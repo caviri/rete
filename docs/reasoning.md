@@ -19,6 +19,11 @@ contradictions such as an individual that belongs to two disjoint classes.
 > open-world consistency in the OWL DL sense. Use it as a lightweight coherence
 > gate, not a certified entailment regime.
 
+<figure class="fig-right">
+  <img src="img/reasoning.svg" alt="Asserted triples plus a subClassOf+type rule produce an inferred type triple (dashed); a disjointWith axiom plus conflicting types produce a red 'incoherent' flag.">
+  <figcaption>Forward-chaining materializes entailed triples (dashed); disjointness and domain clashes surface as <strong>incoherent points</strong>.</figcaption>
+</figure>
+
 ## Usage
 
 ```sh
@@ -29,6 +34,27 @@ rete reason data.rete --materialize --format ttl
 
 `rete reason` **exits non-zero when any inconsistency is found**, and zero when
 the graph is coherent — so it drops straight into CI as a coherence check.
+
+## Build-time materialization
+
+`rete reason --materialize` *prints* the closed graph but doesn't change the file.
+To **persist** the entailments — so they ship in the `.rete` and need no
+query-time reasoning — materialize at build time:
+
+```sh
+rete build data.nt -o data.rete --materialize
+```
+
+This runs the same reasoner over the default graph during the build and stores the
+inferred triples alongside the asserted ones (the index deduplicates any overlap).
+After that, a plain triple/SPARQL query sees the entailed triples directly — e.g.
+with `Class subClassOf Super` and `x a Class` asserted, `x a Super` is queryable
+with no reasoner in the loop. The build **aborts** (non-zero) if the graph is
+logically incoherent, so it never bakes a contradiction into a published file.
+
+Trade-off: a materialized file is larger and fixes the entailments at build time
+(re-build to re-materialize after the ontology changes); an un-materialized file
+stays compact and you run `rete reason` on demand.
 
 ## Entailment rules (materialized to a fixpoint)
 
