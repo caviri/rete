@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dataset Cards · rete docs</title>
+  <style>
+:root { --fg:#1b1f24; --muted:#5b6570; --bg:#ffffff; --side:#0f1620; --side-fg:#c9d4e0;
+        --accent:#2a6df4; --border:#e4e8ec; --code-bg:#f5f7f9; }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       color:var(--fg); background:var(--bg); display:flex; }
+code,pre,.mono { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; }
+
+.sidebar { width:250px; min-height:100vh; background:var(--side); color:var(--side-fg);
+           padding:1.6rem 1.2rem; position:sticky; top:0; flex:0 0 250px; }
+.sidebar .brand { color:#fff; font-size:1.5rem; font-weight:700; text-decoration:none; letter-spacing:.5px; }
+.sidebar .tagline { color:#8595a6; font-size:.8rem; margin:.3rem 0 1.4rem; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.15rem 0; }
+.sidebar a { color:var(--side-fg); text-decoration:none; display:block; padding:.4rem .6rem;
+             border-radius:6px; font-size:.95rem; }
+.sidebar a:hover { background:rgba(255,255,255,.07); color:#fff; }
+.sidebar a.active { background:var(--accent); color:#fff; font-weight:600; }
+.sidebar .foot { margin-top:1.5rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; color:#8595a6; }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.page { display:flex; align-items:flex-start; min-width:0; }
+.content { max-width:820px; padding:2.4rem 3rem; width:100%; min-width:0; }
+footer { max-width:820px; padding:1rem 3rem 3rem; color:var(--muted); font-size:.85rem; }
+
+/* Right sidebar rail: holds the on-this-page TOC and, beneath it, the page's
+   key terms. Sticky at the top-right; scrolls on its own if tall. */
+.rail { flex:0 0 220px; width:220px; position:sticky; top:1.4rem; align-self:flex-start;
+        margin:2.6rem 1.6rem 2rem 0; max-height:calc(100vh - 3rem); overflow:auto; font-size:.82rem; }
+.toc .toc-h, .keyterms .kt-h { font-size:.66rem; font-weight:700; text-transform:uppercase;
+        letter-spacing:.6px; color:var(--muted); margin-bottom:.5rem; }
+.toc ul { list-style:none; margin:0; padding:0; border-left:2px solid var(--border); }
+.toc a { display:block; padding:.22rem .7rem; margin-left:-2px; border-left:2px solid transparent;
+         color:var(--muted); text-decoration:none; line-height:1.3; }
+.toc a:hover { color:var(--accent); }
+.toc a.active { color:var(--accent); border-left-color:var(--accent); font-weight:600; }
+.toc .toc-sub a { padding-left:1.4rem; font-size:.95em; }
+
+/* Key terms box, under the TOC in the same column. */
+.keyterms { margin-top:1.5rem; background:#f3f7ff; border:1px solid #cfe0ff;
+            border-left:3px solid var(--accent); border-radius:8px; padding:.65rem .8rem; }
+.keyterms .kt-i { margin:.4rem 0; line-height:1.4; color:var(--muted); }
+.keyterms .kt-i b { color:var(--fg); }
+
+.content h2, .content h3 { scroll-margin-top:1rem; }
+@media (max-width:1100px) { .rail { display:none; } }
+
+.content h1 { font-size:2.1rem; margin:.2rem 0 1rem; line-height:1.2; }
+.content h2 { font-size:1.5rem; margin:2.2rem 0 .8rem; padding-bottom:.3rem; border-bottom:1px solid var(--border); }
+.content h3 { font-size:1.2rem; margin:1.6rem 0 .6rem; }
+.content a { color:var(--accent); text-decoration:none; }
+.content a:hover { text-decoration:underline; }
+.content p,.content li { color:var(--fg); }
+.content code { background:var(--code-bg); padding:.12em .4em; border-radius:4px; font-size:.88em; }
+.content pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+               padding:1rem 1.1rem; overflow:auto; line-height:1.5; }
+.content pre code { background:none; padding:0; font-size:.85rem; }
+.content blockquote { margin:1rem 0; padding:.4rem 1rem; border-left:4px solid var(--accent);
+                      background:#f3f7ff; color:#33415a; border-radius:0 6px 6px 0; }
+.content table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+.content th,.content td { border:1px solid var(--border); padding:.45rem .7rem; text-align:left; }
+.content th { background:var(--code-bg); }
+.content tr:nth-child(even) td { background:#fafbfc; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+
+/* Right-floating figures: a diagram sits beside the prose it illustrates and
+   text wraps around it. On narrow screens it drops to full width below. */
+.content figure { margin:0; }
+.content figure.fig-right { float:right; width:min(44%, 400px); margin:.3rem 0 1rem 1.8rem; clear:right; }
+.content figure.fig-center { margin:1.4rem auto; max-width:680px; }
+.content figure img { width:100%; border:1px solid var(--border); border-radius:8px;
+                      background:#fff; padding:.5rem; }
+.content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
+/* Don't let a floated figure poke past the section it belongs to. */
+.content h2 { clear:right; }
+
+/* ---- click-to-zoom lightbox (no dependencies) ---- */
+.content img { cursor:zoom-in; }
+.lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out;
+            background:rgba(15,22,32,.85); padding:3vmin; }
+.lightbox.open { display:flex; align-items:center; justify-content:center; }
+.lightbox img { max-width:96vw; max-height:94vh; width:auto; height:auto;
+                border-radius:8px; background:#fff; padding:.5rem;
+                box-shadow:0 10px 40px rgba(0,0,0,.5); }
+.lightbox .lb-close { position:fixed; top:1rem; right:1.25rem; font-size:2rem; line-height:1;
+                      color:#fff; opacity:.8; cursor:pointer; user-select:none; }
+.lightbox .lb-close:hover { opacity:1; }
+
+/* ---- glossary term tooltips (hover / focus; injected client-side) ---- */
+.content .term { border-bottom:1px dotted var(--accent); cursor:help; position:relative; }
+.content .term:focus { outline:none; }
+.content .term .tip { position:absolute; left:0; top:1.55em; z-index:60; width:max-content; max-width:280px;
+  background:var(--side); color:#eef3f9; padding:.5rem .7rem; border-radius:7px; font-size:.78rem;
+  font-weight:400; line-height:1.45; box-shadow:0 6px 22px rgba(15,22,32,.3);
+  opacity:0; visibility:hidden; transition:opacity .12s; pointer-events:none; }
+.content .term:hover .tip, .content .term:focus .tip { opacity:1; visibility:visible; }
+
+
+/* ---- syntax highlighting (lightweight, applied client-side; no external deps) ---- */
+.content pre code .tok-com  { color:#7a8896; font-style:italic; }
+.content pre code .tok-str  { color:#0a7d4d; }
+.content pre code .tok-kw   { color:#a020a0; font-weight:600; }
+.content pre code .tok-num  { color:#b35900; }
+.content pre code .tok-fn   { color:#2a6df4; }
+.content pre code .tok-iri  { color:#2a6df4; }
+.content pre code .tok-var  { color:#b35900; }
+.content pre code .tok-flag { color:#7a5b00; }
+.content pre code .tok-punct{ color:#5b6570; }
+
+@media (max-width:980px) {
+  .content figure.fig-right { float:none; width:100%; margin:1.4rem 0; }
+}
+@media (max-width:780px) {
+  body { flex-direction:column; }
+  .sidebar { width:100%; flex-basis:auto; min-height:auto; position:static; }
+  .content,footer { padding-left:1.2rem; padding-right:1.2rem; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <ul>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="dataset-cards.html" class="active">Dataset Cards</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/carlosvivarrios/rete">GitHub</a></p>
+  </nav>
+  <main>
+    <div class="page">
+      <article class="content">
+<h1>Dataset Cards</h1>
+<p>A <strong>Dataset Card</strong> is a small, embeddable data-catalog record carried <em>inside</em> a
+<code>.rete</code> file. It turns an opaque graph blob into a <strong>self-describing dataset</strong>:
+who made it, under what license, where it came from — plus an auto-computed
+profile of what's in it (counts, the predicates and classes actually used, the
+vocabularies they belong to). One <code>rete card</code> (or <code>rete info</code>) reads it back, so a
+<code>.rete</code> file doubles as its own mini data catalog.</p>
+<p>The card lives in the file's <strong>metadata section</strong> — a slot the format reserves
+right after the 128-byte header. Adding a card is <strong>not a format change</strong>: a file
+without one is byte-for-byte identical to a pre-card build, and an older reader
+simply ignores the section. The card is folded into the file's <code>blake3</code> content
+hash, so <code>rete verify</code> covers it and it is <strong>tamper-evident</strong>.</p>
+<h2>Building a card</h2>
+<p>Cards are <strong>opt-in</strong>: a plain <code>rete build</code> writes no card and is unchanged. Pass
+any card flag to embed one. The statistics are derived from the data; the curated
+fields (title, license, …) are yours to supply.</p>
+<pre><code class="language-sh"># Auto-derived stats only (no curated fields):
+rete build data.nt -o data.rete --card
+
+# With curated catalog metadata:
+rete build data.nt -o data.rete \
+  --title "Citation graph 2021" \
+  --license "CC0-1.0" \
+  --source "https://example.org/citations" \
+  --description "Open citations sharded by year" \
+  --created 2026-06-08
+</code></pre>
+<p>For the curated fields — including a list of <strong>example queries</strong>, which has no
+flag — supply a small JSON file with <code>--card-file</code>. Explicit flags override
+whatever the file provides:</p>
+<pre><code class="language-json">{
+  "title": "Citation graph 2021",
+  "license": "CC0-1.0",
+  "source": "https://example.org/citations",
+  "description": "Open citations sharded by year",
+  "example_queries": [
+    "SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt; ?cited }"
+  ]
+}
+</code></pre>
+<pre><code class="language-sh">rete build data.nt -o data.rete --card-file card.json --title "Override title"
+</code></pre>
+<p>Any of <code>--card</code>, <code>--card-file</code>, <code>--title</code>, <code>--license</code>, <code>--source</code>,
+<code>--description</code>, or <code>--created</code> opts the build into writing a card.</p>
+<h2>What's in a card</h2>
+<table><thead><tr><th>Field</th><th>Source</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>title</code>, <code>description</code>, <code>license</code>, <code>source</code>, <code>created</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>Free-text catalog metadata. Omitted fields are absent from the JSON.</td></tr>
+<tr><td><code>example_queries</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Sample queries a consumer can run.</td></tr>
+<tr><td><code>triple_count</code></td><td>derived</td><td>Triples in the <strong>default graph</strong>.</td></tr>
+<tr><td><code>quad_count</code>, <code>named_graph_count</code></td><td>derived</td><td>Total statements and number of named graphs.</td></tr>
+<tr><td><code>term_count</code></td><td>derived</td><td>Distinct dictionary terms.</td></tr>
+<tr><td><code>predicates</code></td><td>derived</td><td>Each predicate IRI with its default-graph triple count, <strong>descending</strong>.</td></tr>
+<tr><td><code>classes</code></td><td>derived</td><td>Each <code>rdf:type</code> object (class) with its instance count, descending.</td></tr>
+<tr><td><code>vocabularies</code></td><td>derived</td><td>Distinct <strong>namespaces</strong> of the predicate and class IRIs (the prefix up to the last <code>#</code> or <code>/</code>).</td></tr>
+<tr><td><code>format_version</code></td><td>derived</td><td>The <code>.rete</code> format version the card was written against.</td></tr>
+</tbody></table>
+<p>The per-predicate and per-class statistics are computed over the <strong>default
+graph</strong> (named-graph contents are summarized only by <code>quad_count</code> /
+<code>named_graph_count</code>), matching <code>rete stats</code> and <code>rete predicates</code>.</p>
+<h2>Reading a card</h2>
+<p><code>rete card</code> prints a human-readable catalog; <code>--json</code> emits the raw card:</p>
+<pre><code class="language-sh">rete card data.rete
+#  Dataset Card
+#    title        : Citation graph 2021
+#    license      : CC0-1.0
+#    source       : https://example.org/citations
+#    triples      : 12048
+#    terms        : 9571
+#    checksum     : 8f5b97374ac5f5e324b5cc53f592e96c  (blake3-16 content hash)
+#    vocabularies : 2
+#        http://purl.org/spar/cito/
+#        http://purl.org/dc/terms/
+#    predicates (2):
+#           11020  &lt;http://purl.org/spar/cito/cites&gt;
+#            1028  &lt;http://purl.org/dc/terms/date&gt;
+#    ...
+
+rete card data.rete --json     # the embedded JSON, pretty-printed
+</code></pre>
+<p><code>rete info</code> prints the file header and, when a card is present, appends the same
+catalog — so <code>info</code> is a one-shot overview of <em>what the file is</em> as well as <em>how
+it's laid out</em>. A file with no card just shows the header.</p>
+<p>The <code>checksum</code> line is the file's <code>blake3</code> content hash (the same value
+<code>rete verify</code> checks) — it identifies the exact bytes, card included.</p>
+<h2>How it sits in the file</h2>
+<p>The card is stored as compact <strong>JSON</strong> in the metadata section, which sits
+between the header and the dictionary:</p>
+<pre><code class="language-text">[0..128)      header              (metadata_offset = 128, metadata_len = card bytes)
+[128 .. 128+L)  Dataset Card JSON   (L = metadata_len; absent when no card)
+[dictionary]    front-coded terms   (shifts to offset 128 + L)
+[index]         permutation blocks
+[pyramid-meta]  community summary
+[named graphs]  (if any)
+[footer]        trailing magic
+</code></pre>
+<p>A few properties worth knowing:</p>
+<ul>
+<li><strong>No format break.</strong> Without a card, <code>metadata_len</code> is <code>0</code> and the dictionary
+starts at offset 128 exactly as before — the output is byte-identical to a
+pre-card build, and existing files keep verifying unchanged.</li>
+<li><strong>Integrity-covered.</strong> The card bytes are part of the <code>blake3</code> content hash, so
+<code>rete verify</code> validates the card too and any edit to it is detected.</li>
+<li><strong>Off the query path.</strong> Range-reading opens (<code>rete query-url</code>, <code>sparql-url</code>,
+<code>summary-url</code>, federation routing) fetch sections by offset and <strong>never read
+the card</strong>, so embedding one adds nothing to query-time bytes-on-the-wire. The
+card is a full-open / <code>rete card</code> artifact.</li>
+<li><strong>Opaque to the engine.</strong> <code>rete-core</code> treats the section as raw bytes; the card
+schema lives entirely in the CLI. The metadata section is a general extension
+point — a card is just its first use.</li>
+</ul>
+<p>See <a href="SPEC.html">the format specification</a> for the header layout and
+<a href="cli.html">the CLI reference</a> for every flag.</p>
+
+      </article>
+      <aside class="rail" aria-label="On this page">
+        <nav class="toc" id="toc"></nav>
+        <div class="keyterms" id="keyterms"></div>
+      </aside>
+    </div>
+    <footer>Generated from <code>docs/dataset-cards.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+  <script>
+(function () {
+  function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+  // Shared token regexes (sticky: must match at the cursor).
+  var COM_HASH = /#.*/y, COM_SLASH = /\/\/.*/y, COM_BLOCK = /\/\*[\s\S]*?\*\//y;
+  var STR = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/y;
+  var NUM = /\b\d[\d_]*(?:\.\d+)?\b/y;
+  var WS  = /\s+/y, IDENT = /[A-Za-z_]\w*/y;
+  var IRI = /<[^>\s]*>/y, VAR = /[?$][A-Za-z_]\w*/y;
+  var PNAME = /[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*|:[A-Za-z_][\w.-]*/y;
+  var FLAG = /--?[A-Za-z][\w-]*/y;
+  function kw(words, flags){ return new RegExp("\\b(?:" + words.join("|") + ")\\b", (flags||"") + "y"); }
+  var RUST = kw(["as","async","await","break","const","continue","crate","dyn","else","enum","extern","false","fn","for","if","impl","in","let","loop","match","mod","move","mut","pub","ref","return","self","Self","static","struct","super","trait","true","type","unsafe","use","where","while"]);
+  var PY = kw(["def","return","import","from","as","for","in","if","elif","else","while","with","class","lambda","None","True","False","and","or","not","is","pass","break","continue","try","except","finally","raise","yield","global","nonlocal","assert","del","print","async","await"]);
+  var SPARQL = kw(["SELECT","CONSTRUCT","ASK","DESCRIBE","WHERE","PREFIX","BASE","FILTER","OPTIONAL","UNION","MINUS","GRAPH","SERVICE","BIND","VALUES","DISTINCT","REDUCED","ORDER","BY","ASC","DESC","GROUP","HAVING","LIMIT","OFFSET","FROM","NAMED","COUNT","SUM","AVG","MIN","MAX","SAMPLE","STR","LANG","DATATYPE","BOUND","IRI","URI","REGEX","EXISTS","NOT","AS"], "i");
+  var SH = kw(["rete","cargo","docker","python3","python","pip","curl","wget","cd","cp","mv","rm","ls","mkdir","cat","grep","echo","node","git","wasm-pack","jq","tee","export","sudo","bash","sh"]);
+  var JS = kw(["const","let","var","function","return","if","else","for","while","do","switch","case","break","continue","new","class","extends","super","this","typeof","instanceof","in","of","await","async","import","from","export","default","try","catch","finally","throw","yield","true","false","null","undefined","void","delete"]);
+  var RULES = {
+    rust:   [[COM_SLASH,"com"],[COM_BLOCK,"com"],[STR,"str"],[/\b[a-z_]\w*!/y,"fn"],[RUST,"kw"],[NUM,"num"],[IDENT,null]],
+    py:     [[COM_HASH,"com"],[STR,"str"],[/@\w+/y,"fn"],[PY,"kw"],[NUM,"num"],[IDENT,null]],
+    sh:     [[COM_HASH,"com"],[STR,"str"],[FLAG,"flag"],[SH,"fn"],[NUM,"num"],[IDENT,null]],
+    js:     [[COM_SLASH,"com"],[COM_BLOCK,"com"],[STR,"str"],[/`(?:\\.|[^`\\])*`/y,"str"],[JS,"kw"],[/\b[A-Za-z_]\w*(?=\s*\()/y,"fn"],[NUM,"num"],[IDENT,null]],
+    json:   [[STR,"str"],[kw(["true","false","null"]),"kw"],[NUM,"num"],[IDENT,null]],
+    sparql: [[COM_HASH,"com"],[IRI,"iri"],[STR,"str"],[VAR,"var"],[/\ba\b/y,"kw"],[SPARQL,"kw"],[PNAME,"fn"],[NUM,"num"],[IDENT,null]],
+    ttl:    [[COM_HASH,"com"],[IRI,"iri"],[STR,"str"],[/@[A-Za-z]+/y,"kw"],[/\ba\b/y,"kw"],[PNAME,"fn"],[NUM,"num"],[IDENT,null]]
+  };
+  var ALIAS = {bash:"sh",shell:"sh",console:"sh",sh:"sh",rs:"rust",rust:"rust",python:"py",py:"py",js:"js",javascript:"js",mjs:"js",json:"json",sparql:"sparql",turtle:"ttl",ttl:"ttl",nt:"ttl",ntriples:"ttl",nq:"ttl",trig:"ttl"};
+  function highlight(code, rules){
+    var out = "", i = 0, n = code.length;
+    outer: while (i < n){
+      WS.lastIndex = i; var w = WS.exec(code);
+      if (w && w.index === i){ out += w[0]; i += w[0].length; continue; }
+      for (var r = 0; r < rules.length; r++){
+        var re = rules[r][0], cls = rules[r][1];
+        re.lastIndex = i; var m = re.exec(code);
+        if (m && m.index === i && m[0].length){
+          out += cls ? '<span class="tok-' + cls + '">' + esc(m[0]) + "</span>" : esc(m[0]);
+          i += m[0].length; continue outer;
+        }
+      }
+      out += esc(code[i]); i++;
+    }
+    return out;
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    var blocks = document.querySelectorAll('pre code[class*="language-"]');
+    blocks.forEach(function (el) {
+      var cls = (el.className.match(/language-([\w-]+)/) || [])[1] || "";
+      var rules = RULES[ALIAS[cls.toLowerCase()] || ""];
+      if (!rules) return;
+      el.innerHTML = highlight(el.textContent, rules);
+    });
+  });
+})();
+</script>
+  <script>
+(function () {
+  document.addEventListener("DOMContentLoaded", function () {
+    var imgs = document.querySelectorAll(".content img");
+    if (!imgs.length) return;
+    var box = document.createElement("div");
+    box.className = "lightbox";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-label", "Enlarged image");
+    var close = document.createElement("span");
+    close.className = "lb-close";
+    close.setAttribute("aria-hidden", "true");
+    close.textContent = "×"; // ×
+    var big = document.createElement("img");
+    box.appendChild(close);
+    box.appendChild(big);
+    document.body.appendChild(box);
+
+    function open(src, alt) {
+      big.src = src;
+      big.alt = alt || "";
+      box.classList.add("open");
+    }
+    function hide() {
+      box.classList.remove("open");
+      big.removeAttribute("src");
+    }
+    imgs.forEach(function (img) {
+      img.addEventListener("click", function () { open(img.currentSrc || img.src, img.alt); });
+    });
+    box.addEventListener("click", hide);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && box.classList.contains("open")) hide();
+    });
+  });
+})();
+</script>
+  <script>
+(function () {
+  var GLOSSARY = {
+    "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
+    "SPARQL": "The W3C query language for RDF graphs (SELECT / ASK / CONSTRUCT / DESCRIBE).",
+    "IRI": "Internationalized Resource Identifier — a global, URL-like id for a resource.",
+    "BGP": "Basic Graph Pattern — a set of triple patterns joined on their shared variables.",
+    "HDT": "Header-Dictionary-Triples — a compact binary RDF format rete's dictionary draws on.",
+    "triple": "One fact: subject – predicate – object.",
+    "dictionary": "The table that maps terms (IRIs / literals) to compact integer ids.",
+    "zstd": "Zstandard — a fast lossless compression algorithm.",
+    "blake3": "A fast cryptographic hash, used here for content addressing / integrity.",
+    "WebAssembly": "A portable binary format that runs in browsers at near-native speed.",
+    "WASM": "WebAssembly — a portable binary format that runs in the browser at near-native speed.",
+    "SPO": "One of the three index orderings (Subject-Predicate-Object; also POS and OSP).",
+    "Louvain": "A community-detection algorithm that groups densely-connected nodes.",
+    "PMTiles": "A single-file, range-readable format for map tiles — an inspiration for rete.",
+    "Parquet": "A columnar single-file format for tabular data — an inspiration for rete.",
+    "CORS": "Cross-Origin Resource Sharing — browser rules for fetching across domains.",
+    "COOP": "Cross-Origin-Opener-Policy — a header that helps enable cross-origin isolation.",
+    "COEP": "Cross-Origin-Embedder-Policy — paired with COOP to unlock SharedArrayBuffer.",
+    "LDA": "Latent Dirichlet Allocation — a statistical topic-modelling method.",
+    "OWL RL": "The rule-based profile of OWL, suited to forward-chaining over triples.",
+    "OWL": "Web Ontology Language — schema axioms (class hierarchies, disjointness, identity).",
+    "RDFS": "RDF Schema — a basic class/property vocabulary with simple entailments.",
+    "DOI": "Digital Object Identifier — a persistent id for a publication.",
+    "CVE": "Common Vulnerabilities and Exposures — a public id for a security flaw.",
+    "SBOM": "Software Bill of Materials — an inventory of a piece of software's components.",
+    "N-Triples": "A line-based plain-text RDF format: one triple per line.",
+    "N-Quads": "Like N-Triples, with a fourth column naming the graph.",
+    "Turtle": "A compact, human-friendly text syntax for RDF.",
+    "zone map": "Per-block min/max stats that let a query skip blocks that cannot match.",
+    "property path": "A SPARQL path over edges (e.g. knows+ = follow knows transitively).",
+    "named graph": "A sub-graph within a dataset, identified by its own IRI.",
+    "pyramid": "rete's progressively-coarsened community summary: overview first, drill into detail.",
+    "range request": "An HTTP request for a byte range, so a client fetches only part of a file.",
+    "Oxigraph": "A popular Rust RDF triplestore + SPARQL engine, used here as a benchmark baseline."
+  };
+  function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function rx(term){
+    var e = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    var tail = /[A-Za-z0-9_]$/.test(term) ? "(?![A-Za-z0-9_])" : "";
+    return new RegExp("(^|[^A-Za-z0-9_])(" + e + ")" + tail);
+  }
+  function present(text, term){ return rx(term).test(text); }
+
+  function wrapFirst(root, term, def){
+    var re = rx(term);
+    var skip = "pre,code,a,h1,h2,h3,.rail,.term";
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) {
+        if (!n.nodeValue || !n.parentElement) return NodeFilter.FILTER_REJECT;
+        if (n.parentElement.closest(skip)) return NodeFilter.FILTER_REJECT;
+        return re.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      }
+    });
+    var node = walker.nextNode();
+    if (!node) return;
+    var m = re.exec(node.nodeValue);
+    if (!m) return;
+    var start = m.index + m[1].length;
+    var mid = node.splitText(start);
+    mid.splitText(term.length);
+    var span = document.createElement("span");
+    span.className = "term"; span.tabIndex = 0; span.setAttribute("role", "note");
+    span.textContent = term;
+    var tip = document.createElement("span");
+    tip.className = "tip"; tip.textContent = def;
+    span.appendChild(tip);
+    mid.parentNode.replaceChild(span, mid);
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var content = document.querySelector(".content");
+    if (!content) return;
+    var terms = Object.keys(GLOSSARY).sort(function (a, b) { return b.length - a.length; });
+
+    // 1) Key terms box in the right rail (under the TOC): every glossary term
+    //    that appears on the page, in order of first appearance.
+    var pageText = content.textContent || "";
+    var present = terms
+      .filter(function (t) { return rx(t).test(pageText); })
+      .map(function (t) { return { t: t, at: pageText.search(rx(t)) }; })
+      .sort(function (a, b) { return a.at - b.at; });
+    var kt = document.getElementById("keyterms");
+    if (kt && present.length) {
+      kt.innerHTML = '<div class="kt-h">Key terms</div>' + present.map(function (e) {
+        return '<div class="kt-i"><b>' + esc(e.t) + "</b> — " + esc(GLOSSARY[e.t]) + "</div>";
+      }).join("");
+    }
+
+    // 2) Inline tooltips: wrap the first occurrence of each term in the prose.
+    terms.forEach(function (t) { wrapFirst(content, t, GLOSSARY[t]); });
+  });
+})();
+</script>
+  <script>
+(function () {
+  document.addEventListener("DOMContentLoaded", function () {
+    var toc = document.getElementById("toc");
+    var content = document.querySelector(".content");
+    if (!toc || !content) return;
+    var heads = [].slice.call(content.querySelectorAll("h2, h3"));
+    if (heads.length < 2) { toc.remove(); return; } // not worth a TOC
+
+    var used = {};
+    function slug(s) {
+      var base = s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "section";
+      var id = base, i = 2;
+      while (used[id]) { id = base + "-" + i++; }
+      used[id] = 1; return id;
+    }
+    var ul = document.createElement("ul");
+    heads.forEach(function (h) {
+      if (!h.id) h.id = slug(h.textContent);
+      var li = document.createElement("li");
+      if (h.tagName === "H3") li.className = "toc-sub";
+      var a = document.createElement("a");
+      a.href = "#" + h.id;
+      a.textContent = h.textContent;
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
+    var head = document.createElement("div");
+    head.className = "toc-h"; head.textContent = "On this page";
+    toc.appendChild(head);
+    toc.appendChild(ul);
+
+    // Scroll-spy: mark the heading currently at/above the top of the viewport.
+    var links = {};
+    toc.querySelectorAll("a").forEach(function (a) { links[a.getAttribute("href").slice(1)] = a; });
+    function spy() {
+      var current = heads[0].id;
+      for (var i = 0; i < heads.length; i++) {
+        if (heads[i].getBoundingClientRect().top - 100 <= 0) current = heads[i].id;
+      }
+      Object.keys(links).forEach(function (id) {
+        links[id].classList.toggle("active", id === current);
+      });
+    }
+    window.addEventListener("scroll", spy, { passive: true });
+    window.addEventListener("resize", spy, { passive: true });
+    spy();
+  });
+})();
+</script>
+</body>
+</html>
