@@ -209,6 +209,7 @@ pub enum Builtin {
     IsBlank,
     IsLiteral,
     IsNumeric,
+    Regex,
 }
 
 /// A small boolean/comparison expression for FILTER (a subset of SPARQL exprs).
@@ -233,8 +234,80 @@ pub enum FExpr {
     Exists(Box<Plan>),
 }
 
-/// Memoizes each EXISTS sub-plan's solutions within one filter application.
-type ExistsCache = std::collections::HashMap<*const Plan, Vec<Binding>>;
+/// Memoizes each EXISTS sub-plan's solutions (plus a lazily-built semi-join
+/// index) within one filter application.
+type ExistsCache = std::collections::HashMap<*const Plan, ExistsEntry>;
+
+/// A cached EXISTS sub-plan: its solutions and a semi-join index built on first
+/// probe, so repeated probes are O(1) instead of O(sols) — turning FILTER (NOT)
+/// EXISTS over a BGP from O(L×R) into O(L+R), like the MINUS anti-join.
+struct ExistsEntry {
+    sols: Vec<Binding>,
+    probe: Option<ExistsProbe>,
+}
+
+/// The semi-join index: solution rows keyed by the variables they share with the
+/// probing rows. A probe `b` satisfies EXISTS iff some solution is compatible
+/// with it (agrees on every shared variable).
+struct ExistsProbe {
+    /// All variables bound by some solution (sorted).
+    svars: Vec<String>,
+    /// The shared variables with the probing rows (sorted) — the index key.
+    jvars: Vec<String>,
+    /// `jvars`-value tuples of the solutions bound on all of `jvars`.
+    keys: std::collections::HashSet<Vec<String>>,
+    /// Solutions missing a `jvars` variable (e.g. via a nested OPTIONAL): scanned.
+    partial: Vec<Binding>,
+}
+
+/// Build the semi-join index for `sols`, keyed by the variables shared with the
+/// probe row `b`.
+fn build_exists_probe(b: &Binding, sols: &[Binding]) -> ExistsProbe {
+    let mut svset: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for s in sols {
+        svset.extend(s.keys().map(String::as_str));
+    }
+    let svars: Vec<String> = svset.iter().map(|s| s.to_string()).collect();
+    let jvars: Vec<String> = svars
+        .iter()
+        .filter(|v| b.contains_key(*v))
+        .cloned()
+        .collect();
+    let mut keys = std::collections::HashSet::new();
+    let mut partial = Vec::new();
+    for s in sols {
+        if jvars.iter().all(|v| s.contains_key(v)) {
+            keys.insert(jvars.iter().map(|v| s[v].clone()).collect::<Vec<String>>());
+        } else {
+            partial.push(s.clone());
+        }
+    }
+    ExistsProbe {
+        svars,
+        jvars,
+        keys,
+        partial,
+    }
+}
+
+/// Does `b` satisfy the cached EXISTS? Uses the keyed index when `b`'s shared
+/// variables match the index's `jvars` (the common, homogeneous case); otherwise
+/// falls back to scanning all solutions (exact semantics on irregular rows).
+fn exists_matches(b: &Binding, entry: &ExistsEntry) -> bool {
+    let probe = entry.probe.as_ref().unwrap();
+    let bj: Vec<String> = probe
+        .svars
+        .iter()
+        .filter(|v| b.contains_key(*v))
+        .cloned()
+        .collect();
+    if bj == probe.jvars {
+        let k: Vec<String> = probe.jvars.iter().map(|v| b[v].clone()).collect();
+        probe.keys.contains(&k) || probe.partial.iter().any(|s| compatible(b, s))
+    } else {
+        entry.sols.iter().any(|s| compatible(b, s))
+    }
+}
 
 impl FExpr {
     /// Evaluate to a value string against a binding (variables resolve, errors
@@ -284,10 +357,17 @@ impl FExpr {
             },
             FExpr::Exists(plan) => {
                 let key = plan.as_ref() as *const Plan;
-                let sols = cache
-                    .entry(key)
-                    .or_insert_with(|| eval_plan_in(rete, index, None, plan));
-                sols.iter().any(|s| compatible(b, s))
+                let entry = cache.entry(key).or_insert_with(|| ExistsEntry {
+                    sols: eval_plan_in(rete, index, None, plan),
+                    probe: None,
+                });
+                if entry.sols.is_empty() {
+                    return false;
+                }
+                if entry.probe.is_none() {
+                    entry.probe = Some(build_exists_probe(b, &entry.sols));
+                }
+                exists_matches(b, entry)
             }
             FExpr::Func(f, args) => func_bool(*f, args, b),
             _ => false,
@@ -371,6 +451,25 @@ fn func_bool(f: Builtin, args: &[FExpr], b: &Binding) -> bool {
         Builtin::Contains => two(|a, c| a.contains(c)),
         Builtin::StrStarts => two(|a, c| a.starts_with(c)),
         Builtin::StrEnds => two(|a, c| a.ends_with(c)),
+        // REGEX(text, pattern [, flags]) — SPARQL flags i/m/s/x map to inline
+        // regex flags. An invalid pattern yields no match rather than erroring.
+        Builtin::Regex => match (val(0), val(1)) {
+            (Some(text), Some(pat)) => {
+                let flags = val(2).map(|t| lexical(&t)).unwrap_or_default();
+                let mut inline = String::new();
+                let on: String = ['i', 'm', 's', 'x']
+                    .iter()
+                    .filter(|c| flags.contains(**c))
+                    .collect();
+                if !on.is_empty() {
+                    inline = format!("(?{on})");
+                }
+                regex_lite::Regex::new(&format!("{inline}{}", lexical(&pat)))
+                    .map(|re| re.is_match(&lexical(&text)))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -573,7 +672,7 @@ pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> 
         }
         Query::Ask { pattern, .. } => {
             let sel = lower_pattern(&pattern)?;
-            Ok(QueryOutput::Ask(!raw_solutions(rete, &sel).is_empty()))
+            Ok(QueryOutput::Ask(ask_solution(rete, &sel)))
         }
         Query::Construct {
             template, pattern, ..
@@ -610,6 +709,157 @@ pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> 
             Ok(QueryOutput::Construct(triples.into_iter().collect()))
         }
     }
+}
+
+/// Evaluate an `ASK`: does the query have any solution? Streams and stops at the
+/// first solution for the common shapes; defers to the full evaluator only where
+/// a solution's existence depends on aggregation/HAVING/post-aggregate aliases.
+fn ask_solution(rete: &Rete, sel: &Select) -> bool {
+    // A grouped query always yields at least one group (so ASK over it hinges on
+    // HAVING); BIND aliases may be referenced by HAVING. These need the full
+    // aggregate path — fall back to materializing.
+    if sel.group.is_some() || !sel.having.is_empty() || !sel.extends.is_empty() {
+        return !raw_solutions(rete, sel).is_empty();
+    }
+    let merged = if sel.from.is_empty() {
+        None
+    } else {
+        Some(merge_graphs(rete, &sel.from))
+    };
+    let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
+    plan_exists(rete, active, sel.from_named.as_deref(), &sel.plan)
+}
+
+/// Does `plan` have at least one solution against `index`? Streams the
+/// streamable shapes and stops at the first solution; falls back to eager
+/// evaluation (testing non-emptiness) for shapes that need a full join/filter —
+/// which still benefit from the now-lazy per-pattern scan.
+fn plan_exists(rete: &Rete, index: &GraphIndex, nf: Option<&[String]>, plan: &Plan) -> bool {
+    match plan {
+        Plan::Bgp(patterns) => crate::bgp::bgp_exists(rete, index, patterns),
+        Plan::Union(l, r) => plan_exists(rete, index, nf, l) || plan_exists(rete, index, nf, r),
+        Plan::Values(_, rows) => !rows.is_empty(),
+        _ => !eval_plan_in(rete, index, nf, plan).is_empty(),
+    }
+}
+
+/// The cap (OFFSET + LIMIT) for a pure-LIMIT early-out, or `None` if the query
+/// has an ORDER BY / DISTINCT / aggregate / HAVING that must see the full
+/// solution set first. BIND (`extends`) is allowed: it adds columns without
+/// dropping rows, so it can be applied to the capped prefix afterwards.
+fn early_out_cap(sel: &Select) -> Option<usize> {
+    if sel.order.is_empty() && !sel.distinct && sel.group.is_none() && sel.having.is_empty() {
+        sel.limit.map(|l| sel.offset.saturating_add(l))
+    } else {
+        None
+    }
+}
+
+/// Evaluate `plan` to at most `cap` solutions, stopping early where the shape
+/// allows (BGP join, FILTER-over-BGP, UNION, VALUES); other shapes fall back to
+/// full evaluation truncated to `cap` (correct, just no early-out). Sound only
+/// when the caller has no ORDER BY/DISTINCT/aggregate (see [`early_out_cap`]), so
+/// any `cap`-sized prefix of solutions is a valid result.
+fn eval_plan_capped(
+    rete: &Rete,
+    index: &GraphIndex,
+    nf: Option<&[String]>,
+    plan: &Plan,
+    cap: usize,
+) -> Vec<Binding> {
+    if cap == 0 {
+        return Vec::new();
+    }
+    match plan {
+        Plan::Bgp(patterns) => crate::bgp::BgpSolutions::new(rete, index, patterns)
+            .take(cap)
+            .collect(),
+        // A FILTER over a BGP streams the join and keeps passing rows until `cap`.
+        Plan::Filter(expr, inner) if matches!(inner.as_ref(), Plan::Bgp(_)) => {
+            let Plan::Bgp(patterns) = inner.as_ref() else {
+                unreachable!()
+            };
+            let mut out = Vec::new();
+            let mut cache = ExistsCache::new();
+            for b in crate::bgp::BgpSolutions::new(rete, index, patterns) {
+                if expr.boolean(rete, index, &b, &mut cache) {
+                    out.push(b);
+                    if out.len() >= cap {
+                        break;
+                    }
+                }
+            }
+            out
+        }
+        Plan::Union(l, r) => {
+            let mut out = eval_plan_capped(rete, index, nf, l, cap);
+            if out.len() < cap {
+                let need = cap - out.len();
+                out.extend(eval_plan_capped(rete, index, nf, r, need));
+            }
+            out
+        }
+        Plan::Values(vars, rows) => rows
+            .iter()
+            .take(cap)
+            .map(|row| {
+                vars.iter()
+                    .zip(row.iter())
+                    .filter_map(|(v, val)| val.as_ref().map(|t| (v.clone(), t.clone())))
+                    .collect()
+            })
+            .collect(),
+        _ => eval_plan_in(rete, index, nf, plan)
+            .into_iter()
+            .take(cap)
+            .collect(),
+    }
+}
+
+/// Fast path for `SELECT DISTINCT ?vars WHERE { BGP }`: dedup on the *integer*
+/// bindings and resolve only the survivors to terms. When a distinct projection
+/// collapses many matched rows to a few values (e.g. `DISTINCT ?discipline` over
+/// every paper), this skips a term resolution + `Binding` allocation per matched
+/// row — only the distinct projections are ever resolved. Applies OFFSET/LIMIT
+/// after dedup (the caller guarantees no ORDER BY/GROUP/HAVING/BIND).
+fn distinct_bgp_fast(
+    rete: &Rete,
+    sel: &Select,
+    patterns: &[TriplePattern],
+) -> (Vec<String>, Vec<Binding>) {
+    let merged = if sel.from.is_empty() {
+        None
+    } else {
+        Some(merge_graphs(rete, &sel.from))
+    };
+    let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
+    let dict = rete.dictionary();
+
+    let mut seen: std::collections::HashSet<Vec<Option<i64>>> = std::collections::HashSet::new();
+    let mut rows: Vec<Binding> = Vec::new();
+    for ib in &eval_bgp_int_in(rete, active, patterns) {
+        // Dedup key over the projected variables (an unprojected/unbound var is
+        // `None`, so its absence is part of the distinct identity).
+        let key: Vec<Option<i64>> = sel.project.iter().map(|v| ib.get(v).copied()).collect();
+        if !seen.insert(key) {
+            continue;
+        }
+        let mut b = Binding::new();
+        for v in &sel.project {
+            if let Some(&val) = ib.get(v) {
+                if let Some(t) = term_of_value(dict, val) {
+                    b.insert(v.clone(), t);
+                }
+            }
+        }
+        rows.push(b);
+    }
+    let rows = rows
+        .into_iter()
+        .skip(sel.offset)
+        .take(sel.limit.unwrap_or(usize::MAX))
+        .collect();
+    (sel.project.clone(), rows)
 }
 
 /// Raw solutions for a lowered pattern: plan + GROUP BY + aggregate aliases,
@@ -714,7 +964,45 @@ pub fn eval_sparql(rete: &Rete, query: &str) -> Result<(Vec<String>, Vec<Binding
 /// Run a lowered SELECT: raw solutions, ORDER BY, then projection, DISTINCT,
 /// and slice (the SPARQL solution-modifier sequence).
 fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding>) {
-    let mut raw = raw_solutions(rete, sel);
+    // Fast path: `SELECT DISTINCT ?vars WHERE { BGP }` (no ORDER BY/GROUP/HAVING/
+    // BIND) dedups on integer bindings and resolves only the survivors.
+    if sel.distinct
+        && sel.group.is_none()
+        && sel.having.is_empty()
+        && sel.order.is_empty()
+        && sel.extends.is_empty()
+        && !sel.project.is_empty()
+    {
+        if let Plan::Bgp(patterns) = &sel.plan {
+            return distinct_bgp_fast(rete, sel, patterns);
+        }
+    }
+
+    let mut raw = match early_out_cap(sel) {
+        // Pure LIMIT/OFFSET with no ORDER BY/DISTINCT/aggregate: produce only the
+        // rows we need and stop. LIMIT without ORDER BY may return any subset, so
+        // a streamed prefix of solutions is spec-compliant.
+        Some(cap) => {
+            let merged = if sel.from.is_empty() {
+                None
+            } else {
+                Some(merge_graphs(rete, &sel.from))
+            };
+            let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
+            let mut rows =
+                eval_plan_capped(rete, active, sel.from_named.as_deref(), &sel.plan, cap);
+            // BIND (extends) add columns without dropping rows — apply post-cap.
+            for row in &mut rows {
+                for (var, expr) in sel.extends.iter().rev() {
+                    if let Some(v) = expr.value(row) {
+                        row.insert(var.clone(), v);
+                    }
+                }
+            }
+            rows
+        }
+        None => raw_solutions(rete, sel),
+    };
 
     // ORDER BY runs before projection so it can see unprojected variables.
     if !sel.order.is_empty() {
@@ -746,11 +1034,12 @@ fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding>) {
         .collect();
 
     if sel.distinct {
-        let mut seen = std::collections::HashSet::new();
-        rows.retain(|row| {
-            let key: Vec<(&String, &String)> = row.iter().collect();
-            seen.insert(format!("{key:?}"))
-        });
+        // Hash the row's (sorted) key/value pairs directly — `Binding` iterates
+        // in key order, so the tuple vector is a canonical DISTINCT key without
+        // the per-row `format!` Debug round-trip.
+        let mut seen: std::collections::HashSet<Vec<(String, String)>> =
+            std::collections::HashSet::new();
+        rows.retain(|row| seen.insert(row.iter().map(|(k, v)| (k.clone(), v.clone())).collect()));
     }
 
     let rows = rows
@@ -1197,54 +1486,10 @@ fn eval_plan_in(
             v.extend(recur(r));
             v
         }
-        Plan::Minus(l, r) => {
-            let left = recur(l);
-            let right = recur(r);
-            left.into_iter()
-                .filter(|lb| {
-                    !right.iter().any(|rb| {
-                        let shared: Vec<&String> =
-                            lb.keys().filter(|k| rb.contains_key(*k)).collect();
-                        !shared.is_empty() && shared.iter().all(|k| lb[*k] == rb[*k])
-                    })
-                })
-                .collect()
-        }
-        Plan::Join(l, r) => {
-            let left = recur(l);
-            let right = recur(r);
-            let mut out = Vec::new();
-            for a in &left {
-                for b in &right {
-                    if let Some(m) = merge(a, b) {
-                        out.push(m);
-                    }
-                }
-            }
-            out
-        }
+        Plan::Minus(l, r) => minus_hash(recur(l), recur(r)),
+        Plan::Join(l, r) => hash_join_solutions(rete, index, recur(l), recur(r), false, None),
         Plan::LeftJoin(l, r, cond) => {
-            let left = recur(l);
-            let right = recur(r);
-            let mut out = Vec::new();
-            for a in &left {
-                let mut matched = false;
-                for b in &right {
-                    if let Some(m) = merge(a, b) {
-                        let ok = cond
-                            .as_ref()
-                            .is_none_or(|f| f.boolean(rete, index, &m, &mut ExistsCache::new()));
-                        if ok {
-                            out.push(m);
-                            matched = true;
-                        }
-                    }
-                }
-                if !matched {
-                    out.push(a.clone());
-                }
-            }
-            out
+            hash_join_solutions(rete, index, recur(l), recur(r), true, cond.as_ref())
         }
         // GRAPH switches the active graph index (subject to FROM NAMED).
         Plan::Graph(GraphTarget::Named(iri), inner) => match rete.graph_index(iri) {
@@ -1505,6 +1750,171 @@ fn merge(a: &Binding, b: &Binding) -> Option<Binding> {
     Some(out)
 }
 
+/// Is a left row eliminated by a right row under `MINUS`? True iff they share at
+/// least one variable and agree on every shared variable (SPARQL `MINUS`:
+/// disjoint-domain rows never eliminate, and a disagreement keeps the left row).
+fn minus_compatible(lb: &Binding, rb: &Binding) -> bool {
+    let mut shared = false;
+    for (k, v) in lb {
+        if let Some(w) = rb.get(k) {
+            if v != w {
+                return false;
+            }
+            shared = true;
+        }
+    }
+    shared
+}
+
+/// `MINUS`: keep each left row unless some right row is [`minus_compatible`] with
+/// it. Replaces the O(L×R) nested loop with an O(L + R) hash anti-join in the
+/// common case (both sides bind the shared variables in every row): the shared
+/// variables `jv` index the right rows, so a fully-bound left row is eliminated
+/// by a single set lookup. Rows missing a shared variable (only via a nested
+/// OPTIONAL/UNION) fall back to a scan, preserving exact semantics.
+fn minus_hash(left: Vec<Binding>, right: Vec<Binding>) -> Vec<Binding> {
+    use std::collections::HashSet;
+    if left.is_empty() || right.is_empty() {
+        return left;
+    }
+    // Shared variables: those appearing in some left row AND some right row.
+    let lvars: HashSet<&str> = left
+        .iter()
+        .flat_map(|b| b.keys().map(String::as_str))
+        .collect();
+    let mut jv: Vec<String> = right
+        .iter()
+        .flat_map(|b| b.keys().map(String::as_str))
+        .filter(|v| lvars.contains(v))
+        .map(String::from)
+        .collect();
+    jv.sort();
+    jv.dedup();
+    if jv.is_empty() {
+        // Disjoint domains ⇒ MINUS eliminates nothing.
+        return left;
+    }
+    let key_of =
+        |b: &Binding| -> Option<Vec<String>> { jv.iter().map(|v| b.get(v).cloned()).collect() };
+    // Right rows fully bound on the shared vars index a set; the rest must be
+    // scanned (a left row could share only a sub-domain with them).
+    let mut full: HashSet<Vec<String>> = HashSet::new();
+    let mut partial_right: Vec<&Binding> = Vec::new();
+    for r in &right {
+        match key_of(r) {
+            Some(k) => {
+                full.insert(k);
+            }
+            None => partial_right.push(r),
+        }
+    }
+    left.into_iter()
+        .filter(|lb| {
+            match key_of(lb) {
+                // Fully bound on the shared vars: a fully-bound right row
+                // eliminates it iff their keys match; otherwise only a partial
+                // right row could.
+                Some(k) => {
+                    if full.contains(&k) {
+                        return false;
+                    }
+                    !partial_right.iter().any(|rb| minus_compatible(lb, rb))
+                }
+                // Missing a shared var: must check every right row.
+                None => !right.iter().any(|rb| minus_compatible(lb, rb)),
+            }
+        })
+        .collect()
+}
+
+/// Hash join two solution sets on the variables they share, emitting every
+/// compatible merge. `optional = true` is a left join (OPTIONAL): a left row
+/// with no surviving match is emitted unchanged, and `cond` (the OPTIONAL's
+/// filter) decides which merges count as a match.
+///
+/// This replaces the O(L×R) nested-loop merge with an O(L + R + matches) hash
+/// join in the common case where the join variables are bound in every row.
+/// Rows missing a join variable (only possible via a nested OPTIONAL) fall back
+/// to being tried against all candidates, preserving exact SPARQL semantics —
+/// `merge` still does the final compatibility check on every shared variable.
+fn hash_join_solutions(
+    rete: &Rete,
+    index: &GraphIndex,
+    left: Vec<Binding>,
+    right: Vec<Binding>,
+    optional: bool,
+    cond: Option<&FExpr>,
+) -> Vec<Binding> {
+    use std::collections::{HashMap, HashSet};
+    if left.is_empty() {
+        return Vec::new();
+    }
+    if right.is_empty() {
+        return if optional { left } else { Vec::new() };
+    }
+    // Join variables: names that occur in both sides.
+    let lvars: HashSet<&str> = left
+        .iter()
+        .flat_map(|b| b.keys().map(String::as_str))
+        .collect();
+    let mut jset: HashSet<&str> = right
+        .iter()
+        .flat_map(|b| b.keys().map(String::as_str))
+        .collect();
+    jset.retain(|v| lvars.contains(v));
+    let mut jv: Vec<String> = jset.into_iter().map(String::from).collect();
+    jv.sort();
+
+    // Key = the join-var values, when all are bound; `None` ⇒ a join var is
+    // unbound in this row (a partial that must be matched against everything).
+    let key_of =
+        |b: &Binding| -> Option<Vec<String>> { jv.iter().map(|v| b.get(v).cloned()).collect() };
+    let mut buckets: HashMap<Vec<String>, Vec<usize>> = HashMap::new();
+    let mut partial: Vec<usize> = Vec::new();
+    for (i, r) in right.iter().enumerate() {
+        match key_of(r) {
+            Some(k) => buckets.entry(k).or_default().push(i),
+            None => partial.push(i),
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut cache = ExistsCache::new();
+    let mut emit = |a: &Binding, r: &Binding, out: &mut Vec<Binding>, matched: &mut bool| {
+        if let Some(m) = merge(a, r) {
+            if cond.is_none_or(|f| f.boolean(rete, index, &m, &mut cache)) {
+                out.push(m);
+                *matched = true;
+            }
+        }
+    };
+    for a in &left {
+        let mut matched = false;
+        match key_of(a) {
+            Some(k) => {
+                if let Some(idxs) = buckets.get(&k) {
+                    for &i in idxs {
+                        emit(a, &right[i], &mut out, &mut matched);
+                    }
+                }
+                for &i in &partial {
+                    emit(a, &right[i], &mut out, &mut matched);
+                }
+            }
+            // `a` itself lacks a join var: every right row is a candidate.
+            None => {
+                for r in &right {
+                    emit(a, r, &mut out, &mut matched);
+                }
+            }
+        }
+        if optional && !matched {
+            out.push(a.clone());
+        }
+    }
+    out
+}
+
 /// Translate a `spargebra` expression into the supported [`FExpr`] subset.
 fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
     let bin = |op, l: &Expression, r: &Expression| -> Result<FExpr, SparqlError> {
@@ -1578,6 +1988,7 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
                 Function::IsBlank => Builtin::IsBlank,
                 Function::IsLiteral => Builtin::IsLiteral,
                 Function::IsNumeric => Builtin::IsNumeric,
+                Function::Regex => Builtin::Regex,
                 _ => return Err(SparqlError::Unsupported("built-in function")),
             };
             let args = params
@@ -1938,6 +2349,29 @@ mod tests {
     }
 
     #[test]
+    fn ask_repeated_variable_pattern() {
+        // ASK's fast path must NOT take the single-pattern scan shortcut when a
+        // variable repeats across positions (`?x knows ?x`) — only Bob self-knows.
+        let yes = rete_from(&[
+            ("<http://ex/Alice>", "<http://ex/knows>", "<http://ex/Bob>"),
+            ("<http://ex/Bob>", "<http://ex/knows>", "<http://ex/Bob>"),
+        ]);
+        let rete = Rete::open(&yes).unwrap();
+        match eval_query(&rete, "PREFIX ex: <http://ex/> ASK { ?x ex:knows ?x }").unwrap() {
+            QueryOutput::Ask(b) => assert!(b, "Bob knows himself"),
+            other => panic!("expected Ask, got {other:?}"),
+        }
+        // With no self-edge, the index still has a `knows` triple, so a naive
+        // first-match probe would wrongly say true; the guard must reject it.
+        let no = rete_from(&[("<http://ex/Alice>", "<http://ex/knows>", "<http://ex/Bob>")]);
+        let rete = Rete::open(&no).unwrap();
+        match eval_query(&rete, "PREFIX ex: <http://ex/> ASK { ?x ex:knows ?x }").unwrap() {
+            QueryOutput::Ask(b) => assert!(!b, "nobody knows themselves"),
+            other => panic!("expected Ask, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn minus_excludes_compatible() {
         // Alice knows Bob and Carol; Bob knows Carol; Carol knows no one.
         let bytes = rete_from(&[
@@ -1956,6 +2390,45 @@ mod tests {
         let (_, sols) = eval_sparql(&rete, q).unwrap();
         let fs: Vec<&str> = sols.iter().map(|b| b["f"].as_str()).collect();
         assert_eq!(fs, vec!["<http://ex/Carol>"]);
+    }
+
+    #[test]
+    fn filter_exists_disjoint_variable() {
+        // EXISTS over a sub-pattern that shares NO variable with the outer row is
+        // true iff the sub-pattern has any solution — so NOT EXISTS removes ALL
+        // rows (the exact case where NOT EXISTS differs from MINUS). Guards the
+        // semi-join index's empty-`jvars` path.
+        let bytes = rete_from(&[
+            ("<http://ex/Alice>", "<http://ex/a>", "<http://ex/Person>"),
+            ("<http://ex/Bob>", "<http://ex/a>", "<http://ex/Person>"),
+            ("<http://ex/Tea>", "<http://ex/a>", "<http://ex/Drink>"),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let q_none = "PREFIX ex: <http://ex/> SELECT ?x WHERE { \
+            ?x ex:a ex:Person FILTER NOT EXISTS { ?y ex:a ex:Drink } }";
+        assert!(eval_sparql(&rete, q_none).unwrap().1.is_empty());
+        let q_all = "PREFIX ex: <http://ex/> SELECT ?x WHERE { \
+            ?x ex:a ex:Person FILTER EXISTS { ?y ex:a ex:Drink } }";
+        assert_eq!(eval_sparql(&rete, q_all).unwrap().1.len(), 2);
+    }
+
+    #[test]
+    fn minus_disjoint_domain_keeps_all() {
+        // MINUS with no shared variable must remove nothing (SPARQL semantics) —
+        // the hash anti-join's `jv.is_empty()` guard. Alice/Bob both kept even
+        // though the right pattern has solutions.
+        let bytes = rete_from(&[
+            ("<http://ex/Alice>", "<http://ex/a>", "<http://ex/Person>"),
+            ("<http://ex/Bob>", "<http://ex/a>", "<http://ex/Person>"),
+            ("<http://ex/Tea>", "<http://ex/a>", "<http://ex/Drink>"),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let q = "PREFIX ex: <http://ex/> SELECT ?x WHERE { \
+                 ?x ex:a ex:Person MINUS { ?y ex:a ex:Drink } }";
+        let (_, sols) = eval_sparql(&rete, q).unwrap();
+        let mut xs: Vec<&str> = sols.iter().map(|b| b["x"].as_str()).collect();
+        xs.sort();
+        assert_eq!(xs, vec!["<http://ex/Alice>", "<http://ex/Bob>"]);
     }
 
     #[test]
@@ -2240,6 +2713,82 @@ mod tests {
         let (_, sols) = eval_sparql(&rete, q).unwrap();
         let ps: Vec<&str> = sols.iter().map(|b| b["p"].as_str()).collect();
         assert_eq!(ps, vec!["<http://ex/c>", "<http://ex/a>"]); // 40, 30
+    }
+
+    #[test]
+    fn limit_early_out_two_hop_join() {
+        // A→B, B→C, B→D, C→E. Two-hop join (?x k ?y . ?y k ?z) has 3 solutions:
+        // (A,B,C), (A,B,D), (B,C,E). The LIMIT early-out must preserve the count
+        // contract and only ever yield genuine solutions.
+        let bytes = rete_from(&[
+            ("<http://ex/A>", "<http://ex/k>", "<http://ex/B>"),
+            ("<http://ex/B>", "<http://ex/k>", "<http://ex/C>"),
+            ("<http://ex/B>", "<http://ex/k>", "<http://ex/D>"),
+            ("<http://ex/C>", "<http://ex/k>", "<http://ex/E>"),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let q = "PREFIX ex: <http://ex/> SELECT ?x ?z WHERE { ?x ex:k ?y . ?y ex:k ?z }";
+        let (_, full) = eval_sparql(&rete, q).unwrap();
+        assert_eq!(full.len(), 3);
+
+        let (_, one) = eval_sparql(&rete, &format!("{q} LIMIT 1")).unwrap();
+        assert_eq!(one.len(), 1);
+        // The early-out row must be a real solution of the full query.
+        assert!(one.iter().all(|r| full.contains(r)));
+
+        // LIMIT above the total returns everything; OFFSET composes.
+        let (_, all) = eval_sparql(&rete, &format!("{q} LIMIT 100")).unwrap();
+        assert_eq!(all.len(), 3);
+        let (_, off) = eval_sparql(&rete, &format!("{q} LIMIT 100 OFFSET 2")).unwrap();
+        assert_eq!(off.len(), 1);
+    }
+
+    #[test]
+    fn limit_early_out_filter_over_bgp() {
+        // FILTER over a BGP under LIMIT streams and stops early; the result must
+        // match the unlimited filtered query's prefix.
+        let xsd = "<http://www.w3.org/2001/XMLSchema#integer>";
+        let bytes = rete_from(&[
+            ("<http://ex/a>", "<http://ex/n>", &format!("\"10\"^^{xsd}")),
+            ("<http://ex/b>", "<http://ex/n>", &format!("\"20\"^^{xsd}")),
+            ("<http://ex/c>", "<http://ex/n>", &format!("\"30\"^^{xsd}")),
+            ("<http://ex/d>", "<http://ex/n>", &format!("\"40\"^^{xsd}")),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let q = "PREFIX ex: <http://ex/> SELECT ?p WHERE { ?p ex:n ?v FILTER(?v > 15) }";
+        let (_, full) = eval_sparql(&rete, q).unwrap();
+        assert_eq!(full.len(), 3); // b, c, d
+        let (_, two) = eval_sparql(&rete, &format!("{q} LIMIT 2")).unwrap();
+        assert_eq!(two.len(), 2);
+        assert!(two.iter().all(|r| full.contains(r)));
+    }
+
+    #[test]
+    fn distinct_bgp_fast_matches_general() {
+        // a/b both →x, b→y, c→z. The integer-DISTINCT fast path must collapse on
+        // the projection and apply OFFSET/LIMIT after dedup.
+        let bytes = rete_from(&[
+            ("<http://ex/a>", "<http://ex/p>", "<http://ex/x>"),
+            ("<http://ex/b>", "<http://ex/p>", "<http://ex/x>"),
+            ("<http://ex/b>", "<http://ex/p>", "<http://ex/y>"),
+            ("<http://ex/c>", "<http://ex/p>", "<http://ex/z>"),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        // DISTINCT ?o → {x, y, z} = 3 (the two ?s→x rows collapse).
+        let q = "PREFIX ex: <http://ex/> SELECT DISTINCT ?o WHERE { ?s ex:p ?o }";
+        let (proj, sols) = eval_sparql(&rete, q).unwrap();
+        assert_eq!(proj, vec!["o"]);
+        let mut os: Vec<&str> = sols.iter().map(|b| b["o"].as_str()).collect();
+        os.sort();
+        assert_eq!(os, vec!["<http://ex/x>", "<http://ex/y>", "<http://ex/z>"]);
+        // LIMIT applies after dedup.
+        assert_eq!(
+            eval_sparql(&rete, &format!("{q} LIMIT 2")).unwrap().1.len(),
+            2
+        );
+        // A 2-var DISTINCT keeps every (s, o) pair → 4 rows.
+        let q2 = "PREFIX ex: <http://ex/> SELECT DISTINCT ?s ?o WHERE { ?s ex:p ?o }";
+        assert_eq!(eval_sparql(&rete, q2).unwrap().1.len(), 4);
     }
 
     #[test]

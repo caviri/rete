@@ -211,6 +211,135 @@ impl<'a> TripleBlock<'a> {
         }
         Some(out)
     }
+
+    /// Stream the triples matching a (permuted) pattern, *without* decoding the
+    /// whole block. `pa`/`pb`/`pc` are the bound components in this block's stored
+    /// order (`None` = wildcard). The cursor walks the grouped body and:
+    ///
+    /// * **range-stops** once the leading component `a` exceeds a bound `pa` — the
+    ///   a-groups are stored ascending, so nothing later can match (the early-out
+    ///   that makes a leading-bound lookup `O(matches + preceding groups)` instead
+    ///   of `O(whole block)`);
+    /// * **group-skips** a/b groups that can't match (decoding their headers to
+    ///   advance, but never building or emitting their triples);
+    /// * **equality-filters** `pb`/`pc` without ever early-breaking inside a
+    ///   c-list, so on a *valid* block the yielded set equals what
+    ///   [`triples`](Self::triples) would yield filtered — even on corrupt bytes
+    ///   it only ever yields fewer, never panics (every read is bounds-checked).
+    ///
+    /// Yields triples in this block's stored `(a, b, c)` order; callers map back
+    /// to canonical `(s, p, o)` themselves.
+    pub fn scan(&self, pa: Option<u32>, pb: Option<u32>, pc: Option<u32>) -> BlockCursor<'a> {
+        BlockCursor {
+            bytes: self.bytes,
+            pos: self.body_start,
+            a: 0,
+            b: 0,
+            c: 0,
+            a_rem: 0,
+            b_rem: 0,
+            c_rem: 0,
+            started: false,
+            pa,
+            pb,
+            pc,
+        }
+    }
+}
+
+/// Read one uvarint at `*pos`, advancing it; `None` if truncated. Panic-free,
+/// mirroring the decoder inside [`TripleBlock::try_triples`].
+#[inline]
+fn rd(bytes: &[u8], pos: &mut usize) -> Option<u32> {
+    let (v, n) = read_uvarint(bytes.get(*pos..)?)?;
+    *pos += n;
+    Some(v as u32)
+}
+
+/// A lazy cursor over a [`TripleBlock`] body produced by [`TripleBlock::scan`].
+/// Holds only the block bytes and the delta-decode accumulators, so it borrows
+/// the block's bytes but allocates nothing.
+pub struct BlockCursor<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+    // Running delta accumulators for the current (a, b, c).
+    a: u32,
+    b: u32,
+    c: u32,
+    // Groups/items not yet consumed at each level.
+    a_rem: u32,
+    b_rem: u32,
+    c_rem: u32,
+    started: bool,
+    pa: Option<u32>,
+    pb: Option<u32>,
+    pc: Option<u32>,
+}
+
+impl Iterator for BlockCursor<'_> {
+    type Item = Triple;
+
+    fn next(&mut self) -> Option<Triple> {
+        let bytes = self.bytes;
+        if !self.started {
+            self.a_rem = rd(bytes, &mut self.pos)?; // num_a
+            self.started = true;
+        }
+        loop {
+            // (1) Drain the c-list of the current matched (a, b) group. Every c is
+            // decoded to keep the delta chain correct; only matches are emitted.
+            while self.c_rem > 0 {
+                self.c_rem -= 1;
+                self.c = self.c.wrapping_add(rd(bytes, &mut self.pos)?);
+                if self.pc.is_none_or(|z| z == self.c) {
+                    return Some((self.a, self.b, self.c));
+                }
+            }
+            // (2) Advance to the next b-group within the current a-group.
+            while self.b_rem > 0 {
+                self.b_rem -= 1;
+                self.b = self.b.wrapping_add(rd(bytes, &mut self.pos)?);
+                let num_c = rd(bytes, &mut self.pos)?;
+                if self.pb.is_some_and(|y| y != self.b) {
+                    for _ in 0..num_c {
+                        rd(bytes, &mut self.pos)?; // group-skip: advance, never emit
+                    }
+                    continue;
+                }
+                self.c = 0; // the encoder resets prev_c per b-group
+                self.c_rem = num_c;
+                break;
+            }
+            if self.c_rem > 0 {
+                continue; // re-enter (1) to drain the matched c-list
+            }
+            // (3) Advance to the next a-group.
+            if self.a_rem == 0 {
+                return None;
+            }
+            self.a_rem -= 1;
+            self.a = self.a.wrapping_add(rd(bytes, &mut self.pos)?);
+            let num_b = rd(bytes, &mut self.pos)?;
+            self.b = 0; // the encoder resets prev_b per a-group
+            if let Some(x) = self.pa {
+                if self.a > x {
+                    return None; // range-stop: a-groups are ascending
+                }
+                if self.a < x {
+                    // skip this whole a-group (b-group headers + c-lists)
+                    for _ in 0..num_b {
+                        rd(bytes, &mut self.pos)?; // delta_b
+                        let nc = rd(bytes, &mut self.pos)?;
+                        for _ in 0..nc {
+                            rd(bytes, &mut self.pos)?;
+                        }
+                    }
+                    continue;
+                }
+            }
+            self.b_rem = num_b;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -270,5 +399,86 @@ mod tests {
         let blk = TripleBlock::parse(&blk_bytes).unwrap();
         assert_eq!(blk.zone().count, 0);
         assert!(blk.triples().is_empty());
+        assert!(blk.scan(None, None, None).next().is_none());
+        assert!(blk.scan(Some(1), None, None).next().is_none());
+    }
+
+    /// The streaming `scan` cursor must, for every bound/unbound shape, yield
+    /// exactly the full-decode result filtered by the same bounds.
+    #[test]
+    fn scan_matches_full_decode_every_shape() {
+        let mut b = TripleBlockBuilder::new();
+        for t in sample() {
+            b.push(t);
+        }
+        let bytes = b.build();
+        let blk = TripleBlock::parse(&bytes).unwrap();
+        let all = blk.triples(); // sorted, deduped, ascending (a, b, c)
+
+        let opt = |v: u32| [None, Some(v)];
+        // Probe present values and an absent one in each position.
+        for pa in opt(1).into_iter().chain([Some(5), Some(99)]) {
+            for pb in opt(1).into_iter().chain([Some(2), Some(99)]) {
+                for pc in opt(1).into_iter().chain([Some(9), Some(99)]) {
+                    let want: Vec<Triple> = all
+                        .iter()
+                        .copied()
+                        .filter(|&(a, bb, c)| {
+                            pa.is_none_or(|x| x == a)
+                                && pb.is_none_or(|x| x == bb)
+                                && pc.is_none_or(|x| x == c)
+                        })
+                        .collect();
+                    // The cursor preserves stored ascending order, so no re-sort.
+                    let got: Vec<Triple> = blk.scan(pa, pb, pc).collect();
+                    assert_eq!(got, want, "scan({pa:?},{pb:?},{pc:?})");
+                }
+            }
+        }
+    }
+
+    /// A range-stop on a bound leading component must not over-read: once `a`
+    /// passes the bound the cursor returns `None` and stops decoding.
+    #[test]
+    fn scan_range_stops_on_leading_bound() {
+        let mut b = TripleBlockBuilder::new();
+        for t in [(1, 1, 1), (1, 2, 2), (3, 1, 1), (5, 1, 1)] {
+            b.push(t);
+        }
+        let bytes = b.build();
+        let blk = TripleBlock::parse(&bytes).unwrap();
+        let got: Vec<Triple> = blk.scan(Some(1), None, None).collect();
+        assert_eq!(got, vec![(1, 1, 1), (1, 2, 2)]);
+        // A bound `a` between stored groups yields nothing (and stops early).
+        assert!(blk.scan(Some(2), None, None).next().is_none());
+        assert!(blk.scan(Some(99), None, None).next().is_none());
+    }
+
+    /// Truncations and byte corruptions must never panic the cursor — it only
+    /// ever yields a clean prefix (every read is bounds-checked).
+    #[test]
+    fn scan_never_panics_on_bad_bytes() {
+        let mut b = TripleBlockBuilder::new();
+        for t in sample() {
+            b.push(t);
+        }
+        let bytes = b.build();
+        for len in 0..bytes.len() {
+            if let Ok(blk) = TripleBlock::parse(&bytes[..len]) {
+                for pat in [(None, None, None), (Some(1u32), Some(1u32), Some(1u32))] {
+                    let _ = blk.scan(pat.0, pat.1, pat.2).count();
+                }
+            }
+        }
+        for i in 0..bytes.len() {
+            for v in [0x00u8, 0xff, 0x80, 0x7f] {
+                let mut bad = bytes.clone();
+                bad[i] = v;
+                if let Ok(blk) = TripleBlock::parse(&bad) {
+                    let _ = blk.scan(None, None, None).count();
+                    let _ = blk.scan(Some(1), None, None).count();
+                }
+            }
+        }
     }
 }

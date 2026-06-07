@@ -117,42 +117,44 @@ impl GraphIndex {
     }
 
     /// All triples matching `pattern`, returned in canonical `(s, p, o)` order.
+    ///
+    /// Thin eager wrapper over [`scan_iter`](Self::scan_iter): collect the lazy
+    /// stream and restore the canonical sort (the stream is sorted in the chosen
+    /// permutation's order, which differs from canonical once `perm.back`
+    /// permutes the free components).
     pub fn match_pattern(&self, pattern: Pattern) -> Vec<Triple> {
+        let mut out: Vec<Triple> = self.scan_iter(pattern).collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Lazily stream the triples matching `pattern` in canonical `(s, p, o)`
+    /// order *within the chosen permutation* — the streaming entry point for
+    /// callers that can stop early (ASK, `LIMIT`, BGP probes) or that don't need
+    /// the canonical re-sort. Decodes only the matching groups (see
+    /// [`TripleBlock::scan`]); a malformed/absent block yields nothing rather
+    /// than panicking.
+    pub fn scan_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
         // Pick the permutation with the longest leading-bound prefix.
         let perm = [Perm::Spo, Perm::Pos, Perm::Osp]
             .into_iter()
             .max_by_key(|p| p.leading_bound(pattern))
             .unwrap();
-        let bytes = match perm {
+        let bytes: &[u8] = match perm {
             Perm::Spo => &self.spo,
             Perm::Pos => &self.pos,
             Perm::Osp => &self.osp,
         };
-        // The block bytes may come from an untrusted file; a malformed block
-        // yields no matches rather than panicking.
-        let Ok(block) = TripleBlock::parse(bytes) else {
-            return Vec::new();
-        };
-
-        // Zone-map prune: translate the pattern into stored-order bounds.
         let [pa, pb, pc] = perm.order_pattern(pattern);
-        if !block.zone().may_contain(pa, pb, pc) {
-            return Vec::new();
-        }
-
-        let mut out: Vec<Triple> = block
-            .triples()
+        // Parse (untrusted bytes ⇒ `None` on malformed) and zone-prune up front,
+        // then stream the matching groups, mapping each back to canonical order.
+        TripleBlock::parse(bytes)
+            .ok()
+            .filter(|b| b.zone().may_contain(pa, pb, pc))
+            .map(|b| b.scan(pa, pb, pc))
             .into_iter()
-            .filter(|&abc| {
-                let [wa, wb, wc] = [pa, pb, pc];
-                wa.is_none_or(|x| x == abc.0)
-                    && wb.is_none_or(|x| x == abc.1)
-                    && wc.is_none_or(|x| x == abc.2)
-            })
-            .map(|abc| perm.back(abc))
-            .collect();
-        out.sort_unstable();
-        out
+            .flatten()
+            .map(move |abc| perm.back(abc))
     }
 }
 
@@ -207,6 +209,11 @@ mod tests {
                         reference(&data, pat),
                         "pattern {pat:?}"
                     );
+                    // The lazy stream must match the eager result once sorted —
+                    // same triples, just without the up-front canonical re-sort.
+                    let mut streamed: Vec<Triple> = idx.scan_iter(pat).collect();
+                    streamed.sort_unstable();
+                    assert_eq!(streamed, reference(&data, pat), "scan_iter {pat:?}");
                 }
             }
         }
