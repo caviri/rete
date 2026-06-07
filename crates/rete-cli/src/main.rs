@@ -38,6 +38,13 @@ enum Command {
         /// Force input format for all inputs: nt | nq | ttl.
         #[arg(long, value_parser = ["nt", "nq", "ttl"])]
         format: Option<String>,
+        /// Materialize RDFS/OWL-RL entailments at build time: run the reasoner
+        /// over the default graph (subClassOf/subPropertyOf/domain/range,
+        /// inverseOf, symmetric/transitive, sameAs) and store the inferred
+        /// triples alongside the asserted ones, so they need no query-time
+        /// reasoning. Aborts if the graph is logically incoherent.
+        #[arg(long)]
+        materialize: bool,
     },
     /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle,
     /// without building. Reports counts, or fails with a parse error.
@@ -291,7 +298,8 @@ fn main() -> anyhow::Result<()> {
             inputs,
             output,
             format,
-        } => build(&inputs, &output, format.as_deref()),
+            materialize,
+        } => build(&inputs, &output, format.as_deref(), materialize),
         Command::Validate { inputs, format } => validate(&inputs, format.as_deref()),
         Command::Info { file } => info(&file),
         Command::Stats { file } => stats(&file),
@@ -455,11 +463,46 @@ fn validate(inputs: &[String], format: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build(inputs: &[String], output: &str, format: Option<&str>) -> anyhow::Result<()> {
+fn build(
+    inputs: &[String],
+    output: &str,
+    format: Option<&str>,
+    materialize: bool,
+) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
 
     // 1. Parse every input into quads (triples → default graph, `None`).
-    let quads = parse_inputs(inputs, format)?;
+    let mut quads = parse_inputs(inputs, format)?;
+
+    // 1b. Optionally materialize RDFS/OWL-RL entailments over the default graph
+    // and fold the inferred triples in (deduped later by the index builder), so
+    // they ship in the file and need no query-time reasoning. A logically
+    // incoherent graph aborts the build rather than baking in a contradiction.
+    if materialize {
+        let base: Vec<(String, String, String)> = quads
+            .iter()
+            .filter(|(_, _, _, g)| g.is_none())
+            .map(|(s, p, o, _)| (s.clone(), p.clone(), o.clone()))
+            .collect();
+        let reasoning = rete_core::reason(&base);
+        if !reasoning.inconsistencies.is_empty() {
+            for inc in &reasoning.inconsistencies {
+                eprintln!("  incoherent [{}] {}", inc.kind, inc.detail);
+            }
+            anyhow::bail!(
+                "{} inconsistency(ies) — refusing to materialize an incoherent graph",
+                reasoning.inconsistencies.len()
+            );
+        }
+        let inferred = reasoning.inferred.len();
+        quads.extend(
+            reasoning
+                .inferred
+                .into_iter()
+                .map(|(s, p, o)| (s, p, o, None)),
+        );
+        eprintln!("materialized {inferred} inferred triple(s) into the default graph");
+    }
 
     // 2. One dictionary over every term in every input.
     let mut db = DictionaryBuilder::new();
@@ -1174,6 +1217,48 @@ mod tests {
     use super::*;
     use rete_core::Binding;
     use serde_json::json;
+
+    /// `build --materialize` runs the reasoner and bakes RDFS entailments into the
+    /// file: `x a C` + `C subClassOf D` yields a queryable `x a D`.
+    #[test]
+    fn build_materialize_bakes_in_entailments() {
+        const TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        const SUBCLASS: &str = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let nt = format!("<http://x> {TYPE} <http://C> .\n<http://C> {SUBCLASS} <http://D> .\n");
+        let pid = std::process::id();
+        let inp = std::env::temp_dir().join(format!("rete_mat_in_{pid}.nt"));
+        let out = std::env::temp_dir().join(format!("rete_mat_out_{pid}.rete"));
+        std::fs::write(&inp, nt).unwrap();
+
+        build(
+            &[inp.to_str().unwrap().to_string()],
+            out.to_str().unwrap(),
+            None,
+            true,
+        )
+        .unwrap();
+
+        let bytes = std::fs::read(&out).unwrap();
+        let rete = Rete::open(&bytes).unwrap();
+        let inferred = rete.query(Some("<http://x>"), Some(TYPE), Some("<http://D>"));
+        assert_eq!(inferred.len(), 1, "x a D should be materialized");
+
+        // Without --materialize the entailed triple is absent.
+        build(
+            &[inp.to_str().unwrap().to_string()],
+            out.to_str().unwrap(),
+            None,
+            false,
+        )
+        .unwrap();
+        let plain = Rete::open(&std::fs::read(&out).unwrap()).unwrap();
+        assert!(plain
+            .query(Some("<http://x>"), Some(TYPE), Some("<http://D>"))
+            .is_empty());
+
+        std::fs::remove_file(&inp).ok();
+        std::fs::remove_file(&out).ok();
+    }
 
     #[test]
     fn term_json_classification() {
