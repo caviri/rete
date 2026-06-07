@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Getting started · rete docs</title>
+  <style>
+:root { --fg:#1b1f24; --muted:#5b6570; --bg:#ffffff; --side:#0f1620; --side-fg:#c9d4e0;
+        --accent:#2a6df4; --border:#e4e8ec; --code-bg:#f5f7f9; }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       color:var(--fg); background:var(--bg); display:flex; }
+code,pre,.mono { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; }
+
+.sidebar { width:250px; min-height:100vh; background:var(--side); color:var(--side-fg);
+           padding:1.6rem 1.2rem; position:sticky; top:0; flex:0 0 250px; }
+.sidebar .brand { color:#fff; font-size:1.5rem; font-weight:700; text-decoration:none; letter-spacing:.5px; }
+.sidebar .tagline { color:#8595a6; font-size:.8rem; margin:.3rem 0 1.4rem; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.15rem 0; }
+.sidebar a { color:var(--side-fg); text-decoration:none; display:block; padding:.4rem .6rem;
+             border-radius:6px; font-size:.95rem; }
+.sidebar a:hover { background:rgba(255,255,255,.07); color:#fff; }
+.sidebar a.active { background:var(--accent); color:#fff; font-weight:600; }
+.sidebar .foot { margin-top:1.5rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; color:#8595a6; }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.content { max-width:820px; padding:2.4rem 3rem; width:100%; }
+footer { max-width:820px; padding:1rem 3rem 3rem; color:var(--muted); font-size:.85rem; }
+
+.content h1 { font-size:2.1rem; margin:.2rem 0 1rem; line-height:1.2; }
+.content h2 { font-size:1.5rem; margin:2.2rem 0 .8rem; padding-bottom:.3rem; border-bottom:1px solid var(--border); }
+.content h3 { font-size:1.2rem; margin:1.6rem 0 .6rem; }
+.content a { color:var(--accent); text-decoration:none; }
+.content a:hover { text-decoration:underline; }
+.content p,.content li { color:var(--fg); }
+.content code { background:var(--code-bg); padding:.12em .4em; border-radius:4px; font-size:.88em; }
+.content pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+               padding:1rem 1.1rem; overflow:auto; line-height:1.5; }
+.content pre code { background:none; padding:0; font-size:.85rem; }
+.content blockquote { margin:1rem 0; padding:.4rem 1rem; border-left:4px solid var(--accent);
+                      background:#f3f7ff; color:#33415a; border-radius:0 6px 6px 0; }
+.content table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+.content th,.content td { border:1px solid var(--border); padding:.45rem .7rem; text-align:left; }
+.content th { background:var(--code-bg); }
+.content tr:nth-child(even) td { background:#fafbfc; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+
+@media (max-width:780px) {
+  body { flex-direction:column; }
+  .sidebar { width:100%; flex-basis:auto; min-height:auto; position:static; }
+  .content,footer { padding-left:1.2rem; padding-right:1.2rem; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <ul>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html" class="active">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/carlosvivarrios/rete">GitHub</a></p>
+  </nav>
+  <main>
+    <article class="content">
+<h1>Getting started</h1>
+<h2>Everything runs in Docker</h2>
+<p><code>rete</code> is developed and built <strong>entirely inside a container</strong> — nothing runs on
+the host. The dev container (<a href="../.devcontainer"><code>.devcontainer/</code></a>) carries the
+Rust 1.92 toolchain, the <code>wasm32-unknown-unknown</code> target, and <code>wasm-pack</code>.</p>
+<p>Open the folder in a dev container (VS Code: <em>Reopen in Container</em>), or run the
+image directly:</p>
+<pre><code class="language-sh">docker run --rm -it -v "$PWD":/work -w /work rust:1.92-bookworm bash
+# then, inside:
+cargo build --release -p rete-cli
+</code></pre>
+<p>The compiled CLI is at <code>target/release/rete</code>. The examples below assume it is on
+your <code>PATH</code> (or substitute <code>cargo run -p rete-cli --</code>).</p>
+<h2>Building a <code>.rete</code> file</h2>
+<p><code>rete build</code> accepts N-Triples (<code>.nt</code>), N-Quads (<code>.nq</code>), and Turtle (<code>.ttl</code>),
+detected by extension. Multiple inputs are merged under one shared dictionary,
+and <code>-</code> reads standard input.</p>
+<pre><code class="language-sh">rete build data.nt -o data.rete                  # single file
+rete build part1.nt part2.nt -o merged.rete      # merge several inputs
+curl -s https://host/data.nt | rete build - -o data.rete   # from a pipe
+rete build dump.unknown --format nt -o out.rete  # force a format
+</code></pre>
+<p>N-Quads inputs build a <strong>dataset</strong>: one shared dictionary, a default-graph index,
+and one index per named graph.</p>
+<h2>Querying locally</h2>
+<pre><code class="language-sh"># Triple pattern — any of subject/predicate/object may be omitted (a wildcard):
+rete query data.rete --predicate '&lt;http://ex/knows&gt;'
+rete query data.rete --object   '&lt;http://ex/Alice&gt;'
+
+# Basic Graph Pattern (multi-pattern join); ?x is a variable, ' . ' separates:
+rete bgp data.rete "?x &lt;http://ex/knows&gt; ?y . ?y &lt;http://ex/knows&gt; ?z"
+
+# Full SPARQL (SELECT / ASK / CONSTRUCT / DESCRIBE):
+rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?x ?z WHERE { ?x e:knows ?y . ?y e:knows ?z }"
+
+# Standard SPARQL Results JSON, for piping into other tools:
+rete sparql data.rete "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10" --json
+</code></pre>
+<p>See the <a href="sparql.html">SPARQL support</a> page for the full feature list.</p>
+<h2>Inspecting a file</h2>
+<pre><code class="language-sh">rete info   data.rete   # raw header
+rete stats  data.rete   # size, counts, named graphs, top predicates
+rete verify data.rete   # check the blake3 content hash (detect corruption)
+rete graphs data.rete   # list named-graph IRIs
+rete export data.rete   # dump back to N-Quads (lossless)
+</code></pre>
+<p>Two <strong>coarse-graph</strong> views answer questions without reading the triple index:</p>
+<pre><code class="language-sh">rete summary data.rete   # structural: Louvain community quotient graph
+rete schema  data.rete   # semantic: relations between rdf:type classes
+rete predicates data.rete  # exact per-predicate totals, from the summary alone
+</code></pre>
+<h2>Deploying &amp; querying over a URL</h2>
+<p>A <code>.rete</code> file is immutable and self-describing, so any static host that honors
+HTTP <code>Range</code> requests works — S3, GCS, GitHub, a CDN, or the bundled dev server:</p>
+<pre><code class="language-sh"># Local range-capable server for testing:
+python3 scripts/range_server.py 8000 .
+rete query-url http://127.0.0.1:8000/data.rete --object '&lt;http://ex/Dave&gt;'
+
+# Real https hosts (rustls; no http-only limitation):
+rete query-url   https://my-bucket.s3.amazonaws.com/data.rete --predicate '&lt;http://ex/knows&gt;'
+rete summary-url https://raw.githubusercontent.com/me/repo/main/data.rete
+</code></pre>
+<p><code>query-url</code> fetches only the byte ranges a query needs; <code>summary-url</code> reads just
+the header, dictionary, and summary — <strong>the index is never downloaded</strong>. The host
+<strong>must</strong> return <code>206 Partial Content</code> to a <code>Range</code> request; a host that ignores
+<code>Range</code> (returns <code>200</code>) is rejected with a clear error rather than silently
+returning wrong bytes.</p>
+<h2>Testing</h2>
+<pre><code class="language-sh">cargo test            # full suite (unit, round-trip, robustness, ranged, HTTP)
+cargo clippy --workspace --all-targets -- -D warnings
+bash scripts/smoke.sh # end-to-end acceptance test of every CLI subcommand
+</code></pre>
+<p>CI runs all of this — plus the feature matrix and the wasm build — inside the
+same <code>rust:1.92-bookworm</code> image, so nothing ever builds on the host.</p>
+
+    </article>
+    <footer>Generated from <code>docs/getting-started.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+</body>
+</html>

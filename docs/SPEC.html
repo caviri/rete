@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Format specification · rete docs</title>
+  <style>
+:root { --fg:#1b1f24; --muted:#5b6570; --bg:#ffffff; --side:#0f1620; --side-fg:#c9d4e0;
+        --accent:#2a6df4; --border:#e4e8ec; --code-bg:#f5f7f9; }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       color:var(--fg); background:var(--bg); display:flex; }
+code,pre,.mono { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; }
+
+.sidebar { width:250px; min-height:100vh; background:var(--side); color:var(--side-fg);
+           padding:1.6rem 1.2rem; position:sticky; top:0; flex:0 0 250px; }
+.sidebar .brand { color:#fff; font-size:1.5rem; font-weight:700; text-decoration:none; letter-spacing:.5px; }
+.sidebar .tagline { color:#8595a6; font-size:.8rem; margin:.3rem 0 1.4rem; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.15rem 0; }
+.sidebar a { color:var(--side-fg); text-decoration:none; display:block; padding:.4rem .6rem;
+             border-radius:6px; font-size:.95rem; }
+.sidebar a:hover { background:rgba(255,255,255,.07); color:#fff; }
+.sidebar a.active { background:var(--accent); color:#fff; font-weight:600; }
+.sidebar .foot { margin-top:1.5rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; color:#8595a6; }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.content { max-width:820px; padding:2.4rem 3rem; width:100%; }
+footer { max-width:820px; padding:1rem 3rem 3rem; color:var(--muted); font-size:.85rem; }
+
+.content h1 { font-size:2.1rem; margin:.2rem 0 1rem; line-height:1.2; }
+.content h2 { font-size:1.5rem; margin:2.2rem 0 .8rem; padding-bottom:.3rem; border-bottom:1px solid var(--border); }
+.content h3 { font-size:1.2rem; margin:1.6rem 0 .6rem; }
+.content a { color:var(--accent); text-decoration:none; }
+.content a:hover { text-decoration:underline; }
+.content p,.content li { color:var(--fg); }
+.content code { background:var(--code-bg); padding:.12em .4em; border-radius:4px; font-size:.88em; }
+.content pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+               padding:1rem 1.1rem; overflow:auto; line-height:1.5; }
+.content pre code { background:none; padding:0; font-size:.85rem; }
+.content blockquote { margin:1rem 0; padding:.4rem 1rem; border-left:4px solid var(--accent);
+                      background:#f3f7ff; color:#33415a; border-radius:0 6px 6px 0; }
+.content table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+.content th,.content td { border:1px solid var(--border); padding:.45rem .7rem; text-align:left; }
+.content th { background:var(--code-bg); }
+.content tr:nth-child(even) td { background:#fafbfc; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+
+@media (max-width:780px) {
+  body { flex-direction:column; }
+  .sidebar { width:100%; flex-basis:auto; min-height:auto; position:static; }
+  .content,footer { padding-left:1.2rem; padding-right:1.2rem; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <ul>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="SPEC.html" class="active">Format specification</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/carlosvivarrios/rete">GitHub</a></p>
+  </nav>
+  <main>
+    <article class="content">
+<h1>Rete — a cloud-native, range-queryable RDF graph file</h1>
+<p><strong>Status:</strong> Draft 0.1 (design) · <strong>File extension:</strong> <code>.rete</code> · <strong>Magic:</strong> <code>RETE\x01</code></p>
+<blockquote>
+<p>One file. Put it on S3, GitHub, or any HTTP server that honors <code>Range</code>.
+Give a client the URL. Run SPARQL. No database server.</p>
+<p>Like <strong>Parquet</strong> for tables and <strong>PMTiles</strong> for maps — but for <strong>RDF graphs</strong>,
+with a <strong>pyramid</strong> of progressively-refined detail.</p>
+</blockquote>
+<hr />
+<h2>1. Goals &amp; non-goals</h2>
+<h3>Goals</h3>
+<ul>
+<li><strong>Single immutable file</strong>, queryable in place over HTTP <code>Range</code> requests.</li>
+<li><strong>Bounded request count</strong> to answer a query — the client reads a small header
+(which carries every section's byte range), then fetches only the sections a
+query actually touches (≤4 ranges for a full open; 3 for the overview path).</li>
+<li><strong>SPARQL</strong> evaluation against the file (start with Basic Graph Patterns; grow
+toward joins, filters, paths).</li>
+<li><strong>Progressive / pyramidal</strong> access: a coarse <em>summary graph</em> loads first, and
+the client refines by "zooming into" regions of interest.</li>
+<li><strong>WASM-friendly</strong>: the same query core runs in a browser and in a CLI.</li>
+<li><strong>RDF-faithful</strong>: IRIs, blank nodes, literals (with datatype + language tag),
+and named graphs (quads).</li>
+</ul>
+<h3>Non-goals (v0)</h3>
+<ul>
+<li><strong>Mutation.</strong> The file is build-once / read-many. Updates = rebuild (or, later,
+a separate overlay file). This buys aggressive compression and CDN caching.</li>
+<li><strong>Full SPARQL 1.1</strong> on day one. We stage it (see §8).</li>
+<li><strong>Inference / reasoning</strong> at query time. Materialize before build if wanted.</li>
+</ul>
+<hr />
+<h2>2. Prior art we build on</h2>
+<table><thead><tr><th>Source</th><th>What we take</th></tr></thead><tbody>
+<tr><td><strong>HDT</strong> (Header-Dictionary-Triples)</td><td>Dictionary + bitmap-encoded triples; the closest existing queryable single-file RDF format. We extend it toward range/progressive access.</td></tr>
+<tr><td><strong>PMTiles</strong></td><td>Header → root directory → leaf directories → data, all byte-range addressable, with a bounded number of requests. This is the spine of our pyramid + index.</td></tr>
+<tr><td><strong>Parquet</strong></td><td>Footer metadata, blocks ("row groups"), and per-block min/max "zone maps" enabling pushdown / block-skipping.</td></tr>
+<tr><td><strong>FlatGeobuf</strong></td><td>Packed static index (R-tree) co-located in the file for streamable spatial queries; our analog indexes <em>graph locality</em>.</td></tr>
+<tr><td><strong>Oxigraph</strong> (<code>oxrdf</code>, <code>spargebra</code>, <code>oxttl</code>)</td><td>Reuse RDF model, SPARQL parser, and algebra rather than writing our own.</td></tr>
+</tbody></table>
+<hr />
+<h2>3. Conceptual model</h2>
+<p>An RDF dataset = a set of <strong>quads</strong> <code>(subject, predicate, object, graph)</code>.</p>
+<p>Three transformations make it range-queryable:</p>
+<ol>
+<li><strong>Dictionary encoding</strong> — every IRI / literal / blank node ⇒ a dense integer
+ID. Triples become integer triples; the dictionary is stored once, compressed.</li>
+<li><strong>Permutation indexes</strong> — store the integer triples sorted in multiple orders
+(SPO, POS, OSP) so <em>any</em> triple pattern resolves to a contiguous scan.</li>
+<li><strong>Pyramid (community summarization)</strong> — partition nodes into a hierarchy of
+communities. Level 0 is a <em>quotient graph</em> (communities as supernodes, with
+aggregated edges). Each deeper level expands supernodes into their members.</li>
+</ol>
+<hr />
+<h2>4. File layout</h2>
+<p>v0 on-disk layout (what <code>write_file</code>/<code>write_dataset</code> actually emit). The header
+is the directory: it carries the absolute offset+length of every section, so a
+client finds everything from the first 128-byte read — no separate directory or
+metadata block to chase.</p>
+<img src="img/file-layout.svg" alt="On-disk layout: a 128-byte HEADER pointing to DICTIONARY, INDEX, PYRAMID META, optional NAMED GRAPHS, and a FOOTER with the RETE magic.">
+<p><em>The header is the directory: a single 128-byte read carries the offset and length of every section. The ASCII below is the precise reference.</em></p>
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│ HEADER            fixed-size, 128 bytes, read first.           │
+│   Holds the offset+length of every section below, the codec   │
+│   ids, counts, and the blake3 content hash (§4.1).             │
+├──────────────────────────────────────────────────────────────┤
+│ DICTIONARY        front-coded container of four sections:      │
+│   ├ shared (terms used as both subject &amp; object)               │
+│   ├ subjects-only                                              │
+│   ├ objects-only (incl. literals)                              │
+│   └ predicates          (graph IRIs live in NAMED GRAPHS)      │
+├──────────────────────────────────────────────────────────────┤
+│ INDEX             default-graph permutation container:         │
+│   SPO / POS / OSP streams, each a zone-mapped, delta-coded,    │
+│   (optionally zstd) block. Pointed to by `root_dir_offset`.    │
+├──────────────────────────────────────────────────────────────┤
+│ PYRAMID META      summary superedges (community quotient graph)│
+│   + optional per-community tiles. Pointed to by pyramid fields.│
+├──────────────────────────────────────────────────────────────┤
+│ NAMED GRAPHS      optional: (graph IRI, permutation container) │
+│   per named graph, sharing the dictionary. Quads only.         │
+├──────────────────────────────────────────────────────────────┤
+│ FOOTER            4-byte `RETE` magic — a format/integrity     │
+│                   sentinel (the directory is the header).      │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Per-level, per-tile <strong>leaf directories</strong> (mapping <code>(level, tile, perm)</code> to byte
+ranges, PMTiles/Parquet style) are part of the fuller design but not materialized
+in v0 — the current index is a single default-graph container plus the pyramid
+summary; tile-routed range queries are future work (see <code>docs/BENCHMARK.md</code>).</p>
+<h3>4.1 Header (128 bytes, little-endian)</h3>
+<table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
+<tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
+<tr><td>4</td><td>1</td><td>format version (<code>0x01</code>)</td></tr>
+<tr><td>5</td><td>1</td><td>flags (bit0: has named graphs / quads)</td></tr>
+<tr><td>6</td><td>2</td><td>header length</td></tr>
+<tr><td>8</td><td>8</td><td>metadata offset</td></tr>
+<tr><td>16</td><td>8</td><td>metadata length</td></tr>
+<tr><td>24</td><td>8</td><td>dictionary offset</td></tr>
+<tr><td>32</td><td>8</td><td>dictionary length</td></tr>
+<tr><td>40</td><td>8</td><td>root directory offset</td></tr>
+<tr><td>48</td><td>8</td><td>root directory length</td></tr>
+<tr><td>56</td><td>8</td><td>pyramid-meta offset</td></tr>
+<tr><td>64</td><td>8</td><td>pyramid-meta length</td></tr>
+<tr><td>72</td><td>1</td><td>dictionary codec id</td></tr>
+<tr><td>73</td><td>1</td><td>block codec id (e.g. zstd)</td></tr>
+<tr><td>74</td><td>2</td><td>number of pyramid levels</td></tr>
+<tr><td>76</td><td>8</td><td>total quad count</td></tr>
+<tr><td>84</td><td>8</td><td>total term count</td></tr>
+<tr><td>92</td><td>16</td><td>content hash (blake3, first 16 bytes) — also an ETag-like id</td></tr>
+<tr><td>108</td><td>8</td><td>named-graphs section offset (0 if default-graph only)</td></tr>
+<tr><td>116</td><td>8</td><td>named-graphs section length (0 if default-graph only)</td></tr>
+<tr><td>124</td><td>4</td><td>reserved</td></tr>
+</tbody></table>
+<blockquote>
+<p>Rationale: a fixed 128-byte header means <strong>one tiny range read</strong> (<code>bytes=0-127</code>)
+tells the client where every section lives.</p>
+</blockquote>
+<hr />
+<h2>5. Dictionary</h2>
+<img src="img/dictionary-roles.svg" alt="The dictionary's four front-coded sections: SHARED terms (both subject and object), SUBJECTS-only, OBJECTS-only, and PREDICATES, with role-ordered IDs.">
+<p><em>Four front-coded sections with role-ordered IDs: a term's ID range reveals whether it is a subject, object, or predicate.</em></p>
+<ul>
+<li>
+<p>Terms are <strong>sorted within each kind</strong> and <strong>front-coded</strong> (store the shared
+prefix length + the suffix vs. the previous term). Cheap to compress, supports
+binary search for <code>string → id</code>, and prefix-friendly for IRI namespaces.</p>
+</li>
+<li>
+<p>IDs are assigned so that <strong>shared terms get the lowest IDs</strong>, then subjects,
+then objects — this lets a triple pattern know a term's role from its ID range.</p>
+<p>Concretely (the HDT four-section scheme): let <code>S</code> = #shared (terms used as
+<em>both</em> subject and object). Subject IDs are <code>1..=S</code> (shared) then <code>S+1..</code>
+(subject-only); object IDs are <code>1..=S</code> (the <strong>same</strong> shared IDs) then <code>S+1..</code>
+(object-only). So a shared term has one ID that means the same thing in subject
+and object position. Predicates and graphs occupy their own independent ID
+spaces. This is what <code>dictionary.rs</code> builds on top of the §5.1 sections.</p>
+</li>
+<li>
+<p>Literals carry datatype IRI (as a dictionary ID) and optional language tag.</p>
+</li>
+<li>
+<p>The dictionary is four independently-decompressible <strong>sections</strong> (shared /
+subjects / objects / predicates), each with a restart-indexed table (§5.1) that
+supports <code>O(log n)</code> term↔ID lookup once loaded. In v0 a client fetches the whole
+dictionary section as one range; splitting each section into independently
+range-fetchable chunks (so resolving one IRI pulls only its run) is future work
+the restart table already enables.</p>
+</li>
+</ul>
+<h3>5.1 Section encoding (front-coded, restart-indexed)</h3>
+<p>Each dictionary <em>kind</em> (shared / subjects / objects / predicates / graphs) is one
+<strong>section</strong>. Within a section terms are UTF-8, <strong>sorted ascending</strong>, deduped, and
+assigned <strong>dense 1-based IDs</strong> in that order (ID <code>0</code> is reserved as "absent").</p>
+<p>Terms are stored in <strong>runs of <code>R</code> entries</strong> (default <code>R = 16</code>, the <em>restart
+interval</em>). Each run begins at a <strong>restart point</strong> storing the full term; the
+remaining <code>R-1</code> entries are <em>front-coded</em> against their predecessor:</p>
+<pre><code>restart entry:   varint(0)            varint(len)  bytes[len]          # full term
+delta entry:     varint(shared_pfx)   varint(suf)  bytes[suf]          # share prefix
+</code></pre>
+<p>A small <strong>restart index</strong> (one <code>(first_term, byte_offset)</code> per run, the first
+terms also front-coded against each other) sits at the head of the section. Both
+lookups stay within one run after a binary search over restarts:</p>
+<ul>
+<li><strong><code>id → term</code></strong>: run = <code>(id-1) / R</code>; jump to its offset; decode forward
+<code>(id-1) % R</code> steps.</li>
+<li><strong><code>term → id</code></strong>: binary-search the restart index for the candidate run; decode
+that run comparing each materialized term; return its ID or <code>None</code>.</li>
+</ul>
+<p>Restart points are also the natural <strong>chunk/compression boundaries</strong>: a client
+fetches just the run(s) covering the IDs/terms a query touches.</p>
+<hr />
+<h2>6. Triples / quads</h2>
+<ul>
+<li>Stored as integer triples in <strong>three permutations</strong>: <strong>SPO, POS, OSP</strong>.
+These three cover all eight triple-pattern shapes (any combination of
+bound/unbound S, P, O resolves to a contiguous range in at least one index).</li>
+<li>Each permutation is encoded as an <strong>adjacency / bitmap-triples</strong> structure
+(HDT-style): for SPO, a sorted list of subjects, each with its predicate
+list, each with its object list, delta-encoded.</li>
+<li>Quads (named graphs) add a <code>G</code> dimension; v0 stores per-graph triple sets plus
+a default-graph union. (Full GSPO permutations are a later optimization.)</li>
+<li>Triples are <strong>partitioned by pyramid tile</strong> (see §7), and within a tile split
+into fixed-size <strong>blocks</strong>. Every block is prefixed with a <strong>zone map</strong>
+(min ID, max ID, count) so the query planner can skip blocks — Parquet-style.</li>
+</ul>
+<h3>6.1 Triple block encoding (grouped delta)</h3>
+<p>Within a block, triples for a permutation are sorted ascending on <code>(a, b, c)</code>
+(e.g. SPO ⇒ a=S, b=P, c=O) and stored as a nested <strong>grouped, delta-coded</strong>
+adjacency — the compact, decode-forward form HDT calls bitmap-triples, written
+here with explicit group counts:</p>
+<pre><code>zone map:  varint min_a, max_a, min_b, max_b, min_c, max_c, triple_count
+body:      varint num_a
+           per a-group:  varint Δa            # Δ from previous a (first = absolute)
+                         varint num_b
+              per b-group: varint Δb          # Δ from previous b *within this a*
+                           varint num_c
+                 per c:      varint Δc         # Δ from previous c *within this b*
+</code></pre>
+<p>Deltas reset at each group boundary, so values stay small and varint-friendly.
+The <strong>zone map</strong> lets the planner skip a block whose <code>[min,max]</code> range cannot
+contain a bound constant before fetching the body — the §7 routing then bounds
+<em>which</em> blocks are fetched at all.</p>
+<hr />
+<h2>7. The pyramid — community summarization</h2>
+<p>The headline feature. "Zoom" = level of graph detail.</p>
+<img src="img/pyramid.svg" alt="The pyramid: a coarse community summary (a few super-nodes) at the top, communities in the middle, and the full triple graph at the base; clients read the top first and descend only where needed.">
+<p><em>Top to bottom: coarse community summary → communities → full triples. Fewer bytes at the top, more detail below; clients fetch the overview first and drill down on demand.</em></p>
+<h3>7.1 Build time</h3>
+<ol>
+<li>
+<p>Run hierarchical community detection (<strong>Leiden</strong>, falling back to Louvain) on
+the (optionally edge-weighted) graph. This yields a dendrogram of communities.</p>
+</li>
+<li>
+<p>Cut the dendrogram into levels. <strong>Level 0</strong> = coarsest: each top-level
+community becomes a <strong>supernode</strong>. <strong>Level N-1</strong> = the full graph.</p>
+<p><strong>Cut policy: size-targeted tiles (committed).</strong> We do <em>not</em> fix <code>N</code> up front.
+Instead each tile targets a byte budget <code>T</code> (default ~64 KiB, configurable) so
+that <strong>one zoom ≈ one block ≈ one range read</strong>, exactly like PMTiles. We
+descend the dendrogram and emit a tile boundary whenever a community's encoded
+triple payload would exceed <code>T</code>; communities still larger than <code>T</code> at the
+finest cut are split into multiple co-located tiles. <code>N</code> (the level count)
+therefore falls out of the data and <code>T</code>, rather than being chosen by hand.
+Consequences: predictable request sizes, uniform client latency per zoom, and
+a directory whose leaf granularity matches the transfer unit.</p>
+</li>
+<li>
+<p>For each level build the <strong>quotient graph</strong>:</p>
+<ul>
+<li>supernode = a community; its weight = node/edge count inside.</li>
+<li>superedge <code>A→B</code> for predicate <code>p</code> = aggregate of all <code>p</code> edges crossing
+from community <code>A</code> to community <code>B</code>, with a count.</li>
+</ul>
+</li>
+<li>
+<p>Emit, per supernode, the <strong>member map</strong> (which finer supernodes / nodes it
+expands into) so a client can drill down without re-clustering.</p>
+</li>
+</ol>
+<h3>7.2 Query / browse time</h3>
+<ul>
+<li>Client loads <strong>level 0</strong> (small): a graph of supernodes + aggregated relations.
+Good for overview, "shape of the data," and routing.</li>
+<li>To <strong>zoom into</strong> a supernode, the client follows its directory entry to fetch
+only that community's finer level — one (or few) range reads.</li>
+<li>SPARQL over the pyramid: a query can run against a level (approximate / rolled-
+up answers via superedges) or be <strong>routed</strong> — use level 0 to find which
+communities can satisfy the pattern, then descend only into those tiles. This
+is the graph analog of Parquet block-skipping.</li>
+</ul>
+<h3>7.3 Level descriptor (in pyramid-meta)</h3>
+<pre><code>level {
+  id, node_count, edge_count,
+  tiles: [ tile { id, member_supernode_ids, dir_key } ],
+  parent_level, child_level
+}
+</code></pre>
+<hr />
+<h2>8. SPARQL evaluation (staged)</h2>
+<p>Implemented in <code>rete-core::sparql</code> (parses with <code>spargebra</code>, lowers to a small
+plan algebra — <code>Bgp</code>/<code>Join</code>/<code>Union</code>/<code>Minus</code>/<code>LeftJoin</code>/<code>Filter</code>/<code>Path</code>/<code>Values</code>/
+<code>Graph</code>):</p>
+<ul>
+<li><strong>Stage 1 — Triple patterns &amp; BGPs.</strong> ✅ Integer patterns over the permutation
+index, nested-loop join on shared variables (<code>bgp.rs</code>). Blank nodes in patterns
+are non-distinguished variables.</li>
+<li><strong>Stage 2 — FILTER, projection, DISTINCT, ORDER BY, LIMIT/OFFSET.</strong> ✅
+(ORDER BY sorts on variable/constant keys: numeric when both are numbers, else
+lexical; complex key expressions are not yet evaluated for ordering.)</li>
+<li><strong>Stage 3 — OPTIONAL, UNION, MINUS, VALUES, FILTER EXISTS/NOT EXISTS,
+property paths, GRAPH.</strong> ✅ Paths (<code>p+</code>/<code>p*</code>/<code>p?</code>, reverse, sequence <code>a/b</code>,
+alternative <code>a|b</code>) evaluated forward from a bound endpoint in integer node
+space. <strong>Named graphs / quads</strong> (full dataset model): N-Quads input → one
+shared dictionary + a permutation index per graph; <code>GRAPH &lt;iri&gt;</code>/<code>GRAPH ?g</code>
+switch the active graph, <code>FROM</code> builds the default graph as an RDF merge,
+<code>FROM NAMED</code> scopes which graphs <code>GRAPH</code> sees, and EXISTS honors the enclosing
+graph context. <em>Future:</em> let paths exploit the pyramid (coarse reachability).</li>
+<li><strong>Stage 4 — Aggregation / GROUP BY / HAVING.</strong> ✅ COUNT/SUM/AVG/MIN/MAX,
+BIND, expression functions (arithmetic, CONCAT, SUBSTR, type checks, …). Exact
+per-predicate totals come straight from the summary superedge counts
+(<code>SummaryView::predicate_totals</code>) without reading the index.</li>
+<li><strong>Query forms.</strong> ✅ SELECT, ASK, CONSTRUCT, DESCRIBE (concise bounded
+description = each resource's outgoing triples).</li>
+<li><strong>Input/output.</strong> ✅ N-Triples + Turtle input; SPARQL Results JSON output.</li>
+<li><strong>Not supported (rejected with a clear error, never silently mis-evaluated):</strong>
+subqueries (nested <code>SELECT</code>) and <code>SERVICE</code> (federation — out of scope for a
+single self-contained file). Complex ORDER BY key <em>expressions</em> (beyond a bare
+variable/constant) are also not yet evaluated for ordering.</li>
+</ul>
+<p>The planner's job is to minimize <strong>bytes fetched</strong>, not CPU — the cost model is
+dominated by range-request count and block sizes.</p>
+<hr />
+<h2>9. Access protocol (the client)</h2>
+<p>v0 (the header <em>is</em> the directory — every section offset/length is in it, so no
+separate directory/footer round-trip is needed):</p>
+<pre><code>1. GET bytes=0-127          → header: all section offsets/lengths + content hash
+2a. Overview path  → GET dictionary + pyramid-meta ranges; answer from the
+    summary (community quotient graph, per-predicate totals). The index is
+    never fetched. (`SummaryView::open_ranged`; `summary_overview` in wasm.)
+2b. Full query path → GET dictionary + index (+ named-graphs) ranges, then:
+     - resolve constant terms in the dictionary
+     - match the pattern in the SPO/POS/OSP permutation blocks (zone-map pruned)
+     - resolve result IDs back to terms via the dictionary
+</code></pre>
+<p>A full open touches ≤4 ranges (header, dict, index, pyramid-meta); the overview
+path touches 3 and skips the index entirely — both asserted by the <code>ranged</code> test
+suite. Per-tile leaf directories that would let the full query path fetch only
+the relevant community tiles (rather than the whole index) are future work.</p>
+<ul>
+<li>The file is <strong>immutable</strong>; its content hash (header field) acts as a strong
+validator. Clients may cache sections by <code>(url, hash, range)</code> forever.</li>
+<li>Range coalescing + a small read-ahead keep the request count low.</li>
+<li><strong>Malformed input is safe.</strong> Because a <code>.rete</code> can be fetched truncated or
+corrupt from an arbitrary URL, every header-derived offset/length and every
+embedded section length is bounds-checked before use. This holds end-to-end:
+<code>open</code> and the ranged readers, <em>and</em> querying a file that opened but carries
+corrupt block/dictionary internals (term resolution, front-coded delta decode,
+permutation-block iteration, unified node-id mapping) all return empty/<code>None</code>
+or an error — never panic, never over-allocate on an untrusted count. (Covered
+by the <code>robustness</code> suite: all truncations, header byte-flips, and arbitrary
+garbage, each then exercised through <code>dump</code>/<code>query</code>/SPARQL incl. a property
+path.)</li>
+</ul>
+<hr />
+<h2>10. Language &amp; build</h2>
+<ul>
+<li><strong>Rust core</strong>, compiled to both <strong>native</strong> (CLI, server-side) and <strong>WASM</strong>
+(browser client) — identical query code in both.</li>
+<li>Crates to lean on: <code>oxrdf</code> / <code>oxttl</code> / <code>spargebra</code> (RDF + SPARQL), <code>object_store</code>
+(S3/GCS/HTTP range reads), <code>zstd</code>, <code>blake3</code>, a Leiden/Louvain implementation.</li>
+<li><strong>Everything runs in Docker dev containers.</strong> No host execution. The container
+carries the Rust toolchain + <code>wasm-pack</code>.</li>
+</ul>
+<hr />
+<h2>11. Open questions</h2>
+<ol>
+<li><strong>Quad/named-graph indexing</strong> — per-graph triple sets vs. full GSPO/GPSO
+permutations. Cost vs. query flexibility.</li>
+<li><strong>Literal indexing</strong> — do we want value-range indexes (numeric/date) for
+FILTER pushdown, à la Parquet zone maps on literal values?</li>
+<li><del>Pyramid cut policy</del> — <strong>resolved (§7.1): size-targeted tiles</strong>, default
+budget <code>T</code> ≈ 64 KiB, PMTiles-style. Remaining sub-question: best default <code>T</code>
+and whether <code>T</code> should scale with the dictionary/literal mix.</li>
+<li><strong>Multiple summarization strategies</strong> — two are implemented: <strong>community</strong>
+(structural, Louvain — the stored pyramid) and <strong>schema</strong> (ontology-aware,
+relations between <code>rdf:type</code> classes — <code>schema_summary</code>/<code>rete schema</code>). An
+<em>importance</em>-based one (PageRank/centrality) is still open. The community
+summary is stored; schema is computed on demand (storing it for cheap HTTP
+access is a future step).</li>
+<li><strong>Overlay/diff files</strong> for "appendable-ish" updates without abandoning
+immutability.</li>
+</ol>
+<hr />
+<h2>12. Glossary</h2>
+<ul>
+<li><strong>Term</strong> — an RDF IRI, blank node, or literal.</li>
+<li><strong>Quotient graph</strong> — graph whose nodes are communities and whose edges
+aggregate the original edges crossing between them.</li>
+<li><strong>Supernode</strong> — a community represented as a single node at a pyramid level.</li>
+<li><strong>Zone map</strong> — per-block min/max/count stats enabling block-skipping.</li>
+<li><strong>Tile</strong> — the unit of range-addressable data for a (level, community).</li>
+</ul>
+
+    </article>
+    <footer>Generated from <code>docs/SPEC.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+</body>
+</html>

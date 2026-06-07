@@ -1,0 +1,38 @@
+[package]
+name = "rete-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Core format types for the Rete cloud-native RDF graph file."
+
+[dependencies]
+thiserror.workspace = true
+spargebra.workspace = true
+blake3.workspace = true
+# Pure-Rust zstd *decoder* — always available (incl. wasm). Encoding uses the
+# faster C `zstd` below when the `compression` feature is on.
+ruzstd = "0.7"
+zstd = { workspace = true, optional = true }
+# Data-parallel query evaluator (prototype). Behind the `parallel` feature so it
+# is never pulled into wasm (the wasm crate builds with --no-default-features).
+rayon = { version = "1", optional = true }
+
+[features]
+default = ["compression"]
+# zstd needs a C toolchain; disable for targets that lack one (e.g. wasm).
+compression = ["dep:zstd"]
+# Prototype data-parallel query evaluator. NOT default; wasm must never enable it
+# (wasm has no threads). Enables the `parallel` module + `rayon`.
+parallel = ["dep:rayon"]
+
+# The parallel benchmark only compiles with the `parallel` feature (it uses
+# rayon + the feature-gated `parallel` module). Without the gate, a default
+# `cargo build --examples` would try to build it and fail.
+[[example]]
+name = "parallel_bench"
+required-features = ["parallel"]
+
+# On wasm, getrandom (pulled transitively via oxrdf) needs its browser backend.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }

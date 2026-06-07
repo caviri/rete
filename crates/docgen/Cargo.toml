@@ -1,0 +1,15 @@
+[package]
+name = "docgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Render the Markdown docs in /docs into a static HTML site."
+publish = false
+
+[[bin]]
+name = "docgen"
+path = "src/main.rs"
+
+[dependencies]
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }

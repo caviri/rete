@@ -1,0 +1,20 @@
+# Build output
+/target
+/web/pkg*
+**/*.rs.bk
+
+# Built graph files are artifacts of the .nt/.nq sources in examples/ — rebuild
+# with `rete build` (see README). The sources, not the binaries, are tracked.
+*.rete
+
+# Cargo.lock IS committed: this workspace ships a binary (rete-cli), so a locked
+# dependency set gives reproducible builds and a stable CI cache key. (It would
+# be omitted only for a library-only crate.)
+
+# Claude Code local runtime state (machine-local, not shareable config)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+
+
+# Generated datasets (regenerate with scripts/fetch_opencitations.py)
+/data/

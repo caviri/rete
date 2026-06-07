@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Federated queries · rete docs</title>
+  <style>
+:root { --fg:#1b1f24; --muted:#5b6570; --bg:#ffffff; --side:#0f1620; --side-fg:#c9d4e0;
+        --accent:#2a6df4; --border:#e4e8ec; --code-bg:#f5f7f9; }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       color:var(--fg); background:var(--bg); display:flex; }
+code,pre,.mono { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; }
+
+.sidebar { width:250px; min-height:100vh; background:var(--side); color:var(--side-fg);
+           padding:1.6rem 1.2rem; position:sticky; top:0; flex:0 0 250px; }
+.sidebar .brand { color:#fff; font-size:1.5rem; font-weight:700; text-decoration:none; letter-spacing:.5px; }
+.sidebar .tagline { color:#8595a6; font-size:.8rem; margin:.3rem 0 1.4rem; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.15rem 0; }
+.sidebar a { color:var(--side-fg); text-decoration:none; display:block; padding:.4rem .6rem;
+             border-radius:6px; font-size:.95rem; }
+.sidebar a:hover { background:rgba(255,255,255,.07); color:#fff; }
+.sidebar a.active { background:var(--accent); color:#fff; font-weight:600; }
+.sidebar .foot { margin-top:1.5rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; color:#8595a6; }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.content { max-width:820px; padding:2.4rem 3rem; width:100%; }
+footer { max-width:820px; padding:1rem 3rem 3rem; color:var(--muted); font-size:.85rem; }
+
+.content h1 { font-size:2.1rem; margin:.2rem 0 1rem; line-height:1.2; }
+.content h2 { font-size:1.5rem; margin:2.2rem 0 .8rem; padding-bottom:.3rem; border-bottom:1px solid var(--border); }
+.content h3 { font-size:1.2rem; margin:1.6rem 0 .6rem; }
+.content a { color:var(--accent); text-decoration:none; }
+.content a:hover { text-decoration:underline; }
+.content p,.content li { color:var(--fg); }
+.content code { background:var(--code-bg); padding:.12em .4em; border-radius:4px; font-size:.88em; }
+.content pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+               padding:1rem 1.1rem; overflow:auto; line-height:1.5; }
+.content pre code { background:none; padding:0; font-size:.85rem; }
+.content blockquote { margin:1rem 0; padding:.4rem 1rem; border-left:4px solid var(--accent);
+                      background:#f3f7ff; color:#33415a; border-radius:0 6px 6px 0; }
+.content table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+.content th,.content td { border:1px solid var(--border); padding:.45rem .7rem; text-align:left; }
+.content th { background:var(--code-bg); }
+.content tr:nth-child(even) td { background:#fafbfc; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+
+@media (max-width:780px) {
+  body { flex-direction:column; }
+  .sidebar { width:100%; flex-basis:auto; min-height:auto; position:static; }
+  .content,footer { padding-left:1.2rem; padding-right:1.2rem; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <ul>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li><a href="federation.html" class="active">Federated queries</a></li>
+        <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/carlosvivarrios/rete">GitHub</a></p>
+  </nav>
+  <main>
+    <article class="content">
+<h1>Federated queries across several <code>.rete</code> files</h1>
+<p><code>rete federate</code> runs <strong>one SPARQL query across many <code>.rete</code> sources</strong> — local
+file paths and/or <code>http(s)://</code> URLs, mixed freely — and merges the results. It is
+the answer to "my data is sharded into several files; query them as one."</p>
+<pre><code class="language-sh">rete federate &lt;source…&gt; --query "&lt;SPARQL&gt;" [--json] [--no-route]
+</code></pre>
+<p>This is an honest <strong>prototype</strong>: it does <em>union</em> federation, not distributed
+joins. Read <a href="#limitations">Limitations</a> before relying on it.</p>
+<h2>Why federation works at the term level</h2>
+<p>Every <code>.rete</code> file carries its <strong>own dictionary</strong> — the integer IDs that encode
+terms are local to one file. ID <code>42</code> in <code>cites-2021.rete</code> and ID <code>42</code> in
+<code>cites-2024.rete</code> are unrelated. So you <strong>cannot</strong> merge files by combining their
+integer indexes.</p>
+<p>Federation therefore works at the <strong>term (string) level</strong>: the query is
+evaluated independently on each file with the existing single-file engine, and
+the <strong>term-level result rows are merged</strong>. This is exactly correct for
+<strong>sharded datasets where each file independently yields complete result rows</strong> —
+the citation data below, sharded by citing year, is precisely this shape: each
+<code>cites</code> edge (and its <code>date</code>/<code>type</code>) lives wholly within one year-shard, so each
+shard produces whole, self-contained answer rows.</p>
+<h2>Merge semantics</h2>
+<table><thead><tr><th>Query form</th><th>Merge across sources</th></tr></thead><tbody>
+<tr><td><code>SELECT</code></td><td><strong>Union</strong> of solution rows, <strong>deduped</strong> (identical rows collapse), stable order (source order, then within-source order).</td></tr>
+<tr><td><code>ASK</code></td><td><strong>Logical OR</strong> — true if any source matches.</td></tr>
+<tr><td><code>CONSTRUCT</code></td><td><strong>Union</strong> of constructed triples, <strong>deduped</strong>.</td></tr>
+</tbody></table>
+<p>Dedup is over the projected variables for <code>SELECT *</code> it is over all bound
+variables. A row that appears in two shards (e.g. a node that cites the target
+and shows up in two files) is reported once.</p>
+<h2>Routing / pruning (default on)</h2>
+<p>Before evaluating, <code>federate</code> reads each source's <strong>predicate set</strong> cheaply from
+its pyramid <strong>summary</strong> — the (large) triple <strong>index is never touched</strong> (the same
+"summary first" path used by <code>rete predicates</code> and <code>rete summary-url</code>). It also
+extracts the <strong>concrete predicate IRIs</strong> the query constrains on (from the parsed
+query's basic graph patterns and property paths). A source whose predicate set is
+<strong>disjoint</strong> from the query's predicates <strong>cannot contribute a row</strong> and is
+<strong>skipped</strong>.</p>
+<ul>
+<li><code>--no-route</code> disables pruning and queries <strong>every</strong> source.</li>
+<li>A query that pins <strong>no</strong> concrete predicate (every pattern uses a variable
+predicate, e.g. <code>?s ?p ?o</code>) cannot be routed — all sources are queried.</li>
+<li>A source with no summary cannot be inspected, so it is <strong>never</strong> pruned.</li>
+</ul>
+<p>For local files routing reads a few hundred bytes per source; for URLs it issues
+a handful of HTTP <strong>range</strong> requests (header + dictionary + summary) — never the
+whole file.</p>
+<p>Per-source diagnostics (rows contributed + time), the queried-vs-pruned tally,
+and the list of pruned sources are written to <strong>stderr</strong> the merged results go to
+stdout.</p>
+<h2>Limitations</h2>
+<p>This is a deliberately honest prototype — it is correct for sharded data and
+clear about what it does <strong>not</strong> do.</p>
+<ul>
+<li><strong>Union only, no cross-file joins.</strong> A solution that needs a triple from file A
+joined with a triple from file B (e.g. <code>?x</code> from one shard joined to <code>?y</code> from
+another) will <strong>not</strong> be found. Each shard is queried in isolation. Cross-file
+joins need a term-level federated BGP engine that ships intermediate bindings
+between sources — future work.</li>
+<li><strong>Aggregates and <code>LIMIT</code> are per source, then unioned.</strong> A federated
+<code>SELECT (COUNT(*) AS ?n)</code> returns <strong>one count per source</strong> (unioned), not a
+global sum and <code>LIMIT 5</code> over two shards can return up to <strong>10</strong> rows (5 from
+each). This keeps the prototype honest rather than silently wrong. Sum / cap
+client-side, or wait for a future <code>--reduce</code> that folds per-source aggregates.</li>
+<li><strong><code>GROUP BY</code></strong> is likewise evaluated per source then unioned, so the same group
+key can appear once per shard.</li>
+</ul>
+<h2>Real example — OpenCitations, sharded by citing year</h2>
+<p>The repo ships a real dataset: citations <strong>of the AlphaFold paper</strong>
+(<code>&lt;https://doi.org/10.1038/s41586-021-03819-2&gt;</code>), sharded by citing year into
+<code>data/opencitations/cites-&lt;year&gt;.rete</code>. Each shard uses
+<code>&lt;http://purl.org/spar/cito/cites&gt;</code>, <code>&lt;http://purl.org/dc/terms/date&gt;</code>, and
+<code>rdf:type</code>. (Regenerate with <code>python3 scripts/fetch_opencitations.py</code>, then
+<code>for f in data/opencitations/*.nt; do rete build "$f" -o "${f%.nt}.rete"; done</code>.)</p>
+<h3>Federated SELECT across two year-shards</h3>
+<pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
+  --query 'SELECT ?citing WHERE {
+             ?citing &lt;http://purl.org/spar/cito/cites&gt;
+                     &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'
+</code></pre>
+<pre><code>  data/opencitations/cites-2021.rete: 5 row(s) in 3.6ms
+  data/opencitations/cites-2024.rete: 5 row(s) in 15.6ms
+10 solution(s)
+federated 2 source(s): 2 queried, 0 pruned (routing on); 10 merged result(s)
+?citing=&lt;https://doi.org/10.1001/jama.2021.15728&gt;
+?citing=&lt;https://doi.org/10.1002/2211-5463.13301&gt;
+?citing=&lt;https://doi.org/10.1002/2211-5463.13316&gt;
+?citing=&lt;https://doi.org/10.1002/advs.202102592&gt;
+?citing=&lt;https://doi.org/10.1002/advs.202103807&gt;
+?citing=&lt;https://doi.org/10.1001/jamadermatol.2024.1126&gt;
+?citing=&lt;https://doi.org/10.1001/jamaophthalmol.2024.3829&gt;
+?citing=&lt;https://doi.org/10.1002/1873-3468.14811&gt;
+?citing=&lt;https://doi.org/10.1002/1873-3468.14823&gt;
+?citing=&lt;https://doi.org/10.1002/1873-3468.14836&gt;
+</code></pre>
+<p>Note the <strong>per-source <code>LIMIT</code></strong> caveat in action: <code>LIMIT 5</code> yielded 5 rows from
+<em>each</em> shard, so the union holds 10. The first five are 2021 citers, the last
+five 2024 citers.</p>
+<h3>Routing in action — a predicate-disjoint shard is pruned</h3>
+<p>Add a source that uses a different predicate (here a shard whose only predicate
+is <code>rdfs:label</code>, not <code>cito:cites</code>). The <code>cites</code> query prunes it without ever
+reading its index:</p>
+<pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete other-demo.rete data/opencitations/cites-2024.rete \
+  --query 'SELECT ?citing WHERE {
+             ?citing &lt;http://purl.org/spar/cito/cites&gt;
+                     &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 3'
+</code></pre>
+<pre><code>  data/opencitations/cites-2021.rete: 3 row(s) in 3.4ms
+  data/opencitations/cites-2024.rete: 3 row(s) in 15.8ms
+6 solution(s)
+federated 3 source(s): 2 queried, 1 pruned (routing on); 6 merged result(s)
+  pruned (predicate-disjoint): other-demo.rete
+…
+</code></pre>
+<p><code>--no-route</code> would instead query all three (the label-only shard contributing 0
+rows). For year-shards that all share <code>cito:cites</code>, routing keeps every shard —
+pruning helps when sources are <strong>heterogeneous</strong> (different predicates per file),
+which is the common federation case.</p>
+<h3>ASK federation (logical OR)</h3>
+<pre><code class="language-sh">rete federate data/opencitations/cites-2017.rete data/opencitations/cites-2024.rete \
+  --query 'ASK { ?x &lt;http://purl.org/spar/cito/cites&gt;
+                    &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; }'
+# → true   (at least one shard has a citation)
+</code></pre>
+<h3>URL sources</h3>
+<p>Sources may be <code>http(s)://</code> URLs of <code>.rete</code> files hosted on S3, GitHub, or any
+CDN that honors HTTP <strong>Range</strong> requests — mix them with local paths freely:</p>
+<pre><code class="language-sh">rete federate \
+  https://example.org/cites-2021.rete \
+  data/opencitations/cites-2024.rete \
+  --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
+                                          &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; }'
+</code></pre>
+<p>Each URL is opened with range reads (header → dictionary → index → pyramid),
+never a full download both routing and evaluation fetch only the bytes they need.</p>
+
+    </article>
+    <footer>Generated from <code>docs/federation.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,28 @@
+# A small causal model with an ontology header, used to demonstrate `rete reason`.
+#
+# Schema:
+#   - Disease and Treatment are kinds of Factor (subClassOf chain → Factor).
+#   - HealthyState owl:disjointWith DiseaseState (you can't be both).
+#   - :causes is an owl:TransitiveProperty (causation chains compose).
+#
+# Data tells two stories:
+#   1. A causal CYCLE  a → b → c → a  (find with SPARQL `?x :causes+ ?x`).
+#   2. An INCOHERENT POINT: patient :p is typed as both a HealthyState and a
+#      DiseaseState, which are disjoint → `rete reason` flags it.
+
+# --- schema -----------------------------------------------------------------
+<http://ex/Disease> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/Condition> .
+<http://ex/Condition> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/Factor> .
+<http://ex/Treatment> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/Factor> .
+<http://ex/HealthyState> <http://www.w3.org/2002/07/owl#disjointWith> <http://ex/DiseaseState> .
+<http://ex/causes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#TransitiveProperty> .
+
+# --- causal cycle: a -> b -> c -> a -----------------------------------------
+<http://ex/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Disease> .
+<http://ex/a> <http://ex/causes> <http://ex/b> .
+<http://ex/b> <http://ex/causes> <http://ex/c> .
+<http://ex/c> <http://ex/causes> <http://ex/a> .
+
+# --- incoherent point: p is both Healthy and Diseased -----------------------
+<http://ex/p> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/HealthyState> .
+<http://ex/p> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/DiseaseState> .

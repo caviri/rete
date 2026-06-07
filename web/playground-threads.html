@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>rete — EXPERIMENTAL threaded playground</title>
+  <style>
+    :root { --fg:#1b1f24; --muted:#5b6570; --accent:#2a6df4; --side:#0f1620;
+            --border:#e4e8ec; --code:#f5f7f9; --warn:#fff7e6; --warnb:#ffe0a3; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+           color:var(--fg); max-width:860px; margin:0 auto; padding:1.5rem 1.2rem 3rem; }
+    h1 { font-size:1.5rem; margin:.2rem 0; }
+    code,pre { font-family:ui-monospace,SFMono-Regular,monospace; }
+    .warn { background:var(--warn); border:1px solid var(--warnb); border-radius:8px;
+            padding:.7rem 1rem; font-size:13.5px; color:#7a5b00; margin:1rem 0; }
+    .card { border:1px solid var(--border); border-radius:9px; padding:1rem 1.2rem; margin:1rem 0; }
+    label { font-size:.9rem; }
+    input,select { padding:.4rem; font-size:.9rem; }
+    input[type=text] { width:100%; }
+    button { padding:.5rem 1.1rem; font-size:.95rem; cursor:pointer; border:1px solid var(--accent);
+             background:var(--accent); color:#fff; border-radius:7px; }
+    button.secondary { background:#fff; color:var(--accent); }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .drop { border:2px dashed var(--border); border-radius:9px; padding:1rem; text-align:center;
+            color:var(--muted); font-size:13px; }
+    .drop.over { border-color:var(--accent); background:#f3f7ff; }
+    table { border-collapse:collapse; width:100%; margin-top:.6rem; font-size:14px; }
+    th,td { border:1px solid var(--border); padding:.45rem .6rem; text-align:left; }
+    th { background:var(--code); }
+    .big { font-size:1.6rem; font-weight:700; color:var(--accent); }
+    .ok { color:#1a7f37; } .err { color:#b00020; }
+    .muted { color:var(--muted); } .small { font-size:12.5px; }
+    a { color:var(--accent); }
+  </style>
+</head>
+<body>
+  <h1>rete · threaded playground <span class="muted small">(experimental)</span></h1>
+  <div class="warn">
+    ⚠ <strong>Experimental, served-only build.</strong> This page runs the WASM engine on
+    <strong>real browser threads</strong> via <code>wasm-bindgen-rayon</code> (Web Workers +
+    <code>SharedArrayBuffer</code>). That needs a <strong>cross-origin-isolated</strong> page, so it
+    <em>only</em> works when served by <code>scripts/serve_coi.py</code> (which sends the
+    <code>COOP</code>/<code>COEP</code> headers) — it cannot run from <code>file://</code> or a plain
+    static host. The stable, offline, single-file playground is
+    <a href="../docs/playground.html">docs/playground.html</a>.
+  </div>
+
+  <div class="card">
+    <div id="status" class="small muted">initializing…</div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">1 · Load a graph</h3>
+    <p class="small muted">Small bundled graphs barely show a speedup — drag-drop a big
+      <code>.rete</code> (e.g. <code>data/opencitations/enriched-all.rete</code>, ~590k triples)
+      to see threads matter.</p>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center">
+      <label>Bundled:
+        <select id="ds">
+          <option value="enriched-all.rete">enriched-all.rete (big, if present)</option>
+          <option value="papers.rete">papers.rete</option>
+          <option value="researchers.rete">researchers.rete</option>
+          <option value="deps.rete">deps.rete</option>
+        </select>
+      </label>
+      <button class="secondary" id="loadDs">Load</button>
+      <span id="loaded" class="small muted"></span>
+    </div>
+    <div class="drop" id="drop" style="margin-top:.7rem">drag &amp; drop a <code>.rete</code> file here</div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">2 · Benchmark: serial vs. threaded reachability</h3>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center">
+      <label>Predicate <input type="text" id="pred" style="width:280px"
+        value="http://ex/coauthor" /></label>
+      <label>Max seeds <input type="number" id="maxseeds" value="600" style="width:6rem" /></label>
+      <label><input type="checkbox" id="reverse" /> reverse</label>
+      <button id="run" disabled>Run benchmark</button>
+    </div>
+    <div id="out" class="small muted" style="margin-top:.8rem">Load a graph first.</div>
+  </div>
+
+  <p class="small muted">One rete task per seed (<code>batch_reach_parallel</code>) — the same
+    14× workload from the <a href="../docs/BENCHMARK.html">Benchmarks</a> page, here on browser
+    threads. Serial uses <code>reach</code>; threaded uses <code>reach_parallel</code>; the page
+    checks the two results are identical before trusting the timing.</p>
+
+  <script type="module">
+    import init, { initThreadPool, info, query, reach, reach_parallel }
+      from "./pkg-threads/rete_wasm.js";
+
+    const $ = (id) => document.getElementById(id);
+    let bytes = null;
+
+    (async () => {
+      try {
+        await init();
+        const n = navigator.hardwareConcurrency || 4;
+        await initThreadPool(n);
+        $("status").innerHTML =
+          `✅ cross-origin isolated: <strong>${self.crossOriginIsolated}</strong> · ` +
+          `thread pool: <strong>${n}</strong> workers (navigator.hardwareConcurrency)`;
+      } catch (e) {
+        $("status").innerHTML = `<span class="err">thread init failed: ${e}. ` +
+          `Are you serving with scripts/serve_coi.py (COOP/COEP)? crossOriginIsolated=${self.crossOriginIsolated}</span>`;
+      }
+    })();
+
+    function setLoaded(name, n) {
+      const m = JSON.parse(info(bytes));
+      $("loaded").textContent = `${name}: ${bytes.length} bytes · ${m.quads} quads · ${m.terms} terms`;
+      $("run").disabled = false;
+      $("out").textContent = "Ready — click Run benchmark.";
+    }
+    async function loadUrl(url) {
+      $("loaded").textContent = "loading…";
+      try {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        bytes = new Uint8Array(await r.arrayBuffer());
+        setLoaded(url);
+      } catch (e) { $("loaded").innerHTML = `<span class="err">${e} (is the file in web/?)</span>`; }
+    }
+    $("loadDs").onclick = () => loadUrl($("ds").value);
+
+    const drop = $("drop");
+    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+    drop.ondragleave = () => drop.classList.remove("over");
+    drop.ondrop = (e) => {
+      e.preventDefault(); drop.classList.remove("over");
+      const f = e.dataTransfer.files[0];
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => { bytes = new Uint8Array(rd.result); setLoaded(f.name); };
+      rd.readAsArrayBuffer(f);
+    };
+
+    $("run").onclick = () => {
+      if (!bytes) return;
+      const pred = "<" + $("pred").value.trim() + ">";
+      const reverse = $("reverse").checked;
+      const max = parseInt($("maxseeds").value) || 200;
+      $("out").textContent = "gathering seeds…";
+      setTimeout(() => {
+        try {
+          // Seeds = distinct subjects of the predicate (the things that have outgoing edges).
+          const q = `SELECT DISTINCT ?s WHERE { ?s ${pred} ?o } LIMIT ${max}`;
+          const res = JSON.parse(query(bytes, q, "table"));
+          const seeds = (res.rows || []).map((r) => r.s).filter(Boolean);
+          if (!seeds.length) { $("out").innerHTML = `<span class="err">no subjects for ${pred} — pick another predicate</span>`; return; }
+          const seedsJson = JSON.stringify(seeds);
+
+          const t0 = performance.now();
+          const a = reach(bytes, pred, seedsJson, reverse);
+          const t1 = performance.now();
+          const b = reach_parallel(bytes, pred, seedsJson, reverse);
+          const t2 = performance.now();
+
+          const serial = t1 - t0, parallel = t2 - t1;
+          const match = a === b;
+          const speedup = (serial / parallel).toFixed(2);
+          $("out").innerHTML =
+            `<table><tr><th>seeds</th><th>serial</th><th>threaded</th><th>speedup</th><th>match</th></tr>` +
+            `<tr><td>${seeds.length}</td><td>${serial.toFixed(1)} ms</td><td>${parallel.toFixed(1)} ms</td>` +
+            `<td class="big">${speedup}×</td><td class="${match ? "ok" : "err"}">${match ? "✓ identical" : "✗ MISMATCH"}</td></tr></table>` +
+            `<p class="small muted">threaded = <code>reach_parallel</code> across ${navigator.hardwareConcurrency} workers.</p>`;
+        } catch (e) { $("out").innerHTML = `<span class="err">${e}</span>`; }
+      }, 10);
+    };
+  </script>
+</body>
+</html>

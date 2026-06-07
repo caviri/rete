@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rete-core",
+    "crates/rete-cli",
+    "crates/rete-wasm",
+    "crates/docgen",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/carlosvivarrios/rete"
+rust-version = "1.86"
+
+[workspace.dependencies]
+# RDF model + SPARQL, reused rather than reinvented (see docs/SPEC.md §2).
+oxrdf = "0.2"
+oxttl = "0.1"
+spargebra = "0.3"
+# Range reads from S3/GCS/HTTP and content hashing / compression.
+object_store = "0.11"
+blake3 = "1"
+zstd = "0.13"
+# Errors + CLI.
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }

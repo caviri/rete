@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CLI reference · rete docs</title>
+  <style>
+:root { --fg:#1b1f24; --muted:#5b6570; --bg:#ffffff; --side:#0f1620; --side-fg:#c9d4e0;
+        --accent:#2a6df4; --border:#e4e8ec; --code-bg:#f5f7f9; }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       color:var(--fg); background:var(--bg); display:flex; }
+code,pre,.mono { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; }
+
+.sidebar { width:250px; min-height:100vh; background:var(--side); color:var(--side-fg);
+           padding:1.6rem 1.2rem; position:sticky; top:0; flex:0 0 250px; }
+.sidebar .brand { color:#fff; font-size:1.5rem; font-weight:700; text-decoration:none; letter-spacing:.5px; }
+.sidebar .tagline { color:#8595a6; font-size:.8rem; margin:.3rem 0 1.4rem; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.15rem 0; }
+.sidebar a { color:var(--side-fg); text-decoration:none; display:block; padding:.4rem .6rem;
+             border-radius:6px; font-size:.95rem; }
+.sidebar a:hover { background:rgba(255,255,255,.07); color:#fff; }
+.sidebar a.active { background:var(--accent); color:#fff; font-weight:600; }
+.sidebar .foot { margin-top:1.5rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; color:#8595a6; }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.content { max-width:820px; padding:2.4rem 3rem; width:100%; }
+footer { max-width:820px; padding:1rem 3rem 3rem; color:var(--muted); font-size:.85rem; }
+
+.content h1 { font-size:2.1rem; margin:.2rem 0 1rem; line-height:1.2; }
+.content h2 { font-size:1.5rem; margin:2.2rem 0 .8rem; padding-bottom:.3rem; border-bottom:1px solid var(--border); }
+.content h3 { font-size:1.2rem; margin:1.6rem 0 .6rem; }
+.content a { color:var(--accent); text-decoration:none; }
+.content a:hover { text-decoration:underline; }
+.content p,.content li { color:var(--fg); }
+.content code { background:var(--code-bg); padding:.12em .4em; border-radius:4px; font-size:.88em; }
+.content pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+               padding:1rem 1.1rem; overflow:auto; line-height:1.5; }
+.content pre code { background:none; padding:0; font-size:.85rem; }
+.content blockquote { margin:1rem 0; padding:.4rem 1rem; border-left:4px solid var(--accent);
+                      background:#f3f7ff; color:#33415a; border-radius:0 6px 6px 0; }
+.content table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+.content th,.content td { border:1px solid var(--border); padding:.45rem .7rem; text-align:left; }
+.content th { background:var(--code-bg); }
+.content tr:nth-child(even) td { background:#fafbfc; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+
+@media (max-width:780px) {
+  body { flex-direction:column; }
+  .sidebar { width:100%; flex-basis:auto; min-height:auto; position:static; }
+  .content,footer { padding-left:1.2rem; padding-right:1.2rem; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <ul>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="cli.html" class="active">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/carlosvivarrios/rete">GitHub</a></p>
+  </nav>
+  <main>
+    <article class="content">
+<h1>CLI reference</h1>
+<p>The <code>rete</code> binary (crate <code>rete-cli</code>). Run <code>rete &lt;command&gt; --help</code> for the
+authoritative flags. Terms are written as canonical N-Triples tokens —
+<code>&lt;http://ex/Alice&gt;</code> for an IRI, <code>"30"</code> or <code>"30"^^&lt;…#integer&gt;</code> for a literal.</p>
+<h2>Building</h2>
+<h3><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl]</code></h3>
+<p>Build a file from one or more RDF inputs, merged under one shared dictionary.
+Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code>); <code>-</code> reads stdin and
+defaults to N-Triples; <code>--format</code> forces a format for all inputs. N-Quads inputs
+produce a dataset with named graphs.</p>
+<pre><code class="language-sh">rete build a.nt b.nt -o merged.rete
+curl -s https://host/data.nt | rete build - -o data.rete
+</code></pre>
+<h2>Validating</h2>
+<h3><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl]</code></h3>
+<p>Parse RDF input(s) without building, to check they are well-formed
+N-Triples/N-Quads/Turtle. Reports statement and named-graph counts, or exits
+non-zero with a precise parse error (file, line, column).</p>
+<pre><code class="language-sh">rete validate data.ttl
+curl -s https://host/data.nt | rete validate - --format nt
+</code></pre>
+<h2>Inspecting</h2>
+<h3><code>rete info &lt;file&gt;</code></h3>
+<p>Print the decoded 128-byte header (offsets, codecs, counts, content hash).</p>
+<h3><code>rete stats &lt;file&gt;</code></h3>
+<p>Human-friendly overview: file size, default-graph triple count, distinct terms,
+named-graph count, pyramid levels, and top predicates.</p>
+<h3><code>rete verify &lt;file&gt;</code></h3>
+<p>Recompute the blake3 content hash and compare to the header. Exits non-zero with
+<code>FAILED — content hash mismatch</code> on corruption/truncation.</p>
+<h3><code>rete graphs &lt;file&gt;</code></h3>
+<p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
+<h3><code>rete export &lt;file&gt; [--format nq|ttl|jsonld]</code></h3>
+<p>Serialize the dataset. <code>nq</code> (the default) dumps every triple/quad as N-Quads
+(default graph + named graphs) — a lossless round-trip. <code>ttl</code> emits Turtle and
+<code>jsonld</code> emits expanded JSON-LD; both serialize the <strong>default graph only</strong>
+(Turtle/JSON-LD here carry no default-vs-named distinction, so named graphs are
+skipped — use <code>nq</code> to export those).</p>
+<pre><code class="language-sh">rete export data.rete                 # N-Quads (default)
+rete export data.rete --format ttl    # Turtle
+rete export data.rete --format jsonld # expanded JSON-LD
+</code></pre>
+<h2>Querying</h2>
+<h3><code>rete query &lt;file&gt; [--subject S] [--predicate P] [--object O]</code></h3>
+<p>Match a single triple pattern; omitted positions are wildcards.</p>
+<pre><code class="language-sh">rete query data.rete --predicate '&lt;http://ex/knows&gt;'
+</code></pre>
+<h3><code>rete bgp &lt;file&gt; "&lt;pattern&gt; . &lt;pattern&gt; …"</code></h3>
+<p>Evaluate a Basic Graph Pattern. Patterns are separated by <code>.</code>, terms by spaces;
+<code>?name</code> is a variable (terms may not contain spaces).</p>
+<pre><code class="language-sh">rete bgp data.rete "?x &lt;http://ex/knows&gt; ?y . ?y &lt;http://ex/knows&gt; ?z"
+</code></pre>
+<h3><code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json]</code></h3>
+<p>Run SPARQL: <code>SELECT</code> / <code>ASK</code> / <code>CONSTRUCT</code> / <code>DESCRIBE</code>. With <code>--json</code>, emit
+standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a href="sparql.html">SPARQL support</a>.</p>
+<pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
+</code></pre>
+<h3><code>rete cypher &lt;file&gt; "&lt;query&gt;" [--base &lt;iri&gt;] [--json]</code></h3>
+<p>Run a read-only <strong>Cypher subset</strong> (a prototype). The query is translated to an
+equivalent SPARQL <code>SELECT</code> and evaluated by the same engine — no second query
+engine. Supports <code>MATCH … [WHERE …] RETURN … [LIMIT n]</code>: node patterns
+(<code>(a)</code>, <code>(a:Label)</code>), forward/reverse relationships (<code>(a)-[:REL]-&gt;(b)</code>,
+<code>(a)&lt;-[:REL]-(b)</code>), variable-length relationships (<code>-[:REL*]-&gt;</code> → the SPARQL
+property path <code>REL+</code>, one-or-more), simple <code>WHERE</code> comparisons on a property
+(<code>a.age &gt; 30</code>) or identity (<code>a = &lt;iri&gt;</code>) joined by <code>AND</code>/<code>OR</code>, and <code>RETURN</code> of
+variables and/or properties. Writes, <code>OPTIONAL MATCH</code>, <code>WITH</code>, aggregations,
+relationship variables/properties, and multiple labels are rejected with a clear
+error. See <a href="compatibility.html">compatibility</a> for the full subset and the
+name→IRI convention. With <code>--json</code>, emit standard SPARQL Results JSON.</p>
+<p>A bare label/relationship/property name <code>X</code> maps to <code>&lt;BASE + X&gt;</code>, where <code>BASE</code>
+defaults to <code>http://ex/</code> and is overridable with <code>--base</code>.</p>
+<pre><code class="language-sh">rete cypher deps.rete "MATCH (a:Application) RETURN a"
+rete cypher deps.rete "MATCH (a)-[:dependsOn*]-&gt;(b) WHERE b = &lt;http://ex/log4x&gt; RETURN a"
+</code></pre>
+<h2>Reasoning</h2>
+<h3><code>rete reason &lt;file&gt; [--materialize] [--format nq|ttl]</code></h3>
+<p>Run the prototype <strong>OWL RL / RDFS reasoner</strong>: materialize RDFS/OWL entailments to
+a fixpoint and report any logical <strong>inconsistencies</strong> ("incoherent points", e.g. a
+disjoint-class violation). Prints the count of newly entailed triples and each
+inconsistency (<code>kind</code> + detail). <strong>Exits non-zero if any inconsistency is found</strong>
+(zero if coherent), so it works as a coherence gate in CI. With <code>--materialize</code>,
+also serialize the base + inferred graph (<code>nq</code> default, or <code>ttl</code>). This is a
+documented subset, not full OWL DL — see <a href="reasoning.html">Reasoning &amp; coherence</a>.</p>
+<pre><code class="language-sh">rete reason data.rete
+rete reason data.rete --materialize --format ttl
+</code></pre>
+<h2>Coarse graphs (no index read)</h2>
+<h3><code>rete summary &lt;file&gt;</code></h3>
+<p>Print the <strong>structural</strong> coarse graph: the Louvain community quotient graph
+(community → community relations with counts).</p>
+<h3><code>rete schema &lt;file&gt;</code></h3>
+<p>Print the <strong>semantic</strong> coarse graph: classes (by <code>rdf:type</code>) with instance
+counts, and the class→predicate→class relations between them — the dataset's
+effective schema.</p>
+<h3><code>rete communities &lt;file&gt; [--json] [--profile] [--predicate IRI] [--round N] [--min-size N]</code></h3>
+<p>Recompute the Louvain communities and expose, per community, its <strong>member
+subjects</strong> and the <strong>literal text</strong> of its triples — the per-community text
+corpus for downstream topic modeling. <code>--profile</code> adds a no-ML "topic" profile
+per community (top literal words, <code>rdf:type</code> classes, and predicates).
+<code>--predicate &lt;iri&gt;</code> detects communities using <strong>only</strong> that relation's edges — a
+criterion-specific partition (see <a href="multi-criteria.html">multi-criteria splitting</a>).
+<code>--json</code> emits <code>[{community, size, members:[&lt;iri&gt;…], text:[lexical…]}]</code> (plus a
+<code>profile</code> object when <code>--profile</code> is set); <code>--round N</code> cuts the dendrogram at a
+specific round (default: the round chosen for the tile budget); <code>--min-size N</code>
+drops communities with fewer than <code>N</code> members. See the
+<a href="topic-modeling.html">topic modeling tutorial</a>.</p>
+<pre><code class="language-sh">rete communities papers.rete --profile               # no-ML topic labels
+rete communities researchers.rete --predicate '&lt;http://ex/cites&gt;'  # one criterion
+rete communities papers.rete --json | python3 scripts/lda_topics.py --topics 3
+</code></pre>
+<h3><code>rete predicates &lt;file&gt;</code></h3>
+<p>Exact per-predicate triple totals, summed from the pyramid summary alone — the
+triple index is never read.</p>
+<h2>Graph traversal</h2>
+<h3><code>rete reach &lt;file&gt; --predicate &lt;iri&gt; --seed &lt;iri&gt;… [--seeds-file F] [--reverse] [--parallel] [--count]</code></h3>
+<p>Multi-source transitive reachability over one relation: for each seed, the set of
+nodes it transitively reaches. <code>--reverse</code> answers <em>"who reaches the seed?"</em>
+(impact analysis); <code>--seeds-file</code> reads one seed IRI per line; <code>--count</code> prints
+only sizes; <strong><code>--parallel</code></strong> runs one <a href="BENCHMARK.html#parallelism">rayon</a> task per
+seed (the batch-reachability workload that benchmarks ~14–15× on many cores).</p>
+<pre><code class="language-sh"># Who (transitively) depends on the vulnerable package?  (impact analysis)
+rete reach deps.rete --predicate '&lt;http://ex/dependsOn&gt;' --seed '&lt;http://ex/log4x&gt;' --reverse
+
+# Many seeds at once, in parallel:
+rete reach g.rete --predicate '&lt;http://ex/knows&gt;' --seeds-file seeds.txt --parallel --count
+</code></pre>
+<h2>Over HTTP</h2>
+<p>Both URL commands work against <code>http://</code> and <code>https://</code> hosts that honor <code>Range</code>
+requests (S3, GitHub, any CDN).</p>
+<h3><code>rete summary-url &lt;url&gt;</code></h3>
+<p>Fetch only the header + dictionary + pyramid summary and print the coarse graph.
+The (large) index is never fetched — the "overview first" path.</p>
+<h3><code>rete query-url &lt;url&gt; [--subject S] [--predicate P] [--object O]</code></h3>
+<p>Match a triple pattern over HTTP, fetching only the byte ranges the query needs
+and reporting how many ranges/bytes were pulled.</p>
+<pre><code class="language-sh">rete query-url https://host/data.rete --object '&lt;http://ex/Dave&gt;'
+</code></pre>
+<h3><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
+<p>Run a full SPARQL query over HTTP, range-fetching the file (header, dictionary,
+index, pyramid) rather than downloading it whole.</p>
+<pre><code class="language-sh">rete sparql-url https://host/data.rete \
+  "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
+</code></pre>
+<h2>Federation</h2>
+<h3><code>rete federate &lt;sources…&gt; --query "&lt;SPARQL&gt;" [--json] [--no-route]</code></h3>
+<p>Run one SPARQL query across several <code>.rete</code> <strong>sources</strong> — local file paths and/or
+<code>http(s)://</code> URLs, mixed — and merge the results at the <strong>term (string) level</strong>:
+<code>SELECT</code> rows are unioned + deduped, <code>ASK</code> is OR'd across sources, <code>CONSTRUCT</code>
+triples are unioned + deduped. <strong>Routing</strong> (default on) reads each source's
+predicate set from its summary (index never touched) and <strong>prunes</strong> sources whose
+predicates are disjoint from the query's; <code>--no-route</code> queries every source.
+Per-source diagnostics and the queried/pruned tally go to stderr.</p>
+<p>This is <strong>union</strong> federation — correct for sharded data where each file
+independently yields complete rows. It does <strong>not</strong> do cross-file joins, and
+aggregates (<code>COUNT</code>/<code>GROUP BY</code>) and <code>LIMIT</code> are evaluated <strong>per source</strong> then
+unioned (a federated <code>COUNT(*)</code> returns per-source counts, not a global sum). See
+<a href="federation.html">Federated queries</a> for the full model, limitations, and a real
+OpenCitations multi-shard example.</p>
+<pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
+  --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
+                                          &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'
+</code></pre>
+<h2>Exit codes</h2>
+<p><code>0</code> on success; non-zero with a message on error (bad input, missing file,
+corrupt file, a host that ignores <code>Range</code>, or an unsupported query construct).</p>
+
+    </article>
+    <footer>Generated from <code>docs/cli.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+</body>
+</html>

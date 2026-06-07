@@ -1,0 +1,27 @@
+[package]
+name = "rete-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "CLI to build and inspect Rete graph files."
+
+[[bin]]
+name = "rete"
+path = "src/main.rs"
+
+[dependencies]
+# The CLI is always native, so it enables rete-core's `parallel` (rayon) feature
+# to back `rete reach --parallel`. (wasm builds rete-core without this feature.)
+rete-core = { path = "../rete-core", features = ["parallel"] }
+anyhow.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+# Turtle parsing for `rete build *.ttl`.
+oxttl.workspace = true
+# Standard SPARQL Results JSON output.
+serde_json = "1"
+# Blocking HTTP(S) for range requests. The `tls` feature pulls rustls +
+# webpki-roots (pure-Rust, no system OpenSSL) so `query-url`/`summary-url` work
+# against https hosts — S3, GitHub, any CDN — which is the actual deployment story.
+ureq = { version = "2", default-features = false, features = ["tls"] }

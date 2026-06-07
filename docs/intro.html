@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Graph data 101 · rete docs</title>
+  <style>
+:root { --fg:#1b1f24; --muted:#5b6570; --bg:#ffffff; --side:#0f1620; --side-fg:#c9d4e0;
+        --accent:#2a6df4; --border:#e4e8ec; --code-bg:#f5f7f9; }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       color:var(--fg); background:var(--bg); display:flex; }
+code,pre,.mono { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; }
+
+.sidebar { width:250px; min-height:100vh; background:var(--side); color:var(--side-fg);
+           padding:1.6rem 1.2rem; position:sticky; top:0; flex:0 0 250px; }
+.sidebar .brand { color:#fff; font-size:1.5rem; font-weight:700; text-decoration:none; letter-spacing:.5px; }
+.sidebar .tagline { color:#8595a6; font-size:.8rem; margin:.3rem 0 1.4rem; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.15rem 0; }
+.sidebar a { color:var(--side-fg); text-decoration:none; display:block; padding:.4rem .6rem;
+             border-radius:6px; font-size:.95rem; }
+.sidebar a:hover { background:rgba(255,255,255,.07); color:#fff; }
+.sidebar a.active { background:var(--accent); color:#fff; font-weight:600; }
+.sidebar .foot { margin-top:1.5rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; color:#8595a6; }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.content { max-width:820px; padding:2.4rem 3rem; width:100%; }
+footer { max-width:820px; padding:1rem 3rem 3rem; color:var(--muted); font-size:.85rem; }
+
+.content h1 { font-size:2.1rem; margin:.2rem 0 1rem; line-height:1.2; }
+.content h2 { font-size:1.5rem; margin:2.2rem 0 .8rem; padding-bottom:.3rem; border-bottom:1px solid var(--border); }
+.content h3 { font-size:1.2rem; margin:1.6rem 0 .6rem; }
+.content a { color:var(--accent); text-decoration:none; }
+.content a:hover { text-decoration:underline; }
+.content p,.content li { color:var(--fg); }
+.content code { background:var(--code-bg); padding:.12em .4em; border-radius:4px; font-size:.88em; }
+.content pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+               padding:1rem 1.1rem; overflow:auto; line-height:1.5; }
+.content pre code { background:none; padding:0; font-size:.85rem; }
+.content blockquote { margin:1rem 0; padding:.4rem 1rem; border-left:4px solid var(--accent);
+                      background:#f3f7ff; color:#33415a; border-radius:0 6px 6px 0; }
+.content table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+.content th,.content td { border:1px solid var(--border); padding:.45rem .7rem; text-align:left; }
+.content th { background:var(--code-bg); }
+.content tr:nth-child(even) td { background:#fafbfc; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+
+@media (max-width:780px) {
+  body { flex-direction:column; }
+  .sidebar { width:100%; flex-basis:auto; min-height:auto; position:static; }
+  .content,footer { padding-left:1.2rem; padding-right:1.2rem; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <ul>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html" class="active">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/carlosvivarrios/rete">GitHub</a></p>
+  </nav>
+  <main>
+    <article class="content">
+<h1>Graph data, for dummies</h1>
+<p>A gentle, practical tour of graph/network data formats and standards — with one
+question running through every section: <strong>what kinds of questions does this let
+me ask?</strong> If you've never touched RDF, SPARQL, or Neo4j, start here. By the end
+you'll know the landscape and exactly what you can ask a <code>.rete</code> file.</p>
+<h2>What is a graph (a.k.a. a network)?</h2>
+<p>A graph is just two ingredients:</p>
+<ul>
+<li><strong>Nodes</strong> — the <em>things</em> (a person, a software package, a disease, a web page).</li>
+<li><strong>Edges</strong> — the <em>relationships</em> between things (Alice <em>knows</em> Bob; <code>web</code>
+<em>dependsOn</em> <code>logging</code>; smoking <em>causes</em> cancer).</li>
+</ul>
+<p>That's it. A social network, a software dependency tree, a knowledge base
+(Wikipedia-as-data), an org chart, a causal model — all the same shape: dots and
+lines. The reason this shape is worth a whole family of tools is the <em>kind of
+question it answers naturally</em>, the kind that's painful in a spreadsheet or a
+table:</p>
+<ul>
+<li><strong>Connection:</strong> "Who/what is directly connected to X?" (Alice's friends; the
+direct dependencies of <code>app</code>.)</li>
+<li><strong>Reachability / paths:</strong> "Is there <em>any</em> path from A to B, however long?"
+(Does <code>app</code> transitively depend on the vulnerable <code>log4x</code>?)</li>
+<li><strong>Structure / clusters:</strong> "What groups or communities exist? What's the big
+picture before I zoom in?"</li>
+</ul>
+<p>Tables are great at "all rows where age &gt; 30". Graphs are great at "everything
+reachable from here by following relationships." Hold onto that distinction — it
+explains everything below.</p>
+<h2>Two big families: RDF vs. Labeled Property Graphs</h2>
+<p>There are two dominant ways to <em>write down</em> a graph. They model the same dots and
+lines, but differently.</p>
+<p><strong>RDF (Resource Description Framework)</strong> breaks the world into <strong>triples</strong> —
+short statements of the form <code>(subject, predicate, object)</code>:</p>
+<pre><code>&lt;Alice&gt;  &lt;knows&gt;  &lt;Bob&gt;
+&lt;Alice&gt;  &lt;age&gt;    "30"
+</code></pre>
+<p>Everything — including the relationship name (<code>knows</code>) — is a first-class
+<em>resource</em> with a global identifier (an IRI, essentially a URL). It's the W3C web
+standard for sharing data between systems.</p>
+<p><strong>Labeled Property Graphs (LPG)</strong>, the Neo4j model, instead give nodes and edges
+<strong>labels</strong> and bags of <strong>key/value properties</strong>:</p>
+<pre><code>(:Person {name:"Alice", age:30}) -[:KNOWS {since:2019}]-&gt; (:Person {name:"Bob"})
+</code></pre>
+<p>Note that the <em>edge itself</em> carries a property (<code>since:2019</code>) — that's the LPG
+superpower and the main thing plain RDF can't do without extra modeling.</p>
+<table><thead><tr><th></th><th>RDF (triples)</th><th>Labeled Property Graph</th></tr></thead><tbody>
+<tr><td>Atom of data</td><td>A statement <code>(s, p, o)</code></td><td>A node or edge with properties</td></tr>
+<tr><td>Identity</td><td>Global IRIs (web-wide)</td><td>Local node/edge ids</td></tr>
+<tr><td>Edges carry data?</td><td>Not directly (needs reification / RDF-star)</td><td>Yes — properties on edges</td></tr>
+<tr><td>Schema &amp; meaning</td><td>RDFS/OWL (formal, inferable)</td><td>Conventions, mostly app-defined</td></tr>
+<tr><td>Query language</td><td>SPARQL (a W3C standard)</td><td>Cypher / GQL</td></tr>
+<tr><td>Best at</td><td>Sharing, merging, inference across sources</td><td>Rich edges, app-local traversal</td></tr>
+</tbody></table>
+<p><strong><code>rete</code> is RDF.</strong> It is a storage + query format <em>for</em> RDF — not a new model.
+It can also translate a small, read-only <strong>subset of Cypher</strong> into SPARQL so LPG
+folks can ask familiar <code>MATCH … RETURN</code> questions; see
+<a href="compatibility.html">Compatibility &amp; interop</a>.</p>
+<h2>The standards, plainly</h2>
+<p>The RDF world is a stack of standards, each answering a different <em>kind</em> of
+question. Here's the whole map on one page — and what <code>rete</code> does with each.</p>
+<table><thead><tr><th>Standard</th><th>What it's for</th><th>A question it helps answer</th><th>In <code>rete</code>?</th></tr></thead><tbody>
+<tr><td><strong>RDF</strong></td><td>The data model: triples/quads</td><td>"What facts do I have?"</td><td>✅ core — it's RDF</td></tr>
+<tr><td><strong>RDFS</strong></td><td>Lightweight schema: class/property hierarchies</td><td>"If <code>Dog</code> is a <code>subClassOf Animal</code>, is Rex an Animal?"</td><td>✅ via <a href="reasoning.html"><code>rete reason</code></a></td></tr>
+<tr><td><strong>OWL</strong></td><td>Rich schema + meaning: disjointness, identity, transitivity</td><td>"Are these two facts logically <em>contradictory</em>?"</td><td>⚠️ prototype OWL <strong>RL</strong> subset, not full OWL DL — <a href="reasoning.html">reasoning</a></td></tr>
+<tr><td><strong>SPARQL</strong></td><td>The query language for RDF</td><td>"Find everyone Alice transitively knows."</td><td>✅ <a href="sparql.html">SPARQL support</a></td></tr>
+<tr><td><strong>SHACL / ShEx</strong></td><td>Shapes/validation: does data match a required shape?</td><td>"Does every <code>Person</code> have exactly one email?"</td><td>❌ not yet (see <a href="compatibility.html">compatibility</a>)</td></tr>
+<tr><td><strong>N-Triples / N-Quads</strong></td><td>Plainest serialization (one statement per line)</td><td>"How do I hand my triples to a tool, losslessly?"</td><td>✅ build input + N-Quads export</td></tr>
+<tr><td><strong>Turtle</strong></td><td>Human-friendly RDF text format</td><td>"Can I read/write this by hand?"</td><td>✅ build input + export (default graph)</td></tr>
+<tr><td><strong>JSON-LD</strong></td><td>RDF as JSON, for web APIs</td><td>"Can I consume this in a JS app?"</td><td>✅ expanded JSON-LD export (default graph)</td></tr>
+<tr><td><strong>Cypher / GQL</strong></td><td>The property-graph query language(s)</td><td>"<code>MATCH (a)-[:KNOWS]-&gt;(b) RETURN b</code>"</td><td>⚠️ read-only Cypher <em>subset</em>, translated to SPARQL — <a href="compatibility.html">compatibility</a></td></tr>
+</tbody></table>
+<p>Two honest caveats up front: there's <strong>no SHACL/ShEx</strong> shape validation yet (you
+can do <em>syntactic</em> and <em>logical</em> coherence checks instead — see below), and the
+reasoner is a <strong>documented OWL RL subset</strong>, not a full OWL DL engine. <code>rete</code> also
+has no SPARQL Update / writes — a <code>.rete</code> file is immutable by design.</p>
+<h2>What kinds of questions can you actually ask <code>rete</code>?</h2>
+<p>This is the heart of it. Below: a plain-English question → the kind of query it
+is → the concrete <code>rete</code> command. (Examples use the bundled dependency graph,
+<code>examples/deps.nt</code>; build it once with <code>rete build examples/deps.nt -o deps.rete</code>.)</p>
+<table><thead><tr><th>You want to ask…</th><th>Kind of query</th><th>Command</th></tr></thead><tbody>
+<tr><td>"What facts have this predicate?" (a point lookup)</td><td>Triple pattern</td><td><code>rete query</code></td></tr>
+<tr><td>"Find a 2-hop chain / a join across edges"</td><td>Basic Graph Pattern (BGP)</td><td><code>rete bgp</code></td></tr>
+<tr><td>"What transitively depends on / reaches X?"</td><td>Property path (<code>+</code>/<code>*</code>)</td><td><code>rete sparql</code></td></tr>
+<tr><td>"How many edges per node? Top-N by count?"</td><td>Aggregation (<code>GROUP BY</code>)</td><td><code>rete sparql</code></td></tr>
+<tr><td>"What <em>kinds</em> of things exist and how do they relate?"</td><td>Schema / class summary</td><td><code>rete schema</code></td></tr>
+<tr><td>"Give me the big picture first, cheaply"</td><td>Pyramid overview</td><td><code>rete summary</code></td></tr>
+<tr><td>"Is my data logically <em>coherent</em>?"</td><td>Reasoning / coherence</td><td><code>rete reason</code></td></tr>
+</tbody></table>
+<p>A few of these spelled out:</p>
+<p><strong>Fact lookup</strong> — match a single triple pattern; omitted positions are wildcards:</p>
+<pre><code class="language-sh">rete query deps.rete --predicate '&lt;http://ex/hasVulnerability&gt;'
+</code></pre>
+<p><strong>Join (BGP)</strong> — chain triple patterns sharing a variable (here, a 2-hop path):</p>
+<pre><code class="language-sh">rete bgp deps.rete "?x &lt;http://ex/dependsOn&gt; ?y . ?y &lt;http://ex/dependsOn&gt; ?z"
+</code></pre>
+<p><strong>Reachability / transitive</strong> — the question tables can't answer. The <code>+</code> is a
+<em>property path</em>: follow <code>dependsOn</code> one-or-more times.</p>
+<pre><code class="language-sh">rete sparql deps.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
+</code></pre>
+<p><strong>Aggregation / counting</strong> — group and count, e.g. each package's out-degree:</p>
+<pre><code class="language-sh">rete sparql deps.rete \
+  "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?d) AS ?deps) WHERE { ?p e:dependsOn ?d } GROUP BY ?p ORDER BY DESC(?deps)"
+</code></pre>
+<p><strong>"What kinds of things, and how do they relate?"</strong> — the dataset's effective
+schema (classes by <code>rdf:type</code>, plus the class→predicate→class relations), without
+reading the triple index:</p>
+<pre><code class="language-sh">rete schema deps.rete
+</code></pre>
+<p><strong>"Give me the big picture first."</strong> <code>rete</code> stores a <strong>pyramid</strong>: a coarse
+community summary at the top, drilling down to full triples at the base. You read
+the overview first (a few small byte ranges) and zoom in only where a query needs
+it — overview-first, like map tiles for graphs.</p>
+<img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
+<pre><code class="language-sh">rete summary deps.rete   # structural overview (Louvain community quotient graph)
+</code></pre>
+<p><strong>"Is my data coherent?"</strong> — not "is it well-formed" but "does it logically
+contradict itself?" The prototype OWL RL / RDFS reasoner materializes entailments
+(e.g. subclass and transitive-property closures) and flags <strong>incoherent points</strong>
+like an individual typed as two <code>owl:disjointWith</code> classes. It exits non-zero on
+incoherence, so it doubles as a CI gate.</p>
+<pre><code class="language-sh">rete reason deps.rete
+</code></pre>
+<p>(Want plain "is this file valid RDF / not corrupt?" instead? That's <code>rete validate</code> on the source and <code>rete verify</code> on the built file — see
+<a href="compatibility.html">compatibility</a>.)</p>
+<h2>Where <code>rete</code> fits</h2>
+<p><code>rete</code> is a <strong>format + query</strong> layer for RDF that you can drop on a plain URL: no
+database server, no query endpoint. Publish one immutable <code>.rete</code> file to S3, a
+CDN, or a GitHub raw URL, and clients answer the questions above by fetching only
+the byte ranges each query needs — overview (the pyramid) first, detail on
+demand. The model is standard RDF; the queries are standard SPARQL.</p>
+<p>Ready to ask your own questions?</p>
+<ul>
+<li><strong><a href="getting-started.html">Getting started</a></strong> — install, build a file, run a query.</li>
+<li><strong><a href="scenario.html">Real-world scenario</a></strong> — publish a queryable SBOM to a URL and
+answer "what does this CVE impact?" over plain HTTP.</li>
+</ul>
+
+    </article>
+    <footer>Generated from <code>docs/intro.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+</body>
+</html>

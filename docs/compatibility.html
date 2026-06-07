@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Compatibility & interop · rete docs</title>
+  <style>
+:root { --fg:#1b1f24; --muted:#5b6570; --bg:#ffffff; --side:#0f1620; --side-fg:#c9d4e0;
+        --accent:#2a6df4; --border:#e4e8ec; --code-bg:#f5f7f9; }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       color:var(--fg); background:var(--bg); display:flex; }
+code,pre,.mono { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; }
+
+.sidebar { width:250px; min-height:100vh; background:var(--side); color:var(--side-fg);
+           padding:1.6rem 1.2rem; position:sticky; top:0; flex:0 0 250px; }
+.sidebar .brand { color:#fff; font-size:1.5rem; font-weight:700; text-decoration:none; letter-spacing:.5px; }
+.sidebar .tagline { color:#8595a6; font-size:.8rem; margin:.3rem 0 1.4rem; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.15rem 0; }
+.sidebar a { color:var(--side-fg); text-decoration:none; display:block; padding:.4rem .6rem;
+             border-radius:6px; font-size:.95rem; }
+.sidebar a:hover { background:rgba(255,255,255,.07); color:#fff; }
+.sidebar a.active { background:var(--accent); color:#fff; font-weight:600; }
+.sidebar .foot { margin-top:1.5rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; color:#8595a6; }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.content { max-width:820px; padding:2.4rem 3rem; width:100%; }
+footer { max-width:820px; padding:1rem 3rem 3rem; color:var(--muted); font-size:.85rem; }
+
+.content h1 { font-size:2.1rem; margin:.2rem 0 1rem; line-height:1.2; }
+.content h2 { font-size:1.5rem; margin:2.2rem 0 .8rem; padding-bottom:.3rem; border-bottom:1px solid var(--border); }
+.content h3 { font-size:1.2rem; margin:1.6rem 0 .6rem; }
+.content a { color:var(--accent); text-decoration:none; }
+.content a:hover { text-decoration:underline; }
+.content p,.content li { color:var(--fg); }
+.content code { background:var(--code-bg); padding:.12em .4em; border-radius:4px; font-size:.88em; }
+.content pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+               padding:1rem 1.1rem; overflow:auto; line-height:1.5; }
+.content pre code { background:none; padding:0; font-size:.85rem; }
+.content blockquote { margin:1rem 0; padding:.4rem 1rem; border-left:4px solid var(--accent);
+                      background:#f3f7ff; color:#33415a; border-radius:0 6px 6px 0; }
+.content table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+.content th,.content td { border:1px solid var(--border); padding:.45rem .7rem; text-align:left; }
+.content th { background:var(--code-bg); }
+.content tr:nth-child(even) td { background:#fafbfc; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+
+@media (max-width:780px) {
+  body { flex-direction:column; }
+  .sidebar { width:100%; flex-basis:auto; min-height:auto; position:static; }
+  .content,footer { padding-left:1.2rem; padding-right:1.2rem; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <ul>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="compatibility.html" class="active">Compatibility & interop</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/carlosvivarrios/rete">GitHub</a></p>
+  </nav>
+  <main>
+    <article class="content">
+<h1>Compatibility, validation &amp; interop</h1>
+<h2>Is it compatible with RDF?</h2>
+<p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
+format <em>for</em> RDF, built on the standard Rust RDF stack
+(<a href="https://crates.io/crates/oxrdf"><code>oxrdf</code></a>,
+<a href="https://crates.io/crates/oxttl"><code>oxttl</code></a>,
+<a href="https://crates.io/crates/spargebra"><code>spargebra</code></a>).</p>
+<p>It implements the RDF 1.1 data model:</p>
+<table><thead><tr><th>RDF concept</th><th>Support</th></tr></thead><tbody>
+<tr><td>IRIs</td><td>✅</td></tr>
+<tr><td>Literals (plain)</td><td>✅</td></tr>
+<tr><td>Typed literals (<code>"30"^^xsd:integer</code>)</td><td>✅ — datatype preserved</td></tr>
+<tr><td>Language-tagged literals (<code>"hi"@en</code>)</td><td>✅ — tag preserved</td></tr>
+<tr><td>Blank nodes</td><td>✅ (as terms; non-distinguished variables in patterns)</td></tr>
+<tr><td>Named graphs / RDF datasets</td><td>✅ — N-Quads in, <code>GRAPH</code>/<code>FROM</code>/<code>FROM NAMED</code> in SPARQL</td></tr>
+<tr><td>SPARQL 1.1 query</td><td>✅ — see <a href="sparql.html">SPARQL support</a></td></tr>
+</tbody></table>
+<p><strong>Input formats:</strong> N-Triples (<code>.nt</code>), N-Quads (<code>.nq</code>), Turtle (<code>.ttl</code>).
+<strong>Output:</strong> N-Quads (<code>rete export</code>, lossless round-trip), Turtle and expanded
+JSON-LD (<code>rete export --format ttl|jsonld</code>, default graph only), and SPARQL
+Results JSON (<code>rete sparql --json</code>).</p>
+<p><strong>Interop in practice:</strong> anything that emits N-Triples/N-Quads/Turtle can feed
+<code>rete build</code>, and <code>rete export</code> round-trips back to N-Quads for any other RDF
+tool. So <code>rete</code> slots in as a <em>publishing + query</em> layer next to your existing RDF
+pipeline.</p>
+<p><strong>Current limits (not RDF-incompatible, just unimplemented):</strong> no RDF-star
+(quoted triples), and there is no SPARQL Update (the file is immutable by
+design). Turtle/JSON-LD export covers the default graph only (use N-Quads export
+for named graphs).</p>
+<h2>Validation</h2>
+<p>There are three independent ways to check correctness:</p>
+<ol>
+<li>
+<p><strong>Syntactic — <code>rete validate</code>.</strong> Parses N-Triples/N-Quads/Turtle without
+building, and fails with a precise line/column error on malformed input:</p>
+<pre><code class="language-sh">rete validate data.ttl
+#  valid: 4210 statement(s) — 4180 in the default graph, 2 named graph(s)
+rete validate broken.ttl
+#  Error: broken.ttl: Parser error at line 12 ... not a valid subject
+</code></pre>
+<p><code>rete build</code> runs the same parse, so a successful build is also a validation.</p>
+</li>
+<li>
+<p><strong>Integrity — <code>rete verify</code>.</strong> Recomputes the blake3 content hash and compares
+it to the header, detecting any corruption or truncation of a <code>.rete</code> file.</p>
+</li>
+<li>
+<p><strong>Round-trip — <code>rete export</code>.</strong> Dumps back to N-Quads; diff against the source
+(or re-validate the output) to confirm nothing was lost.</p>
+</li>
+<li>
+<p><strong>Logical coherence — <code>rete reason</code>.</strong> A prototype OWL RL / RDFS reasoner
+materializes RDFS/OWL entailments and flags <em>incoherent points</em> — logical
+contradictions such as disjoint-class violations, <code>sameAs</code>/<code>differentFrom</code>
+clashes, functional-property conflicts, and <code>owl:Nothing</code> membership. It exits
+non-zero on incoherence, so it doubles as a CI coherence gate. See
+<a href="reasoning.html">Reasoning &amp; coherence</a> for the full rule set and scope (it is a
+documented subset, not full OWL DL).</p>
+<pre><code class="language-sh">rete reason data.rete
+#  inferred 9 new triple(s)
+#  1 inconsistency(ies) found:
+#    [disjoint-classes] &lt;http://ex/p&gt; is typed as both … owl:disjointWith
+</code></pre>
+</li>
+</ol>
+<p><strong>Not yet available:</strong> <em>semantic</em> validation against a schema/shape
+(SHACL / ShEx). That's a natural future addition — the SPARQL engine already has
+the primitives a shape checker needs, and <code>rete reason</code> already does rule-based
+OWL RL coherence checking.</p>
+<h2>Could it speak Cypher too?</h2>
+<p>Short answer: <strong>not today, and it's a different data model — but a useful subset
+could be translated to SPARQL.</strong> Here's the honest picture.</p>
+<p>Cypher targets the <strong>labeled property graph (LPG)</strong> model (Neo4j): nodes and
+relationships both carry a label and arbitrary key/value <em>properties</em>. RDF is a
+<strong>triple</strong> model: everything is <code>(subject, predicate, object)</code>. They overlap a
+lot, but not perfectly:</p>
+<table><thead><tr><th>Cypher (LPG)</th><th>RDF / SPARQL equivalent</th></tr></thead><tbody>
+<tr><td><code>(a:Person)</code> (node label)</td><td><code>?a rdf:type ex:Person</code></td></tr>
+<tr><td><code>(a)-[:KNOWS]-&gt;(b)</code></td><td><code>?a ex:knows ?b</code> (a triple / BGP)</td></tr>
+<tr><td><code>(a)-[:KNOWS*]-&gt;(b)</code> (var-length)</td><td><code>?a ex:knows+ ?b</code> (property path)</td></tr>
+<tr><td>node property <code>a.age</code></td><td><code>?a ex:age ?age</code> (triple with a literal)</td></tr>
+<tr><td><strong>relationship property</strong> <code>[:KNOWS {since: 2020}]</code></td><td>no direct triple — needs reification or RDF-star</td></tr>
+<tr><td><code>RETURN</code>, <code>WHERE</code>, <code>LIMIT</code></td><td><code>SELECT</code>, <code>FILTER</code>, <code>LIMIT</code></td></tr>
+</tbody></table>
+<p>So a <strong>"loose Cypher"</strong> front-end — read-only <code>MATCH … WHERE … RETURN</code>, including
+variable-length relationships — maps cleanly onto the BGP + property-path + filter
+machinery this engine already has. The genuine gaps are LPG features with no plain
+RDF triple: <strong>relationship properties</strong>, and the distinction between a node label
+and a node property. Those need a modeling convention (reification, or RDF-star
+once supported).</p>
+<p>What this is <em>not</em>: full openCypher (no writes/<code>CREATE</code>/<code>MERGE</code>, no <code>APOC</code>,
+no stored procedures) — the file is immutable and server-less by design.</p>
+<p><strong>Status: available as a prototype</strong> via <code>rete cypher</code>. It is a translation
+layer, not a second engine: a small Cypher subset is parsed into an AST, emitted
+as an equivalent SPARQL <code>SELECT</code> string, and evaluated by the existing SPARQL
+engine — so it reuses the same BGP/join, property-path, and <code>FILTER</code> machinery.</p>
+<h3>Supported subset (read-only)</h3>
+<pre><code class="language-text">query      := MATCH patterns [WHERE conditions] RETURN items [LIMIT n]
+patterns   := pattern ("," pattern)*
+pattern    := node (rel node)*
+node       := "(" [var] [":" Label] ")"
+rel        := "-" "[" ":" REL ["*"] "]" "-&gt;"      (forward)
+            | "&lt;-" "[" ":" REL ["*"] "]" "-"      (reverse)
+conditions := condition (("AND" | "OR") condition)*
+condition  := var "." prop  OP  value             (property comparison)
+            | var          "=" value              (node identity)
+OP         := "=" | "&lt;&gt;" | "!=" | "&lt;" | "&lt;=" | "&gt;" | "&gt;="
+value      := number | "string" | &lt;iri&gt;
+items      := item ("," item)*
+item       := var | var "." prop
+</code></pre>
+<p>Variable-length <code>-[:REL*]-&gt;</code> lowers to the SPARQL property path <code>REL+</code>
+(<strong>one-or-more</strong>) for the prototype; bounded forms (<code>*N..M</code>) are not supported.</p>
+<h3>Name → IRI convention</h3>
+<p>A bare label/relationship/property name <code>X</code> maps to <code>&lt;BASE + X&gt;</code>, where <code>BASE</code>
+defaults to <code>http://ex/</code> and is overridable with <code>--base</code>. With the default base:</p>
+<table><thead><tr><th>Cypher</th><th>Emitted SPARQL</th></tr></thead><tbody>
+<tr><td><code>(a:Library)</code></td><td><code>?a a &lt;http://ex/Library&gt;</code></td></tr>
+<tr><td><code>-[:dependsOn]-&gt;</code></td><td>predicate <code>&lt;http://ex/dependsOn&gt;</code></td></tr>
+<tr><td><code>a.name</code></td><td><code>?a &lt;http://ex/name&gt; ?a_name</code></td></tr>
+<tr><td><code>(a)-[:dependsOn*]-&gt;(b)</code></td><td><code>?a &lt;http://ex/dependsOn&gt;+ ?b</code></td></tr>
+</tbody></table>
+<h3>Out of scope (rejected with a clear error, never a panic)</h3>
+<p>Writes (<code>CREATE</code> / <code>MERGE</code> / <code>SET</code> / <code>DELETE</code>), <code>OPTIONAL MATCH</code>, <code>WITH</code>,
+aggregations, <code>RETURN *</code>, relationship variables/properties
+(<code>[r:REL {since: 2020}]</code>), and multiple labels per node. These genuinely depend
+on LPG features (relationship properties) or write/aggregation semantics outside
+this prototype's scope.</p>
+<h3>Worked example</h3>
+<p>Against the bundled <code>examples/deps.nt</code> dependency graph:</p>
+<pre><code class="language-sh">rete build examples/deps.nt -o deps.rete
+
+# Which packages transitively depend on the vulnerable log4x?
+rete cypher deps.rete \
+  "MATCH (a)-[:dependsOn*]-&gt;(b) WHERE b = &lt;http://ex/log4x&gt; RETURN a"
+# ?a=&lt;http://ex/app&gt;
+# ?a=&lt;http://ex/web&gt;
+# ?a=&lt;http://ex/auth&gt;
+# ?a=&lt;http://ex/logging&gt;
+</code></pre>
+<p>That query is translated to
+<code>SELECT ?a WHERE { ?a &lt;http://ex/dependsOn&gt;+ ?b . FILTER(?b = &lt;http://ex/log4x&gt;) }</code>
+and evaluated by the SPARQL engine's property-path machinery.</p>
+
+    </article>
+    <footer>Generated from <code>docs/compatibility.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+</body>
+</html>

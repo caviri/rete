@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reasoning & coherence · rete docs</title>
+  <style>
+:root { --fg:#1b1f24; --muted:#5b6570; --bg:#ffffff; --side:#0f1620; --side-fg:#c9d4e0;
+        --accent:#2a6df4; --border:#e4e8ec; --code-bg:#f5f7f9; }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       color:var(--fg); background:var(--bg); display:flex; }
+code,pre,.mono { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; }
+
+.sidebar { width:250px; min-height:100vh; background:var(--side); color:var(--side-fg);
+           padding:1.6rem 1.2rem; position:sticky; top:0; flex:0 0 250px; }
+.sidebar .brand { color:#fff; font-size:1.5rem; font-weight:700; text-decoration:none; letter-spacing:.5px; }
+.sidebar .tagline { color:#8595a6; font-size:.8rem; margin:.3rem 0 1.4rem; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.15rem 0; }
+.sidebar a { color:var(--side-fg); text-decoration:none; display:block; padding:.4rem .6rem;
+             border-radius:6px; font-size:.95rem; }
+.sidebar a:hover { background:rgba(255,255,255,.07); color:#fff; }
+.sidebar a.active { background:var(--accent); color:#fff; font-weight:600; }
+.sidebar .foot { margin-top:1.5rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; color:#8595a6; }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.content { max-width:820px; padding:2.4rem 3rem; width:100%; }
+footer { max-width:820px; padding:1rem 3rem 3rem; color:var(--muted); font-size:.85rem; }
+
+.content h1 { font-size:2.1rem; margin:.2rem 0 1rem; line-height:1.2; }
+.content h2 { font-size:1.5rem; margin:2.2rem 0 .8rem; padding-bottom:.3rem; border-bottom:1px solid var(--border); }
+.content h3 { font-size:1.2rem; margin:1.6rem 0 .6rem; }
+.content a { color:var(--accent); text-decoration:none; }
+.content a:hover { text-decoration:underline; }
+.content p,.content li { color:var(--fg); }
+.content code { background:var(--code-bg); padding:.12em .4em; border-radius:4px; font-size:.88em; }
+.content pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+               padding:1rem 1.1rem; overflow:auto; line-height:1.5; }
+.content pre code { background:none; padding:0; font-size:.85rem; }
+.content blockquote { margin:1rem 0; padding:.4rem 1rem; border-left:4px solid var(--accent);
+                      background:#f3f7ff; color:#33415a; border-radius:0 6px 6px 0; }
+.content table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+.content th,.content td { border:1px solid var(--border); padding:.45rem .7rem; text-align:left; }
+.content th { background:var(--code-bg); }
+.content tr:nth-child(even) td { background:#fafbfc; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+
+@media (max-width:780px) {
+  body { flex-direction:column; }
+  .sidebar { width:100%; flex-basis:auto; min-height:auto; position:static; }
+  .content,footer { padding-left:1.2rem; padding-right:1.2rem; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <ul>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="reasoning.html" class="active">Reasoning & coherence</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/carlosvivarrios/rete">GitHub</a></p>
+  </nav>
+  <main>
+    <article class="content">
+<h1>Reasoning &amp; coherence checking</h1>
+<p><code>rete reason</code> runs a <strong>prototype forward-chaining OWL RL / RDFS reasoner</strong> over a
+file's default graph: it materializes the obvious RDFS/OWL entailments to a
+fixpoint, then scans the closed graph for <strong>incoherent points</strong> — logical
+contradictions such as an individual that belongs to two disjoint classes.</p>
+<blockquote>
+<p><strong>OWL RL in one paragraph.</strong> OWL (the Web Ontology Language) lets you state
+<em>schema</em> axioms about your data — class hierarchies, property characteristics,
+disjointness, identity. A <em>reasoner</em> draws the logical consequences (e.g. "if
+<code>:a causes :b</code> and causation is transitive, then <code>:a causes :c</code>") and detects
+contradictions. OWL RL is the rule-based profile of OWL designed exactly for
+forward-chaining materialization over triples, which is what this implements.</p>
+</blockquote>
+<blockquote>
+<p><strong>Scope — this is a prototype subset, NOT full OWL DL.</strong> It covers the rules in
+the tables below by exact-string matching on canonical N-Triples tokens. It does
+not do equality reasoning beyond the checks listed, class expressions
+(<code>owl:Restriction</code>, intersections/unions), cardinality, datatype reasoning, or
+open-world consistency in the OWL DL sense. Use it as a lightweight coherence
+gate, not a certified entailment regime.</p>
+</blockquote>
+<h2>Usage</h2>
+<pre><code class="language-sh">rete reason data.rete                       # report entailment count + incoherent points
+rete reason data.rete --materialize          # also print base + inferred graph (N-Quads)
+rete reason data.rete --materialize --format ttl
+</code></pre>
+<p><code>rete reason</code> <strong>exits non-zero when any inconsistency is found</strong>, and zero when
+the graph is coherent — so it drops straight into CI as a coherence check.</p>
+<h2>Entailment rules (materialized to a fixpoint)</h2>
+<table><thead><tr><th>Rule</th><th>If the graph contains…</th><th>…then entail</th></tr></thead><tbody>
+<tr><td>subClassOf transitivity</td><td><code>c rdfs:subClassOf d</code> · <code>d rdfs:subClassOf e</code></td><td><code>c rdfs:subClassOf e</code></td></tr>
+<tr><td>type propagation</td><td><code>x a c</code> · <code>c rdfs:subClassOf d</code></td><td><code>x a d</code></td></tr>
+<tr><td>subPropertyOf</td><td><code>p rdfs:subPropertyOf q</code> · <code>x p y</code></td><td><code>x q y</code></td></tr>
+<tr><td>subPropertyOf transitivity</td><td><code>p rdfs:subPropertyOf q</code> · <code>q rdfs:subPropertyOf r</code></td><td><code>p rdfs:subPropertyOf r</code></td></tr>
+<tr><td>domain</td><td><code>p rdfs:domain c</code> · <code>x p y</code></td><td><code>x a c</code></td></tr>
+<tr><td>range</td><td><code>p rdfs:range c</code> · <code>x p y</code></td><td><code>y a c</code></td></tr>
+<tr><td>inverseOf</td><td><code>p owl:inverseOf q</code> · <code>x p y</code></td><td><code>y q x</code> (and the reverse direction)</td></tr>
+<tr><td>SymmetricProperty</td><td><code>p a owl:SymmetricProperty</code> · <code>x p y</code></td><td><code>y p x</code></td></tr>
+<tr><td>TransitiveProperty</td><td><code>p a owl:TransitiveProperty</code> · <code>x p y</code> · <code>y p z</code></td><td><code>x p z</code></td></tr>
+</tbody></table>
+<h2>Inconsistency rules (the incoherent points)</h2>
+<p>Detection runs <strong>after</strong> materialization, so entailed types count — a
+disjointness violation that only shows up once <code>rdfs:subClassOf</code> has propagated is
+still caught.</p>
+<table><thead><tr><th><code>kind</code></th><th>Triggered by</th></tr></thead><tbody>
+<tr><td><code>disjoint-classes</code></td><td><code>x a c</code> · <code>x a d</code> · <code>c owl:disjointWith d</code> (either direction)</td></tr>
+<tr><td><code>sameas-differentfrom</code></td><td><code>x owl:sameAs y</code> · <code>x owl:differentFrom y</code> (either direction)</td></tr>
+<tr><td><code>functional-property</code></td><td><code>p a owl:FunctionalProperty</code> · <code>x p y</code> · <code>x p z</code> · <code>y ≠ z</code> (and not <code>y owl:sameAs z</code>)</td></tr>
+<tr><td><code>owl-nothing</code></td><td><code>x a owl:Nothing</code></td></tr>
+</tbody></table>
+<h2>Worked example: a causal model</h2>
+<p><code>examples/causal.nt</code> is a small causal graph. It carries (1) a causal <strong>cycle</strong>
+<code>a → b → c → a</code>, and (2) an <strong>incoherent point</strong>: a patient <code>:p</code> typed as both
+<code>HealthyState</code> and <code>DiseaseState</code>, which are declared <code>owl:disjointWith</code>.</p>
+<p>The two kinds of problem are found by two complementary tools:</p>
+<p><strong>A causal cycle</strong> is a <em>structural</em> fact about the data — find it with a SPARQL
+property path:</p>
+<pre><code class="language-sh">rete sparql causal.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?x WHERE { ?x e:causes+ ?x }"
+#  ?x=&lt;http://ex/a&gt;
+#  ?x=&lt;http://ex/b&gt;
+#  ?x=&lt;http://ex/c&gt;
+</code></pre>
+<p><strong>A disjointness (or functional-property) violation</strong> is a <em>logical</em>
+contradiction — find it with <code>rete reason</code>:</p>
+<pre><code class="language-sh">rete build examples/causal.nt -o causal.rete
+rete reason causal.rete
+#  inferred 9 new triple(s)
+#  1 inconsistency(ies) found:
+#    [disjoint-classes] &lt;http://ex/p&gt; is typed as both &lt;http://ex/DiseaseState&gt; and &lt;http://ex/HealthyState&gt;, which are owl:disjointWith
+#  Error: 1 inconsistency(ies) — graph is incoherent   (exit code 1)
+</code></pre>
+<p>The entailment count (9) reflects the materialized <code>subClassOf</code> chain
+(<code>Disease ⊑ Condition ⊑ Factor</code>) and the transitive <code>:causes</code> closure
+(<code>a causes c</code>, etc.). Because the graph is incoherent, the command exits non-zero.</p>
+
+    </article>
+    <footer>Generated from <code>docs/reasoning.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+</body>
+</html>

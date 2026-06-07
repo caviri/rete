@@ -1,0 +1,7 @@
+# An RDF dataset: default graph + two named graphs (N-Quads).
+<http://ex/Alice> <http://ex/name> "Alice" .
+<http://ex/Bob> <http://ex/name> "Bob" .
+<http://ex/Alice> <http://ex/knows> <http://ex/Bob> <http://ex/social> .
+<http://ex/Bob> <http://ex/knows> <http://ex/Carol> <http://ex/social> .
+<http://ex/Alice> <http://ex/age> "30" <http://ex/profile> .
+<http://ex/Bob> <http://ex/age> "25" <http://ex/profile> .

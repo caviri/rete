@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Overview · rete docs</title>
+  <style>
+:root { --fg:#1b1f24; --muted:#5b6570; --bg:#ffffff; --side:#0f1620; --side-fg:#c9d4e0;
+        --accent:#2a6df4; --border:#e4e8ec; --code-bg:#f5f7f9; }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       color:var(--fg); background:var(--bg); display:flex; }
+code,pre,.mono { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; }
+
+.sidebar { width:250px; min-height:100vh; background:var(--side); color:var(--side-fg);
+           padding:1.6rem 1.2rem; position:sticky; top:0; flex:0 0 250px; }
+.sidebar .brand { color:#fff; font-size:1.5rem; font-weight:700; text-decoration:none; letter-spacing:.5px; }
+.sidebar .tagline { color:#8595a6; font-size:.8rem; margin:.3rem 0 1.4rem; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.15rem 0; }
+.sidebar a { color:var(--side-fg); text-decoration:none; display:block; padding:.4rem .6rem;
+             border-radius:6px; font-size:.95rem; }
+.sidebar a:hover { background:rgba(255,255,255,.07); color:#fff; }
+.sidebar a.active { background:var(--accent); color:#fff; font-weight:600; }
+.sidebar .foot { margin-top:1.5rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; color:#8595a6; }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.content { max-width:820px; padding:2.4rem 3rem; width:100%; }
+footer { max-width:820px; padding:1rem 3rem 3rem; color:var(--muted); font-size:.85rem; }
+
+.content h1 { font-size:2.1rem; margin:.2rem 0 1rem; line-height:1.2; }
+.content h2 { font-size:1.5rem; margin:2.2rem 0 .8rem; padding-bottom:.3rem; border-bottom:1px solid var(--border); }
+.content h3 { font-size:1.2rem; margin:1.6rem 0 .6rem; }
+.content a { color:var(--accent); text-decoration:none; }
+.content a:hover { text-decoration:underline; }
+.content p,.content li { color:var(--fg); }
+.content code { background:var(--code-bg); padding:.12em .4em; border-radius:4px; font-size:.88em; }
+.content pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+               padding:1rem 1.1rem; overflow:auto; line-height:1.5; }
+.content pre code { background:none; padding:0; font-size:.85rem; }
+.content blockquote { margin:1rem 0; padding:.4rem 1rem; border-left:4px solid var(--accent);
+                      background:#f3f7ff; color:#33415a; border-radius:0 6px 6px 0; }
+.content table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+.content th,.content td { border:1px solid var(--border); padding:.45rem .7rem; text-align:left; }
+.content th { background:var(--code-bg); }
+.content tr:nth-child(even) td { background:#fafbfc; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+
+@media (max-width:780px) {
+  body { flex-direction:column; }
+  .sidebar { width:100%; flex-basis:auto; min-height:auto; position:static; }
+  .content,footer { padding-left:1.2rem; padding-right:1.2rem; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <ul>
+        <li><a href="index.html" class="active">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/carlosvivarrios/rete">GitHub</a></p>
+  </nav>
+  <main>
+    <article class="content">
+<h1>rete</h1>
+<p><strong>A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server.</strong></p>
+<p><code>rete</code> packs an RDF graph (or a full dataset of named graphs) into one immutable
+<code>.rete</code> file with its own dictionary, permutation indexes, and a pyramidal
+community summary. Drop the file on S3, GitHub, or any HTTP host that honors
+<code>Range</code> requests, hand a client the URL, and query it in place — fetching only
+the bytes a query needs. The same engine compiles to WebAssembly, so the browser
+queries the file directly with no backend.</p>
+<p>Think <strong>Parquet / SQLite-over-HTTP / PMTiles</strong>, but for RDF + SPARQL.</p>
+<img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
+<p><em>The pyramid: read a coarse summary first, then drill into detail only where a query needs it.</em></p>
+<h2>Why</h2>
+<ul>
+<li><strong>No database server.</strong> The file <em>is</em> the database. Publish once to static
+hosting; clients query by URL.</li>
+<li><strong>Bounded, progressive reads.</strong> A query touches a handful of byte ranges, never
+a linear scan. The coarse "overview" graph can be fetched first (≈25 % of a
+file, 3 ranges) before drilling into detail — PMTiles-style zoom, for graphs.</li>
+<li><strong>Real SPARQL.</strong> SELECT / ASK / CONSTRUCT / DESCRIBE over BGPs, joins, OPTIONAL,
+UNION, MINUS, FILTER, VALUES, property paths, GROUP BY / aggregates, and named
+graphs — evaluated against the file.</li>
+<li><strong>In the browser.</strong> <code>rete-wasm</code> runs the identical engine client-side; the demo
+page loads the overview over HTTP ranges and runs SPARQL with no server.</li>
+<li><strong>Safe on untrusted input.</strong> A truncated or corrupt file from an arbitrary URL
+yields an error, never a panic (fuzz-tested).</li>
+</ul>
+<h2>60-second tour</h2>
+<pre><code class="language-sh"># Build a file from N-Triples (or .nq / .ttl; merge several; or read stdin):
+rete build examples/social.nt -o social.rete
+
+# Query a triple pattern, a BGP, or full SPARQL:
+rete query  social.rete --predicate '&lt;http://ex/knows&gt;'
+rete sparql social.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p ?age WHERE { ?p e:age ?age . FILTER(?age &gt; 27) }"
+
+# Query straight from a URL — fetches only the byte ranges needed (http or https):
+rete query-url https://my-bucket.s3.amazonaws.com/social.rete --object '&lt;http://ex/Alice&gt;'
+
+# Look at the coarse graphs without reading the index:
+rete summary social.rete    # structural (Louvain communities)
+rete schema  social.rete    # semantic (by rdf:type)
+</code></pre>
+<h2>Documentation</h2>
+<ul>
+<li><strong><a href="intro.html">Graph data 101</a></strong> — new to graphs/RDF? A beginner's tour, framed by the questions you can ask.</li>
+<li><strong><a href="getting-started.html">Getting started</a></strong> — install (Docker-only), build, query, deploy.</li>
+<li><strong><a href="scenario.html">Real-world scenario</a></strong> — publish a queryable SBOM to a URL; curl examples.</li>
+<li><strong><a href="cli.html">CLI reference</a></strong> — every <code>rete</code> subcommand.</li>
+<li><strong><a href="sparql.html">SPARQL support</a></strong> — exactly what the engine evaluates.</li>
+<li><strong><a href="compatibility.html">Compatibility &amp; interop</a></strong> — RDF, validation, and Cypher.</li>
+<li><strong><a href="reasoning.html">Reasoning &amp; coherence</a></strong> — prototype OWL RL / RDFS reasoner; find incoherent points.</li>
+<li><strong><a href="topic-modeling.html">Topic modeling (LDA)</a></strong> — label each community's theme: <code>rete communities</code> + scikit-learn LDA.</li>
+<li><strong><a href="multi-criteria.html">Multi-criteria communities</a></strong> — partition the same graph by different relations/attributes; combine criteria.</li>
+<li><strong><a href="federation.html">Federated queries</a></strong> — query several <code>.rete</code> files (local paths and/or URLs) as one; union merge + predicate routing.</li>
+<li><strong><a href="browser.html">Browser / WASM</a></strong> — query in the browser; progressive loading.</li>
+<li><strong><a href="playground.html">Interactive playground</a></strong> — a static, no-server, runs-entirely-in-your-browser page: it embeds the WASM engine and the example datasets, so SELECT/ASK/CONSTRUCT, Table/Turtle/JSON-LD, the community view, reachability, and history all work offline (even from <code>file://</code>).</li>
+<li><strong><a href="SPEC.html">Format specification</a></strong> — the on-disk byte layout, for implementers.</li>
+<li><strong><a href="BENCHMARK.html">Benchmarks</a></strong> — size and latency on a 139 k-triple graph.</li>
+<li><strong><a href="parallel-browser.html">Parallel in the browser (experimental)</a></strong> — real WASM threads via <code>wasm-bindgen-rayon</code> (served, cross-origin-isolated).</li>
+</ul>
+<h2>Status</h2>
+<p>Experimental (v0). The format is not yet stable across versions. Everything is
+built and tested in Docker — see <a href="getting-started.html">Getting started</a>.</p>
+
+    </article>
+    <footer>Generated from <code>docs/index.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+</body>
+</html>

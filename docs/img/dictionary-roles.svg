@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
+  <title id="t">dictionary: four front-coded sections — shared, subjects, objects, predicates — with role-ordered IDs</title>
+  <rect width="720" height="360" fill="#ffffff"/>
+  <text x="360" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">Dictionary — four front-coded sections</text>
+  <text x="360" y="54" text-anchor="middle" font-size="12.5" fill="#5b6570">IDs are role-ordered so a term's position (subject / object / predicate) is known from its ID range.</text>
+
+  <!-- SHARED -->
+  <rect x="48" y="80" width="280" height="100" rx="8" fill="#2a6df4"/>
+  <text x="64" y="106" font-size="14" font-weight="700" fill="#ffffff">SHARED</text>
+  <text x="64" y="126" font-size="11.5" fill="#dce8ff">terms used as both subject &amp; object</text>
+  <text x="64" y="160" font-size="11.5" fill="#dce8ff">IDs 1..S — same id in S and O position</text>
+
+  <!-- SUBJECTS -->
+  <rect x="48" y="196" width="280" height="64" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
+  <text x="64" y="222" font-size="14" font-weight="700" fill="#1b3a8a">SUBJECTS-only</text>
+  <text x="64" y="242" font-size="11.5" fill="#3a5a9a">subject IDs continue S+1..</text>
+
+  <!-- OBJECTS -->
+  <rect x="392" y="196" width="280" height="64" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
+  <text x="408" y="222" font-size="14" font-weight="700" fill="#1b3a8a">OBJECTS-only</text>
+  <text x="408" y="242" font-size="11.5" fill="#3a5a9a">incl. literals · object IDs S+1..</text>
+
+  <!-- PREDICATES -->
+  <rect x="392" y="80" width="280" height="100" rx="8" fill="#0f1620"/>
+  <text x="408" y="106" font-size="14" font-weight="700" fill="#ffffff">PREDICATES</text>
+  <text x="408" y="126" font-size="11.5" fill="#c9d4e0">independent ID space</text>
+  <text x="408" y="160" font-size="11.5" fill="#c9d4e0">(graph IRIs live in NAMED GRAPHS)</text>
+
+  <!-- shared feeds both subjects and objects -->
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/>
+    </marker>
+  </defs>
+  <g stroke="#5b6570" stroke-width="1.5" fill="none">
+    <path d="M150,180 L150,192" marker-end="url(#a)"/>
+    <path d="M260,180 C320,188 440,188 470,192" marker-end="url(#a)"/>
+  </g>
+
+  <text x="360" y="300" text-anchor="middle" font-size="12.5" fill="#5b6570">Each section is sorted, deduped, front-coded, and restart-indexed for O(log n) term ↔ id lookup.</text>
+  <text x="360" y="320" text-anchor="middle" font-size="12.5" fill="#5b6570">Restart points double as range-fetch / compression boundaries.</text>
+</svg>

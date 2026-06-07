@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>rete — interactive WASM query playground</title>
+  <style>
+    body { font: 15px/1.55 system-ui, sans-serif; max-width: 920px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { margin-bottom: .2rem; }
+    .muted { color: #666; }
+    code, textarea, pre, .iri { font-family: ui-monospace, SFMono-Regular, monospace; }
+    textarea { width: 100%; height: 6.5rem; font-size: 13px; padding: .5rem; box-sizing: border-box; }
+    input { width: 100%; padding: .4rem; box-sizing: border-box; }
+    select { padding: .35rem; font-size: .9rem; }
+    button { padding: .45rem 1rem; font-size: .95rem; cursor: pointer; }
+    .ex-btn { padding: .3rem .7rem; font-size: 13px; margin: .15rem .2rem .15rem 0; }
+    pre { background: #f5f5f5; padding: 1rem; overflow: auto; max-height: 28rem; }
+    section { border: 1px solid #e3e3e3; border-radius: 8px; padding: 1rem 1.2rem; margin: 1.2rem 0; }
+    .overview { background: #fafbff; }
+    .chip { display: inline-block; background: #eef2ff; border: 1px solid #d4ddff; border-radius: 999px;
+            padding: .15rem .6rem; margin: .15rem .2rem; cursor: pointer; font-size: 13px; }
+    .chip:hover { background: #dde6ff; }
+    .rel { padding: .15rem 0; cursor: pointer; }
+    .rel:hover { background: #f0f4ff; }
+    .iri { color: #2a4b8d; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    th, td { border: 1px solid #e3e3e3; padding: .35rem .5rem; text-align: left; vertical-align: top; }
+    th { background: #f5f5f5; }
+    .count { color: #777; }
+    .err { color: #b00020; }
+    .row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin: .6rem 0; }
+    .row label { font-size: .9rem; }
+    .note { background: #fff7e6; border: 1px solid #ffe0a3; border-radius: 6px; padding: .5rem .8rem;
+            font-size: 13px; color: #7a5b00; margin: .6rem 0; }
+    .hist-item { padding: .4rem .5rem; border-bottom: 1px solid #eee; cursor: pointer; font-size: 13px; }
+    .hist-item:hover { background: #f0f4ff; }
+    .hist-meta { color: #888; font-size: 11px; }
+    .small { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>rete · interactive query playground</h1>
+  <p class="muted">
+    No database server. This page <code>fetch</code>es a single <code>.rete</code>
+    file and runs everything — dictionary, permutation indexes, SPARQL, zstd
+    decode — in WebAssembly. It shows the <strong>ontology overview first</strong>
+    (the semantic coarse graph), then lets you run SELECT / ASK / CONSTRUCT and
+    render the result as a table, Turtle, or JSON-LD.
+  </p>
+
+  <p>
+    <label>Dataset:
+      <select id="ds">
+        <option value="./typed.rete">typed.rete — People &amp; Orgs (ontology demo)</option>
+        <option value="./deps.rete">deps.rete — dependency graph (CVE impact demo)</option>
+        <option value="./papers.rete">papers.rete — citation graph (community demo)</option>
+      </select>
+    </label>
+    &nbsp;or a URL: <input id="url" value="./typed.rete" style="width:auto" />
+  </p>
+  <p>
+    <button id="load">Load</button>
+    <span id="meta" class="muted"></span>
+  </p>
+
+  <section class="overview" id="overviewBox" hidden>
+    <h3 style="margin-top:0">Overview — the coarse graph <span class="muted">(by <code>rdf:type</code>, no data scanned for detail)</span></h3>
+    <div><strong>Classes</strong> <span class="muted">— click to list instances</span><div id="classes"></div></div>
+    <div style="margin-top:.8rem"><strong>Relations</strong> <span class="muted">— click to see the actual triples</span><div id="relations"></div></div>
+  </section>
+
+  <section>
+    <h3 style="margin-top:0">Progressive load <span class="muted">— fetch the overview over HTTP ranges, skipping the index</span></h3>
+    <p class="muted">
+      Fetches only the header, dictionary, and pyramid summary via HTTP
+      <code>Range</code> requests — the (large) triple index is never downloaded.
+      Needs a range-capable host (the bundled <code>scripts/range_server.py</code> qualifies).
+    </p>
+    <p><button id="prog">Load overview only</button> <span id="progmeta" class="muted"></span></p>
+    <div id="progout"></div>
+  </section>
+
+  <section>
+    <h3 style="margin-top:0">Query <span class="muted">— SELECT / ASK / CONSTRUCT, runs entirely in your browser</span></h3>
+    <div id="examples" class="small"></div>
+    <textarea id="q">PREFIX ex: &lt;http://ex/&gt;
+SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
+    <div class="row">
+      <button id="run">Run</button>
+      <label>Output:
+        <select id="fmt">
+          <option value="table">Table</option>
+          <option value="jsonld">JSON-LD</option>
+          <option value="ttl">Turtle</option>
+        </select>
+      </label>
+      <label>Evaluation:
+        <select id="strategy">
+          <option value="whole">Whole graph</option>
+          <option value="community">Split by community</option>
+        </select>
+      </label>
+      <label id="roundWrap" hidden>Round:
+        <input id="round" type="number" min="0" style="width:4rem" placeholder="auto" />
+      </label>
+      <span id="qmeta" class="muted"></span>
+    </div>
+    <div id="out"></div>
+    <div id="commOut"></div>
+  </section>
+
+  <section>
+    <h3 style="margin-top:0">Reachability <span class="muted">— multi-source transitive reach over one relation, in your browser</span></h3>
+    <div id="reachExamples" class="small"></div>
+    <div class="row">
+      <label style="flex:1 1 16rem">Predicate:
+        <input id="reachPred" placeholder="&lt;http://ex/dependsOn&gt;" />
+      </label>
+      <label style="flex:1 1 16rem">Seeds <span class="muted">(IRI; comma-separated for several)</span>:
+        <input id="reachSeeds" placeholder="&lt;http://ex/app&gt;" />
+      </label>
+    </div>
+    <div class="row">
+      <button id="reachRun">Run reach</button>
+      <label><input type="checkbox" id="reachReverse" /> reverse (who reaches the seed?)</label>
+      <span id="reachMeta" class="muted"></span>
+    </div>
+    <div class="note">
+      The browser engine is single-threaded; reach runs <strong>serially</strong> here.
+      The native CLI's <code>rete reach --parallel</code> fans out one task per seed
+      (~14–15× on many cores) — see the
+      <a href="https://github.com/carlosvivarrios/rete/blob/main/docs/BENCHMARK.md">Benchmarks</a>.
+    </div>
+    <div id="reachOut"></div>
+  </section>
+
+  <section>
+    <h3 style="margin-top:0">History <span class="muted">— your last 20 runs (localStorage, this browser only)</span></h3>
+    <p><button id="clearHist" type="button">Clear history</button></p>
+    <div id="histList"><p class="muted small">No history yet.</p></div>
+  </section>
+
+  <script type="module">
+    import init, { info, schema, query, communities, reach, header_ranges, summary_overview }
+      from "./pkg/rete_wasm.js";
+
+    const $ = (id) => document.getElementById(id);
+    let bytes = null;
+
+    const shorten = (t) => t.startsWith("<") && t.endsWith(">") ? t.slice(1, -1) : t;
+    const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+    async function load(url) {
+      const buf = await (await fetch(url)).arrayBuffer();
+      bytes = new Uint8Array(buf);
+      const m = JSON.parse(info(bytes));
+      $("meta").textContent =
+        `${bytes.length} bytes · ${m.quads} quads · ${m.terms} terms · ${m.pyramidLevels} pyramid level(s)`;
+      renderOverview(JSON.parse(schema(bytes)));
+      renderExamples();
+      renderReachDefaults();
+      $("out").innerHTML = "";
+      $("commOut").innerHTML = "";
+      $("reachOut").innerHTML = "";
+      $("reachMeta").textContent = "";
+      $("qmeta").textContent = "";
+    }
+
+    function renderOverview({ classes, relations }) {
+      const box = $("overviewBox");
+      box.hidden = false;
+      $("classes").innerHTML = classes.length
+        ? classes.map(([cls, n]) =>
+            `<span class="chip" data-cls="${esc(cls)}"><span class="iri">${esc(shorten(cls))}</span> <span class="count">×${n}</span></span>`).join("")
+        : `<span class="muted">no rdf:type assertions — this graph is untyped</span>`;
+      $("relations").innerHTML = relations.map(([s, p, o, n]) =>
+        `<div class="rel" data-pred="${esc(p)}">` +
+        `<span class="iri">${esc(shorten(s))}</span> ──<span class="iri">${esc(shorten(p))}</span>──▶ ` +
+        `<span class="iri">${esc(shorten(o))}</span> <span class="count">×${n}</span></div>`).join("");
+
+      box.querySelectorAll(".chip").forEach((el) => el.onclick = () => {
+        const cls = el.dataset.cls;
+        setQuery(`SELECT ?instance WHERE { ?instance <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ${cls} }`, "table");
+      });
+      box.querySelectorAll(".rel").forEach((el) => el.onclick = () => {
+        const p = el.dataset.pred;
+        setQuery(`SELECT ?s ?o WHERE { ?s ${p} ?o } LIMIT 100`, "table");
+      });
+    }
+
+    function setQuery(q, fmt) {
+      $("q").value = q;
+      if (fmt) $("fmt").value = fmt;
+      runQuery();
+      $("q").scrollIntoView({ behavior: "smooth" });
+    }
+
+    function renderTable(vars, rows) {
+      if (!rows.length) return `<p class="muted">0 results.</p>`;
+      const cols = vars && vars.length ? vars : [...new Set(rows.flatMap((r) => Object.keys(r)))];
+      const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
+      const body = rows.map((r) =>
+        `<tr>${cols.map((c) => `<td>${esc(shorten(r[c] ?? ""))}</td>`).join("")}</tr>`).join("");
+      return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    }
+
+    function renderTriplesTable(triples) {
+      if (!triples.length) return `<p class="muted">0 triples.</p>`;
+      const body = triples.map(([s, p, o]) =>
+        `<tr><td>${esc(shorten(s))}</td><td>${esc(shorten(p))}</td><td>${esc(shorten(o))}</td></tr>`).join("");
+      return `<table><thead><tr><th>subject</th><th>predicate</th><th>object</th></tr></thead><tbody>${body}</tbody></table>`;
+    }
+
+    // Render a parsed result envelope from query(); returns a short summary string.
+    function renderResult(res, fmt) {
+      const out = $("out");
+      if (res.kind === "ask") {
+        out.innerHTML = `<p>ASK → <strong>${res.boolean}</strong></p>`;
+        return `ASK ${res.boolean}`;
+      }
+      if (res.kind === "select") {
+        if (fmt === "ttl" || fmt === "jsonld") {
+          out.innerHTML = `<div class="note">${fmt === "ttl" ? "Turtle" : "JSON-LD"} output applies to CONSTRUCT/DESCRIBE. ` +
+            `This is a SELECT, so showing the table instead.</div>` + renderTable(res.vars, res.rows);
+        } else {
+          out.innerHTML = renderTable(res.vars, res.rows);
+        }
+        return `${res.rows.length} row(s)`;
+      }
+      // construct
+      if (res.format === "ttl" || res.format === "jsonld") {
+        out.innerHTML = `<pre>${esc(res.text)}</pre>`;
+        return `CONSTRUCT (${res.format})`;
+      }
+      out.innerHTML = renderTriplesTable(res.triples || []);
+      return `${(res.triples || []).length} triple(s)`;
+    }
+
+    function runQuery() {
+      if (!bytes) { $("out").innerHTML = `<p class="err">Load a file first.</p>`; return; }
+      const q = $("q").value, fmt = $("fmt").value, strat = $("strategy").value;
+      $("commOut").innerHTML = "";
+      const t0 = performance.now();
+      try {
+        const res = JSON.parse(query(bytes, q, fmt));
+        const dt = performance.now() - t0;
+        const summary = renderResult(res, fmt);
+        $("qmeta").textContent = `${summary} · ${dt.toFixed(1)} ms`;
+        if (strat === "community") runCommunity();
+        saveHistory({ query: q, format: fmt, strategy: strat, dataset: $("url").value,
+          ts: Date.now(), resultSummary: summary });
+      } catch (e) {
+        $("qmeta").textContent = "";
+        $("out").innerHTML = `<p class="err">Error: ${esc(String(e))}</p>`;
+      }
+    }
+
+    // "Split by community" view: decompose the graph and show per-community size.
+    function runCommunity() {
+      const roundVal = $("round").value.trim();
+      const round = roundVal === "" ? undefined : Number(roundVal);
+      const t0 = performance.now();
+      let comms;
+      try {
+        comms = JSON.parse(communities(bytes, round));
+      } catch (e) {
+        $("commOut").innerHTML = `<p class="err">community error: ${esc(String(e))}</p>`;
+        return;
+      }
+      const dt = performance.now() - t0;
+      const rows = comms.map((c) =>
+        `<tr><td>C${c.community}</td><td>${c.size}</td><td>${c.triples}</td></tr>`).join("");
+      $("commOut").innerHTML =
+        `<div class="note"><strong>Evaluation: split by community.</strong> The browser engine is ` +
+        `single-threaded (WASM has no threads); this shows the community <em>decomposition</em>, not a ` +
+        `parallel speedup. Real parallel execution is the native <code>parallel</code> feature — ` +
+        `see the <a href="https://github.com/carlosvivarrios/rete/blob/main/docs/BENCHMARK.md">Benchmarks</a> page.</div>` +
+        `<p class="small muted">${comms.length} communities decomposed in ${dt.toFixed(1)} ms</p>` +
+        `<table><thead><tr><th>community</th><th>members</th><th>triples</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    // Per-dataset curated example queries. Each: {label, fmt, q, tip}.
+    const EXAMPLES = {
+      "./typed.rete": [
+        { label: "SELECT: who works where", fmt: "table", tip: "List the worksAt relation",
+          q: "PREFIX ex: <http://ex/>\nSELECT ?person ?org WHERE { ?person ex:worksAt ?org }" },
+        { label: "Aggregate: people per org", fmt: "table", tip: "GROUP BY count of employees per org",
+          q: "PREFIX ex: <http://ex/>\nSELECT ?org (COUNT(?p) AS ?n) WHERE { ?p ex:worksAt ?org } GROUP BY ?org ORDER BY DESC(?n)" },
+        { label: "CONSTRUCT: employs (reverse edges)", fmt: "ttl", tip: "Build a reverse-edge graph; render as Turtle",
+          q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?org ex:employs ?p } WHERE { ?p ex:worksAt ?org }" },
+        { label: "ASK: anyone over 40?", fmt: "table", tip: "Boolean ASK with a FILTER",
+          q: "PREFIX ex: <http://ex/>\nASK { ?p ex:age ?a FILTER(?a > 40) }" },
+      ],
+      "./deps.rete": [
+        { label: "SELECT: direct dependencies", fmt: "table", tip: "List all dependsOn edges",
+          q: "PREFIX ex: <http://ex/>\nSELECT ?a ?b WHERE { ?a ex:dependsOn ?b } LIMIT 100" },
+        { label: "Property path: transitive impact", fmt: "table", tip: "Everything that (transitively) depends on the vulnerable package",
+          q: "PREFIX ex: <http://ex/>\n# Transitive blast radius of the CVE:\nSELECT DISTINCT ?dependent WHERE { ?dependent ex:dependsOn+ ex:log4x }" },
+        { label: "Aggregate: out-degree", fmt: "table", tip: "GROUP BY count of direct dependencies per package",
+          q: "PREFIX ex: <http://ex/>\nSELECT ?a (COUNT(?b) AS ?deps) WHERE { ?a ex:dependsOn ?b } GROUP BY ?a ORDER BY DESC(?deps)" },
+        { label: "CONSTRUCT: dependents (reverse)", fmt: "jsonld", tip: "Reverse the dependsOn edges; render as JSON-LD",
+          q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?b ex:dependedOnBy ?a } WHERE { ?a ex:dependsOn ?b }" },
+      ],
+      "./papers.rete": [
+        { label: "SELECT: titles", fmt: "table", tip: "List every paper's title",
+          q: "PREFIX ex: <http://ex/>\nSELECT ?p ?title WHERE { ?p ex:title ?title }" },
+        { label: "Property path: reachable by citation", fmt: "table", tip: "Papers reachable from p1 via cites+",
+          q: "PREFIX ex: <http://ex/>\nSELECT DISTINCT ?reached WHERE { ex:p1 ex:cites+ ?reached }" },
+        { label: "Aggregate: citations made", fmt: "table", tip: "GROUP BY count of outgoing citations per paper",
+          q: "PREFIX ex: <http://ex/>\nSELECT ?p (COUNT(?c) AS ?cites) WHERE { ?p ex:cites ?c } GROUP BY ?p ORDER BY DESC(?cites)" },
+        { label: "CONSTRUCT: citedBy (reverse)", fmt: "ttl", tip: "Reverse the citation graph; render as Turtle",
+          q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?b ex:citedBy ?a } WHERE { ?a ex:cites ?b }" },
+      ],
+    };
+
+    function renderExamples() {
+      const list = EXAMPLES[$("url").value] || [];
+      $("examples").innerHTML = list.length
+        ? "Examples: " + list.map((ex, i) =>
+            `<button type="button" class="ex-btn" data-ex="${i}" title="${esc(ex.tip)}">${esc(ex.label)}</button>`).join("")
+        : `<span class="muted">No curated examples for this URL.</span>`;
+      $("examples").querySelectorAll(".ex-btn").forEach((el) => el.onclick = () => {
+        const ex = list[Number(el.dataset.ex)];
+        setQuery(ex.q, ex.fmt);
+      });
+    }
+
+    // --- reachability ---------------------------------------------------------
+    // Per-dataset sensible defaults + a couple of curated seed/predicate examples.
+    const REACH = {
+      "./typed.rete": {
+        pred: "<http://ex/knows>",
+        examples: [
+          { label: "who does p1 know (transitively)?", pred: "<http://ex/knows>", seeds: "<http://ex/p1>", reverse: false },
+          { label: "who knows p3? (reverse)", pred: "<http://ex/knows>", seeds: "<http://ex/p3>", reverse: true },
+        ],
+      },
+      "./deps.rete": {
+        pred: "<http://ex/dependsOn>",
+        examples: [
+          { label: "app's dependency closure", pred: "<http://ex/dependsOn>", seeds: "<http://ex/app>", reverse: false },
+          { label: "who depends on log4x? (reverse / blast radius)", pred: "<http://ex/dependsOn>", seeds: "<http://ex/log4x>", reverse: true },
+        ],
+      },
+      "./papers.rete": {
+        pred: "<http://ex/cites>",
+        examples: [
+          { label: "papers p1 reaches via citation", pred: "<http://ex/cites>", seeds: "<http://ex/p1>", reverse: false },
+          { label: "who cites p5? (reverse)", pred: "<http://ex/cites>", seeds: "<http://ex/p5>", reverse: true },
+        ],
+      },
+    };
+
+    function renderReachDefaults() {
+      const cfg = REACH[$("url").value];
+      if (cfg && !$("reachPred").value) $("reachPred").value = cfg.pred;
+      const list = (cfg && cfg.examples) || [];
+      $("reachExamples").innerHTML = list.length
+        ? "Examples: " + list.map((ex, i) =>
+            `<button type="button" class="ex-btn" data-rex="${i}">${esc(ex.label)}</button>`).join("")
+        : "";
+      $("reachExamples").querySelectorAll(".ex-btn").forEach((el) => el.onclick = () => {
+        const ex = list[Number(el.dataset.rex)];
+        $("reachPred").value = ex.pred;
+        $("reachSeeds").value = ex.seeds;
+        $("reachReverse").checked = !!ex.reverse;
+        runReach();
+        $("reachPred").scrollIntoView({ behavior: "smooth" });
+      });
+    }
+
+    function runReach() {
+      if (!bytes) { $("reachOut").innerHTML = `<p class="err">Load a file first.</p>`; return; }
+      const pred = $("reachPred").value.trim();
+      const reverse = $("reachReverse").checked;
+      const seeds = $("reachSeeds").value.split(",").map((s) => s.trim()).filter(Boolean);
+      if (!pred) { $("reachOut").innerHTML = `<p class="err">Enter a predicate IRI.</p>`; return; }
+      if (!seeds.length) { $("reachOut").innerHTML = `<p class="err">Enter at least one seed IRI.</p>`; return; }
+      const t0 = performance.now();
+      let results;
+      try {
+        results = JSON.parse(reach(bytes, pred, JSON.stringify(seeds), reverse));
+      } catch (e) {
+        $("reachMeta").textContent = "";
+        $("reachOut").innerHTML = `<p class="err">Error: ${esc(String(e))}</p>`;
+        return;
+      }
+      const dt = performance.now() - t0;
+      const dir = reverse ? "reached-by" : "reaches";
+      const rows = results.map((r) => {
+        if (r.error) {
+          return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td colspan="2" class="err">${esc(r.error)}</td></tr>`;
+        }
+        const list = r.reached.length
+          ? `<details><summary>${r.count} node(s)</summary><div class="small">` +
+            r.reached.map((t) => `<div class="iri">${esc(shorten(t))}</div>`).join("") + `</div></details>`
+          : `<span class="muted">0 node(s)</span>`;
+        return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td>${r.count}</td><td>${list}</td></tr>`;
+      }).join("");
+      $("reachMeta").textContent = `${results.length} seed(s) · serial · ${dt.toFixed(1)} ms`;
+      $("reachOut").innerHTML =
+        `<table><thead><tr><th>seed</th><th>${dir} (count)</th><th>reached IRIs</th></tr></thead>` +
+        `<tbody>${rows}</tbody></table>`;
+    }
+
+    // --- localStorage history -------------------------------------------------
+    const HIST_KEY = "rete.history";
+    function loadHistory() {
+      try { return JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); }
+      catch { return []; }
+    }
+    function saveHistory(entry) {
+      let hist = loadHistory();
+      hist.unshift(entry);
+      hist = hist.slice(0, 20);
+      try { localStorage.setItem(HIST_KEY, JSON.stringify(hist)); }
+      catch { /* quota / disabled — degrade silently */ }
+      renderHistory();
+    }
+    function renderHistory() {
+      const hist = loadHistory();
+      const box = $("histList");
+      if (!hist.length) { box.innerHTML = `<p class="muted small">No history yet.</p>`; return; }
+      box.innerHTML = hist.map((h, i) => {
+        const when = new Date(h.ts).toLocaleString();
+        const snip = (h.query || "").replace(/\s+/g, " ").slice(0, 80);
+        return `<div class="hist-item" data-h="${i}">` +
+          `<div>${esc(snip)}</div>` +
+          `<div class="hist-meta">${esc(when)} · ${esc(h.dataset || "")} · ${esc(h.format)} · ${esc(h.strategy)} · ${esc(h.resultSummary || "")}</div>` +
+          `</div>`;
+      }).join("");
+      box.querySelectorAll(".hist-item").forEach((el) => el.onclick = () => {
+        const h = loadHistory()[Number(el.dataset.h)];
+        if (!h) return;
+        $("q").value = h.query;
+        $("fmt").value = h.format;
+        $("strategy").value = h.strategy;
+        $("roundWrap").hidden = h.strategy !== "community";
+        if (h.dataset && h.dataset !== $("url").value) {
+          $("url").value = h.dataset;
+          for (const o of $("ds").options) if (o.value === h.dataset) $("ds").value = h.dataset;
+          load(h.dataset).catch((e) => $("meta").textContent = "Error: " + e);
+        }
+        $("q").scrollIntoView({ behavior: "smooth" });
+      });
+    }
+    $("clearHist").onclick = () => {
+      try { localStorage.removeItem(HIST_KEY); } catch { /* ignore */ }
+      renderHistory();
+    };
+
+    // --- progressive overview (range fetch, index never downloaded) -----------
+    async function progressive(url) {
+      const range = async (off, len) => {
+        const end = off + len - 1;
+        const r = await fetch(url, { headers: { Range: `bytes=${off}-${end}` } });
+        if (r.status !== 206) throw new Error(`host did not honor Range (status ${r.status})`);
+        return new Uint8Array(await r.arrayBuffer());
+      };
+      const total = Number((await fetch(url, { method: "HEAD" })).headers.get("content-length"));
+      let fetched = 0, reqs = 0;
+      const get = async (o, l) => { fetched += l; reqs++; return range(o, l); };
+
+      const header = await get(0, 128);
+      const r = JSON.parse(header_ranges(header));
+      const sparse = new Uint8Array(total);
+      sparse.set(header, 0);
+      sparse.set(await get(r.dictOffset, r.dictLen), r.dictOffset);
+      sparse.set(await get(r.pyramidOffset, r.pyramidLen), r.pyramidOffset);
+
+      const ov = JSON.parse(summary_overview(sparse));
+      $("progmeta").textContent =
+        `${fetched} of ${total} bytes (${Math.round(100 * fetched / total)}%) in ${reqs} ranges · index (${r.indexLen} B) never fetched`;
+      const rows = ov.predicateTotals
+        .map(([p, n]) => `<tr><td class="iri">${esc(shorten(p))}</td><td>${n}</td></tr>`).join("");
+      $("progout").innerHTML =
+        `<p class="muted">${ov.communities} communities · pyramid round ${ov.round}</p>` +
+        `<table><thead><tr><th>predicate</th><th>total triples</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    // --- wiring ---------------------------------------------------------------
+    $("ds").onchange = () => {
+      $("url").value = $("ds").value;
+      $("reachPred").value = "";
+      $("reachSeeds").value = "";
+      load($("ds").value).catch((e) => $("meta").textContent = "Error: " + e);
+    };
+    $("strategy").onchange = () => { $("roundWrap").hidden = $("strategy").value !== "community"; };
+    $("prog").onclick = () =>
+      progressive($("url").value).catch((e) => $("progmeta").textContent = "Error: " + e);
+    $("load").onclick = () => load($("url").value).catch((e) => $("meta").textContent = "Error: " + e);
+    $("run").onclick = runQuery;
+    $("reachRun").onclick = runReach;
+
+    await init();
+    renderHistory();
+    load($("url").value).catch((e) => $("meta").textContent = "Error: " + e);
+  </script>
+</body>
+</html>

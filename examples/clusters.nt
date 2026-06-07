@@ -1,0 +1,10 @@
+# Two friend groups joined by a single bridge edge (Carol -> Dave).
+<http://ex/Alice> <http://ex/knows> <http://ex/Bob> .
+<http://ex/Bob> <http://ex/knows> <http://ex/Carol> .
+<http://ex/Carol> <http://ex/knows> <http://ex/Alice> .
+<http://ex/Alice> <http://ex/knows> <http://ex/Carol> .
+<http://ex/Dave> <http://ex/knows> <http://ex/Eve> .
+<http://ex/Eve> <http://ex/knows> <http://ex/Frank> .
+<http://ex/Frank> <http://ex/knows> <http://ex/Dave> .
+<http://ex/Dave> <http://ex/knows> <http://ex/Frank> .
+<http://ex/Carol> <http://ex/knows> <http://ex/Dave> .
