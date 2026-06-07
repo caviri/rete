@@ -7,8 +7,8 @@ mod ntriples;
 
 use clap::{Parser, Subcommand};
 use rete_core::{
-    eval_bgp, eval_query, CountingReader, PatternTerm, QueryOutput, RangeReader, Rete, SliceReader,
-    SummaryView, TriplePattern, CODEC_ZSTD,
+    eval_bgp, eval_query, CountingReader, PatternTerm, QueryOutput, RangeReader, Rete, SummaryView,
+    TriplePattern,
 };
 
 use crate::http::HttpRangeReader;
@@ -302,10 +302,10 @@ fn main() -> anyhow::Result<()> {
         Command::Validate { inputs, format } => {
             commands::build::validate(&inputs, format.as_deref())
         }
-        Command::Info { file } => info(&file),
-        Command::Stats { file } => stats(&file),
-        Command::Verify { file } => verify_cmd(&file),
-        Command::Graphs { file } => graphs(&file),
+        Command::Info { file } => commands::inspect::info(&file),
+        Command::Stats { file } => commands::inspect::stats(&file),
+        Command::Verify { file } => commands::inspect::verify_cmd(&file),
+        Command::Graphs { file } => commands::inspect::graphs(&file),
         Command::Export { file, format } => commands::export::export(&file, &format),
         Command::Query {
             file,
@@ -313,7 +313,7 @@ fn main() -> anyhow::Result<()> {
             predicate,
             object,
         } => query(&file, subject, predicate, object),
-        Command::Summary { file } => summary(&file),
+        Command::Summary { file } => commands::inspect::summary(&file),
         Command::Communities {
             file,
             json,
@@ -329,8 +329,8 @@ fn main() -> anyhow::Result<()> {
             profile,
             predicate.as_deref(),
         ),
-        Command::Predicates { file } => predicates(&file),
-        Command::Schema { file } => schema(&file),
+        Command::Predicates { file } => commands::inspect::predicates(&file),
+        Command::Schema { file } => commands::inspect::schema(&file),
         Command::Reach {
             file,
             predicate,
@@ -372,68 +372,6 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-fn info(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let header = rete_core::Header::from_bytes(&bytes)?;
-    println!("{header:#?}");
-    Ok(())
-}
-
-fn stats(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
-    let h = rete.header();
-    println!("{file} — {} bytes", bytes.len());
-    println!("  default-graph triples : {}", h.quad_count);
-    println!("  distinct terms        : {}", h.term_count);
-    println!("  named graphs          : {}", rete.graph_names().len());
-    println!("  pyramid levels        : {}", h.pyramid_levels);
-    println!(
-        "  compression           : {}",
-        if h.block_codec == CODEC_ZSTD {
-            "zstd"
-        } else {
-            "none"
-        }
-    );
-
-    // Per-predicate totals + community count come from the summary alone.
-    let reader = SliceReader::new(&bytes);
-    if let Some(view) = SummaryView::open_ranged(&reader)? {
-        println!("  communities           : {}", view.community_count());
-        let totals = view.predicate_totals();
-        println!("  predicates (top {}):", totals.len().min(10));
-        for (pred, count) in totals.iter().take(10) {
-            println!("    {count:>8}  {pred}");
-        }
-    }
-    Ok(())
-}
-
-fn graphs(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
-    let names = rete.graph_names();
-    if names.is_empty() {
-        println!("(default graph only — no named graphs)");
-    } else {
-        for n in names {
-            println!("{n}");
-        }
-    }
-    Ok(())
-}
-
-fn verify_cmd(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    if rete_core::verify(&bytes)? {
-        println!("OK — content hash matches");
-        Ok(())
-    } else {
-        anyhow::bail!("FAILED — content hash mismatch (file corrupted or truncated)");
-    }
-}
-
 fn query(
     file: &str,
     s: Option<String>,
@@ -447,93 +385,6 @@ fn query(
         println!("{s} {p} {o} .");
     }
     eprintln!("{} result(s)", results.len());
-    Ok(())
-}
-
-fn summary(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
-    let Some(pyr) = rete.pyramid() else {
-        eprintln!("file has no pyramid");
-        return Ok(());
-    };
-    let dict = rete.dictionary();
-    println!(
-        "pyramid round {} — {} communities summarized as {} superedge(s):",
-        pyr.round,
-        community_count(pyr),
-        pyr.summary.len()
-    );
-    for e in &pyr.summary {
-        let pred = dict
-            .predicate_term(e.predicate)
-            .unwrap_or_else(|| format!("#{}", e.predicate));
-        let arrow = if e.s_comm == e.o_comm {
-            "(internal)"
-        } else {
-            "->"
-        };
-        println!(
-            "  C{} {arrow} C{}  via {pred}  x{}",
-            e.s_comm, e.o_comm, e.count
-        );
-    }
-    Ok(())
-}
-
-fn community_count(pyr: &rete_core::PyramidMeta) -> usize {
-    // Tiles are no longer materialized (dropped to shrink the file), so count the
-    // distinct communities referenced by the summary superedges instead.
-    let mut comms = std::collections::HashSet::new();
-    for e in &pyr.summary {
-        comms.insert(e.s_comm);
-        comms.insert(e.o_comm);
-    }
-    comms.len()
-}
-
-fn schema(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
-
-    let classes = rete_core::schema_classes(&rete);
-    if classes.is_empty() {
-        println!("(no rdf:type assertions — the data is untyped)");
-    } else {
-        println!("classes ({} types):", classes.len());
-        for (class, count) in &classes {
-            println!("  {count:>8}  {class}");
-        }
-    }
-
-    let summary = rete_core::schema_summary(&rete);
-    println!("relations:");
-    for (s_class, pred, o_class, count) in &summary {
-        println!("  {s_class} --{pred}--> {o_class}  ×{count}");
-    }
-    Ok(())
-}
-
-/// Run the prototype OWL RL / RDFS reasoner over a file's default graph: report
-/// the count of newly entailed triples and every detected inconsistency. Exits
-/// non-zero (via `anyhow::bail!`) when any inconsistency is found so it can serve
-/// as a coherence gate in CI. With `--materialize`, also serialize the base +
-/// inferred graph (reusing the same nq/ttl serializers as `export`).
-fn predicates(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let reader = SliceReader::new(&bytes);
-    match SummaryView::open_ranged(&reader)? {
-        Some(view) => {
-            println!(
-                "{} communities · per-predicate totals (from summary, index not read):",
-                view.community_count()
-            );
-            for (pred, count) in view.predicate_totals() {
-                println!("  {count}\t{pred}");
-            }
-        }
-        None => eprintln!("file has no pyramid"),
-    }
     Ok(())
 }
 
