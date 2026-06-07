@@ -2,6 +2,7 @@
 //! crate root (`main.rs`) keeps the Clap definitions + dispatch and the shared
 //! helpers; each module here owns one command's logic.
 
+pub(crate) mod build;
 pub(crate) mod communities;
 pub(crate) mod export;
 pub(crate) mod federate;
