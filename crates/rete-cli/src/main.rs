@@ -6,9 +6,7 @@ mod http;
 mod ntriples;
 
 use clap::{Parser, Subcommand};
-use rete_core::{eval_query, CountingReader, QueryOutput, RangeReader, Rete, SummaryView};
-
-use crate::http::HttpRangeReader;
+use rete_core::QueryOutput;
 
 #[derive(Parser)]
 #[command(name = "rete", version, about = "Cloud-native RDF graph files")]
@@ -352,14 +350,14 @@ fn main() -> anyhow::Result<()> {
             base,
             json,
         } => commands::query::cypher_cmd(&file, &query, &base, json),
-        Command::SummaryUrl { url } => summary_url(&url),
+        Command::SummaryUrl { url } => commands::url::summary_url(&url),
         Command::QueryUrl {
             url,
             subject,
             predicate,
             object,
-        } => query_url(&url, subject, predicate, object),
-        Command::SparqlUrl { url, query, json } => sparql_url(&url, &query, json),
+        } => commands::url::query_url(&url, subject, predicate, object),
+        Command::SparqlUrl { url, query, json } => commands::url::sparql_url(&url, &query, json),
         Command::Federate {
             sources,
             query,
@@ -367,83 +365,6 @@ fn main() -> anyhow::Result<()> {
             no_route,
         } => commands::federate::federate(&sources, &query, json, !no_route),
     }
-}
-
-fn summary_url(url: &str) -> anyhow::Result<()> {
-    let reader = CountingReader::new(HttpRangeReader::open(url)?);
-    let total = reader.len();
-    match SummaryView::open_ranged(&reader)? {
-        Some(view) => {
-            println!(
-                "pyramid round {} — {} communities, {} superedge(s):",
-                view.round,
-                view.community_count(),
-                view.summary.len()
-            );
-            for e in &view.summary {
-                let pred = view
-                    .predicate_term(e.predicate)
-                    .unwrap_or_else(|| format!("#{}", e.predicate));
-                let arrow = if e.s_comm == e.o_comm {
-                    "(internal)"
-                } else {
-                    "->"
-                };
-                println!(
-                    "  C{} {arrow} C{}  via {pred}  x{}",
-                    e.s_comm, e.o_comm, e.count
-                );
-            }
-            eprintln!(
-                "fetched {} of {} bytes in {} range request(s) — index NOT fetched",
-                reader.bytes_read(),
-                total,
-                reader.requests()
-            );
-        }
-        None => eprintln!("file has no pyramid"),
-    }
-    Ok(())
-}
-
-fn query_url(
-    url: &str,
-    s: Option<String>,
-    p: Option<String>,
-    o: Option<String>,
-) -> anyhow::Result<()> {
-    let reader = CountingReader::new(HttpRangeReader::open(url)?);
-    let total = reader.len();
-    let rete = Rete::open_ranged(&reader)?;
-    let results = rete.query(s.as_deref(), p.as_deref(), o.as_deref());
-    for (s, p, o) in &results {
-        println!("{s} {p} {o} .");
-    }
-    eprintln!(
-        "{} result(s) · fetched {} bytes in {} range request(s) (file is {} bytes)",
-        results.len(),
-        reader.bytes_read(),
-        reader.requests(),
-        total
-    );
-    Ok(())
-}
-
-/// Run SPARQL against a `.rete` over HTTP(S), fetching only the byte ranges the
-/// open needs (header, dictionary, index, pyramid) — never a full download.
-fn sparql_url(url: &str, query: &str, json: bool) -> anyhow::Result<()> {
-    let reader = CountingReader::new(HttpRangeReader::open(url)?);
-    let total = reader.len();
-    let rete = Rete::open_ranged(&reader)?;
-    let result = eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{e}"))?;
-    print_query_output(&result, json);
-    eprintln!(
-        "(fetched {} bytes in {} range request(s); file is {} bytes)",
-        reader.bytes_read(),
-        reader.requests(),
-        total
-    );
-    Ok(())
 }
 
 /// Print a query result: SPARQL Results JSON when `json`, else a readable form.
@@ -623,8 +544,8 @@ mod federate_tests {
     use super::*;
     use crate::commands::federate::{source_predicates, MergeAcc};
     use rete_core::{
-        build_pyramid_meta, query_predicates, write_dataset, Binding, DictionaryBuilder,
-        GraphIndexBuilder, Rete, DEFAULT_TILE_BUDGET,
+        build_pyramid_meta, eval_query, query_predicates, write_dataset, Binding,
+        DictionaryBuilder, GraphIndexBuilder, Rete, DEFAULT_TILE_BUDGET,
     };
 
     /// Build an in-memory `.rete` from `(s, p, o)` N-Triples-token triples.
