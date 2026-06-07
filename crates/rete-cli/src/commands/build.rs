@@ -3,9 +3,11 @@
 //! root keeps only the Clap definitions + dispatch; the parse/build logic lives
 //! here.
 
+use crate::commands::card::{self, CardArgs};
 use crate::ntriples;
 use rete_core::{
-    build_pyramid_meta, write_dataset, DictionaryBuilder, GraphIndexBuilder, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, write_dataset, write_dataset_with_metadata, DictionaryBuilder,
+    GraphIndexBuilder, DEFAULT_TILE_BUDGET,
 };
 
 /// Parse Turtle into canonical N-Triples-token triples via oxttl.
@@ -105,6 +107,7 @@ pub(crate) fn build(
     output: &str,
     format: Option<&str>,
     materialize: bool,
+    card_args: CardArgs,
 ) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
 
@@ -176,14 +179,38 @@ pub(crate) fn build(
         .collect();
 
     let (meta, levels) = build_pyramid_meta(&dict, &default_triples, DEFAULT_TILE_BUDGET);
-    let bytes = write_dataset(
-        &dict,
-        &def.build(),
-        &named_indexes,
-        has_named,
-        &meta,
-        levels,
-    );
+
+    // Optionally derive + embed a Dataset Card (data-catalog metadata). Without a
+    // card flag the cardless path is byte-identical to a metadata-free build.
+    let bytes = if card_args.requested() {
+        let curated = card::load_curated(&card_args)?;
+        let dataset_card = card::derive_card(
+            &quads,
+            dict.term_count() as u64,
+            named_indexes.len() as u64,
+            curated,
+        );
+        let blob = dataset_card.to_json_bytes();
+        eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+        write_dataset_with_metadata(
+            &dict,
+            &def.build(),
+            &named_indexes,
+            has_named,
+            &meta,
+            levels,
+            &blob,
+        )
+    } else {
+        write_dataset(
+            &dict,
+            &def.build(),
+            &named_indexes,
+            has_named,
+            &meta,
+            levels,
+        )
+    };
     std::fs::write(output, &bytes)?;
 
     if has_named {
@@ -229,6 +256,7 @@ mod tests {
             out.to_str().unwrap(),
             None,
             true,
+            CardArgs::default(),
         )
         .unwrap();
 
@@ -243,6 +271,7 @@ mod tests {
             out.to_str().unwrap(),
             None,
             false,
+            CardArgs::default(),
         )
         .unwrap();
         let plain = Rete::open(&std::fs::read(&out).unwrap()).unwrap();

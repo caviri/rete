@@ -38,6 +38,32 @@ enum Command {
         /// reasoning. Aborts if the graph is logically incoherent.
         #[arg(long)]
         materialize: bool,
+        /// Embed a **Dataset Card** (data-catalog metadata) in the file. Auto
+        /// fields — triple/term counts, top predicates and classes, vocabularies
+        /// — are derived from the data; the curated fields below are optional.
+        /// Any card flag opts in; without one the build is cardless. View it with
+        /// `rete card` / `rete info`. See `docs/dataset-cards.md`.
+        #[arg(long)]
+        card: bool,
+        /// JSON file of curated card fields (title/description/license/source/
+        /// created/example_queries); implies `--card`. Explicit flags override it.
+        #[arg(long = "card-file")]
+        card_file: Option<String>,
+        /// Card title (implies `--card`).
+        #[arg(long)]
+        title: Option<String>,
+        /// Card license, e.g. `CC0-1.0` (implies `--card`).
+        #[arg(long)]
+        license: Option<String>,
+        /// Card source URL (implies `--card`).
+        #[arg(long)]
+        source: Option<String>,
+        /// Card description (implies `--card`).
+        #[arg(long)]
+        description: Option<String>,
+        /// Card creation date, e.g. `2026-06-08` (implies `--card`).
+        #[arg(long)]
+        created: Option<String>,
     },
     /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle,
     /// without building. Reports counts, or fails with a parse error.
@@ -63,6 +89,16 @@ enum Command {
     Verify {
         /// Path to the `.rete` file.
         file: String,
+    },
+    /// Print the embedded Dataset Card (data-catalog metadata), if the file has
+    /// one — title/license/source, counts, top predicates and classes,
+    /// vocabularies, and the content-hash checksum. `--json` emits the raw card.
+    Card {
+        /// Path to the `.rete` file.
+        file: String,
+        /// Emit the card as JSON instead of the human catalog view.
+        #[arg(long)]
+        json: bool,
     },
     /// List the named graphs in a dataset.
     Graphs {
@@ -292,13 +328,35 @@ fn main() -> anyhow::Result<()> {
             output,
             format,
             materialize,
-        } => commands::build::build(&inputs, &output, format.as_deref(), materialize),
+            card,
+            card_file,
+            title,
+            license,
+            source,
+            description,
+            created,
+        } => commands::build::build(
+            &inputs,
+            &output,
+            format.as_deref(),
+            materialize,
+            commands::card::CardArgs {
+                enabled: card,
+                file: card_file,
+                title,
+                license,
+                source,
+                description,
+                created,
+            },
+        ),
         Command::Validate { inputs, format } => {
             commands::build::validate(&inputs, format.as_deref())
         }
         Command::Info { file } => commands::inspect::info(&file),
         Command::Stats { file } => commands::inspect::stats(&file),
         Command::Verify { file } => commands::inspect::verify_cmd(&file),
+        Command::Card { file, json } => commands::card::card_cmd(&file, json),
         Command::Graphs { file } => commands::inspect::graphs(&file),
         Command::Export { file, format } => commands::export::export(&file, &format),
         Command::Query {

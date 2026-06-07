@@ -6,11 +6,22 @@
 
 use rete_core::{Rete, SliceReader, SummaryView, CODEC_ZSTD};
 
-/// Print the raw file header (section offsets, counts, codec).
+/// Print the raw file header (section offsets, counts, codec), plus the embedded
+/// Dataset Card catalog when the file carries one.
 pub(crate) fn info(file: &str) -> anyhow::Result<()> {
     let bytes = std::fs::read(file)?;
     let header = rete_core::Header::from_bytes(&bytes)?;
     println!("{header:#?}");
+    if let Some(card) = crate::commands::card::load_card(&bytes)? {
+        println!();
+        println!(
+            "{}",
+            crate::commands::card::format_card(
+                &card,
+                &crate::commands::card::hex16(&header.content_hash)
+            )
+        );
+    }
     Ok(())
 }
 
