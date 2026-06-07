@@ -125,6 +125,14 @@ const QUERIES: &[(&str, &str)] = &[
     ("ORDER BY + LIMIT + OFFSET", "SELECT ?p ?c WHERE { ?p ex:citationCount ?c } ORDER BY DESC(?c) LIMIT 10 OFFSET 50"),
 ];
 
+/// Expected row counts for the default 30_000-paper dataset (parallel to
+/// `QUERIES`). A mismatch is an engine regression and fails the run — the bench
+/// is a correctness guard, not just a timing report.
+const EXPECTED: &[usize] = &[
+    1, 6, 1, 3, 4, 10000, 10000, 200, 4000, 4000, 50, 200, 200, 200, 200, 1, 1, 1, 6, 6, 6, 1, 1,
+    10,
+];
+
 fn rows(rete: &Rete, q: &str) -> usize {
     match eval_query(rete, q) {
         Ok(QueryOutput::Select(_, r)) => r.len(),
@@ -161,11 +169,18 @@ fn main() {
     let rete = Rete::open(&bytes).expect("open");
 
     eprintln!("dataset: {} triples ({papers} papers)\n", triples.len());
+    // Expected counts are calibrated for the default size; only assert there.
+    let check = papers == 30_000;
+    let mut mismatches = 0;
     println!("| Query | rows | median ms |");
     println!("|---|--:|--:|");
-    for (name, body) in QUERIES {
+    for ((name, body), &expect) in QUERIES.iter().zip(EXPECTED) {
         let q = format!("{PREFIXES}{body}");
         let n = rows(&rete, &q); // warm up + correctness anchor
+        if check && n != expect {
+            eprintln!("ROW-COUNT MISMATCH — {name}: got {n}, expected {expect}");
+            mismatches += 1;
+        }
         let reps = 7;
         let mut times = Vec::with_capacity(reps);
         for _ in 0..reps {
@@ -174,5 +189,9 @@ fn main() {
             times.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         println!("| {name} | {n} | {:.3} |", median(times));
+    }
+    if mismatches > 0 {
+        eprintln!("\n{mismatches} row-count mismatch(es) — engine regression");
+        std::process::exit(1);
     }
 }
