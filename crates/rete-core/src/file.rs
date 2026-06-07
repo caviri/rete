@@ -228,55 +228,94 @@ pub fn write_dataset(
     pyramid_meta: &[u8],
     pyramid_levels: u16,
 ) -> Vec<u8> {
+    write_dataset_with_metadata(
+        dict,
+        default_index,
+        named,
+        has_quads,
+        pyramid_meta,
+        pyramid_levels,
+        &[],
+    )
+}
+
+/// Serialize a dataset with an opaque **metadata** payload occupying the file's
+/// metadata section (the application layer defines its meaning — the CLI stores a
+/// JSON Dataset Card there). The section sits immediately after the 128-byte
+/// header and before the dictionary, so `metadata_offset` stays at `HEADER_LEN`
+/// and every downstream section shifts by `metadata.len()`. The payload is folded
+/// into the `content_hash`, so `verify` covers it and it is tamper-evident.
+///
+/// Passing an empty `metadata` is byte-identical to [`write_dataset`]: the section
+/// is omitted (`metadata_len = 0`, `dictionary_offset = HEADER_LEN`) and the hash
+/// is computed over exactly the same parts (a zero-length hash update is a no-op).
+pub fn write_dataset_with_metadata(
+    dict: &Dictionary,
+    default_index: &GraphIndex,
+    named: &[(String, GraphIndex)],
+    has_quads: bool,
+    pyramid_meta: &[u8],
+    pyramid_levels: u16,
+    metadata: &[u8],
+) -> Vec<u8> {
     let codec = writer_codec();
     let dict_container = encode_container(&dict.sections(), codec);
     let index_container = encode_container(&default_index.blocks(), codec);
     let named_section = encode_named_graphs(named, codec);
 
-    let dict_offset = HEADER_LEN as u64;
+    // The metadata section (if any) sits between the header and the dictionary,
+    // so the dictionary — and everything after it — shifts forward by its length.
+    let meta_section_len = metadata.len() as u64;
+    let dict_offset = HEADER_LEN as u64 + meta_section_len;
     let dict_len = dict_container.len() as u64;
     let index_offset = dict_offset + dict_len;
     let index_len = index_container.len() as u64;
-    let meta_offset = index_offset + index_len;
-    let meta_len = pyramid_meta.len() as u64;
-    let named_offset = meta_offset + meta_len;
+    let pyr_offset = index_offset + index_len;
+    let pyr_len = pyramid_meta.len() as u64;
+    let named_offset = pyr_offset + pyr_len;
     let named_len = if named.is_empty() {
         0
     } else {
         named_section.len() as u64
     };
 
+    // Hash parts in physical order, with the metadata payload prepended when
+    // present. Omitting it entirely (rather than hashing an empty slice) keeps the
+    // no-metadata output's hash byte-identical to the pre-metadata writer.
+    let mut parts: Vec<&[u8]> = Vec::with_capacity(5);
+    if meta_section_len > 0 {
+        parts.push(metadata);
+    }
+    parts.push(&dict_container);
+    parts.push(&index_container);
+    parts.push(pyramid_meta);
+    if named_len > 0 {
+        parts.push(&named_section);
+    }
+
     let header = Header {
         flags: if has_quads { FLAG_HAS_QUADS } else { 0 },
         metadata_offset: HEADER_LEN as u64,
-        metadata_len: 0,
+        metadata_len: meta_section_len,
         dictionary_offset: dict_offset,
         dictionary_len: dict_len,
         root_dir_offset: index_offset,
         root_dir_len: index_len,
-        pyramid_meta_offset: if meta_len > 0 { meta_offset } else { 0 },
-        pyramid_meta_len: meta_len,
+        pyramid_meta_offset: if pyr_len > 0 { pyr_offset } else { 0 },
+        pyramid_meta_len: pyr_len,
         dict_codec: codec,
         block_codec: codec,
         pyramid_levels,
         quad_count: default_index.triple_count() as u64,
         term_count: dict.term_count() as u64,
-        content_hash: if named_len > 0 {
-            content_hash(&[
-                &dict_container,
-                &index_container,
-                pyramid_meta,
-                &named_section,
-            ])
-        } else {
-            content_hash(&[&dict_container, &index_container, pyramid_meta])
-        },
+        content_hash: content_hash(&parts),
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
         named_graphs_len: named_len,
     };
 
     let mut out = Vec::with_capacity(
         HEADER_LEN
+            + metadata.len()
             + dict_container.len()
             + index_container.len()
             + pyramid_meta.len()
@@ -284,6 +323,9 @@ pub fn write_dataset(
             + MAGIC.len(),
     );
     out.extend_from_slice(&header.to_bytes());
+    if meta_section_len > 0 {
+        out.extend_from_slice(metadata);
+    }
     out.extend_from_slice(&dict_container);
     out.extend_from_slice(&index_container);
     out.extend_from_slice(pyramid_meta);
@@ -370,7 +412,15 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     } else {
         &[]
     };
-    let mut parts: Vec<&[u8]> = vec![d, i, m];
+    // Match the writer's ordering exactly: the metadata payload is prepended when
+    // present, then dict, index, pyramid-meta, and (if any) the named graphs.
+    let mut parts: Vec<&[u8]> = Vec::with_capacity(5);
+    if header.metadata_len > 0 {
+        parts.push(slice(header.metadata_offset, header.metadata_len)?);
+    }
+    parts.push(d);
+    parts.push(i);
+    parts.push(m);
     if header.named_graphs_len > 0 {
         parts.push(slice(header.named_graphs_offset, header.named_graphs_len)?);
     }
@@ -384,6 +434,11 @@ pub struct Rete {
     index: GraphIndex,
     pyramid: Option<PyramidMeta>,
     named_graphs: Vec<(String, GraphIndex)>,
+    /// Raw bytes of the metadata section (empty if the file has none). The
+    /// application layer decodes this (the CLI stores a JSON Dataset Card here).
+    /// Only [`Rete::open`] populates it; [`Rete::open_ranged`] leaves it empty to
+    /// preserve its minimal-fetch budget.
+    metadata: Vec<u8>,
 }
 
 impl Rete {
@@ -449,17 +504,36 @@ impl Rete {
             Vec::new()
         };
 
+        let metadata = if header.metadata_len > 0 {
+            region(header.metadata_offset, header.metadata_len)?.to_vec()
+        } else {
+            Vec::new()
+        };
+
         Ok(Self {
             header,
             dict,
             index,
             pyramid,
             named_graphs,
+            metadata,
         })
     }
 
     pub fn header(&self) -> &Header {
         &self.header
+    }
+
+    /// Raw bytes of the file's metadata section, or `None` if it has none. The
+    /// CLI stores a JSON Dataset Card here; `rete-core` treats it as opaque.
+    /// Populated by [`Rete::open`] only — an [`Rete::open_ranged`] view returns
+    /// `None` here (the card is not fetched on the minimal query path).
+    pub fn metadata(&self) -> Option<&[u8]> {
+        if self.metadata.is_empty() {
+            None
+        } else {
+            Some(&self.metadata)
+        }
     }
 
     pub fn dictionary(&self) -> &Dictionary {
@@ -589,12 +663,16 @@ impl Rete {
             Vec::new()
         };
 
+        // The metadata section (Dataset Card) is deliberately NOT fetched here:
+        // a ranged query open keeps to its small range budget. Use `Rete::open`
+        // (or a dedicated card fetch) when the card is actually needed.
         Ok(Self {
             header,
             dict,
             index,
             pyramid,
             named_graphs,
+            metadata: Vec::new(),
         })
     }
 
@@ -898,6 +976,107 @@ mod tests {
         let last = tampered.len() - 5; // inside payload, before footer magic
         tampered[last] ^= 0xff;
         assert!(!verify(&tampered).unwrap());
+    }
+
+    /// Build the standard 3-triple image with an opaque metadata payload.
+    fn build_with_metadata(meta: &[u8]) -> Vec<u8> {
+        let triples = [
+            ("Alice", "knows", "Bob"),
+            ("Bob", "knows", "Carol"),
+            ("Alice", "age", "30"),
+        ];
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let ids: Vec<_> = triples
+            .iter()
+            .map(|(s, p, o)| dict.encode(s, p, o).unwrap())
+            .collect();
+        let mut ib = GraphIndexBuilder::new();
+        for &t in &ids {
+            ib.push(t);
+        }
+        let (pmeta, levels) = build_pyramid_meta(&dict, &ids, DEFAULT_TILE_BUDGET);
+        write_dataset_with_metadata(&dict, &ib.build(), &[], false, &pmeta, levels, meta)
+    }
+
+    #[test]
+    fn metadata_round_trips_and_shifts_offsets() {
+        let card = br#"{"title":"My Dataset"}"#;
+        let bytes = build_with_metadata(card);
+        let rete = Rete::open(&bytes).unwrap();
+
+        // The opaque payload reads back verbatim.
+        assert_eq!(rete.metadata(), Some(card.as_slice()));
+        let h = rete.header();
+        assert_eq!(h.metadata_offset, HEADER_LEN as u64);
+        assert_eq!(h.metadata_len, card.len() as u64);
+        // The dictionary (and everything after it) shifted forward by the card.
+        assert_eq!(h.dictionary_offset, HEADER_LEN as u64 + card.len() as u64);
+
+        // The index still decodes correctly at its shifted offset.
+        assert_eq!(
+            rete.query(Some("Bob"), Some("knows"), Some("Carol")).len(),
+            1
+        );
+        // The card is inside the content hash, so the file still verifies.
+        assert!(verify(&bytes).unwrap());
+    }
+
+    #[test]
+    fn empty_metadata_is_byte_identical_to_plain_writer() {
+        // The `&[]` path must produce exactly the bytes of the metadata-free
+        // writer for identical inputs — old files and outputs are unchanged.
+        assert_eq!(
+            build_with_metadata(&[]),
+            build_image(),
+            "empty-metadata output must equal the plain writer byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn metadata_is_tamper_evident() {
+        let card = br#"{"title":"x"}"#;
+        let mut bytes = build_with_metadata(card);
+        assert!(verify(&bytes).unwrap());
+        // The card occupies [HEADER_LEN .. HEADER_LEN+card_len); flip a byte in it.
+        bytes[HEADER_LEN + 2] ^= 0xff;
+        assert!(
+            !verify(&bytes).unwrap(),
+            "tampering with the card must break verify()"
+        );
+    }
+
+    #[test]
+    fn ranged_opens_do_not_fetch_metadata() {
+        use crate::reader::{CountingReader, SliceReader};
+        let card = vec![0xABu8; 512]; // distinctive and sizable
+        let bytes = build_with_metadata(&card);
+        let total = bytes.len() as u64;
+
+        // A full ranged open never loads the card and never reads its byte range.
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let rete = Rete::open_ranged(&r).unwrap();
+        assert!(
+            rete.metadata().is_none(),
+            "open_ranged must not load the card"
+        );
+        assert!(r.requests() <= 4, "requests = {}", r.requests());
+        assert!(
+            r.bytes_read() <= total - card.len() as u64,
+            "read {} of {} bytes; the {}-byte card must be skipped",
+            r.bytes_read(),
+            total,
+            card.len()
+        );
+
+        // Summary-only open likewise ignores the card and still summarizes.
+        let rs = CountingReader::new(SliceReader::new(&bytes));
+        let view = SummaryView::open_ranged(&rs).unwrap().unwrap();
+        assert!(!view.summary.is_empty());
+        assert!(rs.bytes_read() <= total - card.len() as u64);
     }
 
     #[test]
