@@ -491,22 +491,34 @@ fn as_number(s: &str) -> Option<f64> {
     lex.parse::<f64>().ok()
 }
 
-/// Ordering of two term values: numeric when both are numbers, else lexical.
-fn cmp_values(a: &str, b: &str) -> std::cmp::Ordering {
-    match (as_number(a), as_number(b)) {
-        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
-        _ => a.cmp(b),
-    }
+/// A precomputed ORDER BY sort key: unbound (`None`) sorts before bound values;
+/// bound values compare numerically when both are numbers, else lexically. The
+/// numeric value is parsed once at construction so comparisons never re-parse
+/// (same ordering as a numeric-or-lexical compare with unbound sorting first).
+enum SortKey {
+    Unbound,
+    Bound(Option<f64>, String),
 }
 
-/// Ordering for ORDER BY: unbound (`None`) sorts before bound values.
-fn cmp_opt(a: &Option<String>, b: &Option<String>) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
-    match (a, b) {
-        (None, None) => Ordering::Equal,
-        (None, _) => Ordering::Less,
-        (_, None) => Ordering::Greater,
-        (Some(x), Some(y)) => cmp_values(x, y),
+impl SortKey {
+    fn of(v: Option<String>) -> Self {
+        match v {
+            None => SortKey::Unbound,
+            Some(s) => SortKey::Bound(as_number(&s), s),
+        }
+    }
+
+    fn cmp(&self, other: &SortKey) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (SortKey::Unbound, SortKey::Unbound) => Ordering::Equal,
+            (SortKey::Unbound, _) => Ordering::Less,
+            (_, SortKey::Unbound) => Ordering::Greater,
+            (SortKey::Bound(na, sa), SortKey::Bound(nb, sb)) => match (na, nb) {
+                (Some(x), Some(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+                _ => sa.cmp(sb),
+            },
+        }
     }
 }
 
@@ -1005,10 +1017,24 @@ fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding>) {
     };
 
     // ORDER BY runs before projection so it can see unprojected variables.
+    // Decorate–sort–undecorate: resolve each row's sort keys *once* (with the
+    // numeric value pre-parsed) instead of re-evaluating + re-parsing them on
+    // every comparison — O(n) key builds vs. O(n log n) in `sort_by`.
     if !sel.order.is_empty() {
-        raw.sort_by(|a, b| {
-            for (expr, desc) in &sel.order {
-                let ord = cmp_opt(&expr.value(a), &expr.value(b));
+        let mut keyed: Vec<(Vec<SortKey>, Binding)> = raw
+            .into_iter()
+            .map(|b| {
+                let keys = sel
+                    .order
+                    .iter()
+                    .map(|(e, _)| SortKey::of(e.value(&b)))
+                    .collect();
+                (keys, b)
+            })
+            .collect();
+        keyed.sort_by(|(ka, _), (kb, _)| {
+            for (i, (_, desc)) in sel.order.iter().enumerate() {
+                let ord = ka[i].cmp(&kb[i]);
                 let ord = if *desc { ord.reverse() } else { ord };
                 if ord != std::cmp::Ordering::Equal {
                     return ord;
@@ -1016,6 +1042,7 @@ fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding>) {
             }
             std::cmp::Ordering::Equal
         });
+        raw = keyed.into_iter().map(|(_, b)| b).collect();
     }
 
     // Project to the requested variables (SELECT * keeps everything).
@@ -1296,17 +1323,41 @@ fn aggregate_int(rete: &Rete, rows: Vec<IntBinding>, g: &GroupSpec) -> Vec<Bindi
     out
 }
 
+/// A variable's values across `members`, resolved to numbers, memoizing the
+/// dictionary lookup + parse by node id (members frequently repeat values — e.g.
+/// an integer literal — so this is ~distinct-values decodes, not one per row).
+fn agg_nums(dict: &crate::Dictionary, members: &[IntBinding], var: &str) -> Vec<f64> {
+    let mut cache: std::collections::HashMap<i64, Option<f64>> = std::collections::HashMap::new();
+    members
+        .iter()
+        .filter_map(|m| m.get(var).copied())
+        .filter_map(|v| {
+            *cache
+                .entry(v)
+                .or_insert_with(|| term_of_value(dict, v).as_deref().and_then(as_number))
+        })
+        .collect()
+}
+
+/// A variable's values across `members`, resolved to terms, memoizing the
+/// dictionary lookup by node id.
+fn agg_terms(dict: &crate::Dictionary, members: &[IntBinding], var: &str) -> Vec<String> {
+    let mut cache: std::collections::HashMap<i64, Option<String>> =
+        std::collections::HashMap::new();
+    members
+        .iter()
+        .filter_map(|m| m.get(var).copied())
+        .filter_map(|v| {
+            cache
+                .entry(v)
+                .or_insert_with(|| term_of_value(dict, v))
+                .clone()
+        })
+        .collect()
+}
+
 fn compute_agg_int(rete: &Rete, agg: &Agg, members: &[IntBinding]) -> Option<String> {
     let dict = rete.dictionary();
-    // Values of a variable across members, resolved to terms (only when needed).
-    let nums = |var: &str| -> Vec<f64> {
-        members
-            .iter()
-            .filter_map(|m| m.get(var))
-            .filter_map(|&v| term_of_value(dict, v))
-            .filter_map(|t| as_number(&t))
-            .collect()
-    };
     match agg {
         Agg::CountStar { .. } => Some(fmt_num(members.len() as f64)),
         Agg::Count(var, distinct) => {
@@ -1321,9 +1372,9 @@ fn compute_agg_int(rete: &Rete, agg: &Agg, members: &[IntBinding]) -> Option<Str
             };
             Some(fmt_num(n as f64))
         }
-        Agg::Sum(var) => Some(fmt_num(nums(var).iter().sum())),
+        Agg::Sum(var) => Some(fmt_num(agg_nums(dict, members, var).iter().sum())),
         Agg::Avg(var) => {
-            let v = nums(var);
+            let v = agg_nums(dict, members, var);
             (!v.is_empty()).then(|| fmt_num(v.iter().sum::<f64>() / v.len() as f64))
         }
         Agg::Sample(var) => members
@@ -1331,22 +1382,15 @@ fn compute_agg_int(rete: &Rete, agg: &Agg, members: &[IntBinding]) -> Option<Str
             .find_map(|m| m.get(var))
             .and_then(|&v| term_of_value(dict, v)),
         Agg::GroupConcat(var, sep) => Some(
-            members
+            agg_terms(dict, members, var)
                 .iter()
-                .filter_map(|m| m.get(var))
-                .filter_map(|&v| term_of_value(dict, v))
-                .map(|t| lexical(&t))
+                .map(|t| lexical(t))
                 .collect::<Vec<_>>()
                 .join(sep),
         ),
         Agg::Min(var) | Agg::Max(var) => {
             let want_min = matches!(agg, Agg::Min(_));
-            let terms: Vec<String> = members
-                .iter()
-                .filter_map(|m| m.get(var))
-                .filter_map(|&v| term_of_value(dict, v))
-                .collect();
-            terms.into_iter().reduce(|cur, v| {
+            agg_terms(dict, members, var).into_iter().reduce(|cur, v| {
                 let take = match (as_number(&v), as_number(&cur)) {
                     (Some(a), Some(b)) if want_min => a < b,
                     (Some(a), Some(b)) => a > b,
@@ -1487,7 +1531,8 @@ fn eval_plan_in(
             v
         }
         Plan::Minus(l, r) => minus_hash(recur(l), recur(r)),
-        Plan::Join(l, r) => hash_join_solutions(rete, index, recur(l), recur(r), false, None),
+        Plan::Join(l, r) => values_pushdown(rete, index, l, r)
+            .unwrap_or_else(|| hash_join_solutions(rete, index, recur(l), recur(r), false, None)),
         Plan::LeftJoin(l, r, cond) => {
             hash_join_solutions(rete, index, recur(l), recur(r), true, cond.as_ref())
         }
@@ -1745,6 +1790,81 @@ fn merge(a: &Binding, b: &Binding) -> Option<Binding> {
             None => {
                 out.insert(k.clone(), v.clone());
             }
+        }
+    }
+    Some(out)
+}
+
+/// Substitute a binding's variables into a BGP's patterns, turning each bound
+/// variable into a constant term so the index scan can constrain on it.
+fn substitute_patterns(patterns: &[TriplePattern], input: &Binding) -> Vec<TriplePattern> {
+    let sub = |t: &PatternTerm| -> PatternTerm {
+        match t {
+            PatternTerm::Var(v) => match input.get(v) {
+                Some(val) => PatternTerm::Const(val.clone()),
+                None => t.clone(),
+            },
+            PatternTerm::Const(_) => t.clone(),
+        }
+    };
+    patterns
+        .iter()
+        .map(|p| TriplePattern {
+            s: sub(&p.s),
+            p: sub(&p.p),
+            o: sub(&p.o),
+        })
+        .collect()
+}
+
+/// `VALUES`-driven join pushdown: when one side of a join is inline `VALUES`
+/// (few, ground rows) and the other is a BGP, substitute each VALUES row into
+/// the BGP's scan instead of materializing the whole BGP and hash-joining. This
+/// turns `VALUES ?d {…} ?p :discipline ?d` into a couple of selective scans
+/// rather than one full-predicate scan filtered down. Returns `None` (use the
+/// hash join) when neither side is a pushable VALUES/BGP pair.
+fn values_pushdown(rete: &Rete, index: &GraphIndex, l: &Plan, r: &Plan) -> Option<Vec<Binding>> {
+    let (vals, patterns) = match (l, r) {
+        (Plan::Values(v, rows), Plan::Bgp(p)) | (Plan::Bgp(p), Plan::Values(v, rows)) => {
+            ((v, rows), p)
+        }
+        _ => return None,
+    };
+    let (vars, rows) = vals;
+    // Only beneficial when a VALUES variable actually appears in the BGP (so the
+    // substitution constrains the scan); a disjoint pair is a Cartesian product
+    // better handled once by the hash join than re-scanned per VALUES row.
+    let bgp_vars: std::collections::HashSet<&str> = patterns
+        .iter()
+        .flat_map(|p| [&p.s, &p.p, &p.o])
+        .filter_map(|t| match t {
+            PatternTerm::Var(v) => Some(v.as_str()),
+            PatternTerm::Const(_) => None,
+        })
+        .collect();
+    if !vars.iter().any(|v| bgp_vars.contains(v.as_str())) {
+        return None;
+    }
+    let dict = rete.dictionary();
+    let mut out = Vec::new();
+    for row in rows {
+        // The bound variables from this VALUES row (UNDEF entries stay variable).
+        let input: Binding = vars
+            .iter()
+            .zip(row.iter())
+            .filter_map(|(v, val)| val.as_ref().map(|t| (v.clone(), t.clone())))
+            .collect();
+        let subst = substitute_patterns(patterns, &input);
+        for ib in eval_bgp_int_in(rete, index, &subst) {
+            // Re-attach this row's VALUES bindings (the substituted vars no longer
+            // appear in the BGP result), then the BGP's own bindings.
+            let mut b = input.clone();
+            for (k, v) in ib {
+                if let Some(t) = term_of_value(dict, v) {
+                    b.insert(k, t);
+                }
+            }
+            out.push(b);
         }
     }
     Some(out)
@@ -2429,6 +2549,33 @@ mod tests {
         let mut xs: Vec<&str> = sols.iter().map(|b| b["x"].as_str()).collect();
         xs.sort();
         assert_eq!(xs, vec!["<http://ex/Alice>", "<http://ex/Bob>"]);
+    }
+
+    #[test]
+    fn values_pushdown_selects_subset() {
+        // VALUES with several rows pushes each into the scan; the result must be
+        // exactly the union (here: two of three disciplines).
+        let bytes = rete_from(&[
+            ("<http://ex/a>", "<http://ex/d>", "<http://ex/Bio>"),
+            ("<http://ex/b>", "<http://ex/d>", "<http://ex/Phys>"),
+            ("<http://ex/c>", "<http://ex/d>", "<http://ex/Chem>"),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let q = "PREFIX ex: <http://ex/> SELECT ?p ?disc WHERE { \
+            VALUES ?disc { ex:Bio ex:Phys } ?p ex:d ?disc }";
+        let (_, sols) = eval_sparql(&rete, q).unwrap();
+        let mut got: Vec<(String, String)> = sols
+            .iter()
+            .map(|b| (b["p"].clone(), b["disc"].clone()))
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                ("<http://ex/a>".into(), "<http://ex/Bio>".into()),
+                ("<http://ex/b>".into(), "<http://ex/Phys>".into()),
+            ]
+        );
     }
 
     #[test]
