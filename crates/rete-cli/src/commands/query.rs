@@ -5,8 +5,8 @@
 
 use rete_core::{eval_bgp, eval_query, PatternTerm, Rete, TriplePattern};
 
+use crate::commands::render::print_query_output;
 use crate::cypher;
-use crate::print_query_output;
 
 /// Query a triple pattern: unspecified positions are variables, terms match as
 /// canonical N-Triples tokens.

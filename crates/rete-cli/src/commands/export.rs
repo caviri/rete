@@ -3,7 +3,7 @@
 
 use rete_core::Rete;
 
-use crate::term_to_json;
+use crate::commands::render::term_to_json;
 
 /// `rete export <file> <format>`: write the graph as N-Quads, Turtle, or JSON-LD.
 pub(crate) fn export(file: &str, format: &str) -> anyhow::Result<()> {
@@ -136,5 +136,75 @@ fn object_to_jsonld(token: &str) -> serde_json::Value {
             }
             Value::Object(obj)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_triples() -> Vec<(String, String, String)> {
+        vec![
+            (
+                "<http://ex/Alice>".into(),
+                "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>".into(),
+                "<http://ex/Person>".into(),
+            ),
+            (
+                "<http://ex/Alice>".into(),
+                "<http://ex/age>".into(),
+                "\"30\"^^<http://www.w3.org/2001/XMLSchema#integer>".into(),
+            ),
+            (
+                "<http://ex/Alice>".into(),
+                "<http://ex/label>".into(),
+                "\"héllo \\\"quote\\\"\"@en".into(),
+            ),
+            (
+                "<http://ex/Alice>".into(),
+                "<http://ex/knows>".into(),
+                "_:b0".into(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn turtle_export_groups_and_abbreviates() {
+        let ttl = export_turtle(&sample_triples());
+        // One subject block, predicates sorted, `rdf:type` shown as `a`.
+        assert!(ttl.starts_with("<http://ex/Alice>\n"));
+        assert!(ttl.contains("    a <http://ex/Person>"), "got:\n{ttl}");
+        // Datatype literal passes through verbatim (valid Turtle term syntax).
+        assert!(
+            ttl.contains("\"30\"^^<http://www.w3.org/2001/XMLSchema#integer>"),
+            "got:\n{ttl}"
+        );
+        // Lang tag + escaped quote preserved exactly.
+        assert!(ttl.contains("\"héllo \\\"quote\\\"\"@en"), "got:\n{ttl}");
+        // Blank node passes through; statement list ends with ` .`.
+        assert!(ttl.contains("_:b0"));
+        assert!(ttl.trim_end().ends_with(" ."));
+    }
+
+    #[test]
+    fn jsonld_export_expanded_shape() {
+        let v: serde_json::Value = serde_json::from_str(&export_jsonld(&sample_triples())).unwrap();
+        let node = &v[0];
+        assert_eq!(node["@id"], "http://ex/Alice");
+        // IRI object → {"@id": …}; rdf:type is a normal predicate IRI (not @type).
+        assert_eq!(
+            node["http://www.w3.org/1999/02/22-rdf-syntax-ns#type"][0]["@id"],
+            "http://ex/Person"
+        );
+        // Typed literal → @value + @type, with the unescaped lexical form.
+        let age = &node["http://ex/age"][0];
+        assert_eq!(age["@value"], "30");
+        assert_eq!(age["@type"], "http://www.w3.org/2001/XMLSchema#integer");
+        // Lang-tagged literal → @value + @language; escapes resolved to chars.
+        let label = &node["http://ex/label"][0];
+        assert_eq!(label["@value"], "héllo \"quote\"");
+        assert_eq!(label["@language"], "en");
+        // Blank node object → {"@id": "_:b0"}.
+        assert_eq!(node["http://ex/knows"][0]["@id"], "_:b0");
     }
 }

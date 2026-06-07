@@ -4,7 +4,7 @@
 
 use rete_core::{Rete, DEFAULT_TILE_BUDGET};
 
-use crate::literal_lexical;
+use crate::commands::render::literal_lexical;
 
 /// One community's membership + literal corpus, ready to serialize.
 struct CommunityRecord {

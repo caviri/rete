@@ -4,8 +4,8 @@
 
 use rete_core::{eval_query, query_predicates, QueryOutput, Rete, SliceReader, SummaryView};
 
+use crate::commands::render::print_query_output;
 use crate::http::HttpRangeReader;
-use crate::print_query_output;
 
 /// Is this source an `http(s)://` URL (vs. a local file path)?
 fn is_url(source: &str) -> bool {

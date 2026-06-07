@@ -7,8 +7,8 @@
 
 use rete_core::{eval_query, CountingReader, RangeReader, Rete, SummaryView};
 
+use crate::commands::render::print_query_output;
 use crate::http::HttpRangeReader;
-use crate::print_query_output;
 
 /// Fetch just the pyramid summary (coarse graph) over HTTP — header, dictionary,
 /// and summary only, skipping the (large) triple index.
