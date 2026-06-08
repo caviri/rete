@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 260" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
+  <title id="t">Building a .rete file: source triples are compiled by rete build into one immutable file hosted on a URL</title>
+  <rect width="820" height="260" fill="#ffffff"/>
+  <text x="410" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">Building a .rete file</text>
+
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/>
+    </marker>
+  </defs>
+
+  <!-- Input boxes (stacked, light-blue) -->
+  <g font-size="13.5" font-weight="700">
+    <rect x="36" y="84" width="96" height="34" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
+    <text x="84" y="106" text-anchor="middle" fill="#1b3a8a">.nt</text>
+
+    <rect x="36" y="124" width="96" height="34" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
+    <text x="84" y="146" text-anchor="middle" fill="#1b3a8a">.ttl</text>
+
+    <rect x="36" y="164" width="96" height="34" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
+    <text x="84" y="186" text-anchor="middle" fill="#1b3a8a">.nq</text>
+  </g>
+  <text x="84" y="74" text-anchor="middle" font-size="11.5" fill="#5b6570">source triples</text>
+
+  <!-- arrow to rete build -->
+  <path d="M136,141 L208,141" stroke="#5b6570" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- rete build (dark navy) -->
+  <rect x="212" y="110" width="130" height="62" rx="8" fill="#0f1620"/>
+  <text x="277" y="140" text-anchor="middle" font-size="14.5" font-weight="700" fill="#ffffff">rete build</text>
+  <text x="277" y="158" text-anchor="middle" font-size="11" fill="#c9d4e0">compile</text>
+
+  <!-- arrow to social.rete -->
+  <path d="M346,141 L416,141" stroke="#5b6570" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- social.rete (accent-blue) with inner labels -->
+  <rect x="420" y="78" width="170" height="126" rx="8" fill="#2a6df4"/>
+  <text x="505" y="104" text-anchor="middle" font-size="14.5" font-weight="700" fill="#ffffff">social.rete</text>
+  <g font-size="12" font-weight="600">
+    <rect x="438" y="116" width="134" height="24" rx="5" fill="#dce8ff"/>
+    <text x="505" y="133" text-anchor="middle" fill="#1b3a8a">dictionary</text>
+
+    <rect x="438" y="146" width="134" height="24" rx="5" fill="#dce8ff"/>
+    <text x="505" y="163" text-anchor="middle" fill="#1b3a8a">indexes</text>
+
+    <rect x="438" y="176" width="134" height="24" rx="5" fill="#dce8ff"/>
+    <text x="505" y="193" text-anchor="middle" fill="#1b3a8a">pyramid</text>
+  </g>
+
+  <!-- arrow to HTTP host -->
+  <path d="M594,141 L664,141" stroke="#5b6570" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- HTTP host node -->
+  <rect x="668" y="106" width="120" height="70" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
+  <text x="728" y="136" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b3a8a">HTTP host</text>
+  <text x="728" y="155" text-anchor="middle" font-size="11.5" fill="#3a5a9a">/ URL</text>
+
+  <text x="410" y="240" text-anchor="middle" font-size="12.5" fill="#5b6570">One immutable file: dictionary + permutation indexes + community pyramid. Put it on any URL.</text>
+</svg>

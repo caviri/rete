@@ -1,0 +1,16 @@
+//! Subcommand handlers for the `rete` CLI, one module per command group. The
+//! crate root (`main.rs`) keeps only the Clap definitions + dispatch; each module
+//! here owns one command's logic, and `render` holds the result-formatting
+//! helpers shared across the query/export/communities commands.
+
+pub(crate) mod build;
+pub(crate) mod card;
+pub(crate) mod communities;
+pub(crate) mod export;
+pub(crate) mod federate;
+pub(crate) mod inspect;
+pub(crate) mod query;
+pub(crate) mod reach;
+pub(crate) mod reason;
+pub(crate) mod render;
+pub(crate) mod url;

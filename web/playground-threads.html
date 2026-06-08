@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>rete — parallel reach (Web Workers)</title>
+  <style>
+    :root { --fg:#1b1f24; --muted:#5b6570; --accent:#2a6df4; --border:#e4e8ec;
+            --code:#f5f7f9; --warn:#fff7e6; --warnb:#ffe0a3; }
+    * { box-sizing:border-box; }
+    body { margin:0 auto; max-width:880px; padding:1.5rem 1.2rem 3rem;
+           font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:var(--fg); }
+    h1 { font-size:1.5rem; margin:.2rem 0; }
+    code,pre { font-family:ui-monospace,SFMono-Regular,monospace; }
+    .warn { background:var(--warn); border:1px solid var(--warnb); border-radius:8px;
+            padding:.7rem 1rem; font-size:13.5px; color:#7a5b00; margin:1rem 0; }
+    .card { border:1px solid var(--border); border-radius:9px; padding:1rem 1.2rem; margin:1rem 0; }
+    label { font-size:.9rem; } input,select { padding:.4rem; font-size:.9rem; }
+    button { padding:.5rem 1.1rem; font-size:.95rem; cursor:pointer; border:1px solid var(--accent);
+             background:var(--accent); color:#fff; border-radius:7px; }
+    button.secondary { background:#fff; color:var(--accent); } button:disabled { opacity:.5; cursor:not-allowed; }
+    .drop { border:2px dashed var(--border); border-radius:9px; padding:1rem; text-align:center; color:var(--muted); font-size:13px; }
+    .drop.over { border-color:var(--accent); background:#f3f7ff; }
+    table { border-collapse:collapse; width:100%; margin-top:.6rem; font-size:14px; }
+    th,td { border:1px solid var(--border); padding:.45rem .6rem; text-align:left; } th { background:var(--code); }
+    .big { font-size:1.6rem; font-weight:700; color:var(--accent); }
+    .ok { color:#1a7f37; } .err { color:#b00020; } .muted { color:var(--muted); } .small { font-size:12.5px; }
+    a { color:var(--accent); }
+  </style>
+</head>
+<body>
+  <h1>rete · parallel reachability <span class="muted small">(experimental)</span></h1>
+  <div class="warn">
+    ⚠ <strong>Experimental.</strong> This page parallelizes transitive reachability across a
+    pool of <strong>Web Workers</strong> — each worker is its own WASM instance running the serial
+    <code>reach</code> over a slice of the seeds (message passing, <em>no</em>
+    <code>SharedArrayBuffer</code>). So it works on any plain static server (no COOP/COEP needed),
+    using the normal <code>web/pkg</code> build. The stable single-file playground is
+    <a href="../docs/playground.html">docs/playground.html</a>; the native multicore path is
+    <code>rete reach --parallel</code> (<a href="../docs/BENCHMARK.html">Benchmarks</a>).
+  </div>
+
+  <div class="card"><div id="status" class="small muted">initializing…</div></div>
+
+  <div class="card">
+    <h3 style="margin-top:0">1 · Load a graph</h3>
+    <p class="small muted">Bigger graphs show the speedup — drag-drop e.g.
+      <code>data/opencitations/enriched-all.rete</code> (~590k triples).</p>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center">
+      <label>Bundled:
+        <select id="ds">
+          <option value="enriched-all.rete">enriched-all.rete (big, if present)</option>
+          <option value="research.rete">research.rete</option>
+          <option value="papers.rete">papers.rete</option>
+          <option value="researchers.rete">researchers.rete</option>
+          <option value="deps.rete">deps.rete</option>
+        </select>
+      </label>
+      <button class="secondary" id="loadDs">Load</button>
+      <span id="loaded" class="small muted"></span>
+    </div>
+    <div class="drop" id="drop" style="margin-top:.7rem">drag &amp; drop a <code>.rete</code> file here</div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">2 · Benchmark: serial vs. Web-Worker-pool reachability</h3>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center">
+      <label>Predicate <input type="text" id="pred" style="width:280px" value="http://ex/coauthor" /></label>
+      <label>Max seeds <input type="number" id="maxseeds" value="600" style="width:6rem" /></label>
+      <label><input type="checkbox" id="reverse" /> reverse</label>
+      <button id="run" disabled>Run benchmark</button>
+    </div>
+    <div id="out" class="small muted" style="margin-top:.8rem">Load a graph first.</div>
+  </div>
+
+  <p class="small muted">Each worker computes the transitive reach for its slice of seeds
+    independently (the embarrassingly-parallel batch-reachability workload). The page checks the
+    merged worker result is identical to the serial run before reporting the speedup.</p>
+
+  <script type="module">
+    import init, { info, query, reach } from "./pkg/rete_wasm.js";
+    const $ = (id) => document.getElementById(id);
+    let bytes = null, pool = [], N = Math.max(2, navigator.hardwareConcurrency || 4);
+
+    (async () => {
+      await init();
+      // Pre-spawn the worker pool.
+      pool = Array.from({ length: N }, () => new Worker(new URL("./reach-worker.js", import.meta.url), { type: "module" }));
+      $("status").innerHTML = `✅ ready · Web-Worker pool: <strong>${N}</strong> workers ` +
+        `(navigator.hardwareConcurrency=${navigator.hardwareConcurrency || "?"})`;
+    })();
+
+    function once(worker) { return new Promise((res) => { worker.onmessage = (e) => res(e.data); }); }
+
+    function setLoaded(name) {
+      const m = JSON.parse(info(bytes));
+      $("loaded").textContent = `${name}: ${bytes.length} bytes · ${m.quads} quads · ${m.terms} terms`;
+      $("run").disabled = false; $("out").textContent = "Ready — click Run benchmark.";
+    }
+    async function loadUrl(url) {
+      $("loaded").textContent = "loading…";
+      try { const r = await fetch(url); if (!r.ok) throw new Error("HTTP " + r.status);
+        bytes = new Uint8Array(await r.arrayBuffer()); setLoaded(url);
+      } catch (e) { $("loaded").innerHTML = `<span class="err">${e} (is the file in web/?)</span>`; }
+    }
+    $("loadDs").onclick = () => loadUrl($("ds").value);
+    const drop = $("drop");
+    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+    drop.ondragleave = () => drop.classList.remove("over");
+    drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over");
+      const f = e.dataTransfer.files[0]; if (!f) return;
+      const rd = new FileReader(); rd.onload = () => { bytes = new Uint8Array(rd.result); setLoaded(f.name); };
+      rd.readAsArrayBuffer(f); };
+
+    $("run").onclick = async () => {
+      if (!bytes) return;
+      const pred = "<" + $("pred").value.trim() + ">", reverse = $("reverse").checked;
+      const max = parseInt($("maxseeds").value) || 200;
+      $("out").textContent = "gathering seeds…";
+      try {
+        const res = JSON.parse(query(bytes, `SELECT DISTINCT ?s WHERE { ?s ${pred} ?o } LIMIT ${max}`, "table"));
+        const seeds = (res.rows || []).map((r) => r.s).filter(Boolean);
+        if (!seeds.length) { $("out").innerHTML = `<span class="err">no subjects for ${pred}</span>`; return; }
+
+        // Serial (main thread).
+        const t0 = performance.now();
+        const serialJson = reach(bytes, pred, JSON.stringify(seeds), reverse);
+        const t1 = performance.now();
+
+        // Parallel: split seeds across the worker pool; merge in chunk order.
+        const k = Math.min(N, seeds.length);
+        const chunks = Array.from({ length: k }, (_, i) => seeds.filter((_, j) => j % k === i));
+        const order = []; // reconstruct input order from round-robin split
+        seeds.forEach((_, j) => order.push(j));
+        const t2 = performance.now();
+        const parts = await Promise.all(chunks.map((chunk, i) => {
+          const w = pool[i]; const p = once(w);
+          // copy bytes per worker (structured clone)
+          w.postMessage({ id: i, bytes, predicate: pred, seeds: chunk, reverse });
+          return p;
+        }));
+        const t3 = performance.now();
+        if (parts.some((p) => !p.ok)) throw new Error(parts.find((p) => !p.ok).error);
+        // Reassemble into original seed order to compare with serial.
+        const perSeed = new Map();
+        parts.forEach((p, i) => { JSON.parse(p.json).forEach((rec) => perSeed.set(rec.seed, rec)); });
+        const merged = seeds.map((s) => perSeed.get(s));
+        const match = JSON.stringify(merged) === serialJson;
+
+        const serial = t1 - t0, parallel = t3 - t2, speedup = (serial / parallel).toFixed(2);
+        $("out").innerHTML =
+          `<table><tr><th>seeds</th><th>workers</th><th>serial</th><th>parallel</th><th>speedup</th><th>match</th></tr>` +
+          `<tr><td>${seeds.length}</td><td>${k}</td><td>${serial.toFixed(1)} ms</td><td>${parallel.toFixed(1)} ms</td>` +
+          `<td class="big">${speedup}×</td><td class="${match ? "ok" : "err"}">${match ? "✓ identical" : "✗ MISMATCH"}</td></tr></table>` +
+          `<p class="small muted">parallel = ${k} Web Workers, each a separate WASM instance.</p>`;
+      } catch (e) { $("out").innerHTML = `<span class="err">${e}</span>`; }
+    };
+  </script>
+</body>
+</html>

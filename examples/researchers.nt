@@ -1,0 +1,46 @@
+# Multi-criteria community example. Eight researchers with THREE grouping criteria
+# that deliberately disagree:
+#   - ex:cites      → two dense citation clusters: {r1..r4} and {r5..r8}
+#   - ex:coauthor   → pairs that CROSS the citation clusters (r1-r5, r2-r6, …)
+#   - ex:organization → an attribute (OrgX / OrgY), groupable via SPARQL
+# So "community" depends on which relation you partition by — that's the point.
+<http://ex/r1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r3> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r4> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r5> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r6> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r7> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r8> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+# Citation cluster A = {r1,r2,r3,r4} (dense, all pairs cite)
+<http://ex/r1> <http://ex/cites> <http://ex/r2> .
+<http://ex/r1> <http://ex/cites> <http://ex/r3> .
+<http://ex/r1> <http://ex/cites> <http://ex/r4> .
+<http://ex/r2> <http://ex/cites> <http://ex/r3> .
+<http://ex/r2> <http://ex/cites> <http://ex/r4> .
+<http://ex/r3> <http://ex/cites> <http://ex/r4> .
+# Citation cluster B = {r5,r6,r7,r8} (dense, all pairs cite)
+<http://ex/r5> <http://ex/cites> <http://ex/r6> .
+<http://ex/r5> <http://ex/cites> <http://ex/r7> .
+<http://ex/r5> <http://ex/cites> <http://ex/r8> .
+<http://ex/r6> <http://ex/cites> <http://ex/r7> .
+<http://ex/r6> <http://ex/cites> <http://ex/r8> .
+<http://ex/r7> <http://ex/cites> <http://ex/r8> .
+# Coauthorship CROSSES the citation clusters → different communities
+<http://ex/r1> <http://ex/coauthor> <http://ex/r5> .
+<http://ex/r5> <http://ex/coauthor> <http://ex/r1> .
+<http://ex/r2> <http://ex/coauthor> <http://ex/r6> .
+<http://ex/r6> <http://ex/coauthor> <http://ex/r2> .
+<http://ex/r3> <http://ex/coauthor> <http://ex/r7> .
+<http://ex/r7> <http://ex/coauthor> <http://ex/r3> .
+<http://ex/r4> <http://ex/coauthor> <http://ex/r8> .
+<http://ex/r8> <http://ex/coauthor> <http://ex/r4> .
+# Organization attribute (a third criterion, grouped via SPARQL)
+<http://ex/r1> <http://ex/organization> <http://ex/OrgX> .
+<http://ex/r2> <http://ex/organization> <http://ex/OrgX> .
+<http://ex/r5> <http://ex/organization> <http://ex/OrgX> .
+<http://ex/r6> <http://ex/organization> <http://ex/OrgX> .
+<http://ex/r3> <http://ex/organization> <http://ex/OrgY> .
+<http://ex/r4> <http://ex/organization> <http://ex/OrgY> .
+<http://ex/r7> <http://ex/organization> <http://ex/OrgY> .
+<http://ex/r8> <http://ex/organization> <http://ex/OrgY> .

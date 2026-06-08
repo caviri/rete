@@ -1,0 +1,168 @@
+//! An HTTP(S)-backed [`RangeReader`] (SPEC.md §9): point the client at a URL and
+//! it fetches only the byte ranges a query needs via HTTP `Range` requests.
+//!
+//! Uses blocking `ureq` with rustls (the `tls` feature), so `http://` and
+//! `https://` both work — the file can live on S3, GitHub, or any CDN that honors
+//! `Range`, which is the format's whole deployment story.
+
+use std::io::Read;
+
+use rete_core::RangeReader;
+
+pub struct HttpRangeReader {
+    url: String,
+    len: u64,
+}
+
+impl HttpRangeReader {
+    /// Probe the resource length with a HEAD request.
+    pub fn open(url: &str) -> anyhow::Result<Self> {
+        let resp = ureq::head(url).call()?;
+        let len = resp
+            .header("content-length")
+            .and_then(|v| v.parse::<u64>().ok())
+            .ok_or_else(|| anyhow::anyhow!("server did not report Content-Length for {url}"))?;
+        Ok(Self {
+            url: url.to_string(),
+            len,
+        })
+    }
+}
+
+impl RangeReader for HttpRangeReader {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        let end = offset + len - 1; // HTTP ranges are inclusive
+        let resp = ureq::get(&self.url)
+            .set("Range", &format!("bytes={offset}-{end}"))
+            .call()
+            .map_err(std::io::Error::other)?;
+        // The server MUST honor the range. A `200 OK` means it ignored `Range`
+        // and is returning the whole body from offset 0 — taking `len` bytes of
+        // that would silently yield the wrong slice, so reject it loudly instead.
+        if resp.status() != 206 {
+            return Err(std::io::Error::other(format!(
+                "server ignored Range (status {}, expected 206 Partial Content) for {}; \
+                 the host must support HTTP range requests",
+                resp.status(),
+                self.url
+            )));
+        }
+        let mut buf = Vec::with_capacity(len as usize);
+        resp.into_reader().take(len).read_to_end(&mut buf)?;
+        Ok(buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    /// A throwaway localhost HTTP/1.1 server over the given bytes. `honor_range`
+    /// toggles whether it replies `206` to `Range` (a real range host) or ignores
+    /// it and replies `200` with the whole body (a plain static server). Returns
+    /// the bound `http://127.0.0.1:PORT/` base URL; the server thread is detached.
+    fn serve(data: Vec<u8>, honor_range: bool) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                // Read the request head (until CRLFCRLF).
+                let mut req = Vec::new();
+                let mut byte = [0u8; 1];
+                while !req.ends_with(b"\r\n\r\n") {
+                    use std::io::Read as _;
+                    if stream.read(&mut byte).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    req.push(byte[0]);
+                }
+                let text = String::from_utf8_lossy(&req);
+                let is_head = text.starts_with("HEAD");
+                let range = text.lines().find_map(|l| {
+                    let l = l.to_ascii_lowercase();
+                    l.strip_prefix("range: bytes=")
+                        .map(|r| r.trim().to_string())
+                });
+
+                let total = data.len();
+                if is_head {
+                    let h = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = stream.write_all(h.as_bytes());
+                } else if let (true, Some(r)) = (honor_range, range) {
+                    let (a, b) = r.split_once('-').unwrap();
+                    let a: usize = a.parse().unwrap();
+                    let b: usize = b.parse().unwrap();
+                    let slice = &data[a..=b.min(total - 1)];
+                    let h = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {a}-{b}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        slice.len()
+                    );
+                    let _ = stream.write_all(h.as_bytes());
+                    let _ = stream.write_all(slice);
+                } else {
+                    // Ignore Range: reply 200 with the entire body.
+                    let h = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = stream.write_all(h.as_bytes());
+                    let _ = stream.write_all(&data);
+                }
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn reads_exact_ranges_from_a_range_host() {
+        let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
+        let url = serve(data.clone(), true);
+        let r = HttpRangeReader::open(&url).unwrap();
+        assert_eq!(r.len(), 1000);
+        assert_eq!(r.read_at(0, 4).unwrap(), &data[0..4]);
+        assert_eq!(r.read_at(500, 20).unwrap(), &data[500..520]);
+        assert_eq!(r.read_at(996, 4).unwrap(), &data[996..1000]);
+        assert!(r.read_at(0, 0).unwrap().is_empty());
+    }
+
+    /// Proves the `https://` transport works end-to-end against a real host that
+    /// honors Range. Network-dependent, so `#[ignore]`d — CI never touches the
+    /// network. Run on demand: `cargo test -p rete-cli -- --ignored https`.
+    #[test]
+    #[ignore = "hits the network (httpbin); run with --ignored"]
+    fn reads_ranges_over_https() {
+        let url = "https://httpbin.org/range/2048";
+        let r = HttpRangeReader::open(url).unwrap();
+        assert!(r.len() >= 2048);
+        let chunk = r.read_at(100, 16).unwrap();
+        assert_eq!(chunk.len(), 16);
+    }
+
+    #[test]
+    fn rejects_a_host_that_ignores_range() {
+        // A server that returns 200 with the whole body must be detected, not
+        // silently mis-read as the requested slice.
+        let data: Vec<u8> = (0..200u8).collect();
+        let url = serve(data, false);
+        let r = HttpRangeReader::open(&url).unwrap();
+        let err = r.read_at(50, 10).unwrap_err();
+        assert!(
+            err.to_string().contains("ignored Range"),
+            "expected a clear range-unsupported error, got: {err}"
+        );
+    }
+}

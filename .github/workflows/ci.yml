@@ -1,0 +1,91 @@
+name: CI
+
+# Everything runs inside the same `rust:1.92-bookworm` image the dev container
+# uses — the project's rule is that nothing builds on the host, and a GitHub
+# Actions `container:` job is exactly that: every step executes in Docker.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: fmt · clippy · test matrix
+    runs-on: ubuntu-latest
+    container:
+      image: rust:1.92-bookworm
+    steps:
+      - uses: actions/checkout@v4
+
+      # The C zstd encoder (default `compression` feature) needs the dev headers.
+      - name: Install system deps
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libzstd-dev python3
+          rustup component add rustfmt clippy
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      # `rete-bench` is a dev-only benchmark that pulls in Oxigraph (a heavy dep
+      # tree); it is excluded from the hot CI steps to keep them fast. It still
+      # builds locally via `cargo build -p rete-bench` (see docs/BENCHMARK.md).
+      - name: Clippy (warnings = errors)
+        run: cargo clippy --workspace --exclude rete-bench --all-targets -- -D warnings
+
+      - name: Test (default features)
+        run: cargo test --workspace --exclude rete-bench
+
+      # The exact configuration the wasm crate consumes `rete-core` under
+      # (no C zstd encoder; pure-Rust ruzstd decoder only).
+      - name: Test (--no-default-features)
+        run: cargo test -p rete-core --no-default-features
+
+      - name: Build (--all-features)
+        run: cargo build -p rete-core --all-features
+
+      # rete-bench pulls Oxigraph (a heavy dep tree) so it's kept out of the hot
+      # clippy/test steps — but build it here so the benchmark can't bit-rot.
+      - name: Build rete-bench (smoke)
+        run: cargo build -p rete-bench
+
+      # End-to-end acceptance test of every CLI subcommand + the HTTP range path.
+      - name: CLI smoke test
+        run: bash scripts/smoke.sh
+
+      # The rendered HTML docs must match their Markdown source.
+      - name: Docs HTML in sync
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cargo run -q -p docgen
+          git diff --exit-code docs/ \
+            || { echo "docs/*.html is stale — run 'cargo run -p docgen' and commit"; exit 1; }
+
+  wasm:
+    name: wasm build
+    runs-on: ubuntu-latest
+    container:
+      image: rust:1.92-bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add wasm target + wasm-pack
+        run: |
+          rustup target add wasm32-unknown-unknown
+          curl -sSfL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+      - name: Build browser bindings
+        run: wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg

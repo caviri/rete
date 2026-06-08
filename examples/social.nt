@@ -1,0 +1,8 @@
+# A tiny social graph in N-Triples.
+<http://ex/Alice> <http://ex/knows> <http://ex/Bob> .
+<http://ex/Bob> <http://ex/knows> <http://ex/Carol> .
+<http://ex/Carol> <http://ex/knows> <http://ex/Alice> .
+<http://ex/Alice> <http://ex/age> "30"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex/Bob> <http://ex/age> "25"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex/Alice> <http://ex/name> "Alice"@en .
+<http://ex/Bob> <http://ex/name> "Bob"@en .

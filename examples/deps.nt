@@ -1,0 +1,17 @@
+# A software dependency graph (an SBOM-style slice): packages, their kinds, and
+# `dependsOn` edges — including a transitive chain down to a vulnerable package.
+# Demonstrates the offline/embedded use case: "what is impacted by this CVE?"
+# answered by a transitive property path, entirely client-side.
+<http://ex/app> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Application> .
+<http://ex/web> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Library> .
+<http://ex/auth> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Library> .
+<http://ex/logging> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Library> .
+<http://ex/log4x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Library> .
+<http://ex/safejson> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Library> .
+<http://ex/log4x> <http://ex/hasVulnerability> <http://ex/CVE-2099-0001> .
+<http://ex/app> <http://ex/dependsOn> <http://ex/web> .
+<http://ex/app> <http://ex/dependsOn> <http://ex/auth> .
+<http://ex/web> <http://ex/dependsOn> <http://ex/logging> .
+<http://ex/auth> <http://ex/dependsOn> <http://ex/logging> .
+<http://ex/auth> <http://ex/dependsOn> <http://ex/safejson> .
+<http://ex/logging> <http://ex/dependsOn> <http://ex/log4x> .

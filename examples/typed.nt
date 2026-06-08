@@ -1,0 +1,7 @@
+# A small typed graph: People and Orgs, so `rete schema` has an ontology to profile.
+<http://ex/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> .
+<http://ex/Bob> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> .
+<http://ex/Acme> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Org> .
+<http://ex/Alice> <http://ex/knows> <http://ex/Bob> .
+<http://ex/Alice> <http://ex/worksAt> <http://ex/Acme> .
+<http://ex/Bob> <http://ex/name> "Bob" .

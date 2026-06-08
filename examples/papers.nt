@@ -1,0 +1,53 @@
+<http://ex/p1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p1> <http://ex/title> "Deep neural networks for image classification" .
+<http://ex/p1> <http://ex/abstract> "We train a deep neural network model on labeled images. The network learns features through gradient descent and backpropagation. Our classifier improves accuracy on the benchmark dataset using convolutional layers and dropout regularization." .
+<http://ex/p1> <http://ex/cites> <http://ex/p2> .
+<http://ex/p1> <http://ex/cites> <http://ex/p3> .
+
+<http://ex/p2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p2> <http://ex/title> "Reinforcement learning with neural network policies" .
+<http://ex/p2> <http://ex/abstract> "A reinforcement learning agent learns a policy by maximizing reward. We use a neural network to approximate the value function and train with gradient descent. The model generalizes across tasks and improves sample efficiency during training." .
+<http://ex/p2> <http://ex/cites> <http://ex/p1> .
+<http://ex/p2> <http://ex/cites> <http://ex/p3> .
+
+<http://ex/p3> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p3> <http://ex/title> "Training transformer models for language" .
+<http://ex/p3> <http://ex/abstract> "Transformer neural network models are trained on text using attention. We optimize the model with gradient descent and study how the network learns representations. Our deep learning approach improves accuracy on language modeling benchmarks." .
+<http://ex/p3> <http://ex/cites> <http://ex/p1> .
+<http://ex/p3> <http://ex/cites> <http://ex/p2> .
+
+<http://ex/p4> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p4> <http://ex/title> "Query optimization in relational databases" .
+<http://ex/p4> <http://ex/abstract> "We present a query optimizer for a relational database. The system uses indexes and a cost model to plan joins. Our approach reduces query latency and improves throughput for transactional workloads on the storage engine." .
+<http://ex/p4> <http://ex/cites> <http://ex/p5> .
+<http://ex/p4> <http://ex/cites> <http://ex/p6> .
+
+<http://ex/p5> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p5> <http://ex/title> "Indexing strategies for transactional storage" .
+<http://ex/p5> <http://ex/abstract> "An index accelerates lookups in a database storage engine. We compare B-tree and hash index structures for transactional workloads. The query planner chooses indexes to lower latency and improve throughput of joins." .
+<http://ex/p5> <http://ex/cites> <http://ex/p4> .
+<http://ex/p5> <http://ex/cites> <http://ex/p6> .
+
+<http://ex/p6> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p6> <http://ex/title> "Concurrency control for database transactions" .
+<http://ex/p6> <http://ex/abstract> "We study concurrency control in a relational database. The transaction manager uses locking and the storage engine maintains indexes for joins. Our query scheduler improves throughput and reduces latency under high transactional load." .
+<http://ex/p6> <http://ex/cites> <http://ex/p4> .
+<http://ex/p6> <http://ex/cites> <http://ex/p5> .
+
+<http://ex/p7> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p7> <http://ex/title> "Gene expression in cancer cells" .
+<http://ex/p7> <http://ex/abstract> "We measure gene expression in cancer cells using sequencing. The protein levels reveal how the cell regulates its genome. Mutations in the DNA drive tumor growth and we study the molecular pathways of the disease in tissue samples." .
+<http://ex/p7> <http://ex/cites> <http://ex/p8> .
+<http://ex/p7> <http://ex/cites> <http://ex/p9> .
+
+<http://ex/p8> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p8> <http://ex/title> "Protein folding and molecular structure" .
+<http://ex/p8> <http://ex/abstract> "A protein folds into a molecular structure determined by its gene sequence. We model how the cell synthesizes protein from DNA and how mutations alter folding. The study links genome variation to disease in living tissue." .
+<http://ex/p8> <http://ex/cites> <http://ex/p7> .
+<http://ex/p8> <http://ex/cites> <http://ex/p9> .
+
+<http://ex/p9> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p9> <http://ex/title> "DNA sequencing of the human genome" .
+<http://ex/p9> <http://ex/abstract> "DNA sequencing reveals the genome of a cell. We analyze gene mutations linked to cancer and disease across tissue samples. The protein products of each gene help explain the molecular biology of the cell and its growth." .
+<http://ex/p9> <http://ex/cites> <http://ex/p7> .
+<http://ex/p9> <http://ex/cites> <http://ex/p8> .

@@ -1,0 +1,319 @@
+//! Dictionary assembly: classify RDF terms by role and assign the HDT-style
+//! global IDs that triple blocks reference (SPEC.md §5, §5.1).
+//!
+//! Four sections are built from the §5.1 front-coded primitive:
+//! `shared` (used as both subject and object), `subjects` (subject-only),
+//! `objects` (object-only), and `predicates`. Subject IDs run `1..=S` (shared)
+//! then `S+1..` (subject-only); object IDs reuse `1..=S` for the same shared
+//! terms then `S+1..` for object-only. Predicates have their own space.
+
+use std::collections::BTreeSet;
+
+use crate::dict::{parse_meta, section_id, section_term, DictSectionBuilder, SectionMeta};
+
+/// Builds a [`Dictionary`] from observed `(subject, predicate, object)` terms.
+#[derive(Default)]
+pub struct DictionaryBuilder {
+    subjects: BTreeSet<String>,
+    objects: BTreeSet<String>,
+    predicates: BTreeSet<String>,
+}
+
+impl DictionaryBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record one triple's terms (IDs are assigned later, in [`Self::build`]).
+    pub fn observe(&mut self, subject: &str, predicate: &str, object: &str) {
+        self.subjects.insert(subject.to_string());
+        self.objects.insert(object.to_string());
+        self.predicates.insert(predicate.to_string());
+    }
+
+    pub fn build(self) -> Dictionary {
+        let shared: BTreeSet<&String> = self.subjects.intersection(&self.objects).collect();
+
+        let mut shared_b = DictSectionBuilder::new();
+        let mut subj_b = DictSectionBuilder::new();
+        let mut obj_b = DictSectionBuilder::new();
+        let mut pred_b = DictSectionBuilder::new();
+
+        for s in &self.subjects {
+            if shared.contains(s) {
+                shared_b.push(s.clone());
+            } else {
+                subj_b.push(s.clone());
+            }
+        }
+        for o in &self.objects {
+            if !shared.contains(o) {
+                obj_b.push(o.clone());
+            }
+        }
+        for p in &self.predicates {
+            pred_b.push(p.clone());
+        }
+
+        let shared = shared_b.build();
+        Dictionary::from_sections([shared, subj_b.build(), obj_b.build(), pred_b.build()])
+    }
+}
+
+fn meta_of(bytes: &[u8]) -> SectionMeta {
+    parse_meta(bytes).unwrap_or(SectionMeta {
+        term_count: 0,
+        restart_interval: 1,
+        restart_offsets: Vec::new(),
+    })
+}
+
+/// A read-only dictionary mapping terms ↔ role-specific IDs.
+///
+/// Holds the four serialized sections plus their parsed restart tables, so
+/// lookups never re-parse a section header.
+pub struct Dictionary {
+    shared: Vec<u8>,
+    shared_meta: SectionMeta,
+    subjects: Vec<u8>,
+    subjects_meta: SectionMeta,
+    objects: Vec<u8>,
+    objects_meta: SectionMeta,
+    predicates: Vec<u8>,
+    predicates_meta: SectionMeta,
+    shared_len: u32,
+}
+
+impl Dictionary {
+    /// Rebuild from four serialized sections (shared, subjects, objects,
+    /// predicates), e.g. when reading a `.rete` file.
+    pub fn from_sections(sections: [Vec<u8>; 4]) -> Self {
+        let [shared, subjects, objects, predicates] = sections;
+        let shared_meta = meta_of(&shared);
+        let shared_len = shared_meta.term_count;
+        Dictionary {
+            shared_meta,
+            subjects_meta: meta_of(&subjects),
+            objects_meta: meta_of(&objects),
+            predicates_meta: meta_of(&predicates),
+            shared,
+            subjects,
+            objects,
+            predicates,
+            shared_len,
+        }
+    }
+
+    /// Total number of distinct terms across all four sections.
+    pub fn term_count(&self) -> u32 {
+        self.shared_meta.term_count
+            + self.subjects_meta.term_count
+            + self.objects_meta.term_count
+            + self.predicates_meta.term_count
+    }
+
+    /// Number of shared terms `S`.
+    pub fn shared_count(&self) -> u32 {
+        self.shared_len
+    }
+
+    /// Number of subject-only terms `Su`.
+    pub fn subject_only_count(&self) -> u32 {
+        self.subjects_meta.term_count
+    }
+
+    /// Number of object-only terms `Oo`.
+    pub fn object_only_count(&self) -> u32 {
+        self.objects_meta.term_count
+    }
+
+    // --- unified node space (for graph algorithms / the pyramid) ----------
+    //
+    // Subjects and objects use *separate* ID spaces that overlap on shared
+    // terms; the pyramid needs one node per distinct term. We lay them out as:
+    //   [0 .. S)            shared
+    //   [S .. S+Su)         subject-only
+    //   [S+Su .. S+Su+Oo)   object-only
+
+    /// Total distinct graph nodes `N = S + Su + Oo`.
+    pub fn node_count(&self) -> u32 {
+        self.shared_len + self.subject_only_count() + self.object_only_count()
+    }
+
+    /// Unified node ID for a subject-role ID. Shared and subject-only IDs are
+    /// already contiguous (`1..=S+Su`), so this is just `sid - 1`.
+    pub fn subject_node(&self, sid: u32) -> u32 {
+        // saturating_sub: a corrupt block may carry id 0; valid ids are ≥1 so this
+        // is identical for well-formed files but never underflow-panics.
+        sid.saturating_sub(1)
+    }
+
+    /// Unified node ID for an object-role ID: shared stay at `oid-1`, object-only
+    /// IDs are shifted past the subject-only block.
+    pub fn object_node(&self, oid: u32) -> u32 {
+        if oid <= self.shared_len {
+            oid.saturating_sub(1)
+        } else {
+            oid.saturating_sub(1) + self.subject_only_count()
+        }
+    }
+
+    /// Resolve a unified node ID back to its term.
+    pub fn node_term(&self, node: u32) -> Option<String> {
+        let su = self.subject_only_count();
+        if node < self.shared_len + su {
+            self.subject_term(node + 1)
+        } else {
+            self.object_term(node + 1 - su)
+        }
+    }
+
+    /// Unified node ID for a term, resolving via subject role then object role.
+    pub fn node_of_term(&self, term: &str) -> Option<u32> {
+        if let Some(sid) = self.subject_id(term) {
+            return Some(self.subject_node(sid));
+        }
+        self.object_id(term).map(|oid| self.object_node(oid))
+    }
+
+    /// Subject-role ID of a node, or `None` if the node never appears as a
+    /// subject (an object-only term).
+    pub fn node_as_subject_id(&self, node: u32) -> Option<u32> {
+        if node < self.shared_len + self.subject_only_count() {
+            Some(node + 1)
+        } else {
+            None
+        }
+    }
+
+    /// Object-role ID of a node, or `None` if the node never appears as an
+    /// object (a subject-only term).
+    pub fn node_as_object_id(&self, node: u32) -> Option<u32> {
+        let (s, su) = (self.shared_len, self.subject_only_count());
+        if node < s {
+            Some(node + 1) // shared
+        } else if node >= s + su {
+            Some(node + 1 - su) // object-only
+        } else {
+            None // subject-only
+        }
+    }
+
+    // --- term -> id -------------------------------------------------------
+
+    /// Subject-role ID for `term`: shared `1..=S`, else subject-only `S+1..`.
+    pub fn subject_id(&self, term: &str) -> Option<u32> {
+        if let Some(id) = section_id(&self.shared, &self.shared_meta, term) {
+            return Some(id);
+        }
+        section_id(&self.subjects, &self.subjects_meta, term).map(|id| self.shared_len + id)
+    }
+
+    /// Object-role ID for `term`: shared `1..=S`, else object-only `S+1..`.
+    pub fn object_id(&self, term: &str) -> Option<u32> {
+        if let Some(id) = section_id(&self.shared, &self.shared_meta, term) {
+            return Some(id);
+        }
+        section_id(&self.objects, &self.objects_meta, term).map(|id| self.shared_len + id)
+    }
+
+    /// Predicate ID for `term` (independent space).
+    pub fn predicate_id(&self, term: &str) -> Option<u32> {
+        section_id(&self.predicates, &self.predicates_meta, term)
+    }
+
+    // --- id -> term -------------------------------------------------------
+
+    pub fn subject_term(&self, id: u32) -> Option<String> {
+        if id <= self.shared_len {
+            section_term(&self.shared, &self.shared_meta, id)
+        } else {
+            section_term(&self.subjects, &self.subjects_meta, id - self.shared_len)
+        }
+    }
+
+    pub fn object_term(&self, id: u32) -> Option<String> {
+        if id <= self.shared_len {
+            section_term(&self.shared, &self.shared_meta, id)
+        } else {
+            section_term(&self.objects, &self.objects_meta, id - self.shared_len)
+        }
+    }
+
+    pub fn predicate_term(&self, id: u32) -> Option<String> {
+        section_term(&self.predicates, &self.predicates_meta, id)
+    }
+
+    /// Encode a `(s, p, o)` term triple to its `(subject_id, predicate_id,
+    /// object_id)`. `None` if any term is unknown.
+    pub fn encode(&self, s: &str, p: &str, o: &str) -> Option<(u32, u32, u32)> {
+        Some((
+            self.subject_id(s)?,
+            self.predicate_id(p)?,
+            self.object_id(o)?,
+        ))
+    }
+
+    /// The four serialized sections, for the file writer.
+    pub fn sections(&self) -> [&[u8]; 4] {
+        [
+            &self.shared,
+            &self.subjects,
+            &self.objects,
+            &self.predicates,
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dict() -> Dictionary {
+        let mut b = DictionaryBuilder::new();
+        // Alice knows Bob; Bob knows Carol. So Bob is both subject and object
+        // (shared); Alice is subject-only; Carol is object-only.
+        b.observe("Alice", "knows", "Bob");
+        b.observe("Bob", "knows", "Carol");
+        b.build()
+    }
+
+    #[test]
+    fn shared_term_has_same_id_in_both_roles() {
+        let d = dict();
+        assert_eq!(d.shared_count(), 1); // just "Bob"
+        let sid = d.subject_id("Bob").unwrap();
+        let oid = d.object_id("Bob").unwrap();
+        assert_eq!(sid, oid, "shared term must share its ID across roles");
+        assert_eq!(sid, 1, "shared terms get the lowest IDs");
+    }
+
+    #[test]
+    fn role_specific_terms_round_trip() {
+        let d = dict();
+        // subject-only Alice
+        let a = d.subject_id("Alice").unwrap();
+        assert!(a > d.shared_count());
+        assert_eq!(d.subject_term(a).as_deref(), Some("Alice"));
+        // object-only Carol
+        let c = d.object_id("Carol").unwrap();
+        assert!(c > d.shared_count());
+        assert_eq!(d.object_term(c).as_deref(), Some("Carol"));
+        // predicate
+        let k = d.predicate_id("knows").unwrap();
+        assert_eq!(d.predicate_term(k).as_deref(), Some("knows"));
+        // Alice never appears as object, Carol never as subject.
+        assert_eq!(d.object_id("Alice"), None);
+        assert_eq!(d.subject_id("Carol"), None);
+    }
+
+    #[test]
+    fn encode_full_triples() {
+        let d = dict();
+        let t1 = d.encode("Alice", "knows", "Bob").unwrap();
+        let t2 = d.encode("Bob", "knows", "Carol").unwrap();
+        // Bob is object in t1 and subject in t2 — same ID both times.
+        assert_eq!(t1.2, t2.0);
+        assert!(d.encode("Nobody", "knows", "Bob").is_none());
+    }
+}
