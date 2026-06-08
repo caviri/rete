@@ -9,6 +9,11 @@ only for final bindings.
 Run via the CLI (`rete sparql <file> "<query>" [--json]`) or in the browser
 (`query_sparql` in `rete-wasm`).
 
+<figure class="fig-right">
+  <img src="img/bgp-join.svg" alt="Two triple patterns sharing the variable ?f are joined on it, producing a binding table with columns for the bound variables.">
+  <figcaption>A basic graph pattern is a join on shared variables: patterns that share <code>?f</code> are intersected via the permutation indexes.</figcaption>
+</figure>
+
 ## Supported
 
 | Area | Details |

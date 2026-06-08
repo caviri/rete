@@ -5,13 +5,14 @@ members = [
     "crates/rete-cli",
     "crates/rete-wasm",
     "crates/docgen",
+    "crates/bench",
 ]
 
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/carlosvivarrios/rete"
+repository = "https://github.com/caviri/rete"
 rust-version = "1.86"
 
 [workspace.dependencies]

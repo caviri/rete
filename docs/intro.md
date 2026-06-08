@@ -7,6 +7,11 @@ you'll know the landscape and exactly what you can ask a `.rete` file.
 
 ## What is a graph (a.k.a. a network)?
 
+<figure class="fig-right">
+  <img src="img/graph-vs-table.svg" alt="The same facts shown as a relational table of rows on the left and as a node-link graph on the right, joined by a 'same facts' arrow.">
+  <figcaption>The same facts as rows vs. as a graph. A graph stores the relationships directly, so "who is connected to whom" is a traversal, not a join.</figcaption>
+</figure>
+
 A graph is just two ingredients:
 
 - **Nodes** — the *things* (a person, a software package, a disease, a web page).
@@ -34,6 +39,11 @@ explains everything below.
 
 There are two dominant ways to *write down* a graph. They model the same dots and
 lines, but differently.
+
+<figure class="fig-right">
+  <img src="img/triple.svg" alt="An RDF triple drawn as a node-link: a subject node connected by a labeled predicate arrow to an object node, with a second example pointing to a literal value.">
+  <figcaption>One triple = one fact: <code>subject —predicate→ object</code>. Resources are rounded nodes; literals are boxes. A graph is many triples sharing nodes.</figcaption>
+</figure>
 
 **RDF (Resource Description Framework)** breaks the world into **triples** —
 short statements of the form `(subject, predicate, object)`:

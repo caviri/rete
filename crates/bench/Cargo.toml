@@ -1,0 +1,14 @@
+[package]
+name = "rete-bench"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+# Benchmark harness: rete (serial) vs rete (parallel reach) vs Oxigraph, in one
+# process on identical data, warm timings. Not part of the shipped product; it
+# pulls in Oxigraph only here. In-memory Oxigraph needs no RocksDB/clang, so we
+# disable default features to keep the build light.
+[dependencies]
+rete-core = { path = "../rete-core", features = ["parallel"] }
+oxigraph = { version = "0.5", default-features = false }
+anyhow = "1"

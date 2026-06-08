@@ -13,6 +13,11 @@ joins. Read [Limitations](#limitations) before relying on it.
 
 ## Why federation works at the term level
 
+<figure class="fig-right">
+  <img src="img/federation.svg" alt="A SPARQL query goes to a router that does predicate routing, fans out to three .rete files each with its own dictionary, then results are merged at the term level into a row set.">
+  <figcaption>Each file keeps its own dictionary; the router sends each pattern only to files holding its predicate, then results merge at the term level.</figcaption>
+</figure>
+
 Every `.rete` file carries its **own dictionary** — the integer IDs that encode
 terms are local to one file. ID `42` in `cites-2021.rete` and ID `42` in
 `cites-2024.rete` are unrelated. So you **cannot** merge files by combining their

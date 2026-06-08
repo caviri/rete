@@ -17,6 +17,12 @@ rete build a.nt b.nt -o merged.rete
 curl -s https://host/data.nt | rete build - -o data.rete
 ```
 
+`--materialize` bakes RDFS/OWL-RL entailments into the file at build time (see
+[Reasoning](reasoning.md)). `--card` (and `--card-file` / `--title` / `--license`
+/ `--source` / `--description` / `--created`) embeds a [Dataset
+Card](dataset-cards.md) — data-catalog metadata plus an auto-derived profile.
+Both are opt-in; without them the output is byte-identical to a plain build.
+
 ## Validating
 
 ### `rete validate <inputs…> [--format nt|nq|ttl]`
@@ -32,7 +38,8 @@ curl -s https://host/data.nt | rete validate - --format nt
 ## Inspecting
 
 ### `rete info <file>`
-Print the decoded 128-byte header (offsets, codecs, counts, content hash).
+Print the decoded 128-byte header (offsets, codecs, counts, content hash) — plus
+the [Dataset Card](dataset-cards.md) catalog when the file carries one.
 
 ### `rete stats <file>`
 Human-friendly overview: file size, default-graph triple count, distinct terms,
@@ -41,6 +48,13 @@ named-graph count, pyramid levels, and top predicates.
 ### `rete verify <file>`
 Recompute the blake3 content hash and compare to the header. Exits non-zero with
 `FAILED — content hash mismatch` on corruption/truncation.
+
+### `rete card <file> [--json]`
+Print the embedded [Dataset Card](dataset-cards.md) — curated metadata
+(title/license/source/…) plus the derived profile (counts, top predicates and
+classes, vocabularies) and the content-hash checksum. `--json` emits the raw
+card. Prints `(no dataset card)` for a file built without one. `rete info` shows
+the same catalog beneath the header when a card is present.
 
 ### `rete graphs <file>`
 List the named-graph IRIs in a dataset (the default graph is unnamed).

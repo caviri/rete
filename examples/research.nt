@@ -1,0 +1,218 @@
+# Academic knowledge graph — a rich, coherent ontology for the playground.
+#
+# Classes (6): Researcher, Paper, Institution, Journal, Topic, Grant  (+ City)
+# Object properties (11): authored, affiliatedWith, advisedBy, coauthor,
+#   publishedIn, cites, hasTopic, fundedBy, awardedTo, locatedIn, subTopicOf
+# Data properties: foaf:name, ex:orcid, ex:hIndex, dcterms:title, dcterms:date,
+#   ex:doi, ex:citationCount, ex:country, ex:founded, ex:issn, ex:impactFactor,
+#   rdfs:label, ex:amount, ex:agency, ex:issn.
+#
+# Vocab: rdf:type, foaf:name, rdfs:label, dcterms:title/date, ex:* domain terms.
+
+# ============================ Cities (3) ============================
+<http://ex/city/zurich> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/City> .
+<http://ex/city/zurich> <http://www.w3.org/2000/01/rdf-schema#label> "Zurich" .
+<http://ex/city/boston> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/City> .
+<http://ex/city/boston> <http://www.w3.org/2000/01/rdf-schema#label> "Boston" .
+<http://ex/city/london> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/City> .
+<http://ex/city/london> <http://www.w3.org/2000/01/rdf-schema#label> "London" .
+
+# ========================= Institutions (3) =========================
+<http://ex/inst/ethz> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Institution> .
+<http://ex/inst/ethz> <http://xmlns.com/foaf/0.1/name> "ETH Zurich" .
+<http://ex/inst/ethz> <http://ex/country> "Switzerland" .
+<http://ex/inst/ethz> <http://ex/founded> "1855" .
+<http://ex/inst/ethz> <http://ex/locatedIn> <http://ex/city/zurich> .
+<http://ex/inst/mit> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Institution> .
+<http://ex/inst/mit> <http://xmlns.com/foaf/0.1/name> "MIT" .
+<http://ex/inst/mit> <http://ex/country> "USA" .
+<http://ex/inst/mit> <http://ex/founded> "1861" .
+<http://ex/inst/mit> <http://ex/locatedIn> <http://ex/city/boston> .
+<http://ex/inst/ucl> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Institution> .
+<http://ex/inst/ucl> <http://xmlns.com/foaf/0.1/name> "University College London" .
+<http://ex/inst/ucl> <http://ex/country> "United Kingdom" .
+<http://ex/inst/ucl> <http://ex/founded> "1826" .
+<http://ex/inst/ucl> <http://ex/locatedIn> <http://ex/city/london> .
+
+# =========================== Journals (3) ===========================
+<http://ex/journal/jmlr> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Journal> .
+<http://ex/journal/jmlr> <http://purl.org/dc/terms/title> "Journal of Machine Learning Research" .
+<http://ex/journal/jmlr> <http://ex/issn> "1532-4435" .
+<http://ex/journal/jmlr> <http://ex/impactFactor> "6.0" .
+<http://ex/journal/nature> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Journal> .
+<http://ex/journal/nature> <http://purl.org/dc/terms/title> "Nature" .
+<http://ex/journal/nature> <http://ex/issn> "0028-0836" .
+<http://ex/journal/nature> <http://ex/impactFactor> "64.8" .
+<http://ex/journal/tods> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Journal> .
+<http://ex/journal/tods> <http://purl.org/dc/terms/title> "ACM Transactions on Database Systems" .
+<http://ex/journal/tods> <http://ex/issn> "0362-5915" .
+<http://ex/journal/tods> <http://ex/impactFactor> "2.5" .
+
+# ============================ Topics (4) ============================
+<http://ex/topic/ai> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Topic> .
+<http://ex/topic/ai> <http://www.w3.org/2000/01/rdf-schema#label> "Artificial Intelligence" .
+<http://ex/topic/ml> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Topic> .
+<http://ex/topic/ml> <http://www.w3.org/2000/01/rdf-schema#label> "Machine Learning" .
+<http://ex/topic/ml> <http://ex/subTopicOf> <http://ex/topic/ai> .
+<http://ex/topic/nlp> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Topic> .
+<http://ex/topic/nlp> <http://www.w3.org/2000/01/rdf-schema#label> "Natural Language Processing" .
+<http://ex/topic/nlp> <http://ex/subTopicOf> <http://ex/topic/ml> .
+<http://ex/topic/db> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Topic> .
+<http://ex/topic/db> <http://www.w3.org/2000/01/rdf-schema#label> "Databases" .
+
+# ============================ Grants (3) ============================
+<http://ex/grant/erc1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Grant> .
+<http://ex/grant/erc1> <http://ex/amount> "2500000" .
+<http://ex/grant/erc1> <http://ex/agency> "European Research Council" .
+<http://ex/grant/erc1> <http://ex/awardedTo> <http://ex/r/alice> .
+<http://ex/grant/nsf1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Grant> .
+<http://ex/grant/nsf1> <http://ex/amount> "900000" .
+<http://ex/grant/nsf1> <http://ex/agency> "National Science Foundation" .
+<http://ex/grant/nsf1> <http://ex/awardedTo> <http://ex/r/carol> .
+<http://ex/grant/snsf1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Grant> .
+<http://ex/grant/snsf1> <http://ex/amount> "1200000" .
+<http://ex/grant/snsf1> <http://ex/agency> "Swiss National Science Foundation" .
+<http://ex/grant/snsf1> <http://ex/awardedTo> <http://ex/r/bob> .
+
+# ========================== Researchers (6) =========================
+<http://ex/r/alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r/alice> <http://xmlns.com/foaf/0.1/name> "Alice Bauer" .
+<http://ex/r/alice> <http://ex/orcid> "0000-0002-1825-0097" .
+<http://ex/r/alice> <http://ex/hIndex> "42" .
+<http://ex/r/alice> <http://ex/affiliatedWith> <http://ex/inst/ethz> .
+
+<http://ex/r/bob> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r/bob> <http://xmlns.com/foaf/0.1/name> "Bob Keller" .
+<http://ex/r/bob> <http://ex/orcid> "0000-0001-5109-3700" .
+<http://ex/r/bob> <http://ex/hIndex> "28" .
+<http://ex/r/bob> <http://ex/affiliatedWith> <http://ex/inst/ethz> .
+<http://ex/r/bob> <http://ex/advisedBy> <http://ex/r/alice> .
+
+<http://ex/r/carol> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r/carol> <http://xmlns.com/foaf/0.1/name> "Carol Diaz" .
+<http://ex/r/carol> <http://ex/orcid> "0000-0003-4842-1196" .
+<http://ex/r/carol> <http://ex/hIndex> "51" .
+<http://ex/r/carol> <http://ex/affiliatedWith> <http://ex/inst/mit> .
+
+<http://ex/r/dave> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r/dave> <http://xmlns.com/foaf/0.1/name> "Dave Novak" .
+<http://ex/r/dave> <http://ex/orcid> "0000-0002-9079-5933" .
+<http://ex/r/dave> <http://ex/hIndex> "19" .
+<http://ex/r/dave> <http://ex/affiliatedWith> <http://ex/inst/mit> .
+<http://ex/r/dave> <http://ex/advisedBy> <http://ex/r/carol> .
+
+<http://ex/r/erin> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r/erin> <http://xmlns.com/foaf/0.1/name> "Erin Flores" .
+<http://ex/r/erin> <http://ex/orcid> "0000-0001-7700-3201" .
+<http://ex/r/erin> <http://ex/hIndex> "35" .
+<http://ex/r/erin> <http://ex/affiliatedWith> <http://ex/inst/ucl> .
+
+<http://ex/r/frank> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Researcher> .
+<http://ex/r/frank> <http://xmlns.com/foaf/0.1/name> "Frank Owens" .
+<http://ex/r/frank> <http://ex/orcid> "0000-0002-3312-7741" .
+<http://ex/r/frank> <http://ex/hIndex> "23" .
+<http://ex/r/frank> <http://ex/affiliatedWith> <http://ex/inst/ucl> .
+<http://ex/r/frank> <http://ex/advisedBy> <http://ex/r/erin> .
+
+# Coauthorship (symmetric, crosses institutions)
+<http://ex/r/alice> <http://ex/coauthor> <http://ex/r/carol> .
+<http://ex/r/carol> <http://ex/coauthor> <http://ex/r/alice> .
+<http://ex/r/bob> <http://ex/coauthor> <http://ex/r/dave> .
+<http://ex/r/dave> <http://ex/coauthor> <http://ex/r/bob> .
+<http://ex/r/erin> <http://ex/coauthor> <http://ex/r/alice> .
+<http://ex/r/alice> <http://ex/coauthor> <http://ex/r/erin> .
+
+# ============================ Papers (8) ============================
+<http://ex/p/p1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p/p1> <http://purl.org/dc/terms/title> "Attention as a Scaling Law" .
+<http://ex/p/p1> <http://purl.org/dc/terms/date> "2021-03-14" .
+<http://ex/p/p1> <http://ex/doi> "10.1000/p1" .
+<http://ex/p/p1> <http://ex/citationCount> "320" .
+<http://ex/p/p1> <http://ex/publishedIn> <http://ex/journal/jmlr> .
+<http://ex/p/p1> <http://ex/hasTopic> <http://ex/topic/nlp> .
+<http://ex/p/p1> <http://ex/fundedBy> <http://ex/grant/erc1> .
+
+<http://ex/p/p2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p/p2> <http://purl.org/dc/terms/title> "Self-Supervised Representation Learning" .
+<http://ex/p/p2> <http://purl.org/dc/terms/date> "2020-06-01" .
+<http://ex/p/p2> <http://ex/doi> "10.1000/p2" .
+<http://ex/p/p2> <http://ex/citationCount> "510" .
+<http://ex/p/p2> <http://ex/publishedIn> <http://ex/journal/jmlr> .
+<http://ex/p/p2> <http://ex/hasTopic> <http://ex/topic/ml> .
+<http://ex/p/p2> <http://ex/fundedBy> <http://ex/grant/erc1> .
+
+<http://ex/p/p3> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p/p3> <http://purl.org/dc/terms/title> "Neural Machine Translation at Scale" .
+<http://ex/p/p3> <http://purl.org/dc/terms/date> "2022-01-20" .
+<http://ex/p/p3> <http://ex/doi> "10.1000/p3" .
+<http://ex/p/p3> <http://ex/citationCount> "140" .
+<http://ex/p/p3> <http://ex/publishedIn> <http://ex/journal/nature> .
+<http://ex/p/p3> <http://ex/hasTopic> <http://ex/topic/nlp> .
+
+<http://ex/p/p4> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p/p4> <http://purl.org/dc/terms/title> "Foundations of Reinforcement Learning" .
+<http://ex/p/p4> <http://purl.org/dc/terms/date> "2019-11-05" .
+<http://ex/p/p4> <http://ex/doi> "10.1000/p4" .
+<http://ex/p/p4> <http://ex/citationCount> "275" .
+<http://ex/p/p4> <http://ex/publishedIn> <http://ex/journal/jmlr> .
+<http://ex/p/p4> <http://ex/hasTopic> <http://ex/topic/ml> .
+<http://ex/p/p4> <http://ex/fundedBy> <http://ex/grant/snsf1> .
+
+<http://ex/p/p5> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p/p5> <http://purl.org/dc/terms/title> "Adaptive Indexing for Column Stores" .
+<http://ex/p/p5> <http://purl.org/dc/terms/date> "2021-09-09" .
+<http://ex/p/p5> <http://ex/doi> "10.1000/p5" .
+<http://ex/p/p5> <http://ex/citationCount> "88" .
+<http://ex/p/p5> <http://ex/publishedIn> <http://ex/journal/tods> .
+<http://ex/p/p5> <http://ex/hasTopic> <http://ex/topic/db> .
+<http://ex/p/p5> <http://ex/fundedBy> <http://ex/grant/nsf1> .
+
+<http://ex/p/p6> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p/p6> <http://purl.org/dc/terms/title> "Serializable Transactions Without Locks" .
+<http://ex/p/p6> <http://purl.org/dc/terms/date> "2020-02-17" .
+<http://ex/p/p6> <http://ex/doi> "10.1000/p6" .
+<http://ex/p/p6> <http://ex/citationCount> "112" .
+<http://ex/p/p6> <http://ex/publishedIn> <http://ex/journal/tods> .
+<http://ex/p/p6> <http://ex/hasTopic> <http://ex/topic/db> .
+<http://ex/p/p6> <http://ex/fundedBy> <http://ex/grant/nsf1> .
+
+<http://ex/p/p7> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p/p7> <http://purl.org/dc/terms/title> "A Survey of Modern AI Methods" .
+<http://ex/p/p7> <http://purl.org/dc/terms/date> "2023-04-30" .
+<http://ex/p/p7> <http://ex/doi> "10.1000/p7" .
+<http://ex/p/p7> <http://ex/citationCount> "60" .
+<http://ex/p/p7> <http://ex/publishedIn> <http://ex/journal/nature> .
+<http://ex/p/p7> <http://ex/hasTopic> <http://ex/topic/ai> .
+
+<http://ex/p/p8> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Paper> .
+<http://ex/p/p8> <http://purl.org/dc/terms/title> "Graph Neural Networks for Knowledge Bases" .
+<http://ex/p/p8> <http://purl.org/dc/terms/date> "2022-08-12" .
+<http://ex/p/p8> <http://ex/doi> "10.1000/p8" .
+<http://ex/p/p8> <http://ex/citationCount> "95" .
+<http://ex/p/p8> <http://ex/publishedIn> <http://ex/journal/jmlr> .
+<http://ex/p/p8> <http://ex/hasTopic> <http://ex/topic/ml> .
+<http://ex/p/p8> <http://ex/fundedBy> <http://ex/grant/snsf1> .
+
+# Authorship (Researcher -> Paper)
+<http://ex/r/alice> <http://ex/authored> <http://ex/p/p1> .
+<http://ex/r/alice> <http://ex/authored> <http://ex/p/p2> .
+<http://ex/r/bob> <http://ex/authored> <http://ex/p/p3> .
+<http://ex/r/bob> <http://ex/authored> <http://ex/p/p8> .
+<http://ex/r/carol> <http://ex/authored> <http://ex/p/p4> .
+<http://ex/r/dave> <http://ex/authored> <http://ex/p/p5> .
+<http://ex/r/dave> <http://ex/authored> <http://ex/p/p6> .
+<http://ex/r/erin> <http://ex/authored> <http://ex/p/p7> .
+<http://ex/r/frank> <http://ex/authored> <http://ex/p/p8> .
+
+# Citations (Paper -> Paper), coherent within/across topics
+<http://ex/p/p1> <http://ex/cites> <http://ex/p/p2> .
+<http://ex/p/p1> <http://ex/cites> <http://ex/p/p3> .
+<http://ex/p/p3> <http://ex/cites> <http://ex/p/p1> .
+<http://ex/p/p3> <http://ex/cites> <http://ex/p/p2> .
+<http://ex/p/p4> <http://ex/cites> <http://ex/p/p2> .
+<http://ex/p/p6> <http://ex/cites> <http://ex/p/p5> .
+<http://ex/p/p5> <http://ex/cites> <http://ex/p/p6> .
+<http://ex/p/p7> <http://ex/cites> <http://ex/p/p1> .
+<http://ex/p/p7> <http://ex/cites> <http://ex/p/p4> .
+<http://ex/p/p8> <http://ex/cites> <http://ex/p/p2> .
+<http://ex/p/p8> <http://ex/cites> <http://ex/p/p7> .

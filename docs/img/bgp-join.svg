@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 380" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
+  <title id="t">a basic graph pattern is a join on a shared variable: two triple patterns share ?f and are joined, producing bindings for ?p, ?f and ?age</title>
+  <rect width="760" height="380" fill="#ffffff"/>
+  <text x="380" y="34" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">A basic graph pattern is a join on shared variables</text>
+
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/>
+    </marker>
+  </defs>
+
+  <!-- Triple pattern 1 -->
+  <rect x="48" y="96" width="300" height="56" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
+  <text x="68" y="131" font-family="ui-monospace,SFMono-Regular,monospace" font-size="17" font-weight="700">
+    <tspan fill="#2a6df4">?p</tspan><tspan fill="#3a5a9a">  :knows  </tspan><tspan fill="#2a6df4">?f</tspan>
+  </text>
+
+  <!-- Triple pattern 2 -->
+  <rect x="48" y="216" width="300" height="56" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
+  <text x="68" y="251" font-family="ui-monospace,SFMono-Regular,monospace" font-size="17" font-weight="700">
+    <tspan fill="#2a6df4">?f</tspan><tspan fill="#3a5a9a">  :age  </tspan><tspan fill="#1b3a8a">?age</tspan>
+  </text>
+
+  <!-- Join connector between the two ?f occurrences -->
+  <g stroke="#5b6570" stroke-width="1.5" fill="none">
+    <path d="M320,152 C360,176 360,196 320,220" marker-end="url(#a)"/>
+  </g>
+  <text x="372" y="190" font-size="12.5" font-weight="600" fill="#2a6df4">join on ?f</text>
+
+  <!-- Arrow to results table -->
+  <g stroke="#5b6570" stroke-width="1.5" fill="none">
+    <path d="M348,184 C420,184 440,184 472,184" marker-end="url(#a)"/>
+  </g>
+
+  <!-- Results binding table -->
+  <text x="610" y="92" text-anchor="middle" font-size="13" font-weight="700" fill="#1b1f24">bindings</text>
+  <g font-family="ui-monospace,SFMono-Regular,monospace">
+    <!-- header row -->
+    <rect x="480" y="104" width="260" height="34" rx="6" fill="#0f1620"/>
+    <text x="513" y="126" text-anchor="middle" font-size="12.5" font-weight="700" fill="#ffffff">?p</text>
+    <text x="600" y="126" text-anchor="middle" font-size="12.5" font-weight="700" fill="#ffffff">?f</text>
+    <text x="700" y="126" text-anchor="middle" font-size="12.5" font-weight="700" fill="#ffffff">?age</text>
+    <!-- row 1 -->
+    <rect x="480" y="142" width="260" height="34" rx="6" fill="#dce8ff" stroke="#e4e8ec"/>
+    <text x="513" y="164" text-anchor="middle" font-size="12.5" fill="#1b3a8a">:ann</text>
+    <text x="600" y="164" text-anchor="middle" font-size="12.5" fill="#2a6df4">:bob</text>
+    <text x="700" y="164" text-anchor="middle" font-size="12.5" fill="#1b3a8a">31</text>
+    <!-- row 2 -->
+    <rect x="480" y="180" width="260" height="34" rx="6" fill="#ffffff" stroke="#e4e8ec"/>
+    <text x="513" y="202" text-anchor="middle" font-size="12.5" fill="#1b3a8a">:ann</text>
+    <text x="600" y="202" text-anchor="middle" font-size="12.5" fill="#2a6df4">:cleo</text>
+    <text x="700" y="202" text-anchor="middle" font-size="12.5" fill="#1b3a8a">27</text>
+  </g>
+
+  <text x="380" y="332" text-anchor="middle" font-size="12.5" fill="#5b6570">Patterns sharing a variable are joined; the engine intersects the matching</text>
+  <text x="380" y="352" text-anchor="middle" font-size="12.5" fill="#5b6570">triples using the permutation indexes.</text>
+</svg>

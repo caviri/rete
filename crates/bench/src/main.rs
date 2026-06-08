@@ -1,0 +1,330 @@
+//! Three-way benchmark: **rete (serial)** vs **rete (parallel reach)** vs
+//! **Oxigraph**, in one process, on identical data, with warm timings.
+//!
+//! Two workloads:
+//!   1. **SPARQL query latency** — the same queries run on rete's engine
+//!      (`eval_query`) and on an in-memory Oxigraph `Store`. rete's SPARQL is
+//!      single-threaded; this is the apples-to-apples engine comparison.
+//!   2. **Batch transitive reachability** — rete's dedicated batch-reach
+//!      (`batch_reach_serial` vs `batch_reach_parallel`, the `parallel` feature)
+//!      vs the equivalent on Oxigraph expressed as a `p+` property path per seed.
+//!
+//! Usage (paths relative to repo root):
+//!   cargo run --release -p rete-bench -- <file.rete> <file.nt> [seed_count]
+//!
+//! Emits Markdown tables on stdout, ready to paste into docs/BENCHMARK.md.
+
+use std::collections::BTreeSet;
+use std::fs::File;
+use std::io::BufReader;
+use std::time::Instant;
+
+use anyhow::{ensure, Context, Result};
+use oxigraph::io::RdfFormat;
+use oxigraph::sparql::{QueryResults, SparqlEvaluator};
+use oxigraph::store::Store;
+use rete_core::parallel::batch_reach_parallel;
+use rete_core::{batch_reach_serial, build_adjacency, eval_query, QueryOutput, Rete};
+
+const COAUTHOR: &str = "<http://ex/coauthor>";
+
+/// Common prefixes, prepended to every query below.
+const PREFIXES: &str = "PREFIX cito: <http://purl.org/spar/cito/> \
+PREFIX dct: <http://purl.org/dc/terms/> PREFIX ex: <http://ex/> \
+PREFIX prism: <http://prismstandard.org/namespaces/basic/2.0/> \
+PREFIX foaf: <http://xmlns.com/foaf/0.1/> ";
+
+/// A matrix of queries spanning operators and complexity, on the citation
+/// network. `(operator label, query body)`. Row counts are compared across
+/// engines as a cross-engine correctness check; some operators (DESCRIBE) are
+/// impl-defined and may legitimately differ.
+const QUERIES: &[(&str, &str)] = &[
+    // --- forms & basics ---
+    ("SELECT count (aggregate)",
+     "SELECT (COUNT(?p) AS ?n) WHERE { ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> }"),
+    ("SELECT DISTINCT",
+     "SELECT DISTINCT ?d WHERE { ?p ex:discipline ?d }"),
+    ("ASK",
+     "ASK { ?p ex:discipline <http://ex/discipline/Physics> }"),
+    ("CONSTRUCT",
+     "CONSTRUCT { ?a ex:coauthor ?b } WHERE { VALUES ?a { <http://ex/author/1235> } ?a ex:coauthor ?b }"),
+    ("DESCRIBE (impl-defined)",
+     "DESCRIBE <http://ex/author/1235>"),
+    // --- joins & algebra ---
+    ("VALUES (inline data)",
+     "SELECT ?p WHERE { VALUES ?d { <http://ex/discipline/Biology> <http://ex/discipline/Physics> } ?p ex:discipline ?d }"),
+    ("UNION",
+     "SELECT ?p WHERE { { ?p ex:discipline <http://ex/discipline/Biology> } UNION { ?p ex:discipline <http://ex/discipline/Chemistry> } }"),
+    ("OPTIONAL (left join)",
+     "SELECT ?p ?v WHERE { ?p ex:discipline <http://ex/discipline/Biology> OPTIONAL { ?p prism:publicationName ?v } } LIMIT 200"),
+    ("MINUS",
+     "SELECT ?p WHERE { ?p ex:discipline <http://ex/discipline/Biology> MINUS { ?p dct:subject \"protein\" } }"),
+    ("FILTER NOT EXISTS",
+     "SELECT ?p WHERE { ?p ex:discipline <http://ex/discipline/Biology> FILTER NOT EXISTS { ?p dct:subject \"protein\" } }"),
+    ("3-way join + LIMIT",
+     "SELECT ?name ?title WHERE { ?p dct:subject \"protein\" . ?p dct:title ?title . ?p dct:creator ?a . ?a foaf:name ?name } LIMIT 50"),
+    // --- filters, bind, functions ---
+    ("FILTER REGEX (case-insens.)",
+     "SELECT ?p ?t WHERE { ?p dct:title ?t FILTER(REGEX(?t, \"genome\", \"i\")) } LIMIT 200"),
+    ("FILTER arith + logical",
+     "SELECT ?p ?c WHERE { ?p ex:citationCount ?c FILTER(?c >= 100 && ?c <= 110) } LIMIT 200"),
+    ("BIND + SUBSTR + CONCAT",
+     "SELECT ?p ?label WHERE { ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> . ?p dct:date ?y BIND(CONCAT(SUBSTR(?y,1,3), \"0s\") AS ?label) } LIMIT 200"),
+    // --- property paths ---
+    ("path sequence a/b",
+     "SELECT ?name WHERE { ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> . ?p dct:creator/foaf:name ?name } LIMIT 200"),
+    ("path inverse ^p (count)",
+     "SELECT (COUNT(?x) AS ?n) WHERE { <https://doi.org/10.1038/s41586-021-03819-2> ^cito:cites ?x }"),
+    ("path + transitive (count)",
+     "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { <http://ex/author/1235> ex:coauthor+ ?o }"),
+    ("path * zero-or-more (count)",
+     "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { <http://ex/author/1235> ex:coauthor* ?o }"),
+    // --- aggregation & solution modifiers ---
+    ("GROUP BY + ORDER BY",
+     "SELECT ?d (COUNT(?p) AS ?n) WHERE { ?p ex:discipline ?d } GROUP BY ?d ORDER BY DESC(?n)"),
+    ("GROUP BY + HAVING",
+     "SELECT ?d (COUNT(?p) AS ?n) WHERE { ?p ex:discipline ?d } GROUP BY ?d HAVING(COUNT(?p) > 5400)"),
+    ("AVG per group",
+     "SELECT ?d (AVG(?c) AS ?avg) WHERE { ?p ex:discipline ?d . ?p ex:citationCount ?c } GROUP BY ?d ORDER BY DESC(?avg)"),
+    ("MIN/MAX/SUM",
+     "SELECT (MIN(?c) AS ?lo) (MAX(?c) AS ?hi) (SUM(?c) AS ?tot) WHERE { ?p ex:citationCount ?c }"),
+    ("COUNT(DISTINCT)",
+     "SELECT (COUNT(DISTINCT ?v) AS ?n) WHERE { ?p prism:publicationName ?v }"),
+    ("ORDER BY + LIMIT + OFFSET",
+     "SELECT ?p ?c WHERE { ?p ex:citationCount ?c } ORDER BY DESC(?c) LIMIT 10 OFFSET 50"),
+];
+
+/// Truncate an error message to keep the table tidy.
+fn short(e: &str) -> String {
+    let one = e.replace('\n', " ");
+    if one.len() > 60 {
+        format!("{}…", &one[..60])
+    } else {
+        one
+    }
+}
+
+fn median(mut v: Vec<f64>) -> f64 {
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v[v.len() / 2]
+}
+
+/// Run `f` `reps` times; return (median ms, last result-size).
+fn bench<F: FnMut() -> usize>(reps: usize, mut f: F) -> (f64, usize) {
+    let mut times = Vec::with_capacity(reps);
+    let mut last = 0;
+    for _ in 0..reps {
+        let t = Instant::now();
+        last = f();
+        times.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+    (median(times), last)
+}
+
+/// rete result size, or an error string (e.g. an unsupported operator).
+fn rete_try(rete: &Rete, q: &str) -> Result<usize, String> {
+    match eval_query(rete, q) {
+        Ok(QueryOutput::Select(_, rows)) => Ok(rows.len()),
+        Ok(QueryOutput::Ask(b)) => Ok(b as usize),
+        Ok(QueryOutput::Construct(t)) => Ok(t.len()),
+        Err(e) => Err(format!("{e}")),
+    }
+}
+
+/// Oxigraph result size, or an error string.
+fn oxi_try(store: &Store, q: &str) -> Result<usize, String> {
+    let ev = SparqlEvaluator::new()
+        .parse_query(q)
+        .map_err(|e| e.to_string())?;
+    let res = ev.on_store(store).execute().map_err(|e| e.to_string())?;
+    Ok(match res {
+        QueryResults::Solutions(solutions) => solutions.filter(|s| s.is_ok()).count(),
+        QueryResults::Boolean(b) => b as usize,
+        QueryResults::Graph(triples) => triples.filter(|t| t.is_ok()).count(),
+    })
+}
+
+fn main() -> Result<()> {
+    let mut args = std::env::args().skip(1);
+    let rete_path = args
+        .next()
+        .context("usage: rete-bench <file.rete> <file.nt> [seeds]")?;
+    let nt_path = args
+        .next()
+        .context("usage: rete-bench <file.rete> <file.nt> [seeds]")?;
+    let seed_count: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(300);
+    let reps = 5;
+
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+
+    // ---- Load both engines (one-time cost, reported separately) ----
+    let bytes = std::fs::read(&rete_path).with_context(|| format!("read {rete_path}"))?;
+    let t = Instant::now();
+    let rete = Rete::open(&bytes).context("Rete::open")?;
+    let rete_open_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+    let store = Store::new().context("Store::new")?;
+    let t = Instant::now();
+    store
+        .load_from_reader(RdfFormat::NTriples, BufReader::new(File::open(&nt_path)?))
+        .context("oxigraph load")?;
+    let oxi_load_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let oxi_len = store.len()?;
+
+    println!("# Benchmark: rete vs rete (parallel) vs Oxigraph\n");
+    println!(
+        "Data: `{rete_path}` ({} bytes) / `{nt_path}` · Oxigraph store: {oxi_len} triples · \
+         {threads} logical cores · median of {reps} runs.\n",
+        bytes.len()
+    );
+
+    println!("## Load / open (one-time)\n");
+    println!("| Engine | Step | Time |");
+    println!("|---|---|--:|");
+    println!("| rete | `Rete::open` (mmap-style, indexes already built) | {rete_open_ms:.1} ms |");
+    println!("| Oxigraph | bulk-load N-Triples + index in memory | {oxi_load_ms:.0} ms |");
+    println!();
+
+    // ---- Workload 1: SPARQL operator-coverage matrix ----
+    println!("## SPARQL operators & complexity (single-threaded engines)\n");
+    println!(
+        "Every query run on both engines; `rows` compares result sizes (a cross-engine check).\n"
+    );
+    println!("| Operator / form | rete | Oxigraph | rete vs oxi | rows (rete / oxi) | ✓ |");
+    println!("|---|--:|--:|--:|--:|:--:|");
+    let mut agree = 0;
+    let mut total = 0;
+    // Hard failures — a rete error, or a row-count disagreement on a query whose
+    // result is NOT implementation-defined — make the bench exit non-zero, so a
+    // correctness regression fails CI instead of just printing a lower tally.
+    let mut hard_mismatch: Vec<String> = Vec::new();
+    for (name, body) in QUERIES {
+        let q = format!("{PREFIXES}{body}");
+        let r0 = rete_try(&rete, &q);
+        let o0 = oxi_try(&store, &q);
+        total += 1;
+        match (&r0, &o0) {
+            (Ok(rr), Ok(or)) => {
+                let (rete_ms, _) = bench(reps, || rete_try(&rete, &q).unwrap_or(0));
+                let (oxi_ms, _) = bench(reps, || oxi_try(&store, &q).unwrap_or(0));
+                let speedup = oxi_ms / rete_ms;
+                let ok = rr == or;
+                if ok {
+                    agree += 1;
+                } else if !name.contains("impl-defined") {
+                    hard_mismatch.push(format!("{name}: rete {rr} rows vs oxigraph {or}"));
+                }
+                println!(
+                    "| {name} | {rete_ms:.2} ms | {oxi_ms:.2} ms | {speedup:.1}× | {rr} / {or} | {} |",
+                    if ok { "✓" } else { "✗" }
+                );
+            }
+            (Err(e), _) => {
+                hard_mismatch.push(format!("{name}: rete error: {}", short(e)));
+                println!("| {name} | _rete: {}_ | — | — | — | — |", short(e));
+            }
+            (_, Err(e)) => println!("| {name} | — | _oxi: {}_ | — | — | — |", short(e)),
+        }
+    }
+    println!("\n{agree}/{total} queries returned identical row counts on both engines.\n");
+    ensure!(
+        hard_mismatch.is_empty(),
+        "cross-engine correctness regression:\n  {}",
+        hard_mismatch.join("\n  ")
+    );
+
+    // ---- Workload 2: batch transitive reachability ----
+    // Seeds: first `seed_count` distinct subjects of the coauthor relation.
+    let dict = rete.dictionary();
+    let pairs = rete.predicate_pairs(COAUTHOR);
+    let mut seen = BTreeSet::new();
+    let mut seed_nodes: Vec<u32> = Vec::new();
+    for (s, _) in &pairs {
+        if seen.insert(*s) {
+            seed_nodes.push(*s);
+            if seed_nodes.len() >= seed_count {
+                break;
+            }
+        }
+    }
+    let seed_iris: Vec<String> = seed_nodes
+        .iter()
+        .filter_map(|n| dict.node_term(*n))
+        .collect();
+
+    let adj = build_adjacency(&rete, COAUTHOR);
+    let (serial_ms, total_serial) = bench(3, || {
+        let sets = batch_reach_serial(&adj, &seed_nodes);
+        sets.iter().map(BTreeSet::len).sum()
+    });
+    let (par_ms, total_par) = bench(3, || {
+        let sets = batch_reach_parallel(&adj, &seed_nodes);
+        sets.iter().map(BTreeSet::len).sum()
+    });
+    // The parallel reach must reproduce the serial result exactly — assert it
+    // rather than just claiming it in prose.
+    ensure!(
+        total_serial == total_par,
+        "parallel reach disagrees with serial: {total_par} vs {total_serial} nodes"
+    );
+
+    // Oxigraph: same transitive closure expressed as a property path, per seed.
+    let (oxi_reach_ms, total_oxi) = bench(3, || {
+        let mut total = 0usize;
+        for iri in &seed_iris {
+            let q = format!(
+                "PREFIX ex: <http://ex/> SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE {{ {iri} ex:coauthor+ ?o }}"
+            );
+            // Read the single COUNT cell so the work is actually performed.
+            if let QueryResults::Solutions(mut sols) = SparqlEvaluator::new()
+                .parse_query(&q)
+                .expect("parse")
+                .on_store(&store)
+                .execute()
+                .expect("exec")
+            {
+                if let Some(Ok(sol)) = sols.next() {
+                    if let Some(v) = sol.get("n") {
+                        // Parse the COUNT(DISTINCT ?o) integer literal
+                        // (`"42"^^xsd:integer`) so the total is the real reach
+                        // count, comparable to rete's — not a meaningless length.
+                        let s = v.to_string();
+                        let lex = s.trim_start_matches('"').split('"').next().unwrap_or(&s);
+                        total += lex.parse::<usize>().unwrap_or(0);
+                    }
+                }
+            }
+        }
+        total
+    });
+
+    println!(
+        "## Batch transitive reachability — `coauthor+` from {} seeds\n",
+        seed_nodes.len()
+    );
+    println!(
+        "rete reached {total_serial} nodes total (serial), {total_par} (parallel); \
+         the two agree. Oxigraph touched {total_oxi} result cells.\n"
+    );
+    println!("| Engine / mode | Time | vs rete-serial |");
+    println!("|---|--:|--:|");
+    println!("| rete — `batch_reach_serial` (1 core) | {serial_ms:.1} ms | 1.0× |");
+    println!(
+        "| rete — `batch_reach_parallel` ({threads} cores) | {par_ms:.1} ms | {:.1}× |",
+        serial_ms / par_ms
+    );
+    println!(
+        "| Oxigraph — `coauthor+` property path, per seed | {oxi_reach_ms:.0} ms | {:.1}× |",
+        serial_ms / oxi_reach_ms
+    );
+    println!();
+    println!(
+        "_rete's reach is a purpose-built BFS over a prebuilt adjacency map; Oxigraph evaluates a \
+         general SPARQL property path. Different abstraction levels — read it as \"a dedicated \
+         graph primitive vs. a general SPARQL engine,\" not a like-for-like core comparison._"
+    );
+
+    Ok(())
+}

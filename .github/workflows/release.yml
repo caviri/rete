@@ -1,0 +1,58 @@
+name: Release
+
+# On a version tag (e.g. `v0.1.0`), build the `rete` CLI in the same
+# `rust:1.92-bookworm` image the dev container uses (nothing builds on the host),
+# package it as a tarball with a checksum, and publish a GitHub Release with it.
+#
+# `workflow_dispatch` runs the build + package as a dry run (no publish) so you
+# can sanity-check the release artifact off a branch.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the GitHub Release and upload assets
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: build · package · publish
+    runs-on: ubuntu-latest
+    container:
+      image: rust:1.92-bookworm
+    steps:
+      - uses: actions/checkout@v4
+
+      # The C zstd encoder (default `compression` feature) needs the dev headers.
+      - name: Install system deps
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libzstd-dev
+
+      - name: Build release binary
+        run: cargo build --release -p rete-cli
+
+      - name: Package tarball + checksum
+        run: |
+          ver="${GITHUB_REF_NAME}"
+          name="rete-${ver}-x86_64-unknown-linux-gnu"
+          mkdir -p "dist/${name}"
+          cp target/release/rete "dist/${name}/"
+          cp README.md LICENSE "dist/${name}/"
+          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
+          ls -l dist
+
+      - name: Publish GitHub Release
+        # Only publish for real version tags; workflow_dispatch is a dry run.
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          generate_release_notes: true

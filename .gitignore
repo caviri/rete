@@ -18,3 +18,6 @@
 
 # Generated datasets (regenerate with scripts/fetch_opencitations.py)
 /data/
+
+# Local engineering notes / scratch plans — not part of the published repo.
+/dev/

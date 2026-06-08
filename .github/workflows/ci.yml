@@ -42,11 +42,14 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+      # `rete-bench` is a dev-only benchmark that pulls in Oxigraph (a heavy dep
+      # tree); it is excluded from the hot CI steps to keep them fast. It still
+      # builds locally via `cargo build -p rete-bench` (see docs/BENCHMARK.md).
       - name: Clippy (warnings = errors)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude rete-bench --all-targets -- -D warnings
 
       - name: Test (default features)
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude rete-bench
 
       # The exact configuration the wasm crate consumes `rete-core` under
       # (no C zstd encoder; pure-Rust ruzstd decoder only).
@@ -55,6 +58,11 @@ jobs:
 
       - name: Build (--all-features)
         run: cargo build -p rete-core --all-features
+
+      # rete-bench pulls Oxigraph (a heavy dep tree) so it's kept out of the hot
+      # clippy/test steps — but build it here so the benchmark can't bit-rot.
+      - name: Build rete-bench (smoke)
+        run: cargo build -p rete-bench
 
       # End-to-end acceptance test of every CLI subcommand + the HTTP range path.
       - name: CLI smoke test

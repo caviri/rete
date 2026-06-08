@@ -133,6 +133,15 @@ summary; tile-routed range queries are future work (see `docs/BENCHMARK.md`).
 > Rationale: a fixed 128-byte header means **one tiny range read** (`bytes=0-127`)
 > tells the client where every section lives.
 
+The **metadata section** (offset 8 / length 16) sits between the header and the
+dictionary and is `0`-length by default. When present it carries an opaque,
+application-defined payload — the CLI stores a JSON [Dataset Card](dataset-cards.md)
+there. Its bytes are included in the content hash (so `verify` covers it), and a
+range-reading client never fetches it for a query (it reads sections by their
+header offsets). A reader that doesn't understand the payload simply skips it: the
+dictionary is always located via `dictionary offset`, which already accounts for
+the section's length.
+
 ---
 
 ## 5. Dictionary

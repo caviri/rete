@@ -13,6 +13,9 @@ blake3.workspace = true
 # Pure-Rust zstd *decoder* — always available (incl. wasm). Encoding uses the
 # faster C `zstd` below when the `compression` feature is on.
 ruzstd = "0.7"
+# Tiny pure-Rust regex engine for SPARQL `REGEX(...)` — `regex-lite` keeps the
+# wasm small (no SIMD/aho-corasick), unlike the full `regex` crate.
+regex-lite = "0.1"
 zstd = { workspace = true, optional = true }
 # Data-parallel query evaluator (prototype). Behind the `parallel` feature so it
 # is never pulled into wasm (the wasm crate builds with --no-default-features).

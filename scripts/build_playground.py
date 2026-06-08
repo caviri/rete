@@ -30,8 +30,18 @@ OUT = ROOT / "docs" / "playground.html"
 GLUE_JS = NOMOD / "rete_wasm.js"
 WASM = NOMOD / "rete_wasm_bg.wasm"
 
-# Datasets to embed: name -> built .rete file under web/.
-DATASETS = ["typed", "deps", "papers", "researchers"]
+# Datasets to embed: (playground key, built .rete file under web/).
+# `citations` is the real OpenCitations network (citations of the AlphaFold paper,
+# 10.1038/s41586-021-03819-2) enriched with clearly-labelled synthetic metadata;
+# real DOIs / edges / years, fabricated titles/authors/venues/keywords.
+DATASETS = [
+    ("research", "research.rete"),
+    ("typed", "typed.rete"),
+    ("deps", "deps.rete"),
+    ("papers", "papers.rete"),
+    ("researchers", "researchers.rete"),
+    ("citations", "enriched-all.rete"),
+]
 
 
 def die(msg: str) -> None:
@@ -49,10 +59,10 @@ def main() -> None:
             die(f"missing required input: {p} (build the no-modules wasm first)")
 
     datasets_b64 = {}
-    for name in DATASETS:
-        f = WEB / f"{name}.rete"
+    for name, filename in DATASETS:
+        f = WEB / filename
         if not f.exists():
-            die(f"missing dataset {f} (run `rete build examples/{name}.nt -o {f}`)")
+            die(f"missing dataset {f} (build it into web/{filename} first)")
         datasets_b64[name] = b64(f)
 
     glue = GLUE_JS.read_text(encoding="utf-8")
@@ -87,7 +97,7 @@ def main() -> None:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(html, encoding="utf-8")
 
-    sizes = ", ".join(f"{n}={len(datasets_b64[n])}b64" for n in DATASETS)
+    sizes = ", ".join(f"{n}={len(datasets_b64[n])}b64" for n, _ in DATASETS)
     print(f"build_playground: wrote {OUT}")
     print(f"  wasm: {WASM.stat().st_size} bytes -> {len(wasm_b64)} base64 chars")
     print(f"  datasets: {sizes}")

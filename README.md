@@ -1,190 +1,132 @@
-# rete
+<p align="center">
+  <img src="docs/img/logo.svg" alt="rete — a queryable RDF graph in a single file" width="520">
+</p>
 
-A **cloud-native, range-queryable RDF graph file**. Put one `.rete` file on S3,
-GitHub, or any HTTP server that honors `Range`, give a client the URL, and run
-SPARQL — no database server. Like **Parquet** for tables and **PMTiles** for
-maps, but for **RDF graphs**, with a **pyramid** of progressively-refined detail.
+<p align="center">
+  <b>Put an RDF graph in one file. Drop it on a URL. Query it with SPARQL — no database server.</b>
+</p>
 
-> **Documentation:** [`docs/`](docs/index.md) — overview, getting started, CLI
-> reference, SPARQL support, browser/WASM, the format spec, and benchmarks.
-> Browsable as Markdown on GitHub, or as a rendered HTML site (`docs/*.html`,
-> regenerated with `cargo run -p docgen`). Format version `0.1` (draft).
+---
+
+## What is rete?
+
+`rete` packs a whole RDF graph — its dictionary, indexes, and a community
+"summary pyramid" — into **one immutable `.rete` file**. Put that file on S3,
+GitHub Pages, or any HTTP host that supports range requests, hand a client the
+URL, and it runs **real SPARQL** against the file in place, fetching only the
+bytes a query needs. The same engine compiles to WebAssembly, so a **browser can
+query the file directly with no backend**.
+
+> Think **Parquet** (for tables) or **PMTiles** (for maps) — but for **RDF
+> graphs + SPARQL**.
+
+- **No server.** The file *is* the database. Publish once to static hosting.
+- **Query in place.** SELECT / ASK / CONSTRUCT / DESCRIBE, joins, OPTIONAL,
+  UNION, MINUS, FILTER, property paths, GROUP BY / aggregates, named graphs.
+- **Small + fast to open.** Compressed (~zstd) with indexes prebuilt, so it
+  *opens in ~20 ms* — no load/index step. (See [benchmarks](#how-fast).)
+- **Runs in the browser.** Same engine in WASM — try the
+  **[interactive playground](docs/playground.html)** (a single offline HTML page).
+
+## When does rete make sense?
+
+✅ **A good fit when…**
+- You want to **publish a graph dataset** and let people query it without
+  standing up (and paying for) a triplestore — just static hosting + a URL.
+- The data is **read-mostly / versioned snapshots** (a release, a daily dump, a
+  knowledge-base export) rather than constantly mutated.
+- You need **SPARQL in the browser** / at the edge / in a notebook, with no
+  backend.
+- You ship **many graphs** (per-tenant, per-dataset, sharded by year) and want
+  each to be one cheap, cacheable, queryable artifact — even
+  [federated across several files](docs/federation.md).
+- You care about **bounded, progressive reads** — fetch a coarse overview first,
+  drill into detail only where a query needs it (PMTiles-style, for graphs).
+
+🚫 **Reach for a real triplestore instead when…**
+- You need **frequent writes / transactions / live updates** (rete files are
+  immutable — you rebuild to change them).
+- You need a **always-on SPARQL endpoint** with a mature, lazy/streaming planner
+  squeezing every millisecond (e.g. [Oxigraph](https://github.com/oxigraph/oxigraph),
+  Jena, GraphDB). rete is competitive but optimized for *publish-and-query*, not
+  server throughput — see the honest [comparison](docs/BENCHMARK.md#comparison-vs-oxigraph-real-opencitations-network).
+
+## Quick start
+
+Everything runs **in Docker** (nothing builds on your host):
+
+```sh
+# Build the CLI once (inside the rust container):
+docker run --rm -it -v "$PWD":/work -w /work rust:1.92-bookworm \
+  cargo build --release -p rete-cli       # binary at target/release/rete
+```
+
+```sh
+# 1. Build a .rete file from N-Triples / Turtle / N-Quads:
+rete build examples/social.nt -o social.rete
+
+# 2. Query it — a triple pattern, or full SPARQL:
+rete query  social.rete --predicate '<http://ex/knows>'
+rete sparql social.rete "PREFIX e: <http://ex/> \
+  SELECT ?p ?age WHERE { ?p e:age ?age . FILTER(?age > 27) }"
+
+# 3. Or query straight from a URL — fetches only the byte ranges it needs:
+rete query-url https://my-bucket.s3.amazonaws.com/social.rete \
+  --object '<http://ex/Alice>'
+```
+
+### Try it in your browser (no install)
+
+Open **[`docs/playground.html`](docs/playground.html)** — a self-contained page
+that embeds the WASM engine and example datasets (including a real ~588k-triple
+**OpenCitations** network). Pick a dataset, run the **Easy → Hard** example
+queries, visualise the ontology, and explore reachability — all offline.
+
+## How fast?
+
+Real **OpenCitations** citation network (~539k triples), vs
+[Oxigraph](https://github.com/oxigraph/oxigraph) (in-memory), in the dev
+container — full writeup in [`docs/BENCHMARK.md`](docs/BENCHMARK.md):
+
+| | rete | Oxigraph |
+|---|--:|--:|
+| **Open / load the graph** | **20 ms** (indexes prebuilt in the file) | ~2,000 ms (parse + index) |
+| SPARQL queries (24 operators) | tens of ms · **24/24 results identical** | tens of ms |
+| Batch reachability, 300 seeds | 459 ms → **37 ms** with `--parallel` | 2,431 ms |
+
+rete opens ~100× faster and its **parallel reachability is ~66× faster** than a
+general property-path; Oxigraph's lazy planner wins on `LIMIT`/early-out queries.
+File size: ~11.8× smaller than raw N-Triples, ~1.25× of `gzip` — but *queryable*.
+
+## Documentation
+
+- **[Graph data 101](docs/intro.md)** — new to RDF/graphs? Start here.
+- **[Getting started](docs/getting-started.md)** · **[CLI reference](docs/cli.md)** · **[SPARQL support](docs/sparql.md)**
+- **[Interactive playground](docs/playground.html)** — query in the browser, offline.
+- **[Real-world scenario](docs/scenario.md)** · **[Federated queries](docs/federation.md)** · **[Reasoning & coherence](docs/reasoning.md)**
+- **[Format spec](docs/SPEC.md)** · **[Benchmarks](docs/BENCHMARK.md)** · **[Browser / WASM](docs/browser.md)**
+
+The docs render as Markdown on GitHub, or as an HTML site (`docs/*.html`,
+regenerated with `cargo run -p docgen`).
 
 ## Status
 
-Working v0 end-to-end (single file, community pyramid, SPARQL, HTTP range,
-browser/wasm):
+**Experimental (v0).** Working end-to-end — single-file format, community
+pyramid, SPARQL, HTTP-range queries, and the browser/WASM engine — but the file
+format is **not yet stable across versions**. Format version `0.1` (draft).
 
-- `crates/rete-core` — `varint`, `header` (§4.1), `dict` (front-coded sections
-  §5.1), `dictionary` (HDT four-section role IDs §5), `triples` (grouped-delta
-  blocks + zone maps §6.1), `index` (SPO/POS/OSP permutation set §6), and `file`
-  (assemble/read a `.rete` image + `query` by triple pattern). All under test.
-- `crates/rete-cli` — `rete build in.{nt,ttl,nq} -o out.rete` (N-Triples,
-  Turtle, or N-Quads datasets), `rete info`, `rete query`, plus `verify`,
-  `summary`, `predicates`, `graphs`, `bgp`, `sparql` (incl. `GRAPH`), `query-url`.
-- **RDF datasets / named graphs**: N-Quads build groups triples per graph under
-  one shared dictionary; SPARQL `GRAPH <iri> { … }` / `GRAPH ?g { … }` query them.
-
-- pyramid (SPEC §7): `pyramid` (Louvain communities + quotient coarsening),
-  `tiling` (size-targeted per-community tiles + quotient summary), `meta`
-  (on-disk pyramid section). `rete build` embeds it; `rete summary` shows the
-  coarse community graph.
-- `bgp` — Basic Graph Pattern (multi-pattern join) evaluation; `rete bgp`.
-- `sparql` — SPARQL (via spargebra): SELECT · ASK · CONSTRUCT over BGP · JOIN ·
-  UNION · OPTIONAL · MINUS · FILTER (incl. EXISTS, arithmetic, built-ins like
-  CONTAINS/STRLEN/isIRI) · VALUES · GROUP BY/aggregates (COUNT/SUM/AVG/MIN/MAX) ·
-  BIND · property paths (`p+`/`p*`/`p?`/`/`/`|`/reverse) · ORDER BY · DISTINCT ·
-  LIMIT/OFFSET. `rete sparql`.
-- per-section **zstd** compression (codec in the header). ~8.8× on a 3k-triple
-  graph (300 KB `.nt` → 34 KB `.rete`, pyramid included).
-- `reader` — `RangeReader` trait + `Rete::open_ranged` (a full query touches ≤4
-  byte ranges, never a linear scan) and `SummaryView::open_ranged` (coarse graph
-  first, skips the index). The "give it a URL, fetch only what you need" path.
-- `schema` — an **ontology-level** coarse graph: classes (by `rdf:type`) with
-  their populations, plus the class→predicate→class relations between them. A
-  *semantic* summary (what kinds of things relate how), complementary to the
-  community pyramid's *structural* one. `rete schema`.
+## Develop (Docker only)
 
 ```sh
-rete build examples/social.nt -o social.rete
-rete build part1.nt part2.nt part3.nt -o merged.rete   # merge several inputs
-curl -s https://host/data.nt | rete build - -o data.rete   # build from stdin
-rete query social.rete --predicate '<http://ex/knows>'    # all "knows" edges
-rete query social.rete --object '<http://ex/Alice>'       # who knows Alice?
-
-rete build examples/clusters.nt -o clusters.rete
-rete summary clusters.rete
-#  pyramid round 0 — 2 communities summarized as 3 superedge(s):
-#    C0 (internal) C0  via <http://ex/knows>  x4
-#    C0 -> C1          via <http://ex/knows>  x1   (the bridge)
-#    C1 (internal) C1  via <http://ex/knows>  x4
-
-# ontology profile — the semantic coarse graph (by rdf:type), no clustering:
-rete build examples/typed.nt -o typed.rete
-rete schema typed.rete
-#  classes (2 types):
-#         2  <http://ex/Person>
-#         1  <http://ex/Org>
-#  relations:
-#    <http://ex/Person> --<http://ex/knows>--> <http://ex/Person>  ×1
-#    <http://ex/Person> --<http://ex/name>--> (literal)  ×1
-#    <http://ex/Person> --<http://ex/worksAt>--> <http://ex/Org>  ×1
-
-# multi-pattern (BGP) joins — `?x` is a variable, ` . ` separates patterns:
-rete bgp clusters.rete "?x <http://ex/knows> ?y . ?y <http://ex/knows> ?z . ?z <http://ex/knows> ?x"
-#  finds both knows-triangles
-
-# real SPARQL SELECT (via spargebra) — joins, DISTINCT, LIMIT, FILTER:
-rete sparql clusters.rete "PREFIX ex: <http://ex/> SELECT ?x ?z WHERE { ?x ex:knows ?y . ?y ex:knows ?z }"
-rete sparql social.rete   "PREFIX ex: <http://ex/> SELECT ?p ?age WHERE { ?p ex:age ?age . FILTER(?age > 27) }"
-
-# query straight from a URL — fetches only the needed byte ranges over HTTP(S):
-python3 scripts/range_server.py 8000 .            # range-capable static server
-rete query-url http://127.0.0.1:8000/clusters.rete --object '<http://ex/Dave>'
-#  → answers in 4 bounded range requests, no full download
-
-# https works too (rustls) — point it at S3, GitHub, or any CDN that honors Range:
-rete query-url https://my-bucket.s3.amazonaws.com/clusters.rete --predicate '<http://ex/knows>'
-```
-
-### RDF datasets (named graphs)
-
-Build from N-Quads — triples are grouped per graph under one shared dictionary —
-then query specific graphs with SPARQL `GRAPH`:
-
-```sh
-rete build examples/dataset.nq -o dataset.rete       # default graph + named graphs
-rete graphs dataset.rete                              # list named graph IRIs
-
-# which graph holds the age triples, and whose?
-rete sparql dataset.rete \
-  "PREFIX ex: <http://ex/> SELECT ?g ?p ?age WHERE { GRAPH ?g { ?p ex:age ?age } }"
-
-rete export dataset.rete > out.nq                     # dump back to N-Quads (lossless)
-```
-
-## Benchmarks
-
-Synthetic social graph, **139k triples** (20k people in ~200 communities),
-release build, dev container. Full writeup + harness in
-[`docs/BENCHMARK.md`](docs/BENCHMARK.md) (`scripts/bench.sh`).
-
-| | |
-|---|--:|
-| raw N-Triples | 8.38 MB |
-| `gzip -9` | 565 KB |
-| **`.rete`** (queryable, zstd + pyramid) | **708 KB** (1.25× gzip) |
-| build | 660 ms |
-| triple-pattern query | 20 ms |
-| 2-hop BGP join | 27 ms |
-| transitive path `knows+` (reaches whole graph) | 53 ms |
-| GROUP BY COUNT (every node's degree) | 93 ms |
-| per-predicate totals (summary only, index unread) | 15 ms |
-| HTTP point query | 4 bounded range requests |
-
-`.rete` is ~1.25× the size of gzip but is *queryable in place and over HTTP
-ranges* — gzip answers no query without a full download + scan.
-
-## Develop (in Docker only — nothing runs on the host)
-
-Open the folder in a dev container (VS Code: *Reopen in Container*), then inside:
-
-```sh
-cargo test          # 94 tests: round-trip, malformed-input robustness, range
-                    # access invariants, HTTP range reader, SPARQL features
+cargo test                 # round-trip, malformed-input robustness, range access, SPARQL
 cargo run -p rete-cli -- info some.rete
-cargo clippy
-bash scripts/smoke.sh   # end-to-end acceptance test of every CLI subcommand
+bash scripts/smoke.sh      # end-to-end test of every CLI subcommand
 ```
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs fmt, clippy, the
-test matrix (default / `--no-default-features` / `--all-features`), the CLI smoke
-test, and the wasm build — all inside the same `rust:1.92-bookworm` image, so
-nothing ever builds on the host.
+CI runs fmt, clippy, the test matrix, the CLI smoke test, and the WASM build —
+all inside `rust:1.92-bookworm`, so nothing builds on the host. See
+[`docs/getting-started.md`](docs/getting-started.md) for the dev-container setup.
 
-The container ([`.devcontainer/`](.devcontainer/)) carries the Rust toolchain,
-the `wasm32-unknown-unknown` target, and `wasm-pack` for the future browser
-client.
+## License
 
-`rete-core` builds for the browser today (the same SPARQL/query code runs in
-wasm). zstd is an optional `compression` feature for the C *encoder*; decoding
-always uses the pure-Rust `ruzstd`, so the browser reads compressed files fine.
-
-### Run SPARQL in the browser
-
-`crates/rete-wasm` exposes the engine to JS (`info`, `schema`, `graph_names`,
-`query_triples`, `query_sparql`, plus `header_ranges`/`summary_overview` for
-progressive loading); `web/index.html` is a serverless explorer that fetches a
-`.rete` and queries it client-side — no server-side query. It renders the
-**ontology overview first** (the `schema` coarse graph: classes + their
-relations), and each class/relation is clickable to drill into the data with a
-generated SPARQL query, results shown as a table.
-
-It also has a **progressive load** button: using `header_ranges` +
-`summary_overview`, the page reads bytes `0..128`, then range-fetches only the
-dictionary and pyramid summary and computes the coarse graph from them — the
-(large) triple index is **never downloaded**. The same "overview first" path as
-`rete summary-url`, in the browser. (Verified end-to-end in `rete-wasm`'s Node
-test: the index region can be left zero-filled and the overview still computes —
-typically ~25 % of the file fetched in 3 ranges.)
-
-```sh
-wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
-rete build examples/typed.nt -o web/typed.rete   # ontology demo (People & Orgs)
-rete build examples/deps.nt  -o web/deps.rete    # CVE-impact demo (dependsOn+ path)
-python3 scripts/range_server.py 8000 web         # then open http://localhost:8000
-```
-
-## Roadmap
-
-See `docs/SPEC.md` §8 (SPARQL status) and §11 (open questions). Next up:
-
-- **Tile-routed queries** — use the pyramid to fetch only relevant community
-  tiles over HTTP instead of the whole index (re-enables stored tiles).
-- **Range-fetch the *full* query path in wasm** — the progressive *overview* is
-  now range-fetched in the browser (`header_ranges` + `summary_overview`); the
-  full triple-query path still loads the whole file client-side.
-
-Done since first draft: named graphs / quads, ORDER BY, DESCRIBE, GROUP BY on
-integer IDs end-to-end, the `schema` ontology profile, and progressive
-overview-only loading over HTTP ranges in the browser.
+[Apache-2.0](LICENSE).

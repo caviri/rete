@@ -1,5 +1,10 @@
 # Multi-criteria community splitting
 
+<figure class="fig-right">
+  <img src="img/multi-criteria.svg" alt="The same six nodes shown twice: partitioned by :cites into one set of clusters on the left, and by :hasTopic into a different set of clusters on the right.">
+  <figcaption>The same nodes regroup depending on which relation (or attribute) you partition by — there is no single "correct" community.</figcaption>
+</figure>
+
 "What community is X in?" has no single answer — it depends on **which relation
 (or attribute) you group by**. `rete` lets you partition the *same* graph by
 different criteria and compare them. This page is a runnable example.

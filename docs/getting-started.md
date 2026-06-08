@@ -20,6 +20,11 @@ your `PATH` (or substitute `cargo run -p rete-cli --`).
 
 ## Building a `.rete` file
 
+<figure class="fig-right">
+  <img src="img/build-pipeline.svg" alt="A pipeline: .nt, .ttl and .nq inputs feed into 'rete build', which produces one social.rete file containing a dictionary, indexes and a pyramid, ready to put on an HTTP host or URL.">
+  <figcaption><code>rete build</code> packs your triples into one immutable file — dictionary, permutation indexes, and a community pyramid — that you can drop on any URL.</figcaption>
+</figure>
+
 `rete build` accepts N-Triples (`.nt`), N-Quads (`.nq`), and Turtle (`.ttl`),
 detected by extension. Multiple inputs are merged under one shared dictionary,
 and `-` reads standard input.

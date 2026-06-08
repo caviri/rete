@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
+  <title id="t">Same data, two shapes: rows versus a graph</title>
+  <rect width="760" height="360" fill="#ffffff"/>
+  <text x="380" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">Same data, two shapes: rows vs. a graph</text>
+
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/>
+    </marker>
+  </defs>
+
+  <!-- LEFT: relational table -->
+  <text x="160" y="78" text-anchor="middle" font-size="13" font-weight="700" fill="#1b1f24">table: friendship</text>
+
+  <!-- header row -->
+  <rect x="50" y="92" width="110" height="38" fill="#0f1620"/>
+  <rect x="160" y="92" width="110" height="38" fill="#0f1620"/>
+  <text x="105" y="116" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">person</text>
+  <text x="215" y="116" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">knows</text>
+
+  <!-- data rows -->
+  <g font-size="13" fill="#1b1f24">
+    <rect x="50" y="130" width="110" height="38" fill="#ffffff" stroke="#e4e8ec"/>
+    <rect x="160" y="130" width="110" height="38" fill="#ffffff" stroke="#e4e8ec"/>
+    <text x="105" y="154" text-anchor="middle">Alice</text>
+    <text x="215" y="154" text-anchor="middle">Bob</text>
+
+    <rect x="50" y="168" width="110" height="38" fill="#f5f7f9" stroke="#e4e8ec"/>
+    <rect x="160" y="168" width="110" height="38" fill="#f5f7f9" stroke="#e4e8ec"/>
+    <text x="105" y="192" text-anchor="middle">Bob</text>
+    <text x="215" y="192" text-anchor="middle">Carol</text>
+
+    <rect x="50" y="206" width="110" height="38" fill="#ffffff" stroke="#e4e8ec"/>
+    <rect x="160" y="206" width="110" height="38" fill="#ffffff" stroke="#e4e8ec"/>
+    <text x="105" y="230" text-anchor="middle">Carol</text>
+    <text x="215" y="230" text-anchor="middle">Alice</text>
+  </g>
+
+  <!-- CENTER: same facts arrow -->
+  <path d="M300,168 L440,168" stroke="#5b6570" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <text x="370" y="158" text-anchor="middle" font-size="12.5" font-weight="600" fill="#2a6df4">same facts</text>
+
+  <!-- RIGHT: node-link graph -->
+  <text x="600" y="78" text-anchor="middle" font-size="13" font-weight="700" fill="#1b1f24">graph: relationships</text>
+
+  <!-- nodes -->
+  <g>
+    <rect x="540" y="100" width="120" height="48" rx="24" fill="#dce8ff" stroke="#2a6df4"/>
+    <text x="600" y="130" text-anchor="middle" font-size="14" font-weight="700" fill="#1b3a8a">:Alice</text>
+
+    <rect x="640" y="220" width="120" height="48" rx="24" fill="#dce8ff" stroke="#2a6df4"/>
+    <text x="700" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#1b3a8a">:Bob</text>
+
+    <rect x="460" y="220" width="120" height="48" rx="24" fill="#dce8ff" stroke="#2a6df4"/>
+    <text x="520" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#1b3a8a">:Carol</text>
+  </g>
+
+  <!-- edges -->
+  <g stroke="#5b6570" stroke-width="1.5" fill="none">
+    <path d="M624,150 L686,216" marker-end="url(#a)"/>
+    <path d="M636,244 L584,244" marker-end="url(#a)"/>
+    <path d="M512,218 L576,152" marker-end="url(#a)"/>
+  </g>
+  <g font-size="11.5" font-weight="600" fill="#2a6df4">
+    <text x="678" y="186" text-anchor="middle">:knows</text>
+    <text x="610" y="236" text-anchor="middle">:knows</text>
+    <text x="524" y="186" text-anchor="middle">:knows</text>
+  </g>
+
+  <text x="380" y="332" text-anchor="middle" font-size="12.5" fill="#5b6570">Tables store rows; a graph stores relationships directly — so "who is connected to whom" is a traversal, not a join.</text>
+</svg>

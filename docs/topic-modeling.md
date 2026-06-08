@@ -1,5 +1,10 @@
 # Topic modeling over communities (LDA)
 
+<figure class="fig-right">
+  <img src="img/topics.svg" alt="Three structural node communities feed into an LDA topic model, which emits a topic card of keywords for each community.">
+  <figcaption>Communities are <em>structural</em> (link topology); topics are <em>latent themes</em> in the text on their nodes. LDA labels each community with its dominant theme.</figcaption>
+</figure>
+
 A graph has two complementary notions of "cluster":
 
 - **Communities** — *structural* groups found from the link topology. Densely

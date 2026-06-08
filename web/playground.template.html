@@ -57,7 +57,40 @@
     section { background:var(--bg); border:1px solid var(--border); border-radius:10px;
               padding:1.1rem 1.3rem; margin:0; box-shadow:0 1px 2px rgba(16,22,32,.03); }
     .col section { margin:0; }
+
+    /* ===== collapsible "step" expanders (same card look as section) ===== */
+    details.step { background:var(--bg); border:1px solid var(--border); border-radius:10px;
+                   margin:0; box-shadow:0 1px 2px rgba(16,22,32,.03); overflow:hidden; }
+    details.step > summary {
+      list-style:none; cursor:pointer; user-select:none;
+      display:flex; align-items:center; gap:.55rem;
+      padding:.85rem 1.3rem; font-size:1.06rem; font-weight:600; color:var(--fg);
+      transition:background .12s; }
+    details.step > summary::-webkit-details-marker { display:none; }
+    details.step > summary::marker { content:""; }
+    details.step > summary:hover { background:#f6f9ff; }
+    details.step > summary::before { content:"\25B8"; /* ▸ */ color:var(--muted);
+      font-size:.8em; transition:transform .12s; }
+    details.step[open] > summary::before { content:"\25BE"; /* ▾ */ }
+    details.step > summary .step-num { display:inline-flex; align-items:center; justify-content:center;
+      width:1.5rem; height:1.5rem; border-radius:999px; background:var(--accent); color:#fff;
+      font-size:.82rem; font-weight:700; flex:0 0 auto; }
+    details.step > summary .summary-spacer { flex:1 1 auto; }
+    details.step > summary .summary-sub { color:var(--muted); font-weight:400; font-size:.8rem; }
+    details.step > .body { padding:0 1.3rem 1.2rem; }
     .overview { background:#fbfcff; }
+    /* ontology overview as a collapsible card (auto-collapses on query run) */
+    details.overview { border:1px solid var(--border); border-radius:10px; padding:0;
+                       box-shadow:0 1px 2px rgba(16,22,32,.03); }
+    details.overview > summary { list-style:none; cursor:pointer; padding:1.1rem 1.3rem;
+      font-size:1.06rem; font-weight:700; display:flex; gap:.5rem; align-items:baseline; }
+    details.overview > summary::-webkit-details-marker { display:none; }
+    details.overview > summary::before { content:"\25B8"; /* ▸ */ color:var(--muted);
+      font-size:.8em; font-weight:400; flex:0 0 auto; }
+    details.overview[open] > summary::before { content:"\25BE"; /* ▾ */ }
+    details.overview > summary .muted { font-weight:400; }
+    details.overview > summary:hover { background:#f3f7ff; border-radius:10px 10px 0 0; }
+    details.overview > .onto-body { padding:0 1.3rem 1.1rem; }
     .col-head { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.6px;
                 color:var(--muted); margin:.2rem .1rem -.2rem; }
 
@@ -119,6 +152,14 @@
     @media (max-width:1000px) { .loadgrid { grid-template-columns:1fr 1fr; } }
     @media (max-width:720px) { .loadgrid { grid-template-columns:1fr; } }
     .loadgrid .field { font-size:.85rem; color:var(--muted); margin-bottom:.3rem; display:block; }
+    /* nested sub-sections (e.g. inside the Load panel) */
+    .substep { border:1px solid var(--border); border-radius:8px; margin:.55rem 0 0; background:#fbfcff; overflow:hidden; }
+    .substep > summary { cursor:pointer; list-style:none; padding:.5rem .75rem; font-size:.85rem;
+                         font-weight:600; color:var(--fg); display:flex; align-items:center; gap:.45rem; }
+    .substep > summary::-webkit-details-marker { display:none; }
+    .substep > summary::before { content:"\25B8"; color:var(--accent); font-size:.75em; }
+    .substep[open] > summary::before { content:"\25BE"; }
+    .substep > .sbody { padding:0 .75rem .8rem; }
 
     /* ===== chat-style history ===== */
     .histcard { display:flex; flex-direction:column; min-height:0; }
@@ -178,141 +219,190 @@
       <div class="col col-left">
         <section>
           <h1>Query playground</h1>
-          <p class="muted small" style="margin:.2rem 0 .6rem">
+          <p class="muted small" style="margin:.2rem 0 0">
             100% client-side. This single page embeds the WASM engine
             <em>and</em> the demo datasets (base64) — no server, no app-load network
             requests. Works offline from <code>file://</code>. It hands a
             <code>.rete</code> file's bytes to WebAssembly and runs the dictionary,
             permutation indexes, SPARQL and zstd decode entirely in your browser.
+            Follow the numbered steps below.
           </p>
-
-          <label class="field" for="ds">Dataset</label>
-          <select id="ds" style="width:100%">
-            <option value="typed">typed.rete — People &amp; Orgs (ontology demo)</option>
-            <option value="deps">deps.rete — dependency graph (CVE impact demo)</option>
-            <option value="papers">papers.rete — citation graph (community demo)</option>
-            <option value="researchers">researchers.rete — co-authorship (multi-criteria demo)</option>
-          </select>
-          <p id="meta" class="muted small" style="margin:.5rem 0 0"></p>
-          <p id="dsDesc" class="muted small" style="margin:.4rem 0 0"></p>
-
-          <div class="loadgrid" style="margin-top:1rem">
-            <div>
-              <span class="field">Load a <code>.rete</code> from a URL</span>
-              <div class="row" style="margin:0">
-                <input type="text" id="urlInput" style="flex:1 1 9rem" placeholder="https://example.org/data.rete" />
-                <button id="urlBtn" type="button">Load</button>
-              </div>
-              <p class="small muted" style="margin:.4rem 0 0">
-                The host must allow cross-origin reads (CORS) or serve same-origin.
-              </p>
-            </div>
-            <div>
-              <span class="field">Or load a local file (fully offline)</span>
-              <div id="dropzone" class="dropzone">
-                <strong>Drop a <code>.rete</code> file here</strong><br />
-                or <span style="color:var(--accent)">click to browse</span>
-                <input type="file" id="fileInput" accept=".rete" hidden />
-              </div>
-              <p class="small muted" style="margin:.4rem 0 0">
-                The bundled datasets are small. Big graphs (e.g. the enriched
-                OpenCitations file) load fine via drag-drop or URL.
-              </p>
-            </div>
-          </div>
-
-          <div class="row" style="margin:.9rem 0 0">
-            <button id="shareBtn" class="secondary" type="button" title="Copy a link that reproduces the current dataset, query and format">Copy shareable link</button>
-            <span id="shareMsg" class="small muted"></span>
-          </div>
         </section>
 
-        <section class="histcard">
-          <h3 style="display:flex; align-items:center; gap:.5rem">
+        <details class="step" open>
+          <summary><span class="step-num">1</span> Load a graph</summary>
+          <div class="body">
+            <p class="muted small" style="margin:0 0 .2rem">Pick a source — three ways to load a graph:</p>
+
+            <details class="substep" open>
+              <summary>A · Bundled dataset</summary>
+              <div class="sbody">
+                <label class="field" for="ds">Dataset</label>
+                <select id="ds" style="width:100%">
+                  <option value="research">research.rete — Academic knowledge graph (best ontology showcase)</option>
+                  <option value="citations">citations — REAL OpenCitations network (~588k triples, citers of AlphaFold)</option>
+                  <option value="typed">typed.rete — People &amp; Orgs (ontology demo)</option>
+                  <option value="deps">deps.rete — dependency graph (CVE impact demo)</option>
+                  <option value="papers">papers.rete — citation graph (community demo)</option>
+                  <option value="researchers">researchers.rete — co-authorship (multi-criteria demo)</option>
+                </select>
+                <p id="meta" class="muted small" style="margin:.5rem 0 0"></p>
+                <p id="dsDesc" class="muted small" style="margin:.4rem 0 0"></p>
+              </div>
+            </details>
+
+            <details class="substep">
+              <summary>B · From a URL</summary>
+              <div class="sbody">
+                <div class="row" style="margin:0">
+                  <input type="text" id="urlInput" style="flex:1 1 9rem" placeholder="https://example.org/data.rete" />
+                  <button id="urlBtn" type="button">Load</button>
+                </div>
+                <p class="small muted" style="margin:.4rem 0 0">
+                  The host must allow cross-origin reads (CORS) or serve same-origin.
+                </p>
+              </div>
+            </details>
+
+            <details class="substep">
+              <summary>C · From a local file (fully offline)</summary>
+              <div class="sbody">
+                <div id="dropzone" class="dropzone">
+                  <strong>Drop a <code>.rete</code> file here</strong><br />
+                  or <span style="color:var(--accent)">click to browse</span>
+                  <input type="file" id="fileInput" accept=".rete" hidden />
+                </div>
+                <p class="small muted" style="margin:.4rem 0 0">
+                  The bundled datasets are small. Big graphs (e.g. the enriched
+                  OpenCitations file) load fine via drag-drop or URL.
+                </p>
+              </div>
+            </details>
+
+            <div class="row" style="margin:.9rem 0 0">
+              <button id="shareBtn" class="secondary" type="button" title="Copy a link that reproduces the current dataset, query and format">Copy shareable link</button>
+              <span id="shareMsg" class="small muted"></span>
+            </div>
+          </div>
+        </details>
+
+        <details class="step">
+          <summary>
             History
-            <button id="clearHist" class="secondary" type="button" style="margin-left:auto; padding:.28rem .6rem; font-size:.78rem">Clear</button>
-          </h3>
-          <p class="muted small" style="margin:0 0 .5rem">
-            Your last 20 runs (localStorage, this browser). Click a bubble to restore it.
-          </p>
-          <div id="histList" class="chatlog"><p class="empty">No history yet.</p></div>
-        </section>
+            <span class="summary-spacer"></span>
+            <button id="clearHist" class="secondary" type="button" style="padding:.28rem .6rem; font-size:.78rem">Clear</button>
+          </summary>
+          <div class="body histcard">
+            <p class="muted small" style="margin:0 0 .5rem">
+              Your last 20 runs (localStorage, this browser). Click a bubble to restore it.
+            </p>
+            <div id="histList" class="chatlog"><p class="empty">No history yet.</p></div>
+          </div>
+        </details>
       </div>
 
       <!-- ============================================================= -->
       <!-- COLUMN 2 — compose the query (examples, editor, controls)      -->
       <!-- ============================================================= -->
       <div class="col col-mid">
-        <section>
-          <h3>Query <span class="muted small">— SELECT / ASK / CONSTRUCT</span></h3>
-          <div id="examples" class="small"></div>
-          <textarea id="q">PREFIX ex: &lt;http://ex/&gt;
+        <details class="step" open>
+          <summary><span class="step-num">2</span> Query <span class="summary-sub">— SELECT / ASK / CONSTRUCT</span></summary>
+          <div class="body">
+            <p class="muted small" style="margin:0 0 .4rem">
+              <strong>Example query families</strong> — grouped <strong>easy → hard</strong>:
+              basics (one pattern, ASK, count) → grouping, filters &amp; dates → multi-way
+              joins, property paths, aggregates &amp; CONSTRUCT. Click any chip to load it, then <strong>Run</strong>.
+            </p>
+            <div id="examples" class="small"></div>
+            <textarea id="q">PREFIX ex: &lt;http://ex/&gt;
 SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
-          <div class="row">
-            <button id="run">Run</button>
-            <label>View:
-              <span class="seg" id="viewSeg">
-                <button type="button" data-view="table" class="active">Table</button>
-                <button type="button" data-view="jsonld">JSON-LD</button>
-                <button type="button" data-view="ttl">Turtle</button>
-                <button type="button" data-view="graph">Graph</button>
-              </span>
-            </label>
-            <input type="hidden" id="fmt" value="table" />
+            <div class="row">
+              <button id="run">Run</button>
+              <label>View:
+                <span class="seg" id="viewSeg">
+                  <button type="button" data-view="table" class="active">Table</button>
+                  <button type="button" data-view="jsonld">JSON-LD</button>
+                  <button type="button" data-view="ttl">Turtle</button>
+                  <button type="button" data-view="graph">Graph</button>
+                </span>
+              </label>
+              <input type="hidden" id="fmt" value="table" />
+            </div>
+            <div class="row">
+              <label>Evaluation:
+                <select id="strategy">
+                  <option value="whole">Whole graph</option>
+                  <option value="community">Split by community</option>
+                </select>
+              </label>
+              <label id="roundWrap" hidden>Round:
+                <input id="round" type="number" min="0" style="width:4rem" placeholder="auto" />
+              </label>
+              <span id="qmeta" class="muted small"></span>
+            </div>
           </div>
-          <div class="row">
-            <label>Evaluation:
-              <select id="strategy">
-                <option value="whole">Whole graph</option>
-                <option value="community">Split by community</option>
-              </select>
-            </label>
-            <label id="roundWrap" hidden>Round:
-              <input id="round" type="number" min="0" style="width:4rem" placeholder="auto" />
-            </label>
-            <span id="qmeta" class="muted small"></span>
-          </div>
-        </section>
+        </details>
 
-        <section>
-          <h3>Reachability <span class="muted small">— transitive reach over one relation</span></h3>
-          <div id="reachExamples" class="small"></div>
-          <div class="row">
-            <label style="flex:1 1 100%">Predicate:
-              <input id="reachPred" style="flex:1; width:100%" placeholder="&lt;http://ex/dependsOn&gt;" />
-            </label>
+        <details class="step" open>
+          <summary><span class="step-num">3</span> Reachability <span class="summary-sub">— transitive reach over one relation</span></summary>
+          <div class="body">
+            <p class="muted small" style="margin:0 0 .5rem">
+              <strong>Transitive reach over a single relation:</strong> from each seed,
+              every node reachable by following that one predicate repeatedly (the
+              relation's transitive closure from the seed).
+            </p>
+            <ul class="muted small" style="margin:.2rem 0 .6rem; padding-left:1.2rem">
+              <li><strong>Forward</strong> = "what does the seed reach?";
+                <strong>reverse</strong> (<code>--reverse</code> / the checkbox) =
+                "<strong>who reaches the seed?</strong>" — i.e. impact analysis
+                (e.g. "which packages transitively depend on this vulnerable one?").</li>
+              <li><strong>Single-relation</strong> — one predicate at a time.
+                <strong>Multi-seed</strong> — comma-separated seeds run together.</li>
+            </ul>
+            <div id="reachExamples" class="small"></div>
+            <div class="row">
+              <label style="flex:1 1 100%">Predicate:
+                <input id="reachPred" style="flex:1; width:100%" placeholder="&lt;http://ex/dependsOn&gt;" />
+              </label>
+            </div>
+            <div class="row">
+              <label style="flex:1 1 100%">Seeds <span class="muted">(IRI; comma-separated)</span>:
+                <input id="reachSeeds" style="flex:1; width:100%" placeholder="&lt;http://ex/app&gt;" />
+              </label>
+            </div>
+            <div class="row">
+              <button id="reachRun">Run reach</button>
+              <label><input type="checkbox" id="reachReverse" /> reverse (who reaches the seed?)</label>
+              <span id="reachMeta" class="muted small"></span>
+            </div>
+            <div class="note">
+              This <strong>offline</strong> build runs reach <strong>single-threaded</strong>.
+              For <strong>real in-browser multicore</strong> over big graphs / many seeds,
+              open the experimental <a href="../web/playground-threads.html">threaded playground</a>
+              — it runs reach on a <strong>Web-Worker pool</strong> that works on
+              <strong>any static server (no special headers)</strong>
+              (see <a href="parallel-browser.html">Parallel in the browser</a>). Natively,
+              <code>rete reach --parallel</code> does ~14–15× (<a href="BENCHMARK.html">Benchmarks</a>).
+            </div>
           </div>
-          <div class="row">
-            <label style="flex:1 1 100%">Seeds <span class="muted">(IRI; comma-separated)</span>:
-              <input id="reachSeeds" style="flex:1; width:100%" placeholder="&lt;http://ex/app&gt;" />
-            </label>
-          </div>
-          <div class="row">
-            <button id="reachRun">Run reach</button>
-            <label><input type="checkbox" id="reachReverse" /> reverse (who reaches the seed?)</label>
-            <span id="reachMeta" class="muted small"></span>
-          </div>
-          <div class="note">
-            The browser engine is single-threaded; reach runs <strong>serially</strong> here.
-            The native CLI's <code>rete reach --parallel</code> fans out one task per seed
-            (~14–15× on many cores) — see the <a href="BENCHMARK.html">Benchmarks</a>.
-          </div>
-        </section>
+        </details>
       </div>
 
       <!-- ============================================================= -->
       <!-- COLUMN 3 — results (schema, query output, reach/community)     -->
       <!-- ============================================================= -->
       <div class="col col-right">
-        <section class="overview" id="overviewBox" hidden>
-          <h3>Ontology <span class="muted small">— classes as blocks, their data properties inside, object properties as arrows (from <code>rdf:type</code> + the schema; no index read)</span></h3>
-          <div id="ontologyDiagram" class="onto"></div>
-          <details style="margin-top:.7rem">
-            <summary class="muted small" style="cursor:pointer">Classes &amp; relations (text · clickable)</summary>
-            <div style="margin-top:.5rem"><strong>Classes</strong> <span class="muted small">— click to list instances</span><div id="classes"></div></div>
-            <div style="margin-top:.6rem"><strong>Relations</strong> <span class="muted small">— click to see the actual triples</span><div id="relations"></div></div>
-          </details>
-        </section>
+        <details class="overview" id="overviewBox" open hidden>
+          <summary>Ontology <span class="muted small">— classes as blocks, their data properties inside, object properties as arrows (from <code>rdf:type</code> + the schema; no index read). Collapses automatically when you run a query.</span></summary>
+          <div class="onto-body">
+            <div id="ontologyDiagram" class="onto"></div>
+            <details style="margin-top:.7rem">
+              <summary class="muted small" style="cursor:pointer">Classes &amp; relations (text · clickable)</summary>
+              <div style="margin-top:.5rem"><strong>Classes</strong> <span class="muted small">— click to list instances</span><div id="classes"></div></div>
+              <div style="margin-top:.6rem"><strong>Relations</strong> <span class="muted small">— click to see the actual triples</span><div id="relations"></div></div>
+            </details>
+          </div>
+        </details>
 
         <section>
           <h3>Query results <span class="muted small">— table / JSON-LD / Turtle / graph</span></h3>
@@ -372,13 +462,15 @@ __GLUE_JS__
     const W = () => wasm_bindgen;
 
     const DESCRIPTIONS = {
+      research: "Academic knowledge graph — 6 entity types (Researcher, Paper, Institution, Journal, Topic, Grant + City) & 10+ relations (authored, cites, advisedBy, coauthor, publishedIn, hasTopic, fundedBy, affiliatedWith, locatedIn, subTopicOf), plus rich data properties. The best showcase for the ontology diagram.",
       typed: "People & Orgs — an ontology demo: rdf:type classes (Person/Org) and knows / worksAt / name. Good for the schema overview and ASK queries.",
       deps: "A software dependency graph — property paths (dependsOn+) and reverse reach show the transitive blast radius of a vulnerable package (CVE impact).",
       papers: "A citation graph with topical clusters (ML / DB / bio) — good for community decomposition and cites+ property paths.",
       researchers: "A co-authorship graph — multiple relations (cites / coauthor / organization) for the multi-criteria community view.",
+      citations: "REAL citation network from OpenCitations: ~588k triples — 32,729 papers that cite the AlphaFold paper (10.1038/s41586-021-03819-2). The DOIs, cites edges and years are REAL; titles, authors, venues, disciplines and keywords are clearly-labelled SYNTHETIC metadata (ex:synthetic \"true\"). Use the Easy → Medium → Hard query families below to explore it — all running offline in your browser.",
     };
 
-    const DEFAULT_DATASET = "typed";
+    const DEFAULT_DATASET = "research";
 
     function setStatsFromBytes(prefix) {
       try {
@@ -459,6 +551,7 @@ __GLUE_JS__
       const classes = schema.classes || [], relations = schema.relations || [];
       const box = $("overviewBox");
       box.hidden = false;
+      box.open = true; // re-open the ontology when a new graph is loaded
       $("classes").innerHTML = classes.length
         ? classes.map(([cls, n]) =>
             `<span class="chip" data-cls="${esc(cls)}"><span class="iri">${esc(shorten(cls))}</span> <span class="count">×${n}</span></span>`).join("")
@@ -507,28 +600,130 @@ __GLUE_JS__
       }
       const countOf = Object.fromEntries(classes);
       const nodes = [...classes.map(([c]) => c), ...extra.keys()];
-      // Grid layout.
-      const cols = Math.max(1, Math.min(nodes.length, Math.ceil(Math.sqrt(nodes.length))));
-      const BW = 230, HEAD = 30, LINE = 18, PAD = 8, GX = 70, GY = 56;
+      const N = nodes.length;
+      const idx = new Map(nodes.map((c, i) => [c, i]));
+
+      // ---- Box sizing (size-aware so repulsion can avoid overlaps) ----
+      const BW = 230, HEAD = 30, LINE = 18, PAD = 8;
       const propsShown = (c) => (data.get(c) || []).slice(0, 8);
       const heightOf = (c) => HEAD + (known.has(c) ? propsShown(c).length * LINE + PAD : 6);
+      const box = nodes.map((c) => ({ w: BW, h: heightOf(c) }));
+
+      // ---- Deterministic force-directed layout of the class boxes ----
+      // Seed positions on a circle (deterministic, no Math.random) so the layout
+      // is stable across reloads. Then run a cooling simulation with:
+      //  - box-size-aware repulsion (boxes push apart by their half-extents),
+      //  - spring attraction along edges,
+      //  - light centering toward the origin.
+      const pt = []; // {x,y} center of each box
+      const ringR = Math.max(220, 90 * N);
+      for (let i = 0; i < N; i++) {
+        const a = (2 * Math.PI * i) / Math.max(1, N);
+        pt.push({ x: ringR * Math.cos(a), y: ringR * Math.sin(a) });
+      }
+      // Unique non-self edges drive the springs (self-loops don't pull).
+      const springs = [];
+      for (const [s, o] of edges) {
+        const si = idx.get(s), oi = idx.get(o);
+        if (si == null || oi == null || si === oi) continue;
+        springs.push([si, oi]);
+      }
+      // Desired separation between two boxes' centers (half-extents + margin).
+      const SEP = 70;
+      const sepX = (i, j) => box[i].w / 2 + box[j].w / 2 + SEP;
+      const sepY = (i, j) => box[i].h / 2 + box[j].h / 2 + SEP;
+      const SPRING_LEN = 320, SPRING_K = 0.02, CENTER_K = 0.006, REPULSE = 1.0;
+      const ITER = 260;
+      for (let it = 0; it < ITER; it++) {
+        const cool = 1 - it / ITER; // 1 → 0
+        const fx = new Array(N).fill(0), fy = new Array(N).fill(0);
+        // Repulsion (box-aware): the closer the overlap on the dominant axis,
+        // the stronger the push. Use a rectangle-gap measure so big boxes keep
+        // proportionally more room.
+        for (let i = 0; i < N; i++) {
+          for (let j = i + 1; j < N; j++) {
+            let dx = pt[i].x - pt[j].x, dy = pt[i].y - pt[j].y;
+            const wantX = sepX(i, j), wantY = sepY(i, j);
+            // Normalized overlap (>0 means too close on that axis).
+            const ox = wantX - Math.abs(dx), oy = wantY - Math.abs(dy);
+            let d2 = dx * dx + dy * dy;
+            if (d2 < 1e-6) { dx = (i - j) || 1; dy = 1; d2 = dx * dx + dy * dy; }
+            const dist = Math.sqrt(d2);
+            // Base inverse-square repulsion scaled by box footprint.
+            const f = (REPULSE * wantX * wantY) / d2;
+            fx[i] += (dx / dist) * f; fy[i] += (dy / dist) * f;
+            fx[j] -= (dx / dist) * f; fy[j] -= (dy / dist) * f;
+            // Hard overlap correction (both axes overlapping → push apart).
+            if (ox > 0 && oy > 0) {
+              const push = Math.min(ox, oy) * 0.5;
+              const ux = dx / dist, uy = dy / dist;
+              fx[i] += ux * push; fy[i] += uy * push;
+              fx[j] -= ux * push; fy[j] -= uy * push;
+            }
+          }
+        }
+        // Springs (edges pull connected boxes toward SPRING_LEN apart).
+        for (const [a, b] of springs) {
+          const dx = pt[b].x - pt[a].x, dy = pt[b].y - pt[a].y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const f = SPRING_K * (dist - SPRING_LEN);
+          const ux = dx / dist, uy = dy / dist;
+          fx[a] += ux * f; fy[a] += uy * f;
+          fx[b] -= ux * f; fy[b] -= uy * f;
+        }
+        // Light centering toward origin.
+        for (let i = 0; i < N; i++) {
+          fx[i] -= pt[i].x * CENTER_K;
+          fy[i] -= pt[i].y * CENTER_K;
+        }
+        // Integrate with capped step (cooling).
+        const MAX = 40 * cool + 4;
+        for (let i = 0; i < N; i++) {
+          let mvx = fx[i], mvy = fy[i];
+          const m = Math.hypot(mvx, mvy);
+          if (m > MAX) { mvx = (mvx / m) * MAX; mvy = (mvy / m) * MAX; }
+          pt[i].x += mvx; pt[i].y += mvy;
+        }
+      }
+      // Residual overlap resolution: a few sweeps that push any still-overlapping
+      // box pair apart along the minimum-translation axis.
+      for (let pass = 0; pass < 12; pass++) {
+        let moved = false;
+        for (let i = 0; i < N; i++) {
+          for (let j = i + 1; j < N; j++) {
+            const dx = pt[i].x - pt[j].x, dy = pt[i].y - pt[j].y;
+            const ox = sepX(i, j) - Math.abs(dx), oy = sepY(i, j) - Math.abs(dy);
+            if (ox > 0 && oy > 0) {
+              moved = true;
+              if (ox < oy) {
+                const s = (dx >= 0 ? 1 : -1) * ox / 2;
+                pt[i].x += s; pt[j].x -= s;
+              } else {
+                const s = (dy >= 0 ? 1 : -1) * oy / 2;
+                pt[i].y += s; pt[j].y -= s;
+              }
+            }
+          }
+        }
+        if (!moved) break;
+      }
+
+      // ---- Convert centers to box rects; auto-fit the viewBox ----
+      const MARGIN = 60;
       const pos = new Map();
-      let rowH = [], x0 = 24, y0 = 24;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       nodes.forEach((c, i) => {
-        const col = i % cols, row = Math.floor(i / cols);
-        rowH[row] = Math.max(rowH[row] || 0, heightOf(c));
+        const w = box[i].w, h = box[i].h;
+        const x = pt[i].x - w / 2, y = pt[i].y - h / 2;
+        pos.set(c, { x, y, w, h });
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x + w); maxY = Math.max(maxY, y + h);
       });
-      const rowY = []; let acc = y0;
-      for (let r = 0; r < rowH.length; r++) { rowY[r] = acc; acc += rowH[r] + GY; }
-      nodes.forEach((c, i) => {
-        const col = i % cols, row = Math.floor(i / cols);
-        pos.set(c, { x: x0 + col * (BW + GX), y: rowY[row], w: BW, h: heightOf(c) });
-      });
-      const W = x0 + cols * (BW + GX) - GX + 24;
-      const H = acc + 8;
+      const vbX = minX - MARGIN, vbY = minY - MARGIN;
+      const W = (maxX - minX) + 2 * MARGIN, H = (maxY - minY) + 2 * MARGIN;
 
       const svg = document.createElementNS(SVGNS, "svg");
-      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      svg.setAttribute("viewBox", `${vbX} ${vbY} ${W} ${H}`);
       svg.setAttribute("width", W); svg.setAttribute("height", H);
       svg.innerHTML =
         `<defs><marker id="oarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">` +
@@ -540,23 +735,59 @@ __GLUE_JS__
         if (text != null) e.textContent = text;
         return e;
       };
-      // Edges (under boxes).
+      // Where does the segment from box-center `from` toward point `to` cross the
+      // border of box `from`? Returns the intersection on the rectangle edge.
+      const borderPoint = (b, to) => {
+        const c = center(b);
+        let dx = to.x - c.x, dy = to.y - c.y;
+        if (dx === 0 && dy === 0) return c;
+        const hw = b.w / 2, hh = b.h / 2;
+        // Scale so the longer axis just reaches the border.
+        const sx = dx === 0 ? Infinity : hw / Math.abs(dx);
+        const sy = dy === 0 ? Infinity : hh / Math.abs(dy);
+        const s = Math.min(sx, sy);
+        return { x: c.x + dx * s, y: c.y + dy * s };
+      };
+      // Detect bidirectional pairs so we can curve A→B and B→A oppositely.
+      const pairKey = (a, b) => a + " " + b;
+      const present = new Set(edges.filter(([s, , o]) => s !== o).map(([s, , o]) => pairKey(s, o)));
+      // Edges (under boxes), drawn as curved quadratic beziers.
       for (const [s, p, o, n] of edges) {
         const a = pos.get(s), b = pos.get(o);
         if (!a || !b) continue;
+        const label = shorten(p);
         let lx, ly;
-        if (s === o) { // self-loop
-          const x = a.x + a.w, y = a.y + 14;
-          svg.appendChild(el("path", { d: `M${x-12},${y} C${x+34},${y-20} ${x+34},${y+30} ${x-12},${y+16}`,
+        if (s === o) { // self-loop drawn as a loop outside the box top-right
+          const cx = a.x + a.w * 0.72, top = a.y;
+          const x1 = cx - 18, x2 = cx + 18, ytop = top - 46;
+          svg.appendChild(el("path", {
+            d: `M${x1},${top} C${x1 - 18},${ytop} ${x2 + 18},${ytop} ${x2},${top}`,
             fill: "none", stroke: "#9aa6b2", "stroke-width": 1.3, "marker-end": "url(#oarr)" }));
-          lx = x + 30; ly = y + 8;
+          lx = cx; ly = ytop + 4;
         } else {
           const ca = center(a), cb = center(b);
-          svg.appendChild(el("line", { x1: ca.x, y1: ca.y, x2: cb.x, y2: cb.y,
-            stroke: "#9aa6b2", "stroke-width": 1.3, "marker-end": "url(#oarr)" }));
-          lx = (ca.x + cb.x) / 2; ly = (ca.y + cb.y) / 2;
+          // Midpoint + perpendicular offset → curvature. Opposite sign when the
+          // reverse edge also exists, so both directions stay visible.
+          const bidir = present.has(pairKey(o, s));
+          const dirSign = bidir ? (s < o ? 1 : -1) : 0;
+          const mx = (ca.x + cb.x) / 2, my = (ca.y + cb.y) / 2;
+          let nx = -(cb.y - ca.y), ny = (cb.x - ca.x);
+          const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+          const dist = Math.hypot(cb.x - ca.x, cb.y - ca.y);
+          const bend = (bidir ? 0.18 : 0.10) * dist * (dirSign || 1) * (bidir ? 1 : 0.6);
+          const cpx = mx + nx * bend, cpy = my + ny * bend;
+          // Trim to box borders using the control point as the aim direction.
+          const start = borderPoint(a, { x: cpx, y: cpy });
+          const end = borderPoint(b, { x: cpx, y: cpy });
+          svg.appendChild(el("path", {
+            d: `M${start.x},${start.y} Q${cpx},${cpy} ${end.x},${end.y}`,
+            fill: "none", stroke: "#9aa6b2", "stroke-width": 1.3, "marker-end": "url(#oarr)" }));
+          // Label at the curve's true midpoint (bezier t=0.5), nudged off the line.
+          const bmx = 0.25 * start.x + 0.5 * cpx + 0.25 * end.x;
+          const bmy = 0.25 * start.y + 0.5 * cpy + 0.25 * end.y;
+          lx = bmx + nx * 10 * (dirSign || 1);
+          ly = bmy + ny * 10 * (dirSign || 1);
         }
-        const label = shorten(p);
         const tw = label.length * 6.4 + 8;
         svg.appendChild(el("rect", { x: lx - tw / 2, y: ly - 9, width: tw, height: 15, rx: 3, fill: "#eef2ff", stroke: "#d4ddff" }));
         svg.appendChild(el("text", { x: lx, y: ly + 2, "text-anchor": "middle", "font-size": 10.5, fill: "#2a4b8d" }, label));
@@ -833,6 +1064,8 @@ __GLUE_JS__
 
     function runQuery() {
       if (!bytes) { $("out").innerHTML = `<p class="err">Load a file first.</p>`; return; }
+      // Collapse the ontology expander to give the results room while querying.
+      const ob = $("overviewBox"); if (ob) ob.open = false;
       const q = $("q").value, fmt = $("fmt").value, strat = $("strategy").value;
       // Graph view needs a triples array; CONSTRUCT serializes as ttl/jsonld text otherwise.
       const queryFmt = fmt === "graph" ? "table" : fmt;
@@ -867,10 +1100,13 @@ __GLUE_JS__
       const rows = comms.map((c) =>
         `<tr><td>C${c.community}</td><td>${c.size}</td><td>${c.triples}</td></tr>`).join("");
       $("commOut").innerHTML =
-        `<div class="note"><strong>Evaluation: split by community.</strong> The browser engine is ` +
-        `single-threaded (WASM has no threads); this shows the community <em>decomposition</em>, not a ` +
-        `parallel speedup. Real parallel execution is the native <code>parallel</code> feature — ` +
-        `see the <a href="BENCHMARK.html">Benchmarks</a> page.</div>` +
+        `<div class="note"><strong>Evaluation: split by community.</strong> This offline build ` +
+        `runs single-threaded, so this shows the community <em>decomposition</em>, not a speedup. ` +
+        `For real in-browser threads see the experimental ` +
+        `<a href="../web/playground-threads.html">threaded playground</a> — a ` +
+        `<strong>Web-Worker pool</strong> that works on <strong>any static server ` +
+        `(no special headers)</strong> (<a href="parallel-browser.html">Parallel in the browser</a>); ` +
+        `natively, the <code>parallel</code> feature (<a href="BENCHMARK.html">Benchmarks</a>).</div>` +
         `<p class="small muted">${comms.length} communities decomposed in ${dt.toFixed(1)} ms</p>` +
         `<table><thead><tr><th>community</th><th>members</th><th>triples</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
@@ -919,6 +1155,52 @@ __GLUE_JS__
           tip: "CONSTRUCT the cites edges so the Graph view shows the citation clusters.",
           q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ex:cites ?b } WHERE { ?a ex:cites ?b }" },
       ],
+      citations: [
+        // ---- Family 1: Easy — single pattern, ASK, plain count ----
+        { group: "Easy · basics", label: "Paper titles (50)", view: "table",
+          tip: "One triple pattern: list 50 citing papers and their (synthetic) titles. The simplest possible SELECT.",
+          q: "PREFIX dct: <http://purl.org/dc/terms/>\n# Easy: one pattern, just list rows.\nSELECT ?paper ?title WHERE { ?paper dct:title ?title } LIMIT 50" },
+        { group: "Easy · basics", label: "Is AlphaFold cited? (ASK)", view: "table",
+          tip: "A boolean ASK: does at least one paper cite the AlphaFold paper (10.1038/s41586-021-03819-2)?",
+          q: "PREFIX cito: <http://purl.org/spar/cito/>\nASK { ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> }" },
+        { group: "Easy · basics", label: "Count the citing papers", view: "table",
+          tip: "A single COUNT over the real citation edges — how many papers cite AlphaFold in this graph.",
+          q: "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT (COUNT(?p) AS ?citingPapers)\nWHERE { ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> }" },
+
+        // ---- Family 2: Medium — GROUP BY, ORDER BY, FILTER, dates ----
+        { group: "Medium · group, filter & dates", label: "Citations per year", view: "table",
+          tip: "Join the citation edge with each paper's REAL year, then GROUP BY year — the citation trend over time.",
+          q: "PREFIX cito: <http://purl.org/spar/cito/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?year (COUNT(?p) AS ?n) WHERE {\n  ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> .\n  ?p dct:date ?year\n} GROUP BY ?year ORDER BY ?year" },
+        { group: "Medium · group, filter & dates", label: "Papers per discipline", view: "table",
+          tip: "GROUP BY the (synthetic) discipline, busiest first.",
+          q: "PREFIX ex: <http://ex/>\nSELECT ?discipline (COUNT(?p) AS ?n)\nWHERE { ?p ex:discipline ?discipline }\nGROUP BY ?discipline ORDER BY DESC(?n)" },
+        { group: "Medium · group, filter & dates", label: "Top 10 venues", view: "table",
+          tip: "Most common publication venues among the citing papers (synthetic), top 10.",
+          q: "PREFIX prism: <http://prismstandard.org/namespaces/basic/2.0/>\nSELECT ?venue (COUNT(?p) AS ?n)\nWHERE { ?p prism:publicationName ?venue }\nGROUP BY ?venue ORDER BY DESC(?n) LIMIT 10" },
+        { group: "Medium · group, filter & dates", label: "High-impact Biology papers", view: "table",
+          tip: "Two patterns + a numeric FILTER: Biology papers whose (synthetic) citationCount exceeds 120.",
+          q: "PREFIX ex: <http://ex/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?p ?c WHERE {\n  ?p ex:discipline <http://ex/discipline/Biology> .\n  ?p ex:citationCount ?c .\n  FILTER(?c > 120)\n} ORDER BY DESC(?c) LIMIT 25" },
+        { group: "Medium · group, filter & dates", label: "Papers tagged \"protein\"", view: "table",
+          tip: "Filter by a keyword (dcterms:subject) and join the title.",
+          q: "PREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?p ?title WHERE {\n  ?p dct:subject \"protein\" .\n  ?p dct:title ?title\n} LIMIT 50" },
+
+        // ---- Family 3: Hard — multi-way joins, property paths, aggregates, CONSTRUCT ----
+        { group: "Hard · joins, paths & aggregates", label: "Most collaborative authors", view: "table",
+          tip: "Aggregate over the co-authorship graph: each author's number of distinct collaborators, top 15.",
+          q: "PREFIX ex: <http://ex/>\nSELECT ?author (COUNT(?co) AS ?collaborators)\nWHERE { ?author ex:coauthor ?co }\nGROUP BY ?author ORDER BY DESC(?collaborators) LIMIT 15" },
+        { group: "Hard · joins, paths & aggregates", label: "Avg citations per discipline", view: "table",
+          tip: "AVG aggregate with a second COUNT: mean (synthetic) citationCount per discipline.",
+          q: "PREFIX ex: <http://ex/>\nSELECT ?discipline (AVG(?c) AS ?avgCitations) (COUNT(?p) AS ?papers) WHERE {\n  ?p ex:discipline ?discipline .\n  ?p ex:citationCount ?c\n} GROUP BY ?discipline ORDER BY DESC(?avgCitations)" },
+        { group: "Hard · joins, paths & aggregates", label: "Authors of \"protein\" papers", view: "table",
+          tip: "A three-pattern join: keyword → paper → creator → author name.",
+          q: "PREFIX dct: <http://purl.org/dc/terms/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nSELECT ?name ?title WHERE {\n  ?p dct:subject \"protein\" .\n  ?p dct:title ?title .\n  ?p dct:creator ?a .\n  ?a foaf:name ?name\n} LIMIT 50" },
+        { group: "Hard · joins, paths & aggregates", label: "Transitive collaborators of an author", view: "table",
+          tip: "A property path (coauthor+): everyone reachable from author 1235 through chains of co-authorship.",
+          q: "PREFIX ex: <http://ex/>\nSELECT DISTINCT ?collaborator WHERE {\n  <http://ex/author/1235> ex:coauthor+ ?collaborator\n} LIMIT 100" },
+        { group: "Hard · joins, paths & aggregates", label: "Draw a hub author's network", view: "graph",
+          tip: "CONSTRUCT the co-authorship edges of a well-connected author (1235) so the Graph view draws the ego-network.",
+          q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ex:coauthor ?b } WHERE {\n  VALUES ?a { <http://ex/author/1235> }\n  ?a ex:coauthor ?b\n}" },
+      ],
       researchers: [
         { group: "Select", label: "Co-authorships", view: "table",
           tip: "Lists every coauthor edge between researchers.",
@@ -962,6 +1244,16 @@ __GLUE_JS__
 
     // --- reachability ---------------------------------------------------------
     const REACH = {
+      research: {
+        pred: "<http://ex/coauthor>",
+        examples: [
+          { label: "Alice's co-author network", pred: "<http://ex/coauthor>", seeds: "<http://ex/r/alice>", reverse: false },
+          { label: "Alice's academic descendants (who she advised, transitively)", pred: "<http://ex/advisedBy>", seeds: "<http://ex/r/alice>", reverse: true },
+          { label: "Bob's advisor lineage", pred: "<http://ex/advisedBy>", seeds: "<http://ex/r/bob>", reverse: false },
+          { label: "citation closure of paper p1", pred: "<http://ex/cites>", seeds: "<http://ex/p/p1>", reverse: false },
+          { label: "who cites p3? (impact / reverse)", pred: "<http://ex/cites>", seeds: "<http://ex/p/p3>", reverse: true },
+        ],
+      },
       typed: {
         pred: "<http://ex/knows>",
         examples: [
@@ -987,6 +1279,14 @@ __GLUE_JS__
         pred: "<http://ex/coauthor>",
         examples: [
           { label: "r1's co-author network", pred: "<http://ex/coauthor>", seeds: "<http://ex/r1>", reverse: false },
+        ],
+      },
+      citations: {
+        pred: "<http://ex/coauthor>",
+        examples: [
+          { label: "author 1235's collaboration network (5,454 reached)", pred: "<http://ex/coauthor>", seeds: "<http://ex/author/1235>", reverse: false },
+          { label: "everyone who cites AlphaFold (reverse — 32,729!)", pred: "<http://purl.org/spar/cito/cites>", seeds: "<https://doi.org/10.1038/s41586-021-03819-2>", reverse: true },
+          { label: "what does one citing paper cite? (forward → AlphaFold)", pred: "<http://purl.org/spar/cito/cites>", seeds: "<https://doi.org/10.1101/2021.11.29.470303>", reverse: false },
         ],
       },
     };
@@ -1031,9 +1331,12 @@ __GLUE_JS__
         if (r.error) {
           return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td colspan="2" class="err">${esc(r.error)}</td></tr>`;
         }
+        const CAP = 500; // don't build tens of thousands of DOM nodes for huge reach sets
+        const shown = r.reached.slice(0, CAP);
+        const more = r.count > CAP ? `<div class="muted small" style="margin-top:.3rem">…showing first ${CAP} of ${r.count}.</div>` : "";
         const list = r.reached.length
           ? `<details><summary>${r.count} node(s)</summary><div class="small">` +
-            r.reached.map((t) => `<div class="iri">${esc(shorten(t))}</div>`).join("") + `</div></details>`
+            shown.map((t) => `<div class="iri">${esc(shorten(t))}</div>`).join("") + more + `</div></details>`
           : `<span class="muted">0 node(s)</span>`;
         return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td>${r.count}</td><td>${list}</td></tr>`;
       }).join("");
@@ -1088,7 +1391,8 @@ __GLUE_JS__
         $("q").scrollIntoView({ behavior: "smooth" });
       });
     }
-    $("clearHist").onclick = () => {
+    $("clearHist").onclick = (e) => {
+      e.stopPropagation(); // don't toggle the enclosing <details>
       try { localStorage.removeItem(HIST_KEY); } catch (e) { /* ignore */ }
       renderHistory();
     };

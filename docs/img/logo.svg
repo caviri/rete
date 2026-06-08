@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 200" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
+  <title id="t">rete — a queryable RDF graph in a single file</title>
+
+  <!-- icon: a graph (network) packed inside one rounded "file" tile -->
+  <rect x="24" y="40" width="120" height="120" rx="28" fill="#2a6df4"/>
+  <g stroke="#dce8ff" stroke-width="3" fill="none" opacity="0.95">
+    <path d="M84 76 L56 116"/>
+    <path d="M84 76 L112 116"/>
+    <path d="M56 116 L112 116"/>
+    <path d="M56 116 L84 142"/>
+    <path d="M112 116 L84 142"/>
+  </g>
+  <g fill="#ffffff">
+    <circle cx="84" cy="74" r="11"/>
+    <circle cx="54" cy="117" r="9"/>
+    <circle cx="114" cy="117" r="9"/>
+    <circle cx="84" cy="143" r="8"/>
+  </g>
+
+  <!-- wordmark + tagline (accent blue reads on both light and dark themes) -->
+  <text x="176" y="118" font-size="86" font-weight="800" fill="#2a6df4" letter-spacing="-2">rete</text>
+  <text x="180" y="150" font-size="19" fill="#5b6570">a queryable RDF graph in a single file — no server</text>
+</svg>
