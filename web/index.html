@@ -129,7 +129,7 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
       The browser engine is single-threaded; reach runs <strong>serially</strong> here.
       The native CLI's <code>rete reach --parallel</code> fans out one task per seed
       (~14–15× on many cores) — see the
-      <a href="https://github.com/carlosvivarrios/rete/blob/main/docs/BENCHMARK.md">Benchmarks</a>.
+      <a href="https://github.com/caviri/rete/blob/main/docs/BENCHMARK.md">Benchmarks</a>.
     </div>
     <div id="reachOut"></div>
   </section>
@@ -274,7 +274,7 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
         `<div class="note"><strong>Evaluation: split by community.</strong> The browser engine is ` +
         `single-threaded (WASM has no threads); this shows the community <em>decomposition</em>, not a ` +
         `parallel speedup. Real parallel execution is the native <code>parallel</code> feature — ` +
-        `see the <a href="https://github.com/carlosvivarrios/rete/blob/main/docs/BENCHMARK.md">Benchmarks</a> page.</div>` +
+        `see the <a href="https://github.com/caviri/rete/blob/main/docs/BENCHMARK.md">Benchmarks</a> page.</div>` +
         `<p class="small muted">${comms.length} communities decomposed in ${dt.toFixed(1)} ms</p>` +
         `<table><thead><tr><th>community</th><th>members</th><th>triples</th></tr></thead><tbody>${rows}</tbody></table>`;
     }

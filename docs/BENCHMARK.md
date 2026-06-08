@@ -142,11 +142,14 @@ Reading the times honestly:
   `^p`, transitive `+`/`*` from a bound node, `COUNT(DISTINCT)`, and the GROUP BYs.
 - Oxigraph is **faster wherever there's constant per-row work over a wide scan**
   (DISTINCT, VALUES/UNION expansion, BIND/FILTER/REGEX/`a/b` over hundreds of
-  rows) and **dominates anything it can stop early** — ASK, CONSTRUCT, `LIMIT`
-  (≤0.3 ms) — because its operators are **lazy/streaming** while rete materializes
-  each step eagerly. Both sit in the **same tens-of-ms range**; there are **no
+  rows) and **dominates many shapes it can stop early** — ASK, CONSTRUCT, and
+  broad `LIMIT` workloads — because its planner is mature and lazy across more
+  operators. rete now has lazy fast paths for simple BGP/FILTER `LIMIT` and ASK
+  shapes, but DISTINCT, ORDER BY, aggregation, and most compound algebra still
+  materialize. Both sit in the **same tens-of-ms range**; there are **no
   correctness gaps and no pathological blow-ups** after the join fixes (findings
-  6–7). The remaining gap is **eager vs. lazy evaluation** — the next engine work.
+  6–7). The remaining planner gap is **broad lazy evaluation** rather than basic
+  join complexity.
 
 ### Batch transitive reachability — `coauthor+` from 300 seeds
 
@@ -291,9 +294,10 @@ amortized; cheap single scans should stay serial.
    shared variables — `bgp.rs::eval_bgp_int_in`) cut it to **34 ms** (~2,400×);
    the high-impact filter 13.8 s → 29 ms, the 3-way join 20.8 s → 61 ms. Results
    are unchanged (the BGP + SPARQL suites still pass). This is what made the
-   interactive citation network in the [playground](playground.html) usable.
-   **Next:** lazy / early-out evaluation so `LIMIT` queries stop early — the gap
-   behind Oxigraph's 0.1 ms on the capped join.
+   interactive citation network in the [playground](playground.html) usable. A
+   first lazy path now lets simple BGP/FILTER queries under `LIMIT` stop early;
+   the remaining work is extending that laziness across ORDER BY, DISTINCT,
+   aggregation, and compound algebra.
 7. **Sweeping 24 operators caught two more issues — both fixed.** Running the
    full operator matrix against Oxigraph surfaced (a) **`OPTIONAL` at 11.5 s** —
    the SPARQL algebra's `Join`/`LeftJoin` still used an O(L×R) nested-loop merge

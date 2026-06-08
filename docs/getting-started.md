@@ -4,13 +4,15 @@
 
 `rete` is developed and built **entirely inside a container** — nothing runs on
 the host. The dev container ([`.devcontainer/`](../.devcontainer)) carries the
-Rust 1.92 toolchain, the `wasm32-unknown-unknown` target, and `wasm-pack`.
+Rust 1.92 toolchain, rustfmt, clippy, Python, the `wasm32-unknown-unknown`
+target, and `wasm-pack`.
 
 Open the folder in a dev container (VS Code: *Reopen in Container*), or run the
-image directly:
+same image directly:
 
 ```sh
-docker run --rm -it -v "$PWD":/work -w /work rust:1.92-bookworm bash
+docker build -t rete-dev -f .devcontainer/Dockerfile .
+docker run --rm -it -v "${PWD}:/work" -w /work rete-dev bash
 # then, inside:
 cargo build --release -p rete-cli
 ```
@@ -105,5 +107,5 @@ cargo clippy --workspace --all-targets -- -D warnings
 bash scripts/smoke.sh # end-to-end acceptance test of every CLI subcommand
 ```
 
-CI runs all of this — plus the feature matrix and the wasm build — inside the
-same `rust:1.92-bookworm` image, so nothing ever builds on the host.
+CI runs all of this — plus the feature matrix and the wasm build — in containers,
+so nothing ever builds on the host.

@@ -9,7 +9,7 @@
 (or attribute) you group by**. `rete` lets you partition the *same* graph by
 different criteria and compare them. This page is a runnable example.
 
-The data ([`examples/researchers.nt`](https://github.com/carlosvivarrios/rete/blob/main/examples/researchers.nt))
+The data ([`examples/researchers.nt`](https://github.com/caviri/rete/blob/main/examples/researchers.nt))
 has 8 researchers with three criteria that **deliberately disagree**:
 
 - `ex:cites` — two dense citation clusters `{r1..r4}` and `{r5..r8}`.

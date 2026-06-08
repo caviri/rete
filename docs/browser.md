@@ -26,7 +26,7 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `info(bytes)` | `{ quads, terms, pyramidLevels, namedGraphs }` |
 | `graph_names(bytes)` | array of named-graph IRIs |
 | `query_triples(bytes, s?, p?, o?)` | `[[s,p,o], …]` (omit a position for a wildcard) |
-| `query_sparql(bytes, query)` | array of solution objects `{ var: value, … }` |
+| `query_sparql(bytes, query)` | SELECT-only compatibility wrapper; array of solution objects `{ var: value, ... }` |
 | `schema(bytes)` | `{ classes: [["<iri>",count]], relations: [["s","p","o",count]] }` |
 | `header_ranges(headerBytes)` | `{ dictOffset, dictLen, pyramidOffset, pyramidLen, indexOffset, indexLen }` |
 | `summary_overview(bytes)` | `{ round, communities, predicateTotals: [["<iri>",count]] }` |
@@ -110,5 +110,5 @@ queries, and a **"Load overview only"** button that runs the progressive path
 above against the range server. It is also an **interactive query playground**:
 SELECT / ASK / CONSTRUCT with Table / Turtle / JSON-LD output (via `query`), a
 "split by community" evaluation view (via `communities`), query timing, and a
-localStorage history. See [Interactive playground](playground.md) for the full
+localStorage history. See [Interactive playground](playground.html) for the full
 walk-through.

@@ -19,5 +19,5 @@
   "mounts": [
     "source=rete-cargo-cache,target=/usr/local/cargo/registry,type=volume"
   ],
-  "postCreateCommand": "cargo --version && rustc --version"
+  "postCreateCommand": "cargo --version && rustc --version && cargo fmt --version && cargo clippy --version && python3 --version && wasm-pack --version"
 }

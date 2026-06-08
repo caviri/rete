@@ -7,7 +7,8 @@ algebra (`Bgp`/`Join`/`Union`/`Minus`/`LeftJoin`/`Filter`/`Path`/`Values`/
 only for final bindings.
 
 Run via the CLI (`rete sparql <file> "<query>" [--json]`) or in the browser
-(`query_sparql` in `rete-wasm`).
+(`query` in `rete-wasm` for any query form; `query_sparql` is the older
+SELECT-only wrapper).
 
 <figure class="fig-right">
   <img src="img/bgp-join.svg" alt="Two triple patterns sharing the variable ?f are joined on it, producing a binding table with columns for the bound variables.">
@@ -19,7 +20,7 @@ Run via the CLI (`rete sparql <file> "<query>" [--json]`) or in the browser
 | Area | Details |
 |---|---|
 | **Query forms** | `SELECT`, `ASK`, `CONSTRUCT`, `DESCRIBE` |
-| **Patterns** | Triple patterns, BGPs, nested-loop join on shared variables; blank nodes as non-distinguished variables |
+| **Patterns** | Triple patterns and BGPs evaluated as integer-space hash joins on shared variables; blank nodes as non-distinguished variables |
 | **Algebra** | `OPTIONAL` (left join), `UNION`, `MINUS`, `FILTER EXISTS` / `NOT EXISTS` |
 | **Filters** | Comparisons, `&&`/`\|\|`/`!`, arithmetic, `BOUND`, `COALESCE`; built-ins incl. `CONTAINS`, `STRLEN`, `SUBSTR`, `CONCAT`, `STR`, `isIRI`/`isLiteral`/`isBlank`, `REGEX` |
 | **Property paths** | `p+`, `p*`, `p?` (zero-length included for `*`/`?`), reverse `^p`, sequence `a/b`, alternative `a\|b` — evaluated goal-directed from a bound endpoint |
@@ -51,6 +52,14 @@ rete predicates data.rete            # CLI
 ```sparql
 # (the summary path; see SummaryView::predicate_totals)
 ```
+
+### Evaluation caveat
+
+The engine is not a full streaming triplestore planner. Simple BGP/FILTER shapes
+under `LIMIT` can stop early, and `ASK` has fast non-materializing paths, but
+`ORDER BY`, `DISTINCT`, aggregation, and most compound algebra still materialize
+intermediate rows. That is why the benchmark page separates correctness coverage
+from latency and calls out where Oxigraph's mature lazy planner still wins.
 
 ## Not supported
 

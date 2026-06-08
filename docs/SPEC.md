@@ -17,8 +17,8 @@
 - **Bounded request count** to answer a query — the client reads a small header
   (which carries every section's byte range), then fetches only the sections a
   query actually touches (≤4 ranges for a full open; 3 for the overview path).
-- **SPARQL** evaluation against the file (start with Basic Graph Patterns; grow
-  toward joins, filters, paths).
+- **SPARQL** evaluation against the file (BGPs, joins, filters, paths, aggregates,
+  named graphs, and the supported query forms in §8).
 - **Progressive / pyramidal** access: a coarse *summary graph* loads first, and
   the client refines by "zooming into" regions of interest.
 - **WASM-friendly**: the same query core runs in a browser and in a CLI.
@@ -295,11 +295,14 @@ plan algebra — `Bgp`/`Join`/`Union`/`Minus`/`LeftJoin`/`Filter`/`Path`/`Values
 `Graph`):
 
 - **Stage 1 — Triple patterns & BGPs.** ✅ Integer patterns over the permutation
-  index, nested-loop join on shared variables (`bgp.rs`). Blank nodes in patterns
-  are non-distinguished variables.
-- **Stage 2 — FILTER, projection, DISTINCT, ORDER BY, LIMIT/OFFSET.** ✅
-  (ORDER BY sorts on variable/constant keys: numeric when both are numbers, else
-  lexical; complex key expressions are not yet evaluated for ordering.)
+  index, left-deep hash joins on shared variables (`bgp.rs`), and a lazy BGP
+  iterator for streamable `LIMIT`/`ASK` shapes. Blank nodes in patterns are
+  non-distinguished variables.
+- **Stage 2 — FILTER, projection, DISTINCT, ORDER BY, LIMIT/OFFSET.** ✅ Simple
+  BGP/FILTER plans can stop early under `LIMIT`; DISTINCT, ORDER BY, aggregation,
+  and most compound algebra remain eager. ORDER BY sorts on variable/constant
+  keys: numeric when both are numbers, else lexical; complex key expressions are
+  not yet evaluated for ordering.
 - **Stage 3 — OPTIONAL, UNION, MINUS, VALUES, FILTER EXISTS/NOT EXISTS,
   property paths, GRAPH.** ✅ Paths (`p+`/`p*`/`p?`, reverse, sequence `a/b`,
   alternative `a|b`) evaluated forward from a bound endpoint in integer node
@@ -314,7 +317,8 @@ plan algebra — `Bgp`/`Join`/`Union`/`Minus`/`LeftJoin`/`Filter`/`Path`/`Values
   (`SummaryView::predicate_totals`) without reading the index.
 - **Query forms.** ✅ SELECT, ASK, CONSTRUCT, DESCRIBE (concise bounded
   description = each resource's outgoing triples).
-- **Input/output.** ✅ N-Triples + Turtle input; SPARQL Results JSON output.
+- **Input/output.** ✅ N-Triples, N-Quads, and Turtle input; N-Quads/Turtle/JSON-LD
+  export; SPARQL Results JSON output.
 - **Not supported (rejected with a clear error, never silently mis-evaluated):**
   subqueries (nested `SELECT`) and `SERVICE` (federation — out of scope for a
   single self-contained file). Complex ORDER BY key *expressions* (beyond a bare
@@ -366,10 +370,13 @@ the relevant community tiles (rather than the whole index) are future work.
 
 - **Rust core**, compiled to both **native** (CLI, server-side) and **WASM**
   (browser client) — identical query code in both.
-- Crates to lean on: `oxrdf` / `oxttl` / `spargebra` (RDF + SPARQL), `object_store`
-  (S3/GCS/HTTP range reads), `zstd`, `blake3`, a Leiden/Louvain implementation.
+- Crates to lean on: `oxrdf` / `oxttl` / `spargebra` (RDF + SPARQL), `ureq`
+  (CLI HTTP range reads), `zstd`/`ruzstd`, `blake3`, `regex-lite`, `serde_json`,
+  `rayon` behind native-only feature gates, and Louvain-style community
+  detection.
 - **Everything runs in Docker dev containers.** No host execution. The container
-  carries the Rust toolchain + `wasm-pack`.
+  carries the Rust toolchain, rustfmt, clippy, Python smoke-test tooling,
+  `wasm-pack`, and the WASM target.
 
 ---
 

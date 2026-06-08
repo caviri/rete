@@ -10,6 +10,9 @@
 
 ## What is rete?
 
+The name comes from Latin **rēte**, meaning "net". Pronounce it **RAY-teh**
+(Classical Latin: roughly `/ˈreː.te/`).
+
 `rete` packs a whole RDF graph — its dictionary, indexes, and a community
 "summary pyramid" — into **one immutable `.rete` file**. Put that file on S3,
 GitHub Pages, or any HTTP host that supports range requests, hand a client the
@@ -26,7 +29,7 @@ query the file directly with no backend**.
 - **Small + fast to open.** Compressed (~zstd) with indexes prebuilt, so it
   *opens in ~20 ms* — no load/index step. (See [benchmarks](#how-fast).)
 - **Runs in the browser.** Same engine in WASM — try the
-  **[interactive playground](docs/playground.html)** (a single offline HTML page).
+  **[interactive playground](https://caviri.github.io/rete/playground.html)** (a single offline HTML page).
 
 ## When does rete make sense?
 
@@ -39,25 +42,26 @@ query the file directly with no backend**.
   backend.
 - You ship **many graphs** (per-tenant, per-dataset, sharded by year) and want
   each to be one cheap, cacheable, queryable artifact — even
-  [federated across several files](docs/federation.md).
+  [federated across several files](https://caviri.github.io/rete/federation.html).
 - You care about **bounded, progressive reads** — fetch a coarse overview first,
   drill into detail only where a query needs it (PMTiles-style, for graphs).
 
 🚫 **Reach for a real triplestore instead when…**
 - You need **frequent writes / transactions / live updates** (rete files are
   immutable — you rebuild to change them).
-- You need a **always-on SPARQL endpoint** with a mature, lazy/streaming planner
+- You need an **always-on SPARQL endpoint** with a mature, lazy/streaming planner
   squeezing every millisecond (e.g. [Oxigraph](https://github.com/oxigraph/oxigraph),
   Jena, GraphDB). rete is competitive but optimized for *publish-and-query*, not
-  server throughput — see the honest [comparison](docs/BENCHMARK.md#comparison-vs-oxigraph-real-opencitations-network).
+  server throughput — see the honest [comparison](https://caviri.github.io/rete/BENCHMARK.html#comparison-vs-oxigraph-real-opencitations-network).
 
 ## Quick start
 
 Everything runs **in Docker** (nothing builds on your host):
 
 ```sh
-# Build the CLI once (inside the rust container):
-docker run --rm -it -v "$PWD":/work -w /work rust:1.92-bookworm \
+# Build the repo dev image once, then build the CLI inside it:
+docker build -t rete-dev -f .devcontainer/Dockerfile .
+docker run --rm -it -v "${PWD}:/work" -w /work rete-dev \
   cargo build --release -p rete-cli       # binary at target/release/rete
 ```
 
@@ -77,16 +81,17 @@ rete query-url https://my-bucket.s3.amazonaws.com/social.rete \
 
 ### Try it in your browser (no install)
 
-Open **[`docs/playground.html`](docs/playground.html)** — a self-contained page
+Open **[the playground](https://caviri.github.io/rete/playground.html)** — a self-contained page
 that embeds the WASM engine and example datasets (including a real ~588k-triple
 **OpenCitations** network). Pick a dataset, run the **Easy → Hard** example
 queries, visualise the ontology, and explore reachability — all offline.
 
 ## How fast?
 
-Real **OpenCitations** citation network (~539k triples), vs
+Real **OpenCitations** citation network (539,246 sanitized triples from the
+~588k-triple playground dataset), vs
 [Oxigraph](https://github.com/oxigraph/oxigraph) (in-memory), in the dev
-container — full writeup in [`docs/BENCHMARK.md`](docs/BENCHMARK.md):
+container — full writeup in [Benchmarks](https://caviri.github.io/rete/BENCHMARK.html):
 
 | | rete | Oxigraph |
 |---|--:|--:|
@@ -95,16 +100,19 @@ container — full writeup in [`docs/BENCHMARK.md`](docs/BENCHMARK.md):
 | Batch reachability, 300 seeds | 459 ms → **37 ms** with `--parallel` | 2,431 ms |
 
 rete opens ~100× faster and its **parallel reachability is ~66× faster** than a
-general property-path; Oxigraph's lazy planner wins on `LIMIT`/early-out queries.
-File size: ~11.8× smaller than raw N-Triples, ~1.25× of `gzip` — but *queryable*.
+general property-path. Oxigraph's broader lazy planner still wins some selective
+and early-out workloads; rete now has lazy fast paths for simple BGP/FILTER
+`LIMIT` shapes, but ORDER BY, DISTINCT, aggregation, and many algebra forms still
+materialize intermediate rows. File size: ~11.8× smaller than raw N-Triples,
+~1.25× of `gzip` — but *queryable*.
 
 ## Documentation
 
-- **[Graph data 101](docs/intro.md)** — new to RDF/graphs? Start here.
-- **[Getting started](docs/getting-started.md)** · **[CLI reference](docs/cli.md)** · **[SPARQL support](docs/sparql.md)**
-- **[Interactive playground](docs/playground.html)** — query in the browser, offline.
-- **[Real-world scenario](docs/scenario.md)** · **[Federated queries](docs/federation.md)** · **[Reasoning & coherence](docs/reasoning.md)**
-- **[Format spec](docs/SPEC.md)** · **[Benchmarks](docs/BENCHMARK.md)** · **[Browser / WASM](docs/browser.md)**
+- **[Graph data 101](https://caviri.github.io/rete/intro.html)** — new to RDF/graphs? Start here.
+- **[Getting started](https://caviri.github.io/rete/getting-started.html)** · **[CLI reference](https://caviri.github.io/rete/cli.html)** · **[SPARQL support](https://caviri.github.io/rete/sparql.html)** · **[Dataset Cards](https://caviri.github.io/rete/dataset-cards.html)**
+- **[Interactive playground](https://caviri.github.io/rete/playground.html)** — query in the browser, offline.
+- **[Real-world scenario](https://caviri.github.io/rete/scenario.html)** · **[Federated queries](https://caviri.github.io/rete/federation.html)** · **[Reasoning & coherence](https://caviri.github.io/rete/reasoning.html)**
+- **[Format spec](https://caviri.github.io/rete/SPEC.html)** · **[Benchmarks](https://caviri.github.io/rete/BENCHMARK.html)** · **[Browser / WASM](https://caviri.github.io/rete/browser.html)**
 
 The docs render as Markdown on GitHub, or as an HTML site (`docs/*.html`,
 regenerated with `cargo run -p docgen`).
@@ -123,9 +131,9 @@ cargo run -p rete-cli -- info some.rete
 bash scripts/smoke.sh      # end-to-end test of every CLI subcommand
 ```
 
-CI runs fmt, clippy, the test matrix, the CLI smoke test, and the WASM build —
-all inside `rust:1.92-bookworm`, so nothing builds on the host. See
-[`docs/getting-started.md`](docs/getting-started.md) for the dev-container setup.
+CI runs fmt, clippy, the test matrix, the CLI smoke test, and the WASM build in
+containers, so nothing builds on the host. See
+[Getting started](https://caviri.github.io/rete/getting-started.html) for the dev-container setup.
 
 ## License
 

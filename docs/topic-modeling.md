@@ -26,7 +26,7 @@ to **label each community with its dominant theme**.
 > per-community text extraction. LDA is a standard downstream step —
 > `rete` is a graph file format, not an ML engine.
 
-The example graph, [`examples/papers.nt`](https://github.com/carlosvivarrios/rete/blob/main/examples/papers.nt),
+The example graph, [`examples/papers.nt`](https://github.com/caviri/rete/blob/main/examples/papers.nt),
 is 9 "papers" in 3 citation clusters (ML, databases, biology). Citations are
 dense *within* a cluster and sparse *across*, so Louvain recovers the 3 groups;
 each paper carries a `title` and an `abstract` literal with cluster-specific
@@ -114,7 +114,7 @@ you get a human summary (members + literal counts).
 
 ## Step 3 — run LDA
 
-[`scripts/lda_topics.py`](https://github.com/carlosvivarrios/rete/blob/main/scripts/lda_topics.py)
+[`scripts/lda_topics.py`](https://github.com/caviri/rete/blob/main/scripts/lda_topics.py)
 treats **each community as one document** (its `text` joined), builds a
 document-term matrix (English stopwords), fits LDA, and prints the top words per
 topic plus each community's dominant topic.

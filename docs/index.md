@@ -63,8 +63,8 @@ rete schema  social.rete    # semantic (by rdf:type)
 - **[Browser / WASM](browser.md)** — query in the browser; progressive loading.
 - **[Interactive playground](playground.html)** — a static, no-server, runs-entirely-in-your-browser page: it embeds the WASM engine and the example datasets, so SELECT/ASK/CONSTRUCT, Table/Turtle/JSON-LD, the community view, reachability, and history all work offline (even from `file://`).
 - **[Format specification](SPEC.md)** — the on-disk byte layout, for implementers.
-- **[Benchmarks](BENCHMARK.md)** — size and latency on a 139 k-triple graph.
-- **[Parallel in the browser (experimental)](parallel-browser.md)** — real WASM threads via `wasm-bindgen-rayon` (served, cross-origin-isolated).
+- **[Benchmarks](BENCHMARK.md)** — synthetic 139 k-triple sizing plus the real OpenCitations/Oxigraph comparison.
+- **[Parallel in the browser (experimental)](parallel-browser.md)** — a working Web Worker reachability demo, plus the more fragile shared-memory WASM thread path.
 
 ## Status
 

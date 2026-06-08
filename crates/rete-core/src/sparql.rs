@@ -1,11 +1,11 @@
-//! SPARQL `SELECT` → BGP translation (SPEC.md §8).
+//! SPARQL parsing, lowering, and evaluation (SPEC.md §8).
 //!
-//! Parses a query with `spargebra` and lowers its algebra into the [`bgp`]
-//! engine. v0 supports SELECT over a basic graph pattern (plus the structural
-//! wrappers `Project`/`Join`/`Distinct`/`Reduced`/`OrderBy`/`Slice`/`Extend`,
-//! whose triple patterns are collected). FILTER/OPTIONAL/UNION and aggregation
-//! are later stages and are reported as unsupported rather than silently
-//! dropped.
+//! Queries are parsed with `spargebra`, lowered into a small plan algebra, and
+//! evaluated against the `.rete` indexes. BGPs use the integer-space hash-join
+//! engine in [`bgp`]; filters, joins, OPTIONAL, UNION, MINUS, VALUES, property
+//! paths, named graphs, aggregates, and query forms are handled in the sibling
+//! lowering/evaluation modules. Unsupported features are rejected explicitly
+//! rather than silently dropped.
 //!
 //! [`bgp`]: crate::bgp
 
