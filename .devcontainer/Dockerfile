@@ -19,6 +19,10 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 
 RUN printf '%s\n' 'export PATH="/usr/local/cargo/bin:$PATH"' > /etc/profile.d/rust-cargo-path.sh
 
+# uv is the repository's Python script runner; it is only used at generation
+# time and is not a runtime dependency of the static playground.
+RUN pip3 install --no-cache-dir --break-system-packages uv
+
 # Non-root dev user
 RUN groupadd --gid $USER_GID $USERNAME \
     && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME

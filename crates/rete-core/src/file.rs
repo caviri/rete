@@ -15,11 +15,12 @@
 
 use crate::dictionary::Dictionary;
 use crate::header::{Header, FLAG_HAS_QUADS, HEADER_LEN, MAGIC};
-use crate::index::{GraphIndex, Pattern};
+use crate::index::{GraphIndex, IndexPermutation, Pattern};
 use crate::meta::PyramidMeta;
 use crate::pyramid::{build_dendrogram, project_graph};
 use crate::reader::RangeReader;
 use crate::tiling::{choose_round_for_budget, summarize, SuperEdge};
+use crate::triples::Triple;
 use crate::varint::{read_uvarint, write_uvarint};
 
 /// Default per-tile byte budget `T` (SPEC.md §7.1).
@@ -118,6 +119,42 @@ fn content_hash(parts: &[&[u8]]) -> [u8; 16] {
 
 /// A resolved triple as terms.
 pub type TermTriple = (String, String, String);
+
+/// A byte range in the `.rete` file image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteRange {
+    pub offset: u64,
+    pub len: u64,
+}
+
+impl ByteRange {
+    pub fn end(self) -> u64 {
+        self.offset + self.len
+    }
+}
+
+/// Why a triple-pattern result is present in the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TripleProvenance {
+    /// Matched triple resolved to canonical N-Triples tokens.
+    pub terms: TermTriple,
+    /// Matched triple in dictionary ID space.
+    pub ids: Triple,
+    /// Named graph IRI, or `None` for the default graph.
+    pub graph: Option<String>,
+    /// The resolved ID-space pattern that was matched.
+    pub matched_pattern: Pattern,
+    /// Permutation selected to answer the pattern.
+    pub index_permutation: IndexPermutation,
+    /// File byte range containing the dictionary container.
+    pub dictionary_range: ByteRange,
+    /// File byte range containing the permutation index container.
+    pub index_range: ByteRange,
+    /// File byte range containing the pyramid metadata, when present.
+    pub pyramid_range: Option<ByteRange>,
+    /// Physical tile identifier, once tile directories are materialized.
+    pub tile: Option<String>,
+}
 
 /// Encode a length-prefixed container of byte sections, each compressed with
 /// `codec` independently (so a range-reading client decompresses only the
@@ -676,44 +713,95 @@ impl Rete {
         })
     }
 
-    /// Evaluate a triple pattern given as optional term strings, returning
-    /// matching triples resolved back to terms. A bound term that is unknown to
-    /// the dictionary yields no matches.
-    pub fn query(&self, s: Option<&str>, p: Option<&str>, o: Option<&str>) -> Vec<TermTriple> {
-        // Resolve bound terms to IDs; a bound-but-unknown term => empty result.
+    fn resolve_query_pattern(
+        &self,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+    ) -> Option<Pattern> {
         let sid = match s {
             Some(t) => match self.dict.subject_id(t) {
                 Some(id) => Some(id),
-                None => return Vec::new(),
+                None => return None,
             },
             None => None,
         };
         let pid = match p {
             Some(t) => match self.dict.predicate_id(t) {
                 Some(id) => Some(id),
-                None => return Vec::new(),
+                None => return None,
             },
             None => None,
         };
         let oid = match o {
             Some(t) => match self.dict.object_id(t) {
                 Some(id) => Some(id),
-                None => return Vec::new(),
+                None => return None,
             },
             None => None,
         };
+        Some((sid, pid, oid))
+    }
 
-        let pattern: Pattern = (sid, pid, oid);
+    /// Evaluate a triple pattern and include the file/index provenance for every
+    /// matched result. A bound term that is unknown to the dictionary yields no
+    /// matches.
+    pub fn query_with_provenance(
+        &self,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+    ) -> Vec<TripleProvenance> {
+        let pattern = match self.resolve_query_pattern(s, p, o) {
+            Some(pattern) => pattern,
+            None => return Vec::new(),
+        };
+
+        let index_permutation = GraphIndex::best_permutation(pattern);
+        let dictionary_range = ByteRange {
+            offset: self.header.dictionary_offset,
+            len: self.header.dictionary_len,
+        };
+        let index_range = ByteRange {
+            offset: self.header.root_dir_offset,
+            len: self.header.root_dir_len,
+        };
+        let pyramid_range = (self.header.pyramid_meta_len > 0).then_some(ByteRange {
+            offset: self.header.pyramid_meta_offset,
+            len: self.header.pyramid_meta_len,
+        });
+
         self.index
             .match_pattern(pattern)
             .into_iter()
             .filter_map(|(s, p, o)| {
-                Some((
+                let terms = (
                     self.dict.subject_term(s)?,
                     self.dict.predicate_term(p)?,
                     self.dict.object_term(o)?,
-                ))
+                );
+                Some(TripleProvenance {
+                    terms,
+                    ids: (s, p, o),
+                    graph: None,
+                    matched_pattern: pattern,
+                    index_permutation,
+                    dictionary_range,
+                    index_range,
+                    pyramid_range,
+                    tile: None,
+                })
             })
+            .collect()
+    }
+
+    /// Evaluate a triple pattern given as optional term strings, returning
+    /// matching triples resolved back to terms. A bound term that is unknown to
+    /// the dictionary yields no matches.
+    pub fn query(&self, s: Option<&str>, p: Option<&str>, o: Option<&str>) -> Vec<TermTriple> {
+        self.query_with_provenance(s, p, o)
+            .into_iter()
+            .map(|m| m.terms)
             .collect()
     }
 }
@@ -1216,5 +1304,47 @@ mod tests {
         );
         assert!(rete.query(Some("Nobody"), None, None).is_empty());
         assert!(rete.query(None, Some("likes"), None).is_empty());
+    }
+
+    #[test]
+    fn query_provenance_reports_terms_ids_sections_and_index_choice() {
+        let bytes = build_image();
+        let rete = Rete::open(&bytes).unwrap();
+
+        let mut matches = rete.query_with_provenance(None, Some("knows"), None);
+        matches.sort_by(|a, b| a.terms.cmp(&b.terms));
+
+        assert_eq!(matches.len(), 2);
+        assert_eq!(
+            matches[0].terms,
+            ("Alice".into(), "knows".into(), "Bob".into())
+        );
+        assert_eq!(
+            matches[0].ids,
+            rete.dictionary().encode("Alice", "knows", "Bob").unwrap()
+        );
+        assert_eq!(matches[0].graph.as_deref(), None);
+        assert_eq!(
+            matches[0].matched_pattern,
+            (None, Some(matches[0].ids.1), None)
+        );
+        assert_eq!(
+            matches[0].index_permutation,
+            crate::index::IndexPermutation::Pos
+        );
+
+        let h = rete.header();
+        assert_eq!(matches[0].dictionary_range.offset, h.dictionary_offset);
+        assert_eq!(matches[0].dictionary_range.len, h.dictionary_len);
+        assert_eq!(matches[0].index_range.offset, h.root_dir_offset);
+        assert_eq!(matches[0].index_range.len, h.root_dir_len);
+        assert_eq!(
+            matches[0].pyramid_range.as_ref().map(|r| (r.offset, r.len)),
+            Some((h.pyramid_meta_offset, h.pyramid_meta_len))
+        );
+        assert!(
+            matches[0].tile.is_none(),
+            "v0 files do not materialize per-community tile directories yet"
+        );
     }
 }

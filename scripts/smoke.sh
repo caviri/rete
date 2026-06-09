@@ -87,6 +87,8 @@ check "export jsonld" '"@id": "http://ex/Alice"'    -- $B export "$T/g.rete" --f
 
 echo "== query =="
 check "query pred" "Bob|Alice"   -- $B query "$T/g.rete" --predicate "<http://ex/knows>"
+check "why"        "index: POS|dictionary" -- $B why "$T/g.rete" --predicate "<http://ex/knows>"
+check "why json"   '"index_permutation": "POS"' -- $B why "$T/g.rete" --predicate "<http://ex/knows>" --json
 check "bgp"        "Alice|Bob"   -- $B bgp "$T/g.rete" "?x <http://ex/knows> ?y"
 check "sparql"     "Bob"         -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "sparql json" '"bindings"' -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { ?x e:knows ?y }" --json

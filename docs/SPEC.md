@@ -343,12 +343,17 @@ separate directory/footer round-trip is needed):
      - resolve constant terms in the dictionary
      - match the pattern in the SPO/POS/OSP permutation blocks (zone-map pruned)
      - resolve result IDs back to terms via the dictionary
+     - optionally emit result provenance: matched IDs/terms, graph scope, chosen
+       permutation, and the dictionary/index/pyramid byte ranges
 ```
 
 A full open touches ≤4 ranges (header, dict, index, pyramid-meta); the overview
 path touches 3 and skips the index entirely — both asserted by the `ranged` test
 suite. Per-tile leaf directories that would let the full query path fetch only
-the relevant community tiles (rather than the whole index) are future work.
+the relevant community tiles (rather than the whole index) are future work. For
+the same reason, current provenance identifies the index container and selected
+permutation, while tile/block-level provenance remains a physical-layout
+extension.
 
 - The file is **immutable**; its content hash (header field) acts as a strong
   validator. Clients may cache sections by `(url, hash, range)` forever.

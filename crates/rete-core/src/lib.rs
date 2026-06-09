@@ -28,11 +28,11 @@ pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 pub use file::{
     build_pyramid_meta, schema_classes, schema_summary, verify, write_dataset,
-    write_dataset_with_metadata, write_file, Rete, SummaryView, TermTriple, CODEC_NONE, CODEC_ZSTD,
-    DEFAULT_TILE_BUDGET, RDF_TYPE,
+    write_dataset_with_metadata, write_file, ByteRange, Rete, SummaryView, TermTriple,
+    TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 pub use header::{Header, HeaderError, MAGIC, VERSION};
-pub use index::{GraphIndex, GraphIndexBuilder, Pattern};
+pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern};
 pub use meta::PyramidMeta;
 pub use pyramid::{
     build_dendrogram, louvain_one_level, project_graph, Dendrogram, Graph, Partition,

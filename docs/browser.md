@@ -8,8 +8,10 @@ client-side with no server. `web/index.html` is a working serverless explorer.
 
 ```sh
 wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
+wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
 rete build examples/typed.nt -o web/typed.rete   # ontology demo (People & Orgs)
 rete build examples/deps.nt  -o web/deps.rete    # CVE-impact demo (dependsOn+)
+uv run python scripts/build_playground.py
 python3 scripts/range_server.py 8000 web          # open http://localhost:8000
 ```
 
@@ -26,6 +28,7 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `info(bytes)` | `{ quads, terms, pyramidLevels, namedGraphs }` |
 | `graph_names(bytes)` | array of named-graph IRIs |
 | `query_triples(bytes, s?, p?, o?)` | `[[s,p,o], …]` (omit a position for a wildcard) |
+| `why_triples(bytes, s?, p?, o?)` | `{ pattern, resultCount, results:[{ terms, ids, provenance }] }` for triple-pattern provenance |
 | `query_sparql(bytes, query)` | SELECT-only compatibility wrapper; array of solution objects `{ var: value, ... }` |
 | `schema(bytes)` | `{ classes: [["<iri>",count]], relations: [["s","p","o",count]] }` |
 | `header_ranges(headerBytes)` | `{ dictOffset, dictLen, pyramidOffset, pyramidLen, indexOffset, indexLen }` |
@@ -55,6 +58,13 @@ seed in input order: `{ seed, count, reached }`, or `{ seed, error }` for a seed
 not in the graph (so one unknown seed never fails the whole call). It runs
 **serially** — the browser engine is single-threaded; the native CLI's
 `rete reach --parallel` fans one task per seed for a real speedup.
+
+`why_triples` exposes the same result-provenance path as `rete why`. It resolves
+the optional triple pattern through `Rete::query_with_provenance` and returns
+browser-style camelCase fields: `resultCount`, `matchedPattern`,
+`indexPermutation`, `indexSection`, `dictionaryRange`, `indexRange`, and
+`pyramidRange`. Tile provenance is explicit even before tile directories are
+materialized: `{ "available": false, "reason": "not_materialized" }`.
 
 ### Minimal example
 
@@ -136,12 +146,11 @@ Successful responses reuse the normal `query` envelopes and add
 
 ## The demo page / playground
 
-`web/index.html` ties it together: it renders the `schema` ontology overview on
-load, lets you click a class or relation to drill in with a generated SPARQL
-query, has a **dataset selector** (typed / deps / papers) with one-click example
-queries, and a **"Load overview only"** button that runs the progressive path
-above against the range server. It is also an **interactive query playground**:
-SELECT / ASK / CONSTRUCT with Table / Turtle / JSON-LD output (via `query`), a
-summary-only progressive evaluation mode (via `progressive_query`), a "split by
-community" evaluation view (via `communities`), query timing, and a localStorage
-history. See [Interactive playground](playground.html) for the full walk-through.
+`docs/playground.html` is the static console build. It is generated from
+`web/playground.template.html` plus the source fragments in
+`web/playground-src/`, then inlines the no-modules WASM glue, WASM bytes, and
+bundled `.rete` datasets. It opens directly from `file://`, defaults to SPARQL,
+and keeps SHACL, reachability, schema, and provenance modes available without a
+runtime server or bundler. The WASM initializer receives embedded bytes; the
+generator removes wasm-bindgen's URL/fetch fallback so app boot cannot silently
+go to the network.

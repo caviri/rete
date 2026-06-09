@@ -130,6 +130,21 @@ enum Command {
         #[arg(short, long)]
         object: Option<String>,
     },
+    /// Explain a triple-pattern result: terms, IDs, graph scope, index choice,
+    /// and the file byte ranges that were used.
+    Why {
+        /// Path to the `.rete` file.
+        file: String,
+        #[arg(short, long)]
+        subject: Option<String>,
+        #[arg(short, long)]
+        predicate: Option<String>,
+        #[arg(short, long)]
+        object: Option<String>,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the pyramid summary graph (community-to-community relations).
     Summary {
         /// Path to the `.rete` file.
@@ -412,6 +427,13 @@ fn main() -> anyhow::Result<()> {
             predicate,
             object,
         } => commands::query::query(&file, subject, predicate, object),
+        Command::Why {
+            file,
+            subject,
+            predicate,
+            object,
+            json,
+        } => commands::query::why(&file, subject, predicate, object, json),
         Command::Summary { file } => commands::inspect::summary(&file),
         Command::Communities {
             file,

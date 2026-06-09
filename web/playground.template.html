@@ -3,1916 +3,256 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>rete — interactive WASM query playground (offline)</title>
+  <title>rete playground — offline WASM console</title>
   <style>
-    :root {
-      --fg:#1b1f24; --muted:#5b6570; --bg:#ffffff; --side:#0f1620;
-      --accent:#2a6df4; --accent-dk:#1f57c8; --border:#e4e8ec; --code-bg:#f5f7f9;
-      --ok-bg:#e7f7ed; --ok-bd:#b7e4c7; --ok-fg:#1b5e2f;
-      --warn-bg:#fff7e6; --warn-bd:#ffe0a3; --warn-fg:#7a5b00;
-      --err:#b00020;
-    }
-    * { box-sizing: border-box; }
-    html, body { margin:0; }
-    body { font:15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-           color:var(--fg); background:#fafbfc; }
-    code, textarea, pre, .iri, .mono {
-      font-family:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
-
-    /* sticky top bar */
-    .topbar { position:sticky; top:0; z-index:20; background:var(--side); color:#c9d4e0;
-              display:flex; align-items:center; gap:1rem; flex-wrap:wrap;
-              padding:.7rem 1.2rem; box-shadow:0 1px 0 rgba(0,0,0,.15); }
-    .topbar .brand { color:#fff; font-weight:700; font-size:1.15rem; letter-spacing:.4px;
-                     text-decoration:none; }
-    .topbar .brand small { color:#8595a6; font-weight:400; font-size:.78rem; }
-    .topbar .spacer { flex:1 1 auto; }
-    .topbar a.back { color:#8595a6; text-decoration:none; font-size:.85rem; }
-    .topbar a.back:hover { color:#fff; }
-    .topbar .pill { background:rgba(255,255,255,.08); color:#c9d4e0; border-radius:999px;
-                    padding:.2rem .7rem; font-size:.75rem; }
-
-    .wrap { max-width:none; margin:0; padding:1.2rem 1.6rem 2.5rem; }
-    h1 { font-size:1.45rem; margin:.2rem 0 .3rem; }
-    h3 { font-size:1.06rem; margin:0 0 .7rem; }
-
-    /* ===== 3-column app grid ===== */
-    .app { display:grid; grid-template-columns:300px 380px 1fr; gap:1.1rem; align-items:start; }
-    .col { display:flex; flex-direction:column; gap:1.1rem; }
-    /* No internal column scrollbars — the page scrolls as a whole. */
-    .col-left { padding-right:.2rem; }
-    @media (max-width:1000px) {
-      .app { grid-template-columns:1fr; }
-    }
-    .muted { color:var(--muted); }
-    .small { font-size:12px; }
-    a { color:var(--accent); }
-
-    .banner { background:var(--ok-bg); border:1px solid var(--ok-bd); border-radius:8px;
-              padding:.6rem .9rem; font-size:13px; color:var(--ok-fg); margin:.8rem 0; }
-    .note { background:var(--warn-bg); border:1px solid var(--warn-bd); border-radius:8px;
-            padding:.55rem .85rem; font-size:13px; color:var(--warn-fg); margin:.6rem 0; }
-    .meta-strip { display:flex; flex-wrap:wrap; gap:.35rem .6rem; align-items:center;
-                  background:#f1f7f4; border:1px solid #c8dfd3; color:#174f32;
-                  border-radius:8px; padding:.5rem .65rem; margin:.55rem 0 .65rem;
-                  font-size:12px; }
-    .meta-strip code { background:rgba(255,255,255,.65); padding:.08rem .28rem; border-radius:4px; }
-    .err { color:var(--err); }
-
-    section { background:var(--bg); border:1px solid var(--border); border-radius:10px;
-              padding:1.1rem 1.3rem; margin:0; box-shadow:0 1px 2px rgba(16,22,32,.03); }
-    .col section { margin:0; }
-
-    /* ===== collapsible "step" expanders (same card look as section) ===== */
-    details.step { background:var(--bg); border:1px solid var(--border); border-radius:10px;
-                   margin:0; box-shadow:0 1px 2px rgba(16,22,32,.03); overflow:hidden; }
-    details.step > summary {
-      list-style:none; cursor:pointer; user-select:none;
-      display:flex; align-items:center; gap:.55rem;
-      padding:.85rem 1.3rem; font-size:1.06rem; font-weight:600; color:var(--fg);
-      transition:background .12s; }
-    details.step > summary::-webkit-details-marker { display:none; }
-    details.step > summary::marker { content:""; }
-    details.step > summary:hover { background:#f6f9ff; }
-    details.step > summary::before { content:"\25B8"; /* ▸ */ color:var(--muted);
-      font-size:.8em; transition:transform .12s; }
-    details.step[open] > summary::before { content:"\25BE"; /* ▾ */ }
-    details.step > summary .step-num { display:inline-flex; align-items:center; justify-content:center;
-      width:1.5rem; height:1.5rem; border-radius:999px; background:var(--accent); color:#fff;
-      font-size:.82rem; font-weight:700; flex:0 0 auto; }
-    details.step > summary .summary-spacer { flex:1 1 auto; }
-    details.step > summary .summary-sub { color:var(--muted); font-weight:400; font-size:.8rem; }
-    details.step > .body { padding:0 1.3rem 1.2rem; }
-    .overview { background:#fbfcff; }
-    /* ontology overview as a collapsible card (auto-collapses on query run) */
-    details.overview { border:1px solid var(--border); border-radius:10px; padding:0;
-                       box-shadow:0 1px 2px rgba(16,22,32,.03); }
-    details.overview > summary { list-style:none; cursor:pointer; padding:1.1rem 1.3rem;
-      font-size:1.06rem; font-weight:700; display:flex; gap:.5rem; align-items:baseline; }
-    details.overview > summary::-webkit-details-marker { display:none; }
-    details.overview > summary::before { content:"\25B8"; /* ▸ */ color:var(--muted);
-      font-size:.8em; font-weight:400; flex:0 0 auto; }
-    details.overview[open] > summary::before { content:"\25BE"; /* ▾ */ }
-    details.overview > summary .muted { font-weight:400; }
-    details.overview > summary:hover { background:#f3f7ff; border-radius:10px 10px 0 0; }
-    details.overview > .onto-body { padding:0 1.3rem 1.1rem; }
-    .col-head { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.6px;
-                color:var(--muted); margin:.2rem .1rem -.2rem; }
-
-    code, .iri { font-size:.86em; }
-    .content-code { background:var(--code-bg); padding:.1em .4em; border-radius:4px; }
-
-    textarea { width:100%; height:6.5rem; font-size:13px; padding:.6rem; box-sizing:border-box;
-               border:1px solid var(--border); border-radius:8px; resize:vertical;
-               background:var(--code-bg); color:var(--fg); }
-    input[type=text], input[type=number], input:not([type]) {
-      padding:.45rem .55rem; box-sizing:border-box; border:1px solid var(--border);
-      border-radius:7px; font-size:.9rem; background:#fff; color:var(--fg); }
-    select { padding:.4rem .5rem; font-size:.9rem; border:1px solid var(--border);
-             border-radius:7px; background:#fff; color:var(--fg); }
-
-    button { padding:.5rem 1rem; font-size:.9rem; cursor:pointer; border:1px solid var(--accent);
-             background:var(--accent); color:#fff; border-radius:7px; font-weight:600;
-             transition:background .12s; }
-    button:hover { background:var(--accent-dk); border-color:var(--accent-dk); }
-    button.secondary { background:#fff; color:var(--accent); }
-    button.secondary:hover { background:#eef3ff; }
-    .ex-btn { padding:.32rem .7rem; font-size:12.5px; margin:.15rem .25rem .15rem 0;
-              background:#fff; color:var(--fg); border:1px solid var(--border); font-weight:500; }
-    .ex-btn:hover { background:#eef3ff; border-color:#c8d8ff; color:var(--accent-dk); }
-
-    pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
-          padding:1rem; overflow:auto; max-height:28rem; line-height:1.5; }
-
-    .topnav { font-size:13px; margin:.2rem 0 1rem; }
-
-    .chip { display:inline-block; background:#eef2ff; border:1px solid #d4ddff; border-radius:999px;
-            padding:.18rem .65rem; margin:.18rem .25rem; cursor:pointer; font-size:12.5px; }
-    .chip:hover { background:#dde6ff; }
-    .rel { padding:.18rem 0; cursor:pointer; border-radius:5px; }
-    .rel:hover { background:#f0f4ff; }
-    .iri { color:var(--accent-dk); }
-
-    table { border-collapse:collapse; width:100%; font-size:13px; }
-    th, td { border:1px solid var(--border); padding:.4rem .6rem; text-align:left; vertical-align:top; }
-    th { background:var(--code-bg); font-weight:600; }
-    tr:nth-child(even) td { background:#fafbfc; }
-    .count { color:var(--muted); }
-
-    .row { display:flex; flex-wrap:wrap; gap:.8rem; align-items:center; margin:.7rem 0; }
-    .row label { font-size:.88rem; display:inline-flex; align-items:center; gap:.35rem; }
-
-    .ds-bar { display:flex; flex-wrap:wrap; gap:.8rem; align-items:center; }
-    .ds-bar .stats { font-size:12.5px; }
-
-    /* drop zone */
-    .dropzone { border:2px dashed var(--border); border-radius:10px; padding:1rem 1.1rem;
-                text-align:center; color:var(--muted); font-size:13px; background:#fcfdff;
-                transition:border-color .12s, background .12s; cursor:pointer; }
-    .dropzone.drag { border-color:var(--accent); background:#eef3ff; color:var(--accent-dk); }
-    .dropzone strong { color:var(--fg); }
-
-    /* In the narrow left column the load fields stack; widen again below the breakpoint. */
-    .loadgrid { display:grid; grid-template-columns:1fr; gap:.9rem; }
-    @media (max-width:1000px) { .loadgrid { grid-template-columns:1fr 1fr; } }
-    @media (max-width:720px) { .loadgrid { grid-template-columns:1fr; } }
-    .loadgrid .field { font-size:.85rem; color:var(--muted); margin-bottom:.3rem; display:block; }
-    /* nested sub-sections (e.g. inside the Load panel) */
-    .substep { border:1px solid var(--border); border-radius:8px; margin:.55rem 0 0; background:#fbfcff; overflow:hidden; }
-    .substep > summary { cursor:pointer; list-style:none; padding:.5rem .75rem; font-size:.85rem;
-                         font-weight:600; color:var(--fg); display:flex; align-items:center; gap:.45rem; }
-    .substep > summary::-webkit-details-marker { display:none; }
-    .substep > summary::before { content:"\25B8"; color:var(--accent); font-size:.75em; }
-    .substep[open] > summary::before { content:"\25BE"; }
-    .substep > .sbody { padding:0 .75rem .8rem; }
-
-    /* ===== chat-style history ===== */
-    .histcard { display:flex; flex-direction:column; min-height:0; }
-    .histcard .chatlog { flex:1 1 auto; min-height:6rem;
-                         display:flex; flex-direction:column; gap:.55rem; padding:.4rem .15rem .2rem;
-                         background:linear-gradient(180deg,#f7f9fc,#fbfcfe); border:1px solid var(--border);
-                         border-radius:9px; }
-    .bubble { align-self:flex-end; max-width:88%; background:#eef3ff; border:1px solid #d7e2ff;
-              border-radius:12px 12px 4px 12px; padding:.45rem .6rem; cursor:pointer; font-size:12.5px;
-              box-shadow:0 1px 1px rgba(16,22,32,.04); transition:background .12s, border-color .12s; }
-    .bubble:hover { background:#e2ebff; border-color:#bcd0ff; }
-    .bubble .bq { font-family:ui-monospace, SFMono-Regular, Consolas, monospace; font-size:12px;
-                  color:var(--fg); white-space:pre-wrap; word-break:break-word; line-height:1.35; }
-    .bubble .bmeta { color:var(--muted); font-size:10.5px; margin-top:.3rem; }
-    .chatlog .empty { align-self:center; color:var(--muted); font-size:12px; margin:auto; }
-    #dsDesc { font-size:13px; }
-
-    .ex-group { margin:.2rem 0 .5rem; }
-    .ex-group .ex-lead { font-size:12px; color:var(--muted); margin:.3rem 0 .1rem; font-weight:600;
-                         text-transform:uppercase; letter-spacing:.4px; }
-
-    /* ontology diagram */
-    .onto { border:1px solid var(--border); border-radius:8px; background:#fcfdff; overflow:auto; }
-    .onto svg { display:block; min-width:100%; }
-    .onto .empty { color:var(--muted); font-size:12px; padding:1rem; }
-    /* graph view */
-    .graphwrap { border:1px solid var(--border); border-radius:8px; background:#fff; overflow:hidden; }
-    .graphwrap svg { display:block; width:100%; height:540px; background:#fcfdff; cursor:grab; }
-    .graphwrap svg.grabbing { cursor:grabbing; }
-    .gnode { fill:var(--accent); stroke:#fff; stroke-width:1.5; cursor:grab; }
-    .gnode:hover { fill:var(--accent-dk); }
-    .gnode-label { font:11px ui-monospace, Consolas, monospace; fill:var(--fg); pointer-events:none; }
-    .gedge { stroke:#9fb4d8; stroke-width:1.4; }
-    .gedge-label { font:9.5px ui-monospace, Consolas, monospace; fill:var(--muted); pointer-events:none; }
-
-    .seg { display:inline-flex; border:1px solid var(--border); border-radius:7px; overflow:hidden; }
-    .seg button { border:none; border-radius:0; background:#fff; color:var(--fg); font-weight:500;
-                  padding:.4rem .8rem; }
-    .seg button.active { background:var(--accent); color:#fff; }
-    .seg button:not(:last-child) { border-right:1px solid var(--border); }
+__PLAYGROUND_CSS__
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <a class="brand" href="index.html">rete <small>· query playground</small></a>
-    <span class="pill">100% client-side · offline</span>
-    <span class="spacer"></span>
-    <a class="back" href="index.html">&larr; back to docs</a>
-  </div>
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="rete documentation">
+      <span class="brand-mark">rete</span>
+      <span class="brand-sub">offline graph console</span>
+    </a>
 
-  <div class="wrap">
-    <div class="app">
-
-      <!-- ============================================================= -->
-      <!-- COLUMN 1 — intro + load controls + chat-style history          -->
-      <!-- ============================================================= -->
-      <div class="col col-left">
-        <section>
-          <h1>Query playground</h1>
-          <p class="muted small" style="margin:.2rem 0 0">
-            100% client-side. This single page embeds the WASM engine
-            <em>and</em> the demo datasets (base64) — no server, no app-load network
-            requests. Works offline from <code>file://</code>. It hands a
-            <code>.rete</code> file's bytes to WebAssembly and runs the dictionary,
-            permutation indexes, SPARQL and zstd decode entirely in your browser.
-            Follow the numbered steps below.
-          </p>
-        </section>
-
-        <details class="step" open>
-          <summary><span class="step-num">1</span> Load a graph</summary>
-          <div class="body">
-            <p class="muted small" style="margin:0 0 .2rem">Pick a source — three ways to load a graph:</p>
-
-            <details class="substep" open>
-              <summary>A · Bundled dataset</summary>
-              <div class="sbody">
-                <label class="field" for="ds">Dataset</label>
-                <select id="ds" style="width:100%">
-                  <option value="research">research.rete — Academic knowledge graph (best ontology showcase)</option>
-                  <option value="citations">citations — REAL OpenCitations network (~588k triples, citers of AlphaFold)</option>
-                  <option value="typed">typed.rete — People &amp; Orgs (ontology demo)</option>
-                  <option value="deps">deps.rete — dependency graph (CVE impact demo)</option>
-                  <option value="papers">papers.rete — citation graph (community demo)</option>
-                  <option value="researchers">researchers.rete — co-authorship (multi-criteria demo)</option>
-                </select>
-                <p id="meta" class="muted small" style="margin:.5rem 0 0"></p>
-                <p id="dsDesc" class="muted small" style="margin:.4rem 0 0"></p>
-              </div>
-            </details>
-
-            <details class="substep">
-              <summary>B · From a URL</summary>
-              <div class="sbody">
-                <div class="row" style="margin:0">
-                  <input type="text" id="urlInput" style="flex:1 1 9rem" placeholder="https://example.org/data.rete" />
-                  <button id="urlBtn" type="button">Load</button>
-                </div>
-                <p class="small muted" style="margin:.4rem 0 0">
-                  The host must allow cross-origin reads (CORS) or serve same-origin.
-                </p>
-              </div>
-            </details>
-
-            <details class="substep">
-              <summary>C · From a local file (fully offline)</summary>
-              <div class="sbody">
-                <div id="dropzone" class="dropzone">
-                  <strong>Drop a <code>.rete</code> file here</strong><br />
-                  or <span style="color:var(--accent)">click to browse</span>
-                  <input type="file" id="fileInput" accept=".rete" hidden />
-                </div>
-                <p class="small muted" style="margin:.4rem 0 0">
-                  The bundled datasets are small. Big graphs (e.g. the enriched
-                  OpenCitations file) load fine via drag-drop or URL.
-                </p>
-              </div>
-            </details>
-
-            <div class="row" style="margin:.9rem 0 0">
-              <button id="shareBtn" class="secondary" type="button" title="Copy a link that reproduces the current dataset, query and format">Copy shareable link</button>
-              <span id="shareMsg" class="small muted"></span>
-            </div>
-          </div>
-        </details>
-
-        <details class="step">
-          <summary>
-            History
-            <span class="summary-spacer"></span>
-            <button id="clearHist" class="secondary" type="button" style="padding:.28rem .6rem; font-size:.78rem">Clear</button>
-          </summary>
-          <div class="body histcard">
-            <p class="muted small" style="margin:0 0 .5rem">
-              Your last 20 runs (localStorage, this browser). Click a bubble to restore it.
-            </p>
-            <div id="histList" class="chatlog"><p class="empty">No history yet.</p></div>
-          </div>
-        </details>
-      </div>
-
-      <!-- ============================================================= -->
-      <!-- COLUMN 2 — compose the query (examples, editor, controls)      -->
-      <!-- ============================================================= -->
-      <div class="col col-mid">
-        <details class="step" open>
-          <summary><span class="step-num">2</span> Query <span class="summary-sub">— SELECT / ASK / CONSTRUCT</span></summary>
-          <div class="body">
-            <p class="muted small" style="margin:0 0 .4rem">
-              <strong>Example query families</strong> — grouped <strong>easy → hard</strong>:
-              basics (one pattern, ASK, count) → grouping, filters &amp; dates → multi-way
-              joins, property paths, aggregates &amp; CONSTRUCT. Click any chip to load it, then <strong>Run</strong>.
-            </p>
-            <div id="examples" class="small"></div>
-            <textarea id="q">PREFIX ex: &lt;http://ex/&gt;
-SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
-            <div class="row">
-              <button id="run">Run</button>
-              <label>View:
-                <span class="seg" id="viewSeg">
-                  <button type="button" data-view="table" class="active">Table</button>
-                  <button type="button" data-view="jsonld">JSON-LD</button>
-                  <button type="button" data-view="ttl">Turtle</button>
-                  <button type="button" data-view="graph">Graph</button>
-                </span>
-              </label>
-              <input type="hidden" id="fmt" value="table" />
-            </div>
-            <div class="row">
-              <label>Evaluation:
-                <select id="strategy">
-                  <option value="whole">Whole graph</option>
-                  <option value="progressive">Progressive summary</option>
-                  <option value="community">Split by community</option>
-                </select>
-              </label>
-              <label id="roundWrap" hidden>Round:
-                <input id="round" type="number" min="0" style="width:4rem" placeholder="auto" />
-              </label>
-              <span id="qmeta" class="muted small"></span>
-            </div>
-          </div>
-        </details>
-
-        <details class="step" open>
-          <summary><span class="step-num">3</span> Validate <span class="summary-sub">— SHACL Core shapes</span></summary>
-          <div class="body">
-            <p class="muted small" style="margin:0 0 .5rem">
-              <strong>SHACL examples</strong> validate the loaded graph against Turtle shapes.
-              Use a passing chip to check the schema contract, or a failing chip to inspect
-              the validation report.
-            </p>
-            <div id="shaclExamples" class="small"></div>
-            <textarea id="shapeText">@prefix ex: &lt;http://ex/&gt; .
-@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
-
-ex:AnyResourceShape
-  a sh:NodeShape ;
-  sh:targetSubjectsOf ex:name .</textarea>
-            <div class="row">
-              <button id="shaclRun">Validate</button>
-              <label>Report:
-                <select id="shaclFormat">
-                  <option value="text">Text</option>
-                  <option value="json">JSON</option>
-                  <option value="ttl">Turtle</option>
-                </select>
-              </label>
-              <span id="shaclMeta" class="muted small"></span>
-            </div>
-          </div>
-        </details>
-
-        <details class="step" open>
-          <summary><span class="step-num">4</span> Reachability <span class="summary-sub">— transitive reach over one relation</span></summary>
-          <div class="body">
-            <p class="muted small" style="margin:0 0 .5rem">
-              <strong>Transitive reach over a single relation:</strong> from each seed,
-              every node reachable by following that one predicate repeatedly (the
-              relation's transitive closure from the seed).
-            </p>
-            <ul class="muted small" style="margin:.2rem 0 .6rem; padding-left:1.2rem">
-              <li><strong>Forward</strong> = "what does the seed reach?";
-                <strong>reverse</strong> (<code>--reverse</code> / the checkbox) =
-                "<strong>who reaches the seed?</strong>" — i.e. impact analysis
-                (e.g. "which packages transitively depend on this vulnerable one?").</li>
-              <li><strong>Single-relation</strong> — one predicate at a time.
-                <strong>Multi-seed</strong> — comma-separated seeds run together.</li>
-            </ul>
-            <div id="reachExamples" class="small"></div>
-            <div class="row">
-              <label style="flex:1 1 100%">Predicate:
-                <input id="reachPred" style="flex:1; width:100%" placeholder="&lt;http://ex/dependsOn&gt;" />
-              </label>
-            </div>
-            <div class="row">
-              <label style="flex:1 1 100%">Seeds <span class="muted">(IRI; comma-separated)</span>:
-                <input id="reachSeeds" style="flex:1; width:100%" placeholder="&lt;http://ex/app&gt;" />
-              </label>
-            </div>
-            <div class="row">
-              <button id="reachRun">Run reach</button>
-              <label><input type="checkbox" id="reachReverse" /> reverse (who reaches the seed?)</label>
-              <span id="reachMeta" class="muted small"></span>
-            </div>
-            <div class="note">
-              This <strong>offline</strong> build runs reach <strong>single-threaded</strong>.
-              For <strong>real in-browser multicore</strong> over big graphs / many seeds,
-              open the experimental <a href="../web/playground-threads.html">threaded playground</a>
-              — it runs reach on a <strong>Web-Worker pool</strong> that works on
-              <strong>any static server (no special headers)</strong>
-              (see <a href="parallel-browser.html">Parallel in the browser</a>). Natively,
-              <code>rete reach --parallel</code> does ~14–15× (<a href="BENCHMARK.html">Benchmarks</a>).
-            </div>
-          </div>
-        </details>
-      </div>
-
-      <!-- ============================================================= -->
-      <!-- COLUMN 3 — results (schema, query output, reach/community)     -->
-      <!-- ============================================================= -->
-      <div class="col col-right">
-        <details class="overview" id="overviewBox" open hidden>
-          <summary>Ontology <span class="muted small">— classes as blocks, their data properties inside, object properties as arrows (from <code>rdf:type</code> + the schema; no index read). Collapses automatically when you run a query.</span></summary>
-          <div class="onto-body">
-            <div id="ontologyDiagram" class="onto"></div>
-            <details style="margin-top:.7rem">
-              <summary class="muted small" style="cursor:pointer">Classes &amp; relations (text · clickable)</summary>
-              <div style="margin-top:.5rem"><strong>Classes</strong> <span class="muted small">— click to list instances</span><div id="classes"></div></div>
-              <div style="margin-top:.6rem"><strong>Relations</strong> <span class="muted small">— click to see the actual triples</span><div id="relations"></div></div>
-            </details>
-          </div>
-        </details>
-
-        <section>
-          <h3>Query results <span class="muted small">— table / JSON-LD / Turtle / graph</span></h3>
-          <div id="out"><p class="muted small">Run a query (middle column) to see results here.</p></div>
-          <div id="commOut"></div>
-        </section>
-
-        <section>
-          <h3>Validation report <span class="muted small">â€” SHACL Core</span></h3>
-          <div id="shaclOut"><p class="muted small">Run a SHACL shape check to see the report here.</p></div>
-        </section>
-
-        <section>
-          <h3>Reachability results</h3>
-          <div id="reachOut"><p class="muted small">Run a reach query to see results here.</p></div>
-        </section>
-
-        <section class="small muted">
-          <p style="margin:0">
-            <strong>Note:</strong> progressive summary queries work here against the
-            embedded <code>.rete</code> bytes and skip the triple index. The true
-            HTTP-<code>Range</code> fetch path still needs a range-capable server and
-            is demonstrated by <code>web/index.html</code>.
-          </p>
-        </section>
-      </div>
-
+    <div class="status-cluster" aria-label="Loaded graph status">
+      <label class="dataset-picker">
+        <span>Dataset</span>
+        <select id="ds"></select>
+      </label>
+      <span id="sourcePill" class="status-pill">bundled</span>
+      <span id="meta" class="statline">loading wasm...</span>
     </div>
-  </div>
 
-  <!-- ===== embedded wasm-bindgen no-modules glue (classic script, exposes global `wasm_bindgen`) ===== -->
+    <div class="top-actions">
+      <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
+        <span aria-hidden="true">↗</span>
+      </button>
+      <a class="docs-link" href="browser.html">Browser API</a>
+    </div>
+  </header>
+
+  <nav id="modeTabs" class="mode-tabs" aria-label="Playground mode">
+    <button type="button" class="active" data-mode="sparql">SPARQL</button>
+    <button type="button" data-mode="shacl">SHACL</button>
+    <button type="button" data-mode="reach">Reach</button>
+    <button type="button" data-mode="schema">Schema</button>
+    <button type="button" data-mode="provenance">Provenance</button>
+  </nav>
+
+  <main class="console-shell">
+    <aside class="library-panel" aria-label="Query library">
+      <section class="source-panel">
+        <h2>Source</h2>
+        <p id="dsDesc" class="microcopy"></p>
+        <div class="source-grid">
+          <label class="file-zone" id="dropZone">
+            <input id="fileInput" type="file" accept=".rete,application/octet-stream" />
+            <span>Drop a .rete file</span>
+          </label>
+          <div class="url-loader">
+            <input id="urlInput" type="text" spellcheck="false" placeholder="https://.../graph.rete" />
+            <button id="urlLoad" type="button" class="secondary">Load URL</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="library">
+        <div class="section-title">
+          <h2>Query Library</h2>
+          <input id="exampleSearch" type="search" placeholder="Filter examples" />
+        </div>
+        <div id="familyFilters" class="filter-row" aria-label="Example family filters"></div>
+        <div id="examples" class="example-list"></div>
+      </section>
+    </aside>
+
+    <section class="workbench" aria-live="polite">
+      <div class="panel active" data-panel="sparql">
+        <div class="editor-head">
+          <div>
+            <h1>SPARQL Console</h1>
+            <p class="microcopy">Default path for exact queries, summary-safe progressive queries, and graph rendering.</p>
+          </div>
+          <div id="viewSeg" class="segmented" aria-label="Result view">
+            <button type="button" data-view="table" class="active">Table</button>
+            <button type="button" data-view="graph">Graph</button>
+            <button type="button" data-view="ttl">TTL</button>
+            <button type="button" data-view="jsonld">JSON-LD</button>
+          </div>
+        </div>
+        <textarea id="q" spellcheck="false"></textarea>
+        <div class="action-row">
+          <button id="run" type="button">Run Query</button>
+          <label>
+            <span>Strategy</span>
+            <select id="strategy">
+              <option value="whole">Whole index</option>
+              <option value="progressive">Progressive summary</option>
+              <option value="community">Split by community</option>
+            </select>
+          </label>
+          <label id="roundWrap" class="hidden">
+            <span>Round</span>
+            <input id="round" type="number" min="0" placeholder="auto" />
+          </label>
+          <select id="fmt" class="visually-hidden" aria-label="Result format">
+            <option value="table">table</option>
+            <option value="graph">graph</option>
+            <option value="ttl">ttl</option>
+            <option value="jsonld">jsonld</option>
+          </select>
+          <span id="qmeta" class="run-meta"></span>
+        </div>
+      </div>
+
+      <div class="panel" data-panel="shacl">
+        <div class="editor-head">
+          <div>
+            <h1>SHACL</h1>
+            <p class="microcopy">Validate the loaded graph against Turtle shapes without leaving the static page.</p>
+          </div>
+          <label>
+            <span>Format</span>
+            <select id="shaclFormat">
+              <option value="text">Text</option>
+              <option value="json">JSON</option>
+              <option value="ttl">Turtle</option>
+            </select>
+          </label>
+        </div>
+        <div id="shaclExamples" class="example-list compact"></div>
+        <textarea id="shapeText" spellcheck="false"></textarea>
+        <div class="action-row">
+          <button id="shaclRun" type="button">Validate</button>
+          <span id="shaclMeta" class="run-meta"></span>
+        </div>
+      </div>
+
+      <div class="panel" data-panel="reach">
+        <div class="editor-head">
+          <div>
+            <h1>Reach</h1>
+            <p class="microcopy">Run transitive closure over one predicate for impact analysis and lineage checks.</p>
+          </div>
+        </div>
+        <div id="reachExamples" class="example-list compact"></div>
+        <div class="form-grid">
+          <label>
+            <span>Predicate</span>
+            <input id="reachPred" type="text" spellcheck="false" />
+          </label>
+          <label>
+            <span>Seeds</span>
+            <input id="reachSeeds" type="text" spellcheck="false" />
+          </label>
+          <label class="checkline">
+            <input id="reachReverse" type="checkbox" />
+            <span>Reverse</span>
+          </label>
+        </div>
+        <div class="action-row">
+          <button id="reachRun" type="button">Run Reach</button>
+          <span id="reachMeta" class="run-meta"></span>
+        </div>
+      </div>
+
+      <div class="panel" data-panel="schema">
+        <div class="editor-head">
+          <div>
+            <h1>Schema</h1>
+            <p class="microcopy">Ontology-aware class and relation summary from the loaded graph.</p>
+          </div>
+        </div>
+        <div id="ontologyDiagram" class="ontology-diagram"></div>
+        <div class="schema-columns">
+          <div>
+            <h3>Classes</h3>
+            <div id="classes"></div>
+          </div>
+          <div>
+            <h3>Relations</h3>
+            <div id="relations"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" data-panel="provenance">
+        <div class="editor-head">
+          <div>
+            <h1>Provenance</h1>
+            <p class="microcopy">Explain triple-pattern matches with selected index permutation and byte ranges.</p>
+          </div>
+        </div>
+        <div class="form-grid provenance-form">
+          <label>
+            <span>Subject</span>
+            <input id="whySubject" type="text" spellcheck="false" placeholder="wildcard" />
+          </label>
+          <label>
+            <span>Predicate</span>
+            <input id="whyPredicate" type="text" spellcheck="false" placeholder="wildcard" />
+          </label>
+          <label>
+            <span>Object</span>
+            <input id="whyObject" type="text" spellcheck="false" placeholder="wildcard" />
+          </label>
+        </div>
+        <div class="action-row">
+          <button id="whyRun" type="button">Explain Matches</button>
+          <span id="whyMeta" class="run-meta"></span>
+        </div>
+      </div>
+
+      <div class="results-band">
+        <div id="out" class="result-pane" data-result="sparql"></div>
+        <div id="commOut" class="result-pane subtle" data-result="sparql-extra"></div>
+        <div id="shaclOut" class="result-pane hidden" data-result="shacl"></div>
+        <div id="reachOut" class="result-pane hidden" data-result="reach"></div>
+        <div id="schemaOut" class="result-pane hidden" data-result="schema"></div>
+        <div id="provOut" class="result-pane hidden" data-result="provenance"></div>
+      </div>
+    </section>
+
+    <aside class="inspector" aria-label="Inspector">
+      <section>
+        <h2>Selected Example</h2>
+        <div id="exampleInfo" class="inspector-block"></div>
+      </section>
+      <section>
+        <h2>Progressive Metadata</h2>
+        <div id="progressiveInfo" class="inspector-block"></div>
+      </section>
+      <section>
+        <h2>Provenance</h2>
+        <div id="provSummary" class="inspector-block"></div>
+      </section>
+      <section>
+        <h2>Schema Summary</h2>
+        <div id="schemaSummary" class="inspector-block"></div>
+      </section>
+      <section>
+        <div class="section-title">
+          <h2>History</h2>
+          <button id="clearHist" class="ghost" type="button">Clear</button>
+        </div>
+        <div id="histList" class="history-list"></div>
+      </section>
+    </aside>
+  </main>
+
   <script>
 __GLUE_JS__
   </script>
-
-  <!-- ===== embedded engine + data (base64, no fetch) ===== -->
   <script>
-    // The wasm binary, base64-encoded at build time by scripts/build_playground.py.
     const RETE_WASM_B64 = "__WASM_B64__";
-    // Map of dataset name -> base64 of its .rete bytes (embedded, no fetch).
     const RETE_DATASETS_B64 = __DATASETS_B64__;
-
-    function b64ToBytes(b64) {
-      const bin = atob(b64);
-      const out = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-      return out;
-    }
   </script>
-
-  <!-- ===== playground UI logic (classic script — no ES modules) ===== -->
   <script>
-  (function () {
-    const $ = (id) => document.getElementById(id);
-    let bytes = null;
-    let activeSource = "dataset"; // "dataset" | "url" | "file"
-
-    const shorten = (t) => t.startsWith("<") && t.endsWith(">") ? t.slice(1, -1) : t;
-    const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-
-    // wasm-bindgen no-modules exports live on the global `wasm_bindgen` object after init.
-    const W = () => wasm_bindgen;
-
-    const DESCRIPTIONS = {
-      research: "Academic knowledge graph — 6 entity types (Researcher, Paper, Institution, Journal, Topic, Grant + City) & 10+ relations (authored, cites, advisedBy, coauthor, publishedIn, hasTopic, fundedBy, affiliatedWith, locatedIn, subTopicOf), plus rich data properties. The best showcase for the ontology diagram.",
-      typed: "People & Orgs — an ontology demo: rdf:type classes (Person/Org) and knows / worksAt / name. Good for the schema overview and ASK queries.",
-      deps: "A software dependency graph — property paths (dependsOn+) and reverse reach show the transitive blast radius of a vulnerable package (CVE impact).",
-      papers: "A citation graph with topical clusters (ML / DB / bio) — good for community decomposition and cites+ property paths.",
-      researchers: "A co-authorship graph — multiple relations (cites / coauthor / organization) for the multi-criteria community view.",
-      citations: "REAL citation network from OpenCitations: ~588k triples — 32,729 papers that cite the AlphaFold paper (10.1038/s41586-021-03819-2). The DOIs, cites edges and years are REAL; titles, authors, venues, disciplines and keywords are clearly-labelled SYNTHETIC metadata (ex:synthetic \"true\"). Use the Easy → Medium → Hard query families below to explore it — all running offline in your browser.",
-    };
-
-    const DEFAULT_DATASET = "research";
-
-    function setStatsFromBytes(prefix) {
-      try {
-        const m = JSON.parse(W().info(bytes));
-        $("meta").textContent =
-          `${prefix} · ${bytes.length} bytes · ${m.quads} quads · ${m.terms} terms · ${m.pyramidLevels} pyramid level(s)`;
-        renderOverview(JSON.parse(W().schema(bytes)));
-        return true;
-      } catch (e) {
-        $("meta").textContent = "Error reading file: " + String(e);
-        $("overviewBox").hidden = true;
-        return false;
-      }
-    }
-
-    function clearOutputs() {
-      $("out").innerHTML = "";
-      $("commOut").innerHTML = "";
-      $("shaclOut").innerHTML = "";
-      $("shaclMeta").textContent = "";
-      $("reachOut").innerHTML = "";
-      $("reachMeta").textContent = "";
-      $("qmeta").textContent = "";
-    }
-
-    function loadDataset(name) {
-      const b64 = RETE_DATASETS_B64[name];
-      if (!b64) { $("meta").textContent = "Error: unknown dataset " + name; return; }
-      activeSource = "dataset";
-      bytes = b64ToBytes(b64);
-      $("dsDesc").textContent = DESCRIPTIONS[name] || "";
-      setStatsFromBytes(`Bundled: ${name}.rete`);
-      renderExamples();
-      renderShaclExamples();
-      renderReachDefaults();
-      clearOutputs();
-    }
-
-    // Load arbitrary bytes (from URL or local file) as the active graph.
-    function loadBytes(buf, label, source) {
-      bytes = new Uint8Array(buf);
-      activeSource = source || "external";
-      $("dsDesc").textContent = `Loaded from ${source === "url" ? "URL" : "file"}: ${label}`;
-      const ok = setStatsFromBytes(label);
-      // Keep example/reach helpers from whichever dataset is selected (best-effort).
-      renderExamples();
-      renderShaclExamples();
-      renderReachDefaults();
-      clearOutputs();
-      return ok;
-    }
-
-    // --- Load from URL (user-initiated network fetch — the only one allowed) ---
-    async function loadFromUrl(url) {
-      url = (url || "").trim();
-      if (!url) { $("meta").textContent = "Enter a URL first."; return; }
-      $("meta").textContent = "Fetching " + url + " …";
-      try {
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error("HTTP " + resp.status + " " + resp.statusText);
-        const buf = await resp.arrayBuffer();
-        loadBytes(buf, url.split("/").pop() || url, "url");
-      } catch (e) {
-        $("meta").innerHTML =
-          `<span class="err">Could not load URL: ${esc(String(e && e.message || e))}.</span> ` +
-          `The remote host must allow cross-origin reads (CORS) or serve the file same-origin. ` +
-          `404 / network errors also land here.`;
-        $("overviewBox").hidden = true;
-      }
-    }
-
-    // --- Load a local file via drag-drop or file picker (fully offline) -------
-    function loadFromFile(file) {
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => loadBytes(reader.result, file.name + " (" + file.size + " bytes)", "file");
-      reader.onerror = () => { $("meta").innerHTML = `<span class="err">Could not read file: ${esc(String(reader.error))}</span>`; };
-      reader.readAsArrayBuffer(file);
-    }
-
-    function renderOverview(schema) {
-      const classes = schema.classes || [], relations = schema.relations || [];
-      const box = $("overviewBox");
-      box.hidden = false;
-      box.open = true; // re-open the ontology when a new graph is loaded
-      $("classes").innerHTML = classes.length
-        ? classes.map(([cls, n]) =>
-            `<span class="chip" data-cls="${esc(cls)}"><span class="iri">${esc(shorten(cls))}</span> <span class="count">×${n}</span></span>`).join("")
-        : `<span class="muted">no rdf:type assertions — this graph is untyped</span>`;
-      $("relations").innerHTML = relations.map(([s, p, o, n]) =>
-        `<div class="rel" data-pred="${esc(p)}">` +
-        `<span class="iri">${esc(shorten(s))}</span> ──<span class="iri">${esc(shorten(p))}</span>──▶ ` +
-        `<span class="iri">${esc(shorten(o))}</span> <span class="count">×${n}</span></div>`).join("");
-
-      box.querySelectorAll(".chip").forEach((el) => el.onclick = () => {
-        const cls = el.dataset.cls;
-        setQuery(`SELECT ?instance WHERE { ?instance <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ${cls} }`, "table");
-      });
-      box.querySelectorAll(".rel").forEach((el) => el.onclick = () => {
-        const p = el.dataset.pred;
-        setQuery(`SELECT ?s ?o WHERE { ?s ${p} ?o } LIMIT 100`, "table");
-      });
-      renderOntology(classes, relations);
-    }
-
-    // Draw the ontology as a UML-ish class diagram: one block per rdf:type class
-    // (with its data properties — predicates whose object is a literal — listed
-    // inside), and arrows for object properties (class --pred--> class). Built
-    // purely from schema() output; no external libraries.
-    function renderOntology(classes, relations) {
-      const host = $("ontologyDiagram");
-      if (!classes.length) {
-        host.innerHTML = '<p class="empty">This graph is untyped (no <code>rdf:type</code>), so there is no class-level ontology to draw. Try a typed dataset (e.g. typed / researchers) or load an enriched graph.</p>';
-        return;
-      }
-      const SVGNS = "http://www.w3.org/2000/svg";
-      const known = new Set(classes.map(([c]) => c));
-      // Per-class data properties (object is a literal) and object-property edges.
-      const data = new Map(classes.map(([c]) => [c, []]));
-      const edges = [];
-      const extra = new Map(); // non-class targets (e.g. (untyped)) → pseudo node
-      for (const [s, p, o, n] of relations) {
-        if (o === "(literal)") {
-          if (data.has(s)) data.get(s).push([shorten(p), n]);
-        } else {
-          let src = s, dst = o;
-          if (!known.has(dst) && !data.has(dst)) extra.set(dst, true);
-          if (!known.has(src) && !data.has(src)) extra.set(src, true);
-          edges.push([src, p, dst, n]);
-        }
-      }
-      const countOf = Object.fromEntries(classes);
-      const nodes = [...classes.map(([c]) => c), ...extra.keys()];
-      const N = nodes.length;
-      const idx = new Map(nodes.map((c, i) => [c, i]));
-
-      // ---- Box sizing (size-aware so repulsion can avoid overlaps) ----
-      const BW = 230, HEAD = 30, LINE = 18, PAD = 8;
-      const propsShown = (c) => (data.get(c) || []).slice(0, 8);
-      const heightOf = (c) => HEAD + (known.has(c) ? propsShown(c).length * LINE + PAD : 6);
-      const box = nodes.map((c) => ({ w: BW, h: heightOf(c) }));
-
-      // ---- Deterministic force-directed layout of the class boxes ----
-      // Seed positions on a circle (deterministic, no Math.random) so the layout
-      // is stable across reloads. Then run a cooling simulation with:
-      //  - box-size-aware repulsion (boxes push apart by their half-extents),
-      //  - spring attraction along edges,
-      //  - light centering toward the origin.
-      const pt = []; // {x,y} center of each box
-      const ringR = Math.max(220, 90 * N);
-      for (let i = 0; i < N; i++) {
-        const a = (2 * Math.PI * i) / Math.max(1, N);
-        pt.push({ x: ringR * Math.cos(a), y: ringR * Math.sin(a) });
-      }
-      // Unique non-self edges drive the springs (self-loops don't pull).
-      const springs = [];
-      for (const [s, o] of edges) {
-        const si = idx.get(s), oi = idx.get(o);
-        if (si == null || oi == null || si === oi) continue;
-        springs.push([si, oi]);
-      }
-      // Desired separation between two boxes' centers (half-extents + margin).
-      const SEP = 70;
-      const sepX = (i, j) => box[i].w / 2 + box[j].w / 2 + SEP;
-      const sepY = (i, j) => box[i].h / 2 + box[j].h / 2 + SEP;
-      const SPRING_LEN = 320, SPRING_K = 0.02, CENTER_K = 0.006, REPULSE = 1.0;
-      const ITER = 260;
-      for (let it = 0; it < ITER; it++) {
-        const cool = 1 - it / ITER; // 1 → 0
-        const fx = new Array(N).fill(0), fy = new Array(N).fill(0);
-        // Repulsion (box-aware): the closer the overlap on the dominant axis,
-        // the stronger the push. Use a rectangle-gap measure so big boxes keep
-        // proportionally more room.
-        for (let i = 0; i < N; i++) {
-          for (let j = i + 1; j < N; j++) {
-            let dx = pt[i].x - pt[j].x, dy = pt[i].y - pt[j].y;
-            const wantX = sepX(i, j), wantY = sepY(i, j);
-            // Normalized overlap (>0 means too close on that axis).
-            const ox = wantX - Math.abs(dx), oy = wantY - Math.abs(dy);
-            let d2 = dx * dx + dy * dy;
-            if (d2 < 1e-6) { dx = (i - j) || 1; dy = 1; d2 = dx * dx + dy * dy; }
-            const dist = Math.sqrt(d2);
-            // Base inverse-square repulsion scaled by box footprint.
-            const f = (REPULSE * wantX * wantY) / d2;
-            fx[i] += (dx / dist) * f; fy[i] += (dy / dist) * f;
-            fx[j] -= (dx / dist) * f; fy[j] -= (dy / dist) * f;
-            // Hard overlap correction (both axes overlapping → push apart).
-            if (ox > 0 && oy > 0) {
-              const push = Math.min(ox, oy) * 0.5;
-              const ux = dx / dist, uy = dy / dist;
-              fx[i] += ux * push; fy[i] += uy * push;
-              fx[j] -= ux * push; fy[j] -= uy * push;
-            }
-          }
-        }
-        // Springs (edges pull connected boxes toward SPRING_LEN apart).
-        for (const [a, b] of springs) {
-          const dx = pt[b].x - pt[a].x, dy = pt[b].y - pt[a].y;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          const f = SPRING_K * (dist - SPRING_LEN);
-          const ux = dx / dist, uy = dy / dist;
-          fx[a] += ux * f; fy[a] += uy * f;
-          fx[b] -= ux * f; fy[b] -= uy * f;
-        }
-        // Light centering toward origin.
-        for (let i = 0; i < N; i++) {
-          fx[i] -= pt[i].x * CENTER_K;
-          fy[i] -= pt[i].y * CENTER_K;
-        }
-        // Integrate with capped step (cooling).
-        const MAX = 40 * cool + 4;
-        for (let i = 0; i < N; i++) {
-          let mvx = fx[i], mvy = fy[i];
-          const m = Math.hypot(mvx, mvy);
-          if (m > MAX) { mvx = (mvx / m) * MAX; mvy = (mvy / m) * MAX; }
-          pt[i].x += mvx; pt[i].y += mvy;
-        }
-      }
-      // Residual overlap resolution: a few sweeps that push any still-overlapping
-      // box pair apart along the minimum-translation axis.
-      for (let pass = 0; pass < 12; pass++) {
-        let moved = false;
-        for (let i = 0; i < N; i++) {
-          for (let j = i + 1; j < N; j++) {
-            const dx = pt[i].x - pt[j].x, dy = pt[i].y - pt[j].y;
-            const ox = sepX(i, j) - Math.abs(dx), oy = sepY(i, j) - Math.abs(dy);
-            if (ox > 0 && oy > 0) {
-              moved = true;
-              if (ox < oy) {
-                const s = (dx >= 0 ? 1 : -1) * ox / 2;
-                pt[i].x += s; pt[j].x -= s;
-              } else {
-                const s = (dy >= 0 ? 1 : -1) * oy / 2;
-                pt[i].y += s; pt[j].y -= s;
-              }
-            }
-          }
-        }
-        if (!moved) break;
-      }
-
-      // ---- Convert centers to box rects; auto-fit the viewBox ----
-      const MARGIN = 60;
-      const pos = new Map();
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      nodes.forEach((c, i) => {
-        const w = box[i].w, h = box[i].h;
-        const x = pt[i].x - w / 2, y = pt[i].y - h / 2;
-        pos.set(c, { x, y, w, h });
-        minX = Math.min(minX, x); minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x + w); maxY = Math.max(maxY, y + h);
-      });
-      const vbX = minX - MARGIN, vbY = minY - MARGIN;
-      const W = (maxX - minX) + 2 * MARGIN, H = (maxY - minY) + 2 * MARGIN;
-
-      const svg = document.createElementNS(SVGNS, "svg");
-      svg.setAttribute("viewBox", `${vbX} ${vbY} ${W} ${H}`);
-      svg.setAttribute("width", W); svg.setAttribute("height", H);
-      svg.innerHTML =
-        `<defs><marker id="oarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">` +
-        `<path d="M0,0 L10,5 L0,10 z" fill="#5b6570"/></marker></defs>`;
-      const center = (b) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
-      const el = (name, attrs, text) => {
-        const e = document.createElementNS(SVGNS, name);
-        for (const k in attrs) e.setAttribute(k, attrs[k]);
-        if (text != null) e.textContent = text;
-        return e;
-      };
-      // Where does the segment from box-center `from` toward point `to` cross the
-      // border of box `from`? Returns the intersection on the rectangle edge.
-      const borderPoint = (b, to) => {
-        const c = center(b);
-        let dx = to.x - c.x, dy = to.y - c.y;
-        if (dx === 0 && dy === 0) return c;
-        const hw = b.w / 2, hh = b.h / 2;
-        // Scale so the longer axis just reaches the border.
-        const sx = dx === 0 ? Infinity : hw / Math.abs(dx);
-        const sy = dy === 0 ? Infinity : hh / Math.abs(dy);
-        const s = Math.min(sx, sy);
-        return { x: c.x + dx * s, y: c.y + dy * s };
-      };
-      // Detect bidirectional pairs so we can curve A→B and B→A oppositely.
-      const pairKey = (a, b) => a + "\u0000" + b;
-      const present = new Set(edges.filter(([s, , o]) => s !== o).map(([s, , o]) => pairKey(s, o)));
-      // Edges (under boxes), drawn as curved quadratic beziers.
-      for (const [s, p, o, n] of edges) {
-        const a = pos.get(s), b = pos.get(o);
-        if (!a || !b) continue;
-        const label = shorten(p);
-        let lx, ly;
-        if (s === o) { // self-loop drawn as a loop outside the box top-right
-          const cx = a.x + a.w * 0.72, top = a.y;
-          const x1 = cx - 18, x2 = cx + 18, ytop = top - 46;
-          svg.appendChild(el("path", {
-            d: `M${x1},${top} C${x1 - 18},${ytop} ${x2 + 18},${ytop} ${x2},${top}`,
-            fill: "none", stroke: "#9aa6b2", "stroke-width": 1.3, "marker-end": "url(#oarr)" }));
-          lx = cx; ly = ytop + 4;
-        } else {
-          const ca = center(a), cb = center(b);
-          // Midpoint + perpendicular offset → curvature. Opposite sign when the
-          // reverse edge also exists, so both directions stay visible.
-          const bidir = present.has(pairKey(o, s));
-          const dirSign = bidir ? (s < o ? 1 : -1) : 0;
-          const mx = (ca.x + cb.x) / 2, my = (ca.y + cb.y) / 2;
-          let nx = -(cb.y - ca.y), ny = (cb.x - ca.x);
-          const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
-          const dist = Math.hypot(cb.x - ca.x, cb.y - ca.y);
-          const bend = (bidir ? 0.18 : 0.10) * dist * (dirSign || 1) * (bidir ? 1 : 0.6);
-          const cpx = mx + nx * bend, cpy = my + ny * bend;
-          // Trim to box borders using the control point as the aim direction.
-          const start = borderPoint(a, { x: cpx, y: cpy });
-          const end = borderPoint(b, { x: cpx, y: cpy });
-          svg.appendChild(el("path", {
-            d: `M${start.x},${start.y} Q${cpx},${cpy} ${end.x},${end.y}`,
-            fill: "none", stroke: "#9aa6b2", "stroke-width": 1.3, "marker-end": "url(#oarr)" }));
-          // Label at the curve's true midpoint (bezier t=0.5), nudged off the line.
-          const bmx = 0.25 * start.x + 0.5 * cpx + 0.25 * end.x;
-          const bmy = 0.25 * start.y + 0.5 * cpy + 0.25 * end.y;
-          lx = bmx + nx * 10 * (dirSign || 1);
-          ly = bmy + ny * 10 * (dirSign || 1);
-        }
-        const tw = label.length * 6.4 + 8;
-        svg.appendChild(el("rect", { x: lx - tw / 2, y: ly - 9, width: tw, height: 15, rx: 3, fill: "#eef2ff", stroke: "#d4ddff" }));
-        svg.appendChild(el("text", { x: lx, y: ly + 2, "text-anchor": "middle", "font-size": 10.5, fill: "#2a4b8d" }, label));
-      }
-      // Boxes.
-      for (const c of nodes) {
-        const b = pos.get(c), isClass = known.has(c);
-        const g = el("g", {});
-        g.appendChild(el("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 7,
-          fill: isClass ? "#ffffff" : "#f6f7f9", stroke: isClass ? "#2a6df4" : "#c2c9d2",
-          "stroke-width": isClass ? 1.6 : 1.1, "stroke-dasharray": isClass ? "" : "4 3" }));
-        g.appendChild(el("rect", { x: b.x, y: b.y, width: b.w, height: HEAD, rx: 7,
-          fill: isClass ? "#2a6df4" : "#e4e8ec" }));
-        g.appendChild(el("rect", { x: b.x, y: b.y + HEAD - 8, width: b.w, height: 8,
-          fill: isClass ? "#2a6df4" : "#e4e8ec" }));
-        const title = shorten(c) + (isClass && countOf[c] != null ? `  ×${countOf[c]}` : "");
-        g.appendChild(el("text", { x: b.x + 10, y: b.y + 20, "font-size": 12.5, "font-weight": 700,
-          fill: isClass ? "#fff" : "#5b6570" }, title));
-        if (isClass) {
-          const ps = propsShown(c);
-          ps.forEach(([pred, n], i) => {
-            g.appendChild(el("text", { x: b.x + 10, y: b.y + HEAD + 14 + i * LINE, "font-size": 11,
-              fill: "#1b1f24", "font-family": "ui-monospace,monospace" }, `${pred}  ·${n}`));
-          });
-          const total = (data.get(c) || []).length;
-          if (total > ps.length)
-            g.appendChild(el("text", { x: b.x + 10, y: b.y + HEAD + 14 + ps.length * LINE, "font-size": 10, fill: "#5b6570" }, `+${total - ps.length} more`));
-        }
-        // Click a class block → list its instances.
-        g.style.cursor = "pointer";
-        if (isClass) g.onclick = () =>
-          setQuery(`SELECT ?instance WHERE { ?instance <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ${c} }`, "table");
-        svg.appendChild(g);
-      }
-      host.innerHTML = "";
-      host.appendChild(svg);
-    }
-
-    function setView(view) {
-      $("fmt").value = view;
-      $("viewSeg").querySelectorAll("button").forEach((b) =>
-        b.classList.toggle("active", b.dataset.view === view));
-    }
-
-    function setStrategy(strategy) {
-      if (strategy) $("strategy").value = strategy;
-      $("roundWrap").hidden = $("strategy").value !== "community";
-    }
-
-    function setQuery(q, view, strategy) {
-      $("q").value = q;
-      if (view) setView(view);
-      setStrategy(strategy);
-      runQuery();
-      $("q").scrollIntoView({ behavior: "smooth" });
-    }
-
-    function renderTable(vars, rows) {
-      if (!rows.length) return `<p class="muted">0 results.</p>`;
-      const cols = vars && vars.length ? vars : [...new Set(rows.flatMap((r) => Object.keys(r)))];
-      const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
-      const body = rows.map((r) =>
-        `<tr>${cols.map((c) => `<td>${esc(shorten(r[c] ?? ""))}</td>`).join("")}</tr>`).join("");
-      return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
-    }
-
-    function renderTriplesTable(triples) {
-      if (!triples.length) return `<p class="muted">0 triples.</p>`;
-      const body = triples.map(([s, p, o]) =>
-        `<tr><td>${esc(shorten(s))}</td><td>${esc(shorten(p))}</td><td>${esc(shorten(o))}</td></tr>`).join("");
-      return `<table><thead><tr><th>subject</th><th>predicate</th><th>object</th></tr></thead><tbody>${body}</tbody></table>`;
-    }
-
-    // ---- Graph view: hand-written force layout + inline SVG (no libraries) ----
-    const GRAPH_CAP = 60;
-
-    function renderGraph(triples) {
-      const out = $("out");
-      if (!triples || !triples.length) {
-        out.innerHTML = `<div class="note">The Graph view needs triples to draw. ` +
-          `Run a <strong>CONSTRUCT</strong> query (e.g. one of the "Graph" examples), ` +
-          `or a SELECT whose pattern produces s/p/o.</div>`;
-        return "graph (0 triples)";
-      }
-      // Collect nodes, capping for legibility.
-      const nodeIdx = new Map();
-      const nodes = [];
-      const edges = [];
-      let truncated = false;
-      function id(term) {
-        if (nodeIdx.has(term)) return nodeIdx.get(term);
-        if (nodes.length >= GRAPH_CAP) { truncated = true; return -1; }
-        const i = nodes.length;
-        nodeIdx.set(term, i);
-        nodes.push({ term, label: shorten(term), x: 0, y: 0, vx: 0, vy: 0 });
-        return i;
-      }
-      for (const [s, p, o] of triples) {
-        const si = id(s), oi = id(o);
-        if (si < 0 || oi < 0) { truncated = true; continue; }
-        edges.push({ s: si, t: oi, p: shorten(p) });
-      }
-      const N = nodes.length;
-      if (!N) { out.innerHTML = `<p class="muted">0 nodes.</p>`; return "graph (0 nodes)"; }
-
-      const Wd = 920, Hd = 440, cx = Wd / 2, cy = Hd / 2;
-      // Seed positions on a circle (deterministic).
-      for (let i = 0; i < N; i++) {
-        const a = (2 * Math.PI * i) / N;
-        nodes[i].x = cx + Math.cos(a) * 150;
-        nodes[i].y = cy + Math.sin(a) * 150;
-      }
-      // Force-directed: repulsion (charge) + link springs + centering.
-      const k = 300;        // repulsion strength
-      const linkLen = 90;   // spring rest length
-      const linkK = 0.04;   // spring stiffness
-      const center = 0.01;  // centering pull
-      const ITER = 220;
-      for (let it = 0; it < ITER; it++) {
-        for (let i = 0; i < N; i++) { nodes[i].vx = 0; nodes[i].vy = 0; }
-        // Pairwise repulsion (N is capped at 60 → fine).
-        for (let i = 0; i < N; i++) {
-          for (let j = i + 1; j < N; j++) {
-            let dx = nodes[i].x - nodes[j].x, dy = nodes[i].y - nodes[j].y;
-            let d2 = dx * dx + dy * dy || 0.01;
-            const f = k * k / d2;
-            const d = Math.sqrt(d2);
-            const fx = (dx / d) * f, fy = (dy / d) * f;
-            nodes[i].vx += fx; nodes[i].vy += fy;
-            nodes[j].vx -= fx; nodes[j].vy -= fy;
-          }
-        }
-        // Link springs.
-        for (const e of edges) {
-          const a = nodes[e.s], b = nodes[e.t];
-          let dx = b.x - a.x, dy = b.y - a.y;
-          const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-          const f = (d - linkLen) * linkK;
-          const fx = (dx / d) * f, fy = (dy / d) * f;
-          a.vx += fx; a.vy += fy;
-          b.vx -= fx; b.vy -= fy;
-        }
-        // Centering + integrate (with cooling + clamping).
-        const cool = 1 - it / ITER;
-        for (let i = 0; i < N; i++) {
-          nodes[i].vx += (cx - nodes[i].x) * center;
-          nodes[i].vy += (cy - nodes[i].y) * center;
-          const max = 30;
-          let vx = Math.max(-max, Math.min(max, nodes[i].vx)) * cool;
-          let vy = Math.max(-max, Math.min(max, nodes[i].vy)) * cool;
-          nodes[i].x += vx; nodes[i].y += vy;
-          nodes[i].x = Math.max(20, Math.min(Wd - 20, nodes[i].x));
-          nodes[i].y = Math.max(20, Math.min(Hd - 20, nodes[i].y));
-        }
-      }
-
-      const showEdgeLabels = edges.length <= 30;
-      const trim = (s) => s.length > 16 ? s.slice(0, 15) + "…" : s;
-
-      let svg = `<svg viewBox="0 0 ${Wd} ${Hd}" preserveAspectRatio="xMidYMid meet">`;
-      svg += `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9fb4d8"/></marker></defs>`;
-      edges.forEach((e, ei) => {
-        const a = nodes[e.s], b = nodes[e.t];
-        svg += `<line class="gedge" data-e="${ei}" data-s="${e.s}" data-t="${e.t}" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" marker-end="url(#arrow)" />`;
-        if (showEdgeLabels) {
-          const mx = ((a.x + b.x) / 2).toFixed(1), my = ((a.y + b.y) / 2).toFixed(1);
-          svg += `<text class="gedge-label" data-el="${ei}" data-s="${e.s}" data-t="${e.t}" x="${mx}" y="${my}">${esc(trim(e.p))}</text>`;
-        }
-      });
-      for (let i = 0; i < N; i++) {
-        const n = nodes[i];
-        svg += `<g class="gnodeg" data-i="${i}">` +
-          `<circle class="gnode" cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="7"><title>${esc(n.term)}</title></circle>` +
-          `<text class="gnode-label" x="${(n.x + 9).toFixed(1)}" y="${(n.y + 4).toFixed(1)}">${esc(trim(n.label))}</text>` +
-          `</g>`;
-      }
-      svg += `</svg>`;
-
-      const notice = truncated
-        ? `<div class="note">Showing the first ${N} nodes (capped at ${GRAPH_CAP} for legibility); some triples were omitted.</div>`
-        : "";
-      out.innerHTML =
-        `<p class="small muted">${N} node(s), ${edges.length} edge(s) · vanilla-JS force layout · drag nodes to rearrange.</p>` +
-        notice + `<div class="graphwrap">${svg}</div>`;
-
-      enableGraphDrag(out.querySelector("svg"), nodes);
-      return `graph (${N} nodes, ${edges.length} edges)`;
-    }
-
-    // Basic node dragging: move circle + its label + incident edges.
-    function enableGraphDrag(svg, nodes) {
-      if (!svg) return;
-      let dragging = null;
-      const pt = (ev) => {
-        const r = svg.getBoundingClientRect();
-        const vbW = 920, vbH = 440;
-        return { x: (ev.clientX - r.left) / r.width * vbW, y: (ev.clientY - r.top) / r.height * vbH };
-      };
-      svg.querySelectorAll(".gnodeg").forEach((g) => {
-        g.addEventListener("mousedown", (ev) => {
-          dragging = Number(g.dataset.i);
-          svg.classList.add("grabbing");
-          ev.preventDefault();
-        });
-      });
-      svg.addEventListener("mousemove", (ev) => {
-        if (dragging == null) return;
-        const p = pt(ev);
-        nodes[dragging].x = Math.max(20, Math.min(900, p.x));
-        nodes[dragging].y = Math.max(20, Math.min(420, p.y));
-        // Move the dragged node group.
-        const g = svg.querySelector(`.gnodeg[data-i="${dragging}"]`);
-        const c = g.querySelector("circle"), t = g.querySelector("text");
-        c.setAttribute("cx", nodes[dragging].x.toFixed(1));
-        c.setAttribute("cy", nodes[dragging].y.toFixed(1));
-        t.setAttribute("x", (nodes[dragging].x + 9).toFixed(1));
-        t.setAttribute("y", (nodes[dragging].y + 4).toFixed(1));
-        // Move incident edges (and their labels).
-        svg.querySelectorAll(`line.gedge[data-s="${dragging}"], line.gedge[data-t="${dragging}"]`).forEach((ln) => {
-          const a = nodes[Number(ln.dataset.s)], b = nodes[Number(ln.dataset.t)];
-          ln.setAttribute("x1", a.x.toFixed(1)); ln.setAttribute("y1", a.y.toFixed(1));
-          ln.setAttribute("x2", b.x.toFixed(1)); ln.setAttribute("y2", b.y.toFixed(1));
-        });
-        svg.querySelectorAll(`text.gedge-label[data-s="${dragging}"], text.gedge-label[data-t="${dragging}"]`).forEach((tx) => {
-          const a = nodes[Number(tx.dataset.s)], b = nodes[Number(tx.dataset.t)];
-          tx.setAttribute("x", ((a.x + b.x) / 2).toFixed(1));
-          tx.setAttribute("y", ((a.y + b.y) / 2).toFixed(1));
-        });
-      });
-      const end = () => { dragging = null; svg.classList.remove("grabbing"); };
-      svg.addEventListener("mouseup", end);
-      svg.addEventListener("mouseleave", end);
-    }
-
-    function getTriplesForGraph(res) {
-      if (res.triples) return res.triples;          // CONSTRUCT (table/json format)
-      if (res.kind === "select") {
-        // Try to turn a SELECT into s/p/o triples if columns look right.
-        const v = res.vars || [];
-        if (v.length >= 3) return res.rows.map((r) => [r[v[0]], r[v[1]], r[v[2]]]);
-        if (v.length === 2) return res.rows.map((r) => [r[v[0]], "related", r[v[1]]]);
-      }
-      return [];
-    }
-
-    function formatBytes(n) {
-      const v = Number(n || 0);
-      if (v < 1024) return `${v} B`;
-      if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
-      return `${(v / 1024 / 1024).toFixed(1)} MB`;
-    }
-
-    function progressiveBanner(meta) {
-      const shape = {
-        predicate_count: "predicate count",
-        triple_count: "triple count",
-        predicate_totals: "predicate totals",
-        predicate_list: "predicate list",
-        predicate_distinct_count: "predicate count",
-        triple_exists: "triple exists",
-        predicate_exists: "predicate exists"
-      }[meta.queryShape] || meta.queryShape || "summary query";
-      const pred = meta.predicate
-        ? `<span>predicate <code>${esc(shorten(meta.predicate))}</code></span>`
-        : "";
-      return `<div class="meta-strip">` +
-        `<strong>Progressive summary</strong>` +
-        `<span>${esc(shape)}</span>` +
-        pred +
-        `<span>${esc(formatBytes(meta.bytes))} read</span>` +
-        `<span>${esc(String(meta.requests || 0))} range read(s)</span>` +
-        `<span>index skipped</span>` +
-        `</div>`;
-    }
-
-    function renderResult(res, fmt) {
-      const out = $("out");
-      const progressive = res.progressive ? progressiveBanner(res.progressive) : "";
-      if (fmt === "graph") {
-        // For CONSTRUCT with ttl/jsonld text we still have no triples array; re-run as triples.
-        let triples = getTriplesForGraph(res);
-        if (!triples.length && res.kind === "construct" && res.format) {
-          // Re-run the same query asking for the triples array form.
-          try {
-            const re = JSON.parse(W().query(bytes, $("q").value, "table"));
-            triples = getTriplesForGraph(re);
-          } catch (e) { /* ignore; renderGraph shows the hint */ }
-        }
-        return renderGraph(triples);
-      }
-      if (res.kind === "ask") {
-        out.innerHTML = progressive + `<p>ASK → <strong>${res.boolean}</strong></p>`;
-        return `ASK ${res.boolean}`;
-      }
-      if (res.kind === "select") {
-        if (fmt === "ttl" || fmt === "jsonld") {
-          out.innerHTML = progressive + `<div class="note">${fmt === "ttl" ? "Turtle" : "JSON-LD"} output applies to CONSTRUCT/DESCRIBE. ` +
-            `This is a SELECT, so showing the table instead.</div>` + renderTable(res.vars, res.rows);
-        } else {
-          out.innerHTML = progressive + renderTable(res.vars, res.rows);
-        }
-        return `${res.rows.length} row(s)`;
-      }
-      if (res.format === "ttl" || res.format === "jsonld") {
-        out.innerHTML = `<pre>${esc(res.text)}</pre>`;
-        return `CONSTRUCT (${res.format})`;
-      }
-      out.innerHTML = renderTriplesTable(res.triples || []);
-      return `${(res.triples || []).length} triple(s)`;
-    }
-
-    function runQuery() {
-      if (!bytes) { $("out").innerHTML = `<p class="err">Load a file first.</p>`; return; }
-      // Collapse the ontology expander to give the results room while querying.
-      const ob = $("overviewBox"); if (ob) ob.open = false;
-      const q = $("q").value, fmt = $("fmt").value, strat = $("strategy").value;
-      // Graph view needs a triples array; CONSTRUCT serializes as ttl/jsonld text otherwise.
-      const queryFmt = strat === "progressive" ? "table" : (fmt === "graph" ? "table" : fmt);
-      $("commOut").innerHTML = "";
-      const t0 = performance.now();
-      try {
-        const res = JSON.parse(strat === "progressive"
-          ? W().progressive_query(bytes, q)
-          : W().query(bytes, q, queryFmt));
-        const dt = performance.now() - t0;
-        const displayFmt = strat === "progressive" && fmt === "graph" ? "table" : fmt;
-        const summary = renderResult(res, displayFmt);
-        const progressiveMeta = res.progressive
-          ? ` · summary exact · ${formatBytes(res.progressive.bytes)} read`
-          : "";
-        $("qmeta").textContent = `${summary} · ${dt.toFixed(1)} ms${progressiveMeta}`;
-        if (strat === "community") runCommunity();
-        saveHistory({ query: q, format: fmt, strategy: strat, dataset: $("ds").value,
-          ts: Date.now(), resultSummary: summary });
-      } catch (e) {
-        $("qmeta").textContent = "";
-        $("out").innerHTML = `<p class="err">Error: ${esc(String(e))}</p>`;
-      }
-    }
-
-    function runCommunity() {
-      const roundVal = $("round").value.trim();
-      const round = roundVal === "" ? undefined : Number(roundVal);
-      const t0 = performance.now();
-      let comms;
-      try {
-        comms = JSON.parse(W().communities(bytes, round));
-      } catch (e) {
-        $("commOut").innerHTML = `<p class="err">community error: ${esc(String(e))}</p>`;
-        return;
-      }
-      const dt = performance.now() - t0;
-      const rows = comms.map((c) =>
-        `<tr><td>C${c.community}</td><td>${c.size}</td><td>${c.triples}</td></tr>`).join("");
-      $("commOut").innerHTML =
-        `<div class="note"><strong>Evaluation: split by community.</strong> This offline build ` +
-        `runs single-threaded, so this shows the community <em>decomposition</em>, not a speedup. ` +
-        `For real in-browser threads see the experimental ` +
-        `<a href="../web/playground-threads.html">threaded playground</a> — a ` +
-        `<strong>Web-Worker pool</strong> that works on <strong>any static server ` +
-        `(no special headers)</strong> (<a href="parallel-browser.html">Parallel in the browser</a>); ` +
-        `natively, the <code>parallel</code> feature (<a href="BENCHMARK.html">Benchmarks</a>).</div>` +
-        `<p class="small muted">${comms.length} communities decomposed in ${dt.toFixed(1)} ms</p>` +
-        `<table><thead><tr><th>community</th><th>members</th><th>triples</th></tr></thead><tbody>${rows}</tbody></table>`;
-    }
-
-    // Per-dataset curated examples. Each: {label, view, q, tip, group}.
-    const EXAMPLES = {
-      typed: [
-        { group: "Progressive summary", label: "Count knows edges", view: "table", strategy: "progressive",
-          tip: "Exact COUNT answered from the pyramid summary; the triple index is skipped.",
-          q: "PREFIX ex: <http://ex/>\nSELECT (COUNT(*) AS ?knowsEdges) WHERE { ?s ex:knows ?o }" },
-        { group: "Progressive summary", label: "Any employment edges?", view: "table", strategy: "progressive",
-          tip: "Exact ASK answered from the summary predicate totals.",
-          q: "PREFIX ex: <http://ex/>\nASK { ?s ex:worksAt ?o }" },
-        { group: "Progressive summary", label: "Total triples", view: "table", strategy: "progressive",
-          tip: "Exact total triple count from the summary graph.",
-          q: "SELECT (COUNT(*) AS ?triples) WHERE { ?s ?p ?o }" },
-        { group: "Progressive summary", label: "Predicate totals", view: "table", strategy: "progressive",
-          tip: "Exact predicate-by-predicate counts from the summary; useful as a first scan.",
-          q: "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p" },
-        { group: "Progressive summary", label: "Predicate list", view: "table", strategy: "progressive",
-          tip: "Exact distinct predicate list from the summary; no index read.",
-          q: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" },
-        { group: "Progressive summary", label: "Predicate count", view: "table", strategy: "progressive",
-          tip: "Exact count of distinct predicates from the summary; no index read.",
-          q: "SELECT (COUNT(DISTINCT ?p) AS ?predicateCount) WHERE { ?s ?p ?o }" },
-        { group: "Progressive summary", label: "Any triples?", view: "table", strategy: "progressive",
-          tip: "Exact graph-nonempty ASK from the summary graph.",
-          q: "ASK { ?s ?p ?o }" },
-        { group: "Select", label: "Who works where", view: "table",
-          tip: "Lists every worksAt edge: which person is employed by which org.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?person ?org WHERE { ?person ex:worksAt ?org }" },
-        { group: "Select", label: "Who knows whom", view: "table",
-          tip: "Lists the social knows relation between people.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?a ?b WHERE { ?a ex:knows ?b }" },
-        { group: "Ask", label: "Does anyone know Bob?", view: "table",
-          tip: "Boolean ASK: is there at least one knows edge pointing at Bob?",
-          q: "PREFIX ex: <http://ex/>\nASK { ?p ex:knows ex:Bob }" },
-        { group: "Graph", label: "Draw the social graph", view: "graph",
-          tip: "CONSTRUCT the people/org links so the Graph view can draw a node-link diagram.",
-          q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ?p ?b } WHERE {\n  { ?a ex:knows ?b BIND(ex:knows AS ?p) }\n  UNION\n  { ?a ex:worksAt ?b BIND(ex:worksAt AS ?p) }\n}" },
-      ],
-      deps: [
-        { group: "Progressive summary", label: "Count dependency edges", view: "table", strategy: "progressive",
-          tip: "Exact dependency-edge count from the summary; useful before drilling into the index.",
-          q: "PREFIX ex: <http://ex/>\nSELECT (COUNT(*) AS ?dependencyEdges) WHERE { ?s ex:dependsOn ?o }" },
-        { group: "Progressive summary", label: "Any dependency edges?", view: "table", strategy: "progressive",
-          tip: "Exact predicate-exists ASK from the summary predicate totals.",
-          q: "PREFIX ex: <http://ex/>\nASK { ?s ex:dependsOn ?o }" },
-        { group: "Progressive summary", label: "Predicate totals", view: "table", strategy: "progressive",
-          tip: "Exact predicate-by-predicate counts from the summary; no index read.",
-          q: "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p" },
-        { group: "Progressive summary", label: "Predicate list", view: "table", strategy: "progressive",
-          tip: "Exact distinct predicate list from the summary; no index read.",
-          q: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" },
-        { group: "Progressive summary", label: "Predicate count", view: "table", strategy: "progressive",
-          tip: "Exact count of distinct predicates from the summary; no index read.",
-          q: "SELECT (COUNT(DISTINCT ?p) AS ?predicateCount) WHERE { ?s ?p ?o }" },
-        { group: "Select", label: "Direct dependencies", view: "table",
-          tip: "Lists every direct dependsOn edge.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?a ?b WHERE { ?a ex:dependsOn ?b } LIMIT 100" },
-        { group: "Property path", label: "Transitive blast radius of the CVE", view: "table",
-          tip: "Every package that (transitively) depends on the vulnerable log4x — the CVE's impact set.",
-          q: "PREFIX ex: <http://ex/>\n# Transitive blast radius of the CVE:\nSELECT DISTINCT ?dependent WHERE { ?dependent ex:dependsOn+ ex:log4x }" },
-        { group: "Aggregate", label: "Out-degree per package", view: "table",
-          tip: "Counts each package's direct dependencies, busiest first.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?a (COUNT(?b) AS ?deps) WHERE { ?a ex:dependsOn ?b } GROUP BY ?a ORDER BY DESC(?deps)" },
-        { group: "Graph", label: "Draw the dependency tree", view: "graph",
-          tip: "CONSTRUCT the dependsOn edges and render them as a node-link diagram.",
-          q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ex:dependsOn ?b } WHERE { ?a ex:dependsOn ?b }" },
-      ],
-      papers: [
-        { group: "Progressive summary", label: "Count citation edges", view: "table", strategy: "progressive",
-          tip: "Exact cites-edge count answered from the summary only.",
-          q: "PREFIX ex: <http://ex/>\nSELECT (COUNT(*) AS ?citationEdges) WHERE { ?s ex:cites ?o }" },
-        { group: "Progressive summary", label: "Total triples", view: "table", strategy: "progressive",
-          tip: "Exact graph-wide triple count from the summary graph.",
-          q: "SELECT (COUNT(*) AS ?triples) WHERE { ?s ?p ?o }" },
-        { group: "Progressive summary", label: "Predicate totals", view: "table", strategy: "progressive",
-          tip: "Exact predicate-by-predicate counts from the summary; no index read.",
-          q: "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p" },
-        { group: "Progressive summary", label: "Predicate list", view: "table", strategy: "progressive",
-          tip: "Exact distinct predicate list from the summary; no index read.",
-          q: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" },
-        { group: "Progressive summary", label: "Predicate count", view: "table", strategy: "progressive",
-          tip: "Exact count of distinct predicates from the summary; no index read.",
-          q: "SELECT (COUNT(DISTINCT ?p) AS ?predicateCount) WHERE { ?s ?p ?o }" },
-        { group: "Select", label: "Paper titles", view: "table",
-          tip: "Lists every paper and its title.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?p ?title WHERE { ?p ex:title ?title }" },
-        { group: "Property path", label: "Reachable from p1 by citation", view: "table",
-          tip: "All papers reachable from p1 by following cites edges transitively.",
-          q: "PREFIX ex: <http://ex/>\nSELECT DISTINCT ?reached WHERE { ex:p1 ex:cites+ ?reached }" },
-        { group: "Aggregate", label: "Citations made per paper", view: "table",
-          tip: "Counts each paper's outgoing citations, most-citing first.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?p (COUNT(?c) AS ?cites) WHERE { ?p ex:cites ?c } GROUP BY ?p ORDER BY DESC(?cites)" },
-        { group: "Graph", label: "Draw the citation graph", view: "graph",
-          tip: "CONSTRUCT the cites edges so the Graph view shows the citation clusters.",
-          q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ex:cites ?b } WHERE { ?a ex:cites ?b }" },
-      ],
-      citations: [
-        { group: "Progressive summary", label: "Count all citation edges", view: "table", strategy: "progressive",
-          tip: "Exact cito:cites count from the summary; no triple-index read.",
-          q: "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT (COUNT(*) AS ?citationEdges) WHERE { ?s cito:cites ?o }" },
-        { group: "Progressive summary", label: "Any titles loaded?", view: "table", strategy: "progressive",
-          tip: "Exact predicate-exists ASK for dcterms:title from summary predicate totals.",
-          q: "PREFIX dct: <http://purl.org/dc/terms/>\nASK { ?s dct:title ?o }" },
-        { group: "Progressive summary", label: "Predicate totals", view: "table", strategy: "progressive",
-          tip: "Exact predicate-by-predicate counts from the summary; no index read.",
-          q: "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p" },
-        { group: "Progressive summary", label: "Predicate list", view: "table", strategy: "progressive",
-          tip: "Exact distinct predicate list from the summary; no index read.",
-          q: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" },
-        { group: "Progressive summary", label: "Predicate count", view: "table", strategy: "progressive",
-          tip: "Exact count of distinct predicates from the summary; no index read.",
-          q: "SELECT (COUNT(DISTINCT ?p) AS ?predicateCount) WHERE { ?s ?p ?o }" },
-        // ---- Family 1: Easy — single pattern, ASK, plain count ----
-        { group: "Easy · basics", label: "Paper titles (50)", view: "table",
-          tip: "One triple pattern: list 50 citing papers and their (synthetic) titles. The simplest possible SELECT.",
-          q: "PREFIX dct: <http://purl.org/dc/terms/>\n# Easy: one pattern, just list rows.\nSELECT ?paper ?title WHERE { ?paper dct:title ?title } LIMIT 50" },
-        { group: "Easy · basics", label: "Is AlphaFold cited? (ASK)", view: "table",
-          tip: "A boolean ASK: does at least one paper cite the AlphaFold paper (10.1038/s41586-021-03819-2)?",
-          q: "PREFIX cito: <http://purl.org/spar/cito/>\nASK { ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> }" },
-        { group: "Easy · basics", label: "Count the citing papers", view: "table",
-          tip: "A single COUNT over the real citation edges — how many papers cite AlphaFold in this graph.",
-          q: "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT (COUNT(?p) AS ?citingPapers)\nWHERE { ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> }" },
-
-        // ---- Family 2: Medium — GROUP BY, ORDER BY, FILTER, dates ----
-        { group: "Medium · group, filter & dates", label: "Citations per year", view: "table",
-          tip: "Join the citation edge with each paper's REAL year, then GROUP BY year — the citation trend over time.",
-          q: "PREFIX cito: <http://purl.org/spar/cito/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?year (COUNT(?p) AS ?n) WHERE {\n  ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> .\n  ?p dct:date ?year\n} GROUP BY ?year ORDER BY ?year" },
-        { group: "Medium · group, filter & dates", label: "Papers per discipline", view: "table",
-          tip: "GROUP BY the (synthetic) discipline, busiest first.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?discipline (COUNT(?p) AS ?n)\nWHERE { ?p ex:discipline ?discipline }\nGROUP BY ?discipline ORDER BY DESC(?n)" },
-        { group: "Medium · group, filter & dates", label: "Top 10 venues", view: "table",
-          tip: "Most common publication venues among the citing papers (synthetic), top 10.",
-          q: "PREFIX prism: <http://prismstandard.org/namespaces/basic/2.0/>\nSELECT ?venue (COUNT(?p) AS ?n)\nWHERE { ?p prism:publicationName ?venue }\nGROUP BY ?venue ORDER BY DESC(?n) LIMIT 10" },
-        { group: "Medium · group, filter & dates", label: "High-impact Biology papers", view: "table",
-          tip: "Two patterns + a numeric FILTER: Biology papers whose (synthetic) citationCount exceeds 120.",
-          q: "PREFIX ex: <http://ex/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?p ?c WHERE {\n  ?p ex:discipline <http://ex/discipline/Biology> .\n  ?p ex:citationCount ?c .\n  FILTER(?c > 120)\n} ORDER BY DESC(?c) LIMIT 25" },
-        { group: "Medium · group, filter & dates", label: "Papers tagged \"protein\"", view: "table",
-          tip: "Filter by a keyword (dcterms:subject) and join the title.",
-          q: "PREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?p ?title WHERE {\n  ?p dct:subject \"protein\" .\n  ?p dct:title ?title\n} LIMIT 50" },
-
-        // ---- Family 3: Hard — multi-way joins, property paths, aggregates, CONSTRUCT ----
-        { group: "Hard · joins, paths & aggregates", label: "Most collaborative authors", view: "table",
-          tip: "Aggregate over the co-authorship graph: each author's number of distinct collaborators, top 15.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?author (COUNT(?co) AS ?collaborators)\nWHERE { ?author ex:coauthor ?co }\nGROUP BY ?author ORDER BY DESC(?collaborators) LIMIT 15" },
-        { group: "Hard · joins, paths & aggregates", label: "Avg citations per discipline", view: "table",
-          tip: "AVG aggregate with a second COUNT: mean (synthetic) citationCount per discipline.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?discipline (AVG(?c) AS ?avgCitations) (COUNT(?p) AS ?papers) WHERE {\n  ?p ex:discipline ?discipline .\n  ?p ex:citationCount ?c\n} GROUP BY ?discipline ORDER BY DESC(?avgCitations)" },
-        { group: "Hard · joins, paths & aggregates", label: "Authors of \"protein\" papers", view: "table",
-          tip: "A three-pattern join: keyword → paper → creator → author name.",
-          q: "PREFIX dct: <http://purl.org/dc/terms/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nSELECT ?name ?title WHERE {\n  ?p dct:subject \"protein\" .\n  ?p dct:title ?title .\n  ?p dct:creator ?a .\n  ?a foaf:name ?name\n} LIMIT 50" },
-        { group: "Hard · joins, paths & aggregates", label: "Transitive collaborators of an author", view: "table",
-          tip: "A property path (coauthor+): everyone reachable from author 1235 through chains of co-authorship.",
-          q: "PREFIX ex: <http://ex/>\nSELECT DISTINCT ?collaborator WHERE {\n  <http://ex/author/1235> ex:coauthor+ ?collaborator\n} LIMIT 100" },
-        { group: "Hard · joins, paths & aggregates", label: "Draw a hub author's network", view: "graph",
-          tip: "CONSTRUCT the co-authorship edges of a well-connected author (1235) so the Graph view draws the ego-network.",
-          q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ex:coauthor ?b } WHERE {\n  VALUES ?a { <http://ex/author/1235> }\n  ?a ex:coauthor ?b\n}" },
-      ],
-      researchers: [
-        { group: "Progressive summary", label: "Count coauthor edges", view: "table", strategy: "progressive",
-          tip: "Exact coauthor-edge count from the summary; index skipped.",
-          q: "PREFIX ex: <http://ex/>\nSELECT (COUNT(*) AS ?coauthorEdges) WHERE { ?s ex:coauthor ?o }" },
-        { group: "Progressive summary", label: "Any cites edges?", view: "table", strategy: "progressive",
-          tip: "Exact ASK over the summary predicate totals.",
-          q: "PREFIX ex: <http://ex/>\nASK { ?s ex:cites ?o }" },
-        { group: "Progressive summary", label: "Predicate totals", view: "table", strategy: "progressive",
-          tip: "Exact predicate-by-predicate counts from the summary; no index read.",
-          q: "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p" },
-        { group: "Progressive summary", label: "Predicate list", view: "table", strategy: "progressive",
-          tip: "Exact distinct predicate list from the summary; no index read.",
-          q: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" },
-        { group: "Progressive summary", label: "Predicate count", view: "table", strategy: "progressive",
-          tip: "Exact count of distinct predicates from the summary; no index read.",
-          q: "SELECT (COUNT(DISTINCT ?p) AS ?predicateCount) WHERE { ?s ?p ?o }" },
-        { group: "Select", label: "Co-authorships", view: "table",
-          tip: "Lists every coauthor edge between researchers.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?a ?b WHERE { ?a ex:coauthor ?b } LIMIT 100" },
-        { group: "Aggregate", label: "Most collaborative researchers", view: "table",
-          tip: "Counts each researcher's co-authors, most collaborative first.",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?a (COUNT(?b) AS ?n) WHERE { ?a ex:coauthor ?b } GROUP BY ?a ORDER BY DESC(?n)" },
-        { group: "Property path", label: "r1's citation neighbourhood", view: "table",
-          tip: "Everyone reachable from r1 by following cites edges transitively.",
-          q: "PREFIX ex: <http://ex/>\nSELECT DISTINCT ?reached WHERE { ex:r1 ex:cites+ ?reached }" },
-        { group: "Graph", label: "Draw cites vs coauthor", view: "graph",
-          tip: "CONSTRUCT both relations so the Graph view shows how co-authorship crosses the citation clusters.",
-          q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ?p ?b } WHERE {\n  { ?a ex:cites ?b BIND(ex:cites AS ?p) }\n  UNION\n  { ?a ex:coauthor ?b BIND(ex:coauthor AS ?p) }\n}" },
-      ],
-    };
-
-    function renderExamples() {
-      const list = EXAMPLES[$("ds").value] || [];
-      if (!list.length) { $("examples").innerHTML = `<span class="muted">No curated examples for this dataset.</span>`; return; }
-      // Group by `group`, preserving first-seen order.
-      const groups = [];
-      const byG = new Map();
-      list.forEach((ex, i) => {
-        if (!byG.has(ex.group)) { byG.set(ex.group, []); groups.push(ex.group); }
-        byG.get(ex.group).push({ ex, i });
-      });
-      $("examples").innerHTML = groups.map((g) =>
-        `<div class="ex-group"><div class="ex-lead">${esc(g)}</div>` +
-        byG.get(g).map(({ ex, i }) =>
-          `<button type="button" class="ex-btn" data-ex="${i}" title="${esc(ex.tip)}">` +
-          `${esc(ex.label)}</button>`).join("") +
-        `<div class="small muted" style="margin:.1rem 0 .2rem">${esc(byG.get(g)[0].ex.tip)}</div></div>`
-      ).join("");
-      $("examples").querySelectorAll(".ex-btn").forEach((el) => el.onclick = () => {
-        const ex = list[Number(el.dataset.ex)];
-        // Show this example's specific description, then run it.
-        setQuery(ex.q, ex.view, ex.strategy || "whole");
-        $("qmeta").title = ex.tip;
-      });
-    }
-
-    // Per-dataset SHACL shape examples. Each: {label, shape, tip, group}.
-    const SHACL_EXAMPLES = {
-      typed: [
-        { group: "Passes", label: "Person employment is an Org",
-          tip: "Optional values are allowed, but every worksAt value must point to an Org.",
-          shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:PersonEmploymentShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Person ;
-  sh:property [
-    sh:path ex:worksAt ;
-    sh:class ex:Org ;
-    sh:maxCount 1
-  ] .` },
-        { group: "Intentional violations", label: "Every person needs a name",
-          tip: "Alice has no ex:name in this tiny graph, so this produces a MinCount violation.",
-          shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-
-ex:PersonNameShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Person ;
-  sh:property [
-    sh:path ex:name ;
-    sh:minCount 1 ;
-    sh:maxCount 1 ;
-    sh:datatype xsd:string ;
-    sh:message "Every Person must have exactly one string name."
-  ] .` },
-      ],
-      deps: [
-        { group: "Passes", label: "Application has dependencies",
-          tip: "The application node has at least one direct dependency.",
-          shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:ApplicationDependencyShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Application ;
-  sh:property [
-    sh:path ex:dependsOn ;
-    sh:minCount 1 ;
-    sh:class ex:Library
-  ] .` },
-        { group: "Intentional violations", label: "Every library has a CVE",
-          tip: "Only log4x has hasVulnerability, so most Library nodes fail this contract.",
-          shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:LibraryVulnerabilityShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Library ;
-  sh:property [
-    sh:path ex:hasVulnerability ;
-    sh:minCount 1 ;
-    sh:message "Library has no declared vulnerability."
-  ] .` },
-      ],
-      papers: [
-        { group: "Passes", label: "Paper title + abstract",
-          tip: "Every bundled paper has a title and abstract literal.",
-          shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-
-ex:PaperTextShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Paper ;
-  sh:property [ sh:path ex:title ; sh:minCount 1 ; sh:datatype xsd:string ] ;
-  sh:property [ sh:path ex:abstract ; sh:minCount 1 ; sh:datatype xsd:string ] .` },
-        { group: "Intentional violations", label: "Paper DOI required",
-          tip: "This sample has titles and abstracts but no DOI field, so every paper violates it.",
-          shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:PaperDoiShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Paper ;
-  sh:property [
-    sh:path ex:doi ;
-    sh:minCount 1 ;
-    sh:message "Paper is missing a DOI."
-  ] .` },
-      ],
-      researchers: [
-        { group: "Passes", label: "Researcher organization",
-          tip: "Every researcher in this multi-criteria example belongs to OrgX or OrgY.",
-          shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:ResearcherOrganizationShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Researcher ;
-  sh:property [
-    sh:path ex:organization ;
-    sh:minCount 1 ;
-    sh:in ( ex:OrgX ex:OrgY )
-  ] .` },
-        { group: "Intentional violations", label: "Two coauthors required",
-          tip: "Each researcher only has one cross-cluster coauthor in this sample.",
-          shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:ResearcherCoauthorShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Researcher ;
-  sh:property [
-    sh:path ex:coauthor ;
-    sh:minCount 2 ;
-    sh:message "Researcher has fewer than two coauthors."
-  ] .` },
-      ],
-      research: [
-        { group: "Passes", label: "Researcher profile",
-          tip: "Researchers have a FOAF name, h-index, and an institution.",
-          shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix foaf: <http://xmlns.com/foaf/0.1/> .
-
-ex:ResearcherProfileShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Researcher ;
-  sh:property [ sh:path foaf:name ; sh:minCount 1 ; sh:maxCount 1 ] ;
-  sh:property [ sh:path ex:hIndex ; sh:minCount 1 ] ;
-  sh:property [ sh:path ex:affiliatedWith ; sh:minCount 1 ; sh:class ex:Institution ] .` },
-        { group: "Intentional violations", label: "Journal impact is integer",
-          tip: "Impact factors are plain decimal-looking literals, not xsd:integer values.",
-          shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-
-ex:JournalImpactShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Journal ;
-  sh:property [
-    sh:path ex:impactFactor ;
-    sh:datatype xsd:integer ;
-    sh:message "Impact factor must be typed as xsd:integer."
-  ] .` },
-      ],
-      citations: [
-        { group: "Passes", label: "Citing paper metadata",
-          tip: "Checks that each paper citing AlphaFold has title, date, and discipline metadata.",
-          shape: `@prefix cito: <http://purl.org/spar/cito/> .
-@prefix dct: <http://purl.org/dc/terms/> .
-@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:CitingPaperMetadataShape
-  a sh:NodeShape ;
-  sh:targetSubjectsOf cito:cites ;
-  sh:property [ sh:path dct:title ; sh:minCount 1 ] ;
-  sh:property [ sh:path dct:date ; sh:minCount 1 ] ;
-  sh:property [ sh:path ex:discipline ; sh:minCount 1 ] .` },
-        { group: "Intentional violations", label: "Peer-review marker required",
-          tip: "The enriched OpenCitations sample has no ex:reviewedBy predicate, so this creates many violations.",
-          shape: `@prefix cito: <http://purl.org/spar/cito/> .
-@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:ReviewMarkerShape
-  a sh:NodeShape ;
-  sh:targetSubjectsOf cito:cites ;
-  sh:property [
-    sh:path ex:reviewedBy ;
-    sh:minCount 1 ;
-    sh:message "Citing paper has no peer-review marker."
-  ] .` },
-      ],
-    };
-
-    function renderShaclExamples() {
-      const list = SHACL_EXAMPLES[$("ds").value] || [];
-      if (!list.length) {
-        $("shaclExamples").innerHTML = `<span class="muted">No curated SHACL examples for this dataset.</span>`;
-        return;
-      }
-      const groups = [];
-      const byG = new Map();
-      list.forEach((ex, i) => {
-        if (!byG.has(ex.group)) { byG.set(ex.group, []); groups.push(ex.group); }
-        byG.get(ex.group).push({ ex, i });
-      });
-      $("shaclExamples").innerHTML = groups.map((g) =>
-        `<div class="ex-group"><div class="ex-lead">${esc(g)}</div>` +
-        byG.get(g).map(({ ex, i }) =>
-          `<button type="button" class="ex-btn" data-shacl="${i}" title="${esc(ex.tip)}">` +
-          `${esc(ex.label)}</button>`).join("") +
-        `<div class="small muted" style="margin:.1rem 0 .2rem">${esc(byG.get(g)[0].ex.tip)}</div></div>`
-      ).join("");
-      $("shaclExamples").querySelectorAll(".ex-btn").forEach((el) => el.onclick = () => {
-        const ex = list[Number(el.dataset.shacl)];
-        $("shapeText").value = ex.shape;
-        $("shaclFormat").value = "text";
-        $("shaclMeta").title = ex.tip;
-        runShacl();
-        $("shapeText").scrollIntoView({ behavior: "smooth" });
-      });
-      if (activeSource === "dataset" && list[0]) {
-        $("shapeText").value = list[0].shape;
-      }
-    }
-
-    function renderShaclJson(report, raw) {
-      const results = report.results || [];
-      if (report.conforms) {
-        return `<div class="banner"><strong>Conforms.</strong> No validation results.</div>` +
-          `<details><summary class="small muted">Raw JSON report</summary><pre>${esc(raw)}</pre></details>`;
-      }
-      const CAP = 200;
-      const rows = results.slice(0, CAP).map((r) => {
-        const msg = (r.messages || []).join(" ");
-        return `<tr>` +
-          `<td>${esc(shorten(r.focusNode || ""))}</td>` +
-          `<td>${esc(shorten(r.resultPath || ""))}</td>` +
-          `<td>${esc(shorten(r.sourceConstraintComponent || ""))}</td>` +
-          `<td>${esc(shorten(msg))}</td>` +
-          `</tr>`;
-      }).join("");
-      const more = results.length > CAP
-        ? `<p class="small muted">Showing first ${CAP} of ${results.length} result(s).</p>`
-        : "";
-      return `<div class="note"><strong>Does not conform.</strong> ${results.length} validation result(s).</div>` +
-        more +
-        `<table><thead><tr><th>focus</th><th>path</th><th>component</th><th>message</th></tr></thead><tbody>${rows}</tbody></table>` +
-        `<details style="margin-top:.7rem"><summary class="small muted">Raw JSON report</summary><pre>${esc(raw)}</pre></details>`;
-    }
-
-    function runShacl() {
-      if (!bytes) { $("shaclOut").innerHTML = `<p class="err">Load a file first.</p>`; return; }
-      const shapes = $("shapeText").value.trim();
-      if (!shapes) { $("shaclOut").innerHTML = `<p class="err">Enter a SHACL Turtle shape.</p>`; return; }
-      const fmt = $("shaclFormat").value;
-      const t0 = performance.now();
-      try {
-        const reportText = W().shacl(bytes, shapes, null, fmt);
-        const dt = performance.now() - t0;
-        let conforms = false;
-        if (fmt === "json") {
-          const report = JSON.parse(reportText);
-          conforms = !!report.conforms;
-          $("shaclOut").innerHTML = renderShaclJson(report, reportText);
-        } else if (fmt === "ttl") {
-          conforms = reportText.includes("#conforms> true") || reportText.includes("#conforms> true ");
-          $("shaclOut").innerHTML = `<pre>${esc(reportText)}</pre>`;
-        } else {
-          conforms = reportText.startsWith("conforms: true");
-          $("shaclOut").innerHTML = `<pre>${esc(reportText)}</pre>`;
-        }
-        $("shaclMeta").textContent = `${conforms ? "conforms" : "violations"} Â· ${dt.toFixed(1)} ms`;
-      } catch (e) {
-        $("shaclMeta").textContent = "";
-        $("shaclOut").innerHTML = `<p class="err">Error: ${esc(String(e))}</p>`;
-      }
-    }
-
-    // --- reachability ---------------------------------------------------------
-    const REACH = {
-      research: {
-        pred: "<http://ex/coauthor>",
-        examples: [
-          { label: "Alice's co-author network", pred: "<http://ex/coauthor>", seeds: "<http://ex/r/alice>", reverse: false },
-          { label: "Alice's academic descendants (who she advised, transitively)", pred: "<http://ex/advisedBy>", seeds: "<http://ex/r/alice>", reverse: true },
-          { label: "Bob's advisor lineage", pred: "<http://ex/advisedBy>", seeds: "<http://ex/r/bob>", reverse: false },
-          { label: "citation closure of paper p1", pred: "<http://ex/cites>", seeds: "<http://ex/p/p1>", reverse: false },
-          { label: "who cites p3? (impact / reverse)", pred: "<http://ex/cites>", seeds: "<http://ex/p/p3>", reverse: true },
-        ],
-      },
-      typed: {
-        pred: "<http://ex/knows>",
-        examples: [
-          { label: "who does Alice know?", pred: "<http://ex/knows>", seeds: "<http://ex/Alice>", reverse: false },
-          { label: "who knows Bob? (reverse)", pred: "<http://ex/knows>", seeds: "<http://ex/Bob>", reverse: true },
-        ],
-      },
-      deps: {
-        pred: "<http://ex/dependsOn>",
-        examples: [
-          { label: "app's dependency closure", pred: "<http://ex/dependsOn>", seeds: "<http://ex/app>", reverse: false },
-          { label: "who depends on log4x? (reverse / blast radius)", pred: "<http://ex/dependsOn>", seeds: "<http://ex/log4x>", reverse: true },
-        ],
-      },
-      papers: {
-        pred: "<http://ex/cites>",
-        examples: [
-          { label: "papers p1 reaches via citation", pred: "<http://ex/cites>", seeds: "<http://ex/p1>", reverse: false },
-          { label: "who cites p5? (reverse)", pred: "<http://ex/cites>", seeds: "<http://ex/p5>", reverse: true },
-        ],
-      },
-      researchers: {
-        pred: "<http://ex/coauthor>",
-        examples: [
-          { label: "r1's co-author network", pred: "<http://ex/coauthor>", seeds: "<http://ex/r1>", reverse: false },
-        ],
-      },
-      citations: {
-        pred: "<http://ex/coauthor>",
-        examples: [
-          { label: "author 1235's collaboration network (5,454 reached)", pred: "<http://ex/coauthor>", seeds: "<http://ex/author/1235>", reverse: false },
-          { label: "everyone who cites AlphaFold (reverse — 32,729!)", pred: "<http://purl.org/spar/cito/cites>", seeds: "<https://doi.org/10.1038/s41586-021-03819-2>", reverse: true },
-          { label: "what does one citing paper cite? (forward → AlphaFold)", pred: "<http://purl.org/spar/cito/cites>", seeds: "<https://doi.org/10.1101/2021.11.29.470303>", reverse: false },
-        ],
-      },
-    };
-
-    function renderReachDefaults() {
-      const cfg = REACH[$("ds").value];
-      $("reachPred").value = (cfg && cfg.pred) || "";
-      const list = (cfg && cfg.examples) || [];
-      $("reachExamples").innerHTML = list.length
-        ? "Examples: " + list.map((ex, i) =>
-            `<button type="button" class="ex-btn" data-rex="${i}">${esc(ex.label)}</button>`).join("")
-        : "";
-      $("reachExamples").querySelectorAll(".ex-btn").forEach((el) => el.onclick = () => {
-        const ex = list[Number(el.dataset.rex)];
-        $("reachPred").value = ex.pred;
-        $("reachSeeds").value = ex.seeds;
-        $("reachReverse").checked = !!ex.reverse;
-        runReach();
-        $("reachPred").scrollIntoView({ behavior: "smooth" });
-      });
-    }
-
-    function runReach() {
-      if (!bytes) { $("reachOut").innerHTML = `<p class="err">Load a file first.</p>`; return; }
-      const pred = $("reachPred").value.trim();
-      const reverse = $("reachReverse").checked;
-      const seeds = $("reachSeeds").value.split(",").map((s) => s.trim()).filter(Boolean);
-      if (!pred) { $("reachOut").innerHTML = `<p class="err">Enter a predicate IRI.</p>`; return; }
-      if (!seeds.length) { $("reachOut").innerHTML = `<p class="err">Enter at least one seed IRI.</p>`; return; }
-      const t0 = performance.now();
-      let results;
-      try {
-        results = JSON.parse(W().reach(bytes, pred, JSON.stringify(seeds), reverse));
-      } catch (e) {
-        $("reachMeta").textContent = "";
-        $("reachOut").innerHTML = `<p class="err">Error: ${esc(String(e))}</p>`;
-        return;
-      }
-      const dt = performance.now() - t0;
-      const dir = reverse ? "reached-by" : "reaches";
-      const rows = results.map((r) => {
-        if (r.error) {
-          return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td colspan="2" class="err">${esc(r.error)}</td></tr>`;
-        }
-        const CAP = 500; // don't build tens of thousands of DOM nodes for huge reach sets
-        const shown = r.reached.slice(0, CAP);
-        const more = r.count > CAP ? `<div class="muted small" style="margin-top:.3rem">…showing first ${CAP} of ${r.count}.</div>` : "";
-        const list = r.reached.length
-          ? `<details><summary>${r.count} node(s)</summary><div class="small">` +
-            shown.map((t) => `<div class="iri">${esc(shorten(t))}</div>`).join("") + more + `</div></details>`
-          : `<span class="muted">0 node(s)</span>`;
-        return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td>${r.count}</td><td>${list}</td></tr>`;
-      }).join("");
-      $("reachMeta").textContent = `${results.length} seed(s) · serial · ${dt.toFixed(1)} ms`;
-      $("reachOut").innerHTML =
-        `<table><thead><tr><th>seed</th><th>${dir} (count)</th><th>reached IRIs</th></tr></thead>` +
-        `<tbody>${rows}</tbody></table>`;
-    }
-
-    // --- localStorage history -------------------------------------------------
-    const HIST_KEY = "rete.history";
-    function loadHistory() {
-      try { return JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); }
-      catch (e) { return []; }
-    }
-    function saveHistory(entry) {
-      let hist = loadHistory();
-      hist.unshift(entry);
-      hist = hist.slice(0, 20);
-      try { localStorage.setItem(HIST_KEY, JSON.stringify(hist)); }
-      catch (e) { /* quota / disabled — degrade silently */ }
-      renderHistory();
-    }
-    function renderHistory() {
-      const hist = loadHistory();
-      const box = $("histList");
-      if (!hist.length) { box.innerHTML = `<p class="empty">No history yet.</p>`; return; }
-      // Chat-log order: oldest at the top, newest at the BOTTOM (hist[0] is newest).
-      const ordered = hist.slice().reverse();
-      box.innerHTML = ordered.map((h) => {
-        const idx = hist.indexOf(h);
-        const when = new Date(h.ts).toLocaleTimeString();
-        const snip = (h.query || "").replace(/\s+/g, " ").slice(0, 110);
-        return `<div class="bubble" data-h="${idx}" title="Click to restore this query">` +
-          `<div class="bq">${esc(snip)}</div>` +
-          `<div class="bmeta">${esc(h.dataset || "")} · ${esc(h.format)} · ${esc(h.resultSummary || "")} · ${esc(when)}</div>` +
-          `</div>`;
-      }).join("");
-      // Auto-scroll to the newest bubble (bottom), like a chat.
-      box.scrollTop = box.scrollHeight;
-      box.querySelectorAll(".bubble").forEach((el) => el.onclick = () => {
-        const h = loadHistory()[Number(el.dataset.h)];
-        if (!h) return;
-        $("q").value = h.query;
-        setView(h.format && h.format !== "json" ? h.format : "table");
-        setStrategy(h.strategy);
-        if (h.dataset && h.dataset !== $("ds").value && RETE_DATASETS_B64[h.dataset]) {
-          $("ds").value = h.dataset;
-          loadDataset(h.dataset);
-        }
-        $("q").scrollIntoView({ behavior: "smooth" });
-      });
-    }
-    $("clearHist").onclick = (e) => {
-      e.stopPropagation(); // don't toggle the enclosing <details>
-      try { localStorage.removeItem(HIST_KEY); } catch (e) { /* ignore */ }
-      renderHistory();
-    };
-
-    // --- shareable link (URL params) -----------------------------------------
-    function buildShareUrl() {
-      const params = new URLSearchParams();
-      if (activeSource === "url" && $("urlInput").value.trim()) {
-        params.set("url", $("urlInput").value.trim());
-      } else {
-        params.set("dataset", $("ds").value);
-      }
-      params.set("q", $("q").value);
-      params.set("format", $("fmt").value);
-      params.set("strategy", $("strategy").value);
-      const base = location.origin && location.origin !== "null"
-        ? location.origin + location.pathname
-        : location.href.split("?")[0].split("#")[0];
-      return base + "?" + params.toString();
-    }
-    $("shareBtn").onclick = async () => {
-      const link = buildShareUrl();
-      try {
-        await navigator.clipboard.writeText(link);
-        $("shareMsg").textContent = "Copied!";
-      } catch (e) {
-        // Fallback: prompt so the user can copy manually (no DOM clipboard perms on file://).
-        try { window.prompt("Copy this shareable link:", link); $("shareMsg").textContent = "Link ready."; }
-        catch (e2) { $("shareMsg").textContent = "Could not copy."; }
-      }
-      setTimeout(() => { $("shareMsg").textContent = ""; }, 2500);
-    };
-
-    function applyUrlParams() {
-      const p = new URLSearchParams(location.search);
-      const ds = p.get("dataset");
-      const q = p.get("q");
-      const fmt = p.get("format");
-      const strategy = p.get("strategy");
-      const url = p.get("url");
-      const validFmt = ["table", "ttl", "jsonld", "graph"];
-      const validStrategy = ["whole", "progressive", "community"];
-      if (fmt && validFmt.includes(fmt)) setView(fmt);
-      if (strategy && validStrategy.includes(strategy)) setStrategy(strategy);
-      if (q != null) $("q").value = q;
-      // Returns true if it already loaded a dataset/url (so boot skips its default).
-      if (url) { $("urlInput").value = url; loadFromUrl(url); return true; }
-      if (ds && RETE_DATASETS_B64[ds]) { $("ds").value = ds; loadDataset(ds); return true; }
-      return false;
-    }
-
-    // --- wiring ---------------------------------------------------------------
-    $("ds").onchange = () => loadDataset($("ds").value);
-    $("strategy").onchange = () => setStrategy();
-    $("run").onclick = runQuery;
-    $("shaclRun").onclick = runShacl;
-    $("reachRun").onclick = runReach;
-    $("urlBtn").onclick = () => loadFromUrl($("urlInput").value);
-    $("urlInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadFromUrl($("urlInput").value); });
-
-    $("viewSeg").querySelectorAll("button").forEach((b) =>
-      b.onclick = () => setView(b.dataset.view));
-
-    // drag-drop + file picker
-    const dz = $("dropzone");
-    dz.onclick = () => $("fileInput").click();
-    $("fileInput").onchange = (e) => loadFromFile(e.target.files && e.target.files[0]);
-    ["dragenter", "dragover"].forEach((ev) =>
-      dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("drag"); }));
-    ["dragleave", "drop"].forEach((ev) =>
-      dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove("drag"); }));
-    dz.addEventListener("drop", (e) => {
-      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      loadFromFile(f);
-    });
-
-    // Boot: initialize wasm from embedded bytes (no fetch), then apply URL params or default.
-    (async function boot() {
-      try {
-        await wasm_bindgen({ module_or_path: b64ToBytes(RETE_WASM_B64) });
-      } catch (e) {
-        $("meta").textContent = "WASM init failed: " + String(e);
-        return;
-      }
-      renderHistory();
-      const handled = applyUrlParams();
-      if (!handled) {
-        $("ds").value = DEFAULT_DATASET;
-        loadDataset(DEFAULT_DATASET);
-      }
-      // If a query was supplied via ?q=, run it once a graph is loaded.
-      if (new URLSearchParams(location.search).get("q") != null && bytes) runQuery();
-    })();
-  })();
+__PLAYGROUND_CATALOG_JS__
+  </script>
+  <script>
+__PLAYGROUND_APP_JS__
   </script>
 </body>
 </html>

@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Generate a fully self-contained, static playground at docs/playground.html.
+"""Generate a self-contained, static playground at docs/playground.html.
 
-The output runs entirely from WebAssembly with no server and no network fetches:
+The output runs entirely from WebAssembly with no server and no app-load network
+requests:
 - the wasm-bindgen *no-modules* glue (a classic script exposing a global
   ``wasm_bindgen``) is inlined verbatim,
 - the ``.wasm`` binary is embedded as base64 and handed to the initializer as
   bytes (so it never ``fetch``es), and
 - the example ``.rete`` datasets are embedded as a base64 map.
 
+The page still includes a user-initiated URL loader for custom `.rete` files.
+
 Prerequisites (all via Docker, see CLAUDE.md / docs):
-  wasm-pack build crates/rete-wasm --target no-modules --out-dir web/pkg-nomodules
+  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
   rete build examples/<x>.nt -o web/<x>.rete      # for each dataset below
 
 Run (deterministic):
-  python3 scripts/build_playground.py
+  uv run python scripts/build_playground.py
 """
 
 import base64
@@ -23,12 +26,16 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
+SRC = WEB / "playground-src"
 NOMOD = WEB / "pkg-nomodules"
 TEMPLATE = WEB / "playground.template.html"
 OUT = ROOT / "docs" / "playground.html"
 
 GLUE_JS = NOMOD / "rete_wasm.js"
 WASM = NOMOD / "rete_wasm_bg.wasm"
+CSS = SRC / "styles.css"
+CATALOG_JS = SRC / "catalog.js"
+APP_JS = SRC / "app.js"
 
 # Datasets to embed: (playground key, built .rete file under web/).
 # `citations` is the real OpenCitations network (citations of the AlphaFold paper,
@@ -54,7 +61,7 @@ def b64(path: pathlib.Path) -> str:
 
 
 def main() -> None:
-    for p in (TEMPLATE, GLUE_JS, WASM):
+    for p in (TEMPLATE, CSS, CATALOG_JS, APP_JS, GLUE_JS, WASM):
         if not p.exists():
             die(f"missing required input: {p} (build the no-modules wasm first)")
 
@@ -92,7 +99,24 @@ def main() -> None:
         template.replace("__GLUE_JS__", glue)
         .replace("__WASM_B64__", wasm_b64)
         .replace("__DATASETS_B64__", datasets_json)
+        .replace("__PLAYGROUND_CSS__", CSS.read_text(encoding="utf-8").rstrip())
+        .replace(
+            "__PLAYGROUND_CATALOG_JS__",
+            CATALOG_JS.read_text(encoding="utf-8").rstrip(),
+        )
+        .replace("__PLAYGROUND_APP_JS__", APP_JS.read_text(encoding="utf-8").rstrip())
     )
+    placeholders = (
+        "__GLUE_JS__",
+        "__WASM_B64__",
+        "__DATASETS_B64__",
+        "__PLAYGROUND_CSS__",
+        "__PLAYGROUND_CATALOG_JS__",
+        "__PLAYGROUND_APP_JS__",
+    )
+    missing = [p for p in placeholders if p in html]
+    if missing:
+        die("unreplaced template placeholder(s): " + ", ".join(missing))
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(html, encoding="utf-8")

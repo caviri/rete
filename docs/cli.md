@@ -81,6 +81,21 @@ Match a single triple pattern; omitted positions are wildcards.
 rete query data.rete --predicate '<http://ex/knows>'
 ```
 
+### `rete why <file> [--subject S] [--predicate P] [--object O] [--json]`
+Explain the provenance of each triple-pattern result. The command reports the
+matched terms, dictionary IDs, graph scope, chosen SPO/POS/OSP permutation, and
+the file byte ranges for the dictionary, index container, and pyramid metadata.
+With `--json`, the same data is emitted as stable machine-readable JSON.
+
+```sh
+rete why data.rete --predicate '<http://ex/knows>'
+rete why data.rete --subject '<http://ex/Alice>' --json
+```
+
+Current v0 provenance is honest about the physical layout: it identifies the
+index container and selected permutation section, but per-community tile
+provenance is reported as `not_materialized` until tile directories are stored.
+
 ### `rete bgp <file> "<pattern> . <pattern> …"`
 Evaluate a Basic Graph Pattern. Patterns are separated by ` . `, terms by spaces;
 `?name` is a variable (terms may not contain spaces).
