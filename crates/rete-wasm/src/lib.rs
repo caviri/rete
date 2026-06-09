@@ -5,9 +5,9 @@
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
     eval_sparql, project_graph, schema_classes, schema_summary, summary_query_shape,
-    tile_by_community, validate_shacl, CountingReader, DataGraph, Header, QueryOutput, RangeReader,
-    Rete, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, ValidationReport,
-    DEFAULT_TILE_BUDGET,
+    tile_by_community, validate_shacl, ByteRange, CountingReader, DataGraph, Header, QueryOutput,
+    RangeReader, Rete, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TripleProvenance,
+    ValidationReport, DEFAULT_TILE_BUDGET,
 };
 use wasm_bindgen::prelude::*;
 
@@ -44,6 +44,50 @@ pub fn query_triples(
     let rete = open(bytes)?;
     let rows = rete.query(subject.as_deref(), predicate.as_deref(), object.as_deref());
     serde_json::to_string(&rows).map_err(err)
+}
+
+/// Explain why each triple-pattern match is present in the `.rete` file.
+///
+/// `null`/`undefined` positions are wildcards. The JSON uses browser-facing
+/// camelCase fields:
+/// `{ "pattern", "resultCount", "results": [{ "terms", "ids", "provenance" }] }`.
+#[wasm_bindgen]
+pub fn why_triples(
+    bytes: &[u8],
+    subject: Option<String>,
+    predicate: Option<String>,
+    object: Option<String>,
+) -> Result<String, JsValue> {
+    why_triples_json(
+        bytes,
+        subject.as_deref(),
+        predicate.as_deref(),
+        object.as_deref(),
+    )
+    .map_err(|e| JsValue::from_str(&e))
+}
+
+/// Native-testable implementation for [`why_triples`].
+pub fn why_triples_json(
+    bytes: &[u8],
+    subject: Option<&str>,
+    predicate: Option<&str>,
+    object: Option<&str>,
+) -> Result<String, String> {
+    use serde_json::json;
+
+    let rete = Rete::open(bytes).map_err(|e| e.to_string())?;
+    let results = rete.query_with_provenance(subject, predicate, object);
+    let out = json!({
+        "pattern": {
+            "subject": subject,
+            "predicate": predicate,
+            "object": object,
+        },
+        "resultCount": results.len(),
+        "results": results.iter().map(provenance_json).collect::<Vec<_>>(),
+    });
+    serde_json::to_string(&out).map_err(|e| e.to_string())
 }
 
 /// Run a SPARQL SELECT; returns a JSON array of solution objects
@@ -674,6 +718,56 @@ fn progressive_meta<R: RangeReader>(
 
 fn integer_literal(value: u64) -> String {
     format!("\"{}\"^^<{}>", value, XSD_INTEGER_IRI)
+}
+
+fn provenance_json(m: &TripleProvenance) -> serde_json::Value {
+    use serde_json::json;
+
+    let tile = match &m.tile {
+        Some(id) => json!({
+            "available": true,
+            "id": id,
+        }),
+        None => json!({
+            "available": false,
+            "reason": "not_materialized",
+        }),
+    };
+
+    json!({
+        "terms": {
+            "subject": m.terms.0,
+            "predicate": m.terms.1,
+            "object": m.terms.2,
+        },
+        "ids": {
+            "subject": m.ids.0,
+            "predicate": m.ids.1,
+            "object": m.ids.2,
+        },
+        "provenance": {
+            "graph": m.graph.as_deref().unwrap_or("default"),
+            "matchedPattern": {
+                "subject": m.matched_pattern.0,
+                "predicate": m.matched_pattern.1,
+                "object": m.matched_pattern.2,
+            },
+            "indexPermutation": m.index_permutation.name(),
+            "indexSection": m.index_permutation.section_index(),
+            "dictionaryRange": range_json(m.dictionary_range),
+            "indexRange": range_json(m.index_range),
+            "pyramidRange": m.pyramid_range.map(range_json),
+            "tile": tile,
+        },
+    })
+}
+
+fn range_json(range: ByteRange) -> serde_json::Value {
+    serde_json::json!({
+        "offset": range.offset,
+        "len": range.len,
+        "end": range.end(),
+    })
 }
 
 /// Serialize a triple list (canonical N-Triples tokens) to Turtle: group by

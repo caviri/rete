@@ -84,8 +84,9 @@ rete query-url https://my-bucket.s3.amazonaws.com/social.rete \
 
 Open **[the playground](https://caviri.github.io/rete/playground.html)** — a self-contained page
 that embeds the WASM engine and example datasets (including a real ~588k-triple
-**OpenCitations** network). Pick a dataset, run the **Easy → Hard** example
-queries, visualise the ontology, and explore reachability — all offline.
+**OpenCitations** network). Pick a dataset, run filterable SPARQL examples,
+inspect progressive exactness metadata, validate SHACL, explore reachability,
+review schema summaries, and explain triple-pattern provenance — all offline.
 
 ## How fast?
 
@@ -130,6 +131,7 @@ format is **not yet stable across versions**. Format version `0.1` (draft).
 cargo test                 # round-trip, malformed-input robustness, range access, SPARQL
 cargo run -p rete-cli -- info some.rete
 bash scripts/smoke.sh      # end-to-end test of every CLI subcommand
+uv run python scripts/build_playground.py
 ```
 
 CI runs fmt, clippy, the test matrix, the CLI smoke test, and the WASM build in

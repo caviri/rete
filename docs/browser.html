@@ -198,8 +198,10 @@ SPARQL, zstd decode) to WebAssembly, so a web page queries a <code>.rete</code> 
 client-side with no server. <code>web/index.html</code> is a working serverless explorer.</p>
 <h2>Build</h2>
 <pre><code class="language-sh">wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
+wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
 rete build examples/typed.nt -o web/typed.rete   # ontology demo (People &amp; Orgs)
 rete build examples/deps.nt  -o web/deps.rete    # CVE-impact demo (dependsOn+)
+uv run python scripts/build_playground.py
 python3 scripts/range_server.py 8000 web          # open http://localhost:8000
 </code></pre>
 <p>zstd's C encoder isn't used on wasm; decoding uses the pure-Rust <code>ruzstd</code>, so the
@@ -211,6 +213,7 @@ browser reads compressed files fine. <code>rete-wasm</code> depends on <code>ret
 <tr><td><code>info(bytes)</code></td><td><code>{ quads, terms, pyramidLevels, namedGraphs }</code></td></tr>
 <tr><td><code>graph_names(bytes)</code></td><td>array of named-graph IRIs</td></tr>
 <tr><td><code>query_triples(bytes, s?, p?, o?)</code></td><td><code>[[s,p,o], …]</code> (omit a position for a wildcard)</td></tr>
+<tr><td><code>why_triples(bytes, s?, p?, o?)</code></td><td><code>{ pattern, resultCount, results:[{ terms, ids, provenance }] }</code> for triple-pattern provenance</td></tr>
 <tr><td><code>query_sparql(bytes, query)</code></td><td>SELECT-only compatibility wrapper; array of solution objects <code>{ var: value, ... }</code></td></tr>
 <tr><td><code>schema(bytes)</code></td><td><code>{ classes: [["&lt;iri&gt;",count]], relations: [["s","p","o",count]] }</code></td></tr>
 <tr><td><code>header_ranges(headerBytes)</code></td><td><code>{ dictOffset, dictLen, pyramidOffset, pyramidLen, indexOffset, indexLen }</code></td></tr>
@@ -239,6 +242,12 @@ seed in input order: <code>{ seed, count, reached }</code>, or <code>{ seed, err
 not in the graph (so one unknown seed never fails the whole call). It runs
 <strong>serially</strong> — the browser engine is single-threaded; the native CLI's
 <code>rete reach --parallel</code> fans one task per seed for a real speedup.</p>
+<p><code>why_triples</code> exposes the same result-provenance path as <code>rete why</code>. It resolves
+the optional triple pattern through <code>Rete::query_with_provenance</code> and returns
+browser-style camelCase fields: <code>resultCount</code>, <code>matchedPattern</code>,
+<code>indexPermutation</code>, <code>indexSection</code>, <code>dictionaryRange</code>, <code>indexRange</code>, and
+<code>pyramidRange</code>. Tile provenance is explicit even before tile directories are
+materialized: <code>{ "available": false, "reason": "not_materialized" }</code>.</p>
 <h3>Minimal example</h3>
 <pre><code class="language-js">import init, { info, query_sparql } from "./pkg/rete_wasm.js";
 await init();
@@ -305,15 +314,14 @@ of these shapes:</p>
 }
 </code></pre>
 <h2>The demo page / playground</h2>
-<p><code>web/index.html</code> ties it together: it renders the <code>schema</code> ontology overview on
-load, lets you click a class or relation to drill in with a generated SPARQL
-query, has a <strong>dataset selector</strong> (typed / deps / papers) with one-click example
-queries, and a <strong>"Load overview only"</strong> button that runs the progressive path
-above against the range server. It is also an <strong>interactive query playground</strong>:
-SELECT / ASK / CONSTRUCT with Table / Turtle / JSON-LD output (via <code>query</code>), a
-summary-only progressive evaluation mode (via <code>progressive_query</code>), a "split by
-community" evaluation view (via <code>communities</code>), query timing, and a localStorage
-history. See <a href="playground.html">Interactive playground</a> for the full walk-through.</p>
+<p><code>docs/playground.html</code> is the static console build. It is generated from
+<code>web/playground.template.html</code> plus the source fragments in
+<code>web/playground-src/</code>, then inlines the no-modules WASM glue, WASM bytes, and
+bundled <code>.rete</code> datasets. It opens directly from <code>file://</code>, defaults to SPARQL,
+and keeps SHACL, reachability, schema, and provenance modes available without a
+runtime server or bundler. The WASM initializer receives embedded bytes; the
+generator removes wasm-bindgen's URL/fetch fallback so app boot cannot silently
+go to the network.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
