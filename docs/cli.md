@@ -115,10 +115,12 @@ rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE 
 ### `rete cost <file-or-url> "<query>" [--json] [--explain]`
 Preview the byte/range-request cost of a SPARQL query without evaluating it.
 The report parses the query, lists the concrete predicates that can drive
-summary-based routing, and compares two access paths:
+summary-based routing, and compares three access paths:
 
 - **summary overview** — header + dictionary + pyramid summary, skipping the
   triple index.
+- **routed pattern open** — for a single default-graph triple pattern, header +
+  dictionary + the one selected SPO/POS/OSP permutation payload.
 - **full query open** — the current SPARQL engine path, which opens dictionary +
   index (+ pyramid/named-graph metadata when present) before evaluation.
 
@@ -141,13 +143,13 @@ are marked `requires_index`.
 
 Add `--explain` to include a planner explanation. In JSON, this adds an
 `explain` object with the classified `query_shape`, whether the answer is
-`summary_exact`, the planned access path (`summary-only` or `full-index`), and
-whether the current engine path still reads the index.
+`summary_exact`, the planned access path (`summary-only`, `routed-pattern`, or
+`full-index`), and whether the current engine path still reads the index.
 
 For HTTP(S), the host must honor `Range` requests, just like `query-url` and
 `sparql-url`. Treat this as a deployment/debugging preview: it reports the
-current engine's range budget and the cheaper overview/routing budget; future
-tile-routed progressive queries can refine the estimate by query shape.
+current SPARQL engine's range budget, the summary budget, and the exact routed
+single-pattern budget when the query shape allows it.
 
 ### `rete progressive <file-or-url> "<query>" [--json]`
 Run the first summary-only progressive query path. This command answers only
@@ -286,7 +288,10 @@ The (large) index is never fetched — the "overview first" path.
 
 ### `rete query-url <url> [--subject S] [--predicate P] [--object O]`
 Match a triple pattern over HTTP, fetching only the byte ranges the query needs
-and reporting how many ranges/bytes were pulled.
+and reporting how many ranges/bytes were pulled. Bound terms are resolved from
+the dictionary first; if they exist, the reader fetches only the selected
+SPO/POS/OSP permutation payload rather than the whole index container. If a
+bound term is unknown, the index is skipped entirely and the result is empty.
 
 ```sh
 rete query-url https://host/data.rete --object '<http://ex/Dave>'

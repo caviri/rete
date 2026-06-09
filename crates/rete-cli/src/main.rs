@@ -264,8 +264,9 @@ enum Command {
     },
     /// Preview the range-read byte cost of running a SPARQL query.
     ///
-    /// Reports the cheap summary/overview path and the current full SPARQL
-    /// query-open path without evaluating or materializing query results.
+    /// Reports the cheap summary/overview path, the routed single-pattern path
+    /// when applicable, and the current full SPARQL query-open path without
+    /// materializing query results.
     Cost {
         /// Local `.rete` file path or http(s) URL.
         source: String,
@@ -325,7 +326,8 @@ enum Command {
         /// http(s):// URL of a `.rete` file (S3, GitHub, any CDN).
         url: String,
     },
-    /// Query a triple pattern over HTTP, fetching only the byte ranges needed.
+    /// Query a triple pattern over HTTP, fetching only the selected permutation
+    /// payload after dictionary resolution.
     QueryUrl {
         /// http(s):// URL of a `.rete` file (host must honor Range requests).
         url: String,

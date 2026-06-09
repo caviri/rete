@@ -275,10 +275,12 @@ standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a 
 <h3><code>rete cost &lt;file-or-url&gt; "&lt;query&gt;" [--json] [--explain]</code></h3>
 <p>Preview the byte/range-request cost of a SPARQL query without evaluating it.
 The report parses the query, lists the concrete predicates that can drive
-summary-based routing, and compares two access paths:</p>
+summary-based routing, and compares three access paths:</p>
 <ul>
 <li><strong>summary overview</strong> — header + dictionary + pyramid summary, skipping the
 triple index.</li>
+<li><strong>routed pattern open</strong> — for a single default-graph triple pattern, header +
+dictionary + the one selected SPO/POS/OSP permutation payload.</li>
 <li><strong>full query open</strong> — the current SPARQL engine path, which opens dictionary +
 index (+ pyramid/named-graph metadata when present) before evaluation.</li>
 </ul>
@@ -298,12 +300,12 @@ predicate distinct counts return the number of predicates. More complex shapes
 are marked <code>requires_index</code>.</p>
 <p>Add <code>--explain</code> to include a planner explanation. In JSON, this adds an
 <code>explain</code> object with the classified <code>query_shape</code>, whether the answer is
-<code>summary_exact</code>, the planned access path (<code>summary-only</code> or <code>full-index</code>), and
-whether the current engine path still reads the index.</p>
+<code>summary_exact</code>, the planned access path (<code>summary-only</code>, <code>routed-pattern</code>, or
+<code>full-index</code>), and whether the current engine path still reads the index.</p>
 <p>For HTTP(S), the host must honor <code>Range</code> requests, just like <code>query-url</code> and
 <code>sparql-url</code>. Treat this as a deployment/debugging preview: it reports the
-current engine's range budget and the cheaper overview/routing budget; future
-tile-routed progressive queries can refine the estimate by query shape.</p>
+current SPARQL engine's range budget, the summary budget, and the exact routed
+single-pattern budget when the query shape allows it.</p>
 <h3><code>rete progressive &lt;file-or-url&gt; "&lt;query&gt;" [--json]</code></h3>
 <p>Run the first summary-only progressive query path. This command answers only
 the exact shapes that can be proven from the pyramid summary without opening
@@ -412,7 +414,10 @@ requests (S3, GitHub, any CDN).</p>
 The (large) index is never fetched — the "overview first" path.</p>
 <h3><code>rete query-url &lt;url&gt; [--subject S] [--predicate P] [--object O]</code></h3>
 <p>Match a triple pattern over HTTP, fetching only the byte ranges the query needs
-and reporting how many ranges/bytes were pulled.</p>
+and reporting how many ranges/bytes were pulled. Bound terms are resolved from
+the dictionary first; if they exist, the reader fetches only the selected
+SPO/POS/OSP permutation payload rather than the whole index container. If a
+bound term is unknown, the index is skipped entirely and the result is empty.</p>
 <pre><code class="language-sh">rete query-url https://host/data.rete --object '&lt;http://ex/Dave&gt;'
 </code></pre>
 <h3><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>

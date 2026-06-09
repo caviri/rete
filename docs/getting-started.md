@@ -106,11 +106,12 @@ rete query-url   https://my-bucket.s3.amazonaws.com/data.rete --predicate '<http
 rete summary-url https://raw.githubusercontent.com/me/repo/main/data.rete
 ```
 
-`query-url` fetches only the byte ranges a query needs; `summary-url` reads just
-the header, dictionary, and summary — **the index is never downloaded**. The host
-**must** return `206 Partial Content` to a `Range` request; a host that ignores
-`Range` (returns `200`) is rejected with a clear error rather than silently
-returning wrong bytes.
+`query-url` resolves bound terms from the dictionary, then fetches only the
+selected SPO/POS/OSP permutation payload for the triple pattern. `summary-url`
+reads just the header, dictionary, and summary — **the index is never
+downloaded**. The host **must** return `206 Partial Content` to a `Range`
+request; a host that ignores `Range` (returns `200`) is rejected with a clear
+error rather than silently returning wrong bytes.
 
 ## Testing
 

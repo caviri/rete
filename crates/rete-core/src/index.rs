@@ -134,9 +134,10 @@ impl GraphIndex {
         [&self.spo, &self.pos, &self.osp]
     }
 
-    /// The permutation selected for a pattern. Ties keep the canonical SPO
-    /// order, which makes provenance stable for unbound or equally selective
-    /// shapes.
+    /// The permutation selected for a pattern: the one with the longest bound
+    /// prefix. Ties keep the canonical SPO order (then POS, then OSP), which
+    /// makes provenance stable for unbound or equally selective shapes and routes
+    /// a fully unbound pattern to the SPO block rather than fetching all three.
     pub fn best_permutation(pattern: Pattern) -> IndexPermutation {
         let mut best = IndexPermutation::Spo;
         let mut best_score = best.leading_bound(pattern);
@@ -156,6 +157,27 @@ impl GraphIndex {
             IndexPermutation::Pos => &self.pos,
             IndexPermutation::Osp => &self.osp,
         }
+    }
+
+    /// Match one already-decoded serialized permutation block. This is the core
+    /// primitive for range-routed readers: the caller fetches only the selected
+    /// block payload, then this scans it as if it came from a full [`GraphIndex`].
+    pub fn match_serialized_block(
+        bytes: &[u8],
+        permutation: IndexPermutation,
+        pattern: Pattern,
+    ) -> Vec<Triple> {
+        let [pa, pb, pc] = permutation.order_pattern(pattern);
+        let mut out: Vec<Triple> = TripleBlock::parse(bytes)
+            .ok()
+            .filter(|b| b.zone().may_contain(pa, pb, pc))
+            .map(|b| b.scan(pa, pb, pc))
+            .into_iter()
+            .flatten()
+            .map(move |abc| permutation.back(abc))
+            .collect();
+        out.sort_unstable();
+        out
     }
 
     /// All triples matching `pattern`, returned in canonical `(s, p, o)` order.

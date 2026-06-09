@@ -181,3 +181,66 @@ fn full_open_is_bounded_not_a_scan() {
     let plain = Rete::open(&image).unwrap();
     assert_eq!(rete.dump(None).len(), plain.dump(None).len());
 }
+
+#[test]
+fn routed_pattern_query_fetches_only_the_selected_permutation() {
+    let image = image_with_pyramid();
+    let (idx_start, idx_end) = index_region(&image);
+    let plain = Rete::open(&image).unwrap();
+    let expected = plain.query(Some("<http://ex/n0>"), Some("<http://ex/knows>"), None);
+    assert!(!expected.is_empty());
+
+    let full_reader = RecordingReader::new(image.clone());
+    let _ = Rete::open_ranged(&full_reader).unwrap();
+
+    let reader = RecordingReader::new(image.clone());
+    let got = Rete::query_ranged(
+        &reader,
+        Some("<http://ex/n0>"),
+        Some("<http://ex/knows>"),
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(got, expected);
+    assert!(
+        reader.bytes_read() < full_reader.bytes_read(),
+        "routed pattern query read {} bytes; full ranged open read {} bytes",
+        reader.bytes_read(),
+        full_reader.bytes_read()
+    );
+    assert!(
+        reader
+            .reads()
+            .iter()
+            .any(|r| overlaps(*r, (idx_start, idx_end))),
+        "the routed query should fetch the selected index permutation"
+    );
+    assert!(
+        !reader.reads().contains(&(idx_start, idx_end - idx_start)),
+        "routed query must not fetch the whole index container"
+    );
+}
+
+#[test]
+fn routed_pattern_query_with_unknown_term_skips_the_index() {
+    let image = image_with_pyramid();
+    let (idx_start, idx_end) = index_region(&image);
+    let reader = RecordingReader::new(image);
+
+    let got = Rete::query_ranged(
+        &reader,
+        Some("<http://ex/missing>"),
+        Some("<http://ex/knows>"),
+        None,
+    )
+    .unwrap();
+
+    assert!(got.is_empty());
+    for r in reader.reads() {
+        assert!(
+            !overlaps(r, (idx_start, idx_end)),
+            "unknown-term query read index range {r:?}"
+        );
+    }
+}

@@ -80,6 +80,11 @@ rete query-url https://my-bucket.s3.amazonaws.com/social.rete \
   --object '<http://ex/Alice>'
 ```
 
+`query-url` resolves bound terms from the dictionary, then range-fetches only
+the selected SPO/POS/OSP permutation payload for that triple pattern. Full
+SPARQL-over-URL still uses the broader ranged open path; `rete cost --explain`
+shows when a query can use the summary-only or routed-pattern budgets.
+
 ### Try it in your browser (no install)
 
 Open **[the playground](https://caviri.github.io/rete/playground.html)** — a self-contained page
