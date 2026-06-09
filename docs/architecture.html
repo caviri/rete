@@ -255,6 +255,20 @@ non-materializing paths, and several aggregate shapes operate in integer space.
 materialize intermediate rows.</p>
 <p>Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
 nested <code>SELECT</code> subqueries and <code>SERVICE</code> federation.</p>
+<h2>Result Provenance</h2>
+<p><code>Rete::query_with_provenance</code> is the core API behind <code>rete why</code>. It runs the same
+triple-pattern path as <code>Rete::query</code>, then attaches:</p>
+<ul>
+<li>the matched terms and dictionary IDs,</li>
+<li>the graph scope (<code>default</code> today for the local triple-pattern command),</li>
+<li>the resolved ID-space pattern,</li>
+<li>the selected permutation (<code>SPO</code>, <code>POS</code>, or <code>OSP</code>) and section index,</li>
+<li>the header byte ranges for dictionary, index container, and pyramid metadata.</li>
+</ul>
+<p>This is intentionally physical-file provenance, not a narrative explanation. In
+v0 the index is still stored as one permutation container, so provenance can name
+the selected permutation and container range but not a per-community tile. <code>rete why --json</code> reports that tile provenance is <code>not_materialized</code> until tile
+directories are added.</p>
 <h2>Progressive And Cost Paths</h2>
 <p>The summary path is the first layer of progressive querying. These query shapes
 are exact from the summary and skip the full index:</p>
@@ -312,7 +326,7 @@ compatibility notes.</li>
 <h2>Extension Points</h2>
 <table><thead><tr><th>Area</th><th>Next work</th></tr></thead><tbody>
 <tr><td>Tile-routed query refinement</td><td>Use the pyramid to fetch only relevant exact ranges</td></tr>
-<tr><td>Result provenance</td><td>Attach contributing triples/blocks/ranges to query answers</td></tr>
+<tr><td>Result provenance</td><td>Extend current triple-pattern provenance from container ranges to block/tile ranges</td></tr>
 <tr><td>Query engine rows</td><td>Replace wide <code>BTreeMap&lt;String, String&gt;</code> bindings with integer slot rows</td></tr>
 <tr><td>Benchmark docs</td><td>Refresh JSON snapshots with <code>rete-bench --json</code> and regenerate the benchmark section</td></tr>
 <tr><td>SHACL</td><td>Add <code>sh:qualifiedValueShapesDisjoint</code> if full Core coverage becomes necessary</td></tr>

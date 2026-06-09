@@ -224,6 +224,7 @@ rete build examples/social.nt -o social.rete
 
 # Query a triple pattern, a BGP, or full SPARQL:
 rete query  social.rete --predicate '&lt;http://ex/knows&gt;'
+rete why    social.rete --predicate '&lt;http://ex/knows&gt;'   # result provenance
 rete sparql social.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p ?age WHERE { ?p e:age ?age . FILTER(?age &gt; 27) }"
 
 # Query straight from a URL — fetches only the byte ranges needed (http or https):

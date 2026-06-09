@@ -14,37 +14,55 @@ pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
 
 /// Which stored permutation to scan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Perm {
+pub enum IndexPermutation {
     Spo,
     Pos,
     Osp,
 }
 
-impl Perm {
+impl IndexPermutation {
+    /// Stable display name used in CLI diagnostics and provenance records.
+    pub fn name(self) -> &'static str {
+        match self {
+            IndexPermutation::Spo => "SPO",
+            IndexPermutation::Pos => "POS",
+            IndexPermutation::Osp => "OSP",
+        }
+    }
+
+    /// Section number inside the stored permutation container.
+    pub fn section_index(self) -> usize {
+        match self {
+            IndexPermutation::Spo => 0,
+            IndexPermutation::Pos => 1,
+            IndexPermutation::Osp => 2,
+        }
+    }
+
     /// Map a canonical `(s, p, o)` triple into this permutation's `(a, b, c)`.
     fn forward(self, (s, p, o): Triple) -> Triple {
         match self {
-            Perm::Spo => (s, p, o),
-            Perm::Pos => (p, o, s),
-            Perm::Osp => (o, s, p),
+            IndexPermutation::Spo => (s, p, o),
+            IndexPermutation::Pos => (p, o, s),
+            IndexPermutation::Osp => (o, s, p),
         }
     }
 
     /// Map a stored `(a, b, c)` back to canonical `(s, p, o)`.
     fn back(self, (a, b, c): Triple) -> Triple {
         match self {
-            Perm::Spo => (a, b, c),
-            Perm::Pos => (c, a, b), // a=p, b=o, c=s
-            Perm::Osp => (b, c, a), // a=o, b=s, c=p
+            IndexPermutation::Spo => (a, b, c),
+            IndexPermutation::Pos => (c, a, b), // a=p, b=o, c=s
+            IndexPermutation::Osp => (b, c, a), // a=o, b=s, c=p
         }
     }
 
     /// The pattern's bound components in this permutation's component order.
     fn order_pattern(self, (s, p, o): Pattern) -> [Option<u32>; 3] {
         match self {
-            Perm::Spo => [s, p, o],
-            Perm::Pos => [p, o, s],
-            Perm::Osp => [o, s, p],
+            IndexPermutation::Spo => [s, p, o],
+            IndexPermutation::Pos => [p, o, s],
+            IndexPermutation::Osp => [o, s, p],
         }
     }
 
@@ -77,9 +95,9 @@ impl GraphIndexBuilder {
         let mut pos = TripleBlockBuilder::new();
         let mut osp = TripleBlockBuilder::new();
         for &t in &self.triples {
-            spo.push(Perm::Spo.forward(t));
-            pos.push(Perm::Pos.forward(t));
-            osp.push(Perm::Osp.forward(t));
+            spo.push(IndexPermutation::Spo.forward(t));
+            pos.push(IndexPermutation::Pos.forward(t));
+            osp.push(IndexPermutation::Osp.forward(t));
         }
         GraphIndex {
             spo: spo.build(),
@@ -116,6 +134,30 @@ impl GraphIndex {
         [&self.spo, &self.pos, &self.osp]
     }
 
+    /// The permutation selected for a pattern. Ties keep the canonical SPO
+    /// order, which makes provenance stable for unbound or equally selective
+    /// shapes.
+    pub fn best_permutation(pattern: Pattern) -> IndexPermutation {
+        let mut best = IndexPermutation::Spo;
+        let mut best_score = best.leading_bound(pattern);
+        for perm in [IndexPermutation::Pos, IndexPermutation::Osp] {
+            let score = perm.leading_bound(pattern);
+            if score > best_score {
+                best = perm;
+                best_score = score;
+            }
+        }
+        best
+    }
+
+    fn block(&self, perm: IndexPermutation) -> &[u8] {
+        match perm {
+            IndexPermutation::Spo => &self.spo,
+            IndexPermutation::Pos => &self.pos,
+            IndexPermutation::Osp => &self.osp,
+        }
+    }
+
     /// All triples matching `pattern`, returned in canonical `(s, p, o)` order.
     ///
     /// Thin eager wrapper over [`scan_iter`](Self::scan_iter): collect the lazy
@@ -136,15 +178,8 @@ impl GraphIndex {
     /// than panicking.
     pub fn scan_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
         // Pick the permutation with the longest leading-bound prefix.
-        let perm = [Perm::Spo, Perm::Pos, Perm::Osp]
-            .into_iter()
-            .max_by_key(|p| p.leading_bound(pattern))
-            .unwrap();
-        let bytes: &[u8] = match perm {
-            Perm::Spo => &self.spo,
-            Perm::Pos => &self.pos,
-            Perm::Osp => &self.osp,
-        };
+        let perm = Self::best_permutation(pattern);
+        let bytes = self.block(perm);
         let [pa, pb, pc] = perm.order_pattern(pattern);
         // Parse (untrusted bytes ⇒ `None` on malformed) and zone-prune up front,
         // then stream the matching groups, mapping each back to canonical order.

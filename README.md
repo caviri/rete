@@ -71,6 +71,7 @@ rete build examples/social.nt -o social.rete
 
 # 2. Query it — a triple pattern, or full SPARQL:
 rete query  social.rete --predicate '<http://ex/knows>'
+rete why    social.rete --predicate '<http://ex/knows>'   # explain result provenance
 rete sparql social.rete "PREFIX e: <http://ex/> \
   SELECT ?p ?age WHERE { ?p e:age ?age . FILTER(?age > 27) }"
 
