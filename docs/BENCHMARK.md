@@ -68,129 +68,127 @@ no pathological blowup: build 1.63 s, triple query 31 ms, property path 107 ms,
 GROUP BY 526 ms, predicate totals 17 ms (summary stays cheap regardless of size),
 file 1.80 MB (same 11.8× vs raw / ~1.27× vs gzip ratios).
 
+<!-- benchmark:opencitations:start -->
 ## Comparison vs Oxigraph (real OpenCitations network)
 
-Dataset: the real **OpenCitations** citation network from the
-[playground](playground.html) — papers citing the AlphaFold paper
-(`10.1038/s41586-021-03819-2`), enriched with clearly-labelled synthetic
-metadata. **~588 k triples** (539,246 after Oxigraph's spec-strict parser dropped
-88 malformed compound-DOI IRIs present in the OpenCitations dump; **both engines
-load the same sanitized N-Triples**, so it is apples-to-apples). One process
-loads both engines and times each workload warm — median of 5 runs (queries) /
-3 (reach) — via `cargo run --release -p rete-bench`. Latest run:
-**2026-06-08**. **Oxigraph 0.5.8**, in-memory store (no RocksDB). Machine:
-32 logical cores.
+Dataset: the real **OpenCitations** citation network from the [playground](playground.html) - papers citing the AlphaFold paper (`10.1038/s41586-021-03819-2`), enriched with clearly-labelled synthetic metadata.
+
+**~588 k triples** in the playground dataset, **539,246 triples** after Oxigraph's spec-strict parser dropped 88 malformed compound-DOI IRIs present in the OpenCitations dump. Both engines load the same sanitized N-Triples, so the comparison is apples-to-apples.
 
 This pits rete (a queryable *file*) against Oxigraph (a full in-memory
-triplestore with a mature SPARQL planner). Honest summary: rete **opens ~150×
-faster** (indexes are prebuilt in the file), wins several scan/aggregate shapes,
-still loses badly where Oxigraph can stream, stop early, or apply a mature
-planner, and **wins decisively on multi-source reachability**.
+triplestore with a mature SPARQL planner). Honest summary: rete opens
+much faster because its indexes are prebuilt in the file, wins several
+scan/aggregate shapes, still loses where Oxigraph can stream, stop early,
+or apply a mature planner, and wins decisively on multi-source
+reachability.
+
+This section is generated from
+`docs/benchmark-opencitations.json` with
+`scripts/render_benchmark_doc.py`. Latest run:
+**2026-06-08**. **Oxigraph 0.5.8**, in-memory store
+(no RocksDB). Machine: 32 logical cores.
 
 ### Load / open (one-time)
 
 | Engine | Step | Time |
 |---|---|--:|
-| **rete** | `Rete::open` — indexes already built in the file | **15.6 ms** |
-| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2,415 ms |
+| **rete** | `Rete::open` - indexes already built in the file | **15.6 ms** |
+| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2415 ms |
 
-rete's "load" just maps a file whose dictionary + permutation indexes already
-exist on disk; Oxigraph parses 539 k triples and builds its indexes on every
-startup. This is the format's core promise — **publish once, open instantly,
-query in place** — not a query-engine trick.
+rete's "load" just maps a file whose dictionary + permutation indexes
+already exist on disk; Oxigraph parses the triples and builds its indexes
+on every startup. This is the format's core promise: **publish once, open
+instantly, query in place**.
 
 ### SPARQL operator coverage (both single-threaded)
 
-24 queries spanning every supported form and operator, run on both engines.
-**Every one returns the identical row count** — a cross-engine correctness check
-across the whole language surface, not just a speed race. Median of 5 warm runs.
+24 queries spanning supported forms and operators, run on both
+engines. Row counts are a cross-engine correctness check across the
+language surface, not just a speed race.
+Median of 5 warm runs.
 
-| Operator / form | rete | Oxigraph | rete vs oxi | rows | ✓ |
+| Operator / form | rete | Oxigraph | rete vs oxi | rows | ok |
 |---|--:|--:|--:|--:|:--:|
-| SELECT count (aggregate) | **2.77 ms** | 7.12 ms | 2.6× | 1 | ✓ |
-| SELECT DISTINCT | **4.81 ms** | 7.33 ms | 1.5× | 6 | ✓ |
-| ASK | 0.30 ms | 0.01 ms | — | 1 | ✓ |
-| CONSTRUCT | 0.02 ms | 0.01 ms | 0.8× | 9 | ✓ |
-| DESCRIBE (impl-defined) | 0.02 ms | 0.01 ms | 0.5× | 11 | ✓ |
-| VALUES (inline data) | 10.51 ms | 5.71 ms | 0.5× | 10,962 | ✓ |
-| UNION | 9.18 ms | 4.26 ms | 0.5× | 10,993 | ✓ |
-| OPTIONAL (left join) | 63.75 ms | 0.16 ms | — | 200 | ✓ |
-| MINUS | 7.77 ms | 1.67 ms | 0.2× | 2,728 | ✓ |
-| FILTER NOT EXISTS | 7.95 ms | 7.57 ms | 1.0× | 2,728 | ✓ |
-| 3-way join + `LIMIT` | 44.58 ms | 0.12 ms | — | 50 | ✓ |
-| FILTER REGEX (case-insens.) | 64.40 ms | 0.51 ms | — | 200 | ✓ |
-| FILTER arithmetic + logical | 3.90 ms | 0.76 ms | 0.2× | 200 | ✓ |
-| BIND + SUBSTR + CONCAT | 12.80 ms | 0.24 ms | — | 200 | ✓ |
-| path sequence `a/b` | 63.14 ms | 0.20 ms | — | 200 | ✓ |
-| path inverse `^p` (count) | **2.71 ms** | 4.38 ms | 1.6× | 1 | ✓ |
-| path `+` transitive (count) | 8.40 ms | 7.47 ms | 0.9× | 1 | ✓ |
-| path `*` zero-or-more (count) | 8.43 ms | 8.41 ms | 1.0× | 1 | ✓ |
-| GROUP BY + ORDER BY | **4.92 ms** | 8.24 ms | 1.7× | 6 | ✓ |
-| GROUP BY + HAVING | 4.86 ms | 4.76 ms | 1.0× | 5 | ✓ |
-| AVG per group | **34.46 ms** | 47.83 ms | 1.4× | 6 | ✓ |
-| MIN / MAX / SUM | **9.69 ms** | 17.72 ms | 1.8× | 1 | ✓ |
-| COUNT(DISTINCT) | **5.28 ms** | 10.12 ms | 1.9× | 1 | ✓ |
-| ORDER BY + LIMIT + OFFSET | 63.04 ms | 18.74 ms | 0.3× | 10 | ✓ |
+| SELECT count (aggregate) | **2.77 ms** | 7.12 ms | 2.6x | 1 | yes |
+| SELECT DISTINCT | **4.81 ms** | 7.33 ms | 1.5x | 6 | yes |
+| ASK | 0.30 ms | **0.01 ms** | 0.0x | 1 | yes |
+| CONSTRUCT | 0.02 ms | **0.01 ms** | 0.8x | 9 | yes |
+| DESCRIBE (impl-defined) | 0.02 ms | **0.01 ms** | 0.5x | 11 | yes |
+| VALUES (inline data) | 10.5 ms | **5.71 ms** | 0.5x | 10962 | yes |
+| UNION | 9.18 ms | **4.26 ms** | 0.5x | 10993 | yes |
+| OPTIONAL (left join) | 63.8 ms | **0.16 ms** | 0.0x | 200 | yes |
+| MINUS | 7.77 ms | **1.67 ms** | 0.2x | 2728 | yes |
+| FILTER NOT EXISTS | 7.95 ms | **7.57 ms** | 1.0x | 2728 | yes |
+| 3-way join + `LIMIT` | 44.6 ms | **0.12 ms** | 0.0x | 50 | yes |
+| FILTER REGEX (case-insens.) | 64.4 ms | **0.51 ms** | 0.0x | 200 | yes |
+| FILTER arithmetic + logical | 3.90 ms | **0.76 ms** | 0.2x | 200 | yes |
+| BIND + SUBSTR + CONCAT | 12.8 ms | **0.24 ms** | 0.0x | 200 | yes |
+| path sequence `a/b` | 63.1 ms | **0.20 ms** | 0.0x | 200 | yes |
+| path inverse `^p` (count) | **2.71 ms** | 4.38 ms | 1.6x | 1 | yes |
+| path `+` transitive (count) | 8.40 ms | **7.47 ms** | 0.9x | 1 | yes |
+| path `*` zero-or-more (count) | 8.43 ms | **8.41 ms** | 1.0x | 1 | yes |
+| GROUP BY + ORDER BY | **4.92 ms** | 8.24 ms | 1.7x | 6 | yes |
+| GROUP BY + HAVING | 4.86 ms | **4.76 ms** | 1.0x | 5 | yes |
+| AVG per group | **34.5 ms** | 47.8 ms | 1.4x | 6 | yes |
+| MIN / MAX / SUM | **9.69 ms** | 17.7 ms | 1.8x | 1 | yes |
+| COUNT(DISTINCT) | **5.28 ms** | 10.1 ms | 1.9x | 1 | yes |
+| ORDER BY + LIMIT + OFFSET | 63.0 ms | **18.7 ms** | 0.3x | 10 | yes |
 
-**24 / 24 identical row counts** — across SELECT/ASK/CONSTRUCT/DESCRIBE, every
-algebra operator (UNION, OPTIONAL, MINUS, `NOT EXISTS`, VALUES), filters and
-functions (REGEX, arithmetic, BIND/SUBSTR/CONCAT), all four property-path shapes
-(`a/b`, `^p`, `+`, `*`), and the full aggregate set.
+**24 / 24 identical row counts** across
+SELECT/ASK/CONSTRUCT/DESCRIBE, algebra operators, filters/functions,
+property paths, and aggregates.
 
 Reading the times honestly:
 
-- rete **wins or ties** several index-served and aggregate shapes: simple count,
-  DISTINCT in this run, inverse path `^p`, transitive `+`/`*` counts, `GROUP BY`,
-  AVG, MIN/MAX/SUM, `COUNT(DISTINCT)`, and `FILTER NOT EXISTS`.
-- Oxigraph still **dominates many shapes it can stream or stop early** — ASK,
-  OPTIONAL with `LIMIT`, 3-way joins with `LIMIT`, REGEX/BIND scans, path
-  sequence `a/b`, and offset pagination — because its planner is mature and lazy
-  across more operators. rete now has lazy fast paths for simple BGP/FILTER
-  `LIMIT` and ASK shapes, but ORDER BY, broad compound algebra, and some
-  expression-heavy scans still materialize too much. Both sit in the
-  **sub-ms-to-tens-of-ms range** on this dataset; there are **no correctness gaps
-  and no pathological blow-ups** after the join fixes (findings 6–7). The
-  remaining planner gap is **broad lazy evaluation** rather than basic join
-  complexity.
+- rete wins or ties several index-served and aggregate shapes.
+- Oxigraph still dominates many shapes it can stream or stop early,
+  especially LIMIT-heavy joins, OPTIONAL, expression scans, and offset
+  pagination. rete has targeted lazy fast paths, but broad lazy evaluation
+  remains future engine work.
+- Both engines are in the sub-ms-to-tens-of-ms range on this dataset after
+  the join fixes; the remaining planner gap is broad laziness rather than
+  basic join complexity.
 
-### Batch transitive reachability — `coauthor+` from 300 seeds
+### Batch transitive reachability - `coauthor+` from 300 seeds
 
-"From each of 300 authors, who is reachable through co-authorship?" — a
-multi-source transitive closure. rete exposes this as a dedicated primitive
-(`rete reach`, `batch_reach_*`); on Oxigraph it is a `coauthor+` property path
-evaluated per seed. Both reach **1,636,200 nodes total**, and rete's serial and
-parallel results are identical.
+"From each seed author, who is reachable through co-authorship?" rete
+exposes this as a dedicated primitive (`rete reach`, `batch_reach_*`); on
+Oxigraph it is a `coauthor+` property path evaluated per seed.
 
 | Engine / mode | Time | vs rete-serial |
 |---|--:|--:|
-| rete — `batch_reach_serial` (1 core) | 454.7 ms | 1.0× |
-| **rete — `batch_reach_parallel` (32 cores)** | **34.4 ms** | **13.2×** |
-| Oxigraph — `coauthor+` property path, per seed | 2,105 ms | 0.22× |
+| rete - `batch_reach_serial` (1 core) | 455 ms | 1.0x |
+| **rete - `batch_reach_parallel` (32 cores)** | **34.4 ms** | **13.2x** |
+| Oxigraph - `coauthor+` property path, per seed | 2105 ms | 0.2x |
 
-rete's serial reach is already **4.6× faster** than Oxigraph's property-path
-evaluation here, and **`rete reach --parallel` is ~61× faster**. Caveat: these
-are different abstraction levels — a purpose-built graph primitive vs. a general
-SPARQL path operator — so read it as "use the right tool for multi-source
-reach," not a core-for-core SPARQL comparison.
+rete serial and parallel both reached 1,636,200 nodes;
+Oxigraph touched 1,636,200 result cells. The dedicated
+parallel primitive is a different abstraction level from a general SPARQL
+property path, so read this as: use the right tool for multi-source reach.
 
 ### Reproduce
 
 ```sh
 # In the dev container (Docker). The OpenCitations + synthetic-enrichment data
 # comes from scripts/fetch_opencitations.py + scripts/enrich.py (-> enriched-all.nt).
-# Sanitize the 88 malformed compound-DOI IRIs so both engines load identical data:
+# Sanitize malformed compound-DOI IRIs so both engines load identical data:
 grep -vE "<[^>]* [^>]*>" data/opencitations/enriched-all.nt \
   > data/opencitations/enriched-clean.nt
 ./target/release/rete build data/opencitations/enriched-clean.nt \
   -o data/opencitations/enriched-clean.rete
 
 cargo build --release -p rete-bench
-./target/release/rete-bench data/opencitations/enriched-clean.rete \
-                            data/opencitations/enriched-clean.nt 300
+./target/release/rete-bench --json data/opencitations/enriched-clean.rete \
+  data/opencitations/enriched-clean.nt 300 > docs/benchmark-opencitations.json
+python3 scripts/render_benchmark_doc.py docs/benchmark-opencitations.json \
+  --input docs/BENCHMARK.md --output docs/BENCHMARK.md
+cargo run -p docgen
 ```
 
-The `rete-bench` crate pulls in Oxigraph only for this comparison; its in-memory
-store needs no RocksDB/clang, so `default-features = false` keeps the build light.
+The `rete-bench` crate pulls in Oxigraph only for this comparison; its
+in-memory store needs no RocksDB/clang, so `default-features = false` keeps
+the build light.
+<!-- benchmark:opencitations:end -->
 
 ## Parallelism
 

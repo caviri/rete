@@ -11,8 +11,10 @@
 //!
 //! Usage (paths relative to repo root):
 //!   cargo run --release -p rete-bench -- <file.rete> <file.nt> [seed_count]
+//!   cargo run --release -p rete-bench -- --json <file.rete> <file.nt> [seed_count]
 //!
-//! Emits Markdown tables on stdout, ready to paste into docs/BENCHMARK.md.
+//! Emits Markdown tables by default, or a machine-readable JSON report with
+//! `--json`.
 
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -25,8 +27,16 @@ use oxigraph::sparql::{QueryResults, SparqlEvaluator};
 use oxigraph::store::Store;
 use rete_core::parallel::batch_reach_parallel;
 use rete_core::{batch_reach_serial, build_adjacency, eval_query, QueryOutput, Rete};
+use serde_json::{json, Value};
 
 const COAUTHOR: &str = "<http://ex/coauthor>";
+const USAGE: &str = "usage: rete-bench [--json] <file.rete> <file.nt> [seeds]";
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum OutputFormat {
+    Markdown,
+    Json,
+}
 
 /// Common prefixes, prepended to every query below.
 const PREFIXES: &str = "PREFIX cito: <http://purl.org/spar/cito/> \
@@ -144,16 +154,31 @@ fn oxi_try(store: &Store, q: &str) -> Result<usize, String> {
     })
 }
 
+fn parse_args() -> Result<(OutputFormat, String, String, usize)> {
+    let mut format = OutputFormat::Markdown;
+    let mut args = Vec::new();
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--json" => format = OutputFormat::Json,
+            "--markdown" => format = OutputFormat::Markdown,
+            "-h" | "--help" => {
+                println!("{USAGE}");
+                std::process::exit(0);
+            }
+            _ => args.push(arg),
+        }
+    }
+
+    let rete_path = args.first().cloned().context(USAGE)?;
+    let nt_path = args.get(1).cloned().context(USAGE)?;
+    let seed_count = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(300);
+    Ok((format, rete_path, nt_path, seed_count))
+}
+
 fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    let rete_path = args
-        .next()
-        .context("usage: rete-bench <file.rete> <file.nt> [seeds]")?;
-    let nt_path = args
-        .next()
-        .context("usage: rete-bench <file.rete> <file.nt> [seeds]")?;
-    let seed_count: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(300);
+    let (format, rete_path, nt_path, seed_count) = parse_args()?;
     let reps = 5;
+    let reach_reps = 3;
 
     let threads = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -173,29 +198,36 @@ fn main() -> Result<()> {
     let oxi_load_ms = t.elapsed().as_secs_f64() * 1000.0;
     let oxi_len = store.len()?;
 
-    println!("# Benchmark: rete vs rete (parallel) vs Oxigraph\n");
-    println!(
-        "Data: `{rete_path}` ({} bytes) / `{nt_path}` · Oxigraph store: {oxi_len} triples · \
-         {threads} logical cores · median of {reps} runs.\n",
-        bytes.len()
-    );
+    if format == OutputFormat::Markdown {
+        println!("# Benchmark: rete vs rete (parallel) vs Oxigraph\n");
+        println!(
+            "Data: `{rete_path}` ({} bytes) / `{nt_path}` · Oxigraph store: {oxi_len} triples · \
+             {threads} logical cores · median of {reps} runs.\n",
+            bytes.len()
+        );
 
-    println!("## Load / open (one-time)\n");
-    println!("| Engine | Step | Time |");
-    println!("|---|---|--:|");
-    println!("| rete | `Rete::open` (mmap-style, indexes already built) | {rete_open_ms:.1} ms |");
-    println!("| Oxigraph | bulk-load N-Triples + index in memory | {oxi_load_ms:.0} ms |");
-    println!();
+        println!("## Load / open (one-time)\n");
+        println!("| Engine | Step | Time |");
+        println!("|---|---|--:|");
+        println!(
+            "| rete | `Rete::open` (mmap-style, indexes already built) | {rete_open_ms:.1} ms |"
+        );
+        println!("| Oxigraph | bulk-load N-Triples + index in memory | {oxi_load_ms:.0} ms |");
+        println!();
+    }
 
     // ---- Workload 1: SPARQL operator-coverage matrix ----
-    println!("## SPARQL operators & complexity (single-threaded engines)\n");
-    println!(
-        "Every query run on both engines; `rows` compares result sizes (a cross-engine check).\n"
-    );
-    println!("| Operator / form | rete | Oxigraph | rete vs oxi | rows (rete / oxi) | ✓ |");
-    println!("|---|--:|--:|--:|--:|:--:|");
+    if format == OutputFormat::Markdown {
+        println!("## SPARQL operators & complexity (single-threaded engines)\n");
+        println!(
+            "Every query run on both engines; `rows` compares result sizes (a cross-engine check).\n"
+        );
+        println!("| Operator / form | rete | Oxigraph | rete vs oxi | rows (rete / oxi) | ✓ |");
+        println!("|---|--:|--:|--:|--:|:--:|");
+    }
     let mut agree = 0;
     let mut total = 0;
+    let mut query_rows: Vec<Value> = Vec::new();
     // Hard failures — a rete error, or a row-count disagreement on a query whose
     // result is NOT implementation-defined — make the bench exit non-zero, so a
     // correctness regression fails CI instead of just printing a lower tally.
@@ -216,19 +248,50 @@ fn main() -> Result<()> {
                 } else if !name.contains("impl-defined") {
                     hard_mismatch.push(format!("{name}: rete {rr} rows vs oxigraph {or}"));
                 }
-                println!(
-                    "| {name} | {rete_ms:.2} ms | {oxi_ms:.2} ms | {speedup:.1}× | {rr} / {or} | {} |",
-                    if ok { "✓" } else { "✗" }
-                );
+                query_rows.push(json!({
+                    "name": name,
+                    "query": body,
+                    "rete_ms": rete_ms,
+                    "oxigraph_ms": oxi_ms,
+                    "speedup": speedup,
+                    "rete_rows": rr,
+                    "oxigraph_rows": or,
+                    "agree": ok,
+                    "implementation_defined": name.contains("impl-defined"),
+                }));
+                if format == OutputFormat::Markdown {
+                    println!(
+                        "| {name} | {rete_ms:.2} ms | {oxi_ms:.2} ms | {speedup:.1}× | {rr} / {or} | {} |",
+                        if ok { "✓" } else { "✗" }
+                    );
+                }
             }
             (Err(e), _) => {
                 hard_mismatch.push(format!("{name}: rete error: {}", short(e)));
-                println!("| {name} | _rete: {}_ | — | — | — | — |", short(e));
+                query_rows.push(json!({
+                    "name": name,
+                    "query": body,
+                    "rete_error": short(e),
+                }));
+                if format == OutputFormat::Markdown {
+                    println!("| {name} | _rete: {}_ | — | — | — | — |", short(e));
+                }
             }
-            (_, Err(e)) => println!("| {name} | — | _oxi: {}_ | — | — | — |", short(e)),
+            (_, Err(e)) => {
+                query_rows.push(json!({
+                    "name": name,
+                    "query": body,
+                    "oxigraph_error": short(e),
+                }));
+                if format == OutputFormat::Markdown {
+                    println!("| {name} | — | _oxi: {}_ | — | — | — |", short(e));
+                }
+            }
         }
     }
-    println!("\n{agree}/{total} queries returned identical row counts on both engines.\n");
+    if format == OutputFormat::Markdown {
+        println!("\n{agree}/{total} queries returned identical row counts on both engines.\n");
+    }
     ensure!(
         hard_mismatch.is_empty(),
         "cross-engine correctness regression:\n  {}",
@@ -255,11 +318,11 @@ fn main() -> Result<()> {
         .collect();
 
     let adj = build_adjacency(&rete, COAUTHOR);
-    let (serial_ms, total_serial) = bench(3, || {
+    let (serial_ms, total_serial) = bench(reach_reps, || {
         let sets = batch_reach_serial(&adj, &seed_nodes);
         sets.iter().map(BTreeSet::len).sum()
     });
-    let (par_ms, total_par) = bench(3, || {
+    let (par_ms, total_par) = bench(reach_reps, || {
         let sets = batch_reach_parallel(&adj, &seed_nodes);
         sets.iter().map(BTreeSet::len).sum()
     });
@@ -271,7 +334,7 @@ fn main() -> Result<()> {
     );
 
     // Oxigraph: same transitive closure expressed as a property path, per seed.
-    let (oxi_reach_ms, total_oxi) = bench(3, || {
+    let (oxi_reach_ms, total_oxi) = bench(reach_reps, || {
         let mut total = 0usize;
         for iri in &seed_iris {
             let q = format!(
@@ -300,31 +363,71 @@ fn main() -> Result<()> {
         total
     });
 
-    println!(
-        "## Batch transitive reachability — `coauthor+` from {} seeds\n",
-        seed_nodes.len()
-    );
-    println!(
-        "rete reached {total_serial} nodes total (serial), {total_par} (parallel); \
-         the two agree. Oxigraph touched {total_oxi} result cells.\n"
-    );
-    println!("| Engine / mode | Time | vs rete-serial |");
-    println!("|---|--:|--:|");
-    println!("| rete — `batch_reach_serial` (1 core) | {serial_ms:.1} ms | 1.0× |");
-    println!(
-        "| rete — `batch_reach_parallel` ({threads} cores) | {par_ms:.1} ms | {:.1}× |",
-        serial_ms / par_ms
-    );
-    println!(
-        "| Oxigraph — `coauthor+` property path, per seed | {oxi_reach_ms:.0} ms | {:.1}× |",
-        serial_ms / oxi_reach_ms
-    );
-    println!();
-    println!(
-        "_rete's reach is a purpose-built BFS over a prebuilt adjacency map; Oxigraph evaluates a \
-         general SPARQL property path. Different abstraction levels — read it as \"a dedicated \
-         graph primitive vs. a general SPARQL engine,\" not a like-for-like core comparison._"
-    );
+    if format == OutputFormat::Markdown {
+        println!(
+            "## Batch transitive reachability — `coauthor+` from {} seeds\n",
+            seed_nodes.len()
+        );
+        println!(
+            "rete reached {total_serial} nodes total (serial), {total_par} (parallel); \
+             the two agree. Oxigraph touched {total_oxi} result cells.\n"
+        );
+        println!("| Engine / mode | Time | vs rete-serial |");
+        println!("|---|--:|--:|");
+        println!("| rete — `batch_reach_serial` (1 core) | {serial_ms:.1} ms | 1.0× |");
+        println!(
+            "| rete — `batch_reach_parallel` ({threads} cores) | {par_ms:.1} ms | {:.1}× |",
+            serial_ms / par_ms
+        );
+        println!(
+            "| Oxigraph — `coauthor+` property path, per seed | {oxi_reach_ms:.0} ms | {:.1}× |",
+            serial_ms / oxi_reach_ms
+        );
+        println!();
+        println!(
+            "_rete's reach is a purpose-built BFS over a prebuilt adjacency map; Oxigraph evaluates a \
+             general SPARQL property path. Different abstraction levels — read it as \"a dedicated \
+             graph primitive vs. a general SPARQL engine,\" not a like-for-like core comparison._"
+        );
+    } else {
+        let report = json!({
+            "schema_version": 1,
+            "tool": "rete-bench",
+            "inputs": {
+                "rete_path": rete_path,
+                "nt_path": nt_path,
+                "rete_bytes": bytes.len(),
+                "oxigraph_triples": oxi_len,
+            },
+            "environment": {
+                "logical_cores": threads,
+                "query_repetitions": reps,
+                "reach_repetitions": reach_reps,
+            },
+            "load_open": {
+                "rete_ms": rete_open_ms,
+                "oxigraph_ms": oxi_load_ms,
+            },
+            "queries": query_rows,
+            "query_agreement": {
+                "agree": agree,
+                "total": total,
+            },
+            "reachability": {
+                "predicate": COAUTHOR,
+                "seed_count": seed_nodes.len(),
+                "rete_serial_ms": serial_ms,
+                "rete_parallel_ms": par_ms,
+                "oxigraph_ms": oxi_reach_ms,
+                "rete_serial_total": total_serial,
+                "rete_parallel_total": total_par,
+                "oxigraph_total": total_oxi,
+                "parallel_speedup_vs_serial": serial_ms / par_ms,
+                "oxigraph_vs_rete_serial": serial_ms / oxi_reach_ms,
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    }
 
     Ok(())
 }
