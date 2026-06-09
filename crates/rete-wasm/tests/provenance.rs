@@ -53,6 +53,26 @@ fn why_triples_returns_browser_camel_case_provenance() {
             > 0
     );
     assert!(first["provenance"]["indexRange"]["len"].as_u64().unwrap() > 0);
+    assert!(
+        first["provenance"]["indexSectionRange"]["offset"]
+            .as_u64()
+            .unwrap()
+            > first["provenance"]["indexRange"]["offset"]
+                .as_u64()
+                .unwrap()
+    );
+    assert!(
+        first["provenance"]["indexSectionRange"]["len"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(
+        first["provenance"]["indexSectionRange"]["end"]
+            .as_u64()
+            .unwrap()
+            <= first["provenance"]["indexRange"]["end"].as_u64().unwrap()
+    );
     assert!(first["provenance"]["pyramidRange"]["len"].as_u64().unwrap() > 0);
     assert_eq!(first["provenance"]["tile"]["available"], false);
     assert_eq!(first["provenance"]["tile"]["reason"], "not_materialized");

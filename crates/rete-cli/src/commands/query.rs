@@ -71,6 +71,7 @@ fn provenance_json(m: &TripleProvenance) -> serde_json::Value {
             "index_section": m.index_permutation.section_index(),
             "dictionary_range": range_json(m.dictionary_range),
             "index_range": range_json(m.index_range),
+            "index_section_range": range_json(m.index_section_range),
             "pyramid_range": m.pyramid_range.map(range_json),
             "tile": tile,
         },
@@ -111,6 +112,11 @@ pub(crate) fn why(
                 m.index_permutation.section_index(),
                 m.index_range.offset,
                 m.index_range.end()
+            );
+            println!(
+                "  index section payload: bytes [{}..{})",
+                m.index_section_range.offset,
+                m.index_section_range.end()
             );
             println!(
                 "  dictionary: bytes [{}..{})",

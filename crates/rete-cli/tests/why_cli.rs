@@ -65,6 +65,26 @@ fn why_cli_reports_result_provenance_as_json() {
     assert_eq!(first["provenance"]["index_permutation"], "POS");
     assert!(first["provenance"]["index_range"]["len"].as_u64().unwrap() > 0);
     assert!(
+        first["provenance"]["index_section_range"]["offset"]
+            .as_u64()
+            .unwrap()
+            > first["provenance"]["index_range"]["offset"]
+                .as_u64()
+                .unwrap()
+    );
+    assert!(
+        first["provenance"]["index_section_range"]["len"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(
+        first["provenance"]["index_section_range"]["end"]
+            .as_u64()
+            .unwrap()
+            <= first["provenance"]["index_range"]["end"].as_u64().unwrap()
+    );
+    assert!(
         first["provenance"]["dictionary_range"]["len"]
             .as_u64()
             .unwrap()

@@ -84,13 +84,14 @@ triple-pattern path as `Rete::query`, then attaches:
 - the graph scope (`default` today for the local triple-pattern command),
 - the resolved ID-space pattern,
 - the selected permutation (`SPO`, `POS`, or `OSP`) and section index,
-- the header byte ranges for dictionary, index container, and pyramid metadata.
+- the header byte ranges for dictionary, index container, selected permutation
+  payload, and pyramid metadata.
 
 This is intentionally physical-file provenance, not a narrative explanation. In
-v0 the index is still stored as one permutation container, so provenance can name
-the selected permutation and container range but not a per-community tile. `rete
-why --json` reports that tile provenance is `not_materialized` until tile
-directories are added.
+v0 the index is still stored as one permutation container with three payload
+sections, so provenance can name the selected permutation payload but not a
+per-community tile. `rete why --json` reports that tile provenance is
+`not_materialized` until tile directories are added.
 
 ## Progressive And Cost Paths
 
@@ -172,8 +173,8 @@ the bundled `.rete` datasets into `docs/playground.html`. Run it with
 
 | Area | Next work |
 |---|---|
-| Tile-routed query refinement | Use the pyramid to fetch only relevant exact ranges |
-| Result provenance | Extend current triple-pattern provenance from container ranges to block/tile ranges |
+| Tile-routed query refinement | Add physical community-tile directories so exact routing can fetch relevant community ranges, not whole permutation payloads |
+| Result provenance | Extend current section-range provenance to physical block/tile ranges once tile directories are materialized |
 | Query engine rows | Replace wide `BTreeMap<String, String>` bindings with integer slot rows |
 | Benchmark docs | Refresh JSON snapshots with `rete-bench --json` and regenerate the benchmark section |
 | SHACL | Add `sh:qualifiedValueShapesDisjoint` if full Core coverage becomes necessary |
