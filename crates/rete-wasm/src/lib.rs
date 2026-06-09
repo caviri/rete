@@ -756,6 +756,7 @@ fn provenance_json(m: &TripleProvenance) -> serde_json::Value {
             "indexSection": m.index_permutation.section_index(),
             "dictionaryRange": range_json(m.dictionary_range),
             "indexRange": range_json(m.index_range),
+            "indexSectionRange": range_json(m.index_section_range),
             "pyramidRange": m.pyramid_range.map(range_json),
             "tile": tile,
         },

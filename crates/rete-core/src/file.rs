@@ -152,6 +152,9 @@ pub struct TripleProvenance {
     pub dictionary_range: ByteRange,
     /// File byte range containing the permutation index container.
     pub index_range: ByteRange,
+    /// File byte range containing the selected permutation payload inside the
+    /// index container.
+    pub index_section_range: ByteRange,
     /// File byte range containing the pyramid metadata, when present.
     pub pyramid_range: Option<ByteRange>,
     /// Physical tile identifier, once tile directories are materialized.
@@ -221,6 +224,57 @@ fn decode_index_container(bytes: &[u8], codec: u8) -> Result<GraphIndex, FileErr
         std::mem::take(&mut isecs[1]),
         std::mem::take(&mut isecs[2]),
     ]))
+}
+
+fn container_section_payload_ranges(
+    bytes: &[u8],
+    container_offset: u64,
+    expected_sections: usize,
+) -> Result<Vec<ByteRange>, FileError> {
+    let (section_count, mut pos) =
+        read_uvarint(bytes).ok_or(FileError::Container("truncated count"))?;
+    let section_count = usize::try_from(section_count)
+        .map_err(|_| FileError::Container("section count too large"))?;
+    if section_count != expected_sections {
+        return Err(FileError::Container("unexpected section count"));
+    }
+
+    let mut ranges = Vec::with_capacity(section_count);
+    for _ in 0..section_count {
+        let remaining = bytes
+            .get(pos..)
+            .ok_or(FileError::Container("truncated length"))?;
+        let (payload_len, used) =
+            read_uvarint(remaining).ok_or(FileError::Container("truncated length"))?;
+        pos = pos
+            .checked_add(used)
+            .ok_or(FileError::Container("section range overflows"))?;
+        let payload_len_usize = usize::try_from(payload_len)
+            .map_err(|_| FileError::Container("section length too large"))?;
+        let payload_end = pos
+            .checked_add(payload_len_usize)
+            .ok_or(FileError::Container("section range overflows"))?;
+        if payload_end > bytes.len() {
+            return Err(FileError::Container("section overruns buffer"));
+        }
+        ranges.push(ByteRange {
+            offset: checked_end(container_offset, pos as u64)?,
+            len: payload_len,
+        });
+        pos = payload_end;
+    }
+
+    Ok(ranges)
+}
+
+fn decode_index_section_ranges(
+    bytes: &[u8],
+    container_offset: u64,
+) -> Result<[ByteRange; 3], FileError> {
+    let ranges = container_section_payload_ranges(bytes, container_offset, 3)?;
+    ranges
+        .try_into()
+        .map_err(|_| FileError::Container("expected 3 permutation blocks"))
 }
 
 fn read_uvarint_at<R: RangeReader>(
@@ -552,6 +606,7 @@ pub struct Rete {
     header: Header,
     dict: Dictionary,
     index: GraphIndex,
+    index_section_ranges: [ByteRange; 3],
     pyramid: Option<PyramidMeta>,
     named_graphs: Vec<(String, GraphIndex)>,
     /// Raw bytes of the metadata section (empty if the file has none). The
@@ -584,10 +639,10 @@ impl Rete {
             header.dict_codec,
         )?;
 
-        let index = decode_index_container(
-            region(header.root_dir_offset, header.root_dir_len)?,
-            header.block_codec,
-        )?;
+        let index_bytes = region(header.root_dir_offset, header.root_dir_len)?;
+        let index = decode_index_container(index_bytes, header.block_codec)?;
+        let index_section_ranges =
+            decode_index_section_ranges(index_bytes, header.root_dir_offset)?;
 
         let pyramid = if header.pyramid_meta_len > 0 {
             Some(
@@ -617,6 +672,7 @@ impl Rete {
             header,
             dict,
             index,
+            index_section_ranges,
             pyramid,
             named_graphs,
             metadata,
@@ -731,6 +787,8 @@ impl Rete {
 
         let index_bytes = reader.read_at(header.root_dir_offset, header.root_dir_len)?;
         let index = decode_index_container(&index_bytes, header.block_codec)?;
+        let index_section_ranges =
+            decode_index_section_ranges(&index_bytes, header.root_dir_offset)?;
 
         let pyramid = if header.pyramid_meta_len > 0 {
             let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
@@ -756,6 +814,7 @@ impl Rete {
             header,
             dict,
             index,
+            index_section_ranges,
             pyramid,
             named_graphs,
             metadata: Vec::new(),
@@ -815,6 +874,7 @@ impl Rete {
             offset: self.header.root_dir_offset,
             len: self.header.root_dir_len,
         };
+        let index_section_range = self.index_section_ranges[index_permutation.section_index()];
         let pyramid_range = (self.header.pyramid_meta_len > 0).then_some(ByteRange {
             offset: self.header.pyramid_meta_offset,
             len: self.header.pyramid_meta_len,
@@ -837,6 +897,7 @@ impl Rete {
                     index_permutation,
                     dictionary_range,
                     index_range,
+                    index_section_range,
                     pyramid_range,
                     tile: None,
                 })
@@ -1478,6 +1539,13 @@ mod tests {
         assert_eq!(matches[0].dictionary_range.len, h.dictionary_len);
         assert_eq!(matches[0].index_range.offset, h.root_dir_offset);
         assert_eq!(matches[0].index_range.len, h.root_dir_len);
+        assert!(
+            matches[0].index_section_range.offset > h.root_dir_offset,
+            "POS is section 1, so its payload starts after the container header and SPO payload"
+        );
+        assert!(matches[0].index_section_range.len > 0);
+        assert!(matches[0].index_section_range.end() <= matches[0].index_range.end());
+        assert!(matches[0].index_section_range.len < matches[0].index_range.len);
         assert_eq!(
             matches[0].pyramid_range.as_ref().map(|r| (r.offset, r.len)),
             Some((h.pyramid_meta_offset, h.pyramid_meta_len))

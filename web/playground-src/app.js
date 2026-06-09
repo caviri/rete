@@ -706,7 +706,8 @@
         `<td class="iri">${esc(shorten(r.terms.subject, 80))}</td>` +
         `<td class="iri">${esc(shorten(r.terms.predicate, 70))}</td>` +
         `<td class="iri">${esc(shorten(r.terms.object, 80))}</td>` +
-        `<td>${esc(p.indexPermutation)} / ${esc(p.indexSection)}</td>` +
+        `<td>${esc(p.indexPermutation)} / ${esc(p.indexSection)}` +
+        `<span class="cell-note">payload ${esc(renderRange(p.indexSectionRange))}</span></td>` +
         `<td>${esc(renderRange(p.dictionaryRange))}</td>` +
         `<td>${esc(renderRange(p.indexRange))}</td>` +
         `<td>${esc(p.tile && p.tile.available ? p.tile.id : "not_materialized")}</td>` +
@@ -714,7 +715,7 @@
     }).join("");
     $("provOut").innerHTML =
       `<div class="banner">${out.resultCount} result(s) matched by the selected triple pattern.</div>` +
-      `<table><thead><tr><th>subject</th><th>predicate</th><th>object</th><th>index</th><th>dictionary range</th><th>index range</th><th>tile</th></tr></thead><tbody>${rows}</tbody></table>`;
+      `<table><thead><tr><th>subject</th><th>predicate</th><th>object</th><th>index section</th><th>dictionary range</th><th>index container</th><th>tile</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   function renderProvenanceSummary(out) {
@@ -736,7 +737,8 @@
       metric("tile", p.tile.available ? "available" : p.tile.reason) +
       `</div>` +
       `<div>Dictionary: ${esc(renderRange(p.dictionaryRange))}</div>` +
-      `<div>Index: ${esc(renderRange(p.indexRange))}</div>` +
+      `<div>Index container: ${esc(renderRange(p.indexRange))}</div>` +
+      `<div>Selected payload: ${esc(renderRange(p.indexSectionRange))}</div>` +
       `<div>Pyramid: ${esc(renderRange(p.pyramidRange))}</div>`;
   }
 

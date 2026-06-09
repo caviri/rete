@@ -511,7 +511,7 @@ separate directory/footer round-trip is needed):</p>
      - match the pattern in the SPO/POS/OSP permutation blocks (zone-map pruned)
      - resolve result IDs back to terms via the dictionary
      - optionally emit result provenance: matched IDs/terms, graph scope, chosen
-       permutation, and the dictionary/index/pyramid byte ranges
+       permutation, and the dictionary/index/payload/pyramid byte ranges
 2c. Routed single-pattern path → GET dictionary, resolve constants, choose the
     best SPO/POS/OSP permutation, then follow the index container's length
     prefixes and fetch only that one permutation payload. Unknown bound terms
@@ -524,7 +524,7 @@ access invariants are asserted by the <code>ranged</code> test suite. Per-tile l
 directories that would let the query path fetch only the relevant community
 tiles (rather than a whole permutation section) are future work. For the same
 reason, current provenance identifies the index container and selected
-permutation, while tile/block-level provenance remains a physical-layout
+permutation payload, while tile/block-level provenance remains a physical-layout
 extension.</p>
 <ul>
 <li>The file is <strong>immutable</strong>; its content hash (header field) acts as a strong

@@ -545,6 +545,13 @@ tr:nth-child(even) td {
   background: #fcfaf5;
 }
 
+.cell-note {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 pre {
   margin: 0;
   border: 1px solid var(--line);

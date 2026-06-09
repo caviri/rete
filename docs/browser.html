@@ -245,9 +245,11 @@ not in the graph (so one unknown seed never fails the whole call). It runs
 <p><code>why_triples</code> exposes the same result-provenance path as <code>rete why</code>. It resolves
 the optional triple pattern through <code>Rete::query_with_provenance</code> and returns
 browser-style camelCase fields: <code>resultCount</code>, <code>matchedPattern</code>,
-<code>indexPermutation</code>, <code>indexSection</code>, <code>dictionaryRange</code>, <code>indexRange</code>, and
-<code>pyramidRange</code>. Tile provenance is explicit even before tile directories are
-materialized: <code>{ "available": false, "reason": "not_materialized" }</code>.</p>
+<code>indexPermutation</code>, <code>indexSection</code>, <code>dictionaryRange</code>, <code>indexRange</code>,
+<code>indexSectionRange</code>, and <code>pyramidRange</code>. <code>indexRange</code> is the full permutation
+container; <code>indexSectionRange</code> is the selected SPO/POS/OSP payload inside it.
+Tile provenance is explicit even before tile directories are materialized:
+<code>{ "available": false, "reason": "not_materialized" }</code>.</p>
 <h3>Minimal example</h3>
 <pre><code class="language-js">import init, { info, query_sparql } from "./pkg/rete_wasm.js";
 await init();

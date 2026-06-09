@@ -62,9 +62,11 @@ not in the graph (so one unknown seed never fails the whole call). It runs
 `why_triples` exposes the same result-provenance path as `rete why`. It resolves
 the optional triple pattern through `Rete::query_with_provenance` and returns
 browser-style camelCase fields: `resultCount`, `matchedPattern`,
-`indexPermutation`, `indexSection`, `dictionaryRange`, `indexRange`, and
-`pyramidRange`. Tile provenance is explicit even before tile directories are
-materialized: `{ "available": false, "reason": "not_materialized" }`.
+`indexPermutation`, `indexSection`, `dictionaryRange`, `indexRange`,
+`indexSectionRange`, and `pyramidRange`. `indexRange` is the full permutation
+container; `indexSectionRange` is the selected SPO/POS/OSP payload inside it.
+Tile provenance is explicit even before tile directories are materialized:
+`{ "available": false, "reason": "not_materialized" }`.
 
 ### Minimal example
 
