@@ -177,4 +177,4 @@ the bundled `.rete` datasets into `docs/playground.html`. Run it with
 | Result provenance | Extend current section-range provenance to physical block/tile ranges once tile directories are materialized |
 | Query engine rows | Replace wide `BTreeMap<String, String>` bindings with integer slot rows |
 | Benchmark docs | Refresh JSON snapshots with `rete-bench --json` and regenerate the benchmark section |
-| SHACL | Add `sh:qualifiedValueShapesDisjoint` if full Core coverage becomes necessary |
+| SHACL | Add SHACL-SPARQL constraints only if the CLI needs extension-level coverage |

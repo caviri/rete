@@ -98,12 +98,11 @@ Supported constraint components:
 | Nested shapes | `sh:node`, `sh:property` |
 | Logical constraints | `sh:not`, `sh:and`, `sh:or`, `sh:xone` |
 | Closed shapes | `sh:closed`, `sh:ignoredProperties` |
-| Qualified values | `sh:qualifiedValueShape`, `sh:qualifiedMinCount`, `sh:qualifiedMaxCount` |
+| Qualified values | `sh:qualifiedValueShape`, `sh:qualifiedMinCount`, `sh:qualifiedMaxCount`, `sh:qualifiedValueShapesDisjoint` |
 
 ## Current limits
 
 - Shape files must be Turtle.
-- `sh:qualifiedValueShapesDisjoint` is not implemented yet.
 - SHACL-SPARQL constraints, custom functions, rules, and JavaScript extensions
   are out of scope for this command.
 - Recursive shape cycles are reported as validation results instead of being
