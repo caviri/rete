@@ -176,4 +176,4 @@ the bundled `.rete` datasets into `docs/playground.html`. Run it with
 | Result provenance | Extend current triple-pattern provenance from container ranges to block/tile ranges |
 | Query engine rows | Replace wide `BTreeMap<String, String>` bindings with integer slot rows |
 | Benchmark docs | Refresh JSON snapshots with `rete-bench --json` and regenerate the benchmark section |
-| SHACL | Add `sh:qualifiedValueShapesDisjoint` if full Core coverage becomes necessary |
+| SHACL | Add SHACL-SPARQL constraints only if the CLI needs extension-level coverage |

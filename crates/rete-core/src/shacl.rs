@@ -184,6 +184,17 @@ impl ShaclShapes {
         self.graph.objects(subject, predicate)
     }
 
+    fn subjects(&self, predicate: &str, object: &str) -> Vec<String> {
+        unique(
+            self.graph
+                .triples
+                .iter()
+                .filter(|(_, p, o)| p == predicate && o == object)
+                .map(|(s, _, _)| s.clone())
+                .collect(),
+        )
+    }
+
     fn has(&self, s: &str, p: &str, o: &str) -> bool {
         self.graph.has(s, p, o)
     }
@@ -1008,10 +1019,20 @@ impl<'a> Validator<'a> {
         else {
             return;
         };
-        let count = values
-            .iter()
-            .filter(|v| self.conforms(&qshape, v, stack))
-            .count();
+        let sibling_shapes = self.qualified_sibling_shapes(view.id, &qshape);
+        let mut count = 0;
+        for value in values {
+            if !self.conforms(&qshape, value, stack) {
+                continue;
+            }
+            if sibling_shapes
+                .iter()
+                .any(|sibling| self.conforms(sibling, value, stack))
+            {
+                continue;
+            }
+            count += 1;
+        }
         for min in self.shapes.objects(view.id, sh!("qualifiedMinCount")) {
             if let Some(n) = int_literal(&min) {
                 if count < n as usize {
@@ -1038,6 +1059,29 @@ impl<'a> Validator<'a> {
                 }
             }
         }
+    }
+
+    fn qualified_sibling_shapes(&self, property_shape: &str, qshape: &str) -> Vec<String> {
+        if !bool_param(
+            self.shapes
+                .objects(property_shape, sh!("qualifiedValueShapesDisjoint"))
+                .first(),
+        ) {
+            return Vec::new();
+        }
+
+        let mut siblings = Vec::new();
+        for parent_shape in self.shapes.subjects(sh!("property"), property_shape) {
+            for sibling_property_shape in self.shapes.objects(&parent_shape, sh!("property")) {
+                siblings.extend(
+                    self.shapes
+                        .objects(&sibling_property_shape, sh!("qualifiedValueShape"))
+                        .into_iter()
+                        .filter(|sibling| sibling != qshape),
+                );
+            }
+        }
+        unique(siblings)
     }
 
     fn result(

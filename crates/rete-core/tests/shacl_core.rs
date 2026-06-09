@@ -217,3 +217,69 @@ fn supports_inverse_paths_enumerations_language_and_qualified_counts() {
         "http://www.w3.org/ns/shacl#MinCountConstraintComponent"
     ));
 }
+
+#[test]
+fn qualified_value_shapes_disjoint_excludes_overlapping_sibling_matches_from_counts() {
+    const TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+
+    let data = graph(&[
+        ("<http://ex/hand>", TYPE, "<http://ex/Hand>"),
+        ("<http://ex/hand>", "<http://ex/digit>", "<http://ex/thumb>"),
+        ("<http://ex/hand>", "<http://ex/digit>", "<http://ex/index>"),
+        (
+            "<http://ex/hand>",
+            "<http://ex/digit>",
+            "<http://ex/middle>",
+        ),
+        ("<http://ex/hand>", "<http://ex/digit>", "<http://ex/ring>"),
+        ("<http://ex/hand>", "<http://ex/digit>", "<http://ex/pinky>"),
+        ("<http://ex/thumb>", TYPE, "<http://ex/Thumb>"),
+        ("<http://ex/thumb>", TYPE, "<http://ex/Finger>"),
+        ("<http://ex/index>", TYPE, "<http://ex/Finger>"),
+        ("<http://ex/middle>", TYPE, "<http://ex/Finger>"),
+        ("<http://ex/ring>", TYPE, "<http://ex/Finger>"),
+        ("<http://ex/pinky>", TYPE, "<http://ex/Finger>"),
+    ]);
+    let shapes = ShaclShapes::parse_turtle(
+        r#"
+        @prefix ex: <http://ex/> .
+        @prefix sh: <http://www.w3.org/ns/shacl#> .
+
+        ex:HandShape a sh:NodeShape ;
+          sh:targetClass ex:Hand ;
+          sh:property [
+            sh:path ex:digit ;
+            sh:qualifiedValueShape [ sh:class ex:Thumb ] ;
+            sh:qualifiedValueShapesDisjoint true ;
+            sh:qualifiedMinCount 1 ;
+            sh:qualifiedMaxCount 1
+          ] ;
+          sh:property [
+            sh:path ex:digit ;
+            sh:qualifiedValueShape [ sh:class ex:Finger ] ;
+            sh:qualifiedValueShapesDisjoint true ;
+            sh:qualifiedMinCount 4 ;
+            sh:qualifiedMaxCount 4
+          ] .
+        "#,
+    )
+    .unwrap();
+
+    let report = validate_shacl(&data, &shapes);
+
+    assert!(!report.conforms);
+    assert!(
+        has_component(
+            &report,
+            "http://www.w3.org/ns/shacl#QualifiedMinCountConstraintComponent"
+        ),
+        "the overlapping thumb is excluded from the Thumb count because it also matches the sibling Finger shape"
+    );
+    assert!(
+        !has_component(
+            &report,
+            "http://www.w3.org/ns/shacl#QualifiedMaxCountConstraintComponent"
+        ),
+        "the overlapping thumb is also excluded from the Finger count, leaving exactly four fingers"
+    );
+}
