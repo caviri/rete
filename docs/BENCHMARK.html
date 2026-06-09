@@ -353,7 +353,7 @@ the build light.</p>
 module <code>parallel.rs</code>, behind <code>rayon</code> — <em>off by default, never compiled into
 wasm</em>) splits decomposable work across communities/seeds and harmonizes the
 partials. Every parallel workload ships with a serial reference that produces a
-bit-identical result; the benchmark asserts <code>serial == parallel</code> (<code>RESULTS  MATCH</code>) before trusting any timing. Numbers below are from
+bit-identical result; the benchmark asserts <code>serial == parallel</code> (<code>RESULTS MATCH</code>) before trusting any timing. Numbers below are from
 <code>cargo run --release -p rete-core --example parallel_bench --features parallel</code>
 in the dev container, best-of-N after a warm-up.</p>
 <p><strong>Machine: 32 cores</strong> (<code>available_parallelism</code> = 32, rayon = 32 threads).</p>
