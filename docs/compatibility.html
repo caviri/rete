@@ -174,6 +174,7 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="compatibility.html" class="active">Compatibility & interop</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
@@ -206,6 +207,7 @@ format <em>for</em> RDF, built on the standard Rust RDF stack
 <tr><td>Blank nodes</td><td>✅ (as terms; non-distinguished variables in patterns)</td></tr>
 <tr><td>Named graphs / RDF datasets</td><td>✅ — N-Quads in, <code>GRAPH</code>/<code>FROM</code>/<code>FROM NAMED</code> in SPARQL</td></tr>
 <tr><td>SPARQL 1.1 query</td><td>✅ — see <a href="sparql.html">SPARQL support</a></td></tr>
+<tr><td>SHACL Core validation</td><td>✅ — see <a href="shacl.html">SHACL validation</a></td></tr>
 </tbody></table>
 <p><strong>Input formats:</strong> N-Triples (<code>.nt</code>), N-Quads (<code>.nq</code>), Turtle (<code>.ttl</code>).
 <strong>Output:</strong> N-Quads (<code>rete export</code>, lossless round-trip), Turtle and expanded
@@ -220,7 +222,7 @@ pipeline.</p>
 design). Turtle/JSON-LD export covers the default graph only (use N-Quads export
 for named graphs).</p>
 <h2>Validation</h2>
-<p>There are three independent ways to check correctness:</p>
+<p>There are five independent ways to check correctness:</p>
 <ol>
 <li>
 <p><strong>Syntactic — <code>rete validate</code>.</strong> Parses N-Triples/N-Quads/Turtle without
@@ -231,6 +233,15 @@ rete validate broken.ttl
 #  Error: broken.ttl: Parser error at line 12 ... not a valid subject
 </code></pre>
 <p><code>rete build</code> runs the same parse, so a successful build is also a validation.</p>
+</li>
+<li>
+<p><strong>Shape validation — <code>rete shacl</code>.</strong> Validates a <code>.rete</code> graph against SHACL
+Core shapes read from Turtle. It exits non-zero when the validation report is
+non-conformant, so it works as a CI gate. See <a href="shacl.html">SHACL validation</a> for
+the supported target, path, and constraint components.</p>
+<pre><code class="language-sh">rete shacl data.rete --shapes shapes.ttl
+rete shacl data.rete --shapes shapes.ttl --format json
+</code></pre>
 </li>
 <li>
 <p><strong>Integrity — <code>rete verify</code>.</strong> Recomputes the blake3 content hash and compares
@@ -255,10 +266,9 @@ documented subset, not full OWL DL).</p>
 </code></pre>
 </li>
 </ol>
-<p><strong>Not yet available:</strong> <em>semantic</em> validation against a schema/shape
-(SHACL / ShEx). That's a natural future addition — the SPARQL engine already has
-the primitives a shape checker needs, and <code>rete reason</code> already does rule-based
-OWL RL coherence checking.</p>
+<p><code>rete shacl</code> is SHACL Core support, not the whole shape-language universe:
+SHACL-SPARQL, SHACL-AF, JavaScript extensions, SHACL 1.2 draft features, and ShEx
+are not implemented.</p>
 <h2>Could it speak Cypher too?</h2>
 <p>Short answer: <strong>not today, and it's a different data model — but a useful subset
 could be translated to SPARQL.</strong> Here's the honest picture.</p>
@@ -439,6 +449,7 @@ and evaluated by the SPARQL engine's property-path machinery.</p>
   var GLOSSARY = {
     "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
     "SPARQL": "The W3C query language for RDF graphs (SELECT / ASK / CONSTRUCT / DESCRIBE).",
+    "SHACL": "Shapes Constraint Language - the W3C language for validating RDF graphs against shapes.",
     "IRI": "Internationalized Resource Identifier — a global, URL-like id for a resource.",
     "BGP": "Basic Graph Pattern — a set of triple patterns joined on their shared variables.",
     "HDT": "Header-Dictionary-Triples — a compact binary RDF format rete's dictionary draws on.",

@@ -174,6 +174,7 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
@@ -238,13 +239,14 @@ rete schema  social.rete    # semantic (by rdf:type)
 <li><strong><a href="scenario.html">Real-world scenario</a></strong> — publish a queryable SBOM to a URL; curl examples.</li>
 <li><strong><a href="cli.html">CLI reference</a></strong> — every <code>rete</code> subcommand.</li>
 <li><strong><a href="sparql.html">SPARQL support</a></strong> — exactly what the engine evaluates.</li>
+<li><strong><a href="shacl.html">SHACL validation</a></strong> — validate <code>.rete</code> graphs against SHACL Core shapes.</li>
 <li><strong><a href="compatibility.html">Compatibility &amp; interop</a></strong> — RDF, validation, and Cypher.</li>
 <li><strong><a href="reasoning.html">Reasoning &amp; coherence</a></strong> — prototype OWL RL / RDFS reasoner; find incoherent points.</li>
 <li><strong><a href="topic-modeling.html">Topic modeling (LDA)</a></strong> — label each community's theme: <code>rete communities</code> + scikit-learn LDA.</li>
 <li><strong><a href="multi-criteria.html">Multi-criteria communities</a></strong> — partition the same graph by different relations/attributes; combine criteria.</li>
 <li><strong><a href="federation.html">Federated queries</a></strong> — query several <code>.rete</code> files (local paths and/or URLs) as one; union merge + predicate routing.</li>
 <li><strong><a href="browser.html">Browser / WASM</a></strong> — query in the browser; progressive loading.</li>
-<li><strong><a href="playground.html">Interactive playground</a></strong> — a static, no-server, runs-entirely-in-your-browser page: it embeds the WASM engine and the example datasets, so SELECT/ASK/CONSTRUCT, Table/Turtle/JSON-LD, the community view, reachability, and history all work offline (even from <code>file://</code>).</li>
+<li><strong><a href="playground.html">Interactive playground</a></strong> — a static, no-server, runs-entirely-in-your-browser page: it embeds the WASM engine and the example datasets, so SELECT/ASK/CONSTRUCT, progressive summary queries, Table/Turtle/JSON-LD, the community view, reachability, and history all work offline (even from <code>file://</code>).</li>
 <li><strong><a href="SPEC.html">Format specification</a></strong> — the on-disk byte layout, for implementers.</li>
 <li><strong><a href="BENCHMARK.html">Benchmarks</a></strong> — synthetic 139 k-triple sizing plus the real OpenCitations/Oxigraph comparison.</li>
 <li><strong><a href="parallel-browser.html">Parallel in the browser (experimental)</a></strong> — a working Web Worker reachability demo, plus the more fragile shared-memory WASM thread path.</li>
@@ -358,6 +360,7 @@ built and tested in Docker — see <a href="getting-started.html">Getting starte
   var GLOSSARY = {
     "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
     "SPARQL": "The W3C query language for RDF graphs (SELECT / ASK / CONSTRUCT / DESCRIBE).",
+    "SHACL": "Shapes Constraint Language - the W3C language for validating RDF graphs against shapes.",
     "IRI": "Internationalized Resource Identifier — a global, URL-like id for a resource.",
     "BGP": "Basic Graph Pattern — a set of triple patterns joined on their shared variables.",
     "HDT": "Header-Dictionary-Triples — a compact binary RDF format rete's dictionary draws on.",

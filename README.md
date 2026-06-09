@@ -95,11 +95,11 @@ container — full writeup in [Benchmarks](https://caviri.github.io/rete/BENCHMA
 
 | | rete | Oxigraph |
 |---|--:|--:|
-| **Open / load the graph** | **20 ms** (indexes prebuilt in the file) | ~2,000 ms (parse + index) |
+| **Open / load the graph** | **16 ms** (indexes prebuilt in the file) | 2,415 ms (parse + index) |
 | SPARQL queries (24 operators) | tens of ms · **24/24 results identical** | tens of ms |
-| Batch reachability, 300 seeds | 459 ms → **37 ms** with `--parallel` | 2,431 ms |
+| Batch reachability, 300 seeds | 455 ms → **34 ms** with `--parallel` | 2,105 ms |
 
-rete opens ~100× faster and its **parallel reachability is ~66× faster** than a
+rete opens ~150× faster and its **parallel reachability is ~61× faster** than a
 general property-path. Oxigraph's broader lazy planner still wins some selective
 and early-out workloads; rete now has lazy fast paths for simple BGP/FILTER
 `LIMIT` shapes, but ORDER BY, DISTINCT, aggregation, and many algebra forms still
@@ -109,7 +109,7 @@ materialize intermediate rows. File size: ~11.8× smaller than raw N-Triples,
 ## Documentation
 
 - **[Graph data 101](https://caviri.github.io/rete/intro.html)** — new to RDF/graphs? Start here.
-- **[Getting started](https://caviri.github.io/rete/getting-started.html)** · **[CLI reference](https://caviri.github.io/rete/cli.html)** · **[SPARQL support](https://caviri.github.io/rete/sparql.html)** · **[Dataset Cards](https://caviri.github.io/rete/dataset-cards.html)**
+- **[Getting started](https://caviri.github.io/rete/getting-started.html)** · **[CLI reference](https://caviri.github.io/rete/cli.html)** · **[SPARQL support](https://caviri.github.io/rete/sparql.html)** · **[SHACL validation](https://caviri.github.io/rete/shacl.html)** · **[Dataset Cards](https://caviri.github.io/rete/dataset-cards.html)**
 - **[Interactive playground](https://caviri.github.io/rete/playground.html)** — query in the browser, offline.
 - **[Real-world scenario](https://caviri.github.io/rete/scenario.html)** · **[Federated queries](https://caviri.github.io/rete/federation.html)** · **[Reasoning & coherence](https://caviri.github.io/rete/reasoning.html)**
 - **[Format spec](https://caviri.github.io/rete/SPEC.html)** · **[Benchmarks](https://caviri.github.io/rete/BENCHMARK.html)** · **[Browser / WASM](https://caviri.github.io/rete/browser.html)**

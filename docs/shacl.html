@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Topic modeling (LDA) · rete docs</title>
+  <title>SHACL validation · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -174,10 +174,10 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
-        <li><a href="shacl.html">SHACL validation</a></li>
+        <li><a href="shacl.html" class="active">SHACL validation</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
-        <li><a href="topic-modeling.html" class="active">Topic modeling (LDA)</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="browser.html">Browser / WASM</a></li>
@@ -191,147 +191,113 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
   <main>
     <div class="page">
       <article class="content">
-<h1>Topic modeling over communities (LDA)</h1>
-<figure class="fig-right">
-  <img src="img/topics.svg" alt="Three structural node communities feed into an LDA topic model, which emits a topic card of keywords for each community.">
-  <figcaption>Communities are <em>structural</em> (link topology); topics are <em>latent themes</em> in the text on their nodes. LDA labels each community with its dominant theme.</figcaption>
-</figure>
-<p>A graph has two complementary notions of "cluster":</p>
+<h1>SHACL validation</h1>
+<p><code>rete shacl</code> validates a <code>.rete</code> file against SHACL Core shapes. It is meant for
+release checks and CI gates: build the graph once, run the shape file against the
+default graph or a named graph, and fail the job if the validation report is not
+conformant.</p>
+<pre><code class="language-sh">rete build data.ttl -o data.rete
+rete shacl data.rete --shapes shapes.ttl
+rete shacl data.rete --shapes shapes.ttl --format json
+rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/releases/2026-06&gt;'
+</code></pre>
+<p>The command exits with status <code>0</code> when the report conforms and non-zero when it
+finds at least one result. Shapes are read as Turtle. Data comes from the <code>.rete</code>
+file, so validation runs over exactly the graph you publish and query.</p>
+<h2>A minimal shape</h2>
+<pre><code class="language-turtle">@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
+@prefix ex: &lt;http://ex/&gt; .
+@prefix xsd: &lt;http://www.w3.org/2001/XMLSchema#&gt; .
+
+ex:PersonShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [
+    sh:path ex:email ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+    sh:pattern "@" ;
+    sh:message "Every person needs exactly one email string." ;
+  ] .
+</code></pre>
+<pre><code class="language-sh">rete shacl people.rete --shapes person-shapes.ttl
+</code></pre>
+<p>Text output is compact and human-oriented:</p>
+<pre><code class="language-text">conforms: false
+
+- focus: &lt;http://ex/Alice&gt;
+  severity: http://www.w3.org/ns/shacl#Violation
+  component: http://www.w3.org/ns/shacl#MinCountConstraintComponent
+  path: &lt;http://ex/email&gt;
+  shape: _:b1
+  message: Every person needs exactly one email string.
+</code></pre>
+<p>Use <code>--format json</code> for automation and <code>--format ttl</code> for a Turtle validation
+report.</p>
+<h2>Supported SHACL surface</h2>
+<p>This implementation targets the stable W3C SHACL Core 2017 Recommendation. It
+does not try to implement SHACL-SPARQL, SHACL-AF, SHACL-JS, SHACL 1.2 drafts, or
+ShEx.</p>
+<p>Supported targets:</p>
+<table><thead><tr><th>Feature</th><th>Status</th></tr></thead><tbody>
+<tr><td><code>sh:targetNode</code></td><td>yes</td></tr>
+<tr><td><code>sh:targetClass</code></td><td>yes, including <code>rdfs:subClassOf</code> closure in the data graph</td></tr>
+<tr><td><code>sh:targetSubjectsOf</code></td><td>yes</td></tr>
+<tr><td><code>sh:targetObjectsOf</code></td><td>yes</td></tr>
+<tr><td>implicit class targets (<code>rdfs:Class</code>, <code>owl:Class</code>)</td><td>yes</td></tr>
+<tr><td><code>sh:deactivated</code>, <code>sh:severity</code>, <code>sh:message</code></td><td>yes</td></tr>
+</tbody></table>
+<p>Supported property paths:</p>
+<table><thead><tr><th>Path form</th><th>Status</th></tr></thead><tbody>
+<tr><td>predicate IRI</td><td>yes</td></tr>
+<tr><td><code>sh:inversePath</code></td><td>yes</td></tr>
+<tr><td>RDF list sequence paths</td><td>yes</td></tr>
+<tr><td><code>sh:alternativePath</code></td><td>yes</td></tr>
+<tr><td><code>sh:zeroOrMorePath</code></td><td>yes</td></tr>
+<tr><td><code>sh:oneOrMorePath</code></td><td>yes</td></tr>
+<tr><td><code>sh:zeroOrOnePath</code></td><td>yes</td></tr>
+</tbody></table>
+<p>Supported constraint components:</p>
+<table><thead><tr><th>Constraint family</th><th>Components</th></tr></thead><tbody>
+<tr><td>Cardinality</td><td><code>sh:minCount</code>, <code>sh:maxCount</code></td></tr>
+<tr><td>Value type</td><td><code>sh:class</code>, <code>sh:datatype</code>, <code>sh:nodeKind</code></td></tr>
+<tr><td>Value range</td><td><code>sh:minInclusive</code>, <code>sh:maxInclusive</code>, <code>sh:minExclusive</code>, <code>sh:maxExclusive</code></td></tr>
+<tr><td>Strings and languages</td><td><code>sh:minLength</code>, <code>sh:maxLength</code>, <code>sh:pattern</code>, <code>sh:flags</code>, <code>sh:languageIn</code>, <code>sh:uniqueLang</code></td></tr>
+<tr><td>Property pairs</td><td><code>sh:equals</code>, <code>sh:disjoint</code>, <code>sh:lessThan</code>, <code>sh:lessThanOrEquals</code></td></tr>
+<tr><td>Value sets</td><td><code>sh:hasValue</code>, <code>sh:in</code></td></tr>
+<tr><td>Nested shapes</td><td><code>sh:node</code>, <code>sh:property</code></td></tr>
+<tr><td>Logical constraints</td><td><code>sh:not</code>, <code>sh:and</code>, <code>sh:or</code>, <code>sh:xone</code></td></tr>
+<tr><td>Closed shapes</td><td><code>sh:closed</code>, <code>sh:ignoredProperties</code></td></tr>
+<tr><td>Qualified values</td><td><code>sh:qualifiedValueShape</code>, <code>sh:qualifiedMinCount</code>, <code>sh:qualifiedMaxCount</code></td></tr>
+</tbody></table>
+<h2>Current limits</h2>
 <ul>
-<li><strong>Communities</strong> — <em>structural</em> groups found from the link topology. Densely
-connected nodes (here: papers that cite each other) fall into the same Louvain
-community. This is what <code>rete</code> computes for its pyramid summary (see
-<a href="cli.html#coarse-graphs-no-index-read"><code>rete summary</code></a> and
-<a href="intro.html">the pyramid idea</a>).</li>
-<li><strong>Topics</strong> — <em>latent themes</em> in the <strong>text</strong> attached to those nodes (titles,
-abstracts, labels). "Machine learning", "databases", "biology" are topics, not
-links.</li>
+<li>Shape files must be Turtle.</li>
+<li><code>sh:qualifiedValueShapesDisjoint</code> is not implemented yet.</li>
+<li>SHACL-SPARQL constraints, custom functions, rules, and JavaScript extensions
+are out of scope for this command.</li>
+<li>Recursive shape cycles are reported as validation results instead of being
+treated as fatal engine errors.</li>
+<li>Rete files are immutable snapshots. If your build uses <code>--materialize</code>, SHACL
+validates the already-materialized graph; otherwise it validates asserted data
+only.</li>
 </ul>
-<p>They often line up — a citation cluster usually shares a theme — but nothing
-guarantees it. This tutorial uses <code>rete</code> to get <strong>(a)</strong> the community partition
-and <strong>(b)</strong> each community's text in one shot, then runs
-<a href="https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.LatentDirichletAllocation.html">Latent Dirichlet Allocation (LDA)</a>
-to <strong>label each community with its dominant theme</strong>.</p>
-<blockquote>
-<p><code>rete</code> supplies the two hard parts: the partition (Louvain) and the
-per-community text extraction. LDA is a standard downstream step —
-<code>rete</code> is a graph file format, not an ML engine.</p>
-</blockquote>
-<p>The example graph, <a href="https://github.com/caviri/rete/blob/main/examples/papers.nt"><code>examples/papers.nt</code></a>,
-is 9 "papers" in 3 citation clusters (ML, databases, biology). Citations are
-dense <em>within</em> a cluster and sparse <em>across</em>, so Louvain recovers the 3 groups;
-each paper carries a <code>title</code> and an <code>abstract</code> literal with cluster-specific
-vocabulary.</p>
-<h2>Quick path: structural profiles (no ML)</h2>
-<p>Before reaching for LDA, <code>rete communities --profile</code> gives each community a
-no-ML "topic" label straight from the graph: its most frequent literal words,
-<code>rdf:type</code> classes, and predicates. No Python, no dependencies.</p>
-<pre><code class="language-sh">rete build examples/papers.nt -o papers.rete
-rete communities papers.rete --profile
-</code></pre>
-<pre><code>community 0: 3 members, 6 literals
-    topic words : network (6), neural (5), deep (3), gradient (3), learning (3) …
-    classes     : &lt;http://ex/Paper&gt; (3)
-    predicates  : &lt;http://ex/cites&gt; (6), &lt;http://ex/abstract&gt; (3), &lt;http://ex/title&gt; (3) …
-community 1: 3 members, 6 literals
-    topic words : query (5), database (4), storage (4), transactional (4) …
-community 2: 3 members, 6 literals
-    topic words : gene (5), protein (5), cell (4), dna (4), genome (4) …
-</code></pre>
-<p>That already separates ML / databases / biology cleanly — word frequency over a
-community's text is a strong baseline. Reach for LDA below when you want <em>latent</em>
-topics (themes that span words and are shared across communities) rather than
-just the top terms. <code>--json --profile</code> adds a <code>"profile": { types, predicates, terms }</code> object to each community for programmatic use.</p>
-<h2>Step 1 — build the file</h2>
-<pre><code class="language-sh">rete build examples/papers.nt -o papers.rete
-</code></pre>
-<p>Peek at the structure (no index read needed):</p>
-<pre><code class="language-sh">rete summary papers.rete
-</code></pre>
-<pre><code>pyramid round 0 — 3 communities summarized as 12 superedge(s):
-  C0 (internal) C0  via &lt;http://ex/cites&gt;  x6
-  C1 (internal) C1  via &lt;http://ex/cites&gt;  x6
-  C2 (internal) C2  via &lt;http://ex/cites&gt;  x6
-  ...
-</code></pre>
-<p>Three communities, each internally dense on <code>cites</code> — exactly the citation
-clusters.</p>
-<h2>Step 2 — extract per-community membership + text</h2>
-<pre><code class="language-sh">rete communities papers.rete --json &gt; communities.json
-</code></pre>
-<p>Each element is one community: its <code>members</code> (subject IRIs) and <code>text</code> (the
-lexical values of all literal objects — the topic corpus):</p>
-<pre><code class="language-json">[
-  {
-    "community": 0,
-    "size": 3,
-    "members": ["&lt;http://ex/p1&gt;", "&lt;http://ex/p2&gt;", "&lt;http://ex/p3&gt;"],
-    "text": [
-      "We train a deep neural network model on labeled images...",
-      "Deep neural networks for image classification",
-      "A reinforcement learning agent learns a policy by maximizing reward...",
-      ...
-    ]
-  },
-  ...
-]
-</code></pre>
-<p><code>--round N</code> cuts the dendrogram at a specific round (default: the round chosen
-for the tile budget); <code>--min-size N</code> drops tiny communities. Without <code>--json</code>
-you get a human summary (members + literal counts).</p>
-<h2>Step 3 — run LDA</h2>
-<p><a href="https://github.com/caviri/rete/blob/main/scripts/lda_topics.py"><code>scripts/lda_topics.py</code></a>
-treats <strong>each community as one document</strong> (its <code>text</code> joined), builds a
-document-term matrix (English stopwords), fits LDA, and prints the top words per
-topic plus each community's dominant topic.</p>
-<pre><code class="language-sh">pip install scikit-learn
-rete communities papers.rete --json | python3 scripts/lda_topics.py --topics 3
-</code></pre>
-<pre><code>== 3 topic(s) over 3 community document(s) ==
-  topic 0: network, neural, improves, query, model, transactional, database, storage
-  topic 1: using, study, model, tree, transaction, strategies, structures, load
-  topic 2: protein, gene, genome, molecular, dna, cell, tissue, mutations
+<h2>Core API</h2>
+<p>The CLI uses the reusable core API:</p>
+<pre><code class="language-rust">use rete_core::{validate_shacl, DataGraph, Rete, ShaclShapes};
 
-== community → dominant topic ==
-  community 0: topic 0  [network, neural, improves]  (p=0.99)
-  community 1: topic 0  [network, neural, improves]  (p=0.99)
-  community 2: topic 2  [protein, gene, genome]  (p=0.99)
-</code></pre>
-<p>Community 2 is cleanly the <em>biology</em> cluster (<code>gene, genome, dna, protein</code>).
-The script reads from stdin or a file (<code>lda_topics.py communities.json</code>), and
-<code>--topics</code> / <code>--top-words</code> are tunable.</p>
-<h2>Step 4 (optional) — write topics back as queryable RDF</h2>
-<p>Once you have a label per community, you can attach it to each member and rebuild
-so the topic becomes <strong>queryable with SPARQL</strong>:</p>
-<pre><code class="language-sh"># e.g. community 2 → "biology"
-cat &gt;&gt; topics.nt &lt;&lt;'EOF'
-&lt;http://ex/p7&gt; &lt;http://ex/topic&gt; "biology" .
-&lt;http://ex/p8&gt; &lt;http://ex/topic&gt; "biology" .
-&lt;http://ex/p9&gt; &lt;http://ex/topic&gt; "biology" .
-EOF
+let rete = Rete::open("data.rete")?;
+let data = DataGraph::from_rete(&amp;rete, None)?;
+let shape_text = std::fs::read_to_string("shapes.ttl")?;
+let shapes = ShaclShapes::parse_turtle(&amp;shape_text)?;
+let report = validate_shacl(&amp;data, &amp;shapes);
 
-rete build examples/papers.nt topics.nt -o papers-topics.rete
-
-rete sparql papers-topics.rete \
-  'PREFIX e: &lt;http://ex/&gt; SELECT ?p WHERE { ?p e:topic "biology" }'
+if !report.conforms {
+    eprintln!("{}", report.to_json());
+}
 </code></pre>
-<p>The topic is now a first-class edge: filter, join, and traverse it like any
-other relation.</p>
-<h2>Honest notes</h2>
-<ul>
-<li><strong>LDA needs real text and volume.</strong> This 9-paper demo is <em>illustrative</em>: with
-only 3 documents LDA cannot reliably split the two technical clusters (ML vs.
-databases often land on one topic), though the lexically distinct biology
-cluster separates perfectly. On a real corpus (hundreds of documents per
-community, longer abstracts) topics become sharp.</li>
-<li><strong>Communities ≠ topics.</strong> They coincide <em>here</em> by construction; on real data
-compare them — a structural community spanning two topics is itself a finding.</li>
-<li>LDA is non-deterministic up to its random seed (the script fixes
-<code>random_state=0</code> for reproducibility) and the topic <em>count</em> is a
-hyperparameter you choose.</li>
-</ul>
-<p>See also: <a href="intro.html">Graph data 101</a>, <a href="cli.html">CLI reference</a>,
-<a href="compatibility.html">Compatibility &amp; interop</a>.</p>
+<p>Pass <code>Some("&lt;graph-iri&gt;")</code> to <code>DataGraph::from_rete</code> to validate one named graph.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -339,7 +305,7 @@ hyperparameter you choose.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/topic-modeling.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/shacl.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

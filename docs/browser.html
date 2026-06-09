@@ -174,6 +174,7 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
@@ -213,6 +214,7 @@ browser reads compressed files fine. <code>rete-wasm</code> depends on <code>ret
 <tr><td><code>schema(bytes)</code></td><td><code>{ classes: [["&lt;iri&gt;",count]], relations: [["s","p","o",count]] }</code></td></tr>
 <tr><td><code>header_ranges(headerBytes)</code></td><td><code>{ dictOffset, dictLen, pyramidOffset, pyramidLen, indexOffset, indexLen }</code></td></tr>
 <tr><td><code>summary_overview(bytes)</code></td><td><code>{ round, communities, predicateTotals: [["&lt;iri&gt;",count]] }</code></td></tr>
+<tr><td><code>progressive_query(bytes, query)</code></td><td>SELECT/ASK envelope for summary-safe COUNT/ASK shapes, plus <code>progressive</code> metadata</td></tr>
 <tr><td><code>query(bytes, query, format)</code></td><td>any SPARQL form, tagged by <code>kind</code> (see below)</td></tr>
 <tr><td><code>communities(bytes, round?)</code></td><td><code>[{ community, size, triples }, …]</code> (Louvain decomposition)</td></tr>
 <tr><td><code>reach(bytes, predicate, seeds, reverse)</code></td><td><code>[{ seed, count, reached:["&lt;iri&gt;",…] }, …]</code> (serial transitive reach)</td></tr>
@@ -272,6 +274,35 @@ const overview = JSON.parse(summary_overview(buf)); // index never fetched
 <p>This is the same path as <code>rete summary-url</code> natively. It's verified end-to-end in
 <code>rete-wasm</code>'s Node test: with the index region zero-filled, the overview still
 computes — typically ~25 % of the file fetched in 3 ranges.</p>
+<p><code>progressive_query</code> uses the same summary-only path for query answering. It is
+intentionally conservative and returns an error unless the query is exactly one
+of these shapes:</p>
+<ul>
+<li><code>SELECT (COUNT(*) AS ?n) WHERE { ?s &lt;predicate&gt; ?o }</code></li>
+<li><code>SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }</code></li>
+<li><code>SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p</code></li>
+<li><code>SELECT DISTINCT ?p WHERE { ?s ?p ?o }</code></li>
+<li><code>SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }</code></li>
+<li><code>ASK { ?s ?p ?o }</code></li>
+<li><code>ASK { ?s &lt;predicate&gt; ?o }</code></li>
+</ul>
+<p>Successful responses reuse the normal <code>query</code> envelopes and add
+<code>progressive</code>, for example:</p>
+<pre><code class="language-json">{
+  "kind": "select",
+  "vars": ["n"],
+  "rows": [{ "n": "\"42\"^^&lt;http://www.w3.org/2001/XMLSchema#integer&gt;" }],
+  "progressive": {
+    "stage": "summary",
+    "exact": true,
+    "readsIndex": false,
+    "queryShape": "predicate_count",
+    "bytes": 9182,
+    "requests": 3,
+    "fileBytes": 37210
+  }
+}
+</code></pre>
 <h2>The demo page / playground</h2>
 <p><code>web/index.html</code> ties it together: it renders the <code>schema</code> ontology overview on
 load, lets you click a class or relation to drill in with a generated SPARQL
@@ -279,9 +310,9 @@ query, has a <strong>dataset selector</strong> (typed / deps / papers) with one-
 queries, and a <strong>"Load overview only"</strong> button that runs the progressive path
 above against the range server. It is also an <strong>interactive query playground</strong>:
 SELECT / ASK / CONSTRUCT with Table / Turtle / JSON-LD output (via <code>query</code>), a
-"split by community" evaluation view (via <code>communities</code>), query timing, and a
-localStorage history. See <a href="playground.html">Interactive playground</a> for the full
-walk-through.</p>
+summary-only progressive evaluation mode (via <code>progressive_query</code>), a "split by
+community" evaluation view (via <code>communities</code>), query timing, and a localStorage
+history. See <a href="playground.html">Interactive playground</a> for the full walk-through.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -388,6 +419,7 @@ walk-through.</p>
   var GLOSSARY = {
     "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
     "SPARQL": "The W3C query language for RDF graphs (SELECT / ASK / CONSTRUCT / DESCRIBE).",
+    "SHACL": "Shapes Constraint Language - the W3C language for validating RDF graphs against shapes.",
     "IRI": "Internationalized Resource Identifier — a global, URL-like id for a resource.",
     "BGP": "Basic Graph Pattern — a set of triple patterns joined on their shared variables.",
     "HDT": "Header-Dictionary-Triples — a compact binary RDF format rete's dictionary draws on.",

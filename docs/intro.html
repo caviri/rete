@@ -174,6 +174,7 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
@@ -263,16 +264,16 @@ question. Here's the whole map on one page — and what <code>rete</code> does w
 <tr><td><strong>RDFS</strong></td><td>Lightweight schema: class/property hierarchies</td><td>"If <code>Dog</code> is a <code>subClassOf Animal</code>, is Rex an Animal?"</td><td>✅ via <a href="reasoning.html"><code>rete reason</code></a></td></tr>
 <tr><td><strong>OWL</strong></td><td>Rich schema + meaning: disjointness, identity, transitivity</td><td>"Are these two facts logically <em>contradictory</em>?"</td><td>⚠️ prototype OWL <strong>RL</strong> subset, not full OWL DL — <a href="reasoning.html">reasoning</a></td></tr>
 <tr><td><strong>SPARQL</strong></td><td>The query language for RDF</td><td>"Find everyone Alice transitively knows."</td><td>✅ <a href="sparql.html">SPARQL support</a></td></tr>
-<tr><td><strong>SHACL / ShEx</strong></td><td>Shapes/validation: does data match a required shape?</td><td>"Does every <code>Person</code> have exactly one email?"</td><td>❌ not yet (see <a href="compatibility.html">compatibility</a>)</td></tr>
+<tr><td><strong>SHACL / ShEx</strong></td><td>Shapes/validation: does data match a required shape?</td><td>"Does every <code>Person</code> have exactly one email?"</td><td>✅ SHACL Core via <a href="shacl.html"><code>rete shacl</code></a>; ShEx not implemented</td></tr>
 <tr><td><strong>N-Triples / N-Quads</strong></td><td>Plainest serialization (one statement per line)</td><td>"How do I hand my triples to a tool, losslessly?"</td><td>✅ build input + N-Quads export</td></tr>
 <tr><td><strong>Turtle</strong></td><td>Human-friendly RDF text format</td><td>"Can I read/write this by hand?"</td><td>✅ build input + export (default graph)</td></tr>
 <tr><td><strong>JSON-LD</strong></td><td>RDF as JSON, for web APIs</td><td>"Can I consume this in a JS app?"</td><td>✅ expanded JSON-LD export (default graph)</td></tr>
 <tr><td><strong>Cypher / GQL</strong></td><td>The property-graph query language(s)</td><td>"<code>MATCH (a)-[:KNOWS]-&gt;(b) RETURN b</code>"</td><td>⚠️ read-only Cypher <em>subset</em>, translated to SPARQL — <a href="compatibility.html">compatibility</a></td></tr>
 </tbody></table>
-<p>Two honest caveats up front: there's <strong>no SHACL/ShEx</strong> shape validation yet (you
-can do <em>syntactic</em> and <em>logical</em> coherence checks instead — see below), and the
-reasoner is a <strong>documented OWL RL subset</strong>, not a full OWL DL engine. <code>rete</code> also
-has no SPARQL Update / writes — a <code>.rete</code> file is immutable by design.</p>
+<p>Two honest caveats up front: SHACL support targets <strong>SHACL Core</strong> rather than
+SHACL-SPARQL, SHACL-AF, or ShEx, and the reasoner is a <strong>documented OWL RL
+subset</strong>, not a full OWL DL engine. <code>rete</code> also has no SPARQL Update / writes —
+a <code>.rete</code> file is immutable by design.</p>
 <h2>What kinds of questions can you actually ask <code>rete</code>?</h2>
 <p>This is the heart of it. Below: a plain-English question → the kind of query it
 is → the concrete <code>rete</code> command. (Examples use the bundled dependency graph,
@@ -440,6 +441,7 @@ answer "what does this CVE impact?" over plain HTTP.</li>
   var GLOSSARY = {
     "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
     "SPARQL": "The W3C query language for RDF graphs (SELECT / ASK / CONSTRUCT / DESCRIBE).",
+    "SHACL": "Shapes Constraint Language - the W3C language for validating RDF graphs against shapes.",
     "IRI": "Internationalized Resource Identifier — a global, URL-like id for a resource.",
     "BGP": "Basic Graph Pattern — a set of triple patterns joined on their shared variables.",
     "HDT": "Header-Dictionary-Triples — a compact binary RDF format rete's dictionary draws on.",

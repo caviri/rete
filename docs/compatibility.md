@@ -19,6 +19,7 @@ It implements the RDF 1.1 data model:
 | Blank nodes | ✅ (as terms; non-distinguished variables in patterns) |
 | Named graphs / RDF datasets | ✅ — N-Quads in, `GRAPH`/`FROM`/`FROM NAMED` in SPARQL |
 | SPARQL 1.1 query | ✅ — see [SPARQL support](sparql.md) |
+| SHACL Core validation | ✅ — see [SHACL validation](shacl.md) |
 
 **Input formats:** N-Triples (`.nt`), N-Quads (`.nq`), Turtle (`.ttl`).
 **Output:** N-Quads (`rete export`, lossless round-trip), Turtle and expanded
@@ -37,7 +38,7 @@ for named graphs).
 
 ## Validation
 
-There are three independent ways to check correctness:
+There are five independent ways to check correctness:
 
 1. **Syntactic — `rete validate`.** Parses N-Triples/N-Quads/Turtle without
    building, and fails with a precise line/column error on malformed input:
@@ -51,13 +52,23 @@ There are three independent ways to check correctness:
 
    `rete build` runs the same parse, so a successful build is also a validation.
 
-2. **Integrity — `rete verify`.** Recomputes the blake3 content hash and compares
+2. **Shape validation — `rete shacl`.** Validates a `.rete` graph against SHACL
+   Core shapes read from Turtle. It exits non-zero when the validation report is
+   non-conformant, so it works as a CI gate. See [SHACL validation](shacl.md) for
+   the supported target, path, and constraint components.
+
+   ```sh
+   rete shacl data.rete --shapes shapes.ttl
+   rete shacl data.rete --shapes shapes.ttl --format json
+   ```
+
+3. **Integrity — `rete verify`.** Recomputes the blake3 content hash and compares
    it to the header, detecting any corruption or truncation of a `.rete` file.
 
-3. **Round-trip — `rete export`.** Dumps back to N-Quads; diff against the source
+4. **Round-trip — `rete export`.** Dumps back to N-Quads; diff against the source
    (or re-validate the output) to confirm nothing was lost.
 
-4. **Logical coherence — `rete reason`.** A prototype OWL RL / RDFS reasoner
+5. **Logical coherence — `rete reason`.** A prototype OWL RL / RDFS reasoner
    materializes RDFS/OWL entailments and flags *incoherent points* — logical
    contradictions such as disjoint-class violations, `sameAs`/`differentFrom`
    clashes, functional-property conflicts, and `owl:Nothing` membership. It exits
@@ -72,10 +83,9 @@ There are three independent ways to check correctness:
    #    [disjoint-classes] <http://ex/p> is typed as both … owl:disjointWith
    ```
 
-**Not yet available:** *semantic* validation against a schema/shape
-(SHACL / ShEx). That's a natural future addition — the SPARQL engine already has
-the primitives a shape checker needs, and `rete reason` already does rule-based
-OWL RL coherence checking.
+`rete shacl` is SHACL Core support, not the whole shape-language universe:
+SHACL-SPARQL, SHACL-AF, JavaScript extensions, SHACL 1.2 draft features, and ShEx
+are not implemented.
 
 ## Could it speak Cypher too?
 

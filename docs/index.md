@@ -55,13 +55,14 @@ rete schema  social.rete    # semantic (by rdf:type)
 - **[Real-world scenario](scenario.md)** — publish a queryable SBOM to a URL; curl examples.
 - **[CLI reference](cli.md)** — every `rete` subcommand.
 - **[SPARQL support](sparql.md)** — exactly what the engine evaluates.
+- **[SHACL validation](shacl.md)** — validate `.rete` graphs against SHACL Core shapes.
 - **[Compatibility & interop](compatibility.md)** — RDF, validation, and Cypher.
 - **[Reasoning & coherence](reasoning.md)** — prototype OWL RL / RDFS reasoner; find incoherent points.
 - **[Topic modeling (LDA)](topic-modeling.md)** — label each community's theme: `rete communities` + scikit-learn LDA.
 - **[Multi-criteria communities](multi-criteria.md)** — partition the same graph by different relations/attributes; combine criteria.
 - **[Federated queries](federation.md)** — query several `.rete` files (local paths and/or URLs) as one; union merge + predicate routing.
 - **[Browser / WASM](browser.md)** — query in the browser; progressive loading.
-- **[Interactive playground](playground.html)** — a static, no-server, runs-entirely-in-your-browser page: it embeds the WASM engine and the example datasets, so SELECT/ASK/CONSTRUCT, Table/Turtle/JSON-LD, the community view, reachability, and history all work offline (even from `file://`).
+- **[Interactive playground](playground.html)** — a static, no-server, runs-entirely-in-your-browser page: it embeds the WASM engine and the example datasets, so SELECT/ASK/CONSTRUCT, progressive summary queries, Table/Turtle/JSON-LD, the community view, reachability, and history all work offline (even from `file://`).
 - **[Format specification](SPEC.md)** — the on-disk byte layout, for implementers.
 - **[Benchmarks](BENCHMARK.md)** — synthetic 139 k-triple sizing plus the real OpenCitations/Oxigraph comparison.
 - **[Parallel in the browser (experimental)](parallel-browser.md)** — a working Web Worker reachability demo, plus the more fragile shared-memory WASM thread path.

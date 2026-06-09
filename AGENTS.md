@@ -12,7 +12,7 @@ query engine, the WASM crate exposes browser bindings, and `docgen` renders the
 static documentation site.
 
 - `crates/rete-core`: file layout, dictionary/index/pyramid encoding, SPARQL,
-  reasoning, range readers, and robustness tests.
+  SHACL validation, reasoning, range readers, and robustness tests.
 - `crates/rete-cli`: the `rete` binary and command handlers.
 - `crates/rete-wasm`: `wasm-bindgen` browser API; default build is
   single-threaded and `file://` friendly.

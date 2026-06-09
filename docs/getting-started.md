@@ -60,6 +60,19 @@ rete sparql data.rete "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10" --json
 
 See the [SPARQL support](sparql.md) page for the full feature list.
 
+## Validating shapes
+
+Use `rete shacl` when you need semantic data-quality checks, not just syntax or
+file integrity. Shapes are Turtle files; the command exits non-zero if the graph
+does not conform.
+
+```sh
+rete shacl data.rete --shapes shapes.ttl
+rete shacl data.rete --shapes shapes.ttl --format json
+```
+
+See [SHACL validation](shacl.md) for the supported SHACL Core surface.
+
 ## Inspecting a file
 
 ```sh

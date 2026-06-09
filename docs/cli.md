@@ -97,6 +97,66 @@ standard SPARQL Results JSON (for `SELECT`/`ASK`). See [SPARQL support](sparql.m
 rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 ```
 
+### `rete cost <file-or-url> "<query>" [--json] [--explain]`
+Preview the byte/range-request cost of a SPARQL query without evaluating it.
+The report parses the query, lists the concrete predicates that can drive
+summary-based routing, and compares two access paths:
+
+- **summary overview** — header + dictionary + pyramid summary, skipping the
+  triple index.
+- **full query open** — the current SPARQL engine path, which opens dictionary +
+  index (+ pyramid/named-graph metadata when present) before evaluation.
+
+```sh
+rete cost data.rete "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+rete cost https://host/data.rete "ASK { ?s <http://ex/knows> ?o }" --json
+```
+
+For the exact summary-only shapes `SELECT (COUNT(*) AS ?n) WHERE { ?s <p> ?o }`,
+`SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }`,
+`SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p`,
+`SELECT DISTINCT ?p WHERE { ?s ?p ?o }`,
+`SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }`, `ASK { ?s <p> ?o }`,
+and `ASK { ?s ?p ?o }`, the JSON output includes `summary_answer` with the
+exact count/boolean value read from the pyramid summary. Predicate-specific
+shapes also include the predicate; predicate totals return all predicate/count
+pairs, predicate lists return all predicates present in the summary, and
+predicate distinct counts return the number of predicates. More complex shapes
+are marked `requires_index`.
+
+Add `--explain` to include a planner explanation. In JSON, this adds an
+`explain` object with the classified `query_shape`, whether the answer is
+`summary_exact`, the planned access path (`summary-only` or `full-index`), and
+whether the current engine path still reads the index.
+
+For HTTP(S), the host must honor `Range` requests, just like `query-url` and
+`sparql-url`. Treat this as a deployment/debugging preview: it reports the
+current engine's range budget and the cheaper overview/routing budget; future
+tile-routed progressive queries can refine the estimate by query shape.
+
+### `rete progressive <file-or-url> "<query>" [--json]`
+Run the first summary-only progressive query path. This command answers only
+the exact shapes that can be proven from the pyramid summary without opening
+the triple index:
+
+- `SELECT (COUNT(*) AS ?n) WHERE { ?s <p> ?o }`
+- `SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }`
+- `SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p`
+- `SELECT DISTINCT ?p WHERE { ?s ?p ?o }`
+- `SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }`
+- `ASK { ?s ?p ?o }`
+- `ASK { ?s <p> ?o }`
+
+```sh
+rete progressive data.rete "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
+```
+
+The JSON output is SPARQL Results JSON with an added `progressive` object
+describing the summary stage, exactness, predicate when one is fixed, bytes
+fetched, request count, and `reads_index: false`. Other query shapes fail
+clearly; use `rete sparql` for full-index evaluation or `rete cost --explain` to
+inspect why a query is not summary-answerable yet.
+
 ### `rete cypher <file> "<query>" [--base <iri>] [--json]`
 Run a read-only **Cypher subset** (a prototype). The query is translated to an
 equivalent SPARQL `SELECT` and evaluated by the same engine — no second query
@@ -132,6 +192,21 @@ documented subset, not full OWL DL — see [Reasoning & coherence](reasoning.md)
 ```sh
 rete reason data.rete
 rete reason data.rete --materialize --format ttl
+```
+
+## Shape validation
+
+### `rete shacl <file> --shapes <shapes.ttl> [--graph <iri>] [--format text|json|ttl]`
+Validate a `.rete` graph against SHACL Core shapes read from Turtle. The default
+graph is validated unless `--graph` names one dataset graph. The command exits
+zero when the report conforms and non-zero when it finds validation results, so
+it can be used as a CI data-quality gate. See [SHACL validation](shacl.md) for
+the supported components and current limits.
+
+```sh
+rete shacl data.rete --shapes shapes.ttl
+rete shacl data.rete --shapes shapes.ttl --format json
+rete shacl data.rete --shapes shapes.ttl --graph '<http://ex/snapshot>'
 ```
 
 ## Coarse graphs (no index read)

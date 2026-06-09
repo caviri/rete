@@ -20,6 +20,7 @@ const PAGES: &[(&str, &str)] = &[
     ("cli.md", "CLI reference"),
     ("dataset-cards.md", "Dataset Cards"),
     ("sparql.md", "SPARQL support"),
+    ("shacl.md", "SHACL validation"),
     ("compatibility.md", "Compatibility & interop"),
     ("reasoning.md", "Reasoning & coherence"),
     ("topic-modeling.md", "Topic modeling (LDA)"),
@@ -438,6 +439,7 @@ const GLOSSARY_JS: &str = r#"
   var GLOSSARY = {
     "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
     "SPARQL": "The W3C query language for RDF graphs (SELECT / ASK / CONSTRUCT / DESCRIBE).",
+    "SHACL": "Shapes Constraint Language - the W3C language for validating RDF graphs against shapes.",
     "IRI": "Internationalized Resource Identifier — a global, URL-like id for a resource.",
     "BGP": "Basic Graph Pattern — a set of triple patterns joined on their shared variables.",
     "HDT": "Header-Dictionary-Triples — a compact binary RDF format rete's dictionary draws on.",
