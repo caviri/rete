@@ -170,10 +170,12 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
         <li><a href="index.html">Overview</a></li>
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li><a href="cli.html" class="active">CLI reference</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
@@ -259,6 +261,58 @@ rete export data.rete --format jsonld # expanded JSON-LD
 standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a href="sparql.html">SPARQL support</a>.</p>
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 </code></pre>
+<h3><code>rete cost &lt;file-or-url&gt; "&lt;query&gt;" [--json] [--explain]</code></h3>
+<p>Preview the byte/range-request cost of a SPARQL query without evaluating it.
+The report parses the query, lists the concrete predicates that can drive
+summary-based routing, and compares two access paths:</p>
+<ul>
+<li><strong>summary overview</strong> — header + dictionary + pyramid summary, skipping the
+triple index.</li>
+<li><strong>full query open</strong> — the current SPARQL engine path, which opens dictionary +
+index (+ pyramid/named-graph metadata when present) before evaluation.</li>
+</ul>
+<pre><code class="language-sh">rete cost data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?y WHERE { e:Alice e:knows ?y }"
+rete cost https://host/data.rete "ASK { ?s &lt;http://ex/knows&gt; ?o }" --json
+</code></pre>
+<p>For the exact summary-only shapes <code>SELECT (COUNT(*) AS ?n) WHERE { ?s &lt;p&gt; ?o }</code>,
+<code>SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }</code>,
+<code>SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p</code>,
+<code>SELECT DISTINCT ?p WHERE { ?s ?p ?o }</code>,
+<code>SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }</code>, <code>ASK { ?s &lt;p&gt; ?o }</code>,
+and <code>ASK { ?s ?p ?o }</code>, the JSON output includes <code>summary_answer</code> with the
+exact count/boolean value read from the pyramid summary. Predicate-specific
+shapes also include the predicate; predicate totals return all predicate/count
+pairs, predicate lists return all predicates present in the summary, and
+predicate distinct counts return the number of predicates. More complex shapes
+are marked <code>requires_index</code>.</p>
+<p>Add <code>--explain</code> to include a planner explanation. In JSON, this adds an
+<code>explain</code> object with the classified <code>query_shape</code>, whether the answer is
+<code>summary_exact</code>, the planned access path (<code>summary-only</code> or <code>full-index</code>), and
+whether the current engine path still reads the index.</p>
+<p>For HTTP(S), the host must honor <code>Range</code> requests, just like <code>query-url</code> and
+<code>sparql-url</code>. Treat this as a deployment/debugging preview: it reports the
+current engine's range budget and the cheaper overview/routing budget; future
+tile-routed progressive queries can refine the estimate by query shape.</p>
+<h3><code>rete progressive &lt;file-or-url&gt; "&lt;query&gt;" [--json]</code></h3>
+<p>Run the first summary-only progressive query path. This command answers only
+the exact shapes that can be proven from the pyramid summary without opening
+the triple index:</p>
+<ul>
+<li><code>SELECT (COUNT(*) AS ?n) WHERE { ?s &lt;p&gt; ?o }</code></li>
+<li><code>SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }</code></li>
+<li><code>SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p</code></li>
+<li><code>SELECT DISTINCT ?p WHERE { ?s ?p ?o }</code></li>
+<li><code>SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }</code></li>
+<li><code>ASK { ?s ?p ?o }</code></li>
+<li><code>ASK { ?s &lt;p&gt; ?o }</code></li>
+</ul>
+<pre><code class="language-sh">rete progressive data.rete "PREFIX e: &lt;http://ex/&gt; SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
+</code></pre>
+<p>The JSON output is SPARQL Results JSON with an added <code>progressive</code> object
+describing the summary stage, exactness, predicate when one is fixed, bytes
+fetched, request count, and <code>reads_index: false</code>. Other query shapes fail
+clearly; use <code>rete sparql</code> for full-index evaluation or <code>rete cost --explain</code> to
+inspect why a query is not summary-answerable yet.</p>
 <h3><code>rete cypher &lt;file&gt; "&lt;query&gt;" [--base &lt;iri&gt;] [--json]</code></h3>
 <p>Run a read-only <strong>Cypher subset</strong> (a prototype). The query is translated to an
 equivalent SPARQL <code>SELECT</code> and evaluated by the same engine — no second query
@@ -287,6 +341,17 @@ also serialize the base + inferred graph (<code>nq</code> default, or <code>ttl<
 documented subset, not full OWL DL — see <a href="reasoning.html">Reasoning &amp; coherence</a>.</p>
 <pre><code class="language-sh">rete reason data.rete
 rete reason data.rete --materialize --format ttl
+</code></pre>
+<h2>Shape validation</h2>
+<h3><code>rete shacl &lt;file&gt; --shapes &lt;shapes.ttl&gt; [--graph &lt;iri&gt;] [--format text|json|ttl]</code></h3>
+<p>Validate a <code>.rete</code> graph against SHACL Core shapes read from Turtle. The default
+graph is validated unless <code>--graph</code> names one dataset graph. The command exits
+zero when the report conforms and non-zero when it finds validation results, so
+it can be used as a CI data-quality gate. See <a href="shacl.html">SHACL validation</a> for
+the supported components and current limits.</p>
+<pre><code class="language-sh">rete shacl data.rete --shapes shapes.ttl
+rete shacl data.rete --shapes shapes.ttl --format json
+rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/snapshot&gt;'
 </code></pre>
 <h2>Coarse graphs (no index read)</h2>
 <h3><code>rete summary &lt;file&gt;</code></h3>
@@ -473,6 +538,7 @@ corrupt file, a host that ignores <code>Range</code>, or an unsupported query co
   var GLOSSARY = {
     "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
     "SPARQL": "The W3C query language for RDF graphs (SELECT / ASK / CONSTRUCT / DESCRIBE).",
+    "SHACL": "Shapes Constraint Language - the W3C language for validating RDF graphs against shapes.",
     "IRI": "Internationalized Resource Identifier — a global, URL-like id for a resource.",
     "BGP": "Basic Graph Pattern — a set of triple patterns joined on their shared variables.",
     "HDT": "Header-Dictionary-Triples — a compact binary RDF format rete's dictionary draws on.",

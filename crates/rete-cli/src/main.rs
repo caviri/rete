@@ -229,6 +229,53 @@ enum Command {
         #[arg(long, value_parser = ["nq", "ttl"], default_value = "nq")]
         format: String,
     },
+    /// Validate a `.rete` graph against SHACL Core shapes (2017 Recommendation).
+    ///
+    /// Shapes are read from Turtle. The default graph is validated unless
+    /// `--graph` names one dataset graph. Exits non-zero when the report is
+    /// non-conformant, so it can be used as a CI gate.
+    Shacl {
+        /// Path to the `.rete` file.
+        file: String,
+        /// Turtle file containing SHACL shapes.
+        #[arg(long)]
+        shapes: String,
+        /// Validate this named graph instead of the default graph.
+        #[arg(long)]
+        graph: Option<String>,
+        /// Output format: text | json | ttl.
+        #[arg(long, value_parser = ["text", "json", "ttl"], default_value = "text")]
+        format: String,
+    },
+    /// Preview the range-read byte cost of running a SPARQL query.
+    ///
+    /// Reports the cheap summary/overview path and the current full SPARQL
+    /// query-open path without evaluating or materializing query results.
+    Cost {
+        /// Local `.rete` file path or http(s) URL.
+        source: String,
+        /// The SPARQL query to parse and inspect.
+        query: String,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+        /// Include planner explanation for the selected access path.
+        #[arg(long)]
+        explain: bool,
+    },
+    /// Answer exact summary-safe SPARQL queries without opening the triple index.
+    ///
+    /// This is the first progressive-query surface: it supports exact
+    /// per-predicate `COUNT(*)` and `ASK` shapes from the pyramid summary.
+    Progressive {
+        /// Local `.rete` file path or http(s) URL.
+        source: String,
+        /// The SPARQL query to answer from the summary.
+        query: String,
+        /// Emit SPARQL Results JSON plus progressive metadata.
+        #[arg(long)]
+        json: bool,
+    },
     /// Run a SPARQL query (SELECT / ASK / CONSTRUCT).
     Sparql {
         /// Path to the `.rete` file.
@@ -400,6 +447,23 @@ fn main() -> anyhow::Result<()> {
             materialize,
             format,
         } => commands::reason::reason_cmd(&file, materialize, &format),
+        Command::Shacl {
+            file,
+            shapes,
+            graph,
+            format,
+        } => commands::shacl::shacl_cmd(&file, &shapes, graph.as_deref(), &format),
+        Command::Cost {
+            source,
+            query,
+            json,
+            explain,
+        } => commands::cost::cost(&source, &query, json, explain),
+        Command::Progressive {
+            source,
+            query,
+            json,
+        } => commands::progressive::progressive(&source, &query, json),
         Command::Sparql { file, query, json } => commands::query::sparql(&file, &query, json),
         Command::Cypher {
             file,

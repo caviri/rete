@@ -30,6 +30,7 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `schema(bytes)` | `{ classes: [["<iri>",count]], relations: [["s","p","o",count]] }` |
 | `header_ranges(headerBytes)` | `{ dictOffset, dictLen, pyramidOffset, pyramidLen, indexOffset, indexLen }` |
 | `summary_overview(bytes)` | `{ round, communities, predicateTotals: [["<iri>",count]] }` |
+| `progressive_query(bytes, query)` | SELECT/ASK envelope for summary-safe COUNT/ASK shapes, plus `progressive` metadata |
 | `query(bytes, query, format)` | any SPARQL form, tagged by `kind` (see below) |
 | `communities(bytes, round?)` | `[{ community, size, triples }, …]` (Louvain decomposition) |
 | `reach(bytes, predicate, seeds, reverse)` | `[{ seed, count, reached:["<iri>",…] }, …]` (serial transitive reach) |
@@ -101,6 +102,38 @@ This is the same path as `rete summary-url` natively. It's verified end-to-end i
 `rete-wasm`'s Node test: with the index region zero-filled, the overview still
 computes — typically ~25 % of the file fetched in 3 ranges.
 
+`progressive_query` uses the same summary-only path for query answering. It is
+intentionally conservative and returns an error unless the query is exactly one
+of these shapes:
+
+- `SELECT (COUNT(*) AS ?n) WHERE { ?s <predicate> ?o }`
+- `SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }`
+- `SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p`
+- `SELECT DISTINCT ?p WHERE { ?s ?p ?o }`
+- `SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }`
+- `ASK { ?s ?p ?o }`
+- `ASK { ?s <predicate> ?o }`
+
+Successful responses reuse the normal `query` envelopes and add
+`progressive`, for example:
+
+```json
+{
+  "kind": "select",
+  "vars": ["n"],
+  "rows": [{ "n": "\"42\"^^<http://www.w3.org/2001/XMLSchema#integer>" }],
+  "progressive": {
+    "stage": "summary",
+    "exact": true,
+    "readsIndex": false,
+    "queryShape": "predicate_count",
+    "bytes": 9182,
+    "requests": 3,
+    "fileBytes": 37210
+  }
+}
+```
+
 ## The demo page / playground
 
 `web/index.html` ties it together: it renders the `schema` ontology overview on
@@ -109,6 +142,6 @@ query, has a **dataset selector** (typed / deps / papers) with one-click example
 queries, and a **"Load overview only"** button that runs the progressive path
 above against the range server. It is also an **interactive query playground**:
 SELECT / ASK / CONSTRUCT with Table / Turtle / JSON-LD output (via `query`), a
-"split by community" evaluation view (via `communities`), query timing, and a
-localStorage history. See [Interactive playground](playground.html) for the full
-walk-through.
+summary-only progressive evaluation mode (via `progressive_query`), a "split by
+community" evaluation view (via `communities`), query timing, and a localStorage
+history. See [Interactive playground](playground.html) for the full walk-through.

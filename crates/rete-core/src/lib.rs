@@ -17,6 +17,7 @@ pub mod pyramid;
 pub mod reach;
 pub mod reader;
 pub mod reason;
+pub mod shacl;
 pub mod sparql;
 pub mod tiling;
 pub mod triples;
@@ -39,9 +40,14 @@ pub use pyramid::{
 pub use reach::{batch_reach_serial, build_adjacency, reach_one};
 pub use reader::{CountingReader, RangeReader, SliceReader};
 pub use reason::{reason, Inconsistency, Reasoning};
+pub use shacl::{
+    validate_shacl, DataGraph, Severity, ShaclError, ShaclShapes, ValidationReport,
+    ValidationResult,
+};
 pub use sparql::{
-    eval_query, eval_sparql, parse_select, query_predicates, Agg, FExpr, GraphTarget, GroupSpec,
-    Op, PathAst, Plan, QueryOutput, Rep, Select, SparqlError,
+    eval_query, eval_sparql, parse_select, query_predicates, summary_query_shape, Agg, FExpr,
+    GraphTarget, GroupSpec, Op, PathAst, Plan, QueryOutput, Rep, Select, SparqlError,
+    SummaryQueryShape,
 };
 pub use tiling::{choose_round_for_budget, summarize, tile_by_community, SuperEdge, Tile};
 pub use triples::{Triple, TripleBlock, TripleBlockBuilder, ZoneMap};

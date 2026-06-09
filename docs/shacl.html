@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Compatibility & interop · rete docs</title>
+  <title>SHACL validation · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -175,8 +175,8 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
-        <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="compatibility.html" class="active">Compatibility & interop</a></li>
+        <li><a href="shacl.html" class="active">SHACL validation</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
@@ -192,158 +192,113 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
   <main>
     <div class="page">
       <article class="content">
-<h1>Compatibility, validation &amp; interop</h1>
-<h2>Is it compatible with RDF?</h2>
-<p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
-format <em>for</em> RDF, built on the standard Rust RDF stack
-(<a href="https://crates.io/crates/oxrdf"><code>oxrdf</code></a>,
-<a href="https://crates.io/crates/oxttl"><code>oxttl</code></a>,
-<a href="https://crates.io/crates/spargebra"><code>spargebra</code></a>).</p>
-<p>It implements the RDF 1.1 data model:</p>
-<table><thead><tr><th>RDF concept</th><th>Support</th></tr></thead><tbody>
-<tr><td>IRIs</td><td>✅</td></tr>
-<tr><td>Literals (plain)</td><td>✅</td></tr>
-<tr><td>Typed literals (<code>"30"^^xsd:integer</code>)</td><td>✅ — datatype preserved</td></tr>
-<tr><td>Language-tagged literals (<code>"hi"@en</code>)</td><td>✅ — tag preserved</td></tr>
-<tr><td>Blank nodes</td><td>✅ (as terms; non-distinguished variables in patterns)</td></tr>
-<tr><td>Named graphs / RDF datasets</td><td>✅ — N-Quads in, <code>GRAPH</code>/<code>FROM</code>/<code>FROM NAMED</code> in SPARQL</td></tr>
-<tr><td>SPARQL 1.1 query</td><td>✅ — see <a href="sparql.html">SPARQL support</a></td></tr>
-<tr><td>SHACL Core validation</td><td>✅ — see <a href="shacl.html">SHACL validation</a></td></tr>
-</tbody></table>
-<p><strong>Input formats:</strong> N-Triples (<code>.nt</code>), N-Quads (<code>.nq</code>), Turtle (<code>.ttl</code>).
-<strong>Output:</strong> N-Quads (<code>rete export</code>, lossless round-trip), Turtle and expanded
-JSON-LD (<code>rete export --format ttl|jsonld</code>, default graph only), and SPARQL
-Results JSON (<code>rete sparql --json</code>).</p>
-<p><strong>Interop in practice:</strong> anything that emits N-Triples/N-Quads/Turtle can feed
-<code>rete build</code>, and <code>rete export</code> round-trips back to N-Quads for any other RDF
-tool. So <code>rete</code> slots in as a <em>publishing + query</em> layer next to your existing RDF
-pipeline.</p>
-<p><strong>Current limits (not RDF-incompatible, just unimplemented):</strong> no RDF-star
-(quoted triples), and there is no SPARQL Update (the file is immutable by
-design). Turtle/JSON-LD export covers the default graph only (use N-Quads export
-for named graphs).</p>
-<h2>Validation</h2>
-<p>There are five independent ways to check correctness:</p>
-<ol>
-<li>
-<p><strong>Syntactic — <code>rete validate</code>.</strong> Parses N-Triples/N-Quads/Turtle without
-building, and fails with a precise line/column error on malformed input:</p>
-<pre><code class="language-sh">rete validate data.ttl
-#  valid: 4210 statement(s) — 4180 in the default graph, 2 named graph(s)
-rete validate broken.ttl
-#  Error: broken.ttl: Parser error at line 12 ... not a valid subject
-</code></pre>
-<p><code>rete build</code> runs the same parse, so a successful build is also a validation.</p>
-</li>
-<li>
-<p><strong>Shape validation — <code>rete shacl</code>.</strong> Validates a <code>.rete</code> graph against SHACL
-Core shapes read from Turtle. It exits non-zero when the validation report is
-non-conformant, so it works as a CI gate. See <a href="shacl.html">SHACL validation</a> for
-the supported target, path, and constraint components.</p>
-<pre><code class="language-sh">rete shacl data.rete --shapes shapes.ttl
+<h1>SHACL validation</h1>
+<p><code>rete shacl</code> validates a <code>.rete</code> file against SHACL Core shapes. It is meant for
+release checks and CI gates: build the graph once, run the shape file against the
+default graph or a named graph, and fail the job if the validation report is not
+conformant.</p>
+<pre><code class="language-sh">rete build data.ttl -o data.rete
+rete shacl data.rete --shapes shapes.ttl
 rete shacl data.rete --shapes shapes.ttl --format json
+rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/releases/2026-06&gt;'
 </code></pre>
-</li>
-<li>
-<p><strong>Integrity — <code>rete verify</code>.</strong> Recomputes the blake3 content hash and compares
-it to the header, detecting any corruption or truncation of a <code>.rete</code> file.</p>
-</li>
-<li>
-<p><strong>Round-trip — <code>rete export</code>.</strong> Dumps back to N-Quads; diff against the source
-(or re-validate the output) to confirm nothing was lost.</p>
-</li>
-<li>
-<p><strong>Logical coherence — <code>rete reason</code>.</strong> A prototype OWL RL / RDFS reasoner
-materializes RDFS/OWL entailments and flags <em>incoherent points</em> — logical
-contradictions such as disjoint-class violations, <code>sameAs</code>/<code>differentFrom</code>
-clashes, functional-property conflicts, and <code>owl:Nothing</code> membership. It exits
-non-zero on incoherence, so it doubles as a CI coherence gate. See
-<a href="reasoning.html">Reasoning &amp; coherence</a> for the full rule set and scope (it is a
-documented subset, not full OWL DL).</p>
-<pre><code class="language-sh">rete reason data.rete
-#  inferred 9 new triple(s)
-#  1 inconsistency(ies) found:
-#    [disjoint-classes] &lt;http://ex/p&gt; is typed as both … owl:disjointWith
-</code></pre>
-</li>
-</ol>
-<p><code>rete shacl</code> is SHACL Core support, not the whole shape-language universe:
-SHACL-SPARQL, SHACL-AF, JavaScript extensions, SHACL 1.2 draft features, and ShEx
-are not implemented.</p>
-<h2>Could it speak Cypher too?</h2>
-<p>Short answer: <strong>not today, and it's a different data model — but a useful subset
-could be translated to SPARQL.</strong> Here's the honest picture.</p>
-<p>Cypher targets the <strong>labeled property graph (LPG)</strong> model (Neo4j): nodes and
-relationships both carry a label and arbitrary key/value <em>properties</em>. RDF is a
-<strong>triple</strong> model: everything is <code>(subject, predicate, object)</code>. They overlap a
-lot, but not perfectly:</p>
-<table><thead><tr><th>Cypher (LPG)</th><th>RDF / SPARQL equivalent</th></tr></thead><tbody>
-<tr><td><code>(a:Person)</code> (node label)</td><td><code>?a rdf:type ex:Person</code></td></tr>
-<tr><td><code>(a)-[:KNOWS]-&gt;(b)</code></td><td><code>?a ex:knows ?b</code> (a triple / BGP)</td></tr>
-<tr><td><code>(a)-[:KNOWS*]-&gt;(b)</code> (var-length)</td><td><code>?a ex:knows+ ?b</code> (property path)</td></tr>
-<tr><td>node property <code>a.age</code></td><td><code>?a ex:age ?age</code> (triple with a literal)</td></tr>
-<tr><td><strong>relationship property</strong> <code>[:KNOWS {since: 2020}]</code></td><td>no direct triple — needs reification or RDF-star</td></tr>
-<tr><td><code>RETURN</code>, <code>WHERE</code>, <code>LIMIT</code></td><td><code>SELECT</code>, <code>FILTER</code>, <code>LIMIT</code></td></tr>
-</tbody></table>
-<p>So a <strong>"loose Cypher"</strong> front-end — read-only <code>MATCH … WHERE … RETURN</code>, including
-variable-length relationships — maps cleanly onto the BGP + property-path + filter
-machinery this engine already has. The genuine gaps are LPG features with no plain
-RDF triple: <strong>relationship properties</strong>, and the distinction between a node label
-and a node property. Those need a modeling convention (reification, or RDF-star
-once supported).</p>
-<p>What this is <em>not</em>: full openCypher (no writes/<code>CREATE</code>/<code>MERGE</code>, no <code>APOC</code>,
-no stored procedures) — the file is immutable and server-less by design.</p>
-<p><strong>Status: available as a prototype</strong> via <code>rete cypher</code>. It is a translation
-layer, not a second engine: a small Cypher subset is parsed into an AST, emitted
-as an equivalent SPARQL <code>SELECT</code> string, and evaluated by the existing SPARQL
-engine — so it reuses the same BGP/join, property-path, and <code>FILTER</code> machinery.</p>
-<h3>Supported subset (read-only)</h3>
-<pre><code class="language-text">query      := MATCH patterns [WHERE conditions] RETURN items [LIMIT n]
-patterns   := pattern ("," pattern)*
-pattern    := node (rel node)*
-node       := "(" [var] [":" Label] ")"
-rel        := "-" "[" ":" REL ["*"] "]" "-&gt;"      (forward)
-            | "&lt;-" "[" ":" REL ["*"] "]" "-"      (reverse)
-conditions := condition (("AND" | "OR") condition)*
-condition  := var "." prop  OP  value             (property comparison)
-            | var          "=" value              (node identity)
-OP         := "=" | "&lt;&gt;" | "!=" | "&lt;" | "&lt;=" | "&gt;" | "&gt;="
-value      := number | "string" | &lt;iri&gt;
-items      := item ("," item)*
-item       := var | var "." prop
-</code></pre>
-<p>Variable-length <code>-[:REL*]-&gt;</code> lowers to the SPARQL property path <code>REL+</code>
-(<strong>one-or-more</strong>) for the prototype; bounded forms (<code>*N..M</code>) are not supported.</p>
-<h3>Name → IRI convention</h3>
-<p>A bare label/relationship/property name <code>X</code> maps to <code>&lt;BASE + X&gt;</code>, where <code>BASE</code>
-defaults to <code>http://ex/</code> and is overridable with <code>--base</code>. With the default base:</p>
-<table><thead><tr><th>Cypher</th><th>Emitted SPARQL</th></tr></thead><tbody>
-<tr><td><code>(a:Library)</code></td><td><code>?a a &lt;http://ex/Library&gt;</code></td></tr>
-<tr><td><code>-[:dependsOn]-&gt;</code></td><td>predicate <code>&lt;http://ex/dependsOn&gt;</code></td></tr>
-<tr><td><code>a.name</code></td><td><code>?a &lt;http://ex/name&gt; ?a_name</code></td></tr>
-<tr><td><code>(a)-[:dependsOn*]-&gt;(b)</code></td><td><code>?a &lt;http://ex/dependsOn&gt;+ ?b</code></td></tr>
-</tbody></table>
-<h3>Out of scope (rejected with a clear error, never a panic)</h3>
-<p>Writes (<code>CREATE</code> / <code>MERGE</code> / <code>SET</code> / <code>DELETE</code>), <code>OPTIONAL MATCH</code>, <code>WITH</code>,
-aggregations, <code>RETURN *</code>, relationship variables/properties
-(<code>[r:REL {since: 2020}]</code>), and multiple labels per node. These genuinely depend
-on LPG features (relationship properties) or write/aggregation semantics outside
-this prototype's scope.</p>
-<h3>Worked example</h3>
-<p>Against the bundled <code>examples/deps.nt</code> dependency graph:</p>
-<pre><code class="language-sh">rete build examples/deps.nt -o deps.rete
+<p>The command exits with status <code>0</code> when the report conforms and non-zero when it
+finds at least one result. Shapes are read as Turtle. Data comes from the <code>.rete</code>
+file, so validation runs over exactly the graph you publish and query.</p>
+<h2>A minimal shape</h2>
+<pre><code class="language-turtle">@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
+@prefix ex: &lt;http://ex/&gt; .
+@prefix xsd: &lt;http://www.w3.org/2001/XMLSchema#&gt; .
 
-# Which packages transitively depend on the vulnerable log4x?
-rete cypher deps.rete \
-  "MATCH (a)-[:dependsOn*]-&gt;(b) WHERE b = &lt;http://ex/log4x&gt; RETURN a"
-# ?a=&lt;http://ex/app&gt;
-# ?a=&lt;http://ex/web&gt;
-# ?a=&lt;http://ex/auth&gt;
-# ?a=&lt;http://ex/logging&gt;
+ex:PersonShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [
+    sh:path ex:email ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+    sh:pattern "@" ;
+    sh:message "Every person needs exactly one email string." ;
+  ] .
 </code></pre>
-<p>That query is translated to
-<code>SELECT ?a WHERE { ?a &lt;http://ex/dependsOn&gt;+ ?b . FILTER(?b = &lt;http://ex/log4x&gt;) }</code>
-and evaluated by the SPARQL engine's property-path machinery.</p>
+<pre><code class="language-sh">rete shacl people.rete --shapes person-shapes.ttl
+</code></pre>
+<p>Text output is compact and human-oriented:</p>
+<pre><code class="language-text">conforms: false
+
+- focus: &lt;http://ex/Alice&gt;
+  severity: http://www.w3.org/ns/shacl#Violation
+  component: http://www.w3.org/ns/shacl#MinCountConstraintComponent
+  path: &lt;http://ex/email&gt;
+  shape: _:b1
+  message: Every person needs exactly one email string.
+</code></pre>
+<p>Use <code>--format json</code> for automation and <code>--format ttl</code> for a Turtle validation
+report.</p>
+<h2>Supported SHACL surface</h2>
+<p>This implementation targets the stable W3C SHACL Core 2017 Recommendation. It
+does not try to implement SHACL-SPARQL, SHACL-AF, SHACL-JS, SHACL 1.2 drafts, or
+ShEx.</p>
+<p>Supported targets:</p>
+<table><thead><tr><th>Feature</th><th>Status</th></tr></thead><tbody>
+<tr><td><code>sh:targetNode</code></td><td>yes</td></tr>
+<tr><td><code>sh:targetClass</code></td><td>yes, including <code>rdfs:subClassOf</code> closure in the data graph</td></tr>
+<tr><td><code>sh:targetSubjectsOf</code></td><td>yes</td></tr>
+<tr><td><code>sh:targetObjectsOf</code></td><td>yes</td></tr>
+<tr><td>implicit class targets (<code>rdfs:Class</code>, <code>owl:Class</code>)</td><td>yes</td></tr>
+<tr><td><code>sh:deactivated</code>, <code>sh:severity</code>, <code>sh:message</code></td><td>yes</td></tr>
+</tbody></table>
+<p>Supported property paths:</p>
+<table><thead><tr><th>Path form</th><th>Status</th></tr></thead><tbody>
+<tr><td>predicate IRI</td><td>yes</td></tr>
+<tr><td><code>sh:inversePath</code></td><td>yes</td></tr>
+<tr><td>RDF list sequence paths</td><td>yes</td></tr>
+<tr><td><code>sh:alternativePath</code></td><td>yes</td></tr>
+<tr><td><code>sh:zeroOrMorePath</code></td><td>yes</td></tr>
+<tr><td><code>sh:oneOrMorePath</code></td><td>yes</td></tr>
+<tr><td><code>sh:zeroOrOnePath</code></td><td>yes</td></tr>
+</tbody></table>
+<p>Supported constraint components:</p>
+<table><thead><tr><th>Constraint family</th><th>Components</th></tr></thead><tbody>
+<tr><td>Cardinality</td><td><code>sh:minCount</code>, <code>sh:maxCount</code></td></tr>
+<tr><td>Value type</td><td><code>sh:class</code>, <code>sh:datatype</code>, <code>sh:nodeKind</code></td></tr>
+<tr><td>Value range</td><td><code>sh:minInclusive</code>, <code>sh:maxInclusive</code>, <code>sh:minExclusive</code>, <code>sh:maxExclusive</code></td></tr>
+<tr><td>Strings and languages</td><td><code>sh:minLength</code>, <code>sh:maxLength</code>, <code>sh:pattern</code>, <code>sh:flags</code>, <code>sh:languageIn</code>, <code>sh:uniqueLang</code></td></tr>
+<tr><td>Property pairs</td><td><code>sh:equals</code>, <code>sh:disjoint</code>, <code>sh:lessThan</code>, <code>sh:lessThanOrEquals</code></td></tr>
+<tr><td>Value sets</td><td><code>sh:hasValue</code>, <code>sh:in</code></td></tr>
+<tr><td>Nested shapes</td><td><code>sh:node</code>, <code>sh:property</code></td></tr>
+<tr><td>Logical constraints</td><td><code>sh:not</code>, <code>sh:and</code>, <code>sh:or</code>, <code>sh:xone</code></td></tr>
+<tr><td>Closed shapes</td><td><code>sh:closed</code>, <code>sh:ignoredProperties</code></td></tr>
+<tr><td>Qualified values</td><td><code>sh:qualifiedValueShape</code>, <code>sh:qualifiedMinCount</code>, <code>sh:qualifiedMaxCount</code></td></tr>
+</tbody></table>
+<h2>Current limits</h2>
+<ul>
+<li>Shape files must be Turtle.</li>
+<li><code>sh:qualifiedValueShapesDisjoint</code> is not implemented yet.</li>
+<li>SHACL-SPARQL constraints, custom functions, rules, and JavaScript extensions
+are out of scope for this command.</li>
+<li>Recursive shape cycles are reported as validation results instead of being
+treated as fatal engine errors.</li>
+<li>Rete files are immutable snapshots. If your build uses <code>--materialize</code>, SHACL
+validates the already-materialized graph; otherwise it validates asserted data
+only.</li>
+</ul>
+<h2>Core API</h2>
+<p>The CLI uses the reusable core API:</p>
+<pre><code class="language-rust">use rete_core::{validate_shacl, DataGraph, Rete, ShaclShapes};
+
+let rete = Rete::open("data.rete")?;
+let data = DataGraph::from_rete(&amp;rete, None)?;
+let shape_text = std::fs::read_to_string("shapes.ttl")?;
+let shapes = ShaclShapes::parse_turtle(&amp;shape_text)?;
+let report = validate_shacl(&amp;data, &amp;shapes);
+
+if !report.conforms {
+    eprintln!("{}", report.to_json());
+}
+</code></pre>
+<p>Pass <code>Some("&lt;graph-iri&gt;")</code> to <code>DataGraph::from_rete</code> to validate one named graph.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -351,7 +306,7 @@ and evaluated by the SPARQL engine's property-path machinery.</p>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/compatibility.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/shacl.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

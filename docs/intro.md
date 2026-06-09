@@ -92,16 +92,16 @@ question. Here's the whole map on one page — and what `rete` does with each.
 | **RDFS** | Lightweight schema: class/property hierarchies | "If `Dog` is a `subClassOf Animal`, is Rex an Animal?" | ✅ via [`rete reason`](reasoning.md) |
 | **OWL** | Rich schema + meaning: disjointness, identity, transitivity | "Are these two facts logically *contradictory*?" | ⚠️ prototype OWL **RL** subset, not full OWL DL — [reasoning](reasoning.md) |
 | **SPARQL** | The query language for RDF | "Find everyone Alice transitively knows." | ✅ [SPARQL support](sparql.md) |
-| **SHACL / ShEx** | Shapes/validation: does data match a required shape? | "Does every `Person` have exactly one email?" | ❌ not yet (see [compatibility](compatibility.md)) |
+| **SHACL / ShEx** | Shapes/validation: does data match a required shape? | "Does every `Person` have exactly one email?" | ✅ SHACL Core via [`rete shacl`](shacl.md); ShEx not implemented |
 | **N-Triples / N-Quads** | Plainest serialization (one statement per line) | "How do I hand my triples to a tool, losslessly?" | ✅ build input + N-Quads export |
 | **Turtle** | Human-friendly RDF text format | "Can I read/write this by hand?" | ✅ build input + export (default graph) |
 | **JSON-LD** | RDF as JSON, for web APIs | "Can I consume this in a JS app?" | ✅ expanded JSON-LD export (default graph) |
 | **Cypher / GQL** | The property-graph query language(s) | "`MATCH (a)-[:KNOWS]->(b) RETURN b`" | ⚠️ read-only Cypher *subset*, translated to SPARQL — [compatibility](compatibility.md) |
 
-Two honest caveats up front: there's **no SHACL/ShEx** shape validation yet (you
-can do *syntactic* and *logical* coherence checks instead — see below), and the
-reasoner is a **documented OWL RL subset**, not a full OWL DL engine. `rete` also
-has no SPARQL Update / writes — a `.rete` file is immutable by design.
+Two honest caveats up front: SHACL support targets **SHACL Core** rather than
+SHACL-SPARQL, SHACL-AF, or ShEx, and the reasoner is a **documented OWL RL
+subset**, not a full OWL DL engine. `rete` also has no SPARQL Update / writes —
+a `.rete` file is immutable by design.
 
 ## What kinds of questions can you actually ask `rete`?
 

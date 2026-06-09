@@ -374,6 +374,214 @@ pub enum QueryOutput {
     Construct(Vec<(String, String, String)>),
 }
 
+/// Query shapes that can be answered exactly from [`SummaryView`] predicate
+/// totals, without opening the triple index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SummaryQueryShape {
+    /// `SELECT (COUNT(*) AS ?n) WHERE { ?s <p> ?o }`
+    PredicateCount { predicate: String, variable: String },
+    /// `SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }`
+    TripleCount { variable: String },
+    /// `SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p`
+    PredicateTotals {
+        predicate_variable: String,
+        count_variable: String,
+    },
+    /// `SELECT DISTINCT ?p WHERE { ?s ?p ?o }`
+    PredicateList { variable: String },
+    /// `SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }`
+    PredicateDistinctCount { variable: String },
+    /// `ASK { ?s ?p ?o }`
+    TripleExists,
+    /// `ASK { ?s <p> ?o }`
+    PredicateExists { predicate: String },
+}
+
+/// Classify SPARQL queries that can be answered exactly from the pyramid
+/// summary's per-predicate totals. This is intentionally conservative: anything
+/// with constants, repeated variables, filters, joins, paths, named graphs,
+/// ORDER BY, OFFSET/LIMIT, or non-summary-safe aggregates still requires the
+/// index. The only accepted DISTINCT shape is a predicate list over one fully
+/// unbound triple pattern.
+pub fn summary_query_shape(query: &str) -> Result<Option<SummaryQueryShape>, SparqlError> {
+    let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
+    match parsed {
+        Query::Select {
+            pattern, dataset, ..
+        } => {
+            let sel = lower_select(&pattern, &dataset)?;
+            if !sel.from.is_empty()
+                || sel.from_named.is_some()
+                || sel.offset != 0
+                || sel.limit.is_some()
+                || !sel.order.is_empty()
+                || !sel.having.is_empty()
+            {
+                return Ok(None);
+            }
+            if sel.distinct {
+                if sel.group.is_some() || !sel.extends.is_empty() {
+                    return Ok(None);
+                }
+                let [projected] = sel.project.as_slice() else {
+                    return Ok(None);
+                };
+                let Some(SummaryPatternShape::AnyPredicate { variable }) =
+                    single_summary_pattern(&sel.plan)
+                else {
+                    return Ok(None);
+                };
+                return if projected == &variable {
+                    Ok(Some(SummaryQueryShape::PredicateList { variable }))
+                } else {
+                    Ok(None)
+                };
+            }
+            let Some(group) = &sel.group else {
+                return Ok(None);
+            };
+            if group.aggs.len() != 1 {
+                return Ok(None);
+            }
+            match group.by.as_slice() {
+                [] => match &group.aggs[0].1 {
+                    Agg::CountStar { distinct: false } => {
+                        let Some(variable) = public_aggregate_variable(&sel, &group.aggs[0].0)
+                        else {
+                            return Ok(None);
+                        };
+                        Ok(single_summary_pattern(&sel.plan).map(|shape| match shape {
+                            SummaryPatternShape::Predicate(predicate) => {
+                                SummaryQueryShape::PredicateCount {
+                                    predicate,
+                                    variable,
+                                }
+                            }
+                            SummaryPatternShape::AnyPredicate { .. } => {
+                                SummaryQueryShape::TripleCount { variable }
+                            }
+                        }))
+                    }
+                    Agg::Count(counted, true) => {
+                        let Some(public_variable) =
+                            public_aggregate_variable(&sel, &group.aggs[0].0)
+                        else {
+                            return Ok(None);
+                        };
+                        let Some(SummaryPatternShape::AnyPredicate { variable }) =
+                            single_summary_pattern(&sel.plan)
+                        else {
+                            return Ok(None);
+                        };
+                        if &variable != counted {
+                            return Ok(None);
+                        }
+                        Ok(Some(SummaryQueryShape::PredicateDistinctCount {
+                            variable: public_variable,
+                        }))
+                    }
+                    _ => Ok(None),
+                },
+                [group_var] => {
+                    if !matches!(group.aggs[0].1, Agg::CountStar { distinct: false }) {
+                        return Ok(None);
+                    }
+                    let Some(SummaryPatternShape::AnyPredicate { variable }) =
+                        single_summary_pattern(&sel.plan)
+                    else {
+                        return Ok(None);
+                    };
+                    if &variable != group_var {
+                        return Ok(None);
+                    }
+                    let Some(count_variable) =
+                        public_group_aggregate_variable(&sel, &group.aggs[0].0, group_var)
+                    else {
+                        return Ok(None);
+                    };
+                    Ok(Some(SummaryQueryShape::PredicateTotals {
+                        predicate_variable: group_var.clone(),
+                        count_variable,
+                    }))
+                }
+                _ => Ok(None),
+            }
+        }
+        Query::Ask { pattern, .. } => {
+            let sel = lower_pattern(&pattern)?;
+            Ok(single_summary_pattern(&sel.plan).map(|shape| match shape {
+                SummaryPatternShape::Predicate(predicate) => {
+                    SummaryQueryShape::PredicateExists { predicate }
+                }
+                SummaryPatternShape::AnyPredicate { .. } => SummaryQueryShape::TripleExists,
+            }))
+        }
+        Query::Construct { .. } | Query::Describe { .. } => Ok(None),
+    }
+}
+
+enum SummaryPatternShape {
+    Predicate(String),
+    AnyPredicate { variable: String },
+}
+
+fn single_summary_pattern(plan: &Plan) -> Option<SummaryPatternShape> {
+    let Plan::Bgp(patterns) = plan else {
+        return None;
+    };
+    let [tp] = patterns.as_slice() else {
+        return None;
+    };
+    let (PatternTerm::Var(s), PatternTerm::Var(o)) = (&tp.s, &tp.o) else {
+        return None;
+    };
+    if s == o {
+        return None;
+    }
+    match &tp.p {
+        PatternTerm::Const(p) => Some(SummaryPatternShape::Predicate(p.clone())),
+        PatternTerm::Var(p) if p != s && p != o => Some(SummaryPatternShape::AnyPredicate {
+            variable: p.clone(),
+        }),
+        _ => None,
+    }
+}
+
+fn public_aggregate_variable(sel: &Select, aggregate_var: &str) -> Option<String> {
+    let [projected] = sel.project.as_slice() else {
+        return None;
+    };
+    if projected == aggregate_var {
+        return Some(projected.clone());
+    }
+    sel.extends.iter().find_map(|(var, expr)| match expr {
+        FExpr::Var(source) if var == projected && source == aggregate_var => Some(var.clone()),
+        _ => None,
+    })
+}
+
+fn public_group_aggregate_variable(
+    sel: &Select,
+    aggregate_var: &str,
+    group_var: &str,
+) -> Option<String> {
+    let [projected_group, projected_aggregate] = sel.project.as_slice() else {
+        return None;
+    };
+    if projected_group != group_var {
+        return None;
+    }
+    if projected_aggregate == aggregate_var {
+        return Some(projected_aggregate.clone());
+    }
+    sel.extends.iter().find_map(|(var, expr)| match expr {
+        FExpr::Var(source) if var == projected_aggregate && source == aggregate_var => {
+            Some(var.clone())
+        }
+        _ => None,
+    })
+}
+
 /// Evaluate any supported SPARQL query form (SELECT / ASK / CONSTRUCT).
 pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> {
     let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
@@ -737,6 +945,77 @@ mod tests {
         let (_, sols) = eval_sparql(&rete, "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }").unwrap();
         assert_eq!(sols.len(), 1);
         assert_eq!(sols[0]["n"], "2");
+    }
+
+    #[test]
+    fn summary_query_shape_classifies_only_exact_predicate_totals() {
+        let count = summary_query_shape(
+            "PREFIX ex: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s ex:p ?o }",
+        )
+        .unwrap();
+        assert_eq!(
+            count,
+            Some(SummaryQueryShape::PredicateCount {
+                predicate: "<http://ex/p>".into(),
+                variable: "n".into(),
+            })
+        );
+
+        let total = summary_query_shape("SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }").unwrap();
+        assert_eq!(
+            total,
+            Some(SummaryQueryShape::TripleCount {
+                variable: "n".into(),
+            })
+        );
+
+        let by_pred =
+            summary_query_shape("SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p")
+                .unwrap();
+        assert_eq!(
+            by_pred,
+            Some(SummaryQueryShape::PredicateTotals {
+                predicate_variable: "p".into(),
+                count_variable: "n".into(),
+            })
+        );
+
+        let predicates = summary_query_shape("SELECT DISTINCT ?p WHERE { ?s ?p ?o }").unwrap();
+        assert_eq!(
+            predicates,
+            Some(SummaryQueryShape::PredicateList {
+                variable: "p".into(),
+            })
+        );
+
+        let predicate_count =
+            summary_query_shape("SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }").unwrap();
+        assert_eq!(
+            predicate_count,
+            Some(SummaryQueryShape::PredicateDistinctCount {
+                variable: "n".into(),
+            })
+        );
+
+        let ask = summary_query_shape("PREFIX ex: <http://ex/> ASK { ?s ex:p ?o }").unwrap();
+        assert_eq!(
+            ask,
+            Some(SummaryQueryShape::PredicateExists {
+                predicate: "<http://ex/p>".into(),
+            })
+        );
+
+        let any_ask = summary_query_shape("ASK { ?s ?p ?o }").unwrap();
+        assert_eq!(any_ask, Some(SummaryQueryShape::TripleExists));
+
+        let constrained =
+            summary_query_shape("PREFIX ex: <http://ex/> ASK { ex:a ex:p ?o }").unwrap();
+        assert_eq!(constrained, None);
+
+        let filtered =
+            summary_query_shape("PREFIX ex: <http://ex/> ASK { ?s ex:p ?o FILTER(?s = ?o) }")
+                .unwrap();
+        assert_eq!(filtered, None);
     }
 
     #[test]

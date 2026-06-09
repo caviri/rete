@@ -40,8 +40,12 @@ pub(crate) fn print_query_output(result: &QueryOutput, json: bool) {
 /// Render a query result as SPARQL Results JSON (W3C
 /// `application/sparql-results+json`), pretty-printed.
 fn results_json(result: &QueryOutput) -> String {
+    serde_json::to_string_pretty(&query_output_json(result)).unwrap_or_default()
+}
+
+pub(crate) fn query_output_json(result: &QueryOutput) -> serde_json::Value {
     use serde_json::{json, Map, Value};
-    let v = match result {
+    match result {
         QueryOutput::Ask(b) => json!({ "head": {}, "boolean": b }),
         QueryOutput::Select(project, solutions) => {
             // Variable order: the projection, else the union of solution keys.
@@ -75,8 +79,7 @@ fn results_json(result: &QueryOutput) -> String {
             let arr: Vec<Value> = triples.iter().map(|(s, p, o)| json!([s, p, o])).collect();
             json!({ "triples": arr })
         }
-    };
-    serde_json::to_string_pretty(&v).unwrap_or_default()
+    }
 }
 
 /// Classify an N-Triples term token into a SPARQL-JSON RDF term object.

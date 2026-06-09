@@ -9,7 +9,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 cargo build --release -q -p rete-cli
-B=./target/release/rete
+B="${CARGO_TARGET_DIR:-target}/release/rete"
 T=$(mktemp -d)
 fails=0
 
@@ -38,6 +38,28 @@ cat > "$T/d.nq" <<EOF
 <http://ex/Alice> <http://ex/knows> <http://ex/Bob> <http://ex/g1> .
 <http://ex/Bob> <http://ex/age> "25" <http://ex/g2> .
 EOF
+cat > "$T/person-ok.ttl" <<EOF
+@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:PersonShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [
+    sh:path ex:knows ;
+    sh:minCount 1
+  ] .
+EOF
+cat > "$T/person-bad.ttl" <<EOF
+@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:PersonShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [
+    sh:path ex:age ;
+    sh:minCount 1
+  ] .
+EOF
 
 echo "== build =="
 check "build .nt"  "5 triples"          -- $B build "$T/g.nt" -o "$T/g.rete"
@@ -51,6 +73,8 @@ check "merge has both" "Z"              -- $B query "$T/merge.rete" --subject "<
 echo "== validate =="
 check "validate ok"    "valid: 5"       -- $B validate "$T/g.nt"
 check "validate bad"   "rror|parse"     -- bash -c "printf 'garbage <<<\n' > '$T/bad.nt'; $B validate '$T/bad.nt'; true"
+check "shacl ok"       '"conforms": true' -- $B shacl "$T/g.rete" --shapes "$T/person-ok.ttl" --format json
+check "shacl bad"      "MinCountConstraintComponent" -- bash -c "$B shacl '$T/g.rete' --shapes '$T/person-bad.ttl' --format json; true"
 
 echo "== inspect =="
 check "info"       "magic|version|pyramid"        -- $B info "$T/g.rete"
@@ -67,6 +91,16 @@ check "bgp"        "Alice|Bob"   -- $B bgp "$T/g.rete" "?x <http://ex/knows> ?y"
 check "sparql"     "Bob"         -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "sparql json" '"bindings"' -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { ?x e:knows ?y }" --json
 check "ask"        "true|boolean" -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> ASK { ?x e:knows ?y }"
+check "cost"       "full-index|summary overview" -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "cost json"  '"current_engine_access": "full-index"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" --json
+check "cost summary answer" '"kind": "predicate_count"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
+check "cost explain" '"planned_access": "summary-only"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json --explain
+check "progressive count" '"reads_index": false' -- $B progressive "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
+check "progressive total" '"query_shape": "triple_count"' -- $B progressive "$T/g.rete" "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }" --json
+check "progressive predicate totals" '"query_shape": "predicate_totals"' -- $B progressive "$T/g.rete" "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p" --json
+check "progressive predicate list" '"query_shape": "predicate_list"' -- $B progressive "$T/g.rete" "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" --json
+check "progressive predicate distinct count" '"query_shape": "predicate_distinct_count"' -- $B progressive "$T/g.rete" "SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }" --json
+check "progressive any ask" '"query_shape": "triple_exists"' -- $B progressive "$T/g.rete" "ASK { ?s ?p ?o }" --json
 
 echo "== cypher (translated to SPARQL) =="
 # Build the example dependency graph and run Cypher-subset queries against it.
@@ -164,6 +198,7 @@ sleep 1
 check "summary-url" "knows|round" -- $B summary-url "http://127.0.0.1:8099/web.rete"
 check "query-url"   "Bob|Alice|result" -- $B query-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>"
 check "sparql-url"  "Bob|solution" -- $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "cost-url"    "full query open|range request" -- $B cost "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 kill "$(cat "$T/srv.pid")" 2>/dev/null
 
 echo "== error handling (must fail cleanly, not panic) =="

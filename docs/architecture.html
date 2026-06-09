@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Compatibility & interop · rete docs</title>
+  <title>Architecture · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -170,13 +170,13 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
         <li><a href="index.html">Overview</a></li>
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
-        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="architecture.html" class="active">Architecture</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="compatibility.html" class="active">Compatibility & interop</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
@@ -192,158 +192,131 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
   <main>
     <div class="page">
       <article class="content">
-<h1>Compatibility, validation &amp; interop</h1>
-<h2>Is it compatible with RDF?</h2>
-<p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
-format <em>for</em> RDF, built on the standard Rust RDF stack
-(<a href="https://crates.io/crates/oxrdf"><code>oxrdf</code></a>,
-<a href="https://crates.io/crates/oxttl"><code>oxttl</code></a>,
-<a href="https://crates.io/crates/spargebra"><code>spargebra</code></a>).</p>
-<p>It implements the RDF 1.1 data model:</p>
-<table><thead><tr><th>RDF concept</th><th>Support</th></tr></thead><tbody>
-<tr><td>IRIs</td><td>✅</td></tr>
-<tr><td>Literals (plain)</td><td>✅</td></tr>
-<tr><td>Typed literals (<code>"30"^^xsd:integer</code>)</td><td>✅ — datatype preserved</td></tr>
-<tr><td>Language-tagged literals (<code>"hi"@en</code>)</td><td>✅ — tag preserved</td></tr>
-<tr><td>Blank nodes</td><td>✅ (as terms; non-distinguished variables in patterns)</td></tr>
-<tr><td>Named graphs / RDF datasets</td><td>✅ — N-Quads in, <code>GRAPH</code>/<code>FROM</code>/<code>FROM NAMED</code> in SPARQL</td></tr>
-<tr><td>SPARQL 1.1 query</td><td>✅ — see <a href="sparql.html">SPARQL support</a></td></tr>
-<tr><td>SHACL Core validation</td><td>✅ — see <a href="shacl.html">SHACL validation</a></td></tr>
+<h1>Architecture</h1>
+<p><code>rete</code> is a publish-and-query RDF stack built around one immutable,
+range-readable file. The design bias is simple: do expensive graph preparation at
+build time, ship one cacheable artifact, and let clients answer useful questions
+with bounded reads before they reach for a server.</p>
+<h2>Workspace Map</h2>
+<table><thead><tr><th>Path</th><th>Responsibility</th></tr></thead><tbody>
+<tr><td><code>crates/rete-core</code></td><td>File format, dictionary, triple indexes, pyramid summary, SPARQL evaluation, reasoning, SHACL, range readers</td></tr>
+<tr><td><code>crates/rete-cli</code></td><td>The <code>rete</code> binary, command routing, JSON/text rendering, URL/range command helpers</td></tr>
+<tr><td><code>crates/rete-wasm</code></td><td>Browser-facing API compiled with <code>wasm-bindgen</code>; no native-only dependencies on the default path</td></tr>
+<tr><td><code>crates/docgen</code></td><td>Static docs renderer for <code>docs/*.md</code> to <code>docs/*.html</code></td></tr>
+<tr><td><code>crates/bench</code></td><td>Dev-only Oxigraph comparison harness and benchmark JSON output</td></tr>
+<tr><td><code>web/</code></td><td>Playground template, generated WASM packages, embedded datasets</td></tr>
+<tr><td><code>scripts/</code></td><td>Smoke tests, synthetic data generation, range server, docs/playground build helpers</td></tr>
 </tbody></table>
-<p><strong>Input formats:</strong> N-Triples (<code>.nt</code>), N-Quads (<code>.nq</code>), Turtle (<code>.ttl</code>).
-<strong>Output:</strong> N-Quads (<code>rete export</code>, lossless round-trip), Turtle and expanded
-JSON-LD (<code>rete export --format ttl|jsonld</code>, default graph only), and SPARQL
-Results JSON (<code>rete sparql --json</code>).</p>
-<p><strong>Interop in practice:</strong> anything that emits N-Triples/N-Quads/Turtle can feed
-<code>rete build</code>, and <code>rete export</code> round-trips back to N-Quads for any other RDF
-tool. So <code>rete</code> slots in as a <em>publishing + query</em> layer next to your existing RDF
-pipeline.</p>
-<p><strong>Current limits (not RDF-incompatible, just unimplemented):</strong> no RDF-star
-(quoted triples), and there is no SPARQL Update (the file is immutable by
-design). Turtle/JSON-LD export covers the default graph only (use N-Quads export
-for named graphs).</p>
-<h2>Validation</h2>
-<p>There are five independent ways to check correctness:</p>
+<p>The CLI is split by command group under <code>crates/rete-cli/src/commands/</code>. Core
+query behavior lives in <code>rete-core</code>; the CLI and WASM layers should mostly adapt
+inputs and outputs rather than reimplement engine logic.</p>
+<h2>Build Pipeline</h2>
+<p><code>rete build</code> turns RDF text into a <code>.rete</code> snapshot:</p>
 <ol>
-<li>
-<p><strong>Syntactic — <code>rete validate</code>.</strong> Parses N-Triples/N-Quads/Turtle without
-building, and fails with a precise line/column error on malformed input:</p>
-<pre><code class="language-sh">rete validate data.ttl
-#  valid: 4210 statement(s) — 4180 in the default graph, 2 named graph(s)
-rete validate broken.ttl
-#  Error: broken.ttl: Parser error at line 12 ... not a valid subject
-</code></pre>
-<p><code>rete build</code> runs the same parse, so a successful build is also a validation.</p>
-</li>
-<li>
-<p><strong>Shape validation — <code>rete shacl</code>.</strong> Validates a <code>.rete</code> graph against SHACL
-Core shapes read from Turtle. It exits non-zero when the validation report is
-non-conformant, so it works as a CI gate. See <a href="shacl.html">SHACL validation</a> for
-the supported target, path, and constraint components.</p>
-<pre><code class="language-sh">rete shacl data.rete --shapes shapes.ttl
-rete shacl data.rete --shapes shapes.ttl --format json
-</code></pre>
-</li>
-<li>
-<p><strong>Integrity — <code>rete verify</code>.</strong> Recomputes the blake3 content hash and compares
-it to the header, detecting any corruption or truncation of a <code>.rete</code> file.</p>
-</li>
-<li>
-<p><strong>Round-trip — <code>rete export</code>.</strong> Dumps back to N-Quads; diff against the source
-(or re-validate the output) to confirm nothing was lost.</p>
-</li>
-<li>
-<p><strong>Logical coherence — <code>rete reason</code>.</strong> A prototype OWL RL / RDFS reasoner
-materializes RDFS/OWL entailments and flags <em>incoherent points</em> — logical
-contradictions such as disjoint-class violations, <code>sameAs</code>/<code>differentFrom</code>
-clashes, functional-property conflicts, and <code>owl:Nothing</code> membership. It exits
-non-zero on incoherence, so it doubles as a CI coherence gate. See
-<a href="reasoning.html">Reasoning &amp; coherence</a> for the full rule set and scope (it is a
-documented subset, not full OWL DL).</p>
-<pre><code class="language-sh">rete reason data.rete
-#  inferred 9 new triple(s)
-#  1 inconsistency(ies) found:
-#    [disjoint-classes] &lt;http://ex/p&gt; is typed as both … owl:disjointWith
-</code></pre>
-</li>
+<li>Parse RDF input into default-graph triples and optional named-graph quads.</li>
+<li>Intern terms in the dictionary so query-time matching works on compact integer
+IDs instead of repeated strings.</li>
+<li>Build three permutation indexes over the default graph: SPO, POS, and OSP.</li>
+<li>Compute the pyramid summary: community hierarchy, super-edges, predicate
+totals, class/type summaries, and named-graph metadata.</li>
+<li>Optionally attach dataset-card metadata into the reserved metadata section.</li>
+<li>Write the header, dictionary, indexes, summary, metadata, and content hash.</li>
 </ol>
-<p><code>rete shacl</code> is SHACL Core support, not the whole shape-language universe:
-SHACL-SPARQL, SHACL-AF, JavaScript extensions, SHACL 1.2 draft features, and ShEx
-are not implemented.</p>
-<h2>Could it speak Cypher too?</h2>
-<p>Short answer: <strong>not today, and it's a different data model — but a useful subset
-could be translated to SPARQL.</strong> Here's the honest picture.</p>
-<p>Cypher targets the <strong>labeled property graph (LPG)</strong> model (Neo4j): nodes and
-relationships both carry a label and arbitrary key/value <em>properties</em>. RDF is a
-<strong>triple</strong> model: everything is <code>(subject, predicate, object)</code>. They overlap a
-lot, but not perfectly:</p>
-<table><thead><tr><th>Cypher (LPG)</th><th>RDF / SPARQL equivalent</th></tr></thead><tbody>
-<tr><td><code>(a:Person)</code> (node label)</td><td><code>?a rdf:type ex:Person</code></td></tr>
-<tr><td><code>(a)-[:KNOWS]-&gt;(b)</code></td><td><code>?a ex:knows ?b</code> (a triple / BGP)</td></tr>
-<tr><td><code>(a)-[:KNOWS*]-&gt;(b)</code> (var-length)</td><td><code>?a ex:knows+ ?b</code> (property path)</td></tr>
-<tr><td>node property <code>a.age</code></td><td><code>?a ex:age ?age</code> (triple with a literal)</td></tr>
-<tr><td><strong>relationship property</strong> <code>[:KNOWS {since: 2020}]</code></td><td>no direct triple — needs reification or RDF-star</td></tr>
-<tr><td><code>RETURN</code>, <code>WHERE</code>, <code>LIMIT</code></td><td><code>SELECT</code>, <code>FILTER</code>, <code>LIMIT</code></td></tr>
+<p>The file is immutable. Updates mean rebuilding the artifact. That keeps readers
+simple and lets a <code>.rete</code> file sit on GitHub Pages, S3, GCS, or any HTTP server
+that honors <code>Range</code>.</p>
+<h2>File Layout</h2>
+<p>The header gives fixed offsets and lengths for the remaining sections. Readers
+first validate the header, then decide how much of the file to load:</p>
+<table><thead><tr><th>Section</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>Header</td><td>Magic/version, section offsets, content hash</td></tr>
+<tr><td>Dictionary</td><td>Front-coded term strings and role-aware ID spaces</td></tr>
+<tr><td>Indexes</td><td>Compressed triple blocks in SPO/POS/OSP order</td></tr>
+<tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts</td></tr>
+<tr><td>Metadata</td><td>Optional dataset-card JSON/catalog data</td></tr>
 </tbody></table>
-<p>So a <strong>"loose Cypher"</strong> front-end — read-only <code>MATCH … WHERE … RETURN</code>, including
-variable-length relationships — maps cleanly onto the BGP + property-path + filter
-machinery this engine already has. The genuine gaps are LPG features with no plain
-RDF triple: <strong>relationship properties</strong>, and the distinction between a node label
-and a node property. Those need a modeling convention (reification, or RDF-star
-once supported).</p>
-<p>What this is <em>not</em>: full openCypher (no writes/<code>CREATE</code>/<code>MERGE</code>, no <code>APOC</code>,
-no stored procedures) — the file is immutable and server-less by design.</p>
-<p><strong>Status: available as a prototype</strong> via <code>rete cypher</code>. It is a translation
-layer, not a second engine: a small Cypher subset is parsed into an AST, emitted
-as an equivalent SPARQL <code>SELECT</code> string, and evaluated by the existing SPARQL
-engine — so it reuses the same BGP/join, property-path, and <code>FILTER</code> machinery.</p>
-<h3>Supported subset (read-only)</h3>
-<pre><code class="language-text">query      := MATCH patterns [WHERE conditions] RETURN items [LIMIT n]
-patterns   := pattern ("," pattern)*
-pattern    := node (rel node)*
-node       := "(" [var] [":" Label] ")"
-rel        := "-" "[" ":" REL ["*"] "]" "-&gt;"      (forward)
-            | "&lt;-" "[" ":" REL ["*"] "]" "-"      (reverse)
-conditions := condition (("AND" | "OR") condition)*
-condition  := var "." prop  OP  value             (property comparison)
-            | var          "=" value              (node identity)
-OP         := "=" | "&lt;&gt;" | "!=" | "&lt;" | "&lt;=" | "&gt;" | "&gt;="
-value      := number | "string" | &lt;iri&gt;
-items      := item ("," item)*
-item       := var | var "." prop
-</code></pre>
-<p>Variable-length <code>-[:REL*]-&gt;</code> lowers to the SPARQL property path <code>REL+</code>
-(<strong>one-or-more</strong>) for the prototype; bounded forms (<code>*N..M</code>) are not supported.</p>
-<h3>Name → IRI convention</h3>
-<p>A bare label/relationship/property name <code>X</code> maps to <code>&lt;BASE + X&gt;</code>, where <code>BASE</code>
-defaults to <code>http://ex/</code> and is overridable with <code>--base</code>. With the default base:</p>
-<table><thead><tr><th>Cypher</th><th>Emitted SPARQL</th></tr></thead><tbody>
-<tr><td><code>(a:Library)</code></td><td><code>?a a &lt;http://ex/Library&gt;</code></td></tr>
-<tr><td><code>-[:dependsOn]-&gt;</code></td><td>predicate <code>&lt;http://ex/dependsOn&gt;</code></td></tr>
-<tr><td><code>a.name</code></td><td><code>?a &lt;http://ex/name&gt; ?a_name</code></td></tr>
-<tr><td><code>(a)-[:dependsOn*]-&gt;(b)</code></td><td><code>?a &lt;http://ex/dependsOn&gt;+ ?b</code></td></tr>
+<p><code>Rete::open</code> reads the full file. <code>Rete::open_ranged</code> fetches the sections needed
+for exact index queries. <code>SummaryView::open_ranged</code> reads only header,
+dictionary, and summary, deliberately skipping the index.</p>
+<h2>Query Pipeline</h2>
+<p>SPARQL goes through four stages:</p>
+<ol>
+<li><code>spargebra</code> parses the query.</li>
+<li><code>rete-core</code> lowers the supported algebra subset into an internal plan.</li>
+<li>BGPs, paths, filters, joins, aggregates, and graph targets evaluate against
+integer IDs where possible.</li>
+<li>Final bindings resolve dictionary IDs back into RDF terms for text, JSON, or
+WASM output.</li>
+</ol>
+<p>The engine has fast paths, but it is not a full streaming triplestore planner.
+Simple BGP/FILTER shapes under <code>LIMIT</code> can stop early, <code>ASK</code> has
+non-materializing paths, and several aggregate shapes operate in integer space.
+<code>ORDER BY</code>, broad compound algebra, and many expression-heavy queries still
+materialize intermediate rows.</p>
+<p>Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
+nested <code>SELECT</code> subqueries and <code>SERVICE</code> federation.</p>
+<h2>Progressive And Cost Paths</h2>
+<p>The summary path is the first layer of progressive querying. These query shapes
+are exact from the summary and skip the full index:</p>
+<ul>
+<li><code>SELECT (COUNT(*) AS ?n) WHERE { ?s &lt;p&gt; ?o }</code></li>
+<li><code>SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p</code></li>
+<li><code>SELECT ?p WHERE { ?s ?p ?o }</code></li>
+<li><code>SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }</code></li>
+<li><code>ASK { ?s &lt;p&gt; ?o }</code></li>
+</ul>
+<p><code>rete cost --json --explain</code> reports whether a query is summary-only or needs
+the full index. <code>rete progressive</code> exposes the summary-safe path directly and
+returns metadata such as byte counts, request counts, and whether the index was
+read.</p>
+<p>The next architectural step is tile-routed exact refinement: use the pyramid to
+fetch only relevant community/index ranges instead of opening the whole index.</p>
+<h2>Range Reads</h2>
+<p>Range readers use the same file layout as local readers. A ranged open typically
+does:</p>
+<ol>
+<li>Fetch the header.</li>
+<li>Fetch dictionary metadata and the term sections needed to resolve constants.</li>
+<li>Fetch summary or index ranges depending on the query shape.</li>
+<li>Count bytes and requests with <code>CountingReader</code> for cost/progressive reporting.</li>
+</ol>
+<p>The product boundary here is strict: a host that ignores <code>Range</code> must fail
+clearly instead of silently downloading the world and pretending the query was
+bounded.</p>
+<h2>Reasoning And Validation</h2>
+<p><code>build --materialize</code> can run the RDFS/OWL-RL subset at build time and write the
+inferred triples into the snapshot. SHACL validation reads the snapshot and shape
+graph, then validates the asserted or already-materialized data through
+<code>rete-core</code>'s reusable SHACL API.</p>
+<p>Reasoning and SHACL are intentionally snapshot-oriented. A <code>.rete</code> file records
+the graph state you publish; validation runs against that exact state.</p>
+<h2>Browser And WASM</h2>
+<p>The browser API is compiled from <code>crates/rete-wasm</code> and embedded in the static
+playground. The default WASM build is single-threaded and avoids native-only
+dependencies. The native <code>parallel</code> feature uses Rayon for CPU-side workloads
+such as batch reachability, but it is not part of the default browser path.</p>
+<p>The playground is generated from <code>web/playground.template.html</code> and the WASM
+package by <code>scripts/build_playground.py</code>. Do not hand-edit
+<code>docs/playground.html</code>.</p>
+<h2>Safety Invariants</h2>
+<ul>
+<li>Binary readers handle corrupt or truncated bytes with clean errors, not panics.</li>
+<li>Bounds checks are product behavior because <code>.rete</code> files may be fetched from
+arbitrary URLs.</li>
+<li>WASM default builds must not pull in native-only dependencies.</li>
+<li>Generated docs HTML must match the Markdown and templates.</li>
+<li>Benchmarks must assert result parity before trusting timing numbers.</li>
+<li>File-format changes require updates to <code>docs/SPEC.md</code>, layout tests, and
+compatibility notes.</li>
+</ul>
+<h2>Extension Points</h2>
+<table><thead><tr><th>Area</th><th>Next work</th></tr></thead><tbody>
+<tr><td>Tile-routed query refinement</td><td>Use the pyramid to fetch only relevant exact ranges</td></tr>
+<tr><td>Result provenance</td><td>Attach contributing triples/blocks/ranges to query answers</td></tr>
+<tr><td>Query engine rows</td><td>Replace wide <code>BTreeMap&lt;String, String&gt;</code> bindings with integer slot rows</td></tr>
+<tr><td>Benchmark docs</td><td>Refresh JSON snapshots with <code>rete-bench --json</code> and regenerate the benchmark section</td></tr>
+<tr><td>SHACL</td><td>Add <code>sh:qualifiedValueShapesDisjoint</code> if full Core coverage becomes necessary</td></tr>
 </tbody></table>
-<h3>Out of scope (rejected with a clear error, never a panic)</h3>
-<p>Writes (<code>CREATE</code> / <code>MERGE</code> / <code>SET</code> / <code>DELETE</code>), <code>OPTIONAL MATCH</code>, <code>WITH</code>,
-aggregations, <code>RETURN *</code>, relationship variables/properties
-(<code>[r:REL {since: 2020}]</code>), and multiple labels per node. These genuinely depend
-on LPG features (relationship properties) or write/aggregation semantics outside
-this prototype's scope.</p>
-<h3>Worked example</h3>
-<p>Against the bundled <code>examples/deps.nt</code> dependency graph:</p>
-<pre><code class="language-sh">rete build examples/deps.nt -o deps.rete
-
-# Which packages transitively depend on the vulnerable log4x?
-rete cypher deps.rete \
-  "MATCH (a)-[:dependsOn*]-&gt;(b) WHERE b = &lt;http://ex/log4x&gt; RETURN a"
-# ?a=&lt;http://ex/app&gt;
-# ?a=&lt;http://ex/web&gt;
-# ?a=&lt;http://ex/auth&gt;
-# ?a=&lt;http://ex/logging&gt;
-</code></pre>
-<p>That query is translated to
-<code>SELECT ?a WHERE { ?a &lt;http://ex/dependsOn&gt;+ ?b . FILTER(?b = &lt;http://ex/log4x&gt;) }</code>
-and evaluated by the SPARQL engine's property-path machinery.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -351,7 +324,7 @@ and evaluated by the SPARQL engine's property-path machinery.</p>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/compatibility.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/architecture.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {
