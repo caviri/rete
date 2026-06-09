@@ -268,11 +268,12 @@ rete query-url http://127.0.0.1:8000/data.rete --object '&lt;http://ex/Dave&gt;'
 rete query-url   https://my-bucket.s3.amazonaws.com/data.rete --predicate '&lt;http://ex/knows&gt;'
 rete summary-url https://raw.githubusercontent.com/me/repo/main/data.rete
 </code></pre>
-<p><code>query-url</code> fetches only the byte ranges a query needs; <code>summary-url</code> reads just
-the header, dictionary, and summary — <strong>the index is never downloaded</strong>. The host
-<strong>must</strong> return <code>206 Partial Content</code> to a <code>Range</code> request; a host that ignores
-<code>Range</code> (returns <code>200</code>) is rejected with a clear error rather than silently
-returning wrong bytes.</p>
+<p><code>query-url</code> resolves bound terms from the dictionary, then fetches only the
+selected SPO/POS/OSP permutation payload for the triple pattern. <code>summary-url</code>
+reads just the header, dictionary, and summary — <strong>the index is never
+downloaded</strong>. The host <strong>must</strong> return <code>206 Partial Content</code> to a <code>Range</code>
+request; a host that ignores <code>Range</code> (returns <code>200</code>) is rejected with a clear
+error rather than silently returning wrong bytes.</p>
 <h2>Testing</h2>
 <pre><code class="language-sh">cargo test            # full suite (unit, round-trip, robustness, ranged, HTTP)
 cargo clippy --workspace --all-targets -- -D warnings

@@ -1,17 +1,18 @@
 //! `.rete` file assembly and reading (SPEC.md §4, §9).
 //!
-//! v0 layout (single tile, no pyramid yet):
+//! v0 layout:
 //!
 //! ```text
 //! [0..128)   header
 //! [dict]     dictionary container: 4 front-coded sections
 //! [index]    permutation container: 3 triple blocks (SPO, POS, OSP)
+//! [pyramid]  summary meta (and, in future, tile directories)
 //! [footer]   trailing magic
 //! ```
 //!
-//! The header points at the dictionary container (`dictionary_offset/len`) and,
-//! for v0, at the permutation container via `root_dir_offset/len` (the pyramid
-//! directory replaces this once tiling lands).
+//! The header points at the dictionary container (`dictionary_offset/len`) and
+//! the permutation container (`root_dir_offset/len`); routed readers can fetch a
+//! single permutation payload from that container.
 
 use crate::dictionary::Dictionary;
 use crate::header::{Header, FLAG_HAS_QUADS, HEADER_LEN, MAGIC};
@@ -30,9 +31,10 @@ pub const DEFAULT_TILE_BUDGET: usize = 64 * 1024;
 /// sized to `budget`, then emit the **summary** (quotient) graph. Returns
 /// `(encoded_meta, pyramid_levels)`.
 ///
-/// Per-community tiles are *not* stored: they would duplicate every triple
-/// (the index already answers all queries), and nothing reads them yet. They
-/// return when tile-routed range queries are implemented (SPEC §7.2).
+/// Per-community tiles are *not* stored: they would duplicate every triple, and
+/// the exact ranged single-pattern path now routes into one permutation section
+/// without that fourth copy. Physical community-tile directories are the next
+/// storage step (SPEC §7.2).
 pub fn build_pyramid_meta(
     dict: &Dictionary,
     triples: &[(u32, u32, u32)],
@@ -189,6 +191,87 @@ fn decode_container(bytes: &[u8], codec: u8) -> Result<Vec<Vec<u8>>, FileError> 
         pos = end;
     }
     Ok(out)
+}
+
+fn checked_end(off: u64, len: u64) -> Result<u64, FileError> {
+    off.checked_add(len)
+        .ok_or(FileError::Container("section range overflows"))
+}
+
+fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, FileError> {
+    let mut dsecs = decode_container(bytes, codec)?;
+    if dsecs.len() != 4 {
+        return Err(FileError::Container("expected 4 dictionary sections"));
+    }
+    Ok(Dictionary::from_sections([
+        std::mem::take(&mut dsecs[0]),
+        std::mem::take(&mut dsecs[1]),
+        std::mem::take(&mut dsecs[2]),
+        std::mem::take(&mut dsecs[3]),
+    ]))
+}
+
+fn decode_index_container(bytes: &[u8], codec: u8) -> Result<GraphIndex, FileError> {
+    let mut isecs = decode_container(bytes, codec)?;
+    if isecs.len() != 3 {
+        return Err(FileError::Container("expected 3 permutation blocks"));
+    }
+    Ok(GraphIndex::from_blocks([
+        std::mem::take(&mut isecs[0]),
+        std::mem::take(&mut isecs[1]),
+        std::mem::take(&mut isecs[2]),
+    ]))
+}
+
+fn read_uvarint_at<R: RangeReader>(
+    reader: &R,
+    absolute_offset: u64,
+    container_end: u64,
+) -> Result<(u64, u64), FileError> {
+    if absolute_offset >= container_end {
+        return Err(FileError::Container("truncated container varint"));
+    }
+    let remaining = container_end - absolute_offset;
+    let probe_len = remaining.min(10);
+    let bytes = reader.read_at(absolute_offset, probe_len)?;
+    read_uvarint(&bytes)
+        .map(|(value, used)| (value, used as u64))
+        .ok_or(FileError::Container("truncated container varint"))
+}
+
+fn read_container_section_ranged<R: RangeReader>(
+    reader: &R,
+    container_offset: u64,
+    container_len: u64,
+    codec: u8,
+    section_index: usize,
+) -> Result<Vec<u8>, FileError> {
+    let container_end = checked_end(container_offset, container_len)?;
+    let (section_count, used) = read_uvarint_at(reader, container_offset, container_end)?;
+    if section_count != 3 {
+        return Err(FileError::Container("expected 3 permutation blocks"));
+    }
+    if section_index >= section_count as usize {
+        return Err(FileError::Container(
+            "container section index out of bounds",
+        ));
+    }
+
+    let mut pos = checked_end(container_offset, used)?;
+    for i in 0..section_count as usize {
+        let (payload_len, len_used) = read_uvarint_at(reader, pos, container_end)?;
+        pos = checked_end(pos, len_used)?;
+        let payload_end = checked_end(pos, payload_len)?;
+        if payload_end > container_end {
+            return Err(FileError::Container("section overruns buffer"));
+        }
+        if i == section_index {
+            let payload = reader.read_at(pos, payload_len)?;
+            return decompress(codec, &payload);
+        }
+        pos = payload_end;
+    }
+    Err(FileError::Container("container section not found"))
 }
 
 /// Serialize a complete `.rete` file image from a dictionary, index, and an
@@ -496,32 +579,15 @@ impl Rete {
             Ok(&bytes[start..end])
         };
 
-        let mut dsecs = decode_container(
+        let dict = decode_dictionary_container(
             region(header.dictionary_offset, header.dictionary_len)?,
             header.dict_codec,
         )?;
-        if dsecs.len() != 4 {
-            return Err(FileError::Container("expected 4 dictionary sections"));
-        }
-        let dict = Dictionary::from_sections([
-            std::mem::take(&mut dsecs[0]),
-            std::mem::take(&mut dsecs[1]),
-            std::mem::take(&mut dsecs[2]),
-            std::mem::take(&mut dsecs[3]),
-        ]);
 
-        let mut isecs = decode_container(
+        let index = decode_index_container(
             region(header.root_dir_offset, header.root_dir_len)?,
             header.block_codec,
         )?;
-        if isecs.len() != 3 {
-            return Err(FileError::Container("expected 3 permutation blocks"));
-        }
-        let index = GraphIndex::from_blocks([
-            std::mem::take(&mut isecs[0]),
-            std::mem::take(&mut isecs[1]),
-            std::mem::take(&mut isecs[2]),
-        ]);
 
         let pyramid = if header.pyramid_meta_len > 0 {
             Some(
@@ -661,27 +727,10 @@ impl Rete {
         let header = Header::from_bytes(&head)?;
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-        let mut dsecs = decode_container(&dict_bytes, header.dict_codec)?;
-        if dsecs.len() != 4 {
-            return Err(FileError::Container("expected 4 dictionary sections"));
-        }
-        let dict = Dictionary::from_sections([
-            std::mem::take(&mut dsecs[0]),
-            std::mem::take(&mut dsecs[1]),
-            std::mem::take(&mut dsecs[2]),
-            std::mem::take(&mut dsecs[3]),
-        ]);
+        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
 
         let index_bytes = reader.read_at(header.root_dir_offset, header.root_dir_len)?;
-        let mut isecs = decode_container(&index_bytes, header.block_codec)?;
-        if isecs.len() != 3 {
-            return Err(FileError::Container("expected 3 permutation blocks"));
-        }
-        let index = GraphIndex::from_blocks([
-            std::mem::take(&mut isecs[0]),
-            std::mem::take(&mut isecs[1]),
-            std::mem::take(&mut isecs[2]),
-        ]);
+        let index = decode_index_container(&index_bytes, header.block_codec)?;
 
         let pyramid = if header.pyramid_meta_len > 0 {
             let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
@@ -804,6 +853,106 @@ impl Rete {
             .map(|m| m.terms)
             .collect()
     }
+
+    /// Evaluate one triple pattern through a [`RangeReader`] by fetching only
+    /// the header, dictionary, and the single SPO/POS/OSP permutation section
+    /// selected for the bound positions. Unknown bound terms return an empty
+    /// result before touching the index.
+    pub fn query_ranged<R: RangeReader>(
+        reader: &R,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+    ) -> Result<Vec<TermTriple>, FileError> {
+        let routed = match read_routed_pattern_block(reader, s, p, o)? {
+            Some(routed) => routed,
+            None => return Ok(Vec::new()),
+        };
+
+        Ok(
+            GraphIndex::match_serialized_block(&routed.block, routed.permutation, routed.pattern)
+                .into_iter()
+                .filter_map(|(s, p, o)| {
+                    Some((
+                        routed.dict.subject_term(s)?,
+                        routed.dict.predicate_term(p)?,
+                        routed.dict.object_term(o)?,
+                    ))
+                })
+                .collect(),
+        )
+    }
+
+    /// Fetch the routed permutation payload for one triple pattern without
+    /// decoding matches. Returns `false` when a bound term is unknown and the
+    /// index was skipped.
+    pub fn route_pattern_ranged<R: RangeReader>(
+        reader: &R,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+    ) -> Result<bool, FileError> {
+        Ok(read_routed_pattern_block(reader, s, p, o)?.is_some())
+    }
+}
+
+struct RoutedPatternBlock {
+    dict: Dictionary,
+    pattern: Pattern,
+    permutation: IndexPermutation,
+    block: Vec<u8>,
+}
+
+fn read_routed_pattern_block<R: RangeReader>(
+    reader: &R,
+    s: Option<&str>,
+    p: Option<&str>,
+    o: Option<&str>,
+) -> Result<Option<RoutedPatternBlock>, FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+
+    let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
+    let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
+
+    let Some(pattern) = resolve_query_pattern(&dict, s, p, o) else {
+        return Ok(None);
+    };
+    let permutation = GraphIndex::best_permutation(pattern);
+    let block = read_container_section_ranged(
+        reader,
+        header.root_dir_offset,
+        header.root_dir_len,
+        header.block_codec,
+        permutation.section_index(),
+    )?;
+    Ok(Some(RoutedPatternBlock {
+        dict,
+        pattern,
+        permutation,
+        block,
+    }))
+}
+
+fn resolve_query_pattern(
+    dict: &Dictionary,
+    s: Option<&str>,
+    p: Option<&str>,
+    o: Option<&str>,
+) -> Option<Pattern> {
+    let sid = match s {
+        Some(t) => Some(dict.subject_id(t)?),
+        None => None,
+    };
+    let pid = match p {
+        Some(t) => Some(dict.predicate_id(t)?),
+        None => None,
+    };
+    let oid = match o {
+        Some(t) => Some(dict.object_id(t)?),
+        None => None,
+    };
+    Some((sid, pid, oid))
 }
 
 /// A lightweight, overview-only view of a file: the pyramid summary graph plus
@@ -826,16 +975,7 @@ impl SummaryView {
         }
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-        let mut dsecs = decode_container(&dict_bytes, header.dict_codec)?;
-        if dsecs.len() != 4 {
-            return Err(FileError::Container("expected 4 dictionary sections"));
-        }
-        let dict = Dictionary::from_sections([
-            std::mem::take(&mut dsecs[0]),
-            std::mem::take(&mut dsecs[1]),
-            std::mem::take(&mut dsecs[2]),
-            std::mem::take(&mut dsecs[3]),
-        ]);
+        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
 
         let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
         let meta =

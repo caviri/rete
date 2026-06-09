@@ -98,18 +98,24 @@ The summary path is the first layer of progressive querying. These query shapes
 are exact from the summary and skip the full index:
 
 - `SELECT (COUNT(*) AS ?n) WHERE { ?s <p> ?o }`
+- `SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }`
 - `SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p`
-- `SELECT ?p WHERE { ?s ?p ?o }`
+- `SELECT DISTINCT ?p WHERE { ?s ?p ?o }`
 - `SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }`
+- `ASK { ?s ?p ?o }`
 - `ASK { ?s <p> ?o }`
 
-`rete cost --json --explain` reports whether a query is summary-only or needs
-the full index. `rete progressive` exposes the summary-safe path directly and
-returns metadata such as byte counts, request counts, and whether the index was
-read.
+`rete cost --json --explain` reports whether a query is summary-only, exactly
+routable as one triple pattern, or still needs the full index. `rete
+progressive` exposes the summary-safe path directly and returns metadata such as
+byte counts, request counts, and whether the index was read.
 
-The next architectural step is tile-routed exact refinement: use the pyramid to
-fetch only relevant community/index ranges instead of opening the whole index.
+The first exact routed refinement is implemented for single default-graph triple
+patterns: the reader resolves constants from the dictionary, chooses the best
+SPO/POS/OSP permutation, follows the container length prefixes, and fetches only
+that permutation payload. The next architectural step is physical community-tile
+directories: use the pyramid to fetch only relevant community ranges instead of
+even a whole permutation section.
 
 ## Range Reads
 
@@ -118,7 +124,8 @@ does:
 
 1. Fetch the header.
 2. Fetch dictionary metadata and the term sections needed to resolve constants.
-3. Fetch summary or index ranges depending on the query shape.
+3. Fetch summary, one selected permutation payload, or the full index depending
+   on the query shape.
 4. Count bytes and requests with `CountingReader` for cost/progressive reporting.
 
 The product boundary here is strict: a host that ignores `Range` must fail

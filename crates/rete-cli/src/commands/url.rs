@@ -49,7 +49,8 @@ pub(crate) fn summary_url(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Query a triple pattern over HTTP, fetching only the byte ranges needed.
+/// Query a triple pattern over HTTP: header + dictionary + the one selected
+/// SPO/POS/OSP permutation payload. Unknown bound terms skip the index.
 pub(crate) fn query_url(
     url: &str,
     s: Option<String>,
@@ -58,8 +59,7 @@ pub(crate) fn query_url(
 ) -> anyhow::Result<()> {
     let reader = CountingReader::new(HttpRangeReader::open(url)?);
     let total = reader.len();
-    let rete = Rete::open_ranged(&reader)?;
-    let results = rete.query(s.as_deref(), p.as_deref(), o.as_deref());
+    let results = Rete::query_ranged(&reader, s.as_deref(), p.as_deref(), o.as_deref())?;
     for (s, p, o) in &results {
         println!("{s} {p} {o} .");
     }

@@ -102,7 +102,9 @@ metadata block to chase.
 Per-level, per-tile **leaf directories** (mapping `(level, tile, perm)` to byte
 ranges, PMTiles/Parquet style) are part of the fuller design but not materialized
 in v0 — the current index is a single default-graph container plus the pyramid
-summary; tile-routed range queries are future work (see `docs/BENCHMARK.md`).
+summary. Exact single-pattern range routing is implemented by fetching just the
+selected SPO/POS/OSP payload from that container; physical community-tile ranges
+are future work (see `docs/BENCHMARK.md`).
 
 ### 4.1 Header (128 bytes, little-endian)
 
@@ -345,13 +347,19 @@ separate directory/footer round-trip is needed):
      - resolve result IDs back to terms via the dictionary
      - optionally emit result provenance: matched IDs/terms, graph scope, chosen
        permutation, and the dictionary/index/pyramid byte ranges
+2c. Routed single-pattern path → GET dictionary, resolve constants, choose the
+    best SPO/POS/OSP permutation, then follow the index container's length
+    prefixes and fetch only that one permutation payload. Unknown bound terms
+    skip the index entirely and return an empty result.
 ```
 
 A full open touches ≤4 ranges (header, dict, index, pyramid-meta); the overview
-path touches 3 and skips the index entirely — both asserted by the `ranged` test
-suite. Per-tile leaf directories that would let the full query path fetch only
-the relevant community tiles (rather than the whole index) are future work. For
-the same reason, current provenance identifies the index container and selected
+path touches 3 and skips the index entirely. The routed single-pattern path reads
+the selected permutation payload instead of the whole index container. These
+access invariants are asserted by the `ranged` test suite. Per-tile leaf
+directories that would let the query path fetch only the relevant community
+tiles (rather than a whole permutation section) are future work. For the same
+reason, current provenance identifies the index container and selected
 permutation, while tile/block-level provenance remains a physical-layout
 extension.
 

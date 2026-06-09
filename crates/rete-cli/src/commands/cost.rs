@@ -3,8 +3,8 @@
 //! `summary-url` and `sparql-url` and reports the observed request/byte budget.
 
 use rete_core::{
-    query_predicates, summary_query_shape, CountingReader, Header, RangeReader, Rete,
-    SummaryQueryShape, SummaryView,
+    query_predicates, routed_triple_pattern, summary_query_shape, CountingReader, Header,
+    RangeReader, Rete, RoutedTriplePattern, SummaryQueryShape, SummaryView,
 };
 
 use crate::commands::range_source::{is_url, RangedSourceReader};
@@ -28,12 +28,15 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
         query_predicates(query).map_err(|e| anyhow::anyhow!("SPARQL parse error: {e}"))?;
     let summary_shape =
         summary_query_shape(query).map_err(|e| anyhow::anyhow!("SPARQL parse error: {e}"))?;
+    let routed_shape =
+        routed_triple_pattern(query).map_err(|e| anyhow::anyhow!("SPARQL parse error: {e}"))?;
     let header = read_header(source)?;
     let source_kind = if is_url(source) { "url" } else { "local" };
     let summary = measure_summary(source)?;
+    let routed = measure_routed_pattern(source, routed_shape.as_ref())?;
     let full = measure_full(source)?;
     let summary_answer = summary_answer_json(summary.view.as_ref(), summary_shape.as_ref());
-    let explain_plan = explain_json(summary_shape.as_ref(), &summary_answer);
+    let explain_plan = explain_json(summary_shape.as_ref(), &summary_answer, &routed);
 
     if json {
         let mut body = serde_json::json!({
@@ -49,6 +52,7 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
                 "requests": summary.access.requests,
                 "reads_index": summary.access.reads_index,
             },
+            "routed_pattern_open": routed_json(&routed),
             "full_query_open": {
                 "available": full.available,
                 "bytes": full.bytes,
@@ -82,6 +86,7 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
             print_explain(&explain_plan);
         }
         print_access("summary overview", summary.access);
+        print_routed_pattern(&routed);
         print_access(
             "full query open",
             AccessCost {
@@ -133,6 +138,12 @@ struct SummaryCost {
     view: Option<SummaryView>,
 }
 
+struct RoutedPatternCost {
+    access: AccessCost,
+    pattern: Option<RoutedTriplePattern>,
+    reason: Option<&'static str>,
+}
+
 fn measure_summary(source: &str) -> anyhow::Result<SummaryCost> {
     let reader = CountingReader::new(RangedSourceReader::open(source)?);
     let view = SummaryView::open_ranged(&reader)?;
@@ -157,6 +168,42 @@ fn measure_full(source: &str) -> anyhow::Result<FullCost> {
         bytes: reader.bytes_read(),
         requests: reader.requests(),
         reads_index: true,
+    })
+}
+
+fn measure_routed_pattern(
+    source: &str,
+    pattern: Option<&RoutedTriplePattern>,
+) -> anyhow::Result<RoutedPatternCost> {
+    let Some(pattern) = pattern else {
+        return Ok(RoutedPatternCost {
+            access: AccessCost {
+                available: false,
+                bytes: 0,
+                requests: 0,
+                reads_index: false,
+            },
+            pattern: None,
+            reason: Some("query is not a single default-graph triple pattern"),
+        });
+    };
+
+    let reader = CountingReader::new(RangedSourceReader::open(source)?);
+    let reads_index = Rete::route_pattern_ranged(
+        &reader,
+        pattern.subject.as_deref(),
+        pattern.predicate.as_deref(),
+        pattern.object.as_deref(),
+    )?;
+    Ok(RoutedPatternCost {
+        access: AccessCost {
+            available: true,
+            bytes: reader.bytes_read(),
+            requests: reader.requests(),
+            reads_index,
+        },
+        pattern: Some(pattern.clone()),
+        reason: None,
     })
 }
 
@@ -259,14 +306,54 @@ fn summary_answer_json(
     }
 }
 
+fn routed_json(cost: &RoutedPatternCost) -> serde_json::Value {
+    if cost.access.available {
+        let pattern = cost.pattern.as_ref().expect("available routed pattern");
+        serde_json::json!({
+            "available": true,
+            "bytes": cost.access.bytes,
+            "requests": cost.access.requests,
+            "reads_index": cost.access.reads_index,
+            "index_access": "single-permutation",
+            "pattern": {
+                "subject": pattern.subject,
+                "predicate": pattern.predicate,
+                "object": pattern.object,
+            },
+        })
+    } else {
+        serde_json::json!({
+            "available": false,
+            "bytes": 0,
+            "requests": 0,
+            "reads_index": false,
+            "reason": cost.reason.unwrap_or("not routable"),
+        })
+    }
+}
+
+fn print_routed_pattern(cost: &RoutedPatternCost) {
+    if cost.access.available {
+        print_access("routed pattern open", cost.access);
+    } else {
+        println!(
+            "  routed pattern open: unavailable ({})",
+            cost.reason.unwrap_or("not routable")
+        );
+    }
+}
+
 fn explain_json(
     shape: Option<&SummaryQueryShape>,
     summary_answer: &serde_json::Value,
+    routed: &RoutedPatternCost,
 ) -> serde_json::Value {
     let summary_exact = summary_answer["available"].as_bool() == Some(true);
     let query_shape = shape.map(shape_kind).unwrap_or("requires_index");
     let planned_access = if summary_exact {
         "summary-only"
+    } else if routed.access.available {
+        "routed-pattern"
     } else {
         "full-index"
     };
@@ -296,6 +383,11 @@ fn explain_json(
             .as_str()
             .unwrap_or("query requires the full index"),
         _ => "query requires the full index",
+    };
+    let reason = if !summary_exact && routed.access.available {
+        "single default-graph triple pattern can fetch one selected permutation section instead of the full index container"
+    } else {
+        reason
     };
 
     serde_json::json!({

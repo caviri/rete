@@ -397,6 +397,53 @@ pub enum SummaryQueryShape {
     PredicateExists { predicate: String },
 }
 
+/// A single triple pattern that can be answered by the range-routed permutation
+/// reader. `None` means the position is a variable/wildcard; `Some(term)` means
+/// the query pins that term.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoutedTriplePattern {
+    pub subject: Option<String>,
+    pub predicate: Option<String>,
+    pub object: Option<String>,
+}
+
+/// Classify queries whose graph access is exactly one default-graph triple
+/// pattern. Solution modifiers (projection, LIMIT, aggregate wrappers) do not
+/// change the underlying range access, but named graphs, FROM, joins, filters,
+/// paths, and other algebra need the full SPARQL evaluator.
+pub fn routed_triple_pattern(query: &str) -> Result<Option<RoutedTriplePattern>, SparqlError> {
+    let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
+    let sel = match parsed {
+        Query::Select {
+            pattern, dataset, ..
+        } => lower_select(&pattern, &dataset)?,
+        Query::Ask { pattern, .. } => lower_pattern(&pattern)?,
+        Query::Construct { pattern, .. } => lower_pattern(&pattern)?,
+        Query::Describe { pattern, .. } => lower_pattern(&pattern)?,
+    };
+    if !sel.from.is_empty() || sel.from_named.is_some() {
+        return Ok(None);
+    }
+    let Plan::Bgp(patterns) = sel.plan else {
+        return Ok(None);
+    };
+    let [tp] = patterns.as_slice() else {
+        return Ok(None);
+    };
+    Ok(Some(RoutedTriplePattern {
+        subject: term_const(&tp.s),
+        predicate: term_const(&tp.p),
+        object: term_const(&tp.o),
+    }))
+}
+
+fn term_const(term: &PatternTerm) -> Option<String> {
+    match term {
+        PatternTerm::Const(t) => Some(t.clone()),
+        PatternTerm::Var(_) => None,
+    }
+}
+
 /// Classify SPARQL queries that can be answered exactly from the pyramid
 /// summary's per-predicate totals. This is intentionally conservative: anything
 /// with constants, repeated variables, filters, joins, paths, named graphs,

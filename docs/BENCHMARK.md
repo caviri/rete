@@ -17,10 +17,10 @@ Synthetic social graph, **139,093 triples** (20k people in ~200 communities,
 `.rete` is only ~1.25× larger than `gzip` while being *queryable in place and
 over HTTP ranges* (gzip answers no query without a full download + scan). It
 stores three permutation indexes (SPO/POS/OSP) — each triple ~3× — plus the
-dictionary and the small pyramid summary. Earlier it was ~2× gzip because it also
-stored per-community tiles (a redundant 4th copy); those are dropped until
-tile-routed queries need them, cutting the file 37% (1,124,360 → ~708,000 bytes)
-with no functional loss.
+dictionary and the small pyramid summary. Per-community tiles remain out of the
+default file because they duplicate every triple; exact single-pattern range
+routing now fetches one selected SPO/POS/OSP payload instead of the whole index
+container, while physical community-tile directories are the next storage step.
 
 ## Build
 
@@ -54,10 +54,11 @@ percent — see finding 5.
 
 ## HTTP range
 
-A point query over HTTP fetched the file in **4 range requests** (bounded,
-PMTiles-style). For *this* query it pulled most of the file because triple
-queries use the full index. The **progressive path is far cheaper**: fetching
-just the coarse community graph (`summary-url`) reads only the header +
+A point query over HTTP is bounded, PMTiles-style. The full SPARQL URL path still
+opens the broad index section, but `query-url` and `rete cost` now have an exact
+single-pattern route: header + dictionary + one selected SPO/POS/OSP permutation
+payload. The **progressive path is cheaper still** for summary-safe queries:
+fetching just the coarse community graph (`summary-url`) reads only the header +
 dictionary + summary — e.g. **2.2 KB of a 15.6 KB file (14%) in 3 requests, the
 index never fetched** — the "overview first, drill down later" promise.
 
@@ -274,9 +275,10 @@ amortized; cheap single scans should stay serial.
 3. **Fixed during benchmarking:** property paths materialized a *global*
    transitive closure even with a constant subject — `p0 knows+ ?y` hung on this
    graph. Now goal-directed (BFS from the bound endpoint).
-4. **Tile-routed queries** would let a range client fetch only the relevant
-   community tiles instead of the whole index — the pyramid's promise for point
-   queries, not yet wired into the query path.
+4. **Routed range queries are staged.** Single-pattern lookups now fetch one
+   selected permutation payload instead of the whole index container. The next
+   step is physical community-tile directories so the client can fetch only the
+   relevant community ranges inside that permutation.
 5. **Malformed-input hardening cost a few percent, and it's worth it.** The
    reader is now panic-free on any byte sequence (truncated/corrupt/untrusted
    files — see the `robustness` suite): every header offset, dictionary lookup,

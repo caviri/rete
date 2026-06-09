@@ -59,6 +59,16 @@ fn cost_cli_reports_summary_and_full_open_byte_preview_as_json() {
     );
     assert_eq!(json["summary_overview"]["reads_index"], false);
     assert_eq!(json["full_query_open"]["reads_index"], true);
+    assert_eq!(json["routed_pattern_open"]["available"], true);
+    assert_eq!(
+        json["routed_pattern_open"]["index_access"],
+        "single-permutation"
+    );
+    assert_eq!(json["routed_pattern_open"]["reads_index"], true);
+    assert!(
+        json["routed_pattern_open"]["bytes"].as_u64().unwrap()
+            < json["full_query_open"]["bytes"].as_u64().unwrap()
+    );
     assert!(json["summary_overview"]["requests"].as_u64().unwrap() >= 1);
     assert!(
         json["full_query_open"]["bytes"].as_u64().unwrap()
