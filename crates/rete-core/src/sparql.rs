@@ -248,44 +248,42 @@ type ExistsCache = std::collections::HashMap<*const Plan, ExistsEntry>;
 /// probe, so repeated probes are O(1) instead of O(sols) — turning FILTER (NOT)
 /// EXISTS over a BGP from O(L×R) into O(L+R), like the MINUS anti-join.
 struct ExistsEntry {
-    sols: Vec<Binding>,
+    sols: Vec<crate::row::Row>,
     probe: Option<ExistsProbe>,
 }
 
-/// The semi-join index: solution rows keyed by the variables they share with the
+/// The semi-join index: solution rows keyed by the slots they share with the
 /// probing rows. A probe `b` satisfies EXISTS iff some solution is compatible
-/// with it (agrees on every shared variable).
+/// with it (agrees on every shared slot).
 struct ExistsProbe {
-    /// All variables bound by some solution (sorted).
-    svars: Vec<String>,
-    /// The shared variables with the probing rows (sorted) — the index key.
-    jvars: Vec<String>,
+    /// All slots bound by some solution (ascending).
+    svars: Vec<usize>,
+    /// The shared slots with the probing rows (ascending) — the index key.
+    jvars: Vec<usize>,
     /// `jvars`-value tuples of the solutions bound on all of `jvars`.
-    keys: std::collections::HashSet<Vec<String>>,
-    /// Solutions missing a `jvars` variable (e.g. via a nested OPTIONAL): scanned.
-    partial: Vec<Binding>,
+    keys: std::collections::HashSet<Vec<crate::row::Val>>,
+    /// Solutions missing a `jvars` slot (e.g. via a nested OPTIONAL): scanned.
+    partial: Vec<crate::row::Row>,
 }
 
-/// Build the semi-join index for `sols`, keyed by the variables shared with the
+/// Build the semi-join index for `sols`, keyed by the slots shared with the
 /// probe row `b`.
-fn build_exists_probe(b: &Binding, sols: &[Binding]) -> ExistsProbe {
-    let mut svset: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-    for s in sols {
-        svset.extend(s.keys().map(String::as_str));
-    }
-    let svars: Vec<String> = svset.iter().map(|s| s.to_string()).collect();
-    let jvars: Vec<String> = svars
-        .iter()
-        .filter(|v| b.contains_key(*v))
-        .cloned()
-        .collect();
+fn build_exists_probe(b: &crate::row::Row, sols: &[crate::row::Row]) -> ExistsProbe {
+    let mask = crate::row::bound_mask(sols, b.len());
+    let svars: Vec<usize> = (0..b.len()).filter(|&i| mask[i]).collect();
+    let jvars: Vec<usize> = svars.iter().copied().filter(|&i| b[i].is_some()).collect();
     let mut keys = std::collections::HashSet::new();
     let mut partial = Vec::new();
     for s in sols {
-        if jvars.iter().all(|v| s.contains_key(v)) {
-            keys.insert(jvars.iter().map(|v| s[v].clone()).collect::<Vec<String>>());
-        } else {
-            partial.push(s.clone());
+        match jvars
+            .iter()
+            .map(|&i| s[i].clone())
+            .collect::<Option<Vec<crate::row::Val>>>()
+        {
+            Some(k) => {
+                keys.insert(k);
+            }
+            None => partial.push(s.clone()),
         }
     }
     ExistsProbe {
@@ -297,21 +295,25 @@ fn build_exists_probe(b: &Binding, sols: &[Binding]) -> ExistsProbe {
 }
 
 /// Does `b` satisfy the cached EXISTS? Uses the keyed index when `b`'s shared
-/// variables match the index's `jvars` (the common, homogeneous case); otherwise
+/// slots match the index's `jvars` (the common, homogeneous case); otherwise
 /// falls back to scanning all solutions (exact semantics on irregular rows).
-fn exists_matches(b: &Binding, entry: &ExistsEntry) -> bool {
+fn exists_matches(b: &crate::row::Row, entry: &ExistsEntry) -> bool {
     let probe = entry.probe.as_ref().unwrap();
-    let bj: Vec<String> = probe
+    let bj: Vec<usize> = probe
         .svars
         .iter()
-        .filter(|v| b.contains_key(*v))
-        .cloned()
+        .copied()
+        .filter(|&i| b[i].is_some())
         .collect();
     if bj == probe.jvars {
-        let k: Vec<String> = probe.jvars.iter().map(|v| b[v].clone()).collect();
-        probe.keys.contains(&k) || probe.partial.iter().any(|s| compatible(b, s))
+        let k: Vec<crate::row::Val> = probe.jvars.iter().map(|&i| b[i].clone().unwrap()).collect();
+        probe.keys.contains(&k)
+            || probe
+                .partial
+                .iter()
+                .any(|s| crate::row::compatible_rows(b, s))
     } else {
-        entry.sols.iter().any(|s| compatible(b, s))
+        entry.sols.iter().any(|s| crate::row::compatible_rows(b, s))
     }
 }
 
@@ -326,14 +328,13 @@ fn lexical(token: &str) -> String {
     token.to_string()
 }
 
-/// Two bindings are compatible when they agree on every shared variable.
-fn compatible(a: &Binding, b: &Binding) -> bool {
-    a.iter()
-        .all(|(k, v)| b.get(k).map(|w| w == v).unwrap_or(true))
+/// Numeric value of a term: the lexical part of a literal (`"30"^^...` → 30) or
+/// a bare numeric token, else `None`. (`term_number` is the crate-visible name
+/// used by the row resolver's memoized parse.)
+pub(crate) fn term_number(s: &str) -> Option<f64> {
+    as_number(s)
 }
 
-/// Numeric value of a term: the lexical part of a literal (`"30"^^...` → 30) or
-/// a bare numeric token, else `None`.
 fn as_number(s: &str) -> Option<f64> {
     let lex = if let Some(rest) = s.strip_prefix('"') {
         &rest[..rest.find('"')?]
@@ -647,8 +648,8 @@ pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> 
             template, pattern, ..
         } => {
             let sel = lower_pattern(&pattern)?;
-            let sols = raw_solutions(rete, &sel);
-            Ok(QueryOutput::Construct(instantiate(&template, &sols)))
+            let (ctx, sols) = raw_solutions(rete, &sel);
+            Ok(QueryOutput::Construct(instantiate(&ctx, &template, &sols)))
         }
         Query::Describe {
             pattern, dataset, ..
@@ -656,15 +657,21 @@ pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> 
             // The projected variables' values are the resources to describe;
             // we return each one's outgoing triples (concise bounded description).
             let sel = lower_select(&pattern, &dataset)?;
-            let rows = raw_solutions(rete, &sel);
+            let (ctx, rows) = raw_solutions(rete, &sel);
             let mut resources = std::collections::BTreeSet::new();
             for row in &rows {
                 if sel.project.is_empty() {
-                    resources.extend(row.values().cloned());
+                    for val in row.iter().flatten() {
+                        if let Some(t) = ctx.resolver.str_of(val) {
+                            resources.insert(t.to_string());
+                        }
+                    }
                 } else {
                     for v in &sel.project {
-                        if let Some(val) = row.get(v) {
-                            resources.insert(val.clone());
+                        if let Some(val) = ctx.slots.slot(v).and_then(|s| row[s].as_ref()) {
+                            if let Some(t) = ctx.resolver.str_of(val) {
+                                resources.insert(t.to_string());
+                            }
                         }
                     }
                 }

@@ -1,11 +1,12 @@
 //! Property-path evaluation (SPEC.md §8): `subject <path> object` as a binary
-//! relation over the graph's nodes. Traversal runs on integer node IDs; terms
-//! are resolved only for the produced bindings, and a constant endpoint is
-//! pushed down so an unbounded path never enumerates the whole graph.
+//! relation over the graph's nodes. Traversal runs on integer node IDs and
+//! solutions are emitted as integer slot rows — terms are never resolved here
+//! (the engine materializes only at projection). A constant endpoint is pushed
+//! down so an unbounded path never enumerates the whole graph.
 
-use crate::bgp::{Binding, PatternTerm};
-use crate::file::Rete;
+use crate::bgp::PatternTerm;
 use crate::index::GraphIndex;
+use crate::row::{Ctx, Row, Val};
 
 use super::{reverse, PathAst, Rep};
 
@@ -17,7 +18,7 @@ type AdjCache =
 /// Successor nodes of `start` along a single predicate (built and cached on
 /// first use, directly from integer node pairs — no term resolution).
 fn successors(
-    rete: &Rete,
+    ctx: &Ctx,
     index: &GraphIndex,
     cache: &mut AdjCache,
     pred: &str,
@@ -26,7 +27,7 @@ fn successors(
 ) -> Vec<u32> {
     let key = (pred.to_string(), rev);
     if !cache.contains_key(&key) {
-        let dict = rete.dictionary();
+        let dict = ctx.rete.dictionary();
         let pairs: Vec<(u32, u32)> = match dict.predicate_id(pred) {
             Some(pid) => index
                 .match_pattern((None, Some(pid), None))
@@ -52,7 +53,7 @@ fn successors(
 /// Nodes reachable from `start` along `ast` — forward from the start node, so a
 /// bound endpoint never triggers a global closure. Integer node space.
 fn reach_from(
-    rete: &Rete,
+    ctx: &Ctx,
     index: &GraphIndex,
     ast: &PathAst,
     start: u32,
@@ -60,37 +61,37 @@ fn reach_from(
 ) -> std::collections::BTreeSet<u32> {
     use std::collections::BTreeSet;
     match ast {
-        PathAst::Pred(p, rev) => successors(rete, index, cache, p, *rev, start)
+        PathAst::Pred(p, rev) => successors(ctx, index, cache, p, *rev, start)
             .into_iter()
             .collect(),
         PathAst::Alt(a, b) => {
-            let mut r = reach_from(rete, index, a, start, cache);
-            r.extend(reach_from(rete, index, b, start, cache));
+            let mut r = reach_from(ctx, index, a, start, cache);
+            r.extend(reach_from(ctx, index, b, start, cache));
             r
         }
         PathAst::Seq(a, b) => {
-            let mids = reach_from(rete, index, a, start, cache);
+            let mids = reach_from(ctx, index, a, start, cache);
             let mut out = BTreeSet::new();
             for m in &mids {
-                out.extend(reach_from(rete, index, b, *m, cache));
+                out.extend(reach_from(ctx, index, b, *m, cache));
             }
             out
         }
         PathAst::Rep(inner, rep) => match rep {
-            Rep::One => reach_from(rete, index, inner, start, cache),
+            Rep::One => reach_from(ctx, index, inner, start, cache),
             Rep::ZeroOrOne => {
-                let mut r = reach_from(rete, index, inner, start, cache);
+                let mut r = reach_from(ctx, index, inner, start, cache);
                 r.insert(start);
                 r
             }
             Rep::OneOrMore | Rep::ZeroOrMore => {
                 let mut visited = BTreeSet::new();
-                let mut stack: Vec<u32> = reach_from(rete, index, inner, start, cache)
+                let mut stack: Vec<u32> = reach_from(ctx, index, inner, start, cache)
                     .into_iter()
                     .collect();
                 while let Some(n) = stack.pop() {
                     if visited.insert(n) {
-                        for m in reach_from(rete, index, inner, n, cache) {
+                        for m in reach_from(ctx, index, inner, n, cache) {
                             if !visited.contains(&m) {
                                 stack.push(m);
                             }
@@ -106,32 +107,34 @@ fn reach_from(
     }
 }
 
-fn bind_pair(subj: &PatternTerm, obj: &PatternTerm, a: &str, b: &str) -> Option<Binding> {
-    let mut binding = Binding::new();
-    for (term, val) in [(subj, a), (obj, b)] {
+/// Build a solution row binding the subject/object endpoints (consistently for
+/// a repeated variable like `?x <path> ?x`).
+fn bind_pair(ctx: &Ctx, subj: &PatternTerm, obj: &PatternTerm, a: u32, b: u32) -> Option<Row> {
+    let mut row = ctx.slots.empty_row();
+    for (term, node) in [(subj, a), (obj, b)] {
         if let PatternTerm::Var(v) = term {
-            match binding.get(v) {
-                Some(existing) if existing != val => return None,
-                _ => {
-                    binding.insert(v.clone(), val.to_string());
-                }
+            let slot = ctx.slots.slot(v)?;
+            match row[slot] {
+                Some(Val::Id(existing)) if existing != node as i64 => return None,
+                Some(_) => {}
+                None => row[slot] = Some(Val::Id(node as i64)),
             }
         }
     }
-    Some(binding)
+    Some(row)
 }
 
-/// Evaluate a property path to solution bindings. Traversal runs on integer node
-/// IDs; terms are resolved only for the produced bindings. A constant endpoint is
-/// pushed down so unbounded paths don't enumerate the whole graph.
+/// Evaluate a property path to solution rows. Traversal runs on integer node
+/// IDs. A constant endpoint is pushed down so unbounded paths don't enumerate
+/// the whole graph.
 pub(super) fn eval_path(
-    rete: &Rete,
+    ctx: &Ctx,
     index: &GraphIndex,
     subj: &PatternTerm,
     ast: &PathAst,
     obj: &PatternTerm,
-) -> Vec<Binding> {
-    let dict = rete.dictionary();
+) -> Vec<Row> {
+    let dict = ctx.rete.dictionary();
     let mut cache = AdjCache::new();
     let mut out = Vec::new();
 
@@ -145,16 +148,14 @@ pub(super) fn eval_path(
                 PatternTerm::Const(o) => Some(dict.node_of_term(o)),
                 _ => None,
             };
-            for e in reach_from(rete, index, ast, sn, &mut cache) {
+            for e in reach_from(ctx, index, ast, sn, &mut cache) {
                 if let Some(on) = obj_node {
                     if on != Some(e) {
                         continue;
                     }
                 }
-                if let Some(et) = dict.node_term(e) {
-                    if let Some(b) = bind_pair(subj, obj, s, &et) {
-                        out.push(b);
-                    }
+                if let Some(b) = bind_pair(ctx, subj, obj, sn, e) {
+                    out.push(b);
                 }
             }
         }
@@ -164,22 +165,18 @@ pub(super) fn eval_path(
                 return Vec::new();
             };
             let rev = reverse(ast.clone());
-            for s in reach_from(rete, index, &rev, on, &mut cache) {
-                if let Some(st) = dict.node_term(s) {
-                    if let Some(b) = bind_pair(subj, obj, &st, o) {
-                        out.push(b);
-                    }
+            for s in reach_from(ctx, index, &rev, on, &mut cache) {
+                if let Some(b) = bind_pair(ctx, subj, obj, s, on) {
+                    out.push(b);
                 }
             }
         }
         // Both unbound: enumerate from every node (inherently expensive).
         (PatternTerm::Var(_), PatternTerm::Var(_)) => {
             for start in 0..dict.node_count() {
-                for e in reach_from(rete, index, ast, start, &mut cache) {
-                    if let (Some(st), Some(et)) = (dict.node_term(start), dict.node_term(e)) {
-                        if let Some(b) = bind_pair(subj, obj, &st, &et) {
-                            out.push(b);
-                        }
+                for e in reach_from(ctx, index, ast, start, &mut cache) {
+                    if let Some(b) = bind_pair(ctx, subj, obj, start, e) {
+                        out.push(b);
                     }
                 }
             }

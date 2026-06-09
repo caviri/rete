@@ -1,22 +1,28 @@
-//! GROUP BY / aggregate evaluation (SPEC.md §8). Grouping runs on integer
-//! bindings where possible (`aggregate_int`), resolving only the group keys and
-//! the values an aggregate actually needs — the dictionary decode is memoized by
-//! node id so a repeated literal is decoded once, not once per row.
+//! GROUP BY / aggregate evaluation (SPEC.md §8). Grouping runs directly on
+//! integer slot rows: group keys are `Val`s (so key hashing never resolves a
+//! term), and an aggregate resolves only the values it actually needs — the
+//! dictionary decode and numeric parse are memoized by the per-query resolver,
+//! so a repeated literal is decoded once, not once per row.
 
-use crate::bgp::{term_of_value, Binding, IntBinding};
-use crate::file::Rete;
+use std::rc::Rc;
+
+use crate::row::{Ctx, Row, Val};
 
 use super::{as_number, fmt_num, lexical, Agg, GroupSpec};
 
-/// Group `rows` and compute aggregates, producing one binding per group.
-pub(super) fn aggregate(rows: Vec<Binding>, g: &GroupSpec) -> Vec<Binding> {
+/// Group `rows` and compute aggregates, producing one row per group (group-by
+/// slots keep their values; each aggregate's result lands in its result slot).
+pub(super) fn aggregate(ctx: &Ctx, rows: Vec<Row>, g: &GroupSpec) -> Vec<Row> {
     use std::collections::BTreeMap;
-    let mut groups: BTreeMap<Vec<String>, Vec<Binding>> = BTreeMap::new();
+    let by_slots: Vec<Option<usize>> = g.by.iter().map(|v| ctx.slots.slot(v)).collect();
+
+    // BTreeMap keeps group order deterministic (by integer id / value order).
+    let mut groups: BTreeMap<Vec<Option<Val>>, Vec<Row>> = BTreeMap::new();
     for r in rows {
-        let key: Vec<String> =
-            g.by.iter()
-                .map(|v| r.get(v).cloned().unwrap_or_default())
-                .collect();
+        let key: Vec<Option<Val>> = by_slots
+            .iter()
+            .map(|s| s.and_then(|i| r[i].clone()))
+            .collect();
         groups.entry(key).or_default().push(r);
     }
     // A grouped query with no rows still yields one (empty/zero) group.
@@ -26,212 +32,116 @@ pub(super) fn aggregate(rows: Vec<Binding>, g: &GroupSpec) -> Vec<Binding> {
 
     let mut out = Vec::new();
     for (key, members) in groups {
-        let mut b = Binding::new();
-        for (v, val) in g.by.iter().zip(key.iter()) {
-            if !val.is_empty() {
-                b.insert(v.clone(), val.clone());
+        let mut row = ctx.slots.empty_row();
+        for (slot, val) in by_slots.iter().zip(key.into_iter()) {
+            if let (Some(i), Some(v)) = (slot, val) {
+                row[*i] = Some(v);
             }
         }
         for (res_var, agg) in &g.aggs {
-            if let Some(val) = compute_agg(agg, &members) {
-                b.insert(res_var.clone(), val);
-            }
-        }
-        out.push(b);
-    }
-    out
-}
-
-/// Integer-binding aggregation: group on tagged i64 keys and resolve only the
-/// group-key terms (and any values an aggregate actually needs). Mirrors
-/// [`aggregate`] but avoids resolving every row to terms.
-pub(super) fn aggregate_int(rete: &Rete, rows: Vec<IntBinding>, g: &GroupSpec) -> Vec<Binding> {
-    use std::collections::BTreeMap;
-    let dict = rete.dictionary();
-    const UNBOUND: i64 = i64::MIN;
-
-    let mut groups: BTreeMap<Vec<i64>, Vec<IntBinding>> = BTreeMap::new();
-    for r in rows {
-        let key: Vec<i64> =
-            g.by.iter()
-                .map(|v| r.get(v).copied().unwrap_or(UNBOUND))
-                .collect();
-        groups.entry(key).or_default().push(r);
-    }
-    if g.by.is_empty() && groups.is_empty() {
-        groups.insert(Vec::new(), Vec::new());
-    }
-
-    let mut out = Vec::new();
-    for (key, members) in groups {
-        let mut b = Binding::new();
-        for (v, &val) in g.by.iter().zip(key.iter()) {
-            if val != UNBOUND {
-                if let Some(t) = term_of_value(dict, val) {
-                    b.insert(v.clone(), t);
+            if let Some(slot) = ctx.slots.slot(res_var) {
+                if let Some(val) = compute_agg(ctx, agg, &members) {
+                    // Canonicalize so the computed value joins/dedups exactly
+                    // like an equal dictionary term would.
+                    row[slot] = Some(ctx.resolver.canon_term(&val));
                 }
             }
         }
-        for (res_var, agg) in &g.aggs {
-            if let Some(val) = compute_agg_int(rete, agg, &members) {
-                b.insert(res_var.clone(), val);
-            }
-        }
-        out.push(b);
+        out.push(row);
     }
     out
 }
 
-/// A variable's values across `members`, resolved to numbers, memoizing the
-/// dictionary lookup + parse by node id (members frequently repeat values — e.g.
-/// an integer literal — so this is ~distinct-values decodes, not one per row).
-fn agg_nums(dict: &crate::Dictionary, members: &[IntBinding], var: &str) -> Vec<f64> {
-    let mut cache: std::collections::HashMap<i64, Option<f64>> = std::collections::HashMap::new();
+/// A variable's values across `members` as numbers (memoized by the resolver:
+/// a repeated literal parses once, not once per row).
+fn agg_nums(ctx: &Ctx, members: &[Row], slot: usize) -> Vec<f64> {
     members
         .iter()
-        .filter_map(|m| m.get(var).copied())
-        .filter_map(|v| {
-            *cache
-                .entry(v)
-                .or_insert_with(|| term_of_value(dict, v).as_deref().and_then(as_number))
-        })
+        .filter_map(|m| m[slot].as_ref())
+        .filter_map(|v| ctx.resolver.num(v))
         .collect()
 }
 
-/// A variable's values across `members`, resolved to terms, memoizing the
-/// dictionary lookup by node id.
-fn agg_terms(dict: &crate::Dictionary, members: &[IntBinding], var: &str) -> Vec<String> {
-    let mut cache: std::collections::HashMap<i64, Option<String>> =
-        std::collections::HashMap::new();
+/// A variable's values across `members` as term strings (memoized decode).
+fn agg_terms(ctx: &Ctx, members: &[Row], slot: usize) -> Vec<Rc<str>> {
     members
         .iter()
-        .filter_map(|m| m.get(var).copied())
-        .filter_map(|v| {
-            cache
-                .entry(v)
-                .or_insert_with(|| term_of_value(dict, v))
-                .clone()
-        })
+        .filter_map(|m| m[slot].as_ref())
+        .filter_map(|v| ctx.resolver.str_of(v))
         .collect()
 }
 
-fn compute_agg_int(rete: &Rete, agg: &Agg, members: &[IntBinding]) -> Option<String> {
-    let dict = rete.dictionary();
+fn compute_agg(ctx: &Ctx, agg: &Agg, members: &[Row]) -> Option<String> {
+    let slot_of = |var: &str| ctx.slots.slot(var);
     match agg {
         Agg::CountStar { .. } => Some(fmt_num(members.len() as f64)),
         Agg::Count(var, distinct) => {
+            let Some(slot) = slot_of(var) else {
+                return Some(fmt_num(0.0));
+            };
             let n = if *distinct {
                 members
                     .iter()
-                    .filter_map(|m| m.get(var).copied())
+                    .filter_map(|m| m[slot].as_ref())
                     .collect::<std::collections::BTreeSet<_>>()
                     .len()
             } else {
-                members.iter().filter(|m| m.contains_key(var)).count()
+                members.iter().filter(|m| m[slot].is_some()).count()
             };
             Some(fmt_num(n as f64))
         }
-        Agg::Sum(var) => Some(fmt_num(agg_nums(dict, members, var).iter().sum())),
+        Agg::Sum(var) => {
+            let nums = match slot_of(var) {
+                Some(slot) => agg_nums(ctx, members, slot),
+                None => Vec::new(), // never-bound variable sums to 0
+            };
+            Some(fmt_num(nums.iter().sum()))
+        }
         Agg::Avg(var) => {
-            let v = agg_nums(dict, members, var);
+            let slot = slot_of(var)?;
+            let v = agg_nums(ctx, members, slot);
             (!v.is_empty()).then(|| fmt_num(v.iter().sum::<f64>() / v.len() as f64))
         }
-        Agg::Sample(var) => members
-            .iter()
-            .find_map(|m| m.get(var))
-            .and_then(|&v| term_of_value(dict, v)),
-        Agg::GroupConcat(var, sep) => Some(
-            agg_terms(dict, members, var)
-                .iter()
-                .map(|t| lexical(t))
-                .collect::<Vec<_>>()
-                .join(sep),
-        ),
-        Agg::Min(var) | Agg::Max(var) => {
-            let want_min = matches!(agg, Agg::Min(_));
-            agg_terms(dict, members, var).into_iter().reduce(|cur, v| {
-                let take = match (as_number(&v), as_number(&cur)) {
-                    (Some(a), Some(b)) if want_min => a < b,
-                    (Some(a), Some(b)) => a > b,
-                    _ if want_min => v < cur,
-                    _ => v > cur,
-                };
-                if take {
-                    v
-                } else {
-                    cur
-                }
-            })
-        }
-    }
-}
-
-fn compute_agg(agg: &Agg, members: &[Binding]) -> Option<String> {
-    let nums = |var: &str| -> Vec<f64> {
-        members
-            .iter()
-            .filter_map(|m| m.get(var))
-            .filter_map(|v| as_number(v))
-            .collect()
-    };
-    match agg {
-        Agg::CountStar { .. } => Some(fmt_num(members.len() as f64)),
-        Agg::Count(var, distinct) => {
-            let n = if *distinct {
-                members
-                    .iter()
-                    .filter_map(|m| m.get(var).cloned())
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len()
-            } else {
-                members.iter().filter(|m| m.contains_key(var)).count()
-            };
-            Some(fmt_num(n as f64))
-        }
-        Agg::Sum(var) => Some(fmt_num(nums(var).iter().sum())),
-        Agg::Avg(var) => {
-            let v = nums(var);
-            if v.is_empty() {
-                None
-            } else {
-                Some(fmt_num(v.iter().sum::<f64>() / v.len() as f64))
-            }
-        }
-        Agg::Min(var) => extreme(members, var, true),
-        Agg::Max(var) => extreme(members, var, false),
-        Agg::Sample(var) => members.iter().find_map(|m| m.get(var).cloned()),
-        Agg::GroupConcat(var, sep) => Some(
+        Agg::Sample(var) => {
+            let slot = slot_of(var)?;
             members
                 .iter()
-                .filter_map(|m| m.get(var))
-                .map(|t| lexical(t))
-                .collect::<Vec<_>>()
-                .join(sep),
-        ),
+                .find_map(|m| m[slot].as_ref())
+                .and_then(|v| ctx.resolver.str_of(v))
+                .map(|t| t.to_string())
+        }
+        Agg::GroupConcat(var, sep) => {
+            let terms = match slot_of(var) {
+                Some(slot) => agg_terms(ctx, members, slot),
+                None => Vec::new(),
+            };
+            Some(
+                terms
+                    .iter()
+                    .map(|t| lexical(t))
+                    .collect::<Vec<_>>()
+                    .join(sep),
+            )
+        }
+        Agg::Min(var) | Agg::Max(var) => {
+            let want_min = matches!(agg, Agg::Min(_));
+            let slot = slot_of(var)?;
+            agg_terms(ctx, members, slot)
+                .into_iter()
+                .reduce(|cur, v| {
+                    let take = match (as_number(&v), as_number(&cur)) {
+                        (Some(a), Some(b)) if want_min => a < b,
+                        (Some(a), Some(b)) => a > b,
+                        _ if want_min => v < cur,
+                        _ => v > cur,
+                    };
+                    if take {
+                        v
+                    } else {
+                        cur
+                    }
+                })
+                .map(|t| t.to_string())
+        }
     }
-}
-
-/// Min (`want_min`) or Max of a variable's values: numeric when both compare as
-/// numbers, else lexical.
-fn extreme(members: &[Binding], var: &str, want_min: bool) -> Option<String> {
-    let mut best: Option<String> = None;
-    for v in members.iter().filter_map(|m| m.get(var)) {
-        best = Some(match best {
-            None => v.clone(),
-            Some(cur) => {
-                let take = match (as_number(v), as_number(&cur)) {
-                    (Some(a), Some(b)) if want_min => a < b,
-                    (Some(a), Some(b)) => a > b,
-                    _ if want_min => v < &cur,
-                    _ => v > &cur,
-                };
-                if take {
-                    v.clone()
-                } else {
-                    cur
-                }
-            }
-        });
-    }
-    best
 }
