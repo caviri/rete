@@ -86,15 +86,15 @@ reachability.
 This section is generated from
 `docs/benchmark-opencitations.json` with
 `scripts/render_benchmark_doc.py`. Latest run:
-**2026-06-08**. **Oxigraph 0.5.8**, in-memory store
+**2026-06-09**. **Oxigraph 0.5.8**, in-memory store
 (no RocksDB). Machine: 32 logical cores.
 
 ### Load / open (one-time)
 
 | Engine | Step | Time |
 |---|---|--:|
-| **rete** | `Rete::open` - indexes already built in the file | **15.6 ms** |
-| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2415 ms |
+| **rete** | `Rete::open` - indexes already built in the file | **15.2 ms** |
+| Oxigraph | bulk-load N-Triples + build in-memory indexes | 1925 ms |
 
 rete's "load" just maps a file whose dictionary + permutation indexes
 already exist on disk; Oxigraph parses the triples and builds its indexes
@@ -110,30 +110,30 @@ Median of 5 warm runs.
 
 | Operator / form | rete | Oxigraph | rete vs oxi | rows | ok |
 |---|--:|--:|--:|--:|:--:|
-| SELECT count (aggregate) | **2.77 ms** | 7.12 ms | 2.6x | 1 | yes |
-| SELECT DISTINCT | **4.81 ms** | 7.33 ms | 1.5x | 6 | yes |
-| ASK | 0.30 ms | **0.01 ms** | 0.0x | 1 | yes |
+| SELECT count (aggregate) | **2.74 ms** | 6.15 ms | 2.2x | 1 | yes |
+| SELECT DISTINCT | **5.08 ms** | 6.61 ms | 1.3x | 6 | yes |
+| ASK | 0.32 ms | **0.01 ms** | 0.0x | 1 | yes |
 | CONSTRUCT | 0.02 ms | **0.01 ms** | 0.8x | 9 | yes |
 | DESCRIBE (impl-defined) | 0.02 ms | **0.01 ms** | 0.5x | 11 | yes |
-| VALUES (inline data) | 10.5 ms | **5.71 ms** | 0.5x | 10962 | yes |
-| UNION | 9.18 ms | **4.26 ms** | 0.5x | 10993 | yes |
-| OPTIONAL (left join) | 63.8 ms | **0.16 ms** | 0.0x | 200 | yes |
-| MINUS | 7.77 ms | **1.67 ms** | 0.2x | 2728 | yes |
-| FILTER NOT EXISTS | 7.95 ms | **7.57 ms** | 1.0x | 2728 | yes |
-| 3-way join + `LIMIT` | 44.6 ms | **0.12 ms** | 0.0x | 50 | yes |
-| FILTER REGEX (case-insens.) | 64.4 ms | **0.51 ms** | 0.0x | 200 | yes |
-| FILTER arithmetic + logical | 3.90 ms | **0.76 ms** | 0.2x | 200 | yes |
-| BIND + SUBSTR + CONCAT | 12.8 ms | **0.24 ms** | 0.0x | 200 | yes |
-| path sequence `a/b` | 63.1 ms | **0.20 ms** | 0.0x | 200 | yes |
-| path inverse `^p` (count) | **2.71 ms** | 4.38 ms | 1.6x | 1 | yes |
-| path `+` transitive (count) | 8.40 ms | **7.47 ms** | 0.9x | 1 | yes |
-| path `*` zero-or-more (count) | 8.43 ms | **8.41 ms** | 1.0x | 1 | yes |
-| GROUP BY + ORDER BY | **4.92 ms** | 8.24 ms | 1.7x | 6 | yes |
-| GROUP BY + HAVING | 4.86 ms | **4.76 ms** | 1.0x | 5 | yes |
-| AVG per group | **34.5 ms** | 47.8 ms | 1.4x | 6 | yes |
-| MIN / MAX / SUM | **9.69 ms** | 17.7 ms | 1.8x | 1 | yes |
-| COUNT(DISTINCT) | **5.28 ms** | 10.1 ms | 1.9x | 1 | yes |
-| ORDER BY + LIMIT + OFFSET | 63.0 ms | **18.7 ms** | 0.3x | 10 | yes |
+| VALUES (inline data) | 10.7 ms | **5.03 ms** | 0.5x | 10962 | yes |
+| UNION | 8.71 ms | **3.42 ms** | 0.4x | 10993 | yes |
+| OPTIONAL (left join) | 62.4 ms | **0.19 ms** | 0.0x | 200 | yes |
+| MINUS | 7.90 ms | **1.65 ms** | 0.2x | 2728 | yes |
+| FILTER NOT EXISTS | 8.26 ms | **5.43 ms** | 0.7x | 2728 | yes |
+| 3-way join + LIMIT | 39.0 ms | **0.12 ms** | 0.0x | 50 | yes |
+| FILTER REGEX (case-insens.) | 64.4 ms | **0.78 ms** | 0.0x | 200 | yes |
+| FILTER arith + logical | 4.16 ms | **0.73 ms** | 0.2x | 200 | yes |
+| BIND + SUBSTR + CONCAT | 14.9 ms | **0.20 ms** | 0.0x | 200 | yes |
+| path sequence a/b | 60.3 ms | **0.22 ms** | 0.0x | 200 | yes |
+| path inverse ^p (count) | **2.64 ms** | 3.75 ms | 1.4x | 1 | yes |
+| path + transitive (count) | 8.41 ms | **7.27 ms** | 0.9x | 1 | yes |
+| path * zero-or-more (count) | 8.40 ms | **7.86 ms** | 0.9x | 1 | yes |
+| GROUP BY + ORDER BY | **4.54 ms** | 4.89 ms | 1.1x | 6 | yes |
+| GROUP BY + HAVING | **4.58 ms** | 7.47 ms | 1.6x | 5 | yes |
+| AVG per group | 36.8 ms | **35.9 ms** | 1.0x | 6 | yes |
+| MIN/MAX/SUM | 7.77 ms | **6.38 ms** | 0.8x | 1 | yes |
+| COUNT(DISTINCT) | **4.67 ms** | 5.72 ms | 1.2x | 1 | yes |
+| ORDER BY + LIMIT + OFFSET | 62.1 ms | **17.8 ms** | 0.3x | 10 | yes |
 
 **24 / 24 identical row counts** across
 SELECT/ASK/CONSTRUCT/DESCRIBE, algebra operators, filters/functions,
@@ -159,8 +159,8 @@ Oxigraph it is a `coauthor+` property path evaluated per seed.
 | Engine / mode | Time | vs rete-serial |
 |---|--:|--:|
 | rete - `batch_reach_serial` (1 core) | 455 ms | 1.0x |
-| **rete - `batch_reach_parallel` (32 cores)** | **34.4 ms** | **13.2x** |
-| Oxigraph - `coauthor+` property path, per seed | 2105 ms | 0.2x |
+| **rete - `batch_reach_parallel` (32 cores)** | **31.2 ms** | **14.6x** |
+| Oxigraph - `coauthor+` property path, per seed | 2159 ms | 0.2x |
 
 rete serial and parallel both reached 1,636,200 nodes;
 Oxigraph touched 1,636,200 result cells. The dedicated
@@ -181,7 +181,7 @@ grep -vE "<[^>]* [^>]*>" data/opencitations/enriched-all.nt \
 cargo build --release -p rete-bench
 ./target/release/rete-bench --json data/opencitations/enriched-clean.rete \
   data/opencitations/enriched-clean.nt 300 > docs/benchmark-opencitations.json
-python3 scripts/render_benchmark_doc.py docs/benchmark-opencitations.json \
+uv run python scripts/render_benchmark_doc.py docs/benchmark-opencitations.json \
   --input docs/BENCHMARK.md --output docs/BENCHMARK.md
 cargo run -p docgen
 ```
