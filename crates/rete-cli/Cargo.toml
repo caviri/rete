@@ -21,7 +21,7 @@ thiserror.workspace = true
 oxttl.workspace = true
 # Standard SPARQL Results JSON output + the Dataset Card schema (serde derive).
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json.workspace = true
 # Blocking HTTP(S) for range requests. The `tls` feature pulls rustls +
 # webpki-roots (pure-Rust, no system OpenSSL) so `query-url`/`summary-url` work
 # against https hosts — S3, GitHub, any CDN — which is the actual deployment story.

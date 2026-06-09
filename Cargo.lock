@@ -1009,9 +1009,12 @@ version = "0.0.1"
 dependencies = [
  "blake3",
  "getrandom 0.2.17",
+ "oxrdf 0.2.4",
+ "oxttl 0.1.8",
  "rayon",
  "regex-lite",
  "ruzstd",
+ "serde_json",
  "spargebra 0.3.5",
  "thiserror",
  "zstd",

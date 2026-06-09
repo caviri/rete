@@ -52,6 +52,11 @@
               padding:.6rem .9rem; font-size:13px; color:var(--ok-fg); margin:.8rem 0; }
     .note { background:var(--warn-bg); border:1px solid var(--warn-bd); border-radius:8px;
             padding:.55rem .85rem; font-size:13px; color:var(--warn-fg); margin:.6rem 0; }
+    .meta-strip { display:flex; flex-wrap:wrap; gap:.35rem .6rem; align-items:center;
+                  background:#f1f7f4; border:1px solid #c8dfd3; color:#174f32;
+                  border-radius:8px; padding:.5rem .65rem; margin:.55rem 0 .65rem;
+                  font-size:12px; }
+    .meta-strip code { background:rgba(255,255,255,.65); padding:.08rem .28rem; border-radius:4px; }
     .err { color:var(--err); }
 
     section { background:var(--bg); border:1px solid var(--border); border-radius:10px;
@@ -332,6 +337,7 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
               <label>Evaluation:
                 <select id="strategy">
                   <option value="whole">Whole graph</option>
+                  <option value="progressive">Progressive summary</option>
                   <option value="community">Split by community</option>
                 </select>
               </label>
@@ -344,7 +350,36 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
         </details>
 
         <details class="step" open>
-          <summary><span class="step-num">3</span> Reachability <span class="summary-sub">— transitive reach over one relation</span></summary>
+          <summary><span class="step-num">3</span> Validate <span class="summary-sub">— SHACL Core shapes</span></summary>
+          <div class="body">
+            <p class="muted small" style="margin:0 0 .5rem">
+              <strong>SHACL examples</strong> validate the loaded graph against Turtle shapes.
+              Use a passing chip to check the schema contract, or a failing chip to inspect
+              the validation report.
+            </p>
+            <div id="shaclExamples" class="small"></div>
+            <textarea id="shapeText">@prefix ex: &lt;http://ex/&gt; .
+@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
+
+ex:AnyResourceShape
+  a sh:NodeShape ;
+  sh:targetSubjectsOf ex:name .</textarea>
+            <div class="row">
+              <button id="shaclRun">Validate</button>
+              <label>Report:
+                <select id="shaclFormat">
+                  <option value="text">Text</option>
+                  <option value="json">JSON</option>
+                  <option value="ttl">Turtle</option>
+                </select>
+              </label>
+              <span id="shaclMeta" class="muted small"></span>
+            </div>
+          </div>
+        </details>
+
+        <details class="step" open>
+          <summary><span class="step-num">4</span> Reachability <span class="summary-sub">— transitive reach over one relation</span></summary>
           <div class="body">
             <p class="muted small" style="margin:0 0 .5rem">
               <strong>Transitive reach over a single relation:</strong> from each seed,
@@ -411,16 +446,21 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
         </section>
 
         <section>
+          <h3>Validation report <span class="muted small">â€” SHACL Core</span></h3>
+          <div id="shaclOut"><p class="muted small">Run a SHACL shape check to see the report here.</p></div>
+        </section>
+
+        <section>
           <h3>Reachability results</h3>
           <div id="reachOut"><p class="muted small">Run a reach query to see results here.</p></div>
         </section>
 
         <section class="small muted">
           <p style="margin:0">
-            <strong>Note:</strong> the progressive / HTTP-<code>Range</code> streaming demo
-            (fetch only the overview, skip the index) inherently needs a range-capable
-            server, so it is omitted here. It is demonstrated by the server-based
-            <code>web/index.html</code> version of this playground.
+            <strong>Note:</strong> progressive summary queries work here against the
+            embedded <code>.rete</code> bytes and skip the triple index. The true
+            HTTP-<code>Range</code> fetch path still needs a range-capable server and
+            is demonstrated by <code>web/index.html</code>.
           </p>
         </section>
       </div>
@@ -489,6 +529,8 @@ __GLUE_JS__
     function clearOutputs() {
       $("out").innerHTML = "";
       $("commOut").innerHTML = "";
+      $("shaclOut").innerHTML = "";
+      $("shaclMeta").textContent = "";
       $("reachOut").innerHTML = "";
       $("reachMeta").textContent = "";
       $("qmeta").textContent = "";
@@ -502,6 +544,7 @@ __GLUE_JS__
       $("dsDesc").textContent = DESCRIPTIONS[name] || "";
       setStatsFromBytes(`Bundled: ${name}.rete`);
       renderExamples();
+      renderShaclExamples();
       renderReachDefaults();
       clearOutputs();
     }
@@ -514,6 +557,7 @@ __GLUE_JS__
       const ok = setStatsFromBytes(label);
       // Keep example/reach helpers from whichever dataset is selected (best-effort).
       renderExamples();
+      renderShaclExamples();
       renderReachDefaults();
       clearOutputs();
       return ok;
@@ -749,7 +793,7 @@ __GLUE_JS__
         return { x: c.x + dx * s, y: c.y + dy * s };
       };
       // Detect bidirectional pairs so we can curve A→B and B→A oppositely.
-      const pairKey = (a, b) => a + " " + b;
+      const pairKey = (a, b) => a + "\u0000" + b;
       const present = new Set(edges.filter(([s, , o]) => s !== o).map(([s, , o]) => pairKey(s, o)));
       // Edges (under boxes), drawn as curved quadratic beziers.
       for (const [s, p, o, n] of edges) {
@@ -832,9 +876,15 @@ __GLUE_JS__
         b.classList.toggle("active", b.dataset.view === view));
     }
 
-    function setQuery(q, view) {
+    function setStrategy(strategy) {
+      if (strategy) $("strategy").value = strategy;
+      $("roundWrap").hidden = $("strategy").value !== "community";
+    }
+
+    function setQuery(q, view, strategy) {
       $("q").value = q;
       if (view) setView(view);
+      setStrategy(strategy);
       runQuery();
       $("q").scrollIntoView({ behavior: "smooth" });
     }
@@ -1027,8 +1077,39 @@ __GLUE_JS__
       return [];
     }
 
+    function formatBytes(n) {
+      const v = Number(n || 0);
+      if (v < 1024) return `${v} B`;
+      if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+      return `${(v / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function progressiveBanner(meta) {
+      const shape = {
+        predicate_count: "predicate count",
+        triple_count: "triple count",
+        predicate_totals: "predicate totals",
+        predicate_list: "predicate list",
+        predicate_distinct_count: "predicate count",
+        triple_exists: "triple exists",
+        predicate_exists: "predicate exists"
+      }[meta.queryShape] || meta.queryShape || "summary query";
+      const pred = meta.predicate
+        ? `<span>predicate <code>${esc(shorten(meta.predicate))}</code></span>`
+        : "";
+      return `<div class="meta-strip">` +
+        `<strong>Progressive summary</strong>` +
+        `<span>${esc(shape)}</span>` +
+        pred +
+        `<span>${esc(formatBytes(meta.bytes))} read</span>` +
+        `<span>${esc(String(meta.requests || 0))} range read(s)</span>` +
+        `<span>index skipped</span>` +
+        `</div>`;
+    }
+
     function renderResult(res, fmt) {
       const out = $("out");
+      const progressive = res.progressive ? progressiveBanner(res.progressive) : "";
       if (fmt === "graph") {
         // For CONSTRUCT with ttl/jsonld text we still have no triples array; re-run as triples.
         let triples = getTriplesForGraph(res);
@@ -1042,15 +1123,15 @@ __GLUE_JS__
         return renderGraph(triples);
       }
       if (res.kind === "ask") {
-        out.innerHTML = `<p>ASK → <strong>${res.boolean}</strong></p>`;
+        out.innerHTML = progressive + `<p>ASK → <strong>${res.boolean}</strong></p>`;
         return `ASK ${res.boolean}`;
       }
       if (res.kind === "select") {
         if (fmt === "ttl" || fmt === "jsonld") {
-          out.innerHTML = `<div class="note">${fmt === "ttl" ? "Turtle" : "JSON-LD"} output applies to CONSTRUCT/DESCRIBE. ` +
+          out.innerHTML = progressive + `<div class="note">${fmt === "ttl" ? "Turtle" : "JSON-LD"} output applies to CONSTRUCT/DESCRIBE. ` +
             `This is a SELECT, so showing the table instead.</div>` + renderTable(res.vars, res.rows);
         } else {
-          out.innerHTML = renderTable(res.vars, res.rows);
+          out.innerHTML = progressive + renderTable(res.vars, res.rows);
         }
         return `${res.rows.length} row(s)`;
       }
@@ -1068,14 +1149,20 @@ __GLUE_JS__
       const ob = $("overviewBox"); if (ob) ob.open = false;
       const q = $("q").value, fmt = $("fmt").value, strat = $("strategy").value;
       // Graph view needs a triples array; CONSTRUCT serializes as ttl/jsonld text otherwise.
-      const queryFmt = fmt === "graph" ? "table" : fmt;
+      const queryFmt = strat === "progressive" ? "table" : (fmt === "graph" ? "table" : fmt);
       $("commOut").innerHTML = "";
       const t0 = performance.now();
       try {
-        const res = JSON.parse(W().query(bytes, q, queryFmt));
+        const res = JSON.parse(strat === "progressive"
+          ? W().progressive_query(bytes, q)
+          : W().query(bytes, q, queryFmt));
         const dt = performance.now() - t0;
-        const summary = renderResult(res, fmt);
-        $("qmeta").textContent = `${summary} · ${dt.toFixed(1)} ms`;
+        const displayFmt = strat === "progressive" && fmt === "graph" ? "table" : fmt;
+        const summary = renderResult(res, displayFmt);
+        const progressiveMeta = res.progressive
+          ? ` · summary exact · ${formatBytes(res.progressive.bytes)} read`
+          : "";
+        $("qmeta").textContent = `${summary} · ${dt.toFixed(1)} ms${progressiveMeta}`;
         if (strat === "community") runCommunity();
         saveHistory({ query: q, format: fmt, strategy: strat, dataset: $("ds").value,
           ts: Date.now(), resultSummary: summary });
@@ -1114,6 +1201,27 @@ __GLUE_JS__
     // Per-dataset curated examples. Each: {label, view, q, tip, group}.
     const EXAMPLES = {
       typed: [
+        { group: "Progressive summary", label: "Count knows edges", view: "table", strategy: "progressive",
+          tip: "Exact COUNT answered from the pyramid summary; the triple index is skipped.",
+          q: "PREFIX ex: <http://ex/>\nSELECT (COUNT(*) AS ?knowsEdges) WHERE { ?s ex:knows ?o }" },
+        { group: "Progressive summary", label: "Any employment edges?", view: "table", strategy: "progressive",
+          tip: "Exact ASK answered from the summary predicate totals.",
+          q: "PREFIX ex: <http://ex/>\nASK { ?s ex:worksAt ?o }" },
+        { group: "Progressive summary", label: "Total triples", view: "table", strategy: "progressive",
+          tip: "Exact total triple count from the summary graph.",
+          q: "SELECT (COUNT(*) AS ?triples) WHERE { ?s ?p ?o }" },
+        { group: "Progressive summary", label: "Predicate totals", view: "table", strategy: "progressive",
+          tip: "Exact predicate-by-predicate counts from the summary; useful as a first scan.",
+          q: "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p" },
+        { group: "Progressive summary", label: "Predicate list", view: "table", strategy: "progressive",
+          tip: "Exact distinct predicate list from the summary; no index read.",
+          q: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" },
+        { group: "Progressive summary", label: "Predicate count", view: "table", strategy: "progressive",
+          tip: "Exact count of distinct predicates from the summary; no index read.",
+          q: "SELECT (COUNT(DISTINCT ?p) AS ?predicateCount) WHERE { ?s ?p ?o }" },
+        { group: "Progressive summary", label: "Any triples?", view: "table", strategy: "progressive",
+          tip: "Exact graph-nonempty ASK from the summary graph.",
+          q: "ASK { ?s ?p ?o }" },
         { group: "Select", label: "Who works where", view: "table",
           tip: "Lists every worksAt edge: which person is employed by which org.",
           q: "PREFIX ex: <http://ex/>\nSELECT ?person ?org WHERE { ?person ex:worksAt ?org }" },
@@ -1128,6 +1236,21 @@ __GLUE_JS__
           q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ?p ?b } WHERE {\n  { ?a ex:knows ?b BIND(ex:knows AS ?p) }\n  UNION\n  { ?a ex:worksAt ?b BIND(ex:worksAt AS ?p) }\n}" },
       ],
       deps: [
+        { group: "Progressive summary", label: "Count dependency edges", view: "table", strategy: "progressive",
+          tip: "Exact dependency-edge count from the summary; useful before drilling into the index.",
+          q: "PREFIX ex: <http://ex/>\nSELECT (COUNT(*) AS ?dependencyEdges) WHERE { ?s ex:dependsOn ?o }" },
+        { group: "Progressive summary", label: "Any dependency edges?", view: "table", strategy: "progressive",
+          tip: "Exact predicate-exists ASK from the summary predicate totals.",
+          q: "PREFIX ex: <http://ex/>\nASK { ?s ex:dependsOn ?o }" },
+        { group: "Progressive summary", label: "Predicate totals", view: "table", strategy: "progressive",
+          tip: "Exact predicate-by-predicate counts from the summary; no index read.",
+          q: "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p" },
+        { group: "Progressive summary", label: "Predicate list", view: "table", strategy: "progressive",
+          tip: "Exact distinct predicate list from the summary; no index read.",
+          q: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" },
+        { group: "Progressive summary", label: "Predicate count", view: "table", strategy: "progressive",
+          tip: "Exact count of distinct predicates from the summary; no index read.",
+          q: "SELECT (COUNT(DISTINCT ?p) AS ?predicateCount) WHERE { ?s ?p ?o }" },
         { group: "Select", label: "Direct dependencies", view: "table",
           tip: "Lists every direct dependsOn edge.",
           q: "PREFIX ex: <http://ex/>\nSELECT ?a ?b WHERE { ?a ex:dependsOn ?b } LIMIT 100" },
@@ -1142,6 +1265,21 @@ __GLUE_JS__
           q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ex:dependsOn ?b } WHERE { ?a ex:dependsOn ?b }" },
       ],
       papers: [
+        { group: "Progressive summary", label: "Count citation edges", view: "table", strategy: "progressive",
+          tip: "Exact cites-edge count answered from the summary only.",
+          q: "PREFIX ex: <http://ex/>\nSELECT (COUNT(*) AS ?citationEdges) WHERE { ?s ex:cites ?o }" },
+        { group: "Progressive summary", label: "Total triples", view: "table", strategy: "progressive",
+          tip: "Exact graph-wide triple count from the summary graph.",
+          q: "SELECT (COUNT(*) AS ?triples) WHERE { ?s ?p ?o }" },
+        { group: "Progressive summary", label: "Predicate totals", view: "table", strategy: "progressive",
+          tip: "Exact predicate-by-predicate counts from the summary; no index read.",
+          q: "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p" },
+        { group: "Progressive summary", label: "Predicate list", view: "table", strategy: "progressive",
+          tip: "Exact distinct predicate list from the summary; no index read.",
+          q: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" },
+        { group: "Progressive summary", label: "Predicate count", view: "table", strategy: "progressive",
+          tip: "Exact count of distinct predicates from the summary; no index read.",
+          q: "SELECT (COUNT(DISTINCT ?p) AS ?predicateCount) WHERE { ?s ?p ?o }" },
         { group: "Select", label: "Paper titles", view: "table",
           tip: "Lists every paper and its title.",
           q: "PREFIX ex: <http://ex/>\nSELECT ?p ?title WHERE { ?p ex:title ?title }" },
@@ -1156,6 +1294,21 @@ __GLUE_JS__
           q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ex:cites ?b } WHERE { ?a ex:cites ?b }" },
       ],
       citations: [
+        { group: "Progressive summary", label: "Count all citation edges", view: "table", strategy: "progressive",
+          tip: "Exact cito:cites count from the summary; no triple-index read.",
+          q: "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT (COUNT(*) AS ?citationEdges) WHERE { ?s cito:cites ?o }" },
+        { group: "Progressive summary", label: "Any titles loaded?", view: "table", strategy: "progressive",
+          tip: "Exact predicate-exists ASK for dcterms:title from summary predicate totals.",
+          q: "PREFIX dct: <http://purl.org/dc/terms/>\nASK { ?s dct:title ?o }" },
+        { group: "Progressive summary", label: "Predicate totals", view: "table", strategy: "progressive",
+          tip: "Exact predicate-by-predicate counts from the summary; no index read.",
+          q: "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p" },
+        { group: "Progressive summary", label: "Predicate list", view: "table", strategy: "progressive",
+          tip: "Exact distinct predicate list from the summary; no index read.",
+          q: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" },
+        { group: "Progressive summary", label: "Predicate count", view: "table", strategy: "progressive",
+          tip: "Exact count of distinct predicates from the summary; no index read.",
+          q: "SELECT (COUNT(DISTINCT ?p) AS ?predicateCount) WHERE { ?s ?p ?o }" },
         // ---- Family 1: Easy — single pattern, ASK, plain count ----
         { group: "Easy · basics", label: "Paper titles (50)", view: "table",
           tip: "One triple pattern: list 50 citing papers and their (synthetic) titles. The simplest possible SELECT.",
@@ -1202,6 +1355,21 @@ __GLUE_JS__
           q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?a ex:coauthor ?b } WHERE {\n  VALUES ?a { <http://ex/author/1235> }\n  ?a ex:coauthor ?b\n}" },
       ],
       researchers: [
+        { group: "Progressive summary", label: "Count coauthor edges", view: "table", strategy: "progressive",
+          tip: "Exact coauthor-edge count from the summary; index skipped.",
+          q: "PREFIX ex: <http://ex/>\nSELECT (COUNT(*) AS ?coauthorEdges) WHERE { ?s ex:coauthor ?o }" },
+        { group: "Progressive summary", label: "Any cites edges?", view: "table", strategy: "progressive",
+          tip: "Exact ASK over the summary predicate totals.",
+          q: "PREFIX ex: <http://ex/>\nASK { ?s ex:cites ?o }" },
+        { group: "Progressive summary", label: "Predicate totals", view: "table", strategy: "progressive",
+          tip: "Exact predicate-by-predicate counts from the summary; no index read.",
+          q: "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p" },
+        { group: "Progressive summary", label: "Predicate list", view: "table", strategy: "progressive",
+          tip: "Exact distinct predicate list from the summary; no index read.",
+          q: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" },
+        { group: "Progressive summary", label: "Predicate count", view: "table", strategy: "progressive",
+          tip: "Exact count of distinct predicates from the summary; no index read.",
+          q: "SELECT (COUNT(DISTINCT ?p) AS ?predicateCount) WHERE { ?s ?p ?o }" },
         { group: "Select", label: "Co-authorships", view: "table",
           tip: "Lists every coauthor edge between researchers.",
           q: "PREFIX ex: <http://ex/>\nSELECT ?a ?b WHERE { ?a ex:coauthor ?b } LIMIT 100" },
@@ -1237,9 +1405,268 @@ __GLUE_JS__
       $("examples").querySelectorAll(".ex-btn").forEach((el) => el.onclick = () => {
         const ex = list[Number(el.dataset.ex)];
         // Show this example's specific description, then run it.
-        setQuery(ex.q, ex.view);
+        setQuery(ex.q, ex.view, ex.strategy || "whole");
         $("qmeta").title = ex.tip;
       });
+    }
+
+    // Per-dataset SHACL shape examples. Each: {label, shape, tip, group}.
+    const SHACL_EXAMPLES = {
+      typed: [
+        { group: "Passes", label: "Person employment is an Org",
+          tip: "Optional values are allowed, but every worksAt value must point to an Org.",
+          shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:PersonEmploymentShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [
+    sh:path ex:worksAt ;
+    sh:class ex:Org ;
+    sh:maxCount 1
+  ] .` },
+        { group: "Intentional violations", label: "Every person needs a name",
+          tip: "Alice has no ex:name in this tiny graph, so this produces a MinCount violation.",
+          shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:PersonNameShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [
+    sh:path ex:name ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+    sh:message "Every Person must have exactly one string name."
+  ] .` },
+      ],
+      deps: [
+        { group: "Passes", label: "Application has dependencies",
+          tip: "The application node has at least one direct dependency.",
+          shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:ApplicationDependencyShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Application ;
+  sh:property [
+    sh:path ex:dependsOn ;
+    sh:minCount 1 ;
+    sh:class ex:Library
+  ] .` },
+        { group: "Intentional violations", label: "Every library has a CVE",
+          tip: "Only log4x has hasVulnerability, so most Library nodes fail this contract.",
+          shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:LibraryVulnerabilityShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Library ;
+  sh:property [
+    sh:path ex:hasVulnerability ;
+    sh:minCount 1 ;
+    sh:message "Library has no declared vulnerability."
+  ] .` },
+      ],
+      papers: [
+        { group: "Passes", label: "Paper title + abstract",
+          tip: "Every bundled paper has a title and abstract literal.",
+          shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:PaperTextShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Paper ;
+  sh:property [ sh:path ex:title ; sh:minCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path ex:abstract ; sh:minCount 1 ; sh:datatype xsd:string ] .` },
+        { group: "Intentional violations", label: "Paper DOI required",
+          tip: "This sample has titles and abstracts but no DOI field, so every paper violates it.",
+          shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:PaperDoiShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Paper ;
+  sh:property [
+    sh:path ex:doi ;
+    sh:minCount 1 ;
+    sh:message "Paper is missing a DOI."
+  ] .` },
+      ],
+      researchers: [
+        { group: "Passes", label: "Researcher organization",
+          tip: "Every researcher in this multi-criteria example belongs to OrgX or OrgY.",
+          shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:ResearcherOrganizationShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Researcher ;
+  sh:property [
+    sh:path ex:organization ;
+    sh:minCount 1 ;
+    sh:in ( ex:OrgX ex:OrgY )
+  ] .` },
+        { group: "Intentional violations", label: "Two coauthors required",
+          tip: "Each researcher only has one cross-cluster coauthor in this sample.",
+          shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:ResearcherCoauthorShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Researcher ;
+  sh:property [
+    sh:path ex:coauthor ;
+    sh:minCount 2 ;
+    sh:message "Researcher has fewer than two coauthors."
+  ] .` },
+      ],
+      research: [
+        { group: "Passes", label: "Researcher profile",
+          tip: "Researchers have a FOAF name, h-index, and an institution.",
+          shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+ex:ResearcherProfileShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Researcher ;
+  sh:property [ sh:path foaf:name ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path ex:hIndex ; sh:minCount 1 ] ;
+  sh:property [ sh:path ex:affiliatedWith ; sh:minCount 1 ; sh:class ex:Institution ] .` },
+        { group: "Intentional violations", label: "Journal impact is integer",
+          tip: "Impact factors are plain decimal-looking literals, not xsd:integer values.",
+          shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:JournalImpactShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Journal ;
+  sh:property [
+    sh:path ex:impactFactor ;
+    sh:datatype xsd:integer ;
+    sh:message "Impact factor must be typed as xsd:integer."
+  ] .` },
+      ],
+      citations: [
+        { group: "Passes", label: "Citing paper metadata",
+          tip: "Checks that each paper citing AlphaFold has title, date, and discipline metadata.",
+          shape: `@prefix cito: <http://purl.org/spar/cito/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:CitingPaperMetadataShape
+  a sh:NodeShape ;
+  sh:targetSubjectsOf cito:cites ;
+  sh:property [ sh:path dct:title ; sh:minCount 1 ] ;
+  sh:property [ sh:path dct:date ; sh:minCount 1 ] ;
+  sh:property [ sh:path ex:discipline ; sh:minCount 1 ] .` },
+        { group: "Intentional violations", label: "Peer-review marker required",
+          tip: "The enriched OpenCitations sample has no ex:reviewedBy predicate, so this creates many violations.",
+          shape: `@prefix cito: <http://purl.org/spar/cito/> .
+@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:ReviewMarkerShape
+  a sh:NodeShape ;
+  sh:targetSubjectsOf cito:cites ;
+  sh:property [
+    sh:path ex:reviewedBy ;
+    sh:minCount 1 ;
+    sh:message "Citing paper has no peer-review marker."
+  ] .` },
+      ],
+    };
+
+    function renderShaclExamples() {
+      const list = SHACL_EXAMPLES[$("ds").value] || [];
+      if (!list.length) {
+        $("shaclExamples").innerHTML = `<span class="muted">No curated SHACL examples for this dataset.</span>`;
+        return;
+      }
+      const groups = [];
+      const byG = new Map();
+      list.forEach((ex, i) => {
+        if (!byG.has(ex.group)) { byG.set(ex.group, []); groups.push(ex.group); }
+        byG.get(ex.group).push({ ex, i });
+      });
+      $("shaclExamples").innerHTML = groups.map((g) =>
+        `<div class="ex-group"><div class="ex-lead">${esc(g)}</div>` +
+        byG.get(g).map(({ ex, i }) =>
+          `<button type="button" class="ex-btn" data-shacl="${i}" title="${esc(ex.tip)}">` +
+          `${esc(ex.label)}</button>`).join("") +
+        `<div class="small muted" style="margin:.1rem 0 .2rem">${esc(byG.get(g)[0].ex.tip)}</div></div>`
+      ).join("");
+      $("shaclExamples").querySelectorAll(".ex-btn").forEach((el) => el.onclick = () => {
+        const ex = list[Number(el.dataset.shacl)];
+        $("shapeText").value = ex.shape;
+        $("shaclFormat").value = "text";
+        $("shaclMeta").title = ex.tip;
+        runShacl();
+        $("shapeText").scrollIntoView({ behavior: "smooth" });
+      });
+      if (activeSource === "dataset" && list[0]) {
+        $("shapeText").value = list[0].shape;
+      }
+    }
+
+    function renderShaclJson(report, raw) {
+      const results = report.results || [];
+      if (report.conforms) {
+        return `<div class="banner"><strong>Conforms.</strong> No validation results.</div>` +
+          `<details><summary class="small muted">Raw JSON report</summary><pre>${esc(raw)}</pre></details>`;
+      }
+      const CAP = 200;
+      const rows = results.slice(0, CAP).map((r) => {
+        const msg = (r.messages || []).join(" ");
+        return `<tr>` +
+          `<td>${esc(shorten(r.focusNode || ""))}</td>` +
+          `<td>${esc(shorten(r.resultPath || ""))}</td>` +
+          `<td>${esc(shorten(r.sourceConstraintComponent || ""))}</td>` +
+          `<td>${esc(shorten(msg))}</td>` +
+          `</tr>`;
+      }).join("");
+      const more = results.length > CAP
+        ? `<p class="small muted">Showing first ${CAP} of ${results.length} result(s).</p>`
+        : "";
+      return `<div class="note"><strong>Does not conform.</strong> ${results.length} validation result(s).</div>` +
+        more +
+        `<table><thead><tr><th>focus</th><th>path</th><th>component</th><th>message</th></tr></thead><tbody>${rows}</tbody></table>` +
+        `<details style="margin-top:.7rem"><summary class="small muted">Raw JSON report</summary><pre>${esc(raw)}</pre></details>`;
+    }
+
+    function runShacl() {
+      if (!bytes) { $("shaclOut").innerHTML = `<p class="err">Load a file first.</p>`; return; }
+      const shapes = $("shapeText").value.trim();
+      if (!shapes) { $("shaclOut").innerHTML = `<p class="err">Enter a SHACL Turtle shape.</p>`; return; }
+      const fmt = $("shaclFormat").value;
+      const t0 = performance.now();
+      try {
+        const reportText = W().shacl(bytes, shapes, null, fmt);
+        const dt = performance.now() - t0;
+        let conforms = false;
+        if (fmt === "json") {
+          const report = JSON.parse(reportText);
+          conforms = !!report.conforms;
+          $("shaclOut").innerHTML = renderShaclJson(report, reportText);
+        } else if (fmt === "ttl") {
+          conforms = reportText.includes("#conforms> true") || reportText.includes("#conforms> true ");
+          $("shaclOut").innerHTML = `<pre>${esc(reportText)}</pre>`;
+        } else {
+          conforms = reportText.startsWith("conforms: true");
+          $("shaclOut").innerHTML = `<pre>${esc(reportText)}</pre>`;
+        }
+        $("shaclMeta").textContent = `${conforms ? "conforms" : "violations"} Â· ${dt.toFixed(1)} ms`;
+      } catch (e) {
+        $("shaclMeta").textContent = "";
+        $("shaclOut").innerHTML = `<p class="err">Error: ${esc(String(e))}</p>`;
+      }
     }
 
     // --- reachability ---------------------------------------------------------
@@ -1382,8 +1809,7 @@ __GLUE_JS__
         if (!h) return;
         $("q").value = h.query;
         setView(h.format && h.format !== "json" ? h.format : "table");
-        $("strategy").value = h.strategy;
-        $("roundWrap").hidden = h.strategy !== "community";
+        setStrategy(h.strategy);
         if (h.dataset && h.dataset !== $("ds").value && RETE_DATASETS_B64[h.dataset]) {
           $("ds").value = h.dataset;
           loadDataset(h.dataset);
@@ -1407,6 +1833,7 @@ __GLUE_JS__
       }
       params.set("q", $("q").value);
       params.set("format", $("fmt").value);
+      params.set("strategy", $("strategy").value);
       const base = location.origin && location.origin !== "null"
         ? location.origin + location.pathname
         : location.href.split("?")[0].split("#")[0];
@@ -1430,9 +1857,12 @@ __GLUE_JS__
       const ds = p.get("dataset");
       const q = p.get("q");
       const fmt = p.get("format");
+      const strategy = p.get("strategy");
       const url = p.get("url");
       const validFmt = ["table", "ttl", "jsonld", "graph"];
+      const validStrategy = ["whole", "progressive", "community"];
       if (fmt && validFmt.includes(fmt)) setView(fmt);
+      if (strategy && validStrategy.includes(strategy)) setStrategy(strategy);
       if (q != null) $("q").value = q;
       // Returns true if it already loaded a dataset/url (so boot skips its default).
       if (url) { $("urlInput").value = url; loadFromUrl(url); return true; }
@@ -1442,8 +1872,9 @@ __GLUE_JS__
 
     // --- wiring ---------------------------------------------------------------
     $("ds").onchange = () => loadDataset($("ds").value);
-    $("strategy").onchange = () => { $("roundWrap").hidden = $("strategy").value !== "community"; };
+    $("strategy").onchange = () => setStrategy();
     $("run").onclick = runQuery;
+    $("shaclRun").onclick = runShacl;
     $("reachRun").onclick = runReach;
     $("urlBtn").onclick = () => loadFromUrl($("urlInput").value);
     $("urlInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadFromUrl($("urlInput").value); });

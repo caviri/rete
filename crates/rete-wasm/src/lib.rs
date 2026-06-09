@@ -4,8 +4,10 @@
 
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
-    eval_sparql, project_graph, schema_classes, schema_summary, tile_by_community, Header,
-    QueryOutput, Rete, SliceReader, SummaryView, DEFAULT_TILE_BUDGET,
+    eval_sparql, project_graph, schema_classes, schema_summary, summary_query_shape,
+    tile_by_community, validate_shacl, CountingReader, DataGraph, Header, QueryOutput, RangeReader,
+    Rete, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, ValidationReport,
+    DEFAULT_TILE_BUDGET,
 };
 use wasm_bindgen::prelude::*;
 
@@ -106,6 +108,133 @@ pub fn summary_overview(bytes: &[u8]) -> Result<String, JsValue> {
         "predicateTotals": view.predicate_totals(),
     }))
     .map_err(err)
+}
+
+/// Answer a conservative subset of SPARQL exactly from the pyramid summary,
+/// without opening the triple index. Unsupported query shapes return an error
+/// instead of silently falling back to a full scan.
+#[wasm_bindgen]
+pub fn progressive_query(bytes: &[u8], query: &str) -> Result<String, JsValue> {
+    progressive_query_json(bytes, query).map_err(|e| JsValue::from_str(&e))
+}
+
+/// Native-testable implementation for [`progressive_query`].
+pub fn progressive_query_json(bytes: &[u8], query: &str) -> Result<String, String> {
+    use serde_json::json;
+
+    let shape = summary_query_shape(query)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "query is not exactly answerable from the summary".to_string())?;
+
+    let reader = CountingReader::new(SliceReader::new(bytes));
+    let file_bytes = reader.len();
+    let view = SummaryView::open_ranged(&reader)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "file has no pyramid summary".to_string())?;
+
+    let value = match shape {
+        SummaryQueryShape::PredicateCount {
+            predicate,
+            variable,
+        } => {
+            let count = u64::from(view.predicate_total(&predicate));
+            select_count_response(
+                &variable,
+                count,
+                progressive_meta(
+                    &reader,
+                    file_bytes,
+                    "predicate_count",
+                    Some(&predicate),
+                    json!(count),
+                ),
+            )
+        }
+        SummaryQueryShape::TripleCount { variable } => {
+            let count = summary_total(&view);
+            select_count_response(
+                &variable,
+                count,
+                progressive_meta(&reader, file_bytes, "triple_count", None, json!(count)),
+            )
+        }
+        SummaryQueryShape::PredicateTotals {
+            predicate_variable,
+            count_variable,
+        } => {
+            let totals = view.predicate_totals();
+            select_predicate_totals_response(
+                &predicate_variable,
+                &count_variable,
+                &totals,
+                progressive_meta(
+                    &reader,
+                    file_bytes,
+                    "predicate_totals",
+                    None,
+                    json!(&totals),
+                ),
+            )
+        }
+        SummaryQueryShape::PredicateList { variable } => {
+            let predicates = predicate_list(&view);
+            select_predicate_list_response(
+                &variable,
+                &predicates,
+                progressive_meta(
+                    &reader,
+                    file_bytes,
+                    "predicate_list",
+                    None,
+                    json!(&predicates),
+                ),
+            )
+        }
+        SummaryQueryShape::PredicateDistinctCount { variable } => {
+            let count = predicate_count(&view);
+            select_count_response(
+                &variable,
+                count,
+                progressive_meta(
+                    &reader,
+                    file_bytes,
+                    "predicate_distinct_count",
+                    None,
+                    json!(count),
+                ),
+            )
+        }
+        SummaryQueryShape::TripleExists => {
+            let exists = summary_total(&view) > 0;
+            json!({
+                "kind": "ask",
+                "boolean": exists,
+                "progressive": progressive_meta(
+                    &reader,
+                    file_bytes,
+                    "triple_exists",
+                    None,
+                    json!(exists),
+                ),
+            })
+        }
+        SummaryQueryShape::PredicateExists { predicate } => {
+            let exists = view.predicate_total(&predicate) > 0;
+            json!({
+                "kind": "ask",
+                "boolean": exists,
+                "progressive": progressive_meta(
+                    &reader,
+                    file_bytes,
+                    "predicate_exists",
+                    Some(&predicate),
+                    json!(exists),
+                ),
+            })
+        }
+    };
+
+    serde_json::to_string(&value).map_err(|e| e.to_string())
 }
 
 /// Run any SPARQL form (SELECT / ASK / CONSTRUCT / DESCRIBE) and serialize the
@@ -278,6 +407,63 @@ pub fn reach(bytes: &[u8], predicate: &str, seeds: &str, reverse: bool) -> Resul
     serde_json::to_string(&arr).map_err(err)
 }
 
+/// Validate a `.rete` graph against SHACL Core shapes written in Turtle.
+///
+/// The default graph is validated unless `graph` names a dataset graph IRI.
+/// `format` is one of:
+/// - `"json"`: structured validation report from rete-core
+/// - `"ttl"`: Turtle validation report
+/// - anything else: compact text report
+///
+/// A non-conformant graph returns a report; it is not a JS exception. Exceptions
+/// are reserved for parse/open errors.
+#[wasm_bindgen]
+pub fn shacl(
+    bytes: &[u8],
+    shapes_turtle: &str,
+    graph: Option<String>,
+    format: &str,
+) -> Result<String, JsValue> {
+    let rete = open(bytes)?;
+    let data = DataGraph::from_rete(&rete, graph.as_deref());
+    let shapes = ShaclShapes::parse_turtle(shapes_turtle).map_err(err)?;
+    let report = validate_shacl(&data, &shapes);
+    Ok(match format {
+        "json" => report.to_json(),
+        "ttl" => report.to_turtle(),
+        _ => format_shacl_text(&report),
+    })
+}
+
+fn format_shacl_text(report: &ValidationReport) -> String {
+    if report.conforms {
+        return "conforms: true\n".to_string();
+    }
+    let mut out = format!("conforms: false\nresults: {}\n", report.results.len());
+    for result in &report.results {
+        out.push_str("\n- focus: ");
+        out.push_str(&result.focus_node);
+        if let Some(value) = &result.value_node {
+            out.push_str("\n  value: ");
+            out.push_str(value);
+        }
+        if let Some(path) = &result.result_path {
+            out.push_str("\n  path: ");
+            out.push_str(path);
+        }
+        out.push_str("\n  component: ");
+        out.push_str(&result.source_constraint_component);
+        out.push_str("\n  severity: ");
+        out.push_str(&result.severity.iri());
+        for message in &result.messages {
+            out.push_str("\n  message: ");
+            out.push_str(message);
+        }
+        out.push('\n');
+    }
+    out
+}
+
 // --- EXPERIMENTAL: real browser-thread parallelism (feature = "threads") ------
 //
 // Only compiled when the `threads` feature is on (a nightly + build-std wasm
@@ -372,6 +558,123 @@ pub fn reach_parallel(
 // --- CONSTRUCT serializers (mirrored from rete-cli, kept minimal) ------------
 
 const RDF_TYPE_IRI: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+const XSD_INTEGER_IRI: &str = "http://www.w3.org/2001/XMLSchema#integer";
+
+fn summary_total(view: &SummaryView) -> u64 {
+    view.summary.iter().map(|edge| u64::from(edge.count)).sum()
+}
+
+fn predicate_list(view: &SummaryView) -> Vec<String> {
+    view.predicate_totals()
+        .into_iter()
+        .map(|(predicate, _)| predicate)
+        .collect()
+}
+
+fn predicate_count(view: &SummaryView) -> u64 {
+    view.predicate_totals().len() as u64
+}
+
+fn select_count_response(
+    variable: &str,
+    count: u64,
+    progressive: serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::{json, Map, Value};
+
+    let mut row = Map::new();
+    row.insert(variable.to_string(), Value::String(integer_literal(count)));
+    json!({
+        "kind": "select",
+        "vars": [variable],
+        "rows": [Value::Object(row)],
+        "progressive": progressive,
+    })
+}
+
+fn select_predicate_list_response(
+    variable: &str,
+    predicates: &[String],
+    progressive: serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::{json, Map, Value};
+
+    let rows: Vec<Value> = predicates
+        .iter()
+        .map(|predicate| {
+            let mut row = Map::new();
+            row.insert(variable.to_string(), Value::String(predicate.clone()));
+            Value::Object(row)
+        })
+        .collect();
+
+    json!({
+        "kind": "select",
+        "vars": [variable],
+        "rows": rows,
+        "progressive": progressive,
+    })
+}
+
+fn select_predicate_totals_response(
+    predicate_variable: &str,
+    count_variable: &str,
+    totals: &[(String, u32)],
+    progressive: serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::{json, Map, Value};
+
+    let rows: Vec<Value> = totals
+        .iter()
+        .map(|(predicate, count)| {
+            let mut row = Map::new();
+            row.insert(
+                predicate_variable.to_string(),
+                Value::String(predicate.clone()),
+            );
+            row.insert(
+                count_variable.to_string(),
+                Value::String(integer_literal(u64::from(*count))),
+            );
+            Value::Object(row)
+        })
+        .collect();
+
+    json!({
+        "kind": "select",
+        "vars": [predicate_variable, count_variable],
+        "rows": rows,
+        "progressive": progressive,
+    })
+}
+
+fn progressive_meta<R: RangeReader>(
+    reader: &CountingReader<R>,
+    file_bytes: u64,
+    query_shape: &str,
+    predicate: Option<&str>,
+    value: serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::{json, Map, Value};
+
+    let mut meta = Map::new();
+    meta.insert("stage".into(), json!("summary"));
+    meta.insert("exact".into(), json!(true));
+    meta.insert("readsIndex".into(), json!(false));
+    meta.insert("queryShape".into(), json!(query_shape));
+    meta.insert("value".into(), value);
+    meta.insert("bytes".into(), json!(reader.bytes_read()));
+    meta.insert("requests".into(), json!(reader.requests()));
+    meta.insert("fileBytes".into(), json!(file_bytes));
+    if let Some(predicate) = predicate {
+        meta.insert("predicate".into(), json!(predicate));
+    }
+    Value::Object(meta)
+}
+
+fn integer_literal(value: u64) -> String {
+    format!("\"{}\"^^<{}>", value, XSD_INTEGER_IRI)
+}
 
 /// Serialize a triple list (canonical N-Triples tokens) to Turtle: group by
 /// subject, sort predicates/objects, abbreviate `rdf:type` to `a`. The tokens are
