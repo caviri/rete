@@ -109,7 +109,7 @@ materialize intermediate rows. File size: ~11.8× smaller than raw N-Triples,
 ## Documentation
 
 - **[Graph data 101](https://caviri.github.io/rete/intro.html)** — new to RDF/graphs? Start here.
-- **[Getting started](https://caviri.github.io/rete/getting-started.html)** · **[CLI reference](https://caviri.github.io/rete/cli.html)** · **[SPARQL support](https://caviri.github.io/rete/sparql.html)** · **[SHACL validation](https://caviri.github.io/rete/shacl.html)** · **[Dataset Cards](https://caviri.github.io/rete/dataset-cards.html)**
+- **[Getting started](https://caviri.github.io/rete/getting-started.html)** · **[Architecture](https://caviri.github.io/rete/architecture.html)** · **[CLI reference](https://caviri.github.io/rete/cli.html)** · **[SPARQL support](https://caviri.github.io/rete/sparql.html)** · **[SHACL validation](https://caviri.github.io/rete/shacl.html)** · **[Dataset Cards](https://caviri.github.io/rete/dataset-cards.html)**
 - **[Interactive playground](https://caviri.github.io/rete/playground.html)** — query in the browser, offline.
 - **[Real-world scenario](https://caviri.github.io/rete/scenario.html)** · **[Federated queries](https://caviri.github.io/rete/federation.html)** · **[Reasoning & coherence](https://caviri.github.io/rete/reasoning.html)**
 - **[Format spec](https://caviri.github.io/rete/SPEC.html)** · **[Benchmarks](https://caviri.github.io/rete/BENCHMARK.html)** · **[Browser / WASM](https://caviri.github.io/rete/browser.html)**

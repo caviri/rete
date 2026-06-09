@@ -170,6 +170,7 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
         <li><a href="index.html" class="active">Overview</a></li>
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
@@ -236,6 +237,7 @@ rete schema  social.rete    # semantic (by rdf:type)
 <ul>
 <li><strong><a href="intro.html">Graph data 101</a></strong> — new to graphs/RDF? A beginner's tour, framed by the questions you can ask.</li>
 <li><strong><a href="getting-started.html">Getting started</a></strong> — install (Docker-only), build, query, deploy.</li>
+<li><strong><a href="architecture.html">Architecture</a></strong> — workspace map, build/read/query pipelines, range model, and extension points.</li>
 <li><strong><a href="scenario.html">Real-world scenario</a></strong> — publish a queryable SBOM to a URL; curl examples.</li>
 <li><strong><a href="cli.html">CLI reference</a></strong> — every <code>rete</code> subcommand.</li>
 <li><strong><a href="sparql.html">SPARQL support</a></strong> — exactly what the engine evaluates.</li>
@@ -248,7 +250,7 @@ rete schema  social.rete    # semantic (by rdf:type)
 <li><strong><a href="browser.html">Browser / WASM</a></strong> — query in the browser; progressive loading.</li>
 <li><strong><a href="playground.html">Interactive playground</a></strong> — a static, no-server, runs-entirely-in-your-browser page: it embeds the WASM engine and the example datasets, so SELECT/ASK/CONSTRUCT, progressive summary queries, Table/Turtle/JSON-LD, the community view, reachability, and history all work offline (even from <code>file://</code>).</li>
 <li><strong><a href="SPEC.html">Format specification</a></strong> — the on-disk byte layout, for implementers.</li>
-<li><strong><a href="BENCHMARK.html">Benchmarks</a></strong> — synthetic 139 k-triple sizing plus the real OpenCitations/Oxigraph comparison.</li>
+<li><strong><a href="BENCHMARK.html">Benchmarks</a></strong> — synthetic 139 k-triple sizing plus the real OpenCitations/Oxigraph comparison, generated from a JSON snapshot.</li>
 <li><strong><a href="parallel-browser.html">Parallel in the browser (experimental)</a></strong> — a working Web Worker reachability demo, plus the more fragile shared-memory WASM thread path.</li>
 </ul>
 <h2>Status</h2>

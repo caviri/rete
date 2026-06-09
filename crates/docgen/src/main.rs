@@ -16,6 +16,7 @@ const PAGES: &[(&str, &str)] = &[
     ("index.md", "Overview"),
     ("intro.md", "Graph data 101"),
     ("getting-started.md", "Getting started"),
+    ("architecture.md", "Architecture"),
     ("scenario.md", "Real-world scenario"),
     ("cli.md", "CLI reference"),
     ("dataset-cards.md", "Dataset Cards"),
