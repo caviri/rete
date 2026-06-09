@@ -2,7 +2,7 @@
 """Render the Oxigraph comparison section of docs/BENCHMARK.md from JSON.
 
 Usage:
-  python3 scripts/render_benchmark_doc.py docs/benchmark-opencitations.json \
+  uv run python scripts/render_benchmark_doc.py docs/benchmark-opencitations.json \
     --input docs/BENCHMARK.md --output docs/BENCHMARK.md
 
 The JSON shape is the output of `rete-bench --json`, optionally enriched with a
@@ -177,7 +177,7 @@ def render(report: dict) -> str:
             "cargo build --release -p rete-bench",
             "./target/release/rete-bench --json data/opencitations/enriched-clean.rete \\",
             "  data/opencitations/enriched-clean.nt 300 > docs/benchmark-opencitations.json",
-            "python3 scripts/render_benchmark_doc.py docs/benchmark-opencitations.json \\",
+            "uv run python scripts/render_benchmark_doc.py docs/benchmark-opencitations.json \\",
             "  --input docs/BENCHMARK.md --output docs/BENCHMARK.md",
             "cargo run -p docgen",
             "```",
@@ -195,7 +195,7 @@ def replace_section(markdown: str, section: str) -> str:
     if START in markdown and END in markdown:
         before, rest = markdown.split(START, 1)
         _, after = rest.split(END, 1)
-        return before.rstrip() + "\n\n" + section.rstrip() + "\n" + after
+        return before.rstrip() + "\n\n" + section.rstrip() + "\n\n" + after.lstrip("\n")
 
     heading = "\n## Comparison vs Oxigraph"
     next_heading = "\n## Parallelism"
