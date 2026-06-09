@@ -72,9 +72,7 @@ file 1.80 MB (same 11.8× vs raw / ~1.27× vs gzip ratios).
 <!-- benchmark:opencitations:start -->
 ## Comparison vs Oxigraph (real OpenCitations network)
 
-Dataset: the real **OpenCitations** citation network from the [playground](playground.html) - papers citing the AlphaFold paper (`10.1038/s41586-021-03819-2`), enriched with clearly-labelled synthetic metadata.
-
-**~588 k triples** in the playground dataset, **539,246 triples** after Oxigraph's spec-strict parser dropped 88 malformed compound-DOI IRIs present in the OpenCitations dump. Both engines load the same sanitized N-Triples, so the comparison is apples-to-apples.
+Dataset: the benchmark N-Triples input loaded into both engines
 
 This pits rete (a queryable *file*) against Oxigraph (a full in-memory
 triplestore with a mature SPARQL planner). Honest summary: rete opens
@@ -86,15 +84,15 @@ reachability.
 This section is generated from
 `docs/benchmark-opencitations.json` with
 `scripts/render_benchmark_doc.py`. Latest run:
-**2026-06-09**. **Oxigraph 0.5.8**, in-memory store
+**unknown**. **Oxigraph 0.5**, in-memory store
 (no RocksDB). Machine: 32 logical cores.
 
 ### Load / open (one-time)
 
 | Engine | Step | Time |
 |---|---|--:|
-| **rete** | `Rete::open` - indexes already built in the file | **15.2 ms** |
-| Oxigraph | bulk-load N-Triples + build in-memory indexes | 1925 ms |
+| **rete** | `Rete::open` - indexes already built in the file | **15.5 ms** |
+| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2026 ms |
 
 rete's "load" just maps a file whose dictionary + permutation indexes
 already exist on disk; Oxigraph parses the triples and builds its indexes
@@ -110,30 +108,30 @@ Median of 5 warm runs.
 
 | Operator / form | rete | Oxigraph | rete vs oxi | rows | ok |
 |---|--:|--:|--:|--:|:--:|
-| SELECT count (aggregate) | **2.74 ms** | 6.15 ms | 2.2x | 1 | yes |
-| SELECT DISTINCT | **5.08 ms** | 6.61 ms | 1.3x | 6 | yes |
-| ASK | 0.32 ms | **0.01 ms** | 0.0x | 1 | yes |
-| CONSTRUCT | 0.02 ms | **0.01 ms** | 0.8x | 9 | yes |
+| SELECT count (aggregate) | **2.97 ms** | 4.51 ms | 1.5x | 1 | yes |
+| SELECT DISTINCT | **3.30 ms** | 5.39 ms | 1.6x | 6 | yes |
+| ASK | 0.33 ms | **0.01 ms** | 0.0x | 1 | yes |
+| CONSTRUCT | 0.02 ms | **0.01 ms** | 0.6x | 9 | yes |
 | DESCRIBE (impl-defined) | 0.02 ms | **0.01 ms** | 0.5x | 11 | yes |
-| VALUES (inline data) | 10.7 ms | **5.03 ms** | 0.5x | 10962 | yes |
-| UNION | 8.71 ms | **3.42 ms** | 0.4x | 10993 | yes |
-| OPTIONAL (left join) | 62.4 ms | **0.19 ms** | 0.0x | 200 | yes |
-| MINUS | 7.90 ms | **1.65 ms** | 0.2x | 2728 | yes |
-| FILTER NOT EXISTS | 8.26 ms | **5.43 ms** | 0.7x | 2728 | yes |
-| 3-way join + LIMIT | 39.0 ms | **0.12 ms** | 0.0x | 50 | yes |
-| FILTER REGEX (case-insens.) | 64.4 ms | **0.78 ms** | 0.0x | 200 | yes |
-| FILTER arith + logical | 4.16 ms | **0.73 ms** | 0.2x | 200 | yes |
-| BIND + SUBSTR + CONCAT | 14.9 ms | **0.20 ms** | 0.0x | 200 | yes |
-| path sequence a/b | 60.3 ms | **0.22 ms** | 0.0x | 200 | yes |
-| path inverse ^p (count) | **2.64 ms** | 3.75 ms | 1.4x | 1 | yes |
-| path + transitive (count) | 8.41 ms | **7.27 ms** | 0.9x | 1 | yes |
-| path * zero-or-more (count) | 8.40 ms | **7.86 ms** | 0.9x | 1 | yes |
-| GROUP BY + ORDER BY | **4.54 ms** | 4.89 ms | 1.1x | 6 | yes |
-| GROUP BY + HAVING | **4.58 ms** | 7.47 ms | 1.6x | 5 | yes |
-| AVG per group | 36.8 ms | **35.9 ms** | 1.0x | 6 | yes |
-| MIN/MAX/SUM | 7.77 ms | **6.38 ms** | 0.8x | 1 | yes |
-| COUNT(DISTINCT) | **4.67 ms** | 5.72 ms | 1.2x | 1 | yes |
-| ORDER BY + LIMIT + OFFSET | 62.1 ms | **17.8 ms** | 0.3x | 10 | yes |
+| VALUES (inline data) | 7.15 ms | **3.38 ms** | 0.5x | 10962 | yes |
+| UNION | 7.45 ms | **2.41 ms** | 0.3x | 10993 | yes |
+| OPTIONAL (left join) | 6.61 ms | **0.18 ms** | 0.0x | 200 | yes |
+| MINUS | 3.71 ms | **1.63 ms** | 0.4x | 2728 | yes |
+| FILTER NOT EXISTS | **3.64 ms** | 5.96 ms | 1.6x | 2728 | yes |
+| 3-way join + LIMIT | 22.3 ms | **0.14 ms** | 0.0x | 50 | yes |
+| FILTER REGEX (case-insens.) | 21.2 ms | **0.49 ms** | 0.0x | 200 | yes |
+| FILTER arith + logical | **0.26 ms** | 0.62 ms | 2.4x | 200 | yes |
+| BIND + SUBSTR + CONCAT | 7.64 ms | **0.22 ms** | 0.0x | 200 | yes |
+| path sequence a/b | 25.5 ms | **0.21 ms** | 0.0x | 200 | yes |
+| path inverse ^p (count) | **2.86 ms** | 5.52 ms | 1.9x | 1 | yes |
+| path + transitive (count) | **5.51 ms** | 6.97 ms | 1.3x | 1 | yes |
+| path * zero-or-more (count) | **5.49 ms** | 8.50 ms | 1.5x | 1 | yes |
+| GROUP BY + ORDER BY | **2.53 ms** | 7.11 ms | 2.8x | 6 | yes |
+| GROUP BY + HAVING | **2.51 ms** | 7.15 ms | 2.8x | 5 | yes |
+| AVG per group | **17.8 ms** | 38.0 ms | 2.1x | 6 | yes |
+| MIN/MAX/SUM | **4.40 ms** | 7.37 ms | 1.7x | 1 | yes |
+| COUNT(DISTINCT) | **2.53 ms** | 4.70 ms | 1.9x | 1 | yes |
+| ORDER BY + LIMIT + OFFSET | **3.77 ms** | 17.3 ms | 4.6x | 10 | yes |
 
 **24 / 24 identical row counts** across
 SELECT/ASK/CONSTRUCT/DESCRIBE, algebra operators, filters/functions,
@@ -141,14 +139,17 @@ property paths, and aggregates.
 
 Reading the times honestly:
 
-- rete wins or ties several index-served and aggregate shapes.
-- Oxigraph still dominates many shapes it can stream or stop early,
-  especially LIMIT-heavy joins, OPTIONAL, expression scans, and offset
-  pagination. rete has targeted lazy fast paths, but broad lazy evaluation
-  remains future engine work.
-- Both engines are in the sub-ms-to-tens-of-ms range on this dataset after
-  the join fixes; the remaining planner gap is broad laziness rather than
-  basic join complexity.
+- rete now wins most aggregate, GROUP BY, DISTINCT, path-closure, and
+  sorted-pagination (top-k) shapes: the engine evaluates as a lazy
+  pipeline over integer slot rows and resolves terms only at projection.
+- Oxigraph still dominates small-LIMIT shapes over multi-pattern joins
+  (OPTIONAL, 3-way join, path sequences, expression scans): rete scans
+  each pattern once per query, where Oxigraph's planner probes indexes
+  per row. Closing that gap needs an index-nested-loop strategy under
+  small LIMITs, not more laziness.
+- Both engines are in the sub-ms-to-tens-of-ms range on this dataset;
+  the remaining gap is join *strategy* on a handful of shapes, not
+  evaluation overhead.
 
 ### Batch transitive reachability - `coauthor+` from 300 seeds
 
@@ -158,9 +159,9 @@ Oxigraph it is a `coauthor+` property path evaluated per seed.
 
 | Engine / mode | Time | vs rete-serial |
 |---|--:|--:|
-| rete - `batch_reach_serial` (1 core) | 455 ms | 1.0x |
-| **rete - `batch_reach_parallel` (32 cores)** | **31.2 ms** | **14.6x** |
-| Oxigraph - `coauthor+` property path, per seed | 2159 ms | 0.2x |
+| rete - `batch_reach_serial` (1 core) | 465 ms | 1.0x |
+| **rete - `batch_reach_parallel` (32 cores)** | **32.3 ms** | **14.4x** |
+| Oxigraph - `coauthor+` property path, per seed | 2089 ms | 0.2x |
 
 rete serial and parallel both reached 1,636,200 nodes;
 Oxigraph touched 1,636,200 result cells. The dedicated

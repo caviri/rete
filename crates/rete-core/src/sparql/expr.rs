@@ -145,6 +145,7 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
         Builtin::StrEnds => two(|a, c| a.ends_with(c)),
         // REGEX(text, pattern [, flags]) — SPARQL flags i/m/s/x map to inline
         // regex flags. An invalid pattern yields no match rather than erroring.
+        // The compiled regex is memoized per query (REGEX runs once per row).
         Builtin::Regex => match (val(0), val(1)) {
             (Some(text), Some(pat)) => {
                 let flags = val(2).map(|t| lexical(&t)).unwrap_or_default();
@@ -156,9 +157,8 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
                 if !on.is_empty() {
                     inline = format!("(?{on})");
                 }
-                regex_lite::Regex::new(&format!("{inline}{}", lexical(&pat)))
-                    .map(|re| re.is_match(&lexical(&text)))
-                    .unwrap_or(false)
+                let full = format!("{inline}{}", lexical(&pat));
+                ctx.resolver.regex_match(&full, &lexical(&text))
             }
             _ => false,
         },

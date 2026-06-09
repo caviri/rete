@@ -82,6 +82,9 @@ pub(crate) struct Resolver<'a> {
     canon_pred: RefCell<HashMap<i64, i64>>,
     /// value → parsed number (memoized `as_number`).
     nums: RefCell<HashMap<Val, Option<f64>>>,
+    /// pattern (with inline flags) → compiled regex (`None` = invalid pattern).
+    /// REGEX in a FILTER runs per row; compiling per row dominates the match.
+    regexes: RefCell<HashMap<String, Option<regex_lite::Regex>>>,
 }
 
 impl<'a> Resolver<'a> {
@@ -91,7 +94,18 @@ impl<'a> Resolver<'a> {
             terms: RefCell::new(HashMap::new()),
             canon_pred: RefCell::new(HashMap::new()),
             nums: RefCell::new(HashMap::new()),
+            regexes: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Does `text` match `pattern` (compiled once per query, memoized)? An
+    /// invalid pattern yields no match rather than erroring.
+    pub(crate) fn regex_match(&self, pattern: &str, text: &str) -> bool {
+        let mut map = self.regexes.borrow_mut();
+        let re = map
+            .entry(pattern.to_string())
+            .or_insert_with(|| regex_lite::Regex::new(pattern).ok());
+        re.as_ref().is_some_and(|re| re.is_match(text))
     }
 
     /// The term string for a tagged id (memoized).

@@ -60,17 +60,21 @@ dictionary, and summary, deliberately skipping the index.
 SPARQL goes through four stages:
 
 1. `spargebra` parses the query.
-2. `rete-core` lowers the supported algebra subset into an internal plan.
-3. BGPs, paths, filters, joins, aggregates, and graph targets evaluate against
-   integer IDs where possible.
-4. Final bindings resolve dictionary IDs back into RDF terms for text, JSON, or
-   WASM output.
+2. `rete-core` lowers the supported algebra subset into an internal plan and
+   compiles its variables into a per-query slot map.
+3. The algebra evaluates as a lazy pull pipeline over integer slot rows:
+   joins, `MINUS`, `DISTINCT`, filters, and `GRAPH` stream, so `LIMIT` and
+   `ASK` stop the underlying index scans early. Aggregation, `ORDER BY`
+   (a bounded top-k when `LIMIT` is present), and hash-join/`MINUS` build
+   sides are the only blocking points.
+4. Only the surviving rows' projected values resolve dictionary IDs back into
+   RDF terms for text, JSON, or WASM output (late materialization, memoized
+   per query).
 
-The engine has fast paths, but it is not a full streaming triplestore planner.
-Simple BGP/FILTER shapes under `LIMIT` can stop early, `ASK` has
-non-materializing paths, and several aggregate shapes operate in integer space.
-`ORDER BY`, broad compound algebra, and many expression-heavy queries still
-materialize intermediate rows.
+This is still not a cost-based planner: join order inside a BGP is a
+selectivity heuristic, hash joins always build their right side, and a small
+`LIMIT` above a multi-pattern join still scans each pattern once (no
+index-nested-loop strategy yet).
 
 Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
 nested `SELECT` subqueries and `SERVICE` federation.
