@@ -1,28 +1,47 @@
-# Normalize line endings: the repo is LF-only. Git stores LF and checks out LF
-# on every platform, so Windows checkouts stop warning "LF will be replaced by
-# CRLF" and diffs stay clean regardless of contributor OS / core.autocrlf.
+# Normalize line endings: this repository is Linux-first and LF-only.
+# Git stores LF and checks out LF on every platform, so Windows checkouts stop
+# warning "LF will be replaced by CRLF" and diffs stay clean regardless of
+# contributor OS or core.autocrlf.
 * text=auto eol=lf
 
-# Source & text formats — explicit LF.
-*.rs    text eol=lf
-*.toml  text eol=lf
-*.md    text eol=lf
-*.html  text eol=lf
-*.css   text eol=lf
-*.js    text eol=lf
-*.py    text eol=lf
-*.sh    text eol=lf
-*.json  text eol=lf
-*.yml   text eol=lf
-*.yaml  text eol=lf
-*.svg   text eol=lf
-*.nt    text eol=lf
-*.nq    text eol=lf
-*.ttl   text eol=lf
+# Source and text formats: explicit LF.
+*.rs         text eol=lf
+*.toml       text eol=lf
+*.lock       text eol=lf
+*.md         text eol=lf
+*.html       text eol=lf
+*.css        text eol=lf
+*.js         text eol=lf
+*.py         text eol=lf
+*.sh         text eol=lf
+*.json       text eol=lf
+*.yml        text eol=lf
+*.yaml       text eol=lf
+*.svg        text eol=lf
+*.nt         text eol=lf
+*.nq         text eol=lf
+*.ttl        text eol=lf
 
-# Built graph files are binary artifacts (also gitignored) — never normalize or
+# Linux/container entry points.
+Dockerfile   text eol=lf
+*.Dockerfile text eol=lf
+.devcontainer/** text eol=lf
+
+# Built graph files are binary artifacts (also gitignored): never normalize or
 # diff them as text.
 *.rete  binary
+
+# Generated/runtime binary assets.
+*.wasm  binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.pyc   binary
 
 # Lockfile is committed and machine-generated; keep it out of language stats and
 # review diffs by default.
