@@ -56,6 +56,16 @@ impl RangeReader for HttpRangeReader {
         }
         let mut buf = Vec::with_capacity(len as usize);
         resp.into_reader().take(len).read_to_end(&mut buf)?;
+        // A truncated transfer (server closed early, range past EOF, proxy
+        // hiccup) must be a clean error, not a silently short buffer handed to
+        // the format parsers — mirroring `SliceReader`'s out-of-bounds error.
+        if (buf.len() as u64) < len {
+            return Err(std::io::Error::other(format!(
+                "short range response: got {} of {len} bytes at offset {offset} from {}",
+                buf.len(),
+                self.url
+            )));
+        }
         Ok(buf)
     }
 }
@@ -66,11 +76,24 @@ mod tests {
     use std::io::Write;
     use std::net::TcpListener;
 
-    /// A throwaway localhost HTTP/1.1 server over the given bytes. `honor_range`
-    /// toggles whether it replies `206` to `Range` (a real range host) or ignores
-    /// it and replies `200` with the whole body (a plain static server). Returns
-    /// the bound `http://127.0.0.1:PORT/` base URL; the server thread is detached.
-    fn serve(data: Vec<u8>, honor_range: bool) -> String {
+    /// How the throwaway test server treats range requests.
+    #[derive(Clone, Copy)]
+    enum ServerMode {
+        /// A real range host: `206` with exactly the requested slice.
+        HonorRange,
+        /// A plain static server: ignores `Range`, replies `200` + whole body.
+        IgnoreRange,
+        /// A flaky host: claims the full range (`206` + Content-Length) but
+        /// closes the connection after sending only half the bytes.
+        TruncateBody,
+        /// A broken host: `500` on every GET.
+        Error500,
+    }
+
+    /// A throwaway localhost HTTP/1.1 server over the given bytes, with the
+    /// given range behavior. Returns the bound `http://127.0.0.1:PORT/` base
+    /// URL; the server thread is detached.
+    fn serve(data: Vec<u8>, mode: ServerMode) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/", listener.local_addr().unwrap());
         std::thread::spawn(move || {
@@ -103,24 +126,39 @@ mod tests {
                         "HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n"
                     );
                     let _ = stream.write_all(h.as_bytes());
-                } else if let (true, Some(r)) = (honor_range, range) {
-                    let (a, b) = r.split_once('-').unwrap();
-                    let a: usize = a.parse().unwrap();
-                    let b: usize = b.parse().unwrap();
-                    let slice = &data[a..=b.min(total - 1)];
-                    let h = format!(
-                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {a}-{b}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        slice.len()
-                    );
-                    let _ = stream.write_all(h.as_bytes());
-                    let _ = stream.write_all(slice);
-                } else {
-                    // Ignore Range: reply 200 with the entire body.
-                    let h = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nConnection: close\r\n\r\n"
-                    );
-                    let _ = stream.write_all(h.as_bytes());
-                    let _ = stream.write_all(&data);
+                    continue;
+                }
+                match (mode, range) {
+                    (ServerMode::Error500, _) => {
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                    (ServerMode::HonorRange | ServerMode::TruncateBody, Some(r)) => {
+                        let (a, b) = r.split_once('-').unwrap();
+                        let a: usize = a.parse().unwrap();
+                        let b: usize = b.parse().unwrap();
+                        let slice = &data[a..=b.min(total - 1)];
+                        let h = format!(
+                            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {a}-{b}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            slice.len()
+                        );
+                        let _ = stream.write_all(h.as_bytes());
+                        let sent = if matches!(mode, ServerMode::TruncateBody) {
+                            &slice[..slice.len() / 2] // lie, then hang up early
+                        } else {
+                            slice
+                        };
+                        let _ = stream.write_all(sent);
+                    }
+                    // Ignore Range (or no Range sent): 200 with the whole body.
+                    _ => {
+                        let h = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nConnection: close\r\n\r\n"
+                        );
+                        let _ = stream.write_all(h.as_bytes());
+                        let _ = stream.write_all(&data);
+                    }
                 }
             }
         });
@@ -130,7 +168,7 @@ mod tests {
     #[test]
     fn reads_exact_ranges_from_a_range_host() {
         let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
-        let url = serve(data.clone(), true);
+        let url = serve(data.clone(), ServerMode::HonorRange);
         let r = HttpRangeReader::open(&url).unwrap();
         assert_eq!(r.len(), 1000);
         assert_eq!(r.read_at(0, 4).unwrap(), &data[0..4]);
@@ -157,12 +195,46 @@ mod tests {
         // A server that returns 200 with the whole body must be detected, not
         // silently mis-read as the requested slice.
         let data: Vec<u8> = (0..200u8).collect();
-        let url = serve(data, false);
+        let url = serve(data, ServerMode::IgnoreRange);
         let r = HttpRangeReader::open(&url).unwrap();
         let err = r.read_at(50, 10).unwrap_err();
         assert!(
             err.to_string().contains("ignored Range"),
             "expected a clear range-unsupported error, got: {err}"
         );
+    }
+
+    #[test]
+    fn rejects_a_truncated_range_response() {
+        // A 206 that claims the slice but delivers only part of it (dropped
+        // connection, range past EOF, broken proxy) must surface as a clean
+        // error — never as a silently short buffer.
+        let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
+        let url = serve(data, ServerMode::TruncateBody);
+        let r = HttpRangeReader::open(&url).unwrap();
+        // ureq itself flags the Content-Length mismatch ("body closed before
+        // all bytes were read"); our own check is the backstop for transports
+        // that don't. Either way: an error, never a short buffer.
+        let err = r.read_at(100, 40).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("short range response") || msg.contains("closed before"),
+            "expected a truncation error, got: {err}"
+        );
+        // And a range that genuinely runs past EOF on an honest host errors too.
+        let data: Vec<u8> = (0..100u8).collect();
+        let url = serve(data, ServerMode::HonorRange);
+        let r = HttpRangeReader::open(&url).unwrap();
+        let err = r.read_at(90, 20).unwrap_err();
+        assert!(err.to_string().contains("short range response"), "{err}");
+    }
+
+    #[test]
+    fn server_errors_are_clean_errors() {
+        let data: Vec<u8> = (0..100u8).collect();
+        let url = serve(data, ServerMode::Error500);
+        let r = HttpRangeReader::open(&url).unwrap();
+        // HEAD succeeded; the GET's 500 must come back as an error, not bytes.
+        assert!(r.read_at(0, 10).is_err());
     }
 }

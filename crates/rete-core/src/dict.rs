@@ -310,4 +310,73 @@ mod tests {
         assert_eq!(sec.term(0), None);
         assert_eq!(sec.term(9999), None);
     }
+
+    /// Property-style stress of the front-coded decode paths: a large
+    /// deterministic-pseudo-random term pool (IRIs with heavy shared prefixes,
+    /// literals, blank nodes — duplicates likely) must round-trip every id and
+    /// term across restart intervals, and near-miss probes (a stored term ± a
+    /// suffix/truncation, including run-boundary terms) must resolve to `None`.
+    /// Term resolution is the engine's hot path, so this is the test that
+    /// guards the buffer-reuse decode.
+    #[test]
+    fn randomized_round_trip_and_near_misses_across_restart_intervals() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let pool: Vec<String> = (0..1500)
+            .map(|i| {
+                let n = next();
+                match n % 4 {
+                    0 => format!("<http://example.org/entity/{n:x}>"),
+                    1 => format!("\"literal value {} with spaces\"", n % 300), // dups likely
+                    2 => format!("<http://example.org/entity/{}/sub/{i}>", n % 64), // long shared prefixes
+                    _ => format!("_:b{}", n % 256),
+                }
+            })
+            .collect();
+        let mut expected = pool.clone();
+        expected.sort();
+        expected.dedup();
+
+        for r in [1u32, 3, 16, 64] {
+            let mut b = DictSectionBuilder::new().with_restart_interval(r);
+            for t in &pool {
+                b.push(t.clone());
+            }
+            let bytes = b.build();
+            let sec = DictSection::parse(&bytes).unwrap();
+            assert_eq!(sec.len() as usize, expected.len(), "r={r}");
+
+            for (i, term) in expected.iter().enumerate() {
+                let id = (i + 1) as u32;
+                assert_eq!(
+                    sec.term(id).as_deref(),
+                    Some(term.as_str()),
+                    "term({id}) r={r}"
+                );
+                assert_eq!(sec.id(term), Some(id), "id({term}) r={r}");
+            }
+            // Near misses around run boundaries (and a sample of the rest):
+            // an appended suffix or a truncation is never a stored term unless
+            // it happens to collide with one.
+            for (i, term) in expected.iter().enumerate() {
+                let near_boundary = (i as u32) % r <= 1;
+                if !near_boundary && i % 37 != 0 {
+                    continue;
+                }
+                let longer = format!("{term}\u{1}");
+                assert_eq!(sec.id(&longer), None, "near-miss long r={r}");
+                let mut shorter = term.clone();
+                shorter.pop();
+                if !shorter.is_empty() && expected.binary_search(&shorter).is_err() {
+                    assert_eq!(sec.id(&shorter), None, "near-miss short {shorter:?} r={r}");
+                }
+            }
+            assert_eq!(sec.term(expected.len() as u32 + 1), None, "past-end r={r}");
+        }
+    }
 }
