@@ -659,7 +659,22 @@
   };
   const TILE_COLORS = ["#c84f2f", "#e0876a"];
 
+  // Byte ranges the last Provenance run touched — the heat overlay.
+  function touchedRanges() {
+    const results = (state.lastProvenance && state.lastProvenance.results) || [];
+    const out = [];
+    for (const r of results.slice(0, 500)) {
+      const p = r.provenance || {};
+      for (const key of ["dictionaryRange", "indexSectionRange"]) {
+        if (p[key]) out.push(p[key]);
+      }
+      if (p.tile && p.tile.range) out.push(p.tile.range);
+    }
+    return out;
+  }
+
   function renderLayout() {
+    if (!state.bytes) return;
     let lay;
     try {
       lay = JSON.parse(W().file_layout(state.bytes));
@@ -672,37 +687,74 @@
     // Pre-index tiles for alternating shades.
     let tileSeq = 0;
     segs.forEach((s) => { if (s.kind === "tile") s.tile = tileSeq++; });
-    const findSeg = (b) => {
-      let lo = 0, hi = segs.length - 1, hit = null;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (segs[mid].offset <= b) { hit = segs[mid]; lo = mid + 1; } else { hi = mid - 1; }
-      }
-      return hit && b < hit.offset + hit.len ? hit : null;
-    };
 
-    const cols = 96;
-    const cells = Math.min(1536, Math.max(cols * 2, Math.ceil(total / 64)));
+    // Cell size: each square is exactly `perCell` bytes. Auto picks the
+    // smallest power of two that keeps the grid under ~1536 cells; an explicit
+    // choice that would exceed 4096 cells falls back to auto with a note.
+    const MAX_CELLS = 4096;
+    const choice = $("layoutCell").value;
+    const autoSize = () => {
+      let s = 16;
+      while (Math.ceil(total / s) > 1536) s *= 2;
+      return s;
+    };
+    let perCell = choice === "auto" ? autoSize() : Number(choice);
+    let fellBackCell = false;
+    if (Math.ceil(total / perCell) > MAX_CELLS) {
+      perCell = autoSize();
+      fellBackCell = true;
+    }
+    const cells = Math.max(1, Math.ceil(total / perCell));
+    const cols = Math.min(96, Math.max(24, Math.ceil(Math.sqrt(cells * 3))));
     const size = 9;
     const rows = Math.ceil(cells / cols);
-    const perCell = total / cells;
+
+    // Heat overlay: cells intersecting the byte ranges of the last
+    // Provenance run (what a remote client would actually fetch).
+    const hot = touchedRanges();
+    const isHot = (lo, hi) => hot.some((r) => r.offset < hi && lo < r.offset + r.len);
+
+    // Dominant-section coloring: a cell takes the section owning most of its
+    // bytes; its opacity is that section's share, so paler = a boundary cell.
+    let si = 0;
     let svg = `<svg viewBox="0 0 ${cols * size} ${rows * size}" role="img" aria-label="File byte map" style="max-width:100%">`;
     for (let i = 0; i < cells; i++) {
-      const lo = Math.floor(i * perCell);
-      const seg = findSeg(Math.min(total - 1, Math.floor(lo + perCell / 2)));
-      const color = !seg ? LAYOUT_COLORS.framing
-        : seg.kind === "tile" ? TILE_COLORS[seg.tile % 2]
-        : (LAYOUT_COLORS[seg.kind] || LAYOUT_COLORS.framing);
-      const label = seg
-        ? `${seg.label} — bytes ${seg.offset}–${seg.offset + seg.len} (${formatBytes(seg.len)})`
-        : "container framing (section directories, length fields)";
-      svg += `<rect x="${(i % cols) * size}" y="${Math.floor(i / cols) * size}" width="${size - 1}" height="${size - 1}" fill="${color}"><title>${esc(label)}</title></rect>`;
+      const lo = i * perCell;
+      const hi = Math.min(total, lo + perCell);
+      while (si < segs.length && segs[si].offset + segs[si].len <= lo) si++;
+      let best = null, bestBytes = 0, covered = 0;
+      for (let j = si; j < segs.length && segs[j].offset < hi; j++) {
+        const ov = Math.min(hi, segs[j].offset + segs[j].len) - Math.max(lo, segs[j].offset);
+        if (ov > 0) {
+          covered += ov;
+          if (ov > bestBytes) { bestBytes = ov; best = segs[j]; }
+        }
+      }
+      const framingBytes = (hi - lo) - covered;
+      const useFraming = framingBytes > bestBytes;
+      const frac = (useFraming ? framingBytes : bestBytes) / (hi - lo);
+      const color = useFraming || !best ? LAYOUT_COLORS.framing
+        : best.kind === "tile" ? TILE_COLORS[best.tile % 2]
+        : (LAYOUT_COLORS[best.kind] || LAYOUT_COLORS.framing);
+      const label = (useFraming || !best
+        ? "container framing (section directories, length fields)"
+        : `${best.label} — bytes ${best.offset}–${best.offset + best.len} (${formatBytes(best.len)})`) +
+        ` | cell: bytes ${lo}–${hi}` + (frac < 1 ? ` (${Math.round(frac * 100)}% of cell)` : "");
+      const heat = isHot(lo, hi);
+      svg += `<rect x="${(i % cols) * size}" y="${Math.floor(i / cols) * size}" width="${size - 1}" height="${size - 1}" ` +
+        `fill="${color}" fill-opacity="${(0.35 + 0.65 * frac).toFixed(2)}"` +
+        (heat ? ` stroke="#17211d" stroke-width="1.4"` : "") +
+        `><title>${esc(label + (heat ? " | touched by your last Provenance query" : ""))}</title></rect>`;
     }
     svg += `</svg>`;
+    $("layoutViz").innerHTML = svg;
     $("layoutNote").textContent =
-      `Every cell is ≈ ${formatBytes(Math.ceil(perCell))} of the ${formatBytes(total)} file, in byte order ` +
-      `(left→right, top→bottom). This is what a range query navigates: it reads the header, then jumps ` +
-      `straight to the cells it needs. Hover a cell for the section and byte range.`;
+      `Each square is exactly ${formatBytes(perCell)} of the ${formatBytes(total)} file, in byte order ` +
+      `(left→right, top→bottom)${fellBackCell ? " — the requested cell size was too fine for this file, using auto" : ""}. ` +
+      `A paler square spans a section boundary. This is the surface a range query navigates: read the ` +
+      `header, then jump straight to the squares you need.` +
+      (hot.length ? " Outlined squares are the bytes your last Provenance query touched." :
+        " Run a Provenance example and come back: the touched bytes get outlined.");
     const legendKinds = [
       ["header", "header"], ["metadata", "metadata"], ["dictionary", "dictionary"],
       ["directory", "tile directories"], ["tile", "index tiles (alternating per tile)"],
@@ -712,12 +764,13 @@
       .filter(([k]) => k === "framing" || k === "tile" || segs.some((s) => s.kind === k))
       .map(([k, label]) =>
         `<span class="lg"><span class="sw" style="background:${k === "tile" ? TILE_COLORS[0] : LAYOUT_COLORS[k]}"></span>${esc(label)}</span>`)
-      .join("");
+      .join("") +
+      (hot.length ? `<span class="lg"><span class="sw" style="background:#fff;border:2px solid #17211d"></span>touched by last Provenance query</span>` : "");
     // Per-kind byte totals.
     const sums = new Map();
     segs.forEach((s) => sums.set(s.kind, (sums.get(s.kind) || 0) + s.len));
-    const covered = Array.from(sums.values()).reduce((a, b) => a + b, 0);
-    sums.set("framing", Math.max(0, total - covered));
+    const coveredTotal = Array.from(sums.values()).reduce((a, b) => a + b, 0);
+    sums.set("framing", Math.max(0, total - coveredTotal));
     $("layoutTable").innerHTML = collapsedTable(
       `<tr><th>section</th><th>bytes</th><th>share</th></tr>`,
       Array.from(sums.entries()).sort((a, b) => b[1] - a[1]).map(([k, n]) =>
@@ -1349,6 +1402,8 @@
       const dt = performance.now() - t0;
       renderProvenance(out);
       $("whyMeta").textContent = `${out.resultCount} match(es) | ${dt.toFixed(1)} ms`;
+      // Refresh the Explore byte map so the touched ranges light up there.
+      if (state.exploreReady) renderLayout();
       updateResultVisibility();
     } catch (e) {
       $("whyMeta").textContent = "";
@@ -1583,6 +1638,7 @@
 
     $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
+    $("layoutCell").onchange = renderLayout;
     $("strategyModalClose").onclick = () => $("strategyModal").classList.add("hidden");
     $("strategyModal").addEventListener("click", (e) => {
       if (e.target === $("strategyModal")) $("strategyModal").classList.add("hidden");

@@ -126,7 +126,21 @@ __PLAYGROUND_CSS__
         <div id="pyramidLegend" class="viz-legend"></div>
         <div id="pyramidViz" class="ontology-diagram"></div>
         <div id="pyramidLevels" style="margin-top:10px"></div>
-        <h3 style="margin-top:20px">File byte map</h3>
+        <div class="section-title" style="margin-top:20px">
+          <h3 style="margin:0">File byte map</h3>
+          <label>
+            <span>Cell size</span>
+            <select id="layoutCell">
+              <option value="auto">auto</option>
+              <option value="64">64 B</option>
+              <option value="256">256 B</option>
+              <option value="1024">1 KB</option>
+              <option value="4096">4 KB</option>
+              <option value="16384">16 KB</option>
+              <option value="65536">64 KB</option>
+            </select>
+          </label>
+        </div>
         <p class="microcopy" id="layoutNote"></p>
         <div id="layoutLegend" class="viz-legend"></div>
         <div id="layoutViz" class="ontology-diagram"></div>
