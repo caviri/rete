@@ -215,6 +215,8 @@ pub enum Builtin {
     IsBlank,
     IsLiteral,
     IsNumeric,
+    Datatype,
+    Lang,
     Regex,
 }
 

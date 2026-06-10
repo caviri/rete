@@ -421,3 +421,66 @@ fn transitive_dependency_impact() {
         vec!["<http://ex/auth>", "<http://ex/logging>", "<http://ex/web>"]
     );
 }
+
+#[test]
+fn datatype_and_lang_builtins() {
+    // A graph with the three recovered-from-Wikidata literal kinds: a typed
+    // numeric, a typed dateTime, a language-tagged string, and a plain string.
+    let dt = "<http://www.w3.org/2001/XMLSchema#dateTime>";
+    let t: Vec<(String, String, String)> = vec![
+        (
+            "Q1",
+            "pop",
+            "\"42\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+        ),
+        ("Q1", "born", &format!("\"2001-05-11T00:00:00Z\"^^{dt}")),
+        ("Q1", "label", "\"Douglas\"@en"),
+        ("Q1", "code", "\"plain\""),
+    ]
+    .into_iter()
+    .map(|(s, p, o)| (iri(s), iri(p), term(o)))
+    .collect();
+    let refs: Vec<(&str, &str, &str)> = t
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let rete = Rete::open(&build(&refs)).unwrap();
+
+    // DATATYPE filter selects only the dateTime-typed object.
+    assert_eq!(
+        col(
+            &rete,
+            &format!("SELECT ?p WHERE {{ ex:Q1 ?p ?o FILTER(DATATYPE(?o) = {dt}) }}"),
+            "p"
+        ),
+        vec!["<http://ex/born>"]
+    );
+    // A plain literal is xsd:string; a language-tagged one is rdf:langString.
+    assert_eq!(
+        col(
+            &rete,
+            "SELECT ?p WHERE { ex:Q1 ?p ?o \
+             FILTER(DATATYPE(?o) = <http://www.w3.org/2001/XMLSchema#string>) }",
+            "p"
+        ),
+        vec!["<http://ex/code>"]
+    );
+    assert_eq!(
+        col(
+            &rete,
+            "SELECT ?p WHERE { ex:Q1 ?p ?o \
+             FILTER(DATATYPE(?o) = <http://www.w3.org/1999/02/22-rdf-syntax-ns#langString>) }",
+            "p"
+        ),
+        vec!["<http://ex/label>"]
+    );
+    // LANG selects the language-tagged literal; plain/typed literals have "".
+    assert_eq!(
+        col(
+            &rete,
+            "SELECT ?p WHERE { ex:Q1 ?p ?o FILTER(LANG(?o) = \"en\") }",
+            "p"
+        ),
+        vec!["<http://ex/label>"]
+    );
+}
