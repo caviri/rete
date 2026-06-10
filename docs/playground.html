@@ -1130,6 +1130,8 @@ pre {
     </div>
 
     <div class="top-actions">
+      <button id="openSource" type="button" class="secondary">Change source…</button>
+      <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
       </button>
@@ -1144,16 +1146,12 @@ pre {
     <button type="button" data-mode="reach">Reach</button>
     <button type="button" data-mode="schema">Schema</button>
     <button type="button" data-mode="provenance">Provenance</button>
-    <button type="button" data-mode="build">Build</button>
   </nav>
 
   <main class="console-shell">
     <aside class="library-panel" aria-label="Query library">
       <section class="source-panel">
-        <div class="section-title">
-          <h2>Source</h2>
-          <button id="openSource" type="button" class="secondary">Change source…</button>
-        </div>
+        <h2>Source</h2>
         <p id="dsDesc" class="microcopy"></p>
       </section>
 
@@ -2585,6 +2583,13 @@ window.RETE_PLAYGROUND_CATALOG = {
       description: "250 papers, 137 authors, 36 venues from scripts/synth_graph.py (seed 42): power-law citations, field communities, Zipfian venues, and typed literals."
     },
     {
+      key: "wikidata",
+      kind: "remote-lazy",
+      url: "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-1gb.rete?download=true",
+      label: "wikidata - real Wikidata (remote, lazy)",
+      description: "A real slice of the Wikidata truthy dump hosted on Hugging Face, queried lazily over HTTP range - only the dictionary chunks and index tiles each query touches are fetched, never the whole file. Pick selective patterns (a bound subject); SPARQL tab only."
+    },
+    {
       key: "scholar-noisy",
       label: "scholar-noisy.rete - same world, 25% noise",
       description: "The same generator at --noise 0.25: rewired citations (incl. temporal violations), missing ORCIDs and ISSNs, and whitespace-mangled titles - for SHACL and data-quality demos."
@@ -2606,6 +2611,45 @@ window.RETE_PLAYGROUND_CATALOG = {
     }
   ],
   examples: {
+    wikidata: [
+      {
+        family: "Select",
+        label: "All facts about an entity",
+        view: "table",
+        tip: "A bound subject (Bemelen, Q100001) routes to just the tiles holding it - a few range reads of the whole file. The coordinate comes back as a geo:wktLiteral (recovered datatype).",
+        q: `SELECT ?p ?o WHERE { <http://www.wikidata.org/entity/Q100001> ?p ?o }`
+      },
+      {
+        family: "Select",
+        label: "English labels of an entity",
+        view: "table",
+        tip: "Bound subject + bound predicate: the most selective shape - minimal bytes fetched.",
+        q: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?label WHERE {
+  <http://www.wikidata.org/entity/Q100001> rdfs:label ?label
+} LIMIT 50`
+      },
+      {
+        family: "Select",
+        label: "Coordinates of a place",
+        view: "table",
+        tip: "Returns a geo:wktLiteral - the datatype recovered during the parquet->rete conversion.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+SELECT ?coord WHERE {
+  <http://www.wikidata.org/entity/Q100001> wdt:P625 ?coord
+}`
+      },
+      {
+        family: "Path",
+        label: "Subclasses of a class",
+        view: "table",
+        tip: "Reverse bound-object lookup (P279 = subclass of): who declares this as their superclass.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+SELECT ?sub WHERE {
+  ?sub wdt:P279 <http://www.wikidata.org/entity/Q515>
+} LIMIT 50`
+      }
+    ],
     scholar: [
       {
         family: "Summary",
@@ -3656,24 +3700,49 @@ ex:ApplicationDependencyShape
     }
   }
 
-  // Connect to a remote .rete and query it lazily (range reads via the
-  // worker) — no full download. Only the SPARQL tab is available in this mode
-  // (the other tabs need the whole graph in memory).
-  function connectRemote() {
-    const url = $("remoteUrl").value.trim();
+  // Enter remote lazy mode: query a remote .rete over HTTP range via the
+  // worker, no full download. Only the SPARQL tab applies (the other tabs need
+  // the whole graph in memory). `datasetKey` ties it to a catalog entry so its
+  // example query library shows; a custom URL (no key) gets no library.
+  function enterRemote(url, datasetKey) {
     if (!url) return;
     state.bytes = null;
     state.remote = { url };
     state.activeSource = "remote";
     state.schema = null;
+    if (datasetKey) {
+      state.dataset = datasetKey;
+      $("ds").value = datasetKey;
+    }
+    state.selectedExample = -1;
     updateSourcePill();
     setStatus("remote (lazy) — queries range-fetch only what they touch");
-    $("dsDesc").textContent = "Remote graph, queried lazily over HTTP range requests: " + url;
+    const info = datasetKey ? datasetInfo(datasetKey) : null;
+    $("dsDesc").textContent = info ? info.description : "Remote graph, queried lazily over HTTP range: " + url;
+    renderExamples();
     closeSource();
     setMode("sparql");
-    $("out").innerHTML = `<div class="note">Connected to a remote .rete. Run a SPARQL query — ` +
-      `only the dictionary chunks and index tiles it touches are fetched. The first query also ` +
-      `pulls the header and directories. Other tabs need a graph loaded into memory.</div>`;
+    const lib = examplesForDataset().length
+      ? "Pick an example from the library, or write your own."
+      : "Write a SPARQL query (a bound subject keeps the fetch small). No example library for a custom URL.";
+    $("out").innerHTML = `<div class="note">Connected to a remote .rete, queried lazily — ` +
+      `each query fetches only the dictionary chunks and index tiles it touches (the first also ` +
+      `pulls the header and directories). ${lib} Other tabs need a graph loaded into memory.</div>`;
+  }
+
+  function connectRemote() {
+    enterRemote($("remoteUrl").value.trim(), null);
+  }
+
+  // Dataset dropdown / catalog selection: bundled keys load into memory;
+  // remote-lazy keys connect over HTTP range.
+  function selectDataset(key) {
+    const info = datasetInfo(key);
+    if (info && info.kind === "remote-lazy") {
+      enterRemote(info.url, key);
+    } else {
+      loadDataset(key);
+    }
   }
 
   function openSource() {
@@ -4922,7 +4991,8 @@ ex:ApplicationDependencyShape
   }
 
   function wireEvents() {
-    $("ds").onchange = () => loadDataset($("ds").value);
+    $("ds").onchange = () => selectDataset($("ds").value);
+    $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
     $("strategy").onchange = () => setStrategy($("strategy").value);
     $$("#viewSeg button").forEach((btn) => {

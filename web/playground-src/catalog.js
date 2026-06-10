@@ -8,6 +8,13 @@ window.RETE_PLAYGROUND_CATALOG = {
       description: "250 papers, 137 authors, 36 venues from scripts/synth_graph.py (seed 42): power-law citations, field communities, Zipfian venues, and typed literals."
     },
     {
+      key: "wikidata",
+      kind: "remote-lazy",
+      url: "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-1gb.rete?download=true",
+      label: "wikidata - real Wikidata (remote, lazy)",
+      description: "A real slice of the Wikidata truthy dump hosted on Hugging Face, queried lazily over HTTP range - only the dictionary chunks and index tiles each query touches are fetched, never the whole file. Pick selective patterns (a bound subject); SPARQL tab only."
+    },
+    {
       key: "scholar-noisy",
       label: "scholar-noisy.rete - same world, 25% noise",
       description: "The same generator at --noise 0.25: rewired citations (incl. temporal violations), missing ORCIDs and ISSNs, and whitespace-mangled titles - for SHACL and data-quality demos."
@@ -29,6 +36,45 @@ window.RETE_PLAYGROUND_CATALOG = {
     }
   ],
   examples: {
+    wikidata: [
+      {
+        family: "Select",
+        label: "All facts about an entity",
+        view: "table",
+        tip: "A bound subject (Bemelen, Q100001) routes to just the tiles holding it - a few range reads of the whole file. The coordinate comes back as a geo:wktLiteral (recovered datatype).",
+        q: `SELECT ?p ?o WHERE { <http://www.wikidata.org/entity/Q100001> ?p ?o }`
+      },
+      {
+        family: "Select",
+        label: "English labels of an entity",
+        view: "table",
+        tip: "Bound subject + bound predicate: the most selective shape - minimal bytes fetched.",
+        q: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?label WHERE {
+  <http://www.wikidata.org/entity/Q100001> rdfs:label ?label
+} LIMIT 50`
+      },
+      {
+        family: "Select",
+        label: "Coordinates of a place",
+        view: "table",
+        tip: "Returns a geo:wktLiteral - the datatype recovered during the parquet->rete conversion.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+SELECT ?coord WHERE {
+  <http://www.wikidata.org/entity/Q100001> wdt:P625 ?coord
+}`
+      },
+      {
+        family: "Path",
+        label: "Subclasses of a class",
+        view: "table",
+        tip: "Reverse bound-object lookup (P279 = subclass of): who declares this as their superclass.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+SELECT ?sub WHERE {
+  ?sub wdt:P279 <http://www.wikidata.org/entity/Q515>
+} LIMIT 50`
+      }
+    ],
     scholar: [
       {
         family: "Summary",

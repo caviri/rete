@@ -470,24 +470,49 @@
     }
   }
 
-  // Connect to a remote .rete and query it lazily (range reads via the
-  // worker) — no full download. Only the SPARQL tab is available in this mode
-  // (the other tabs need the whole graph in memory).
-  function connectRemote() {
-    const url = $("remoteUrl").value.trim();
+  // Enter remote lazy mode: query a remote .rete over HTTP range via the
+  // worker, no full download. Only the SPARQL tab applies (the other tabs need
+  // the whole graph in memory). `datasetKey` ties it to a catalog entry so its
+  // example query library shows; a custom URL (no key) gets no library.
+  function enterRemote(url, datasetKey) {
     if (!url) return;
     state.bytes = null;
     state.remote = { url };
     state.activeSource = "remote";
     state.schema = null;
+    if (datasetKey) {
+      state.dataset = datasetKey;
+      $("ds").value = datasetKey;
+    }
+    state.selectedExample = -1;
     updateSourcePill();
     setStatus("remote (lazy) — queries range-fetch only what they touch");
-    $("dsDesc").textContent = "Remote graph, queried lazily over HTTP range requests: " + url;
+    const info = datasetKey ? datasetInfo(datasetKey) : null;
+    $("dsDesc").textContent = info ? info.description : "Remote graph, queried lazily over HTTP range: " + url;
+    renderExamples();
     closeSource();
     setMode("sparql");
-    $("out").innerHTML = `<div class="note">Connected to a remote .rete. Run a SPARQL query — ` +
-      `only the dictionary chunks and index tiles it touches are fetched. The first query also ` +
-      `pulls the header and directories. Other tabs need a graph loaded into memory.</div>`;
+    const lib = examplesForDataset().length
+      ? "Pick an example from the library, or write your own."
+      : "Write a SPARQL query (a bound subject keeps the fetch small). No example library for a custom URL.";
+    $("out").innerHTML = `<div class="note">Connected to a remote .rete, queried lazily — ` +
+      `each query fetches only the dictionary chunks and index tiles it touches (the first also ` +
+      `pulls the header and directories). ${lib} Other tabs need a graph loaded into memory.</div>`;
+  }
+
+  function connectRemote() {
+    enterRemote($("remoteUrl").value.trim(), null);
+  }
+
+  // Dataset dropdown / catalog selection: bundled keys load into memory;
+  // remote-lazy keys connect over HTTP range.
+  function selectDataset(key) {
+    const info = datasetInfo(key);
+    if (info && info.kind === "remote-lazy") {
+      enterRemote(info.url, key);
+    } else {
+      loadDataset(key);
+    }
   }
 
   function openSource() {
@@ -1736,7 +1761,8 @@
   }
 
   function wireEvents() {
-    $("ds").onchange = () => loadDataset($("ds").value);
+    $("ds").onchange = () => selectDataset($("ds").value);
+    $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
     $("strategy").onchange = () => setStrategy($("strategy").value);
     $$("#viewSeg button").forEach((btn) => {

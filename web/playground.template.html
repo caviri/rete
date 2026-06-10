@@ -25,6 +25,8 @@ __PLAYGROUND_CSS__
     </div>
 
     <div class="top-actions">
+      <button id="openSource" type="button" class="secondary">Change source…</button>
+      <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
       </button>
@@ -39,16 +41,12 @@ __PLAYGROUND_CSS__
     <button type="button" data-mode="reach">Reach</button>
     <button type="button" data-mode="schema">Schema</button>
     <button type="button" data-mode="provenance">Provenance</button>
-    <button type="button" data-mode="build">Build</button>
   </nav>
 
   <main class="console-shell">
     <aside class="library-panel" aria-label="Query library">
       <section class="source-panel">
-        <div class="section-title">
-          <h2>Source</h2>
-          <button id="openSource" type="button" class="secondary">Change source…</button>
-        </div>
+        <h2>Source</h2>
         <p id="dsDesc" class="microcopy"></p>
       </section>
 
