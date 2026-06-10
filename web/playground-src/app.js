@@ -14,10 +14,71 @@
     lastProvenance: null,
     built: null,
     exploreClass: null,
-    exploreReady: false
+    exploreReady: false,
+    remote: null
   };
 
   const RDF_TYPE = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+
+  // --- Remote lazy SPARQL worker ----------------------------------------
+  // The engine is synchronous and wasm can't block on fetch, so remote
+  // range-querying uses synchronous XHR — allowed only inside a Web Worker.
+  // We build that worker from the page's own inlined wasm glue (the #reteGlue
+  // script's source) plus a tiny harness, so the offline single-file page
+  // gains real lazy remote querying with no extra files. Same mechanism
+  // DuckDB uses over httpfs: fetch only the bytes a query touches.
+  const REMOTE_HARNESS = `
+;(function () {
+  var ready = null;
+  self.onmessage = function (e) {
+    var m = e.data;
+    if (m.type === "init") {
+      ready = wasm_bindgen(m.bytes);
+      ready.then(function () { self.postMessage({ type: "ready" }); });
+      return;
+    }
+    if (m.type === "query") {
+      Promise.resolve(ready).then(function () {
+        try {
+          self.postMessage({ type: "result", id: m.id, ok: true,
+            json: wasm_bindgen.sparql_url(m.url, m.query, m.format) });
+        } catch (err) {
+          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err) });
+        }
+      });
+    }
+  };
+})();`;
+  let remoteWorker = null, remoteReady = null, remoteResolveReady = null, remoteSeq = 0;
+  const remotePending = new Map();
+
+  function ensureRemoteWorker() {
+    if (remoteWorker) return remoteReady;
+    const glue = document.getElementById("reteGlue").textContent;
+    const blob = new Blob([glue + REMOTE_HARNESS], { type: "text/javascript" });
+    remoteWorker = new Worker(URL.createObjectURL(blob));
+    remoteWorker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "ready") { if (remoteResolveReady) remoteResolveReady(); return; }
+      if (m.type === "result") {
+        const p = remotePending.get(m.id);
+        if (!p) return;
+        remotePending.delete(m.id);
+        m.ok ? p.resolve(m.json) : p.reject(new Error(m.error));
+      }
+    };
+    remoteReady = new Promise((res) => { remoteResolveReady = res; });
+    remoteWorker.postMessage({ type: "init", bytes: b64ToBytes(RETE_WASM_B64) });
+    return remoteReady;
+  }
+
+  function remoteSparql(url, query, fmt) {
+    return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
+      const id = ++remoteSeq;
+      remotePending.set(id, { resolve, reject });
+      remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table" });
+    }));
+  }
 
   const BUILD_SAMPLE = `# Paste N-Triples here (or open a file), pick the format, then Build.
 <http://ex/Alice> <http://ex/knows> <http://ex/Bob> .
@@ -73,6 +134,7 @@
     if (state.activeSource === "file") return "local file";
     if (state.activeSource === "url") return "url";
     if (state.activeSource === "built") return "built in browser";
+    if (state.activeSource === "remote") return "remote (lazy)";
     return "bundled";
   }
 
@@ -351,6 +413,8 @@
   function loadBytes(bytes, source) {
     state.bytes = bytes;
     state.activeSource = source;
+    state.remote = null; // an in-memory load leaves remote-lazy mode
+    state.exploreReady = false;
     updateSourcePill();
 
     const info = JSON.parse(W().info(bytes));
@@ -392,18 +456,52 @@
   }
 
   async function loadFromUrl() {
-    const url = $("urlInput").value.trim();
+    const url = $("remoteUrl").value.trim();
     if (!url) return;
-    setStatus("loading url...");
+    setStatus("downloading...");
     try {
       const res = await fetch(url);
       if (!res.ok) throw new Error(res.status + " " + res.statusText);
       const buf = new Uint8Array(await res.arrayBuffer());
       loadBytes(buf, "url");
-      state.dataset = $("ds").value;
+      closeSource();
     } catch (e) {
       showError("out", "URL load failed: " + e.message);
     }
+  }
+
+  // Connect to a remote .rete and query it lazily (range reads via the
+  // worker) — no full download. Only the SPARQL tab is available in this mode
+  // (the other tabs need the whole graph in memory).
+  function connectRemote() {
+    const url = $("remoteUrl").value.trim();
+    if (!url) return;
+    state.bytes = null;
+    state.remote = { url };
+    state.activeSource = "remote";
+    state.schema = null;
+    updateSourcePill();
+    setStatus("remote (lazy) — queries range-fetch only what they touch");
+    $("dsDesc").textContent = "Remote graph, queried lazily over HTTP range requests: " + url;
+    closeSource();
+    setMode("sparql");
+    $("out").innerHTML = `<div class="note">Connected to a remote .rete. Run a SPARQL query — ` +
+      `only the dictionary chunks and index tiles it touches are fetched. The first query also ` +
+      `pulls the header and directories. Other tabs need a graph loaded into memory.</div>`;
+  }
+
+  function openSource() {
+    $("sourceBundled").innerHTML = CATALOG.datasets.map((d) =>
+      `<button type="button" data-ds="${esc(d.key)}" class="${!state.remote && d.key === state.dataset ? "active" : ""}">${esc(d.label.split(" - ")[0])}</button>`
+    ).join("");
+    $$("#sourceBundled [data-ds]").forEach((btn) => {
+      btn.onclick = () => { loadDataset(btn.dataset.ds); closeSource(); };
+    });
+    $("sourceModal").classList.remove("hidden");
+  }
+
+  function closeSource() {
+    $("sourceModal").classList.add("hidden");
   }
 
   async function loadFromFile(file) {
@@ -1056,10 +1154,33 @@
   }
 
   function runQuery() {
-    if (!state.bytes) return showError("out", "Load a graph first.");
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
     const fmt = $("fmt").value;
+
+    // Remote lazy mode: route through the worker (range reads), render async.
+    if (state.remote) {
+      $("commOut").innerHTML = "";
+      updateResultVisibility();
+      $("qmeta").textContent = "querying remote…";
+      const t0 = performance.now();
+      remoteSparql(state.remote.url, q, "table").then((raw) => {
+        const res = JSON.parse(raw);
+        const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
+        const r = res.remote || {};
+        const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
+        const dt = performance.now() - t0;
+        $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
+          `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} (${pct}%) · ${dt.toFixed(0)} ms`;
+        saveHistory({ query: q, format: fmt, strategy: "remote", dataset: "(remote)", ts: Date.now(), resultSummary: summary });
+      }).catch((e) => {
+        $("qmeta").textContent = "";
+        showError("out", "Remote query failed: " + String(e.message || e));
+      });
+      return;
+    }
+
+    if (!state.bytes) return showError("out", "Load a graph first.");
     const strategy = $("strategy").value;
     const queryFmt = strategy === "progressive" || fmt === "graph" ? "table" : fmt;
     $("commOut").innerHTML = "";
@@ -1639,12 +1760,21 @@
     $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("layoutCell").onchange = renderLayout;
+    $("openSource").onclick = openSource;
+    $("sourceModalClose").onclick = closeSource;
+    $("remoteConnect").onclick = connectRemote;
+    $("sourceModal").addEventListener("click", (e) => {
+      if (e.target === $("sourceModal")) closeSource();
+    });
     $("strategyModalClose").onclick = () => $("strategyModal").classList.add("hidden");
     $("strategyModal").addEventListener("click", (e) => {
       if (e.target === $("strategyModal")) $("strategyModal").classList.add("hidden");
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") $("strategyModal").classList.add("hidden");
+      if (e.key === "Escape") {
+        $("strategyModal").classList.add("hidden");
+        closeSource();
+      }
     });
 
     // Collapsed tables: every "Show more" button reveals the next step of

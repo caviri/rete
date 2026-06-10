@@ -45,18 +45,11 @@ __PLAYGROUND_CSS__
   <main class="console-shell">
     <aside class="library-panel" aria-label="Query library">
       <section class="source-panel">
-        <h2>Source</h2>
-        <p id="dsDesc" class="microcopy"></p>
-        <div class="source-grid">
-          <label class="file-zone" id="dropZone">
-            <input id="fileInput" type="file" accept=".rete,application/octet-stream" />
-            <span>Drop a .rete file</span>
-          </label>
-          <div class="url-loader">
-            <input id="urlInput" type="text" spellcheck="false" placeholder="https://.../graph.rete" />
-            <button id="urlLoad" type="button" class="secondary">Load URL</button>
-          </div>
+        <div class="section-title">
+          <h2>Source</h2>
+          <button id="openSource" type="button" class="secondary">Change source…</button>
         </div>
+        <p id="dsDesc" class="microcopy"></p>
       </section>
 
       <section class="library">
@@ -312,6 +305,44 @@ __PLAYGROUND_CSS__
     </aside>
   </main>
 
+  <div id="sourceModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sourceModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="sourceModalTitle">Choose a data source</h3>
+        <button id="sourceModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="source-choice">
+        <h4>Bundled datasets</h4>
+        <p class="microcopy">Small example graphs embedded in this page — load instantly, query in memory.</p>
+        <div id="sourceBundled" class="filter-row"></div>
+      </div>
+      <div class="source-choice">
+        <h4>Local file</h4>
+        <p class="microcopy">Drop or pick a <code>.rete</code> file — it never leaves your browser.</p>
+        <label class="file-zone" id="dropZone">
+          <input id="fileInput" type="file" accept=".rete,application/octet-stream" />
+          <span>Drop a .rete file here, or click to choose</span>
+        </label>
+      </div>
+      <div class="source-choice">
+        <h4>Remote .rete (lazy, over HTTP range)</h4>
+        <p class="microcopy">Connect to a <code>.rete</code> URL and query it <strong>without downloading it</strong> —
+          a Web Worker range-fetches only the dictionary chunks and index tiles each query touches
+          (the same trick DuckDB uses on remote Parquet). The host must allow CORS and honor
+          <code>Range</code> (S3, GitHub, Hugging Face all do).</p>
+        <div class="url-loader">
+          <input id="remoteUrl" type="text" spellcheck="false"
+            placeholder="https://…/graph.rete"
+            value="https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-1gb.rete?download=true" />
+          <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+            <button id="remoteConnect" type="button">Connect (lazy)</button>
+            <button id="urlLoad" type="button" class="secondary" title="Download the whole file into memory instead">Download fully</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="strategyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="strategyModalTitle">
     <div class="modal-card">
       <div class="modal-head">
@@ -361,7 +392,7 @@ __PLAYGROUND_CSS__
     </div>
   </div>
 
-  <script>
+  <script id="reteGlue">
 __GLUE_JS__
   </script>
   <script>
