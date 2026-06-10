@@ -380,20 +380,32 @@ struct XhrRangeReader {
 }
 
 impl XhrRangeReader {
-    /// Probe the resource length with a HEAD request.
+    /// Probe the resource length. Some hosts reject `HEAD` (Hugging Face's
+    /// signed-redirect storage answers `405`), so use a one-byte ranged `GET`
+    /// and read the total from the `Content-Range` header (`bytes 0-0/TOTAL`),
+    /// falling back to `Content-Length` if the host doesn't send a range.
     fn open(url: &str) -> Result<Self, JsValue> {
         let xhr = web_sys::XmlHttpRequest::new()?;
-        xhr.open_with_async("HEAD", url, false)?;
+        xhr.open_with_async("GET", url, false)?;
+        xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
+        xhr.set_request_header("Range", "bytes=0-0")?;
         xhr.send()?;
         let status = xhr.status()?;
-        if !(200..300).contains(&status) {
-            return Err(JsValue::from_str(&format!("HEAD {url}: status {status}")));
+        if status != 206 && !(200..300).contains(&status) {
+            return Err(JsValue::from_str(&format!("probe {url}: status {status}")));
         }
+        // `Content-Range: bytes 0-0/12345` — the part after `/` is the total.
         let len = xhr
-            .get_response_header("Content-Length")?
-            .and_then(|v| v.parse::<u64>().ok())
+            .get_response_header("Content-Range")?
+            .and_then(|v| v.rsplit('/').next().and_then(|t| t.trim().parse::<u64>().ok()))
+            .or_else(|| {
+                xhr.get_response_header("Content-Length")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.parse::<u64>().ok())
+            })
             .ok_or_else(|| {
-                JsValue::from_str(&format!("server did not report Content-Length for {url}"))
+                JsValue::from_str(&format!("could not determine length of {url}"))
             })?;
         Ok(Self {
             url: url.to_string(),
