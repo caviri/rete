@@ -78,10 +78,7 @@ impl RangeReader for HttpRangeReader {
         /// Bounded so we never open a burst of sockets to a host for a big scan.
         const MAX_CONCURRENCY: usize = 8;
         if ranges.len() <= 1 {
-            return ranges
-                .iter()
-                .map(|&(o, l)| self.read_at(o, l))
-                .collect();
+            return ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect();
         }
         let workers = MAX_CONCURRENCY.min(ranges.len());
         let chunk = ranges.len().div_ceil(workers);

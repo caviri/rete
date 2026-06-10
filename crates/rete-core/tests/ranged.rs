@@ -453,7 +453,10 @@ fn small_limit_does_not_fetch_the_whole_index() {
     let (idx_start, idx_end) = index_region(&image);
     let index_len = idx_end - idx_start;
     let spo_tiles = Rete::open(&image).unwrap().default_index().tile_sections()[0].len();
-    assert!(spo_tiles > 100, "expected a many-tile fixture, got {spo_tiles}");
+    assert!(
+        spo_tiles > 100,
+        "expected a many-tile fixture, got {spo_tiles}"
+    );
 
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
     let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();

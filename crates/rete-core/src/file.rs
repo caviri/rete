@@ -1947,8 +1947,14 @@ mod tests {
         // Three 16-byte ranges: A..B gap = 32, B..C gap = 1024.
         let ranges = [
             ByteRange { offset: 0, len: 16 },
-            ByteRange { offset: 48, len: 16 },
-            ByteRange { offset: 1088, len: 16 },
+            ByteRange {
+                offset: 48,
+                len: 16,
+            },
+            ByteRange {
+                offset: 1088,
+                len: 16,
+            },
         ];
         // Tight gap (16): nothing merges → one read per range.
         let r = CountingReader::new(SliceReader::new(&bytes));

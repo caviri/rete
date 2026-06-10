@@ -397,16 +397,18 @@ impl XhrRangeReader {
         // `Content-Range: bytes 0-0/12345` — the part after `/` is the total.
         let len = xhr
             .get_response_header("Content-Range")?
-            .and_then(|v| v.rsplit('/').next().and_then(|t| t.trim().parse::<u64>().ok()))
+            .and_then(|v| {
+                v.rsplit('/')
+                    .next()
+                    .and_then(|t| t.trim().parse::<u64>().ok())
+            })
             .or_else(|| {
                 xhr.get_response_header("Content-Length")
                     .ok()
                     .flatten()
                     .and_then(|v| v.parse::<u64>().ok())
             })
-            .ok_or_else(|| {
-                JsValue::from_str(&format!("could not determine length of {url}"))
-            })?;
+            .ok_or_else(|| JsValue::from_str(&format!("could not determine length of {url}")))?;
         Ok(Self {
             url: url.to_string(),
             len,
@@ -483,10 +485,7 @@ impl RangeReader for XhrRangeReader {
                 }
             }
         }
-        ranges
-            .iter()
-            .map(|&(o, l)| self.read_at(o, l))
-            .collect()
+        ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
     }
 }
 
@@ -519,12 +518,7 @@ impl XhrRangeReader {
             lens.set_index(i as u32, l as f64);
         }
         let res = hook
-            .call3(
-                &JsValue::NULL,
-                &JsValue::from_str(&self.url),
-                &offs,
-                &lens,
-            )
+            .call3(&JsValue::NULL, &JsValue::from_str(&self.url), &offs, &lens)
             .ok()?;
         if res.is_null() || res.is_undefined() {
             return None;
