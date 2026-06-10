@@ -274,6 +274,29 @@ reads just the header, dictionary, and summary — <strong>the index is never
 downloaded</strong>. The host <strong>must</strong> return <code>206 Partial Content</code> to a <code>Range</code>
 request; a host that ignores <code>Range</code> (returns <code>200</code>) is rejected with a clear
 error rather than silently returning wrong bytes.</p>
+<h2>Generating synthetic test data</h2>
+<p><code>scripts/synth_graph.py</code> generates a realistic scholarly knowledge graph —
+papers, authors, venues, institutions, grants, fields — with the statistics
+real graphs have (power-law citations via preferential attachment, field
+communities, Zipfian venue popularity, log-normal team sizes, typed literals,
+per-year temporal structure). Two orthogonal knobs control it on demand:</p>
+<pre><code class="language-sh"># 10k papers (~315k triples), clean:
+uv run python scripts/synth_graph.py --papers 10000 -o clean.nt
+
+# Same size, 20% deliberate mess (cross-field rewires, temporal violations,
+# missing attributes, mangled literals) — for robustness/quality testing:
+uv run python scripts/synth_graph.py --papers 10000 --noise 0.2 --seed 7 -o messy.nt
+
+# N-Quads with one named graph per publication year:
+uv run python scripts/synth_graph.py --papers 5000 --quads -o by-year.nq
+
+rete build clean.nt -o clean.rete
+</code></pre>
+<p>Identical arguments + seed reproduce the byte-identical graph; different seeds
+give natural variability at the same size/noise point. A per-kind breakdown of
+every noise event goes to stderr, so a test knows exactly what mess it got.
+(<code>scripts/gen_graph.py</code> is the older, simpler social-graph generator used by
+<code>scripts/bench.sh</code>.)</p>
 <h2>Testing</h2>
 <pre><code class="language-sh">cargo test            # full suite (unit, round-trip, robustness, ranged, HTTP)
 cargo clippy --workspace --all-targets -- -D warnings

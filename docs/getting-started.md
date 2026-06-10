@@ -113,6 +113,34 @@ downloaded**. The host **must** return `206 Partial Content` to a `Range`
 request; a host that ignores `Range` (returns `200`) is rejected with a clear
 error rather than silently returning wrong bytes.
 
+## Generating synthetic test data
+
+`scripts/synth_graph.py` generates a realistic scholarly knowledge graph —
+papers, authors, venues, institutions, grants, fields — with the statistics
+real graphs have (power-law citations via preferential attachment, field
+communities, Zipfian venue popularity, log-normal team sizes, typed literals,
+per-year temporal structure). Two orthogonal knobs control it on demand:
+
+```sh
+# 10k papers (~315k triples), clean:
+uv run python scripts/synth_graph.py --papers 10000 -o clean.nt
+
+# Same size, 20% deliberate mess (cross-field rewires, temporal violations,
+# missing attributes, mangled literals) — for robustness/quality testing:
+uv run python scripts/synth_graph.py --papers 10000 --noise 0.2 --seed 7 -o messy.nt
+
+# N-Quads with one named graph per publication year:
+uv run python scripts/synth_graph.py --papers 5000 --quads -o by-year.nq
+
+rete build clean.nt -o clean.rete
+```
+
+Identical arguments + seed reproduce the byte-identical graph; different seeds
+give natural variability at the same size/noise point. A per-kind breakdown of
+every noise event goes to stderr, so a test knows exactly what mess it got.
+(`scripts/gen_graph.py` is the older, simpler social-graph generator used by
+`scripts/bench.sh`.)
+
 ## Testing
 
 ```sh
