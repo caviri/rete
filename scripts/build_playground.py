@@ -139,14 +139,16 @@ def main() -> None:
     print(f"  datasets: {sizes}")
     print(f"  output: {OUT.stat().st_size} bytes")
 
-    # The lazy explorer: inline the same glue + wasm into its template.
+    # The lazy explorer: inline the same glue + wasm + shared widgets module.
     if EXPLORE_TEMPLATE.exists():
+        widgets = (SRC / "widgets.js").read_text(encoding="utf-8").rstrip()
         ex = (
             EXPLORE_TEMPLATE.read_text(encoding="utf-8")
             .replace("__GLUE_JS__", glue)
             .replace("__WASM_B64__", wasm_b64)
+            .replace("__WIDGETS_JS__", widgets)
         )
-        leftover = [p for p in ("__GLUE_JS__", "__WASM_B64__") if p in ex]
+        leftover = [p for p in ("__GLUE_JS__", "__WASM_B64__", "__WIDGETS_JS__") if p in ex]
         if leftover:
             die("unreplaced explore placeholder(s): " + ", ".join(leftover))
         for out in EXPLORE_OUTS:

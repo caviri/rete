@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Wikidata-100MB — lazy explorer (graph vs tables)</title>
+<title>Wikidata-100MB - lazy explorer</title>
 <style>
   :root {
     --ink:#17211d; --muted:#66746e; --paper:#f6f8f7; --surface:#fff; --side:#eef4ef;
@@ -18,86 +18,128 @@
   header h1 { font:700 20px Georgia,serif; margin:0; }
   header .sub { color:var(--muted); font-size:13px; }
   header a { color:var(--accent-dark); }
-  .intro { padding:10px 20px; color:var(--muted); font-size:13px; max-width:1200px; }
-  .examples { padding:4px 20px 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .examples .lbl { color:var(--muted); font-size:12px; font-weight:700; }
-  main { display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; padding:8px 20px 40px; align-items:start; }
-  @media (max-width:1200px){ main { grid-template-columns:1fr 1fr; } }
-  @media (max-width:760px){ main { grid-template-columns:1fr; } }
-  .panel { border:1px solid var(--line); border-radius:10px; background:var(--surface);
-    box-shadow:0 14px 38px rgba(32,47,41,.08); padding:14px 16px; min-width:0; }
-  .panel h2 { font-size:15px; margin:0 0 2px; }
-  .panel .tech { color:var(--accent-dark); font-weight:700; font-size:11.5px; display:block; }
-  .panel p.note { color:var(--muted); font-size:12px; margin:6px 0 8px; }
-  .exp { color:var(--accent-2); font-weight:700; }
-  textarea { width:100%; min-height:130px; border:1px solid var(--code-border); border-radius:8px;
-    background:var(--code); padding:10px; font:12.5px/1.45 "Cascadia Mono",Consolas,monospace; resize:vertical; }
+  .shell { display:grid; grid-template-columns:300px minmax(0,1fr); gap:16px; padding:16px 20px 40px; align-items:start; }
+  @media (max-width:860px){ .shell { grid-template-columns:1fr; } }
+  .side { display:grid; gap:12px; }
+  .side .about { border:1px solid var(--line); border-radius:10px; background:var(--surface); padding:12px 14px; font-size:12.5px; color:var(--muted); }
+  .side .about b { color:var(--ink); }
+  .card { border:1px solid var(--line); border-radius:10px; background:var(--surface); padding:11px 13px; cursor:pointer; }
+  .card.active { border-color:var(--accent); box-shadow:0 0 0 2px rgba(20,125,105,.16); }
+  .card h3 { margin:0 0 2px; font-size:14px; }
+  .card .tech { font-size:11.5px; color:var(--accent-dark); font-weight:700; }
+  .card .desc { font-size:12px; color:var(--muted); margin-top:3px; }
+  .card .stat { font-size:11px; color:var(--muted); margin-top:5px; }
+  .card .sub-opt { margin-top:7px; font-size:12px; }
+  .work { border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:0 14px 38px rgba(32,47,41,.08);
+    padding:16px; min-width:0; }
+  .work h2 { font-size:16px; margin:0 0 2px; }
+  .work .desc { color:var(--muted); font-size:12.5px; margin:0 0 10px; }
+  .examples { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
   button { min-height:32px; border:1px solid var(--accent-dark); border-radius:6px; background:var(--accent);
-    color:#f4faf8; font-weight:700; padding:5px 12px; cursor:pointer; font-size:13px; }
+    color:#f4faf8; font-weight:700; padding:5px 13px; cursor:pointer; font-size:13px; }
   button:hover { background:var(--accent-dark); }
   button.ex, select { border:1px solid var(--line-strong); background:var(--surface); color:var(--ink);
     font-weight:600; border-radius:6px; min-height:28px; padding:4px 8px; cursor:pointer; font-size:12px; }
-  .meta { color:var(--muted); font-size:11.5px; }
-  .out { margin-top:10px; max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+  .meta { color:var(--muted); font-size:12px; }
+  .out { margin-top:12px; max-height:480px; overflow:auto; border:1px solid var(--line); border-radius:8px; min-width:0; }
+  .microcopy { color:var(--muted); font-size:12px; }
   table { border-collapse:collapse; width:max-content; min-width:100%; font:12px/1.4 "Cascadia Mono",Consolas,monospace; }
   th,td { border:1px solid var(--line); padding:5px 7px; text-align:left; vertical-align:top;
     max-width:520px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   th { background:#eaf1ed; position:sticky; top:0; }
   .err { color:#b42318; padding:8px; white-space:pre-wrap; }
+  .exp { color:var(--accent-2); font-weight:700; }
   code { background:var(--code); border:1px solid var(--code-border); border-radius:4px; padding:1px 4px; }
+  .tbl { overflow-x:auto; max-width:100%; }
+  /* Code editor (gutter + highlight overlay + suggestions) - shared with the playground. */
+  .ed { display:grid; grid-template-columns:auto minmax(0,1fr); border:1px solid var(--code-border);
+    border-radius:8px; background:var(--code); overflow:hidden; }
+  .ed-gutter { min-width:38px; padding:10px 7px 10px 4px; border-right:1px solid var(--code-border);
+    background:rgba(20,125,105,.05); color:#8ba197; text-align:right; white-space:pre; user-select:none;
+    font:13px/1.46 "Cascadia Mono",Consolas,monospace; overflow:hidden; }
+  .ed-body { position:relative; min-width:0; }
+  .ed-hl { position:absolute; inset:0; margin:0; border:0; padding:10px; overflow:hidden; pointer-events:none;
+    white-space:pre; font:13px/1.46 "Cascadia Mono",Consolas,monospace; }
+  .ed textarea { position:relative; min-height:150px; border:0; border-radius:0; background:transparent;
+    color:transparent; caret-color:var(--ink); white-space:pre; overflow:auto; resize:vertical; width:100%;
+    font:13px/1.46 "Cascadia Mono",Consolas,monospace; padding:10px; }
+  .ed textarea::selection { background:rgba(20,125,105,.22); color:transparent; }
+  .tok-com{color:#78877f;font-style:italic} .tok-str{color:#0b745f} .tok-kw{color:#8a3d5a;font-weight:700}
+  .tok-num{color:#a85424} .tok-fn{color:#0b6f5e} .tok-iri{color:#0b6f5e} .tok-var{color:#a85424}
+  .ed-suggest { position:absolute; z-index:30; min-width:200px; max-height:200px; overflow:auto;
+    border:1px solid var(--line-strong); border-radius:7px; background:var(--surface); box-shadow:0 14px 38px rgba(32,47,41,.18);
+    font:12.5px/1.4 "Cascadia Mono",Consolas,monospace; left:44px; top:30px; }
+  .ed-suggest .sg { display:flex; gap:10px; justify-content:space-between; padding:4px 9px; cursor:pointer; white-space:nowrap; }
+  .ed-suggest .sg.active { background:#e3f0ec; }
+  .ed-suggest .sg-k { color:var(--muted); font-size:10.5px; text-transform:uppercase; }
+  .hidden { display:none !important; }
+  .pg-graph { width:100%; height:480px; display:block; }
+  .gnode { fill:var(--accent); stroke:var(--surface); stroke-width:1.6; }
+  .gnode-label { font:10px "Cascadia Mono",Consolas,monospace; fill:var(--ink); }
+  .gedge { stroke:#9fb5ac; stroke-width:1.3; }
+  .seg button { border:1px solid var(--line-strong); background:var(--surface); color:var(--muted);
+    border-radius:6px; min-height:28px; padding:3px 10px; font-size:12px; cursor:pointer; }
+  .seg button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
 </style>
 </head>
 <body>
 <header>
   <h1>Wikidata-100MB</h1>
-  <span class="sub">one ~12M-triple graph, four lossless encodings — queried <strong>lazily over HTTP range</strong></span>
-  <a href="index.html">← playground</a>
-  <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs/tree/wikidata-100MB" target="_blank" rel="noopener">data on Hugging Face ↗</a>
+  <span class="sub">one ~12M-triple graph, queried lazily over HTTP range - pick a backend on the left</span>
+  <a href="index.html">&larr; playground</a>
+  <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs/tree/wikidata-100MB" target="_blank" rel="noopener">data on Hugging Face &#8599;</a>
 </header>
-<p class="intro">
-  The same Wikidata slice lives on Hugging Face as a <code>.rete</code> graph, columnar
-  <code>.parquet</code> entity-tables, a <code>.duckdb</code> database, and a <code>.sqlite</code>
-  database. This page queries all of them in your browser, fetching only the bytes each query
-  touches — rete via <code>sparql_url</code> (range reads in a Worker), Parquet/DuckDB via
-  DuckDB-WASM (httpfs), SQLite via sql.js-httpvfs. Click a question to load the analogous query on
-  every side. Tables in this slice are named by Q-id: <code>Q5</code>=human, <code>Q16521</code>=taxon,
-  <code>Q11424</code>=film.
-</p>
-<div class="examples">
-  <span class="lbl">Analogous questions:</span>
-  <span id="exBar"></span>
+<div class="shell">
+  <aside class="side">
+    <div class="about">
+      The same Wikidata slice in four lossless encodings on Hugging Face. Every query below fetches
+      <b>only the bytes it touches</b> - nothing is downloaded whole. Pick a backend; the example
+      buttons load the <b>analogous</b> query for it. Type tables are named by Q-id
+      (<code>Q5</code>=human, <code>Q16521</code>=taxon).
+    </div>
+    <div class="card active" data-backend="graph">
+      <h3>Graph</h3>
+      <div class="tech">rete &middot; sparql_url</div>
+      <div class="desc">SPARQL over <code>wikidata.rete</code> (105 MB). Range reads in a Web Worker.</div>
+      <div class="stat" id="statGraph">ready</div>
+    </div>
+    <div class="card" data-backend="tables">
+      <h3>Tables</h3>
+      <div class="tech">DuckDB-WASM &middot; httpfs</div>
+      <div class="desc">SQL over the columnar entity-tables. The <code>.parquet</code> files (115 MB)
+        and <code>wikidata.duckdb</code> (214 MB) are the <b>same tables</b> - DuckDB reads either.</div>
+      <label class="sub-opt">storage:
+        <select id="duckSrc"><option value="parquet">Parquet files</option><option value="attach">.duckdb database</option></select>
+      </label>
+      <div class="stat" id="statTables">initializing...</div>
+    </div>
+    <div class="card" data-backend="sqlite">
+      <h3>SQLite <span class="exp">experimental</span></h3>
+      <div class="tech">sql.js-httpvfs</div>
+      <div class="desc">SQL over <code>wikidata.sqlite</code> (475 MB); list/map columns are JSON text.
+        <a id="sqliteDl" href="#" target="_blank" rel="noopener">download</a></div>
+      <div class="stat" id="statSqlite">initializing...</div>
+    </div>
+  </aside>
+
+  <main class="work">
+    <h2 id="workTitle">Graph - SPARQL</h2>
+    <p class="desc" id="workDesc">Lazy SPARQL over the .rete graph.</p>
+    <div class="examples" id="exBar"></div>
+    <textarea id="editor"></textarea>
+    <div class="row">
+      <button id="run">Run</button>
+      <span class="seg" id="viewSeg"><button data-v="table" class="active">Table</button><button data-v="graph">Graph</button></span>
+      <span class="meta" id="meta"></span>
+    </div>
+    <div class="out" id="out"></div>
+  </main>
 </div>
-<main>
-  <section class="panel">
-    <h2>Graph <span class="tech">rete sparql_url · lazy range over wikidata.rete</span></h2>
-    <p class="note">SPARQL. Bound subjects/predicates fetch only the tiles holding them.</p>
-    <textarea id="sparql">SELECT ?p ?o WHERE { &lt;http://www.wikidata.org/entity/Q859&gt; ?p ?o }</textarea>
-    <div class="row"><button id="reteRun">Run SPARQL</button><span class="meta" id="reteMeta"></span></div>
-    <div class="out" id="reteOut"></div>
-  </section>
-
-  <section class="panel">
-    <h2>Columnar <span class="tech">DuckDB-WASM · httpfs over Parquet / .duckdb</span></h2>
-    <p class="note">SQL. <select id="duckSrc"><option value="parquet">read_parquet (files)</option><option value="attach">ATTACH wikidata.duckdb</option></select>
-      DuckDB fetches only needed row groups/columns.</p>
-    <textarea id="sql"></textarea>
-    <div class="row"><button id="duckRun">Run SQL</button><span class="meta" id="duckMeta">initializing DuckDB-WASM…</span></div>
-    <div class="out" id="duckOut"></div>
-  </section>
-
-  <section class="panel">
-    <h2>SQLite <span class="tech">sql.js-httpvfs · range reads over wikidata.sqlite</span></h2>
-    <p class="note"><span class="exp">experimental</span> — lazy remote SQLite (list/map columns are JSON text).
-      <a id="sqliteDl" href="#" target="_blank" rel="noopener">download .sqlite ↗</a></p>
-    <textarea id="ssql">SELECT entity, label, P106 FROM "Q5" WHERE entity = 'http://www.wikidata.org/entity/Q859';</textarea>
-    <div class="row"><button id="sqliteRun">Run SQL</button><span class="meta" id="sqliteMeta">initializing sql.js-httpvfs…</span></div>
-    <div class="out" id="sqliteOut"></div>
-  </section>
-</main>
 
 <script type="text/plain" id="reteGlue">__GLUE_JS__</script>
 <script>window.RETE_WASM_B64 = "__WASM_B64__";</script>
+<script>__WIDGETS_JS__</script>
 <script type="module">
 import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
 
@@ -106,45 +148,91 @@ const RETE_URL = `${BUCKET}/wikidata.rete?download=true`;
 const PARQUET = (f) => `${BUCKET}/parquet/${f}?download=true`;
 const DUCKDB_URL = `${BUCKET}/wikidata.duckdb?download=true`;
 const SQLITE_URL = `${BUCKET}/wikidata.sqlite?download=true`;
-const HUMANS = PARQUET("Q5_.parquet");
 const $ = (id) => document.getElementById(id);
 $("sqliteDl").href = SQLITE_URL;
 
-function renderTable(target, cols, rows) {
-  if (!rows.length) { target.innerHTML = '<p class="meta" style="padding:8px">no rows</p>'; return; }
-  const esc = (v) => String(v == null ? "" : v).replace(/[&<>]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]));
-  target.innerHTML = "<table><thead><tr>" + cols.map((c) => `<th>${esc(c)}</th>`).join("") +
-    "</tr></thead><tbody>" + rows.slice(0, 200).map((r) =>
-      "<tr>" + cols.map((c) => `<td title="${esc(r[c])}">${esc(r[c])}</td>`).join("") + "</tr>").join("") +
-    "</tbody></table>";
+const Q859 = "http://www.wikidata.org/entity/Q859"; // Plato, a human (table Q5)
+const META = {
+  graph: { title: "Graph - SPARQL", desc: "Lazy SPARQL over the .rete graph (rete sparql_url)." },
+  tables: { title: "Tables - SQL (DuckDB-WASM)", desc: "SQL over the columnar entity-tables - Parquet or .duckdb, same data." },
+  sqlite: { title: "SQLite - SQL (sql.js-httpvfs)", desc: "Lazy SQL over the remote SQLite; list/map columns are JSON text." },
+};
+
+// Analogous questions: one logical question, expressed per backend.
+const EX = [
+  { label: "Facts about Plato (Q859)", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `SELECT ?p ?o WHERE { <${Q859}> ?p ?o }`,
+    duck: `SELECT * FROM {T} WHERE entity = '${Q859}';`,
+    sqlite: `SELECT * FROM "Q5" WHERE entity = '${Q859}';` },
+  { label: "Plato's occupations (P106)", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occ WHERE { <${Q859}> wdt:P106 ?occ }`,
+    duck: `SELECT P106 FROM {T} WHERE entity = '${Q859}';`,
+    sqlite: `SELECT P106 FROM "Q5" WHERE entity = '${Q859}';` },
+  { label: "Humans with occupations", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?h ?occ WHERE { ?h wdt:P31 wd:Q5 ; wdt:P106 ?occ } LIMIT 50`,
+    duck: `SELECT entity, label, P106 FROM {T} WHERE len(P106) > 0 LIMIT 50;`,
+    sqlite: `SELECT entity, label, P106 FROM "Q5" WHERE json_array_length(P106) > 0 LIMIT 50;` },
+  { label: "Labels of Plato", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?l WHERE { <${Q859}> rdfs:label ?l } LIMIT 30`,
+    duck: `SELECT label FROM {T} WHERE entity = '${Q859}';`,
+    sqlite: `SELECT label FROM "Q5" WHERE entity = '${Q859}';` },
+  { label: "Type tables / manifest", table: { file: "_manifest.parquet", name: "_manifest" },
+    sparql: `SELECT (COUNT(*) AS ?triples) WHERE { ?s ?p ?o }`,
+    duck: `SELECT class, label, entities, file FROM {T} ORDER BY entities DESC LIMIT 20;`,
+    sqlite: `SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 30;` },
+];
+
+const state = { backend: "graph", exIdx: 0 };
+let ED = null, lastCols = [], lastRows = [], view = "table";
+
+function tableRef(ex) {
+  return $("duckSrc").value === "attach" ? `wd."${ex.table.name}"` : `read_parquet('${PARQUET(ex.table.file)}')`;
+}
+function editorText() {
+  const ex = EX[state.exIdx];
+  if (state.backend === "graph") return ex.sparql;
+  if (state.backend === "tables") return ex.duck.replace("{T}", tableRef(ex));
+  return ex.sqlite;
+}
+function refresh() {
+  $("workTitle").textContent = META[state.backend].title;
+  $("workDesc").textContent = META[state.backend].desc;
+  $("editor").value = editorText();
+  if (ED) ED.refresh();
+  document.querySelectorAll(".card").forEach((c) => c.classList.toggle("active", c.dataset.backend === state.backend));
 }
 
-/* ---- analogous question presets: fill graph (SPARQL) + columnar (SQL) ---- */
-const EX = [
-  { label: "Facts about Plato (Q859)",
-    sparql: "SELECT ?p ?o WHERE { <http://www.wikidata.org/entity/Q859> ?p ?o }",
-    sql: `SELECT * FROM read_parquet('${HUMANS}') WHERE entity = 'http://www.wikidata.org/entity/Q859';` },
-  { label: "Plato's occupations (P106)",
-    sparql: "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occ WHERE { <http://www.wikidata.org/entity/Q859> wdt:P106 ?occ }",
-    sql: `SELECT P106 FROM read_parquet('${HUMANS}') WHERE entity = 'http://www.wikidata.org/entity/Q859';` },
-  { label: "Humans with their occupations",
-    sparql: "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?h ?occ WHERE { ?h wdt:P31 wd:Q5 ; wdt:P106 ?occ } LIMIT 50",
-    sql: `SELECT entity, label, P106 FROM read_parquet('${HUMANS}') WHERE len(P106) > 0 LIMIT 50;` },
-  { label: "Labels of Plato",
-    sparql: "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?l WHERE { <http://www.wikidata.org/entity/Q859> rdfs:label ?l } LIMIT 30",
-    sql: `SELECT label FROM read_parquet('${HUMANS}') WHERE entity = 'http://www.wikidata.org/entity/Q859';` },
-  { label: "Type tables (manifest)",
-    sparql: "SELECT (COUNT(*) AS ?triples) WHERE { ?s ?p ?o }",
-    sql: `SELECT class, label, entities, file FROM read_parquet('${PARQUET("_manifest.parquet")}') ORDER BY entities DESC LIMIT 20;` },
-];
-$("exBar").innerHTML = EX.map((e, i) => `<button class="ex" data-i="${i}">${e.label}</button>`).join("");
-$("exBar").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => {
-  $("sparql").value = EX[b.dataset.i].sparql;
-  $("sql").value = EX[b.dataset.i].sql;
-});
-$("sql").value = EX[0].sql;
+function triplesFromRows(cols, rows) {
+  if (cols.length >= 3) return rows.map((r) => [r[cols[0]], r[cols[1]], r[cols[2]]]);
+  if (cols.length === 2) return rows.map((r) => [r[cols[0]], "-", r[cols[1]]]);
+  return [];
+}
+function show(cols, rows) {
+  lastCols = cols; lastRows = rows;
+  if (view === "graph") RetePG.renderGraph($("out"), triplesFromRows(cols, rows));
+  else RetePG.renderTable($("out"), cols, rows);
+}
+const showErr = (m) => { $("meta").textContent = ""; $("out").innerHTML = `<p class="err">${m}</p>`; };
 
-/* ---- Graph: rete sparql_url via a worker built from the inlined glue ---- */
+const SPARQL_KW = ["SELECT","WHERE","PREFIX","FILTER","OPTIONAL","UNION","MINUS","ORDER BY","GROUP BY",
+  "LIMIT","DISTINCT","COUNT","DATATYPE","LANG","REGEX","BIND","wdt:","wd:","rdfs:label"].map((t) => ({ text: t, kind: "kw" }));
+const SQL_TERMS = [
+  ...["SELECT","FROM","WHERE","ORDER BY","GROUP BY","LIMIT","COUNT","DISTINCT","AS","read_parquet","len",
+    "json_array_length","unnest","map_keys","map_values","ATTACH"].map((t) => ({ text: t, kind: "kw" })),
+  ...["Q5","Q16521","Q11424","Q3863","Q484170","Q4022","_manifest","wd"].map((t) => ({ text: t, kind: "table" })),
+  ...["entity","label","types","extra","P106","P27","P569","P19","P21","P735","class","entities","file"].map((t) => ({ text: t, kind: "col" })),
+];
+const completions = () => (state.backend === "graph" ? SPARQL_KW : SQL_TERMS);
+
+$("exBar").innerHTML = EX.map((e, i) => `<button class="ex" data-i="${i}">${e.label}</button>`).join("");
+$("exBar").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => { state.exIdx = +b.dataset.i; refresh(); });
+document.querySelectorAll(".card").forEach((c) => c.onclick = (e) => {
+  if (["SELECT", "OPTION", "A"].includes(e.target.tagName)) return;
+  state.backend = c.dataset.backend; refresh();
+});
+$("duckSrc").onchange = () => { if (state.backend === "tables") { $("editor").value = editorText(); if (ED) ED.refresh(); } };
+
+/* ---- rete graph worker (built from the inlined glue) ---- */
 const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
 const RETE_HARNESS = ";(function(){var ready=null;self.onmessage=function(e){var m=e.data;" +
   "if(m.type==='init'){ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
@@ -160,60 +248,47 @@ function ensureRete() {
   _rw.postMessage({ type: "init", bytes: b64ToBytes(window.RETE_WASM_B64) });
   return _rwReady;
 }
-$("reteRun").onclick = () => {
-  $("reteMeta").textContent = "querying graph…"; $("reteOut").innerHTML = "";
+function runGraph() {
   const t0 = performance.now();
   ensureRete().then(() => {
     _rw.onmessage = (e) => {
       const dt = (performance.now() - t0).toFixed(0);
-      if (!e.data.ok) { $("reteMeta").textContent = ""; $("reteOut").innerHTML = `<p class="err">${e.data.error}</p>`; return; }
+      if (!e.data.ok) return showErr(e.data.error);
       const r0 = JSON.parse(e.data.json), r = r0.remote || {};
       const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
-      $("reteMeta").textContent = `${(r0.rows || []).length} rows · ${r.requests || 0} req · ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${pct}%) · ${dt} ms`;
-      renderTable($("reteOut"), r0.vars || [], r0.rows || []);
+      $("meta").textContent = `${(r0.rows || []).length} rows | ${r.requests || 0} req | ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${pct}%) | ${dt} ms`;
+      show(r0.vars || [], r0.rows || []);
     };
-    _rw.postMessage({ url: RETE_URL, query: $("sparql").value });
+    _rw.postMessage({ url: RETE_URL, query: $("editor").value });
   });
-};
+}
 
-/* ---- Columnar: DuckDB-WASM over remote Parquet, or ATTACH the remote .duckdb ---- */
+/* ---- DuckDB-WASM (Parquet, or ATTACH the .duckdb) ---- */
 let conn = null, attached = false;
-async function initDuck() {
-  const b = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+duckdb.selectBundle(duckdb.getJsDelivrBundles()).then(async (b) => {
   const w = await duckdb.createWorker(b.mainWorker);
   const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), w);
   await db.instantiate(b.mainModule, b.pthreadWorker);
   conn = await db.connect();
-  $("duckMeta").textContent = "DuckDB-WASM ready";
-}
-$("duckRun").onclick = async () => {
-  if (!conn) { $("duckMeta").textContent = "DuckDB still initializing…"; return; }
-  $("duckMeta").textContent = "querying…"; $("duckOut").innerHTML = "";
+  $("statTables").textContent = "ready";
+}).catch((e) => { $("statTables").textContent = "init failed: " + e; });
+async function runTables() {
+  if (!conn) return showErr("DuckDB-WASM still initializing...");
   const t0 = performance.now();
   try {
-    if ($("duckSrc").value === "attach" && !attached) {
-      await conn.query(`ATTACH '${DUCKDB_URL}' AS wd (READ_ONLY)`); attached = true;
-    }
-    const res = await conn.query($("sql").value);
+    if ($("duckSrc").value === "attach" && !attached) { await conn.query(`ATTACH '${DUCKDB_URL}' AS wd (READ_ONLY)`); attached = true; }
+    const res = await conn.query($("editor").value);
     const cols = res.schema.fields.map((f) => f.name);
     const rows = res.toArray().map((r) => { const o = r.toJSON(); for (const k of cols) if (o[k] && typeof o[k] === "object") o[k] = JSON.stringify(o[k]); return o; });
-    $("duckMeta").textContent = `${rows.length} rows · ${(performance.now() - t0).toFixed(0)} ms`;
-    renderTable($("duckOut"), cols, rows);
-  } catch (e) { $("duckMeta").textContent = ""; $("duckOut").innerHTML = `<p class="err">${String(e)}</p>`; }
-};
-$("duckSrc").onchange = () => {
-  $("sql").value = $("duckSrc").value === "attach"
-    ? `SELECT entity, label, P106 FROM wd."Q5" LIMIT 20;`
-    : EX[0].sql;
-};
+    $("meta").textContent = `${rows.length} rows | ${(performance.now() - t0).toFixed(0)} ms`;
+    show(cols, rows);
+  } catch (e) { showErr(String(e)); }
+}
 
-/* ---- SQLite: sql.js-httpvfs (lazy range over the remote .sqlite) ---- */
+/* ---- SQLite (sql.js-httpvfs via esm.sh) ---- */
 let sqliteWorker = null;
-async function initSqlite() {
+(async () => {
   try {
-    // dist/index.js is UMD (CommonJS) — importing it as ESM leaves `exports`
-    // undefined. esm.sh transpiles the package to real ESM with the named
-    // export; the worker/wasm stay raw jsDelivr files (loaded by URL at runtime).
     const mod = await import("https://esm.sh/sql.js-httpvfs@0.8.12");
     const createDbWorker = mod.createDbWorker || (mod.default && mod.default.createDbWorker);
     if (!createDbWorker) throw new Error("createDbWorker export not found");
@@ -222,28 +297,40 @@ async function initSqlite() {
       "https://esm.sh/sql.js-httpvfs@0.8.12/dist/sqlite.worker.js",
       "https://esm.sh/sql.js-httpvfs@0.8.12/dist/sql-wasm.wasm"
     );
-    $("sqliteMeta").textContent = "sql.js-httpvfs ready";
+    $("statSqlite").textContent = "ready";
   } catch (e) {
-    $("sqliteMeta").textContent = "";
-    $("sqliteOut").innerHTML = `<p class="err">SQLite lazy reader unavailable: ${String(e)}\n` +
-      `(sql.js-httpvfs is finicky from a CDN, and its range VFS may not follow the host's signed-URL ` +
-      `redirect — if so, use the download link and query it locally.)</p>`;
+    $("statSqlite").textContent = "unavailable - use download";
+    sqliteWorker = { err: String(e) };
   }
-}
-$("sqliteRun").onclick = async () => {
-  if (!sqliteWorker) { $("sqliteMeta").textContent = "SQLite not ready (see error)"; return; }
-  $("sqliteMeta").textContent = "querying…"; $("sqliteOut").innerHTML = "";
+})();
+async function runSqlite() {
+  if (!sqliteWorker) return showErr("SQLite still initializing...");
+  if (sqliteWorker.err) return showErr("SQLite lazy reader unavailable: " + sqliteWorker.err +
+    "\n(sql.js-httpvfs is finicky from a CDN and its range VFS may not follow the host's signed-URL redirect - use the download link and query locally.)");
   const t0 = performance.now();
   try {
-    const rows = await sqliteWorker.db.query($("ssql").value);
+    const rows = await sqliteWorker.db.query($("editor").value);
     const cols = rows.length ? Object.keys(rows[0]) : [];
-    $("sqliteMeta").textContent = `${rows.length} rows · ${(performance.now() - t0).toFixed(0)} ms`;
-    renderTable($("sqliteOut"), cols, rows);
-  } catch (e) { $("sqliteMeta").textContent = ""; $("sqliteOut").innerHTML = `<p class="err">${String(e)}</p>`; }
-};
+    $("meta").textContent = `${rows.length} rows | ${(performance.now() - t0).toFixed(0)} ms`;
+    show(cols, rows);
+  } catch (e) { showErr(String(e)); }
+}
 
-initDuck().catch((e) => { $("duckMeta").textContent = "DuckDB init failed: " + e; });
-initSqlite();
+$("run").onclick = () => {
+  $("meta").textContent = "running..."; $("out").innerHTML = "";
+  ({ graph: runGraph, tables: runTables, sqlite: runSqlite }[state.backend])();
+};
+$("viewSeg").querySelectorAll("[data-v]").forEach((b) => b.onclick = () => {
+  view = b.dataset.v;
+  $("viewSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x.dataset.v === view));
+  show(lastCols, lastRows);
+});
+
+ED = RetePG.enhanceEditor($("editor"), {
+  lang: () => (state.backend === "graph" ? "sparql" : "sql"),
+  completions,
+});
+refresh();
 </script>
 </body>
 </html>
