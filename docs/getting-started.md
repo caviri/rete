@@ -145,6 +145,30 @@ The playground's `scholar` / `scholar-noisy` demo datasets are built with this
 generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
 the `scripts/build_playground.py` docstring).
 
+## A real-world graph: a Wikidata biology slice
+
+For a genuinely large, real dataset, `scripts/fetch_wikidata_bio.py` pulls a
+life-sciences slice from the [Wikidata Query Service](https://query.wikidata.org):
+genes, the proteins they encode, the diseases they associate with, drugs that
+treat those diseases, and a disease subclass hierarchy — one connected graph,
+every entity labelled in English. It runs a handful of bounded `CONSTRUCT`
+queries (each well under the WDQS timeout) and merges them as N-Triples.
+
+```sh
+uv run python scripts/fetch_wikidata_bio.py --limit 4000 -o data/wikidata-bio.nt
+rete build data/wikidata-bio.nt -o bio.rete
+rete stats bio.rete        # ~40k triples, ~27k terms, hundreds of communities
+```
+
+A `--limit 4000` run is roughly 40,000 triples (≈2,800 genes, ≈4,000 proteins,
+≈3,600 diseases) — the community pyramid finds hundreds of organism/disease
+clusters, and it exercises every surface: typed-class queries, label joins, the
+disease hierarchy via `wdt:P279`, and HTTP range queries over a real graph.
+`--taxon Q83310` fetches mouse instead of human; `--limit` trades size against
+WDQS time. Output lands in `data/` (git-ignored, like all fetched datasets —
+the script is tracked, the bytes are regenerated on demand). Be a good WDQS
+citizen: it is rate-limited, so fetch a slice, not a firehose.
+
 ## Testing
 
 ```sh

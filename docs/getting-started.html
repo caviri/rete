@@ -320,6 +320,25 @@ every noise event goes to stderr, so a test knows exactly what mess it got.
 <p>The playground's <code>scholar</code> / <code>scholar-noisy</code> demo datasets are built with this
 generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
 the <code>scripts/build_playground.py</code> docstring).</p>
+<h2>A real-world graph: a Wikidata biology slice</h2>
+<p>For a genuinely large, real dataset, <code>scripts/fetch_wikidata_bio.py</code> pulls a
+life-sciences slice from the <a href="https://query.wikidata.org">Wikidata Query Service</a>:
+genes, the proteins they encode, the diseases they associate with, drugs that
+treat those diseases, and a disease subclass hierarchy — one connected graph,
+every entity labelled in English. It runs a handful of bounded <code>CONSTRUCT</code>
+queries (each well under the WDQS timeout) and merges them as N-Triples.</p>
+<pre><code class="language-sh">uv run python scripts/fetch_wikidata_bio.py --limit 4000 -o data/wikidata-bio.nt
+rete build data/wikidata-bio.nt -o bio.rete
+rete stats bio.rete        # ~40k triples, ~27k terms, hundreds of communities
+</code></pre>
+<p>A <code>--limit 4000</code> run is roughly 40,000 triples (≈2,800 genes, ≈4,000 proteins,
+≈3,600 diseases) — the community pyramid finds hundreds of organism/disease
+clusters, and it exercises every surface: typed-class queries, label joins, the
+disease hierarchy via <code>wdt:P279</code>, and HTTP range queries over a real graph.
+<code>--taxon Q83310</code> fetches mouse instead of human; <code>--limit</code> trades size against
+WDQS time. Output lands in <code>data/</code> (git-ignored, like all fetched datasets —
+the script is tracked, the bytes are regenerated on demand). Be a good WDQS
+citizen: it is rate-limited, so fetch a slice, not a firehose.</p>
 <h2>Testing</h2>
 <pre><code class="language-sh">cargo test            # full suite (unit, round-trip, robustness, ranged, HTTP)
 cargo clippy --workspace --all-targets -- -D warnings
