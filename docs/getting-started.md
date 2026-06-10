@@ -187,6 +187,31 @@ WDQS time. Output lands in `data/` (git-ignored, like all fetched datasets —
 the script is tracked, the bytes are regenerated on demand). Be a good WDQS
 citizen: it is rate-limited, so fetch a slice, not a firehose.
 
+### Real Wikidata at gigabyte scale (Parquet)
+
+The Query Service is for slices, not bulk. For a genuinely large, real
+linked-data graph, `scripts/wikidata_parquet_to_nt.py` reads the full Wikidata
+"truthy" dump from the
+[`piebro/wikidata-extraction`](https://huggingface.co/datasets/piebro/wikidata-extraction)
+Parquet conversion on Hugging Face (~80 partitions, `subject/predicate/object/
+language` columns) with DuckDB — `httpfs` streams the remote files, so a bounded
+slice needs no full download — and writes N-Triples.
+
+```sh
+pip install --break-system-packages duckdb
+uv run python scripts/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  # ~1 GB
+rete build data/wd.nt -o wd.rete
+```
+
+Measured on the dev container: converting 2M triples streams in ~5 s (≈200 MB
+N-Triples) and builds to a 16 MB `.rete` with ~12,800 communities; Douglas Adams
+(`Q42`) and his multilingual labels are right there. `--limit 12000000` is about
+1 GB of N-Triples — at ≈85 bytes/triple and the linear build, roughly half a
+minute to convert and under a minute to build. The slice is a real cross-section
+of *all* of Wikidata (people, places, works, taxa, …); for a curated
+biology-only graph use the WDQS fetcher above. `--parts N` draws from N whole
+partitions; `--local-dir` reads partitions you have already downloaded.
+
 ## Testing
 
 ```sh
