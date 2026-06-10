@@ -42,7 +42,8 @@
   button.ex, select { border:1px solid var(--line-strong); background:var(--surface); color:var(--ink);
     font-weight:600; border-radius:6px; min-height:28px; padding:4px 8px; cursor:pointer; font-size:12px; }
   .meta { color:var(--muted); font-size:12px; }
-  .out { margin-top:12px; max-height:480px; overflow:auto; border:1px solid var(--line); border-radius:8px; min-width:0; }
+  .out { margin-top:8px; border:1px solid var(--line); border-radius:8px; min-width:0; }
+  .resbar { display:flex; justify-content:flex-end; gap:8px; align-items:center; margin-top:8px; }
   .microcopy { color:var(--muted); font-size:12px; }
   table { border-collapse:collapse; width:max-content; min-width:100%; font:12px/1.4 "Cascadia Mono",Consolas,monospace; }
   th,td { border:1px solid var(--line); padding:5px 7px; text-align:left; vertical-align:top;
@@ -61,6 +62,9 @@
   .ed-body { position:relative; min-width:0; }
   .ed-hl { position:absolute; inset:0; margin:0; border:0; padding:10px; overflow:hidden; pointer-events:none;
     white-space:pre; font:13px/1.46 "Cascadia Mono",Consolas,monospace; }
+  /* The overlay <code> must carry NO box styling, or it shifts the highlighted
+     text out of register with the (transparent) textarea caret. */
+  .ed-hl code { background:none; border:0; padding:0; margin:0; font:inherit; color:inherit; }
   .ed textarea { position:relative; min-height:150px; border:0; border-radius:0; background:transparent;
     color:transparent; caret-color:var(--ink); white-space:pre; overflow:auto; resize:vertical; width:100%;
     font:13px/1.46 "Cascadia Mono",Consolas,monospace; padding:10px; }
@@ -100,9 +104,20 @@
     </div>
     <div class="card active" data-backend="graph">
       <h3>Graph</h3>
-      <div class="tech">rete &middot; sparql_url</div>
-      <div class="desc">SPARQL over <code>wikidata.rete</code> (105 MB). Range reads in a Web Worker.</div>
-      <div class="stat" id="statGraph">ready</div>
+      <div class="tech">rete &middot; SPARQL</div>
+      <div class="desc">SPARQL over <code>wikidata.rete</code> (105 MB).</div>
+      <label class="sub-opt">read:
+        <select id="graphSrc">
+          <option value="lazy">lazy remote (range)</option>
+          <option value="cached" disabled>cached full copy</option>
+        </select>
+      </label>
+      <div class="sub-opt" style="display:flex; gap:6px; flex-wrap:wrap">
+        <button class="ex" id="cacheBtn">Cache locally</button>
+        <button class="ex" id="dlBtn">Download</button>
+      </div>
+      <progress id="cacheProg" max="100" value="0" hidden style="width:100%; margin-top:6px"></progress>
+      <div class="stat" id="statGraph">ready (lazy)</div>
     </div>
     <div class="card" data-backend="tables">
       <h3>Tables</h3>
@@ -127,11 +142,12 @@
     <h2 id="workTitle">Graph - SPARQL</h2>
     <p class="desc" id="workDesc">Lazy SPARQL over the .rete graph.</p>
     <div class="examples" id="exBar"></div>
+    <p class="microcopy" id="exNote"></p>
     <textarea id="editor"></textarea>
-    <div class="row">
-      <button id="run">Run</button>
+    <div class="row"><button id="run">Run</button><span class="meta" id="meta"></span></div>
+    <div class="resbar">
       <span class="seg" id="viewSeg"><button data-v="table" class="active">Table</button><button data-v="graph">Graph</button></span>
-      <span class="meta" id="meta"></span>
+      <button class="ex" id="dlResult">Download CSV</button>
     </div>
     <div class="out" id="out"></div>
   </main>
@@ -158,31 +174,38 @@ const META = {
   sqlite: { title: "SQLite - SQL (sql.js-httpvfs)", desc: "Lazy SQL over the remote SQLite; list/map columns are JSON text." },
 };
 
-// Analogous questions: one logical question, expressed per backend.
+// Analogous questions: one logical question per backend. The list-valued ones
+// UNNEST the SQL side so the columns match the graph's (entity, value) rows;
+// `?s` is bound so the graph result carries the entity column like the tables.
 const EX = [
   { label: "Facts about Plato (Q859)", table: { file: "Q5_.parquet", name: "Q5" },
-    sparql: `SELECT ?p ?o WHERE { <${Q859}> ?p ?o }`,
-    duck: `SELECT * FROM {T} WHERE entity = '${Q859}';`,
-    sqlite: `SELECT * FROM "Q5" WHERE entity = '${Q859}';` },
+    sparql: `SELECT ?s ?p ?o WHERE {\n  VALUES ?s { <${Q859}> }\n  ?s ?p ?o\n}`,
+    duck: `SELECT *\nFROM {T}\nWHERE entity = '${Q859}';`,
+    sqlite: `SELECT *\nFROM "Q5"\nWHERE entity = '${Q859}';`,
+    note: "Graph is long (one row per predicate/object); the table is one wide row — the shape difference itself." },
   { label: "Plato's occupations (P106)", table: { file: "Q5_.parquet", name: "Q5" },
-    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occ WHERE { <${Q859}> wdt:P106 ?occ }`,
-    duck: `SELECT P106 FROM {T} WHERE entity = '${Q859}';`,
-    sqlite: `SELECT P106 FROM "Q5" WHERE entity = '${Q859}';` },
-  { label: "Humans with occupations", table: { file: "Q5_.parquet", name: "Q5" },
-    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?h ?occ WHERE { ?h wdt:P31 wd:Q5 ; wdt:P106 ?occ } LIMIT 50`,
-    duck: `SELECT entity, label, P106 FROM {T} WHERE len(P106) > 0 LIMIT 50;`,
-    sqlite: `SELECT entity, label, P106 FROM "Q5" WHERE json_array_length(P106) > 0 LIMIT 50;` },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occ WHERE {\n  <${Q859}> wdt:P106 ?occ\n}`,
+    duck: `SELECT unnest(P106) AS occ\nFROM {T}\nWHERE entity = '${Q859}';`,
+    sqlite: `SELECT je.value AS occ\nFROM "Q5", json_each(P106) je\nWHERE entity = '${Q859}';`,
+    note: "UNNEST explodes the P106 list so both sides return the same one-occupation-per-row shape." },
+  { label: "Humans + occupations", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?entity ?occ WHERE {\n  ?entity wdt:P31 wd:Q5 ;\n          wdt:P106 ?occ\n}\nLIMIT 50`,
+    duck: `SELECT entity, unnest(P106) AS occ\nFROM {T}\nWHERE len(P106) > 0\nLIMIT 50;`,
+    sqlite: `SELECT entity, je.value AS occ\nFROM "Q5", json_each(P106) je\nWHERE json_array_length(P106) > 0\nLIMIT 50;`,
+    note: "Same (entity, occ) columns on both sides — directly comparable." },
   { label: "Labels of Plato", table: { file: "Q5_.parquet", name: "Q5" },
-    sparql: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?l WHERE { <${Q859}> rdfs:label ?l } LIMIT 30`,
-    duck: `SELECT label FROM {T} WHERE entity = '${Q859}';`,
-    sqlite: `SELECT label FROM "Q5" WHERE entity = '${Q859}';` },
+    sparql: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?l WHERE {\n  <${Q859}> rdfs:label ?l\n}\nLIMIT 30`,
+    duck: `SELECT label AS l\nFROM {T}\nWHERE entity = '${Q859}';`,
+    sqlite: `SELECT label AS l\nFROM "Q5"\nWHERE entity = '${Q859}';`,
+    note: "The table keeps only the English label column; the graph has every language (others live in `extra`)." },
   { label: "Type tables / manifest", table: { file: "_manifest.parquet", name: "_manifest" },
-    sparql: `SELECT (COUNT(*) AS ?triples) WHERE { ?s ?p ?o }`,
-    duck: `SELECT class, label, entities, file FROM {T} ORDER BY entities DESC LIMIT 20;`,
-    sqlite: `SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 30;` },
+    sparql: `SELECT (COUNT(*) AS ?triples)\nWHERE { ?s ?p ?o }`,
+    duck: `SELECT class, label, entities, file\nFROM {T}\nORDER BY entities DESC\nLIMIT 20;`,
+    sqlite: `SELECT name\nFROM sqlite_master\nWHERE type = 'table'\nORDER BY name\nLIMIT 30;`,
+    note: "No direct graph analogue — the graph counts triples; the tables list the per-type partitions." },
 ];
 
-const state = { backend: "graph", exIdx: 0 };
+const state = { backend: "graph", exIdx: 0, graphSource: "lazy" };
 let ED = null, lastCols = [], lastRows = [], view = "table";
 
 function tableRef(ex) {
@@ -198,6 +221,7 @@ function refresh() {
   $("workTitle").textContent = META[state.backend].title;
   $("workDesc").textContent = META[state.backend].desc;
   $("editor").value = editorText();
+  $("exNote").textContent = EX[state.exIdx].note || "";
   if (ED) ED.refresh();
   document.querySelectorAll(".card").forEach((c) => c.classList.toggle("active", c.dataset.backend === state.backend));
 }
@@ -232,13 +256,19 @@ document.querySelectorAll(".card").forEach((c) => c.onclick = (e) => {
 });
 $("duckSrc").onchange = () => { if (state.backend === "tables") { $("editor").value = editorText(); if (ED) ED.refresh(); } };
 
-/* ---- rete graph worker (built from the inlined glue) ---- */
+/* ---- rete graph: lazy remote (sparql_url) or a cached full copy (query) ----
+   The worker holds the wasm; for "cached" it also holds the full .rete bytes
+   and answers from memory. The cached copy lives in IndexedDB (localStorage
+   caps at ~5 MB, far below 105 MB). */
 const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
-const RETE_HARNESS = ";(function(){var ready=null;self.onmessage=function(e){var m=e.data;" +
+const RETE_HARNESS =
+  ";(function(){var ready=null,MEM=null;self.onmessage=function(e){var m=e.data;" +
   "if(m.type==='init'){ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
-  "Promise.resolve(ready).then(function(){try{self.postMessage({ok:true,json:wasm_bindgen.sparql_url(m.url,m.query,'table')});}" +
-  "catch(err){self.postMessage({ok:false,error:String(err)});}});};})();";
-let _rw = null, _rwReady = null;
+  "if(m.type==='memload'){Promise.resolve(ready).then(function(){MEM=m.bytes;self.postMessage({type:'memready'});});return;}" +
+  "Promise.resolve(ready).then(function(){try{" +
+  "var j=m.mode==='mem'?wasm_bindgen.query(MEM,m.query,'table'):wasm_bindgen.sparql_url(m.url,m.query,'table');" +
+  "self.postMessage({ok:true,json:j});}catch(err){self.postMessage({ok:false,error:String(err)});}});};})();";
+let _rw = null, _rwReady = null, _memReady = null;
 function ensureRete() {
   if (_rw) return _rwReady;
   const glue = document.getElementById("reteGlue").textContent;
@@ -248,20 +278,76 @@ function ensureRete() {
   _rw.postMessage({ type: "init", bytes: b64ToBytes(window.RETE_WASM_B64) });
   return _rwReady;
 }
+function ensureMem() {
+  return ensureRete().then(() => {
+    if (_memReady) return _memReady;
+    _memReady = new Promise((res) => {
+      _rw.addEventListener("message", function onm(e) { if (e.data && e.data.type === "memready") { _rw.removeEventListener("message", onm); res(); } });
+      _rw.postMessage({ type: "memload", bytes: window.__reteBytes });
+    });
+    return _memReady;
+  });
+}
 function runGraph() {
   const t0 = performance.now();
-  ensureRete().then(() => {
+  const cached = state.graphSource === "cached" && window.__reteBytes;
+  (cached ? ensureMem() : ensureRete()).then(() => {
     _rw.onmessage = (e) => {
       const dt = (performance.now() - t0).toFixed(0);
       if (!e.data.ok) return showErr(e.data.error);
-      const r0 = JSON.parse(e.data.json), r = r0.remote || {};
-      const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
-      $("meta").textContent = `${(r0.rows || []).length} rows | ${r.requests || 0} req | ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${pct}%) | ${dt} ms`;
+      const r0 = JSON.parse(e.data.json), r = r0.remote;
+      $("meta").textContent = r
+        ? `${(r0.rows || []).length} rows | ${r.requests || 0} req | ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${r.fileLength ? (100*r.bytes/r.fileLength).toFixed(1) : "?"}%) | ${dt} ms`
+        : `${(r0.rows || []).length} rows | cached, in-memory | ${dt} ms`;
       show(r0.vars || [], r0.rows || []);
     };
-    _rw.postMessage({ url: RETE_URL, query: $("editor").value });
+    _rw.postMessage(cached ? { type: "query", mode: "mem", query: $("editor").value }
+                           : { type: "query", mode: "lazy", url: RETE_URL, query: $("editor").value });
   });
 }
+
+/* ---- cache the .rete in IndexedDB (with progress), download, source switch ---- */
+const RKEY = "wikidata.rete";
+function idb() { return new Promise((res, rej) => { const r = indexedDB.open("reteCache", 1); r.onupgradeneeded = () => r.result.createObjectStore("f"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbGet(k) { const db = await idb(); return new Promise((res) => { const t = db.transaction("f").objectStore("f").get(k); t.onsuccess = () => res(t.result || null); t.onerror = () => res(null); }); }
+async function idbPut(k, v) { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction("f", "readwrite").objectStore("f").put(v, k); t.onsuccess = () => res(); t.onerror = () => rej(t.error); }); }
+function enableCached(mb) {
+  $("graphSrc").querySelector('[value="cached"]').disabled = false;
+  $("statGraph").textContent = `cached copy ready (${mb} MB) — set read to "cached"`;
+}
+async function cacheRete() {
+  const prog = $("cacheProg"); prog.hidden = false; prog.value = 0; $("statGraph").textContent = "caching…";
+  try {
+    const resp = await fetch(RETE_URL); const total = +resp.headers.get("content-length") || 0;
+    const reader = resp.body.getReader(); const chunks = []; let got = 0;
+    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; if (total) prog.value = Math.round(100 * got / total); }
+    const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
+    window.__reteBytes = buf; _memReady = null;
+    await idbPut(RKEY, buf.buffer);
+    enableCached((got / 1048576).toFixed(0));
+  } catch (e) { $("statGraph").textContent = "cache failed: " + e; }
+  finally { prog.hidden = true; }
+}
+async function downloadRete() {
+  let buf = window.__reteBytes;
+  if (!buf) { const ab = await idbGet(RKEY); if (ab) buf = window.__reteBytes = new Uint8Array(ab); }
+  if (!buf) { $("statGraph").textContent = "downloading…"; const r = await fetch(RETE_URL); buf = window.__reteBytes = new Uint8Array(await r.arrayBuffer()); $("statGraph").textContent = "ready (lazy)"; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([buf], { type: "application/octet-stream" }));
+  a.download = "wikidata.rete"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+}
+$("cacheBtn").onclick = cacheRete;
+$("dlBtn").onclick = downloadRete;
+$("graphSrc").onchange = () => { state.graphSource = $("graphSrc").value; $("statGraph").textContent = state.graphSource === "cached" ? "reading cached full copy" : "ready (lazy)"; };
+(async () => { const ab = await idbGet(RKEY); if (ab) { window.__reteBytes = new Uint8Array(ab); enableCached((ab.byteLength / 1048576).toFixed(0)); } })();
+
+/* ---- download the current result table as CSV ---- */
+$("dlResult").onclick = () => {
+  if (!lastRows.length) return;
+  const q = (v) => { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const csv = [lastCols.join(",")].concat(lastRows.map((r) => lastCols.map((c) => q(r[c])).join(","))).join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = "result.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+};
 
 /* ---- DuckDB-WASM (Parquet, or ATTACH the .duckdb) ---- */
 let conn = null, attached = false;
