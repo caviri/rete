@@ -93,8 +93,9 @@ check "bgp"        "Alice|Bob"   -- $B bgp "$T/g.rete" "?x <http://ex/knows> ?y"
 check "sparql"     "Bob"         -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "sparql json" '"bindings"' -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { ?x e:knows ?y }" --json
 check "ask"        "true|boolean" -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> ASK { ?x e:knows ?y }"
-check "cost"       "full-index|summary overview" -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
-check "cost json"  '"current_engine_access": "full-index"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" --json
+check "cost"       "lazy query open|summary overview" -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "cost json"  '"current_engine_access": "lazy-tiles"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" --json
+check "cost lazy open" '"lazy_query_open"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" --json
 check "cost summary answer" '"kind": "predicate_count"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
 check "cost explain" '"planned_access": "summary-only"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json --explain
 check "progressive count" '"reads_index": false' -- $B progressive "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json

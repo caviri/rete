@@ -52,7 +52,13 @@ fn cost_cli_reports_summary_and_full_open_byte_preview_as_json() {
 
     let json: serde_json::Value = serde_json::from_slice(&cost.stdout).unwrap();
     assert_eq!(json["source_kind"], "local");
-    assert_eq!(json["current_engine_access"], "full-index");
+    // Tiled (v0.2) files evaluate SPARQL with lazy tile faulting. (On this
+    // tiny fixture the directory prefetch can exceed the eager open — the
+    // lazy-vs-eager byte win only shows on real-sized sections, which the
+    // rete-core ranged tests assert; here we pin shape and availability.)
+    assert_eq!(json["current_engine_access"], "lazy-tiles");
+    assert_eq!(json["lazy_query_open"]["available"], true);
+    assert!(json["lazy_query_open"]["bytes"].as_u64().unwrap() > 0);
     assert_eq!(
         json["query_predicates"].as_array().unwrap(),
         &[serde_json::json!("<http://ex/knows>")]
