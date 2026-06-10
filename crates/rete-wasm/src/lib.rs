@@ -533,6 +533,21 @@ pub fn query_communities(
     .map_err(err)
 }
 
+/// The file's byte layout, for the playground's byte-map view. JSON:
+/// `{ "fileLength": N, "segments": [ { "kind", "label", "offset", "len" } ] }`
+/// — segments sorted by offset; uncovered bytes are container framing.
+#[wasm_bindgen]
+pub fn file_layout(bytes: &[u8]) -> Result<String, JsValue> {
+    use serde_json::json;
+    let rete = open(bytes)?;
+    let segments: Vec<serde_json::Value> = rete
+        .file_layout()
+        .iter()
+        .map(|s| json!({ "kind": s.kind, "label": s.label, "offset": s.offset, "len": s.len }))
+        .collect();
+    serde_json::to_string(&json!({ "fileLength": bytes.len(), "segments": segments })).map_err(err)
+}
+
 /// The full community pyramid as a tree — the "cluster of clusters" view.
 /// Per dendrogram round (index 0 = finest, last = coarsest), every community
 /// with its member-node count, triple count (triples whose subject belongs to

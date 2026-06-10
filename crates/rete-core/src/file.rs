@@ -157,6 +157,17 @@ fn content_hash(parts: &[&[u8]]) -> [u8; 16] {
 /// A resolved triple as terms.
 pub type TermTriple = (String, String, String);
 
+/// One labelled byte region of a `.rete` file image (see
+/// [`Rete::file_layout`]). `kind` is a stable machine tag: `header`,
+/// `metadata`, `dictionary`, `directory`, `tile`, `pyramid`, `named-graphs`.
+#[derive(Debug, Clone)]
+pub struct LayoutSegment {
+    pub kind: &'static str,
+    pub label: String,
+    pub offset: u64,
+    pub len: u64,
+}
+
 /// A byte range in the `.rete` file image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteRange {
@@ -1111,6 +1122,92 @@ impl Rete {
 
     pub fn header(&self) -> &Header {
         &self.header
+    }
+
+    /// The file's byte layout, for visualization: header, metadata,
+    /// dictionary, each index permutation's tile directory and individual
+    /// tiles, pyramid summary, and named graphs — sorted by offset. Bytes not
+    /// covered by any segment are container framing (section directories and
+    /// length fields).
+    pub fn file_layout(&self) -> Vec<LayoutSegment> {
+        let h = &self.header;
+        let seg = |kind: &'static str, label: String, offset: u64, len: u64| LayoutSegment {
+            kind,
+            label,
+            offset,
+            len,
+        };
+        let mut out = vec![seg(
+            "header",
+            "header (fixed 128 bytes)".into(),
+            0,
+            crate::header::HEADER_LEN as u64,
+        )];
+        if h.metadata_len > 0 {
+            out.push(seg(
+                "metadata",
+                "metadata (dataset card)".into(),
+                h.metadata_offset,
+                h.metadata_len,
+            ));
+        }
+        out.push(seg(
+            "dictionary",
+            "dictionary (4 front-coded term sections)".into(),
+            h.dictionary_offset,
+            h.dictionary_len,
+        ));
+        for (si, perm) in [
+            IndexPermutation::Spo,
+            IndexPermutation::Pos,
+            IndexPermutation::Osp,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let sec = self.index_section_ranges[si];
+            if sec.len == 0 {
+                continue;
+            }
+            let first_tile = self.tile_ranges[si]
+                .first()
+                .map(|&(_, _, r)| r.offset)
+                .unwrap_or(sec.offset + sec.len);
+            if first_tile > sec.offset {
+                out.push(seg(
+                    "directory",
+                    format!("{} tile directory", perm.name()),
+                    sec.offset,
+                    first_tile - sec.offset,
+                ));
+            }
+            for (ti, &(min_a, max_a, r)) in self.tile_ranges[si].iter().enumerate() {
+                out.push(seg(
+                    "tile",
+                    format!("{} tile {ti} (leading ids {min_a}..{max_a})", perm.name()),
+                    r.offset,
+                    r.len,
+                ));
+            }
+        }
+        if h.pyramid_meta_len > 0 {
+            out.push(seg(
+                "pyramid",
+                "pyramid summary (communities + superedges)".into(),
+                h.pyramid_meta_offset,
+                h.pyramid_meta_len,
+            ));
+        }
+        if h.named_graphs_len > 0 {
+            out.push(seg(
+                "named-graphs",
+                format!("named graphs ({})", self.named_graphs.len()),
+                h.named_graphs_offset,
+                h.named_graphs_len,
+            ));
+        }
+        out.sort_by_key(|s| s.offset);
+        out
     }
 
     /// Raw bytes of the file's metadata section, or `None` if it has none. The

@@ -30,8 +30,8 @@ pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 pub use file::{
     build_pyramid_meta, schema_classes, schema_summary, verify, write_dataset,
-    write_dataset_with_metadata, write_file, ByteRange, Rete, SummaryView, TermTriple,
-    TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
+    write_dataset_with_metadata, write_file, ByteRange, LayoutSegment, Rete, SummaryView,
+    TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 pub use header::{Header, HeaderError, MAGIC, VERSION};
 pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern};

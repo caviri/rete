@@ -516,10 +516,92 @@ ex:ApplicationDependencyShape
     }
   },
   provenance: {
-    scholar: { predicate: "<http://purl.org/spar/cito/cites>", object: "<http://ex/paper/15>" },
-    "scholar-noisy": { predicate: "<http://purl.org/spar/cito/cites>", object: "<http://ex/paper/14>" },
-    citations: { predicate: "<http://purl.org/spar/cito/cites>", object: "<https://doi.org/10.1038/s41586-021-03819-2>" },
-    typed: { predicate: "<http://ex/knows>" },
-    deps: { predicate: "<http://ex/dependsOn>" }
+    scholar: {
+      predicate: "<http://purl.org/spar/cito/cites>",
+      object: "<http://ex/paper/15>",
+      examples: [
+        {
+          label: "Who cites the most-cited paper",
+          tip: "Object-bound pattern: routed to the OSP permutation; each match shows its tile and byte range.",
+          predicate: "<http://purl.org/spar/cito/cites>",
+          object: "<http://ex/paper/15>"
+        },
+        {
+          label: "Everything about the hub author",
+          tip: "Subject-bound pattern: routed to SPO — one author's facts live in one a-group of one tile.",
+          subject: "<http://ex/author/105>"
+        },
+        {
+          label: "All coauthor edges",
+          tip: "Predicate-bound pattern: routed to POS — the whole relation is one contiguous run.",
+          predicate: "<http://ex/coauthor>"
+        }
+      ]
+    },
+    "scholar-noisy": {
+      predicate: "<http://purl.org/spar/cito/cites>",
+      object: "<http://ex/paper/14>",
+      examples: [
+        {
+          label: "Who cites paper 14",
+          tip: "Object-bound: OSP permutation, with the matching tile and byte range per row.",
+          predicate: "<http://purl.org/spar/cito/cites>",
+          object: "<http://ex/paper/14>"
+        },
+        {
+          label: "Everything about the hub author",
+          tip: "Subject-bound: SPO routing to a single tile.",
+          subject: "<http://ex/author/120>"
+        }
+      ]
+    },
+    citations: {
+      predicate: "<http://purl.org/spar/cito/cites>",
+      object: "<https://doi.org/10.1038/s41586-021-03819-2>",
+      examples: [
+        {
+          label: "Who cites AlphaFold",
+          tip: "Object-bound over ~539k triples: OSP routes to the one tile holding the DOI's a-group.",
+          predicate: "<http://purl.org/spar/cito/cites>",
+          object: "<https://doi.org/10.1038/s41586-021-03819-2>"
+        },
+        {
+          label: "One author's facts",
+          tip: "Subject-bound: SPO — compare the byte ranges with the predicate-bound example.",
+          subject: "<http://ex/author/1235>"
+        }
+      ]
+    },
+    typed: {
+      predicate: "<http://ex/knows>",
+      examples: [
+        {
+          label: "All knows edges",
+          tip: "Predicate-bound: POS permutation; a tiny file is still one tile per permutation.",
+          predicate: "<http://ex/knows>"
+        },
+        {
+          label: "Everything about Alice",
+          tip: "Subject-bound: SPO routing.",
+          subject: "<http://ex/Alice>"
+        }
+      ]
+    },
+    deps: {
+      predicate: "<http://ex/dependsOn>",
+      examples: [
+        {
+          label: "All dependency edges",
+          tip: "Predicate-bound: POS permutation.",
+          predicate: "<http://ex/dependsOn>"
+        },
+        {
+          label: "Who depends on log4x",
+          tip: "Object-bound: OSP — the impact-analysis pattern at the byte level.",
+          predicate: "<http://ex/dependsOn>",
+          object: "<http://ex/log4x>"
+        }
+      ]
+    }
   }
 };

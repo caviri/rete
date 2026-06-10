@@ -496,6 +496,7 @@
     state.exploreReady = true;
     renderExploreClasses();
     renderPyramid();
+    renderLayout();
   }
 
   function renderExploreClasses() {
@@ -553,17 +554,15 @@
       return vals.length > 3 ? `${shown} (+${vals.length - 3})` : shown;
     };
     const sampled = (res.rows || []).length >= 6000 ? " (sampled)" : "";
-    $("exploreTable").innerHTML =
+    const head = `<tr><th>${esc(localName(cls))}</th>` +
+      cols.map((c) => `<th>${esc(shorten(localName(c), 20))}</th>`).join("") + `</tr>`;
+    const rowHtmls = rows.map(([s, props]) =>
+      `<tr><td class="iri">${esc(shorten(s, 42))}</td>` +
+      cols.map((c) => `<td>${esc(cell(props.get(c)))}</td>`).join("") +
+      `</tr>`);
+    $("exploreTable").innerHTML = collapsedTable(head, rowHtmls,
       `<p class="microcopy">${entities.size} ${esc(localName(cls))} entit${entities.size === 1 ? "y" : "ies"}${sampled} — ` +
-      `showing ${rows.length}, top ${cols.length} properties. Use the SPARQL tab for full values.</p>` +
-      `<table><thead><tr><th>${esc(localName(cls))}</th>` +
-      cols.map((c) => `<th>${esc(shorten(localName(c), 20))}</th>`).join("") +
-      `</tr></thead><tbody>` +
-      rows.map(([s, props]) =>
-        `<tr><td class="iri">${esc(shorten(s, 42))}</td>` +
-        cols.map((c) => `<td>${esc(cell(props.get(c)))}</td>`).join("") +
-        `</tr>`).join("") +
-      `</tbody></table>`;
+      `showing up to ${rows.length}, top ${cols.length} properties. Use the SPARQL tab for full values.</p>`);
   }
 
   // The "cluster of clusters": outer circles are the coarsest dendrogram
@@ -584,8 +583,15 @@
     }
     const chain = tree.levels.map((l) => l.length).reverse().join(" → ");
     $("pyramidNote").textContent =
-      `${tree.rounds} dendrogram round(s); coarsest → finest: ${chain} communities. ` +
-      `These are the same rounds the “Split by community” Round field selects.`;
+      `A community is a group of subjects more densely connected to each other than to the rest ` +
+      `of the graph, found by repeated Louvain clustering. Each clustering round merges ` +
+      `communities into coarser ones — the pyramid. This file: ${tree.rounds} round(s), ` +
+      `coarsest → finest ${chain} communities. These are the same rounds the “Split by ` +
+      `community” Round field selects, and the units the pyramid summary aggregates.`;
+    $("pyramidLegend").innerHTML =
+      `<span class="lg"><span class="sw sw-pyr-outer"></span>outer circle = one coarsest-round community (area ∝ member nodes)</span>` +
+      `<span class="lg"><span class="sw sw-pyr-inner"></span>nested bubble = a finer-round community it absorbs — the cluster of clusters</span>` +
+      `<span class="lg">hover any circle for its exact node and triple counts</span>`;
 
     const outer = tree.levels[tree.rounds - 1].slice().sort((a, b) => b.nodes - a.nodes);
     const inner = tree.rounds >= 2 ? tree.levels[tree.rounds - 2] : null;
@@ -640,6 +646,85 @@
       `</tbody></table>`;
   }
 
+  // The byte map: every byte of the file as a wrapped grid of cells, colored
+  // by the section it belongs to — where the data physically lives.
+  const LAYOUT_COLORS = {
+    header: "#17211d",
+    metadata: "#7b5ea7",
+    dictionary: "#147d69",
+    directory: "#9fb5ac",
+    pyramid: "#b98112",
+    "named-graphs": "#235c7c",
+    framing: "#e3e9e6"
+  };
+  const TILE_COLORS = ["#c84f2f", "#e0876a"];
+
+  function renderLayout() {
+    let lay;
+    try {
+      lay = JSON.parse(W().file_layout(state.bytes));
+    } catch (e) {
+      $("layoutNote").textContent = "layout error: " + String(e);
+      return;
+    }
+    const segs = lay.segments;
+    const total = lay.fileLength || 1;
+    // Pre-index tiles for alternating shades.
+    let tileSeq = 0;
+    segs.forEach((s) => { if (s.kind === "tile") s.tile = tileSeq++; });
+    const findSeg = (b) => {
+      let lo = 0, hi = segs.length - 1, hit = null;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (segs[mid].offset <= b) { hit = segs[mid]; lo = mid + 1; } else { hi = mid - 1; }
+      }
+      return hit && b < hit.offset + hit.len ? hit : null;
+    };
+
+    const cols = 96;
+    const cells = Math.min(1536, Math.max(cols * 2, Math.ceil(total / 64)));
+    const size = 9;
+    const rows = Math.ceil(cells / cols);
+    const perCell = total / cells;
+    let svg = `<svg viewBox="0 0 ${cols * size} ${rows * size}" role="img" aria-label="File byte map" style="max-width:100%">`;
+    for (let i = 0; i < cells; i++) {
+      const lo = Math.floor(i * perCell);
+      const seg = findSeg(Math.min(total - 1, Math.floor(lo + perCell / 2)));
+      const color = !seg ? LAYOUT_COLORS.framing
+        : seg.kind === "tile" ? TILE_COLORS[seg.tile % 2]
+        : (LAYOUT_COLORS[seg.kind] || LAYOUT_COLORS.framing);
+      const label = seg
+        ? `${seg.label} — bytes ${seg.offset}–${seg.offset + seg.len} (${formatBytes(seg.len)})`
+        : "container framing (section directories, length fields)";
+      svg += `<rect x="${(i % cols) * size}" y="${Math.floor(i / cols) * size}" width="${size - 1}" height="${size - 1}" fill="${color}"><title>${esc(label)}</title></rect>`;
+    }
+    svg += `</svg>`;
+    $("layoutNote").textContent =
+      `Every cell is ≈ ${formatBytes(Math.ceil(perCell))} of the ${formatBytes(total)} file, in byte order ` +
+      `(left→right, top→bottom). This is what a range query navigates: it reads the header, then jumps ` +
+      `straight to the cells it needs. Hover a cell for the section and byte range.`;
+    const legendKinds = [
+      ["header", "header"], ["metadata", "metadata"], ["dictionary", "dictionary"],
+      ["directory", "tile directories"], ["tile", "index tiles (alternating per tile)"],
+      ["pyramid", "pyramid summary"], ["named-graphs", "named graphs"], ["framing", "framing"]
+    ];
+    $("layoutLegend").innerHTML = legendKinds
+      .filter(([k]) => k === "framing" || k === "tile" || segs.some((s) => s.kind === k))
+      .map(([k, label]) =>
+        `<span class="lg"><span class="sw" style="background:${k === "tile" ? TILE_COLORS[0] : LAYOUT_COLORS[k]}"></span>${esc(label)}</span>`)
+      .join("");
+    // Per-kind byte totals.
+    const sums = new Map();
+    segs.forEach((s) => sums.set(s.kind, (sums.get(s.kind) || 0) + s.len));
+    const covered = Array.from(sums.values()).reduce((a, b) => a + b, 0);
+    sums.set("framing", Math.max(0, total - covered));
+    $("layoutTable").innerHTML = collapsedTable(
+      `<tr><th>section</th><th>bytes</th><th>share</th></tr>`,
+      Array.from(sums.entries()).sort((a, b) => b[1] - a[1]).map(([k, n]) =>
+        `<tr><td>${esc(k)}</td><td>${formatBytes(n)}</td><td>${(100 * n / total).toFixed(1)}%</td></tr>`)
+    );
+  }
+
   function updateResultVisibility() {
     $$(".result-pane").forEach((pane) => pane.classList.add("hidden"));
     if (state.mode === "sparql") {
@@ -670,29 +755,48 @@
     $("roundHelp").classList.toggle("hidden", noRound);
   }
 
+  // How many rows a table shows before its "Show more" button, and how many
+  // each click reveals.
+  const TABLE_HEAD_ROWS = 12;
+  const TABLE_MORE_STEP = 50;
+
+  /// Wrap table row strings into a collapsed table: the first TABLE_HEAD_ROWS
+  /// rows show; the rest hide behind a "Show more" button (a delegated click
+  /// handler in wireEvents reveals them in steps).
+  function collapsedTable(headRowHtml, rowHtmls, note) {
+    const hidden = Math.max(0, rowHtmls.length - TABLE_HEAD_ROWS);
+    const body = rowHtmls
+      .map((r, i) => (i < TABLE_HEAD_ROWS ? r : r.replace("<tr", `<tr class="tr-hidden"`)))
+      .join("");
+    return (note || "") +
+      `<div class="tbl"><table><thead>${headRowHtml}</thead><tbody>${body}</tbody></table>` +
+      (hidden > 0
+        ? `<button type="button" class="tbl-more secondary">Show ${Math.min(hidden, TABLE_MORE_STEP)} more (${hidden} hidden)</button>`
+        : "") +
+      `</div>`;
+  }
+
   function renderTable(vars, rows) {
     const cap = 500;
     const shown = (rows || []).slice(0, cap);
-    const head = (vars || []).map((v) => `<th>${esc(v)}</th>`).join("");
-    const body = shown.map((row) =>
-      `<tr>${(vars || []).map((v) => `<td class="iri">${esc(shorten(row[v], 120))}</td>`).join("")}</tr>`
-    ).join("");
-    const more = (rows || []).length > cap
+    const head = `<tr>${(vars || []).map((v) => `<th>${esc(v)}</th>`).join("")}</tr>`;
+    const rowHtmls = shown.map((row) =>
+      `<tr>${(vars || []).map((v) => `<td class="iri">${esc(shorten(row[v], 120))}</td>`).join("")}</tr>`);
+    const note = (rows || []).length > cap
       ? `<p class="microcopy">Showing first ${cap} of ${rows.length} rows.</p>`
       : "";
-    return more + `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    return collapsedTable(head, rowHtmls, note);
   }
 
   function renderTriplesTable(triples) {
     const cap = 500;
     const shown = (triples || []).slice(0, cap);
-    const body = shown.map((t) =>
-      `<tr><td class="iri">${esc(shorten(t[0], 120))}</td><td class="iri">${esc(shorten(t[1], 120))}</td><td class="iri">${esc(shorten(t[2], 120))}</td></tr>`
-    ).join("");
-    const more = (triples || []).length > cap
+    const rowHtmls = shown.map((t) =>
+      `<tr><td class="iri">${esc(shorten(t[0], 120))}</td><td class="iri">${esc(shorten(t[1], 120))}</td><td class="iri">${esc(shorten(t[2], 120))}</td></tr>`);
+    const note = (triples || []).length > cap
       ? `<p class="microcopy">Showing first ${cap} of ${triples.length} triples.</p>`
       : "";
-    return more + `<table><thead><tr><th>subject</th><th>predicate</th><th>object</th></tr></thead><tbody>${body}</tbody></table>`;
+    return collapsedTable(`<tr><th>subject</th><th>predicate</th><th>object</th></tr>`, rowHtmls, note);
   }
 
   function triplesForGraph(res) {
@@ -971,11 +1075,11 @@
       `<div class="banner">Subject stars computed per pyramid community, recombined with global ` +
       `joins, modifiers applied once: ${contributing.length} of ${parts.length} communities ` +
       `contributed ${total} partial row(s) — the merged result is identical to the whole-index answer.</div>` +
-      `<table><thead><tr><th>community</th><th>subjects</th><th>partial rows</th></tr></thead><tbody>` +
-      contributing.slice(0, 60).map((p) =>
-        `<tr><td>C${p.community}</td><td>${p.subjects}</td><td>${p.rows}</td></tr>`).join("") +
-      `</tbody></table>` +
-      (contributing.length > 60 ? `<p class="microcopy">Showing first 60 of ${contributing.length} contributing communities.</p>` : "");
+      collapsedTable(
+        `<tr><th>community</th><th>subjects</th><th>partial rows</th></tr>`,
+        contributing.map((p) =>
+          `<tr><td>C${p.community}</td><td>${p.subjects}</td><td>${p.rows}</td></tr>`)
+      );
     updateResultVisibility();
   }
 
@@ -1212,6 +1316,21 @@
     $("whySubject").value = cfg.subject || "";
     $("whyPredicate").value = cfg.predicate || "";
     $("whyObject").value = cfg.object || "";
+    const list = cfg.examples || [];
+    $("provExamples").innerHTML = list.map((ex, i) =>
+      `<article class="example-card"><button type="button" class="example-button" data-prov="${i}">${esc(ex.label)}</button>` +
+      `<div class="tagline">${esc(ex.tip)}</div></article>`).join("");
+    $$("#provExamples [data-prov]").forEach((btn) => {
+      btn.onclick = () => {
+        const ex = list[Number(btn.dataset.prov)];
+        $("whySubject").value = ex.subject || "";
+        $("whyPredicate").value = ex.predicate || "";
+        $("whyObject").value = ex.object || "";
+        $("exampleInfo").innerHTML = `<strong>${esc(ex.label)}</strong><div>${esc(ex.tip)}</div>`;
+        setMode("provenance");
+        runProvenance();
+      };
+    });
   }
 
   function optText(id) {
@@ -1470,6 +1589,19 @@
     });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") $("strategyModal").classList.add("hidden");
+    });
+
+    // Collapsed tables: every "Show more" button reveals the next step of
+    // hidden rows (delegated, so it works for any dynamically-rendered table).
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest(".tbl-more");
+      if (!btn) return;
+      const wrap = btn.closest(".tbl");
+      const hidden = $$("tr.tr-hidden", wrap);
+      hidden.slice(0, TABLE_MORE_STEP).forEach((tr) => tr.classList.remove("tr-hidden"));
+      const left = Math.max(0, hidden.length - TABLE_MORE_STEP);
+      if (left === 0) btn.remove();
+      else btn.textContent = `Show ${Math.min(left, TABLE_MORE_STEP)} more (${left} hidden)`;
     });
     $("clearHist").onclick = () => {
       localStorage.removeItem(HIST_KEY);

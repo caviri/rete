@@ -911,6 +911,52 @@ pre {
   color: var(--accent-dark);
 }
 
+/* Collapsed tables: hidden tail rows + the "Show more" reveal button. */
+.tr-hidden {
+  display: none;
+}
+
+.tbl-more {
+  margin-top: 8px;
+  min-height: 30px;
+  font-size: 12px;
+}
+
+/* Legends for the Explore visualizations. */
+.viz-legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 6px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.viz-legend .lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.viz-legend .sw {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+  border: 1px solid rgba(23, 33, 29, .18);
+}
+
+.viz-legend .sw-pyr-outer {
+  background: rgba(20, 125, 105, .15);
+  border-color: var(--accent);
+}
+
+.viz-legend .sw-pyr-inner {
+  background: rgba(200, 79, 47, .3);
+  border-color: var(--accent-2);
+}
+
 /* Community-pyramid bubbles (Explore tab). */
 .pyr-outer {
   fill: rgba(20, 125, 105, .07);
