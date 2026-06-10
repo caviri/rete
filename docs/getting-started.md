@@ -141,6 +141,24 @@ every noise event goes to stderr, so a test knows exactly what mess it got.
 (`scripts/gen_graph.py` is the older, simpler social-graph generator used by
 `scripts/bench.sh`.)
 
+### Scaling to ~1 GB
+
+The generator and `rete build` scale linearly, so a big stress-test graph is
+just a bigger `--papers`. Output is roughly **85 bytes/triple** as N-Triples
+and **31 triples/paper**, so ~1 GB is about 400k papers / 12.5M triples:
+
+```sh
+uv run python scripts/synth_graph.py --papers 400000 --seed 1 -o big.nt  # ~1.1 GB, ~22 s
+rete build big.nt -o big.rete                                            # ~56 s -> ~100 MB
+```
+
+Measured on the dev container (12.5M triples, 2.0M terms, ~30k communities):
+build is ~56 s and the `.rete` is ~100 MB (zstd). The point of the size is what
+querying it then *doesn't* read: a selective pattern answers in under a second,
+`rete predicates` reads ~20 MB of summary rather than the 80 MB index, and a
+lazy query open (`rete cost big.rete "<query>"`) touches ~7 MB in ~50 range
+requests instead of the whole file — the range-query promise, at 1 GB.
+
 The playground's `scholar` / `scholar-noisy` demo datasets are built with this
 generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
 the `scripts/build_playground.py` docstring).
