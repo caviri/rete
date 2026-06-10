@@ -1,11 +1,16 @@
 window.RETE_PLAYGROUND_CATALOG = {
-  defaultDataset: "research",
+  defaultDataset: "scholar",
   families: ["Summary", "Select", "Path", "Aggregate", "Construct"],
   datasets: [
     {
-      key: "research",
-      label: "research.rete - academic graph",
-      description: "Researcher, paper, institution, journal, coauthor, citation, and advisor relations for the broadest ontology showcase."
+      key: "scholar",
+      label: "scholar.rete - synthetic scholarly world",
+      description: "250 papers, 137 authors, 36 venues from scripts/synth_graph.py (seed 42): power-law citations, field communities, Zipfian venues, and typed literals."
+    },
+    {
+      key: "scholar-noisy",
+      label: "scholar-noisy.rete - same world, 25% noise",
+      description: "The same generator at --noise 0.25: rewired citations (incl. temporal violations), missing ORCIDs and ISSNs, and whitespace-mangled titles - for SHACL and data-quality demos."
     },
     {
       key: "citations",
@@ -21,20 +26,10 @@ window.RETE_PLAYGROUND_CATALOG = {
       key: "deps",
       label: "deps.rete - dependency graph",
       description: "Package dependency graph for impact analysis, transitive reachability, and CVE-style examples."
-    },
-    {
-      key: "papers",
-      label: "papers.rete - citation graph",
-      description: "Compact paper citation graph with titles and abstracts for community and path examples."
-    },
-    {
-      key: "researchers",
-      label: "researchers.rete - coauthorship",
-      description: "Multi-criteria researcher graph with coauthor and citation relations."
     }
   ],
   examples: {
-    research: [
+    scholar: [
       {
         family: "Summary",
         label: "Predicate totals",
@@ -45,43 +40,157 @@ window.RETE_PLAYGROUND_CATALOG = {
       },
       {
         family: "Select",
-        label: "Researcher profiles",
+        label: "Author profiles",
         view: "table",
-        tip: "Names, h-index values, and institutions joined through the academic profile graph.",
+        tip: "Names, integer-typed h-index values, and affiliations, highest h-index first.",
         q: `PREFIX ex: <http://ex/>
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
-SELECT ?researcher ?name ?h ?institution WHERE {
-  ?researcher a ex:Researcher ;
+SELECT ?author ?name ?h ?institution WHERE {
+  ?author a ex:Person ;
     foaf:name ?name ;
     ex:hIndex ?h ;
-    ex:affiliatedWith ?institution
+    ex:affiliation ?institution
 } ORDER BY DESC(?h) LIMIT 50`
       },
       {
-        family: "Path",
-        label: "Advisor lineage",
+        family: "Select",
+        label: "High-novelty papers",
         view: "table",
-        tip: "Transitive advisor chain from a known researcher seed.",
+        tip: "FILTER over an xsd:double literal (noveltyScore is log-normal, so the tail is short).",
         q: `PREFIX ex: <http://ex/>
-SELECT DISTINCT ?mentor WHERE { <http://ex/r/bob> ex:advisedBy+ ?mentor }`
+PREFIX dct: <http://purl.org/dc/terms/>
+SELECT ?title ?score WHERE {
+  ?paper ex:noveltyScore ?score ;
+    dct:title ?title .
+  FILTER(?score > 2.0)
+} ORDER BY DESC(?score)`
+      },
+      {
+        family: "Path",
+        label: "Citation closure",
+        view: "table",
+        tip: "Transitive cito:cites+ from one recent paper reaches 73 papers (citations only point backwards in time).",
+        q: `PREFIX cito: <http://purl.org/spar/cito/>
+SELECT DISTINCT ?reached WHERE { <http://ex/paper/245> cito:cites+ ?reached }`
       },
       {
         family: "Aggregate",
-        label: "Coauthor degree",
+        label: "Most-cited papers",
         view: "table",
-        tip: "Counts direct coauthors per researcher.",
+        tip: "The preferential-attachment power law: a few papers soak up most citations.",
+        q: `PREFIX cito: <http://purl.org/spar/cito/>
+PREFIX dct: <http://purl.org/dc/terms/>
+SELECT ?title (COUNT(?citing) AS ?citations) WHERE {
+  ?citing cito:cites ?paper .
+  ?paper dct:title ?title
+} GROUP BY ?title ORDER BY DESC(?citations) LIMIT 10`
+      },
+      {
+        family: "Aggregate",
+        label: "Papers per field",
+        view: "table",
+        tip: "Zipfian field sizes: genomics dominates, the tail is thin.",
         q: `PREFIX ex: <http://ex/>
-SELECT ?researcher (COUNT(?coauthor) AS ?coauthors) WHERE {
-  ?researcher ex:coauthor ?coauthor
-} GROUP BY ?researcher ORDER BY DESC(?coauthors)`
+SELECT ?field (COUNT(?paper) AS ?papers) WHERE {
+  ?paper a ex:Paper ;
+    ex:hasField ?field
+} GROUP BY ?field ORDER BY DESC(?papers)`
       },
       {
         family: "Construct",
-        label: "Coauthor graph",
+        label: "Coauthor ego network",
         view: "graph",
-        tip: "Constructs a node-link graph of coauthor edges.",
+        tip: "Two hops of coauthorship around the busiest hub author.",
         q: `PREFIX ex: <http://ex/>
-CONSTRUCT { ?a ex:coauthor ?b } WHERE { ?a ex:coauthor ?b }`
+CONSTRUCT { ?a ex:coauthor ?b } WHERE {
+  { <http://ex/author/105> ex:coauthor ?b BIND(<http://ex/author/105> AS ?a) }
+  UNION
+  { <http://ex/author/105> ex:coauthor ?a . ?a ex:coauthor ?b }
+}`
+      }
+    ],
+    "scholar-noisy": [
+      {
+        family: "Summary",
+        label: "Predicate totals",
+        strategy: "progressive",
+        view: "table",
+        tip: "Exact predicate counts from the pyramid summary; the triple index is skipped.",
+        q: `SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p`
+      },
+      {
+        family: "Select",
+        label: "Mangled titles",
+        view: "table",
+        tip: "REGEX catches the whitespace mess the noise knob injected into 20 titles.",
+        q: `PREFIX dct: <http://purl.org/dc/terms/>
+SELECT ?paper ?title WHERE {
+  ?paper dct:title ?title .
+  FILTER(REGEX(?title, "^  "))
+}`
+      },
+      {
+        family: "Select",
+        label: "Authors missing ORCID",
+        view: "table",
+        tip: "NOT EXISTS finds the 16 author records the noise stripped an ORCID from.",
+        q: `PREFIX ex: <http://ex/>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+SELECT ?author ?name WHERE {
+  ?author a ex:Person ;
+    foaf:name ?name .
+  FILTER NOT EXISTS { ?author ex:orcid ?orcid }
+}`
+      },
+      {
+        family: "Path",
+        label: "Noise-inflated closure",
+        view: "table",
+        tip: "The same seed paper reaches 16 papers in the clean graph - rewired citations inflate it to 228 here.",
+        q: `PREFIX cito: <http://purl.org/spar/cito/>
+SELECT DISTINCT ?reached WHERE { <http://ex/paper/249> cito:cites+ ?reached }`
+      },
+      {
+        family: "Aggregate",
+        label: "Temporal violations",
+        view: "table",
+        tip: "Papers citing later-dated papers - impossible without noise; 298 of them here.",
+        q: `PREFIX cito: <http://purl.org/spar/cito/>
+PREFIX dct: <http://purl.org/dc/terms/>
+SELECT (COUNT(*) AS ?violations) WHERE {
+  ?citing cito:cites ?cited .
+  ?citing dct:date ?d1 .
+  ?cited dct:date ?d2 .
+  FILTER(STR(?d2) > STR(?d1))
+}`
+      },
+      {
+        family: "Aggregate",
+        label: "Cross-field citation pairs",
+        view: "table",
+        tip: "Citations that jump fields are mostly noise rewires; the clean graph keeps them rare.",
+        q: `PREFIX ex: <http://ex/>
+PREFIX cito: <http://purl.org/spar/cito/>
+SELECT ?from ?to (COUNT(*) AS ?n) WHERE {
+  ?a cito:cites ?b .
+  ?a ex:hasField ?from .
+  ?b ex:hasField ?to .
+  FILTER(?from != ?to)
+} GROUP BY ?from ?to ORDER BY DESC(?n) LIMIT 15`
+      },
+      {
+        family: "Construct",
+        label: "Cross-field cites from genomics",
+        view: "graph",
+        tip: "Draws the noise: genomics papers citing into other fields.",
+        q: `PREFIX ex: <http://ex/>
+PREFIX cito: <http://purl.org/spar/cito/>
+CONSTRUCT { ?a ex:crossFieldCite ?b } WHERE {
+  ?a cito:cites ?b .
+  ?a ex:hasField <http://ex/field/genomics> .
+  ?b ex:hasField ?other .
+  FILTER(?other != <http://ex/field/genomics>)
+}`
       }
     ],
     citations: [
@@ -218,132 +327,67 @@ SELECT ?package (COUNT(?dependency) AS ?deps) WHERE {
         q: `PREFIX ex: <http://ex/>
 CONSTRUCT { ?a ex:dependsOn ?b } WHERE { ?a ex:dependsOn ?b }`
       }
-    ],
-    papers: [
-      {
-        family: "Summary",
-        label: "Count citation edges",
-        strategy: "progressive",
-        view: "table",
-        tip: "Exact compact citation count from summary metadata.",
-        q: `PREFIX ex: <http://ex/>
-SELECT (COUNT(*) AS ?citationEdges) WHERE { ?s ex:cites ?o }`
-      },
-      {
-        family: "Select",
-        label: "Paper titles",
-        view: "table",
-        tip: "Lists papers and titles.",
-        q: `PREFIX ex: <http://ex/>
-SELECT ?paper ?title WHERE { ?paper ex:title ?title }`
-      },
-      {
-        family: "Path",
-        label: "Reachable from p1",
-        view: "table",
-        tip: "Transitive citation reachability from p1.",
-        q: `PREFIX ex: <http://ex/>
-SELECT DISTINCT ?reached WHERE { ex:p1 ex:cites+ ?reached }`
-      },
-      {
-        family: "Aggregate",
-        label: "Citations made per paper",
-        view: "table",
-        tip: "Outgoing citation counts.",
-        q: `PREFIX ex: <http://ex/>
-SELECT ?paper (COUNT(?cited) AS ?cites) WHERE {
-  ?paper ex:cites ?cited
-} GROUP BY ?paper ORDER BY DESC(?cites)`
-      },
-      {
-        family: "Construct",
-        label: "Citation graph",
-        view: "graph",
-        tip: "Draws paper citation clusters.",
-        q: `PREFIX ex: <http://ex/>
-CONSTRUCT { ?a ex:cites ?b } WHERE { ?a ex:cites ?b }`
-      }
-    ],
-    researchers: [
-      {
-        family: "Summary",
-        label: "Count coauthor edges",
-        strategy: "progressive",
-        view: "table",
-        tip: "Exact coauthor count from summary metadata.",
-        q: `PREFIX ex: <http://ex/>
-SELECT (COUNT(*) AS ?coauthorEdges) WHERE { ?s ex:coauthor ?o }`
-      },
-      {
-        family: "Select",
-        label: "Coauthorships",
-        view: "table",
-        tip: "Lists direct coauthor edges.",
-        q: `PREFIX ex: <http://ex/>
-SELECT ?a ?b WHERE { ?a ex:coauthor ?b } LIMIT 100`
-      },
-      {
-        family: "Path",
-        label: "r1 citation neighborhood",
-        view: "table",
-        tip: "Transitive citation closure from r1.",
-        q: `PREFIX ex: <http://ex/>
-SELECT DISTINCT ?reached WHERE { ex:r1 ex:cites+ ?reached }`
-      },
-      {
-        family: "Aggregate",
-        label: "Most collaborative",
-        view: "table",
-        tip: "Direct coauthor count per researcher.",
-        q: `PREFIX ex: <http://ex/>
-SELECT ?researcher (COUNT(?coauthor) AS ?n) WHERE {
-  ?researcher ex:coauthor ?coauthor
-} GROUP BY ?researcher ORDER BY DESC(?n)`
-      },
-      {
-        family: "Construct",
-        label: "Cites and coauthors",
-        view: "graph",
-        tip: "Draws the relation mix between citations and coauthorships.",
-        q: `PREFIX ex: <http://ex/>
-CONSTRUCT { ?a ?p ?b } WHERE {
-  { ?a ex:cites ?b BIND(ex:cites AS ?p) }
-  UNION
-  { ?a ex:coauthor ?b BIND(ex:coauthor AS ?p) }
-}`
-      }
     ]
   },
   shacl: {
-    research: [
+    scholar: [
       {
-        label: "Researcher profile",
-        tip: "Checks that every researcher has a name, h-index, and institution.",
+        label: "Paper integrity",
+        tip: "Every paper needs exactly one title, a venue, and a double-typed novelty score - the clean graph conforms.",
         shape: `@prefix ex: <http://ex/> .
-@prefix foaf: <http://xmlns.com/foaf/0.1/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:ResearcherProfileShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Researcher ;
-  sh:property [ sh:path foaf:name ; sh:minCount 1 ; sh:maxCount 1 ] ;
-  sh:property [ sh:path ex:hIndex ; sh:minCount 1 ] ;
-  sh:property [ sh:path ex:affiliatedWith ; sh:minCount 1 ; sh:class ex:Institution ] .`
-      },
-      {
-        label: "Journal impact integer",
-        tip: "Intentional violation if impact factors are decimal-like literals.",
-        shape: `@prefix ex: <http://ex/> .
+@prefix dct: <http://purl.org/dc/terms/> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-ex:JournalImpactShape
+ex:PaperShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Paper ;
+  sh:property [ sh:path dct:title ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path ex:publishedIn ; sh:minCount 1 ] ;
+  sh:property [ sh:path ex:noveltyScore ; sh:datatype xsd:double ] .`
+      },
+      {
+        label: "Single keyword only",
+        tip: "Intentional violation: papers carry 2-5 keywords by design, so maxCount 1 flags all 240 of them.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:SingleKeywordShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Paper ;
+  sh:property [
+    sh:path ex:keyword ;
+    sh:maxCount 1 ;
+    sh:message "Papers are multi-keyword by design - intentional violation."
+  ] .`
+      }
+    ],
+    "scholar-noisy": [
+      {
+        label: "Author completeness",
+        tip: "The noise knob dropped ORCIDs and h-indexes - 27 violations here; the clean graph conforms.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:PersonCompleteShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:orcid ; sh:minCount 1 ; sh:message "Author has no ORCID." ] ;
+  sh:property [ sh:path ex:hIndex ; sh:minCount 1 ; sh:message "Author has no h-index." ] .`
+      },
+      {
+        label: "Journals need an ISSN",
+        tip: "Four journals lost their ISSN to the noise knob.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:JournalShape
   a sh:NodeShape ;
   sh:targetClass ex:Journal ;
   sh:property [
-    sh:path ex:impactFactor ;
-    sh:datatype xsd:integer ;
-    sh:message "Impact factor must be typed as xsd:integer."
+    sh:path ex:issn ;
+    sh:minCount 1 ;
+    sh:message "Journal lost its ISSN."
   ] .`
       }
     ],
@@ -411,47 +455,25 @@ ex:ApplicationDependencyShape
     sh:minCount 1
   ] .`
       }
-    ],
-    papers: [
-      {
-        label: "Paper text fields",
-        tip: "Every paper should have title and abstract literals.",
-        shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:PaperTextShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Paper ;
-  sh:property [ sh:path ex:title ; sh:minCount 1 ] ;
-  sh:property [ sh:path ex:abstract ; sh:minCount 1 ] .`
-      }
-    ],
-    researchers: [
-      {
-        label: "Two coauthors required",
-        tip: "Intentional violation in the small coauthorship graph.",
-        shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:ResearcherCoauthorShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Researcher ;
-  sh:property [
-    sh:path ex:coauthor ;
-    sh:minCount 2 ;
-    sh:message "Researcher has fewer than two coauthors."
-  ] .`
-      }
     ]
   },
   reach: {
-    research: {
+    scholar: {
       pred: "<http://ex/coauthor>",
-      seeds: "<http://ex/r/alice>",
+      seeds: "<http://ex/author/105>",
       examples: [
-        { label: "Alice coauthors", pred: "<http://ex/coauthor>", seeds: "<http://ex/r/alice>", reverse: false },
-        { label: "Who cites p3", pred: "<http://ex/cites>", seeds: "<http://ex/p/p3>", reverse: true },
-        { label: "Bob advisor lineage", pred: "<http://ex/advisedBy>", seeds: "<http://ex/r/bob>", reverse: false }
+        { label: "Hub author's coauthor closure", pred: "<http://ex/coauthor>", seeds: "<http://ex/author/105>", reverse: false },
+        { label: "Who cites the most-cited paper", pred: "<http://purl.org/spar/cito/cites>", seeds: "<http://ex/paper/15>", reverse: true },
+        { label: "Citation closure of paper 245", pred: "<http://purl.org/spar/cito/cites>", seeds: "<http://ex/paper/245>", reverse: false }
+      ]
+    },
+    "scholar-noisy": {
+      pred: "<http://purl.org/spar/cito/cites>",
+      seeds: "<http://ex/paper/249>",
+      examples: [
+        { label: "Noise-inflated citation closure", pred: "<http://purl.org/spar/cito/cites>", seeds: "<http://ex/paper/249>", reverse: false },
+        { label: "Who cites paper 14 (transitively)", pred: "<http://purl.org/spar/cito/cites>", seeds: "<http://ex/paper/14>", reverse: true },
+        { label: "Hub author's coauthor closure", pred: "<http://ex/coauthor>", seeds: "<http://ex/author/120>", reverse: false }
       ]
     },
     citations: {
@@ -477,29 +499,13 @@ ex:ResearcherCoauthorShape
         { label: "App dependency closure", pred: "<http://ex/dependsOn>", seeds: "<http://ex/app>", reverse: false },
         { label: "Log4x blast radius", pred: "<http://ex/dependsOn>", seeds: "<http://ex/log4x>", reverse: true }
       ]
-    },
-    papers: {
-      pred: "<http://ex/cites>",
-      seeds: "<http://ex/p1>",
-      examples: [
-        { label: "p1 citation closure", pred: "<http://ex/cites>", seeds: "<http://ex/p1>", reverse: false },
-        { label: "Who cites p5", pred: "<http://ex/cites>", seeds: "<http://ex/p5>", reverse: true }
-      ]
-    },
-    researchers: {
-      pred: "<http://ex/coauthor>",
-      seeds: "<http://ex/r1>",
-      examples: [
-        { label: "r1 coauthors", pred: "<http://ex/coauthor>", seeds: "<http://ex/r1>", reverse: false }
-      ]
     }
   },
   provenance: {
-    research: { predicate: "<http://ex/coauthor>" },
+    scholar: { predicate: "<http://purl.org/spar/cito/cites>", object: "<http://ex/paper/15>" },
+    "scholar-noisy": { predicate: "<http://purl.org/spar/cito/cites>", object: "<http://ex/paper/14>" },
     citations: { predicate: "<http://purl.org/spar/cito/cites>", object: "<https://doi.org/10.1038/s41586-021-03819-2>" },
     typed: { predicate: "<http://ex/knows>" },
-    deps: { predicate: "<http://ex/dependsOn>" },
-    papers: { predicate: "<http://ex/cites>" },
-    researchers: { predicate: "<http://ex/coauthor>" }
+    deps: { predicate: "<http://ex/dependsOn>" }
   }
 };

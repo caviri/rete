@@ -297,6 +297,9 @@ give natural variability at the same size/noise point. A per-kind breakdown of
 every noise event goes to stderr, so a test knows exactly what mess it got.
 (<code>scripts/gen_graph.py</code> is the older, simpler social-graph generator used by
 <code>scripts/bench.sh</code>.)</p>
+<p>The playground's <code>scholar</code> / <code>scholar-noisy</code> demo datasets are built with this
+generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
+the <code>scripts/build_playground.py</code> docstring).</p>
 <h2>Testing</h2>
 <pre><code class="language-sh">cargo test            # full suite (unit, round-trip, robustness, ranged, HTTP)
 cargo clippy --workspace --all-targets -- -D warnings

@@ -141,6 +141,10 @@ every noise event goes to stderr, so a test knows exactly what mess it got.
 (`scripts/gen_graph.py` is the older, simpler social-graph generator used by
 `scripts/bench.sh`.)
 
+The playground's `scholar` / `scholar-noisy` demo datasets are built with this
+generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
+the `scripts/build_playground.py` docstring).
+
 ## Testing
 
 ```sh
