@@ -67,19 +67,23 @@ wins.
 
 ### Community-split evaluation
 
-`eval_select_communities` evaluates a SELECT **per pyramid community** and
-merges: each community's subjects are pushed into the plan as a `VALUES`
-binding, the partial rows are concatenated, and the solution modifiers
-(`GROUP BY` / `ORDER BY` / `LIMIT` / `DISTINCT`) run once on the union —
-"compute per community, aggregate globally", with rows identical to the
-whole-graph answer. This is sound only for **subject-star** queries over the
-default graph — one basic graph pattern (FILTERs allowed) whose every triple
-pattern shares the same subject variable — because tiles partition triples by
-their subject's community, so each solution lives entirely inside one
-community. Any other shape (multi-hop joins, UNION, paths) is **rejected with
-a clear error** rather than answered from a split that could drop
-cross-community rows. The playground's "Split by community" strategy uses
-this; natively it is the seam for per-community parallel evaluation.
+`eval_select_communities` evaluates a SELECT with a **split-where-sound,
+global-where-not** strategy that always returns exactly the whole-graph
+answer. The one place the pyramid partition genuinely applies is a *subject
+star* — a group of triple patterns sharing one variable subject — because
+tiles partition triples by their subject's community, so a star's solutions
+partition cleanly by community. Each BGP is decomposed into its stars; each
+star is evaluated per community (the community's subjects pushed in as a
+`VALUES` binding, which the engine turns into index probes); and the stars
+are recombined with **global hash joins**, so multi-hop joins work and
+solutions that cross communities survive. `FILTER` / `UNION` / `OPTIONAL` /
+`MINUS` recurse through the same machinery; property paths, inline `VALUES`,
+and `GRAPH` blocks evaluate globally inside the split (exact by definition);
+and `GROUP BY` / `ORDER BY` / `LIMIT` / `DISTINCT` run once on the merged
+rows. A query is refused only when nothing in it can split (no BGP with a
+variable subject — the strategy would add nothing) or under `FROM` / `FROM
+NAMED`. The playground's "Split by community" strategy uses this; natively
+the per-star, per-community partials are the seam for parallel evaluation.
 
 ## Not supported
 

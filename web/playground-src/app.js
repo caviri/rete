@@ -772,8 +772,8 @@
       if (strategy === "progressive") {
         msg += " — Progressive answers COUNT/ASK shapes straight from the pyramid summary, " +
           "without touching the index. For this query, use the Whole-index strategy — or " +
-          "Split by community if it is a subject-star query (compute per community, merge, " +
-          "aggregate globally).";
+          "Split by community (stars compute per community, joins and aggregation run " +
+          "globally on the merged partials).";
       }
       showError("out", msg);
       renderProgressiveInfo(null);
@@ -785,9 +785,9 @@
     const total = parts.reduce((a, p) => a + p.rows, 0);
     const contributing = parts.filter((p) => p.rows > 0);
     $("commOut").innerHTML =
-      `<div class="banner">Computed per pyramid community, merged, modifiers applied globally: ` +
-      `${contributing.length} of ${parts.length} communities contributed ${total} partial row(s) — ` +
-      `the merged result is byte-identical to the whole-index answer.</div>` +
+      `<div class="banner">Subject stars computed per pyramid community, recombined with global ` +
+      `joins, modifiers applied once: ${contributing.length} of ${parts.length} communities ` +
+      `contributed ${total} partial row(s) — the merged result is identical to the whole-index answer.</div>` +
       `<table><thead><tr><th>community</th><th>subjects</th><th>partial rows</th></tr></thead><tbody>` +
       contributing.slice(0, 60).map((p) =>
         `<tr><td>C${p.community}</td><td>${p.subjects}</td><td>${p.rows}</td></tr>`).join("") +

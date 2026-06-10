@@ -70,7 +70,7 @@ SELECT ?title ?score WHERE {
         label: "High-novelty, split by community",
         strategy: "community",
         view: "table",
-        tip: "Subject-star queries decompose: each pyramid community is evaluated separately, then merged with FILTER/ORDER BY semantics intact — identical rows to the whole-index run.",
+        tip: "The split strategy: subject stars evaluate per pyramid community, joins recombine the partials globally, FILTER/ORDER BY semantics intact — identical rows to the whole-index run.",
         q: `PREFIX ex: <http://ex/>
 PREFIX dct: <http://purl.org/dc/terms/>
 SELECT ?title ?score WHERE {

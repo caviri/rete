@@ -480,15 +480,17 @@ pub fn sparql_url(url: &str, query: &str, format: &str) -> Result<String, JsValu
     serde_json::to_string(&v).map_err(err)
 }
 
-/// Evaluate a SELECT **per pyramid community**, then merge: each community's
-/// subjects are pushed into the plan as a VALUES binding, the partial rows are
-/// concatenated, and GROUP BY / ORDER BY / LIMIT / DISTINCT run once on the
-/// union — so the rows are identical to [`query`]'s answer ("compute per
-/// community, aggregate globally"). Sound only for subject-star queries (one
-/// BGP, FILTERs allowed, every triple pattern sharing the same subject
-/// variable) over the default graph; anything else errors rather than
-/// returning a wrong split answer. JSON: the SELECT envelope plus
-/// `"communities": [{ "community", "subjects", "rows" }, …]`.
+/// Evaluate a SELECT with the **community-split strategy**: every basic graph
+/// pattern is decomposed into subject stars, each star is evaluated per
+/// pyramid community (the members pushed in as a VALUES binding), and the
+/// stars are recombined with global hash joins — so multi-hop joins work and
+/// cross-community solutions survive. FILTER / UNION / OPTIONAL / MINUS
+/// recurse; paths and GRAPH blocks evaluate globally inside the split; GROUP
+/// BY / ORDER BY / LIMIT / DISTINCT run once on the merged rows. Answers are
+/// identical to [`query`]'s. Refused only when nothing in the query can
+/// split (no BGP with a variable subject) or for FROM / FROM NAMED. JSON:
+/// the SELECT envelope plus `"communities": [{ "community", "subjects",
+/// "rows" }, …]` (rows contributed per community across all split stars).
 #[wasm_bindgen]
 pub fn query_communities(
     bytes: &[u8],
