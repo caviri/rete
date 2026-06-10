@@ -85,8 +85,32 @@ ORDER BY entities DESC LIMIT 20;</textarea>
   </section>
 </main>
 
+<script type="text/plain" id="reteGlue">__GLUE_JS__</script>
+<script>window.RETE_WASM_B64 = "__WASM_B64__";</script>
 <script type="module">
 import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
+
+// rete sparql_url runs in a Web Worker (sync XHR is worker-only). The worker is
+// built on the fly from this page's own inlined wasm glue (#reteGlue) + a small
+// harness, so the page is self-contained (no ./pkg files) — same trick the
+// offline playground uses.
+const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
+const RETE_HARNESS = ";(function(){var ready=null;self.onmessage=function(e){var m=e.data;" +
+  "if(m.type==='init'){ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
+  "Promise.resolve(ready).then(function(){try{self.postMessage({ok:true,json:wasm_bindgen.sparql_url(m.url,m.query,'table')});}" +
+  "catch(err){self.postMessage({ok:false,error:String(err)});}});};})();";
+let _reteWorker = null, _reteReady = null;
+function ensureReteWorker() {
+  if (_reteWorker) return _reteReady;
+  const glue = document.getElementById("reteGlue").textContent;
+  _reteWorker = new Worker(URL.createObjectURL(new Blob([glue + RETE_HARNESS], { type: "text/javascript" })));
+  let resolve; _reteReady = new Promise((r) => { resolve = r; });
+  _reteWorker.addEventListener("message", function onready(e) {
+    if (e.data && e.data.type === "ready") { resolve(); _reteWorker.removeEventListener("message", onready); }
+  });
+  _reteWorker.postMessage({ type: "init", bytes: b64ToBytes(window.RETE_WASM_B64) });
+  return _reteReady;
+}
 
 const BUCKET = "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-100MB";
 const RETE_URL = `${BUCKET}/wikidata.rete?download=true`;
@@ -112,21 +136,21 @@ const reteExamples = [
 $("reteEx").innerHTML = reteExamples.map((e, i) => `<button class="ex" data-i="${i}">${e[0]}</button>`).join("");
 $("reteEx").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => { $("sparql").value = reteExamples[b.dataset.i][1]; });
 
-let reteWorker = null;
 $("reteRun").onclick = () => {
-  if (!reteWorker) reteWorker = new Worker(new URL("./sparql-url-worker.js", import.meta.url), { type: "module" });
   $("reteMeta").textContent = "querying graph…";
   $("reteOut").innerHTML = "";
   const t0 = performance.now();
-  reteWorker.onmessage = (e) => {
-    const dt = (performance.now() - t0).toFixed(0);
-    if (!e.data.ok) { $("reteMeta").textContent = ""; $("reteOut").innerHTML = `<p class="err">${e.data.error}</p>`; return; }
-    const res = JSON.parse(e.data.json), r = res.remote || {};
-    const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
-    $("reteMeta").textContent = `${(res.rows || []).length} rows · ${r.requests || 0} range req · ${((r.bytes||0)/1048576).toFixed(1)} MB of ${((r.fileLength||0)/1048576).toFixed(0)} MB (${pct}%) · ${dt} ms`;
-    renderTable($("reteOut"), res.vars || [], res.rows || []);
-  };
-  reteWorker.postMessage({ url: RETE_URL, query: $("sparql").value });
+  ensureReteWorker().then((w0) => {
+    _reteWorker.onmessage = (e) => {
+      const dt = (performance.now() - t0).toFixed(0);
+      if (!e.data.ok) { $("reteMeta").textContent = ""; $("reteOut").innerHTML = `<p class="err">${e.data.error}</p>`; return; }
+      const res = JSON.parse(e.data.json), r = res.remote || {};
+      const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
+      $("reteMeta").textContent = `${(res.rows || []).length} rows · ${r.requests || 0} range req · ${((r.bytes||0)/1048576).toFixed(1)} MB of ${((r.fileLength||0)/1048576).toFixed(0)} MB (${pct}%) · ${dt} ms`;
+      renderTable($("reteOut"), res.vars || [], res.rows || []);
+    };
+    _reteWorker.postMessage({ url: RETE_URL, query: $("sparql").value });
+  });
 };
 
 /* ---- Tables: DuckDB-WASM over remote Parquet ---- */
