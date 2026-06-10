@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wikidata-100MB — lazy explorer (graph vs tables)</title>
+<style>
+  :root {
+    --ink:#17211d; --muted:#66746e; --paper:#f6f8f7; --surface:#fff; --side:#eef4ef;
+    --line:#d9e2de; --line-strong:#aebfb8; --accent:#147d69; --accent-dark:#0b4f42; --accent-2:#c84f2f;
+    --code:#eef3f1; --code-border:#cfd9d5;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font:14px/1.55 "Aptos","Segoe UI",system-ui,sans-serif; }
+  header { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+    padding:12px 20px; background:var(--side); border-bottom:1px solid var(--line); }
+  header h1 { font:700 20px Georgia,serif; margin:0; }
+  header .sub { color:var(--muted); font-size:13px; }
+  header a { color:var(--accent-dark); }
+  .intro { padding:10px 20px; color:var(--muted); font-size:13px; max-width:1100px; }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px 20px 40px; align-items:start; }
+  @media (max-width:980px){ main { grid-template-columns:1fr; } }
+  .panel { border:1px solid var(--line); border-radius:10px; background:var(--surface);
+    box-shadow:0 14px 38px rgba(32,47,41,.08); padding:14px 16px; }
+  .panel h2 { font-size:15px; margin:0 0 2px; }
+  .panel .tech { color:var(--accent-dark); font-weight:700; font-size:12px; }
+  .panel p.note { color:var(--muted); font-size:12.5px; margin:6px 0 10px; }
+  textarea { width:100%; min-height:150px; border:1px solid var(--code-border); border-radius:8px;
+    background:var(--code); padding:10px; font:13px/1.45 "Cascadia Mono",Consolas,monospace; resize:vertical; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+  button { min-height:34px; border:1px solid var(--accent-dark); border-radius:6px; background:var(--accent);
+    color:#f4faf8; font-weight:700; padding:6px 13px; cursor:pointer; }
+  button:hover { background:var(--accent-dark); }
+  button.ex, select { border:1px solid var(--line-strong); background:var(--surface); color:var(--ink);
+    font-weight:600; border-radius:6px; min-height:30px; padding:4px 8px; cursor:pointer; font-size:12px; }
+  .meta { color:var(--muted); font-size:12px; }
+  .out { margin-top:10px; max-height:460px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+  table { border-collapse:collapse; width:100%; font:12px/1.4 "Cascadia Mono",Consolas,monospace; }
+  th,td { border:1px solid var(--line); padding:5px 7px; text-align:left; vertical-align:top;
+    max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  th { background:#eaf1ed; position:sticky; top:0; }
+  .err { color:#b42318; padding:8px; }
+  code { background:var(--code); border:1px solid var(--code-border); border-radius:4px; padding:1px 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Wikidata-100MB</h1>
+  <span class="sub">one ~12M-triple graph, queried two ways — both <strong>lazily over HTTP range</strong>, nothing downloaded whole</span>
+  <a href="index.html">← playground</a>
+</header>
+<p class="intro">
+  The same Wikidata slice lives on Hugging Face as a <code>.rete</code> graph and as columnar
+  <code>.parquet</code> entity-tables (plus DuckDB/SQLite). This page queries both in your browser
+  fetching only the bytes each query touches: the graph via rete's <code>sparql_url</code> (a Web
+  Worker doing range reads), the tables via DuckDB-WASM's httpfs over the remote Parquet. Compare
+  the same questions across the graph and the table model.
+</p>
+<main>
+  <section class="panel">
+    <h2>Graph <span class="tech">· rete sparql_url (lazy range)</span></h2>
+    <p class="note">SPARQL over <code>wikidata.rete</code>. Bound subjects/predicates fetch only the
+      tiles holding them. Returns recovered datatypes (e.g. <code>geo:wktLiteral</code>).</p>
+    <div class="row" id="reteEx"></div>
+    <textarea id="sparql">SELECT ?p ?o WHERE { &lt;http://www.wikidata.org/entity/Q100001&gt; ?p ?o }</textarea>
+    <div class="row"><button id="reteRun">Run SPARQL</button><span class="meta" id="reteMeta"></span></div>
+    <div class="out" id="reteOut"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Tables <span class="tech">· DuckDB-WASM over remote Parquet (httpfs)</span></h2>
+    <p class="note">One Parquet table per entity type. Pick a type (from <code>_manifest.parquet</code>),
+      or write SQL. DuckDB fetches only the row groups/columns it needs.</p>
+    <div class="row">
+      <select id="tablePick"><option>loading manifest…</option></select>
+      <button class="ex" id="manifestBtn">Show manifest</button>
+    </div>
+    <textarea id="sql">-- pick a type above, or query the manifest
+SELECT class, label, entities, named_columns, file
+FROM read_parquet('{MANIFEST}')
+ORDER BY entities DESC LIMIT 20;</textarea>
+    <div class="row"><button id="duckRun">Run SQL</button><span class="meta" id="duckMeta">initializing DuckDB-WASM…</span></div>
+    <div class="out" id="duckOut"></div>
+  </section>
+</main>
+
+<script type="module">
+import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
+
+const BUCKET = "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-100MB";
+const RETE_URL = `${BUCKET}/wikidata.rete?download=true`;
+const PARQUET = (f) => `${BUCKET}/parquet/${f}?download=true`;
+const MANIFEST = PARQUET("_manifest.parquet");
+const $ = (id) => document.getElementById(id);
+
+function renderTable(target, cols, rows) {
+  if (!rows.length) { target.innerHTML = '<p class="meta" style="padding:8px">no rows</p>'; return; }
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]));
+  target.innerHTML = "<table><thead><tr>" + cols.map((c) => `<th>${esc(c)}</th>`).join("") +
+    "</tr></thead><tbody>" + rows.slice(0, 200).map((r) =>
+      "<tr>" + cols.map((c) => `<td title="${esc(r[c])}">${esc(r[c])}</td>`).join("") + "</tr>").join("") +
+    "</tbody></table>";
+}
+
+/* ---- Graph: rete sparql_url via the shared worker ---- */
+const reteExamples = [
+  ["Facts about Bemelen (Q100001)", "SELECT ?p ?o WHERE { <http://www.wikidata.org/entity/Q100001> ?p ?o }"],
+  ["Its coordinate (wktLiteral)", "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?c WHERE { <http://www.wikidata.org/entity/Q100001> wdt:P625 ?c }"],
+  ["Labels of an entity", "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?l WHERE { <http://www.wikidata.org/entity/Q100001> rdfs:label ?l } LIMIT 30"],
+];
+$("reteEx").innerHTML = reteExamples.map((e, i) => `<button class="ex" data-i="${i}">${e[0]}</button>`).join("");
+$("reteEx").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => { $("sparql").value = reteExamples[b.dataset.i][1]; });
+
+let reteWorker = null;
+$("reteRun").onclick = () => {
+  if (!reteWorker) reteWorker = new Worker(new URL("./sparql-url-worker.js", import.meta.url), { type: "module" });
+  $("reteMeta").textContent = "querying graph…";
+  $("reteOut").innerHTML = "";
+  const t0 = performance.now();
+  reteWorker.onmessage = (e) => {
+    const dt = (performance.now() - t0).toFixed(0);
+    if (!e.data.ok) { $("reteMeta").textContent = ""; $("reteOut").innerHTML = `<p class="err">${e.data.error}</p>`; return; }
+    const res = JSON.parse(e.data.json), r = res.remote || {};
+    const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
+    $("reteMeta").textContent = `${(res.rows || []).length} rows · ${r.requests || 0} range req · ${((r.bytes||0)/1048576).toFixed(1)} MB of ${((r.fileLength||0)/1048576).toFixed(0)} MB (${pct}%) · ${dt} ms`;
+    renderTable($("reteOut"), res.vars || [], res.rows || []);
+  };
+  reteWorker.postMessage({ url: RETE_URL, query: $("sparql").value });
+};
+
+/* ---- Tables: DuckDB-WASM over remote Parquet ---- */
+let conn = null;
+async function initDuck() {
+  const bundles = duckdb.getJsDelivrBundles();
+  const bundle = await duckdb.selectBundle(bundles);
+  const worker = await duckdb.createWorker(bundle.mainWorker);
+  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+  conn = await db.connect();
+  $("duckMeta").textContent = "DuckDB-WASM ready";
+  // Populate the type picker from the manifest.
+  try {
+    const res = await conn.query(`SELECT file, label, class, entities FROM read_parquet('${MANIFEST}') ORDER BY entities DESC`);
+    const rows = res.toArray().map((r) => r.toJSON());
+    $("tablePick").innerHTML = `<option value="">— pick a type —</option>` + rows.map((r) =>
+      `<option value="${r.file}">${(r.label || r.class).replace(/[<>]/g,"")} (${r.entities})</option>`).join("");
+  } catch (e) { $("tablePick").innerHTML = `<option>manifest load failed</option>`; }
+}
+$("sql").value = $("sql").value.replace("{MANIFEST}", MANIFEST);
+$("tablePick").onchange = () => {
+  const f = $("tablePick").value;
+  if (f) $("sql").value = `SELECT * FROM read_parquet('${PARQUET(f)}') LIMIT 20;`;
+};
+$("manifestBtn").onclick = () => { $("sql").value = `SELECT class, label, entities, named_columns, file\nFROM read_parquet('${MANIFEST}') ORDER BY entities DESC LIMIT 30;`; };
+$("duckRun").onclick = async () => {
+  if (!conn) { $("duckMeta").textContent = "DuckDB still initializing…"; return; }
+  $("duckMeta").textContent = "querying tables…"; $("duckOut").innerHTML = "";
+  const t0 = performance.now();
+  try {
+    const res = await conn.query($("sql").value);
+    const cols = res.schema.fields.map((f) => f.name);
+    const rows = res.toArray().map((r) => {
+      const o = r.toJSON();
+      for (const k of cols) if (typeof o[k] === "object" && o[k] !== null) o[k] = JSON.stringify(o[k]);
+      return o;
+    });
+    $("duckMeta").textContent = `${rows.length} rows · ${(performance.now() - t0).toFixed(0)} ms (fetched only needed ranges)`;
+    renderTable($("duckOut"), cols, rows);
+  } catch (e) {
+    $("duckMeta").textContent = ""; $("duckOut").innerHTML = `<p class="err">${String(e)}</p>`;
+  }
+};
+initDuck().catch((e) => { $("duckMeta").textContent = "DuckDB init failed: " + e; });
+</script>
+</body>
+</html>
