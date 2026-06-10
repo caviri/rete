@@ -158,19 +158,42 @@
     </div>
     <div class="card" data-backend="tables">
       <h3>Tables</h3>
-      <div class="tech">DuckDB-WASM &middot; httpfs</div>
-      <div class="desc">SQL over the columnar entity-tables. The <code>.parquet</code> files (115 MB)
-        and <code>wikidata.duckdb</code> (214 MB) are the <b>same tables</b> - DuckDB reads either.</div>
-      <label class="sub-opt">storage:
-        <select id="duckSrc"><option value="parquet">Parquet files</option><option value="attach">.duckdb database</option></select>
-      </label>
+      <div class="tech">DuckDB-WASM &middot; Parquet</div>
+      <div class="desc">SQL over the per-type columnar entity-tables — the <code>.parquet</code> files
+        (115 MB), read lazily over HTTP range.</div>
       <div class="stat" id="statTables">initializing...</div>
+    </div>
+    <div class="card" data-backend="duckdb">
+      <h3>DuckDB</h3>
+      <div class="tech">DuckDB-WASM &middot; .duckdb</div>
+      <div class="desc">The same tables in one <code>wikidata.duckdb</code> file (214 MB).</div>
+      <label class="sub-opt">read:
+        <select id="duckdbSrc">
+          <option value="lazy">lazy remote (range)</option>
+          <option value="cached" disabled>cached full copy</option>
+        </select>
+      </label>
+      <div class="sub-opt" style="display:flex; gap:6px; flex-wrap:wrap">
+        <button class="ex" id="cacheDuckBtn">Cache locally</button>
+      </div>
+      <progress id="cacheDuckProg" max="100" value="0" hidden style="width:100%; margin-top:6px"></progress>
+      <div class="stat" id="statDuckdb">initializing...</div>
     </div>
     <div class="card" data-backend="sqlite">
       <h3>SQLite <span class="exp">experimental</span></h3>
-      <div class="tech">sql.js-httpvfs</div>
+      <div class="tech">sql.js-httpvfs &middot; sql.js</div>
       <div class="desc">SQL over <code>wikidata.sqlite</code> (475 MB); list/map columns are JSON text.
         <a id="sqliteDl" href="#" target="_blank" rel="noopener">download</a></div>
+      <label class="sub-opt">read:
+        <select id="sqliteSrc">
+          <option value="lazy">lazy remote (httpvfs)</option>
+          <option value="cached" disabled>cached full copy</option>
+        </select>
+      </label>
+      <div class="sub-opt" style="display:flex; gap:6px; flex-wrap:wrap">
+        <button class="ex" id="cacheSqliteBtn">Cache locally</button>
+      </div>
+      <progress id="cacheSqliteProg" max="100" value="0" hidden style="width:100%; margin-top:6px"></progress>
       <div class="stat" id="statSqlite">initializing...</div>
     </div>
   </aside>
@@ -1460,8 +1483,9 @@ $("sqliteDl").href = SQLITE_URL;
 const Q859 = "http://www.wikidata.org/entity/Q859"; // Plato, a human (table Q5)
 const META = {
   graph: { title: "Graph - SPARQL", desc: "Lazy SPARQL over the .rete graph (rete sparql_url)." },
-  tables: { title: "Tables - SQL (DuckDB-WASM)", desc: "SQL over the columnar entity-tables - Parquet or .duckdb, same data." },
-  sqlite: { title: "SQLite - SQL (sql.js-httpvfs)", desc: "Lazy SQL over the remote SQLite; list/map columns are JSON text." },
+  tables: { title: "Tables - SQL (DuckDB-WASM, Parquet)", desc: "SQL over the per-type Parquet entity-tables, read lazily over HTTP." },
+  duckdb: { title: "DuckDB - SQL (.duckdb database)", desc: "SQL over the single wikidata.duckdb file - lazy range reads, or a cached full copy." },
+  sqlite: { title: "SQLite - SQL (sql.js)", desc: "SQL over the remote SQLite - lazy (httpvfs) or a cached full copy; list/map columns are JSON text." },
 };
 
 // Object references are stored in the entity tables as N-Triples term tokens
@@ -1505,17 +1529,19 @@ const EX = [
     note: "What do these ~19k people do? The occupations come back as Q-ids — their own label triples aren't all in this 100 MB slice, a reminder you only fetched a slice." },
 ];
 
-const state = { backend: "graph", exIdx: 0, graphSource: "lazy" };
+const state = { backend: "graph", exIdx: 0, graphSource: "lazy", duckSource: "lazy", sqliteSource: "lazy" };
 let ED = null, lastCols = [], lastRows = [], view = "table";
 
-function tableRef(ex) {
-  return $("duckSrc").value === "attach" ? `wd."${ex.table.name}"` : `read_parquet('${PARQUET(ex.table.file)}')`;
+// Tables reads the Parquet files via read_parquet(); DuckDB reads the attached
+// wikidata.duckdb database as wd."<table>". Both run on DuckDB-WASM.
+function duckRef(ex) {
+  return state.backend === "duckdb" ? `wd."${ex.table.name}"` : `read_parquet('${PARQUET(ex.table.file)}')`;
 }
 function editorText() {
   const ex = EX[state.exIdx];
   if (state.backend === "graph") return ex.sparql;
-  if (state.backend === "tables") return ex.duck.replace("{T}", tableRef(ex));
-  return ex.sqlite;
+  if (state.backend === "sqlite") return ex.sqlite;
+  return ex.duck.replace("{T}", duckRef(ex)); // tables (parquet) or duckdb (.duckdb)
 }
 function refresh() {
   $("workTitle").textContent = META[state.backend].title;
@@ -1554,7 +1580,8 @@ document.querySelectorAll(".card").forEach((c) => c.onclick = (e) => {
   if (["SELECT", "OPTION", "A"].includes(e.target.tagName)) return;
   state.backend = c.dataset.backend; refresh();
 });
-$("duckSrc").onchange = () => { if (state.backend === "tables") { $("editor").value = editorText(); if (ED) ED.refresh(); } };
+$("duckdbSrc").onchange = () => { state.duckSource = $("duckdbSrc").value; };
+$("sqliteSrc").onchange = () => { state.sqliteSource = $("sqliteSrc").value; };
 
 /* ---- rete graph: lazy remote (sparql_url) or a cached full copy (query) ----
    The worker holds the wasm; for "cached" it also holds the full .rete bytes
@@ -1695,7 +1722,9 @@ function enableCached(mb) {
 async function cacheRete() {
   const prog = $("cacheProg"); prog.hidden = false; prog.value = 0; $("statGraph").textContent = "caching…";
   try {
-    const resp = await fetch(RETE_URL); const total = +resp.headers.get("content-length") || 0;
+    const resp = await fetch(RETE_URL);
+    if (!resp.ok) throw new Error(`fetch ${resp.status} (host not browser-reachable?)`);
+    const total = +resp.headers.get("content-length") || 0;
     const reader = resp.body.getReader(); const chunks = []; let got = 0;
     for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; if (total) prog.value = Math.round(100 * got / total); }
     const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
@@ -1742,31 +1771,87 @@ $("dlResult").onclick = () => {
   a.download = "result.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
 };
 
-/* ---- DuckDB-WASM (Parquet, or ATTACH the .duckdb) ---- */
-let conn = null, attached = false;
+/* Stream a remote file into IndexedDB with a progress bar; return the bytes.
+   Powers "Cache locally" for the .duckdb and .sqlite (same pattern as the
+   .rete cache), so both can then be queried fully in the browser. */
+async function cacheToIdb(url, key, statId, progId) {
+  const prog = $(progId), stat = $(statId);
+  prog.hidden = false; prog.value = 0; stat.textContent = "caching…";
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`fetch ${resp.status} (host not browser-reachable?)`);
+  const total = +resp.headers.get("content-length") || 0;
+  const reader = resp.body.getReader(); const chunks = []; let got = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; if (total) prog.value = Math.round(100 * got / total); }
+  const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
+  await idbPut(key, buf.buffer);
+  prog.hidden = true;
+  return buf;
+}
+function enableCachedOpt(selId, statId, mb) {
+  $(selId).querySelector('[value="cached"]').disabled = false;
+  $(statId).textContent = `cached copy available (${mb} MB) — set read to "cached"`;
+}
+
+/* ---- DuckDB-WASM: Tables (Parquet) and DuckDB (.duckdb) share one engine ---- */
+let db = null, conn = null, duckAttachedSource = null, duckRegistered = false;
 duckdb.selectBundle(duckdb.getJsDelivrBundles()).then(async (b) => {
   const w = await duckdb.createWorker(b.mainWorker);
-  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), w);
+  db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), w);
   await db.instantiate(b.mainModule, b.pthreadWorker);
   conn = await db.connect();
   $("statTables").textContent = "ready";
-}).catch((e) => { $("statTables").textContent = "init failed: " + e; });
+  if (!/cached/.test($("statDuckdb").textContent)) $("statDuckdb").textContent = "ready (lazy)";
+}).catch((e) => { $("statTables").textContent = "init failed: " + e; $("statDuckdb").textContent = "init failed"; });
+
+function duckRows(res) {
+  const cols = res.schema.fields.map((f) => f.name);
+  const rows = res.toArray().map((r) => { const o = r.toJSON(); for (const k of cols) if (o[k] && typeof o[k] === "object") o[k] = JSON.stringify(o[k]); return o; });
+  return [cols, rows];
+}
 async function runTables() {
-  if (!conn) return showErr("DuckDB-WASM still initializing...");
-  const elapsed = busyStart((s) => `querying DuckDB… ${s.toFixed(1)}s`);
+  if (!conn) return showErr("DuckDB still initializing...");
+  const elapsed = busyStart((s) => `querying Parquet via DuckDB… ${s.toFixed(1)}s`);
   try {
-    if ($("duckSrc").value === "attach" && !attached) { await conn.query(`ATTACH '${DUCKDB_URL}' AS wd (READ_ONLY)`); attached = true; }
-    const res = await conn.query($("editor").value);
-    const cols = res.schema.fields.map((f) => f.name);
-    const rows = res.toArray().map((r) => { const o = r.toJSON(); for (const k of cols) if (o[k] && typeof o[k] === "object") o[k] = JSON.stringify(o[k]); return o; });
-    busyStop();
-    $("meta").textContent = `${rows.length} rows · ${elapsed().toFixed(0)} ms`;
-    show(cols, rows);
+    const [cols, rows] = duckRows(await conn.query($("editor").value));
+    busyStop(); $("meta").textContent = `${rows.length} rows · ${elapsed().toFixed(0)} ms`; show(cols, rows);
   } catch (e) { busyStop(); showErr(String(e)); }
 }
+// Attach the .duckdb either lazily (httpfs range over the URL) or from the
+// cached buffer registered in DuckDB's virtual FS; re-attach when switching.
+async function ensureDuckAttach() {
+  if (duckAttachedSource === state.duckSource) return;
+  if (duckAttachedSource) await conn.query("DETACH wd");
+  if (state.duckSource === "cached") {
+    if (!window.__duckBytes) throw new Error("no cached .duckdb — click ‘Cache locally’ first");
+    if (!duckRegistered) { await db.registerFileBuffer("wikidata.duckdb", window.__duckBytes); duckRegistered = true; }
+    await conn.query("ATTACH 'wikidata.duckdb' AS wd (READ_ONLY)");
+  } else {
+    await conn.query(`ATTACH '${DUCKDB_URL}' AS wd (READ_ONLY)`);
+  }
+  duckAttachedSource = state.duckSource;
+}
+async function runDuckdb() {
+  if (!conn) return showErr("DuckDB still initializing...");
+  const elapsed = busyStart((s) => `querying .duckdb (${state.duckSource})… ${s.toFixed(1)}s`);
+  try {
+    await ensureDuckAttach();
+    const [cols, rows] = duckRows(await conn.query($("editor").value));
+    busyStop(); $("meta").textContent = `${rows.length} rows · ${state.duckSource} · ${elapsed().toFixed(0)} ms`; show(cols, rows);
+  } catch (e) { busyStop(); showErr(String(e)); }
+}
+async function cacheDuckdb() {
+  try {
+    const buf = await cacheToIdb(DUCKDB_URL, "wikidata.duckdb", "statDuckdb", "cacheDuckProg");
+    window.__duckBytes = buf; duckRegistered = false; if (duckAttachedSource === "cached") duckAttachedSource = null;
+    $("duckdbSrc").value = "cached"; state.duckSource = "cached";
+    enableCachedOpt("duckdbSrc", "statDuckdb", (buf.length / 1048576).toFixed(0));
+    $("statDuckdb").textContent = `cached full copy ready (${(buf.length / 1048576).toFixed(0)} MB)`;
+  } catch (e) { $("cacheDuckProg").hidden = true; $("statDuckdb").textContent = "cache failed: " + e; }
+}
+$("cacheDuckBtn").onclick = cacheDuckdb;
 
-/* ---- SQLite (sql.js-httpvfs via esm.sh) ---- */
-let sqliteWorker = null;
+/* ---- SQLite: lazy (sql.js-httpvfs) or a cached full copy (sql.js) ---- */
+let sqliteWorker = null, sqliteFull = null;
 (async () => {
   try {
     const mod = await import("https://esm.sh/sql.js-httpvfs@0.8.12");
@@ -1777,29 +1862,60 @@ let sqliteWorker = null;
       "https://esm.sh/sql.js-httpvfs@0.8.12/dist/sqlite.worker.js",
       "https://esm.sh/sql.js-httpvfs@0.8.12/dist/sql-wasm.wasm"
     );
-    $("statSqlite").textContent = "ready";
+    if (!/cached/.test($("statSqlite").textContent)) $("statSqlite").textContent = "ready (lazy)";
   } catch (e) {
-    $("statSqlite").textContent = "unavailable - use download";
+    if (!/cached/.test($("statSqlite").textContent)) $("statSqlite").textContent = "lazy unavailable — cache locally to query";
     sqliteWorker = { err: String(e) };
   }
 })();
+// The cached full copy runs on plain sql.js (the whole DB in memory).
+async function ensureSqliteFull() {
+  if (sqliteFull) return;
+  if (!window.__sqliteBytes) throw new Error("no cached SQLite — click ‘Cache locally’ first");
+  const initSqlJs = (await import("https://esm.sh/sql.js@1.12.0")).default;
+  const SQL = await initSqlJs({ locateFile: (f) => "https://esm.sh/sql.js@1.12.0/dist/" + f });
+  sqliteFull = new SQL.Database(new Uint8Array(window.__sqliteBytes));
+}
 async function runSqlite() {
-  if (!sqliteWorker) return showErr("SQLite still initializing...");
-  if (sqliteWorker.err) return showErr("SQLite lazy reader unavailable: " + sqliteWorker.err +
-    "\n(sql.js-httpvfs is finicky from a CDN and its range VFS may not follow the host's signed-URL redirect - use the download link and query locally.)");
-  const elapsed = busyStart((s) => `querying SQLite… ${s.toFixed(1)}s`);
+  const elapsed = busyStart((s) => `querying SQLite (${state.sqliteSource})… ${s.toFixed(1)}s`);
   try {
-    const rows = await sqliteWorker.db.query($("editor").value);
-    const cols = rows.length ? Object.keys(rows[0]) : [];
-    busyStop();
-    $("meta").textContent = `${rows.length} rows · ${elapsed().toFixed(0)} ms`;
-    show(cols, rows);
+    let cols, rows;
+    if (state.sqliteSource === "cached") {
+      await ensureSqliteFull();
+      const res = sqliteFull.exec($("editor").value);
+      cols = res.length ? res[0].columns : [];
+      rows = res.length ? res[0].values.map((v) => Object.fromEntries(cols.map((c, i) => [c, v[i]]))) : [];
+    } else {
+      if (!sqliteWorker) { busyStop(); return showErr("SQLite still initializing..."); }
+      if (sqliteWorker.err) { busyStop(); return showErr("SQLite lazy reader unavailable: " + sqliteWorker.err + "\n(sql.js-httpvfs is finicky from a CDN and won't follow a signed-URL redirect — ‘Cache locally’ then set read to ‘cached’, or use the download link.)"); }
+      rows = await sqliteWorker.db.query($("editor").value);
+      cols = rows.length ? Object.keys(rows[0]) : [];
+    }
+    busyStop(); $("meta").textContent = `${rows.length} rows · ${state.sqliteSource} · ${elapsed().toFixed(0)} ms`; show(cols, rows);
   } catch (e) { busyStop(); showErr(String(e)); }
 }
+async function cacheSqlite() {
+  try {
+    const buf = await cacheToIdb(SQLITE_URL, "wikidata.sqlite", "statSqlite", "cacheSqliteProg");
+    window.__sqliteBytes = buf; sqliteFull = null;
+    $("sqliteSrc").value = "cached"; state.sqliteSource = "cached";
+    enableCachedOpt("sqliteSrc", "statSqlite", (buf.length / 1048576).toFixed(0));
+    $("statSqlite").textContent = `cached full copy ready (${(buf.length / 1048576).toFixed(0)} MB)`;
+  } catch (e) { $("cacheSqliteProg").hidden = true; $("statSqlite").textContent = "cache failed: " + e; }
+}
+$("cacheSqliteBtn").onclick = cacheSqlite;
+
+// Re-enable the "cached" option on load if a copy is already in IndexedDB.
+(async () => {
+  const d = await idbGet("wikidata.duckdb");
+  if (d) { window.__duckBytes = new Uint8Array(d); enableCachedOpt("duckdbSrc", "statDuckdb", (d.byteLength / 1048576).toFixed(0)); }
+  const s = await idbGet("wikidata.sqlite");
+  if (s) { window.__sqliteBytes = new Uint8Array(s); enableCachedOpt("sqliteSrc", "statSqlite", (s.byteLength / 1048576).toFixed(0)); }
+})();
 
 $("run").onclick = () => {
   $("out").innerHTML = "";
-  ({ graph: runGraph, tables: runTables, sqlite: runSqlite }[state.backend])();
+  ({ graph: runGraph, tables: runTables, duckdb: runDuckdb, sqlite: runSqlite }[state.backend])();
 };
 $("viewSeg").querySelectorAll("[data-v]").forEach((b) => b.onclick = () => {
   view = b.dataset.v;
