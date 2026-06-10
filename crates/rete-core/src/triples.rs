@@ -212,6 +212,80 @@ impl<'a> TripleBlock<'a> {
         Some(out)
     }
 
+    /// Build the byte-offset directory of this block's a-groups (one header
+    /// walk), enabling binary-search probes via [`scan_from`](Self::scan_from).
+    /// On corrupt bytes the walk stops early — the directory is a prefix, and
+    /// the bounds-checked cursor degrades gracefully like every other reader.
+    pub fn group_directory(&self) -> GroupDirectory {
+        let bytes = self.bytes;
+        let mut entries = Vec::new();
+        let mut p = self.body_start;
+        let mut walk = || -> Option<()> {
+            let num_a = rd(bytes, &mut p)?;
+            // `num_a` is untrusted; each group consumes ≥2 bytes, so the buffer
+            // length caps the allocation.
+            entries.reserve((num_a as usize).min(bytes.len()));
+            let mut a = 0u32;
+            for i in 0..num_a {
+                a = a.wrapping_add(rd(bytes, &mut p)?);
+                let num_b = rd(bytes, &mut p)?;
+                entries.push(DirEntry {
+                    a,
+                    pos: p,
+                    num_b,
+                    a_rem_after: num_a - 1 - i,
+                });
+                for _ in 0..num_b {
+                    rd(bytes, &mut p)?; // delta_b
+                    let nc = rd(bytes, &mut p)?;
+                    for _ in 0..nc {
+                        rd(bytes, &mut p)?;
+                    }
+                }
+            }
+            Some(())
+        };
+        let _ = walk();
+        GroupDirectory { entries }
+    }
+
+    /// Probe the block for a **bound leading component** `pa`, jumping straight
+    /// to its a-group through the directory (binary search) instead of walking
+    /// every preceding group header. Yields exactly what
+    /// `scan(Some(pa), pb, pc)` would.
+    pub fn scan_from(
+        &self,
+        dir: &GroupDirectory,
+        pa: u32,
+        pb: Option<u32>,
+        pc: Option<u32>,
+    ) -> BlockCursor<'a> {
+        let mut cursor = BlockCursor {
+            bytes: self.bytes,
+            pos: self.body_start,
+            a: 0,
+            b: 0,
+            c: 0,
+            a_rem: 0,
+            b_rem: 0,
+            c_rem: 0,
+            started: true, // a dead cursor unless the probe below arms it
+            pa: Some(pa),
+            pb,
+            pc,
+        };
+        if let Ok(i) = dir.entries.binary_search_by_key(&pa, |e| e.a) {
+            let e = &dir.entries[i];
+            // State as if the main cursor had just consumed this group's
+            // delta_a + num_b header: positioned at the first b-group.
+            cursor.pos = e.pos;
+            cursor.a = e.a;
+            cursor.a_rem = e.a_rem_after;
+            cursor.b_rem = e.num_b;
+        }
+        cursor
+    }
+
     /// Stream the triples matching a (permuted) pattern, *without* decoding the
     /// whole block. `pa`/`pb`/`pc` are the bound components in this block's stored
     /// order (`None` = wildcard). The cursor walks the grouped body and:
@@ -254,6 +328,34 @@ fn rd(bytes: &[u8], pos: &mut usize) -> Option<u32> {
     let (v, n) = read_uvarint(bytes.get(*pos..)?)?;
     *pos += n;
     Some(v as u32)
+}
+
+/// A byte-offset directory of a block's a-groups: one entry per group, sorted
+/// by leading id (the storage order). Built once per block with
+/// [`TripleBlock::group_directory`]; [`TripleBlock::scan_from`] then
+/// binary-searches it to jump a probe straight to its group.
+pub struct GroupDirectory {
+    entries: Vec<DirEntry>,
+}
+
+impl GroupDirectory {
+    /// Number of a-groups indexed.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// One a-group: its leading id, the byte offset of its first b-group header
+/// (right after `num_b`), its b-group count, and how many a-groups follow it.
+struct DirEntry {
+    a: u32,
+    pos: usize,
+    num_b: u32,
+    a_rem_after: u32,
 }
 
 /// A lazy cursor over a [`TripleBlock`] body produced by [`TripleBlock::scan`].

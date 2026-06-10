@@ -5,9 +5,13 @@
 //! components into a leading prefix, turning the lookup into a range scan.
 //!
 //! v0 keeps one block per permutation (no tiling yet) and scans with zone-map
-//! pruning; tiling and intra-block binary search come with the pyramid layer.
+//! pruning. Repeated point lookups go through [`GraphIndex::probe_iter`],
+//! which binary-searches a lazily-built in-memory a-group directory; on-disk
+//! tiling comes with the pyramid layer.
 
-use crate::triples::{Triple, TripleBlock, TripleBlockBuilder};
+use std::sync::OnceLock;
+
+use crate::triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder};
 
 /// A triple pattern: `None` is an unbound variable, `Some(id)` a bound term.
 pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
@@ -99,11 +103,7 @@ impl GraphIndexBuilder {
             pos.push(IndexPermutation::Pos.forward(t));
             osp.push(IndexPermutation::Osp.forward(t));
         }
-        GraphIndex {
-            spo: spo.build(),
-            pos: pos.build(),
-            osp: osp.build(),
-        }
+        GraphIndex::from_blocks([spo.build(), pos.build(), osp.build()])
     }
 }
 
@@ -112,6 +112,10 @@ pub struct GraphIndex {
     spo: Vec<u8>,
     pos: Vec<u8>,
     osp: Vec<u8>,
+    /// Lazily-built a-group directories (SPO, POS, OSP), enabling
+    /// binary-search probes ([`probe_iter`](Self::probe_iter)). Built at most
+    /// once per permutation, on the first probe that needs it.
+    dirs: [OnceLock<GroupDirectory>; 3],
 }
 
 impl GraphIndex {
@@ -119,7 +123,12 @@ impl GraphIndex {
     /// when reading a `.rete` file.
     pub fn from_blocks(blocks: [Vec<u8>; 3]) -> Self {
         let [spo, pos, osp] = blocks;
-        GraphIndex { spo, pos, osp }
+        GraphIndex {
+            spo,
+            pos,
+            osp,
+            dirs: [OnceLock::new(), OnceLock::new(), OnceLock::new()],
+        }
     }
 
     /// Total triple count (from the SPO block's zone map).
@@ -213,6 +222,29 @@ impl GraphIndex {
             .flatten()
             .map(move |abc| perm.back(abc))
     }
+
+    /// Like [`scan_iter`](Self::scan_iter), but for **repeated point lookups**
+    /// (index-nested-loop probes): when the chosen permutation's leading
+    /// component is bound, jump straight to its group through a lazily-built
+    /// per-permutation directory (one header walk, amortized across all probes)
+    /// instead of walking every preceding group header per probe. Yields
+    /// exactly what `scan_iter` would.
+    pub fn probe_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
+        let perm = Self::best_permutation(pattern);
+        let bytes = self.block(perm);
+        let [pa, pb, pc] = perm.order_pattern(pattern);
+        let cursor = TripleBlock::parse(bytes)
+            .ok()
+            .filter(|b| b.zone().may_contain(pa, pb, pc))
+            .map(|b| match pa {
+                Some(a) => {
+                    let dir = self.dirs[perm.section_index()].get_or_init(|| b.group_directory());
+                    b.scan_from(dir, a, pb, pc)
+                }
+                None => b.scan(pa, pb, pc),
+            });
+        cursor.into_iter().flatten().map(move |abc| perm.back(abc))
+    }
 }
 
 #[cfg(test)]
@@ -282,5 +314,31 @@ mod tests {
         let mut sorted = data.clone();
         sorted.sort_unstable();
         assert_eq!(idx.match_pattern((None, None, None)), sorted);
+    }
+
+    /// The directory-backed probe must yield exactly what the linear scan
+    /// yields for every bound/unbound shape — including absent ids (between,
+    /// below, and above the stored groups) and repeated probes (the directory
+    /// is built once and reused).
+    #[test]
+    fn probe_iter_matches_scan_iter_every_shape() {
+        let (idx, data) = graph();
+        let vals = |opts: &[u32]| {
+            let mut v: Vec<Option<u32>> = opts.iter().map(|&x| Some(x)).collect();
+            v.push(None);
+            v
+        };
+        for _round in 0..2 {
+            for s in vals(&[1, 2, 3, 0, 9]) {
+                for p in vals(&[10, 11, 12, 99]) {
+                    for o in vals(&[100, 200, 300, 999]) {
+                        let pat = (s, p, o);
+                        let mut probed: Vec<Triple> = idx.probe_iter(pat).collect();
+                        probed.sort_unstable();
+                        assert_eq!(probed, reference(&data, pat), "probe_iter {pat:?}");
+                    }
+                }
+            }
+        }
     }
 }

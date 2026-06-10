@@ -51,4 +51,4 @@ pub use sparql::{
     RoutedTriplePattern, Select, SparqlError, SummaryQueryShape,
 };
 pub use tiling::{choose_round_for_budget, summarize, tile_by_community, SuperEdge, Tile};
-pub use triples::{Triple, TripleBlock, TripleBlockBuilder, ZoneMap};
+pub use triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder, ZoneMap};

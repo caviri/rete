@@ -145,20 +145,13 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
         Builtin::StrEnds => two(|a, c| a.ends_with(c)),
         // REGEX(text, pattern [, flags]) — SPARQL flags i/m/s/x map to inline
         // regex flags. An invalid pattern yields no match rather than erroring.
-        // The compiled regex is memoized per query (REGEX runs once per row).
+        // The matcher is compiled once per query (memoized); literal patterns
+        // skip the regex engine entirely.
         Builtin::Regex => match (val(0), val(1)) {
             (Some(text), Some(pat)) => {
                 let flags = val(2).map(|t| lexical(&t)).unwrap_or_default();
-                let mut inline = String::new();
-                let on: String = ['i', 'm', 's', 'x']
-                    .iter()
-                    .filter(|c| flags.contains(**c))
-                    .collect();
-                if !on.is_empty() {
-                    inline = format!("(?{on})");
-                }
-                let full = format!("{inline}{}", lexical(&pat));
-                ctx.resolver.regex_match(&full, &lexical(&text))
+                ctx.resolver
+                    .regex_match(&lexical(&pat), &flags, &lexical(&text))
             }
             _ => false,
         },

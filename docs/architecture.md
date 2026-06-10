@@ -71,10 +71,13 @@ SPARQL goes through four stages:
    RDF terms for text, JSON, or WASM output (late materialization, memoized
    per query).
 
-This is still not a cost-based planner: join order inside a BGP is a
-selectivity heuristic, hash joins always build their right side, and a small
-`LIMIT` above a multi-pattern join still scans each pattern once (no
-index-nested-loop strategy yet).
+Joins are adaptive: under a small known demand (`LIMIT`/`ASK`), multi-pattern
+BGPs and BGP-shaped join sides switch from one-scan-per-pattern hash joins to
+index-nested-loop probing — each row jumps to its group through a lazily-built
+in-memory block directory, so producing k solutions costs O(k) point lookups
+instead of full pattern scans. This is still not a cost-based planner: join
+order is a selectivity heuristic and the hash path always builds its right
+side.
 
 Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
 nested `SELECT` subqueries and `SERVICE` federation.

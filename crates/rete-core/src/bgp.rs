@@ -256,10 +256,23 @@ fn pattern_rows(
 /// intermediate relations stay small. Pure reordering — `hash_join` is
 /// order-independent, so the result multiset is unchanged.
 fn selectivity_order(lowered: &[(SlotTerm, SlotTerm, SlotTerm)]) -> Vec<usize> {
+    selectivity_order_seeded(lowered, &std::collections::HashSet::new())
+}
+
+/// [`selectivity_order`] with a set of slots already bound by an outer seed
+/// row: those variables count as constants for selectivity and as already
+/// connected.
+fn selectivity_order_seeded(
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    seed: &std::collections::HashSet<usize>,
+) -> Vec<usize> {
     let consts = |t: &(SlotTerm, SlotTerm, SlotTerm)| {
         [&t.0, &t.1, &t.2]
             .into_iter()
-            .filter(|x| !matches!(x, SlotTerm::Var(_)))
+            .filter(|x| match x {
+                SlotTerm::Var(v) => seed.contains(v),
+                _ => true,
+            })
             .count()
     };
     let vars = |t: &(SlotTerm, SlotTerm, SlotTerm)| -> Vec<usize> {
@@ -274,7 +287,7 @@ fn selectivity_order(lowered: &[(SlotTerm, SlotTerm, SlotTerm)]) -> Vec<usize> {
     let n = lowered.len();
     let mut remaining: Vec<usize> = (0..n).collect();
     let mut order: Vec<usize> = Vec::with_capacity(n);
-    let mut bound: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut bound: std::collections::HashSet<usize> = seed.clone();
     while !remaining.is_empty() {
         // Pick the remaining pattern with the best (connected, consts) key; ties
         // go to the lowest original index for a stable, predictable order.
@@ -283,7 +296,9 @@ fn selectivity_order(lowered: &[(SlotTerm, SlotTerm, SlotTerm)]) -> Vec<usize> {
             .max_by(|&&a, &&b| {
                 let key = |i: usize| {
                     let t = &lowered[i];
-                    let connected = !order.is_empty() && vars(t).iter().any(|v| bound.contains(v));
+                    // `bound` starts as the seed, so a seed-connected pattern
+                    // wins the first pick too (empty seed ⇒ unchanged order).
+                    let connected = vars(t).iter().any(|v| bound.contains(v));
                     (connected, consts(t))
                 };
                 key(a).cmp(&key(b)).then(b.cmp(&a))
@@ -481,6 +496,194 @@ impl Iterator for BgpSolutions<'_> {
             }
             self.mi = 0;
             self.cur_scan = Some(s);
+        }
+    }
+}
+
+// --- index-nested-loop probing ------------------------------------------------
+//
+// Under a small, known demand (LIMIT/ASK — see `Ctx::limit_hint`), scanning
+// every pattern once to hash-join is mostly wasted work: the consumer wants a
+// handful of rows. The probe path instead streams the seed/first pattern and,
+// per row, *probes* each next pattern through the index with the row's bound
+// values substituted as scan constants — so producing k solutions touches
+// O(k · patterns) index groups instead of every pattern's full extent. Same
+// solution multiset as the hash join (joins are order-independent); only the
+// evaluation order differs.
+
+/// Index-scan constant for a subject position given a partially-bound row.
+/// Outer `None` = unsatisfiable for this row; inner `None` = wildcard.
+fn probe_subject(ctx: &Ctx, t: &SlotTerm, base: &Row) -> Option<Option<u32>> {
+    let dict = ctx.rete.dictionary();
+    match t {
+        SlotTerm::Node(n) => dict.node_as_subject_id(*n).map(Some),
+        SlotTerm::Pred(_) => None,
+        SlotTerm::Var(i) => match &base[*i] {
+            None => Some(None),
+            Some(Val::Id(v)) if *v >= 0 => dict.node_as_subject_id(*v as u32).map(Some),
+            // A predicate-tagged or computed value can never be a subject.
+            Some(_) => None,
+        },
+    }
+}
+
+/// Index-scan constant for an object position (see [`probe_subject`]).
+fn probe_object(ctx: &Ctx, t: &SlotTerm, base: &Row) -> Option<Option<u32>> {
+    let dict = ctx.rete.dictionary();
+    match t {
+        SlotTerm::Node(n) => dict.node_as_object_id(*n).map(Some),
+        SlotTerm::Pred(_) => None,
+        SlotTerm::Var(i) => match &base[*i] {
+            None => Some(None),
+            Some(Val::Id(v)) if *v >= 0 => dict.node_as_object_id(*v as u32).map(Some),
+            Some(_) => None,
+        },
+    }
+}
+
+/// Index-scan constant for a predicate position (see [`probe_subject`]).
+fn probe_predicate(ctx: &Ctx, t: &SlotTerm, base: &Row) -> Option<Option<u32>> {
+    let dict = ctx.rete.dictionary();
+    match t {
+        SlotTerm::Pred(p) => Some(Some(*p)),
+        SlotTerm::Node(_) => None,
+        SlotTerm::Var(i) => match &base[*i] {
+            None => Some(None),
+            Some(Val::Id(v)) if *v < 0 => Some(Some((-v - 1) as u32)),
+            // Canonicalized to a node id — the term may still be a predicate.
+            Some(Val::Id(v)) => ctx
+                .resolver
+                .term(*v)
+                .and_then(|t| dict.predicate_id(&t))
+                .map(Some),
+            Some(Val::Str(_)) => None,
+        },
+    }
+}
+
+/// Probe one pattern with a partially-bound row: every bound variable becomes
+/// an index-scan constant, and each matching triple extends a clone of the row
+/// (repeated unbound variables stay consistent).
+fn probe_rows<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    t: (SlotTerm, SlotTerm, SlotTerm),
+    base: Row,
+) -> Box<dyn Iterator<Item = Row> + 'q> {
+    let (Some(sid), Some(pid), Some(oid)) = (
+        probe_subject(ctx, &t.0, &base),
+        probe_predicate(ctx, &t.1, &base),
+        probe_object(ctx, &t.2, &base),
+    ) else {
+        return Box::new(std::iter::empty());
+    };
+    let dict = ctx.rete.dictionary();
+    Box::new(
+        index
+            .probe_iter((sid, pid, oid))
+            .filter_map(move |(s_id, p_id, o_id)| {
+                let s_val = dict.subject_node(s_id) as i64;
+                let p_val = ctx.resolver.canon_id(pred_tag(p_id));
+                let o_val = dict.object_node(o_id) as i64;
+                let mut row = base.clone();
+                for (term, val) in [(&t.0, s_val), (&t.1, p_val), (&t.2, o_val)] {
+                    if let SlotTerm::Var(i) = term {
+                        match row[*i] {
+                            Some(Val::Id(existing)) if existing != val => return None,
+                            Some(Val::Id(_)) => {}
+                            Some(Val::Str(_)) => return None,
+                            None => row[*i] = Some(Val::Id(val)),
+                        }
+                    }
+                }
+                Some(row)
+            }),
+    )
+}
+
+/// A lowered, probe-ordered BGP, reusable across many seed rows.
+pub(crate) struct ProbePlan {
+    pats: Vec<(SlotTerm, SlotTerm, SlotTerm)>,
+}
+
+impl ProbePlan {
+    /// Lower and order `patterns` for probing from rows that bind (at least)
+    /// the slots in `seed_mask`. `None` = a constant term is unknown, making
+    /// the BGP unsatisfiable for every seed.
+    pub(crate) fn new(ctx: &Ctx, patterns: &[TriplePattern], seed_mask: &[bool]) -> Option<Self> {
+        let lowered = lower(patterns, ctx)?;
+        let seed: std::collections::HashSet<usize> = seed_mask
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| b.then_some(i))
+            .collect();
+        let order = selectivity_order_seeded(&lowered, &seed);
+        Some(ProbePlan {
+            pats: order.into_iter().map(|i| lowered[i]).collect(),
+        })
+    }
+}
+
+/// Depth-first index-nested-loop join over a [`ProbePlan`], starting from a
+/// seed row. Fully lazy: pulling k rows probes O(k · patterns) index groups.
+pub(crate) struct ProbeJoin<'q> {
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    pats: Vec<(SlotTerm, SlotTerm, SlotTerm)>,
+    stack: Vec<Box<dyn Iterator<Item = Row> + 'q>>,
+}
+
+impl<'q> ProbeJoin<'q> {
+    /// Probe a whole BGP from scratch (the seed is the all-unbound row).
+    /// `None` = unsatisfiable.
+    pub(crate) fn new(
+        ctx: &'q Ctx<'q>,
+        index: &'q GraphIndex,
+        patterns: &[TriplePattern],
+    ) -> Option<Self> {
+        let plan = ProbePlan::new(ctx, patterns, &vec![false; ctx.slots.len()])?;
+        Some(Self::from_plan(ctx, index, &plan, ctx.slots.empty_row()))
+    }
+
+    /// Probe a pre-lowered plan from one seed row.
+    pub(crate) fn from_plan(
+        ctx: &'q Ctx<'q>,
+        index: &'q GraphIndex,
+        plan: &ProbePlan,
+        seed: Row,
+    ) -> Self {
+        let pats = plan.pats.clone();
+        let first = probe_rows(ctx, index, pats[0], seed);
+        ProbeJoin {
+            ctx,
+            index,
+            pats,
+            stack: vec![first],
+        }
+    }
+}
+
+impl Iterator for ProbeJoin<'_> {
+    type Item = Row;
+
+    fn next(&mut self) -> Option<Row> {
+        loop {
+            let depth = self.stack.len();
+            match self.stack.last_mut()?.next() {
+                Some(row) => {
+                    if depth == self.pats.len() {
+                        return Some(row);
+                    }
+                    let it = probe_rows(self.ctx, self.index, self.pats[depth], row);
+                    self.stack.push(it);
+                }
+                None => {
+                    self.stack.pop();
+                    if self.stack.is_empty() {
+                        return None;
+                    }
+                }
+            }
         }
     }
 }
