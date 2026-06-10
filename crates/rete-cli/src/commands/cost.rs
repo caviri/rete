@@ -35,6 +35,15 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
     let summary = measure_summary(source)?;
     let routed = measure_routed_pattern(source, routed_shape.as_ref())?;
     let full = measure_full(source)?;
+    let lazy = measure_lazy_open(source)?;
+    // Tiled (v0.2) files evaluate SPARQL-over-URL with lazy tile faulting: the
+    // open budget below plus one range request per index tile the query's
+    // scans actually touch. Pre-tiling files fetch the index whole.
+    let engine_access = if header.version >= 2 {
+        "lazy-tiles"
+    } else {
+        "full-index"
+    };
     let summary_answer = summary_answer_json(summary.view.as_ref(), summary_shape.as_ref());
     let explain_plan = explain_json(summary_shape.as_ref(), &summary_answer, &routed);
 
@@ -43,7 +52,7 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
             "source": source,
             "source_kind": source_kind,
             "file_bytes": full.file_bytes,
-            "current_engine_access": "full-index",
+            "current_engine_access": engine_access,
             "query_predicates": query_preds,
             "summary_answer": summary_answer,
             "summary_overview": {
@@ -53,6 +62,13 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
                 "reads_index": summary.access.reads_index,
             },
             "routed_pattern_open": routed_json(&routed),
+            "lazy_query_open": {
+                "available": lazy.available,
+                "bytes": lazy.bytes,
+                "requests": lazy.requests,
+                "reads_index": lazy.reads_index,
+                "note": "tile directories only; index tiles fault in per scan",
+            },
             "full_query_open": {
                 "available": full.available,
                 "bytes": full.bytes,
@@ -72,7 +88,7 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
         println!("  source: {source}");
         println!("  source kind: {source_kind}");
         println!("  file bytes: {}", full.file_bytes);
-        println!("  current engine access: full-index");
+        println!("  current engine access: {engine_access}");
         if query_preds.is_empty() {
             println!("  query predicates: (none pinned; predicate routing cannot prune)");
         } else {
@@ -87,6 +103,7 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
         }
         print_access("summary overview", summary.access);
         print_routed_pattern(&routed);
+        print_access("lazy query open", lazy);
         print_access(
             "full query open",
             AccessCost {
@@ -100,10 +117,18 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
             "  index section: offset {} · len {}",
             header.root_dir_offset, header.root_dir_len
         );
-        println!(
-            "  note: current SPARQL evaluation uses the full query-open path; \
-             the summary path is the cheaper overview/routing budget."
-        );
+        if header.version >= 2 {
+            println!(
+                "  note: SPARQL evaluation opens lazily (tile directories only) and \
+                 range-fetches index tiles as the query touches them; the full \
+                 query-open figure is the eager upper bound."
+            );
+        } else {
+            println!(
+                "  note: pre-tiling (v0.1) file — SPARQL evaluation uses the full \
+                 query-open path; the summary path is the cheaper overview budget."
+            );
+        }
     }
     Ok(())
 }
@@ -168,6 +193,19 @@ fn measure_full(source: &str) -> anyhow::Result<FullCost> {
         bytes: reader.bytes_read(),
         requests: reader.requests(),
         reads_index: true,
+    })
+}
+
+/// The lazy SPARQL open budget (what `sparql-url` actually pays up front on a
+/// tiled file): header + dictionary + pyramid + tile directories, no tiles.
+fn measure_lazy_open(source: &str) -> anyhow::Result<AccessCost> {
+    let reader = std::sync::Arc::new(CountingReader::new(RangedSourceReader::open(source)?));
+    let _rete = Rete::open_ranged_lazy(reader.clone())?;
+    Ok(AccessCost {
+        available: true,
+        bytes: reader.bytes_read(),
+        requests: reader.requests(),
+        reads_index: true, // the (small) tile directories live in the index region
     })
 }
 

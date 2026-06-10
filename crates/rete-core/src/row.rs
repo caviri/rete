@@ -82,9 +82,80 @@ pub(crate) struct Resolver<'a> {
     canon_pred: RefCell<HashMap<i64, i64>>,
     /// value → parsed number (memoized `as_number`).
     nums: RefCell<HashMap<Val, Option<f64>>>,
-    /// pattern (with inline flags) → compiled regex (`None` = invalid pattern).
-    /// REGEX in a FILTER runs per row; compiling per row dominates the match.
-    regexes: RefCell<HashMap<String, Option<regex_lite::Regex>>>,
+    /// `(flags, pattern)` → compiled matcher. REGEX in a FILTER runs per row;
+    /// compiling per row dominates the match, and a metacharacter-free pattern
+    /// doesn't need the regex engine at all.
+    regexes: RefCell<HashMap<(String, String), Matcher>>,
+}
+
+/// A compiled REGEX matcher: plain (case-folded) substring search for literal
+/// patterns, the regex engine for everything else, `Never` for invalid patterns.
+enum Matcher {
+    Substring(String),
+    /// Pattern pre-lowercased; the text is lowercased per match (full Unicode
+    /// folding, same outcome as `(?i)` for the literal patterns this serves).
+    SubstringCi(String),
+    Regex(regex_lite::Regex),
+    Never,
+}
+
+impl Matcher {
+    /// `flags` are the SPARQL flags (subset i/m/s/x mapped to inline flags).
+    fn compile(pattern: &str, flags: &str) -> Matcher {
+        // A literal pattern (no regex metacharacters) is a substring test; the
+        // `m`/`s`/`x` flags only alter metacharacter behavior, so only `i`
+        // matters for it.
+        let is_literal = !pattern.chars().any(|c| ".^$*+?()[]{}|\\".contains(c));
+        if is_literal {
+            return if flags.contains('i') {
+                Matcher::SubstringCi(pattern.to_lowercase())
+            } else {
+                Matcher::Substring(pattern.to_string())
+            };
+        }
+        let on: String = ['i', 'm', 's', 'x']
+            .iter()
+            .filter(|c| flags.contains(**c))
+            .collect();
+        let inline = if on.is_empty() {
+            String::new()
+        } else {
+            format!("(?{on})")
+        };
+        match regex_lite::Regex::new(&format!("{inline}{pattern}")) {
+            Ok(re) => Matcher::Regex(re),
+            Err(_) => Matcher::Never,
+        }
+    }
+
+    fn is_match(&self, text: &str) -> bool {
+        match self {
+            Matcher::Substring(p) => text.contains(p.as_str()),
+            Matcher::SubstringCi(p) => {
+                // ASCII text folds without the per-row `to_lowercase`
+                // allocation; non-ASCII falls back to full Unicode lowering
+                // (matching `(?i)` for these literal patterns).
+                if text.is_ascii() && p.is_ascii() {
+                    ascii_ci_contains(text.as_bytes(), p.as_bytes())
+                } else {
+                    text.to_lowercase().contains(p.as_str())
+                }
+            }
+            Matcher::Regex(re) => re.is_match(text),
+            Matcher::Never => false,
+        }
+    }
+}
+
+/// Case-insensitive substring search over ASCII bytes (`needle` already
+/// lowercased), allocation-free.
+fn ascii_ci_contains(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle))
 }
 
 impl<'a> Resolver<'a> {
@@ -98,14 +169,15 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Does `text` match `pattern` (compiled once per query, memoized)? An
-    /// invalid pattern yields no match rather than erroring.
-    pub(crate) fn regex_match(&self, pattern: &str, text: &str) -> bool {
+    /// Does `text` match the SPARQL REGEX `pattern` under `flags`? The matcher
+    /// is compiled once per query (memoized); an invalid pattern yields no
+    /// match rather than erroring.
+    pub(crate) fn regex_match(&self, pattern: &str, flags: &str, text: &str) -> bool {
         let mut map = self.regexes.borrow_mut();
-        let re = map
-            .entry(pattern.to_string())
-            .or_insert_with(|| regex_lite::Regex::new(pattern).ok());
-        re.as_ref().is_some_and(|re| re.is_match(text))
+        let m = map
+            .entry((flags.to_string(), pattern.to_string()))
+            .or_insert_with(|| Matcher::compile(pattern, flags));
+        m.is_match(text)
     }
 
     /// The term string for a tagged id (memoized).
@@ -194,6 +266,12 @@ pub(crate) struct Ctx<'a> {
     pub(crate) rete: &'a Rete,
     pub(crate) slots: Slots,
     pub(crate) resolver: Resolver<'a>,
+    /// An upper bound on how many solutions the consumer will pull, when the
+    /// query shape guarantees one (pure LIMIT/OFFSET, or 1 for ASK). Purely a
+    /// *strategy* hint — joins switch to index probing under a small bound —
+    /// never a correctness input: any plan must yield the same multiset.
+    /// A `Cell` so fully-consuming sub-evaluations (EXISTS) can suspend it.
+    pub(crate) limit_hint: std::cell::Cell<Option<usize>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -202,6 +280,7 @@ impl<'a> Ctx<'a> {
             rete,
             slots,
             resolver: Resolver::new(rete.dictionary()),
+            limit_hint: std::cell::Cell::new(None),
         }
     }
 }

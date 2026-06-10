@@ -1,28 +1,11 @@
 //! The ingest group: parse RDF inputs (N-Triples / N-Quads / Turtle) and either
-//! `build` them into a `.rete` dataset or `validate` that they parse. The crate
-//! root keeps only the Clap definitions + dispatch; the parse/build logic lives
-//! here.
+//! `build` them into a `.rete` dataset or `validate` that they parse. Parsing
+//! and assembly live in `rete_core::ingest` (shared with the wasm bindings);
+//! this module adds the CLI-only concerns: file/stdin IO, format detection by
+//! extension, `--materialize`, and the Dataset Card flags.
 
 use crate::commands::card::{self, CardArgs};
-use crate::ntriples;
-use rete_core::{
-    build_pyramid_meta, write_dataset, write_dataset_with_metadata, DictionaryBuilder,
-    GraphIndexBuilder, DEFAULT_TILE_BUDGET,
-};
-
-/// Parse Turtle into canonical N-Triples-token triples via oxttl.
-fn parse_turtle(text: &str) -> anyhow::Result<Vec<(String, String, String)>> {
-    let mut out = Vec::new();
-    for r in oxttl::TurtleParser::new().for_reader(text.as_bytes()) {
-        let t = r?;
-        out.push((
-            t.subject.to_string(),
-            t.predicate.to_string(),
-            t.object.to_string(),
-        ));
-    }
-    Ok(out)
-}
+use rete_core::ingest;
 
 /// Read an input source: a file path, or `-` for stdin.
 fn read_input(path: &str) -> anyhow::Result<String> {
@@ -59,23 +42,12 @@ fn input_format(path: &str, override_fmt: Option<&str>) -> &'static str {
 /// Parse one or more RDF inputs into quads (triples → default graph). Shared by
 /// `build` and `validate`. Returns a parse error (which input, what went wrong)
 /// if any input is malformed.
-fn parse_inputs(inputs: &[String], format: Option<&str>) -> anyhow::Result<Vec<ntriples::RawQuad>> {
-    let mut quads: Vec<ntriples::RawQuad> = Vec::new();
+fn parse_inputs(inputs: &[String], format: Option<&str>) -> anyhow::Result<Vec<ingest::RawQuad>> {
+    let mut quads: Vec<ingest::RawQuad> = Vec::new();
     for input in inputs {
         let text = read_input(input)?;
-        let parsed: Vec<ntriples::RawQuad> = match input_format(input, format) {
-            "nq" => ntriples::parse_quads(&text).map_err(|e| anyhow::anyhow!("{input}: {e}"))?,
-            "ttl" => parse_turtle(&text)
-                .map_err(|e| anyhow::anyhow!("{input}: {e}"))?
-                .into_iter()
-                .map(|(s, p, o)| (s, p, o, None))
-                .collect(),
-            _ => ntriples::parse(&text)
-                .map_err(|e| anyhow::anyhow!("{input}: {e}"))?
-                .into_iter()
-                .map(|(s, p, o)| (s, p, o, None))
-                .collect(),
-        };
+        let parsed = ingest::parse_statements(&text, input_format(input, format))
+            .map_err(|e| anyhow::anyhow!("{input}: {e}"))?;
         quads.extend(parsed);
     }
     Ok(quads)
@@ -109,8 +81,6 @@ pub(crate) fn build(
     materialize: bool,
     card_args: CardArgs,
 ) -> anyhow::Result<()> {
-    use std::collections::BTreeMap;
-
     // 1. Parse every input into quads (triples → default graph, `None`).
     let mut quads = parse_inputs(inputs, format)?;
 
@@ -144,90 +114,46 @@ pub(crate) fn build(
         eprintln!("materialized {inferred} inferred triple(s) into the default graph");
     }
 
-    // 2. One dictionary over every term in every input.
-    let mut db = DictionaryBuilder::new();
-    for (s, p, o, _) in &quads {
-        db.observe(s, p, o);
-    }
-    let dict = db.build();
-
-    // 3. Split into the default-graph index and one index per named graph.
-    let mut default_triples = Vec::new();
-    let mut named: BTreeMap<String, Vec<(u32, u32, u32)>> = BTreeMap::new();
-    for (s, p, o, g) in &quads {
-        let t = dict.encode(s, p, o).expect("observed term");
-        match g {
-            None => default_triples.push(t),
-            Some(graph) => named.entry(graph.clone()).or_default().push(t),
-        }
-    }
-    let has_named = !named.is_empty();
-
-    let mut def = GraphIndexBuilder::new();
-    for &t in &default_triples {
-        def.push(t);
-    }
-    let named_indexes: Vec<(String, rete_core::GraphIndex)> = named
-        .into_iter()
-        .map(|(g, ts)| {
-            let mut b = GraphIndexBuilder::new();
-            for t in ts {
-                b.push(t);
-            }
-            (g, b.build())
-        })
-        .collect();
-
-    let (meta, levels) = build_pyramid_meta(&dict, &default_triples, DEFAULT_TILE_BUDGET);
-
-    // Optionally derive + embed a Dataset Card (data-catalog metadata). Without a
-    // card flag the cardless path is byte-identical to a metadata-free build.
-    let bytes = if card_args.requested() {
-        let curated = card::load_curated(&card_args)?;
-        let dataset_card = card::derive_card(
-            &quads,
-            dict.term_count() as u64,
-            named_indexes.len() as u64,
-            curated,
-        );
-        let blob = dataset_card.to_json_bytes();
-        eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
-        write_dataset_with_metadata(
-            &dict,
-            &def.build(),
-            &named_indexes,
-            has_named,
-            &meta,
-            levels,
-            &blob,
-        )
+    // 2. Assemble dictionary + indexes + pyramid into the file image, optionally
+    // deriving + embedding a Dataset Card (data-catalog metadata) from the final
+    // counts. Without a card flag the metadata payload is empty, which is
+    // byte-identical to a metadata-free build.
+    let curated = if card_args.requested() {
+        Some(card::load_curated(&card_args)?)
     } else {
-        write_dataset(
-            &dict,
-            &def.build(),
-            &named_indexes,
-            has_named,
-            &meta,
-            levels,
-        )
+        None
     };
+    let (bytes, stats) = ingest::assemble_dataset_with(&quads, |stats| match curated {
+        Some(curated) => {
+            let dataset_card = card::derive_card(
+                &quads,
+                stats.terms as u64,
+                stats.named_graphs as u64,
+                curated,
+            );
+            let blob = dataset_card.to_json_bytes();
+            eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+            blob
+        }
+        None => Vec::new(),
+    });
     std::fs::write(output, &bytes)?;
 
-    if has_named {
+    if stats.named_graphs > 0 {
         println!(
             "wrote {output}: {} quads ({} default + {} named graph(s)), {} terms, {} bytes",
-            quads.len(),
-            default_triples.len(),
-            named_indexes.len(),
-            dict.term_count(),
+            stats.statements,
+            stats.default_triples,
+            stats.named_graphs,
+            stats.terms,
             bytes.len()
         );
     } else {
         println!(
             "wrote {output}: {} triples, {} terms, {} pyramid level(s), {} bytes",
-            default_triples.len(),
-            dict.term_count(),
-            levels,
+            stats.default_triples,
+            stats.terms,
+            stats.pyramid_levels,
             bytes.len()
         );
     }
@@ -281,17 +207,5 @@ mod tests {
 
         std::fs::remove_file(&inp).ok();
         std::fs::remove_file(&out).ok();
-    }
-
-    #[test]
-    fn turtle_parse_abbreviations() {
-        let ttl = "@prefix ex: <http://ex/> .\nex:A ex:knows ex:B , ex:C .";
-        let t = parse_turtle(ttl).unwrap();
-        assert_eq!(t.len(), 2);
-        assert!(t.contains(&(
-            "<http://ex/A>".into(),
-            "<http://ex/knows>".into(),
-            "<http://ex/B>".into()
-        )));
     }
 }

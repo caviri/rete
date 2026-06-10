@@ -99,19 +99,19 @@ metadata block to chase.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Per-level, per-tile **leaf directories** (mapping `(level, tile, perm)` to byte
-ranges, PMTiles/Parquet style) are part of the fuller design but not materialized
-in v0 — the current index is a single default-graph container plus the pyramid
-summary. Exact single-pattern range routing is implemented by fetching just the
-selected SPO/POS/OSP payload from that container; physical community-tile ranges
-are future work (see `docs/BENCHMARK.md`).
+Each permutation section carries its own **tile directory** (format `0x02`,
+§6.2): byte ranges for independently-compressed tiles, keyed by leading-id
+range — so single-pattern routing fetches the selected SPO/POS/OSP section and
+decompresses only the matching tile(s). Per-*community* leaf directories
+(mapping `(level, tile, perm)` to byte ranges across the pyramid) are part of
+the fuller design and remain future work (see `docs/BENCHMARK.md`).
 
 ### 4.1 Header (128 bytes, little-endian)
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | magic `RETE` |
-| 4 | 1 | format version (`0x01`) |
+| 4 | 1 | format version (`0x02`; readers also accept `0x01`, see §6.2) |
 | 5 | 1 | flags (bit0: has named graphs / quads) |
 | 6 | 2 | header length |
 | 8 | 8 | metadata offset |
@@ -237,6 +237,56 @@ The **zone map** lets the planner skip a block whose `[min,max]` range cannot
 contain a bound constant before fetching the body — the §7 routing then bounds
 *which* blocks are fetched at all.
 
+### 6.2 Tiled permutation sections (format `0x02`)
+
+Each permutation section is **tiled**: consecutive runs of whole a-groups are
+packed to a byte budget (default 64 KiB of encoded triples), and each tile is a
+fully self-contained §6.1 block (its own zone map; deltas restart). Tiles are
+**compressed individually** with the header's block codec, so a ranged client
+can fetch and decompress exactly the tiles a query routes to. The section
+payload is stored raw inside the index container (the container-level codec for
+index sections is `none`; compression lives at tile granularity):
+
+```
+section payload:  varint num_tiles
+                  per tile: varint Δmin_a       # Δ from previous tile's min_a
+                            varint max_a−min_a  # leading-id span (routing)
+                            varint clen          # compressed tile length
+                  tiles:    num_tiles × compressed §6.1 blocks, concatenated
+```
+
+A bound leading component binary-searches the directory to exactly **one**
+tile (a-groups are never split across tiles); an unbound one visits every
+tile, zone-map-pruned. The directory is uncompressed so it is readable before
+any tile is fetched.
+
+**Dictionary sections are chunked the same way** (their container-level codec
+is also `none`): each of the four §5 sections is stored as
+
+```
+section payload:  varint header_len, raw §5.1 header (term count, restart
+                  interval, restart-offset table — original encoding, so the
+                  offsets stay valid in the section's coordinate space)
+                  varint num_chunks
+                  per chunk: varint Δfirst_run        # Δ from previous chunk
+                             varint first_term_len, first_term bytes
+                             varint clen               # compressed chunk length
+                  chunks:    run-aligned body slices, compressed individually
+```
+
+Chunks hold whole front-coded runs (~64 KiB of body per chunk), and the
+directory embeds each chunk's first term — so `term → id` binary-searches the
+directory locally and faults exactly **one** chunk, and `id → term` computes
+its chunk arithmetically and faults one. A lazily-opened remote file therefore
+pays the section headers + directories (KBs) up front and O(touched chunks)
+afterwards, instead of the whole dictionary container.
+
+**Compatibility:** version `0x01` files store one whole-section-compressed
+block per permutation and whole-compressed dictionary sections. Readers still
+accept them (each section is one logical tile/chunk); writers always emit
+`0x02`. The format remains experimental — no stability promise beyond this one
+documented transition.
+
 ---
 
 ## 7. The pyramid — community summarization
@@ -297,14 +347,17 @@ plan algebra — `Bgp`/`Join`/`Union`/`Minus`/`LeftJoin`/`Filter`/`Path`/`Values
 `Graph`):
 
 - **Stage 1 — Triple patterns & BGPs.** ✅ Integer patterns over the permutation
-  index, left-deep hash joins on shared variables (`bgp.rs`), and a lazy BGP
-  iterator for streamable `LIMIT`/`ASK` shapes. Blank nodes in patterns are
-  non-distinguished variables.
-- **Stage 2 — FILTER, projection, DISTINCT, ORDER BY, LIMIT/OFFSET.** ✅ Simple
-  BGP/FILTER plans can stop early under `LIMIT`; DISTINCT, ORDER BY, aggregation,
-  and most compound algebra remain eager. ORDER BY sorts on variable/constant
-  keys: numeric when both are numbers, else lexical; complex key expressions are
-  not yet evaluated for ordering.
+  index; BGPs stream their least selective pattern against a hash table of the
+  joined prefix (`bgp.rs`), and under a small `LIMIT`/`ASK` demand bound switch
+  to index-nested-loop probes that jump to their group via a lazily-built block
+  directory. Blank nodes in patterns are non-distinguished variables.
+- **Stage 2 — FILTER, projection, DISTINCT, ORDER BY, LIMIT/OFFSET.** ✅ The
+  whole algebra evaluates as a lazy pull pipeline over integer slot rows, so
+  `LIMIT`/`ASK`/`DISTINCT … LIMIT` demand stops the index scans early; only
+  aggregation, ORDER BY (bounded top-k when `LIMIT` is present), and hash-join
+  build sides block. ORDER BY sorts on variable/constant keys: numeric when
+  both are numbers, else lexical; complex key expressions are not yet evaluated
+  for ordering.
 - **Stage 3 — OPTIONAL, UNION, MINUS, VALUES, FILTER EXISTS/NOT EXISTS,
   property paths, GRAPH.** ✅ Paths (`p+`/`p*`/`p?`, reverse, sequence `a/b`,
   alternative `a|b`) evaluated forward from a bound endpoint in integer node
@@ -393,27 +446,7 @@ extension.
 
 ---
 
-## 11. Open questions
-
-1. **Quad/named-graph indexing** — per-graph triple sets vs. full GSPO/GPSO
-   permutations. Cost vs. query flexibility.
-2. **Literal indexing** — do we want value-range indexes (numeric/date) for
-   FILTER pushdown, à la Parquet zone maps on literal values?
-3. ~~Pyramid cut policy~~ — **resolved (§7.1): size-targeted tiles**, default
-   budget `T` ≈ 64 KiB, PMTiles-style. Remaining sub-question: best default `T`
-   and whether `T` should scale with the dictionary/literal mix.
-4. **Multiple summarization strategies** — two are implemented: **community**
-   (structural, Louvain — the stored pyramid) and **schema** (ontology-aware,
-   relations between `rdf:type` classes — `schema_summary`/`rete schema`). An
-   *importance*-based one (PageRank/centrality) is still open. The community
-   summary is stored; schema is computed on demand (storing it for cheap HTTP
-   access is a future step).
-5. **Overlay/diff files** for "appendable-ish" updates without abandoning
-   immutability.
-
----
-
-## 12. Glossary
+## 11. Glossary
 
 - **Term** — an RDF IRI, blank node, or literal.
 - **Quotient graph** — graph whose nodes are communities and whose edges

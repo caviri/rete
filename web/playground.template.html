@@ -38,6 +38,7 @@ __PLAYGROUND_CSS__
     <button type="button" data-mode="reach">Reach</button>
     <button type="button" data-mode="schema">Schema</button>
     <button type="button" data-mode="provenance">Provenance</button>
+    <button type="button" data-mode="build">Build</button>
   </nav>
 
   <main class="console-shell">
@@ -204,6 +205,34 @@ __PLAYGROUND_CSS__
         </div>
       </div>
 
+      <div class="panel" data-panel="build">
+        <div class="editor-head">
+          <div>
+            <h1>Build a .rete</h1>
+            <p class="microcopy">Paste or open N-Triples / N-Quads / Turtle and assemble a .rete file right here — nothing leaves your browser.</p>
+          </div>
+          <label>
+            <span>Format</span>
+            <select id="buildFormat">
+              <option value="nt">N-Triples</option>
+              <option value="nq">N-Quads</option>
+              <option value="ttl">Turtle</option>
+            </select>
+          </label>
+        </div>
+        <textarea id="buildText" spellcheck="false"></textarea>
+        <div class="action-row">
+          <button id="buildRun" type="button">Build .rete</button>
+          <label class="file-button" title="Open an .nt / .nq / .ttl file">
+            Open RDF file
+            <input id="buildFile" type="file" accept=".nt,.nq,.nquads,.ttl,.turtle,text/plain" hidden />
+          </label>
+          <button id="buildDownload" type="button" class="secondary" disabled>Download</button>
+          <button id="buildOpen" type="button" class="secondary" disabled>Open in console</button>
+          <span id="buildMeta" class="run-meta"></span>
+        </div>
+      </div>
+
       <div class="results-band">
         <div id="out" class="result-pane" data-result="sparql"></div>
         <div id="commOut" class="result-pane subtle" data-result="sparql-extra"></div>
@@ -211,6 +240,7 @@ __PLAYGROUND_CSS__
         <div id="reachOut" class="result-pane hidden" data-result="reach"></div>
         <div id="schemaOut" class="result-pane hidden" data-result="schema"></div>
         <div id="provOut" class="result-pane hidden" data-result="provenance"></div>
+        <div id="buildOut" class="result-pane hidden" data-result="build"></div>
       </div>
     </section>
 

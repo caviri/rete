@@ -53,7 +53,7 @@
       <select id="ds">
         <option value="./typed.rete">typed.rete — People &amp; Orgs (ontology demo)</option>
         <option value="./deps.rete">deps.rete — dependency graph (CVE impact demo)</option>
-        <option value="./papers.rete">papers.rete — citation graph (community demo)</option>
+        <option value="./scholar.rete">scholar.rete — synthetic scholarly graph (community demo)</option>
       </select>
     </label>
     &nbsp;or a URL: <input id="url" value="./typed.rete" style="width:auto" />
@@ -132,6 +132,31 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
       <a href="https://github.com/caviri/rete/blob/main/docs/BENCHMARK.md">Benchmarks</a>.
     </div>
     <div id="reachOut"></div>
+  </section>
+
+  <section>
+    <h3 style="margin-top:0">Remote SPARQL <span class="muted">— lazy HTTP-range queries from a Web Worker (no full download)</span></h3>
+    <p class="muted">
+      Runs SPARQL against a <code>.rete</code> URL fetching only the header, the chunk/tile
+      directories, and the dictionary chunks and index tiles the query touches — full scans
+      coalesce adjacent tiles into batched range reads. Needs a range-capable host
+      (<code>scripts/range_server.py</code> qualifies; a host that ignores <code>Range</code> is
+      rejected loudly). Sync XHR is worker-only, so this never blocks the page.
+    </p>
+    <p>
+      <label>URL: <input id="rurl" value="./scholar.rete" style="width:auto;min-width:18rem" /></label>
+    </p>
+    <textarea id="rq">PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
+PREFIX dct: &lt;http://purl.org/dc/terms/&gt;
+SELECT ?title (COUNT(?citing) AS ?citations) WHERE {
+  ?citing cito:cites ?paper .
+  ?paper dct:title ?title
+} GROUP BY ?title ORDER BY DESC(?citations) LIMIT 10</textarea>
+    <div class="row">
+      <button id="rrun">Run remotely</button>
+      <span id="rmeta" class="muted"></span>
+    </div>
+    <div id="rout"></div>
   </section>
 
   <section>
@@ -301,15 +326,15 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
         { label: "CONSTRUCT: dependents (reverse)", fmt: "jsonld", tip: "Reverse the dependsOn edges; render as JSON-LD",
           q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?b ex:dependedOnBy ?a } WHERE { ?a ex:dependsOn ?b }" },
       ],
-      "./papers.rete": [
+      "./scholar.rete": [
         { label: "SELECT: titles", fmt: "table", tip: "List every paper's title",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?p ?title WHERE { ?p ex:title ?title }" },
-        { label: "Property path: reachable by citation", fmt: "table", tip: "Papers reachable from p1 via cites+",
-          q: "PREFIX ex: <http://ex/>\nSELECT DISTINCT ?reached WHERE { ex:p1 ex:cites+ ?reached }" },
-        { label: "Aggregate: citations made", fmt: "table", tip: "GROUP BY count of outgoing citations per paper",
-          q: "PREFIX ex: <http://ex/>\nSELECT ?p (COUNT(?c) AS ?cites) WHERE { ?p ex:cites ?c } GROUP BY ?p ORDER BY DESC(?cites)" },
+          q: "PREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?p ?title WHERE { ?p dct:title ?title } LIMIT 100" },
+        { label: "Property path: reachable by citation", fmt: "table", tip: "Papers reachable from paper/245 via cito:cites+",
+          q: "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT DISTINCT ?reached WHERE { <http://ex/paper/245> cito:cites+ ?reached }" },
+        { label: "Aggregate: most-cited papers", fmt: "table", tip: "GROUP BY count of incoming citations per paper (power law)",
+          q: "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT ?p (COUNT(?c) AS ?citations) WHERE { ?c cito:cites ?p } GROUP BY ?p ORDER BY DESC(?citations) LIMIT 20" },
         { label: "CONSTRUCT: citedBy (reverse)", fmt: "ttl", tip: "Reverse the citation graph; render as Turtle",
-          q: "PREFIX ex: <http://ex/>\nCONSTRUCT { ?b ex:citedBy ?a } WHERE { ?a ex:cites ?b }" },
+          q: "PREFIX ex: <http://ex/>\nPREFIX cito: <http://purl.org/spar/cito/>\nCONSTRUCT { ?b ex:citedBy ?a } WHERE { ?a cito:cites ?b }" },
       ],
     };
 
@@ -342,11 +367,11 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
           { label: "who depends on log4x? (reverse / blast radius)", pred: "<http://ex/dependsOn>", seeds: "<http://ex/log4x>", reverse: true },
         ],
       },
-      "./papers.rete": {
-        pred: "<http://ex/cites>",
+      "./scholar.rete": {
+        pred: "<http://purl.org/spar/cito/cites>",
         examples: [
-          { label: "papers p1 reaches via citation", pred: "<http://ex/cites>", seeds: "<http://ex/p1>", reverse: false },
-          { label: "who cites p5? (reverse)", pred: "<http://ex/cites>", seeds: "<http://ex/p5>", reverse: true },
+          { label: "papers paper/245 reaches via citation", pred: "<http://purl.org/spar/cito/cites>", seeds: "<http://ex/paper/245>", reverse: false },
+          { label: "who cites paper/15? (reverse)", pred: "<http://purl.org/spar/cito/cites>", seeds: "<http://ex/paper/15>", reverse: true },
         ],
       },
     };
@@ -491,6 +516,49 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
     $("load").onclick = () => load($("url").value).catch((e) => $("meta").textContent = "Error: " + e);
     $("run").onclick = runQuery;
     $("reachRun").onclick = runReach;
+
+    // Remote lazy SPARQL: one persistent module worker (sync XHR is allowed
+    // only off the main thread); each run posts {url, query} and renders the
+    // envelope plus the fetch stats the wasm side reports.
+    let sparqlWorker = null;
+    $("rrun").onclick = () => {
+      const url = $("rurl").value.trim();
+      const q = $("rq").value;
+      if (!url || !q.trim()) return;
+      if (!sparqlWorker) {
+        sparqlWorker = new Worker(new URL("./sparql-url-worker.js", import.meta.url), { type: "module" });
+      }
+      $("rmeta").textContent = "querying remotely…";
+      $("rout").innerHTML = "";
+      const t0 = performance.now();
+      sparqlWorker.onmessage = (e) => {
+        const dt = (performance.now() - t0).toFixed(1);
+        if (!e.data.ok) {
+          $("rmeta").textContent = "";
+          $("rout").innerHTML = `<p class="err">${esc(e.data.error)}</p>`;
+          return;
+        }
+        const res = JSON.parse(e.data.json);
+        const r = res.remote || {};
+        const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
+        $("rmeta").textContent =
+          `${r.requests} range request(s) · ${r.bytes} of ${r.fileLength} bytes (${pct}%) · ${dt} ms`;
+        if (res.kind === "select") {
+          const vars = res.vars || [];
+          const rows = (res.rows || []).slice(0, 200);
+          $("rout").innerHTML =
+            `<table><thead><tr>${vars.map((v) => `<th>?${esc(v)}</th>`).join("")}</tr></thead><tbody>` +
+            rows.map((row) =>
+              `<tr>${vars.map((v) => `<td class="iri">${esc(row[v] || "")}</td>`).join("")}</tr>`).join("") +
+            `</tbody></table>`;
+        } else if (res.kind === "ask") {
+          $("rout").innerHTML = `<p>ASK → <strong>${res.boolean}</strong></p>`;
+        } else {
+          $("rout").innerHTML = `<pre>${esc(JSON.stringify(res.triples || res, null, 2).slice(0, 4000))}</pre>`;
+        }
+      };
+      sparqlWorker.postMessage({ url, query: q });
+    };
 
     await init();
     renderHistory();

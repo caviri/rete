@@ -29,9 +29,22 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
   font-weight:700; text-decoration:none; display:inline-block; line-height:1;
 }
 .sidebar .brand::after { content:""; display:block; width:2.2rem; height:3px; margin-top:.55rem; background:var(--accent-2); }
-.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 1.35rem; }
+.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 .6rem; }
+.sidebar .meta { display:flex; align-items:center; gap:.5rem; font-size:.8rem; margin:0 0 1.1rem; }
+.sidebar .meta .ver {
+  font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
+  font-size:.72rem; font-weight:700; color:#0b4f42; background:#fff;
+  border:1px solid var(--border); border-radius:999px; padding:.06rem .55rem;
+}
+.sidebar .meta a { display:inline; padding:0; border:0; color:#0b6f5e; font-weight:600; }
+.sidebar .meta a:hover { background:none; text-decoration:underline; }
 .sidebar ul { list-style:none; padding:0; margin:0; }
 .sidebar li { margin:.08rem 0; }
+.sidebar li.nav-h {
+  margin:1.15rem 0 .3rem; padding:0 .62rem; font-size:.66rem; font-weight:800;
+  letter-spacing:.09em; text-transform:uppercase; color:#52625b;
+}
+.sidebar li.nav-h:first-child { margin-top:.2rem; }
 .sidebar a {
   color:var(--side-fg); text-decoration:none; display:block; padding:.42rem .62rem;
   border-left:3px solid transparent; border-radius:0 6px 6px 0; font-size:.93rem; line-height:1.25;
@@ -43,11 +56,12 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 
 main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
 .page {
-  width:min(1180px,100%); display:grid; grid-template-columns:minmax(0,860px) 230px;
+  width:min(1320px,100%); margin:0 auto; display:grid;
+  grid-template-columns:minmax(0,980px) 230px;
   gap:2.4rem; padding:0 2.2rem; align-items:start;
 }
 .content { min-width:0; padding:3.1rem 0 2rem; }
-footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
+footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
 
 .rail {
   margin-top:3.25rem; font-size:.82rem;
@@ -71,7 +85,7 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
 
 .content h1,.content h2,.content h3 { scroll-margin-top:1rem; }
 .content h1 {
-  max-width:780px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
+  max-width:860px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
   line-height:1.08; margin:.1rem 0 1.15rem; font-weight:700;
 }
 .content h1::after { content:""; display:block; width:4.4rem; height:4px; margin-top:1rem; background:var(--accent); }
@@ -166,34 +180,41 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <p class="meta"><span class="ver">v0.0.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
+        <li class="nav-h">Start here</li>
         <li><a href="index.html" class="active">Overview</a></li>
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
-        <li><a href="architecture.html">Architecture</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li><a href="federation.html">Federated queries</a></li>
+        <li class="nav-h">In the browser</li>
         <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li class="nav-h">Internals</li>
+        <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html">Format specification</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li><a href="playground.html">Interactive playground</a></li>
     </ul>
-    <p class="foot"><a href="https://github.com/caviri/rete">GitHub</a></p>
+    <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
   </nav>
   <main>
     <div class="page">
       <article class="content">
 <h1>rete</h1>
 <p><strong>A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server.</strong></p>
+<p><a href="https://github.com/caviri/rete"><code>github.com/caviri/rete</code></a> · crate <strong>v0.0.1</strong> · on-disk format <strong>v0.2</strong> (readers accept v0.1)</p>
 <p><code>rete</code> packs an RDF graph (or a full dataset of named graphs) into one immutable
 <code>.rete</code> file with its own dictionary, permutation indexes, and a pyramidal
 community summary. Drop the file on S3, GitHub, or any HTTP host that honors
@@ -235,28 +256,45 @@ rete summary social.rete    # structural (Louvain communities)
 rete schema  social.rete    # semantic (by rdf:type)
 </code></pre>
 <h2>Documentation</h2>
+<h3>Start here</h3>
 <ul>
 <li><strong><a href="intro.html">Graph data 101</a></strong> — new to graphs/RDF? A beginner's tour, framed by the questions you can ask.</li>
-<li><strong><a href="getting-started.html">Getting started</a></strong> — install (Docker-only), build, query, deploy.</li>
-<li><strong><a href="architecture.html">Architecture</a></strong> — workspace map, build/read/query pipelines, range model, and extension points.</li>
+<li><strong><a href="getting-started.html">Getting started</a></strong> — install (Docker-only), build, query, deploy, generate test data.</li>
 <li><strong><a href="scenario.html">Real-world scenario</a></strong> — publish a queryable SBOM to a URL; curl examples.</li>
+<li><strong><a href="playground.html">Interactive playground</a></strong> — a static, no-server page that runs the engine in your browser: SELECT/ASK/CONSTRUCT, progressive summaries, SHACL, reachability — all offline (even from <code>file://</code>).</li>
+</ul>
+<h3>Guides</h3>
+<ul>
 <li><strong><a href="cli.html">CLI reference</a></strong> — every <code>rete</code> subcommand.</li>
 <li><strong><a href="sparql.html">SPARQL support</a></strong> — exactly what the engine evaluates.</li>
 <li><strong><a href="shacl.html">SHACL validation</a></strong> — validate <code>.rete</code> graphs against SHACL Core shapes.</li>
-<li><strong><a href="compatibility.html">Compatibility &amp; interop</a></strong> — RDF, validation, and Cypher.</li>
+<li><strong><a href="dataset-cards.html">Dataset Cards</a></strong> — self-describing metadata embedded in the file.</li>
 <li><strong><a href="reasoning.html">Reasoning &amp; coherence</a></strong> — prototype OWL RL / RDFS reasoner; find incoherent points.</li>
+<li><strong><a href="federation.html">Federated queries</a></strong> — query several <code>.rete</code> files (local paths and/or URLs) as one; union merge + predicate routing.</li>
+<li><strong><a href="compatibility.html">Compatibility &amp; interop</a></strong> — RDF, validation, and Cypher.</li>
+</ul>
+<h3>Graph analysis</h3>
+<ul>
 <li><strong><a href="topic-modeling.html">Topic modeling (LDA)</a></strong> — label each community's theme: <code>rete communities</code> + scikit-learn LDA.</li>
 <li><strong><a href="multi-criteria.html">Multi-criteria communities</a></strong> — partition the same graph by different relations/attributes; combine criteria.</li>
-<li><strong><a href="federation.html">Federated queries</a></strong> — query several <code>.rete</code> files (local paths and/or URLs) as one; union merge + predicate routing.</li>
+</ul>
+<h3>In the browser</h3>
+<ul>
 <li><strong><a href="browser.html">Browser / WASM</a></strong> — query in the browser; progressive loading.</li>
-<li><strong><a href="playground.html">Interactive playground</a></strong> — a static, no-server, runs-entirely-in-your-browser page: it embeds the WASM engine and the example datasets, so SELECT/ASK/CONSTRUCT, progressive summary queries, Table/Turtle/JSON-LD, the community view, reachability, and history all work offline (even from <code>file://</code>).</li>
-<li><strong><a href="SPEC.html">Format specification</a></strong> — the on-disk byte layout, for implementers.</li>
-<li><strong><a href="BENCHMARK.html">Benchmarks</a></strong> — synthetic 139 k-triple sizing plus the real OpenCitations/Oxigraph comparison, generated from a JSON snapshot.</li>
 <li><strong><a href="parallel-browser.html">Parallel in the browser (experimental)</a></strong> — a working Web Worker reachability demo, plus the more fragile shared-memory WASM thread path.</li>
 </ul>
-<h2>Status</h2>
-<p>Experimental (v0). The format is not yet stable across versions. Everything is
-built and tested in Docker — see <a href="getting-started.html">Getting started</a>.</p>
+<h3>Internals</h3>
+<ul>
+<li><strong><a href="architecture.html">Architecture</a></strong> — workspace map, build/read/query pipelines, range model, and extension points.</li>
+<li><strong><a href="SPEC.html">Format specification</a></strong> — the on-disk byte layout, for implementers.</li>
+<li><strong><a href="BENCHMARK.html">Benchmarks</a></strong> — sizing, the OpenCitations/Oxigraph comparison, and the LUBM-style suite, generated from JSON snapshots.</li>
+</ul>
+<h2>Version &amp; status</h2>
+<p>Developed in the open at <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>.
+The crates are <strong>v0.0.1</strong> (experimental); the on-disk format is <strong>v0.2</strong>, and
+readers still accept v0.1 files. The format is not yet stable across versions.
+Everything is built and tested in Docker — see
+<a href="getting-started.html">Getting started</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

@@ -74,8 +74,26 @@ fn why_triples_returns_browser_camel_case_provenance() {
             <= first["provenance"]["indexRange"]["end"].as_u64().unwrap()
     );
     assert!(first["provenance"]["pyramidRange"]["len"].as_u64().unwrap() > 0);
-    assert_eq!(first["provenance"]["tile"]["available"], false);
-    assert_eq!(first["provenance"]["tile"]["reason"], "not_materialized");
+    // Tiled (v0.2) files report the physical tile and its byte range, nested
+    // inside the selected permutation section.
+    assert_eq!(first["provenance"]["tile"]["available"], true);
+    assert!(first["provenance"]["tile"]["id"]
+        .as_str()
+        .unwrap()
+        .contains('/'));
+    let tile_off = first["provenance"]["tile"]["range"]["offset"]
+        .as_u64()
+        .unwrap();
+    let tile_end = first["provenance"]["tile"]["range"]["end"]
+        .as_u64()
+        .unwrap();
+    let sec_off = first["provenance"]["indexSectionRange"]["offset"]
+        .as_u64()
+        .unwrap();
+    let sec_end = first["provenance"]["indexSectionRange"]["end"]
+        .as_u64()
+        .unwrap();
+    assert!(sec_off <= tile_off && tile_end <= sec_end);
 }
 
 #[test]

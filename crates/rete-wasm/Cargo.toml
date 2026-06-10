@@ -25,6 +25,9 @@ threads = ["rete-core/parallel", "dep:wasm-bindgen-rayon"]
 rete-core = { path = "../rete-core", default-features = false }
 wasm-bindgen = "0.2"
 serde_json = "1"
+# Sync-XHR range reader for the in-worker remote-query path (`sparql_url`).
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["XmlHttpRequest", "XmlHttpRequestResponseType"] }
 # Threaded variant only (feature = "threads"). 1.3 targets wasm-bindgen 0.2.x,
 # matching the 0.2.122 already pinned in Cargo.lock.
 wasm-bindgen-rayon = { version = "1.3", optional = true }

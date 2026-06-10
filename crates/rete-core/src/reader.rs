@@ -6,7 +6,7 @@
 //! `Range` client. [`CountingReader`] wraps any reader to measure how few bytes
 //! a given access pattern actually touches.
 
-use std::cell::Cell;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Something that can serve arbitrary byte ranges of a `.rete` resource.
 pub trait RangeReader {
@@ -21,6 +21,18 @@ pub trait RangeReader {
     /// Read `len` bytes starting at `offset`. Implementations should error on
     /// an out-of-bounds range rather than truncating.
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>>;
+}
+
+/// Sharing a reader (e.g. keeping a counting handle while a lazily-faulting
+/// [`Rete`](crate::Rete) owns another) just delegates.
+impl<R: RangeReader + ?Sized> RangeReader for std::sync::Arc<R> {
+    fn len(&self) -> u64 {
+        (**self).len()
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        (**self).read_at(offset, len)
+    }
 }
 
 /// A [`RangeReader`] over an in-memory byte slice (tests, embedded files).
@@ -53,29 +65,31 @@ impl RangeReader for SliceReader<'_> {
 
 /// Wraps a reader and tallies how many ranges were requested and how many bytes
 /// were returned — the metric that matters for a range-streamed format.
+/// Atomically counted, so it stays `Sync` (a lazily-faulting remote index holds
+/// its reader behind a shared loader).
 pub struct CountingReader<R> {
     inner: R,
-    requests: Cell<u64>,
-    bytes: Cell<u64>,
+    requests: AtomicU64,
+    bytes: AtomicU64,
 }
 
 impl<R: RangeReader> CountingReader<R> {
     pub fn new(inner: R) -> Self {
         Self {
             inner,
-            requests: Cell::new(0),
-            bytes: Cell::new(0),
+            requests: AtomicU64::new(0),
+            bytes: AtomicU64::new(0),
         }
     }
 
     /// Number of `read_at` calls made so far.
     pub fn requests(&self) -> u64 {
-        self.requests.get()
+        self.requests.load(Ordering::Relaxed)
     }
 
     /// Total bytes returned so far.
     pub fn bytes_read(&self) -> u64 {
-        self.bytes.get()
+        self.bytes.load(Ordering::Relaxed)
     }
 }
 
@@ -86,8 +100,8 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
 
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         let out = self.inner.read_at(offset, len)?;
-        self.requests.set(self.requests.get() + 1);
-        self.bytes.set(self.bytes.get() + out.len() as u64);
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        self.bytes.fetch_add(out.len() as u64, Ordering::Relaxed);
         Ok(out)
     }
 }

@@ -1,20 +1,22 @@
 :root {
-  --ink: #14110f;
-  --muted: #675f58;
-  --paper: #fbfaf7;
+  /* Shared palette with the documentation site (docgen CSS). */
+  --ink: #17211d;
+  --muted: #66746e;
+  --paper: #f6f8f7;
   --surface: #ffffff;
-  --line: #ded8cd;
-  --line-strong: #b9aa98;
-  --olive: #5e6f35;
-  --olive-dark: #3f4f23;
-  --blue: #235c7c;
-  --clay: #a45535;
-  --amber: #d79b2b;
-  --code: #f4f1ea;
-  --ok: #edf6e7;
-  --warn: #fff7df;
+  --side: #eef4ef;
+  --line: #d9e2de;
+  --line-strong: #aebfb8;
+  --accent: #147d69;
+  --accent-dark: #0b4f42;
+  --accent-2: #c84f2f;
+  --amber: #b98112;
+  --code: #eef3f1;
+  --code-border: #cfd9d5;
+  --ok: #e9f4ec;
+  --warn: #fff8f4;
   --bad: #b42318;
-  --shadow: 0 14px 38px rgba(58, 48, 35, 0.08);
+  --shadow: 0 18px 44px rgba(32, 47, 41, .10);
 }
 
 * {
@@ -28,13 +30,10 @@ body {
 
 body {
   min-width: 320px;
-  background:
-    linear-gradient(90deg, rgba(94, 111, 53, .07) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(164, 85, 53, .05) 1px, transparent 1px),
-    var(--paper);
-  background-size: 28px 28px;
+  background: var(--paper);
   color: var(--ink);
-  font: 14px/1.5 "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  font: 14px/1.55 "Aptos", "Segoe UI", system-ui, sans-serif;
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -50,11 +49,11 @@ textarea,
 .mono,
 .iri,
 table {
-  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: "Cascadia Mono", "SF Mono", Consolas, ui-monospace, monospace;
 }
 
 a {
-  color: var(--blue);
+  color: var(--accent-dark);
 }
 
 .topbar {
@@ -65,29 +64,33 @@ a {
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 16px;
   align-items: center;
-  padding: 12px 18px;
-  border-bottom: 1px solid #2d2925;
-  background: #1c1916;
-  color: #f7f0e5;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--side);
+  color: var(--ink);
 }
 
 .brand {
   display: inline-flex;
   align-items: baseline;
   gap: 10px;
-  color: #fff8ed;
+  color: var(--ink);
   text-decoration: none;
   white-space: nowrap;
 }
 
 .brand-mark {
+  font-family: Georgia, "Times New Roman", serif;
   font-size: 24px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0;
+  border-bottom: 3px solid var(--accent-2);
+  padding-bottom: 2px;
+  line-height: 1;
 }
 
 .brand-sub {
-  color: #c8b9a6;
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -115,10 +118,6 @@ label > span {
   text-transform: uppercase;
 }
 
-.topbar .dataset-picker span {
-  color: #c8b9a6;
-}
-
 select,
 input[type="text"],
 input[type="number"],
@@ -126,7 +125,7 @@ input[type="search"] {
   min-height: 36px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fffefb;
+  background: var(--surface);
   color: var(--ink);
   padding: 7px 9px;
 }
@@ -134,19 +133,22 @@ input[type="search"] {
 .topbar select {
   width: 100%;
   max-width: 440px;
-  border-color: #62594e;
-  background: #29251f;
-  color: #fff8ed;
 }
 
 .status-pill,
 .statline {
-  border: 1px solid rgba(255, 248, 237, .18);
+  border: 1px solid var(--line-strong);
   border-radius: 999px;
   padding: 5px 9px;
-  color: #e3d6c5;
+  background: var(--surface);
+  color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.status-pill {
+  color: var(--accent-dark);
+  font-weight: 700;
 }
 
 .statline {
@@ -162,44 +164,72 @@ input[type="search"] {
 }
 
 .docs-link {
-  color: #f1d39d;
+  color: var(--accent-dark);
   font-size: 13px;
+  font-weight: 600;
   text-decoration: none;
+}
+
+.docs-link:hover {
+  text-decoration: underline;
 }
 
 button {
   min-height: 36px;
-  border: 1px solid var(--olive-dark);
+  border: 1px solid var(--accent-dark);
   border-radius: 6px;
-  background: var(--olive);
-  color: #fffdf8;
+  background: var(--accent);
+  color: #f4faf8;
   cursor: pointer;
   font-weight: 700;
   padding: 7px 13px;
 }
 
 button:hover {
-  background: var(--olive-dark);
+  background: var(--accent-dark);
 }
 
 button.secondary,
 button.ghost {
   border-color: var(--line-strong);
-  background: #fffdf8;
+  background: var(--surface);
   color: var(--ink);
 }
 
 button.secondary:hover,
 button.ghost:hover {
-  background: #f0eadf;
+  background: var(--side);
+}
+
+button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* A label styled like a secondary button, wrapping a hidden file input. */
+label.file-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 700;
+  padding: 7px 13px;
+}
+
+label.file-button:hover {
+  background: var(--side);
 }
 
 .icon-button {
   width: 36px;
   padding: 0;
-  border-color: #5f554a;
-  background: #29251f;
-  color: #f1d39d;
+  border-color: var(--line-strong);
+  background: var(--surface);
+  color: var(--accent-dark);
 }
 
 .mode-tabs {
@@ -218,9 +248,9 @@ button.ghost:hover {
 }
 
 .mode-tabs button.active {
-  border-color: var(--ink);
-  background: var(--ink);
-  color: #fff8ed;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #f4faf8;
 }
 
 .console-shell {
@@ -235,7 +265,7 @@ section,
 .workbench {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .88);
+  background: var(--surface);
   box-shadow: var(--shadow);
 }
 
@@ -264,15 +294,18 @@ p {
 
 h1 {
   margin-bottom: 4px;
+  font-family: Georgia, "Times New Roman", serif;
   font-size: 24px;
+  font-weight: 700;
   line-height: 1.08;
 }
 
 h2 {
   margin-bottom: 9px;
-  font-size: 13px;
+  font-size: 12px;
   letter-spacing: .08em;
   text-transform: uppercase;
+  color: #52625b;
 }
 
 h3 {
@@ -300,15 +333,15 @@ h3 {
   min-height: 64px;
   border: 1px dashed var(--line-strong);
   border-radius: 8px;
-  background: #fbf6ea;
+  background: var(--side);
   color: var(--muted);
   cursor: pointer;
 }
 
 .file-zone.drag {
-  border-color: var(--blue);
-  background: #edf7fb;
-  color: var(--blue);
+  border-color: var(--accent);
+  background: #e3f0ec;
+  color: var(--accent-dark);
 }
 
 .file-zone input {
@@ -346,7 +379,7 @@ h3 {
 .example-button {
   min-height: 30px;
   border-color: var(--line);
-  background: #fffdf8;
+  background: var(--surface);
   color: var(--ink);
   font-size: 12px;
   font-weight: 650;
@@ -354,9 +387,9 @@ h3 {
 
 .filter-row button.active,
 .example-button.active {
-  border-color: var(--blue);
-  background: #eaf4f8;
-  color: var(--blue);
+  border-color: var(--accent);
+  background: #e3f0ec;
+  color: var(--accent-dark);
 }
 
 .example-list {
@@ -366,14 +399,14 @@ h3 {
 
 .example-card {
   border: 1px solid var(--line);
-  border-left: 4px solid var(--olive);
+  border-left: 4px solid var(--accent);
   border-radius: 8px;
-  background: #fffdf8;
+  background: var(--surface);
   padding: 9px 10px;
 }
 
 .example-card[data-family="Path"] {
-  border-left-color: var(--blue);
+  border-left-color: #235c7c;
 }
 
 .example-card[data-family="Aggregate"] {
@@ -381,7 +414,7 @@ h3 {
 }
 
 .example-card[data-family="Construct"] {
-  border-left-color: var(--clay);
+  border-left-color: var(--accent-2);
 }
 
 .example-card .example-button {
@@ -429,13 +462,125 @@ textarea {
   display: block;
   width: 100%;
   min-height: 260px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--code-border);
   border-radius: 8px;
   background: var(--code);
   color: var(--ink);
   padding: 12px;
   resize: vertical;
   line-height: 1.46;
+}
+
+/* --- Code editor (gutter + highlight overlay + suggestions) ------------- */
+.editor {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  border: 1px solid var(--code-border);
+  border-radius: 8px;
+  background: var(--code);
+  overflow: hidden;
+}
+
+.ed-gutter {
+  min-width: 40px;
+  padding: 12px 8px 12px 4px;
+  border-right: 1px solid var(--code-border);
+  background: rgba(20, 125, 105, .05);
+  color: #8ba197;
+  font: 13px/1.46 "Cascadia Mono", "SF Mono", Consolas, ui-monospace, monospace;
+  text-align: right;
+  white-space: pre;
+  overflow: hidden;
+  user-select: none;
+}
+
+.ed-body {
+  position: relative;
+  min-width: 0;
+}
+
+.ed-hl {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 12px;
+  overflow: hidden;
+  pointer-events: none;
+  font-size: 13px;
+  line-height: 1.46;
+  white-space: pre;
+}
+
+.editor textarea {
+  position: relative;
+  min-height: 240px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--ink);
+  font-size: 13px;
+  line-height: 1.46;
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+}
+
+.editor textarea::selection {
+  background: rgba(20, 125, 105, .22);
+  color: transparent;
+}
+
+.editor textarea::placeholder {
+  color: var(--muted);
+}
+
+/* Token colors — same theme as the documentation code blocks. */
+.tok-com  { color: #78877f; font-style: italic; }
+.tok-str  { color: #0b745f; }
+.tok-kw   { color: #8a3d5a; font-weight: 700; }
+.tok-num  { color: #a85424; }
+.tok-fn   { color: #0b6f5e; }
+.tok-iri  { color: #0b6f5e; }
+.tok-var  { color: #a85424; }
+.tok-punct{ color: #66746e; }
+
+.ed-suggest {
+  position: absolute;
+  z-index: 30;
+  min-width: 220px;
+  max-width: 380px;
+  max-height: 212px;
+  overflow: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font: 12.5px/1.4 "Cascadia Mono", "SF Mono", Consolas, ui-monospace, monospace;
+}
+
+.ed-suggest .sg {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 5px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ed-suggest .sg.active {
+  background: #e3f0ec;
+}
+
+.ed-suggest .sg .sg-kind {
+  color: var(--muted);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
 }
 
 #shapeText {
@@ -481,7 +626,7 @@ textarea {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fffdf8;
+  background: var(--surface);
 }
 
 .segmented button {
@@ -498,8 +643,8 @@ textarea {
 }
 
 .segmented button.active {
-  background: var(--blue);
-  color: #fff;
+  background: var(--accent);
+  color: #f4faf8;
 }
 
 .results-band {
@@ -512,13 +657,13 @@ textarea {
   min-height: 150px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fffdf8;
+  background: var(--surface);
   padding: 12px;
 }
 
 .result-pane.subtle {
   min-height: 0;
-  background: #fbf6ea;
+  background: var(--side);
 }
 
 table {
@@ -537,12 +682,13 @@ td {
 }
 
 th {
-  background: #f0eadf;
+  background: #eaf1ed;
+  color: #26342f;
   font-weight: 800;
 }
 
 tr:nth-child(even) td {
-  background: #fcfaf5;
+  background: #fbfcfb;
 }
 
 .cell-note {
@@ -554,7 +700,7 @@ tr:nth-child(even) td {
 
 pre {
   margin: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--code-border);
   border-radius: 8px;
   background: var(--code);
   padding: 12px;
@@ -573,16 +719,16 @@ pre {
 }
 
 .banner {
-  border: 1px solid #bed6aa;
+  border: 1px solid #b5d4be;
   background: var(--ok);
-  color: #33551e;
+  color: #1d5234;
 }
 
 .note,
 .meta-strip {
-  border: 1px solid #e7cf8d;
+  border: 1px solid #e4b9a4;
   background: var(--warn);
-  color: #674d11;
+  color: #7c4124;
 }
 
 .error-box {
@@ -602,17 +748,17 @@ pre {
   display: inline-flex;
   gap: 4px;
   align-items: baseline;
-  border: 1px solid rgba(103, 77, 17, .2);
+  border: 1px solid rgba(124, 65, 36, .2);
   border-radius: 999px;
   padding: 3px 7px;
-  background: rgba(255, 255, 255, .48);
+  background: rgba(255, 255, 255, .55);
 }
 
 .ontology-diagram,
 .graphwrap {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fffdf8;
+  background: var(--surface);
   overflow: hidden;
 }
 
@@ -620,6 +766,10 @@ pre {
 .graphwrap svg {
   display: block;
   width: 100%;
+}
+
+.ontology-diagram svg {
+  max-height: 420px;
 }
 
 .graphwrap svg {
@@ -632,8 +782,8 @@ pre {
 }
 
 .gnode {
-  fill: var(--blue);
-  stroke: #fffdf8;
+  fill: var(--accent);
+  stroke: var(--surface);
   stroke-width: 1.6;
   cursor: grab;
 }
@@ -646,8 +796,52 @@ pre {
 }
 
 .gedge {
-  stroke: #99a991;
+  stroke: #9fb5ac;
   stroke-width: 1.3;
+}
+
+/* UML-style schema class boxes. */
+.cls-box {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1.1;
+}
+
+.cls-head {
+  fill: #eaf1ed;
+  stroke: var(--line-strong);
+  stroke-width: 1.1;
+}
+
+.cls-title {
+  font: 700 11px "Cascadia Mono", Consolas, monospace;
+  fill: var(--accent-dark);
+}
+
+.cls-count {
+  font: 10px "Aptos", "Segoe UI", system-ui, sans-serif;
+  fill: var(--muted);
+}
+
+.cls-attr {
+  font: 10px "Cascadia Mono", Consolas, monospace;
+  fill: var(--ink);
+}
+
+.cls-attr-count {
+  font: 9px "Cascadia Mono", Consolas, monospace;
+  fill: var(--muted);
+}
+
+.cls-edge {
+  stroke: #9fb5ac;
+  stroke-width: 1.2;
+  fill: none;
+}
+
+.cls-edge-label {
+  font: 9.5px "Cascadia Mono", Consolas, monospace;
+  fill: #52625b;
 }
 
 .schema-columns {
@@ -667,7 +861,7 @@ pre {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 4px 8px;
-  background: #fffdf8;
+  background: var(--surface);
   font-size: 12px;
 }
 
@@ -685,13 +879,13 @@ pre {
 .metric {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fffdf8;
+  background: var(--surface);
   padding: 8px;
 }
 
 .metric strong {
   display: block;
-  color: var(--ink);
+  color: var(--accent-dark);
   font-size: 16px;
   line-height: 1.15;
 }
@@ -704,17 +898,17 @@ pre {
 .history-item {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fffdf8;
+  background: var(--surface);
   padding: 8px;
   cursor: pointer;
 }
 
 .history-item:hover {
-  border-color: var(--blue);
+  border-color: var(--accent);
 }
 
 .iri {
-  color: var(--blue);
+  color: var(--accent-dark);
 }
 
 .hidden,

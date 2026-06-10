@@ -16,7 +16,7 @@ use super::path::eval_path;
 use super::*;
 use crate::bgp::{
     bgp_exists, collect_pattern_slots, eval_bgp_rows, row_to_binding, BgpSolutions, Binding,
-    PatternTerm, TriplePattern,
+    PatternTerm, ProbeJoin, ProbePlan, TriplePattern,
 };
 use crate::file::Rete;
 use crate::index::{GraphIndex, GraphIndexBuilder};
@@ -25,6 +25,17 @@ use spargebra::term::{NamedNodePattern, TermPattern, TriplePattern as SpTriplePa
 
 /// A lazily-evaluated stream of solution rows.
 pub(super) type RowIter<'q> = Box<dyn Iterator<Item = Row> + 'q>;
+
+/// The largest `limit_hint` for which joins switch from hash joins (scan every
+/// pattern once) to index-nested-loop probing (probe per row). Above this, the
+/// per-row probes would likely cost more than the one-pass scans they avoid.
+const INLJ_MAX_HINT: usize = 4096;
+
+/// The demand bound, when small enough to make index probing the better join
+/// strategy.
+fn inlj_hint(ctx: &Ctx) -> Option<usize> {
+    ctx.limit_hint.get().filter(|&h| h <= INLJ_MAX_HINT)
+}
 
 /// Build the per-query evaluation context: walk the whole query (plan,
 /// EXISTS sub-plans, BIND targets, aggregates, projection) once and assign
@@ -261,6 +272,8 @@ pub(super) fn ask_solution(rete: &Rete, sel: &Select) -> bool {
     if sel.group.is_some() || !sel.having.is_empty() || !sel.extends.is_empty() {
         return !raw_solutions_in(&ctx, sel).is_empty();
     }
+    // ASK pulls exactly one solution — let joins probe instead of scan.
+    ctx.limit_hint.set(Some(1));
     let merged = if sel.from.is_empty() {
         None
     } else {
@@ -275,7 +288,9 @@ pub(super) fn ask_solution(rete: &Rete, sel: &Select) -> bool {
 /// lazy pipeline and stops.
 fn plan_exists(ctx: &Ctx, index: &GraphIndex, nf: Option<&[String]>, plan: &Plan) -> bool {
     match plan {
-        Plan::Bgp(patterns) => bgp_exists(ctx, index, patterns),
+        // The single-pattern probe is a direct index lookup; multi-pattern
+        // BGPs go through the pipeline, which probes under ASK's demand bound.
+        Plan::Bgp(patterns) if patterns.len() <= 1 => bgp_exists(ctx, index, patterns),
         Plan::Union(l, r) => plan_exists(ctx, index, nf, l) || plan_exists(ctx, index, nf, r),
         Plan::Values(_, rows) => !rows.is_empty(),
         _ => eval_plan_iter(ctx, index, nf, plan).next().is_some(),
@@ -400,6 +415,13 @@ fn inst_named(ctx: &Ctx, n: &NamedNodePattern, b: &Row) -> Option<String> {
 /// other stage streams, so the slice's demand reaches the index scan.
 pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding>) {
     let ctx = query_ctx(rete, sel);
+    // A pure LIMIT/OFFSET (no ORDER BY/DISTINCT/aggregate/HAVING, which all
+    // consume their input fully) bounds how many rows the pipeline will pull —
+    // joins below may switch to index probing. BIND only adds columns.
+    if sel.order.is_empty() && !sel.distinct && sel.group.is_none() && sel.having.is_empty() {
+        ctx.limit_hint
+            .set(sel.limit.map(|l| l.saturating_add(sel.offset)));
+    }
     let merged = if sel.from.is_empty() {
         None
     } else {
@@ -456,15 +478,16 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
         source = Box::new(sorted.into_iter());
     }
 
-    // Project to the requested slots (SELECT * keeps everything). Rows stay
-    // integer-valued; unprojected slots are simply cleared so DISTINCT sees
-    // only the projected identity.
+    // Project to the requested slots (SELECT * keeps everything). Only DISTINCT
+    // needs the materialized projected row (its identity is the projection);
+    // otherwise the final conversion below reads the projected slots straight
+    // off the raw row — no per-row clone.
     let proj_slots: Vec<usize> = sel
         .project
         .iter()
         .filter_map(|v| ctx.slots.slot(v))
         .collect();
-    if !sel.project.is_empty() {
+    if !sel.project.is_empty() && sel.distinct {
         let ctx_ref = &ctx;
         let ps = proj_slots.clone();
         source = Box::new(source.map(move |b| {
@@ -583,14 +606,18 @@ fn values_rows(ctx: &Ctx, vars: &[String], rows: &[Vec<Option<String>>]) -> Vec<
 }
 
 /// Evaluate a plan eagerly to a row vector (used by EXISTS, whose solutions are
-/// cached and probed repeatedly).
+/// cached and probed repeatedly). The demand bound is suspended — this consumes
+/// everything, so hash joins beat per-row probing here.
 pub(crate) fn eval_plan_in(
     ctx: &Ctx,
     index: &GraphIndex,
     named_filter: Option<&[String]>,
     plan: &Plan,
 ) -> Vec<Row> {
-    eval_plan_iter(ctx, index, named_filter, plan).collect()
+    let saved = ctx.limit_hint.replace(None);
+    let rows = eval_plan_iter(ctx, index, named_filter, plan).collect();
+    ctx.limit_hint.set(saved);
+    rows
 }
 
 /// Lazily evaluate a plan against a specific graph `index` (the active graph).
@@ -604,7 +631,17 @@ pub(crate) fn eval_plan_iter<'q>(
     // A named graph is visible unless FROM NAMED excludes it.
     let visible = move |name: &str| named_filter.is_none_or(|f| f.iter().any(|g| g == name));
     match plan {
-        Plan::Bgp(patterns) => Box::new(BgpSolutions::new(ctx, index, patterns)),
+        Plan::Bgp(patterns) => {
+            // Under a small demand bound, probe the join pattern-by-pattern
+            // through the index instead of scanning every pattern once.
+            if inlj_hint(ctx).is_some() && patterns.len() >= 2 {
+                return match ProbeJoin::new(ctx, index, patterns) {
+                    Some(pj) => Box::new(pj),
+                    None => Box::new(std::iter::empty()),
+                };
+            }
+            Box::new(BgpSolutions::new(ctx, index, patterns))
+        }
         Plan::Path(subj, spec, obj) => Box::new(eval_path(ctx, index, subj, spec, obj).into_iter()),
         Plan::Values(vars, rows) => Box::new(values_rows(ctx, vars, rows).into_iter()),
         Plan::Filter(expr, inner) => {
@@ -856,6 +893,31 @@ fn join_iter<'q>(
     optional: bool,
     cond: Option<&'q FExpr>,
 ) -> RowIter<'q> {
+    // Under a small demand bound with a BGP right side, skip materializing it:
+    // stream the left and probe the right's patterns per row through the index
+    // (correlated pushdown). Same multiset as the hash join.
+    if inlj_hint(ctx).is_some() {
+        if let Plan::Bgp(patterns) = r {
+            if !patterns.is_empty() {
+                let lcert = certain_bound(ctx, l, ctx.slots.len());
+                return match ProbePlan::new(ctx, patterns, &lcert) {
+                    Some(plan) => Box::new(ProbedJoin {
+                        ctx,
+                        index,
+                        left: eval_plan_iter(ctx, index, nf, l),
+                        plan,
+                        optional,
+                        cond,
+                        cache: ExistsCache::new(),
+                        cur: None,
+                    }),
+                    // An unknown constant empties the right side for every row.
+                    None if optional => eval_plan_iter(ctx, index, nf, l),
+                    None => Box::new(std::iter::empty()),
+                };
+            }
+        }
+    }
     // Build the right side first: an empty build side short-circuits without
     // ever constructing (or scanning) the left side.
     let right: Vec<Row> = eval_plan_iter(ctx, index, nf, r).collect();
@@ -904,6 +966,49 @@ fn join_iter<'q>(
         ci: 0,
         matched: false,
     })
+}
+
+/// A correlated index-nested-loop join: left rows stream, and each one probes
+/// the right side's BGP through the index with its bound values substituted
+/// ([`ProbeJoin::from_plan`]). `optional`/`cond` follow the OPTIONAL semantics
+/// of [`JoinIter`]. Chosen over the hash join only under a small demand bound.
+struct ProbedJoin<'q> {
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    left: RowIter<'q>,
+    plan: ProbePlan,
+    optional: bool,
+    cond: Option<&'q FExpr>,
+    cache: ExistsCache,
+    /// The current left row, its probe iterator, and whether a merge passed.
+    cur: Option<(Row, ProbeJoin<'q>, bool)>,
+}
+
+impl Iterator for ProbedJoin<'_> {
+    type Item = Row;
+
+    fn next(&mut self) -> Option<Row> {
+        loop {
+            if let Some((_, probe, matched)) = &mut self.cur {
+                for m in probe.by_ref() {
+                    if self
+                        .cond
+                        .is_none_or(|f| f.boolean(self.ctx, self.index, &m, &mut self.cache))
+                    {
+                        *matched = true;
+                        return Some(m);
+                    }
+                }
+                let (l, _, matched) = self.cur.take().unwrap();
+                if self.optional && !matched {
+                    return Some(l);
+                }
+            }
+            let l = self.left.next()?;
+            let probe = ProbeJoin::from_plan(self.ctx, self.index, &self.plan, l.clone());
+            self.cur = Some((l, probe, false));
+        }
+    }
 }
 
 impl Iterator for JoinIter<'_> {

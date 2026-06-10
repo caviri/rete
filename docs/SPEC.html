@@ -29,9 +29,22 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
   font-weight:700; text-decoration:none; display:inline-block; line-height:1;
 }
 .sidebar .brand::after { content:""; display:block; width:2.2rem; height:3px; margin-top:.55rem; background:var(--accent-2); }
-.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 1.35rem; }
+.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 .6rem; }
+.sidebar .meta { display:flex; align-items:center; gap:.5rem; font-size:.8rem; margin:0 0 1.1rem; }
+.sidebar .meta .ver {
+  font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
+  font-size:.72rem; font-weight:700; color:#0b4f42; background:#fff;
+  border:1px solid var(--border); border-radius:999px; padding:.06rem .55rem;
+}
+.sidebar .meta a { display:inline; padding:0; border:0; color:#0b6f5e; font-weight:600; }
+.sidebar .meta a:hover { background:none; text-decoration:underline; }
 .sidebar ul { list-style:none; padding:0; margin:0; }
 .sidebar li { margin:.08rem 0; }
+.sidebar li.nav-h {
+  margin:1.15rem 0 .3rem; padding:0 .62rem; font-size:.66rem; font-weight:800;
+  letter-spacing:.09em; text-transform:uppercase; color:#52625b;
+}
+.sidebar li.nav-h:first-child { margin-top:.2rem; }
 .sidebar a {
   color:var(--side-fg); text-decoration:none; display:block; padding:.42rem .62rem;
   border-left:3px solid transparent; border-radius:0 6px 6px 0; font-size:.93rem; line-height:1.25;
@@ -43,11 +56,12 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 
 main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
 .page {
-  width:min(1180px,100%); display:grid; grid-template-columns:minmax(0,860px) 230px;
+  width:min(1320px,100%); margin:0 auto; display:grid;
+  grid-template-columns:minmax(0,980px) 230px;
   gap:2.4rem; padding:0 2.2rem; align-items:start;
 }
 .content { min-width:0; padding:3.1rem 0 2rem; }
-footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
+footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
 
 .rail {
   margin-top:3.25rem; font-size:.82rem;
@@ -71,7 +85,7 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
 
 .content h1,.content h2,.content h3 { scroll-margin-top:1rem; }
 .content h1 {
-  max-width:780px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
+  max-width:860px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
   line-height:1.08; margin:.1rem 0 1.15rem; font-weight:700;
 }
 .content h1::after { content:""; display:block; width:4.4rem; height:4px; margin-top:1rem; background:var(--accent); }
@@ -166,28 +180,34 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <p class="meta"><span class="ver">v0.0.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
+        <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
-        <li><a href="architecture.html">Architecture</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li><a href="federation.html">Federated queries</a></li>
+        <li class="nav-h">In the browser</li>
         <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li class="nav-h">Internals</li>
+        <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html" class="active">Format specification</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li><a href="playground.html">Interactive playground</a></li>
     </ul>
-    <p class="foot"><a href="https://github.com/caviri/rete">GitHub</a></p>
+    <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
   </nav>
   <main>
     <div class="page">
@@ -278,16 +298,16 @@ metadata block to chase.</p>
 │                   sentinel (the directory is the header).      │
 └──────────────────────────────────────────────────────────────┘
 </code></pre>
-<p>Per-level, per-tile <strong>leaf directories</strong> (mapping <code>(level, tile, perm)</code> to byte
-ranges, PMTiles/Parquet style) are part of the fuller design but not materialized
-in v0 — the current index is a single default-graph container plus the pyramid
-summary. Exact single-pattern range routing is implemented by fetching just the
-selected SPO/POS/OSP payload from that container; physical community-tile ranges
-are future work (see <code>docs/BENCHMARK.md</code>).</p>
+<p>Each permutation section carries its own <strong>tile directory</strong> (format <code>0x02</code>,
+§6.2): byte ranges for independently-compressed tiles, keyed by leading-id
+range — so single-pattern routing fetches the selected SPO/POS/OSP section and
+decompresses only the matching tile(s). Per-<em>community</em> leaf directories
+(mapping <code>(level, tile, perm)</code> to byte ranges across the pyramid) are part of
+the fuller design and remain future work (see <code>docs/BENCHMARK.md</code>).</p>
 <h3>4.1 Header (128 bytes, little-endian)</h3>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
-<tr><td>4</td><td>1</td><td>format version (<code>0x01</code>)</td></tr>
+<tr><td>4</td><td>1</td><td>format version (<code>0x02</code>; readers also accept <code>0x01</code>, see §6.2)</td></tr>
 <tr><td>5</td><td>1</td><td>flags (bit0: has named graphs / quads)</td></tr>
 <tr><td>6</td><td>2</td><td>header length</td></tr>
 <tr><td>8</td><td>8</td><td>metadata offset</td></tr>
@@ -405,6 +425,46 @@ body:      varint num_a
 The <strong>zone map</strong> lets the planner skip a block whose <code>[min,max]</code> range cannot
 contain a bound constant before fetching the body — the §7 routing then bounds
 <em>which</em> blocks are fetched at all.</p>
+<h3>6.2 Tiled permutation sections (format <code>0x02</code>)</h3>
+<p>Each permutation section is <strong>tiled</strong>: consecutive runs of whole a-groups are
+packed to a byte budget (default 64 KiB of encoded triples), and each tile is a
+fully self-contained §6.1 block (its own zone map; deltas restart). Tiles are
+<strong>compressed individually</strong> with the header's block codec, so a ranged client
+can fetch and decompress exactly the tiles a query routes to. The section
+payload is stored raw inside the index container (the container-level codec for
+index sections is <code>none</code>; compression lives at tile granularity):</p>
+<pre><code>section payload:  varint num_tiles
+                  per tile: varint Δmin_a       # Δ from previous tile's min_a
+                            varint max_a−min_a  # leading-id span (routing)
+                            varint clen          # compressed tile length
+                  tiles:    num_tiles × compressed §6.1 blocks, concatenated
+</code></pre>
+<p>A bound leading component binary-searches the directory to exactly <strong>one</strong>
+tile (a-groups are never split across tiles); an unbound one visits every
+tile, zone-map-pruned. The directory is uncompressed so it is readable before
+any tile is fetched.</p>
+<p><strong>Dictionary sections are chunked the same way</strong> (their container-level codec
+is also <code>none</code>): each of the four §5 sections is stored as</p>
+<pre><code>section payload:  varint header_len, raw §5.1 header (term count, restart
+                  interval, restart-offset table — original encoding, so the
+                  offsets stay valid in the section's coordinate space)
+                  varint num_chunks
+                  per chunk: varint Δfirst_run        # Δ from previous chunk
+                             varint first_term_len, first_term bytes
+                             varint clen               # compressed chunk length
+                  chunks:    run-aligned body slices, compressed individually
+</code></pre>
+<p>Chunks hold whole front-coded runs (~64 KiB of body per chunk), and the
+directory embeds each chunk's first term — so <code>term → id</code> binary-searches the
+directory locally and faults exactly <strong>one</strong> chunk, and <code>id → term</code> computes
+its chunk arithmetically and faults one. A lazily-opened remote file therefore
+pays the section headers + directories (KBs) up front and O(touched chunks)
+afterwards, instead of the whole dictionary container.</p>
+<p><strong>Compatibility:</strong> version <code>0x01</code> files store one whole-section-compressed
+block per permutation and whole-compressed dictionary sections. Readers still
+accept them (each section is one logical tile/chunk); writers always emit
+<code>0x02</code>. The format remains experimental — no stability promise beyond this one
+documented transition.</p>
 <hr />
 <h2>7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>
@@ -467,14 +527,17 @@ plan algebra — <code>Bgp</code>/<code>Join</code>/<code>Union</code>/<code>Min
 <code>Graph</code>):</p>
 <ul>
 <li><strong>Stage 1 — Triple patterns &amp; BGPs.</strong> ✅ Integer patterns over the permutation
-index, left-deep hash joins on shared variables (<code>bgp.rs</code>), and a lazy BGP
-iterator for streamable <code>LIMIT</code>/<code>ASK</code> shapes. Blank nodes in patterns are
-non-distinguished variables.</li>
-<li><strong>Stage 2 — FILTER, projection, DISTINCT, ORDER BY, LIMIT/OFFSET.</strong> ✅ Simple
-BGP/FILTER plans can stop early under <code>LIMIT</code>; DISTINCT, ORDER BY, aggregation,
-and most compound algebra remain eager. ORDER BY sorts on variable/constant
-keys: numeric when both are numbers, else lexical; complex key expressions are
-not yet evaluated for ordering.</li>
+index; BGPs stream their least selective pattern against a hash table of the
+joined prefix (<code>bgp.rs</code>), and under a small <code>LIMIT</code>/<code>ASK</code> demand bound switch
+to index-nested-loop probes that jump to their group via a lazily-built block
+directory. Blank nodes in patterns are non-distinguished variables.</li>
+<li><strong>Stage 2 — FILTER, projection, DISTINCT, ORDER BY, LIMIT/OFFSET.</strong> ✅ The
+whole algebra evaluates as a lazy pull pipeline over integer slot rows, so
+<code>LIMIT</code>/<code>ASK</code>/<code>DISTINCT … LIMIT</code> demand stops the index scans early; only
+aggregation, ORDER BY (bounded top-k when <code>LIMIT</code> is present), and hash-join
+build sides block. ORDER BY sorts on variable/constant keys: numeric when
+both are numbers, else lexical; complex key expressions are not yet evaluated
+for ordering.</li>
 <li><strong>Stage 3 — OPTIONAL, UNION, MINUS, VALUES, FILTER EXISTS/NOT EXISTS,
 property paths, GRAPH.</strong> ✅ Paths (<code>p+</code>/<code>p*</code>/<code>p?</code>, reverse, sequence <code>a/b</code>,
 alternative <code>a|b</code>) evaluated forward from a bound endpoint in integer node
@@ -555,26 +618,7 @@ carries the Rust toolchain, rustfmt, clippy, Python smoke-test tooling,
 <code>wasm-pack</code>, and the WASM target.</li>
 </ul>
 <hr />
-<h2>11. Open questions</h2>
-<ol>
-<li><strong>Quad/named-graph indexing</strong> — per-graph triple sets vs. full GSPO/GPSO
-permutations. Cost vs. query flexibility.</li>
-<li><strong>Literal indexing</strong> — do we want value-range indexes (numeric/date) for
-FILTER pushdown, à la Parquet zone maps on literal values?</li>
-<li><del>Pyramid cut policy</del> — <strong>resolved (§7.1): size-targeted tiles</strong>, default
-budget <code>T</code> ≈ 64 KiB, PMTiles-style. Remaining sub-question: best default <code>T</code>
-and whether <code>T</code> should scale with the dictionary/literal mix.</li>
-<li><strong>Multiple summarization strategies</strong> — two are implemented: <strong>community</strong>
-(structural, Louvain — the stored pyramid) and <strong>schema</strong> (ontology-aware,
-relations between <code>rdf:type</code> classes — <code>schema_summary</code>/<code>rete schema</code>). An
-<em>importance</em>-based one (PageRank/centrality) is still open. The community
-summary is stored; schema is computed on demand (storing it for cheap HTTP
-access is a future step).</li>
-<li><strong>Overlay/diff files</strong> for "appendable-ish" updates without abandoning
-immutability.</li>
-</ol>
-<hr />
-<h2>12. Glossary</h2>
+<h2>11. Glossary</h2>
 <ul>
 <li><strong>Term</strong> — an RDF IRI, blank node, or literal.</li>
 <li><strong>Quotient graph</strong> — graph whose nodes are communities and whose edges

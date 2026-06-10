@@ -68,6 +68,13 @@ jobs:
       - name: CLI smoke test
         run: bash scripts/smoke.sh
 
+      # Engine regression tripwire: the self-contained query benchmark asserts
+      # every query's row count and (with --check) generous per-query time
+      # ceilings — a lost fast path or an accidental quadratic join fails CI,
+      # ordinary runner noise does not (see CEILING_MS in qbench.rs).
+      - name: Query engine regression check (qbench --check)
+        run: cargo run --release -p rete-core --example qbench -- --check
+
       # The rendered HTML docs must match their Markdown source.
       - name: Docs HTML in sync
         run: |

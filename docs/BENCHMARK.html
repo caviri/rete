@@ -29,9 +29,22 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
   font-weight:700; text-decoration:none; display:inline-block; line-height:1;
 }
 .sidebar .brand::after { content:""; display:block; width:2.2rem; height:3px; margin-top:.55rem; background:var(--accent-2); }
-.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 1.35rem; }
+.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 .6rem; }
+.sidebar .meta { display:flex; align-items:center; gap:.5rem; font-size:.8rem; margin:0 0 1.1rem; }
+.sidebar .meta .ver {
+  font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
+  font-size:.72rem; font-weight:700; color:#0b4f42; background:#fff;
+  border:1px solid var(--border); border-radius:999px; padding:.06rem .55rem;
+}
+.sidebar .meta a { display:inline; padding:0; border:0; color:#0b6f5e; font-weight:600; }
+.sidebar .meta a:hover { background:none; text-decoration:underline; }
 .sidebar ul { list-style:none; padding:0; margin:0; }
 .sidebar li { margin:.08rem 0; }
+.sidebar li.nav-h {
+  margin:1.15rem 0 .3rem; padding:0 .62rem; font-size:.66rem; font-weight:800;
+  letter-spacing:.09em; text-transform:uppercase; color:#52625b;
+}
+.sidebar li.nav-h:first-child { margin-top:.2rem; }
 .sidebar a {
   color:var(--side-fg); text-decoration:none; display:block; padding:.42rem .62rem;
   border-left:3px solid transparent; border-radius:0 6px 6px 0; font-size:.93rem; line-height:1.25;
@@ -43,11 +56,12 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 
 main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
 .page {
-  width:min(1180px,100%); display:grid; grid-template-columns:minmax(0,860px) 230px;
+  width:min(1320px,100%); margin:0 auto; display:grid;
+  grid-template-columns:minmax(0,980px) 230px;
   gap:2.4rem; padding:0 2.2rem; align-items:start;
 }
 .content { min-width:0; padding:3.1rem 0 2rem; }
-footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
+footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
 
 .rail {
   margin-top:3.25rem; font-size:.82rem;
@@ -71,7 +85,7 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
 
 .content h1,.content h2,.content h3 { scroll-margin-top:1rem; }
 .content h1 {
-  max-width:780px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
+  max-width:860px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
   line-height:1.08; margin:.1rem 0 1.15rem; font-weight:700;
 }
 .content h1::after { content:""; display:block; width:4.4rem; height:4px; margin-top:1rem; background:var(--accent); }
@@ -166,28 +180,34 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <p class="meta"><span class="ver">v0.0.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
+        <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
-        <li><a href="architecture.html">Architecture</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li><a href="federation.html">Federated queries</a></li>
+        <li class="nav-h">In the browser</li>
         <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li class="nav-h">Internals</li>
+        <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html">Format specification</a></li>
         <li><a href="BENCHMARK.html" class="active">Benchmarks</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li><a href="playground.html">Interactive playground</a></li>
     </ul>
-    <p class="foot"><a href="https://github.com/caviri/rete">GitHub</a></p>
+    <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
   </nav>
   <main>
     <div class="page">
@@ -262,10 +282,11 @@ reachability.</p>
 <strong>unknown</strong>. <strong>Oxigraph 0.5</strong>, in-memory store
 (no RocksDB). Machine: 32 logical cores.</p>
 <h3>Load / open (one-time)</h3>
-<table><thead><tr><th>Engine</th><th>Step</th><th style="text-align: right">Time</th></tr></thead><tbody>
-<tr><td><strong>rete</strong></td><td><code>Rete::open</code> - indexes already built in the file</td><td style="text-align: right"><strong>15.5 ms</strong></td></tr>
-<tr><td>Oxigraph</td><td>bulk-load N-Triples + build in-memory indexes</td><td style="text-align: right">2026 ms</td></tr>
+<table><thead><tr><th>Engine</th><th>Step</th><th style="text-align: right">Time</th><th style="text-align: right">Resident heap after load</th></tr></thead><tbody>
+<tr><td><strong>rete</strong></td><td><code>Rete::open</code> - indexes already built in the file</td><td style="text-align: right"><strong>15.2 ms</strong></td><td style="text-align: right">12.71 MiB</td></tr>
+<tr><td>Oxigraph</td><td>bulk-load N-Triples + build in-memory indexes</td><td style="text-align: right">2002 ms</td><td style="text-align: right">144.98 MiB</td></tr>
 </tbody></table>
+<p>Process peak RSS after both loads (<code>VmHWM</code>): 207 MiB.</p>
 <p>rete's "load" just maps a file whose dictionary + permutation indexes
 already exist on disk; Oxigraph parses the triples and builds its indexes
 on every startup. This is the format's core promise: <strong>publish once, open
@@ -274,58 +295,59 @@ instantly, query in place</strong>.</p>
 <p>24 queries spanning supported forms and operators, run on both
 engines. Row counts are a cross-engine correctness check across the
 language surface, not just a speed race.
-Median of 5 warm runs.</p>
-<table><thead><tr><th>Operator / form</th><th style="text-align: right">rete</th><th style="text-align: right">Oxigraph</th><th style="text-align: right">rete vs oxi</th><th style="text-align: right">rows</th><th style="text-align: center">ok</th></tr></thead><tbody>
-<tr><td>SELECT count (aggregate)</td><td style="text-align: right"><strong>2.97 ms</strong></td><td style="text-align: right">4.51 ms</td><td style="text-align: right">1.5x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>SELECT DISTINCT</td><td style="text-align: right"><strong>3.30 ms</strong></td><td style="text-align: right">5.39 ms</td><td style="text-align: right">1.6x</td><td style="text-align: right">6</td><td style="text-align: center">yes</td></tr>
-<tr><td>ASK</td><td style="text-align: right">0.33 ms</td><td style="text-align: right"><strong>0.01 ms</strong></td><td style="text-align: right">0.0x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>CONSTRUCT</td><td style="text-align: right">0.02 ms</td><td style="text-align: right"><strong>0.01 ms</strong></td><td style="text-align: right">0.6x</td><td style="text-align: right">9</td><td style="text-align: center">yes</td></tr>
-<tr><td>DESCRIBE (impl-defined)</td><td style="text-align: right">0.02 ms</td><td style="text-align: right"><strong>0.01 ms</strong></td><td style="text-align: right">0.5x</td><td style="text-align: right">11</td><td style="text-align: center">yes</td></tr>
-<tr><td>VALUES (inline data)</td><td style="text-align: right">7.15 ms</td><td style="text-align: right"><strong>3.38 ms</strong></td><td style="text-align: right">0.5x</td><td style="text-align: right">10962</td><td style="text-align: center">yes</td></tr>
-<tr><td>UNION</td><td style="text-align: right">7.45 ms</td><td style="text-align: right"><strong>2.41 ms</strong></td><td style="text-align: right">0.3x</td><td style="text-align: right">10993</td><td style="text-align: center">yes</td></tr>
-<tr><td>OPTIONAL (left join)</td><td style="text-align: right">6.61 ms</td><td style="text-align: right"><strong>0.18 ms</strong></td><td style="text-align: right">0.0x</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
-<tr><td>MINUS</td><td style="text-align: right">3.71 ms</td><td style="text-align: right"><strong>1.63 ms</strong></td><td style="text-align: right">0.4x</td><td style="text-align: right">2728</td><td style="text-align: center">yes</td></tr>
-<tr><td>FILTER NOT EXISTS</td><td style="text-align: right"><strong>3.64 ms</strong></td><td style="text-align: right">5.96 ms</td><td style="text-align: right">1.6x</td><td style="text-align: right">2728</td><td style="text-align: center">yes</td></tr>
-<tr><td>3-way join + LIMIT</td><td style="text-align: right">22.3 ms</td><td style="text-align: right"><strong>0.14 ms</strong></td><td style="text-align: right">0.0x</td><td style="text-align: right">50</td><td style="text-align: center">yes</td></tr>
-<tr><td>FILTER REGEX (case-insens.)</td><td style="text-align: right">21.2 ms</td><td style="text-align: right"><strong>0.49 ms</strong></td><td style="text-align: right">0.0x</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
-<tr><td>FILTER arith + logical</td><td style="text-align: right"><strong>0.26 ms</strong></td><td style="text-align: right">0.62 ms</td><td style="text-align: right">2.4x</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
-<tr><td>BIND + SUBSTR + CONCAT</td><td style="text-align: right">7.64 ms</td><td style="text-align: right"><strong>0.22 ms</strong></td><td style="text-align: right">0.0x</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
-<tr><td>path sequence a/b</td><td style="text-align: right">25.5 ms</td><td style="text-align: right"><strong>0.21 ms</strong></td><td style="text-align: right">0.0x</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
-<tr><td>path inverse ^p (count)</td><td style="text-align: right"><strong>2.86 ms</strong></td><td style="text-align: right">5.52 ms</td><td style="text-align: right">1.9x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>path + transitive (count)</td><td style="text-align: right"><strong>5.51 ms</strong></td><td style="text-align: right">6.97 ms</td><td style="text-align: right">1.3x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>path * zero-or-more (count)</td><td style="text-align: right"><strong>5.49 ms</strong></td><td style="text-align: right">8.50 ms</td><td style="text-align: right">1.5x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>GROUP BY + ORDER BY</td><td style="text-align: right"><strong>2.53 ms</strong></td><td style="text-align: right">7.11 ms</td><td style="text-align: right">2.8x</td><td style="text-align: right">6</td><td style="text-align: center">yes</td></tr>
-<tr><td>GROUP BY + HAVING</td><td style="text-align: right"><strong>2.51 ms</strong></td><td style="text-align: right">7.15 ms</td><td style="text-align: right">2.8x</td><td style="text-align: right">5</td><td style="text-align: center">yes</td></tr>
-<tr><td>AVG per group</td><td style="text-align: right"><strong>17.8 ms</strong></td><td style="text-align: right">38.0 ms</td><td style="text-align: right">2.1x</td><td style="text-align: right">6</td><td style="text-align: center">yes</td></tr>
-<tr><td>MIN/MAX/SUM</td><td style="text-align: right"><strong>4.40 ms</strong></td><td style="text-align: right">7.37 ms</td><td style="text-align: right">1.7x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>COUNT(DISTINCT)</td><td style="text-align: right"><strong>2.53 ms</strong></td><td style="text-align: right">4.70 ms</td><td style="text-align: right">1.9x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>ORDER BY + LIMIT + OFFSET</td><td style="text-align: right"><strong>3.77 ms</strong></td><td style="text-align: right">17.3 ms</td><td style="text-align: right">4.6x</td><td style="text-align: right">10</td><td style="text-align: center">yes</td></tr>
+Median ±sd of 5 warm runs; <code>peak heap</code> is each query's exact
+allocation high-water mark (counting allocator), engine-comparable.</p>
+<table><thead><tr><th>Operator / form</th><th style="text-align: right">rete</th><th style="text-align: right">Oxigraph</th><th style="text-align: right">rete vs oxi</th><th style="text-align: right">peak heap MiB (rete / oxi)</th><th style="text-align: right">rows</th><th style="text-align: center">ok</th></tr></thead><tbody>
+<tr><td>SELECT count (aggregate)</td><td style="text-align: right"><strong>2.29 ±0.13 ms</strong></td><td style="text-align: right">5.67 ±0.57 ms</td><td style="text-align: right">2.5x</td><td style="text-align: right">3.75 / 0.01</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
+<tr><td>SELECT DISTINCT</td><td style="text-align: right"><strong>3.48 ±0.04 ms</strong></td><td style="text-align: right">5.05 ±0.79 ms</td><td style="text-align: right">1.4x</td><td style="text-align: right">0.01 / 0.00</td><td style="text-align: right">6</td><td style="text-align: center">yes</td></tr>
+<tr><td>ASK</td><td style="text-align: right">0.03 ±0.01 ms</td><td style="text-align: right"><strong>0.01 ±0.01 ms</strong></td><td style="text-align: right">0.3x</td><td style="text-align: right">0.00 / 0.00</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
+<tr><td>CONSTRUCT</td><td style="text-align: right"><strong>0.01 ±0.03 ms</strong></td><td style="text-align: right">0.02 ±0.02 ms</td><td style="text-align: right">1.4x</td><td style="text-align: right">0.01 / 0.01</td><td style="text-align: right">9</td><td style="text-align: center">yes</td></tr>
+<tr><td>DESCRIBE (impl-defined)</td><td style="text-align: right"><strong>0.01 ±0.00 ms</strong></td><td style="text-align: right">0.01 ±0.00 ms</td><td style="text-align: right">1.3x</td><td style="text-align: right">0.01 / 0.00</td><td style="text-align: right">11</td><td style="text-align: center">yes</td></tr>
+<tr><td>VALUES (inline data)</td><td style="text-align: right"><strong>3.25 ±0.38 ms</strong></td><td style="text-align: right">4.22 ±0.90 ms</td><td style="text-align: right">1.3x</td><td style="text-align: right">6.77 / 0.01</td><td style="text-align: right">10962</td><td style="text-align: center">yes</td></tr>
+<tr><td>UNION</td><td style="text-align: right"><strong>3.24 ±0.23 ms</strong></td><td style="text-align: right">4.12 ±0.92 ms</td><td style="text-align: right">1.3x</td><td style="text-align: right">6.54 / 0.00</td><td style="text-align: right">10993</td><td style="text-align: center">yes</td></tr>
+<tr><td>OPTIONAL (left join)</td><td style="text-align: right"><strong>0.18 ±0.02 ms</strong></td><td style="text-align: right">0.19 ±0.04 ms</td><td style="text-align: right">1.1x</td><td style="text-align: right">0.13 / 0.01</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
+<tr><td>MINUS</td><td style="text-align: right">2.02 ±0.32 ms</td><td style="text-align: right"><strong>1.95 ±0.50 ms</strong></td><td style="text-align: right">1.0x</td><td style="text-align: right">2.23 / 0.81</td><td style="text-align: right">2728</td><td style="text-align: center">yes</td></tr>
+<tr><td>FILTER NOT EXISTS</td><td style="text-align: right"><strong>1.84 ±0.05 ms</strong></td><td style="text-align: right">6.00 ±0.48 ms</td><td style="text-align: right">3.3x</td><td style="text-align: right">2.05 / 0.01</td><td style="text-align: right">2728</td><td style="text-align: center">yes</td></tr>
+<tr><td>3-way join + LIMIT</td><td style="text-align: right">0.17 ±0.02 ms</td><td style="text-align: right"><strong>0.11 ±0.02 ms</strong></td><td style="text-align: right">0.7x</td><td style="text-align: right">0.04 / 0.01</td><td style="text-align: right">50</td><td style="text-align: center">yes</td></tr>
+<tr><td>FILTER REGEX (case-insens.)</td><td style="text-align: right">5.37 ±0.06 ms</td><td style="text-align: right"><strong>0.52 ±0.17 ms</strong></td><td style="text-align: right">0.1x</td><td style="text-align: right">0.13 / 0.02</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
+<tr><td>FILTER arith + logical</td><td style="text-align: right"><strong>0.16 ±0.03 ms</strong></td><td style="text-align: right">0.79 ±0.17 ms</td><td style="text-align: right">5.1x</td><td style="text-align: right">0.13 / 0.01</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
+<tr><td>BIND + SUBSTR + CONCAT</td><td style="text-align: right">0.31 ±0.02 ms</td><td style="text-align: right"><strong>0.26 ±0.02 ms</strong></td><td style="text-align: right">0.8x</td><td style="text-align: right">0.13 / 0.01</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
+<tr><td>path sequence a/b</td><td style="text-align: right"><strong>0.13 ±0.02 ms</strong></td><td style="text-align: right">0.23 ±0.02 ms</td><td style="text-align: right">1.8x</td><td style="text-align: right">0.12 / 0.01</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
+<tr><td>path inverse ^p (count)</td><td style="text-align: right"><strong>2.33 ±0.02 ms</strong></td><td style="text-align: right">5.34 ±0.91 ms</td><td style="text-align: right">2.3x</td><td style="text-align: right">3.75 / 0.01</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
+<tr><td>path + transitive (count)</td><td style="text-align: right"><strong>5.69 ±0.10 ms</strong></td><td style="text-align: right">8.01 ±1.02 ms</td><td style="text-align: right">1.4x</td><td style="text-align: right">1.23 / 0.81</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
+<tr><td>path * zero-or-more (count)</td><td style="text-align: right"><strong>5.68 ±0.19 ms</strong></td><td style="text-align: right">6.89 ±1.40 ms</td><td style="text-align: right">1.2x</td><td style="text-align: right">1.23 / 0.81</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
+<tr><td>GROUP BY + ORDER BY</td><td style="text-align: right"><strong>2.97 ±0.04 ms</strong></td><td style="text-align: right">4.97 ±1.25 ms</td><td style="text-align: right">1.7x</td><td style="text-align: right">4.88 / 0.01</td><td style="text-align: right">6</td><td style="text-align: center">yes</td></tr>
+<tr><td>GROUP BY + HAVING</td><td style="text-align: right"><strong>2.98 ±0.42 ms</strong></td><td style="text-align: right">7.91 ±0.24 ms</td><td style="text-align: right">2.7x</td><td style="text-align: right">4.88 / 0.01</td><td style="text-align: right">5</td><td style="text-align: center">yes</td></tr>
+<tr><td>AVG per group</td><td style="text-align: right"><strong>18.0 ±1.5 ms</strong></td><td style="text-align: right">35.9 ±0.6 ms</td><td style="text-align: right">2.0x</td><td style="text-align: right">13.56 / 0.01</td><td style="text-align: right">6</td><td style="text-align: center">yes</td></tr>
+<tr><td>MIN/MAX/SUM</td><td style="text-align: right"><strong>4.57 ±1.09 ms</strong></td><td style="text-align: right">10.2 ±0.2 ms</td><td style="text-align: right">2.2x</td><td style="text-align: right">7.50 / 0.01</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
+<tr><td>COUNT(DISTINCT)</td><td style="text-align: right"><strong>2.50 ±0.10 ms</strong></td><td style="text-align: right">7.03 ±0.80 ms</td><td style="text-align: right">2.8x</td><td style="text-align: right">4.50 / 0.01</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
+<tr><td>ORDER BY + LIMIT + OFFSET</td><td style="text-align: right"><strong>4.11 ±0.18 ms</strong></td><td style="text-align: right">19.2 ±0.8 ms</td><td style="text-align: right">4.7x</td><td style="text-align: right">0.04 / 5.75</td><td style="text-align: right">10</td><td style="text-align: center">yes</td></tr>
 </tbody></table>
 <p><strong>24 / 24 identical row counts</strong> across
 SELECT/ASK/CONSTRUCT/DESCRIBE, algebra operators, filters/functions,
 property paths, and aggregates.</p>
 <p>Reading the times honestly:</p>
 <ul>
-<li>rete now wins most aggregate, GROUP BY, DISTINCT, path-closure, and
-sorted-pagination (top-k) shapes: the engine evaluates as a lazy
-pipeline over integer slot rows and resolves terms only at projection.</li>
-<li>Oxigraph still dominates small-LIMIT shapes over multi-pattern joins
-(OPTIONAL, 3-way join, path sequences, expression scans): rete scans
-each pattern once per query, where Oxigraph's planner probes indexes
-per row. Closing that gap needs an index-nested-loop strategy under
-small LIMITs, not more laziness.</li>
-<li>Both engines are in the sub-ms-to-tens-of-ms range on this dataset;
-the remaining gap is join <em>strategy</em> on a handful of shapes, not
-evaluation overhead.</li>
+<li>rete now wins or ties the large majority of shapes: aggregates,
+GROUP BY, DISTINCT, path closures, sorted pagination (top-k), and
+large UNION/VALUES/MINUS results. The engine evaluates as a lazy
+pipeline over integer slot rows, switches to index-nested-loop
+probes under small LIMIT/ASK demand, and resolves terms only at
+projection.</li>
+<li>Oxigraph keeps an edge on REGEX scans whose pattern needs the real
+regex engine (rete's regex-lite has no literal prefilter; literal
+patterns use a substring fast path) and, by fractions of a
+millisecond, on ASK and the tightest LIMIT joins — floor effects,
+not the orders-of-magnitude gaps from before the engine rework.</li>
 </ul>
 <h3>Batch transitive reachability - <code>coauthor+</code> from 300 seeds</h3>
 <p>"From each seed author, who is reachable through co-authorship?" rete
 exposes this as a dedicated primitive (<code>rete reach</code>, <code>batch_reach_*</code>); on
 Oxigraph it is a <code>coauthor+</code> property path evaluated per seed.</p>
 <table><thead><tr><th>Engine / mode</th><th style="text-align: right">Time</th><th style="text-align: right">vs rete-serial</th></tr></thead><tbody>
-<tr><td>rete - <code>batch_reach_serial</code> (1 core)</td><td style="text-align: right">465 ms</td><td style="text-align: right">1.0x</td></tr>
-<tr><td><strong>rete - <code>batch_reach_parallel</code> (32 cores)</strong></td><td style="text-align: right"><strong>32.3 ms</strong></td><td style="text-align: right"><strong>14.4x</strong></td></tr>
-<tr><td>Oxigraph - <code>coauthor+</code> property path, per seed</td><td style="text-align: right">2089 ms</td><td style="text-align: right">0.2x</td></tr>
+<tr><td>rete - <code>batch_reach_serial</code> (1 core)</td><td style="text-align: right">445 ±3 ms</td><td style="text-align: right">1.0x</td></tr>
+<tr><td><strong>rete - <code>batch_reach_parallel</code> (32 cores)</strong></td><td style="text-align: right"><strong>34.1 ±5.0 ms</strong></td><td style="text-align: right"><strong>13.1x</strong></td></tr>
+<tr><td>Oxigraph - <code>coauthor+</code> property path, per seed</td><td style="text-align: right">2199 ±52 ms</td><td style="text-align: right">0.2x</td></tr>
 </tbody></table>
 <p>rete serial and parallel both reached 1,636,200 nodes;
 Oxigraph touched 1,636,200 result cells. The dedicated
@@ -351,6 +373,42 @@ cargo run -p docgen
 in-memory store needs no RocksDB/clang, so <code>default-features = false</code> keeps
 the build light.</p>
 <!-- benchmark:opencitations:end -->
+<!-- benchmark:lubm:start -->
+<h2>LUBM-style benchmark (standard 14 queries)</h2>
+<p>The <a href="http://swat.cse.lehigh.edu/projects/lubm/">LUBM</a> data model and its 14
+standard queries, on identical pre-materialized data in both engines.
+LUBM(1): 93,139 generated +
+26,007 RDFS/OWL-RL-materialized =
+118,680 triples (<code>.rete</code>: 280,943 bytes).</p>
+<p><strong>Read the caveats:</strong> the generator is a faithful <em>reimplementation</em> of
+UBA's documented cardinalities, not the official Java tool, so counts are
+not comparable to published LUBM figures; inference is rete's RDFS/OWL-RL
+subset, applied up front to the data both engines load — so
+restriction-defined classes (Q12's <code>Chair</code>) are empty on both sides by
+construction. The correctness anchor is <strong>cross-engine row parity</strong>:
+<strong>14 / 14</strong> queries agree.</p>
+<table><thead><tr><th>Engine</th><th style="text-align: right">Load</th><th style="text-align: right">Resident heap</th></tr></thead><tbody>
+<tr><td><strong>rete</strong> <code>Rete::open</code></td><td style="text-align: right"><strong>2.7 ms</strong></td><td style="text-align: right">2.17 MiB</td></tr>
+<tr><td>Oxigraph bulk-load</td><td style="text-align: right">152 ms</td><td style="text-align: right">37.50 MiB</td></tr>
+</tbody></table>
+<table><thead><tr><th>Query</th><th style="text-align: right">rete</th><th style="text-align: right">Oxigraph</th><th style="text-align: right">rete vs oxi</th><th style="text-align: right">peak heap MiB (rete / oxi)</th><th style="text-align: right">rows</th><th style="text-align: center">ok</th></tr></thead><tbody>
+<tr><td>Q1 grad students of a course</td><td style="text-align: right"><strong>0.39 ±0.03 ms</strong></td><td style="text-align: right">0.78 ±0.05 ms</td><td style="text-align: right">2.0x</td><td style="text-align: right">0.47 / 0.00</td><td style="text-align: right">3</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q2 grad student / univ / dept triangle</td><td style="text-align: right"><strong>4.17 ±0.06 ms</strong></td><td style="text-align: right">4.96 ±0.37 ms</td><td style="text-align: right">1.2x</td><td style="text-align: right">3.16 / 0.01</td><td style="text-align: right">2036</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q3 publications of a professor</td><td style="text-align: right"><strong>1.07 ±0.03 ms</strong></td><td style="text-align: right">2.45 ±0.43 ms</td><td style="text-align: right">2.3x</td><td style="text-align: right">1.09 / 0.00</td><td style="text-align: right">9</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q4 professors of a department (+3 props)</td><td style="text-align: right">3.80 ±0.41 ms</td><td style="text-align: right"><strong>0.54 ±0.15 ms</strong></td><td style="text-align: right">0.1x</td><td style="text-align: right">3.20 / 0.01</td><td style="text-align: right">26</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q5 persons member of a department</td><td style="text-align: right"><strong>1.77 ±0.05 ms</strong></td><td style="text-align: right">7.97 ±0.17 ms</td><td style="text-align: right">4.5x</td><td style="text-align: right">2.16 / 0.00</td><td style="text-align: right">544</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q6 all students</td><td style="text-align: right">1.81 ±0.13 ms</td><td style="text-align: right"><strong>1.76 ±0.60 ms</strong></td><td style="text-align: right">1.0x</td><td style="text-align: right">4.39 / 0.00</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q7 students of a professor's courses</td><td style="text-align: right">8.38 ±0.39 ms</td><td style="text-align: right"><strong>0.06 ±0.08 ms</strong></td><td style="text-align: right">0.0x</td><td style="text-align: right">5.17 / 0.01</td><td style="text-align: right">49</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q8 students of a university's departments</td><td style="text-align: right"><strong>10.2 ±1.0 ms</strong></td><td style="text-align: right">18.7 ±0.5 ms</td><td style="text-align: right">1.8x</td><td style="text-align: right">6.83 / 0.01</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q9 student / advisor / course triangle</td><td style="text-align: right"><strong>5.67 ±0.34 ms</strong></td><td style="text-align: right">11.4 ±0.6 ms</td><td style="text-align: right">2.0x</td><td style="text-align: right">1.65 / 0.01</td><td style="text-align: right">115</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q10 students of a graduate course</td><td style="text-align: right"><strong>1.25 ±0.05 ms</strong></td><td style="text-align: right">2.83 ±0.68 ms</td><td style="text-align: right">2.3x</td><td style="text-align: right">1.83 / 0.00</td><td style="text-align: right">0</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q11 research groups of a university</td><td style="text-align: right">0.16 ±0.01 ms</td><td style="text-align: right"><strong>0.16 ±0.02 ms</strong></td><td style="text-align: right">1.0x</td><td style="text-align: right">0.19 / 0.00</td><td style="text-align: right">230</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q12 chairs of a university's departments</td><td style="text-align: right"><strong>0.01 ±0.00 ms</strong></td><td style="text-align: right">0.01 ±0.00 ms</td><td style="text-align: right">2.4x</td><td style="text-align: right">0.00 / 0.01</td><td style="text-align: right">0</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q13 alumni of a university</td><td style="text-align: right">2.61 ±0.56 ms</td><td style="text-align: right"><strong>2.56 ±0.40 ms</strong></td><td style="text-align: right">1.0x</td><td style="text-align: right">3.44 / 0.00</td><td style="text-align: right">2655</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q14 all undergraduate students</td><td style="text-align: right">1.83 ±0.05 ms</td><td style="text-align: right"><strong>1.66 ±0.69 ms</strong></td><td style="text-align: right">0.9x</td><td style="text-align: right">4.39 / 0.00</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
+</tbody></table>
+<p>Reproduce: <code>cargo run --release -p rete-bench -- --json --lubm 1 &gt; docs/benchmark-lubm.json</code> then re-render this doc.</p>
+<!-- benchmark:lubm:end -->
 <h2>Parallelism</h2>
 <p>A prototype <strong>data-parallel query evaluator</strong> (<code>rete-core</code> feature <code>parallel</code>,
 module <code>parallel.rs</code>, behind <code>rayon</code> — <em>off by default, never compiled into
@@ -409,59 +467,6 @@ per-partition work is substantial relative to fork/join + merge overhead, and
 (b) the harmonize step is cheap or itself parallel. Batch reachability nails
 both; per-community aggregations only pay off at scale once the serial merge is
 amortized; cheap single scans should stay serial.</p>
-<h2>Findings &amp; next steps</h2>
-<ol>
-<li><strong>Caching the dictionary restart table was the biggest win.</strong> Each term
-lookup used to re-parse the section header (the restart offsets); caching it
-once per section sped up <em>everything</em> that resolves terms: build 2,225 →
-614 ms (3.6×), GROUP BY 681 → 201 ms (3.4×), property path 102 → 48 ms (2.1×).
-This dwarfed the earlier micro-optimizations because the re-parse was on the
-hot path of all 137k×3 <code>encode</code> calls and every result resolution.</li>
-<li><strong>Evaluation joins on integer IDs.</strong> Property-path traversal and BGP joins
-run in the unified integer node space, resolving terms only for final
-bindings — no intermediate string churn, and a constant path endpoint is
-pushed down (no global closure). <code>COUNT/… GROUP BY</code> over a single BGP
-aggregates on integer bindings and resolves only the group keys, taking
-GROUP BY from 201 → <strong>82 ms</strong> (8.3× under the original 681 ms).</li>
-<li><strong>Fixed during benchmarking:</strong> property paths materialized a <em>global</em>
-transitive closure even with a constant subject — <code>p0 knows+ ?y</code> hung on this
-graph. Now goal-directed (BFS from the bound endpoint).</li>
-<li><strong>Routed range queries are staged.</strong> Single-pattern lookups now fetch one
-selected permutation payload instead of the whole index container. The next
-step is physical community-tile directories so the client can fetch only the
-relevant community ranges inside that permutation.</li>
-<li><strong>Malformed-input hardening cost a few percent, and it's worth it.</strong> The
-reader is now panic-free on any byte sequence (truncated/corrupt/untrusted
-files — see the <code>robustness</code> suite): every header offset, dictionary lookup,
-front-coded delta, triple-block varint, and pyramid-meta length is
-bounds-checked before use, with <code>wrapping_add</code>/<code>saturating_sub</code> guarding the
-delta-decode arithmetic. Replacing raw indexing with <code>slice.get(..)?</code> on the
-resolution hot path lifted GROUP BY 82 → 93 ms and build 614 → 660 ms (~13 %);
-resolution-light queries are unchanged. Cheap insurance against a crash on a
-bad URL fetch.</li>
-<li><strong>The Oxigraph comparison caught a quadratic BGP join — now fixed.</strong>
-Multi-pattern joins used to probe the index <em>once per intermediate binding</em>,
-and each probe scanned the whole permutation block — O(bindings × triples).
-On the 588 k citation graph "citations per year" took <strong>83 s</strong>. Replacing the
-per-binding nested-loop with a <strong>hash join</strong> (scan each pattern once, join on
-shared variables — <code>bgp.rs::eval_bgp_int_in</code>) cut it to <strong>34 ms</strong> (~2,400×);
-the high-impact filter 13.8 s → 29 ms, the 3-way join 20.8 s → 61 ms. Results
-are unchanged (the BGP + SPARQL suites still pass). This is what made the
-interactive citation network in the <a href="playground.html">playground</a> usable. A
-first lazy path now lets simple BGP/FILTER queries under <code>LIMIT</code> stop early;
-the remaining work is extending that laziness across ORDER BY, DISTINCT,
-aggregation, and compound algebra.</li>
-<li><strong>Sweeping 24 operators caught two more issues — both fixed.</strong> Running the
-full operator matrix against Oxigraph surfaced (a) <strong><code>OPTIONAL</code> at 11.5 s</strong> —
-the SPARQL algebra's <code>Join</code>/<code>LeftJoin</code> still used an O(L×R) nested-loop merge
-(5,496 × 32 k rows); replacing it with a <strong>hash join on the shared variables</strong>
-(<code>sparql.rs::hash_join_solutions</code>, the same idea as finding 6 lifted to the
-algebra level) cut it to <strong>75 ms (≈150×)</strong>; and (b) <strong><code>REGEX</code> was silently
-unsupported</strong> despite being documented — now implemented with the tiny
-<code>regex-lite</code> crate (kept out of the heavy <code>regex</code> dependency to protect wasm
-size). After both, <strong>all 24 operator queries agree row-for-row with Oxigraph</strong>
-and none is pathological.</li>
-</ol>
 
       </article>
       <aside class="rail" aria-label="On this page">

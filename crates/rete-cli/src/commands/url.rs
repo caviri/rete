@@ -73,13 +73,25 @@ pub(crate) fn query_url(
     Ok(())
 }
 
-/// Run SPARQL against a `.rete` over HTTP(S), fetching only the byte ranges the
-/// open needs (header, dictionary, index, pyramid) — never a full download.
+/// Run SPARQL against a `.rete` over HTTP(S) with **lazy tile faulting**: the
+/// open fetches the header, dictionary, pyramid, and the index's small tile
+/// directories; index tiles are then fetched one range request at a time, only
+/// when the query's scans and probes actually touch them. A selective query
+/// reads O(touched tiles), not the whole index. (Pre-tiling v0.1 files fall
+/// back to fetching the index whole.)
 pub(crate) fn sparql_url(url: &str, query: &str, json: bool) -> anyhow::Result<()> {
-    let reader = CountingReader::new(HttpRangeReader::open(url)?);
+    let reader = std::sync::Arc::new(CountingReader::new(HttpRangeReader::open(url)?));
     let total = reader.len();
-    let rete = Rete::open_ranged(&reader)?;
+    let rete = Rete::open_ranged_lazy(reader.clone())?;
     let result = eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // Lazy tile fetches surface failures out-of-band: a partial answer must
+    // become an error, never quietly fewer rows.
+    if rete.index_incomplete() {
+        anyhow::bail!(
+            "a range request failed while streaming index tiles from {url}; \
+             results would be incomplete — retry"
+        );
+    }
     print_query_output(&result, json);
     eprintln!(
         "(fetched {} bytes in {} range request(s); file is {} bytes)",

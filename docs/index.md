@@ -2,6 +2,8 @@
 
 **A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server.**
 
+[`github.com/caviri/rete`](https://github.com/caviri/rete) · crate **v0.0.1** · on-disk format **v0.2** (readers accept v0.1)
+
 `rete` packs an RDF graph (or a full dataset of named graphs) into one immutable
 `.rete` file with its own dictionary, permutation indexes, and a pyramidal
 community summary. Drop the file on S3, GitHub, or any HTTP host that honors
@@ -51,25 +53,43 @@ rete schema  social.rete    # semantic (by rdf:type)
 
 ## Documentation
 
+### Start here
+
 - **[Graph data 101](intro.md)** — new to graphs/RDF? A beginner's tour, framed by the questions you can ask.
-- **[Getting started](getting-started.md)** — install (Docker-only), build, query, deploy.
-- **[Architecture](architecture.md)** — workspace map, build/read/query pipelines, range model, and extension points.
+- **[Getting started](getting-started.md)** — install (Docker-only), build, query, deploy, generate test data.
 - **[Real-world scenario](scenario.md)** — publish a queryable SBOM to a URL; curl examples.
+- **[Interactive playground](playground.html)** — a static, no-server page that runs the engine in your browser: SELECT/ASK/CONSTRUCT, progressive summaries, SHACL, reachability — all offline (even from `file://`).
+
+### Guides
+
 - **[CLI reference](cli.md)** — every `rete` subcommand.
 - **[SPARQL support](sparql.md)** — exactly what the engine evaluates.
 - **[SHACL validation](shacl.md)** — validate `.rete` graphs against SHACL Core shapes.
-- **[Compatibility & interop](compatibility.md)** — RDF, validation, and Cypher.
+- **[Dataset Cards](dataset-cards.md)** — self-describing metadata embedded in the file.
 - **[Reasoning & coherence](reasoning.md)** — prototype OWL RL / RDFS reasoner; find incoherent points.
+- **[Federated queries](federation.md)** — query several `.rete` files (local paths and/or URLs) as one; union merge + predicate routing.
+- **[Compatibility & interop](compatibility.md)** — RDF, validation, and Cypher.
+
+### Graph analysis
+
 - **[Topic modeling (LDA)](topic-modeling.md)** — label each community's theme: `rete communities` + scikit-learn LDA.
 - **[Multi-criteria communities](multi-criteria.md)** — partition the same graph by different relations/attributes; combine criteria.
-- **[Federated queries](federation.md)** — query several `.rete` files (local paths and/or URLs) as one; union merge + predicate routing.
+
+### In the browser
+
 - **[Browser / WASM](browser.md)** — query in the browser; progressive loading.
-- **[Interactive playground](playground.html)** — a static, no-server, runs-entirely-in-your-browser page: it embeds the WASM engine and the example datasets, so SELECT/ASK/CONSTRUCT, progressive summary queries, Table/Turtle/JSON-LD, the community view, reachability, and history all work offline (even from `file://`).
-- **[Format specification](SPEC.md)** — the on-disk byte layout, for implementers.
-- **[Benchmarks](BENCHMARK.md)** — synthetic 139 k-triple sizing plus the real OpenCitations/Oxigraph comparison, generated from a JSON snapshot.
 - **[Parallel in the browser (experimental)](parallel-browser.md)** — a working Web Worker reachability demo, plus the more fragile shared-memory WASM thread path.
 
-## Status
+### Internals
 
-Experimental (v0). The format is not yet stable across versions. Everything is
-built and tested in Docker — see [Getting started](getting-started.md).
+- **[Architecture](architecture.md)** — workspace map, build/read/query pipelines, range model, and extension points.
+- **[Format specification](SPEC.md)** — the on-disk byte layout, for implementers.
+- **[Benchmarks](BENCHMARK.md)** — sizing, the OpenCitations/Oxigraph comparison, and the LUBM-style suite, generated from JSON snapshots.
+
+## Version & status
+
+Developed in the open at [github.com/caviri/rete](https://github.com/caviri/rete).
+The crates are **v0.0.1** (experimental); the on-disk format is **v0.2**, and
+readers still accept v0.1 files. The format is not yet stable across versions.
+Everything is built and tested in Docker — see
+[Getting started](getting-started.md).

@@ -71,10 +71,13 @@ SPARQL goes through four stages:
    RDF terms for text, JSON, or WASM output (late materialization, memoized
    per query).
 
-This is still not a cost-based planner: join order inside a BGP is a
-selectivity heuristic, hash joins always build their right side, and a small
-`LIMIT` above a multi-pattern join still scans each pattern once (no
-index-nested-loop strategy yet).
+Joins are adaptive: under a small known demand (`LIMIT`/`ASK`), multi-pattern
+BGPs and BGP-shaped join sides switch from one-scan-per-pattern hash joins to
+index-nested-loop probing — each row jumps to its group through a lazily-built
+in-memory block directory, so producing k solutions costs O(k) point lookups
+instead of full pattern scans. This is still not a cost-based planner: join
+order is a selectivity heuristic and the hash path always builds its right
+side.
 
 Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
 nested `SELECT` subqueries and `SERVICE` federation.
@@ -92,10 +95,11 @@ triple-pattern path as `Rete::query`, then attaches:
   payload, and pyramid metadata.
 
 This is intentionally physical-file provenance, not a narrative explanation. In
-v0 the index is still stored as one permutation container with three payload
-sections, so provenance can name the selected permutation payload but not a
-per-community tile. `rete why --json` reports that tile provenance is
-`not_materialized` until tile directories are added.
+format v0.2 each permutation section is tiled (independently compressed
+~64 KiB tiles with a byte-range directory, SPEC §6.2): routed reads fetch the
+directory plus only the matching tile(s), and provenance names the physical
+tile (`PERM/index`) with its compressed byte range. For pre-tiling (v0.1)
+files `rete why --json` still reports tile provenance as `not_materialized`.
 
 ## Progressive And Cost Paths
 
@@ -178,7 +182,7 @@ the bundled `.rete` datasets into `docs/playground.html`. Run it with
 | Area | Next work |
 |---|---|
 | Tile-routed query refinement | Add physical community-tile directories so exact routing can fetch relevant community ranges, not whole permutation payloads |
-| Result provenance | Extend current section-range provenance to physical block/tile ranges once tile directories are materialized |
+| Result provenance | Extend tile-range provenance (done for permutation tiles) to pyramid/community tiles |
 | Query engine rows | Replace wide `BTreeMap<String, String>` bindings with integer slot rows |
 | Benchmark docs | Refresh JSON snapshots with `rete-bench --json` and regenerate the benchmark section |
 | SHACL | Add SHACL-SPARQL constraints only if the CLI needs extension-level coverage |

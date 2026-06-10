@@ -8,8 +8,12 @@ use std::convert::TryInto;
 /// Magic bytes at offset 0: ASCII `RETE`.
 pub const MAGIC: [u8; 4] = *b"RETE";
 
-/// Current format version.
-pub const VERSION: u8 = 0x01;
+/// Current format version (written by this crate): tiled permutation sections.
+pub const VERSION: u8 = 0x02;
+
+/// Oldest format version this crate still reads (single-block permutation
+/// sections, pre-tiling).
+pub const MIN_READ_VERSION: u8 = 0x01;
 
 /// Fixed header size in bytes.
 pub const HEADER_LEN: usize = 128;
@@ -30,6 +34,10 @@ pub enum HeaderError {
 /// Decoded file header. All multi-byte fields are little-endian on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
+    /// Format version of the parsed file (within
+    /// [`MIN_READ_VERSION`]..=[`VERSION`]); decoders gate layout changes on it.
+    /// The writer always emits [`VERSION`].
+    pub version: u8,
     pub flags: u8,
     pub metadata_offset: u64,
     pub metadata_len: u64,
@@ -56,7 +64,7 @@ impl Header {
     pub fn to_bytes(&self) -> [u8; HEADER_LEN] {
         let mut b = [0u8; HEADER_LEN];
         b[0..4].copy_from_slice(&MAGIC);
-        b[4] = VERSION;
+        b[4] = self.version;
         b[5] = self.flags;
         b[6..8].copy_from_slice(&(HEADER_LEN as u16).to_le_bytes());
         b[8..16].copy_from_slice(&self.metadata_offset.to_le_bytes());
@@ -87,11 +95,12 @@ impl Header {
         if b[0..4] != MAGIC {
             return Err(HeaderError::BadMagic);
         }
-        if b[4] != VERSION {
+        if !(MIN_READ_VERSION..=VERSION).contains(&b[4]) {
             return Err(HeaderError::BadVersion(b[4]));
         }
         let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
         Ok(Header {
+            version: b[4],
             flags: b[5],
             metadata_offset: u64_at(8),
             metadata_len: u64_at(16),
@@ -124,6 +133,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let h = Header {
+            version: VERSION,
             flags: FLAG_HAS_QUADS,
             metadata_offset: 128,
             metadata_len: 42,
@@ -156,6 +166,7 @@ mod tests {
         // round-trip test above is symmetric and would survive a field reorder;
         // this would not. Distinct values make each field's bytes identifiable.
         let h = Header {
+            version: VERSION,
             flags: FLAG_HAS_QUADS,
             metadata_offset: 0x11,
             metadata_len: 0x22,
@@ -208,6 +219,44 @@ mod tests {
         assert!(matches!(
             Header::from_bytes(&bytes),
             Err(HeaderError::BadMagic)
+        ));
+    }
+
+    #[test]
+    fn accepts_v1_and_rejects_unknown_versions() {
+        let h = Header {
+            version: MIN_READ_VERSION,
+            flags: 0,
+            metadata_offset: HEADER_LEN as u64,
+            metadata_len: 0,
+            dictionary_offset: HEADER_LEN as u64,
+            dictionary_len: 0,
+            root_dir_offset: HEADER_LEN as u64,
+            root_dir_len: 0,
+            pyramid_meta_offset: 0,
+            pyramid_meta_len: 0,
+            dict_codec: 0,
+            block_codec: 0,
+            pyramid_levels: 0,
+            quad_count: 0,
+            term_count: 0,
+            content_hash: [0; 16],
+            named_graphs_offset: 0,
+            named_graphs_len: 0,
+        };
+        let back = Header::from_bytes(&h.to_bytes()).unwrap();
+        assert_eq!(back.version, MIN_READ_VERSION);
+
+        let mut bad = h.to_bytes();
+        bad[4] = VERSION + 1;
+        assert!(matches!(
+            Header::from_bytes(&bad),
+            Err(HeaderError::BadVersion(_))
+        ));
+        bad[4] = 0;
+        assert!(matches!(
+            Header::from_bytes(&bad),
+            Err(HeaderError::BadVersion(0))
         ));
     }
 }

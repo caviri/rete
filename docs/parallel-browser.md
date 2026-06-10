@@ -79,15 +79,7 @@ default — which is part of why the **stable** playground stays single-threaded
 self-contained, and why the working parallel demo uses message-passing Web
 Workers instead.
 
-## What was added
-
-- **`web/playground-threads.html`** + **`web/reach-worker.js`** — the working
-  Web-Worker-pool benchmark page (no special headers; recommended).
-- **`rete-wasm` `threads` feature**, **`scripts/build_playground_threads.sh`**,
-  **`scripts/serve_coi.py`** — the scaffolded `wasm-bindgen-rayon` shared-memory
-  path (version-fragile; see above).
-
-This is **experimental** and exists to explore real in-browser multicore. The
-stable path remains the native `parallel` feature (`rete reach --parallel`, the
-[Benchmarks](BENCHMARK.md)) and the offline single-threaded
+This page is **experimental** and exists to explore real in-browser multicore.
+The stable path remains the native `parallel` feature (`rete reach --parallel`,
+the [Benchmarks](BENCHMARK.md)) and the offline single-threaded
 [playground](playground.html).

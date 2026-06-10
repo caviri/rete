@@ -41,12 +41,18 @@ APP_JS = SRC / "app.js"
 # `citations` is the real OpenCitations network (citations of the AlphaFold paper,
 # 10.1038/s41586-021-03819-2) enriched with clearly-labelled synthetic metadata;
 # real DOIs / edges / years, fabricated titles/authors/venues/keywords.
+# The scholar datasets come from scripts/synth_graph.py; regenerate with:
+#   python3 scripts/synth_graph.py --papers 250 --seed 42 -o /tmp/scholar.nt
+#   python3 scripts/synth_graph.py --papers 250 --noise 0.25 --seed 42 -o /tmp/scholar-noisy.nt
+#   rete build /tmp/scholar.nt -o web/scholar.rete
+#   rete build /tmp/scholar-noisy.nt -o web/scholar-noisy.rete
+# (changing size/noise/seed invalidates the IRIs and counts pinned in
+# web/playground-src/catalog.js — update them together).
 DATASETS = [
-    ("research", "research.rete"),
+    ("scholar", "scholar.rete"),
+    ("scholar-noisy", "scholar-noisy.rete"),
     ("typed", "typed.rete"),
     ("deps", "deps.rete"),
-    ("papers", "papers.rete"),
-    ("researchers", "researchers.rete"),
     ("citations", "enriched-all.rete"),
 ]
 

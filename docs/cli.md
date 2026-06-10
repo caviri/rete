@@ -93,9 +93,10 @@ rete why data.rete --predicate '<http://ex/knows>'
 rete why data.rete --subject '<http://ex/Alice>' --json
 ```
 
-Current v0 provenance is honest about the physical layout: it identifies the
-index container and selected permutation payload, but per-community tile
-provenance is reported as `not_materialized` until tile directories are stored.
+Provenance is honest about the physical layout: it identifies the index
+container, the selected permutation payload, and — for tiled (v0.2) files —
+the physical tile holding each match (`PERM/index`) with its compressed byte
+range. Pre-tiling (v0.1) files report tile provenance as `not_materialized`.
 
 ### `rete bgp <file> "<pattern> . <pattern> …"`
 Evaluate a Basic Graph Pattern. Patterns are separated by ` . `, terms by spaces;
@@ -299,8 +300,13 @@ rete query-url https://host/data.rete --object '<http://ex/Dave>'
 ```
 
 ### `rete sparql-url <url> "<query>" [--json]`
-Run a full SPARQL query over HTTP, range-fetching the file (header, dictionary,
-index, pyramid) rather than downloading it whole.
+Run a full SPARQL query over HTTP with **lazy tile faulting** (tiled v0.2
+files): the open fetches the header, dictionary, pyramid, and the index's
+small tile directories; index tiles are then range-fetched only when the
+query's scans and probes touch them, so a selective query reads O(touched
+tiles) rather than the whole index. A range failure mid-query is reported as
+an error, never as silently fewer rows. Pre-tiling (v0.1) files fall back to
+fetching the index whole.
 
 ```sh
 rete sparql-url https://host/data.rete \

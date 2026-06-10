@@ -38,12 +38,17 @@ fn range_json(range: ByteRange) -> serde_json::Value {
 }
 
 fn provenance_json(m: &TripleProvenance) -> serde_json::Value {
-    let tile = match &m.tile {
-        Some(id) => json!({
+    let tile = match (&m.tile, m.tile_range) {
+        (Some(id), Some(range)) => json!({
+            "available": true,
+            "id": id,
+            "range": range_json(range),
+        }),
+        (Some(id), None) => json!({
             "available": true,
             "id": id,
         }),
-        None => json!({
+        _ => json!({
             "available": false,
             "reason": "not_materialized",
         }),
@@ -128,7 +133,13 @@ pub(crate) fn why(
             } else {
                 println!("  pyramid: absent");
             }
-            println!("  tile: not materialized in v0 files");
+            match (&m.tile, m.tile_range) {
+                (Some(id), Some(range)) => {
+                    println!("  tile: {id} bytes [{}..{})", range.offset, range.end())
+                }
+                (Some(id), None) => println!("  tile: {id}"),
+                _ => println!("  tile: not materialized (pre-tiling file)"),
+            }
         }
         eprintln!("{} result(s)", results.len());
     }

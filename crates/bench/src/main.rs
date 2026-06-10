@@ -29,8 +29,17 @@ use rete_core::parallel::batch_reach_parallel;
 use rete_core::{batch_reach_serial, build_adjacency, eval_query, QueryOutput, Rete};
 use serde_json::{json, Value};
 
+mod lubm;
+mod mem;
+
+/// Every allocation in this binary (both engines) goes through the counting
+/// allocator, so per-query peak-heap numbers are exact, not sampled.
+#[global_allocator]
+static ALLOC: mem::CountingAlloc = mem::CountingAlloc;
+
 const COAUTHOR: &str = "<http://ex/coauthor>";
-const USAGE: &str = "usage: rete-bench [--json] <file.rete> <file.nt> [seeds]";
+const USAGE: &str =
+    "usage: rete-bench [--json] <file.rete> <file.nt> [seeds]\n       rete-bench [--json] --lubm [universities]";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum OutputFormat {
@@ -114,13 +123,31 @@ fn short(e: &str) -> String {
     }
 }
 
-fn median(mut v: Vec<f64>) -> f64 {
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    v[v.len() / 2]
+/// One timing measurement: median, sample standard deviation (the ± spread),
+/// and the peak extra heap observed across the repetitions.
+struct Measure {
+    median_ms: f64,
+    sd_ms: f64,
+    peak_heap: usize,
 }
 
-/// Run `f` `reps` times; return (median ms, last result-size).
-fn bench<F: FnMut() -> usize>(reps: usize, mut f: F) -> (f64, usize) {
+fn median_sd(mut v: Vec<f64>) -> (f64, f64) {
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let med = v[v.len() / 2];
+    let mean = v.iter().sum::<f64>() / v.len() as f64;
+    let var = if v.len() > 1 {
+        v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (v.len() - 1) as f64
+    } else {
+        0.0
+    };
+    (med, var.sqrt())
+}
+
+/// Run `f` `reps` times; report median ± sd timing plus the peak heap the
+/// repetitions allocated beyond what was live when they started.
+fn bench<F: FnMut() -> usize>(reps: usize, mut f: F) -> (Measure, usize) {
+    let baseline = mem::live();
+    mem::reset_peak();
     let mut times = Vec::with_capacity(reps);
     let mut last = 0;
     for _ in 0..reps {
@@ -128,7 +155,21 @@ fn bench<F: FnMut() -> usize>(reps: usize, mut f: F) -> (f64, usize) {
         last = f();
         times.push(t.elapsed().as_secs_f64() * 1000.0);
     }
-    (median(times), last)
+    let (median_ms, sd_ms) = median_sd(times);
+    let peak_heap = mem::peak().saturating_sub(baseline);
+    (
+        Measure {
+            median_ms,
+            sd_ms,
+            peak_heap,
+        },
+        last,
+    )
+}
+
+/// `2.41 ±0.05`-style cell.
+fn pm(m: &Measure) -> String {
+    format!("{:.2} ±{:.2}", m.median_ms, m.sd_ms)
 }
 
 /// rete result size, or an error string (e.g. an unsupported operator).
@@ -154,13 +195,15 @@ fn oxi_try(store: &Store, q: &str) -> Result<usize, String> {
     })
 }
 
-fn parse_args() -> Result<(OutputFormat, String, String, usize)> {
+fn parse_args() -> Result<(OutputFormat, Option<usize>, String, String, usize)> {
     let mut format = OutputFormat::Markdown;
+    let mut lubm = false;
     let mut args = Vec::new();
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--json" => format = OutputFormat::Json,
             "--markdown" => format = OutputFormat::Markdown,
+            "--lubm" => lubm = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -168,15 +211,22 @@ fn parse_args() -> Result<(OutputFormat, String, String, usize)> {
             _ => args.push(arg),
         }
     }
+    if lubm {
+        let universities = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
+        return Ok((format, Some(universities), String::new(), String::new(), 0));
+    }
 
     let rete_path = args.first().cloned().context(USAGE)?;
     let nt_path = args.get(1).cloned().context(USAGE)?;
     let seed_count = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(300);
-    Ok((format, rete_path, nt_path, seed_count))
+    Ok((format, None, rete_path, nt_path, seed_count))
 }
 
 fn main() -> Result<()> {
-    let (format, rete_path, nt_path, seed_count) = parse_args()?;
+    let (format, lubm_universities, rete_path, nt_path, seed_count) = parse_args()?;
+    if let Some(universities) = lubm_universities {
+        return lubm::run(format == OutputFormat::Json, universities);
+    }
     let reps = 5;
     let reach_reps = 3;
 
@@ -184,12 +234,15 @@ fn main() -> Result<()> {
         .map(|n| n.get())
         .unwrap_or(1);
 
-    // ---- Load both engines (one-time cost, reported separately) ----
+    // ---- Load both engines (one-time cost + memory, reported separately) ----
+    let heap0 = mem::live();
     let bytes = std::fs::read(&rete_path).with_context(|| format!("read {rete_path}"))?;
     let t = Instant::now();
     let rete = Rete::open(&bytes).context("Rete::open")?;
     let rete_open_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let rete_heap = mem::live().saturating_sub(heap0);
 
+    let heap1 = mem::live();
     let store = Store::new().context("Store::new")?;
     let t = Instant::now();
     store
@@ -197,22 +250,33 @@ fn main() -> Result<()> {
         .context("oxigraph load")?;
     let oxi_load_ms = t.elapsed().as_secs_f64() * 1000.0;
     let oxi_len = store.len()?;
+    let oxi_heap = mem::live().saturating_sub(heap1);
 
     if format == OutputFormat::Markdown {
         println!("# Benchmark: rete vs rete (parallel) vs Oxigraph\n");
         println!(
             "Data: `{rete_path}` ({} bytes) / `{nt_path}` · Oxigraph store: {oxi_len} triples · \
-             {threads} logical cores · median of {reps} runs.\n",
+             {threads} logical cores · median ±sd of {reps} warm runs.\n",
             bytes.len()
         );
 
         println!("## Load / open (one-time)\n");
-        println!("| Engine | Step | Time |");
-        println!("|---|---|--:|");
+        println!("| Engine | Step | Time | Resident heap after load |");
+        println!("|---|---|--:|--:|");
         println!(
-            "| rete | `Rete::open` (mmap-style, indexes already built) | {rete_open_ms:.1} ms |"
+            "| rete | `Rete::open` (mmap-style, indexes already built) | {rete_open_ms:.1} ms | {} MiB (file image + parsed sections) |",
+            mem::mib(rete_heap)
         );
-        println!("| Oxigraph | bulk-load N-Triples + index in memory | {oxi_load_ms:.0} ms |");
+        println!(
+            "| Oxigraph | bulk-load N-Triples + index in memory | {oxi_load_ms:.0} ms | {} MiB |",
+            mem::mib(oxi_heap)
+        );
+        if let Some(kb) = mem::vm_hwm_kb() {
+            println!(
+                "\nProcess peak RSS after both loads (`VmHWM`): {:.1} MiB.",
+                kb as f64 / 1024.0
+            );
+        }
         println!();
     }
 
@@ -220,10 +284,12 @@ fn main() -> Result<()> {
     if format == OutputFormat::Markdown {
         println!("## SPARQL operators & complexity (single-threaded engines)\n");
         println!(
-            "Every query run on both engines; `rows` compares result sizes (a cross-engine check).\n"
+            "Every query run on both engines; `rows` compares result sizes (a cross-engine \
+             check). Times are median ±sd; `peak heap` is the per-query allocation high-water \
+             mark (exact, via a counting allocator).\n"
         );
-        println!("| Operator / form | rete | Oxigraph | rete vs oxi | rows (rete / oxi) | ✓ |");
-        println!("|---|--:|--:|--:|--:|:--:|");
+        println!("| Operator / form | rete (ms) | Oxigraph (ms) | rete vs oxi | peak heap MiB (rete / oxi) | rows (rete / oxi) | ✓ |");
+        println!("|---|--:|--:|--:|--:|--:|:--:|");
     }
     let mut agree = 0;
     let mut total = 0;
@@ -239,9 +305,9 @@ fn main() -> Result<()> {
         total += 1;
         match (&r0, &o0) {
             (Ok(rr), Ok(or)) => {
-                let (rete_ms, _) = bench(reps, || rete_try(&rete, &q).unwrap_or(0));
-                let (oxi_ms, _) = bench(reps, || oxi_try(&store, &q).unwrap_or(0));
-                let speedup = oxi_ms / rete_ms;
+                let (rete_m, _) = bench(reps, || rete_try(&rete, &q).unwrap_or(0));
+                let (oxi_m, _) = bench(reps, || oxi_try(&store, &q).unwrap_or(0));
+                let speedup = oxi_m.median_ms / rete_m.median_ms;
                 let ok = rr == or;
                 if ok {
                     agree += 1;
@@ -251,8 +317,12 @@ fn main() -> Result<()> {
                 query_rows.push(json!({
                     "name": name,
                     "query": body,
-                    "rete_ms": rete_ms,
-                    "oxigraph_ms": oxi_ms,
+                    "rete_ms": rete_m.median_ms,
+                    "rete_ms_sd": rete_m.sd_ms,
+                    "rete_peak_heap_bytes": rete_m.peak_heap,
+                    "oxigraph_ms": oxi_m.median_ms,
+                    "oxigraph_ms_sd": oxi_m.sd_ms,
+                    "oxigraph_peak_heap_bytes": oxi_m.peak_heap,
                     "speedup": speedup,
                     "rete_rows": rr,
                     "oxigraph_rows": or,
@@ -261,7 +331,11 @@ fn main() -> Result<()> {
                 }));
                 if format == OutputFormat::Markdown {
                     println!(
-                        "| {name} | {rete_ms:.2} ms | {oxi_ms:.2} ms | {speedup:.1}× | {rr} / {or} | {} |",
+                        "| {name} | {} | {} | {speedup:.1}× | {} / {} | {rr} / {or} | {} |",
+                        pm(&rete_m),
+                        pm(&oxi_m),
+                        mem::mib(rete_m.peak_heap),
+                        mem::mib(oxi_m.peak_heap),
                         if ok { "✓" } else { "✗" }
                     );
                 }
@@ -318,14 +392,15 @@ fn main() -> Result<()> {
         .collect();
 
     let adj = build_adjacency(&rete, COAUTHOR);
-    let (serial_ms, total_serial) = bench(reach_reps, || {
+    let (serial_m, total_serial) = bench(reach_reps, || {
         let sets = batch_reach_serial(&adj, &seed_nodes);
         sets.iter().map(BTreeSet::len).sum()
     });
-    let (par_ms, total_par) = bench(reach_reps, || {
+    let (par_m, total_par) = bench(reach_reps, || {
         let sets = batch_reach_parallel(&adj, &seed_nodes);
         sets.iter().map(BTreeSet::len).sum()
     });
+    let (serial_ms, par_ms) = (serial_m.median_ms, par_m.median_ms);
     // The parallel reach must reproduce the serial result exactly — assert it
     // rather than just claiming it in prose.
     ensure!(
@@ -334,7 +409,7 @@ fn main() -> Result<()> {
     );
 
     // Oxigraph: same transitive closure expressed as a property path, per seed.
-    let (oxi_reach_ms, total_oxi) = bench(reach_reps, || {
+    let (oxi_reach_m, total_oxi) = bench(reach_reps, || {
         let mut total = 0usize;
         for iri in &seed_iris {
             let q = format!(
@@ -362,6 +437,7 @@ fn main() -> Result<()> {
         }
         total
     });
+    let oxi_reach_ms = oxi_reach_m.median_ms;
 
     if format == OutputFormat::Markdown {
         println!(
@@ -374,13 +450,18 @@ fn main() -> Result<()> {
         );
         println!("| Engine / mode | Time | vs rete-serial |");
         println!("|---|--:|--:|");
-        println!("| rete — `batch_reach_serial` (1 core) | {serial_ms:.1} ms | 1.0× |");
         println!(
-            "| rete — `batch_reach_parallel` ({threads} cores) | {par_ms:.1} ms | {:.1}× |",
+            "| rete — `batch_reach_serial` (1 core) | {serial_ms:.1} ±{:.1} ms | 1.0× |",
+            serial_m.sd_ms
+        );
+        println!(
+            "| rete — `batch_reach_parallel` ({threads} cores) | {par_ms:.1} ±{:.1} ms | {:.1}× |",
+            par_m.sd_ms,
             serial_ms / par_ms
         );
         println!(
-            "| Oxigraph — `coauthor+` property path, per seed | {oxi_reach_ms:.0} ms | {:.1}× |",
+            "| Oxigraph — `coauthor+` property path, per seed | {oxi_reach_ms:.0} ±{:.0} ms | {:.1}× |",
+            oxi_reach_m.sd_ms,
             serial_ms / oxi_reach_ms
         );
         println!();
@@ -391,7 +472,7 @@ fn main() -> Result<()> {
         );
     } else {
         let report = json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "tool": "rete-bench",
             "inputs": {
                 "rete_path": rete_path,
@@ -407,6 +488,9 @@ fn main() -> Result<()> {
             "load_open": {
                 "rete_ms": rete_open_ms,
                 "oxigraph_ms": oxi_load_ms,
+                "rete_heap_bytes": rete_heap,
+                "oxigraph_heap_bytes": oxi_heap,
+                "process_peak_rss_kb": mem::vm_hwm_kb(),
             },
             "queries": query_rows,
             "query_agreement": {
@@ -417,8 +501,11 @@ fn main() -> Result<()> {
                 "predicate": COAUTHOR,
                 "seed_count": seed_nodes.len(),
                 "rete_serial_ms": serial_ms,
+                "rete_serial_ms_sd": serial_m.sd_ms,
                 "rete_parallel_ms": par_ms,
+                "rete_parallel_ms_sd": par_m.sd_ms,
                 "oxigraph_ms": oxi_reach_ms,
+                "oxigraph_ms_sd": oxi_reach_m.sd_ms,
                 "rete_serial_total": total_serial,
                 "rete_parallel_total": total_par,
                 "oxigraph_total": total_oxi,
