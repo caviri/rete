@@ -916,9 +916,19 @@ pre {
   display: none;
 }
 
-/* Result tables scroll horizontally rather than wrapping wide IRI/value cells. */
+/* Result tables scroll horizontally rather than wrapping wide IRI/value cells.
+   The scroll container only clips if its ancestors allow shrinking below their
+   content — grid/flex items default to min-width:auto, which would otherwise let
+   a wide table push the whole column out. */
+.workbench,
+.results-band,
+.result-pane {
+  min-width: 0;
+}
+
 .tbl {
   overflow-x: auto;
+  max-width: 100%;
 }
 
 .tbl table {

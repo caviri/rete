@@ -25,7 +25,7 @@
   @media (max-width:1200px){ main { grid-template-columns:1fr 1fr; } }
   @media (max-width:760px){ main { grid-template-columns:1fr; } }
   .panel { border:1px solid var(--line); border-radius:10px; background:var(--surface);
-    box-shadow:0 14px 38px rgba(32,47,41,.08); padding:14px 16px; }
+    box-shadow:0 14px 38px rgba(32,47,41,.08); padding:14px 16px; min-width:0; }
   .panel h2 { font-size:15px; margin:0 0 2px; }
   .panel .tech { color:var(--accent-dark); font-weight:700; font-size:11.5px; display:block; }
   .panel p.note { color:var(--muted); font-size:12px; margin:6px 0 8px; }
@@ -211,17 +211,23 @@ $("duckSrc").onchange = () => {
 let sqliteWorker = null;
 async function initSqlite() {
   try {
-    const mod = await import("https://cdn.jsdelivr.net/npm/sql.js-httpvfs@0.8.12/dist/index.js");
-    sqliteWorker = await mod.createDbWorker(
+    // dist/index.js is UMD (CommonJS) — importing it as ESM leaves `exports`
+    // undefined. esm.sh transpiles the package to real ESM with the named
+    // export; the worker/wasm stay raw jsDelivr files (loaded by URL at runtime).
+    const mod = await import("https://esm.sh/sql.js-httpvfs@0.8.12");
+    const createDbWorker = mod.createDbWorker || (mod.default && mod.default.createDbWorker);
+    if (!createDbWorker) throw new Error("createDbWorker export not found");
+    sqliteWorker = await createDbWorker(
       [{ from: "inline", config: { serverMode: "full", url: SQLITE_URL, requestChunkSize: 4096 } }],
-      "https://cdn.jsdelivr.net/npm/sql.js-httpvfs@0.8.12/dist/sqlite.worker.js",
-      "https://cdn.jsdelivr.net/npm/sql.js-httpvfs@0.8.12/dist/sql-wasm.wasm"
+      "https://esm.sh/sql.js-httpvfs@0.8.12/dist/sqlite.worker.js",
+      "https://esm.sh/sql.js-httpvfs@0.8.12/dist/sql-wasm.wasm"
     );
     $("sqliteMeta").textContent = "sql.js-httpvfs ready";
   } catch (e) {
     $("sqliteMeta").textContent = "";
     $("sqliteOut").innerHTML = `<p class="err">SQLite lazy reader unavailable: ${String(e)}\n` +
-      `(the host's redirect/Range handling may not suit sql.js-httpvfs — use the download link).</p>`;
+      `(sql.js-httpvfs is finicky from a CDN, and its range VFS may not follow the host's signed-URL ` +
+      `redirect — if so, use the download link and query it locally.)</p>`;
   }
 }
 $("sqliteRun").onclick = async () => {
