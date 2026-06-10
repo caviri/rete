@@ -333,6 +333,27 @@ requests instead of the whole file — the range-query promise, at 1 GB.</p>
 <p>The playground's <code>scholar</code> / <code>scholar-noisy</code> demo datasets are built with this
 generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
 the <code>scripts/build_playground.py</code> docstring).</p>
+<h2>Lossless entity tables (the best of both worlds)</h2>
+<p><code>scripts/rdf_to_entity_tables.py</code> is the <em>lossless</em> counterpart: it keeps the
+readable one-table-per-type shape <strong>without dropping anything</strong>. Each class
+table has the frequent properties as named <code>LIST</code> columns (occupation,
+citizenship, date of birth…) plus three things that make it complete: a
+<code>types</code> column (all <code>P31</code> values, so a multi-typed entity lives in exactly one
+table, never duplicated), an <code>extra</code> <code>MAP(predicate → objects)</code> column that
+catches every other property (rare ones, all the multilingual labels), and an
+<code>_untyped</code> residual table for subjects with no type. Object values are stored
+as N-Triples term tokens (<code>&lt;iri&gt;</code>, <code>"lit"</code>, <code>"lit"@en</code>), so IRIs, literals and
+language tags round-trip. Explode <code>types</code> + every column + <code>extra</code> across all
+tables and you get back <strong>exactly</strong> the triples — <code>--verify</code> checks that
+(reconstructed == input). It can emit Parquet, a DuckDB file, and a SQLite file
+(list/map columns as JSON text) in one run:</p>
+<pre><code class="language-sh">uv run python scripts/rdf_to_entity_tables.py --parts 1 --limit 12000000 --props 24 \
+  --min-entities 50 -o data/ent --duckdb data/ent.duckdb --sqlite data/ent.sqlite --verify
+</code></pre>
+<p><code>--props</code> only changes how many properties get their own column vs. land in
+<code>extra</code> — it never affects losslessness. The <code>_manifest.parquet</code> records each
+class's column → predicate map so reconstruction is mechanical, and N-Triples
+is the interchange hub (<code>rete export</code> ↔ <code>rete build</code> ↔ these tables).</p>
 <h2>Companion: columnar property tables (Parquet, split by type)</h2>
 <p>To compare the <code>.rete</code> graph against a columnar layout,
 <code>scripts/rdf_to_property_tables.py</code> denormalizes the same Wikidata triples into

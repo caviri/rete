@@ -163,6 +163,32 @@ The playground's `scholar` / `scholar-noisy` demo datasets are built with this
 generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
 the `scripts/build_playground.py` docstring).
 
+## Lossless entity tables (the best of both worlds)
+
+`scripts/rdf_to_entity_tables.py` is the *lossless* counterpart: it keeps the
+readable one-table-per-type shape **without dropping anything**. Each class
+table has the frequent properties as named `LIST` columns (occupation,
+citizenship, date of birth…) plus three things that make it complete: a
+`types` column (all `P31` values, so a multi-typed entity lives in exactly one
+table, never duplicated), an `extra` `MAP(predicate → objects)` column that
+catches every other property (rare ones, all the multilingual labels), and an
+`_untyped` residual table for subjects with no type. Object values are stored
+as N-Triples term tokens (`<iri>`, `"lit"`, `"lit"@en`), so IRIs, literals and
+language tags round-trip. Explode `types` + every column + `extra` across all
+tables and you get back **exactly** the triples — `--verify` checks that
+(reconstructed == input). It can emit Parquet, a DuckDB file, and a SQLite file
+(list/map columns as JSON text) in one run:
+
+```sh
+uv run python scripts/rdf_to_entity_tables.py --parts 1 --limit 12000000 --props 24 \
+  --min-entities 50 -o data/ent --duckdb data/ent.duckdb --sqlite data/ent.sqlite --verify
+```
+
+`--props` only changes how many properties get their own column vs. land in
+`extra` — it never affects losslessness. The `_manifest.parquet` records each
+class's column → predicate map so reconstruction is mechanical, and N-Triples
+is the interchange hub (`rete export` ↔ `rete build` ↔ these tables).
+
 ## Companion: columnar property tables (Parquet, split by type)
 
 To compare the `.rete` graph against a columnar layout,
