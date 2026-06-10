@@ -1029,6 +1029,22 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     Ok(content_hash(&parts) == header.content_hash)
 }
 
+/// Faults the pyramid meta in on first access. `None` = the fetch failed.
+type PyramidLoader = Box<dyn Fn() -> Option<PyramidMeta> + Send + Sync>;
+
+/// The pyramid-meta section, held either resident (eager opens) or deferred
+/// (the lazy remote open). SPARQL never touches the pyramid, but on a Wikidata
+/// file it can be tens of MB (114k communities, millions of superedges), so a
+/// remote SPARQL query must not pay to fetch it — it faults in only when a
+/// community/pyramid query actually calls [`Rete::pyramid`].
+enum PyramidSlot {
+    Resident(Option<PyramidMeta>),
+    Lazy {
+        loader: PyramidLoader,
+        cell: std::sync::OnceLock<Option<PyramidMeta>>,
+    },
+}
+
 /// A read-only, in-memory view over a `.rete` file image.
 pub struct Rete {
     header: Header,
@@ -1039,7 +1055,7 @@ pub struct Rete {
     /// (`(min_a, max_a, compressed-tile range)`), for provenance. Empty for
     /// pre-tiling (v0.1) files.
     tile_ranges: [Vec<(u32, u32, ByteRange)>; 3],
-    pyramid: Option<PyramidMeta>,
+    pyramid: PyramidSlot,
     named_graphs: Vec<(String, GraphIndex)>,
     /// Raw bytes of the metadata section (empty if the file has none). The
     /// application layer decodes this (the CLI stores a JSON Dataset Card here).
@@ -1077,14 +1093,14 @@ impl Rete {
         let index_section_ranges =
             decode_index_section_ranges(index_bytes, header.root_dir_offset)?;
 
-        let pyramid = if header.pyramid_meta_len > 0 {
+        let pyramid = PyramidSlot::Resident(if header.pyramid_meta_len > 0 {
             Some(
                 PyramidMeta::decode(region(header.pyramid_meta_offset, header.pyramid_meta_len)?)
                     .map_err(|_| FileError::Container("malformed pyramid meta"))?,
             )
         } else {
             None
-        };
+        });
 
         let named_graphs = if header.named_graphs_len > 0 {
             decode_named_graphs(
@@ -1228,7 +1244,11 @@ impl Rete {
 
     /// The pyramid metadata (summary graph + tiles), if the file has a pyramid.
     pub fn pyramid(&self) -> Option<&PyramidMeta> {
-        self.pyramid.as_ref()
+        match &self.pyramid {
+            PyramidSlot::Resident(p) => p.as_ref(),
+            // Faults the (possibly large) pyramid section on first access only.
+            PyramidSlot::Lazy { loader, cell } => cell.get_or_init(|| loader()).as_ref(),
+        }
     }
 
     /// The default-graph permutation index.
@@ -1320,7 +1340,7 @@ impl Rete {
         let index_section_ranges =
             decode_index_section_ranges(&index_bytes, header.root_dir_offset)?;
 
-        let pyramid = if header.pyramid_meta_len > 0 {
+        let pyramid = PyramidSlot::Resident(if header.pyramid_meta_len > 0 {
             let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
             Some(
                 PyramidMeta::decode(&mb)
@@ -1328,7 +1348,7 @@ impl Rete {
             )
         } else {
             None
-        };
+        });
 
         let named_graphs = if header.named_graphs_len > 0 {
             let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
@@ -1464,14 +1484,22 @@ impl Rete {
                 .collect();
         }
 
+        // The pyramid meta is large on real graphs (tens of MB) and SPARQL never
+        // reads it, so defer its fetch: it faults in only if `pyramid()` is
+        // called (community / pyramid_tree / inspect queries).
         let pyramid = if header.pyramid_meta_len > 0 {
-            let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
-            Some(
-                PyramidMeta::decode(&mb)
-                    .map_err(|_| FileError::Container("malformed pyramid meta"))?,
-            )
+            let pyr_reader = reader.clone();
+            let pyr_off = header.pyramid_meta_offset;
+            let pyr_len = header.pyramid_meta_len;
+            PyramidSlot::Lazy {
+                loader: Box::new(move || {
+                    let mb = pyr_reader.read_at(pyr_off, pyr_len).ok()?;
+                    PyramidMeta::decode(&mb).ok()
+                }),
+                cell: std::sync::OnceLock::new(),
+            }
         } else {
-            None
+            PyramidSlot::Resident(None)
         };
 
         let named_graphs = if header.named_graphs_len > 0 {

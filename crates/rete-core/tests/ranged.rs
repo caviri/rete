@@ -360,6 +360,43 @@ fn lazy_sparql_open_fetches_only_touched_tiles() {
     );
 }
 
+/// The pyramid meta (community structure) is large on real graphs and SPARQL
+/// never reads it, so a lazy open must NOT fetch it — neither on open nor while
+/// evaluating a query. It must still fault in when `pyramid()` is actually
+/// called (community / pyramid_tree / inspect queries).
+#[test]
+fn lazy_open_defers_the_pyramid_until_needed() {
+    let image = image_with_pyramid();
+    let h = Rete::open(&image).unwrap().header().clone();
+    let pyr = (
+        h.pyramid_meta_offset,
+        h.pyramid_meta_offset + h.pyramid_meta_len,
+    );
+    assert!(pyr.1 > pyr.0, "fixture should carry a pyramid");
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+
+    // Open + a bound SPARQL query: the pyramid region must stay untouched.
+    let q = "SELECT ?o WHERE { <http://ex/n0> <http://ex/knows> ?o }";
+    let _ = eval_query(&rete, q).unwrap();
+    assert!(
+        !reader.reads().iter().any(|r| overlaps(*r, pyr)),
+        "lazy SPARQL open/eval fetched the pyramid region {pyr:?}: {:?}",
+        reader.reads()
+    );
+
+    // Asking for the pyramid faults it in (and matches a full open).
+    let got = rete.pyramid().expect("pyramid faults in on demand");
+    let want = Rete::open(&image).unwrap();
+    assert_eq!(got.summary.len(), want.pyramid().unwrap().summary.len());
+    assert!(!got.summary.is_empty(), "fixture pyramid has super-edges");
+    assert!(
+        reader.reads().iter().any(|r| overlaps(*r, pyr)),
+        "pyramid() should have fetched the pyramid region {pyr:?}"
+    );
+}
+
 /// A full unbound scan over a lazily-opened multi-tile file must coalesce its
 /// tile fetches: adjacent tile ranges batch into single range reads, so the
 /// request count stays a small constant instead of one per tile.
