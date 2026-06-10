@@ -68,6 +68,47 @@ impl RangeReader for HttpRangeReader {
         }
         Ok(buf)
     }
+
+    /// Issue the (independent) ranges concurrently across a small thread pool.
+    /// On a latency-bound link the coalesced faults of a query dominate wall
+    /// time; fetching them in parallel collapses N sequential round trips into
+    /// ~N/P. `ureq`'s default agent pools connections and is safe to call from
+    /// several threads at once.
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        /// Bounded so we never open a burst of sockets to a host for a big scan.
+        const MAX_CONCURRENCY: usize = 8;
+        if ranges.len() <= 1 {
+            return ranges
+                .iter()
+                .map(|&(o, l)| self.read_at(o, l))
+                .collect();
+        }
+        let workers = MAX_CONCURRENCY.min(ranges.len());
+        let chunk = ranges.len().div_ceil(workers);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = ranges
+                .chunks(chunk)
+                .map(|group| {
+                    scope.spawn(move || {
+                        group
+                            .iter()
+                            .map(|&(o, l)| self.read_at(o, l))
+                            .collect::<std::io::Result<Vec<Vec<u8>>>>()
+                    })
+                })
+                .collect();
+            // Join in spawn order; chunks are contiguous, so concatenating their
+            // results restores the original request order.
+            let mut out = Vec::with_capacity(ranges.len());
+            for h in handles {
+                let part = h
+                    .join()
+                    .map_err(|_| std::io::Error::other("read_many worker panicked"))??;
+                out.extend(part);
+            }
+            Ok(out)
+        })
+    }
 }
 
 #[cfg(test)]

@@ -21,6 +21,18 @@ pub trait RangeReader {
     /// Read `len` bytes starting at `offset`. Implementations should error on
     /// an out-of-bounds range rather than truncating.
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>>;
+
+    /// Read several `(offset, len)` ranges, returning each range's bytes in
+    /// request order. These ranges are independent, so a reader whose backing
+    /// store is high-latency but parallelizable (an HTTP client) overrides this
+    /// to issue the reads concurrently — turning N round trips into ~N/P. The
+    /// default fetches them sequentially. Any range failing fails the batch.
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        ranges
+            .iter()
+            .map(|&(offset, len)| self.read_at(offset, len))
+            .collect()
+    }
 }
 
 /// Sharing a reader (e.g. keeping a counting handle while a lazily-faulting
@@ -32,6 +44,10 @@ impl<R: RangeReader + ?Sized> RangeReader for std::sync::Arc<R> {
 
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         (**self).read_at(offset, len)
+    }
+
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        (**self).read_many(ranges)
     }
 }
 
@@ -102,6 +118,17 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
         let out = self.inner.read_at(offset, len)?;
         self.requests.fetch_add(1, Ordering::Relaxed);
         self.bytes.fetch_add(out.len() as u64, Ordering::Relaxed);
+        Ok(out)
+    }
+
+    /// Delegate to the inner reader (preserving its parallelism) and tally each
+    /// returned range as one request — the count reflects the coalesced spans
+    /// actually fetched, however the inner reader issues them.
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        let out = self.inner.read_many(ranges)?;
+        self.requests.fetch_add(out.len() as u64, Ordering::Relaxed);
+        self.bytes
+            .fetch_add(out.iter().map(|b| b.len() as u64).sum(), Ordering::Relaxed);
         Ok(out)
     }
 }

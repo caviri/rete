@@ -120,14 +120,19 @@ const TILE_COALESCE_GAP: u64 = 4096;
 const DICT_COALESCE_GAP: u64 = 64 * 1024;
 
 /// Fetch a set of ascending, disjoint byte ranges, coalescing ranges whose gap
-/// is at most `gap` into one `read_at`. Returns each requested range's bytes in
-/// order; `None` if any read fails.
+/// is at most `gap` into one span, then fetching the spans through
+/// [`RangeReader::read_many`] (which a parallelizable reader issues
+/// concurrently). Returns each requested range's bytes in order; `None` if any
+/// read fails.
 fn read_coalesced<R: RangeReader + ?Sized>(
     reader: &R,
     ranges: &[ByteRange],
     gap: u64,
 ) -> Option<Vec<Vec<u8>>> {
-    let mut out = Vec::with_capacity(ranges.len());
+    // Build the coalesced spans and remember which span each input range maps
+    // into, so the fetched span blobs can be sliced back apart in order.
+    let mut spans: Vec<(u64, u64)> = Vec::new();
+    let mut span_of: Vec<usize> = Vec::with_capacity(ranges.len());
     let mut i = 0;
     while i < ranges.len() {
         let start = ranges[i].offset;
@@ -141,13 +146,24 @@ fn read_coalesced<R: RangeReader + ?Sized>(
             end = r.offset.checked_add(r.len)?;
             j += 1;
         }
-        let blob = reader.read_at(start, end - start).ok()?;
-        for r in &ranges[i..j] {
-            let lo = (r.offset - start) as usize;
-            let hi = lo.checked_add(r.len as usize)?;
-            out.push(blob.get(lo..hi)?.to_vec());
+        let si = spans.len();
+        spans.push((start, end - start));
+        for _ in i..j {
+            span_of.push(si);
         }
         i = j;
+    }
+    let blobs = reader.read_many(&spans).ok()?;
+    if blobs.len() != spans.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(ranges.len());
+    for (k, r) in ranges.iter().enumerate() {
+        let (span_start, _) = spans[span_of[k]];
+        let blob = &blobs[span_of[k]];
+        let lo = (r.offset - span_start) as usize;
+        let hi = lo.checked_add(r.len as usize)?;
+        out.push(blob.get(lo..hi)?.to_vec());
     }
     Some(out)
 }
