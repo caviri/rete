@@ -4,6 +4,20 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Wikidata-100MB - lazy explorer</title>
+<script>
+/* Cross-origin isolation unlocks SharedArrayBuffer, which lets the rete worker
+   fetch the byte ranges a query needs in parallel (Atomics-coordinated fetch
+   workers) instead of one synchronous XHR at a time. Static hosts (GitHub
+   Pages, HF) don't send COOP/COEP, so a tiny service worker injects them and
+   we reload once to gain isolation. If the SW is unavailable the page still
+   works — the engine just reads ranges sequentially. */
+(function () {
+  if (window.crossOriginIsolated || !("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("coi-serviceworker.js").then(function (reg) {
+    if (reg.active && !navigator.serviceWorker.controller) window.location.reload();
+  }).catch(function () {});
+})();
+</script>
 <style>
   :root {
     --ink:#17211d; --muted:#66746e; --paper:#f6f8f7; --surface:#fff; --side:#eef4ef;
@@ -118,6 +132,7 @@
       </div>
       <progress id="cacheProg" max="100" value="0" hidden style="width:100%; margin-top:6px"></progress>
       <div class="stat" id="statGraph">ready (lazy)</div>
+      <div class="stat" id="statPar"></div>
     </div>
     <div class="card" data-backend="tables">
       <h3>Tables</h3>
@@ -261,13 +276,64 @@ $("duckSrc").onchange = () => { if (state.backend === "tables") { $("editor").va
    and answers from memory. The cached copy lives in IndexedDB (localStorage
    caps at ~5 MB, far below 105 MB). */
 const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
+
+/* A fetch worker: pulls its assigned ranges with *synchronous* XHR (sequential
+   within the worker, parallel across the pool) and writes the bytes straight
+   into a shared output buffer at each range's known offset, signalling the
+   coordinator via Atomics. Any 206-miss / short read flips the error flag; the
+   coordinator then returns null and the engine falls back to sequential reads. */
+const FETCH_WORKER_SRC = `
+self.onmessage = function (e) {
+  var m = e.data, data = new Uint8Array(m.data), ctrl = new Int32Array(m.ctrl);
+  for (var k = 0; k < m.spans.length; k++) {
+    var s = m.spans[k];
+    try {
+      var x = new XMLHttpRequest();
+      x.open("GET", m.url, false);
+      x.responseType = "arraybuffer";
+      x.setRequestHeader("Range", "bytes=" + s.off + "-" + (s.off + s.len - 1));
+      x.send();
+      if (x.status !== 206) { Atomics.store(ctrl, 1, 1); }
+      else {
+        var b = new Uint8Array(x.response);
+        if (b.length < s.len) { Atomics.store(ctrl, 1, 1); }
+        else { data.set(b.subarray(0, s.len), s.pos); }
+      }
+    } catch (err) { Atomics.store(ctrl, 1, 1); }
+    Atomics.add(ctrl, 0, 1); Atomics.notify(ctrl, 0);
+  }
+};`;
+
+/* Installed on the rete worker as globalThis.reteReadMany, which the wasm
+   XhrRangeReader calls for a batch of ranges. Fetches them in parallel across
+   a fetch-worker pool and blocks (Atomics.wait) until done — the only way a
+   synchronous engine can parallelise network in the browser. Returns a single
+   buffer with the spans concatenated in order, or null on anything that isn't a
+   clean full success (no cross-origin isolation, a failed range, a timeout) so
+   the engine falls back to sequential reads. */
+const POOL_INSTALL_SRC =
+  "var __pool=null;" +
+  "function __ensurePool(src){if(__pool)return __pool;var P=(self.navigator&&navigator.hardwareConcurrency)||4;P=Math.max(2,Math.min(8,P));__pool=[];" +
+  "var u=URL.createObjectURL(new Blob([src],{type:'text/javascript'}));for(var i=0;i<P;i++)__pool.push(new Worker(u));return __pool;}" +
+  "self.reteReadMany=function(url,offs,lens){try{" +
+  "if(!self.crossOriginIsolated||typeof SharedArrayBuffer==='undefined')return null;" +
+  "var n=offs.length;if(!n)return null;var pos=new Array(n),total=0;for(var i=0;i<n;i++){pos[i]=total;total+=lens[i];}" +
+  "var data=new Uint8Array(new SharedArrayBuffer(total));var ctrl=new Int32Array(new SharedArrayBuffer(8));" +
+  "var pool=__ensurePool(self.__fetchSrc),P=pool.length;var jobs=[];for(var w=0;w<P;w++)jobs.push([]);" +
+  "for(var i=0;i<n;i++)jobs[i%P].push({off:offs[i],len:lens[i],pos:pos[i]});" +
+  "for(var w=0;w<P;w++)pool[w].postMessage({url:url,data:data.buffer,ctrl:ctrl.buffer,spans:jobs[w]});" +
+  "var deadline=Date.now()+120000;while(true){var c=Atomics.load(ctrl,0);if(c>=n)break;Atomics.wait(ctrl,0,c,3000);if(Date.now()>deadline)return null;}" +
+  "if(Atomics.load(ctrl,1)!==0)return null;return data;" +
+  "}catch(err){return null;}};";
+
 const RETE_HARNESS =
   ";(function(){var ready=null,MEM=null;self.onmessage=function(e){var m=e.data;" +
-  "if(m.type==='init'){ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
+  "if(m.type==='init'){self.__fetchSrc=m.fetchSrc;ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
   "if(m.type==='memload'){Promise.resolve(ready).then(function(){MEM=m.bytes;self.postMessage({type:'memready'});});return;}" +
   "Promise.resolve(ready).then(function(){try{" +
   "var j=m.mode==='mem'?wasm_bindgen.query(MEM,m.query,'table'):wasm_bindgen.sparql_url(m.url,m.query,'table');" +
-  "self.postMessage({ok:true,json:j});}catch(err){self.postMessage({ok:false,error:String(err)});}});};})();";
+  "self.postMessage({ok:true,json:j});}catch(err){self.postMessage({ok:false,error:String(err)});}});};})();" +
+  POOL_INSTALL_SRC;
 let _rw = null, _rwReady = null, _memReady = null;
 function ensureRete() {
   if (_rw) return _rwReady;
@@ -275,7 +341,7 @@ function ensureRete() {
   _rw = new Worker(URL.createObjectURL(new Blob([glue + RETE_HARNESS], { type: "text/javascript" })));
   let res; _rwReady = new Promise((r) => { res = r; });
   _rw.addEventListener("message", function onr(e) { if (e.data && e.data.type === "ready") { res(); _rw.removeEventListener("message", onr); } });
-  _rw.postMessage({ type: "init", bytes: b64ToBytes(window.RETE_WASM_B64) });
+  _rw.postMessage({ type: "init", bytes: b64ToBytes(window.RETE_WASM_B64), fetchSrc: FETCH_WORKER_SRC });
   return _rwReady;
 }
 function ensureMem() {
@@ -339,6 +405,9 @@ $("cacheBtn").onclick = cacheRete;
 $("dlBtn").onclick = downloadRete;
 $("graphSrc").onchange = () => { state.graphSource = $("graphSrc").value; $("statGraph").textContent = state.graphSource === "cached" ? "reading cached full copy" : "ready (lazy)"; };
 (async () => { const ab = await idbGet(RKEY); if (ab) { window.__reteBytes = new Uint8Array(ab); enableCached((ab.byteLength / 1048576).toFixed(0)); } })();
+$("statPar").textContent = window.crossOriginIsolated
+  ? "parallel range reads on (cross-origin isolated)"
+  : "sequential range reads (isolating… reload to enable parallel)";
 
 /* ---- download the current result table as CSV ---- */
 $("dlResult").onclick = () => {

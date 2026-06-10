@@ -442,6 +442,68 @@ impl RangeReader for XhrRangeReader {
         buf.truncate(len as usize);
         Ok(buf)
     }
+
+    /// Synchronous XHR can't run two requests at once on one thread, so the
+    /// engine's sequential faults serialize their round trips. If the page
+    /// installs `globalThis.reteReadMany(url, offsets, lens)` — a fetch-worker
+    /// pool that fetches the ranges in parallel and blocks (via SAB/Atomics)
+    /// until done — use it; it returns one buffer with the spans concatenated
+    /// in order, or `null`/throws if it can't (no cross-origin isolation, a
+    /// non-206, a short read). On `null` we fall back to the sequential reads
+    /// below, which keep the rigorous per-range validation.
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        if ranges.len() > 1 {
+            if let Some(buf) = self.read_many_via_pool(ranges) {
+                let total: u64 = ranges.iter().map(|&(_, l)| l).sum();
+                if buf.len() as u64 == total {
+                    let mut out = Vec::with_capacity(ranges.len());
+                    let mut pos = 0usize;
+                    for &(_, l) in ranges {
+                        let end = pos + l as usize;
+                        out.push(buf[pos..end].to_vec());
+                        pos = end;
+                    }
+                    return Ok(out);
+                }
+            }
+        }
+        ranges
+            .iter()
+            .map(|&(o, l)| self.read_at(o, l))
+            .collect()
+    }
+}
+
+impl XhrRangeReader {
+    /// Call the optional JS parallel-fetch hook. Returns the concatenated span
+    /// bytes on full success, or `None` if the hook is absent, threw, or
+    /// returned anything other than a `Uint8Array` (→ sequential fallback).
+    fn read_many_via_pool(&self, ranges: &[(u64, u64)]) -> Option<Vec<u8>> {
+        let global = js_sys::global();
+        let hook = js_sys::Reflect::get(&global, &JsValue::from_str("reteReadMany")).ok()?;
+        if !hook.is_function() {
+            return None;
+        }
+        let hook = hook.dyn_into::<js_sys::Function>().ok()?;
+        let offs = js_sys::Float64Array::new_with_length(ranges.len() as u32);
+        let lens = js_sys::Float64Array::new_with_length(ranges.len() as u32);
+        for (i, &(o, l)) in ranges.iter().enumerate() {
+            offs.set_index(i as u32, o as f64);
+            lens.set_index(i as u32, l as f64);
+        }
+        let res = hook
+            .call3(
+                &JsValue::NULL,
+                &JsValue::from_str(&self.url),
+                &offs,
+                &lens,
+            )
+            .ok()?;
+        if res.is_null() || res.is_undefined() {
+            return None;
+        }
+        Some(js_sys::Uint8Array::new(&res).to_vec())
+    }
 }
 
 /// Run a SPARQL query against a **remote `.rete` URL**, fetching only the

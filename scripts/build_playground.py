@@ -151,9 +151,18 @@ def main() -> None:
         leftover = [p for p in ("__GLUE_JS__", "__WASM_B64__", "__WIDGETS_JS__") if p in ex]
         if leftover:
             die("unreplaced explore placeholder(s): " + ", ".join(leftover))
+        # The COI service worker must sit beside the explorer (same origin) so
+        # the page can register it to gain cross-origin isolation (→ parallel
+        # range reads). Copy it next to each explorer output.
+        coi_src = WEB / "coi-serviceworker.js"
+        coi_text = coi_src.read_text(encoding="utf-8") if coi_src.exists() else None
         for out in EXPLORE_OUTS:
             out.write_text(ex, encoding="utf-8")
             print(f"  explorer: wrote {out} ({out.stat().st_size} bytes)")
+            if coi_text is not None:
+                coi_out = out.parent / "coi-serviceworker.js"
+                coi_out.write_text(coi_text, encoding="utf-8")
+                print(f"  explorer: wrote {coi_out}")
 
 
 if __name__ == "__main__":
