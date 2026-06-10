@@ -53,13 +53,17 @@ rete predicates data.rete            # CLI
 # (the summary path; see SummaryView::predicate_totals)
 ```
 
-### Evaluation caveat
+### Evaluation model
 
-The engine is not a full streaming triplestore planner. Simple BGP/FILTER shapes
-under `LIMIT` can stop early, and `ASK` has fast non-materializing paths, but
-`ORDER BY`, `DISTINCT`, aggregation, and most compound algebra still materialize
-intermediate rows. That is why the benchmark page separates correctness coverage
-from latency and calls out where Oxigraph's mature lazy planner still wins.
+The algebra evaluates as a lazy pull pipeline over integer slot rows: joins,
+`MINUS`, `DISTINCT`, filters, and `GRAPH` stream, so `LIMIT` and `ASK` stop the
+underlying index scans early, and under a small known demand joins switch to
+index-nested-loop probes. Aggregation, `ORDER BY` (a bounded top-k when `LIMIT`
+is present), and hash-join build sides are the only blocking points; terms are
+resolved to strings only at projection. It is still not a *cost-based* planner —
+join order is a selectivity heuristic — and the benchmark page separates
+correctness coverage from latency and calls out the shapes where Oxigraph still
+wins.
 
 ## Not supported
 

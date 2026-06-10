@@ -232,12 +232,16 @@ counts, without reading the triple index:</p>
 </code></pre>
 <pre><code class="language-sparql"># (the summary path; see SummaryView::predicate_totals)
 </code></pre>
-<h3>Evaluation caveat</h3>
-<p>The engine is not a full streaming triplestore planner. Simple BGP/FILTER shapes
-under <code>LIMIT</code> can stop early, and <code>ASK</code> has fast non-materializing paths, but
-<code>ORDER BY</code>, <code>DISTINCT</code>, aggregation, and most compound algebra still materialize
-intermediate rows. That is why the benchmark page separates correctness coverage
-from latency and calls out where Oxigraph's mature lazy planner still wins.</p>
+<h3>Evaluation model</h3>
+<p>The algebra evaluates as a lazy pull pipeline over integer slot rows: joins,
+<code>MINUS</code>, <code>DISTINCT</code>, filters, and <code>GRAPH</code> stream, so <code>LIMIT</code> and <code>ASK</code> stop the
+underlying index scans early, and under a small known demand joins switch to
+index-nested-loop probes. Aggregation, <code>ORDER BY</code> (a bounded top-k when <code>LIMIT</code>
+is present), and hash-join build sides are the only blocking points; terms are
+resolved to strings only at projection. It is still not a <em>cost-based</em> planner —
+join order is a selectivity heuristic — and the benchmark page separates
+correctness coverage from latency and calls out the shapes where Oxigraph still
+wins.</p>
 <h2>Not supported</h2>
 <p>These are <strong>rejected with a clear error</strong> — never silently mis-evaluated:</p>
 <ul>

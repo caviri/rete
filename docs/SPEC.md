@@ -297,14 +297,17 @@ plan algebra — `Bgp`/`Join`/`Union`/`Minus`/`LeftJoin`/`Filter`/`Path`/`Values
 `Graph`):
 
 - **Stage 1 — Triple patterns & BGPs.** ✅ Integer patterns over the permutation
-  index, left-deep hash joins on shared variables (`bgp.rs`), and a lazy BGP
-  iterator for streamable `LIMIT`/`ASK` shapes. Blank nodes in patterns are
-  non-distinguished variables.
-- **Stage 2 — FILTER, projection, DISTINCT, ORDER BY, LIMIT/OFFSET.** ✅ Simple
-  BGP/FILTER plans can stop early under `LIMIT`; DISTINCT, ORDER BY, aggregation,
-  and most compound algebra remain eager. ORDER BY sorts on variable/constant
-  keys: numeric when both are numbers, else lexical; complex key expressions are
-  not yet evaluated for ordering.
+  index; BGPs stream their least selective pattern against a hash table of the
+  joined prefix (`bgp.rs`), and under a small `LIMIT`/`ASK` demand bound switch
+  to index-nested-loop probes that jump to their group via a lazily-built block
+  directory. Blank nodes in patterns are non-distinguished variables.
+- **Stage 2 — FILTER, projection, DISTINCT, ORDER BY, LIMIT/OFFSET.** ✅ The
+  whole algebra evaluates as a lazy pull pipeline over integer slot rows, so
+  `LIMIT`/`ASK`/`DISTINCT … LIMIT` demand stops the index scans early; only
+  aggregation, ORDER BY (bounded top-k when `LIMIT` is present), and hash-join
+  build sides block. ORDER BY sorts on variable/constant keys: numeric when
+  both are numbers, else lexical; complex key expressions are not yet evaluated
+  for ordering.
 - **Stage 3 — OPTIONAL, UNION, MINUS, VALUES, FILTER EXISTS/NOT EXISTS,
   property paths, GRAPH.** ✅ Paths (`p+`/`p*`/`p?`, reverse, sequence `a/b`,
   alternative `a|b`) evaluated forward from a bound endpoint in integer node
