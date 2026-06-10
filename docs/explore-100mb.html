@@ -113,6 +113,10 @@
   .seg button { border:1px solid var(--line-strong); background:var(--surface); color:var(--muted);
     border-radius:6px; min-height:28px; padding:3px 10px; font-size:12px; cursor:pointer; }
   .seg button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .notice { border:1px solid #e0b48a; background:#fbf3e9; color:#6f441c; border-radius:8px;
+    padding:10px 13px; margin:0 0 12px; font-size:12.5px; line-height:1.55; }
+  .notice b { color:#7a3d12; } .notice code { background:#f1e2cf; border-color:#e3c9a6; }
+  .notice a { color:#9a3b18; }
 </style>
 </head>
 <body>
@@ -170,6 +174,14 @@
   <main class="work">
     <h2 id="workTitle">Graph - SPARQL</h2>
     <p class="desc" id="workDesc">Lazy SPARQL over the .rete graph.</p>
+    <div class="notice hidden" id="remoteWarn">
+      <b>Remote data isn't reachable from this browser.</b> The bundle is hosted on a
+      Hugging Face <i>bucket</i>, whose <code>resolve</code> endpoint returns <code>405</code>
+      to cross-origin browser range requests — so the lazy <b>Graph</b>, <b>Tables</b> and
+      <b>SQLite</b> backends can't fetch it here. (The <code>rete</code> CLI works fine: it
+      isn't subject to CORS.) To run these in the browser, host the bundle on a CORS-enabled
+      direct server (S3/R2/GCS) or same-origin. You can still browse the example queries below.
+    </div>
     <div class="examples" id="exBar"></div>
     <p class="microcopy" id="exNote"></p>
     <textarea id="editor"></textarea>
@@ -1662,6 +1674,19 @@ $("graphSrc").onchange = () => { state.graphSource = $("graphSrc").value; $("sta
 $("statPar").textContent = window.crossOriginIsolated
   ? "parallel range reads on (cross-origin isolated)"
   : "sequential range reads · add ?parallel=1 for parallel (graph only)";
+
+/* Runtime check: can this browser actually range-fetch the remote bundle? Some
+   hosts (HF buckets) return 405 to cross-origin browser GET even though the CLI
+   works — in that case the remote backends can't run here, so show the banner.
+   When the bundle is later moved to a CORS-friendly host this passes and the
+   banner stays hidden. */
+(async () => {
+  try {
+    const r = await fetch(RETE_URL, { headers: { Range: "bytes=0-0" }, cache: "no-store" });
+    if (r.status === 206 || r.status === 200) return;
+  } catch (e) { /* network/CORS failure → unreachable */ }
+  $("remoteWarn").classList.remove("hidden");
+})();
 
 /* ---- download the current result table as CSV ---- */
 $("dlResult").onclick = () => {

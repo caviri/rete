@@ -91,6 +91,33 @@ throws. The host must answer `Range` requests with `206 Partial Content`
 and send CORS headers when cross-origin. A range fetch that fails mid-query
 is an error — never a silently incomplete result.
 
+The length probe uses a one-byte ranged `GET` (reading the total from
+`Content-Range`) rather than `HEAD`, since some hosts reject `HEAD` —
+notably Hugging Face's signed-redirect storage, which answers `405`.
+
+**Host CORS, in practice.** Range-querying from the browser needs a host that
+serves the bytes *directly* to a cross-origin browser request. A plain static
+server with CORS works; an S3/R2/GCS bucket with CORS works; same-origin always
+works. What does **not** work is Hugging Face's `buckets/.../resolve` endpoint:
+it returns `405` to a cross-origin browser `GET` even though it serves the
+`rete` CLI fine (the CLI sends no `Origin`). The bytes themselves are reachable
+— the resolved signed CDN URL answers `206` to the browser — but the `resolve`
+hop refuses browser requests, so the lazy backends can't follow it. The
+[Wikidata lazy explorer](explore-100mb.html) runtime-probes its data URL on load
+and shows a banner when the host isn't browser-reachable; point it at a
+CORS-enabled direct host to light up the remote backends.
+
+**Parallel range reads (opt-in).** Sequential synchronous XHR serialises a
+query's round trips. With cross-origin isolation the explorer can read the
+faulted ranges in parallel: a pool of fetch workers pulls them (each a
+synchronous XHR, parallel across the pool) into a `SharedArrayBuffer`,
+`Atomics`-coordinated, and the engine blocks until they land — `read_at` falls
+back to sequential when isolation is unavailable, so there is never a
+regression. Static hosts don't send COOP/COEP, so it is **opt-in via
+`?parallel=1`** (a bundled `coi-serviceworker.js` injects the headers and the
+page reloads once); the default page stays un-isolated so the cross-origin
+DuckDB-WASM / SQLite backends keep working.
+
 `why_triples` exposes the same result-provenance path as `rete why`. It resolves
 the optional triple pattern through `Rete::query_with_provenance` and returns
 browser-style camelCase fields: `resultCount`, `matchedPattern`,

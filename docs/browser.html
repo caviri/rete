@@ -292,6 +292,30 @@ throws. The host must answer <code>Range</code> requests with <code>206 Partial 
 (a host that ignores <code>Range</code> is rejected loudly, never silently mis-read)
 and send CORS headers when cross-origin. A range fetch that fails mid-query
 is an error — never a silently incomplete result.</p>
+<p>The length probe uses a one-byte ranged <code>GET</code> (reading the total from
+<code>Content-Range</code>) rather than <code>HEAD</code>, since some hosts reject <code>HEAD</code> —
+notably Hugging Face's signed-redirect storage, which answers <code>405</code>.</p>
+<p><strong>Host CORS, in practice.</strong> Range-querying from the browser needs a host that
+serves the bytes <em>directly</em> to a cross-origin browser request. A plain static
+server with CORS works; an S3/R2/GCS bucket with CORS works; same-origin always
+works. What does <strong>not</strong> work is Hugging Face's <code>buckets/.../resolve</code> endpoint:
+it returns <code>405</code> to a cross-origin browser <code>GET</code> even though it serves the
+<code>rete</code> CLI fine (the CLI sends no <code>Origin</code>). The bytes themselves are reachable
+— the resolved signed CDN URL answers <code>206</code> to the browser — but the <code>resolve</code>
+hop refuses browser requests, so the lazy backends can't follow it. The
+<a href="explore-100mb.html">Wikidata lazy explorer</a> runtime-probes its data URL on load
+and shows a banner when the host isn't browser-reachable; point it at a
+CORS-enabled direct host to light up the remote backends.</p>
+<p><strong>Parallel range reads (opt-in).</strong> Sequential synchronous XHR serialises a
+query's round trips. With cross-origin isolation the explorer can read the
+faulted ranges in parallel: a pool of fetch workers pulls them (each a
+synchronous XHR, parallel across the pool) into a <code>SharedArrayBuffer</code>,
+<code>Atomics</code>-coordinated, and the engine blocks until they land — <code>read_at</code> falls
+back to sequential when isolation is unavailable, so there is never a
+regression. Static hosts don't send COOP/COEP, so it is <strong>opt-in via
+<code>?parallel=1</code></strong> (a bundled <code>coi-serviceworker.js</code> injects the headers and the
+page reloads once); the default page stays un-isolated so the cross-origin
+DuckDB-WASM / SQLite backends keep working.</p>
 <p><code>why_triples</code> exposes the same result-provenance path as <code>rete why</code>. It resolves
 the optional triple pattern through <code>Rete::query_with_provenance</code> and returns
 browser-style camelCase fields: <code>resultCount</code>, <code>matchedPattern</code>,
