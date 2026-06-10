@@ -6,16 +6,30 @@
 <title>Wikidata-100MB - lazy explorer</title>
 <script>
 /* Cross-origin isolation unlocks SharedArrayBuffer, which lets the rete worker
-   fetch the byte ranges a query needs in parallel (Atomics-coordinated fetch
-   workers) instead of one synchronous XHR at a time. Static hosts (GitHub
-   Pages, HF) don't send COOP/COEP, so a tiny service worker injects them and
-   we reload once to gain isolation. If the SW is unavailable the page still
-   works — the engine just reads ranges sequentially. */
+   fetch a query's byte ranges in parallel (Atomics-coordinated fetch workers)
+   instead of one synchronous XHR at a time. But isolation (COEP) breaks the
+   cross-origin CDN modules the Tables (DuckDB-WASM) and SQLite backends load,
+   so it is OPT-IN: add ?parallel=1 to the URL to enable it (graph reads only).
+   By default we stay un-isolated AND actively unregister any leftover COI
+   worker, so the DuckDB/SQLite backends always work out of the box. */
 (function () {
-  if (window.crossOriginIsolated || !("serviceWorker" in navigator)) return;
-  navigator.serviceWorker.register("coi-serviceworker.js").then(function (reg) {
-    if (reg.active && !navigator.serviceWorker.controller) window.location.reload();
-  }).catch(function () {});
+  if (!("serviceWorker" in navigator)) return;
+  var want = /[?&]parallel(=1)?\b/.test(location.search);
+  if (want) {
+    if (window.crossOriginIsolated) return;
+    navigator.serviceWorker.register("coi-serviceworker.js").then(function (reg) {
+      if (reg.active && !navigator.serviceWorker.controller) location.reload();
+    }).catch(function () {});
+  } else {
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      var had = false;
+      regs.forEach(function (r) {
+        var s = (r.active && r.active.scriptURL) || "";
+        if (/coi-serviceworker/.test(s)) { r.unregister(); had = true; }
+      });
+      if (had) location.reload();
+    }).catch(function () {});
+  }
 })();
 </script>
 <style>
@@ -407,7 +421,7 @@ $("graphSrc").onchange = () => { state.graphSource = $("graphSrc").value; $("sta
 (async () => { const ab = await idbGet(RKEY); if (ab) { window.__reteBytes = new Uint8Array(ab); enableCached((ab.byteLength / 1048576).toFixed(0)); } })();
 $("statPar").textContent = window.crossOriginIsolated
   ? "parallel range reads on (cross-origin isolated)"
-  : "sequential range reads (isolating… reload to enable parallel)";
+  : "sequential range reads · add ?parallel=1 for parallel (graph only)";
 
 /* ---- download the current result table as CSV ---- */
 $("dlResult").onclick = () => {

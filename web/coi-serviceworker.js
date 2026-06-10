@@ -23,9 +23,12 @@ self.addEventListener("message", (ev) => {
 
 self.addEventListener("fetch", (event) => {
   const r = event.request;
-  // Range/streamed media uses `only-if-cached` with non-same-origin mode, which
-  // a SW must not intercept — pass it straight through.
-  if (r.cache === "only-if-cached" && r.mode !== "same-origin") return;
+  // Only the top-level navigation needs the isolation headers; the browser then
+  // enforces COEP on subresources itself. Crucially we must NOT re-wrap
+  // cross-origin subresources (the DuckDB-WASM / sql.js-httpvfs worker scripts
+  // and streamed `.wasm` from their CDNs) — doing so breaks their load. Pass
+  // everything that isn't a navigation straight through, untouched.
+  if (r.mode !== "navigate") return;
 
   event.respondWith(
     fetch(r)
