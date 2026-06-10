@@ -11,8 +11,16 @@
     activeSource: "bundled",
     schema: null,
     lastProgressive: null,
-    lastProvenance: null
+    lastProvenance: null,
+    built: null
   };
+
+  const BUILD_SAMPLE = `# Paste N-Triples here (or open a file), pick the format, then Build.
+<http://ex/Alice> <http://ex/knows> <http://ex/Bob> .
+<http://ex/Bob> <http://ex/knows> <http://ex/Carol> .
+<http://ex/Alice> <http://ex/age> "30"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex/Carol> <http://ex/worksAt> <http://ex/AcmeLabs> .
+`;
 
   const $ = (id) => document.getElementById(id);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -60,6 +68,7 @@
   function sourceLabel() {
     if (state.activeSource === "file") return "local file";
     if (state.activeSource === "url") return "url";
+    if (state.activeSource === "built") return "built in browser";
     return "bundled";
   }
 
@@ -229,6 +238,8 @@
       $("schemaOut").classList.remove("hidden");
     } else if (state.mode === "provenance") {
       $("provOut").classList.remove("hidden");
+    } else if (state.mode === "build") {
+      $("buildOut").classList.remove("hidden");
     }
   }
 
@@ -742,6 +753,84 @@
       `<div>Pyramid: ${esc(renderRange(p.pyramidRange))}</div>`;
   }
 
+  function buildFileName() {
+    const base = (state.built && state.built.name) || "graph";
+    return base.replace(/\.(nt|nq|nquads|ttl|turtle|txt)$/i, "") + ".rete";
+  }
+
+  function runBuild() {
+    const text = $("buildText").value;
+    if (!text.trim()) return showError("buildOut", "Paste some RDF first (or open a file).");
+    const fmt = $("buildFormat").value;
+    const t0 = performance.now();
+    try {
+      const bytes = W().build(text, fmt);
+      const dt = performance.now() - t0;
+      state.built = { bytes, name: (state.built && state.built.name) || "graph" };
+      const info = JSON.parse(W().info(bytes));
+      $("buildDownload").disabled = false;
+      $("buildOpen").disabled = false;
+      $("buildMeta").textContent = `${formatBytes(bytes.length)} | ${dt.toFixed(1)} ms`;
+      $("buildOut").innerHTML =
+        `<div class="banner">Built <strong>${esc(buildFileName())}</strong> — a complete, queryable .rete file.</div>` +
+        `<div class="metric-grid">` +
+        metric("Quads", info.quads) +
+        metric("Terms", info.terms) +
+        metric("Pyramid levels", info.pyramidLevels) +
+        metric("Named graphs", info.namedGraphs) +
+        metric("Size", formatBytes(bytes.length)) +
+        `</div>` +
+        `<p class="microcopy">Download it, or open it in this console to query it immediately. ` +
+        `In-browser builds write uncompressed sections (the wasm engine ships no zstd encoder); ` +
+        `<code>rete build</code> produces a smaller file from the same input.</p>`;
+      updateResultVisibility();
+    } catch (e) {
+      state.built = null;
+      $("buildDownload").disabled = true;
+      $("buildOpen").disabled = true;
+      $("buildMeta").textContent = "";
+      showError("buildOut", "Build failed: " + String(e));
+    }
+  }
+
+  function downloadBuilt() {
+    if (!state.built) return;
+    const blob = new Blob([state.built.bytes], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = buildFileName();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function openBuilt() {
+    if (!state.built) return;
+    loadBytes(state.built.bytes, "built");
+    setStatus(`${buildFileName()} | ${formatBytes(state.built.bytes.byteLength)} | built in browser`);
+    $("dsDesc").textContent = "Graph built from RDF text in this session — query it like any dataset.";
+    setMode("sparql");
+  }
+
+  async function loadBuildFile(file) {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      $("buildText").value = text;
+      state.built = { bytes: null, name: file.name };
+      $("buildDownload").disabled = true;
+      $("buildOpen").disabled = true;
+      const ext = (file.name.match(/\.(\w+)$/) || [])[1] || "";
+      const fmt = { nq: "nq", nquads: "nq", ttl: "ttl", turtle: "ttl" }[ext.toLowerCase()] || "nt";
+      $("buildFormat").value = fmt;
+      $("buildMeta").textContent = `${file.name} | ${formatBytes(file.size)} | ready to build`;
+    } catch (e) {
+      showError("buildOut", "File read failed: " + e.message);
+    }
+  }
+
   function showError(targetId, message) {
     $(targetId).innerHTML = `<div class="error-box">${esc(message)}</div>`;
     updateResultVisibility();
@@ -834,6 +923,10 @@
     $("shaclRun").onclick = runShacl;
     $("reachRun").onclick = runReach;
     $("whyRun").onclick = runProvenance;
+    $("buildRun").onclick = runBuild;
+    $("buildDownload").onclick = downloadBuilt;
+    $("buildOpen").onclick = openBuilt;
+    $("buildFile").onchange = (e) => loadBuildFile(e.target.files[0]);
     $("clearHist").onclick = () => {
       localStorage.removeItem(HIST_KEY);
       renderHistory();
@@ -862,6 +955,7 @@
     renderDatasetOptions();
     wireEvents();
     renderHistory();
+    $("buildText").value = BUILD_SAMPLE;
 
     await wasm_bindgen(b64ToBytes(RETE_WASM_B64));
 

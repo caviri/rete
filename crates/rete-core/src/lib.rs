@@ -10,6 +10,7 @@ pub mod dictionary;
 pub mod file;
 pub mod header;
 pub mod index;
+pub mod ingest;
 pub mod meta;
 #[cfg(feature = "parallel")]
 pub mod parallel;

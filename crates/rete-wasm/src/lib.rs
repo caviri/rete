@@ -32,6 +32,27 @@ pub fn graph_names(bytes: &[u8]) -> Result<String, JsValue> {
     serde_json::to_string(&rete.graph_names()).map_err(err)
 }
 
+/// Build a complete `.rete` file image from RDF text, entirely in the browser.
+///
+/// `format` is `"nt"` (N-Triples), `"nq"` (N-Quads; named graphs become a
+/// dataset), or `"ttl"` (Turtle). Returns the file bytes (a `Uint8Array`),
+/// ready to download or to hand straight back to the query functions. The wasm
+/// build has no zstd *encoder*, so sections are written uncompressed (codec
+/// `NONE`) — larger than a CLI build of the same data, but every reader
+/// accepts it; rebuild with `rete build` for a compressed file.
+#[wasm_bindgen]
+pub fn build(text: &str, format: &str) -> Result<Vec<u8>, JsValue> {
+    let quads = rete_core::ingest::parse_statements(text, format)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    if quads.is_empty() {
+        return Err(JsValue::from_str(
+            "no statements parsed (empty input or only comments)",
+        ));
+    }
+    let (bytes, _stats) = rete_core::ingest::assemble_dataset(&quads, &[]);
+    Ok(bytes)
+}
+
 /// Evaluate a triple pattern; `null`/`undefined` positions are wildcards.
 /// Returns a JSON array of `[subject, predicate, object]` triples.
 #[wasm_bindgen]

@@ -194,6 +194,24 @@ button.ghost:hover {
   background: #f0eadf;
 }
 
+/* A label styled like a secondary button, wrapping a hidden file input. */
+label.file-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #fffdf8;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 700;
+  padding: 7px 13px;
+}
+
+label.file-button:hover {
+  background: #f0eadf;
+}
+
 .icon-button {
   width: 36px;
   padding: 0;

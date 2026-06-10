@@ -3,7 +3,6 @@
 mod commands;
 mod cypher;
 mod http;
-mod ntriples;
 
 use clap::{Parser, Subcommand};
 

@@ -37,6 +37,7 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `query(bytes, query, format)` | any SPARQL form, tagged by `kind` (see below) |
 | `communities(bytes, round?)` | `[{ community, size, triples }, …]` (Louvain decomposition) |
 | `reach(bytes, predicate, seeds, reverse)` | `[{ seed, count, reached:["<iri>",…] }, …]` (serial transitive reach) |
+| `build(text, format)` | a complete `.rete` file image (`Uint8Array`) built from RDF text |
 
 `query` runs SELECT / ASK / CONSTRUCT / DESCRIBE via `eval_query` and returns a
 single JSON envelope with a `kind` field:
@@ -58,6 +59,16 @@ seed in input order: `{ seed, count, reached }`, or `{ seed, error }` for a seed
 not in the graph (so one unknown seed never fails the whole call). It runs
 **serially** — the browser engine is single-threaded; the native CLI's
 `rete reach --parallel` fans one task per seed for a real speedup.
+
+`build` is the ingest path in reverse direction from everything above: it takes
+RDF *text* (`format`: `"nt"` N-Triples, `"nq"` N-Quads — named graphs become a
+dataset — or `"ttl"` Turtle) and assembles a complete `.rete` file image in the
+browser: dictionary, permutation indexes, and the community pyramid. The bytes
+it returns are immediately queryable by every other function, and downloadable
+as a file. One caveat: the wasm engine ships only the pure-Rust zstd *decoder*,
+so in-browser builds write uncompressed sections (codec `NONE`) — every reader
+accepts them, but `rete build` produces a smaller file from the same input.
+This powers the playground's **Build** tab.
 
 `why_triples` exposes the same result-provenance path as `rete why`. It resolves
 the optional triple pattern through `Rete::query_with_provenance` and returns
