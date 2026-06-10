@@ -363,14 +363,22 @@ slice needs no full download — and writes N-Triples.</p>
 uv run python scripts/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  # ~1 GB
 rete build data/wd.nt -o wd.rete
 </code></pre>
-<p>Measured on the dev container: converting 2M triples streams in ~5 s (≈200 MB
-N-Triples) and builds to a 16 MB <code>.rete</code> with ~12,800 communities; Douglas Adams
-(<code>Q42</code>) and his multilingual labels are right there. <code>--limit 12000000</code> is about
-1 GB of N-Triples — at ≈85 bytes/triple and the linear build, roughly half a
-minute to convert and under a minute to build. The slice is a real cross-section
-of <em>all</em> of Wikidata (people, places, works, taxa, …); for a curated
-biology-only graph use the WDQS fetcher above. <code>--parts N</code> draws from N whole
-partitions; <code>--local-dir</code> reads partitions you have already downloaded.</p>
+<p>The source Parquet drops literal datatypes, so the converter <strong>recovers them
+authoritatively</strong>: it fetches every Wikidata property's datatype from WDQS once
+(<code>wikibase:propertyType</code>, ~13.5k properties, one query) and re-types each
+literal — dates as <code>xsd:dateTime</code>, quantities as <code>xsd:decimal</code>, coordinates as
+<code>geo:wktLiteral</code>; strings stay plain, monolingual text keeps its language tag,
+and entity values are IRIs. (<code>--no-datatypes</code> skips the lookup and emits plain
+literals.)</p>
+<p>Measured on the dev container, the full <code>--limit 12000000</code> (~1 GB) run:
+converting streams in <strong>~24 s</strong> (1.25 GB N-Triples, datatypes recovered) and
+builds in <strong>~52 s</strong> to a <strong>110 MB <code>.rete</code></strong> — 5 pyramid levels, ~115k
+communities — with typed literals intact (<code>"1830-10-04T00:00:00Z"^^xsd:dateTime</code>,
+<code>"Point(5.47 49.50)"^^geo:wktLiteral</code>) and a selective lookup answering in
+under a second. The slice is a real cross-section of <em>all</em> of Wikidata (people,
+places, works, taxa, …); for a curated biology-only graph use the WDQS fetcher
+above. <code>--parts N</code> draws from N whole partitions; <code>--local-dir</code> reads partitions
+you have already downloaded.</p>
 <h2>Testing</h2>
 <pre><code class="language-sh">cargo test            # full suite (unit, round-trip, robustness, ranged, HTTP)
 cargo clippy --workspace --all-targets -- -D warnings

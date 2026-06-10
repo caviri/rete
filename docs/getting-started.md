@@ -203,14 +203,23 @@ uv run python scripts/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  
 rete build data/wd.nt -o wd.rete
 ```
 
-Measured on the dev container: converting 2M triples streams in ~5 s (≈200 MB
-N-Triples) and builds to a 16 MB `.rete` with ~12,800 communities; Douglas Adams
-(`Q42`) and his multilingual labels are right there. `--limit 12000000` is about
-1 GB of N-Triples — at ≈85 bytes/triple and the linear build, roughly half a
-minute to convert and under a minute to build. The slice is a real cross-section
-of *all* of Wikidata (people, places, works, taxa, …); for a curated
-biology-only graph use the WDQS fetcher above. `--parts N` draws from N whole
-partitions; `--local-dir` reads partitions you have already downloaded.
+The source Parquet drops literal datatypes, so the converter **recovers them
+authoritatively**: it fetches every Wikidata property's datatype from WDQS once
+(`wikibase:propertyType`, ~13.5k properties, one query) and re-types each
+literal — dates as `xsd:dateTime`, quantities as `xsd:decimal`, coordinates as
+`geo:wktLiteral`; strings stay plain, monolingual text keeps its language tag,
+and entity values are IRIs. (`--no-datatypes` skips the lookup and emits plain
+literals.)
+
+Measured on the dev container, the full `--limit 12000000` (~1 GB) run:
+converting streams in **~24 s** (1.25 GB N-Triples, datatypes recovered) and
+builds in **~52 s** to a **110 MB `.rete`** — 5 pyramid levels, ~115k
+communities — with typed literals intact (`"1830-10-04T00:00:00Z"^^xsd:dateTime`,
+`"Point(5.47 49.50)"^^geo:wktLiteral`) and a selective lookup answering in
+under a second. The slice is a real cross-section of *all* of Wikidata (people,
+places, works, taxa, …); for a curated biology-only graph use the WDQS fetcher
+above. `--parts N` draws from N whole partitions; `--local-dir` reads partitions
+you have already downloaded.
 
 ## Testing
 
