@@ -117,6 +117,10 @@
     padding:10px 13px; margin:0 0 12px; font-size:12.5px; line-height:1.55; }
   .notice b { color:#7a3d12; } .notice code { background:#f1e2cf; border-color:#e3c9a6; }
   .notice a { color:#9a3b18; }
+  .spin { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:7px;
+    border:2px solid var(--line-strong); border-top-color:var(--accent); border-radius:50%;
+    animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -185,7 +189,7 @@
     <div class="examples" id="exBar"></div>
     <p class="microcopy" id="exNote"></p>
     <textarea id="editor"></textarea>
-    <div class="row"><button id="run">Run</button><span class="meta" id="meta"></span></div>
+    <div class="row"><button id="run">Run</button><span class="spin hidden" id="spin"></span><span class="meta" id="meta"></span></div>
     <div class="resbar">
       <span class="seg" id="viewSeg"><button data-v="table" class="active">Table</button><button data-v="graph">Graph</button></span>
       <button class="ex" id="dlResult">Download CSV</button>
@@ -215,35 +219,45 @@ const META = {
   sqlite: { title: "SQLite - SQL (sql.js-httpvfs)", desc: "Lazy SQL over the remote SQLite; list/map columns are JSON text." },
 };
 
-// Analogous questions: one logical question per backend. The list-valued ones
-// UNNEST the SQL side so the columns match the graph's (entity, value) rows;
-// `?s` is bound so the graph result carries the entity column like the tables.
+// Object references are stored in the entity tables as N-Triples term tokens
+// (`<iri>`), so SQL matches occupations by the bracketed IRI.
+const OCC = (q) => `<http://www.wikidata.org/entity/${q}>`;
+const PHILOSOPHER = "Q4964182", PHYSICIST = "Q169470", WRITER = "Q36180", POLITICIAN = "Q82955";
+
+// Interesting questions over the ~19k people in this Wikidata slice, posed
+// analogously on each backend. Labels resolve for people (the table subjects);
+// occupations referenced as objects are Q-ids unless their own label triple is
+// also in this 100 MB slice — itself a lesson about partial graphs.
 const EX = [
-  { label: "Facts about Plato (Q859)", table: { file: "Q5_.parquet", name: "Q5" },
-    sparql: `SELECT ?s ?p ?o WHERE {\n  VALUES ?s { <${Q859}> }\n  ?s ?p ?o\n}`,
+  { label: "Everything about Plato (Q859)", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `SELECT ?p ?o WHERE {\n  <${Q859}> ?p ?o\n}`,
     duck: `SELECT *\nFROM {T}\nWHERE entity = '${Q859}';`,
     sqlite: `SELECT *\nFROM "Q5"\nWHERE entity = '${Q859}';`,
-    note: "Graph is long (one row per predicate/object); the table is one wide row — the shape difference itself." },
-  { label: "Plato's occupations (P106)", table: { file: "Q5_.parquet", name: "Q5" },
-    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occ WHERE {\n  <${Q859}> wdt:P106 ?occ\n}`,
-    duck: `SELECT unnest(P106) AS occ\nFROM {T}\nWHERE entity = '${Q859}';`,
-    sqlite: `SELECT je.value AS occ\nFROM "Q5", json_each(P106) je\nWHERE entity = '${Q859}';`,
-    note: "UNNEST explodes the P106 list so both sides return the same one-occupation-per-row shape." },
-  { label: "Humans + occupations", table: { file: "Q5_.parquet", name: "Q5" },
-    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?entity ?occ WHERE {\n  ?entity wdt:P31 wd:Q5 ;\n          wdt:P106 ?occ\n}\nLIMIT 50`,
-    duck: `SELECT entity, unnest(P106) AS occ\nFROM {T}\nWHERE len(P106) > 0\nLIMIT 50;`,
-    sqlite: `SELECT entity, je.value AS occ\nFROM "Q5", json_each(P106) je\nWHERE json_array_length(P106) > 0\nLIMIT 50;`,
-    note: "Same (entity, occ) columns on both sides — directly comparable." },
-  { label: "Labels of Plato", table: { file: "Q5_.parquet", name: "Q5" },
-    sparql: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?l WHERE {\n  <${Q859}> rdfs:label ?l\n}\nLIMIT 30`,
-    duck: `SELECT label AS l\nFROM {T}\nWHERE entity = '${Q859}';`,
-    sqlite: `SELECT label AS l\nFROM "Q5"\nWHERE entity = '${Q859}';`,
-    note: "The table keeps only the English label column; the graph has every language (others live in `extra`)." },
-  { label: "Type tables / manifest", table: { file: "_manifest.parquet", name: "_manifest" },
-    sparql: `SELECT (COUNT(*) AS ?triples)\nWHERE { ?s ?p ?o }`,
-    duck: `SELECT class, label, entities, file\nFROM {T}\nORDER BY entities DESC\nLIMIT 20;`,
-    sqlite: `SELECT name\nFROM sqlite_master\nWHERE type = 'table'\nORDER BY name\nLIMIT 30;`,
-    note: "No direct graph analogue — the graph counts triples; the tables list the per-type partitions." },
+    note: "One entity, every fact. The graph is tall (a row per predicate/object); the table is one wide row — the shape difference itself." },
+
+  { label: "Biggest polymaths", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who (COUNT(?occ) AS ?jobs) WHERE {\n  ?p wdt:P106 ?occ ;\n     rdfs:label ?who .\n  FILTER(LANG(?who) = "en")\n}\nGROUP BY ?who\nORDER BY DESC(?jobs)\nLIMIT 15`,
+    duck: `SELECT label AS who, len(P106) AS jobs\nFROM {T}\nWHERE label IS NOT NULL\nORDER BY jobs DESC\nLIMIT 15;`,
+    sqlite: `SELECT label AS who, json_array_length(P106) AS jobs\nFROM "Q5"\nWHERE label IS NOT NULL\nORDER BY jobs DESC\nLIMIT 15;`,
+    note: "Who wears the most hats? Counts each person's occupations — B. R. Ambedkar, David Bowie, Jack Black… The graph counts P106 edges; the tables read len(P106) off the row." },
+
+  { label: "Physicists who were also philosophers", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who WHERE {\n  ?p wdt:P106 wd:${PHYSICIST} ;     # physicist\n     wdt:P106 wd:${PHILOSOPHER} ;   # philosopher\n     rdfs:label ?who .\n  FILTER(LANG(?who) = "en")\n}\nLIMIT 30`,
+    duck: `SELECT entity, label\nFROM {T}\nWHERE list_contains(P106, '${OCC(PHYSICIST)}')\n  AND list_contains(P106, '${OCC(PHILOSOPHER)}');`,
+    sqlite: `SELECT entity, label\nFROM "Q5"\nWHERE EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '${OCC(PHYSICIST)}')\n  AND EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '${OCC(PHILOSOPHER)}');`,
+    note: "Both physicist (Q169470) AND philosopher (Q4964182) — Al-Farabi, Prigogine, Archytas, Mersenne… An occupation intersection every backend expresses directly." },
+
+  { label: "Writers who went into politics", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who WHERE {\n  ?p wdt:P106 wd:${WRITER} ;        # writer\n     wdt:P106 wd:${POLITICIAN} ;    # politician\n     rdfs:label ?who .\n  FILTER(LANG(?who) = "en")\n}\nLIMIT 30`,
+    duck: `SELECT entity, label\nFROM {T}\nWHERE list_contains(P106, '${OCC(WRITER)}')\n  AND list_contains(P106, '${OCC(POLITICIAN)}');`,
+    sqlite: `SELECT entity, label\nFROM "Q5"\nWHERE EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '${OCC(WRITER)}')\n  AND EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '${OCC(POLITICIAN)}');`,
+    note: "The pen and the podium: people whose occupations include both writer (Q36180) and politician (Q82955)." },
+
+  { label: "Most common occupations", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occupation (COUNT(?p) AS ?people) WHERE {\n  ?p wdt:P106 ?occupation\n}\nGROUP BY ?occupation\nORDER BY DESC(?people)\nLIMIT 15`,
+    duck: `SELECT unnest(P106) AS occupation, count(*) AS people\nFROM {T}\nGROUP BY occupation\nORDER BY people DESC\nLIMIT 15;`,
+    sqlite: `SELECT je.value AS occupation, count(*) AS people\nFROM "Q5", json_each(P106) je\nGROUP BY occupation\nORDER BY people DESC\nLIMIT 15;`,
+    note: "What do these ~19k people do? The occupations come back as Q-ids — their own label triples aren't all in this 100 MB slice, a reminder you only fetched a slice." },
 ];
 
 const state = { backend: "graph", exIdx: 0, graphSource: "lazy" };
@@ -277,7 +291,7 @@ function show(cols, rows) {
   if (view === "graph") RetePG.renderGraph($("out"), triplesFromRows(cols, rows));
   else RetePG.renderTable($("out"), cols, rows);
 }
-const showErr = (m) => { $("meta").textContent = ""; $("out").innerHTML = `<p class="err">${m}</p>`; };
+const showErr = (m) => { if (typeof busyStop === "function") busyStop(); $("meta").textContent = ""; $("out").innerHTML = `<p class="err">${m}</p>`; };
 
 const SPARQL_KW = ["SELECT","WHERE","PREFIX","FILTER","OPTIONAL","UNION","MINUS","ORDER BY","GROUP BY",
   "LIMIT","DISTINCT","COUNT","DATATYPE","LANG","REGEX","BIND","wdt:","wd:","rdfs:label"].map((t) => ({ text: t, kind: "kw" }));
@@ -353,10 +367,14 @@ const POOL_INSTALL_SRC =
   "}catch(err){return null;}};";
 
 const RETE_HARNESS =
-  ";(function(){var ready=null,MEM=null;self.onmessage=function(e){var m=e.data;" +
+  ";(function(){var ready=null,MEM=null,REQ=0,BYTES=0;" +
+  // Forwarded by the wasm reader per range fetch — works mid-sync-call because
+  // postMessage only enqueues; the main thread renders the live counter.
+  "self.reteProgress=function(b){REQ++;BYTES+=b;self.postMessage({type:'progress',requests:REQ,bytes:BYTES});};" +
+  "self.onmessage=function(e){var m=e.data;" +
   "if(m.type==='init'){self.__fetchSrc=m.fetchSrc;ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
   "if(m.type==='memload'){Promise.resolve(ready).then(function(){MEM=m.bytes;self.postMessage({type:'memready'});});return;}" +
-  "Promise.resolve(ready).then(function(){try{" +
+  "Promise.resolve(ready).then(function(){try{REQ=0;BYTES=0;self.postMessage({type:'start',mode:m.mode});" +
   "var j=m.mode==='mem'?wasm_bindgen.query(MEM,m.query,'table'):wasm_bindgen.sparql_url(m.url,m.query,'table');" +
   "self.postMessage({ok:true,json:j});}catch(err){self.postMessage({ok:false,error:String(err)});}});};})();" +
   POOL_INSTALL_SRC;
@@ -380,17 +398,39 @@ function ensureMem() {
     return _memReady;
   });
 }
-function runGraph() {
+/* A spinner + live elapsed/progress status while a query runs. */
+let _tick = null;
+function busyStart(fmt) {
   const t0 = performance.now();
+  $("spin").classList.remove("hidden");
+  if (_tick) clearInterval(_tick);
+  const upd = () => { $("meta").textContent = fmt((performance.now() - t0) / 1000); };
+  upd(); _tick = setInterval(upd, 120);
+  return () => (performance.now() - t0);
+}
+function busyStop() { $("spin").classList.add("hidden"); if (_tick) { clearInterval(_tick); _tick = null; } }
+
+function runGraph() {
   const cached = state.graphSource === "cached" && window.__reteBytes;
+  const prog = { requests: 0, bytes: 0 };
+  // While the (synchronous) query runs, the worker streams progress events for
+  // the lazy path; the cached path is in-memory so we just tick elapsed time.
+  const fmt = (s) => cached
+    ? `querying cached copy… ${s.toFixed(1)}s`
+    : `streaming… ${s.toFixed(1)}s · ${prog.requests} request${prog.requests === 1 ? "" : "s"} · ${(prog.bytes / 1048576).toFixed(2)} MB fetched`;
+  const elapsed = busyStart(fmt);
   (cached ? ensureMem() : ensureRete()).then(() => {
     _rw.onmessage = (e) => {
-      const dt = (performance.now() - t0).toFixed(0);
-      if (!e.data.ok) return showErr(e.data.error);
-      const r0 = JSON.parse(e.data.json), r = r0.remote;
+      const d = e.data;
+      if (d.type === "start") return;
+      if (d.type === "progress") { prog.requests = d.requests; prog.bytes = d.bytes; return; }
+      busyStop();
+      const dt = elapsed().toFixed(0);
+      if (!d.ok) return showErr(d.error);
+      const r0 = JSON.parse(d.json), r = r0.remote;
       $("meta").textContent = r
-        ? `${(r0.rows || []).length} rows | ${r.requests || 0} req | ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${r.fileLength ? (100*r.bytes/r.fileLength).toFixed(1) : "?"}%) | ${dt} ms`
-        : `${(r0.rows || []).length} rows | cached, in-memory | ${dt} ms`;
+        ? `${(r0.rows || []).length} rows · ${r.requests || 0} req · ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${r.fileLength ? (100*r.bytes/r.fileLength).toFixed(1) : "?"}%) · ${dt} ms`
+        : `${(r0.rows || []).length} rows · cached, in-memory · ${dt} ms`;
       show(r0.vars || [], r0.rows || []);
     };
     _rw.postMessage(cached ? { type: "query", mode: "mem", query: $("editor").value }
@@ -468,15 +508,16 @@ duckdb.selectBundle(duckdb.getJsDelivrBundles()).then(async (b) => {
 }).catch((e) => { $("statTables").textContent = "init failed: " + e; });
 async function runTables() {
   if (!conn) return showErr("DuckDB-WASM still initializing...");
-  const t0 = performance.now();
+  const elapsed = busyStart((s) => `querying DuckDB… ${s.toFixed(1)}s`);
   try {
     if ($("duckSrc").value === "attach" && !attached) { await conn.query(`ATTACH '${DUCKDB_URL}' AS wd (READ_ONLY)`); attached = true; }
     const res = await conn.query($("editor").value);
     const cols = res.schema.fields.map((f) => f.name);
     const rows = res.toArray().map((r) => { const o = r.toJSON(); for (const k of cols) if (o[k] && typeof o[k] === "object") o[k] = JSON.stringify(o[k]); return o; });
-    $("meta").textContent = `${rows.length} rows | ${(performance.now() - t0).toFixed(0)} ms`;
+    busyStop();
+    $("meta").textContent = `${rows.length} rows · ${elapsed().toFixed(0)} ms`;
     show(cols, rows);
-  } catch (e) { showErr(String(e)); }
+  } catch (e) { busyStop(); showErr(String(e)); }
 }
 
 /* ---- SQLite (sql.js-httpvfs via esm.sh) ---- */
@@ -501,17 +542,18 @@ async function runSqlite() {
   if (!sqliteWorker) return showErr("SQLite still initializing...");
   if (sqliteWorker.err) return showErr("SQLite lazy reader unavailable: " + sqliteWorker.err +
     "\n(sql.js-httpvfs is finicky from a CDN and its range VFS may not follow the host's signed-URL redirect - use the download link and query locally.)");
-  const t0 = performance.now();
+  const elapsed = busyStart((s) => `querying SQLite… ${s.toFixed(1)}s`);
   try {
     const rows = await sqliteWorker.db.query($("editor").value);
     const cols = rows.length ? Object.keys(rows[0]) : [];
-    $("meta").textContent = `${rows.length} rows | ${(performance.now() - t0).toFixed(0)} ms`;
+    busyStop();
+    $("meta").textContent = `${rows.length} rows · ${elapsed().toFixed(0)} ms`;
     show(cols, rows);
-  } catch (e) { showErr(String(e)); }
+  } catch (e) { busyStop(); showErr(String(e)); }
 }
 
 $("run").onclick = () => {
-  $("meta").textContent = "running..."; $("out").innerHTML = "";
+  $("out").innerHTML = "";
   ({ graph: runGraph, tables: runTables, sqlite: runSqlite }[state.backend])();
 };
 $("viewSeg").querySelectorAll("[data-v]").forEach((b) => b.onclick = () => {

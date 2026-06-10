@@ -452,6 +452,10 @@ impl RangeReader for XhrRangeReader {
             )));
         }
         buf.truncate(len as usize);
+        // Report this fetch to an optional progress hook so a worker can stream
+        // live "N requests · M bytes" updates to the UI *during* the otherwise
+        // opaque synchronous query (postMessage works mid-sync-call).
+        report_progress(buf.len());
         Ok(buf)
     }
 
@@ -483,6 +487,17 @@ impl RangeReader for XhrRangeReader {
             .iter()
             .map(|&(o, l)| self.read_at(o, l))
             .collect()
+    }
+}
+
+/// Notify an optional `globalThis.reteProgress(bytes)` hook of one completed
+/// range fetch (the worker forwards it to the UI). A no-op when unset.
+fn report_progress(bytes: usize) {
+    let g = js_sys::global();
+    if let Ok(f) = js_sys::Reflect::get(&g, &JsValue::from_str("reteProgress")) {
+        if let Ok(f) = f.dyn_into::<js_sys::Function>() {
+            let _ = f.call1(&JsValue::NULL, &JsValue::from_f64(bytes as f64));
+        }
     }
 }
 
