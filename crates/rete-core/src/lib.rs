@@ -17,6 +17,7 @@ pub mod pyramid;
 pub mod reach;
 pub mod reader;
 pub mod reason;
+mod row;
 pub mod shacl;
 pub mod sparql;
 pub mod tiling;

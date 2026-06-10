@@ -1,28 +1,265 @@
-//! Plan evaluation: turn a lowered [`Select`]/[`Plan`] into solution bindings.
-//! `run_select` applies the SPARQL solution-modifier sequence; `eval_plan_in`
-//! evaluates the algebra (BGP/joins/paths/graph) against the active graph; the
-//! join helpers (`hash_join_solutions`, `minus_hash`, `values_pushdown`) operate
-//! on the resolved `Binding` rows. Aggregates, expressions and property paths
-//! live in the sibling `aggregate`/`expr`/`path` modules.
+//! Plan evaluation: turn a lowered [`Select`]/[`Plan`] into solution rows.
+//!
+//! Evaluation is a lazy pull pipeline (volcano model): every algebra node in
+//! [`eval_plan_iter`] yields an iterator of integer slot [`Row`]s, so `LIMIT`,
+//! `ASK` and `DISTINCT … LIMIT` propagate demand all the way down to the index
+//! scan and stop early. Blocking points are only what the semantics force:
+//! aggregation, ORDER BY (top-k when a LIMIT bounds it), and the *build* side
+//! of hash joins / MINUS — their probe sides stream. Terms are resolved to
+//! strings only at the projection boundary (late materialization). Aggregates,
+//! expressions and property paths live in the sibling `aggregate`/`expr`/`path`
+//! modules.
 
-use super::aggregate::{aggregate, aggregate_int};
+use super::aggregate::aggregate;
 use super::expr::SortKey;
 use super::path::eval_path;
 use super::*;
-use crate::bgp::{eval_bgp_int_in, term_of_value, Binding, PatternTerm, TriplePattern};
+use crate::bgp::{
+    bgp_exists, collect_pattern_slots, eval_bgp_rows, row_to_binding, BgpSolutions, Binding,
+    PatternTerm, TriplePattern,
+};
 use crate::file::Rete;
 use crate::index::{GraphIndex, GraphIndexBuilder};
+use crate::row::{bound_mask, merge_rows, Ctx, Row, Slots, Val};
 use spargebra::term::{NamedNodePattern, TermPattern, TriplePattern as SpTriplePattern};
+
+/// A lazily-evaluated stream of solution rows.
+pub(super) type RowIter<'q> = Box<dyn Iterator<Item = Row> + 'q>;
+
+/// Build the per-query evaluation context: walk the whole query (plan,
+/// EXISTS sub-plans, BIND targets, aggregates, projection) once and assign
+/// every variable a slot.
+pub(super) fn query_ctx<'a>(rete: &'a Rete, sel: &Select) -> Ctx<'a> {
+    let mut slots = Slots::new();
+    collect_plan_slots(&sel.plan, &mut slots);
+    for (var, e) in &sel.extends {
+        collect_expr_slots(e, &mut slots);
+        slots.add(var);
+    }
+    if let Some(g) = &sel.group {
+        for v in &g.by {
+            slots.add(v);
+        }
+        for (res_var, agg) in &g.aggs {
+            slots.add(res_var);
+            match agg {
+                Agg::CountStar { .. } => {}
+                Agg::Count(v, _)
+                | Agg::Sum(v)
+                | Agg::Avg(v)
+                | Agg::Min(v)
+                | Agg::Max(v)
+                | Agg::Sample(v)
+                | Agg::GroupConcat(v, _) => {
+                    slots.add(v);
+                }
+            }
+        }
+    }
+    for h in &sel.having {
+        collect_expr_slots(h, &mut slots);
+    }
+    for (e, _) in &sel.order {
+        collect_expr_slots(e, &mut slots);
+    }
+    for v in &sel.project {
+        slots.add(v);
+    }
+    Ctx::new(rete, slots)
+}
+
+fn collect_plan_slots(plan: &Plan, slots: &mut Slots) {
+    match plan {
+        Plan::Bgp(patterns) => collect_pattern_slots(patterns, slots),
+        Plan::Join(l, r) | Plan::Union(l, r) | Plan::Minus(l, r) => {
+            collect_plan_slots(l, slots);
+            collect_plan_slots(r, slots);
+        }
+        Plan::LeftJoin(l, r, cond) => {
+            collect_plan_slots(l, slots);
+            collect_plan_slots(r, slots);
+            if let Some(e) = cond {
+                collect_expr_slots(e, slots);
+            }
+        }
+        Plan::Filter(e, inner) => {
+            collect_expr_slots(e, slots);
+            collect_plan_slots(inner, slots);
+        }
+        Plan::Path(s, _, o) => {
+            for t in [s, o] {
+                if let PatternTerm::Var(v) = t {
+                    slots.add(v);
+                }
+            }
+        }
+        Plan::Values(vars, _) => {
+            for v in vars {
+                slots.add(v);
+            }
+        }
+        Plan::Graph(target, inner) => {
+            if let GraphTarget::Var(v) = target {
+                slots.add(v);
+            }
+            collect_plan_slots(inner, slots);
+        }
+    }
+}
+
+fn collect_expr_slots(e: &FExpr, slots: &mut Slots) {
+    match e {
+        FExpr::Var(v) | FExpr::Bound(v) => {
+            slots.add(v);
+        }
+        FExpr::Const(_) => {}
+        FExpr::Arith(_, l, r) | FExpr::Compare(_, l, r) | FExpr::And(l, r) | FExpr::Or(l, r) => {
+            collect_expr_slots(l, slots);
+            collect_expr_slots(r, slots);
+        }
+        FExpr::Not(inner) => collect_expr_slots(inner, slots),
+        FExpr::Func(_, args) | FExpr::Coalesce(args) => {
+            for a in args {
+                collect_expr_slots(a, slots);
+            }
+        }
+        FExpr::Exists(plan) => collect_plan_slots(plan, slots),
+    }
+}
+
+// --- static binding analysis -------------------------------------------------
+//
+// Streaming joins need their hash key before any left row arrives, so the key
+// is the slots a plan *always* binds (`certain`) rather than the slots its
+// materialized rows happen to bind. A maybe-bound shared slot simply isn't part
+// of the bucket key — `merge_rows`/`minus_compatible` still verify it per
+// candidate, so the result is unchanged; the bucket is just less selective for
+// those (rare, OPTIONAL/UNION-shaped) rows.
+
+/// Slots bound in **every** row the plan can yield.
+fn certain_bound(ctx: &Ctx, plan: &Plan, n: usize) -> Vec<bool> {
+    let mut m = vec![false; n];
+    mark_certain(ctx, plan, &mut m);
+    m
+}
+
+fn mark_certain(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
+    let mark_var = |v: &str, m: &mut [bool]| {
+        if let Some(i) = ctx.slots.slot(v) {
+            m[i] = true;
+        }
+    };
+    match plan {
+        Plan::Bgp(patterns) => {
+            for p in patterns {
+                for t in [&p.s, &p.p, &p.o] {
+                    if let PatternTerm::Var(v) = t {
+                        mark_var(v, m);
+                    }
+                }
+            }
+        }
+        Plan::Path(s, _, o) => {
+            for t in [s, o] {
+                if let PatternTerm::Var(v) = t {
+                    mark_var(v, m);
+                }
+            }
+        }
+        Plan::Values(vars, rows) => {
+            for (vi, v) in vars.iter().enumerate() {
+                if rows
+                    .iter()
+                    .all(|row| row.get(vi).is_some_and(Option::is_some))
+                {
+                    mark_var(v, m);
+                }
+            }
+        }
+        Plan::Filter(_, inner) => mark_certain(ctx, inner, m),
+        Plan::Union(l, r) => {
+            // Certain only when certain in *both* branches.
+            let a = certain_bound(ctx, l, m.len());
+            let b = certain_bound(ctx, r, m.len());
+            for (i, slot) in m.iter_mut().enumerate() {
+                *slot |= a[i] && b[i];
+            }
+        }
+        Plan::Join(l, r) => {
+            mark_certain(ctx, l, m);
+            mark_certain(ctx, r, m);
+        }
+        Plan::LeftJoin(l, _, _) | Plan::Minus(l, _) => mark_certain(ctx, l, m),
+        Plan::Graph(target, inner) => {
+            if let GraphTarget::Var(v) = target {
+                mark_var(v, m);
+            }
+            mark_certain(ctx, inner, m);
+        }
+    }
+}
+
+/// Slots bound in **some** row the plan could yield (over-approximation: every
+/// variable the plan mentions).
+fn possible_bound(ctx: &Ctx, plan: &Plan, n: usize) -> Vec<bool> {
+    let mut m = vec![false; n];
+    mark_possible(ctx, plan, &mut m);
+    m
+}
+
+fn mark_possible(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
+    let mark_var = |v: &str, m: &mut [bool]| {
+        if let Some(i) = ctx.slots.slot(v) {
+            m[i] = true;
+        }
+    };
+    match plan {
+        Plan::Bgp(patterns) => {
+            for p in patterns {
+                for t in [&p.s, &p.p, &p.o] {
+                    if let PatternTerm::Var(v) = t {
+                        mark_var(v, m);
+                    }
+                }
+            }
+        }
+        Plan::Path(s, _, o) => {
+            for t in [s, o] {
+                if let PatternTerm::Var(v) = t {
+                    mark_var(v, m);
+                }
+            }
+        }
+        Plan::Values(vars, _) => {
+            for v in vars {
+                mark_var(v, m);
+            }
+        }
+        Plan::Filter(_, inner) => mark_possible(ctx, inner, m),
+        Plan::Union(l, r) | Plan::Join(l, r) | Plan::LeftJoin(l, r, _) => {
+            mark_possible(ctx, l, m);
+            mark_possible(ctx, r, m);
+        }
+        Plan::Minus(l, _) => mark_possible(ctx, l, m),
+        Plan::Graph(target, inner) => {
+            if let GraphTarget::Var(v) = target {
+                mark_var(v, m);
+            }
+            mark_possible(ctx, inner, m);
+        }
+    }
+}
 
 /// Evaluate an `ASK`: does the query have any solution? Streams and stops at the
 /// first solution for the common shapes; defers to the full evaluator only where
 /// a solution's existence depends on aggregation/HAVING/post-aggregate aliases.
 pub(super) fn ask_solution(rete: &Rete, sel: &Select) -> bool {
+    let ctx = query_ctx(rete, sel);
     // A grouped query always yields at least one group (so ASK over it hinges on
     // HAVING); BIND aliases may be referenced by HAVING. These need the full
     // aggregate path — fall back to materializing.
     if sel.group.is_some() || !sel.having.is_empty() || !sel.extends.is_empty() {
-        return !raw_solutions(rete, sel).is_empty();
+        return !raw_solutions_in(&ctx, sel).is_empty();
     }
     let merged = if sel.from.is_empty() {
         None
@@ -30,170 +267,48 @@ pub(super) fn ask_solution(rete: &Rete, sel: &Select) -> bool {
         Some(merge_graphs(rete, &sel.from))
     };
     let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
-    plan_exists(rete, active, sel.from_named.as_deref(), &sel.plan)
+    plan_exists(&ctx, active, sel.from_named.as_deref(), &sel.plan)
 }
 
-/// Does `plan` have at least one solution against `index`? Streams the
-/// streamable shapes and stops at the first solution; falls back to eager
-/// evaluation (testing non-emptiness) for shapes that need a full join/filter —
-/// which still benefit from the now-lazy per-pattern scan.
-fn plan_exists(rete: &Rete, index: &GraphIndex, nf: Option<&[String]>, plan: &Plan) -> bool {
+/// Does `plan` have at least one solution against `index`? The single-pattern
+/// BGP keeps its dedicated index probe; everything else pulls one row from the
+/// lazy pipeline and stops.
+fn plan_exists(ctx: &Ctx, index: &GraphIndex, nf: Option<&[String]>, plan: &Plan) -> bool {
     match plan {
-        Plan::Bgp(patterns) => crate::bgp::bgp_exists(rete, index, patterns),
-        Plan::Union(l, r) => plan_exists(rete, index, nf, l) || plan_exists(rete, index, nf, r),
+        Plan::Bgp(patterns) => bgp_exists(ctx, index, patterns),
+        Plan::Union(l, r) => plan_exists(ctx, index, nf, l) || plan_exists(ctx, index, nf, r),
         Plan::Values(_, rows) => !rows.is_empty(),
-        _ => !eval_plan_in(rete, index, nf, plan).is_empty(),
+        _ => eval_plan_iter(ctx, index, nf, plan).next().is_some(),
     }
-}
-
-/// The cap (OFFSET + LIMIT) for a pure-LIMIT early-out, or `None` if the query
-/// has an ORDER BY / DISTINCT / aggregate / HAVING that must see the full
-/// solution set first. BIND (`extends`) is allowed: it adds columns without
-/// dropping rows, so it can be applied to the capped prefix afterwards.
-fn early_out_cap(sel: &Select) -> Option<usize> {
-    if sel.order.is_empty() && !sel.distinct && sel.group.is_none() && sel.having.is_empty() {
-        sel.limit.map(|l| sel.offset.saturating_add(l))
-    } else {
-        None
-    }
-}
-
-/// Evaluate `plan` to at most `cap` solutions, stopping early where the shape
-/// allows (BGP join, FILTER-over-BGP, UNION, VALUES); other shapes fall back to
-/// full evaluation truncated to `cap` (correct, just no early-out). Sound only
-/// when the caller has no ORDER BY/DISTINCT/aggregate (see [`early_out_cap`]), so
-/// any `cap`-sized prefix of solutions is a valid result.
-fn eval_plan_capped(
-    rete: &Rete,
-    index: &GraphIndex,
-    nf: Option<&[String]>,
-    plan: &Plan,
-    cap: usize,
-) -> Vec<Binding> {
-    if cap == 0 {
-        return Vec::new();
-    }
-    match plan {
-        Plan::Bgp(patterns) => crate::bgp::BgpSolutions::new(rete, index, patterns)
-            .take(cap)
-            .collect(),
-        // A FILTER over a BGP streams the join and keeps passing rows until `cap`.
-        Plan::Filter(expr, inner) if matches!(inner.as_ref(), Plan::Bgp(_)) => {
-            let Plan::Bgp(patterns) = inner.as_ref() else {
-                unreachable!()
-            };
-            let mut out = Vec::new();
-            let mut cache = ExistsCache::new();
-            for b in crate::bgp::BgpSolutions::new(rete, index, patterns) {
-                if expr.boolean(rete, index, &b, &mut cache) {
-                    out.push(b);
-                    if out.len() >= cap {
-                        break;
-                    }
-                }
-            }
-            out
-        }
-        Plan::Union(l, r) => {
-            let mut out = eval_plan_capped(rete, index, nf, l, cap);
-            if out.len() < cap {
-                let need = cap - out.len();
-                out.extend(eval_plan_capped(rete, index, nf, r, need));
-            }
-            out
-        }
-        Plan::Values(vars, rows) => rows
-            .iter()
-            .take(cap)
-            .map(|row| {
-                vars.iter()
-                    .zip(row.iter())
-                    .filter_map(|(v, val)| val.as_ref().map(|t| (v.clone(), t.clone())))
-                    .collect()
-            })
-            .collect(),
-        _ => eval_plan_in(rete, index, nf, plan)
-            .into_iter()
-            .take(cap)
-            .collect(),
-    }
-}
-
-/// Fast path for `SELECT DISTINCT ?vars WHERE { BGP }`: dedup on the *integer*
-/// bindings and resolve only the survivors to terms. When a distinct projection
-/// collapses many matched rows to a few values (e.g. `DISTINCT ?discipline` over
-/// every paper), this skips a term resolution + `Binding` allocation per matched
-/// row — only the distinct projections are ever resolved. Applies OFFSET/LIMIT
-/// after dedup (the caller guarantees no ORDER BY/GROUP/HAVING/BIND).
-fn distinct_bgp_fast(
-    rete: &Rete,
-    sel: &Select,
-    patterns: &[TriplePattern],
-) -> (Vec<String>, Vec<Binding>) {
-    let merged = if sel.from.is_empty() {
-        None
-    } else {
-        Some(merge_graphs(rete, &sel.from))
-    };
-    let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
-    let dict = rete.dictionary();
-
-    let mut seen: std::collections::HashSet<Vec<Option<i64>>> = std::collections::HashSet::new();
-    let mut rows: Vec<Binding> = Vec::new();
-    for ib in &eval_bgp_int_in(rete, active, patterns) {
-        // Dedup key over the projected variables (an unprojected/unbound var is
-        // `None`, so its absence is part of the distinct identity).
-        let key: Vec<Option<i64>> = sel.project.iter().map(|v| ib.get(v).copied()).collect();
-        if !seen.insert(key) {
-            continue;
-        }
-        let mut b = Binding::new();
-        for v in &sel.project {
-            if let Some(&val) = ib.get(v) {
-                if let Some(t) = term_of_value(dict, val) {
-                    b.insert(v.clone(), t);
-                }
-            }
-        }
-        rows.push(b);
-    }
-    let rows = rows
-        .into_iter()
-        .skip(sel.offset)
-        .take(sel.limit.unwrap_or(usize::MAX))
-        .collect();
-    (sel.project.clone(), rows)
 }
 
 /// Raw solutions for a lowered pattern: plan + GROUP BY + aggregate aliases,
-/// before projection/DISTINCT/slice (which are SELECT-specific).
-pub(super) fn raw_solutions(rete: &Rete, sel: &Select) -> Vec<Binding> {
+/// before projection/DISTINCT/slice (which are SELECT-specific). Returns the
+/// evaluation context alongside the rows so callers can resolve terms.
+pub(super) fn raw_solutions<'a>(rete: &'a Rete, sel: &Select) -> (Ctx<'a>, Vec<Row>) {
+    let ctx = query_ctx(rete, sel);
+    let rows = raw_solutions_in(&ctx, sel);
+    (ctx, rows)
+}
+
+fn raw_solutions_in(ctx: &Ctx, sel: &Select) -> Vec<Row> {
     // The active default graph: `FROM` makes it the union of named graphs.
     let merged = if sel.from.is_empty() {
         None
     } else {
-        Some(merge_graphs(rete, &sel.from))
+        Some(merge_graphs(ctx.rete, &sel.from))
     };
-    let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
+    let active = merged.as_ref().unwrap_or_else(|| ctx.rete.default_index());
     let nf = sel.from_named.as_deref();
 
-    let mut raw = match (&sel.group, &sel.plan) {
-        // Fast path: GROUP BY over a single BGP aggregates on integer bindings,
-        // resolving only the group keys to terms (not every matched row).
-        (Some(g), Plan::Bgp(patterns)) => {
-            aggregate_int(rete, eval_bgp_int_in(rete, active, patterns), g)
-        }
-        (Some(g), _) => aggregate(eval_plan_in(rete, active, nf, &sel.plan), g),
-        (None, _) => eval_plan_in(rete, active, nf, &sel.plan),
+    let mut raw = match &sel.group {
+        // Grouping runs directly on the integer rows — only group keys and the
+        // values an aggregate needs are ever resolved.
+        Some(g) => aggregate(ctx, eval_plan_iter(ctx, active, nf, &sel.plan).collect(), g),
+        None => eval_plan_iter(ctx, active, nf, &sel.plan).collect(),
     };
-    if !sel.extends.is_empty() {
-        for row in &mut raw {
-            for (var, expr) in sel.extends.iter().rev() {
-                if let Some(v) = expr.value(row) {
-                    row.insert(var.clone(), v);
-                }
-            }
-        }
+    for row in raw.iter_mut() {
+        apply_extends_row(ctx, row, &sel.extends);
     }
     // HAVING runs on the aggregated (and aliased) rows.
     if !sel.having.is_empty() {
@@ -201,10 +316,21 @@ pub(super) fn raw_solutions(rete: &Rete, sel: &Select) -> Vec<Binding> {
         raw.retain(|b| {
             sel.having
                 .iter()
-                .all(|f| f.boolean(rete, active, b, &mut cache))
+                .all(|f| f.boolean(ctx, active, b, &mut cache))
         });
     }
     raw
+}
+
+/// Apply BIND/alias assignments to one row (columns only — never drops rows).
+fn apply_extends_row(ctx: &Ctx, row: &mut Row, extends: &[(String, FExpr)]) {
+    for (var, expr) in extends.iter().rev() {
+        if let Some(slot) = ctx.slots.slot(var) {
+            if let Some(v) = expr.value(ctx, row) {
+                row[slot] = Some(ctx.resolver.canon_term(&v));
+            }
+        }
+    }
 }
 
 /// Build the RDF merge (union of triples) of the given named graphs as a single
@@ -225,16 +351,17 @@ fn merge_graphs(rete: &Rete, graphs: &[String]) -> GraphIndex {
 /// Instantiate a CONSTRUCT template against solutions (triples with any unbound
 /// variable are dropped; the result is deduplicated).
 pub(super) fn instantiate(
+    ctx: &Ctx,
     template: &[SpTriplePattern],
-    sols: &[Binding],
+    sols: &[Row],
 ) -> Vec<(String, String, String)> {
     let mut set = std::collections::BTreeSet::new();
     for b in sols {
         for tp in template {
             if let (Some(s), Some(p), Some(o)) = (
-                inst_term(&tp.subject, b),
-                inst_named(&tp.predicate, b),
-                inst_term(&tp.object, b),
+                inst_term(ctx, &tp.subject, b),
+                inst_named(ctx, &tp.predicate, b),
+                inst_term(ctx, &tp.object, b),
             ) {
                 set.insert((s, p, o));
             }
@@ -243,225 +370,311 @@ pub(super) fn instantiate(
     set.into_iter().collect()
 }
 
-fn inst_term(t: &TermPattern, b: &Binding) -> Option<String> {
+fn row_var(ctx: &Ctx, name: &str, b: &Row) -> Option<String> {
+    let slot = ctx.slots.slot(name)?;
+    b[slot]
+        .as_ref()
+        .and_then(|v| ctx.resolver.str_of(v))
+        .map(|t| t.to_string())
+}
+
+fn inst_term(ctx: &Ctx, t: &TermPattern, b: &Row) -> Option<String> {
     match t {
         TermPattern::NamedNode(n) => Some(n.to_string()),
         TermPattern::Literal(l) => Some(l.to_string()),
         TermPattern::BlankNode(bn) => Some(bn.to_string()),
-        TermPattern::Variable(v) => b.get(v.as_str()).cloned(),
+        TermPattern::Variable(v) => row_var(ctx, v.as_str(), b),
     }
 }
 
-fn inst_named(n: &NamedNodePattern, b: &Binding) -> Option<String> {
+fn inst_named(ctx: &Ctx, n: &NamedNodePattern, b: &Row) -> Option<String> {
     match n {
         NamedNodePattern::NamedNode(nn) => Some(nn.to_string()),
-        NamedNodePattern::Variable(v) => b.get(v.as_str()).cloned(),
+        NamedNodePattern::Variable(v) => row_var(ctx, v.as_str(), b),
     }
 }
 
-/// Run a lowered SELECT: raw solutions, ORDER BY, then projection, DISTINCT,
-/// and slice (the SPARQL solution-modifier sequence).
+/// Run a lowered SELECT as a lazy modifier pipeline over the plan iterator:
+/// extends → HAVING → ORDER BY (top-k under LIMIT) → projection → DISTINCT →
+/// slice → late materialization. Only ORDER BY and aggregation block; every
+/// other stage streams, so the slice's demand reaches the index scan.
 pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding>) {
-    // Fast path: `SELECT DISTINCT ?vars WHERE { BGP }` (no ORDER BY/GROUP/HAVING/
-    // BIND) dedups on integer bindings and resolves only the survivors.
-    if sel.distinct
-        && sel.group.is_none()
-        && sel.having.is_empty()
-        && sel.order.is_empty()
-        && sel.extends.is_empty()
-        && !sel.project.is_empty()
-    {
-        if let Plan::Bgp(patterns) = &sel.plan {
-            return distinct_bgp_fast(rete, sel, patterns);
-        }
-    }
+    let ctx = query_ctx(rete, sel);
+    let merged = if sel.from.is_empty() {
+        None
+    } else {
+        Some(merge_graphs(rete, &sel.from))
+    };
+    let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
+    let nf = sel.from_named.as_deref();
 
-    let mut raw = match early_out_cap(sel) {
-        // Pure LIMIT/OFFSET with no ORDER BY/DISTINCT/aggregate: produce only the
-        // rows we need and stop. LIMIT without ORDER BY may return any subset, so
-        // a streamed prefix of solutions is spec-compliant.
-        Some(cap) => {
-            let merged = if sel.from.is_empty() {
-                None
-            } else {
-                Some(merge_graphs(rete, &sel.from))
-            };
-            let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
-            let mut rows =
-                eval_plan_capped(rete, active, sel.from_named.as_deref(), &sel.plan, cap);
-            // BIND (extends) add columns without dropping rows — apply post-cap.
-            for row in &mut rows {
-                for (var, expr) in sel.extends.iter().rev() {
-                    if let Some(v) = expr.value(row) {
-                        row.insert(var.clone(), v);
-                    }
-                }
-            }
-            rows
-        }
-        None => raw_solutions(rete, sel),
+    // Source rows: aggregation is blocking; everything else streams.
+    let mut source: RowIter = match &sel.group {
+        Some(g) => Box::new(
+            aggregate(
+                &ctx,
+                eval_plan_iter(&ctx, active, nf, &sel.plan).collect(),
+                g,
+            )
+            .into_iter(),
+        ),
+        None => eval_plan_iter(&ctx, active, nf, &sel.plan),
     };
 
-    // ORDER BY runs before projection so it can see unprojected variables.
-    // Decorate–sort–undecorate: resolve each row's sort keys *once* (with the
-    // numeric value pre-parsed) instead of re-evaluating + re-parsing them on
-    // every comparison — O(n) key builds vs. O(n log n) in `sort_by`.
+    // BIND/aliases add columns per row — streaming.
+    if !sel.extends.is_empty() {
+        let ctx_ref = &ctx;
+        let extends = &sel.extends;
+        source = Box::new(source.map(move |mut row| {
+            apply_extends_row(ctx_ref, &mut row, extends);
+            row
+        }));
+    }
+
+    // HAVING filters aggregated rows — streaming.
+    if !sel.having.is_empty() {
+        let ctx_ref = &ctx;
+        let having = &sel.having;
+        let mut cache = ExistsCache::new();
+        source = Box::new(source.filter(move |b| {
+            having
+                .iter()
+                .all(|f| f.boolean(ctx_ref, active, b, &mut cache))
+        }));
+    }
+
+    // ORDER BY blocks, but with a LIMIT (and no DISTINCT, which would dedup
+    // *after* the cut) only the top `offset + limit` rows are kept — O(n·k)
+    // bounded insertion instead of a full sort.
     if !sel.order.is_empty() {
-        let mut keyed: Vec<(Vec<SortKey>, Binding)> = raw
-            .into_iter()
-            .map(|b| {
-                let keys = sel
-                    .order
-                    .iter()
-                    .map(|(e, _)| SortKey::of(e.value(&b)))
-                    .collect();
-                (keys, b)
-            })
-            .collect();
-        keyed.sort_by(|(ka, _), (kb, _)| {
-            for (i, (_, desc)) in sel.order.iter().enumerate() {
-                let ord = ka[i].cmp(&kb[i]);
-                let ord = if *desc { ord.reverse() } else { ord };
-                if ord != std::cmp::Ordering::Equal {
-                    return ord;
-                }
+        let sorted = match (sel.limit, sel.distinct) {
+            (Some(limit), false) => {
+                top_k(&ctx, source, &sel.order, sel.offset.saturating_add(limit))
             }
-            std::cmp::Ordering::Equal
-        });
-        raw = keyed.into_iter().map(|(_, b)| b).collect();
+            _ => sort_all(&ctx, source, &sel.order),
+        };
+        source = Box::new(sorted.into_iter());
     }
 
-    // Project to the requested variables (SELECT * keeps everything).
-    let mut rows: Vec<Binding> = raw
-        .into_iter()
-        .map(|b| {
-            if sel.project.is_empty() {
-                b
-            } else {
-                sel.project
-                    .iter()
-                    .filter_map(|v| b.get(v).map(|val| (v.clone(), val.clone())))
-                    .collect()
-            }
-        })
+    // Project to the requested slots (SELECT * keeps everything). Rows stay
+    // integer-valued; unprojected slots are simply cleared so DISTINCT sees
+    // only the projected identity.
+    let proj_slots: Vec<usize> = sel
+        .project
+        .iter()
+        .filter_map(|v| ctx.slots.slot(v))
         .collect();
-
-    if sel.distinct {
-        // Hash the row's (sorted) key/value pairs directly — `Binding` iterates
-        // in key order, so the tuple vector is a canonical DISTINCT key without
-        // the per-row `format!` Debug round-trip.
-        let mut seen: std::collections::HashSet<Vec<(String, String)>> =
-            std::collections::HashSet::new();
-        rows.retain(|row| seen.insert(row.iter().map(|(k, v)| (k.clone(), v.clone())).collect()));
+    if !sel.project.is_empty() {
+        let ctx_ref = &ctx;
+        let ps = proj_slots.clone();
+        source = Box::new(source.map(move |b| {
+            let mut p = ctx_ref.slots.empty_row();
+            for &slot in &ps {
+                p[slot] = b[slot].clone();
+            }
+            p
+        }));
     }
 
-    let rows = rows
-        .into_iter()
+    // DISTINCT dedups on the integer rows — streaming, so DISTINCT … LIMIT
+    // stops the scan as soon as enough distinct rows have surfaced.
+    if sel.distinct {
+        let mut seen: std::collections::HashSet<Row> = std::collections::HashSet::new();
+        source = Box::new(source.filter(move |row| seen.insert(row.clone())));
+    }
+
+    // Slice, then resolve only the surviving rows' projected values.
+    let rows: Vec<Binding> = source
         .skip(sel.offset)
         .take(sel.limit.unwrap_or(usize::MAX))
+        .map(|row| {
+            if sel.project.is_empty() {
+                row_to_binding(&ctx, &row)
+            } else {
+                let mut b = Binding::new();
+                for (v, &slot) in sel.project.iter().zip(&proj_slots) {
+                    if let Some(val) = &row[slot] {
+                        if let Some(t) = ctx.resolver.str_once(val) {
+                            b.insert(v.clone(), t);
+                        }
+                    }
+                }
+                b
+            }
+        })
         .collect();
 
     (sel.project.clone(), rows)
 }
 
-/// Evaluate a plan against a specific graph `index` (the active graph).
-/// `named_filter` (from `FROM NAMED`) restricts which graphs `GRAPH` may see.
+/// Compare two decorated rows by the ORDER BY spec, with the arrival sequence
+/// as the final tiebreak (= a stable sort's order).
+fn cmp_keyed(
+    order: &[(FExpr, bool)],
+    a: &(Vec<SortKey>, usize, Row),
+    b: &(Vec<SortKey>, usize, Row),
+) -> std::cmp::Ordering {
+    for (i, (_, desc)) in order.iter().enumerate() {
+        let ord = a.0[i].cmp(&b.0[i]);
+        let ord = if *desc { ord.reverse() } else { ord };
+        if ord != std::cmp::Ordering::Equal {
+            return ord;
+        }
+    }
+    a.1.cmp(&b.1)
+}
+
+/// Decorate–sort–undecorate: resolve each row's sort keys *once* (numeric value
+/// pre-parsed) instead of re-evaluating them on every comparison.
+fn sort_all(ctx: &Ctx, rows: RowIter, order: &[(FExpr, bool)]) -> Vec<Row> {
+    let mut keyed: Vec<(Vec<SortKey>, usize, Row)> = rows
+        .enumerate()
+        .map(|(seq, b)| {
+            let keys = order
+                .iter()
+                .map(|(e, _)| SortKey::of(e.value(ctx, &b)))
+                .collect();
+            (keys, seq, b)
+        })
+        .collect();
+    keyed.sort_by(|a, b| cmp_keyed(order, a, b));
+    keyed.into_iter().map(|(_, _, b)| b).collect()
+}
+
+/// The first `k` rows of the stable sort order, via bounded insertion — O(n·k)
+/// worst case with k = LIMIT + OFFSET (small), instead of sorting all n rows.
+fn top_k(ctx: &Ctx, rows: RowIter, order: &[(FExpr, bool)], k: usize) -> Vec<Row> {
+    if k == 0 {
+        return Vec::new();
+    }
+    let mut top: Vec<(Vec<SortKey>, usize, Row)> = Vec::with_capacity(k + 1);
+    for (seq, b) in rows.enumerate() {
+        let keys: Vec<SortKey> = order
+            .iter()
+            .map(|(e, _)| SortKey::of(e.value(ctx, &b)))
+            .collect();
+        let entry = (keys, seq, b);
+        if top.len() >= k && cmp_keyed(order, &entry, &top[k - 1]) != std::cmp::Ordering::Less {
+            continue;
+        }
+        let pos =
+            top.partition_point(|e| cmp_keyed(order, e, &entry) != std::cmp::Ordering::Greater);
+        top.insert(pos, entry);
+        top.truncate(k);
+    }
+    top.into_iter().map(|(_, _, b)| b).collect()
+}
+
+/// Inline `VALUES` rows as slot rows (tokens canonicalized to dictionary ids
+/// where they exist, so they join exactly like scanned values).
+fn values_rows(ctx: &Ctx, vars: &[String], rows: &[Vec<Option<String>>]) -> Vec<Row> {
+    let slots: Vec<Option<usize>> = vars.iter().map(|v| ctx.slots.slot(v)).collect();
+    rows.iter()
+        .map(|row| {
+            let mut r = ctx.slots.empty_row();
+            for (slot, val) in slots.iter().zip(row.iter()) {
+                if let (Some(i), Some(t)) = (slot, val) {
+                    r[*i] = Some(ctx.resolver.canon_term(t));
+                }
+            }
+            r
+        })
+        .collect()
+}
+
+/// Evaluate a plan eagerly to a row vector (used by EXISTS, whose solutions are
+/// cached and probed repeatedly).
 pub(crate) fn eval_plan_in(
-    rete: &Rete,
+    ctx: &Ctx,
     index: &GraphIndex,
     named_filter: Option<&[String]>,
     plan: &Plan,
-) -> Vec<Binding> {
-    let recur = |p: &Plan| eval_plan_in(rete, index, named_filter, p);
+) -> Vec<Row> {
+    eval_plan_iter(ctx, index, named_filter, plan).collect()
+}
+
+/// Lazily evaluate a plan against a specific graph `index` (the active graph).
+/// `named_filter` (from `FROM NAMED`) restricts which graphs `GRAPH` may see.
+pub(crate) fn eval_plan_iter<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    named_filter: Option<&'q [String]>,
+    plan: &'q Plan,
+) -> RowIter<'q> {
     // A named graph is visible unless FROM NAMED excludes it.
-    let visible = |name: &str| named_filter.is_none_or(|f| f.iter().any(|g| g == name));
+    let visible = move |name: &str| named_filter.is_none_or(|f| f.iter().any(|g| g == name));
     match plan {
-        Plan::Bgp(patterns) => {
-            let dict = rete.dictionary();
-            eval_bgp_int_in(rete, index, patterns)
-                .into_iter()
-                .map(|ib| {
-                    ib.into_iter()
-                        .filter_map(|(k, v)| term_of_value(dict, v).map(|t| (k, t)))
-                        .collect()
-                })
-                .collect()
-        }
-        Plan::Path(subj, spec, obj) => eval_path(rete, index, subj, spec, obj),
-        Plan::Values(vars, rows) => rows
-            .iter()
-            .map(|row| {
-                vars.iter()
-                    .zip(row.iter())
-                    .filter_map(|(v, val)| val.as_ref().map(|t| (v.clone(), t.clone())))
-                    .collect()
-            })
-            .collect(),
+        Plan::Bgp(patterns) => Box::new(BgpSolutions::new(ctx, index, patterns)),
+        Plan::Path(subj, spec, obj) => Box::new(eval_path(ctx, index, subj, spec, obj).into_iter()),
+        Plan::Values(vars, rows) => Box::new(values_rows(ctx, vars, rows).into_iter()),
         Plan::Filter(expr, inner) => {
-            let mut v = recur(inner);
             let mut cache = ExistsCache::new();
-            v.retain(|b| expr.boolean(rete, index, b, &mut cache));
-            v
+            Box::new(
+                eval_plan_iter(ctx, index, named_filter, inner)
+                    .filter(move |b| expr.boolean(ctx, index, b, &mut cache)),
+            )
         }
-        Plan::Union(l, r) => {
-            let mut v = recur(l);
-            v.extend(recur(r));
-            v
+        Plan::Union(l, r) => Box::new(
+            eval_plan_iter(ctx, index, named_filter, l).chain(eval_plan_iter(
+                ctx,
+                index,
+                named_filter,
+                r,
+            )),
+        ),
+        Plan::Minus(l, r) => minus_iter(ctx, index, named_filter, l, r),
+        Plan::Join(l, r) => {
+            // VALUES-driven pushdown: substitute few ground rows into the BGP
+            // scan instead of scanning the whole pattern and hash-joining.
+            if let Some(v) = values_pushdown(ctx, index, l, r) {
+                return Box::new(v.into_iter());
+            }
+            join_iter(ctx, index, named_filter, l, r, false, None)
         }
-        Plan::Minus(l, r) => minus_hash(recur(l), recur(r)),
-        Plan::Join(l, r) => values_pushdown(rete, index, l, r)
-            .unwrap_or_else(|| hash_join_solutions(rete, index, recur(l), recur(r), false, None)),
         Plan::LeftJoin(l, r, cond) => {
-            hash_join_solutions(rete, index, recur(l), recur(r), true, cond.as_ref())
+            join_iter(ctx, index, named_filter, l, r, true, cond.as_ref())
         }
         // GRAPH switches the active graph index (subject to FROM NAMED).
-        Plan::Graph(GraphTarget::Named(iri), inner) => match rete.graph_index(iri) {
-            Some(gi) if visible(iri) => eval_plan_in(rete, gi, named_filter, inner),
-            _ => Vec::new(),
+        Plan::Graph(GraphTarget::Named(iri), inner) => match ctx.rete.graph_index(iri) {
+            Some(gi) if visible(iri) => eval_plan_iter(ctx, gi, named_filter, inner),
+            _ => Box::new(std::iter::empty()),
         },
         Plan::Graph(GraphTarget::Var(var), inner) => {
-            let mut out = Vec::new();
-            for (name, gi) in rete.named_graphs() {
-                if !visible(name) {
-                    continue;
-                }
-                for mut sol in eval_plan_in(rete, gi, named_filter, inner) {
-                    match sol.get(var) {
-                        Some(existing) if existing != name => continue,
-                        _ => {
-                            sol.insert(var.clone(), name.clone());
-                        }
-                    }
-                    out.push(sol);
-                }
-            }
-            out
+            let Some(slot) = ctx.slots.slot(var) else {
+                return Box::new(std::iter::empty());
+            };
+            Box::new(
+                ctx.rete
+                    .named_graphs()
+                    .iter()
+                    .filter(move |(name, _)| visible(name))
+                    .flat_map(move |(name, gi)| {
+                        let gval = ctx.resolver.canon_term(name);
+                        eval_plan_iter(ctx, gi, named_filter, inner).filter_map(move |mut sol| {
+                            match &sol[slot] {
+                                Some(existing) if *existing != gval => None,
+                                _ => {
+                                    sol[slot] = Some(gval.clone());
+                                    Some(sol)
+                                }
+                            }
+                        })
+                    }),
+            )
         }
     }
 }
 
-/// Merge two bindings if compatible (shared variables agree), else `None`.
-fn merge(a: &Binding, b: &Binding) -> Option<Binding> {
-    let mut out = a.clone();
-    for (k, v) in b {
-        match out.get(k) {
-            Some(existing) if existing != v => return None,
-            Some(_) => {}
-            None => {
-                out.insert(k.clone(), v.clone());
-            }
-        }
-    }
-    Some(out)
-}
-
-/// Substitute a binding's variables into a BGP's patterns, turning each bound
+/// Substitute bound variables into a BGP's patterns, turning each bound
 /// variable into a constant term so the index scan can constrain on it.
-fn substitute_patterns(patterns: &[TriplePattern], input: &Binding) -> Vec<TriplePattern> {
+fn substitute_patterns(
+    patterns: &[TriplePattern],
+    input: &[(String, String)],
+) -> Vec<TriplePattern> {
     let sub = |t: &PatternTerm| -> PatternTerm {
         match t {
-            PatternTerm::Var(v) => match input.get(v) {
-                Some(val) => PatternTerm::Const(val.clone()),
+            PatternTerm::Var(v) => match input.iter().find(|(k, _)| k == v) {
+                Some((_, val)) => PatternTerm::Const(val.clone()),
                 None => t.clone(),
             },
             PatternTerm::Const(_) => t.clone(),
@@ -479,11 +692,10 @@ fn substitute_patterns(patterns: &[TriplePattern], input: &Binding) -> Vec<Tripl
 
 /// `VALUES`-driven join pushdown: when one side of a join is inline `VALUES`
 /// (few, ground rows) and the other is a BGP, substitute each VALUES row into
-/// the BGP's scan instead of materializing the whole BGP and hash-joining. This
-/// turns `VALUES ?d {…} ?p :discipline ?d` into a couple of selective scans
-/// rather than one full-predicate scan filtered down. Returns `None` (use the
-/// hash join) when neither side is a pushable VALUES/BGP pair.
-fn values_pushdown(rete: &Rete, index: &GraphIndex, l: &Plan, r: &Plan) -> Option<Vec<Binding>> {
+/// the BGP's scan instead of materializing the whole BGP and hash-joining.
+/// Returns `None` (use the hash join) when neither side is a pushable
+/// VALUES/BGP pair.
+fn values_pushdown(ctx: &Ctx, index: &GraphIndex, l: &Plan, r: &Plan) -> Option<Vec<Row>> {
     let (vals, patterns) = match (l, r) {
         (Plan::Values(v, rows), Plan::Bgp(p)) | (Plan::Bgp(p), Plan::Values(v, rows)) => {
             ((v, rows), p)
@@ -505,38 +717,43 @@ fn values_pushdown(rete: &Rete, index: &GraphIndex, l: &Plan, r: &Plan) -> Optio
     if !vars.iter().any(|v| bgp_vars.contains(v.as_str())) {
         return None;
     }
-    let dict = rete.dictionary();
     let mut out = Vec::new();
     for row in rows {
         // The bound variables from this VALUES row (UNDEF entries stay variable).
-        let input: Binding = vars
+        let input: Vec<(String, String)> = vars
             .iter()
             .zip(row.iter())
             .filter_map(|(v, val)| val.as_ref().map(|t| (v.clone(), t.clone())))
             .collect();
         let subst = substitute_patterns(patterns, &input);
-        for ib in eval_bgp_int_in(rete, index, &subst) {
-            // Re-attach this row's VALUES bindings (the substituted vars no longer
-            // appear in the BGP result), then the BGP's own bindings.
-            let mut b = input.clone();
-            for (k, v) in ib {
-                if let Some(t) = term_of_value(dict, v) {
-                    b.insert(k, t);
+        // Re-attach this row's VALUES bindings (the substituted vars no longer
+        // appear in the BGP result), then the BGP's own bindings.
+        let mut base = ctx.slots.empty_row();
+        for (v, t) in &input {
+            if let Some(i) = ctx.slots.slot(v) {
+                base[i] = Some(ctx.resolver.canon_term(t));
+            }
+        }
+        for brow in eval_bgp_rows(ctx, index, &subst) {
+            let mut merged = base.clone();
+            for (slot, v) in brow.iter().enumerate() {
+                if v.is_some() {
+                    merged[slot] = v.clone();
                 }
             }
-            out.push(b);
+            out.push(merged);
         }
     }
     Some(out)
 }
 
 /// Is a left row eliminated by a right row under `MINUS`? True iff they share at
-/// least one variable and agree on every shared variable (SPARQL `MINUS`:
+/// least one bound slot and agree on every shared slot (SPARQL `MINUS`:
 /// disjoint-domain rows never eliminate, and a disagreement keeps the left row).
-fn minus_compatible(lb: &Binding, rb: &Binding) -> bool {
+fn minus_compatible(lb: &Row, rb: &Row) -> bool {
     let mut shared = false;
-    for (k, v) in lb {
-        if let Some(w) = rb.get(k) {
+    for (l, r) in lb.iter().zip(rb.iter()) {
+        if let (Some(v), Some(w)) = (l, r) {
             if v != w {
                 return false;
             }
@@ -546,151 +763,191 @@ fn minus_compatible(lb: &Binding, rb: &Binding) -> bool {
     shared
 }
 
-/// `MINUS`: keep each left row unless some right row is [`minus_compatible`] with
-/// it. Replaces the O(L×R) nested loop with an O(L + R) hash anti-join in the
-/// common case (both sides bind the shared variables in every row): the shared
-/// variables `jv` index the right rows, so a fully-bound left row is eliminated
-/// by a single set lookup. Rows missing a shared variable (only via a nested
-/// OPTIONAL/UNION) fall back to a scan, preserving exact semantics.
-fn minus_hash(left: Vec<Binding>, right: Vec<Binding>) -> Vec<Binding> {
-    use std::collections::HashSet;
-    if left.is_empty() || right.is_empty() {
-        return left;
-    }
-    // Shared variables: those appearing in some left row AND some right row.
-    let lvars: HashSet<&str> = left
-        .iter()
-        .flat_map(|b| b.keys().map(String::as_str))
-        .collect();
-    let mut jv: Vec<String> = right
-        .iter()
-        .flat_map(|b| b.keys().map(String::as_str))
-        .filter(|v| lvars.contains(v))
-        .map(String::from)
-        .collect();
-    jv.sort();
-    jv.dedup();
-    if jv.is_empty() {
-        // Disjoint domains ⇒ MINUS eliminates nothing.
-        return left;
-    }
-    let key_of =
-        |b: &Binding| -> Option<Vec<String>> { jv.iter().map(|v| b.get(v).cloned()).collect() };
-    // Right rows fully bound on the shared vars index a set; the rest must be
-    // scanned (a left row could share only a sub-domain with them).
-    let mut full: HashSet<Vec<String>> = HashSet::new();
-    let mut partial_right: Vec<&Binding> = Vec::new();
-    for r in &right {
-        match key_of(r) {
-            Some(k) => {
-                full.insert(k);
-            }
-            None => partial_right.push(r),
-        }
-    }
-    left.into_iter()
-        .filter(|lb| {
-            match key_of(lb) {
-                // Fully bound on the shared vars: a fully-bound right row
-                // eliminates it iff their keys match; otherwise only a partial
-                // right row could.
-                Some(k) => {
-                    if full.contains(&k) {
-                        return false;
-                    }
-                    !partial_right.iter().any(|rb| minus_compatible(lb, rb))
-                }
-                // Missing a shared var: must check every right row.
-                None => !right.iter().any(|rb| minus_compatible(lb, rb)),
-            }
-        })
-        .collect()
-}
-
-/// Hash join two solution sets on the variables they share, emitting every
-/// compatible merge. `optional = true` is a left join (OPTIONAL): a left row
-/// with no surviving match is emitted unchanged, and `cond` (the OPTIONAL's
-/// filter) decides which merges count as a match.
-///
-/// This replaces the O(L×R) nested-loop merge with an O(L + R + matches) hash
-/// join in the common case where the join variables are bound in every row.
-/// Rows missing a join variable (only possible via a nested OPTIONAL) fall back
-/// to being tried against all candidates, preserving exact SPARQL semantics —
-/// `merge` still does the final compatibility check on every shared variable.
-fn hash_join_solutions(
-    rete: &Rete,
-    index: &GraphIndex,
-    left: Vec<Binding>,
-    right: Vec<Binding>,
-    optional: bool,
-    cond: Option<&FExpr>,
-) -> Vec<Binding> {
-    use std::collections::{HashMap, HashSet};
-    if left.is_empty() {
-        return Vec::new();
-    }
+/// `MINUS` as a streaming anti-join: the right side is materialized and indexed
+/// by the slots the left side always binds; left rows then stream through a
+/// filter, each checked against its bucket's candidates (plus the right rows
+/// not fully bound on the key) with [`minus_compatible`].
+fn minus_iter<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    nf: Option<&'q [String]>,
+    l: &'q Plan,
+    r: &'q Plan,
+) -> RowIter<'q> {
+    use std::collections::HashMap;
+    let right: Vec<Row> = eval_plan_iter(ctx, index, nf, r).collect();
     if right.is_empty() {
-        return if optional { left } else { Vec::new() };
+        return eval_plan_iter(ctx, index, nf, l);
     }
-    // Join variables: names that occur in both sides.
-    let lvars: HashSet<&str> = left
-        .iter()
-        .flat_map(|b| b.keys().map(String::as_str))
-        .collect();
-    let mut jset: HashSet<&str> = right
-        .iter()
-        .flat_map(|b| b.keys().map(String::as_str))
-        .collect();
-    jset.retain(|v| lvars.contains(v));
-    let mut jv: Vec<String> = jset.into_iter().map(String::from).collect();
-    jv.sort();
-
-    // Key = the join-var values, when all are bound; `None` ⇒ a join var is
-    // unbound in this row (a partial that must be matched against everything).
-    let key_of =
-        |b: &Binding| -> Option<Vec<String>> { jv.iter().map(|v| b.get(v).cloned()).collect() };
-    let mut buckets: HashMap<Vec<String>, Vec<usize>> = HashMap::new();
+    let n = ctx.slots.len();
+    let rmask = bound_mask(&right, n);
+    // Disjoint domains ⇒ MINUS eliminates nothing.
+    let lposs = possible_bound(ctx, l, n);
+    if !(0..n).any(|i| lposs[i] && rmask[i]) {
+        return eval_plan_iter(ctx, index, nf, l);
+    }
+    let lcert = certain_bound(ctx, l, n);
+    let jv: Vec<usize> = (0..n).filter(|&i| lcert[i] && rmask[i]).collect();
+    // Right rows fully bound on the key slots are bucketed; the rest are
+    // scanned per left row.
+    let mut buckets: HashMap<Vec<Val>, Vec<usize>> = HashMap::new();
     let mut partial: Vec<usize> = Vec::new();
-    for (i, r) in right.iter().enumerate() {
-        match key_of(r) {
+    for (i, row) in right.iter().enumerate() {
+        match jv
+            .iter()
+            .map(|&s| row[s].clone())
+            .collect::<Option<Vec<Val>>>()
+        {
             Some(k) => buckets.entry(k).or_default().push(i),
             None => partial.push(i),
         }
     }
-
-    let mut out = Vec::new();
-    let mut cache = ExistsCache::new();
-    let mut emit = |a: &Binding, r: &Binding, out: &mut Vec<Binding>, matched: &mut bool| {
-        if let Some(m) = merge(a, r) {
-            if cond.is_none_or(|f| f.boolean(rete, index, &m, &mut cache)) {
-                out.push(m);
-                *matched = true;
-            }
-        }
-    };
-    for a in &left {
-        let mut matched = false;
-        match key_of(a) {
+    let left = eval_plan_iter(ctx, index, nf, l);
+    Box::new(left.filter(move |lb| {
+        let eliminated = match jv
+            .iter()
+            .map(|&s| lb[s].clone())
+            .collect::<Option<Vec<Val>>>()
+        {
             Some(k) => {
-                if let Some(idxs) = buckets.get(&k) {
-                    for &i in idxs {
-                        emit(a, &right[i], &mut out, &mut matched);
-                    }
-                }
-                for &i in &partial {
-                    emit(a, &right[i], &mut out, &mut matched);
-                }
+                let in_bucket = buckets
+                    .get(&k)
+                    .is_some_and(|c| c.iter().any(|&i| minus_compatible(lb, &right[i])));
+                in_bucket || partial.iter().any(|&i| minus_compatible(lb, &right[i]))
             }
-            // `a` itself lacks a join var: every right row is a candidate.
-            None => {
-                for r in &right {
-                    emit(a, r, &mut out, &mut matched);
-                }
-            }
-        }
-        if optional && !matched {
-            out.push(a.clone());
+            // Missing a key slot (heterogeneous left): check every right row.
+            None => right.iter().any(|rb| minus_compatible(lb, rb)),
+        };
+        !eliminated
+    }))
+}
+
+/// A streaming hash join: the right side is materialized into buckets keyed by
+/// the slots both sides *always* bind; left rows are then pulled one at a time,
+/// each probing its bucket — so a `LIMIT` above the join stops the left scan.
+/// `optional = true` is a left join (OPTIONAL): a left row with no surviving
+/// match is emitted unchanged, and `cond` (the OPTIONAL's filter) decides which
+/// merges count as a match. `merge_rows` re-checks every shared slot, so
+/// maybe-bound slots outside the bucket key stay exact.
+struct JoinIter<'q> {
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    left: RowIter<'q>,
+    right: Vec<Row>,
+    buckets: std::collections::HashMap<Vec<Val>, Vec<usize>>,
+    /// Right rows not fully bound on `jv` — candidates for every left row.
+    partial: Vec<usize>,
+    jv: Vec<usize>,
+    optional: bool,
+    cond: Option<&'q FExpr>,
+    cache: ExistsCache,
+    cur_left: Option<Row>,
+    candidates: Vec<usize>,
+    ci: usize,
+    matched: bool,
+}
+
+fn join_iter<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    nf: Option<&'q [String]>,
+    l: &'q Plan,
+    r: &'q Plan,
+    optional: bool,
+    cond: Option<&'q FExpr>,
+) -> RowIter<'q> {
+    // Build the right side first: an empty build side short-circuits without
+    // ever constructing (or scanning) the left side.
+    let right: Vec<Row> = eval_plan_iter(ctx, index, nf, r).collect();
+    if right.is_empty() {
+        return if optional {
+            eval_plan_iter(ctx, index, nf, l)
+        } else {
+            Box::new(std::iter::empty())
+        };
+    }
+    let n = ctx.slots.len();
+    let jv: Vec<usize> = {
+        let lcert = certain_bound(ctx, l, n);
+        let rcert = certain_bound(ctx, r, n);
+        let rmask = bound_mask(&right, n);
+        (0..n)
+            .filter(|&i| lcert[i] && rcert[i] && rmask[i])
+            .collect()
+    };
+    let mut buckets: std::collections::HashMap<Vec<Val>, Vec<usize>> =
+        std::collections::HashMap::new();
+    let mut partial: Vec<usize> = Vec::new();
+    for (i, row) in right.iter().enumerate() {
+        match jv
+            .iter()
+            .map(|&s| row[s].clone())
+            .collect::<Option<Vec<Val>>>()
+        {
+            Some(k) => buckets.entry(k).or_default().push(i),
+            None => partial.push(i),
         }
     }
-    out
+    Box::new(JoinIter {
+        ctx,
+        index,
+        left: eval_plan_iter(ctx, index, nf, l),
+        right,
+        buckets,
+        partial,
+        jv,
+        optional,
+        cond,
+        cache: ExistsCache::new(),
+        cur_left: None,
+        candidates: Vec::new(),
+        ci: 0,
+        matched: false,
+    })
+}
+
+impl Iterator for JoinIter<'_> {
+    type Item = Row;
+
+    fn next(&mut self) -> Option<Row> {
+        loop {
+            if let Some(left) = &self.cur_left {
+                while self.ci < self.candidates.len() {
+                    let ri = self.candidates[self.ci];
+                    self.ci += 1;
+                    if let Some(m) = merge_rows(left, &self.right[ri]) {
+                        if self
+                            .cond
+                            .is_none_or(|f| f.boolean(self.ctx, self.index, &m, &mut self.cache))
+                        {
+                            self.matched = true;
+                            return Some(m);
+                        }
+                    }
+                }
+                let l = self.cur_left.take().unwrap();
+                if self.optional && !self.matched {
+                    return Some(l);
+                }
+            }
+            let l = self.left.next()?;
+            self.candidates = match self
+                .jv
+                .iter()
+                .map(|&s| l[s].clone())
+                .collect::<Option<Vec<Val>>>()
+            {
+                Some(k) => {
+                    let mut c = self.buckets.get(&k).cloned().unwrap_or_default();
+                    c.extend_from_slice(&self.partial);
+                    c
+                }
+                // The left row lacks a key slot: every right row is a candidate.
+                None => (0..self.right.len()).collect(),
+            };
+            self.ci = 0;
+            self.matched = false;
+            self.cur_left = Some(l);
+        }
+    }
 }

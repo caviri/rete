@@ -9,11 +9,16 @@
 //! than the O(bindings × scan) of a per-binding nested-loop probe — the
 //! difference between sub-second and minutes once a pattern binds tens of
 //! thousands of rows. Correctness does not depend on pattern order.
+//!
+//! Solutions are slot [`Row`]s of tagged dictionary ids (see `crate::row`):
+//! joins hash and compare integers, and terms are resolved to strings only at
+//! the engine's projection boundary, never per intermediate row.
 
 use std::collections::{BTreeMap, HashMap};
 
 use crate::file::Rete;
 use crate::index::GraphIndex;
+use crate::row::{Ctx, Row, Slots, Val};
 
 /// A term in a pattern: a named variable or a constant term token.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,122 +46,208 @@ pub struct TriplePattern {
     pub o: PatternTerm,
 }
 
-/// A solution: variable name → bound term.
+/// A solution: variable name → bound term (the public, resolved form).
 pub type Binding = BTreeMap<String, String>;
 
 // --- integer join core ------------------------------------------------------
 //
 // Variables bind to a tagged i64: a node ID `n` is stored as `n` (>= 0), a
 // predicate ID `p` as `-(p+1)` (< 0). Nodes are the unified subject/object space
-// so a variable joins consistently across subject and object positions. (A
-// variable ranging over both a predicate *and* a node — rare — won't match
-// across those roles; that's the one HDT-split limitation.)
+// so a variable joins consistently across subject and object positions. A
+// predicate value whose term is also a node is canonicalized to the node id
+// (`Resolver::canon_id`), so cross-role joins match exactly when the term
+// strings match.
 
-/// A pattern position lowered to integer space.
-enum IntTerm {
-    Var(String),
+/// A pattern position lowered to slot/integer space.
+#[derive(Clone, Copy)]
+enum SlotTerm {
+    Var(usize),
     Node(u32),
     Pred(u32),
 }
-
-/// An integer binding: variable → tagged i64 (node `>= 0`, predicate `< 0`).
-pub(crate) type IntBinding = BTreeMap<String, i64>;
 
 fn pred_tag(p: u32) -> i64 {
     -(p as i64) - 1
 }
 
-/// Lower a subject/object position; `None` if a constant term is unknown
-/// (making the whole BGP unsatisfiable).
-fn lower_node(t: &PatternTerm, d: &crate::Dictionary) -> Option<IntTerm> {
-    match t {
-        PatternTerm::Var(v) => Some(IntTerm::Var(v.clone())),
-        PatternTerm::Const(c) => d.node_of_term(c).map(IntTerm::Node),
+/// Register every variable in `patterns` with the slot map.
+pub(crate) fn collect_pattern_slots(patterns: &[TriplePattern], slots: &mut Slots) {
+    for p in patterns {
+        for t in [&p.s, &p.p, &p.o] {
+            if let PatternTerm::Var(v) = t {
+                slots.add(v);
+            }
+        }
     }
 }
 
-/// Lower a predicate position; `None` if the constant predicate is unknown.
-fn lower_pred(t: &PatternTerm, d: &crate::Dictionary) -> Option<IntTerm> {
-    match t {
-        PatternTerm::Var(v) => Some(IntTerm::Var(v.clone())),
-        PatternTerm::Const(c) => d.predicate_id(c).map(IntTerm::Pred),
+/// Lower patterns to slot/integer space; `None` if a constant term is unknown
+/// (making the whole BGP unsatisfiable) or a variable has no slot.
+fn lower(patterns: &[TriplePattern], ctx: &Ctx) -> Option<Vec<(SlotTerm, SlotTerm, SlotTerm)>> {
+    let dict = ctx.rete.dictionary();
+    let node = |t: &PatternTerm| -> Option<SlotTerm> {
+        match t {
+            PatternTerm::Var(v) => ctx.slots.slot(v).map(SlotTerm::Var),
+            PatternTerm::Const(c) => dict.node_of_term(c).map(SlotTerm::Node),
+        }
+    };
+    let pred = |t: &PatternTerm| -> Option<SlotTerm> {
+        match t {
+            PatternTerm::Var(v) => ctx.slots.slot(v).map(SlotTerm::Var),
+            PatternTerm::Const(c) => dict.predicate_id(c).map(SlotTerm::Pred),
+        }
+    };
+    let mut lowered = Vec::with_capacity(patterns.len());
+    for p in patterns {
+        lowered.push((node(&p.s)?, pred(&p.p)?, node(&p.o)?));
     }
+    Some(lowered)
 }
 
-/// Evaluate a BGP against the file's default graph, returning all solutions.
+/// Evaluate a BGP against the file's default graph, returning all solutions
+/// resolved to terms (the public convenience API).
 pub fn eval_bgp(rete: &Rete, patterns: &[TriplePattern]) -> Vec<Binding> {
-    let dict = rete.dictionary();
-    eval_bgp_int_in(rete, rete.default_index(), patterns)
+    let mut slots = Slots::new();
+    collect_pattern_slots(patterns, &mut slots);
+    let ctx = Ctx::new(rete, slots);
+    eval_bgp_rows(&ctx, rete.default_index(), patterns)
         .into_iter()
-        .map(|ib| {
-            ib.into_iter()
-                .filter_map(|(var, val)| term_of(dict, val).map(|t| (var, t)))
-                .collect()
-        })
+        .map(|row| row_to_binding(&ctx, &row))
         .collect()
 }
 
-/// Evaluate a BGP to *integer* bindings against a specific graph `index`
-/// (joins run on integer IDs; the shared dictionary comes from `rete`).
-pub(crate) fn eval_bgp_int_in(
-    rete: &Rete,
-    index: &GraphIndex,
-    patterns: &[TriplePattern],
-) -> Vec<IntBinding> {
-    let dict = rete.dictionary();
-
-    // Lower all patterns; a missing constant term makes the BGP empty.
-    let mut lowered = Vec::with_capacity(patterns.len());
-    for p in patterns {
-        let (s, pr, o) = match (
-            lower_node(&p.s, dict),
-            lower_pred(&p.p, dict),
-            lower_node(&p.o, dict),
-        ) {
-            (Some(s), Some(pr), Some(o)) => (s, pr, o),
-            _ => return Vec::new(),
-        };
-        lowered.push((s, pr, o));
+/// Resolve a row to a named-term binding (every bound slot). Uses the uncached
+/// decode — this is the output boundary, where terms are typically seen once.
+pub(crate) fn row_to_binding(ctx: &Ctx, row: &Row) -> Binding {
+    let mut b = Binding::new();
+    for (i, v) in row.iter().enumerate() {
+        if let Some(val) = v {
+            if let Some(t) = ctx.resolver.str_once(val) {
+                b.insert(ctx.slots.name(i).to_string(), t);
+            }
+        }
     }
+    b
+}
+
+/// Evaluate a BGP to slot rows against a specific graph `index` (joins run on
+/// integer ids; the shared dictionary comes from `ctx`).
+pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePattern]) -> Vec<Row> {
+    // An empty BGP has exactly one (empty) solution.
+    if patterns.is_empty() {
+        return vec![ctx.slots.empty_row()];
+    }
+    // Lower all patterns; a missing constant term makes the BGP empty.
+    let Some(lowered) = lower(patterns, ctx) else {
+        return Vec::new();
+    };
 
     // Join the patterns most-constrained-first (and keeping the join connected),
     // so intermediate relations stay small. Pure reordering: the hash join is
     // order-independent, so the result is unchanged.
     let order = selectivity_order(&lowered);
-    let mut bindings: Vec<IntBinding> = vec![IntBinding::new()];
+    let mut rows: Vec<Row> = vec![ctx.slots.empty_row()];
+    let mut bound: Vec<usize> = Vec::new();
     for &idx in &order {
-        let (sp, pp, op) = &lowered[idx];
-        // Scan this pattern ONCE, constraining only its constant terms (bound
-        // variables are joined in afterwards, not pushed into the scan). A
-        // constant in an impossible role / unknown to the dictionary makes the
-        // pattern — and thus the whole BGP — unsatisfiable.
-        let (sid, pid, oid) = match (
-            const_subject(sp, dict),
-            const_predicate(pp),
-            const_object(op, dict),
-        ) {
-            (Some(s), Some(p), Some(o)) => (s, p, o),
-            _ => return Vec::new(),
+        let Some((rel, rel_slots)) = pattern_rows(ctx, index, &lowered[idx]) else {
+            return Vec::new();
         };
-        let mut rel: Vec<IntBinding> = Vec::new();
-        // Stream the matches with the lazy cursor — the hash join is
-        // order-independent, so no canonical re-sort is needed here.
-        for (s_id, p_id, o_id) in index.scan_iter((sid, pid, oid)) {
-            let s_node = dict.subject_node(s_id) as i64;
-            let p_val = pred_tag(p_id);
-            let o_node = dict.object_node(o_id) as i64;
-            // extend_int from an empty base enforces repeated variables *within*
-            // this pattern (e.g. `?x p ?x`).
-            if let Some(rb) = extend_int(&IntBinding::new(), sp, pp, op, s_node, p_val, o_node) {
-                rel.push(rb);
+        rows = hash_join(rows, &bound, rel, &rel_slots);
+        for s in rel_slots {
+            if !bound.contains(&s) {
+                bound.push(s);
             }
         }
-        bindings = hash_join(bindings, rel);
-        if bindings.is_empty() {
+        if rows.is_empty() {
             break;
         }
     }
-    bindings
+    rows
+}
+
+/// The (deduped) slots a lowered pattern binds.
+fn pattern_slots(t: &(SlotTerm, SlotTerm, SlotTerm)) -> Vec<usize> {
+    let mut slots: Vec<usize> = Vec::new();
+    for term in [&t.0, &t.1, &t.2] {
+        if let SlotTerm::Var(i) = term {
+            if !slots.contains(i) {
+                slots.push(*i);
+            }
+        }
+    }
+    slots
+}
+
+/// Build a solution row for one scanned triple, enforcing repeated variables
+/// *within* the pattern (e.g. `?x p ?x`). `None` = the triple doesn't satisfy
+/// a repeated variable.
+fn triple_row(
+    ctx: &Ctx,
+    t: &(SlotTerm, SlotTerm, SlotTerm),
+    (s_id, p_id, o_id): (u32, u32, u32),
+) -> Option<Row> {
+    let dict = ctx.rete.dictionary();
+    let s_val = dict.subject_node(s_id) as i64;
+    let p_val = ctx.resolver.canon_id(pred_tag(p_id));
+    let o_val = dict.object_node(o_id) as i64;
+    let mut row = ctx.slots.empty_row();
+    for (term, val) in [(&t.0, s_val), (&t.1, p_val), (&t.2, o_val)] {
+        if let SlotTerm::Var(i) = term {
+            match row[*i] {
+                Some(Val::Id(existing)) if existing != val => return None,
+                Some(_) => {}
+                None => row[*i] = Some(Val::Id(val)),
+            }
+        }
+    }
+    Some(row)
+}
+
+/// Lazily scan one lowered pattern as a stream of solution rows. The scan
+/// constrains only the pattern's constant terms (bound variables are joined in
+/// afterwards, not pushed into the scan). `None` = a constant is unsatisfiable
+/// (unknown to the dictionary or in an impossible role), which empties the BGP.
+fn scan_rows<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    t: (SlotTerm, SlotTerm, SlotTerm),
+) -> Option<impl Iterator<Item = Row> + 'q> {
+    let dict = ctx.rete.dictionary();
+    let (sid, pid, oid) = (
+        const_subject(&t.0, dict)?,
+        const_predicate(&t.1)?,
+        const_object(&t.2, dict)?,
+    );
+    Some(
+        index
+            .scan_iter((sid, pid, oid))
+            .filter_map(move |triple| triple_row(ctx, &t, triple)),
+    )
+}
+
+/// Scan one lowered pattern into a materialized relation, returning the rows
+/// and the slots the pattern binds. `None` = a constant is unsatisfiable.
+fn pattern_rows(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    t: &(SlotTerm, SlotTerm, SlotTerm),
+) -> Option<(Vec<Row>, Vec<usize>)> {
+    let slots = pattern_slots(t);
+    let mut rel: Vec<Row> = Vec::new();
+    let dict = ctx.rete.dictionary();
+    let (sid, pid, oid) = (
+        const_subject(&t.0, dict)?,
+        const_predicate(&t.1)?,
+        const_object(&t.2, dict)?,
+    );
+    // Stream the matches with the lazy cursor — the hash join is
+    // order-independent, so no canonical re-sort is needed here.
+    for triple in index.scan_iter((sid, pid, oid)) {
+        if let Some(row) = triple_row(ctx, t, triple) {
+            rel.push(row);
+        }
+    }
+    Some((rel, slots))
 }
 
 /// Order pattern indices for a left-deep join: most-constrained (most constant
@@ -164,18 +255,18 @@ pub(crate) fn eval_bgp_int_in(
 /// variable with the already-joined set so the join stays connected and
 /// intermediate relations stay small. Pure reordering — `hash_join` is
 /// order-independent, so the result multiset is unchanged.
-fn selectivity_order(lowered: &[(IntTerm, IntTerm, IntTerm)]) -> Vec<usize> {
-    let consts = |t: &(IntTerm, IntTerm, IntTerm)| {
+fn selectivity_order(lowered: &[(SlotTerm, SlotTerm, SlotTerm)]) -> Vec<usize> {
+    let consts = |t: &(SlotTerm, SlotTerm, SlotTerm)| {
         [&t.0, &t.1, &t.2]
             .into_iter()
-            .filter(|x| !matches!(x, IntTerm::Var(_)))
+            .filter(|x| !matches!(x, SlotTerm::Var(_)))
             .count()
     };
-    let vars = |t: &(IntTerm, IntTerm, IntTerm)| -> Vec<String> {
+    let vars = |t: &(SlotTerm, SlotTerm, SlotTerm)| -> Vec<usize> {
         [&t.0, &t.1, &t.2]
             .into_iter()
             .filter_map(|x| match x {
-                IntTerm::Var(v) => Some(v.clone()),
+                SlotTerm::Var(v) => Some(*v),
                 _ => None,
             })
             .collect()
@@ -183,7 +274,7 @@ fn selectivity_order(lowered: &[(IntTerm, IntTerm, IntTerm)]) -> Vec<usize> {
     let n = lowered.len();
     let mut remaining: Vec<usize> = (0..n).collect();
     let mut order: Vec<usize> = Vec::with_capacity(n);
-    let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut bound: std::collections::HashSet<usize> = std::collections::HashSet::new();
     while !remaining.is_empty() {
         // Pick the remaining pattern with the best (connected, consts) key; ties
         // go to the lowest original index for a stable, predictable order.
@@ -212,28 +303,19 @@ fn selectivity_order(lowered: &[(IntTerm, IntTerm, IntTerm)]) -> Vec<usize> {
 /// (no materialization); anything else falls back to the full evaluator and
 /// tests non-emptiness (still benefiting from the lazy per-pattern scan). Used
 /// by `ASK`.
-pub(crate) fn bgp_exists(rete: &Rete, index: &GraphIndex, patterns: &[TriplePattern]) -> bool {
-    let dict = rete.dictionary();
-    let mut lowered = Vec::with_capacity(patterns.len());
-    for p in patterns {
-        match (
-            lower_node(&p.s, dict),
-            lower_pred(&p.p, dict),
-            lower_node(&p.o, dict),
-        ) {
-            (Some(s), Some(pr), Some(o)) => lowered.push((s, pr, o)),
-            // An unknown constant term makes the pattern unsatisfiable.
-            _ => return false,
-        }
-    }
+pub(crate) fn bgp_exists(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePattern]) -> bool {
+    let dict = ctx.rete.dictionary();
+    let Some(lowered) = lower(patterns, ctx) else {
+        return false;
+    };
     if let [t] = lowered.as_slice() {
         // The fast path can't enforce a variable repeated across positions
-        // (e.g. `?x p ?x`) — that needs `extend_int` — so only take it when the
-        // pattern's variables are all distinct.
-        let names: Vec<&str> = [&t.0, &t.1, &t.2]
+        // (e.g. `?x p ?x`) — that needs the row builder — so only take it when
+        // the pattern's variables are all distinct.
+        let names: Vec<usize> = [&t.0, &t.1, &t.2]
             .into_iter()
             .filter_map(|x| match x {
-                IntTerm::Var(v) => Some(v.as_str()),
+                SlotTerm::Var(v) => Some(*v),
                 _ => None,
             })
             .collect();
@@ -252,132 +334,112 @@ pub(crate) fn bgp_exists(rete: &Rete, index: &GraphIndex, patterns: &[TriplePatt
             };
         }
     }
-    !eval_bgp_int_in(rete, index, patterns).is_empty()
+    !eval_bgp_rows(ctx, index, patterns).is_empty()
 }
 
-/// A lazy left-deep BGP join that yields term-resolved solution bindings one at a
-/// time, so a consumer under `LIMIT`/`OFFSET` (with no ORDER BY/DISTINCT) can
-/// stop early. The all-but-last patterns are joined eagerly into `prefix`; the
-/// last pattern is probed lazily. Yields the same solution multiset as
-/// [`eval_bgp_int_in`] (the join is order-independent), just incrementally.
-pub(crate) struct BgpSolutions<'r> {
-    rete: &'r Rete,
-    prefix: Vec<IntBinding>,
-    rel: Vec<IntBinding>,
-    buckets: HashMap<Vec<i64>, Vec<usize>>,
-    shared: Vec<String>,
+/// A lazy left-deep BGP join that yields solution rows one at a time, so a
+/// consumer under `LIMIT`/`OFFSET` (or `.next()` for ASK) can stop early —
+/// stopping also stops the underlying index scan.
+///
+/// The all-but-last patterns are joined eagerly into a `prefix` **hash table**
+/// (they are the most selective, so this is the small side); the *last* (least
+/// selective) pattern is then **streamed** from the index cursor, probing the
+/// prefix — the big scan is never materialized, and a `LIMIT` above stops it
+/// after a handful of triples. Yields the same solution multiset as
+/// [`eval_bgp_rows`] (the join is order-independent), just incrementally.
+pub(crate) struct BgpSolutions<'q> {
+    scan: Option<Box<dyn Iterator<Item = Row> + 'q>>,
+    prefix: Vec<Row>,
+    /// Prefix row indices keyed by the shared-slot values.
+    buckets: HashMap<Vec<Val>, Vec<usize>>,
+    shared: Vec<usize>,
     cartesian: bool,
-    li: usize,
-    cur_left: Option<IntBinding>,
+    /// The prefix is the all-unbound seed row (single-pattern BGP): scanned
+    /// rows are already complete solutions — pass them through unmerged.
+    seed_only: bool,
+    cur_scan: Option<Row>,
+    /// Reused candidate buffer (avoids a Vec allocation per scanned row).
     matches: Vec<usize>,
     mi: usize,
 }
 
-impl<'r> BgpSolutions<'r> {
+impl<'q> BgpSolutions<'q> {
     /// An iterator that yields nothing (an unsatisfiable BGP).
-    fn empty(rete: &'r Rete) -> Self {
+    fn empty() -> Self {
         BgpSolutions {
-            rete,
+            scan: None,
             prefix: Vec::new(),
-            rel: Vec::new(),
             buckets: HashMap::new(),
             shared: Vec::new(),
             cartesian: false,
-            li: 0,
-            cur_left: None,
+            seed_only: false,
+            cur_scan: None,
             matches: Vec::new(),
             mi: 0,
         }
     }
 
-    pub(crate) fn new(rete: &'r Rete, index: &GraphIndex, patterns: &[TriplePattern]) -> Self {
-        let dict = rete.dictionary();
+    pub(crate) fn new(ctx: &'q Ctx<'q>, index: &'q GraphIndex, patterns: &[TriplePattern]) -> Self {
         // An empty BGP has exactly one (empty) solution.
         if patterns.is_empty() {
             return BgpSolutions {
-                rete,
-                prefix: vec![IntBinding::new()],
-                rel: vec![IntBinding::new()],
+                scan: Some(Box::new(std::iter::once(ctx.slots.empty_row()))),
+                prefix: vec![ctx.slots.empty_row()],
                 buckets: HashMap::new(),
                 shared: Vec::new(),
                 cartesian: true,
-                li: 0,
-                cur_left: None,
+                seed_only: true,
+                cur_scan: None,
                 matches: Vec::new(),
                 mi: 0,
             };
         }
         // Lower all patterns; an unknown constant term ⇒ no solutions.
-        let mut lowered = Vec::with_capacity(patterns.len());
-        for p in patterns {
-            match (
-                lower_node(&p.s, dict),
-                lower_pred(&p.p, dict),
-                lower_node(&p.o, dict),
-            ) {
-                (Some(s), Some(pr), Some(o)) => lowered.push((s, pr, o)),
-                _ => return Self::empty(rete),
-            }
-        }
-        // Make the *last* (least selective) pattern the lazy probe; join the rest
-        // eagerly into the prefix.
+        let Some(lowered) = lower(patterns, ctx) else {
+            return Self::empty();
+        };
+        // Join all but the *last* (least selective) pattern eagerly into the
+        // prefix; a single pattern leaves the seed row as the prefix.
         let order = selectivity_order(&lowered);
         let (&last_i, prefix_is) = order.split_last().unwrap();
         let prefix_pats: Vec<TriplePattern> =
             prefix_is.iter().map(|&i| patterns[i].clone()).collect();
-        let prefix = eval_bgp_int_in(rete, index, &prefix_pats);
-
-        // Build the last pattern's relation with the lazy index cursor.
-        let (sp, pp, op) = &lowered[last_i];
-        let rel: Vec<IntBinding> = match (
-            const_subject(sp, dict),
-            const_predicate(pp),
-            const_object(op, dict),
-        ) {
-            (Some(sid), Some(pid), Some(oid)) => {
-                let mut rel = Vec::new();
-                for (s_id, p_id, o_id) in index.scan_iter((sid, pid, oid)) {
-                    let s_node = dict.subject_node(s_id) as i64;
-                    let p_val = pred_tag(p_id);
-                    let o_node = dict.object_node(o_id) as i64;
-                    if let Some(rb) =
-                        extend_int(&IntBinding::new(), sp, pp, op, s_node, p_val, o_node)
-                    {
-                        rel.push(rb);
-                    }
-                }
-                rel
-            }
-            _ => Vec::new(),
-        };
-        if prefix.is_empty() || rel.is_empty() {
-            return Self::empty(rete);
+        let prefix = eval_bgp_rows(ctx, index, &prefix_pats);
+        if prefix.is_empty() {
+            return Self::empty();
         }
 
-        // Hash-join key = variables shared by the prefix and the last pattern
-        // (BGP bindings are total, so every shared var is bound on both sides).
-        let shared: Vec<String> = prefix[0]
-            .keys()
-            .filter(|k| rel[0].contains_key(*k))
-            .cloned()
+        // Stream the last pattern with the lazy index cursor.
+        let Some(scan) = scan_rows(ctx, index, lowered[last_i]) else {
+            return Self::empty();
+        };
+
+        // Hash-join key = slots shared by the prefix and the last pattern (BGP
+        // rows bind every slot of their pattern set, so the prefix's bound set
+        // can be read off its first row).
+        let shared: Vec<usize> = pattern_slots(&lowered[last_i])
+            .into_iter()
+            .filter(|&s| prefix[0][s].is_some())
             .collect();
         let cartesian = shared.is_empty();
-        let mut buckets: HashMap<Vec<i64>, Vec<usize>> = HashMap::new();
+        // A single-pattern BGP joins against the all-unbound seed: scanned rows
+        // are already complete solutions.
+        let seed_only = prefix.len() == 1 && prefix[0].iter().all(Option::is_none);
+        let mut buckets: HashMap<Vec<Val>, Vec<usize>> = HashMap::new();
         if !cartesian {
-            for (i, r) in rel.iter().enumerate() {
-                let key: Vec<i64> = shared.iter().map(|k| r[k]).collect();
+            for (i, r) in prefix.iter().enumerate() {
+                let key: Vec<Val> = shared.iter().map(|&s| r[s].clone().unwrap()).collect();
                 buckets.entry(key).or_default().push(i);
             }
         }
         BgpSolutions {
-            rete,
+            scan: Some(Box::new(scan)),
             prefix,
-            rel,
             buckets,
             shared,
             cartesian,
-            li: 0,
-            cur_left: None,
+            seed_only,
+            cur_scan: None,
             matches: Vec::new(),
             mi: 0,
         }
@@ -385,65 +447,71 @@ impl<'r> BgpSolutions<'r> {
 }
 
 impl Iterator for BgpSolutions<'_> {
-    type Item = Binding;
+    type Item = Row;
 
-    fn next(&mut self) -> Option<Binding> {
-        let dict = self.rete.dictionary();
+    fn next(&mut self) -> Option<Row> {
+        // Single-pattern fast path: pass scanned rows through unmerged.
+        if self.seed_only {
+            return self.scan.as_mut()?.next();
+        }
         loop {
-            // Emit the next match for the current left (prefix) row.
+            // Emit the next prefix match for the current scanned row.
             if self.mi < self.matches.len() {
-                let ri = self.matches[self.mi];
+                let pi = self.matches[self.mi];
                 self.mi += 1;
-                let mut merged = self.cur_left.clone().unwrap();
-                for (k, v) in &self.rel[ri] {
-                    merged.insert(k.clone(), *v);
+                let mut merged = self.prefix[pi].clone();
+                for (slot, v) in self.cur_scan.as_ref().unwrap().iter().enumerate() {
+                    if v.is_some() {
+                        merged[slot] = v.clone();
+                    }
                 }
-                return Some(
-                    merged
-                        .into_iter()
-                        .filter_map(|(k, v)| term_of(dict, v).map(|t| (k, t)))
-                        .collect(),
-                );
+                return Some(merged);
             }
-            // Advance to the next left row and gather its matches.
-            if self.li >= self.prefix.len() {
-                return None;
-            }
-            let left = self.prefix[self.li].clone();
-            self.li += 1;
-            self.matches = if self.cartesian {
-                (0..self.rel.len()).collect()
+            // Pull the next row from the index scan and gather its matches
+            // (into the reused buffer — no allocation per scanned row).
+            let s = self.scan.as_mut()?.next()?;
+            self.matches.clear();
+            if self.cartesian {
+                self.matches.extend(0..self.prefix.len());
             } else {
-                let key: Vec<i64> = self.shared.iter().map(|k| left[k]).collect();
-                self.buckets.get(&key).cloned().unwrap_or_default()
-            };
+                let key: Vec<Val> = self.shared.iter().map(|&i| s[i].clone().unwrap()).collect();
+                if let Some(c) = self.buckets.get(&key) {
+                    self.matches.extend_from_slice(c);
+                }
+            }
             self.mi = 0;
-            self.cur_left = Some(left);
+            self.cur_scan = Some(s);
         }
     }
 }
 
-/// Hash-join two solution relations on the variables they share.
-///
-/// Every binding in `left` carries the same variable set (the union of the
-/// already-processed patterns' variables), and every binding in `right` carries
-/// the current pattern's variable set — so the shared keys are uniform and can
-/// be read off the first row of each side.
-fn hash_join(left: Vec<IntBinding>, right: Vec<IntBinding>) -> Vec<IntBinding> {
-    // Fast path: the seed `[{}]` joins to `right` unchanged (first pattern).
-    if left.len() == 1 && left[0].is_empty() {
+/// Hash-join two BGP relations on the slots they share. Every left row binds
+/// exactly the slots accumulated so far and every right row binds the current
+/// pattern's slots, so the shared set is uniform across rows.
+fn hash_join(
+    left: Vec<Row>,
+    left_bound: &[usize],
+    right: Vec<Row>,
+    right_slots: &[usize],
+) -> Vec<Row> {
+    // Fast path: the all-unbound seed row joins to `right` unchanged.
+    if left.len() == 1 && left_bound.is_empty() {
         return right;
     }
     if left.is_empty() || right.is_empty() {
         return Vec::new();
     }
-    let shared: Vec<String> = {
-        let rkeys = &right[0];
-        left[0]
-            .keys()
-            .filter(|k| rkeys.contains_key(*k))
-            .cloned()
-            .collect()
+    let shared: Vec<usize> = right_slots
+        .iter()
+        .copied()
+        .filter(|s| left_bound.contains(s))
+        .collect();
+    let fill = |l: &Row, r: &Row| -> Row {
+        let mut out = l.clone();
+        for &s in right_slots {
+            out[s] = r[s].clone();
+        }
+        out
     };
     if shared.is_empty() {
         // No shared variable: Cartesian product. In a connected BGP this only
@@ -452,13 +520,13 @@ fn hash_join(left: Vec<IntBinding>, right: Vec<IntBinding>) -> Vec<IntBinding> {
         let mut out = Vec::with_capacity(left.len() * right.len());
         for l in &left {
             for r in &right {
-                out.push(merge(l, r));
+                out.push(fill(l, r));
             }
         }
         return out;
     }
-    let key_of = |b: &IntBinding| -> Vec<i64> { shared.iter().map(|k| b[k]).collect() };
-    let mut buckets: HashMap<Vec<i64>, Vec<IntBinding>> = HashMap::new();
+    let key_of = |b: &Row| -> Vec<Val> { shared.iter().map(|&s| b[s].clone().unwrap()).collect() };
+    let mut buckets: HashMap<Vec<Val>, Vec<Row>> = HashMap::new();
     for r in right {
         buckets.entry(key_of(&r)).or_default().push(r);
     }
@@ -466,85 +534,38 @@ fn hash_join(left: Vec<IntBinding>, right: Vec<IntBinding>) -> Vec<IntBinding> {
     for l in &left {
         if let Some(rs) = buckets.get(&key_of(l)) {
             for r in rs {
-                out.push(merge(l, r));
+                out.push(fill(l, r));
             }
         }
     }
     out
 }
 
-/// Merge two bindings that already agree on their shared variables.
-fn merge(l: &IntBinding, r: &IntBinding) -> IntBinding {
-    let mut b = l.clone();
-    for (k, v) in r {
-        b.insert(k.clone(), *v);
-    }
-    b
-}
-
-/// Resolve a tagged integer binding value to its term.
-pub(crate) fn term_of_value(dict: &crate::Dictionary, val: i64) -> Option<String> {
-    term_of(dict, val)
-}
-
 // Constant-only index constraints. A variable scans as a wildcard (`Some(None)`)
 // — it is resolved later by the hash join, not pushed into the scan. The outer
 // `None` means "unsatisfiable" (a constant in an impossible role, or unknown to
 // the dictionary), which empties the whole BGP. Inner `None` = "wildcard".
-fn const_subject(t: &IntTerm, d: &crate::Dictionary) -> Option<Option<u32>> {
+fn const_subject(t: &SlotTerm, d: &crate::Dictionary) -> Option<Option<u32>> {
     match t {
-        IntTerm::Node(n) => d.node_as_subject_id(*n).map(Some),
-        IntTerm::Pred(_) => None, // a predicate term can't be a subject
-        IntTerm::Var(_) => Some(None),
+        SlotTerm::Node(n) => d.node_as_subject_id(*n).map(Some),
+        SlotTerm::Pred(_) => None, // a predicate term can't be a subject
+        SlotTerm::Var(_) => Some(None),
     }
 }
 
-fn const_object(t: &IntTerm, d: &crate::Dictionary) -> Option<Option<u32>> {
+fn const_object(t: &SlotTerm, d: &crate::Dictionary) -> Option<Option<u32>> {
     match t {
-        IntTerm::Node(n) => d.node_as_object_id(*n).map(Some),
-        IntTerm::Pred(_) => None,
-        IntTerm::Var(_) => Some(None),
+        SlotTerm::Node(n) => d.node_as_object_id(*n).map(Some),
+        SlotTerm::Pred(_) => None,
+        SlotTerm::Var(_) => Some(None),
     }
 }
 
-fn const_predicate(t: &IntTerm) -> Option<Option<u32>> {
+fn const_predicate(t: &SlotTerm) -> Option<Option<u32>> {
     match t {
-        IntTerm::Pred(p) => Some(Some(*p)),
-        IntTerm::Node(_) => None, // a node term can't be a predicate
-        IntTerm::Var(_) => Some(None),
-    }
-}
-
-/// Extend an integer binding, rejecting inconsistent variable reuse.
-fn extend_int(
-    base: &IntBinding,
-    sp: &IntTerm,
-    pp: &IntTerm,
-    op: &IntTerm,
-    s: i64,
-    p: i64,
-    o: i64,
-) -> Option<IntBinding> {
-    let mut b = base.clone();
-    for (term, val) in [(sp, s), (pp, p), (op, o)] {
-        if let IntTerm::Var(v) = term {
-            match b.get(v) {
-                Some(&existing) if existing != val => return None,
-                Some(_) => {}
-                None => {
-                    b.insert(v.clone(), val);
-                }
-            }
-        }
-    }
-    Some(b)
-}
-
-fn term_of(dict: &crate::Dictionary, val: i64) -> Option<String> {
-    if val >= 0 {
-        dict.node_term(val as u32)
-    } else {
-        dict.predicate_term((-val - 1) as u32)
+        SlotTerm::Pred(p) => Some(Some(*p)),
+        SlotTerm::Node(_) => None, // a node term can't be a predicate
+        SlotTerm::Var(_) => Some(None),
     }
 }
 

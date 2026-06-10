@@ -1,14 +1,8 @@
 {
-  "schema_version": 1,
-  "tool": "rete-bench",
-  "metadata": {
-    "title": "Comparison vs Oxigraph (real OpenCitations network)",
-    "latest_run": "2026-06-09",
-    "oxigraph_version": "0.5.8",
-    "machine": "32 logical cores",
-    "dataset": "the real **OpenCitations** citation network from the [playground](playground.html) - papers citing the AlphaFold paper (`10.1038/s41586-021-03819-2`), enriched with clearly-labelled synthetic metadata.",
-    "dataset_note": "**~588 k triples** in the playground dataset, **539,246 triples** after Oxigraph's spec-strict parser dropped 88 malformed compound-DOI IRIs present in the OpenCitations dump. Both engines load the same sanitized N-Triples, so the comparison is apples-to-apples.",
-    "source_json": "docs/benchmark-opencitations.json"
+  "environment": {
+    "logical_cores": 32,
+    "query_repetitions": 5,
+    "reach_repetitions": 3
   },
   "inputs": {
     "nt_path": "data/opencitations/enriched-clean.nt",
@@ -16,279 +10,274 @@
     "rete_bytes": 2627985,
     "rete_path": "data/opencitations/enriched-clean.rete"
   },
-  "environment": {
-    "logical_cores": 32,
-    "query_repetitions": 5,
-    "reach_repetitions": 3
-  },
   "load_open": {
-    "oxigraph_ms": 1925.345001,
-    "rete_ms": 15.224466000000001
+    "oxigraph_ms": 2026.2924450000003,
+    "rete_ms": 15.46284
   },
   "queries": [
     {
       "agree": true,
       "implementation_defined": false,
       "name": "SELECT count (aggregate)",
-      "oxigraph_ms": 6.1461809999999995,
+      "oxigraph_ms": 4.514533999999999,
       "oxigraph_rows": 1,
       "query": "SELECT (COUNT(?p) AS ?n) WHERE { ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> }",
-      "rete_ms": 2.7376229999999997,
+      "rete_ms": 2.971447,
       "rete_rows": 1,
-      "speedup": 2.2450793991722016
+      "speedup": 1.51930490431093
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "SELECT DISTINCT",
-      "oxigraph_ms": 6.610035,
+      "oxigraph_ms": 5.392063,
       "oxigraph_rows": 6,
       "query": "SELECT DISTINCT ?d WHERE { ?p ex:discipline ?d }",
-      "rete_ms": 5.080795,
+      "rete_ms": 3.296645,
       "rete_rows": 6,
-      "speedup": 1.3009843931904357
+      "speedup": 1.6356213665711656
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "ASK",
-      "oxigraph_ms": 0.007111,
+      "oxigraph_ms": 0.0069500000000000004,
       "oxigraph_rows": 1,
       "query": "ASK { ?p ex:discipline <http://ex/discipline/Physics> }",
-      "rete_ms": 0.318866,
+      "rete_ms": 0.331079,
       "rete_rows": 1,
-      "speedup": 0.022300903827940265
+      "speedup": 0.020991968684211323
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "CONSTRUCT",
-      "oxigraph_ms": 0.012741,
+      "oxigraph_ms": 0.0133,
       "oxigraph_rows": 9,
       "query": "CONSTRUCT { ?a ex:coauthor ?b } WHERE { VALUES ?a { <http://ex/author/1235> } ?a ex:coauthor ?b }",
-      "rete_ms": 0.016940999999999998,
+      "rete_ms": 0.021481999999999998,
       "rete_rows": 9,
-      "speedup": 0.7520807508411548
+      "speedup": 0.6191229866865283
     },
     {
       "agree": true,
       "implementation_defined": true,
       "name": "DESCRIBE (impl-defined)",
-      "oxigraph_ms": 0.008481,
+      "oxigraph_ms": 0.008311,
       "oxigraph_rows": 11,
       "query": "DESCRIBE <http://ex/author/1235>",
-      "rete_ms": 0.017671,
+      "rete_ms": 0.018431,
       "rete_rows": 11,
-      "speedup": 0.47993888291551134
+      "speedup": 0.450925071889751
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "VALUES (inline data)",
-      "oxigraph_ms": 5.032324,
+      "oxigraph_ms": 3.383159,
       "oxigraph_rows": 10962,
       "query": "SELECT ?p WHERE { VALUES ?d { <http://ex/discipline/Biology> <http://ex/discipline/Physics> } ?p ex:discipline ?d }",
-      "rete_ms": 10.685039,
+      "rete_ms": 7.151063,
       "rete_rows": 10962,
-      "speedup": 0.4709691747498535
+      "speedup": 0.4730987546886386
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "UNION",
-      "oxigraph_ms": 3.417089,
+      "oxigraph_ms": 2.410635,
       "oxigraph_rows": 10993,
       "query": "SELECT ?p WHERE { { ?p ex:discipline <http://ex/discipline/Biology> } UNION { ?p ex:discipline <http://ex/discipline/Chemistry> } }",
-      "rete_ms": 8.706335000000001,
+      "rete_ms": 7.4489090000000004,
       "rete_rows": 10993,
-      "speedup": 0.39248305974902176
+      "speedup": 0.3236225600285894
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "OPTIONAL (left join)",
-      "oxigraph_ms": 0.18582900000000002,
+      "oxigraph_ms": 0.17867,
       "oxigraph_rows": 200,
       "query": "SELECT ?p ?v WHERE { ?p ex:discipline <http://ex/discipline/Biology> OPTIONAL { ?p prism:publicationName ?v } } LIMIT 200",
-      "rete_ms": 62.420977,
+      "rete_ms": 6.608552,
       "rete_rows": 200,
-      "speedup": 0.0029770280590129183
+      "speedup": 0.027036179786434304
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "MINUS",
-      "oxigraph_ms": 1.647827,
+      "oxigraph_ms": 1.631242,
       "oxigraph_rows": 2728,
       "query": "SELECT ?p WHERE { ?p ex:discipline <http://ex/discipline/Biology> MINUS { ?p dct:subject \"protein\" } }",
-      "rete_ms": 7.901534,
+      "rete_ms": 3.712249,
       "rete_rows": 2728,
-      "speedup": 0.2085452014760678
+      "speedup": 0.4394214935474426
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "FILTER NOT EXISTS",
-      "oxigraph_ms": 5.426813,
+      "oxigraph_ms": 5.9638349999999996,
       "oxigraph_rows": 2728,
       "query": "SELECT ?p WHERE { ?p ex:discipline <http://ex/discipline/Biology> FILTER NOT EXISTS { ?p dct:subject \"protein\" } }",
-      "rete_ms": 8.259062,
+      "rete_ms": 3.640045,
       "rete_rows": 2728,
-      "speedup": 0.6570737693941515
+      "speedup": 1.638395953896174
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "3-way join + LIMIT",
-      "oxigraph_ms": 0.119606,
+      "oxigraph_ms": 0.141988,
       "oxigraph_rows": 50,
       "query": "SELECT ?name ?title WHERE { ?p dct:subject \"protein\" . ?p dct:title ?title . ?p dct:creator ?a . ?a foaf:name ?name } LIMIT 50",
-      "rete_ms": 39.023802,
+      "rete_ms": 22.327815,
       "rete_rows": 50,
-      "speedup": 0.003064949950289313
+      "speedup": 0.006359242944282725
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "FILTER REGEX (case-insens.)",
-      "oxigraph_ms": 0.781475,
+      "oxigraph_ms": 0.485678,
       "oxigraph_rows": 200,
       "query": "SELECT ?p ?t WHERE { ?p dct:title ?t FILTER(REGEX(?t, \"genome\", \"i\")) } LIMIT 200",
-      "rete_ms": 64.40368000000001,
+      "rete_ms": 21.249394000000002,
       "rete_rows": 200,
-      "speedup": 0.01213401159685285
+      "speedup": 0.02285608709594259
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "FILTER arith + logical",
-      "oxigraph_ms": 0.7314930000000001,
+      "oxigraph_ms": 0.6211749999999999,
       "oxigraph_rows": 200,
       "query": "SELECT ?p ?c WHERE { ?p ex:citationCount ?c FILTER(?c >= 100 && ?c <= 110) } LIMIT 200",
-      "rete_ms": 4.162297,
+      "rete_ms": 0.258345,
       "rete_rows": 200,
-      "speedup": 0.17574262480548603
+      "speedup": 2.404439799492926
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "BIND + SUBSTR + CONCAT",
-      "oxigraph_ms": 0.203069,
+      "oxigraph_ms": 0.22093300000000002,
       "oxigraph_rows": 200,
       "query": "SELECT ?p ?label WHERE { ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> . ?p dct:date ?y BIND(CONCAT(SUBSTR(?y,1,3), \"0s\") AS ?label) } LIMIT 200",
-      "rete_ms": 14.861569,
+      "rete_ms": 7.64168,
       "rete_rows": 200,
-      "speedup": 0.013664035069244709
+      "speedup": 0.028911574418190766
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "path sequence a/b",
-      "oxigraph_ms": 0.22245,
+      "oxigraph_ms": 0.209592,
       "oxigraph_rows": 200,
       "query": "SELECT ?name WHERE { ?p cito:cites <https://doi.org/10.1038/s41586-021-03819-2> . ?p dct:creator/foaf:name ?name } LIMIT 200",
-      "rete_ms": 60.293723,
+      "rete_ms": 25.479402,
       "rete_rows": 200,
-      "speedup": 0.00368943878287297
+      "speedup": 0.008225938740634493
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "path inverse ^p (count)",
-      "oxigraph_ms": 3.754909,
+      "oxigraph_ms": 5.516089,
       "oxigraph_rows": 1,
       "query": "SELECT (COUNT(?x) AS ?n) WHERE { <https://doi.org/10.1038/s41586-021-03819-2> ^cito:cites ?x }",
-      "rete_ms": 2.6389690000000003,
+      "rete_ms": 2.85655,
       "rete_rows": 1,
-      "speedup": 1.4228696888822867
+      "speedup": 1.9310318391066146
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "path + transitive (count)",
-      "oxigraph_ms": 7.266486,
+      "oxigraph_ms": 6.970182,
       "oxigraph_rows": 1,
       "query": "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { <http://ex/author/1235> ex:coauthor+ ?o }",
-      "rete_ms": 8.407758,
+      "rete_ms": 5.513719999999999,
       "rete_rows": 1,
-      "speedup": 0.8642596516217522
+      "speedup": 1.2641523327263628
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "path * zero-or-more (count)",
-      "oxigraph_ms": 7.859933,
+      "oxigraph_ms": 8.500198000000001,
       "oxigraph_rows": 1,
       "query": "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { <http://ex/author/1235> ex:coauthor* ?o }",
-      "rete_ms": 8.398118,
+      "rete_ms": 5.489543,
       "rete_rows": 1,
-      "speedup": 0.9359159992750756
+      "speedup": 1.5484345418188727
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "GROUP BY + ORDER BY",
-      "oxigraph_ms": 4.89132,
+      "oxigraph_ms": 7.114310000000001,
       "oxigraph_rows": 6,
       "query": "SELECT ?d (COUNT(?p) AS ?n) WHERE { ?p ex:discipline ?d } GROUP BY ?d ORDER BY DESC(?n)",
-      "rete_ms": 4.535284,
+      "rete_ms": 2.528832,
       "rete_rows": 6,
-      "speedup": 1.0785035733153647
+      "speedup": 2.813279015766963
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "GROUP BY + HAVING",
-      "oxigraph_ms": 7.470316,
+      "oxigraph_ms": 7.1544419999999995,
       "oxigraph_rows": 5,
       "query": "SELECT ?d (COUNT(?p) AS ?n) WHERE { ?p ex:discipline ?d } GROUP BY ?d HAVING(COUNT(?p) > 5400)",
-      "rete_ms": 4.5833260000000005,
+      "rete_ms": 2.5127610000000002,
       "rete_rows": 5,
-      "speedup": 1.6298897350963033
+      "speedup": 2.847243331140526
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "AVG per group",
-      "oxigraph_ms": 35.905265,
+      "oxigraph_ms": 37.990636,
       "oxigraph_rows": 6,
       "query": "SELECT ?d (AVG(?c) AS ?avg) WHERE { ?p ex:discipline ?d . ?p ex:citationCount ?c } GROUP BY ?d ORDER BY DESC(?avg)",
-      "rete_ms": 36.840822,
+      "rete_ms": 17.825530999999998,
       "rete_rows": 6,
-      "speedup": 0.9746054254706911
+      "speedup": 2.1312484884742005
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "MIN/MAX/SUM",
-      "oxigraph_ms": 6.3800669999999995,
+      "oxigraph_ms": 7.372864,
       "oxigraph_rows": 1,
       "query": "SELECT (MIN(?c) AS ?lo) (MAX(?c) AS ?hi) (SUM(?c) AS ?tot) WHERE { ?p ex:citationCount ?c }",
-      "rete_ms": 7.765249,
+      "rete_ms": 4.400701,
       "rete_rows": 1,
-      "speedup": 0.8216178257773833
+      "speedup": 1.6753839899597815
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "COUNT(DISTINCT)",
-      "oxigraph_ms": 5.721688,
+      "oxigraph_ms": 4.696004,
       "oxigraph_rows": 1,
       "query": "SELECT (COUNT(DISTINCT ?v) AS ?n) WHERE { ?p prism:publicationName ?v }",
-      "rete_ms": 4.667381,
+      "rete_ms": 2.5260019999999996,
       "rete_rows": 1,
-      "speedup": 1.2258883515187642
+      "speedup": 1.8590658281347365
     },
     {
       "agree": true,
       "implementation_defined": false,
       "name": "ORDER BY + LIMIT + OFFSET",
-      "oxigraph_ms": 17.79757,
+      "oxigraph_ms": 17.309344,
       "oxigraph_rows": 10,
       "query": "SELECT ?p ?c WHERE { ?p ex:citationCount ?c } ORDER BY DESC(?c) LIMIT 10 OFFSET 50",
-      "rete_ms": 62.071534,
+      "rete_ms": 3.765922,
       "rete_rows": 10,
-      "speedup": 0.2867267627057517
+      "speedup": 4.596309748316614
     }
   ],
   "query_agreement": {
@@ -296,15 +285,17 @@
     "total": 24
   },
   "reachability": {
-    "oxigraph_ms": 2159.383851,
+    "oxigraph_ms": 2088.947282,
     "oxigraph_total": 1636200,
-    "oxigraph_vs_rete_serial": 0.21075773850454713,
-    "parallel_speedup_vs_serial": 14.594634194100195,
+    "oxigraph_vs_rete_serial": 0.22274840251329997,
+    "parallel_speedup_vs_serial": 14.411130191000028,
     "predicate": "<http://ex/coauthor>",
-    "rete_parallel_ms": 31.183163,
+    "rete_parallel_ms": 32.288215,
     "rete_parallel_total": 1636200,
-    "rete_serial_ms": 455.106857,
+    "rete_serial_ms": 465.30967,
     "rete_serial_total": 1636200,
     "seed_count": 300
-  }
+  },
+  "schema_version": 1,
+  "tool": "rete-bench"
 }
