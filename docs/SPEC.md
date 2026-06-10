@@ -260,10 +260,32 @@ tile (a-groups are never split across tiles); an unbound one visits every
 tile, zone-map-pruned. The directory is uncompressed so it is readable before
 any tile is fetched.
 
+**Dictionary sections are chunked the same way** (their container-level codec
+is also `none`): each of the four §5 sections is stored as
+
+```
+section payload:  varint header_len, raw §5.1 header (term count, restart
+                  interval, restart-offset table — original encoding, so the
+                  offsets stay valid in the section's coordinate space)
+                  varint num_chunks
+                  per chunk: varint Δfirst_run        # Δ from previous chunk
+                             varint first_term_len, first_term bytes
+                             varint clen               # compressed chunk length
+                  chunks:    run-aligned body slices, compressed individually
+```
+
+Chunks hold whole front-coded runs (~64 KiB of body per chunk), and the
+directory embeds each chunk's first term — so `term → id` binary-searches the
+directory locally and faults exactly **one** chunk, and `id → term` computes
+its chunk arithmetically and faults one. A lazily-opened remote file therefore
+pays the section headers + directories (KBs) up front and O(touched chunks)
+afterwards, instead of the whole dictionary container.
+
 **Compatibility:** version `0x01` files store one whole-section-compressed
-block per permutation. Readers still accept them (the whole section is one
-logical tile); writers always emit `0x02`. The format remains experimental —
-no stability promise beyond this one documented transition.
+block per permutation and whole-compressed dictionary sections. Readers still
+accept them (each section is one logical tile/chunk); writers always emit
+`0x02`. The format remains experimental — no stability promise beyond this one
+documented transition.
 
 ---
 

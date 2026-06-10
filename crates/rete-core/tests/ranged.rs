@@ -1,10 +1,10 @@
-//! Range-access invariants — the headline "give it a URL, fetch only what you
+//! Range-access invariants â€” the headline "give it a URL, fetch only what you
 //! need" promise, asserted in code rather than only measured by the benchmark.
 //!
 //! A [`RecordingReader`] logs every byte range requested, so we can prove:
 //!   * `SummaryView::open_ranged` reads only header + dictionary + summary and
 //!     **never touches the triple-index byte range** (the "overview first" path);
-//!   * `Rete::open_ranged` opens in a small bounded number of requests — never a
+//!   * `Rete::open_ranged` opens in a small bounded number of requests â€” never a
 //!     linear scan proportional to the triple count.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -140,7 +140,7 @@ fn summary_view_never_reads_the_index() {
     // And it pulls far less than the whole file (the index dominates size).
     assert!(
         reader.bytes_read() < image.len() as u64,
-        "summary read {} of {} bytes — expected a strict subset",
+        "summary read {} of {} bytes â€” expected a strict subset",
         reader.bytes_read(),
         image.len()
     );
@@ -155,7 +155,7 @@ fn summary_view_never_reads_the_index() {
 fn summary_works_with_index_zeroed() {
     // The progressive browser path assembles a buffer with only header + dict +
     // summary populated and the index region absent. Prove the overview computes
-    // correctly even when that region is overwritten with zeros — i.e. the
+    // correctly even when that region is overwritten with zeros â€” i.e. the
     // summary truly does not depend on the index bytes.
     let mut image = image_with_pyramid();
     let (idx_start, idx_end) = index_region(&image);
@@ -180,12 +180,12 @@ fn full_open_is_bounded_not_a_scan() {
     let reader = RecordingReader::new(image.clone());
     let rete = Rete::open_ranged(&reader).unwrap();
 
-    // header, dictionary, index, pyramid-meta — at most these four (no named
+    // header, dictionary, index, pyramid-meta â€” at most these four (no named
     // graphs in this file). Crucially constant, not proportional to triples.
     let reads = reader.reads();
     assert!(
         reads.len() <= 4,
-        "full ranged open should be ≤4 reads, got {} ({reads:?})",
+        "full ranged open should be â‰¤4 reads, got {} ({reads:?})",
         reads.len()
     );
 
@@ -234,14 +234,29 @@ fn routed_pattern_query_fetches_only_the_selected_permutation() {
     );
 }
 
-/// A graph whose sections dwarf the 4 KiB directory prefetch, split into many
-/// tiles (tiny tile budget). `<http://ex/n7>` has exactly two `knows` edges.
+/// A graph whose index sections *and* dictionary dwarf the 4 KiB directory
+/// prefetches: many tiles (tiny tile budget) and long IRIs (multi-chunk dict
+/// sections). ``QUERIED_NODE`` has exactly two
+/// `knows` edges.
+/// Node IRIs for [`multi_tile_image`]. Scrambled hex segments keep the
+/// dictionary from front-coding/zstd-ing into a few KB — the lazy-dict
+/// assertion needs real-sized sections.
+fn mt_node(n: u32) -> String {
+    format!(
+        "<http://ex/n/{:08x}/{:08x}/{n:05}>",
+        n.wrapping_mul(0x9E37_79B9),
+        n.wrapping_mul(0x85EB_CA6B) ^ 0x5151_5151
+    )
+}
+
 fn multi_tile_image() -> Vec<u8> {
-    let node = |n: u32| format!("<http://ex/n{n}>");
+    let node = mt_node;
     let knows = "<http://ex/knows>".to_string();
     let mut db = DictionaryBuilder::new();
-    let edges: Vec<(u32, u32)> = (0..4000u32)
-        .flat_map(|i| [(i, (i * 7 + 1) % 4000), (i, (i * 13 + 5) % 4000)])
+    // Enough scrambled terms that each dict section spans many ~64 KiB chunks,
+    // so "a few faulted chunks" is measurably smaller than the section.
+    let edges: Vec<(u32, u32)> = (0..24000u32)
+        .flat_map(|i| [(i, (i * 7 + 1) % 24000), (i, (i * 13 + 5) % 24000)])
         .collect();
     for &(s, o) in &edges {
         db.observe(&node(s), &knows, &node(o));
@@ -255,7 +270,7 @@ fn multi_tile_image() -> Vec<u8> {
 }
 
 /// On a tiled (v0.2) multi-tile file, a bound-subject routed query must fetch
-/// only the tile **directory** plus the one matching tile — a small fraction
+/// only the tile **directory** plus the one matching tile â€” a small fraction
 /// of the selected permutation section, not the whole section.
 #[test]
 fn routed_pattern_query_fetches_only_matching_tiles() {
@@ -264,11 +279,12 @@ fn routed_pattern_query_fetches_only_matching_tiles() {
     let index_len = idx_end - idx_start;
 
     let plain = Rete::open(&image).unwrap();
-    let expected = plain.query(Some("<http://ex/n7>"), None, None);
+    let n7 = mt_node(7);
+    let expected = plain.query(Some(&n7), None, None);
     assert_eq!(expected.len(), 2);
 
     let reader = RecordingReader::new(image.clone());
-    let got = Rete::query_ranged(&reader, Some("<http://ex/n7>"), None, None).unwrap();
+    let got = Rete::query_ranged(&reader, Some(&n7), None, None).unwrap();
     assert_eq!(got, expected);
 
     // Bytes fetched from inside the index region: directory prefix + 1 tile.
@@ -280,14 +296,14 @@ fn routed_pattern_query_fetches_only_matching_tiles() {
         .sum();
     assert!(
         index_bytes_read < index_len / 6,
-        "tile-routed query read {index_bytes_read} of {index_len} index bytes — \
+        "tile-routed query read {index_bytes_read} of {index_len} index bytes â€” \
          expected directory + one tile, a small fraction of one section"
     );
 }
 
 /// Full SPARQL over a lazily-faulting ranged open: a selective query must
-/// fault in only the tiles its scans touch — directory prefixes + a couple of
-/// tiles, a small fraction of the index — while returning exactly the same
+/// fault in only the tiles its scans touch â€” directory prefixes + a couple of
+/// tiles, a small fraction of the index â€” while returning exactly the same
 /// rows as an in-memory open.
 #[test]
 fn lazy_sparql_open_fetches_only_touched_tiles() {
@@ -295,9 +311,9 @@ fn lazy_sparql_open_fetches_only_touched_tiles() {
     let (idx_start, idx_end) = index_region(&image);
     let index_len = idx_end - idx_start;
 
-    let q = "SELECT ?o WHERE { <http://ex/n7> <http://ex/knows> ?o }";
+    let q = format!("SELECT ?o WHERE {{ {} <http://ex/knows> ?o }}", mt_node(7));
     let plain = Rete::open(&image).unwrap();
-    let expected = match eval_query(&plain, q).unwrap() {
+    let expected = match eval_query(&plain, &q).unwrap() {
         QueryOutput::Select(_, rows) => rows,
         other => panic!("unexpected output {other:?}"),
     };
@@ -305,7 +321,7 @@ fn lazy_sparql_open_fetches_only_touched_tiles() {
 
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
     let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
-    let got = match eval_query(&rete, q).unwrap() {
+    let got = match eval_query(&rete, &q).unwrap() {
         QueryOutput::Select(_, rows) => rows,
         other => panic!("unexpected output {other:?}"),
     };
@@ -320,8 +336,27 @@ fn lazy_sparql_open_fetches_only_touched_tiles() {
         .sum();
     assert!(
         index_bytes_read < index_len / 4,
-        "lazy SPARQL read {index_bytes_read} of {index_len} index bytes — \
+        "lazy SPARQL read {index_bytes_read} of {index_len} index bytes â€” \
          expected tile directories plus the touched tiles only"
+    );
+
+    // The dictionary is also lazy (chunked): the query resolves a couple of
+    // constant terms and a couple of output terms, so it must fetch the
+    // section headers + chunk directories plus a few chunks â€” not the whole
+    // dictionary container.
+    let h = plain.header().clone();
+    let (dict_start, dict_end) = (h.dictionary_offset, h.dictionary_offset + h.dictionary_len);
+    let dict_bytes_read: u64 = reader
+        .reads()
+        .iter()
+        .filter(|r| overlaps(**r, (dict_start, dict_end)))
+        .map(|&(_, l)| l)
+        .sum();
+    assert!(
+        dict_bytes_read < h.dictionary_len / 2,
+        "lazy SPARQL read {dict_bytes_read} of {} dictionary bytes â€” \
+         expected directories plus a few chunks only",
+        h.dictionary_len
     );
 }
 
@@ -335,10 +370,10 @@ fn lazy_sparql_open_surfaces_failed_tile_fetches() {
     let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
     assert!(!rete.index_incomplete());
 
-    // The network dies after the open; the next query's tile faults fail.
+    // The network dies after the open; the next query's chunk/tile faults fail.
     reader.fail_from_now();
-    let q = "SELECT ?o WHERE { <http://ex/n7> <http://ex/knows> ?o }";
-    let _ = eval_query(&rete, q).unwrap(); // evaluation itself must not panic
+    let q = format!("SELECT ?o WHERE {{ {} <http://ex/knows> ?o }}", mt_node(7));
+    let _ = eval_query(&rete, &q).unwrap(); // evaluation itself must not panic
     assert!(
         rete.index_incomplete(),
         "a failed tile fetch must set the incomplete flag"

@@ -4,6 +4,9 @@
 //! predicates / graphs), sorted and assigned dense 1-based IDs. Terms are stored
 //! in runs of `R`; each run starts with a full term and front-codes the rest.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+
 use crate::varint::{read_uvarint, write_uvarint};
 
 /// Default restart interval: a full term every `R` entries.
@@ -210,6 +213,271 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
         }
     }
     None
+}
+
+// --- chunked sections ---------------------------------------------------------
+//
+// A section's body is split (on run boundaries) into **chunks** that are
+// compressed and fetched independently (format v0.2), so a remote client
+// resolves a term with one chunk fault instead of downloading the whole
+// section. Local sections are the degenerate case: one pre-set chunk holding
+// the entire serialized section — a single code path serves both.
+
+/// Fetches one chunk's decompressed body slice on demand (`None` = the fetch
+/// failed; the section records it and the lookup misses — callers over remote
+/// data must check [`ChunkedSection::load_incomplete`] after evaluating).
+pub type ChunkLoader = Box<dyn Fn(usize) -> Option<Vec<u8>> + Send + Sync>;
+
+/// One chunk: a run-aligned slice of the section body. `body_start` is the
+/// offset (in the section's coordinate space — the same space
+/// [`SectionMeta::restart_offsets`] uses) where `data[0]` sits.
+pub struct SectionChunk {
+    first_run: usize,
+    /// First term of the chunk (for chunk-level binary search in `id`);
+    /// unused (empty) for the single local chunk.
+    first_term: Vec<u8>,
+    body_start: usize,
+    data: OnceLock<Vec<u8>>,
+}
+
+impl SectionChunk {
+    /// A remote chunk descriptor (data faults in through the loader).
+    pub fn remote(first_run: usize, first_term: Vec<u8>, body_start: usize) -> Self {
+        SectionChunk {
+            first_run,
+            first_term,
+            body_start,
+            data: OnceLock::new(),
+        }
+    }
+
+    /// A resident chunk (data already decoded).
+    pub fn resident(
+        first_run: usize,
+        first_term: Vec<u8>,
+        body_start: usize,
+        data: Vec<u8>,
+    ) -> Self {
+        let cell = OnceLock::new();
+        let _ = cell.set(data);
+        SectionChunk {
+            first_run,
+            first_term,
+            body_start,
+            data: cell,
+        }
+    }
+}
+
+/// The first (full) term of the run starting at `off`, as raw bytes. `None`
+/// on malformed bytes.
+pub fn run_first_term(bytes: &[u8], off: usize) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    run_entry_into(bytes, off, &mut buf)?;
+    Some(buf)
+}
+
+/// A dictionary section whose body is served chunk-by-chunk: metadata + chunk
+/// directory always present, chunk bytes local or faulted in on first touch.
+pub struct ChunkedSection {
+    meta: SectionMeta,
+    chunks: Vec<SectionChunk>,
+    loader: Option<ChunkLoader>,
+    failed: AtomicBool,
+}
+
+impl ChunkedSection {
+    /// A local section: the whole serialized section (header + body) as one
+    /// pre-set chunk at coordinate 0, so the absolute restart offsets index it
+    /// directly. Malformed bytes degrade to an empty section (no panics on
+    /// untrusted files), matching the previous reader behavior.
+    pub fn local(section_bytes: Vec<u8>) -> Self {
+        let meta = parse_meta(&section_bytes).unwrap_or(SectionMeta {
+            term_count: 0,
+            restart_interval: 1,
+            restart_offsets: Vec::new(),
+        });
+        let data = OnceLock::new();
+        let _ = data.set(section_bytes);
+        ChunkedSection {
+            meta,
+            chunks: vec![SectionChunk {
+                first_run: 0,
+                first_term: Vec::new(),
+                body_start: 0,
+                data,
+            }],
+            loader: None,
+            failed: AtomicBool::new(false),
+        }
+    }
+
+    /// A section from parsed parts: metadata + chunk list, with an optional
+    /// loader for non-resident chunks (the remote lazy-open path) — resident
+    /// chunk lists (a locally-decoded chunked section) pass `None`.
+    pub fn from_parts(
+        meta: SectionMeta,
+        chunks: Vec<SectionChunk>,
+        loader: Option<ChunkLoader>,
+    ) -> Self {
+        ChunkedSection {
+            meta,
+            chunks,
+            loader,
+            failed: AtomicBool::new(false),
+        }
+    }
+
+    pub fn meta(&self) -> &SectionMeta {
+        &self.meta
+    }
+
+    pub fn term_count(&self) -> u32 {
+        self.meta.term_count
+    }
+
+    /// Did any chunk fetch fail since this section was opened? (Sticky.)
+    pub fn load_incomplete(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
+    }
+
+    fn chunk_data(&self, ci: usize) -> &[u8] {
+        self.chunks[ci].data.get_or_init(|| match &self.loader {
+            Some(load) => load(ci).unwrap_or_else(|| {
+                self.failed.store(true, Ordering::Relaxed);
+                Vec::new()
+            }),
+            None => Vec::new(),
+        })
+    }
+
+    /// The chunk holding `run` (chunks ascend by `first_run`; the first chunk
+    /// always starts at run 0).
+    fn chunk_of_run(&self, run: usize) -> Option<usize> {
+        let i = self.chunks.partition_point(|c| c.first_run <= run);
+        i.checked_sub(1)
+    }
+
+    /// Resolve `id` (1-based) to its term. One chunk fault at most.
+    pub fn term(&self, id: u32) -> Option<String> {
+        if id == ABSENT || id > self.meta.term_count {
+            return None;
+        }
+        let idx = (id - 1) as usize;
+        let run = idx / self.meta.restart_interval as usize;
+        let steps = idx % self.meta.restart_interval as usize;
+        let ci = self.chunk_of_run(run)?;
+        let bytes = self.chunk_data(ci);
+        let off = self
+            .meta
+            .restart_offsets
+            .get(run)?
+            .checked_sub(self.chunks[ci].body_start)?;
+        let mut buf = Vec::new();
+        let mut pos = run_entry_into(bytes, off, &mut buf)?;
+        for _ in 0..steps {
+            pos = entry_into(bytes, pos, &mut buf)?;
+        }
+        Some(String::from_utf8_lossy(&buf).into_owned())
+    }
+
+    /// Resolve `term` to its ID. Chunk-level binary search runs on the (local)
+    /// chunk directory, so this also costs at most one chunk fault.
+    pub fn id(&self, term: &str) -> Option<u32> {
+        if self.chunks.is_empty() {
+            return None;
+        }
+        // Pick the chunk: the last one whose first term is <= `term` (the
+        // single local chunk skips the search — its `first_term` is unset).
+        let ci = if self.chunks.len() == 1 {
+            0
+        } else {
+            let i = self
+                .chunks
+                .partition_point(|c| c.first_term.as_slice() <= term.as_bytes());
+            i.checked_sub(1)?
+        };
+        let chunk = &self.chunks[ci];
+        let bytes = self.chunk_data(ci);
+        let base = chunk.body_start;
+
+        // Binary search this chunk's runs by their first (full) term.
+        let run_end = self
+            .chunks
+            .get(ci + 1)
+            .map(|c| c.first_run)
+            .unwrap_or(self.meta.restart_offsets.len());
+        let mut buf = Vec::new();
+        let mut lo = chunk.first_run;
+        let mut hi = run_end;
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let off = self.meta.restart_offsets.get(mid)?.checked_sub(base)?;
+            run_entry_into(bytes, off, &mut buf)?;
+            if buf.as_slice() <= term.as_bytes() {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo == chunk.first_run {
+            return None; // smaller than every term in (and before) this chunk
+        }
+        let run = lo - 1;
+        let off = self.meta.restart_offsets.get(run)?.checked_sub(base)?;
+        let mut pos = run_entry_into(bytes, off, &mut buf)?;
+        let base_id = (run * self.meta.restart_interval as usize) as u32 + 1;
+        // saturating_sub: corrupt metadata must not underflow-panic.
+        let run_len = self.meta.restart_interval.min(
+            self.meta
+                .term_count
+                .saturating_sub(run as u32 * self.meta.restart_interval),
+        );
+        for step in 0..run_len {
+            if buf.as_slice() == term.as_bytes() {
+                return Some(base_id + step);
+            }
+            if buf.as_slice() > term.as_bytes() {
+                return None;
+            }
+            if step + 1 < run_len {
+                pos = entry_into(bytes, pos, &mut buf)?;
+            }
+        }
+        None
+    }
+
+    /// The full serialized section (header + body), for the file writer. The
+    /// local single-chunk case returns the stored bytes; a chunked section
+    /// re-assembles them (header re-encoded from the metadata).
+    pub fn raw_section_bytes(&self) -> Vec<u8> {
+        if self.chunks.len() == 1 && self.chunks[0].body_start == 0 {
+            if let Some(bytes) = self.chunks[0].data.get() {
+                return bytes.clone();
+            }
+        }
+        let mut out = encode_section_header(&self.meta);
+        for ci in 0..self.chunks.len() {
+            out.extend_from_slice(self.chunk_data(ci));
+        }
+        out
+    }
+}
+
+/// Re-encode a section header (term_count, interval, restart table) from its
+/// parsed metadata — the inverse of [`parse_meta`]. Restart offsets are stored
+/// body-relative on disk; `meta` holds them absolute, so the body start is
+/// re-derived as the first run's offset.
+pub fn encode_section_header(meta: &SectionMeta) -> Vec<u8> {
+    let body_start = meta.restart_offsets.first().copied().unwrap_or(0);
+    let mut out = Vec::new();
+    write_uvarint(&mut out, meta.term_count as u64);
+    write_uvarint(&mut out, meta.restart_interval as u64);
+    write_uvarint(&mut out, meta.restart_offsets.len() as u64);
+    for off in &meta.restart_offsets {
+        write_uvarint(&mut out, off.saturating_sub(body_start) as u64);
+    }
+    out
 }
 
 /// A parsed, read-only dictionary section (parses its metadata on construction).

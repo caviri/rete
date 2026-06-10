@@ -1,4 +1,4 @@
-//! `.rete` file assembly and reading (SPEC.md §4, §9).
+﻿//! `.rete` file assembly and reading (SPEC.md Â§4, Â§9).
 //!
 //! v0 layout:
 //!
@@ -24,7 +24,7 @@ use crate::tiling::{choose_round_for_budget, summarize, SuperEdge};
 use crate::triples::Triple;
 use crate::varint::{read_uvarint, write_uvarint};
 
-/// Default per-tile byte budget `T` (SPEC.md §7.1).
+/// Default per-tile byte budget `T` (SPEC.md Â§7.1).
 pub const DEFAULT_TILE_BUDGET: usize = 64 * 1024;
 
 /// Build the encoded pyramid-meta section for a graph: cluster, pick a round
@@ -34,7 +34,7 @@ pub const DEFAULT_TILE_BUDGET: usize = 64 * 1024;
 /// Per-community tiles are *not* stored: they would duplicate every triple, and
 /// the exact ranged single-pattern path now routes into one permutation section
 /// without that fourth copy. Physical community-tile directories are the next
-/// storage step (SPEC §7.2).
+/// storage step (SPEC Â§7.2).
 pub fn build_pyramid_meta(
     dict: &Dictionary,
     triples: &[(u32, u32, u32)],
@@ -161,7 +161,7 @@ pub struct TripleProvenance {
     /// Physical tile identifier (`PERM/index`, e.g. `POS/3`) for tiled (v0.2)
     /// files; `None` for pre-tiling files.
     pub tile: Option<String>,
-    /// File byte range of that (compressed) tile — the exact bytes a ranged
+    /// File byte range of that (compressed) tile â€” the exact bytes a ranged
     /// client would fetch to re-derive this match.
     pub tile_range: Option<ByteRange>,
 }
@@ -183,7 +183,7 @@ fn encode_container(sections: &[&[u8]], codec: u8) -> Vec<u8> {
 /// Decode a container into owned, decompressed sections.
 fn decode_container(bytes: &[u8], codec: u8) -> Result<Vec<Vec<u8>>, FileError> {
     let (n, mut pos) = read_uvarint(bytes).ok_or(FileError::Container("truncated count"))?;
-    // `n` is untrusted; each section needs ≥1 byte, so cap the pre-allocation at
+    // `n` is untrusted; each section needs â‰¥1 byte, so cap the pre-allocation at
     // the buffer length rather than trusting the count (avoids an OOM on a bogus
     // header pointing at a small region).
     let mut out = Vec::with_capacity((n as usize).min(bytes.len()));
@@ -206,7 +206,201 @@ fn checked_end(off: u64, len: u64) -> Result<u64, FileError> {
         .ok_or(FileError::Container("section range overflows"))
 }
 
-fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, FileError> {
+/// Per-chunk budget for dictionary section bodies â€” same reasoning as
+/// [`crate::index::INDEX_TILE_BUDGET`]: one fetch, one decompress per touch.
+const DICT_CHUNK_BUDGET: usize = 64 * 1024;
+
+/// Encode one dictionary section as a chunked payload (format v0.2):
+/// `[header_len, raw header (term_count/interval/restart table)]
+///  [num_chunks; per chunk: Î”first_run, first_term, comp_len]
+///  [individually compressed run-aligned body slices]`.
+/// The header keeps its original encoding, so restart offsets stay valid in
+/// the section's coordinate space.
+fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
+    let meta = crate::dict::parse_meta(raw).unwrap_or(crate::dict::SectionMeta {
+        term_count: 0,
+        restart_interval: 1,
+        restart_offsets: Vec::new(),
+    });
+    let body_start = meta.restart_offsets.first().copied().unwrap_or(raw.len());
+    let header = &raw[..body_start.min(raw.len())];
+
+    // Split runs into chunks by body-byte budget (whole runs only).
+    let n_runs = meta.restart_offsets.len();
+    let mut bounds: Vec<(usize, usize, usize)> = Vec::new(); // (first_run, start, end)
+    let mut r = 0;
+    while r < n_runs {
+        let start = meta.restart_offsets[r];
+        let mut r2 = r + 1;
+        while r2 < n_runs && meta.restart_offsets[r2] - start < DICT_CHUNK_BUDGET {
+            r2 += 1;
+        }
+        let end = if r2 < n_runs {
+            meta.restart_offsets[r2]
+        } else {
+            raw.len()
+        };
+        bounds.push((r, start, end));
+        r = r2;
+    }
+
+    let compressed: Vec<Vec<u8>> = bounds
+        .iter()
+        .map(|&(_, s, e)| compress(codec, &raw[s..e]))
+        .collect();
+    let mut out = Vec::new();
+    write_uvarint(&mut out, header.len() as u64);
+    out.extend_from_slice(header);
+    write_uvarint(&mut out, bounds.len() as u64);
+    let mut prev_run = 0usize;
+    for (&(first_run, start, _), comp) in bounds.iter().zip(&compressed) {
+        let first_term = crate::dict::run_first_term(raw, start).unwrap_or_default();
+        write_uvarint(&mut out, (first_run - prev_run) as u64);
+        write_uvarint(&mut out, first_term.len() as u64);
+        out.extend_from_slice(&first_term);
+        write_uvarint(&mut out, comp.len() as u64);
+        prev_run = first_run;
+    }
+    for comp in &compressed {
+        out.extend_from_slice(comp);
+    }
+    out
+}
+
+/// A parsed chunked-dict-section directory entry: the chunk's run/term/body
+/// coordinates plus its compressed byte range *within the payload*.
+struct DictChunkEntry {
+    first_run: usize,
+    first_term: Vec<u8>,
+    body_start: usize,
+    start: usize,
+    end: usize,
+}
+
+/// Parse a chunked dictionary section's header + directory (not the chunks).
+/// `bytes` may be a prefix of the payload; compressed ranges validate against
+/// `total_len`.
+fn parse_chunked_dict_dir(
+    bytes: &[u8],
+    total_len: usize,
+) -> Result<(crate::dict::SectionMeta, Vec<DictChunkEntry>), FileError> {
+    let mut pos = 0usize;
+    let take = |pos: &mut usize| -> Result<u64, FileError> {
+        let (v, n) = read_uvarint(bytes.get(*pos..).unwrap_or(&[]))
+            .ok_or(FileError::Container("truncated dict chunk directory"))?;
+        *pos += n;
+        Ok(v)
+    };
+    let header_len = take(&mut pos)? as usize;
+    let header = bytes
+        .get(pos..pos.saturating_add(header_len))
+        .ok_or(FileError::Container("truncated dict header"))?;
+    let meta = crate::dict::parse_meta(header)
+        .map_err(|_| FileError::Container("malformed dict header"))?;
+    pos += header_len;
+
+    let num_chunks = take(&mut pos)? as usize;
+    let mut entries = Vec::with_capacity(num_chunks.min(bytes.len()));
+    let mut lens = Vec::with_capacity(num_chunks.min(bytes.len()));
+    let mut prev_run = 0usize;
+    for _ in 0..num_chunks {
+        let drun = take(&mut pos)? as usize;
+        let tlen = take(&mut pos)? as usize;
+        let term = bytes
+            .get(pos..pos.saturating_add(tlen))
+            .ok_or(FileError::Container("truncated dict chunk first term"))?
+            .to_vec();
+        pos += tlen;
+        let clen = take(&mut pos)? as usize;
+        let first_run = prev_run + drun;
+        let body_start = meta
+            .restart_offsets
+            .get(first_run)
+            .copied()
+            .ok_or(FileError::Container("dict chunk run out of range"))?;
+        entries.push(DictChunkEntry {
+            first_run,
+            first_term: term,
+            body_start,
+            start: 0,
+            end: 0,
+        });
+        lens.push(clen);
+        prev_run = first_run;
+    }
+    let mut start = pos;
+    for (e, len) in entries.iter_mut().zip(lens) {
+        let end = start
+            .checked_add(len)
+            .filter(|&e| e <= total_len)
+            .ok_or(FileError::Container("dict chunk overruns section"))?;
+        e.start = start;
+        e.end = end;
+        start = end;
+    }
+    Ok((meta, entries))
+}
+
+/// Fetch and parse a remote chunked dict section's header + directory: read a
+/// small prefix and grow it geometrically until it parses, never fetching past
+/// the section.
+fn read_dict_dir_ranged<R: RangeReader>(
+    reader: &R,
+    section: ByteRange,
+) -> Result<(crate::dict::SectionMeta, Vec<DictChunkEntry>), FileError> {
+    let total = section.len as usize;
+    let mut prefetch = 4096.min(total);
+    loop {
+        let prefix = reader.read_at(section.offset, prefetch as u64)?;
+        match parse_chunked_dict_dir(&prefix, total) {
+            Ok(parsed) => return Ok(parsed),
+            Err(_) if prefetch < total => prefetch = prefetch.saturating_mul(2).min(total),
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Decode one chunked dictionary section payload into a resident
+/// [`crate::dict::ChunkedSection`] (chunks decompressed up front â€” the local
+/// open path).
+fn decode_chunked_dict_section(
+    payload: &[u8],
+    codec: u8,
+) -> Result<crate::dict::ChunkedSection, FileError> {
+    let (meta, entries) = parse_chunked_dict_dir(payload, payload.len())?;
+    let chunks = entries
+        .into_iter()
+        .map(|e| {
+            Ok(crate::dict::SectionChunk::resident(
+                e.first_run,
+                e.first_term,
+                e.body_start,
+                decompress(codec, &payload[e.start..e.end])?,
+            ))
+        })
+        .collect::<Result<Vec<_>, FileError>>()?;
+    Ok(crate::dict::ChunkedSection::from_parts(meta, chunks, None))
+}
+
+fn decode_dictionary_container(
+    bytes: &[u8],
+    codec: u8,
+    version: u8,
+) -> Result<Dictionary, FileError> {
+    if version >= 2 {
+        let dsecs = decode_container(bytes, CODEC_NONE)?;
+        if dsecs.len() != 4 {
+            return Err(FileError::Container("expected 4 dictionary sections"));
+        }
+        let mut sections = Vec::with_capacity(4);
+        for sec in &dsecs {
+            sections.push(decode_chunked_dict_section(sec, codec)?);
+        }
+        let arr: [crate::dict::ChunkedSection; 4] = sections
+            .try_into()
+            .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
+        return Ok(Dictionary::from_chunked_sections(arr));
+    }
     let mut dsecs = decode_container(bytes, codec)?;
     if dsecs.len() != 4 {
         return Err(FileError::Container("expected 4 dictionary sections"));
@@ -220,7 +414,7 @@ fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, Fi
 }
 
 /// Encode one permutation's tiled section payload (format v0.2):
-/// `[num_tiles][per tile: delta(min_a), max_a - min_a, compressed_len][tiles…]`,
+/// `[num_tiles][per tile: delta(min_a), max_a - min_a, compressed_len][tilesâ€¦]`,
 /// each tile compressed independently with `codec` so a ranged reader can
 /// fetch and decompress exactly the tiles a query routes to. The directory
 /// itself is uncompressed (it must be readable before any tile).
@@ -459,17 +653,18 @@ fn read_uvarint_at<R: RangeReader>(
 }
 
 /// Locate one section's payload byte range inside a remote container, walking
-/// only the (tiny) varint framing — no payload bytes are fetched.
+/// only the (tiny) varint framing â€” no payload bytes are fetched.
 fn locate_container_section_ranged<R: RangeReader>(
     reader: &R,
     container_offset: u64,
     container_len: u64,
     section_index: usize,
+    expected_sections: u64,
 ) -> Result<ByteRange, FileError> {
     let container_end = checked_end(container_offset, container_len)?;
     let (section_count, used) = read_uvarint_at(reader, container_offset, container_end)?;
-    if section_count != 3 {
-        return Err(FileError::Container("expected 3 permutation blocks"));
+    if section_count != expected_sections {
+        return Err(FileError::Container("unexpected container section count"));
     }
     if section_index >= section_count as usize {
         return Err(FileError::Container(
@@ -587,7 +782,7 @@ pub fn write_dataset(
 }
 
 /// Serialize a dataset with an opaque **metadata** payload occupying the file's
-/// metadata section (the application layer defines its meaning — the CLI stores a
+/// metadata section (the application layer defines its meaning â€” the CLI stores a
 /// JSON Dataset Card there). The section sits immediately after the 128-byte
 /// header and before the dictionary, so `metadata_offset` stays at `HEADER_LEN`
 /// and every downstream section shifts by `metadata.len()`. The payload is folded
@@ -606,12 +801,25 @@ pub fn write_dataset_with_metadata(
     metadata: &[u8],
 ) -> Vec<u8> {
     let codec = writer_codec();
-    let dict_container = encode_container(&dict.sections(), codec);
+    let raw_sections = dict.sections();
+    let dict_payloads: Vec<Vec<u8>> = raw_sections
+        .iter()
+        .map(|raw| encode_chunked_dict_section(raw, codec))
+        .collect();
+    let dict_container = encode_container(
+        &[
+            dict_payloads[0].as_slice(),
+            dict_payloads[1].as_slice(),
+            dict_payloads[2].as_slice(),
+            dict_payloads[3].as_slice(),
+        ],
+        CODEC_NONE,
+    );
     let index_container = encode_index_container(default_index, codec);
     let named_section = encode_named_graphs(named, codec);
 
     // The metadata section (if any) sits between the header and the dictionary,
-    // so the dictionary — and everything after it — shifts forward by its length.
+    // so the dictionary â€” and everything after it â€” shifts forward by its length.
     let meta_section_len = metadata.len() as u64;
     let dict_offset = HEADER_LEN as u64 + meta_section_len;
     let dict_len = dict_container.len() as u64;
@@ -684,7 +892,7 @@ pub fn write_dataset_with_metadata(
     out
 }
 
-/// `rdf:type` — the predicate that assigns a class to a resource.
+/// `rdf:type` â€” the predicate that assigns a class to a resource.
 pub const RDF_TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
 
 /// An **ontology-aware** coarse graph: instead of structural communities, group
@@ -745,7 +953,7 @@ pub fn schema_classes(rete: &Rete) -> Vec<(String, u32)> {
 }
 
 /// Recompute the content hash from a file image and check it against the header
-/// — detects corruption or truncation of the payload sections.
+/// â€” detects corruption or truncation of the payload sections.
 pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     let header = Header::from_bytes(bytes)?;
     let slice = |off: u64, len: u64| -> Result<&[u8], FileError> {
@@ -796,7 +1004,7 @@ pub struct Rete {
 
 impl Rete {
     /// Parse a full file image (v0 loads everything; a range-reading client
-    /// will fetch only the sections it needs — same container format).
+    /// will fetch only the sections it needs â€” same container format).
     pub fn open(bytes: &[u8]) -> Result<Self, FileError> {
         let header = Header::from_bytes(bytes)?;
 
@@ -815,6 +1023,7 @@ impl Rete {
         let dict = decode_dictionary_container(
             region(header.dictionary_offset, header.dictionary_len)?,
             header.dict_codec,
+            header.version,
         )?;
 
         let index_bytes = region(header.root_dir_offset, header.root_dir_len)?;
@@ -871,7 +1080,7 @@ impl Rete {
 
     /// Raw bytes of the file's metadata section, or `None` if it has none. The
     /// CLI stores a JSON Dataset Card here; `rete-core` treats it as opaque.
-    /// Populated by [`Rete::open`] only — an [`Rete::open_ranged`] view returns
+    /// Populated by [`Rete::open`] only â€” an [`Rete::open_ranged`] view returns
     /// `None` here (the card is not fetched on the minimal query path).
     pub fn metadata(&self) -> Option<&[u8]> {
         if self.metadata.is_empty() {
@@ -939,7 +1148,7 @@ impl Rete {
     }
 
     /// Match a triple pattern in dictionary-ID space (subject/predicate/object
-    /// IDs), returning integer triples — the fast path used by the BGP engine.
+    /// IDs), returning integer triples â€” the fast path used by the BGP engine.
     pub fn match_ids(
         &self,
         pattern: (Option<u32>, Option<u32>, Option<u32>),
@@ -948,7 +1157,7 @@ impl Rete {
     }
 
     /// All `(subject_node, object_node)` pairs for a predicate, as unified node
-    /// IDs — no term resolution. The fast path for graph traversal.
+    /// IDs â€” no term resolution. The fast path for graph traversal.
     pub fn predicate_pairs(&self, predicate: &str) -> Vec<(u32, u32)> {
         let pid = match self.dict.predicate_id(predicate) {
             Some(p) => p,
@@ -962,14 +1171,14 @@ impl Rete {
     }
 
     /// Open via a [`RangeReader`], fetching only the header and the named
-    /// section ranges — never a linear scan of the whole resource. A full query
+    /// section ranges â€” never a linear scan of the whole resource. A full query
     /// open touches at most 4 ranges (header, dictionary, index, pyramid-meta).
     pub fn open_ranged<R: RangeReader>(reader: &R) -> Result<Self, FileError> {
         let head = reader.read_at(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
+        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec, header.version)?;
 
         let index_bytes = reader.read_at(header.root_dir_offset, header.root_dir_len)?;
         let index = decode_index_container(&index_bytes, header.block_codec, header.version)?;
@@ -1016,17 +1225,17 @@ impl Rete {
 
     /// Open via an **owned** [`RangeReader`] with lazy tile faulting (tiled
     /// v0.2 files): fetches the header, dictionary, pyramid meta, named graphs,
-    /// and each permutation's tile **directory** — but no default-graph tile
+    /// and each permutation's tile **directory** â€” but no default-graph tile
     /// payloads. Tiles fault in (one range request each) the first time a scan
     /// touches them, so a selective SPARQL query fetches O(touched tiles)
     /// bytes instead of the whole index.
     ///
     /// **Failure contract:** scans are infallible by design, so a failed tile
-    /// fetch yields an empty tile and sets a sticky flag — after evaluating,
+    /// fetch yields an empty tile and sets a sticky flag â€” after evaluating,
     /// callers MUST check [`index_incomplete`](Self::index_incomplete) and
     /// surface an error instead of the (possibly partial) results.
     ///
-    /// Pre-tiling (v0.1) files fall back to [`Rete::open_ranged`] — there is
+    /// Pre-tiling (v0.1) files fall back to [`Rete::open_ranged`] â€” there is
     /// nothing lazy to do.
     pub fn open_ranged_lazy<R: RangeReader + Send + Sync + 'static>(
         reader: R,
@@ -1036,24 +1245,65 @@ impl Rete {
         if header.version < 2 {
             return Self::open_ranged(&reader);
         }
+        let reader = std::sync::Arc::new(reader);
 
-        let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
+        // Lazily-chunked dictionary: locate the four sections, fetch each
+        // section's header + restart table + chunk directory (small), and
+        // fault the chunk bodies in on first term lookup.
+        let mut dict_sections: Vec<crate::dict::ChunkedSection> = Vec::with_capacity(4);
+        for si in 0..4 {
+            let section = locate_container_section_ranged(
+                reader.as_ref(),
+                header.dictionary_offset,
+                header.dictionary_len,
+                si,
+                4,
+            )?;
+            let (meta, entries) = read_dict_dir_ranged(reader.as_ref(), section)?;
+            let ranges: Vec<ByteRange> = entries
+                .iter()
+                .map(|e| ByteRange {
+                    offset: section.offset + e.start as u64,
+                    len: (e.end - e.start) as u64,
+                })
+                .collect();
+            let chunks: Vec<crate::dict::SectionChunk> = entries
+                .into_iter()
+                .map(|e| crate::dict::SectionChunk::remote(e.first_run, e.first_term, e.body_start))
+                .collect();
+            let chunk_reader = reader.clone();
+            let codec = header.dict_codec;
+            let loader: crate::dict::ChunkLoader = Box::new(move |ci| {
+                let range = ranges.get(ci)?;
+                let bytes = chunk_reader.read_at(range.offset, range.len).ok()?;
+                decompress(codec, &bytes).ok()
+            });
+            dict_sections.push(crate::dict::ChunkedSection::from_parts(
+                meta,
+                chunks,
+                Some(loader),
+            ));
+        }
+        let dict_arr: [crate::dict::ChunkedSection; 4] = dict_sections
+            .try_into()
+            .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
+        let dict = Dictionary::from_chunked_sections(dict_arr);
 
-        // Locate the three section payloads (container framing only) and fetch
-        // just their tile directories.
+        // Locate the three index section payloads (container framing only)
+        // and fetch just their tile directories.
         let mut index_section_ranges = [ByteRange { offset: 0, len: 0 }; 3];
         let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; 3] = Default::default();
         let mut directories: [Vec<(u32, u32)>; 3] = Default::default();
         for si in 0..3 {
             let section = locate_container_section_ranged(
-                &reader,
+                reader.as_ref(),
                 header.root_dir_offset,
                 header.root_dir_len,
                 si,
+                3,
             )?;
             index_section_ranges[si] = section;
-            let dir = read_tile_directory_ranged(&reader, section)?;
+            let dir = read_tile_directory_ranged(reader.as_ref(), section)?;
             directories[si] = dir.iter().map(|e| (e.min_a, e.max_a)).collect();
             tile_ranges[si] = dir
                 .into_iter()
@@ -1088,7 +1338,6 @@ impl Rete {
         };
 
         // The loader fetches and decompresses one tile per call.
-        let reader = std::sync::Arc::new(reader);
         let codec = header.block_codec;
         let loader_ranges = tile_ranges.clone();
         let loader: crate::index::TileLoader = Box::new(move |si, ti| {
@@ -1110,12 +1359,14 @@ impl Rete {
         })
     }
 
-    /// Did any lazy tile fetch fail since this `Rete` was opened? When true,
-    /// query results may be silently incomplete — callers using
-    /// [`Rete::open_ranged_lazy`] must check this after evaluating and turn it
-    /// into an error.
+    /// Did any lazy fetch (index tile or dictionary chunk) fail since this
+    /// `Rete` was opened? When true, query results may be silently incomplete â€”
+    /// callers using [`Rete::open_ranged_lazy`] must check this after
+    /// evaluating and turn it into an error.
     pub fn index_incomplete(&self) -> bool {
-        self.index.load_incomplete() || self.named_graphs.iter().any(|(_, g)| g.load_incomplete())
+        self.index.load_incomplete()
+            || self.dict.load_incomplete()
+            || self.named_graphs.iter().any(|(_, g)| g.load_incomplete())
     }
 
     fn resolve_query_pattern(
@@ -1226,7 +1477,7 @@ impl Rete {
     }
 
     /// Evaluate one triple pattern through a [`RangeReader`] by fetching only
-    /// the header, the dictionary, and — for a tiled (v0.2) file — the
+    /// the header, the dictionary, and â€” for a tiled (v0.2) file â€” the
     /// selected permutation section's tile **directory** plus the tile(s) the
     /// bound leading id routes to; an unbound leading id fetches the section's
     /// tile body in one request. v0.1 files fetch the whole selected section.
@@ -1290,7 +1541,7 @@ fn route_pattern<R: RangeReader>(
     let header = Header::from_bytes(&head)?;
 
     let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-    let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
+    let dict = decode_dictionary_container(&dict_bytes, header.dict_codec, header.version)?;
 
     let Some(pattern) = resolve_query_pattern(&dict, s, p, o) else {
         return Ok(None);
@@ -1301,6 +1552,7 @@ fn route_pattern<R: RangeReader>(
         header.root_dir_offset,
         header.root_dir_len,
         permutation.section_index(),
+        3,
     )?;
     Ok(Some(RoutedPattern {
         dict,
@@ -1312,7 +1564,7 @@ fn route_pattern<R: RangeReader>(
 }
 
 /// Fetch and scan a routed pattern's matches. v0.2: read the tile directory,
-/// then only the matching tile byte ranges (one tile for a bound leading id —
+/// then only the matching tile byte ranges (one tile for a bound leading id â€”
 /// the O(matching bytes) promise); v0.1: the whole section, decompressed.
 fn fetch_routed_matches<R: RangeReader>(
     reader: &R,
@@ -1348,7 +1600,7 @@ fn fetch_routed_matches<R: RangeReader>(
                 ));
             }
         }
-        // Unbound leading id: every tile matters — fetch the contiguous tile
+        // Unbound leading id: every tile matters â€” fetch the contiguous tile
         // body in one request and slice it.
         None => {
             if let (Some(first), Some(last)) = (dir.first(), dir.last()) {
@@ -1395,8 +1647,8 @@ fn resolve_query_pattern(
 
 /// A lightweight, overview-only view of a file: the pyramid summary graph plus
 /// just enough dictionary to label predicates. Fetched via ranges *without*
-/// touching the (large) triple index — the "load the coarse graph first" path
-/// from SPEC.md §7.2.
+/// touching the (large) triple index â€” the "load the coarse graph first" path
+/// from SPEC.md Â§7.2.
 pub struct SummaryView {
     pub round: u32,
     pub summary: Vec<SuperEdge>,
@@ -1404,7 +1656,7 @@ pub struct SummaryView {
 }
 
 impl SummaryView {
-    /// Read header → dictionary → pyramid-meta only (skips the index container).
+    /// Read header â†’ dictionary â†’ pyramid-meta only (skips the index container).
     pub fn open_ranged<R: RangeReader>(reader: &R) -> Result<Option<Self>, FileError> {
         let head = reader.read_at(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
@@ -1413,7 +1665,7 @@ impl SummaryView {
         }
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
+        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec, header.version)?;
 
         let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
         let meta =
@@ -1432,7 +1684,7 @@ impl SummaryView {
     }
 
     /// Exact number of triples using `predicate`, summed from the summary's
-    /// superedge counts — answered without ever reading the triple index.
+    /// superedge counts â€” answered without ever reading the triple index.
     pub fn predicate_total(&self, predicate: &str) -> u32 {
         match self.dict.predicate_id(predicate) {
             Some(pid) => self
@@ -1524,7 +1776,7 @@ mod tests {
     /// A pre-tiling (format v0.1) file must still open and query identically:
     /// the test reconstructs the old writer byte-for-byte (whole-section
     /// compression, one block per permutation, version byte 1) and runs the
-    /// modern reader over it — both the in-memory and the routed paths.
+    /// modern reader over it â€” both the in-memory and the routed paths.
     #[test]
     fn reads_v1_single_block_files() {
         let triples = [
@@ -1562,7 +1814,16 @@ mod tests {
             }
             b.build()
         });
-        let dict_container = encode_container(&dict.sections(), codec);
+        let raw_sections = dict.sections();
+        let dict_container = encode_container(
+            &[
+                raw_sections[0].as_slice(),
+                raw_sections[1].as_slice(),
+                raw_sections[2].as_slice(),
+                raw_sections[3].as_slice(),
+            ],
+            codec,
+        );
         let index_container = encode_container(&[&blocks[0], &blocks[1], &blocks[2]], codec);
         let header = Header {
             version: crate::header::MIN_READ_VERSION,
@@ -1609,7 +1870,7 @@ mod tests {
 
     /// A file whose index was built with a tiny tile budget (forcing many
     /// tiles per permutation) must round-trip through write/open and answer
-    /// every query shape identically — through both the in-memory and the
+    /// every query shape identically â€” through both the in-memory and the
     /// routed ranged read paths.
     #[test]
     fn multi_tile_file_round_trips_and_routes() {
@@ -1663,10 +1924,47 @@ mod tests {
         assert_eq!(routed.len(), 8);
     }
 
+    /// A dictionary big enough to split into multiple chunks per section must
+    /// round-trip every idâ†”term mapping through the chunked (v0.2) encoding â€”
+    /// including terms at chunk boundaries and absent near-misses.
+    #[test]
+    fn multi_chunk_dictionary_round_trips() {
+        let mut db = DictionaryBuilder::new();
+        let term = |i: u32| format!("<http://example.org/some/long/prefix/entity/{i:06}>");
+        for i in 0..6000u32 {
+            db.observe(&term(i), "<http://ex/p>", &term(i + 1));
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new();
+        for i in 0..6000u32 {
+            ib.push(
+                dict.encode(&term(i), "<http://ex/p>", &term(i + 1))
+                    .unwrap(),
+            );
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+        let d = rete.dictionary();
+        assert_eq!(d.term_count(), dict.term_count());
+        for i in (0..6000).step_by(97).chain([0, 1, 5999, 6000]) {
+            let t = term(i);
+            let sid = dict.subject_id(&t);
+            assert_eq!(d.subject_id(&t), sid, "subject_id({t})");
+            if let Some(id) = sid {
+                assert_eq!(d.subject_term(id).as_deref(), Some(t.as_str()));
+            }
+            let oid = dict.object_id(&t);
+            assert_eq!(d.object_id(&t), oid, "object_id({t})");
+        }
+        assert_eq!(d.subject_id("<http://example.org/absent>"), None);
+        assert_eq!(d.predicate_id("<http://ex/p>"), Some(1));
+        assert_eq!(d.predicate_term(1).as_deref(), Some("<http://ex/p>"));
+    }
+
     #[test]
     #[cfg(feature = "compression")]
     fn compression_shrinks_repetitive_data() {
-        // Many triples sharing IRI prefixes — exactly what front-coding + zstd
+        // Many triples sharing IRI prefixes â€” exactly what front-coding + zstd
         // should crush. The compressed file must be far smaller than the raw
         // term bytes, and still query correctly.
         let mut db = DictionaryBuilder::new();
@@ -1748,7 +2046,7 @@ mod tests {
             "<http://ex/e1>"
         );
 
-        // Summary-only open skips the index → strictly fewer bytes than the file.
+        // Summary-only open skips the index â†’ strictly fewer bytes than the file.
         let summ_reader = CountingReader::new(SliceReader::new(&bytes));
         let view = SummaryView::open_ranged(&summ_reader).unwrap().unwrap();
         assert!(!view.summary.is_empty());
@@ -1836,7 +2134,7 @@ mod tests {
     #[test]
     fn empty_metadata_is_byte_identical_to_plain_writer() {
         // The `&[]` path must produce exactly the bytes of the metadata-free
-        // writer for identical inputs — old files and outputs are unchanged.
+        // writer for identical inputs â€” old files and outputs are unchanged.
         assert_eq!(
             build_with_metadata(&[]),
             build_image(),

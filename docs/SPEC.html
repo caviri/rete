@@ -423,10 +423,28 @@ index sections is <code>none</code>; compression lives at tile granularity):</p>
 tile (a-groups are never split across tiles); an unbound one visits every
 tile, zone-map-pruned. The directory is uncompressed so it is readable before
 any tile is fetched.</p>
+<p><strong>Dictionary sections are chunked the same way</strong> (their container-level codec
+is also <code>none</code>): each of the four §5 sections is stored as</p>
+<pre><code>section payload:  varint header_len, raw §5.1 header (term count, restart
+                  interval, restart-offset table — original encoding, so the
+                  offsets stay valid in the section's coordinate space)
+                  varint num_chunks
+                  per chunk: varint Δfirst_run        # Δ from previous chunk
+                             varint first_term_len, first_term bytes
+                             varint clen               # compressed chunk length
+                  chunks:    run-aligned body slices, compressed individually
+</code></pre>
+<p>Chunks hold whole front-coded runs (~64 KiB of body per chunk), and the
+directory embeds each chunk's first term — so <code>term → id</code> binary-searches the
+directory locally and faults exactly <strong>one</strong> chunk, and <code>id → term</code> computes
+its chunk arithmetically and faults one. A lazily-opened remote file therefore
+pays the section headers + directories (KBs) up front and O(touched chunks)
+afterwards, instead of the whole dictionary container.</p>
 <p><strong>Compatibility:</strong> version <code>0x01</code> files store one whole-section-compressed
-block per permutation. Readers still accept them (the whole section is one
-logical tile); writers always emit <code>0x02</code>. The format remains experimental —
-no stability promise beyond this one documented transition.</p>
+block per permutation and whole-compressed dictionary sections. Readers still
+accept them (each section is one logical tile/chunk); writers always emit
+<code>0x02</code>. The format remains experimental — no stability promise beyond this one
+documented transition.</p>
 <hr />
 <h2>7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>

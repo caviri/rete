@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::dict::{parse_meta, section_id, section_term, DictSectionBuilder, SectionMeta};
+use crate::dict::{ChunkedSection, DictSectionBuilder};
 
 /// Builds a [`Dictionary`] from observed `(subject, predicate, object)` terms.
 #[derive(Default)]
@@ -60,27 +60,14 @@ impl DictionaryBuilder {
     }
 }
 
-fn meta_of(bytes: &[u8]) -> SectionMeta {
-    parse_meta(bytes).unwrap_or(SectionMeta {
-        term_count: 0,
-        restart_interval: 1,
-        restart_offsets: Vec::new(),
-    })
-}
-
 /// A read-only dictionary mapping terms ↔ role-specific IDs.
 ///
-/// Holds the four serialized sections plus their parsed restart tables, so
-/// lookups never re-parse a section header.
+/// Holds the four sections as [`ChunkedSection`]s — local files keep each
+/// section as one resident chunk; a lazily-opened remote file faults
+/// individual chunks in on first touch. Lookups never re-parse a header.
 pub struct Dictionary {
-    shared: Vec<u8>,
-    shared_meta: SectionMeta,
-    subjects: Vec<u8>,
-    subjects_meta: SectionMeta,
-    objects: Vec<u8>,
-    objects_meta: SectionMeta,
-    predicates: Vec<u8>,
-    predicates_meta: SectionMeta,
+    /// shared, subjects, objects, predicates.
+    sections: [ChunkedSection; 4],
     shared_len: u32,
 }
 
@@ -88,28 +75,26 @@ impl Dictionary {
     /// Rebuild from four serialized sections (shared, subjects, objects,
     /// predicates), e.g. when reading a `.rete` file.
     pub fn from_sections(sections: [Vec<u8>; 4]) -> Self {
-        let [shared, subjects, objects, predicates] = sections;
-        let shared_meta = meta_of(&shared);
-        let shared_len = shared_meta.term_count;
+        Self::from_chunked_sections(sections.map(ChunkedSection::local))
+    }
+
+    /// Rebuild from four already-chunked sections (the remote lazy-open path).
+    pub fn from_chunked_sections(sections: [ChunkedSection; 4]) -> Self {
+        let shared_len = sections[0].term_count();
         Dictionary {
-            shared_meta,
-            subjects_meta: meta_of(&subjects),
-            objects_meta: meta_of(&objects),
-            predicates_meta: meta_of(&predicates),
-            shared,
-            subjects,
-            objects,
-            predicates,
+            sections,
             shared_len,
         }
     }
 
     /// Total number of distinct terms across all four sections.
     pub fn term_count(&self) -> u32 {
-        self.shared_meta.term_count
-            + self.subjects_meta.term_count
-            + self.objects_meta.term_count
-            + self.predicates_meta.term_count
+        self.sections.iter().map(|s| s.term_count()).sum()
+    }
+
+    /// Did any lazy chunk fetch fail since this dictionary was opened?
+    pub fn load_incomplete(&self) -> bool {
+        self.sections.iter().any(|s| s.load_incomplete())
     }
 
     /// Number of shared terms `S`.
@@ -119,12 +104,12 @@ impl Dictionary {
 
     /// Number of subject-only terms `Su`.
     pub fn subject_only_count(&self) -> u32 {
-        self.subjects_meta.term_count
+        self.sections[1].term_count()
     }
 
     /// Number of object-only terms `Oo`.
     pub fn object_only_count(&self) -> u32 {
-        self.objects_meta.term_count
+        self.sections[2].term_count()
     }
 
     // --- unified node space (for graph algorithms / the pyramid) ----------
@@ -203,45 +188,45 @@ impl Dictionary {
 
     /// Subject-role ID for `term`: shared `1..=S`, else subject-only `S+1..`.
     pub fn subject_id(&self, term: &str) -> Option<u32> {
-        if let Some(id) = section_id(&self.shared, &self.shared_meta, term) {
+        if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
-        section_id(&self.subjects, &self.subjects_meta, term).map(|id| self.shared_len + id)
+        self.sections[1].id(term).map(|id| self.shared_len + id)
     }
 
     /// Object-role ID for `term`: shared `1..=S`, else object-only `S+1..`.
     pub fn object_id(&self, term: &str) -> Option<u32> {
-        if let Some(id) = section_id(&self.shared, &self.shared_meta, term) {
+        if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
-        section_id(&self.objects, &self.objects_meta, term).map(|id| self.shared_len + id)
+        self.sections[2].id(term).map(|id| self.shared_len + id)
     }
 
     /// Predicate ID for `term` (independent space).
     pub fn predicate_id(&self, term: &str) -> Option<u32> {
-        section_id(&self.predicates, &self.predicates_meta, term)
+        self.sections[3].id(term)
     }
 
     // --- id -> term -------------------------------------------------------
 
     pub fn subject_term(&self, id: u32) -> Option<String> {
         if id <= self.shared_len {
-            section_term(&self.shared, &self.shared_meta, id)
+            self.sections[0].term(id)
         } else {
-            section_term(&self.subjects, &self.subjects_meta, id - self.shared_len)
+            self.sections[1].term(id - self.shared_len)
         }
     }
 
     pub fn object_term(&self, id: u32) -> Option<String> {
         if id <= self.shared_len {
-            section_term(&self.shared, &self.shared_meta, id)
+            self.sections[0].term(id)
         } else {
-            section_term(&self.objects, &self.objects_meta, id - self.shared_len)
+            self.sections[2].term(id - self.shared_len)
         }
     }
 
     pub fn predicate_term(&self, id: u32) -> Option<String> {
-        section_term(&self.predicates, &self.predicates_meta, id)
+        self.sections[3].term(id)
     }
 
     /// Encode a `(s, p, o)` term triple to its `(subject_id, predicate_id,
@@ -254,13 +239,13 @@ impl Dictionary {
         ))
     }
 
-    /// The four serialized sections, for the file writer.
-    pub fn sections(&self) -> [&[u8]; 4] {
+    /// The four serialized sections (header + body each), for the file writer.
+    pub fn sections(&self) -> [Vec<u8>; 4] {
         [
-            &self.shared,
-            &self.subjects,
-            &self.objects,
-            &self.predicates,
+            self.sections[0].raw_section_bytes(),
+            self.sections[1].raw_section_bytes(),
+            self.sections[2].raw_section_bytes(),
+            self.sections[3].raw_section_bytes(),
         ]
     }
 }
