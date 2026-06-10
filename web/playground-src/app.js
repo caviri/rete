@@ -750,40 +750,50 @@
 
     const t0 = performance.now();
     try {
-      const raw = strategy === "progressive"
-        ? W().progressive_query(state.bytes, q)
-        : W().query(state.bytes, q, queryFmt);
+      let raw;
+      if (strategy === "progressive") {
+        raw = W().progressive_query(state.bytes, q);
+      } else if (strategy === "community") {
+        const roundText = $("round").value.trim();
+        raw = W().query_communities(state.bytes, q, roundText === "" ? undefined : Number(roundText));
+      } else {
+        raw = W().query(state.bytes, q, queryFmt);
+      }
       const res = JSON.parse(raw);
-      const summary = renderResult(res, strategy === "progressive" && fmt === "graph" ? "table" : fmt);
+      const summary = renderResult(res, strategy !== "whole" && fmt === "graph" ? "table" : fmt);
       const dt = performance.now() - t0;
       $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms`;
-      if (strategy === "community") runCommunity();
+      if (strategy === "community") renderCommunityPartials(res.communities);
       saveHistory({ query: q, format: fmt, strategy, dataset: state.dataset, ts: Date.now(), resultSummary: summary });
       updateHash();
     } catch (e) {
       $("qmeta").textContent = "";
-      showError("out", String(e));
+      let msg = String(e);
+      if (strategy === "progressive") {
+        msg += " — Progressive answers COUNT/ASK shapes straight from the pyramid summary, " +
+          "without touching the index. For this query, use the Whole-index strategy — or " +
+          "Split by community if it is a subject-star query (compute per community, merge, " +
+          "aggregate globally).";
+      }
+      showError("out", msg);
       renderProgressiveInfo(null);
     }
   }
 
-  function runCommunity() {
-    const roundText = $("round").value.trim();
-    const round = roundText === "" ? undefined : Number(roundText);
-    const t0 = performance.now();
-    try {
-      const rows = JSON.parse(W().communities(state.bytes, round));
-      const dt = performance.now() - t0;
-      $("commOut").innerHTML =
-        `<div class="note">Community split is shown as decomposition metadata in this single-threaded static build.</div>` +
-        `<p class="microcopy">${rows.length} communities | ${dt.toFixed(1)} ms</p>` +
-        `<table><thead><tr><th>community</th><th>members</th><th>triples</th></tr></thead><tbody>` +
-        rows.map((r) => `<tr><td>C${r.community}</td><td>${r.size}</td><td>${r.triples}</td></tr>`).join("") +
-        `</tbody></table>`;
-      updateResultVisibility();
-    } catch (e) {
-      showError("commOut", "community error: " + e.message);
-    }
+  function renderCommunityPartials(parts) {
+    if (!parts || !parts.length) return;
+    const total = parts.reduce((a, p) => a + p.rows, 0);
+    const contributing = parts.filter((p) => p.rows > 0);
+    $("commOut").innerHTML =
+      `<div class="banner">Computed per pyramid community, merged, modifiers applied globally: ` +
+      `${contributing.length} of ${parts.length} communities contributed ${total} partial row(s) — ` +
+      `the merged result is byte-identical to the whole-index answer.</div>` +
+      `<table><thead><tr><th>community</th><th>subjects</th><th>partial rows</th></tr></thead><tbody>` +
+      contributing.slice(0, 60).map((p) =>
+        `<tr><td>C${p.community}</td><td>${p.subjects}</td><td>${p.rows}</td></tr>`).join("") +
+      `</tbody></table>` +
+      (contributing.length > 60 ? `<p class="microcopy">Showing first 60 of ${contributing.length} contributing communities.</p>` : "");
+    updateResultVisibility();
   }
 
   function renderShaclExamples() {

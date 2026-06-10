@@ -4,10 +4,10 @@
 
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
-    eval_sparql, project_graph, schema_classes, schema_summary, summary_query_shape,
-    tile_by_community, validate_shacl, ByteRange, CountingReader, DataGraph, Header, QueryOutput,
-    RangeReader, Rete, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TripleProvenance,
-    ValidationReport, DEFAULT_TILE_BUDGET,
+    eval_select_communities, eval_sparql, project_graph, schema_classes, schema_summary,
+    summary_query_shape, tile_by_community, validate_shacl, ByteRange, CountingReader, DataGraph,
+    Header, QueryOutput, RangeReader, Rete, ShaclShapes, SliceReader, SummaryQueryShape,
+    SummaryView, TripleProvenance, ValidationReport, DEFAULT_TILE_BUDGET,
 };
 use wasm_bindgen::prelude::*;
 
@@ -478,6 +478,57 @@ pub fn sparql_url(url: &str, query: &str, format: &str) -> Result<String, JsValu
         );
     }
     serde_json::to_string(&v).map_err(err)
+}
+
+/// Evaluate a SELECT **per pyramid community**, then merge: each community's
+/// subjects are pushed into the plan as a VALUES binding, the partial rows are
+/// concatenated, and GROUP BY / ORDER BY / LIMIT / DISTINCT run once on the
+/// union — so the rows are identical to [`query`]'s answer ("compute per
+/// community, aggregate globally"). Sound only for subject-star queries (one
+/// BGP, FILTERs allowed, every triple pattern sharing the same subject
+/// variable) over the default graph; anything else errors rather than
+/// returning a wrong split answer. JSON: the SELECT envelope plus
+/// `"communities": [{ "community", "subjects", "rows" }, …]`.
+#[wasm_bindgen]
+pub fn query_communities(
+    bytes: &[u8],
+    query: &str,
+    round: Option<usize>,
+) -> Result<String, JsValue> {
+    use serde_json::{json, Map, Value};
+    let rete = open(bytes)?;
+    let (mut vars, solutions, partials) =
+        eval_select_communities(&rete, query, round).map_err(err)?;
+    if vars.is_empty() {
+        let mut seen = std::collections::BTreeSet::new();
+        for s in &solutions {
+            for k in s.keys() {
+                if seen.insert(k.clone()) {
+                    vars.push(k.clone());
+                }
+            }
+        }
+    }
+    let rows: Vec<Value> = solutions
+        .iter()
+        .map(|s| {
+            let mut obj = Map::new();
+            for var in &vars {
+                if let Some(term) = s.get(var) {
+                    obj.insert(var.clone(), Value::String(term.clone()));
+                }
+            }
+            Value::Object(obj)
+        })
+        .collect();
+    let communities: Vec<Value> = partials
+        .iter()
+        .map(|p| json!({ "community": p.community, "subjects": p.subjects, "rows": p.rows }))
+        .collect();
+    serde_json::to_string(
+        &json!({ "kind": "select", "vars": vars, "rows": rows, "communities": communities }),
+    )
+    .map_err(err)
 }
 
 /// Recompute the Louvain community decomposition and report, per community, its

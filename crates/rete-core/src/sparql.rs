@@ -20,7 +20,7 @@ mod expr;
 mod lower;
 mod path;
 
-use eval::{ask_solution, instantiate, raw_solutions, run_select};
+use eval::{ask_solution, instantiate, raw_solutions, run_select, run_select_communities};
 use lower::{lower_pattern, lower_select};
 pub use lower::{parse_select, query_predicates};
 // Re-exported so the sibling modules' `use super::*` can reach the evaluator
@@ -628,6 +628,45 @@ fn public_group_aggregate_variable(
         }
         _ => None,
     })
+}
+
+/// One community's contribution to a community-split evaluation: how many
+/// member subjects it holds and how many solution rows it produced.
+#[derive(Debug, Clone, Copy)]
+pub struct CommunityPartial {
+    pub community: usize,
+    pub subjects: usize,
+    pub rows: usize,
+}
+
+/// The outcome of a community-split SELECT: the projected variables, the
+/// merged solution rows, and each community's contribution.
+pub type CommunitySelect = (Vec<String>, Vec<Binding>, Vec<CommunityPartial>);
+
+/// Evaluate a SELECT **per pyramid community**, then merge: each community's
+/// subjects are pushed into the plan as a VALUES binding, the partial rows
+/// are concatenated, and the solution modifiers (GROUP BY / ORDER BY / LIMIT
+/// / DISTINCT) run once on the union — so the rows are identical to
+/// [`eval_query`]'s answer. Sound only for subject-star queries over the
+/// default graph (every triple pattern sharing one subject variable; FILTERs
+/// allowed); anything else returns [`SparqlError::Unsupported`] rather than a
+/// possibly-wrong split answer. `round` picks the dendrogram granularity
+/// (`None` = the build's tile-budget round). Also returns each community's
+/// subject and row counts for display.
+pub fn eval_select_communities(
+    rete: &Rete,
+    query: &str,
+    round: Option<usize>,
+) -> Result<CommunitySelect, SparqlError> {
+    let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
+    match parsed {
+        Query::Select {
+            pattern, dataset, ..
+        } => run_select_communities(rete, &lower_select(&pattern, &dataset)?, round),
+        _ => Err(SparqlError::Unsupported(
+            "community-split evaluation supports SELECT queries only",
+        )),
+    }
 }
 
 /// Evaluate any supported SPARQL query form (SELECT / ASK / CONSTRUCT).

@@ -65,6 +65,22 @@ join order is a selectivity heuristic — and the benchmark page separates
 correctness coverage from latency and calls out the shapes where Oxigraph still
 wins.
 
+### Community-split evaluation
+
+`eval_select_communities` evaluates a SELECT **per pyramid community** and
+merges: each community's subjects are pushed into the plan as a `VALUES`
+binding, the partial rows are concatenated, and the solution modifiers
+(`GROUP BY` / `ORDER BY` / `LIMIT` / `DISTINCT`) run once on the union —
+"compute per community, aggregate globally", with rows identical to the
+whole-graph answer. This is sound only for **subject-star** queries over the
+default graph — one basic graph pattern (FILTERs allowed) whose every triple
+pattern shares the same subject variable — because tiles partition triples by
+their subject's community, so each solution lives entirely inside one
+community. Any other shape (multi-hop joins, UNION, paths) is **rejected with
+a clear error** rather than answered from a split that could drop
+cross-community rows. The playground's "Split by community" strategy uses
+this; natively it is the seam for per-community parallel evaluation.
+
 ## Not supported
 
 These are **rejected with a clear error** — never silently mis-evaluated:

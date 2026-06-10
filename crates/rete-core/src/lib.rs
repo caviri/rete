@@ -47,9 +47,10 @@ pub use shacl::{
     ValidationResult,
 };
 pub use sparql::{
-    eval_query, eval_sparql, parse_select, query_predicates, routed_triple_pattern,
-    summary_query_shape, Agg, FExpr, GraphTarget, GroupSpec, Op, PathAst, Plan, QueryOutput, Rep,
-    RoutedTriplePattern, Select, SparqlError, SummaryQueryShape,
+    eval_query, eval_select_communities, eval_sparql, parse_select, query_predicates,
+    routed_triple_pattern, summary_query_shape, Agg, CommunityPartial, CommunitySelect, FExpr,
+    GraphTarget, GroupSpec, Op, PathAst, Plan, QueryOutput, Rep, RoutedTriplePattern, Select,
+    SparqlError, SummaryQueryShape,
 };
 pub use tiling::{choose_round_for_budget, summarize, tile_by_community, SuperEdge, Tile};
 pub use triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder, ZoneMap};

@@ -241,6 +241,7 @@ browser reads compressed files fine. <code>rete-wasm</code> depends on <code>ret
 <tr><td><code>progressive_query(bytes, query)</code></td><td>SELECT/ASK envelope for summary-safe COUNT/ASK shapes, plus <code>progressive</code> metadata</td></tr>
 <tr><td><code>query(bytes, query, format)</code></td><td>any SPARQL form, tagged by <code>kind</code> (see below)</td></tr>
 <tr><td><code>communities(bytes, round?)</code></td><td><code>[{ community, size, triples }, …]</code> (Louvain decomposition)</td></tr>
+<tr><td><code>query_communities(bytes, query, round?)</code></td><td>a SELECT evaluated per pyramid community and merged (exact rows; subject-star queries only), plus <code>communities: [{ community, subjects, rows }]</code></td></tr>
 <tr><td><code>reach(bytes, predicate, seeds, reverse)</code></td><td><code>[{ seed, count, reached:["&lt;iri&gt;",…] }, …]</code> (serial transitive reach)</td></tr>
 <tr><td><code>build(text, format)</code></td><td>a complete <code>.rete</code> file image (<code>Uint8Array</code>) built from RDF text</td></tr>
 <tr><td><code>sparql_url(url, query, format)</code></td><td><strong>worker-only</strong>: the <code>query</code> envelope evaluated against a remote URL via lazy HTTP range reads, plus <code>remote: { fileLength, bytes, requests }</code></td></tr>

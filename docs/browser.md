@@ -36,6 +36,7 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `progressive_query(bytes, query)` | SELECT/ASK envelope for summary-safe COUNT/ASK shapes, plus `progressive` metadata |
 | `query(bytes, query, format)` | any SPARQL form, tagged by `kind` (see below) |
 | `communities(bytes, round?)` | `[{ community, size, triples }, …]` (Louvain decomposition) |
+| `query_communities(bytes, query, round?)` | a SELECT evaluated per pyramid community and merged (exact rows; subject-star queries only), plus `communities: [{ community, subjects, rows }]` |
 | `reach(bytes, predicate, seeds, reverse)` | `[{ seed, count, reached:["<iri>",…] }, …]` (serial transitive reach) |
 | `build(text, format)` | a complete `.rete` file image (`Uint8Array`) built from RDF text |
 | `sparql_url(url, query, format)` | **worker-only**: the `query` envelope evaluated against a remote URL via lazy HTTP range reads, plus `remote: { fileLength, bytes, requests }` |

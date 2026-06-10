@@ -429,40 +429,43 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
     };
     let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
     let nf = sel.from_named.as_deref();
+    let source = eval_plan_iter(&ctx, active, nf, &sel.plan);
+    finish_select(&ctx, active, sel, source)
+}
 
+/// Apply a SELECT's solution modifiers — aggregation, BIND, HAVING, ORDER BY,
+/// projection, DISTINCT, OFFSET/LIMIT — to already-evaluated plan rows, then
+/// resolve the survivors. Split from [`run_select`] so the community-split
+/// evaluator can feed it the *union* of per-community plan rows: modifiers
+/// must run once, globally, for exact semantics.
+fn finish_select<'a, 'q>(
+    ctx: &'q Ctx<'a>,
+    active: &'q GraphIndex,
+    sel: &'q Select,
+    source: RowIter<'q>,
+) -> (Vec<String>, Vec<Binding>) {
     // Source rows: aggregation is blocking; everything else streams.
-    let mut source: RowIter = match &sel.group {
-        Some(g) => Box::new(
-            aggregate(
-                &ctx,
-                eval_plan_iter(&ctx, active, nf, &sel.plan).collect(),
-                g,
-            )
-            .into_iter(),
-        ),
-        None => eval_plan_iter(&ctx, active, nf, &sel.plan),
+    let mut source: RowIter<'q> = match &sel.group {
+        Some(g) => Box::new(aggregate(ctx, source.collect(), g).into_iter()),
+        None => source,
     };
 
     // BIND/aliases add columns per row — streaming.
     if !sel.extends.is_empty() {
-        let ctx_ref = &ctx;
         let extends = &sel.extends;
         source = Box::new(source.map(move |mut row| {
-            apply_extends_row(ctx_ref, &mut row, extends);
+            apply_extends_row(ctx, &mut row, extends);
             row
         }));
     }
 
     // HAVING filters aggregated rows — streaming.
     if !sel.having.is_empty() {
-        let ctx_ref = &ctx;
         let having = &sel.having;
         let mut cache = ExistsCache::new();
-        source = Box::new(source.filter(move |b| {
-            having
-                .iter()
-                .all(|f| f.boolean(ctx_ref, active, b, &mut cache))
-        }));
+        source = Box::new(
+            source.filter(move |b| having.iter().all(|f| f.boolean(ctx, active, b, &mut cache))),
+        );
     }
 
     // ORDER BY blocks, but with a LIMIT (and no DISTINCT, which would dedup
@@ -471,9 +474,9 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
     if !sel.order.is_empty() {
         let sorted = match (sel.limit, sel.distinct) {
             (Some(limit), false) => {
-                top_k(&ctx, source, &sel.order, sel.offset.saturating_add(limit))
+                top_k(ctx, source, &sel.order, sel.offset.saturating_add(limit))
             }
-            _ => sort_all(&ctx, source, &sel.order),
+            _ => sort_all(ctx, source, &sel.order),
         };
         source = Box::new(sorted.into_iter());
     }
@@ -488,10 +491,9 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
         .filter_map(|v| ctx.slots.slot(v))
         .collect();
     if !sel.project.is_empty() && sel.distinct {
-        let ctx_ref = &ctx;
         let ps = proj_slots.clone();
         source = Box::new(source.map(move |b| {
-            let mut p = ctx_ref.slots.empty_row();
+            let mut p = ctx.slots.empty_row();
             for &slot in &ps {
                 p[slot] = b[slot].clone();
             }
@@ -512,7 +514,7 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
         .take(sel.limit.unwrap_or(usize::MAX))
         .map(|row| {
             if sel.project.is_empty() {
-                row_to_binding(&ctx, &row)
+                row_to_binding(ctx, &row)
             } else {
                 let mut b = Binding::new();
                 for (v, &slot) in sel.project.iter().zip(&proj_slots) {
@@ -528,6 +530,91 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
         .collect();
 
     (sel.project.clone(), rows)
+}
+
+/// The single subject variable of a star-shaped plan — `FILTER`s over one BGP
+/// whose triple patterns all share a `?var` subject — if the plan has that
+/// shape.
+fn star_subject_var(plan: &Plan) -> Option<&str> {
+    match plan {
+        Plan::Filter(_, inner) => star_subject_var(inner),
+        Plan::Bgp(pats) if !pats.is_empty() => {
+            let PatternTerm::Var(first) = &pats[0].s else {
+                return None;
+            };
+            pats.iter()
+                .all(|tp| matches!(&tp.s, PatternTerm::Var(v) if v == first))
+                .then_some(first.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// Evaluate a SELECT **per subject community** (the pyramid partition), merge
+/// the partial rows, and apply the solution modifiers once globally.
+///
+/// Sound only for *subject-star* queries over the default graph: tiles
+/// partition triples by their subject's community, so every solution of a
+/// star (all patterns sharing one subject variable) is computed entirely
+/// inside one community, the partials are disjoint, and their union is
+/// exactly the whole-graph answer. Aggregation / ORDER BY / LIMIT then run on
+/// the union — "compute per community, aggregate globally". Any other shape
+/// returns `Unsupported` rather than a possibly-wrong split answer.
+pub(super) fn run_select_communities(
+    rete: &Rete,
+    sel: &Select,
+    round: Option<usize>,
+) -> Result<CommunitySelect, SparqlError> {
+    if !sel.from.is_empty() || sel.from_named.is_some() {
+        return Err(SparqlError::Unsupported(
+            "community-split evaluation works on the default graph only (no FROM / FROM NAMED)",
+        ));
+    }
+    let var = star_subject_var(&sel.plan).ok_or(SparqlError::Unsupported(
+        "community-split evaluation needs a subject-star query: one basic graph pattern \
+         (FILTERs allowed) whose every triple pattern shares the same subject variable",
+    ))?;
+
+    // Partition subjects by pyramid community — the same dendrogram + round
+    // policy the file build uses.
+    let dict = rete.dictionary();
+    let ids = rete.match_ids((None, None, None));
+    let g = crate::pyramid::project_graph(dict, &ids);
+    let dend = crate::pyramid::build_dendrogram(&g);
+    let round = round.unwrap_or_else(|| {
+        crate::tiling::choose_round_for_budget(dict, &ids, &dend, crate::file::DEFAULT_TILE_BUDGET)
+    });
+    let tiles = crate::tiling::tile_by_community(dict, &ids, &dend, round);
+
+    let ctx = query_ctx(rete, sel);
+    let active = rete.default_index();
+    let mut all: Vec<Row> = Vec::new();
+    let mut partials = Vec::with_capacity(tiles.len());
+    for tile in &tiles {
+        let subjects: std::collections::BTreeSet<u32> =
+            tile.triples.iter().map(|&(s, _, _)| s).collect();
+        // The community's subjects become a VALUES pushdown: the engine
+        // probes the star per member, so only this community's rows come back.
+        let members: Vec<Vec<Option<String>>> = subjects
+            .iter()
+            .filter_map(|&s| dict.subject_term(s))
+            .map(|t| vec![Some(t)])
+            .collect();
+        let n_subjects = members.len();
+        let plan_c = Plan::Join(
+            Box::new(Plan::Values(vec![var.to_string()], members)),
+            Box::new(sel.plan.clone()),
+        );
+        let before = all.len();
+        all.extend(eval_plan_iter(&ctx, active, None, &plan_c));
+        partials.push(CommunityPartial {
+            community: tile.community,
+            subjects: n_subjects,
+            rows: all.len() - before,
+        });
+    }
+    let (vars, rows) = finish_select(&ctx, active, sel, Box::new(all.into_iter()));
+    Ok((vars, rows, partials))
 }
 
 /// Compare two decorated rows by the ORDER BY spec, with the arrival sequence

@@ -66,6 +66,20 @@ SELECT ?title ?score WHERE {
 } ORDER BY DESC(?score)`
       },
       {
+        family: "Select",
+        label: "High-novelty, split by community",
+        strategy: "community",
+        view: "table",
+        tip: "Subject-star queries decompose: each pyramid community is evaluated separately, then merged with FILTER/ORDER BY semantics intact — identical rows to the whole-index run.",
+        q: `PREFIX ex: <http://ex/>
+PREFIX dct: <http://purl.org/dc/terms/>
+SELECT ?title ?score WHERE {
+  ?paper ex:noveltyScore ?score ;
+    dct:title ?title .
+  FILTER(?score > 2.0)
+} ORDER BY DESC(?score)`
+      },
+      {
         family: "Path",
         label: "Citation closure",
         view: "table",
