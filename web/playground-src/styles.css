@@ -916,6 +916,25 @@ pre {
   display: none;
 }
 
+/* Result tables scroll horizontally rather than wrapping wide IRI/value cells. */
+.tbl {
+  overflow-x: auto;
+}
+
+.tbl table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.tbl th,
+.tbl td {
+  white-space: nowrap;
+  max-width: 560px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: normal;
+}
+
 .tbl-more {
   margin-top: 8px;
   min-height: 30px;

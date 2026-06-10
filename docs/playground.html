@@ -923,6 +923,25 @@ pre {
   display: none;
 }
 
+/* Result tables scroll horizontally rather than wrapping wide IRI/value cells. */
+.tbl {
+  overflow-x: auto;
+}
+
+.tbl table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.tbl th,
+.tbl td {
+  white-space: nowrap;
+  max-width: 560px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: normal;
+}
+
 .tbl-more {
   margin-top: 8px;
   min-height: 30px;
@@ -1432,7 +1451,10 @@ pre {
         <p class="microcopy">Connect to a <code>.rete</code> URL and query it <strong>without downloading it</strong> —
           a Web Worker range-fetches only the dictionary chunks and index tiles each query touches
           (the same trick DuckDB uses on remote Parquet). The host must allow CORS and honor
-          <code>Range</code> (S3, GitHub, Hugging Face all do).</p>
+          <code>Range</code> (S3, GitHub, Hugging Face all do). The prefilled graph and its
+          companion Parquet / DuckDB / SQLite live in this
+          <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs/tree/wikidata-100MB" target="_blank" rel="noopener">Hugging Face bucket</a>;
+          explore all four side by side in the <a href="explore-100mb.html">lazy explorer</a>.</p>
         <div class="url-loader">
           <input id="remoteUrl" type="text" spellcheck="false"
             placeholder="https://…/graph.rete"

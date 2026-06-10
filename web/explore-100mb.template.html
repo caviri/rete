@@ -18,70 +18,81 @@
   header h1 { font:700 20px Georgia,serif; margin:0; }
   header .sub { color:var(--muted); font-size:13px; }
   header a { color:var(--accent-dark); }
-  .intro { padding:10px 20px; color:var(--muted); font-size:13px; max-width:1100px; }
-  main { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px 20px 40px; align-items:start; }
-  @media (max-width:980px){ main { grid-template-columns:1fr; } }
+  .intro { padding:10px 20px; color:var(--muted); font-size:13px; max-width:1200px; }
+  .examples { padding:4px 20px 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .examples .lbl { color:var(--muted); font-size:12px; font-weight:700; }
+  main { display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; padding:8px 20px 40px; align-items:start; }
+  @media (max-width:1200px){ main { grid-template-columns:1fr 1fr; } }
+  @media (max-width:760px){ main { grid-template-columns:1fr; } }
   .panel { border:1px solid var(--line); border-radius:10px; background:var(--surface);
     box-shadow:0 14px 38px rgba(32,47,41,.08); padding:14px 16px; }
   .panel h2 { font-size:15px; margin:0 0 2px; }
-  .panel .tech { color:var(--accent-dark); font-weight:700; font-size:12px; }
-  .panel p.note { color:var(--muted); font-size:12.5px; margin:6px 0 10px; }
-  textarea { width:100%; min-height:150px; border:1px solid var(--code-border); border-radius:8px;
-    background:var(--code); padding:10px; font:13px/1.45 "Cascadia Mono",Consolas,monospace; resize:vertical; }
+  .panel .tech { color:var(--accent-dark); font-weight:700; font-size:11.5px; display:block; }
+  .panel p.note { color:var(--muted); font-size:12px; margin:6px 0 8px; }
+  .exp { color:var(--accent-2); font-weight:700; }
+  textarea { width:100%; min-height:130px; border:1px solid var(--code-border); border-radius:8px;
+    background:var(--code); padding:10px; font:12.5px/1.45 "Cascadia Mono",Consolas,monospace; resize:vertical; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
-  button { min-height:34px; border:1px solid var(--accent-dark); border-radius:6px; background:var(--accent);
-    color:#f4faf8; font-weight:700; padding:6px 13px; cursor:pointer; }
+  button { min-height:32px; border:1px solid var(--accent-dark); border-radius:6px; background:var(--accent);
+    color:#f4faf8; font-weight:700; padding:5px 12px; cursor:pointer; font-size:13px; }
   button:hover { background:var(--accent-dark); }
   button.ex, select { border:1px solid var(--line-strong); background:var(--surface); color:var(--ink);
-    font-weight:600; border-radius:6px; min-height:30px; padding:4px 8px; cursor:pointer; font-size:12px; }
-  .meta { color:var(--muted); font-size:12px; }
-  .out { margin-top:10px; max-height:460px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
-  table { border-collapse:collapse; width:100%; font:12px/1.4 "Cascadia Mono",Consolas,monospace; }
+    font-weight:600; border-radius:6px; min-height:28px; padding:4px 8px; cursor:pointer; font-size:12px; }
+  .meta { color:var(--muted); font-size:11.5px; }
+  .out { margin-top:10px; max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+  table { border-collapse:collapse; width:max-content; min-width:100%; font:12px/1.4 "Cascadia Mono",Consolas,monospace; }
   th,td { border:1px solid var(--line); padding:5px 7px; text-align:left; vertical-align:top;
-    max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    max-width:520px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   th { background:#eaf1ed; position:sticky; top:0; }
-  .err { color:#b42318; padding:8px; }
+  .err { color:#b42318; padding:8px; white-space:pre-wrap; }
   code { background:var(--code); border:1px solid var(--code-border); border-radius:4px; padding:1px 4px; }
 </style>
 </head>
 <body>
 <header>
   <h1>Wikidata-100MB</h1>
-  <span class="sub">one ~12M-triple graph, queried two ways — both <strong>lazily over HTTP range</strong>, nothing downloaded whole</span>
+  <span class="sub">one ~12M-triple graph, four lossless encodings — queried <strong>lazily over HTTP range</strong></span>
   <a href="index.html">← playground</a>
+  <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs/tree/wikidata-100MB" target="_blank" rel="noopener">data on Hugging Face ↗</a>
 </header>
 <p class="intro">
-  The same Wikidata slice lives on Hugging Face as a <code>.rete</code> graph and as columnar
-  <code>.parquet</code> entity-tables (plus DuckDB/SQLite). This page queries both in your browser
-  fetching only the bytes each query touches: the graph via rete's <code>sparql_url</code> (a Web
-  Worker doing range reads), the tables via DuckDB-WASM's httpfs over the remote Parquet. Compare
-  the same questions across the graph and the table model.
+  The same Wikidata slice lives on Hugging Face as a <code>.rete</code> graph, columnar
+  <code>.parquet</code> entity-tables, a <code>.duckdb</code> database, and a <code>.sqlite</code>
+  database. This page queries all of them in your browser, fetching only the bytes each query
+  touches — rete via <code>sparql_url</code> (range reads in a Worker), Parquet/DuckDB via
+  DuckDB-WASM (httpfs), SQLite via sql.js-httpvfs. Click a question to load the analogous query on
+  every side. Tables in this slice are named by Q-id: <code>Q5</code>=human, <code>Q16521</code>=taxon,
+  <code>Q11424</code>=film.
 </p>
+<div class="examples">
+  <span class="lbl">Analogous questions:</span>
+  <span id="exBar"></span>
+</div>
 <main>
   <section class="panel">
-    <h2>Graph <span class="tech">· rete sparql_url (lazy range)</span></h2>
-    <p class="note">SPARQL over <code>wikidata.rete</code>. Bound subjects/predicates fetch only the
-      tiles holding them. Returns recovered datatypes (e.g. <code>geo:wktLiteral</code>).</p>
-    <div class="row" id="reteEx"></div>
-    <textarea id="sparql">SELECT ?p ?o WHERE { &lt;http://www.wikidata.org/entity/Q100001&gt; ?p ?o }</textarea>
+    <h2>Graph <span class="tech">rete sparql_url · lazy range over wikidata.rete</span></h2>
+    <p class="note">SPARQL. Bound subjects/predicates fetch only the tiles holding them.</p>
+    <textarea id="sparql">SELECT ?p ?o WHERE { &lt;http://www.wikidata.org/entity/Q859&gt; ?p ?o }</textarea>
     <div class="row"><button id="reteRun">Run SPARQL</button><span class="meta" id="reteMeta"></span></div>
     <div class="out" id="reteOut"></div>
   </section>
 
   <section class="panel">
-    <h2>Tables <span class="tech">· DuckDB-WASM over remote Parquet (httpfs)</span></h2>
-    <p class="note">One Parquet table per entity type. Pick a type (from <code>_manifest.parquet</code>),
-      or write SQL. DuckDB fetches only the row groups/columns it needs.</p>
-    <div class="row">
-      <select id="tablePick"><option>loading manifest…</option></select>
-      <button class="ex" id="manifestBtn">Show manifest</button>
-    </div>
-    <textarea id="sql">-- pick a type above, or query the manifest
-SELECT class, label, entities, named_columns, file
-FROM read_parquet('{MANIFEST}')
-ORDER BY entities DESC LIMIT 20;</textarea>
+    <h2>Columnar <span class="tech">DuckDB-WASM · httpfs over Parquet / .duckdb</span></h2>
+    <p class="note">SQL. <select id="duckSrc"><option value="parquet">read_parquet (files)</option><option value="attach">ATTACH wikidata.duckdb</option></select>
+      DuckDB fetches only needed row groups/columns.</p>
+    <textarea id="sql"></textarea>
     <div class="row"><button id="duckRun">Run SQL</button><span class="meta" id="duckMeta">initializing DuckDB-WASM…</span></div>
     <div class="out" id="duckOut"></div>
+  </section>
+
+  <section class="panel">
+    <h2>SQLite <span class="tech">sql.js-httpvfs · range reads over wikidata.sqlite</span></h2>
+    <p class="note"><span class="exp">experimental</span> — lazy remote SQLite (list/map columns are JSON text).
+      <a id="sqliteDl" href="#" target="_blank" rel="noopener">download .sqlite ↗</a></p>
+    <textarea id="ssql">SELECT entity, label, P106 FROM "Q5" WHERE entity = 'http://www.wikidata.org/entity/Q859';</textarea>
+    <div class="row"><button id="sqliteRun">Run SQL</button><span class="meta" id="sqliteMeta">initializing sql.js-httpvfs…</span></div>
+    <div class="out" id="sqliteOut"></div>
   </section>
 </main>
 
@@ -90,33 +101,14 @@ ORDER BY entities DESC LIMIT 20;</textarea>
 <script type="module">
 import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
 
-// rete sparql_url runs in a Web Worker (sync XHR is worker-only). The worker is
-// built on the fly from this page's own inlined wasm glue (#reteGlue) + a small
-// harness, so the page is self-contained (no ./pkg files) — same trick the
-// offline playground uses.
-const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
-const RETE_HARNESS = ";(function(){var ready=null;self.onmessage=function(e){var m=e.data;" +
-  "if(m.type==='init'){ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
-  "Promise.resolve(ready).then(function(){try{self.postMessage({ok:true,json:wasm_bindgen.sparql_url(m.url,m.query,'table')});}" +
-  "catch(err){self.postMessage({ok:false,error:String(err)});}});};})();";
-let _reteWorker = null, _reteReady = null;
-function ensureReteWorker() {
-  if (_reteWorker) return _reteReady;
-  const glue = document.getElementById("reteGlue").textContent;
-  _reteWorker = new Worker(URL.createObjectURL(new Blob([glue + RETE_HARNESS], { type: "text/javascript" })));
-  let resolve; _reteReady = new Promise((r) => { resolve = r; });
-  _reteWorker.addEventListener("message", function onready(e) {
-    if (e.data && e.data.type === "ready") { resolve(); _reteWorker.removeEventListener("message", onready); }
-  });
-  _reteWorker.postMessage({ type: "init", bytes: b64ToBytes(window.RETE_WASM_B64) });
-  return _reteReady;
-}
-
 const BUCKET = "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-100MB";
 const RETE_URL = `${BUCKET}/wikidata.rete?download=true`;
 const PARQUET = (f) => `${BUCKET}/parquet/${f}?download=true`;
-const MANIFEST = PARQUET("_manifest.parquet");
+const DUCKDB_URL = `${BUCKET}/wikidata.duckdb?download=true`;
+const SQLITE_URL = `${BUCKET}/wikidata.sqlite?download=true`;
+const HUMANS = PARQUET("Q5_.parquet");
 const $ = (id) => document.getElementById(id);
+$("sqliteDl").href = SQLITE_URL;
 
 function renderTable(target, cols, rows) {
   if (!rows.length) { target.innerHTML = '<p class="meta" style="padding:8px">no rows</p>'; return; }
@@ -127,75 +119,125 @@ function renderTable(target, cols, rows) {
     "</tbody></table>";
 }
 
-/* ---- Graph: rete sparql_url via the shared worker ---- */
-const reteExamples = [
-  ["Facts about Bemelen (Q100001)", "SELECT ?p ?o WHERE { <http://www.wikidata.org/entity/Q100001> ?p ?o }"],
-  ["Its coordinate (wktLiteral)", "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?c WHERE { <http://www.wikidata.org/entity/Q100001> wdt:P625 ?c }"],
-  ["Labels of an entity", "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?l WHERE { <http://www.wikidata.org/entity/Q100001> rdfs:label ?l } LIMIT 30"],
+/* ---- analogous question presets: fill graph (SPARQL) + columnar (SQL) ---- */
+const EX = [
+  { label: "Facts about Plato (Q859)",
+    sparql: "SELECT ?p ?o WHERE { <http://www.wikidata.org/entity/Q859> ?p ?o }",
+    sql: `SELECT * FROM read_parquet('${HUMANS}') WHERE entity = 'http://www.wikidata.org/entity/Q859';` },
+  { label: "Plato's occupations (P106)",
+    sparql: "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occ WHERE { <http://www.wikidata.org/entity/Q859> wdt:P106 ?occ }",
+    sql: `SELECT P106 FROM read_parquet('${HUMANS}') WHERE entity = 'http://www.wikidata.org/entity/Q859';` },
+  { label: "Humans with their occupations",
+    sparql: "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?h ?occ WHERE { ?h wdt:P31 wd:Q5 ; wdt:P106 ?occ } LIMIT 50",
+    sql: `SELECT entity, label, P106 FROM read_parquet('${HUMANS}') WHERE len(P106) > 0 LIMIT 50;` },
+  { label: "Labels of Plato",
+    sparql: "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?l WHERE { <http://www.wikidata.org/entity/Q859> rdfs:label ?l } LIMIT 30",
+    sql: `SELECT label FROM read_parquet('${HUMANS}') WHERE entity = 'http://www.wikidata.org/entity/Q859';` },
+  { label: "Type tables (manifest)",
+    sparql: "SELECT (COUNT(*) AS ?triples) WHERE { ?s ?p ?o }",
+    sql: `SELECT class, label, entities, file FROM read_parquet('${PARQUET("_manifest.parquet")}') ORDER BY entities DESC LIMIT 20;` },
 ];
-$("reteEx").innerHTML = reteExamples.map((e, i) => `<button class="ex" data-i="${i}">${e[0]}</button>`).join("");
-$("reteEx").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => { $("sparql").value = reteExamples[b.dataset.i][1]; });
+$("exBar").innerHTML = EX.map((e, i) => `<button class="ex" data-i="${i}">${e.label}</button>`).join("");
+$("exBar").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => {
+  $("sparql").value = EX[b.dataset.i].sparql;
+  $("sql").value = EX[b.dataset.i].sql;
+});
+$("sql").value = EX[0].sql;
 
+/* ---- Graph: rete sparql_url via a worker built from the inlined glue ---- */
+const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
+const RETE_HARNESS = ";(function(){var ready=null;self.onmessage=function(e){var m=e.data;" +
+  "if(m.type==='init'){ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
+  "Promise.resolve(ready).then(function(){try{self.postMessage({ok:true,json:wasm_bindgen.sparql_url(m.url,m.query,'table')});}" +
+  "catch(err){self.postMessage({ok:false,error:String(err)});}});};})();";
+let _rw = null, _rwReady = null;
+function ensureRete() {
+  if (_rw) return _rwReady;
+  const glue = document.getElementById("reteGlue").textContent;
+  _rw = new Worker(URL.createObjectURL(new Blob([glue + RETE_HARNESS], { type: "text/javascript" })));
+  let res; _rwReady = new Promise((r) => { res = r; });
+  _rw.addEventListener("message", function onr(e) { if (e.data && e.data.type === "ready") { res(); _rw.removeEventListener("message", onr); } });
+  _rw.postMessage({ type: "init", bytes: b64ToBytes(window.RETE_WASM_B64) });
+  return _rwReady;
+}
 $("reteRun").onclick = () => {
-  $("reteMeta").textContent = "querying graph…";
-  $("reteOut").innerHTML = "";
+  $("reteMeta").textContent = "querying graph…"; $("reteOut").innerHTML = "";
   const t0 = performance.now();
-  ensureReteWorker().then((w0) => {
-    _reteWorker.onmessage = (e) => {
+  ensureRete().then(() => {
+    _rw.onmessage = (e) => {
       const dt = (performance.now() - t0).toFixed(0);
       if (!e.data.ok) { $("reteMeta").textContent = ""; $("reteOut").innerHTML = `<p class="err">${e.data.error}</p>`; return; }
-      const res = JSON.parse(e.data.json), r = res.remote || {};
+      const r0 = JSON.parse(e.data.json), r = r0.remote || {};
       const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
-      $("reteMeta").textContent = `${(res.rows || []).length} rows · ${r.requests || 0} range req · ${((r.bytes||0)/1048576).toFixed(1)} MB of ${((r.fileLength||0)/1048576).toFixed(0)} MB (${pct}%) · ${dt} ms`;
-      renderTable($("reteOut"), res.vars || [], res.rows || []);
+      $("reteMeta").textContent = `${(r0.rows || []).length} rows · ${r.requests || 0} req · ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${pct}%) · ${dt} ms`;
+      renderTable($("reteOut"), r0.vars || [], r0.rows || []);
     };
-    _reteWorker.postMessage({ url: RETE_URL, query: $("sparql").value });
+    _rw.postMessage({ url: RETE_URL, query: $("sparql").value });
   });
 };
 
-/* ---- Tables: DuckDB-WASM over remote Parquet ---- */
-let conn = null;
+/* ---- Columnar: DuckDB-WASM over remote Parquet, or ATTACH the remote .duckdb ---- */
+let conn = null, attached = false;
 async function initDuck() {
-  const bundles = duckdb.getJsDelivrBundles();
-  const bundle = await duckdb.selectBundle(bundles);
-  const worker = await duckdb.createWorker(bundle.mainWorker);
-  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
-  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+  const b = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+  const w = await duckdb.createWorker(b.mainWorker);
+  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), w);
+  await db.instantiate(b.mainModule, b.pthreadWorker);
   conn = await db.connect();
   $("duckMeta").textContent = "DuckDB-WASM ready";
-  // Populate the type picker from the manifest.
-  try {
-    const res = await conn.query(`SELECT file, label, class, entities FROM read_parquet('${MANIFEST}') ORDER BY entities DESC`);
-    const rows = res.toArray().map((r) => r.toJSON());
-    $("tablePick").innerHTML = `<option value="">— pick a type —</option>` + rows.map((r) =>
-      `<option value="${r.file}">${(r.label || r.class).replace(/[<>]/g,"")} (${r.entities})</option>`).join("");
-  } catch (e) { $("tablePick").innerHTML = `<option>manifest load failed</option>`; }
 }
-$("sql").value = $("sql").value.replace("{MANIFEST}", MANIFEST);
-$("tablePick").onchange = () => {
-  const f = $("tablePick").value;
-  if (f) $("sql").value = `SELECT * FROM read_parquet('${PARQUET(f)}') LIMIT 20;`;
-};
-$("manifestBtn").onclick = () => { $("sql").value = `SELECT class, label, entities, named_columns, file\nFROM read_parquet('${MANIFEST}') ORDER BY entities DESC LIMIT 30;`; };
 $("duckRun").onclick = async () => {
   if (!conn) { $("duckMeta").textContent = "DuckDB still initializing…"; return; }
-  $("duckMeta").textContent = "querying tables…"; $("duckOut").innerHTML = "";
+  $("duckMeta").textContent = "querying…"; $("duckOut").innerHTML = "";
   const t0 = performance.now();
   try {
+    if ($("duckSrc").value === "attach" && !attached) {
+      await conn.query(`ATTACH '${DUCKDB_URL}' AS wd (READ_ONLY)`); attached = true;
+    }
     const res = await conn.query($("sql").value);
     const cols = res.schema.fields.map((f) => f.name);
-    const rows = res.toArray().map((r) => {
-      const o = r.toJSON();
-      for (const k of cols) if (typeof o[k] === "object" && o[k] !== null) o[k] = JSON.stringify(o[k]);
-      return o;
-    });
-    $("duckMeta").textContent = `${rows.length} rows · ${(performance.now() - t0).toFixed(0)} ms (fetched only needed ranges)`;
+    const rows = res.toArray().map((r) => { const o = r.toJSON(); for (const k of cols) if (o[k] && typeof o[k] === "object") o[k] = JSON.stringify(o[k]); return o; });
+    $("duckMeta").textContent = `${rows.length} rows · ${(performance.now() - t0).toFixed(0)} ms`;
     renderTable($("duckOut"), cols, rows);
-  } catch (e) {
-    $("duckMeta").textContent = ""; $("duckOut").innerHTML = `<p class="err">${String(e)}</p>`;
-  }
+  } catch (e) { $("duckMeta").textContent = ""; $("duckOut").innerHTML = `<p class="err">${String(e)}</p>`; }
 };
+$("duckSrc").onchange = () => {
+  $("sql").value = $("duckSrc").value === "attach"
+    ? `SELECT entity, label, P106 FROM wd."Q5" LIMIT 20;`
+    : EX[0].sql;
+};
+
+/* ---- SQLite: sql.js-httpvfs (lazy range over the remote .sqlite) ---- */
+let sqliteWorker = null;
+async function initSqlite() {
+  try {
+    const mod = await import("https://cdn.jsdelivr.net/npm/sql.js-httpvfs@0.8.12/dist/index.js");
+    sqliteWorker = await mod.createDbWorker(
+      [{ from: "inline", config: { serverMode: "full", url: SQLITE_URL, requestChunkSize: 4096 } }],
+      "https://cdn.jsdelivr.net/npm/sql.js-httpvfs@0.8.12/dist/sqlite.worker.js",
+      "https://cdn.jsdelivr.net/npm/sql.js-httpvfs@0.8.12/dist/sql-wasm.wasm"
+    );
+    $("sqliteMeta").textContent = "sql.js-httpvfs ready";
+  } catch (e) {
+    $("sqliteMeta").textContent = "";
+    $("sqliteOut").innerHTML = `<p class="err">SQLite lazy reader unavailable: ${String(e)}\n` +
+      `(the host's redirect/Range handling may not suit sql.js-httpvfs — use the download link).</p>`;
+  }
+}
+$("sqliteRun").onclick = async () => {
+  if (!sqliteWorker) { $("sqliteMeta").textContent = "SQLite not ready (see error)"; return; }
+  $("sqliteMeta").textContent = "querying…"; $("sqliteOut").innerHTML = "";
+  const t0 = performance.now();
+  try {
+    const rows = await sqliteWorker.db.query($("ssql").value);
+    const cols = rows.length ? Object.keys(rows[0]) : [];
+    $("sqliteMeta").textContent = `${rows.length} rows · ${(performance.now() - t0).toFixed(0)} ms`;
+    renderTable($("sqliteOut"), cols, rows);
+  } catch (e) { $("sqliteMeta").textContent = ""; $("sqliteOut").innerHTML = `<p class="err">${String(e)}</p>`; }
+};
+
 initDuck().catch((e) => { $("duckMeta").textContent = "DuckDB init failed: " + e; });
+initSqlite();
 </script>
 </body>
 </html>
