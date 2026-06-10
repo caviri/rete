@@ -533,6 +533,61 @@ pub fn query_communities(
     .map_err(err)
 }
 
+/// The full community pyramid as a tree — the "cluster of clusters" view.
+/// Per dendrogram round (index 0 = finest, last = coarsest), every community
+/// with its member-node count, triple count (triples whose subject belongs to
+/// it), and its parent community at the next-coarser round (`null` at the
+/// top). JSON:
+/// `{ "rounds": N, "levels": [ [ { "id", "nodes", "triples", "parent" } ] ] }`.
+#[wasm_bindgen]
+pub fn pyramid_tree(bytes: &[u8]) -> Result<String, JsValue> {
+    use serde_json::json;
+    use std::collections::BTreeMap;
+    let rete = open(bytes)?;
+    let dict = rete.dictionary();
+    let ids = rete.match_ids((None, None, None));
+    let g = project_graph(dict, &ids);
+    let dend = build_dendrogram(&g);
+    let rounds = dend.rounds();
+    if rounds == 0 {
+        return serde_json::to_string(&json!({ "rounds": 0, "levels": [] })).map_err(err);
+    }
+    let n = g.node_count();
+    let mut levels = Vec::with_capacity(rounds);
+    for r in 0..rounds {
+        let mut nodes_per: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut rep: BTreeMap<usize, usize> = BTreeMap::new();
+        for node in 0..n {
+            let c = dend.base_community(node, r);
+            *nodes_per.entry(c).or_default() += 1;
+            rep.entry(c).or_insert(node);
+        }
+        let mut triples_per: BTreeMap<usize, usize> = BTreeMap::new();
+        for &(s, _, _) in &ids {
+            let c = dend.base_community(dict.subject_node(s) as usize, r);
+            *triples_per.entry(c).or_default() += 1;
+        }
+        let level: Vec<serde_json::Value> = nodes_per
+            .iter()
+            .map(|(&c, &nodes)| {
+                let parent = if r + 1 < rounds {
+                    json!(dend.base_community(rep[&c], r + 1))
+                } else {
+                    json!(null)
+                };
+                json!({
+                    "id": c,
+                    "nodes": nodes,
+                    "triples": triples_per.get(&c).copied().unwrap_or(0),
+                    "parent": parent,
+                })
+            })
+            .collect();
+        levels.push(level);
+    }
+    serde_json::to_string(&json!({ "rounds": rounds, "levels": levels })).map_err(err)
+}
+
 /// Recompute the Louvain community decomposition and report, per community, its
 /// member-subject count and triple count. Powers the "split by community"
 /// strategy view in the playground. JSON:

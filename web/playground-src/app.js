@@ -12,8 +12,12 @@
     schema: null,
     lastProgressive: null,
     lastProvenance: null,
-    built: null
+    built: null,
+    exploreClass: null,
+    exploreReady: false
   };
+
+  const RDF_TYPE = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
 
   const BUILD_SAMPLE = `# Paste N-Triples here (or open a file), pick the format, then Build.
 <http://ex/Alice> <http://ex/knows> <http://ex/Bob> .
@@ -356,7 +360,10 @@
 
     const schema = JSON.parse(W().schema(bytes));
     state.schema = schema;
+    state.exploreClass = null;
+    state.exploreReady = false;
     renderSchema(schema);
+    if (state.mode === "explore") ensureExplore();
     renderProgressiveInfo(null);
     renderProvenanceSummary(null);
     renderReachDefaults();
@@ -478,8 +485,159 @@
     state.mode = mode;
     $$("#modeTabs button").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
     $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === mode));
+    if (mode === "explore") ensureExplore();
     updateResultVisibility();
     updateHash();
+  }
+
+  // --- Explore: entity tables + the community pyramid -------------------
+  function ensureExplore() {
+    if (!state.bytes || state.exploreReady) return;
+    state.exploreReady = true;
+    renderExploreClasses();
+    renderPyramid();
+  }
+
+  function renderExploreClasses() {
+    const classes = ((state.schema && state.schema.classes) || []).slice(0, 12);
+    if (!classes.length) {
+      $("exploreClasses").innerHTML =
+        `<p class="microcopy">No rdf:type classes in this graph — showing raw triples.</p>`;
+      const res = JSON.parse(W().query(state.bytes, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 300", "table"));
+      $("exploreTable").innerHTML = renderTable(res.vars || [], res.rows || []);
+      return;
+    }
+    if (!state.exploreClass) state.exploreClass = classes[0][0];
+    $("exploreClasses").innerHTML = classes.map(([c, n]) =>
+      `<button type="button" data-cls="${esc(c)}" class="${c === state.exploreClass ? "active" : ""}">` +
+        `${esc(shorten(localName(c), 22))} (${esc(n)})` +
+      `</button>`).join("");
+    $$("#exploreClasses [data-cls]").forEach((btn) => {
+      btn.onclick = () => {
+        state.exploreClass = btn.dataset.cls;
+        renderExploreClasses();
+      };
+    });
+    renderEntityTable(state.exploreClass);
+  }
+
+  // Pivot one class's instances into an entity table: rows = entities,
+  // columns = their most frequent properties (multi-values joined).
+  function renderEntityTable(cls) {
+    let res;
+    try {
+      res = JSON.parse(W().query(state.bytes,
+        `SELECT ?s ?p ?o WHERE { ?s ${RDF_TYPE} ${cls} . ?s ?p ?o } LIMIT 6000`, "table"));
+    } catch (e) {
+      $("exploreTable").innerHTML = `<div class="error-box">${esc(String(e))}</div>`;
+      return;
+    }
+    const entities = new Map();
+    const predCount = new Map();
+    for (const row of res.rows || []) {
+      if (row.p === RDF_TYPE) continue;
+      if (!entities.has(row.s)) entities.set(row.s, new Map());
+      const props = entities.get(row.s);
+      if (!props.has(row.p)) props.set(row.p, []);
+      props.get(row.p).push(row.o);
+      predCount.set(row.p, (predCount.get(row.p) || 0) + 1);
+    }
+    const cols = Array.from(predCount.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([p]) => p);
+    const rows = Array.from(entities.entries()).slice(0, 100);
+    const cell = (vals) => {
+      if (!vals) return "";
+      const shown = vals.slice(0, 3).map((v) => shorten(v, 44)).join("; ");
+      return vals.length > 3 ? `${shown} (+${vals.length - 3})` : shown;
+    };
+    const sampled = (res.rows || []).length >= 6000 ? " (sampled)" : "";
+    $("exploreTable").innerHTML =
+      `<p class="microcopy">${entities.size} ${esc(localName(cls))} entit${entities.size === 1 ? "y" : "ies"}${sampled} — ` +
+      `showing ${rows.length}, top ${cols.length} properties. Use the SPARQL tab for full values.</p>` +
+      `<table><thead><tr><th>${esc(localName(cls))}</th>` +
+      cols.map((c) => `<th>${esc(shorten(localName(c), 20))}</th>`).join("") +
+      `</tr></thead><tbody>` +
+      rows.map(([s, props]) =>
+        `<tr><td class="iri">${esc(shorten(s, 42))}</td>` +
+        cols.map((c) => `<td>${esc(cell(props.get(c)))}</td>`).join("") +
+        `</tr>`).join("") +
+      `</tbody></table>`;
+  }
+
+  // The "cluster of clusters": outer circles are the coarsest dendrogram
+  // round; nested circles are the next finer round's communities they merge.
+  function renderPyramid() {
+    let tree;
+    try {
+      tree = JSON.parse(W().pyramid_tree(state.bytes));
+    } catch (e) {
+      $("pyramidNote").textContent = "pyramid error: " + String(e);
+      return;
+    }
+    if (!tree.rounds) {
+      $("pyramidNote").textContent = "This graph has no community structure (one community holds everything).";
+      $("pyramidViz").innerHTML = "";
+      $("pyramidLevels").innerHTML = "";
+      return;
+    }
+    const chain = tree.levels.map((l) => l.length).reverse().join(" → ");
+    $("pyramidNote").textContent =
+      `${tree.rounds} dendrogram round(s); coarsest → finest: ${chain} communities. ` +
+      `These are the same rounds the “Split by community” Round field selects.`;
+
+    const outer = tree.levels[tree.rounds - 1].slice().sort((a, b) => b.nodes - a.nodes);
+    const inner = tree.rounds >= 2 ? tree.levels[tree.rounds - 2] : null;
+    const children = new Map();
+    if (inner) {
+      for (const c of inner) {
+        if (!children.has(c.parent)) children.set(c.parent, []);
+        children.get(c.parent).push(c);
+      }
+    }
+    const shown = outer.slice(0, 24);
+    const totalNodes = shown.reduce((a, c) => a + c.nodes, 0) || 1;
+    const width = 920;
+    const items = shown.map((c) => ({ c, R: Math.max(24, Math.sqrt(c.nodes / totalNodes) * 240) }));
+    let x = 14, y = 16, rowH = 0;
+    for (const it of items) {
+      const d = it.R * 2 + 14;
+      if (x + d > width) { x = 14; y += rowH + 14; rowH = 0; }
+      it.cx = x + it.R;
+      it.cy = y + it.R;
+      x += d;
+      rowH = Math.max(rowH, it.R * 2);
+    }
+    const height = y + rowH + 16;
+    let svg = `<svg viewBox="0 0 ${width} ${Math.max(height, 140)}" role="img" aria-label="Community pyramid">`;
+    for (const it of items) {
+      svg += `<circle class="pyr-outer" cx="${it.cx.toFixed(1)}" cy="${it.cy.toFixed(1)}" r="${it.R.toFixed(1)}">` +
+        `<title>round ${tree.rounds - 1} community C${it.c.id}: ${it.c.nodes} nodes, ${it.c.triples} triples</title></circle>`;
+      const kids = (children.get(it.c.id) || []).sort((a, b) => b.nodes - a.nodes).slice(0, 40);
+      const kTotal = kids.reduce((a, k) => a + k.nodes, 0) || 1;
+      kids.forEach((k, i) => {
+        const angle = i * 2.399963;
+        const dist = (it.R * 0.6) * Math.sqrt((i + 0.5) / kids.length);
+        const r = Math.max(3, Math.sqrt(k.nodes / kTotal) * it.R * 0.42);
+        svg += `<circle class="pyr-inner" cx="${(it.cx + Math.cos(angle) * dist).toFixed(1)}" ` +
+          `cy="${(it.cy + Math.sin(angle) * dist).toFixed(1)}" r="${r.toFixed(1)}">` +
+          `<title>round ${tree.rounds - 2} community C${k.id}: ${k.nodes} nodes, ${k.triples} triples</title></circle>`;
+      });
+      if (it.R >= 30) {
+        svg += `<text class="pyr-label" x="${it.cx.toFixed(1)}" y="${(it.cy - it.R + 14).toFixed(1)}" text-anchor="middle">C${it.c.id}</text>`;
+      }
+    }
+    svg += `</svg>`;
+    $("pyramidViz").innerHTML = svg +
+      (outer.length > 24 ? `<p class="microcopy" style="padding:4px 10px">Showing the 24 largest of ${outer.length} top-level communities.</p>` : "");
+    $("pyramidLevels").innerHTML =
+      `<table><thead><tr><th>round</th><th>communities</th><th>largest (nodes)</th><th>largest (triples)</th></tr></thead><tbody>` +
+      tree.levels.map((l, r) =>
+        `<tr><td>${r}${r === tree.rounds - 1 ? " (coarsest)" : r === 0 ? " (finest)" : ""}</td>` +
+        `<td>${l.length}</td><td>${Math.max(...l.map((c) => c.nodes))}</td>` +
+        `<td>${Math.max(...l.map((c) => c.triples))}</td></tr>`).join("") +
+      `</tbody></table>`;
   }
 
   function updateResultVisibility() {
@@ -507,7 +665,9 @@
 
   function setStrategy(strategy) {
     $("strategy").value = strategy || "whole";
-    $("roundWrap").classList.toggle("hidden", $("strategy").value !== "community");
+    const noRound = $("strategy").value !== "community";
+    $("roundWrap").classList.toggle("hidden", noRound);
+    $("roundHelp").classList.toggle("hidden", noRound);
   }
 
   function renderTable(vars, rows) {
@@ -1303,6 +1463,7 @@
     $("buildFile").onchange = (e) => loadBuildFile(e.target.files[0]);
 
     $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
+    $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("strategyModalClose").onclick = () => $("strategyModal").classList.add("hidden");
     $("strategyModal").addEventListener("click", (e) => {
       if (e.target === $("strategyModal")) $("strategyModal").classList.add("hidden");

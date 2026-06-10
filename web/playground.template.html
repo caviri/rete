@@ -34,6 +34,7 @@ __PLAYGROUND_CSS__
 
   <nav id="modeTabs" class="mode-tabs" aria-label="Playground mode">
     <button type="button" class="active" data-mode="sparql">SPARQL</button>
+    <button type="button" data-mode="explore">Explore</button>
     <button type="button" data-mode="shacl">SHACL</button>
     <button type="button" data-mode="reach">Reach</button>
     <button type="button" data-mode="schema">Schema</button>
@@ -98,6 +99,7 @@ __PLAYGROUND_CSS__
             <span>Round</span>
             <input id="round" type="number" min="0" placeholder="auto" />
           </label>
+          <button id="roundHelp" type="button" class="help-button hidden" title="What is a round?" aria-label="Explain dendrogram rounds">?</button>
           <select id="fmt" class="visually-hidden" aria-label="Result format">
             <option value="table">table</option>
             <option value="graph">graph</option>
@@ -106,6 +108,23 @@ __PLAYGROUND_CSS__
           </select>
           <span id="qmeta" class="run-meta"></span>
         </div>
+      </div>
+
+      <div class="panel" data-panel="explore">
+        <div class="editor-head">
+          <div>
+            <h1>Explore</h1>
+            <p class="microcopy">Browse the dataset as entity tables, and the community pyramid as nested clusters of clusters.</p>
+          </div>
+        </div>
+        <h3>Entity tables</h3>
+        <p class="microcopy">One table per <code>rdf:type</code> class: entities as rows, their properties as columns.</p>
+        <div id="exploreClasses" class="filter-row"></div>
+        <div id="exploreTable"></div>
+        <h3 style="margin-top:20px">Community pyramid</h3>
+        <p class="microcopy" id="pyramidNote"></p>
+        <div id="pyramidViz" class="ontology-diagram"></div>
+        <div id="pyramidLevels" style="margin-top:10px"></div>
       </div>
 
       <div class="panel" data-panel="shacl">
@@ -294,6 +313,16 @@ __PLAYGROUND_CSS__
           that returns <em>values</em> (titles, scores, IRIs) needs dictionary and index bytes, so
           it falls back to the whole index — and says so in a banner. The Progressive Metadata
           panel shows the exactness, bytes, and range reads of a summary-served answer.
+        </dd>
+        <dt>Round (split by community)</dt>
+        <dd>
+          The pyramid is built by repeated Louvain clustering: <strong>round 0</strong> is the
+          finest partition (many small communities); each higher round merges communities into
+          coarser "clusters of clusters", up to the top of the dendrogram. The Round field picks
+          which level the split uses — fewer, bigger partials at higher rounds; more, smaller
+          ones at round 0. Left empty, it uses the same round the file build chose for its
+          ~64&nbsp;KiB tile budget. The answer is identical at every round; only the
+          decomposition changes. The Explore tab visualizes these levels.
         </dd>
         <dt>Split by community</dt>
         <dd>

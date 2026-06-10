@@ -911,6 +911,25 @@ pre {
   color: var(--accent-dark);
 }
 
+/* Community-pyramid bubbles (Explore tab). */
+.pyr-outer {
+  fill: rgba(20, 125, 105, .07);
+  stroke: var(--accent);
+  stroke-width: 1.4;
+}
+
+.pyr-inner {
+  fill: rgba(200, 79, 47, .16);
+  stroke: var(--accent-2);
+  stroke-width: 1;
+}
+
+.pyr-label {
+  font: 11px "Cascadia Mono", Consolas, monospace;
+  fill: var(--accent-dark);
+  pointer-events: none;
+}
+
 /* The strategy-help "?" button and its explanation modal. */
 .help-button {
   width: 28px;

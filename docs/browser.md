@@ -37,6 +37,7 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `query(bytes, query, format)` | any SPARQL form, tagged by `kind` (see below) |
 | `communities(bytes, round?)` | `[{ community, size, triples }, …]` (Louvain decomposition) |
 | `query_communities(bytes, query, round?)` | a SELECT evaluated with the community-split strategy (stars per community, global joins — exact rows), plus `communities: [{ community, subjects, rows }]` |
+| `pyramid_tree(bytes)` | the full community pyramid: per dendrogram round, every community's node/triple counts and its parent at the next-coarser round |
 | `reach(bytes, predicate, seeds, reverse)` | `[{ seed, count, reached:["<iri>",…] }, …]` (serial transitive reach) |
 | `build(text, format)` | a complete `.rete` file image (`Uint8Array`) built from RDF text |
 | `sparql_url(url, query, format)` | **worker-only**: the `query` envelope evaluated against a remote URL via lazy HTTP range reads, plus `remote: { fileLength, bytes, requests }` |
