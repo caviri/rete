@@ -163,6 +163,32 @@ The playground's `scholar` / `scholar-noisy` demo datasets are built with this
 generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
 the `scripts/build_playground.py` docstring).
 
+## Companion: columnar property tables (Parquet, split by type)
+
+To compare the `.rete` graph against a columnar layout,
+`scripts/rdf_to_property_tables.py` denormalizes the same Wikidata triples into
+**one Parquet table per entity type** (the classic RDF "property table"): rows
+are entities, grouped by `wdt:P31` (instance-of); columns are that class's most
+common structured properties, multi-valued as `LIST(VARCHAR)`; an English
+`label` column is added and the labelling/description predicates are excluded
+so the columns are the real properties. It runs entirely in DuckDB from the
+source Parquet:
+
+```sh
+pip install --break-system-packages duckdb
+uv run python scripts/rdf_to_property_tables.py --parts 10 --limit 120000000 -o data/wd-tables
+# -> data/wd-tables/Q5.parquet (human), Q16521.parquet (taxon), … + _manifest.parquet
+```
+
+Each class table is independently queryable (`SELECT … FROM 'Q5.parquet'`), the
+`_manifest.parquet` maps class IRI → label/entity-count/file and each column id
+back to its predicate, and a single DuckDB over the set is just views:
+`CREATE VIEW human AS SELECT * FROM 'data/wd-tables/Q5.parquet'`. Match the
+`.rete` slice by passing the same `--parts`/`--limit`. This is a property-table
+companion for benchmarking storage/query tech against the graph format — not a
+lossless graph encoding (sparse properties become NULLs, heterogeneous classes
+get wide; that's the point of the comparison).
+
 ## A real-world graph: a Wikidata biology slice
 
 For a genuinely large, real dataset, `scripts/fetch_wikidata_bio.py` pulls a

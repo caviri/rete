@@ -333,6 +333,27 @@ requests instead of the whole file — the range-query promise, at 1 GB.</p>
 <p>The playground's <code>scholar</code> / <code>scholar-noisy</code> demo datasets are built with this
 generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
 the <code>scripts/build_playground.py</code> docstring).</p>
+<h2>Companion: columnar property tables (Parquet, split by type)</h2>
+<p>To compare the <code>.rete</code> graph against a columnar layout,
+<code>scripts/rdf_to_property_tables.py</code> denormalizes the same Wikidata triples into
+<strong>one Parquet table per entity type</strong> (the classic RDF "property table"): rows
+are entities, grouped by <code>wdt:P31</code> (instance-of); columns are that class's most
+common structured properties, multi-valued as <code>LIST(VARCHAR)</code>; an English
+<code>label</code> column is added and the labelling/description predicates are excluded
+so the columns are the real properties. It runs entirely in DuckDB from the
+source Parquet:</p>
+<pre><code class="language-sh">pip install --break-system-packages duckdb
+uv run python scripts/rdf_to_property_tables.py --parts 10 --limit 120000000 -o data/wd-tables
+# -&gt; data/wd-tables/Q5.parquet (human), Q16521.parquet (taxon), … + _manifest.parquet
+</code></pre>
+<p>Each class table is independently queryable (<code>SELECT … FROM 'Q5.parquet'</code>), the
+<code>_manifest.parquet</code> maps class IRI → label/entity-count/file and each column id
+back to its predicate, and a single DuckDB over the set is just views:
+<code>CREATE VIEW human AS SELECT * FROM 'data/wd-tables/Q5.parquet'</code>. Match the
+<code>.rete</code> slice by passing the same <code>--parts</code>/<code>--limit</code>. This is a property-table
+companion for benchmarking storage/query tech against the graph format — not a
+lossless graph encoding (sparse properties become NULLs, heterogeneous classes
+get wide; that's the point of the comparison).</p>
 <h2>A real-world graph: a Wikidata biology slice</h2>
 <p>For a genuinely large, real dataset, <code>scripts/fetch_wikidata_bio.py</code> pulls a
 life-sciences slice from the <a href="https://query.wikidata.org">Wikidata Query Service</a>:
