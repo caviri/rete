@@ -751,8 +751,23 @@
     const t0 = performance.now();
     try {
       let raw;
+      let fellBack = false;
       if (strategy === "progressive") {
-        raw = W().progressive_query(state.bytes, q);
+        // Progressive is a contract, not a speedup: answer exactly from the
+        // pyramid summary or don't. Shapes that need index/dictionary bytes
+        // (any query returning values) fall back to the whole index — run,
+        // and *say so* rather than refusing.
+        try {
+          raw = W().progressive_query(state.bytes, q);
+        } catch (pe) {
+          const m = String(pe);
+          if (m.includes("not exactly answerable") || m.includes("no pyramid summary")) {
+            raw = W().query(state.bytes, q, queryFmt);
+            fellBack = true;
+          } else {
+            throw pe;
+          }
+        }
       } else if (strategy === "community") {
         const roundText = $("round").value.trim();
         raw = W().query_communities(state.bytes, q, roundText === "" ? undefined : Number(roundText));
@@ -762,7 +777,18 @@
       const res = JSON.parse(raw);
       const summary = renderResult(res, strategy !== "whole" && fmt === "graph" ? "table" : fmt);
       const dt = performance.now() - t0;
-      $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms`;
+      $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms${fellBack ? " | fell back to whole index" : ""}`;
+      if (fellBack) {
+        $("out").innerHTML =
+          `<div class="note">Not summary-answerable: this query returns values (titles, scores, …), ` +
+          `which live in the dictionary and triple index — the pyramid summary holds only community ` +
+          `structure and per-predicate counts, so the progressive contract (answer from the summary ` +
+          `alone, never touch the index) cannot apply. <strong>Ran the whole index instead.</strong> ` +
+          `Progressive shines on shapes like the “Predicate totals” example.</div>` +
+          $("out").innerHTML;
+        $("progressiveInfo").innerHTML =
+          `<div>Fell back to the whole index — this query needs index bytes the summary does not hold.</div>`;
+      }
       if (strategy === "community") renderCommunityPartials(res.communities);
       saveHistory({ query: q, format: fmt, strategy, dataset: state.dataset, ts: Date.now(), resultSummary: summary });
       updateHash();
@@ -770,10 +796,7 @@
       $("qmeta").textContent = "";
       let msg = String(e);
       if (strategy === "progressive") {
-        msg += " — Progressive answers COUNT/ASK shapes straight from the pyramid summary, " +
-          "without touching the index. For this query, use the Whole-index strategy — or " +
-          "Split by community (stars compute per community, joins and aggregation run " +
-          "globally on the merged partials).";
+        msg += " — Progressive answers COUNT/ASK shapes straight from the pyramid summary.";
       }
       showError("out", msg);
       renderProgressiveInfo(null);
@@ -1278,6 +1301,15 @@
     $("buildDownload").onclick = downloadBuilt;
     $("buildOpen").onclick = openBuilt;
     $("buildFile").onchange = (e) => loadBuildFile(e.target.files[0]);
+
+    $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
+    $("strategyModalClose").onclick = () => $("strategyModal").classList.add("hidden");
+    $("strategyModal").addEventListener("click", (e) => {
+      if (e.target === $("strategyModal")) $("strategyModal").classList.add("hidden");
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") $("strategyModal").classList.add("hidden");
+    });
     $("clearHist").onclick = () => {
       localStorage.removeItem(HIST_KEY);
       renderHistory();

@@ -918,6 +918,75 @@ pre {
   color: var(--accent-dark);
 }
 
+/* The strategy-help "?" button and its explanation modal. */
+.help-button {
+  width: 28px;
+  min-height: 28px;
+  align-self: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent-dark);
+  font-weight: 800;
+  padding: 0;
+}
+
+.help-button:hover {
+  background: var(--side);
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(23, 33, 29, .45);
+}
+
+.modal-card {
+  width: min(640px, 100%);
+  max-height: 86vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.modal-head h3 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 19px;
+}
+
+.strategy-list {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.strategy-list dt {
+  margin-top: 12px;
+  font-weight: 800;
+  color: var(--accent-dark);
+}
+
+.strategy-list dd {
+  margin: 4px 0 0;
+  color: var(--ink);
+}
+
 .hidden,
 .visually-hidden {
   display: none !important;
@@ -1047,6 +1116,7 @@ pre {
               <option value="community">Split by community</option>
             </select>
           </label>
+          <button id="strategyHelp" type="button" class="help-button" title="What do these strategies do?" aria-label="Explain the evaluation strategies">?</button>
           <label id="roundWrap" class="hidden">
             <span>Round</span>
             <input id="round" type="number" min="0" placeholder="auto" />
@@ -1224,6 +1294,45 @@ pre {
       </section>
     </aside>
   </main>
+
+  <div id="strategyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="strategyModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="strategyModalTitle">Evaluation strategies</h3>
+        <button id="strategyModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <dl class="strategy-list">
+        <dt>Whole index</dt>
+        <dd>
+          The default and the reference answer. Evaluates against the full SPO/POS/OSP
+          permutation indexes with the complete engine — every supported SPARQL form and
+          feature. When in doubt, use this.
+        </dd>
+        <dt>Progressive summary</dt>
+        <dd>
+          A <strong>contract, not a speedup</strong>: answer <em>exactly</em> from the pyramid
+          summary — community structure and per-predicate counts, fetched in ~3 small range
+          reads — and <strong>never touch the triple index</strong>. Only shapes the summary can
+          answer qualify (counting triples or a predicate's total, ASK-style existence). A query
+          that returns <em>values</em> (titles, scores, IRIs) needs dictionary and index bytes, so
+          it falls back to the whole index — and says so in a banner. The Progressive Metadata
+          panel shows the exactness, bytes, and range reads of a summary-served answer.
+        </dd>
+        <dt>Split by community</dt>
+        <dd>
+          Decomposes each basic graph pattern into <em>subject stars</em>, evaluates every star
+          per pyramid community (the community's subjects pushed in as a VALUES binding), and
+          recombines the partials with global hash joins; FILTER / UNION / OPTIONAL / MINUS
+          recurse, paths and GRAPH evaluate globally inside the split, and ORDER BY / GROUP BY /
+          LIMIT run once on the merged rows — so the rows are <strong>identical to the
+          whole-index answer</strong>, with a per-community contribution table below the result.
+          In this single-threaded page it illustrates the decomposition; natively the same
+          partials are the seam for parallel evaluation. Refused only when nothing in the query
+          can split (e.g. a pure property path).
+        </dd>
+      </dl>
+    </div>
+  </div>
 
   <script>
 let wasm_bindgen = (function(exports) {
@@ -3522,8 +3631,23 @@ ex:ApplicationDependencyShape
     const t0 = performance.now();
     try {
       let raw;
+      let fellBack = false;
       if (strategy === "progressive") {
-        raw = W().progressive_query(state.bytes, q);
+        // Progressive is a contract, not a speedup: answer exactly from the
+        // pyramid summary or don't. Shapes that need index/dictionary bytes
+        // (any query returning values) fall back to the whole index — run,
+        // and *say so* rather than refusing.
+        try {
+          raw = W().progressive_query(state.bytes, q);
+        } catch (pe) {
+          const m = String(pe);
+          if (m.includes("not exactly answerable") || m.includes("no pyramid summary")) {
+            raw = W().query(state.bytes, q, queryFmt);
+            fellBack = true;
+          } else {
+            throw pe;
+          }
+        }
       } else if (strategy === "community") {
         const roundText = $("round").value.trim();
         raw = W().query_communities(state.bytes, q, roundText === "" ? undefined : Number(roundText));
@@ -3533,7 +3657,18 @@ ex:ApplicationDependencyShape
       const res = JSON.parse(raw);
       const summary = renderResult(res, strategy !== "whole" && fmt === "graph" ? "table" : fmt);
       const dt = performance.now() - t0;
-      $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms`;
+      $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms${fellBack ? " | fell back to whole index" : ""}`;
+      if (fellBack) {
+        $("out").innerHTML =
+          `<div class="note">Not summary-answerable: this query returns values (titles, scores, …), ` +
+          `which live in the dictionary and triple index — the pyramid summary holds only community ` +
+          `structure and per-predicate counts, so the progressive contract (answer from the summary ` +
+          `alone, never touch the index) cannot apply. <strong>Ran the whole index instead.</strong> ` +
+          `Progressive shines on shapes like the “Predicate totals” example.</div>` +
+          $("out").innerHTML;
+        $("progressiveInfo").innerHTML =
+          `<div>Fell back to the whole index — this query needs index bytes the summary does not hold.</div>`;
+      }
       if (strategy === "community") renderCommunityPartials(res.communities);
       saveHistory({ query: q, format: fmt, strategy, dataset: state.dataset, ts: Date.now(), resultSummary: summary });
       updateHash();
@@ -3541,10 +3676,7 @@ ex:ApplicationDependencyShape
       $("qmeta").textContent = "";
       let msg = String(e);
       if (strategy === "progressive") {
-        msg += " — Progressive answers COUNT/ASK shapes straight from the pyramid summary, " +
-          "without touching the index. For this query, use the Whole-index strategy — or " +
-          "Split by community (stars compute per community, joins and aggregation run " +
-          "globally on the merged partials).";
+        msg += " — Progressive answers COUNT/ASK shapes straight from the pyramid summary.";
       }
       showError("out", msg);
       renderProgressiveInfo(null);
@@ -4049,6 +4181,15 @@ ex:ApplicationDependencyShape
     $("buildDownload").onclick = downloadBuilt;
     $("buildOpen").onclick = openBuilt;
     $("buildFile").onchange = (e) => loadBuildFile(e.target.files[0]);
+
+    $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
+    $("strategyModalClose").onclick = () => $("strategyModal").classList.add("hidden");
+    $("strategyModal").addEventListener("click", (e) => {
+      if (e.target === $("strategyModal")) $("strategyModal").classList.add("hidden");
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") $("strategyModal").classList.add("hidden");
+    });
     $("clearHist").onclick = () => {
       localStorage.removeItem(HIST_KEY);
       renderHistory();

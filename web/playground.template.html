@@ -93,6 +93,7 @@ __PLAYGROUND_CSS__
               <option value="community">Split by community</option>
             </select>
           </label>
+          <button id="strategyHelp" type="button" class="help-button" title="What do these strategies do?" aria-label="Explain the evaluation strategies">?</button>
           <label id="roundWrap" class="hidden">
             <span>Round</span>
             <input id="round" type="number" min="0" placeholder="auto" />
@@ -270,6 +271,45 @@ __PLAYGROUND_CSS__
       </section>
     </aside>
   </main>
+
+  <div id="strategyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="strategyModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="strategyModalTitle">Evaluation strategies</h3>
+        <button id="strategyModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <dl class="strategy-list">
+        <dt>Whole index</dt>
+        <dd>
+          The default and the reference answer. Evaluates against the full SPO/POS/OSP
+          permutation indexes with the complete engine — every supported SPARQL form and
+          feature. When in doubt, use this.
+        </dd>
+        <dt>Progressive summary</dt>
+        <dd>
+          A <strong>contract, not a speedup</strong>: answer <em>exactly</em> from the pyramid
+          summary — community structure and per-predicate counts, fetched in ~3 small range
+          reads — and <strong>never touch the triple index</strong>. Only shapes the summary can
+          answer qualify (counting triples or a predicate's total, ASK-style existence). A query
+          that returns <em>values</em> (titles, scores, IRIs) needs dictionary and index bytes, so
+          it falls back to the whole index — and says so in a banner. The Progressive Metadata
+          panel shows the exactness, bytes, and range reads of a summary-served answer.
+        </dd>
+        <dt>Split by community</dt>
+        <dd>
+          Decomposes each basic graph pattern into <em>subject stars</em>, evaluates every star
+          per pyramid community (the community's subjects pushed in as a VALUES binding), and
+          recombines the partials with global hash joins; FILTER / UNION / OPTIONAL / MINUS
+          recurse, paths and GRAPH evaluate globally inside the split, and ORDER BY / GROUP BY /
+          LIMIT run once on the merged rows — so the rows are <strong>identical to the
+          whole-index answer</strong>, with a per-community contribution table below the result.
+          In this single-threaded page it illustrates the decomposition; natively the same
+          partials are the seam for parallel evaluation. Refused only when nothing in the query
+          can split (e.g. a pure property path).
+        </dd>
+      </dl>
+    </div>
+  </div>
 
   <script>
 __GLUE_JS__

@@ -911,6 +911,75 @@ pre {
   color: var(--accent-dark);
 }
 
+/* The strategy-help "?" button and its explanation modal. */
+.help-button {
+  width: 28px;
+  min-height: 28px;
+  align-self: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent-dark);
+  font-weight: 800;
+  padding: 0;
+}
+
+.help-button:hover {
+  background: var(--side);
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(23, 33, 29, .45);
+}
+
+.modal-card {
+  width: min(640px, 100%);
+  max-height: 86vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.modal-head h3 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 19px;
+}
+
+.strategy-list {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.strategy-list dt {
+  margin-top: 12px;
+  font-weight: 800;
+  color: var(--accent-dark);
+}
+
+.strategy-list dd {
+  margin: 4px 0 0;
+  color: var(--ink);
+}
+
 .hidden,
 .visually-hidden {
   display: none !important;
