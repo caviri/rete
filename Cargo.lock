@@ -1025,10 +1025,12 @@ dependencies = [
 name = "rete-wasm"
 version = "0.0.1"
 dependencies = [
+ "js-sys",
  "rete-core",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-rayon",
+ "web-sys",
 ]
 
 [[package]]

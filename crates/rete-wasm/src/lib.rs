@@ -316,9 +316,16 @@ pub fn progressive_query_json(bytes: &[u8], query: &str) -> Result<String, Strin
 ///   - otherwise (`table`/`json`) → `{ "kind":"construct", "triples": [[s,p,o], ...] }`.
 #[wasm_bindgen]
 pub fn query(bytes: &[u8], query: &str, format: &str) -> Result<String, JsValue> {
-    use serde_json::{json, Map, Value};
     let rete = open(bytes)?;
-    let out = eval_query(&rete, query).map_err(err)?;
+    let v = query_value(&rete, query, format)?;
+    serde_json::to_string(&v).map_err(err)
+}
+
+/// Evaluate any SPARQL form against an open [`Rete`] and build the playground
+/// JSON envelope (shared by [`query`] and [`sparql_url`]).
+fn query_value(rete: &Rete, query: &str, format: &str) -> Result<serde_json::Value, JsValue> {
+    use serde_json::{json, Map, Value};
+    let out = eval_query(rete, query).map_err(err)?;
     let v = match out {
         QueryOutput::Ask(b) => json!({ "kind": "ask", "boolean": b }),
         QueryOutput::Select(project, solutions) => {
@@ -359,6 +366,117 @@ pub fn query(bytes: &[u8], query: &str, format: &str) -> Result<String, JsValue>
             }
         },
     };
+    Ok(v)
+}
+
+/// HTTP `Range` reader over **synchronous** XMLHttpRequest — the bridge that
+/// lets the lazily-faulting `Rete::open_ranged_lazy` run in the browser with
+/// the synchronous engine untouched. Browsers permit sync XHR with a binary
+/// response **only inside Web Workers**: call [`sparql_url`] from a worker,
+/// never the main thread (where the browser throws).
+struct XhrRangeReader {
+    url: String,
+    len: u64,
+}
+
+impl XhrRangeReader {
+    /// Probe the resource length with a HEAD request.
+    fn open(url: &str) -> Result<Self, JsValue> {
+        let xhr = web_sys::XmlHttpRequest::new()?;
+        xhr.open_with_async("HEAD", url, false)?;
+        xhr.send()?;
+        let status = xhr.status()?;
+        if !(200..300).contains(&status) {
+            return Err(JsValue::from_str(&format!("HEAD {url}: status {status}")));
+        }
+        let len = xhr
+            .get_response_header("Content-Length")?
+            .and_then(|v| v.parse::<u64>().ok())
+            .ok_or_else(|| {
+                JsValue::from_str(&format!("server did not report Content-Length for {url}"))
+            })?;
+        Ok(Self {
+            url: url.to_string(),
+            len,
+        })
+    }
+}
+
+impl RangeReader for XhrRangeReader {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        let js = |e: JsValue| std::io::Error::other(format!("XHR error: {e:?}"));
+        let xhr = web_sys::XmlHttpRequest::new().map_err(js)?;
+        xhr.open_with_async("GET", &self.url, false).map_err(js)?;
+        xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
+        let end = offset + len - 1; // HTTP ranges are inclusive
+        xhr.set_request_header("Range", &format!("bytes={offset}-{end}"))
+            .map_err(js)?;
+        xhr.send().map_err(js)?;
+        let status = xhr.status().map_err(js)?;
+        // Same contract as the CLI's HttpRangeReader: a 200 means the server
+        // ignored Range and is returning the whole body — reject it loudly
+        // rather than silently mis-slicing.
+        if status != 206 {
+            return Err(std::io::Error::other(format!(
+                "server ignored Range (status {status}, expected 206 Partial Content) for {}; \
+                 the host must support HTTP range requests",
+                self.url
+            )));
+        }
+        let resp = xhr.response().map_err(js)?;
+        let mut buf = js_sys::Uint8Array::new(&resp).to_vec();
+        if (buf.len() as u64) < len {
+            return Err(std::io::Error::other(format!(
+                "short range response: got {} of {len} bytes at offset {offset} from {}",
+                buf.len(),
+                self.url
+            )));
+        }
+        buf.truncate(len as usize);
+        Ok(buf)
+    }
+}
+
+/// Run a SPARQL query against a **remote `.rete` URL**, fetching only the
+/// byte ranges the query needs: header, dictionary chunk directories, tile
+/// directories, then just the touched chunks and tiles (full scans coalesce
+/// adjacent tiles into batched range reads). Returns the same JSON envelope
+/// as [`query`], plus `"remote": { "fileLength", "bytes", "requests" }` —
+/// how little of the file the query actually pulled.
+///
+/// **Worker-only.** This uses synchronous XHR (the engine is synchronous and
+/// wasm cannot block on `fetch`); browsers allow that off the main thread
+/// only, so call it from a Web Worker. A failed range fetch mid-query is an
+/// error, never a silently incomplete result. The host must answer `Range`
+/// requests with `206` (and send CORS headers if cross-origin).
+#[wasm_bindgen]
+pub fn sparql_url(url: &str, query: &str, format: &str) -> Result<String, JsValue> {
+    let reader = std::sync::Arc::new(CountingReader::new(XhrRangeReader::open(url)?));
+    let file_length = reader.len();
+    let rete = Rete::open_ranged_lazy(reader.clone()).map_err(err)?;
+    let mut v = query_value(&rete, query, format)?;
+    if rete.index_incomplete() {
+        return Err(JsValue::from_str(
+            "a range fetch failed mid-query; refusing to return incomplete results",
+        ));
+    }
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert(
+            "remote".to_string(),
+            serde_json::json!({
+                "fileLength": file_length,
+                "bytes": reader.bytes_read(),
+                "requests": reader.requests(),
+            }),
+        );
+    }
     serde_json::to_string(&v).map_err(err)
 }
 

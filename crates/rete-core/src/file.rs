@@ -1,4 +1,4 @@
-﻿//! `.rete` file assembly and reading (SPEC.md Â§4, Â§9).
+//! `.rete` file assembly and reading (SPEC.md Â§4, Â§9).
 //!
 //! v0 layout:
 //!
@@ -105,6 +105,41 @@ fn decompress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
         }
         other => Err(FileError::UnknownCodec(other)),
     }
+}
+
+/// Fetch a set of ascending, disjoint byte ranges, coalescing ranges whose
+/// gap is at most [`COALESCE_GAP`] into one `read_at` (tiles/chunks are laid
+/// out back-to-back, so a full-section sweep collapses into a single read).
+/// Returns each requested range's bytes in order; `None` if any read fails.
+fn read_coalesced<R: RangeReader + ?Sized>(
+    reader: &R,
+    ranges: &[ByteRange],
+) -> Option<Vec<Vec<u8>>> {
+    /// Two ranges this close are cheaper as one read than as two round trips.
+    const COALESCE_GAP: u64 = 4096;
+    let mut out = Vec::with_capacity(ranges.len());
+    let mut i = 0;
+    while i < ranges.len() {
+        let start = ranges[i].offset;
+        let mut end = ranges[i].offset.checked_add(ranges[i].len)?;
+        let mut j = i + 1;
+        while j < ranges.len() {
+            let r = &ranges[j];
+            if r.offset < end || r.offset - end > COALESCE_GAP {
+                break;
+            }
+            end = r.offset.checked_add(r.len)?;
+            j += 1;
+        }
+        let blob = reader.read_at(start, end - start).ok()?;
+        for r in &ranges[i..j] {
+            let lo = (r.offset - start) as usize;
+            let hi = lo.checked_add(r.len as usize)?;
+            out.push(blob.get(lo..hi)?.to_vec());
+        }
+        i = j;
+    }
+    Some(out)
 }
 
 /// Content hash (first 16 bytes of blake3) over the file payload sections.
@@ -1106,6 +1141,9 @@ impl Rete {
 
     /// Resolve every triple of a graph (`None` = default graph) back to terms.
     pub fn dump(&self, graph: Option<&str>) -> Vec<TermTriple> {
+        // A dump resolves every term: batch-fault the whole dictionary up
+        // front (coalesced range reads on a lazy remote open; no-op locally).
+        self.dict.prefetch_all();
         let index = match graph {
             None => &self.index,
             Some(g) => match self.graph_index(g) {
@@ -1273,16 +1311,25 @@ impl Rete {
                 .collect();
             let chunk_reader = reader.clone();
             let codec = header.dict_codec;
+            let loader_ranges = ranges.clone();
             let loader: crate::dict::ChunkLoader = Box::new(move |ci| {
-                let range = ranges.get(ci)?;
+                let range = loader_ranges.get(ci)?;
                 let bytes = chunk_reader.read_at(range.offset, range.len).ok()?;
                 decompress(codec, &bytes).ok()
             });
-            dict_sections.push(crate::dict::ChunkedSection::from_parts(
-                meta,
-                chunks,
-                Some(loader),
-            ));
+            // Full-section sweeps (export/dump) batch their chunk fetches:
+            // adjacent chunk ranges coalesce into a handful of range reads.
+            let bulk_reader = reader.clone();
+            let bulk: crate::dict::ChunkBulkLoader = Box::new(move |cis| {
+                let want: Option<Vec<ByteRange>> =
+                    cis.iter().map(|&ci| ranges.get(ci).copied()).collect();
+                let blobs = read_coalesced(bulk_reader.as_ref(), &want?)?;
+                blobs.iter().map(|b| decompress(codec, b).ok()).collect()
+            });
+            dict_sections.push(
+                crate::dict::ChunkedSection::from_parts(meta, chunks, Some(loader))
+                    .with_bulk_loader(bulk),
+            );
         }
         let dict_arr: [crate::dict::ChunkedSection; 4] = dict_sections
             .try_into()
@@ -1337,15 +1384,29 @@ impl Rete {
             Vec::new()
         };
 
-        // The loader fetches and decompresses one tile per call.
+        // The loader fetches and decompresses one tile per call; the bulk
+        // loader serves multi-tile scans by coalescing adjacent tile ranges
+        // into single range reads (tiles are back-to-back in their section,
+        // so a full-section scan is typically one request).
         let codec = header.block_codec;
         let loader_ranges = tile_ranges.clone();
+        let loader_reader = reader.clone();
         let loader: crate::index::TileLoader = Box::new(move |si, ti| {
             let (_, _, range) = loader_ranges.get(si)?.get(ti)?;
-            let bytes = reader.read_at(range.offset, range.len).ok()?;
+            let bytes = loader_reader.read_at(range.offset, range.len).ok()?;
             decompress(codec, &bytes).ok()
         });
-        let index = GraphIndex::from_remote_directories(directories, loader);
+        let bulk_ranges = tile_ranges.clone();
+        let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis| {
+            let section = bulk_ranges.get(si)?;
+            let want: Option<Vec<ByteRange>> = tis
+                .iter()
+                .map(|&ti| section.get(ti).map(|&(_, _, r)| r))
+                .collect();
+            let blobs = read_coalesced(reader.as_ref(), &want?)?;
+            blobs.iter().map(|b| decompress(codec, b).ok()).collect()
+        });
+        let index = GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
 
         Ok(Self {
             header,

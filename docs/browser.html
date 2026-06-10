@@ -243,6 +243,7 @@ browser reads compressed files fine. <code>rete-wasm</code> depends on <code>ret
 <tr><td><code>communities(bytes, round?)</code></td><td><code>[{ community, size, triples }, …]</code> (Louvain decomposition)</td></tr>
 <tr><td><code>reach(bytes, predicate, seeds, reverse)</code></td><td><code>[{ seed, count, reached:["&lt;iri&gt;",…] }, …]</code> (serial transitive reach)</td></tr>
 <tr><td><code>build(text, format)</code></td><td>a complete <code>.rete</code> file image (<code>Uint8Array</code>) built from RDF text</td></tr>
+<tr><td><code>sparql_url(url, query, format)</code></td><td><strong>worker-only</strong>: the <code>query</code> envelope evaluated against a remote URL via lazy HTTP range reads, plus <code>remote: { fileLength, bytes, requests }</code></td></tr>
 </tbody></table>
 <p><code>query</code> runs SELECT / ASK / CONSTRUCT / DESCRIBE via <code>eval_query</code> and returns a
 single JSON envelope with a <code>kind</code> field:</p>
@@ -272,6 +273,22 @@ as a file. One caveat: the wasm engine ships only the pure-Rust zstd <em>decoder
 so in-browser builds write uncompressed sections (codec <code>NONE</code>) — every reader
 accepts them, but <code>rete build</code> produces a smaller file from the same input.
 This powers the playground's <strong>Build</strong> tab.</p>
+<p><code>sparql_url</code> runs full SPARQL against a <strong>remote <code>.rete</code> URL without
+downloading it</strong>: it reads the header, the dictionary chunk directories and
+index tile directories, then faults in only the dictionary chunks and index
+tiles the query touches — and full scans coalesce adjacent tiles into batched
+range reads, so even <code>?s ?p ?o</code> costs a handful of requests, not one per
+tile. The result envelope is the same as <code>query</code>, plus a <code>remote</code> object
+reporting exactly how little of the file was fetched.</p>
+<p>The design constraint, honestly: the engine is synchronous, and wasm cannot
+block on <code>fetch</code>. Instead of an async engine refactor, the byte-range reads
+use <strong>synchronous XHR — which browsers permit only inside Web Workers</strong>. So
+call <code>sparql_url</code> from a worker (see <code>web/sparql-url-worker.js</code> and the
+"Remote SPARQL" section of the demo page); on the main thread the browser
+throws. The host must answer <code>Range</code> requests with <code>206 Partial Content</code>
+(a host that ignores <code>Range</code> is rejected loudly, never silently mis-read)
+and send CORS headers when cross-origin. A range fetch that fails mid-query
+is an error — never a silently incomplete result.</p>
 <p><code>why_triples</code> exposes the same result-provenance path as <code>rete why</code>. It resolves
 the optional triple pattern through <code>Rete::query_with_provenance</code> and returns
 browser-style camelCase fields: <code>resultCount</code>, <code>matchedPattern</code>,

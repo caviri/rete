@@ -360,6 +360,72 @@ fn lazy_sparql_open_fetches_only_touched_tiles() {
     );
 }
 
+/// A full unbound scan over a lazily-opened multi-tile file must coalesce its
+/// tile fetches: adjacent tile ranges batch into single range reads, so the
+/// request count stays a small constant instead of one per tile.
+#[test]
+fn full_scan_coalesces_tile_fetches() {
+    let image = multi_tile_image();
+    let (idx_start, idx_end) = index_region(&image);
+
+    let plain = Rete::open(&image).unwrap();
+    let spo_tiles = plain.default_index().tile_sections()[0].len();
+    assert!(
+        spo_tiles > 100,
+        "expected a many-tile fixture, got {spo_tiles}"
+    );
+    // Fully unbound: routes to SPO and must visit every one of its tiles.
+    let q = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }";
+    let expected = match eval_query(&plain, q).unwrap() {
+        QueryOutput::Select(_, rows) => rows.len(),
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert!(expected > 40_000);
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let got = match eval_query(&rete, q).unwrap() {
+        QueryOutput::Select(_, rows) => rows.len(),
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(got, expected);
+    assert!(!rete.index_incomplete());
+
+    let index_reads = reader
+        .reads()
+        .iter()
+        .filter(|r| overlaps(**r, (idx_start, idx_end)))
+        .count();
+    assert!(
+        index_reads < 20,
+        "full scan issued {index_reads} index-region reads over {spo_tiles} tiles — \
+         expected the tile directories plus a few coalesced batch reads"
+    );
+}
+
+/// `dump` resolves every triple and every term: over a lazy open it must
+/// batch-fault the dictionary chunks and the scanned tiles in coalesced
+/// reads — a bounded number of requests, never one per chunk/tile.
+#[test]
+fn dump_over_lazy_open_coalesces_fetches() {
+    let image = multi_tile_image();
+    let plain = Rete::open(&image).unwrap();
+    let expected = plain.dump(None);
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let got = rete.dump(None);
+    assert_eq!(got, expected);
+    assert!(!rete.index_incomplete());
+
+    let total_reads = reader.reads().len();
+    assert!(
+        total_reads < 40,
+        "lazy dump issued {total_reads} range reads — expected directories \
+         plus coalesced chunk/tile batches"
+    );
+}
+
 /// A range failure during lazy tile faulting must be detectable: the engine's
 /// scans stay infallible (they see an empty tile), but the sticky
 /// `index_incomplete` flag turns the partial answer into an error upstream.

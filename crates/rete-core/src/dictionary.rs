@@ -97,6 +97,16 @@ impl Dictionary {
         self.sections.iter().any(|s| s.load_incomplete())
     }
 
+    /// Batch-fault every unloaded chunk of every section (no-op for local
+    /// dictionaries). Callers about to resolve *every* term — export, dump —
+    /// call this once so the sweep coalesces into a few range reads instead
+    /// of one fetch per chunk.
+    pub fn prefetch_all(&self) {
+        for s in &self.sections {
+            s.prefetch_all();
+        }
+    }
+
     /// Number of shared terms `S`.
     pub fn shared_count(&self) -> u32 {
         self.shared_len

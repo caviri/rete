@@ -228,6 +228,14 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
 /// data must check [`ChunkedSection::load_incomplete`] after evaluating).
 pub type ChunkLoader = Box<dyn Fn(usize) -> Option<Vec<u8>> + Send + Sync>;
 
+/// Fetches **many** chunks in one round trip: given ascending chunk indices,
+/// returns each chunk's decompressed body in the same order. The ranged
+/// reader implements this by coalescing byte-adjacent chunk ranges into
+/// single range reads — a full-dictionary sweep (export, dump) costs a few
+/// requests per section instead of one per chunk. `None` = the batch failed;
+/// callers fall back to the per-chunk [`ChunkLoader`].
+pub type ChunkBulkLoader = Box<dyn Fn(&[usize]) -> Option<Vec<Vec<u8>>> + Send + Sync>;
+
 /// One chunk: a run-aligned slice of the section body. `body_start` is the
 /// offset (in the section's coordinate space — the same space
 /// [`SectionMeta::restart_offsets`] uses) where `data[0]` sits.
@@ -283,6 +291,7 @@ pub struct ChunkedSection {
     meta: SectionMeta,
     chunks: Vec<SectionChunk>,
     loader: Option<ChunkLoader>,
+    bulk: Option<ChunkBulkLoader>,
     failed: AtomicBool,
 }
 
@@ -308,6 +317,7 @@ impl ChunkedSection {
                 data,
             }],
             loader: None,
+            bulk: None,
             failed: AtomicBool::new(false),
         }
     }
@@ -324,7 +334,38 @@ impl ChunkedSection {
             meta,
             chunks,
             loader,
+            bulk: None,
             failed: AtomicBool::new(false),
+        }
+    }
+
+    /// Attach a batched chunk fetcher (see [`ChunkBulkLoader`]): full-section
+    /// sweeps ([`prefetch_all`](Self::prefetch_all)) go through it instead of
+    /// faulting chunk by chunk.
+    pub fn with_bulk_loader(mut self, bulk: ChunkBulkLoader) -> Self {
+        self.bulk = Some(bulk);
+        self
+    }
+
+    /// Batch-fault every unloaded chunk through the bulk loader, if one is
+    /// attached and at least two chunks are missing. Callers about to sweep
+    /// the whole section (export/dump term resolution) call this once; a
+    /// failed batch leaves the chunks unloaded for the per-chunk loader to
+    /// retry (and record failures) lookup by lookup.
+    pub fn prefetch_all(&self) {
+        let Some(bulk) = &self.bulk else { return };
+        let missing: Vec<usize> = (0..self.chunks.len())
+            .filter(|&ci| self.chunks[ci].data.get().is_none())
+            .collect();
+        if missing.len() < 2 {
+            return;
+        }
+        if let Some(bodies) = bulk(&missing) {
+            if bodies.len() == missing.len() {
+                for (&ci, body) in missing.iter().zip(bodies) {
+                    let _ = self.chunks[ci].data.set(body);
+                }
+            }
         }
     }
 

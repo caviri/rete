@@ -38,6 +38,7 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `communities(bytes, round?)` | `[{ community, size, triples }, …]` (Louvain decomposition) |
 | `reach(bytes, predicate, seeds, reverse)` | `[{ seed, count, reached:["<iri>",…] }, …]` (serial transitive reach) |
 | `build(text, format)` | a complete `.rete` file image (`Uint8Array`) built from RDF text |
+| `sparql_url(url, query, format)` | **worker-only**: the `query` envelope evaluated against a remote URL via lazy HTTP range reads, plus `remote: { fileLength, bytes, requests }` |
 
 `query` runs SELECT / ASK / CONSTRUCT / DESCRIBE via `eval_query` and returns a
 single JSON envelope with a `kind` field:
@@ -69,6 +70,24 @@ as a file. One caveat: the wasm engine ships only the pure-Rust zstd *decoder*,
 so in-browser builds write uncompressed sections (codec `NONE`) — every reader
 accepts them, but `rete build` produces a smaller file from the same input.
 This powers the playground's **Build** tab.
+
+`sparql_url` runs full SPARQL against a **remote `.rete` URL without
+downloading it**: it reads the header, the dictionary chunk directories and
+index tile directories, then faults in only the dictionary chunks and index
+tiles the query touches — and full scans coalesce adjacent tiles into batched
+range reads, so even `?s ?p ?o` costs a handful of requests, not one per
+tile. The result envelope is the same as `query`, plus a `remote` object
+reporting exactly how little of the file was fetched.
+
+The design constraint, honestly: the engine is synchronous, and wasm cannot
+block on `fetch`. Instead of an async engine refactor, the byte-range reads
+use **synchronous XHR — which browsers permit only inside Web Workers**. So
+call `sparql_url` from a worker (see `web/sparql-url-worker.js` and the
+"Remote SPARQL" section of the demo page); on the main thread the browser
+throws. The host must answer `Range` requests with `206 Partial Content`
+(a host that ignores `Range` is rejected loudly, never silently mis-read)
+and send CORS headers when cross-origin. A range fetch that fails mid-query
+is an error — never a silently incomplete result.
 
 `why_triples` exposes the same result-provenance path as `rete why`. It resolves
 the optional triple pattern through `Rete::query_with_provenance` and returns

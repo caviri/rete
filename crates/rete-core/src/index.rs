@@ -32,6 +32,15 @@ pub const INDEX_TILE_BUDGET: usize = 64 * 1024;
 /// callers running over remote data MUST check the flag after evaluating.
 pub type TileLoader = Box<dyn Fn(usize, usize) -> Option<Vec<u8>> + Send + Sync>;
 
+/// Fetches **many** tiles of one section in one round trip: given the section
+/// and the (ascending) indices of the tiles wanted, returns each tile's
+/// uncompressed block image in the same order. The ranged reader implements
+/// this by coalescing byte-adjacent tile ranges into single range reads, so a
+/// full-section scan costs a handful of requests instead of one per tile.
+/// `None` = the batch failed as a whole; callers fall back to the per-tile
+/// [`TileLoader`] (which records per-tile failures).
+pub type TileBulkLoader = Box<dyn Fn(usize, &[usize]) -> Option<Vec<Vec<u8>>> + Send + Sync>;
+
 /// One tile of a permutation section: a fully self-contained [`TripleBlock`]
 /// over a consecutive run of whole a-groups, plus the leading-id range it
 /// covers (for routing without parsing or fetching) and its lazily-built group
@@ -264,6 +273,9 @@ pub struct GraphIndex {
     sections: [Vec<Tile>; 3],
     /// Faults in remote tiles on first scan (`None` for local indexes).
     loader: Option<TileLoader>,
+    /// Optional batched fetch for multi-tile scans (`None` falls back to
+    /// one [`TileLoader`] call per tile).
+    bulk: Option<TileBulkLoader>,
     /// Set when the loader failed for some tile: results may be incomplete and
     /// the caller must surface an error rather than the partial answer.
     load_failed: std::sync::atomic::AtomicBool,
@@ -274,6 +286,7 @@ impl GraphIndex {
         GraphIndex {
             sections,
             loader: None,
+            bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -321,13 +334,43 @@ impl GraphIndex {
         GraphIndex {
             sections,
             loader: Some(loader),
+            bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Attach a batched tile fetcher (see [`TileBulkLoader`]): multi-tile
+    /// scans prefetch their span through it instead of faulting tile by tile.
+    pub fn with_bulk_loader(mut self, bulk: TileBulkLoader) -> Self {
+        self.bulk = Some(bulk);
+        self
     }
 
     /// Did any tile fetch fail since this index was opened? (Sticky.)
     pub fn load_incomplete(&self) -> bool {
         self.load_failed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Batch-fault the unloaded tiles in `[start, end)` of `section` through
+    /// the bulk loader, if one is attached and at least two tiles are missing
+    /// (a single missing tile costs the same either way). A failed batch is
+    /// not an error here: the tiles stay unloaded and the per-tile loader
+    /// retries each one (recording failures) when the scan reaches it.
+    fn prefetch_span(&self, section: usize, start: usize, end: usize) {
+        let Some(bulk) = &self.bulk else { return };
+        let missing: Vec<usize> = (start..end)
+            .filter(|&ti| self.sections[section][ti].data.get().is_none())
+            .collect();
+        if missing.len() < 2 {
+            return;
+        }
+        if let Some(images) = bulk(section, &missing) {
+            if images.len() == missing.len() {
+                for (&ti, img) in missing.iter().zip(images) {
+                    let _ = self.sections[section][ti].data.set(img);
+                }
+            }
+        }
     }
 
     /// The tile's block image, faulting it in through the loader if remote.
@@ -348,6 +391,7 @@ impl GraphIndex {
     /// Total triple count (sum of the SPO tiles' zone counts). For a remote
     /// index this faults in the SPO tiles — prefer the header's quad count.
     pub fn triple_count(&self) -> u32 {
+        self.prefetch_span(0, 0, self.sections[0].len());
         (0..self.sections[0].len())
             .filter_map(|ti| TripleBlock::parse(self.tile_data(0, ti)).ok())
             .map(|b| b.zone().count)
@@ -428,6 +472,9 @@ impl GraphIndex {
         let [pa, pb, pc] = perm.order_pattern(pattern);
         let si = perm.section_index();
         let (start, end) = self.tile_span(si, pa);
+        // A multi-tile span (unbound leading component) batch-faults its
+        // missing tiles in coalesced range reads instead of one per tile.
+        self.prefetch_span(si, start, end);
         (start..end)
             .flat_map(move |ti| {
                 // Fault in (if remote), parse (untrusted bytes ⇒ `None` on
