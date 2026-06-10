@@ -16,11 +16,17 @@ The slice is a real cross-section of all of Wikidata (people, places, works,
 taxa, …), not a curated subset — for a biology-specific graph use
 `scripts/fetch_wikidata_bio.py` instead.
 
-Literal datatypes (dropped by the source Parquet) are recovered authoritatively
-from each property's Wikibase datatype (one WDQS query): dates become
-`xsd:dateTime`, quantities `xsd:decimal`, coordinates `geo:wktLiteral`; strings
-stay plain, monolingual text keeps its language tag, entity values are IRIs.
-Pass `--no-datatypes` to skip the lookup and emit plain literals.
+Literal datatypes (dropped by the source Parquet) are recovered. `--datatypes`:
+* `auto` (default): the authoritative property→datatype map — a local cache
+  (`--datatype-cache`) if present, else one WDQS `wikibase:propertyType` query
+  (with 429 backoff), cached for next time — giving dates `xsd:dateTime`,
+  quantities `xsd:decimal`, coordinates `geo:wktLiteral`; if that is
+  unavailable it falls back to the heuristic below;
+* `heuristic`: offline value inference — only the unambiguous `xsd:dateTime`
+  (ISO timestamps) and `geo:wktLiteral` (WKT geometries); numbers stay plain,
+  since a bare number can't be told from a numeric external-id without the map;
+* `none`: all literals plain.
+Monolingual text keeps its language tag and entity values are IRIs regardless.
 
 Requires DuckDB:  pip install --break-system-packages duckdb
 
@@ -34,7 +40,9 @@ Then: rete build data/wd.nt -o wd.rete
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -61,23 +69,53 @@ WDQS = "https://query.wikidata.org/sparql"
 USER_AGENT = "rete-demo/0.1 (https://github.com/caviri/rete; parquet datatype lookup)"
 
 
-def fetch_property_datatypes() -> dict[str, str]:
-    """Map bare property id (e.g. 'P569') -> recovered literal datatype IRI,
-    from WDQS `wikibase:propertyType` (all ~13.5k properties, one query). Only
-    properties whose values are typed literals appear; on any network failure
-    return {} (the converter then emits plain literals, as before)."""
+def _wdqs_property_types_csv() -> str | None:
+    """The raw `P-id,WikibaseType` CSV for all properties from WDQS, with a
+    backoff retry on 429 (the service rate-limits to ~1 req/min under load).
+    `None` on failure."""
     q = "SELECT ?p ?t WHERE { ?p wikibase:propertyType ?t }"
     url = WDQS + "?" + urllib.parse.urlencode({"query": q})
-    req = urllib.request.Request(
-        url, headers={"User-Agent": USER_AGENT, "Accept": "text/csv"}
-    )
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/csv"})
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return r.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 2:
+                print("  WDQS rate-limited (429); waiting 65 s…", file=sys.stderr)
+                time.sleep(65)
+                continue
+            print(f"  datatype lookup failed (HTTP {e.code})", file=sys.stderr)
+            return None
+        except Exception as e:  # noqa: BLE001 — best-effort
+            print(f"  datatype lookup failed ({e})", file=sys.stderr)
+            return None
+    return None
+
+
+def fetch_property_datatypes(cache: str | None) -> dict[str, str]:
+    """Map bare property id (e.g. 'P569') -> recovered literal datatype IRI.
+
+    Reads the authoritative `P-id,WikibaseType` CSV from a local `cache` file
+    if present (so a build needs no network and survives WDQS outages); else
+    fetches it from WDQS (`wikibase:propertyType`, ~13.5k properties, one
+    query, with 429 backoff) and writes the cache for next time. `{}` on
+    failure with no cache — the converter then emits plain literals."""
+    text: str | None = None
+    if cache and os.path.exists(cache):
+        text = open(cache, encoding="utf-8").read()
+        print(f"  using cached property datatypes: {cache}", file=sys.stderr)
+    else:
+        text = _wdqs_property_types_csv()
+        if text and cache:
+            os.makedirs(os.path.dirname(cache) or ".", exist_ok=True)
+            with open(cache, "w", encoding="utf-8") as f:
+                f.write(text)
+            print(f"  cached property datatypes to {cache}", file=sys.stderr)
+    if not text:
+        print("  no datatype map; emitting plain literals", file=sys.stderr)
+        return {}
     out: dict[str, str] = {}
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            text = r.read().decode("utf-8")
-    except Exception as e:  # noqa: BLE001 — best-effort; plain literals if it fails
-        print(f"  datatype lookup failed ({e}); emitting plain literals", file=sys.stderr)
-        return out
     for line in text.splitlines()[1:]:  # skip CSV header
         p, _, t = line.partition(",")
         pid = p.rsplit("/", 1)[-1]
@@ -85,6 +123,27 @@ def fetch_property_datatypes() -> dict[str, str]:
         if pid and wb in WIKIBASE_TO_DTYPE:
             out[pid] = WIKIBASE_TO_DTYPE[wb]
     return out
+
+
+import re
+
+# Offline fallback when the authoritative property→datatype map is unavailable
+# (WDQS/HF rate-limited). Only the *unambiguous* shapes are inferred from the
+# value: an ISO timestamp and a WKT geometry can't be confused with anything
+# else. Quantities are deliberately NOT inferred — a bare number is
+# indistinguishable from a numeric external-id without the property map, so
+# those stay plain literals rather than risk mis-typing.
+_DATETIME_RE = re.compile(r"^[+-]?\d{1,4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z?$")
+_WKT_RE = re.compile(r"^(?:Point|POLYGON|LINESTRING|MULTIPOINT|MULTIPOLYGON|MULTILINESTRING|GEOMETRYCOLLECTION)\(", re.IGNORECASE)
+
+
+def infer_datatype(obj: str) -> str | None:
+    """Heuristic datatype for an object value — only the unambiguous ones."""
+    if _DATETIME_RE.match(obj):
+        return f"{XSD}dateTime"
+    if _WKT_RE.match(obj):
+        return GEO_WKT
+    return None
 
 
 def nt_object(obj: str, lang: str | None, dtype: str | None) -> str:
@@ -117,9 +176,16 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None, help="hard cap on emitted triples (~12M ≈ 1 GB)")
     ap.add_argument("--local-dir", default=None, help="read part_*.parquet from a local dir instead of HF")
     ap.add_argument(
-        "--no-datatypes",
-        action="store_true",
-        help="skip the WDQS property-datatype lookup; emit all literals as plain",
+        "--datatypes",
+        choices=["auto", "heuristic", "none"],
+        default="auto",
+        help="auto: authoritative property map (cache→WDQS) then value heuristics; "
+        "heuristic: value heuristics only (offline, dates+coordinates); none: plain literals",
+    )
+    ap.add_argument(
+        "--datatype-cache",
+        default="data/wd_property_types.csv",
+        help="local cache of the property→datatype CSV (fetched once, reused)",
     )
     ap.add_argument("-o", "--output", default="data/wikidata.nt")
     args = ap.parse_args()
@@ -129,17 +195,22 @@ def main() -> None:
     except ModuleNotFoundError:
         sys.exit("duckdb not installed — run: pip install --break-system-packages duckdb")
 
-    import os
-
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
     # Recover literal datatypes (time/quantity/coordinate) from the property
     # map, unless disabled. Keyed by bare predicate id ('P569' → xsd:dateTime).
     dtypes: dict[str, str] = {}
-    if not args.no_datatypes:
-        print("fetching property datatypes from WDQS…", file=sys.stderr)
-        dtypes = fetch_property_datatypes()
-        print(f"  {len(dtypes)} properties carry a typed literal", file=sys.stderr)
+    use_heuristic = args.datatypes == "heuristic"
+    if args.datatypes == "auto":
+        print("resolving property datatypes…", file=sys.stderr)
+        dtypes = fetch_property_datatypes(args.datatype_cache)
+        if dtypes:
+            print(f"  {len(dtypes)} properties carry a typed literal (authoritative)", file=sys.stderr)
+        else:
+            use_heuristic = True
+            print("  no property map — falling back to value heuristics", file=sys.stderr)
+    if use_heuristic:
+        print("  inferring dateTime/wktLiteral from values (heuristic)", file=sys.stderr)
 
     con = duckdb.connect()
     if args.local_dir:
@@ -177,7 +248,12 @@ def main() -> None:
             for subject, predicate, obj, lang in batch:
                 if subject is None or predicate is None or obj is None:
                     continue
-                dtype = dtypes.get(predicate.rsplit("/", 1)[-1]) if dtypes else None
+                if dtypes:
+                    dtype = dtypes.get(predicate.rsplit("/", 1)[-1])
+                elif use_heuristic and not lang and not obj.startswith(("http://", "https://", "_:")):
+                    dtype = infer_datatype(obj)
+                else:
+                    dtype = None
                 lines.append(f"<{subject}> <{predicate}> {nt_object(obj, lang, dtype)} .\n")
             f.write("".join(lines))
             written += len(lines)

@@ -203,13 +203,18 @@ uv run python scripts/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  
 rete build data/wd.nt -o wd.rete
 ```
 
-The source Parquet drops literal datatypes, so the converter **recovers them
-authoritatively**: it fetches every Wikidata property's datatype from WDQS once
-(`wikibase:propertyType`, ~13.5k properties, one query) and re-types each
-literal — dates as `xsd:dateTime`, quantities as `xsd:decimal`, coordinates as
-`geo:wktLiteral`; strings stay plain, monolingual text keeps its language tag,
-and entity values are IRIs. (`--no-datatypes` skips the lookup and emits plain
-literals.)
+The source Parquet drops literal datatypes, so the converter **recovers them**
+(`--datatypes`, default `auto`): it resolves each property's datatype from a
+local cache or one WDQS `wikibase:propertyType` query (~13.5k properties,
+cached for reuse) and re-types each literal — dates `xsd:dateTime`, quantities
+`xsd:decimal`, coordinates `geo:wktLiteral`; strings stay plain, monolingual
+text keeps its language tag, entity values are IRIs. If that map is
+unavailable (e.g. WDQS rate-limited), it falls back to an **offline heuristic**
+that types the unambiguous values — ISO timestamps and WKT geometries — leaving
+numbers plain (a bare number is indistinguishable from a numeric external-id
+without the map). `--datatypes heuristic` forces the offline path; `none` emits
+plain literals. Once typed, the engine's `DATATYPE(?o)` / `LANG(?o)` filters
+can select by datatype.
 
 Measured on the dev container, the full `--limit 12000000` (~1 GB) run:
 converting streams in **~24 s** (1.25 GB N-Triples, datatypes recovered) and

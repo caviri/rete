@@ -363,13 +363,18 @@ slice needs no full download — and writes N-Triples.</p>
 uv run python scripts/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  # ~1 GB
 rete build data/wd.nt -o wd.rete
 </code></pre>
-<p>The source Parquet drops literal datatypes, so the converter <strong>recovers them
-authoritatively</strong>: it fetches every Wikidata property's datatype from WDQS once
-(<code>wikibase:propertyType</code>, ~13.5k properties, one query) and re-types each
-literal — dates as <code>xsd:dateTime</code>, quantities as <code>xsd:decimal</code>, coordinates as
-<code>geo:wktLiteral</code>; strings stay plain, monolingual text keeps its language tag,
-and entity values are IRIs. (<code>--no-datatypes</code> skips the lookup and emits plain
-literals.)</p>
+<p>The source Parquet drops literal datatypes, so the converter <strong>recovers them</strong>
+(<code>--datatypes</code>, default <code>auto</code>): it resolves each property's datatype from a
+local cache or one WDQS <code>wikibase:propertyType</code> query (~13.5k properties,
+cached for reuse) and re-types each literal — dates <code>xsd:dateTime</code>, quantities
+<code>xsd:decimal</code>, coordinates <code>geo:wktLiteral</code>; strings stay plain, monolingual
+text keeps its language tag, entity values are IRIs. If that map is
+unavailable (e.g. WDQS rate-limited), it falls back to an <strong>offline heuristic</strong>
+that types the unambiguous values — ISO timestamps and WKT geometries — leaving
+numbers plain (a bare number is indistinguishable from a numeric external-id
+without the map). <code>--datatypes heuristic</code> forces the offline path; <code>none</code> emits
+plain literals. Once typed, the engine's <code>DATATYPE(?o)</code> / <code>LANG(?o)</code> filters
+can select by datatype.</p>
 <p>Measured on the dev container, the full <code>--limit 12000000</code> (~1 GB) run:
 converting streams in <strong>~24 s</strong> (1.25 GB N-Triples, datatypes recovered) and
 builds in <strong>~52 s</strong> to a <strong>110 MB <code>.rete</code></strong> — 5 pyramid levels, ~115k
