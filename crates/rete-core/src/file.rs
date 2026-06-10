@@ -158,7 +158,12 @@ pub struct TripleProvenance {
     /// File byte range containing the pyramid metadata, when present.
     pub pyramid_range: Option<ByteRange>,
     /// Physical tile identifier, once tile directories are materialized.
+    /// Physical tile identifier (`PERM/index`, e.g. `POS/3`) for tiled (v0.2)
+    /// files; `None` for pre-tiling files.
     pub tile: Option<String>,
+    /// File byte range of that (compressed) tile — the exact bytes a ranged
+    /// client would fetch to re-derive this match.
+    pub tile_range: Option<ByteRange>,
 }
 
 /// Encode a length-prefixed container of byte sections, each compressed with
@@ -246,20 +251,22 @@ struct TileDirEntry {
     end: usize,
 }
 
-/// Parse a tiled section payload's directory (not the tiles). Every length is
-/// untrusted; ranges are validated against the payload before use.
-fn parse_tile_directory(payload: &[u8]) -> Result<Vec<TileDirEntry>, FileError> {
+/// Parse a tiled section payload's directory (not the tiles). `bytes` may be a
+/// **prefix** of the payload (a ranged reader fetches the directory before any
+/// tile); tile byte ranges are validated against `total_len`, the full payload
+/// length. Every length is untrusted.
+fn parse_tile_directory(bytes: &[u8], total_len: usize) -> Result<Vec<TileDirEntry>, FileError> {
     let mut pos = 0usize;
     let take = |pos: &mut usize| -> Result<u64, FileError> {
-        let (v, n) = read_uvarint(payload.get(*pos..).unwrap_or(&[]))
+        let (v, n) = read_uvarint(bytes.get(*pos..).unwrap_or(&[]))
             .ok_or(FileError::Container("truncated tile directory"))?;
         *pos += n;
         Ok(v)
     };
     let num_tiles = take(&mut pos)? as usize;
-    let mut entries = Vec::with_capacity(num_tiles.min(payload.len()));
+    let mut entries = Vec::with_capacity(num_tiles.min(bytes.len()));
     let mut prev_min = 0u32;
-    let mut lens = Vec::with_capacity(num_tiles.min(payload.len()));
+    let mut lens = Vec::with_capacity(num_tiles.min(bytes.len()));
     for _ in 0..num_tiles {
         let dmin = take(&mut pos)? as u32;
         let span = take(&mut pos)? as u32;
@@ -278,7 +285,7 @@ fn parse_tile_directory(payload: &[u8]) -> Result<Vec<TileDirEntry>, FileError> 
     for (e, len) in entries.iter_mut().zip(lens) {
         let end = start
             .checked_add(len)
-            .filter(|&e| e <= payload.len())
+            .filter(|&e| e <= total_len)
             .ok_or(FileError::Container("tile overruns section"))?;
         e.start = start;
         e.end = end;
@@ -287,10 +294,66 @@ fn parse_tile_directory(payload: &[u8]) -> Result<Vec<TileDirEntry>, FileError> 
     Ok(entries)
 }
 
+/// Fetch and parse a remote tiled section's directory: read a small prefix and
+/// grow it geometrically until the directory parses, never fetching past the
+/// section. A directory that still fails on the whole section is corrupt.
+fn read_tile_directory_ranged<R: RangeReader>(
+    reader: &R,
+    section: ByteRange,
+) -> Result<Vec<TileDirEntry>, FileError> {
+    let total = section.len as usize;
+    let mut prefetch = 4096.min(total);
+    loop {
+        let prefix = reader.read_at(section.offset, prefetch as u64)?;
+        match parse_tile_directory(&prefix, total) {
+            Ok(dir) => return Ok(dir),
+            Err(_) if prefetch < total => prefetch = prefetch.saturating_mul(2).min(total),
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Per-tile absolute file ranges of each permutation section, for provenance.
+/// Empty for pre-tiling (v0.1) files; a malformed directory yields an empty
+/// section (provenance degrades, queries are unaffected).
+fn tile_file_ranges(
+    index_bytes: &[u8],
+    container_offset: u64,
+    section_ranges: &[ByteRange; 3],
+    version: u8,
+) -> [Vec<(u32, u32, ByteRange)>; 3] {
+    let mut out: [Vec<(u32, u32, ByteRange)>; 3] = Default::default();
+    if version < 2 {
+        return out;
+    }
+    for (section, range) in out.iter_mut().zip(section_ranges) {
+        let start = (range.offset - container_offset) as usize;
+        let Some(payload) = index_bytes.get(start..start + range.len as usize) else {
+            continue;
+        };
+        if let Ok(dir) = parse_tile_directory(payload, payload.len()) {
+            *section = dir
+                .into_iter()
+                .map(|e| {
+                    (
+                        e.min_a,
+                        e.max_a,
+                        ByteRange {
+                            offset: range.offset + e.start as u64,
+                            len: (e.end - e.start) as u64,
+                        },
+                    )
+                })
+                .collect();
+        }
+    }
+    out
+}
+
 /// Decode a tiled section payload into `(min_a, max_a, uncompressed tile)`
 /// triples.
 fn decode_tiled_section(payload: &[u8], codec: u8) -> Result<Vec<(u32, u32, Vec<u8>)>, FileError> {
-    parse_tile_directory(payload)?
+    parse_tile_directory(payload, payload.len())?
         .into_iter()
         .map(|e| {
             Ok((
@@ -395,13 +458,14 @@ fn read_uvarint_at<R: RangeReader>(
         .ok_or(FileError::Container("truncated container varint"))
 }
 
-fn read_container_section_ranged<R: RangeReader>(
+/// Locate one section's payload byte range inside a remote container, walking
+/// only the (tiny) varint framing — no payload bytes are fetched.
+fn locate_container_section_ranged<R: RangeReader>(
     reader: &R,
     container_offset: u64,
     container_len: u64,
-    codec: u8,
     section_index: usize,
-) -> Result<Vec<u8>, FileError> {
+) -> Result<ByteRange, FileError> {
     let container_end = checked_end(container_offset, container_len)?;
     let (section_count, used) = read_uvarint_at(reader, container_offset, container_end)?;
     if section_count != 3 {
@@ -422,8 +486,10 @@ fn read_container_section_ranged<R: RangeReader>(
             return Err(FileError::Container("section overruns buffer"));
         }
         if i == section_index {
-            let payload = reader.read_at(pos, payload_len)?;
-            return decompress(codec, &payload);
+            return Ok(ByteRange {
+                offset: pos,
+                len: payload_len,
+            });
         }
         pos = payload_end;
     }
@@ -715,6 +781,10 @@ pub struct Rete {
     dict: Dictionary,
     index: GraphIndex,
     index_section_ranges: [ByteRange; 3],
+    /// Per-permutation tile directories as absolute file ranges
+    /// (`(min_a, max_a, compressed-tile range)`), for provenance. Empty for
+    /// pre-tiling (v0.1) files.
+    tile_ranges: [Vec<(u32, u32, ByteRange)>; 3],
     pyramid: Option<PyramidMeta>,
     named_graphs: Vec<(String, GraphIndex)>,
     /// Raw bytes of the metadata section (empty if the file has none). The
@@ -777,11 +847,18 @@ impl Rete {
             Vec::new()
         };
 
+        let tile_ranges = tile_file_ranges(
+            index_bytes,
+            header.root_dir_offset,
+            &index_section_ranges,
+            header.version,
+        );
         Ok(Self {
             header,
             dict,
             index,
             index_section_ranges,
+            tile_ranges,
             pyramid,
             named_graphs,
             metadata,
@@ -919,11 +996,18 @@ impl Rete {
         // The metadata section (Dataset Card) is deliberately NOT fetched here:
         // a ranged query open keeps to its small range budget. Use `Rete::open`
         // (or a dedicated card fetch) when the card is actually needed.
+        let tile_ranges = tile_file_ranges(
+            &index_bytes,
+            header.root_dir_offset,
+            &index_section_ranges,
+            header.version,
+        );
         Ok(Self {
             header,
             dict,
             index,
             index_section_ranges,
+            tile_ranges,
             pyramid,
             named_graphs,
             metadata: Vec::new(),
@@ -989,6 +1073,7 @@ impl Rete {
             len: self.header.pyramid_meta_len,
         });
 
+        let tiles = &self.tile_ranges[index_permutation.section_index()];
         self.index
             .match_pattern(pattern)
             .into_iter()
@@ -998,6 +1083,17 @@ impl Rete {
                     self.dict.predicate_term(p)?,
                     self.dict.object_term(o)?,
                 );
+                // The physical tile holding this match: the one whose
+                // leading-id range covers the match's permuted leading id.
+                let a = index_permutation.forward((s, p, o)).0;
+                let ti = tiles.partition_point(|&(_, max_a, _)| max_a < a);
+                let (tile, tile_range) = match tiles.get(ti) {
+                    Some(&(min_a, _, range)) if min_a <= a => (
+                        Some(format!("{}/{ti}", index_permutation.name())),
+                        Some(range),
+                    ),
+                    _ => (None, None),
+                };
                 Some(TripleProvenance {
                     terms,
                     ids: (s, p, o),
@@ -1008,7 +1104,8 @@ impl Rete {
                     index_range,
                     index_section_range,
                     pyramid_range,
-                    tile: None,
+                    tile,
+                    tile_range,
                 })
             })
             .collect()
@@ -1025,32 +1122,22 @@ impl Rete {
     }
 
     /// Evaluate one triple pattern through a [`RangeReader`] by fetching only
-    /// the header, dictionary, and the single SPO/POS/OSP permutation section
-    /// selected for the bound positions. Unknown bound terms return an empty
-    /// result before touching the index.
+    /// the header, the dictionary, and — for a tiled (v0.2) file — the
+    /// selected permutation section's tile **directory** plus the tile(s) the
+    /// bound leading id routes to; an unbound leading id fetches the section's
+    /// tile body in one request. v0.1 files fetch the whole selected section.
+    /// Unknown bound terms return an empty result before touching the index.
     pub fn query_ranged<R: RangeReader>(
         reader: &R,
         s: Option<&str>,
         p: Option<&str>,
         o: Option<&str>,
     ) -> Result<Vec<TermTriple>, FileError> {
-        let routed = match read_routed_pattern_block(reader, s, p, o)? {
+        let routed = match route_pattern(reader, s, p, o)? {
             Some(routed) => routed,
             None => return Ok(Vec::new()),
         };
-
-        let matches = if routed.version >= 2 {
-            // Tiled section: route through its directory and decompress only
-            // the tile(s) the bound leading id can live in.
-            match_tiled_payload(
-                &routed.block,
-                routed.codec,
-                routed.permutation,
-                routed.pattern,
-            )?
-        } else {
-            GraphIndex::match_serialized_block(&routed.block, routed.permutation, routed.pattern)
-        };
+        let matches = fetch_routed_matches(reader, &routed)?;
         Ok(matches
             .into_iter()
             .filter_map(|(s, p, o)| {
@@ -1063,8 +1150,8 @@ impl Rete {
             .collect())
     }
 
-    /// Fetch the routed permutation payload for one triple pattern without
-    /// decoding matches. Returns `false` when a bound term is unknown and the
+    /// Route one triple pattern to its permutation section without fetching
+    /// any payload bytes. Returns `false` when a bound term is unknown and the
     /// index was skipped.
     pub fn route_pattern_ranged<R: RangeReader>(
         reader: &R,
@@ -1072,55 +1159,29 @@ impl Rete {
         p: Option<&str>,
         o: Option<&str>,
     ) -> Result<bool, FileError> {
-        Ok(read_routed_pattern_block(reader, s, p, o)?.is_some())
+        Ok(route_pattern(reader, s, p, o)?.is_some())
     }
 }
 
-/// Match a fetched tiled section payload (v0.2): decompress and scan only the
-/// tile(s) whose leading-id range can contain the pattern's bound leading
-/// component (all tiles when it is unbound).
-fn match_tiled_payload(
-    payload: &[u8],
-    codec: u8,
-    permutation: IndexPermutation,
-    pattern: Pattern,
-) -> Result<Vec<Triple>, FileError> {
-    let [pa, _, _] = permutation.order_pattern(pattern);
-    let mut out = Vec::new();
-    for e in parse_tile_directory(payload)? {
-        if let Some(a) = pa {
-            if a < e.min_a || a > e.max_a {
-                continue;
-            }
-        }
-        let tile = decompress(codec, &payload[e.start..e.end])?;
-        out.extend(GraphIndex::match_serialized_block(
-            &tile,
-            permutation,
-            pattern,
-        ));
-    }
-    out.sort_unstable();
-    Ok(out)
-}
-
-struct RoutedPatternBlock {
+/// A pattern routed to its permutation section: everything needed to fetch
+/// matches, with no payload bytes read yet.
+struct RoutedPattern {
     dict: Dictionary,
     pattern: Pattern,
     permutation: IndexPermutation,
-    /// v0.1: the decompressed permutation block; v0.2: the raw tiled section
-    /// payload (tiles still compressed — route first, then decompress).
-    block: Vec<u8>,
-    version: u8,
-    codec: u8,
+    header: Header,
+    /// Absolute byte range of the selected section's payload.
+    section: ByteRange,
 }
 
-fn read_routed_pattern_block<R: RangeReader>(
+/// Resolve a pattern against the remote dictionary and locate its permutation
+/// section (header + dictionary + container framing only).
+fn route_pattern<R: RangeReader>(
     reader: &R,
     s: Option<&str>,
     p: Option<&str>,
     o: Option<&str>,
-) -> Result<Option<RoutedPatternBlock>, FileError> {
+) -> Result<Option<RoutedPattern>, FileError> {
     let head = reader.read_at(0, HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
 
@@ -1131,28 +1192,80 @@ fn read_routed_pattern_block<R: RangeReader>(
         return Ok(None);
     };
     let permutation = GraphIndex::best_permutation(pattern);
-    // v0.2 sections are stored raw (their tiles are compressed individually);
-    // v0.1 sections are compressed whole.
-    let section_codec = if header.version >= 2 {
-        CODEC_NONE
-    } else {
-        header.block_codec
-    };
-    let block = read_container_section_ranged(
+    let section = locate_container_section_ranged(
         reader,
         header.root_dir_offset,
         header.root_dir_len,
-        section_codec,
         permutation.section_index(),
     )?;
-    Ok(Some(RoutedPatternBlock {
+    Ok(Some(RoutedPattern {
         dict,
         pattern,
         permutation,
-        block,
-        version: header.version,
-        codec: header.block_codec,
+        header,
+        section,
     }))
+}
+
+/// Fetch and scan a routed pattern's matches. v0.2: read the tile directory,
+/// then only the matching tile byte ranges (one tile for a bound leading id —
+/// the O(matching bytes) promise); v0.1: the whole section, decompressed.
+fn fetch_routed_matches<R: RangeReader>(
+    reader: &R,
+    routed: &RoutedPattern,
+) -> Result<Vec<Triple>, FileError> {
+    if routed.header.version < 2 {
+        let payload = reader.read_at(routed.section.offset, routed.section.len)?;
+        let block = decompress(routed.header.block_codec, &payload)?;
+        return Ok(GraphIndex::match_serialized_block(
+            &block,
+            routed.permutation,
+            routed.pattern,
+        ));
+    }
+
+    let dir = read_tile_directory_ranged(reader, routed.section)?;
+    let [pa, _, _] = routed.permutation.order_pattern(routed.pattern);
+    let codec = routed.header.block_codec;
+    let mut out = Vec::new();
+    match pa {
+        // Bound leading id: at most one tile contains it.
+        Some(a) => {
+            for e in dir.iter().filter(|e| e.min_a <= a && a <= e.max_a) {
+                let bytes = reader.read_at(
+                    routed.section.offset + e.start as u64,
+                    (e.end - e.start) as u64,
+                )?;
+                let tile = decompress(codec, &bytes)?;
+                out.extend(GraphIndex::match_serialized_block(
+                    &tile,
+                    routed.permutation,
+                    routed.pattern,
+                ));
+            }
+        }
+        // Unbound leading id: every tile matters — fetch the contiguous tile
+        // body in one request and slice it.
+        None => {
+            if let (Some(first), Some(last)) = (dir.first(), dir.last()) {
+                let base = first.start;
+                let body = reader.read_at(
+                    routed.section.offset + base as u64,
+                    (last.end - base) as u64,
+                )?;
+                for e in &dir {
+                    let tile = decompress(codec, &body[e.start - base..e.end - base])?;
+                    out.extend(GraphIndex::match_serialized_block(
+                        &tile,
+                        routed.permutation,
+                        routed.pattern,
+                    ));
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    Ok(out)
 }
 
 fn resolve_query_pattern(
@@ -1852,9 +1965,15 @@ mod tests {
             matches[0].pyramid_range.as_ref().map(|r| (r.offset, r.len)),
             Some((h.pyramid_meta_offset, h.pyramid_meta_len))
         );
-        assert!(
-            matches[0].tile.is_none(),
-            "v0 files do not materialize per-community tile directories yet"
-        );
+        // Tiled (v0.2) files report the physical tile holding the match; its
+        // compressed byte range nests inside the selected section payload.
+        let tile_range = matches[0].tile_range.expect("tiled file reports a tile");
+        assert!(matches[0]
+            .tile
+            .as_deref()
+            .unwrap()
+            .starts_with(matches[0].index_permutation.name()));
+        assert!(matches[0].index_section_range.offset <= tile_range.offset);
+        assert!(tile_range.end() <= matches[0].index_section_range.end());
     }
 }

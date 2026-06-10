@@ -96,11 +96,10 @@ triple-pattern path as `Rete::query`, then attaches:
 
 This is intentionally physical-file provenance, not a narrative explanation. In
 format v0.2 each permutation section is tiled (independently compressed
-~64 KiB tiles with a byte-range directory, SPEC §6.2) and routed reads
-decompress only the matching tiles — but provenance is not yet wired to the
-tile directories, so it names the selected permutation payload, not the tile.
-`rete why --json` reports tile provenance as `not_materialized` until that
-wiring lands.
+~64 KiB tiles with a byte-range directory, SPEC §6.2): routed reads fetch the
+directory plus only the matching tile(s), and provenance names the physical
+tile (`PERM/index`) with its compressed byte range. For pre-tiling (v0.1)
+files `rete why --json` still reports tile provenance as `not_materialized`.
 
 ## Progressive And Cost Paths
 
@@ -183,7 +182,7 @@ the bundled `.rete` datasets into `docs/playground.html`. Run it with
 | Area | Next work |
 |---|---|
 | Tile-routed query refinement | Add physical community-tile directories so exact routing can fetch relevant community ranges, not whole permutation payloads |
-| Result provenance | Extend current section-range provenance to physical block/tile ranges once tile directories are materialized |
+| Result provenance | Extend tile-range provenance (done for permutation tiles) to pyramid/community tiles |
 | Query engine rows | Replace wide `BTreeMap<String, String>` bindings with integer slot rows |
 | Benchmark docs | Refresh JSON snapshots with `rete-bench --json` and regenerate the benchmark section |
 | SHACL | Add SHACL-SPARQL constraints only if the CLI needs extension-level coverage |

@@ -723,12 +723,17 @@ fn integer_literal(value: u64) -> String {
 fn provenance_json(m: &TripleProvenance) -> serde_json::Value {
     use serde_json::json;
 
-    let tile = match &m.tile {
-        Some(id) => json!({
+    let tile = match (&m.tile, m.tile_range) {
+        (Some(id), Some(range)) => json!({
+            "available": true,
+            "id": id,
+            "range": range_json(range),
+        }),
+        (Some(id), None) => json!({
             "available": true,
             "id": id,
         }),
-        None => json!({
+        _ => json!({
             "available": false,
             "reason": "not_materialized",
         }),

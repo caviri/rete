@@ -275,11 +275,10 @@ payload, and pyramid metadata.</li>
 </ul>
 <p>This is intentionally physical-file provenance, not a narrative explanation. In
 format v0.2 each permutation section is tiled (independently compressed
-~64 KiB tiles with a byte-range directory, SPEC §6.2) and routed reads
-decompress only the matching tiles — but provenance is not yet wired to the
-tile directories, so it names the selected permutation payload, not the tile.
-<code>rete why --json</code> reports tile provenance as <code>not_materialized</code> until that
-wiring lands.</p>
+~64 KiB tiles with a byte-range directory, SPEC §6.2): routed reads fetch the
+directory plus only the matching tile(s), and provenance names the physical
+tile (<code>PERM/index</code>) with its compressed byte range. For pre-tiling (v0.1)
+files <code>rete why --json</code> still reports tile provenance as <code>not_materialized</code>.</p>
 <h2>Progressive And Cost Paths</h2>
 <p>The summary path is the first layer of progressive querying. These query shapes
 are exact from the summary and skip the full index:</p>
@@ -347,7 +346,7 @@ compatibility notes.</li>
 <h2>Extension Points</h2>
 <table><thead><tr><th>Area</th><th>Next work</th></tr></thead><tbody>
 <tr><td>Tile-routed query refinement</td><td>Add physical community-tile directories so exact routing can fetch relevant community ranges, not whole permutation payloads</td></tr>
-<tr><td>Result provenance</td><td>Extend current section-range provenance to physical block/tile ranges once tile directories are materialized</td></tr>
+<tr><td>Result provenance</td><td>Extend tile-range provenance (done for permutation tiles) to pyramid/community tiles</td></tr>
 <tr><td>Query engine rows</td><td>Replace wide <code>BTreeMap&lt;String, String&gt;</code> bindings with integer slot rows</td></tr>
 <tr><td>Benchmark docs</td><td>Refresh JSON snapshots with <code>rete-bench --json</code> and regenerate the benchmark section</td></tr>
 <tr><td>SHACL</td><td>Add SHACL-SPARQL constraints only if the CLI needs extension-level coverage</td></tr>

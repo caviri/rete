@@ -222,6 +222,53 @@ fn routed_pattern_query_fetches_only_the_selected_permutation() {
     );
 }
 
+/// On a tiled (v0.2) multi-tile file, a bound-subject routed query must fetch
+/// only the tile **directory** plus the one matching tile — a small fraction
+/// of the selected permutation section, not the whole section.
+#[test]
+fn routed_pattern_query_fetches_only_matching_tiles() {
+    // A graph whose sections dwarf the 4 KiB directory prefetch, split into
+    // many tiles.
+    let node = |n: u32| format!("<http://ex/n{n}>");
+    let knows = "<http://ex/knows>".to_string();
+    let mut db = DictionaryBuilder::new();
+    let edges: Vec<(u32, u32)> = (0..4000u32)
+        .flat_map(|i| [(i, (i * 7 + 1) % 4000), (i, (i * 13 + 5) % 4000)])
+        .collect();
+    for &(s, o) in &edges {
+        db.observe(&node(s), &knows, &node(o));
+    }
+    let dict = db.build();
+    let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+    for &(s, o) in &edges {
+        ib.push(dict.encode(&node(s), &knows, &node(o)).unwrap());
+    }
+    let image = write_file(&dict, &ib.build(), false, &[], 0);
+    let (idx_start, idx_end) = index_region(&image);
+    let index_len = idx_end - idx_start;
+
+    let plain = Rete::open(&image).unwrap();
+    let expected = plain.query(Some("<http://ex/n7>"), None, None);
+    assert_eq!(expected.len(), 2);
+
+    let reader = RecordingReader::new(image.clone());
+    let got = Rete::query_ranged(&reader, Some("<http://ex/n7>"), None, None).unwrap();
+    assert_eq!(got, expected);
+
+    // Bytes fetched from inside the index region: directory prefix + 1 tile.
+    let index_bytes_read: u64 = reader
+        .reads()
+        .iter()
+        .filter(|r| overlaps(**r, (idx_start, idx_end)))
+        .map(|&(_, l)| l)
+        .sum();
+    assert!(
+        index_bytes_read < index_len / 6,
+        "tile-routed query read {index_bytes_read} of {index_len} index bytes — \
+         expected directory + one tile, a small fraction of one section"
+    );
+}
+
 #[test]
 fn routed_pattern_query_with_unknown_term_skips_the_index() {
     let image = image_with_pyramid();

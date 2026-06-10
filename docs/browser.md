@@ -65,7 +65,9 @@ browser-style camelCase fields: `resultCount`, `matchedPattern`,
 `indexPermutation`, `indexSection`, `dictionaryRange`, `indexRange`,
 `indexSectionRange`, and `pyramidRange`. `indexRange` is the full permutation
 container; `indexSectionRange` is the selected SPO/POS/OSP payload inside it.
-Tile provenance is explicit even before tile directories are materialized:
+Tile provenance reports the physical tile for tiled (v0.2) files —
+`{ "available": true, "id": "SPO/3", "range": { … } }` — and is explicit when
+a pre-tiling file cannot provide one:
 `{ "available": false, "reason": "not_materialized" }`.
 
 ### Minimal example

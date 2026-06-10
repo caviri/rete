@@ -248,7 +248,9 @@ browser-style camelCase fields: <code>resultCount</code>, <code>matchedPattern</
 <code>indexPermutation</code>, <code>indexSection</code>, <code>dictionaryRange</code>, <code>indexRange</code>,
 <code>indexSectionRange</code>, and <code>pyramidRange</code>. <code>indexRange</code> is the full permutation
 container; <code>indexSectionRange</code> is the selected SPO/POS/OSP payload inside it.
-Tile provenance is explicit even before tile directories are materialized:
+Tile provenance reports the physical tile for tiled (v0.2) files —
+<code>{ "available": true, "id": "SPO/3", "range": { … } }</code> — and is explicit when
+a pre-tiling file cannot provide one:
 <code>{ "available": false, "reason": "not_materialized" }</code>.</p>
 <h3>Minimal example</h3>
 <pre><code class="language-js">import init, { info, query_sparql } from "./pkg/rete_wasm.js";

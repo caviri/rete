@@ -85,7 +85,7 @@ impl IndexPermutation {
     }
 
     /// Map a canonical `(s, p, o)` triple into this permutation's `(a, b, c)`.
-    fn forward(self, (s, p, o): Triple) -> Triple {
+    pub(crate) fn forward(self, (s, p, o): Triple) -> Triple {
         match self {
             IndexPermutation::Spo => (s, p, o),
             IndexPermutation::Pos => (p, o, s),
