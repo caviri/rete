@@ -433,10 +433,48 @@ fn full_scan_coalesces_tile_fetches() {
         .iter()
         .filter(|r| overlaps(**r, (idx_start, idx_end)))
         .count();
+    // The scan ramps its prefetch window geometrically (4, 8, 16, … tiles),
+    // so a full sweep costs O(log tiles) coalesced batch reads plus the tile
+    // directories — a small constant, NOT one read per tile (which over 700+
+    // tiles would be in the hundreds).
     assert!(
-        index_reads < 20,
+        index_reads < 32,
         "full scan issued {index_reads} index-region reads over {spo_tiles} tiles — \
-         expected the tile directories plus a few coalesced batch reads"
+         expected the tile directories plus O(log n) coalesced batch reads"
+    );
+}
+
+/// A small `LIMIT` on an unbound scan must not fault the whole index: the
+/// geometric prefetch ramp stops as soon as the pipeline stops pulling rows,
+/// so `LIMIT 1` fetches only the first window of tiles, not every tile.
+#[test]
+fn small_limit_does_not_fetch_the_whole_index() {
+    let image = multi_tile_image();
+    let (idx_start, idx_end) = index_region(&image);
+    let index_len = idx_end - idx_start;
+    let spo_tiles = Rete::open(&image).unwrap().default_index().tile_sections()[0].len();
+    assert!(spo_tiles > 100, "expected a many-tile fixture, got {spo_tiles}");
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let q = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1";
+    let rows = match eval_query(&rete, q).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(rows.len(), 1);
+    assert!(!rete.index_incomplete());
+
+    let index_bytes_read: u64 = reader
+        .reads()
+        .iter()
+        .filter(|r| overlaps(**r, (idx_start, idx_end)))
+        .map(|&(_, l)| l)
+        .sum();
+    assert!(
+        index_bytes_read < index_len / 4,
+        "LIMIT 1 read {index_bytes_read} of {index_len} index bytes over \
+         {spo_tiles} tiles — expected only the first prefetch window"
     );
 }
 
@@ -457,9 +495,9 @@ fn dump_over_lazy_open_coalesces_fetches() {
 
     let total_reads = reader.reads().len();
     assert!(
-        total_reads < 40,
+        total_reads < 56,
         "lazy dump issued {total_reads} range reads — expected directories \
-         plus coalesced chunk/tile batches"
+         plus coalesced chunk batches and O(log n) tile-prefetch batches"
     );
 }
 
