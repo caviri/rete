@@ -80,6 +80,263 @@
     return CATALOG.datasets.find((d) => d.key === key) || CATALOG.datasets[0];
   }
 
+  // --- Code editors: gutter + syntax highlight overlay + autocomplete -----
+  // A textarea is wrapped with a line-number gutter and a <pre> overlay that
+  // renders the same text highlighted (the textarea's own text is transparent,
+  // only its caret/selection show). Same token theme as the documentation.
+  const EDITORS = {};
+
+  const ED_TOKENS = (() => {
+    const COM = /#.*/y;
+    const STR = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/y;
+    const IRI = /<[^>\s]*>?/y;
+    const VAR = /[?$][A-Za-z_]\w*/y;
+    const NUM = /\b\d[\d_]*(?:\.\d+)?\b/y;
+    const WS = /\s+/y;
+    const IDENT = /[A-Za-z_]\w*/y;
+    const PNAME = /[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*|:[A-Za-z_][\w.-]*/y;
+    const A_KW = /\ba\b/y;
+    const AT_KW = /@[A-Za-z]+/y;
+    const kw = (words, flags) => new RegExp("\\b(?:" + words.join("|") + ")\\b", (flags || "") + "y");
+    const SPARQL = kw(["SELECT", "CONSTRUCT", "ASK", "DESCRIBE", "WHERE", "PREFIX", "BASE",
+      "FILTER", "OPTIONAL", "UNION", "MINUS", "GRAPH", "SERVICE", "BIND", "VALUES", "DISTINCT",
+      "REDUCED", "ORDER", "BY", "ASC", "DESC", "GROUP", "HAVING", "LIMIT", "OFFSET", "FROM",
+      "NAMED", "COUNT", "SUM", "AVG", "MIN", "MAX", "SAMPLE", "GROUP_CONCAT", "STR", "STRLEN",
+      "UCASE", "LCASE", "CONTAINS", "STRSTARTS", "STRENDS", "STRBEFORE", "STRAFTER", "CONCAT",
+      "SUBSTR", "ABS", "CEIL", "FLOOR", "ROUND", "COALESCE", "LANG", "DATATYPE", "BOUND",
+      "IRI", "URI", "REGEX", "EXISTS", "NOT", "IN", "AS", "UNDEF"], "i");
+    return {
+      sparql: [[COM, "com"], [IRI, "iri"], [STR, "str"], [VAR, "var"], [A_KW, "kw"],
+        [SPARQL, "kw"], [PNAME, "fn"], [NUM, "num"], [IDENT, null]],
+      ttl: [[COM, "com"], [IRI, "iri"], [STR, "str"], [AT_KW, "kw"], [A_KW, "kw"],
+        [PNAME, "fn"], [NUM, "num"], [IDENT, null]]
+    };
+  })();
+
+  function highlightCode(text, lang) {
+    const rules = ED_TOKENS[lang] || ED_TOKENS.ttl;
+    let out = "";
+    let i = 0;
+    const n = text.length;
+    const WS = /\s+/y;
+    outer: while (i < n) {
+      WS.lastIndex = i;
+      const w = WS.exec(text);
+      if (w && w.index === i) {
+        out += w[0];
+        i += w[0].length;
+        continue;
+      }
+      for (const [re, cls] of rules) {
+        re.lastIndex = i;
+        const m = re.exec(text);
+        if (m && m.index === i && m[0].length) {
+          out += cls ? `<span class="tok-${cls}">${esc(m[0])}</span>` : esc(m[0]);
+          i += m[0].length;
+          continue outer;
+        }
+      }
+      out += esc(text[i]);
+      i++;
+    }
+    return out;
+  }
+
+  const SPARQL_COMPLETIONS = ["SELECT", "CONSTRUCT", "ASK", "DESCRIBE", "WHERE", "PREFIX",
+    "FILTER", "OPTIONAL", "UNION", "MINUS", "GRAPH", "BIND", "VALUES", "DISTINCT",
+    "ORDER BY", "ORDER BY DESC(", "GROUP BY", "HAVING", "LIMIT", "OFFSET", "FROM NAMED",
+    "COUNT", "SUM", "AVG", "MIN", "MAX", "SAMPLE", "GROUP_CONCAT", "STR", "STRLEN", "UCASE",
+    "LCASE", "CONTAINS", "STRSTARTS", "STRENDS", "CONCAT", "SUBSTR", "COALESCE", "LANG",
+    "DATATYPE", "BOUND", "REGEX", "EXISTS", "NOT EXISTS", "AS", "UNDEF"];
+  const TTL_COMPLETIONS = ["@prefix", "sh:NodeShape", "sh:PropertyShape", "sh:targetClass",
+    "sh:targetSubjectsOf", "sh:targetObjectsOf", "sh:property", "sh:path", "sh:minCount",
+    "sh:maxCount", "sh:datatype", "sh:class", "sh:nodeKind", "sh:pattern", "sh:message",
+    "sh:severity", "sh:in", "sh:or", "sh:and", "sh:not", "xsd:integer", "xsd:double",
+    "xsd:date", "xsd:boolean", "xsd:string"];
+
+  function completionItems(ed) {
+    const items = [];
+    const base = ed.lang === "sparql" ? SPARQL_COMPLETIONS : TTL_COMPLETIONS;
+    base.forEach((text) => items.push({ text, kind: "kw" }));
+    if (ed.lang === "sparql") {
+      // Variables already used in this query.
+      const vars = new Set(ed.ta.value.match(/[?$][A-Za-z_]\w*/g) || []);
+      vars.forEach((v) => items.push({ text: v, kind: "var" }));
+    }
+    // Terms from the loaded graph: classes and predicates from the schema view.
+    if (state.schema) {
+      (state.schema.classes || []).slice(0, 40).forEach((c) =>
+        items.push({ text: String(c[0]), kind: "class" }));
+      const preds = new Set();
+      (state.schema.relations || []).forEach((r) => preds.add(String(r[1])));
+      Array.from(preds).slice(0, 60).forEach((p) => items.push({ text: p, kind: "pred" }));
+    }
+    return items;
+  }
+
+  function currentToken(ta) {
+    const pos = ta.selectionStart;
+    const head = ta.value.slice(0, pos);
+    const m = head.match(/[<A-Za-z0-9_?$:@\/#.-]+$/);
+    return m ? { token: m[0], start: pos - m[0].length, end: pos } : null;
+  }
+
+  function matchCompletions(ed, token) {
+    const t = token.toLowerCase();
+    const bare = t.replace(/^</, "");
+    const seen = new Set();
+    const out = [];
+    for (const item of completionItems(ed)) {
+      const lower = item.text.toLowerCase();
+      if (seen.has(lower)) continue;
+      const isIri = lower.startsWith("<");
+      const hit = isIri
+        ? bare.length >= 2 && lower.includes(bare)
+        : lower.startsWith(t) && lower !== t;
+      if (hit) {
+        seen.add(lower);
+        out.push(item);
+        if (out.length >= 8) break;
+      }
+    }
+    return out;
+  }
+
+  function caretOffset(ed) {
+    // Mirror the text up to the caret in a hidden element with the same text
+    // metrics, then read the marker's position.
+    const ta = ed.ta;
+    const probe = document.createElement("div");
+    probe.style.cssText =
+      "position:absolute;visibility:hidden;white-space:pre;padding:12px;" +
+      "font:13px/1.46 'Cascadia Mono','SF Mono',Consolas,ui-monospace,monospace;";
+    probe.textContent = ta.value.slice(0, ta.selectionStart);
+    const mark = document.createElement("span");
+    mark.textContent = "\u200b";
+    probe.appendChild(mark);
+    ed.body.appendChild(probe);
+    const x = mark.offsetLeft - ta.scrollLeft;
+    const y = mark.offsetTop - ta.scrollTop;
+    probe.remove();
+    return { x, y };
+  }
+
+  function updateSuggest(ed) {
+    const tok = currentToken(ed.ta);
+    const min = tok && (tok.token.startsWith("?") || tok.token.startsWith("<")) ? 1 : 2;
+    if (!tok || tok.token.length < min) return hideSuggest(ed);
+    const items = matchCompletions(ed, tok.token);
+    if (!items.length) return hideSuggest(ed);
+    ed.items = items;
+    ed.tok = tok;
+    ed.sel = 0;
+    const at = caretOffset(ed);
+    ed.sug.style.left = Math.max(0, Math.min(at.x, ed.body.clientWidth - 240)) + "px";
+    ed.sug.style.top = (at.y + 21) + "px";
+    renderSuggest(ed);
+    ed.sug.classList.remove("hidden");
+  }
+
+  function renderSuggest(ed) {
+    ed.sug.innerHTML = ed.items.map((item, i) =>
+      `<div class="sg ${i === ed.sel ? "active" : ""}" data-sg="${i}">` +
+        `<span>${esc(shorten(item.text, 46))}</span>` +
+        `<span class="sg-kind">${esc(item.kind)}</span>` +
+      `</div>`
+    ).join("");
+    $$("[data-sg]", ed.sug).forEach((el) => {
+      el.onmousedown = (e) => {
+        e.preventDefault();
+        acceptSuggest(ed, Number(el.dataset.sg));
+      };
+    });
+  }
+
+  function acceptSuggest(ed, index) {
+    const item = ed.items[index];
+    if (!item || !ed.tok) return;
+    const ta = ed.ta;
+    ta.value = ta.value.slice(0, ed.tok.start) + item.text + ta.value.slice(ed.tok.end);
+    const caret = ed.tok.start + item.text.length;
+    ta.setSelectionRange(caret, caret);
+    hideSuggest(ed);
+    ed.refresh();
+    ta.focus();
+  }
+
+  function hideSuggest(ed) {
+    ed.sug.classList.add("hidden");
+    ed.items = [];
+  }
+
+  function suggestKeydown(ed, e) {
+    if (ed.sug.classList.contains("hidden")) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const d = e.key === "ArrowDown" ? 1 : -1;
+      ed.sel = (ed.sel + d + ed.items.length) % ed.items.length;
+      renderSuggest(ed);
+    } else if (e.key === "Tab" || e.key === "Enter") {
+      e.preventDefault();
+      acceptSuggest(ed, ed.sel);
+    } else if (e.key === "Escape") {
+      hideSuggest(ed);
+    }
+  }
+
+  function enhanceEditor(id, lang) {
+    const ta = $(id);
+    const wrap = document.createElement("div");
+    wrap.className = "editor";
+    const gutter = document.createElement("div");
+    gutter.className = "ed-gutter";
+    const body = document.createElement("div");
+    body.className = "ed-body";
+    const hl = document.createElement("pre");
+    hl.className = "ed-hl";
+    const code = document.createElement("code");
+    hl.appendChild(code);
+    const sug = document.createElement("div");
+    sug.className = "ed-suggest hidden";
+
+    ta.parentNode.insertBefore(wrap, ta);
+    wrap.appendChild(gutter);
+    wrap.appendChild(body);
+    body.appendChild(hl);
+    body.appendChild(ta);
+    body.appendChild(sug);
+    ta.setAttribute("wrap", "off");
+    ta.spellcheck = false;
+
+    const ed = { ta, gutter, code, hl, sug, body, lang, items: [], sel: 0, tok: null };
+    ed.refresh = () => {
+      const text = ta.value;
+      code.innerHTML = highlightCode(text, lang);
+      const lines = text.split("\n").length;
+      gutter.textContent = Array.from({ length: lines }, (_, i) => i + 1).join("\n");
+      ed.sync();
+    };
+    ed.sync = () => {
+      hl.scrollTop = ta.scrollTop;
+      hl.scrollLeft = ta.scrollLeft;
+      gutter.scrollTop = ta.scrollTop;
+    };
+    ta.addEventListener("input", () => {
+      ed.refresh();
+      updateSuggest(ed);
+    });
+    ta.addEventListener("scroll", ed.sync);
+    ta.addEventListener("keydown", (e) => suggestKeydown(ed, e));
+    ta.addEventListener("blur", () => setTimeout(() => hideSuggest(ed), 120));
+    EDITORS[id] = ed;
+    ed.refresh();
+  }
+
+  function setEd(id, text) {
+    $(id).value = text;
+    if (EDITORS[id]) EDITORS[id].refresh();
+  }
+
   function renderDatasetOptions() {
     $("ds").innerHTML = CATALOG.datasets.map((d) =>
       `<option value="${esc(d.key)}">${esc(d.label)}</option>`
@@ -205,7 +462,7 @@
     const ex = examplesForDataset()[index];
     if (!ex) return;
     state.selectedExample = index;
-    $("q").value = ex.q;
+    setEd("q", ex.q);
     setView(ex.view || "table");
     setStrategy(ex.strategy || "whole");
     setMode("sparql");
@@ -533,7 +790,7 @@
     const list = CATALOG.shacl[state.dataset] || [];
     if (!list.length) {
       $("shaclExamples").innerHTML = `<p class="microcopy">No SHACL examples for this dataset.</p>`;
-      $("shapeText").value = "";
+      setEd("shapeText", "");
       return;
     }
     $("shaclExamples").innerHTML = list.map((ex, i) =>
@@ -542,12 +799,12 @@
     $$("#shaclExamples [data-shacl]").forEach((btn) => {
       btn.onclick = () => {
         const ex = list[Number(btn.dataset.shacl)];
-        $("shapeText").value = ex.shape;
+        setEd("shapeText", ex.shape);
         $("exampleInfo").innerHTML = `<strong>${esc(ex.label)}</strong><div>${esc(ex.tip)}</div>`;
         setMode("shacl");
       };
     });
-    $("shapeText").value = list[0].shape;
+    setEd("shapeText", list[0].shape);
   }
 
   function renderShaclJson(report, raw) {
@@ -651,23 +908,107 @@
     $("schemaOut").innerHTML = `<div class="banner">${classes.length} classes and ${relations.length} class-level relations.</div>`;
   }
 
+  function localName(term) {
+    const m = String(term).match(/[\/#]([^\/#>]+)>?$/);
+    return m ? m[1] : String(term).replace(/[<>]/g, "");
+  }
+
+  // UML-style schema: each class is a box whose rows are its datatype
+  // properties (relations whose object class is "(literal)"); object
+  // properties between shown classes are drawn as labelled edges.
   function renderOntologyDiagram(classes, relations) {
     if (!classes.length) return `<div class="note">No rdf:type-derived classes found.</div>`;
-    const top = classes.slice(0, 10);
+    const top = classes.slice(0, 8);
     const idx = new Map(top.map((c, i) => [c[0], i]));
-    const nodes = top.map((c, i) => {
-      const angle = -Math.PI / 2 + i * 2 * Math.PI / Math.max(top.length, 1);
-      return { iri: c[0], count: c[1], x: 310 + Math.cos(angle) * 220, y: 210 + Math.sin(angle) * 145 };
+
+    // Per-class datatype properties (top 5 by count) + object edges.
+    const attrs = top.map(() => []);
+    const edgeMap = new Map(); // "s>t" -> {s, t, preds: Map(pred -> count)}
+    relations.forEach((r) => {
+      const [sc, p, oc, n] = r;
+      if (!idx.has(sc)) return;
+      if (oc === "(literal)") {
+        attrs[idx.get(sc)].push([p, Number(n)]);
+      } else if (idx.has(oc)) {
+        const s = idx.get(sc), t = idx.get(oc);
+        const key = s + ">" + t;
+        if (!edgeMap.has(key)) edgeMap.set(key, { s, t, preds: new Map() });
+        const e = edgeMap.get(key);
+        e.preds.set(p, (e.preds.get(p) || 0) + Number(n));
+      }
     });
-    const edges = relations.filter((r) => idx.has(r[0]) && idx.has(r[2])).slice(0, 32);
-    let svg = `<svg viewBox="0 0 620 420" role="img" aria-label="Schema graph">`;
-    edges.forEach((r) => {
-      const a = nodes[idx.get(r[0])], b = nodes[idx.get(r[2])];
-      svg += `<line class="gedge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"></line>`;
-      svg += `<text class="gedge-label" x="${(a.x + b.x) / 2}" y="${(a.y + b.y) / 2}">${esc(shorten(r[1], 24))}</text>`;
+    attrs.forEach((list) => list.sort((a, b) => b[1] - a[1]).splice(5));
+
+    // Grid layout: up to 4 columns; row height grows with the tallest box.
+    const cols = Math.min(4, top.length);
+    const boxW = 196;
+    const gapX = 36;
+    const gapY = 46;
+    const headH = 24;
+    const rowH = 13;
+    const width = 24 + cols * boxW + (cols - 1) * gapX + 24;
+    const boxH = (i) => headH + 7 + attrs[i].length * rowH + (attrs[i].length ? 5 : 0);
+    const boxes = top.map((c, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      return { iri: c[0], count: c[1], i, col, row, w: boxW, h: boxH(i) };
     });
-    nodes.forEach((n) => {
-      svg += `<g><circle class="gnode" cx="${n.x}" cy="${n.y}" r="${Math.max(10, Math.min(28, 8 + Math.sqrt(Number(n.count || 0))))}"></circle><text class="gnode-label" x="${n.x + 12}" y="${n.y + 4}">${esc(shorten(n.iri, 32))}</text></g>`;
+    const rowHeights = [];
+    boxes.forEach((b) => {
+      rowHeights[b.row] = Math.max(rowHeights[b.row] || 0, b.h);
+    });
+    let y = 18;
+    const rowY = rowHeights.map((h) => {
+      const at = y;
+      y += h + gapY;
+      return at;
+    });
+    boxes.forEach((b) => {
+      b.x = 24 + b.col * (boxW + gapX);
+      b.y = rowY[b.row];
+    });
+    const height = y - gapY + 18;
+
+    const anchor = (b) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
+    let svg = `<svg viewBox="0 0 ${width} ${Math.max(height, 160)}" role="img" aria-label="Schema diagram">`;
+    svg += `<defs><marker id="sarrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#9fb5ac"></path></marker></defs>`;
+
+    // Edges beneath the boxes. Self-references (e.g. Person coauthor Person)
+    // are drawn as a small loop on top of the box.
+    const edges = Array.from(edgeMap.values()).slice(0, 18);
+    edges.forEach((e) => {
+      const label = Array.from(e.preds.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 2)
+        .map(([p]) => localName(p))
+        .join(", ");
+      if (e.s === e.t) {
+        const b = boxes[e.s];
+        const cx = b.x + b.w - 26;
+        const cy = b.y;
+        svg += `<path class="cls-edge" d="M ${cx - 12} ${cy} C ${cx - 12} ${cy - 26}, ${cx + 12} ${cy - 26}, ${cx + 12} ${cy}" marker-end="url(#sarrow)"></path>`;
+        svg += `<text class="cls-edge-label" x="${cx}" y="${cy - 28}" text-anchor="middle">${esc(shorten(label, 22))}</text>`;
+        return;
+      }
+      const a = anchor(boxes[e.s]);
+      const b = anchor(boxes[e.t]);
+      svg += `<line class="cls-edge" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" marker-end="url(#sarrow)"></line>`;
+      svg += `<text class="cls-edge-label" x="${((a.x + b.x) / 2).toFixed(1)}" y="${((a.y + b.y) / 2 - 4).toFixed(1)}" text-anchor="middle">${esc(shorten(label, 26))}</text>`;
+    });
+
+    boxes.forEach((b) => {
+      svg += `<g><title>${esc(b.iri)} (${esc(b.count)} instances)</title>`;
+      svg += `<rect class="cls-box" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="6"></rect>`;
+      svg += `<rect class="cls-head" x="${b.x}" y="${b.y}" width="${b.w}" height="${headH}" rx="6"></rect>`;
+      svg += `<rect class="cls-head" x="${b.x}" y="${b.y + headH - 6}" width="${b.w}" height="6"></rect>`;
+      svg += `<text class="cls-title" x="${b.x + 9}" y="${b.y + 16}">${esc(shorten(localName(b.iri), 18))}</text>`;
+      svg += `<text class="cls-count" x="${b.x + b.w - 9}" y="${b.y + 16}" text-anchor="end">${esc(b.count)}</text>`;
+      attrs[b.i].forEach(([p, n], j) => {
+        const ay = b.y + headH + 14 + j * rowH;
+        svg += `<text class="cls-attr" x="${b.x + 9}" y="${ay}">${esc(shorten(localName(p), 20))}</text>`;
+        svg += `<text class="cls-attr-count" x="${b.x + b.w - 9}" y="${ay}" text-anchor="end">${esc(n)}</text>`;
+      });
+      svg += `</g>`;
     });
     svg += `</svg>`;
     return svg;
@@ -818,7 +1159,7 @@
     if (!file) return;
     try {
       const text = await file.text();
-      $("buildText").value = text;
+      setEd("buildText", text);
       state.built = { bytes: null, name: file.name };
       $("buildDownload").disabled = true;
       $("buildOpen").disabled = true;
@@ -873,7 +1214,7 @@
       el.onclick = () => {
         const h = loadHistory()[Number(el.dataset.hist)];
         if (!h) return;
-        $("q").value = h.query || "";
+        setEd("q", h.query || "");
         setView(h.format || "table");
         setStrategy(h.strategy || "whole");
         if (h.dataset && h.dataset !== state.dataset && RETE_DATASETS_B64[h.dataset]) loadDataset(h.dataset);
@@ -955,7 +1296,10 @@
     renderDatasetOptions();
     wireEvents();
     renderHistory();
-    $("buildText").value = BUILD_SAMPLE;
+    enhanceEditor("q", "sparql");
+    enhanceEditor("shapeText", "ttl");
+    enhanceEditor("buildText", "ttl");
+    setEd("buildText", BUILD_SAMPLE);
 
     await wasm_bindgen(b64ToBytes(RETE_WASM_B64));
 
@@ -966,7 +1310,7 @@
 
     const q = params.get("q");
     if (q) {
-      $("q").value = q;
+      setEd("q", q);
       state.selectedExample = -1;
       renderExamples();
     }
