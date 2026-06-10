@@ -89,10 +89,12 @@ This section is generated from
 
 ### Load / open (one-time)
 
-| Engine | Step | Time |
-|---|---|--:|
-| **rete** | `Rete::open` - indexes already built in the file | **15.2 ms** |
-| Oxigraph | bulk-load N-Triples + build in-memory indexes | 1767 ms |
+| Engine | Step | Time | Resident heap after load |
+|---|---|--:|--:|
+| **rete** | `Rete::open` - indexes already built in the file | **15.2 ms** | 12.71 MiB |
+| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2002 ms | 144.98 MiB |
+
+Process peak RSS after both loads (`VmHWM`): 207 MiB.
 
 rete's "load" just maps a file whose dictionary + permutation indexes
 already exist on disk; Oxigraph parses the triples and builds its indexes
@@ -104,34 +106,35 @@ instantly, query in place**.
 24 queries spanning supported forms and operators, run on both
 engines. Row counts are a cross-engine correctness check across the
 language surface, not just a speed race.
-Median of 5 warm runs.
+Median ±sd of 5 warm runs; `peak heap` is each query's exact
+allocation high-water mark (counting allocator), engine-comparable.
 
-| Operator / form | rete | Oxigraph | rete vs oxi | rows | ok |
-|---|--:|--:|--:|--:|:--:|
-| SELECT count (aggregate) | **1.94 ms** | 5.33 ms | 2.8x | 1 | yes |
-| SELECT DISTINCT | **2.90 ms** | 4.05 ms | 1.4x | 6 | yes |
-| ASK | 0.03 ms | **0.01 ms** | 0.2x | 1 | yes |
-| CONSTRUCT | **0.01 ms** | 0.01 ms | 1.4x | 9 | yes |
-| DESCRIBE (impl-defined) | **0.01 ms** | 0.01 ms | 1.4x | 11 | yes |
-| VALUES (inline data) | **2.39 ms** | 2.48 ms | 1.0x | 10962 | yes |
-| UNION | **2.44 ms** | 2.49 ms | 1.0x | 10993 | yes |
-| OPTIONAL (left join) | **0.14 ms** | 0.17 ms | 1.3x | 200 | yes |
-| MINUS | 1.55 ms | **1.54 ms** | 1.0x | 2728 | yes |
-| FILTER NOT EXISTS | **1.56 ms** | 4.30 ms | 2.8x | 2728 | yes |
-| 3-way join + LIMIT | 0.13 ms | **0.09 ms** | 0.7x | 50 | yes |
-| FILTER REGEX (case-insens.) | 3.90 ms | **0.43 ms** | 0.1x | 200 | yes |
-| FILTER arith + logical | **0.15 ms** | 0.58 ms | 3.9x | 200 | yes |
-| BIND + SUBSTR + CONCAT | 0.27 ms | **0.23 ms** | 0.8x | 200 | yes |
-| path sequence a/b | **0.11 ms** | 0.21 ms | 2.0x | 200 | yes |
-| path inverse ^p (count) | **1.94 ms** | 4.20 ms | 2.2x | 1 | yes |
-| path + transitive (count) | **5.24 ms** | 6.36 ms | 1.2x | 1 | yes |
-| path * zero-or-more (count) | **5.27 ms** | 5.87 ms | 1.1x | 1 | yes |
-| GROUP BY + ORDER BY | **2.20 ms** | 4.00 ms | 1.8x | 6 | yes |
-| GROUP BY + HAVING | **2.21 ms** | 4.43 ms | 2.0x | 5 | yes |
-| AVG per group | **11.4 ms** | 32.9 ms | 2.9x | 6 | yes |
-| MIN/MAX/SUM | **4.07 ms** | 7.33 ms | 1.8x | 1 | yes |
-| COUNT(DISTINCT) | **2.04 ms** | 4.70 ms | 2.3x | 1 | yes |
-| ORDER BY + LIMIT + OFFSET | **3.57 ms** | 18.1 ms | 5.1x | 10 | yes |
+| Operator / form | rete | Oxigraph | rete vs oxi | peak heap MiB (rete / oxi) | rows | ok |
+|---|--:|--:|--:|--:|--:|:--:|
+| SELECT count (aggregate) | **2.29 ±0.13 ms** | 5.67 ±0.57 ms | 2.5x | 3.75 / 0.01 | 1 | yes |
+| SELECT DISTINCT | **3.48 ±0.04 ms** | 5.05 ±0.79 ms | 1.4x | 0.01 / 0.00 | 6 | yes |
+| ASK | 0.03 ±0.01 ms | **0.01 ±0.01 ms** | 0.3x | 0.00 / 0.00 | 1 | yes |
+| CONSTRUCT | **0.01 ±0.03 ms** | 0.02 ±0.02 ms | 1.4x | 0.01 / 0.01 | 9 | yes |
+| DESCRIBE (impl-defined) | **0.01 ±0.00 ms** | 0.01 ±0.00 ms | 1.3x | 0.01 / 0.00 | 11 | yes |
+| VALUES (inline data) | **3.25 ±0.38 ms** | 4.22 ±0.90 ms | 1.3x | 6.77 / 0.01 | 10962 | yes |
+| UNION | **3.24 ±0.23 ms** | 4.12 ±0.92 ms | 1.3x | 6.54 / 0.00 | 10993 | yes |
+| OPTIONAL (left join) | **0.18 ±0.02 ms** | 0.19 ±0.04 ms | 1.1x | 0.13 / 0.01 | 200 | yes |
+| MINUS | 2.02 ±0.32 ms | **1.95 ±0.50 ms** | 1.0x | 2.23 / 0.81 | 2728 | yes |
+| FILTER NOT EXISTS | **1.84 ±0.05 ms** | 6.00 ±0.48 ms | 3.3x | 2.05 / 0.01 | 2728 | yes |
+| 3-way join + LIMIT | 0.17 ±0.02 ms | **0.11 ±0.02 ms** | 0.7x | 0.04 / 0.01 | 50 | yes |
+| FILTER REGEX (case-insens.) | 5.37 ±0.06 ms | **0.52 ±0.17 ms** | 0.1x | 0.13 / 0.02 | 200 | yes |
+| FILTER arith + logical | **0.16 ±0.03 ms** | 0.79 ±0.17 ms | 5.1x | 0.13 / 0.01 | 200 | yes |
+| BIND + SUBSTR + CONCAT | 0.31 ±0.02 ms | **0.26 ±0.02 ms** | 0.8x | 0.13 / 0.01 | 200 | yes |
+| path sequence a/b | **0.13 ±0.02 ms** | 0.23 ±0.02 ms | 1.8x | 0.12 / 0.01 | 200 | yes |
+| path inverse ^p (count) | **2.33 ±0.02 ms** | 5.34 ±0.91 ms | 2.3x | 3.75 / 0.01 | 1 | yes |
+| path + transitive (count) | **5.69 ±0.10 ms** | 8.01 ±1.02 ms | 1.4x | 1.23 / 0.81 | 1 | yes |
+| path * zero-or-more (count) | **5.68 ±0.19 ms** | 6.89 ±1.40 ms | 1.2x | 1.23 / 0.81 | 1 | yes |
+| GROUP BY + ORDER BY | **2.97 ±0.04 ms** | 4.97 ±1.25 ms | 1.7x | 4.88 / 0.01 | 6 | yes |
+| GROUP BY + HAVING | **2.98 ±0.42 ms** | 7.91 ±0.24 ms | 2.7x | 4.88 / 0.01 | 5 | yes |
+| AVG per group | **18.0 ±1.5 ms** | 35.9 ±0.6 ms | 2.0x | 13.56 / 0.01 | 6 | yes |
+| MIN/MAX/SUM | **4.57 ±1.09 ms** | 10.2 ±0.2 ms | 2.2x | 7.50 / 0.01 | 1 | yes |
+| COUNT(DISTINCT) | **2.50 ±0.10 ms** | 7.03 ±0.80 ms | 2.8x | 4.50 / 0.01 | 1 | yes |
+| ORDER BY + LIMIT + OFFSET | **4.11 ±0.18 ms** | 19.2 ±0.8 ms | 4.7x | 0.04 / 5.75 | 10 | yes |
 
 **24 / 24 identical row counts** across
 SELECT/ASK/CONSTRUCT/DESCRIBE, algebra operators, filters/functions,
@@ -159,9 +162,9 @@ Oxigraph it is a `coauthor+` property path evaluated per seed.
 
 | Engine / mode | Time | vs rete-serial |
 |---|--:|--:|
-| rete - `batch_reach_serial` (1 core) | 441 ms | 1.0x |
-| **rete - `batch_reach_parallel` (32 cores)** | **30.1 ms** | **14.6x** |
-| Oxigraph - `coauthor+` property path, per seed | 1764 ms | 0.3x |
+| rete - `batch_reach_serial` (1 core) | 445 ±3 ms | 1.0x |
+| **rete - `batch_reach_parallel` (32 cores)** | **34.1 ±5.0 ms** | **13.1x** |
+| Oxigraph - `coauthor+` property path, per seed | 2199 ±52 ms | 0.2x |
 
 rete serial and parallel both reached 1,636,200 nodes;
 Oxigraph touched 1,636,200 result cells. The dedicated
@@ -191,6 +194,49 @@ The `rete-bench` crate pulls in Oxigraph only for this comparison; its
 in-memory store needs no RocksDB/clang, so `default-features = false` keeps
 the build light.
 <!-- benchmark:opencitations:end -->
+
+<!-- benchmark:lubm:start -->
+## LUBM-style benchmark (standard 14 queries)
+
+The [LUBM](http://swat.cse.lehigh.edu/projects/lubm/) data model and its 14
+standard queries, on identical pre-materialized data in both engines.
+LUBM(1): 93,139 generated +
+26,007 RDFS/OWL-RL-materialized =
+118,680 triples (`.rete`: 280,943 bytes).
+
+**Read the caveats:** the generator is a faithful *reimplementation* of
+UBA's documented cardinalities, not the official Java tool, so counts are
+not comparable to published LUBM figures; inference is rete's RDFS/OWL-RL
+subset, applied up front to the data both engines load — so
+restriction-defined classes (Q12's `Chair`) are empty on both sides by
+construction. The correctness anchor is **cross-engine row parity**:
+**14 / 14** queries agree.
+
+| Engine | Load | Resident heap |
+|---|--:|--:|
+| **rete** `Rete::open` | **2.7 ms** | 2.17 MiB |
+| Oxigraph bulk-load | 152 ms | 37.50 MiB |
+
+| Query | rete | Oxigraph | rete vs oxi | peak heap MiB (rete / oxi) | rows | ok |
+|---|--:|--:|--:|--:|--:|:--:|
+| Q1 grad students of a course | **0.39 ±0.03 ms** | 0.78 ±0.05 ms | 2.0x | 0.47 / 0.00 | 3 | yes |
+| Q2 grad student / univ / dept triangle | **4.17 ±0.06 ms** | 4.96 ±0.37 ms | 1.2x | 3.16 / 0.01 | 2036 | yes |
+| Q3 publications of a professor | **1.07 ±0.03 ms** | 2.45 ±0.43 ms | 2.3x | 1.09 / 0.00 | 9 | yes |
+| Q4 professors of a department (+3 props) | 3.80 ±0.41 ms | **0.54 ±0.15 ms** | 0.1x | 3.20 / 0.01 | 26 | yes |
+| Q5 persons member of a department | **1.77 ±0.05 ms** | 7.97 ±0.17 ms | 4.5x | 2.16 / 0.00 | 544 | yes |
+| Q6 all students | 1.81 ±0.13 ms | **1.76 ±0.60 ms** | 1.0x | 4.39 / 0.00 | 7232 | yes |
+| Q7 students of a professor's courses | 8.38 ±0.39 ms | **0.06 ±0.08 ms** | 0.0x | 5.17 / 0.01 | 49 | yes |
+| Q8 students of a university's departments | **10.2 ±1.0 ms** | 18.7 ±0.5 ms | 1.8x | 6.83 / 0.01 | 7232 | yes |
+| Q9 student / advisor / course triangle | **5.67 ±0.34 ms** | 11.4 ±0.6 ms | 2.0x | 1.65 / 0.01 | 115 | yes |
+| Q10 students of a graduate course | **1.25 ±0.05 ms** | 2.83 ±0.68 ms | 2.3x | 1.83 / 0.00 | 0 | yes |
+| Q11 research groups of a university | 0.16 ±0.01 ms | **0.16 ±0.02 ms** | 1.0x | 0.19 / 0.00 | 230 | yes |
+| Q12 chairs of a university's departments | **0.01 ±0.00 ms** | 0.01 ±0.00 ms | 2.4x | 0.00 / 0.01 | 0 | yes |
+| Q13 alumni of a university | 2.61 ±0.56 ms | **2.56 ±0.40 ms** | 1.0x | 3.44 / 0.00 | 2655 | yes |
+| Q14 all undergraduate students | 1.83 ±0.05 ms | **1.66 ±0.69 ms** | 0.9x | 4.39 / 0.00 | 7232 | yes |
+
+Reproduce: `cargo run --release -p rete-bench -- --json --lubm 1 >
+docs/benchmark-lubm.json` then re-render this doc.
+<!-- benchmark:lubm:end -->
 
 ## Parallelism
 

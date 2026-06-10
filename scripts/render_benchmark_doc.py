@@ -18,6 +18,8 @@ from pathlib import Path
 
 START = "<!-- benchmark:opencitations:start -->"
 END = "<!-- benchmark:opencitations:end -->"
+LUBM_START = "<!-- benchmark:lubm:start -->"
+LUBM_END = "<!-- benchmark:lubm:end -->"
 
 
 def ms(value: float, digits: int = 2) -> str:
@@ -26,6 +28,23 @@ def ms(value: float, digits: int = 2) -> str:
     if value >= 10:
         return f"{value:.1f} ms"
     return f"{value:.{digits}f} ms"
+
+
+def ms_pm(value: float, sd: float | None) -> str:
+    """`2.41 ±0.05 ms`-style cell (falls back to plain when no spread known)."""
+    if sd is None:
+        return ms(value)
+    if value >= 100:
+        return f"{value:.0f} ±{sd:.0f} ms"
+    if value >= 10:
+        return f"{value:.1f} ±{sd:.1f} ms"
+    return f"{value:.2f} ±{sd:.2f} ms"
+
+
+def mib(num_bytes: float | None) -> str:
+    if num_bytes is None:
+        return "-"
+    return f"{num_bytes / (1024 * 1024):.2f}"
 
 
 def maybe_bold(value: str, bold: bool) -> str:
@@ -83,10 +102,22 @@ def render(report: dict) -> str:
             "",
             "### Load / open (one-time)",
             "",
-            "| Engine | Step | Time |",
-            "|---|---|--:|",
-            f"| **rete** | `Rete::open` - indexes already built in the file | **{ms(load['rete_ms'], 1)}** |",
-            f"| Oxigraph | bulk-load N-Triples + build in-memory indexes | {ms(load['oxigraph_ms'], 0)} |",
+            "| Engine | Step | Time | Resident heap after load |",
+            "|---|---|--:|--:|",
+            f"| **rete** | `Rete::open` - indexes already built in the file | **{ms(load['rete_ms'], 1)}** | {mib(load.get('rete_heap_bytes'))} MiB |",
+            f"| Oxigraph | bulk-load N-Triples + build in-memory indexes | {ms(load['oxigraph_ms'], 0)} | {mib(load.get('oxigraph_heap_bytes'))} MiB |",
+        ]
+    )
+    rss_kb = load.get("process_peak_rss_kb")
+    if rss_kb:
+        lines.extend(
+            [
+                "",
+                f"Process peak RSS after both loads (`VmHWM`): {rss_kb / 1024:.0f} MiB.",
+            ]
+        )
+    lines.extend(
+        [
             "",
             "rete's \"load\" just maps a file whose dictionary + permutation indexes",
             "already exist on disk; Oxigraph parses the triples and builds its indexes",
@@ -98,10 +129,11 @@ def render(report: dict) -> str:
             f"{len(queries)} queries spanning supported forms and operators, run on both",
             "engines. Row counts are a cross-engine correctness check across the",
             "language surface, not just a speed race.",
-            f"Median of {query_reps} warm runs.",
+            f"Median ±sd of {query_reps} warm runs; `peak heap` is each query's exact",
+            "allocation high-water mark (counting allocator), engine-comparable.",
             "",
-            "| Operator / form | rete | Oxigraph | rete vs oxi | rows | ok |",
-            "|---|--:|--:|--:|--:|:--:|",
+            "| Operator / form | rete | Oxigraph | rete vs oxi | peak heap MiB (rete / oxi) | rows | ok |",
+            "|---|--:|--:|--:|--:|--:|:--:|",
         ]
     )
 
@@ -109,20 +141,27 @@ def render(report: dict) -> str:
         if "rete_error" in row or "oxigraph_error" in row:
             rete = row.get("rete_error", "-")
             oxi = row.get("oxigraph_error", "-")
-            lines.append(f"| {row['name']} | {rete} | {oxi} | - | - | - |")
+            lines.append(f"| {row['name']} | {rete} | {oxi} | - | - | - | - |")
             continue
         rete_wins = row["rete_ms"] < row["oxigraph_ms"]
-        rete_cell = maybe_bold(ms(row["rete_ms"]), rete_wins)
-        oxi_cell = maybe_bold(ms(row["oxigraph_ms"]), not rete_wins)
+        rete_cell = maybe_bold(ms_pm(row["rete_ms"], row.get("rete_ms_sd")), rete_wins)
+        oxi_cell = maybe_bold(
+            ms_pm(row["oxigraph_ms"], row.get("oxigraph_ms_sd")), not rete_wins
+        )
+        heap_cell = "{} / {}".format(
+            mib(row.get("rete_peak_heap_bytes")),
+            mib(row.get("oxigraph_peak_heap_bytes")),
+        )
         rows_cell = str(row["rete_rows"])
         if row["rete_rows"] != row["oxigraph_rows"]:
             rows_cell = f"{row['rete_rows']} / {row['oxigraph_rows']}"
         lines.append(
-            "| {name} | {rete} | {oxi} | {ratio} | {rows} | {ok} |".format(
+            "| {name} | {rete} | {oxi} | {ratio} | {heap} | {rows} | {ok} |".format(
                 name=row["name"].replace("|", "\\|"),
                 rete=rete_cell,
                 oxi=oxi_cell,
                 ratio=speedup(row["speedup"]),
+                heap=heap_cell,
                 rows=rows_cell,
                 ok="yes" if row.get("agree") else "no",
             )
@@ -157,9 +196,9 @@ def render(report: dict) -> str:
             "",
             "| Engine / mode | Time | vs rete-serial |",
             "|---|--:|--:|",
-            f"| rete - `batch_reach_serial` (1 core) | {ms(reach['rete_serial_ms'], 1)} | 1.0x |",
-            f"| **rete - `batch_reach_parallel` ({env.get('logical_cores', '?')} cores)** | **{ms(reach['rete_parallel_ms'], 1)}** | **{speedup(reach['parallel_speedup_vs_serial'])}** |",
-            f"| Oxigraph - `coauthor+` property path, per seed | {ms(reach['oxigraph_ms'], 0)} | {speedup(reach['oxigraph_vs_rete_serial'])} |",
+            f"| rete - `batch_reach_serial` (1 core) | {ms_pm(reach['rete_serial_ms'], reach.get('rete_serial_ms_sd'))} | 1.0x |",
+            f"| **rete - `batch_reach_parallel` ({env.get('logical_cores', '?')} cores)** | **{ms_pm(reach['rete_parallel_ms'], reach.get('rete_parallel_ms_sd'))}** | **{speedup(reach['parallel_speedup_vs_serial'])}** |",
+            f"| Oxigraph - `coauthor+` property path, per seed | {ms_pm(reach['oxigraph_ms'], reach.get('oxigraph_ms_sd'))} | {speedup(reach['oxigraph_vs_rete_serial'])} |",
             "",
             f"rete serial and parallel both reached {reach['rete_serial_total']:,} nodes;",
             f"Oxigraph touched {reach['oxigraph_total']:,} result cells. The dedicated",
@@ -194,11 +233,77 @@ def render(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def replace_section(markdown: str, section: str) -> str:
-    if START in markdown and END in markdown:
-        before, rest = markdown.split(START, 1)
-        _, after = rest.split(END, 1)
+def render_lubm(report: dict, source_json: str) -> str:
+    load = report["load_open"]
+    queries = report["queries"]
+    agreement = report["query_agreement"]
+    lines: list[str] = [
+        LUBM_START,
+        "## LUBM-style benchmark (standard 14 queries)",
+        "",
+        f"The [LUBM](http://swat.cse.lehigh.edu/projects/lubm/) data model and its 14",
+        "standard queries, on identical pre-materialized data in both engines.",
+        f"LUBM({report['universities']}): {report['base_triples']:,} generated +",
+        f"{report['materialized_triples']:,} RDFS/OWL-RL-materialized =",
+        f"{report['total_triples']:,} triples (`.rete`: {report['rete_bytes']:,} bytes).",
+        "",
+        "**Read the caveats:** the generator is a faithful *reimplementation* of",
+        "UBA's documented cardinalities, not the official Java tool, so counts are",
+        "not comparable to published LUBM figures; inference is rete's RDFS/OWL-RL",
+        "subset, applied up front to the data both engines load — so",
+        "restriction-defined classes (Q12's `Chair`) are empty on both sides by",
+        "construction. The correctness anchor is **cross-engine row parity**:",
+        f"**{agreement['agree']} / {agreement['total']}** queries agree.",
+        "",
+        "| Engine | Load | Resident heap |",
+        "|---|--:|--:|",
+        f"| **rete** `Rete::open` | **{ms(load['rete_ms'], 1)}** | {mib(load.get('rete_heap_bytes'))} MiB |",
+        f"| Oxigraph bulk-load | {ms(load['oxigraph_ms'], 0)} | {mib(load.get('oxigraph_heap_bytes'))} MiB |",
+        "",
+        "| Query | rete | Oxigraph | rete vs oxi | peak heap MiB (rete / oxi) | rows | ok |",
+        "|---|--:|--:|--:|--:|--:|:--:|",
+    ]
+    for row in queries:
+        rete_wins = row["rete_ms"] < row["oxigraph_ms"]
+        lines.append(
+            "| {name} | {rete} | {oxi} | {ratio} | {heap} | {rows} | {ok} |".format(
+                name=row["name"].replace("|", "\\|"),
+                rete=maybe_bold(ms_pm(row["rete_ms"], row.get("rete_ms_sd")), rete_wins),
+                oxi=maybe_bold(
+                    ms_pm(row["oxigraph_ms"], row.get("oxigraph_ms_sd")), not rete_wins
+                ),
+                ratio=speedup(row["speedup"]),
+                heap="{} / {}".format(
+                    mib(row.get("rete_peak_heap_bytes")),
+                    mib(row.get("oxigraph_peak_heap_bytes")),
+                ),
+                rows=row["rows"],
+                ok="yes" if row.get("agree") else "no",
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "Reproduce: `cargo run --release -p rete-bench -- --json --lubm 1 >",
+            f"{source_json}` then re-render this doc.",
+            LUBM_END,
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def replace_between(markdown: str, section: str, start: str, end: str) -> str | None:
+    if start in markdown and end in markdown:
+        before, rest = markdown.split(start, 1)
+        _, after = rest.split(end, 1)
         return before.rstrip() + "\n\n" + section.rstrip() + "\n\n" + after.lstrip("\n")
+    return None
+
+
+def replace_section(markdown: str, section: str) -> str:
+    replaced = replace_between(markdown, section, START, END)
+    if replaced is not None:
+        return replaced
 
     heading = "\n## Comparison vs Oxigraph"
     next_heading = "\n## Parallelism"
@@ -209,9 +314,27 @@ def replace_section(markdown: str, section: str) -> str:
     return markdown[: start + 1] + section + markdown[end:]
 
 
+def insert_lubm(markdown: str, section: str) -> str:
+    replaced = replace_between(markdown, section, LUBM_START, LUBM_END)
+    if replaced is not None:
+        return replaced
+    # First insertion: right after the Oxigraph comparison section.
+    anchor = markdown.find(END)
+    if anchor == -1:
+        raise SystemExit("render the Oxigraph section before adding the LUBM section")
+    anchor += len(END)
+    return markdown[:anchor] + "\n\n" + section.rstrip() + markdown[anchor:]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("json_file", type=Path)
+    parser.add_argument(
+        "--lubm",
+        type=Path,
+        default=None,
+        help="optional rete-bench --lubm --json report to render as its own section",
+    )
     parser.add_argument("--input", type=Path, default=Path("docs/BENCHMARK.md"))
     parser.add_argument("--output", type=Path, default=Path("docs/BENCHMARK.md"))
     parser.add_argument("--section-only", action="store_true")
@@ -226,7 +349,11 @@ def main() -> None:
         return
 
     source = args.input.read_text(encoding="utf-8")
-    args.output.write_text(replace_section(source, section), encoding="utf-8")
+    out = replace_section(source, section)
+    if args.lubm is not None:
+        lubm_report = json.loads(args.lubm.read_text(encoding="utf-8"))
+        out = insert_lubm(out, render_lubm(lubm_report, args.lubm.as_posix()))
+    args.output.write_text(out, encoding="utf-8")
 
 
 if __name__ == "__main__":

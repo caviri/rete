@@ -176,9 +176,17 @@ fn rows(rete: &Rete, q: &str) -> usize {
     }
 }
 
-fn median(mut v: Vec<f64>) -> f64 {
+/// Median and sample standard deviation (the ± spread).
+fn median_sd(mut v: Vec<f64>) -> (f64, f64) {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    v[v.len() / 2]
+    let med = v[v.len() / 2];
+    let mean = v.iter().sum::<f64>() / v.len() as f64;
+    let var = if v.len() > 1 {
+        v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (v.len() - 1) as f64
+    } else {
+        0.0
+    };
+    (med, var.sqrt())
 }
 
 fn main() {
@@ -212,7 +220,7 @@ fn main() {
     // size; only assert there.
     let check = papers == 30_000;
     let mut failures = 0;
-    println!("| Query | rows | median ms |");
+    println!("| Query | rows | median ±sd ms |");
     println!("|---|--:|--:|");
     for (((name, body), &expect), &ceiling) in QUERIES.iter().zip(EXPECTED).zip(CEILING_MS) {
         let q = format!("{PREFIXES}{body}");
@@ -228,12 +236,12 @@ fn main() {
             let _ = rows(&rete, &q);
             times.push(t.elapsed().as_secs_f64() * 1000.0);
         }
-        let med = median(times);
+        let (med, sd) = median_sd(times);
         if check && check_times && med > ceiling {
             eprintln!("TIME CEILING EXCEEDED — {name}: {med:.3} ms > {ceiling} ms");
             failures += 1;
         }
-        println!("| {name} | {n} | {med:.3} |");
+        println!("| {name} | {n} | {med:.3} ±{sd:.3} |");
     }
     if failures > 0 {
         eprintln!("\n{failures} check failure(s) — engine regression");
