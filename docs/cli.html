@@ -423,8 +423,13 @@ bound term is unknown, the index is skipped entirely and the result is empty.</p
 <pre><code class="language-sh">rete query-url https://host/data.rete --object '&lt;http://ex/Dave&gt;'
 </code></pre>
 <h3><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
-<p>Run a full SPARQL query over HTTP, range-fetching the file (header, dictionary,
-index, pyramid) rather than downloading it whole.</p>
+<p>Run a full SPARQL query over HTTP with <strong>lazy tile faulting</strong> (tiled v0.2
+files): the open fetches the header, dictionary, pyramid, and the index's
+small tile directories; index tiles are then range-fetched only when the
+query's scans and probes touch them, so a selective query reads O(touched
+tiles) rather than the whole index. A range failure mid-query is reported as
+an error, never as silently fewer rows. Pre-tiling (v0.1) files fall back to
+fetching the index whole.</p>
 <pre><code class="language-sh">rete sparql-url https://host/data.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 </code></pre>

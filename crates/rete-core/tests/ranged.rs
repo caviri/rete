@@ -7,31 +7,40 @@
 //!   * `Rete::open_ranged` opens in a small bounded number of requests — never a
 //!     linear scan proportional to the triple count.
 
-use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use rete_core::{
-    build_pyramid_meta, write_file, DictionaryBuilder, GraphIndexBuilder, RangeReader, Rete,
-    SliceReader, SummaryView, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, eval_query, write_file, DictionaryBuilder, GraphIndexBuilder, QueryOutput,
+    RangeReader, Rete, SliceReader, SummaryView, DEFAULT_TILE_BUDGET,
 };
 
-/// A `RangeReader` over an in-memory image that records each `(offset, len)`.
+/// A `RangeReader` over an in-memory image that records each `(offset, len)`,
+/// and can be switched to fail every read (simulating a network outage
+/// mid-session). `Sync` so it can back a lazily-faulting open.
 struct RecordingReader {
     data: Vec<u8>,
-    reads: RefCell<Vec<(u64, u64)>>,
+    reads: Mutex<Vec<(u64, u64)>>,
+    fail: AtomicBool,
 }
 
 impl RecordingReader {
     fn new(data: Vec<u8>) -> Self {
         Self {
             data,
-            reads: RefCell::new(Vec::new()),
+            reads: Mutex::new(Vec::new()),
+            fail: AtomicBool::new(false),
         }
     }
     fn reads(&self) -> Vec<(u64, u64)> {
-        self.reads.borrow().clone()
+        self.reads.lock().unwrap().clone()
     }
     fn bytes_read(&self) -> u64 {
-        self.reads.borrow().iter().map(|&(_, l)| l).sum()
+        self.reads.lock().unwrap().iter().map(|&(_, l)| l).sum()
+    }
+    /// Make every subsequent `read_at` fail.
+    fn fail_from_now(&self) {
+        self.fail.store(true, Ordering::Relaxed);
     }
 }
 
@@ -40,7 +49,10 @@ impl RangeReader for RecordingReader {
         self.data.len() as u64
     }
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
-        self.reads.borrow_mut().push((offset, len));
+        if self.fail.load(Ordering::Relaxed) {
+            return Err(std::io::Error::other("simulated network failure"));
+        }
+        self.reads.lock().unwrap().push((offset, len));
         let start = offset as usize;
         let end = start
             .checked_add(len as usize)
@@ -222,13 +234,9 @@ fn routed_pattern_query_fetches_only_the_selected_permutation() {
     );
 }
 
-/// On a tiled (v0.2) multi-tile file, a bound-subject routed query must fetch
-/// only the tile **directory** plus the one matching tile — a small fraction
-/// of the selected permutation section, not the whole section.
-#[test]
-fn routed_pattern_query_fetches_only_matching_tiles() {
-    // A graph whose sections dwarf the 4 KiB directory prefetch, split into
-    // many tiles.
+/// A graph whose sections dwarf the 4 KiB directory prefetch, split into many
+/// tiles (tiny tile budget). `<http://ex/n7>` has exactly two `knows` edges.
+fn multi_tile_image() -> Vec<u8> {
     let node = |n: u32| format!("<http://ex/n{n}>");
     let knows = "<http://ex/knows>".to_string();
     let mut db = DictionaryBuilder::new();
@@ -243,7 +251,15 @@ fn routed_pattern_query_fetches_only_matching_tiles() {
     for &(s, o) in &edges {
         ib.push(dict.encode(&node(s), &knows, &node(o)).unwrap());
     }
-    let image = write_file(&dict, &ib.build(), false, &[], 0);
+    write_file(&dict, &ib.build(), false, &[], 0)
+}
+
+/// On a tiled (v0.2) multi-tile file, a bound-subject routed query must fetch
+/// only the tile **directory** plus the one matching tile — a small fraction
+/// of the selected permutation section, not the whole section.
+#[test]
+fn routed_pattern_query_fetches_only_matching_tiles() {
+    let image = multi_tile_image();
     let (idx_start, idx_end) = index_region(&image);
     let index_len = idx_end - idx_start;
 
@@ -266,6 +282,66 @@ fn routed_pattern_query_fetches_only_matching_tiles() {
         index_bytes_read < index_len / 6,
         "tile-routed query read {index_bytes_read} of {index_len} index bytes — \
          expected directory + one tile, a small fraction of one section"
+    );
+}
+
+/// Full SPARQL over a lazily-faulting ranged open: a selective query must
+/// fault in only the tiles its scans touch — directory prefixes + a couple of
+/// tiles, a small fraction of the index — while returning exactly the same
+/// rows as an in-memory open.
+#[test]
+fn lazy_sparql_open_fetches_only_touched_tiles() {
+    let image = multi_tile_image();
+    let (idx_start, idx_end) = index_region(&image);
+    let index_len = idx_end - idx_start;
+
+    let q = "SELECT ?o WHERE { <http://ex/n7> <http://ex/knows> ?o }";
+    let plain = Rete::open(&image).unwrap();
+    let expected = match eval_query(&plain, q).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(expected.len(), 2);
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let got = match eval_query(&rete, q).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(got, expected);
+    assert!(!rete.index_incomplete());
+
+    let index_bytes_read: u64 = reader
+        .reads()
+        .iter()
+        .filter(|r| overlaps(**r, (idx_start, idx_end)))
+        .map(|&(_, l)| l)
+        .sum();
+    assert!(
+        index_bytes_read < index_len / 4,
+        "lazy SPARQL read {index_bytes_read} of {index_len} index bytes — \
+         expected tile directories plus the touched tiles only"
+    );
+}
+
+/// A range failure during lazy tile faulting must be detectable: the engine's
+/// scans stay infallible (they see an empty tile), but the sticky
+/// `index_incomplete` flag turns the partial answer into an error upstream.
+#[test]
+fn lazy_sparql_open_surfaces_failed_tile_fetches() {
+    let image = multi_tile_image();
+    let reader = std::sync::Arc::new(RecordingReader::new(image));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    assert!(!rete.index_incomplete());
+
+    // The network dies after the open; the next query's tile faults fail.
+    reader.fail_from_now();
+    let q = "SELECT ?o WHERE { <http://ex/n7> <http://ex/knows> ?o }";
+    let _ = eval_query(&rete, q).unwrap(); // evaluation itself must not panic
+    assert!(
+        rete.index_incomplete(),
+        "a failed tile fetch must set the incomplete flag"
     );
 }
 

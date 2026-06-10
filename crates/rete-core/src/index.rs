@@ -25,23 +25,42 @@ pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
 /// section: ~64 KiB matches both zstd's sweet spot and one HTTP range read.
 pub const INDEX_TILE_BUDGET: usize = 64 * 1024;
 
+/// Fetches one tile's (uncompressed) block image on demand: the bridge that
+/// lets a remote `GraphIndex` fault tiles in over a `RangeReader` without this
+/// module knowing about I/O. `None` = the fetch failed; the index records the
+/// failure ([`GraphIndex::load_incomplete`]) and the scan sees an empty tile —
+/// callers running over remote data MUST check the flag after evaluating.
+pub type TileLoader = Box<dyn Fn(usize, usize) -> Option<Vec<u8>> + Send + Sync>;
+
 /// One tile of a permutation section: a fully self-contained [`TripleBlock`]
 /// over a consecutive run of whole a-groups, plus the leading-id range it
-/// covers (for routing without parsing) and its lazily-built group directory
-/// (for intra-tile point lookups).
+/// covers (for routing without parsing or fetching) and its lazily-built group
+/// directory (for intra-tile point lookups). The block image itself may be
+/// local (built/decoded eagerly) or faulted in by the index's [`TileLoader`].
 pub struct Tile {
     min_a: u32,
     max_a: u32,
-    bytes: Vec<u8>,
+    data: OnceLock<Vec<u8>>,
     dir: OnceLock<GroupDirectory>,
 }
 
 impl Tile {
-    fn new(min_a: u32, max_a: u32, bytes: Vec<u8>) -> Self {
+    fn local(min_a: u32, max_a: u32, bytes: Vec<u8>) -> Self {
+        let data = OnceLock::new();
+        let _ = data.set(bytes);
         Tile {
             min_a,
             max_a,
-            bytes,
+            data,
+            dir: OnceLock::new(),
+        }
+    }
+
+    fn remote(min_a: u32, max_a: u32) -> Self {
+        Tile {
+            min_a,
+            max_a,
+            data: OnceLock::new(),
             dir: OnceLock::new(),
         }
     }
@@ -51,9 +70,11 @@ impl Tile {
         (self.min_a, self.max_a)
     }
 
-    /// The tile's serialized (uncompressed) [`TripleBlock`] image.
+    /// The tile's serialized (uncompressed) [`TripleBlock`] image, if present
+    /// locally (always, for built/opened indexes; empty for an unfaulted
+    /// remote tile — the writer never sees those).
     pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+        self.data.get().map(Vec::as_slice).unwrap_or(&[])
     }
 }
 
@@ -161,7 +182,7 @@ impl GraphIndexBuilder {
             let permuted: Vec<Triple> = self.triples.iter().map(|&t| perm.forward(t)).collect();
             build_tiles(permuted, self.tile_budget)
         });
-        GraphIndex { sections }
+        GraphIndex::from_sections(sections)
     }
 }
 
@@ -192,7 +213,7 @@ fn build_tiles(mut triples: Vec<Triple>, budget: usize) -> Vec<Tile> {
         for &t in run {
             b.push(t);
         }
-        Tile::new(run[0].0, run[run.len() - 1].0, b.build())
+        Tile::local(run[0].0, run[run.len() - 1].0, b.build())
     };
 
     let mut tiles = Vec::new();
@@ -241,9 +262,22 @@ pub struct GraphIndex {
     /// Tiles per permutation (SPO, POS, OSP), ascending and disjoint in their
     /// leading-id ranges.
     sections: [Vec<Tile>; 3],
+    /// Faults in remote tiles on first scan (`None` for local indexes).
+    loader: Option<TileLoader>,
+    /// Set when the loader failed for some tile: results may be incomplete and
+    /// the caller must surface an error rather than the partial answer.
+    load_failed: std::sync::atomic::AtomicBool,
 }
 
 impl GraphIndex {
+    fn from_sections(sections: [Vec<Tile>; 3]) -> Self {
+        GraphIndex {
+            sections,
+            loader: None,
+            load_failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
     /// Rebuild from three single serialized permutation blocks (SPO, POS,
     /// OSP) — the v0.1 layout, and the natural form for tests. Each block
     /// becomes a one-tile section (its leading range read off the zone map).
@@ -251,14 +285,14 @@ impl GraphIndex {
         let sections = blocks.map(|bytes| {
             match TripleBlock::parse(&bytes) {
                 Ok(b) if b.zone().count > 0 => {
-                    vec![Tile::new(b.zone().min_a, b.zone().max_a, bytes)]
+                    vec![Tile::local(b.zone().min_a, b.zone().max_a, bytes)]
                 }
                 // Empty or unparsable: an empty section (scans yield nothing
                 // either way; this just skips the dead tile).
                 _ => Vec::new(),
             }
         });
-        GraphIndex { sections }
+        Self::from_sections(sections)
     }
 
     /// Rebuild from tiled sections: per permutation, `(min_a, max_a, block
@@ -267,17 +301,55 @@ impl GraphIndex {
         let sections = sections.map(|tiles| {
             tiles
                 .into_iter()
-                .map(|(min_a, max_a, bytes)| Tile::new(min_a, max_a, bytes))
+                .map(|(min_a, max_a, bytes)| Tile::local(min_a, max_a, bytes))
                 .collect()
         });
-        GraphIndex { sections }
+        Self::from_sections(sections)
     }
 
-    /// Total triple count (sum of the SPO tiles' zone counts).
+    /// A **remote** index: only the tile directories (leading-id ranges per
+    /// permutation, ascending) are known; tile payloads fault in through
+    /// `loader` on first scan. Check [`load_incomplete`](Self::load_incomplete)
+    /// after evaluating — a failed fetch must become an error, never a
+    /// silently smaller result.
+    pub fn from_remote_directories(directories: [Vec<(u32, u32)>; 3], loader: TileLoader) -> Self {
+        let sections = directories.map(|dir| {
+            dir.into_iter()
+                .map(|(min_a, max_a)| Tile::remote(min_a, max_a))
+                .collect()
+        });
+        GraphIndex {
+            sections,
+            loader: Some(loader),
+            load_failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Did any tile fetch fail since this index was opened? (Sticky.)
+    pub fn load_incomplete(&self) -> bool {
+        self.load_failed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The tile's block image, faulting it in through the loader if remote.
+    fn tile_data(&self, section: usize, tile: usize) -> &[u8] {
+        self.sections[section][tile].data.get_or_init(|| {
+            match &self.loader {
+                Some(load) => load(section, tile).unwrap_or_else(|| {
+                    self.load_failed
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    Vec::new()
+                }),
+                // A local tile with no data was constructed empty on purpose.
+                None => Vec::new(),
+            }
+        })
+    }
+
+    /// Total triple count (sum of the SPO tiles' zone counts). For a remote
+    /// index this faults in the SPO tiles — prefer the header's quad count.
     pub fn triple_count(&self) -> u32 {
-        self.sections[IndexPermutation::Spo.section_index()]
-            .iter()
-            .filter_map(|t| TripleBlock::parse(&t.bytes).ok())
+        (0..self.sections[0].len())
+            .filter_map(|ti| TripleBlock::parse(self.tile_data(0, ti)).ok())
             .map(|b| b.zone().count)
             .sum()
     }
@@ -354,12 +426,15 @@ impl GraphIndex {
         // built on first use, costing one walk of that (budget-sized) tile.
         let perm = Self::best_permutation(pattern);
         let [pa, pb, pc] = perm.order_pattern(pattern);
-        self.tiles_for(perm, pa)
-            .iter()
-            .flat_map(move |tile| {
-                // Parse (untrusted bytes ⇒ `None` on malformed) and zone-prune
-                // per tile, then stream the matching groups.
-                TripleBlock::parse(&tile.bytes)
+        let si = perm.section_index();
+        let (start, end) = self.tile_span(si, pa);
+        (start..end)
+            .flat_map(move |ti| {
+                // Fault in (if remote), parse (untrusted bytes ⇒ `None` on
+                // malformed), and zone-prune per tile, then stream the
+                // matching groups.
+                let tile = &self.sections[si][ti];
+                TripleBlock::parse(self.tile_data(si, ti))
                     .ok()
                     .filter(|b| b.zone().may_contain(pa, pb, pc))
                     .map(|b| match pa {
@@ -375,19 +450,19 @@ impl GraphIndex {
             .map(move |abc| perm.back(abc))
     }
 
-    /// The tiles a scan must visit: all of them when the leading component is
-    /// unbound, else the single tile whose leading-id range covers it (tile
-    /// ranges are ascending and disjoint).
-    fn tiles_for(&self, perm: IndexPermutation, pa: Option<u32>) -> &[Tile] {
-        let tiles = &self.sections[perm.section_index()];
+    /// The tile index span a scan must visit: every tile when the leading
+    /// component is unbound, else the single tile whose leading-id range
+    /// covers it (tile ranges are ascending and disjoint).
+    fn tile_span(&self, section: usize, pa: Option<u32>) -> (usize, usize) {
+        let tiles = &self.sections[section];
         match pa {
-            None => tiles,
+            None => (0, tiles.len()),
             Some(a) => {
                 let i = tiles.partition_point(|t| t.max_a < a);
                 if i < tiles.len() && tiles[i].min_a <= a {
-                    &tiles[i..=i]
+                    (i, i + 1)
                 } else {
-                    &[]
+                    (0, 0)
                 }
             }
         }

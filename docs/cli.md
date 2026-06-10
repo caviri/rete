@@ -300,8 +300,13 @@ rete query-url https://host/data.rete --object '<http://ex/Dave>'
 ```
 
 ### `rete sparql-url <url> "<query>" [--json]`
-Run a full SPARQL query over HTTP, range-fetching the file (header, dictionary,
-index, pyramid) rather than downloading it whole.
+Run a full SPARQL query over HTTP with **lazy tile faulting** (tiled v0.2
+files): the open fetches the header, dictionary, pyramid, and the index's
+small tile directories; index tiles are then range-fetched only when the
+query's scans and probes touch them, so a selective query reads O(touched
+tiles) rather than the whole index. A range failure mid-query is reported as
+an error, never as silently fewer rows. Pre-tiling (v0.1) files fall back to
+fetching the index whole.
 
 ```sh
 rete sparql-url https://host/data.rete \

@@ -1014,6 +1014,110 @@ impl Rete {
         })
     }
 
+    /// Open via an **owned** [`RangeReader`] with lazy tile faulting (tiled
+    /// v0.2 files): fetches the header, dictionary, pyramid meta, named graphs,
+    /// and each permutation's tile **directory** — but no default-graph tile
+    /// payloads. Tiles fault in (one range request each) the first time a scan
+    /// touches them, so a selective SPARQL query fetches O(touched tiles)
+    /// bytes instead of the whole index.
+    ///
+    /// **Failure contract:** scans are infallible by design, so a failed tile
+    /// fetch yields an empty tile and sets a sticky flag — after evaluating,
+    /// callers MUST check [`index_incomplete`](Self::index_incomplete) and
+    /// surface an error instead of the (possibly partial) results.
+    ///
+    /// Pre-tiling (v0.1) files fall back to [`Rete::open_ranged`] — there is
+    /// nothing lazy to do.
+    pub fn open_ranged_lazy<R: RangeReader + Send + Sync + 'static>(
+        reader: R,
+    ) -> Result<Self, FileError> {
+        let head = reader.read_at(0, HEADER_LEN as u64)?;
+        let header = Header::from_bytes(&head)?;
+        if header.version < 2 {
+            return Self::open_ranged(&reader);
+        }
+
+        let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
+        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
+
+        // Locate the three section payloads (container framing only) and fetch
+        // just their tile directories.
+        let mut index_section_ranges = [ByteRange { offset: 0, len: 0 }; 3];
+        let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; 3] = Default::default();
+        let mut directories: [Vec<(u32, u32)>; 3] = Default::default();
+        for si in 0..3 {
+            let section = locate_container_section_ranged(
+                &reader,
+                header.root_dir_offset,
+                header.root_dir_len,
+                si,
+            )?;
+            index_section_ranges[si] = section;
+            let dir = read_tile_directory_ranged(&reader, section)?;
+            directories[si] = dir.iter().map(|e| (e.min_a, e.max_a)).collect();
+            tile_ranges[si] = dir
+                .into_iter()
+                .map(|e| {
+                    (
+                        e.min_a,
+                        e.max_a,
+                        ByteRange {
+                            offset: section.offset + e.start as u64,
+                            len: (e.end - e.start) as u64,
+                        },
+                    )
+                })
+                .collect();
+        }
+
+        let pyramid = if header.pyramid_meta_len > 0 {
+            let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
+            Some(
+                PyramidMeta::decode(&mb)
+                    .map_err(|_| FileError::Container("malformed pyramid meta"))?,
+            )
+        } else {
+            None
+        };
+
+        let named_graphs = if header.named_graphs_len > 0 {
+            let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
+            decode_named_graphs(&nb, header.block_codec, header.version)?
+        } else {
+            Vec::new()
+        };
+
+        // The loader fetches and decompresses one tile per call.
+        let reader = std::sync::Arc::new(reader);
+        let codec = header.block_codec;
+        let loader_ranges = tile_ranges.clone();
+        let loader: crate::index::TileLoader = Box::new(move |si, ti| {
+            let (_, _, range) = loader_ranges.get(si)?.get(ti)?;
+            let bytes = reader.read_at(range.offset, range.len).ok()?;
+            decompress(codec, &bytes).ok()
+        });
+        let index = GraphIndex::from_remote_directories(directories, loader);
+
+        Ok(Self {
+            header,
+            dict,
+            index,
+            index_section_ranges,
+            tile_ranges,
+            pyramid,
+            named_graphs,
+            metadata: Vec::new(),
+        })
+    }
+
+    /// Did any lazy tile fetch fail since this `Rete` was opened? When true,
+    /// query results may be silently incomplete — callers using
+    /// [`Rete::open_ranged_lazy`] must check this after evaluating and turn it
+    /// into an error.
+    pub fn index_incomplete(&self) -> bool {
+        self.index.load_incomplete() || self.named_graphs.iter().any(|(_, g)| g.load_incomplete())
+    }
+
     fn resolve_query_pattern(
         &self,
         s: Option<&str>,
