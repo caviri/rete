@@ -143,6 +143,12 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
       (<code>scripts/range_server.py</code> qualifies; a host that ignores <code>Range</code> is
       rejected loudly). Sync XHR is worker-only, so this never blocks the page.
     </p>
+    <p class="small">Presets:
+      <button type="button" class="rpreset" data-url="./scholar.rete"
+        data-q="PREFIX cito: &lt;http://purl.org/spar/cito/&gt;&#10;PREFIX dct: &lt;http://purl.org/dc/terms/&gt;&#10;SELECT ?title (COUNT(?citing) AS ?citations) WHERE {&#10;  ?citing cito:cites ?paper .&#10;  ?paper dct:title ?title&#10;} GROUP BY ?title ORDER BY DESC(?citations) LIMIT 10">scholar.rete (local)</button>
+      <button type="button" class="rpreset" data-url="https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-1gb.rete?download=true"
+        data-q="# All facts about one entity (Bemelen, Q100001): a bound subject&#10;# routes to just the tiles holding it — a few range reads of a big file.&#10;# The coordinate comes back as a geo:wktLiteral (recovered datatype).&#10;SELECT ?p ?o WHERE { &lt;http://www.wikidata.org/entity/Q100001&gt; ?p ?o }">Wikidata on HF (real, remote)</button>
+    </p>
     <p>
       <label>URL: <input id="rurl" value="./scholar.rete" style="width:auto;min-width:18rem" /></label>
     </p>
@@ -521,6 +527,10 @@ SELECT ?title (COUNT(?citing) AS ?citations) WHERE {
     // only off the main thread); each run posts {url, query} and renders the
     // envelope plus the fetch stats the wasm side reports.
     let sparqlWorker = null;
+    document.querySelectorAll(".rpreset").forEach((btn) => btn.onclick = () => {
+      $("rurl").value = btn.dataset.url;
+      $("rq").value = btn.dataset.q;
+    });
     $("rrun").onclick = () => {
       const url = $("rurl").value.trim();
       const q = $("rq").value;
