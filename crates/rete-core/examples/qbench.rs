@@ -133,6 +133,40 @@ const EXPECTED: &[usize] = &[
     10,
 ];
 
+/// Per-query median-time ceilings in ms for `--check` (parallel to `QUERIES`),
+/// calibrated at ~15× the 2026-06 medians on a desktop core. This is a
+/// **catastrophic-regression tripwire** — a lost fast path or an accidental
+/// O(n²) join blows through these by orders of magnitude — not a tight drift
+/// detector; CI runners are slower and noisier than dev machines, and the
+/// headroom absorbs that. If an intentional change moves a median, recalibrate
+/// the ceiling alongside it (and the numbers in docs/BENCHMARK.md).
+const CEILING_MS: &[f64] = &[
+    18.0,  // SELECT count (aggregate)
+    40.0,  // SELECT DISTINCT
+    5.0,   // ASK
+    5.0,   // CONSTRUCT
+    5.0,   // DESCRIBE
+    32.0,  // VALUES
+    30.0,  // UNION
+    5.0,   // OPTIONAL
+    29.0,  // MINUS
+    27.0,  // FILTER NOT EXISTS
+    5.0,   // 3-way join + LIMIT
+    32.0,  // FILTER REGEX + LIMIT
+    5.0,   // FILTER arith + LIMIT
+    6.0,   // BIND + SUBSTR + LIMIT
+    5.0,   // path a/b + LIMIT
+    18.0,  // path inverse ^p (count)
+    45.0,  // path + transitive (count)
+    45.0,  // path * (count)
+    30.0,  // GROUP BY + ORDER BY
+    30.0,  // GROUP BY + HAVING
+    150.0, // AVG per group
+    55.0,  // MIN/MAX/SUM
+    29.0,  // COUNT(DISTINCT)
+    50.0,  // ORDER BY + LIMIT + OFFSET
+];
+
 fn rows(rete: &Rete, q: &str) -> usize {
     match eval_query(rete, q) {
         Ok(QueryOutput::Select(_, r)) => r.len(),
@@ -148,10 +182,15 @@ fn median(mut v: Vec<f64>) -> f64 {
 }
 
 fn main() {
-    let papers: usize = std::env::args()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(30_000);
+    let mut check_times = false;
+    let mut papers: usize = 30_000;
+    for arg in std::env::args().skip(1) {
+        if arg == "--check" {
+            check_times = true;
+        } else if let Ok(n) = arg.parse() {
+            papers = n;
+        }
+    }
     let triples = generate(papers);
 
     let mut db = DictionaryBuilder::new();
@@ -169,17 +208,18 @@ fn main() {
     let rete = Rete::open(&bytes).expect("open");
 
     eprintln!("dataset: {} triples ({papers} papers)\n", triples.len());
-    // Expected counts are calibrated for the default size; only assert there.
+    // Expected counts (and `--check` ceilings) are calibrated for the default
+    // size; only assert there.
     let check = papers == 30_000;
-    let mut mismatches = 0;
+    let mut failures = 0;
     println!("| Query | rows | median ms |");
     println!("|---|--:|--:|");
-    for ((name, body), &expect) in QUERIES.iter().zip(EXPECTED) {
+    for (((name, body), &expect), &ceiling) in QUERIES.iter().zip(EXPECTED).zip(CEILING_MS) {
         let q = format!("{PREFIXES}{body}");
         let n = rows(&rete, &q); // warm up + correctness anchor
         if check && n != expect {
             eprintln!("ROW-COUNT MISMATCH — {name}: got {n}, expected {expect}");
-            mismatches += 1;
+            failures += 1;
         }
         let reps = 7;
         let mut times = Vec::with_capacity(reps);
@@ -188,10 +228,15 @@ fn main() {
             let _ = rows(&rete, &q);
             times.push(t.elapsed().as_secs_f64() * 1000.0);
         }
-        println!("| {name} | {n} | {:.3} |", median(times));
+        let med = median(times);
+        if check && check_times && med > ceiling {
+            eprintln!("TIME CEILING EXCEEDED — {name}: {med:.3} ms > {ceiling} ms");
+            failures += 1;
+        }
+        println!("| {name} | {n} | {med:.3} |");
     }
-    if mismatches > 0 {
-        eprintln!("\n{mismatches} row-count mismatch(es) — engine regression");
+    if failures > 0 {
+        eprintln!("\n{failures} check failure(s) — engine regression");
         std::process::exit(1);
     }
 }

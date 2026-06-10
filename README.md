@@ -27,7 +27,7 @@ query the file directly with no backend**.
 - **Query in place.** SELECT / ASK / CONSTRUCT / DESCRIBE, joins, OPTIONAL,
   UNION, MINUS, FILTER, property paths, GROUP BY / aggregates, named graphs.
 - **Small + fast to open.** Compressed (~zstd) with indexes prebuilt, so it
-  *opens in ~20 ms* — no load/index step. (See [benchmarks](#how-fast).)
+  *opens in ~15 ms* — no load/index step. (See [benchmarks](#how-fast).)
 - **Runs in the browser.** Same engine in WASM — try the
   **[interactive playground](https://caviri.github.io/rete/playground.html)** (a single offline HTML page).
 
@@ -49,10 +49,11 @@ query the file directly with no backend**.
 🚫 **Reach for a real triplestore instead when…**
 - You need **frequent writes / transactions / live updates** (rete files are
   immutable — you rebuild to change them).
-- You need an **always-on SPARQL endpoint** with a mature, lazy/streaming planner
-  squeezing every millisecond (e.g. [Oxigraph](https://github.com/oxigraph/oxigraph),
-  Jena, GraphDB). rete is competitive but optimized for *publish-and-query*, not
-  server throughput — see the honest [comparison](https://caviri.github.io/rete/BENCHMARK.html#comparison-vs-oxigraph-real-opencitations-network).
+- You need an **always-on SPARQL endpoint** with a mature, battle-tested planner
+  (e.g. [Oxigraph](https://github.com/oxigraph/oxigraph), Jena, GraphDB). rete's
+  engine now wins or ties most benchmark shapes against Oxigraph, but it is
+  optimized for *publish-and-query*, not server throughput — see the honest
+  [comparison](https://caviri.github.io/rete/BENCHMARK.html#comparison-vs-oxigraph-real-opencitations-network).
 
 ## Quick start
 
@@ -102,16 +103,16 @@ container — full writeup in [Benchmarks](https://caviri.github.io/rete/BENCHMA
 
 | | rete | Oxigraph |
 |---|--:|--:|
-| **Open / load the graph** | **16 ms** (indexes prebuilt in the file) | 2,415 ms (parse + index) |
-| SPARQL queries (24 operators) | tens of ms · **24/24 results identical** | tens of ms |
-| Batch reachability, 300 seeds | 455 ms → **34 ms** with `--parallel` | 2,105 ms |
+| **Open / load the graph** | **15 ms** (indexes prebuilt in the file) | ~1,700–2,500 ms (parse + index) |
+| SPARQL queries (24 operators) | **wins or ties 21/24** · 24/24 results identical | sub-ms to tens of ms |
+| Batch reachability, 300 seeds | 450 ms → **30 ms** with `--parallel` | 1,606 ms |
 
-rete opens ~150× faster and its **parallel reachability is ~61× faster** than a
-general property-path. Oxigraph's broader lazy planner still wins some selective
-and early-out workloads; rete now has lazy fast paths for simple BGP/FILTER
-`LIMIT` shapes, but ORDER BY, DISTINCT, aggregation, and many algebra forms still
-materialize intermediate rows. File size: ~11.8× smaller than raw N-Triples,
-~1.25× of `gzip` — but *queryable*.
+rete opens ~100–160× faster, and after the 2026-06 engine rework (lazy
+slot-row pipeline, adaptive index-nested-loop joins, top-k ORDER BY) it wins
+or ties most SPARQL shapes — aggregates, GROUP BY, DISTINCT, OPTIONAL,
+UNION/VALUES, paths, sorted pagination. Oxigraph keeps a fractional edge on
+ASK, the tightest LIMIT joins, and non-literal REGEX scans. File size: ~11.8×
+smaller than raw N-Triples, ~1.25× of `gzip` — but *queryable*.
 
 ## Documentation
 
@@ -139,8 +140,9 @@ bash scripts/smoke.sh      # end-to-end test of every CLI subcommand
 uv run python scripts/build_playground.py
 ```
 
-CI runs fmt, clippy, the test matrix, the CLI smoke test, and the WASM build in
-containers, so nothing builds on the host. See
+CI runs fmt, clippy, the test matrix, the CLI smoke test, a query-engine
+regression check (`qbench --check`: per-query row counts + time ceilings), and
+the WASM build in containers, so nothing builds on the host. See
 [Getting started](https://caviri.github.io/rete/getting-started.html) for the dev-container setup.
 
 ## License
