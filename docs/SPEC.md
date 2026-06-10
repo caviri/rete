@@ -99,19 +99,19 @@ metadata block to chase.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Per-level, per-tile **leaf directories** (mapping `(level, tile, perm)` to byte
-ranges, PMTiles/Parquet style) are part of the fuller design but not materialized
-in v0 — the current index is a single default-graph container plus the pyramid
-summary. Exact single-pattern range routing is implemented by fetching just the
-selected SPO/POS/OSP payload from that container; physical community-tile ranges
-are future work (see `docs/BENCHMARK.md`).
+Each permutation section carries its own **tile directory** (format `0x02`,
+§6.2): byte ranges for independently-compressed tiles, keyed by leading-id
+range — so single-pattern routing fetches the selected SPO/POS/OSP section and
+decompresses only the matching tile(s). Per-*community* leaf directories
+(mapping `(level, tile, perm)` to byte ranges across the pyramid) are part of
+the fuller design and remain future work (see `docs/BENCHMARK.md`).
 
 ### 4.1 Header (128 bytes, little-endian)
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | magic `RETE` |
-| 4 | 1 | format version (`0x01`) |
+| 4 | 1 | format version (`0x02`; readers also accept `0x01`, see §6.2) |
 | 5 | 1 | flags (bit0: has named graphs / quads) |
 | 6 | 2 | header length |
 | 8 | 8 | metadata offset |
@@ -236,6 +236,34 @@ Deltas reset at each group boundary, so values stay small and varint-friendly.
 The **zone map** lets the planner skip a block whose `[min,max]` range cannot
 contain a bound constant before fetching the body — the §7 routing then bounds
 *which* blocks are fetched at all.
+
+### 6.2 Tiled permutation sections (format `0x02`)
+
+Each permutation section is **tiled**: consecutive runs of whole a-groups are
+packed to a byte budget (default 64 KiB of encoded triples), and each tile is a
+fully self-contained §6.1 block (its own zone map; deltas restart). Tiles are
+**compressed individually** with the header's block codec, so a ranged client
+can fetch and decompress exactly the tiles a query routes to. The section
+payload is stored raw inside the index container (the container-level codec for
+index sections is `none`; compression lives at tile granularity):
+
+```
+section payload:  varint num_tiles
+                  per tile: varint Δmin_a       # Δ from previous tile's min_a
+                            varint max_a−min_a  # leading-id span (routing)
+                            varint clen          # compressed tile length
+                  tiles:    num_tiles × compressed §6.1 blocks, concatenated
+```
+
+A bound leading component binary-searches the directory to exactly **one**
+tile (a-groups are never split across tiles); an unbound one visits every
+tile, zone-map-pruned. The directory is uncompressed so it is readable before
+any tile is fetched.
+
+**Compatibility:** version `0x01` files store one whole-section-compressed
+block per permutation. Readers still accept them (the whole section is one
+logical tile); writers always emit `0x02`. The format remains experimental —
+no stability promise beyond this one documented transition.
 
 ---
 

@@ -278,16 +278,16 @@ metadata block to chase.</p>
 │                   sentinel (the directory is the header).      │
 └──────────────────────────────────────────────────────────────┘
 </code></pre>
-<p>Per-level, per-tile <strong>leaf directories</strong> (mapping <code>(level, tile, perm)</code> to byte
-ranges, PMTiles/Parquet style) are part of the fuller design but not materialized
-in v0 — the current index is a single default-graph container plus the pyramid
-summary. Exact single-pattern range routing is implemented by fetching just the
-selected SPO/POS/OSP payload from that container; physical community-tile ranges
-are future work (see <code>docs/BENCHMARK.md</code>).</p>
+<p>Each permutation section carries its own <strong>tile directory</strong> (format <code>0x02</code>,
+§6.2): byte ranges for independently-compressed tiles, keyed by leading-id
+range — so single-pattern routing fetches the selected SPO/POS/OSP section and
+decompresses only the matching tile(s). Per-<em>community</em> leaf directories
+(mapping <code>(level, tile, perm)</code> to byte ranges across the pyramid) are part of
+the fuller design and remain future work (see <code>docs/BENCHMARK.md</code>).</p>
 <h3>4.1 Header (128 bytes, little-endian)</h3>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
-<tr><td>4</td><td>1</td><td>format version (<code>0x01</code>)</td></tr>
+<tr><td>4</td><td>1</td><td>format version (<code>0x02</code>; readers also accept <code>0x01</code>, see §6.2)</td></tr>
 <tr><td>5</td><td>1</td><td>flags (bit0: has named graphs / quads)</td></tr>
 <tr><td>6</td><td>2</td><td>header length</td></tr>
 <tr><td>8</td><td>8</td><td>metadata offset</td></tr>
@@ -405,6 +405,28 @@ body:      varint num_a
 The <strong>zone map</strong> lets the planner skip a block whose <code>[min,max]</code> range cannot
 contain a bound constant before fetching the body — the §7 routing then bounds
 <em>which</em> blocks are fetched at all.</p>
+<h3>6.2 Tiled permutation sections (format <code>0x02</code>)</h3>
+<p>Each permutation section is <strong>tiled</strong>: consecutive runs of whole a-groups are
+packed to a byte budget (default 64 KiB of encoded triples), and each tile is a
+fully self-contained §6.1 block (its own zone map; deltas restart). Tiles are
+<strong>compressed individually</strong> with the header's block codec, so a ranged client
+can fetch and decompress exactly the tiles a query routes to. The section
+payload is stored raw inside the index container (the container-level codec for
+index sections is <code>none</code>; compression lives at tile granularity):</p>
+<pre><code>section payload:  varint num_tiles
+                  per tile: varint Δmin_a       # Δ from previous tile's min_a
+                            varint max_a−min_a  # leading-id span (routing)
+                            varint clen          # compressed tile length
+                  tiles:    num_tiles × compressed §6.1 blocks, concatenated
+</code></pre>
+<p>A bound leading component binary-searches the directory to exactly <strong>one</strong>
+tile (a-groups are never split across tiles); an unbound one visits every
+tile, zone-map-pruned. The directory is uncompressed so it is readable before
+any tile is fetched.</p>
+<p><strong>Compatibility:</strong> version <code>0x01</code> files store one whole-section-compressed
+block per permutation. Readers still accept them (the whole section is one
+logical tile); writers always emit <code>0x02</code>. The format remains experimental —
+no stability promise beyond this one documented transition.</p>
 <hr />
 <h2>7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>

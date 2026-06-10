@@ -274,10 +274,12 @@ triple-pattern path as <code>Rete::query</code>, then attaches:</p>
 payload, and pyramid metadata.</li>
 </ul>
 <p>This is intentionally physical-file provenance, not a narrative explanation. In
-v0 the index is still stored as one permutation container with three payload
-sections, so provenance can name the selected permutation payload but not a
-per-community tile. <code>rete why --json</code> reports that tile provenance is
-<code>not_materialized</code> until tile directories are added.</p>
+format v0.2 each permutation section is tiled (independently compressed
+~64 KiB tiles with a byte-range directory, SPEC §6.2) and routed reads
+decompress only the matching tiles — but provenance is not yet wired to the
+tile directories, so it names the selected permutation payload, not the tile.
+<code>rete why --json</code> reports tile provenance as <code>not_materialized</code> until that
+wiring lands.</p>
 <h2>Progressive And Cost Paths</h2>
 <p>The summary path is the first layer of progressive querying. These query shapes
 are exact from the summary and skip the full index:</p>
