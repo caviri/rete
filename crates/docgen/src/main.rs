@@ -10,34 +10,60 @@ use std::path::PathBuf;
 
 use pulldown_cmark::{html, Options, Parser};
 
-/// Ordered nav: (markdown file, sidebar title). The HTML file is the same name
-/// with `.html`, so cross-links between the `.md` sources resolve after rewrite.
-const PAGES: &[(&str, &str)] = &[
-    ("index.md", "Overview"),
-    ("intro.md", "Graph data 101"),
-    ("getting-started.md", "Getting started"),
-    ("architecture.md", "Architecture"),
-    ("scenario.md", "Real-world scenario"),
-    ("cli.md", "CLI reference"),
-    ("dataset-cards.md", "Dataset Cards"),
-    ("sparql.md", "SPARQL support"),
-    ("shacl.md", "SHACL validation"),
-    ("compatibility.md", "Compatibility & interop"),
-    ("reasoning.md", "Reasoning & coherence"),
-    ("topic-modeling.md", "Topic modeling (LDA)"),
-    ("multi-criteria.md", "Multi-criteria communities"),
-    ("federation.md", "Federated queries"),
-    ("browser.md", "Browser / WASM"),
-    ("SPEC.md", "Format specification"),
-    ("BENCHMARK.md", "Benchmarks"),
-    ("parallel-browser.md", "Parallel in browser (exp.)"),
-];
+/// Crate version, shown in the sidebar next to the repository link.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const REPO_URL: &str = "https://github.com/caviri/rete";
 
-/// Extra sidebar links to pre-built, non-Markdown pages (e.g. the static WASM
-/// playground produced by `scripts/build_playground.py`, not by docgen). These
-/// are appended to the generated `PAGES` links in every page's sidebar. Tuple is
-/// `(href, title)`.
-const EXTRA_NAV: &[(&str, &str)] = &[("playground.html", "Interactive playground")];
+/// Sectioned nav: (section title, [(file, sidebar title)]). Markdown entries are
+/// rendered to the sibling `.html`; entries already ending in `.html` are
+/// pre-built pages (e.g. the WASM playground from `scripts/build_playground.py`)
+/// and are linked as-is, never rendered.
+const SECTIONS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Start here",
+        &[
+            ("index.md", "Overview"),
+            ("intro.md", "Graph data 101"),
+            ("getting-started.md", "Getting started"),
+            ("scenario.md", "Real-world scenario"),
+            ("playground.html", "Interactive playground"),
+        ],
+    ),
+    (
+        "Guides",
+        &[
+            ("cli.md", "CLI reference"),
+            ("sparql.md", "SPARQL support"),
+            ("shacl.md", "SHACL validation"),
+            ("dataset-cards.md", "Dataset Cards"),
+            ("reasoning.md", "Reasoning & coherence"),
+            ("federation.md", "Federated queries"),
+            ("compatibility.md", "Compatibility & interop"),
+        ],
+    ),
+    (
+        "Graph analysis",
+        &[
+            ("topic-modeling.md", "Topic modeling (LDA)"),
+            ("multi-criteria.md", "Multi-criteria communities"),
+        ],
+    ),
+    (
+        "In the browser",
+        &[
+            ("browser.md", "Browser / WASM"),
+            ("parallel-browser.md", "Parallel in browser (exp.)"),
+        ],
+    ),
+    (
+        "Internals",
+        &[
+            ("architecture.md", "Architecture"),
+            ("SPEC.md", "Format specification"),
+            ("BENCHMARK.md", "Benchmarks"),
+        ],
+    ),
+];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Docs dir: first CLI arg, else ./docs.
@@ -50,23 +76,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut rendered = 0;
-    for (md, title) in PAGES {
-        let src = docs_dir.join(md);
-        if !src.exists() {
-            eprintln!(
-                "warning: {} listed in nav but missing — skipping",
-                src.display()
-            );
-            continue;
+    for (_, pages) in SECTIONS {
+        for (md, title) in *pages {
+            if !md.ends_with(".md") {
+                continue; // pre-built page (playground); linked, never rendered
+            }
+            let src = docs_dir.join(md);
+            if !src.exists() {
+                eprintln!(
+                    "warning: {} listed in nav but missing — skipping",
+                    src.display()
+                );
+                continue;
+            }
+            let markdown = fs::read_to_string(&src)?;
+            let body = render_markdown(&markdown);
+            let html_name = md.replace(".md", ".html");
+            let page = template(title, &body, md);
+            let out = docs_dir.join(&html_name);
+            fs::write(&out, page)?;
+            println!("  {md:<22} -> {html_name}");
+            rendered += 1;
         }
-        let markdown = fs::read_to_string(&src)?;
-        let body = render_markdown(&markdown);
-        let html_name = md.replace(".md", ".html");
-        let page = template(title, &body, md);
-        let out = docs_dir.join(&html_name);
-        fs::write(&out, page)?;
-        println!("  {md:<22} -> {html_name}");
-        rendered += 1;
     }
     println!(
         "docgen: wrote {rendered} HTML page(s) to {}",
@@ -101,22 +132,18 @@ fn rewrite_links(html: &str) -> String {
 }
 
 fn template(title: &str, body: &str, current_md: &str) -> String {
-    let mut nav_items: Vec<String> = PAGES
-        .iter()
-        .map(|(md, t)| {
+    let mut nav_items: Vec<String> = Vec::new();
+    for (section, pages) in SECTIONS {
+        nav_items.push(format!("<li class=\"nav-h\">{section}</li>"));
+        for (md, t) in *pages {
             let href = md.replace(".md", ".html");
             let class = if *md == current_md {
                 " class=\"active\""
             } else {
                 ""
             };
-            format!("<li><a href=\"{href}\"{class}>{t}</a></li>")
-        })
-        .collect();
-    // Append links to externally-built pages (e.g. the static WASM playground).
-    // These are never the "current" Markdown page, so they get no active class.
-    for (href, t) in EXTRA_NAV {
-        nav_items.push(format!("<li><a href=\"{href}\">{t}</a></li>"));
+            nav_items.push(format!("<li><a href=\"{href}\"{class}>{t}</a></li>"));
+        }
     }
     let nav = nav_items.join("\n        ");
 
@@ -133,10 +160,11 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <p class="meta"><span class="ver">v{version}</span> <a href="{repo}">caviri/rete</a></p>
     <ul>
         {nav}
     </ul>
-    <p class="foot"><a href="https://github.com/caviri/rete">GitHub</a></p>
+    <p class="foot"><a href="{repo}">github.com/caviri/rete</a></p>
   </nav>
   <main>
     <div class="page">
@@ -162,6 +190,8 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
         nav = nav,
         body = body,
         current_md = current_md,
+        version = VERSION,
+        repo = REPO_URL,
         script = HIGHLIGHTER,
         lightbox = LIGHTBOX,
         glossary = GLOSSARY_JS,
@@ -194,9 +224,22 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
   font-weight:700; text-decoration:none; display:inline-block; line-height:1;
 }
 .sidebar .brand::after { content:""; display:block; width:2.2rem; height:3px; margin-top:.55rem; background:var(--accent-2); }
-.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 1.35rem; }
+.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 .6rem; }
+.sidebar .meta { display:flex; align-items:center; gap:.5rem; font-size:.8rem; margin:0 0 1.1rem; }
+.sidebar .meta .ver {
+  font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
+  font-size:.72rem; font-weight:700; color:#0b4f42; background:#fff;
+  border:1px solid var(--border); border-radius:999px; padding:.06rem .55rem;
+}
+.sidebar .meta a { display:inline; padding:0; border:0; color:#0b6f5e; font-weight:600; }
+.sidebar .meta a:hover { background:none; text-decoration:underline; }
 .sidebar ul { list-style:none; padding:0; margin:0; }
 .sidebar li { margin:.08rem 0; }
+.sidebar li.nav-h {
+  margin:1.15rem 0 .3rem; padding:0 .62rem; font-size:.66rem; font-weight:800;
+  letter-spacing:.09em; text-transform:uppercase; color:#52625b;
+}
+.sidebar li.nav-h:first-child { margin-top:.2rem; }
 .sidebar a {
   color:var(--side-fg); text-decoration:none; display:block; padding:.42rem .62rem;
   border-left:3px solid transparent; border-radius:0 6px 6px 0; font-size:.93rem; line-height:1.25;
@@ -208,11 +251,12 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 
 main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
 .page {
-  width:min(1180px,100%); display:grid; grid-template-columns:minmax(0,860px) 230px;
+  width:min(1320px,100%); margin:0 auto; display:grid;
+  grid-template-columns:minmax(0,980px) 230px;
   gap:2.4rem; padding:0 2.2rem; align-items:start;
 }
 .content { min-width:0; padding:3.1rem 0 2rem; }
-footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
+footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
 
 .rail {
   margin-top:3.25rem; font-size:.82rem;
@@ -236,7 +280,7 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
 
 .content h1,.content h2,.content h3 { scroll-margin-top:1rem; }
 .content h1 {
-  max-width:780px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
+  max-width:860px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
   line-height:1.08; margin:.1rem 0 1.15rem; font-weight:700;
 }
 .content h1::after { content:""; display:block; width:4.4rem; height:4px; margin-top:1rem; background:var(--accent); }

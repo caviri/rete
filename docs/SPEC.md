@@ -446,27 +446,7 @@ extension.
 
 ---
 
-## 11. Open questions
-
-1. **Quad/named-graph indexing** — per-graph triple sets vs. full GSPO/GPSO
-   permutations. Cost vs. query flexibility.
-2. **Literal indexing** — do we want value-range indexes (numeric/date) for
-   FILTER pushdown, à la Parquet zone maps on literal values?
-3. ~~Pyramid cut policy~~ — **resolved (§7.1): size-targeted tiles**, default
-   budget `T` ≈ 64 KiB, PMTiles-style. Remaining sub-question: best default `T`
-   and whether `T` should scale with the dictionary/literal mix.
-4. **Multiple summarization strategies** — two are implemented: **community**
-   (structural, Louvain — the stored pyramid) and **schema** (ontology-aware,
-   relations between `rdf:type` classes — `schema_summary`/`rete schema`). An
-   *importance*-based one (PageRank/centrality) is still open. The community
-   summary is stored; schema is computed on demand (storing it for cheap HTTP
-   access is a future step).
-5. **Overlay/diff files** for "appendable-ish" updates without abandoning
-   immutability.
-
----
-
-## 12. Glossary
+## 11. Glossary
 
 - **Term** — an RDF IRI, blank node, or literal.
 - **Quotient graph** — graph whose nodes are communities and whose edges

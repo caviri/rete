@@ -29,9 +29,22 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
   font-weight:700; text-decoration:none; display:inline-block; line-height:1;
 }
 .sidebar .brand::after { content:""; display:block; width:2.2rem; height:3px; margin-top:.55rem; background:var(--accent-2); }
-.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 1.35rem; }
+.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 .6rem; }
+.sidebar .meta { display:flex; align-items:center; gap:.5rem; font-size:.8rem; margin:0 0 1.1rem; }
+.sidebar .meta .ver {
+  font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
+  font-size:.72rem; font-weight:700; color:#0b4f42; background:#fff;
+  border:1px solid var(--border); border-radius:999px; padding:.06rem .55rem;
+}
+.sidebar .meta a { display:inline; padding:0; border:0; color:#0b6f5e; font-weight:600; }
+.sidebar .meta a:hover { background:none; text-decoration:underline; }
 .sidebar ul { list-style:none; padding:0; margin:0; }
 .sidebar li { margin:.08rem 0; }
+.sidebar li.nav-h {
+  margin:1.15rem 0 .3rem; padding:0 .62rem; font-size:.66rem; font-weight:800;
+  letter-spacing:.09em; text-transform:uppercase; color:#52625b;
+}
+.sidebar li.nav-h:first-child { margin-top:.2rem; }
 .sidebar a {
   color:var(--side-fg); text-decoration:none; display:block; padding:.42rem .62rem;
   border-left:3px solid transparent; border-radius:0 6px 6px 0; font-size:.93rem; line-height:1.25;
@@ -43,11 +56,12 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 
 main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
 .page {
-  width:min(1180px,100%); display:grid; grid-template-columns:minmax(0,860px) 230px;
+  width:min(1320px,100%); margin:0 auto; display:grid;
+  grid-template-columns:minmax(0,980px) 230px;
   gap:2.4rem; padding:0 2.2rem; align-items:start;
 }
 .content { min-width:0; padding:3.1rem 0 2rem; }
-footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
+footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
 
 .rail {
   margin-top:3.25rem; font-size:.82rem;
@@ -71,7 +85,7 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
 
 .content h1,.content h2,.content h3 { scroll-margin-top:1rem; }
 .content h1 {
-  max-width:780px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
+  max-width:860px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
   line-height:1.08; margin:.1rem 0 1.15rem; font-weight:700;
 }
 .content h1::after { content:""; display:block; width:4.4rem; height:4px; margin-top:1rem; background:var(--accent); }
@@ -166,28 +180,34 @@ footer { width:min(860px,100%); padding:1rem 2.2rem 3rem; color:var(--muted); fo
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <p class="meta"><span class="ver">v0.0.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
+        <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
-        <li><a href="architecture.html">Architecture</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
+        <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="reasoning.html" class="active">Reasoning & coherence</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li><a href="federation.html">Federated queries</a></li>
+        <li class="nav-h">In the browser</li>
         <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li class="nav-h">Internals</li>
+        <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html">Format specification</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li><a href="playground.html">Interactive playground</a></li>
     </ul>
-    <p class="foot"><a href="https://github.com/caviri/rete">GitHub</a></p>
+    <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
   </nav>
   <main>
     <div class="page">
