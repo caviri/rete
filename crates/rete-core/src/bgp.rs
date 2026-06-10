@@ -580,7 +580,7 @@ fn probe_rows<'q>(
     let dict = ctx.rete.dictionary();
     Box::new(
         index
-            .probe_iter((sid, pid, oid))
+            .scan_iter((sid, pid, oid))
             .filter_map(move |(s_id, p_id, o_id)| {
                 let s_val = dict.subject_node(s_id) as i64;
                 let p_val = ctx.resolver.canon_id(pred_tag(p_id));

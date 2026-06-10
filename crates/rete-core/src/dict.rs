@@ -125,25 +125,14 @@ pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
     })
 }
 
-/// Decode a run's restart (full-term) entry at `off`; returns `(term, next_pos)`.
-/// `None` if the bytes are malformed/truncated (an untrusted section).
-fn run_entry(bytes: &[u8], off: usize) -> Option<(String, usize)> {
-    let (_shared, n1) = read_uvarint(bytes.get(off..)?)?;
-    let p = off + n1;
-    let (len, n2) = read_uvarint(bytes.get(p..)?)?;
-    let start = p + n2;
-    let end = start
-        .checked_add(len as usize)
-        .filter(|&e| e <= bytes.len())?;
-    Some((
-        String::from_utf8_lossy(&bytes[start..end]).into_owned(),
-        end,
-    ))
-}
-
-/// Decode a front-coded entry at `pos` given the previous term. `None` on
-/// malformed bytes (including a shared-prefix length longer than `prev`).
-fn delta_entry(bytes: &[u8], pos: usize, prev: &str) -> Option<(String, usize)> {
+/// Decode the front-coded entry at `pos` *into* `buf`: truncate `buf` to the
+/// entry's shared-prefix length and append its suffix bytes. For a restart
+/// entry the stored shared length is 0, so the same decode works for both
+/// entry kinds. Returns the next entry's position; `None` on malformed bytes
+/// (including a shared length longer than the previous term). Allocation-free
+/// after `buf`'s first growth — this is the hot path of every term resolution.
+#[inline]
+fn entry_into(bytes: &[u8], pos: usize, buf: &mut Vec<u8>) -> Option<usize> {
     let (shared, n1) = read_uvarint(bytes.get(pos..)?)?;
     let p = pos + n1;
     let (suf, n2) = read_uvarint(bytes.get(p..)?)?;
@@ -151,9 +140,18 @@ fn delta_entry(bytes: &[u8], pos: usize, prev: &str) -> Option<(String, usize)> 
     let end = start
         .checked_add(suf as usize)
         .filter(|&e| e <= bytes.len())?;
-    let mut term = prev.as_bytes().get(..shared as usize)?.to_vec();
-    term.extend_from_slice(&bytes[start..end]);
-    Some((String::from_utf8_lossy(&term).into_owned(), end))
+    if shared as usize > buf.len() {
+        return None;
+    }
+    buf.truncate(shared as usize);
+    buf.extend_from_slice(&bytes[start..end]);
+    Some(end)
+}
+
+/// Decode a run's restart (full-term) entry at `off` into `buf`.
+fn run_entry_into(bytes: &[u8], off: usize, buf: &mut Vec<u8>) -> Option<usize> {
+    buf.clear(); // a restart entry stands alone; stale prefix bytes must not leak
+    entry_into(bytes, off, buf)
 }
 
 /// Resolve `id` (1-based) to its term using cached metadata. Returns `None` on
@@ -165,24 +163,24 @@ pub fn section_term(bytes: &[u8], meta: &SectionMeta, id: u32) -> Option<String>
     let idx = (id - 1) as usize;
     let run = idx / meta.restart_interval as usize;
     let steps = idx % meta.restart_interval as usize;
-    let (mut cur, mut pos) = run_entry(bytes, *meta.restart_offsets.get(run)?)?;
+    let mut buf = Vec::new();
+    let mut pos = run_entry_into(bytes, *meta.restart_offsets.get(run)?, &mut buf)?;
     for _ in 0..steps {
-        let (next, np) = delta_entry(bytes, pos, &cur)?;
-        cur = next;
-        pos = np;
+        pos = entry_into(bytes, pos, &mut buf)?;
     }
-    Some(cur)
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 /// Resolve `term` to its ID using cached metadata.
 pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
+    let mut buf = Vec::new();
     // Binary search restart runs by their first (full) term.
     let mut lo = 0usize;
     let mut hi = meta.restart_offsets.len();
     while lo < hi {
         let mid = (lo + hi) / 2;
-        let (first, _) = run_entry(bytes, meta.restart_offsets[mid])?;
-        if first.as_str() <= term {
+        run_entry_into(bytes, meta.restart_offsets[mid], &mut buf)?;
+        if buf.as_slice() <= term.as_bytes() {
             lo = mid + 1;
         } else {
             hi = mid;
@@ -192,7 +190,7 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
         return None; // smaller than every term
     }
     let run = lo - 1;
-    let (mut cur, mut pos) = run_entry(bytes, meta.restart_offsets[run])?;
+    let mut pos = run_entry_into(bytes, meta.restart_offsets[run], &mut buf)?;
     let base_id = (run * meta.restart_interval as usize) as u32 + 1;
     // saturating_sub: corrupt metadata where run*interval > term_count must not
     // underflow-panic.
@@ -201,16 +199,14 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
             .saturating_sub(run as u32 * meta.restart_interval),
     );
     for step in 0..run_len {
-        if cur == term {
+        if buf.as_slice() == term.as_bytes() {
             return Some(base_id + step);
         }
-        if cur.as_str() > term {
+        if buf.as_slice() > term.as_bytes() {
             return None;
         }
         if step + 1 < run_len {
-            let (next, np) = delta_entry(bytes, pos, &cur)?;
-            cur = next;
-            pos = np;
+            pos = entry_into(bytes, pos, &mut buf)?;
         }
     }
     None

@@ -91,8 +91,8 @@ This section is generated from
 
 | Engine | Step | Time |
 |---|---|--:|
-| **rete** | `Rete::open` - indexes already built in the file | **15.1 ms** |
-| Oxigraph | bulk-load N-Triples + build in-memory indexes | 1717 ms |
+| **rete** | `Rete::open` - indexes already built in the file | **15.2 ms** |
+| Oxigraph | bulk-load N-Triples + build in-memory indexes | 1767 ms |
 
 rete's "load" just maps a file whose dictionary + permutation indexes
 already exist on disk; Oxigraph parses the triples and builds its indexes
@@ -108,30 +108,30 @@ Median of 5 warm runs.
 
 | Operator / form | rete | Oxigraph | rete vs oxi | rows | ok |
 |---|--:|--:|--:|--:|:--:|
-| SELECT count (aggregate) | **2.75 ms** | 4.50 ms | 1.6x | 1 | yes |
-| SELECT DISTINCT | **3.17 ms** | 4.43 ms | 1.4x | 6 | yes |
-| ASK | 0.30 ms | **0.01 ms** | 0.0x | 1 | yes |
-| CONSTRUCT | 0.02 ms | **0.01 ms** | 0.6x | 9 | yes |
-| DESCRIBE (impl-defined) | 0.02 ms | **0.01 ms** | 0.4x | 11 | yes |
-| VALUES (inline data) | 8.17 ms | **2.65 ms** | 0.3x | 10962 | yes |
-| UNION | 8.79 ms | **3.48 ms** | 0.4x | 10993 | yes |
-| OPTIONAL (left join) | 0.61 ms | **0.17 ms** | 0.3x | 200 | yes |
-| MINUS | 3.90 ms | **1.54 ms** | 0.4x | 2728 | yes |
-| FILTER NOT EXISTS | **3.89 ms** | 4.24 ms | 1.1x | 2728 | yes |
-| 3-way join + LIMIT | 0.16 ms | **0.10 ms** | 0.6x | 50 | yes |
-| FILTER REGEX (case-insens.) | 4.55 ms | **0.53 ms** | 0.1x | 200 | yes |
-| FILTER arith + logical | **0.28 ms** | 0.65 ms | 2.3x | 200 | yes |
-| BIND + SUBSTR + CONCAT | 0.62 ms | **0.26 ms** | 0.4x | 200 | yes |
-| path sequence a/b | **0.19 ms** | 0.23 ms | 1.2x | 200 | yes |
-| path inverse ^p (count) | **2.80 ms** | 4.41 ms | 1.6x | 1 | yes |
-| path + transitive (count) | **5.43 ms** | 8.08 ms | 1.5x | 1 | yes |
-| path * zero-or-more (count) | **5.57 ms** | 8.67 ms | 1.6x | 1 | yes |
-| GROUP BY + ORDER BY | **2.54 ms** | 4.31 ms | 1.7x | 6 | yes |
-| GROUP BY + HAVING | **2.50 ms** | 4.16 ms | 1.7x | 5 | yes |
-| AVG per group | **12.9 ms** | 35.0 ms | 2.7x | 6 | yes |
-| MIN/MAX/SUM | **4.12 ms** | 6.36 ms | 1.5x | 1 | yes |
-| COUNT(DISTINCT) | **2.39 ms** | 4.10 ms | 1.7x | 1 | yes |
-| ORDER BY + LIMIT + OFFSET | **3.79 ms** | 15.9 ms | 4.2x | 10 | yes |
+| SELECT count (aggregate) | **1.94 ms** | 5.33 ms | 2.8x | 1 | yes |
+| SELECT DISTINCT | **2.90 ms** | 4.05 ms | 1.4x | 6 | yes |
+| ASK | 0.03 ms | **0.01 ms** | 0.2x | 1 | yes |
+| CONSTRUCT | **0.01 ms** | 0.01 ms | 1.4x | 9 | yes |
+| DESCRIBE (impl-defined) | **0.01 ms** | 0.01 ms | 1.4x | 11 | yes |
+| VALUES (inline data) | **2.39 ms** | 2.48 ms | 1.0x | 10962 | yes |
+| UNION | **2.44 ms** | 2.49 ms | 1.0x | 10993 | yes |
+| OPTIONAL (left join) | **0.14 ms** | 0.17 ms | 1.3x | 200 | yes |
+| MINUS | 1.55 ms | **1.54 ms** | 1.0x | 2728 | yes |
+| FILTER NOT EXISTS | **1.56 ms** | 4.30 ms | 2.8x | 2728 | yes |
+| 3-way join + LIMIT | 0.13 ms | **0.09 ms** | 0.7x | 50 | yes |
+| FILTER REGEX (case-insens.) | 3.90 ms | **0.43 ms** | 0.1x | 200 | yes |
+| FILTER arith + logical | **0.15 ms** | 0.58 ms | 3.9x | 200 | yes |
+| BIND + SUBSTR + CONCAT | 0.27 ms | **0.23 ms** | 0.8x | 200 | yes |
+| path sequence a/b | **0.11 ms** | 0.21 ms | 2.0x | 200 | yes |
+| path inverse ^p (count) | **1.94 ms** | 4.20 ms | 2.2x | 1 | yes |
+| path + transitive (count) | **5.24 ms** | 6.36 ms | 1.2x | 1 | yes |
+| path * zero-or-more (count) | **5.27 ms** | 5.87 ms | 1.1x | 1 | yes |
+| GROUP BY + ORDER BY | **2.20 ms** | 4.00 ms | 1.8x | 6 | yes |
+| GROUP BY + HAVING | **2.21 ms** | 4.43 ms | 2.0x | 5 | yes |
+| AVG per group | **11.4 ms** | 32.9 ms | 2.9x | 6 | yes |
+| MIN/MAX/SUM | **4.07 ms** | 7.33 ms | 1.8x | 1 | yes |
+| COUNT(DISTINCT) | **2.04 ms** | 4.70 ms | 2.3x | 1 | yes |
+| ORDER BY + LIMIT + OFFSET | **3.57 ms** | 18.1 ms | 5.1x | 10 | yes |
 
 **24 / 24 identical row counts** across
 SELECT/ASK/CONSTRUCT/DESCRIBE, algebra operators, filters/functions,
@@ -139,17 +139,17 @@ property paths, and aggregates.
 
 Reading the times honestly:
 
-- rete now wins most aggregate, GROUP BY, DISTINCT, path-closure, and
-  sorted-pagination (top-k) shapes: the engine evaluates as a lazy
-  pipeline over integer slot rows and resolves terms only at projection.
-- Small-LIMIT shapes over multi-pattern joins (OPTIONAL, 3-way join,
-  path sequences, BIND scans) run as adaptive index-nested-loop probes
-  and land in the same sub-millisecond range as Oxigraph.
-- Oxigraph keeps an edge on a few shapes: sub-0.1 ms ASK (rete pays
-  ~0.3 ms of query parsing per call), large UNION/VALUES/MINUS result
-  sets (term materialization volume), and non-literal REGEX scans.
-  These are fractions-of-a-millisecond to single-digit-ms gaps, not
-  the orders of magnitude they were before the engine rework.
+- rete now wins or ties the large majority of shapes: aggregates,
+  GROUP BY, DISTINCT, path closures, sorted pagination (top-k), and
+  large UNION/VALUES/MINUS results. The engine evaluates as a lazy
+  pipeline over integer slot rows, switches to index-nested-loop
+  probes under small LIMIT/ASK demand, and resolves terms only at
+  projection.
+- Oxigraph keeps an edge on REGEX scans whose pattern needs the real
+  regex engine (rete's regex-lite has no literal prefilter; literal
+  patterns use a substring fast path) and, by fractions of a
+  millisecond, on ASK and the tightest LIMIT joins — floor effects,
+  not the orders-of-magnitude gaps from before the engine rework.
 
 ### Batch transitive reachability - `coauthor+` from 300 seeds
 
@@ -159,9 +159,9 @@ Oxigraph it is a `coauthor+` property path evaluated per seed.
 
 | Engine / mode | Time | vs rete-serial |
 |---|--:|--:|
-| rete - `batch_reach_serial` (1 core) | 455 ms | 1.0x |
-| **rete - `batch_reach_parallel` (32 cores)** | **30.4 ms** | **15.0x** |
-| Oxigraph - `coauthor+` property path, per seed | 1801 ms | 0.3x |
+| rete - `batch_reach_serial` (1 core) | 441 ms | 1.0x |
+| **rete - `batch_reach_parallel` (32 cores)** | **30.1 ms** | **14.6x** |
+| Oxigraph - `coauthor+` property path, per seed | 1764 ms | 0.3x |
 
 rete serial and parallel both reached 1,636,200 nodes;
 Oxigraph touched 1,636,200 result cells. The dedicated

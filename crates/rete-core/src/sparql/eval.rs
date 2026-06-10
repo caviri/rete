@@ -478,15 +478,16 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
         source = Box::new(sorted.into_iter());
     }
 
-    // Project to the requested slots (SELECT * keeps everything). Rows stay
-    // integer-valued; unprojected slots are simply cleared so DISTINCT sees
-    // only the projected identity.
+    // Project to the requested slots (SELECT * keeps everything). Only DISTINCT
+    // needs the materialized projected row (its identity is the projection);
+    // otherwise the final conversion below reads the projected slots straight
+    // off the raw row — no per-row clone.
     let proj_slots: Vec<usize> = sel
         .project
         .iter()
         .filter_map(|v| ctx.slots.slot(v))
         .collect();
-    if !sel.project.is_empty() {
+    if !sel.project.is_empty() && sel.distinct {
         let ctx_ref = &ctx;
         let ps = proj_slots.clone();
         source = Box::new(source.map(move |b| {

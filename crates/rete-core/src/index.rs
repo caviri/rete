@@ -9,6 +9,7 @@
 //! which binary-searches a lazily-built in-memory a-group directory; on-disk
 //! tiling comes with the pyramid layer.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
 
 use crate::triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder};
@@ -113,9 +114,11 @@ pub struct GraphIndex {
     pos: Vec<u8>,
     osp: Vec<u8>,
     /// Lazily-built a-group directories (SPO, POS, OSP), enabling
-    /// binary-search probes ([`probe_iter`](Self::probe_iter)). Built at most
-    /// once per permutation, on the first probe that needs it.
+    /// binary-search jumps for leading-bound scans. Built at most once per
+    /// permutation — and only from the *second* such scan (`scan_counts`), so
+    /// a one-shot cold query never pays the full directory walk.
     dirs: [OnceLock<GroupDirectory>; 3],
+    scan_counts: [AtomicU32; 3],
 }
 
 impl GraphIndex {
@@ -128,6 +131,7 @@ impl GraphIndex {
             pos,
             osp,
             dirs: [OnceLock::new(), OnceLock::new(), OnceLock::new()],
+            scan_counts: [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)],
         }
     }
 
@@ -214,36 +218,34 @@ impl GraphIndex {
         let [pa, pb, pc] = perm.order_pattern(pattern);
         // Parse (untrusted bytes ⇒ `None` on malformed) and zone-prune up front,
         // then stream the matching groups, mapping each back to canonical order.
-        TripleBlock::parse(bytes)
-            .ok()
-            .filter(|b| b.zone().may_contain(pa, pb, pc))
-            .map(|b| b.scan(pa, pb, pc))
-            .into_iter()
-            .flatten()
-            .map(move |abc| perm.back(abc))
-    }
-
-    /// Like [`scan_iter`](Self::scan_iter), but for **repeated point lookups**
-    /// (index-nested-loop probes): when the chosen permutation's leading
-    /// component is bound, jump straight to its group through a lazily-built
-    /// per-permutation directory (one header walk, amortized across all probes)
-    /// instead of walking every preceding group header per probe. Yields
-    /// exactly what `scan_iter` would.
-    pub fn probe_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
-        let perm = Self::best_permutation(pattern);
-        let bytes = self.block(perm);
-        let [pa, pb, pc] = perm.order_pattern(pattern);
         let cursor = TripleBlock::parse(bytes)
             .ok()
             .filter(|b| b.zone().may_contain(pa, pb, pc))
-            .map(|b| match pa {
-                Some(a) => {
-                    let dir = self.dirs[perm.section_index()].get_or_init(|| b.group_directory());
-                    b.scan_from(dir, a, pb, pc)
-                }
-                None => b.scan(pa, pb, pc),
+            .map(|b| match (pa, self.directory(perm)) {
+                // A leading-bound scan with the directory available jumps
+                // straight to its a-group (binary search) instead of walking
+                // and decoding every preceding group.
+                (Some(a), Some(dir)) => b.scan_from(dir, a, pb, pc),
+                _ => b.scan(pa, pb, pc),
             });
         cursor.into_iter().flatten().map(move |abc| perm.back(abc))
+    }
+
+    /// The permutation's a-group directory, if this scan should use one: the
+    /// first leading-bound scan walks linearly (a cold one-shot query never
+    /// pays the full directory build), every later one gets — and if needed
+    /// builds — the directory, after which probes are point lookups. The
+    /// directory itself is built at most once (`OnceLock`).
+    fn directory(&self, perm: IndexPermutation) -> Option<&GroupDirectory> {
+        let i = perm.section_index();
+        if let Some(dir) = self.dirs[i].get() {
+            return Some(dir);
+        }
+        if self.scan_counts[i].fetch_add(1, Ordering::Relaxed) == 0 {
+            return None;
+        }
+        let block = TripleBlock::parse(self.block(perm)).ok()?;
+        Some(self.dirs[i].get_or_init(|| block.group_directory()))
     }
 }
 
@@ -316,26 +318,26 @@ mod tests {
         assert_eq!(idx.match_pattern((None, None, None)), sorted);
     }
 
-    /// The directory-backed probe must yield exactly what the linear scan
-    /// yields for every bound/unbound shape — including absent ids (between,
-    /// below, and above the stored groups) and repeated probes (the directory
-    /// is built once and reused).
+    /// Scans must yield identical results across the directory lifecycle: the
+    /// first leading-bound scan walks linearly, the second builds the
+    /// directory, and later ones jump through it — including absent ids
+    /// (between, below, and above the stored groups).
     #[test]
-    fn probe_iter_matches_scan_iter_every_shape() {
+    fn directory_backed_scans_match_reference_every_shape() {
         let (idx, data) = graph();
         let vals = |opts: &[u32]| {
             let mut v: Vec<Option<u32>> = opts.iter().map(|&x| Some(x)).collect();
             v.push(None);
             v
         };
-        for _round in 0..2 {
+        for round in 0..3 {
             for s in vals(&[1, 2, 3, 0, 9]) {
                 for p in vals(&[10, 11, 12, 99]) {
                     for o in vals(&[100, 200, 300, 999]) {
                         let pat = (s, p, o);
-                        let mut probed: Vec<Triple> = idx.probe_iter(pat).collect();
-                        probed.sort_unstable();
-                        assert_eq!(probed, reference(&data, pat), "probe_iter {pat:?}");
+                        let mut got: Vec<Triple> = idx.scan_iter(pat).collect();
+                        got.sort_unstable();
+                        assert_eq!(got, reference(&data, pat), "round {round} scan {pat:?}");
                     }
                 }
             }

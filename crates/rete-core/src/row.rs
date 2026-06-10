@@ -131,11 +131,31 @@ impl Matcher {
     fn is_match(&self, text: &str) -> bool {
         match self {
             Matcher::Substring(p) => text.contains(p.as_str()),
-            Matcher::SubstringCi(p) => text.to_lowercase().contains(p.as_str()),
+            Matcher::SubstringCi(p) => {
+                // ASCII text folds without the per-row `to_lowercase`
+                // allocation; non-ASCII falls back to full Unicode lowering
+                // (matching `(?i)` for these literal patterns).
+                if text.is_ascii() && p.is_ascii() {
+                    ascii_ci_contains(text.as_bytes(), p.as_bytes())
+                } else {
+                    text.to_lowercase().contains(p.as_str())
+                }
+            }
             Matcher::Regex(re) => re.is_match(text),
             Matcher::Never => false,
         }
     }
+}
+
+/// Case-insensitive substring search over ASCII bytes (`needle` already
+/// lowercased), allocation-free.
+fn ascii_ci_contains(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle))
 }
 
 impl<'a> Resolver<'a> {
