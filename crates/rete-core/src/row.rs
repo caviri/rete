@@ -180,6 +180,25 @@ impl<'a> Resolver<'a> {
         m.is_match(text)
     }
 
+    /// Coalesce the dictionary chunk faults for a set of values about to be
+    /// resolved (a bounded result page): batch-fault their chunks in a few
+    /// range reads instead of one per distinct term. Strings carry their own
+    /// text and need no fetch. No-op for a local dictionary.
+    pub(crate) fn prefetch<'v>(&self, vals: impl Iterator<Item = &'v Val>) {
+        let mut nodes = Vec::new();
+        let mut preds = Vec::new();
+        for v in vals {
+            if let Val::Id(id) = v {
+                if *id >= 0 {
+                    nodes.push(*id as u32);
+                } else {
+                    preds.push((-id - 1) as u32);
+                }
+            }
+        }
+        self.dict.prefetch_terms(&nodes, &preds);
+    }
+
     /// The term string for a tagged id (memoized).
     pub(crate) fn term(&self, id: i64) -> Option<Rc<str>> {
         if let Some(t) = self.terms.borrow().get(&id) {

@@ -353,9 +353,21 @@ impl ChunkedSection {
     /// failed batch leaves the chunks unloaded for the per-chunk loader to
     /// retry (and record failures) lookup by lookup.
     pub fn prefetch_all(&self) {
+        self.prefetch_chunks(&(0..self.chunks.len()).collect::<Vec<_>>());
+    }
+
+    /// Batch-fault a *specific* set of chunks (the subset a bounded query's
+    /// output touches) through the bulk loader, coalescing byte-adjacent ranges
+    /// into single reads. `cis` should be ascending and deduped; chunks already
+    /// resident are skipped. Like [`prefetch_all`](Self::prefetch_all) a single
+    /// missing chunk is left for the per-chunk loader, and a failed batch leaves
+    /// the chunks unloaded for that loader to retry (and record failures).
+    pub fn prefetch_chunks(&self, cis: &[usize]) {
         let Some(bulk) = &self.bulk else { return };
-        let missing: Vec<usize> = (0..self.chunks.len())
-            .filter(|&ci| self.chunks[ci].data.get().is_none())
+        let missing: Vec<usize> = cis
+            .iter()
+            .copied()
+            .filter(|&ci| self.chunks.get(ci).is_some_and(|c| c.data.get().is_none()))
             .collect();
         if missing.len() < 2 {
             return;
@@ -397,6 +409,17 @@ impl ChunkedSection {
     fn chunk_of_run(&self, run: usize) -> Option<usize> {
         let i = self.chunks.partition_point(|c| c.first_run <= run);
         i.checked_sub(1)
+    }
+
+    /// The chunk index holding term `id` (1-based, section-local), or `None` if
+    /// out of range. Mirrors the run→chunk math in [`term`](Self::term) so a
+    /// caller can group a set of output ids by chunk and batch-prefetch them.
+    pub fn chunk_of_id(&self, id: u32) -> Option<usize> {
+        if id == ABSENT || id > self.meta.term_count {
+            return None;
+        }
+        let run = (id - 1) as usize / self.meta.restart_interval as usize;
+        self.chunk_of_run(run)
     }
 
     /// Resolve `id` (1-based) to its term. One chunk fault at most.

@@ -508,10 +508,26 @@ fn finish_select<'a, 'q>(
         source = Box::new(source.filter(move |row| seen.insert(row.clone())));
     }
 
-    // Slice, then resolve only the surviving rows' projected values.
-    let rows: Vec<Binding> = source
+    // Slice to the bounded result page first, then coalesce the dictionary
+    // chunk faults for just those rows before resolving them — one batch of
+    // (coalesced) range reads instead of one fetch per distinct output term,
+    // which over a remote file is the difference between a few requests and
+    // hundreds. Then resolve only the surviving rows' projected values.
+    let raw: Vec<Row> = source
         .skip(sel.offset)
         .take(sel.limit.unwrap_or(usize::MAX))
+        .collect();
+    if sel.project.is_empty() {
+        ctx.resolver
+            .prefetch(raw.iter().flat_map(|r| r.iter().filter_map(|v| v.as_ref())));
+    } else {
+        ctx.resolver.prefetch(
+            raw.iter()
+                .flat_map(|r| proj_slots.iter().filter_map(|&slot| r[slot].as_ref())),
+        );
+    }
+    let rows: Vec<Binding> = raw
+        .into_iter()
         .map(|row| {
             if sel.project.is_empty() {
                 row_to_binding(ctx, &row)

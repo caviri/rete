@@ -478,6 +478,49 @@ fn small_limit_does_not_fetch_the_whole_index() {
     );
 }
 
+/// Resolving a many-row result must coalesce its dictionary faults: the engine
+/// gathers the bounded page's term IDs and batch-faults their chunks in a few
+/// coalesced range reads, instead of one fetch per distinct term (which over a
+/// remote file is hundreds of sequential requests).
+#[test]
+fn multi_term_output_coalesces_dictionary_faults() {
+    let image = multi_tile_image();
+    let h = Rete::open(&image).unwrap().header().clone();
+    let dict = (h.dictionary_offset, h.dictionary_offset + h.dictionary_len);
+
+    // 400 rows, each a distinct (subject, object) of scrambled IRIs — their
+    // terms land in many chunks spread across the dictionary sections.
+    let q = "SELECT ?s ?o WHERE { ?s <http://ex/knows> ?o } LIMIT 400";
+    let plain = Rete::open(&image).unwrap();
+    let expected = match eval_query(&plain, q).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(expected.len(), 400);
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let got = match eval_query(&rete, q).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(got, expected);
+    assert!(!rete.index_incomplete());
+
+    // 800 cells (400 subjects + 400 objects) resolve in far fewer than 800
+    // dictionary reads — the per-section chunk batches coalesce adjacent runs.
+    let dict_reads = reader
+        .reads()
+        .iter()
+        .filter(|r| overlaps(**r, dict))
+        .count();
+    assert!(
+        dict_reads < 24,
+        "resolving 800 output terms issued {dict_reads} dictionary reads — \
+         expected a few coalesced chunk batches, not one per term/chunk"
+    );
+}
+
 /// `dump` resolves every triple and every term: over a lazy open it must
 /// batch-fault the dictionary chunks and the scanned tiles in coalesced
 /// reads — a bounded number of requests, never one per chunk/tile.

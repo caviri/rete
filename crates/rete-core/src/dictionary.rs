@@ -107,6 +107,54 @@ impl Dictionary {
         }
     }
 
+    /// Batch-fault just the chunks needed to resolve a bounded result set:
+    /// `node_ids` are unified-node ids (the `Val::Id(id)` with `id >= 0`),
+    /// `predicate_ids` are predicate-space ids. Groups them by `(section,
+    /// chunk)` and coalesces each section's faults into a few range reads —
+    /// turning "one request per distinct output term" into "a handful per
+    /// query". No-op for a local dictionary (every chunk is already resident).
+    pub fn prefetch_terms(&self, node_ids: &[u32], predicate_ids: &[u32]) {
+        let mut want: [std::collections::BTreeSet<usize>; 4] = Default::default();
+        for &n in node_ids {
+            if let Some((si, ci)) = self.node_chunk(n) {
+                want[si].insert(ci);
+            }
+        }
+        for &p in predicate_ids {
+            if let Some(ci) = self.sections[3].chunk_of_id(p) {
+                want[3].insert(ci);
+            }
+        }
+        for (si, set) in want.iter().enumerate() {
+            if set.len() >= 2 {
+                let cis: Vec<usize> = set.iter().copied().collect();
+                self.sections[si].prefetch_chunks(&cis);
+            }
+        }
+    }
+
+    /// The `(section, chunk)` holding a unified node id — mirrors the section
+    /// routing in [`node_term`](Self::node_term).
+    fn node_chunk(&self, node: u32) -> Option<(usize, usize)> {
+        let su = self.subject_only_count();
+        let (si, local) = if node < self.shared_len + su {
+            let id = node + 1; // subject_term(id)
+            if id <= self.shared_len {
+                (0, id)
+            } else {
+                (1, id - self.shared_len)
+            }
+        } else {
+            let id = node + 1 - su; // object_term(id)
+            if id <= self.shared_len {
+                (0, id)
+            } else {
+                (2, id - self.shared_len)
+            }
+        };
+        Some((si, self.sections[si].chunk_of_id(local)?))
+    }
+
     /// Number of shared terms `S`.
     pub fn shared_count(&self) -> u32 {
         self.shared_len
