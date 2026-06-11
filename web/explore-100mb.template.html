@@ -150,7 +150,6 @@
       </label>
       <div class="sub-opt" style="display:flex; gap:6px; flex-wrap:wrap">
         <button class="ex" id="cacheBtn">Cache locally</button>
-        <button class="ex" id="dlBtn">Download</button>
       </div>
       <progress id="cacheProg" max="100" value="0" hidden style="width:100%; margin-top:6px"></progress>
       <div class="stat" id="statGraph">ready (lazy)</div>
@@ -465,13 +464,22 @@ function runGraph() {
   });
 }
 
-/* ---- cache the .rete in IndexedDB (with progress), download, source switch ---- */
+/* ---- cache the .rete in IndexedDB (with progress) + source switch ---- */
 const RKEY = "wikidata.rete";
 function idb() { return new Promise((res, rej) => { const r = indexedDB.open("reteCache", 1); r.onupgradeneeded = () => r.result.createObjectStore("f"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
 async function idbGet(k) { const db = await idb(); return new Promise((res) => { const t = db.transaction("f").objectStore("f").get(k); t.onsuccess = () => res(t.result || null); t.onerror = () => res(null); }); }
 async function idbPut(k, v) { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction("f", "readwrite").objectStore("f").put(v, k); t.onsuccess = () => res(); t.onerror = () => rej(t.error); }); }
+async function idbDel(k) { const db = await idb(); return new Promise((res) => { const t = db.transaction("f", "readwrite").objectStore("f").delete(k); t.onsuccess = () => res(); t.onerror = () => res(); }); }
+// A cache button toggles between "Cache locally" (download) and "Remove cache"
+// (drop the local copy) depending on whether a cached copy exists.
+function setCacheBtn(btnId, cached, cacheFn, removeFn) {
+  const b = $(btnId);
+  b.textContent = cached ? "Remove cache" : "Cache locally";
+  b.onclick = cached ? removeFn : cacheFn;
+}
 function enableCached(mb) {
   $("graphSrc").querySelector('[value="cached"]').disabled = false;
+  setCacheBtn("cacheBtn", true, cacheRete, removeRete);
   $("statGraph").textContent = `cached copy ready (${mb} MB) — set read to "cached"`;
 }
 async function cacheRete() {
@@ -489,15 +497,15 @@ async function cacheRete() {
   } catch (e) { $("statGraph").textContent = "cache failed: " + e; }
   finally { prog.hidden = true; }
 }
-async function downloadRete() {
-  let buf = window.__reteBytes;
-  if (!buf) { const ab = await idbGet(RKEY); if (ab) buf = window.__reteBytes = new Uint8Array(ab); }
-  if (!buf) { $("statGraph").textContent = "downloading…"; const r = await fetch(RETE_URL); buf = window.__reteBytes = new Uint8Array(await r.arrayBuffer()); $("statGraph").textContent = "ready (lazy)"; }
-  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([buf], { type: "application/octet-stream" }));
-  a.download = "wikidata.rete"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+async function removeRete() {
+  await idbDel(RKEY);
+  window.__reteBytes = null; _memReady = null;
+  const sel = $("graphSrc"); sel.value = "lazy"; sel.querySelector('[value="cached"]').disabled = true;
+  state.graphSource = "lazy";
+  setCacheBtn("cacheBtn", false, cacheRete, removeRete);
+  $("statGraph").textContent = "cache removed — ready (lazy)";
 }
 $("cacheBtn").onclick = cacheRete;
-$("dlBtn").onclick = downloadRete;
 $("graphSrc").onchange = () => { state.graphSource = $("graphSrc").value; $("statGraph").textContent = state.graphSource === "cached" ? "reading cached full copy" : "ready (lazy)"; };
 (async () => { const ab = await idbGet(RKEY); if (ab) { window.__reteBytes = new Uint8Array(ab); enableCached((ab.byteLength / 1048576).toFixed(0)); } })();
 $("statPar").textContent = window.crossOriginIsolated
@@ -542,8 +550,9 @@ async function cacheToIdb(url, key, statId, progId) {
   prog.hidden = true;
   return buf;
 }
-function enableCachedOpt(selId, statId, mb) {
+function enableCachedOpt(selId, statId, mb, btnId, cacheFn, removeFn) {
   $(selId).querySelector('[value="cached"]').disabled = false;
+  if (btnId) setCacheBtn(btnId, true, cacheFn, removeFn);
   $(statId).textContent = `cached copy available (${mb} MB) — set read to "cached"`;
 }
 
@@ -599,11 +608,21 @@ async function cacheDuckdb() {
     const buf = await cacheToIdb(DUCKDB_URL, "wikidata.duckdb", "statDuckdb", "cacheDuckProg");
     window.__duckBytes = buf; duckRegistered = false; if (duckAttachedSource === "cached") duckAttachedSource = null;
     $("duckdbSrc").value = "cached"; state.duckSource = "cached";
-    enableCachedOpt("duckdbSrc", "statDuckdb", (buf.length / 1048576).toFixed(0));
+    enableCachedOpt("duckdbSrc", "statDuckdb", (buf.length / 1048576).toFixed(0), "cacheDuckBtn", cacheDuckdb, removeDuckdb);
     $("statDuckdb").textContent = `cached full copy ready (${(buf.length / 1048576).toFixed(0)} MB)`;
   } catch (e) { $("cacheDuckProg").hidden = true; $("statDuckdb").textContent = "cache failed: " + e; }
 }
-$("cacheDuckBtn").onclick = cacheDuckdb;
+async function removeDuckdb() {
+  await idbDel("wikidata.duckdb");
+  if (duckAttachedSource === "cached" && conn) { try { await conn.query("DETACH wd"); } catch (e) {} duckAttachedSource = null; }
+  if (db && duckRegistered) { try { await db.dropFile("wikidata.duckdb"); } catch (e) {} }
+  window.__duckBytes = null; duckRegistered = false;
+  const sel = $("duckdbSrc"); sel.value = "lazy"; sel.querySelector('[value="cached"]').disabled = true;
+  state.duckSource = "lazy";
+  setCacheBtn("cacheDuckBtn", false, cacheDuckdb, removeDuckdb);
+  $("statDuckdb").textContent = "cache removed — ready (lazy)";
+}
+setCacheBtn("cacheDuckBtn", false, cacheDuckdb, removeDuckdb);
 
 /* ---- SQLite: lazy (sql.js-httpvfs) or a cached full copy (sql.js) ---- */
 let sqliteWorker = null, sqliteFull = null;
@@ -654,18 +673,27 @@ async function cacheSqlite() {
     const buf = await cacheToIdb(SQLITE_URL, "wikidata.sqlite", "statSqlite", "cacheSqliteProg");
     window.__sqliteBytes = buf; sqliteFull = null;
     $("sqliteSrc").value = "cached"; state.sqliteSource = "cached";
-    enableCachedOpt("sqliteSrc", "statSqlite", (buf.length / 1048576).toFixed(0));
+    enableCachedOpt("sqliteSrc", "statSqlite", (buf.length / 1048576).toFixed(0), "cacheSqliteBtn", cacheSqlite, removeSqlite);
     $("statSqlite").textContent = `cached full copy ready (${(buf.length / 1048576).toFixed(0)} MB)`;
   } catch (e) { $("cacheSqliteProg").hidden = true; $("statSqlite").textContent = "cache failed: " + e; }
 }
-$("cacheSqliteBtn").onclick = cacheSqlite;
+async function removeSqlite() {
+  await idbDel("wikidata.sqlite");
+  if (sqliteFull) { try { sqliteFull.close(); } catch (e) {} sqliteFull = null; }
+  window.__sqliteBytes = null;
+  const sel = $("sqliteSrc"); sel.value = "lazy"; sel.querySelector('[value="cached"]').disabled = true;
+  state.sqliteSource = "lazy";
+  setCacheBtn("cacheSqliteBtn", false, cacheSqlite, removeSqlite);
+  $("statSqlite").textContent = sqliteWorker && !sqliteWorker.err ? "cache removed — ready (lazy)" : "cache removed — lazy unavailable";
+}
+setCacheBtn("cacheSqliteBtn", false, cacheSqlite, removeSqlite);
 
 // Re-enable the "cached" option on load if a copy is already in IndexedDB.
 (async () => {
   const d = await idbGet("wikidata.duckdb");
-  if (d) { window.__duckBytes = new Uint8Array(d); enableCachedOpt("duckdbSrc", "statDuckdb", (d.byteLength / 1048576).toFixed(0)); }
+  if (d) { window.__duckBytes = new Uint8Array(d); enableCachedOpt("duckdbSrc", "statDuckdb", (d.byteLength / 1048576).toFixed(0), "cacheDuckBtn", cacheDuckdb, removeDuckdb); }
   const s = await idbGet("wikidata.sqlite");
-  if (s) { window.__sqliteBytes = new Uint8Array(s); enableCachedOpt("sqliteSrc", "statSqlite", (s.byteLength / 1048576).toFixed(0)); }
+  if (s) { window.__sqliteBytes = new Uint8Array(s); enableCachedOpt("sqliteSrc", "statSqlite", (s.byteLength / 1048576).toFixed(0), "cacheSqliteBtn", cacheSqlite, removeSqlite); }
 })();
 
 $("run").onclick = () => {
