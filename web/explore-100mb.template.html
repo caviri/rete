@@ -149,7 +149,7 @@
   <span class="sub">one ~12M-triple graph, queried lazily over HTTP range - pick a backend on the left</span>
   <a href="index.html">&larr; playground</a>
   <a href="https://huggingface.co/datasets/katospiegel/knowledge-graphs/tree/main/wikidata-100MB" target="_blank" rel="noopener">data on Hugging Face &#8599;</a>
-  <button id="srcBtn" class="srcbtn">Source: HF Bucket</button>
+  <button id="srcBtn" class="srcbtn">Source: HF Space (CORS)</button>
 </header>
 <div id="srcModal" class="modal hidden">
   <div class="modal-box">
@@ -274,6 +274,8 @@ const $ = (id) => document.getElementById(id);
 // compare how each host's CORS / Range support behaves in this browser. (The
 // rete CLI is unaffected — it sends no Origin; this is purely the fetch story.)
 const SOURCES = {
+  hfspace: { label: "HF Space (CORS)", base: "https://katospiegel-rete.hf.space/data/wikidata-100MB", dl: "",
+    info: "A tiny <b>FastAPI Space</b> in front of the bucket that adds <b>CORS + Range</b> (which HF's own resolve endpoint won't give a browser). Serves the whole bundle — <code>.rete</code>, parquet, <code>.duckdb</code>, <code>.sqlite</code> — so <b>every backend works in the browser</b> here. This is the recommended source." },
   bucket: { label: "HF Bucket", base: "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-100MB", dl: "?download=true",
     info: "Hugging Face <b>bucket</b> (resolve). The rete CLI reads it fine, but its resolve endpoint returns <code>405</code> to a cross-origin browser GET — so the browser backends can't fetch it here." },
   datasets: { label: "HF Datasets", base: "https://huggingface.co/datasets/katospiegel/knowledge-graphs/resolve/main/wikidata-100MB", dl: "?download=true",
@@ -283,7 +285,7 @@ const SOURCES = {
   github: { label: "GitHub Pages", base: "wikidata-100MB", dl: "",
     info: "<b>Same-origin</b> on GitHub Pages (no CORS; Pages serves <code>206</code> Range). A pyramid-less <b>~74 MB</b> build of <code>wikidata.rete</code> is committed here under <code>wikidata-100MB/</code> (GitHub blocks &gt;100 MiB; dropping the unused community pyramid fits it under the cap), so the <b>Graph</b> backend works directly — verified end-to-end. Tables / DuckDB / SQLite aren't hosted here (too big), so use an HF source for those." },
 };
-let SRC = "bucket", RETE_URL, DUCKDB_URL, SQLITE_URL;
+let SRC = "hfspace", RETE_URL, DUCKDB_URL, SQLITE_URL;
 // Always absolute: the rete worker resolves URLs against its blob: base, so a
 // relative GitHub-Pages path (resolved against the page here) must be absolute
 // before it reaches the worker's XHR.
