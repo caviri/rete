@@ -37,3 +37,6 @@ __pycache__/
 
 # Local engineering notes / scratch plans — not part of the published repo.
 /dev/
+
+# Local secrets (JWT_TOKEN etc.) — never commit.
+.env

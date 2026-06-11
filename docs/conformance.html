@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Topic modeling (LDA) · rete docs</title>
+  <title>SPARQL 1.1 conformance · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -198,7 +198,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
         <li class="nav-h">Graph analysis</li>
-        <li><a href="topic-modeling.html" class="active">Topic modeling (LDA)</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
         <li class="nav-h">In the browser</li>
         <li><a href="browser.html">Browser / WASM</a></li>
@@ -207,154 +207,108 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html">Format specification</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
-        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+        <li><a href="conformance.html" class="active">SPARQL 1.1 conformance</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
   </nav>
   <main>
     <div class="page">
       <article class="content">
-<h1>Topic modeling over communities (LDA)</h1>
-<figure class="fig-right">
-  <img src="img/topics.svg" alt="Three structural node communities feed into an LDA topic model, which emits a topic card of keywords for each community.">
-  <figcaption>Communities are <em>structural</em> (link topology); topics are <em>latent themes</em> in the text on their nodes. LDA labels each community with its dominant theme.</figcaption>
-</figure>
-<p>A graph has two complementary notions of "cluster":</p>
+<h1>SPARQL 1.1 conformance</h1>
+<p>How much of SPARQL does rete actually answer correctly? This runs the official
+<strong>W3C SPARQL 1.1 query-evaluation test suite</strong> — the canonical
+<a href="https://github.com/w3c/rdf-tests"><code>w3c/rdf-tests</code></a> fixtures: each test ships a
+tiny RDF dataset, a query, and the <strong>expected results</strong> — against rete and
+scores every test. It is a <em>correctness</em> suite (the datasets are a handful of
+triples), so it measures <strong>coverage</strong>, not speed; performance is benchmarked
+separately on a real graph (see <a href="BENCHMARK.html">BENCHMARK</a>).</p>
+<p>The harness is <a href="https://github.com/caviri/rete/blob/main/scripts/sparql_conformance.py"><code>scripts/sparql_conformance.py</code></a>:
+for each <code>mf:QueryEvaluationTest</code> it builds a <code>.rete</code> from the data, runs the
+query through the <code>rete</code> CLI, and compares to the expected result — SPARQL
+Results JSON/XML (SRX/SRJ) for SELECT/ASK as an unordered multiset, and an <strong>RDF
+graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
+<pre><code class="language-sh">python scripts/sparql_conformance.py \
+  --rete target/release/rete --suite &lt;rdf-tests&gt;/sparql/sparql11
+</code></pre>
+<h2>Scorecard</h2>
+<p><strong>309 query-evaluation tests.</strong> Two columns: <strong>strict</strong> = byte-for-byte W3C
+result match; <strong>value</strong> = the same, but numeric literals are compared by value
+(see the finding below). "n/s" = errored / not supported.</p>
+<table><thead><tr><th>Category</th><th style="text-align: right">pass (strict)</th><th style="text-align: right">pass (value)</th><th style="text-align: right">n/s</th><th>notes</th></tr></thead><tbody>
+<tr><td>negation</td><td style="text-align: right">12 / 12</td><td style="text-align: right">12 / 12</td><td style="text-align: right">0</td><td>✅ full</td></tr>
+<tr><td>json-res</td><td style="text-align: right">4 / 4</td><td style="text-align: right">4 / 4</td><td style="text-align: right">0</td><td>✅ full</td></tr>
+<tr><td>bindings (VALUES)</td><td style="text-align: right">9 / 11</td><td style="text-align: right">9 / 11</td><td style="text-align: right">2</td><td></td></tr>
+<tr><td>property-path</td><td style="text-align: right">21 / 26</td><td style="text-align: right">21 / 26</td><td style="text-align: right">7</td><td>strong</td></tr>
+<tr><td>grouping</td><td style="text-align: right">3 / 4</td><td style="text-align: right">3 / 4</td><td style="text-align: right">0</td><td></td></tr>
+<tr><td>construct</td><td style="text-align: right">3 / 5</td><td style="text-align: right">3 / 5</td><td style="text-align: right">1</td><td>graph-isomorphism check</td></tr>
+<tr><td>exists</td><td style="text-align: right">4 / 6</td><td style="text-align: right">4 / 6</td><td style="text-align: right">1</td><td></td></tr>
+<tr><td>project-expression</td><td style="text-align: right">3 / 7</td><td style="text-align: right"><strong>6 / 7</strong></td><td style="text-align: right">0</td><td>numeric typing</td></tr>
+<tr><td>aggregates</td><td style="text-align: right">12 / 42</td><td style="text-align: right"><strong>27 / 42</strong></td><td style="text-align: right">5</td><td>numeric typing</td></tr>
+<tr><td>functions</td><td style="text-align: right">13 / 75</td><td style="text-align: right"><strong>19 / 75</strong></td><td style="text-align: right">45</td><td>many builtins missing</td></tr>
+<tr><td>bind</td><td style="text-align: right">2 / 10</td><td style="text-align: right"><strong>5 / 10</strong></td><td style="text-align: right">0</td><td>numeric typing</td></tr>
+<tr><td>entailment</td><td style="text-align: right">21 / 70</td><td style="text-align: right">24 / 70</td><td style="text-align: right">4</td><td>needs <code>build --materialize</code></td></tr>
+<tr><td>subquery</td><td style="text-align: right">0 / 14</td><td style="text-align: right">0 / 14</td><td style="text-align: right">13</td><td>not supported</td></tr>
+<tr><td>cast</td><td style="text-align: right">0 / 6</td><td style="text-align: right">0 / 6</td><td style="text-align: right">6</td><td>xsd cast fns missing</td></tr>
+<tr><td>service</td><td style="text-align: right">0 / 7</td><td style="text-align: right">0 / 7</td><td style="text-align: right">7</td><td>SPARQL federation (N/A)</td></tr>
+<tr><td>csv-tsv-res</td><td style="text-align: right">0 / 3</td><td style="text-align: right">0 / 3</td><td style="text-align: right">3</td><td>CSV/TSV result format</td></tr>
+<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>107 / 309 (34.6%)</strong></td><td style="text-align: right"><strong>137 / 309 (44.3%)</strong></td><td style="text-align: right">94</td><td></td></tr>
+</tbody></table>
+<h2>Findings</h2>
+<ol>
+<li>
+<p><strong>Computed numerics are emitted untyped — the single biggest, highest-ROI
+gap.</strong> rete evaluates arithmetic / aggregates / numeric functions to the
+<strong>right value</strong> but serializes the result as a plain literal (<code>"11"</code>) instead
+of <code>"11"^^xsd:integer</code>. That alone fails ~30 otherwise-correct tests — the
+entire gap between <em>strict</em> (34.6%) and <em>value</em> (44.3%): aggregates 12→27,
+functions 13→19, bind 2→5, project-expression 3→6. Tagging computed numerics
+with their <code>xsd:integer</code>/<code>decimal</code>/<code>double</code> datatype (in <code>sparql::expr</code> /
+aggregate eval + the results serializer) would lift conformance to ~44% with
+no new operators.</p>
+</li>
+<li>
+<p><strong>Genuinely strong areas:</strong> negation (<code>MINUS</code> / <code>NOT EXISTS</code>) and the JSON
+results format are 100%; property paths (21/26), VALUES, GROUP BY, and
+CONSTRUCT (verified by graph isomorphism) are solid. This matches the
+24-operator cross-check against Oxigraph in <a href="BENCHMARK.html">BENCHMARK</a>.</p>
+</li>
+<li>
+<p><strong>Out of scope (counted, but not engine bugs):</strong></p>
 <ul>
-<li><strong>Communities</strong> — <em>structural</em> groups found from the link topology. Densely
-connected nodes (here: papers that cite each other) fall into the same Louvain
-community. This is what <code>rete</code> computes for its pyramid summary (see
-<a href="cli.html#coarse-graphs-no-index-read"><code>rete summary</code></a> and
-<a href="intro.html">the pyramid idea</a>).</li>
-<li><strong>Topics</strong> — <em>latent themes</em> in the <strong>text</strong> attached to those nodes (titles,
-abstracts, labels). "Machine learning", "databases", "biology" are topics, not
-links.</li>
+<li><strong>SERVICE</strong> (7) — SPARQL federation to a remote endpoint; rete is a file,
+not an endpoint. (Cross-<em>file</em> federation is a different feature — see
+<a href="federation.html">federation</a>.)</li>
+<li><strong>entailment</strong> (≈49) — RDFS/OWL entailment regimes; rete answers these only
+when entailments are baked in at build time (<code>rete build --materialize</code>),
+which this run does not do.</li>
+<li><strong>subquery</strong> (14) — nested <code>SELECT</code> is rejected rather than evaluated.</li>
+<li><strong>cast</strong> (6), <strong>csv-tsv-res</strong> (3) — xsd cast functions and the CSV/TSV
+result serialization aren't implemented.</li>
 </ul>
-<p>They often line up — a citation cluster usually shares a theme — but nothing
-guarantees it. This tutorial uses <code>rete</code> to get <strong>(a)</strong> the community partition
-and <strong>(b)</strong> each community's text in one shot, then runs
-<a href="https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.LatentDirichletAllocation.html">Latent Dirichlet Allocation (LDA)</a>
-to <strong>label each community with its dominant theme</strong>.</p>
-<blockquote>
-<p><code>rete</code> supplies the two hard parts: the partition (Louvain) and the
-per-community text extraction. LDA is a standard downstream step —
-<code>rete</code> is a graph file format, not an ML engine.</p>
-</blockquote>
-<p>The example graph, <a href="https://github.com/caviri/rete/blob/main/examples/papers.nt"><code>examples/papers.nt</code></a>,
-is 9 "papers" in 3 citation clusters (ML, databases, biology). Citations are
-dense <em>within</em> a cluster and sparse <em>across</em>, so Louvain recovers the 3 groups;
-each paper carries a <code>title</code> and an <code>abstract</code> literal with cluster-specific
-vocabulary.</p>
-<h2>Quick path: structural profiles (no ML)</h2>
-<p>Before reaching for LDA, <code>rete communities --profile</code> gives each community a
-no-ML "topic" label straight from the graph: its most frequent literal words,
-<code>rdf:type</code> classes, and predicates. No Python, no dependencies.</p>
-<pre><code class="language-sh">rete build examples/papers.nt -o papers.rete
-rete communities papers.rete --profile
+</li>
+<li>
+<p><strong>Missing builtins</strong> account for most of the <code>functions</code> shortfall (45 n/s) —
+each unimplemented function (string, hash, datetime, etc.) errors rather than
+returning a wrong answer, so they're honest "not yet" rather than silent bugs.</p>
+</li>
+</ol>
+<h2>The same answers, lazily and remotely</h2>
+<p>The conformance run opens each file <strong>locally (in memory)</strong>. rete's three read
+modes — local, <strong>remote-lazy</strong> (HTTP range reads via <code>sparql_url</code> /
+<code>sparql-url</code>), and <strong>remote-cached</strong> (download once, query in memory) — share the
+<em>identical</em> evaluator; only the byte source differs. So they return identical
+results, which the <a href="explore-100mb.html">Wikidata explorer</a> demonstrates on a real
+~12 M-triple graph: the same query yields the same rows whether served locally,
+lazily from a CDN, or federated across shards. The tiny conformance fixtures make
+per-mode <em>timing</em> meaningless — that comparison lives in
+<a href="BENCHMARK.html">BENCHMARK</a>, on a graph large enough for it to matter.</p>
+<h2>Reproduce</h2>
+<pre><code class="language-sh">git clone --depth 1 --filter=blob:none --sparse https://github.com/w3c/rdf-tests
+cd rdf-tests &amp;&amp; git sparse-checkout set sparql/sparql11 &amp;&amp; cd ..
+cargo build --release -p rete-cli
+python scripts/sparql_conformance.py --rete target/release/rete \
+  --suite rdf-tests/sparql/sparql11            # add --relaxed for the value column
 </code></pre>
-<pre><code>community 0: 3 members, 6 literals
-    topic words : network (6), neural (5), deep (3), gradient (3), learning (3) …
-    classes     : &lt;http://ex/Paper&gt; (3)
-    predicates  : &lt;http://ex/cites&gt; (6), &lt;http://ex/abstract&gt; (3), &lt;http://ex/title&gt; (3) …
-community 1: 3 members, 6 literals
-    topic words : query (5), database (4), storage (4), transactional (4) …
-community 2: 3 members, 6 literals
-    topic words : gene (5), protein (5), cell (4), dna (4), genome (4) …
-</code></pre>
-<p>That already separates ML / databases / biology cleanly — word frequency over a
-community's text is a strong baseline. Reach for LDA below when you want <em>latent</em>
-topics (themes that span words and are shared across communities) rather than
-just the top terms. <code>--json --profile</code> adds a <code>"profile": { types, predicates, terms }</code> object to each community for programmatic use.</p>
-<h2>Step 1 — build the file</h2>
-<pre><code class="language-sh">rete build examples/papers.nt -o papers.rete
-</code></pre>
-<p>Peek at the structure (no index read needed):</p>
-<pre><code class="language-sh">rete summary papers.rete
-</code></pre>
-<pre><code>pyramid round 0 — 3 communities summarized as 12 superedge(s):
-  C0 (internal) C0  via &lt;http://ex/cites&gt;  x6
-  C1 (internal) C1  via &lt;http://ex/cites&gt;  x6
-  C2 (internal) C2  via &lt;http://ex/cites&gt;  x6
-  ...
-</code></pre>
-<p>Three communities, each internally dense on <code>cites</code> — exactly the citation
-clusters.</p>
-<h2>Step 2 — extract per-community membership + text</h2>
-<pre><code class="language-sh">rete communities papers.rete --json &gt; communities.json
-</code></pre>
-<p>Each element is one community: its <code>members</code> (subject IRIs) and <code>text</code> (the
-lexical values of all literal objects — the topic corpus):</p>
-<pre><code class="language-json">[
-  {
-    "community": 0,
-    "size": 3,
-    "members": ["&lt;http://ex/p1&gt;", "&lt;http://ex/p2&gt;", "&lt;http://ex/p3&gt;"],
-    "text": [
-      "We train a deep neural network model on labeled images...",
-      "Deep neural networks for image classification",
-      "A reinforcement learning agent learns a policy by maximizing reward...",
-      ...
-    ]
-  },
-  ...
-]
-</code></pre>
-<p><code>--round N</code> cuts the dendrogram at a specific round (default: the round chosen
-for the tile budget); <code>--min-size N</code> drops tiny communities. Without <code>--json</code>
-you get a human summary (members + literal counts).</p>
-<h2>Step 3 — run LDA</h2>
-<p><a href="https://github.com/caviri/rete/blob/main/scripts/lda_topics.py"><code>scripts/lda_topics.py</code></a>
-treats <strong>each community as one document</strong> (its <code>text</code> joined), builds a
-document-term matrix (English stopwords), fits LDA, and prints the top words per
-topic plus each community's dominant topic.</p>
-<pre><code class="language-sh">pip install scikit-learn
-rete communities papers.rete --json | python3 scripts/lda_topics.py --topics 3
-</code></pre>
-<pre><code>== 3 topic(s) over 3 community document(s) ==
-  topic 0: network, neural, improves, query, model, transactional, database, storage
-  topic 1: using, study, model, tree, transaction, strategies, structures, load
-  topic 2: protein, gene, genome, molecular, dna, cell, tissue, mutations
-
-== community → dominant topic ==
-  community 0: topic 0  [network, neural, improves]  (p=0.99)
-  community 1: topic 0  [network, neural, improves]  (p=0.99)
-  community 2: topic 2  [protein, gene, genome]  (p=0.99)
-</code></pre>
-<p>Community 2 is cleanly the <em>biology</em> cluster (<code>gene, genome, dna, protein</code>).
-The script reads from stdin or a file (<code>lda_topics.py communities.json</code>), and
-<code>--topics</code> / <code>--top-words</code> are tunable.</p>
-<h2>Step 4 (optional) — write topics back as queryable RDF</h2>
-<p>Once you have a label per community, you can attach it to each member and rebuild
-so the topic becomes <strong>queryable with SPARQL</strong>:</p>
-<pre><code class="language-sh"># e.g. community 2 → "biology"
-cat &gt;&gt; topics.nt &lt;&lt;'EOF'
-&lt;http://ex/p7&gt; &lt;http://ex/topic&gt; "biology" .
-&lt;http://ex/p8&gt; &lt;http://ex/topic&gt; "biology" .
-&lt;http://ex/p9&gt; &lt;http://ex/topic&gt; "biology" .
-EOF
-
-rete build examples/papers.nt topics.nt -o papers-topics.rete
-
-rete sparql papers-topics.rete \
-  'PREFIX e: &lt;http://ex/&gt; SELECT ?p WHERE { ?p e:topic "biology" }'
-</code></pre>
-<p>The topic is now a first-class edge: filter, join, and traverse it like any
-other relation.</p>
-<h2>Honest notes</h2>
-<ul>
-<li><strong>LDA needs real text and volume.</strong> This 9-paper demo is <em>illustrative</em>: with
-only 3 documents LDA cannot reliably split the two technical clusters (ML vs.
-databases often land on one topic), though the lexically distinct biology
-cluster separates perfectly. On a real corpus (hundreds of documents per
-community, longer abstracts) topics become sharp.</li>
-<li><strong>Communities ≠ topics.</strong> They coincide <em>here</em> by construction; on real data
-compare them — a structural community spanning two topics is itself a finding.</li>
-<li>LDA is non-deterministic up to its random seed (the script fixes
-<code>random_state=0</code> for reproducibility) and the topic <em>count</em> is a
-hyperparameter you choose.</li>
-</ul>
-<p>See also: <a href="intro.html">Graph data 101</a>, <a href="cli.html">CLI reference</a>,
-<a href="compatibility.html">Compatibility &amp; interop</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -362,7 +316,7 @@ hyperparameter you choose.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/topic-modeling.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/conformance.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

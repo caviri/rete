@@ -62,6 +62,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("architecture.md", "Architecture"),
             ("SPEC.md", "Format specification"),
             ("BENCHMARK.md", "Benchmarks"),
+            ("conformance.md", "SPARQL 1.1 conformance"),
         ],
     ),
 ];
