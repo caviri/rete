@@ -802,7 +802,12 @@ pub fn reach(bytes: &[u8], predicate: &str, seeds: &str, reverse: bool) -> Resul
 /// reads): builds adjacency for `predicate` by faulting only that predicate's
 /// tiles, then BFS from each seed. Worker-only (synchronous XHR).
 #[wasm_bindgen]
-pub fn reach_url(url: &str, predicate: &str, seeds: &str, reverse: bool) -> Result<String, JsValue> {
+pub fn reach_url(
+    url: &str,
+    predicate: &str,
+    seeds: &str,
+    reverse: bool,
+) -> Result<String, JsValue> {
     let (reader, rete) = open_url(url)?;
     let out = reach_rete(&rete, predicate, seeds, reverse)?;
     incomplete_guard(&rete, "reach")?;
@@ -831,7 +836,7 @@ fn reach_rete(rete: &Rete, predicate: &str, seeds: &str, reverse: bool) -> Resul
         }
         m
     } else {
-        build_adjacency(&rete, predicate)
+        build_adjacency(rete, predicate)
     };
 
     // Resolve known seeds to node ids; remember unknowns to report inline.
