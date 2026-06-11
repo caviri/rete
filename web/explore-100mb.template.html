@@ -286,10 +286,19 @@ const SOURCES = {
     info: "<b>Same-origin</b> on GitHub Pages (no CORS; Pages serves <code>206</code> Range). A pyramid-less <b>~74 MB</b> build of <code>wikidata.rete</code> is committed here under <code>wikidata-100MB/</code> (GitHub blocks &gt;100 MiB; dropping the unused community pyramid fits it under the cap), so the <b>Graph</b> backend works directly — verified end-to-end. Tables / DuckDB / SQLite aren't hosted here (too big), so use an HF source for those." },
 };
 let SRC = "hfspace", RETE_URL, DUCKDB_URL, SQLITE_URL;
+// If the HF Space is JWT-protected, the token is entered at runtime (never
+// committed) and appended as ?token=… to every request — query-param so there's
+// no CORS preflight and the DuckDB/SQLite range reads carry it too.
+let hfToken = (typeof localStorage !== "undefined" && localStorage.getItem("hfspaceToken")) || "";
+function srcQuery(name) {
+  let q = SOURCES[name].dl || "";
+  if (name === "hfspace" && hfToken) q += (q ? "&" : "?") + "token=" + encodeURIComponent(hfToken);
+  return q;
+}
 // Always absolute: the rete worker resolves URLs against its blob: base, so a
 // relative GitHub-Pages path (resolved against the page here) must be absolute
 // before it reaches the worker's XHR.
-const fileUrl = (name) => { const s = SOURCES[SRC]; return new URL(`${s.base}/${name}${s.dl}`, location.href).href; };
+const fileUrl = (name) => new URL(`${SOURCES[SRC].base}/${name}${srcQuery(SRC)}`, location.href).href;
 const PARQUET = (f) => fileUrl("parquet/" + f);
 function applySource() {
   RETE_URL = fileUrl("wikidata.rete");
@@ -678,10 +687,10 @@ async function probeSource(name) {
   try {
     // Sharded sources probe their manifest; single-file sources probe a 1-byte range.
     if (s.manifest) {
-      const r = await fetch(new URL(`${s.base}/${s.manifest}`, location.href).href, { cache: "no-store" });
+      const r = await fetch(new URL(`${s.base}/${s.manifest}${srcQuery(name)}`, location.href).href, { cache: "no-store" });
       return r.ok;
     }
-    const url = new URL(`${s.base}/wikidata.rete${s.dl}`, location.href).href;
+    const url = new URL(`${s.base}/wikidata.rete${srcQuery(name)}`, location.href).href;
     const r = await fetch(url, { headers: { Range: "bytes=0-0" }, cache: "no-store" });
     return r.status === 206 || r.status === 200;
   } catch (e) { return false; }
@@ -899,17 +908,37 @@ function switchSource(name) {
   probeRemote();
 }
 function renderSrcList() {
+  const tokenField = (k) => k === "hfspace"
+    ? `<input id="hfTokenInput" type="password" placeholder="access token — only if the Space is JWT-protected" ` +
+      `value="${hfToken.replace(/"/g, "&quot;")}" style="width:100%; margin-top:6px; padding:5px 8px; ` +
+      `border:1px solid var(--line-strong); border-radius:6px; font-size:12px">`
+    : "";
   $("srcList").innerHTML = Object.entries(SOURCES).map(([k, s]) =>
     `<label class="src-opt"><input type="radio" name="src" value="${k}" ${k === SRC ? "checked" : ""}>` +
     `<span><b>${s.label}</b> <span class="src-badge wait" id="badge-${k}">checking…</span><br>` +
-    `<span class="microcopy">${s.info}</span></span></label>`).join("");
+    `<span class="microcopy">${s.info}</span>${tokenField(k)}</span></label>`).join("");
   $("srcList").querySelectorAll("input[name=src]").forEach((r) => r.onchange = () => { switchSource(r.value); });
-  // Probe each source's reachability and badge it.
-  Object.keys(SOURCES).forEach(async (k) => {
-    const ok = await probeSource(k); const b = $("badge-" + k); if (!b) return;
-    b.className = "src-badge " + (ok ? "ok" : "no");
-    b.textContent = ok ? "reachable ✓" : "not reachable (405/CORS)";
-  });
+  const ti = $("hfTokenInput");
+  if (ti) {
+    // Clicking the field shouldn't toggle the radio; typing saves + re-probes.
+    ti.onclick = (e) => e.preventDefault();
+    ti.oninput = () => {
+      hfToken = ti.value.trim();
+      try { localStorage.setItem("hfspaceToken", hfToken); } catch (_) {}
+      applySource();
+      clearTimeout(ti._t); ti._t = setTimeout(() => probeOne("hfspace"), 400);
+      if (SRC === "hfspace") probeRemote();
+    };
+  }
+  Object.keys(SOURCES).forEach(probeOne);
+}
+async function probeOne(k) {
+  const b = $("badge-" + k); if (!b) return;
+  b.className = "src-badge wait"; b.textContent = "checking…";
+  const ok = await probeSource(k);
+  if (!$("badge-" + k)) return;
+  $("badge-" + k).className = "src-badge " + (ok ? "ok" : "no");
+  $("badge-" + k).textContent = ok ? "reachable ✓" : "not reachable (401/405/CORS)";
 }
 $("srcBtn").onclick = () => { renderSrcList(); $("srcModal").classList.remove("hidden"); };
 $("srcClose").onclick = () => $("srcModal").classList.add("hidden");
