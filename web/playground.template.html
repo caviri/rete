@@ -25,6 +25,8 @@ __PLAYGROUND_CSS__
     </div>
 
     <div class="top-actions">
+      <button id="openSource" type="button" class="secondary">Change source…</button>
+      <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
       </button>
@@ -34,11 +36,11 @@ __PLAYGROUND_CSS__
 
   <nav id="modeTabs" class="mode-tabs" aria-label="Playground mode">
     <button type="button" class="active" data-mode="sparql">SPARQL</button>
+    <button type="button" data-mode="explore">Explore</button>
     <button type="button" data-mode="shacl">SHACL</button>
     <button type="button" data-mode="reach">Reach</button>
     <button type="button" data-mode="schema">Schema</button>
     <button type="button" data-mode="provenance">Provenance</button>
-    <button type="button" data-mode="build">Build</button>
   </nav>
 
   <main class="console-shell">
@@ -46,16 +48,6 @@ __PLAYGROUND_CSS__
       <section class="source-panel">
         <h2>Source</h2>
         <p id="dsDesc" class="microcopy"></p>
-        <div class="source-grid">
-          <label class="file-zone" id="dropZone">
-            <input id="fileInput" type="file" accept=".rete,application/octet-stream" />
-            <span>Drop a .rete file</span>
-          </label>
-          <div class="url-loader">
-            <input id="urlInput" type="text" spellcheck="false" placeholder="https://.../graph.rete" />
-            <button id="urlLoad" type="button" class="secondary">Load URL</button>
-          </div>
-        </div>
       </section>
 
       <section class="library">
@@ -93,10 +85,12 @@ __PLAYGROUND_CSS__
               <option value="community">Split by community</option>
             </select>
           </label>
+          <button id="strategyHelp" type="button" class="help-button" title="What do these strategies do?" aria-label="Explain the evaluation strategies">?</button>
           <label id="roundWrap" class="hidden">
             <span>Round</span>
             <input id="round" type="number" min="0" placeholder="auto" />
           </label>
+          <button id="roundHelp" type="button" class="help-button hidden" title="What is a round?" aria-label="Explain dendrogram rounds">?</button>
           <select id="fmt" class="visually-hidden" aria-label="Result format">
             <option value="table">table</option>
             <option value="graph">graph</option>
@@ -105,6 +99,43 @@ __PLAYGROUND_CSS__
           </select>
           <span id="qmeta" class="run-meta"></span>
         </div>
+      </div>
+
+      <div class="panel" data-panel="explore">
+        <div class="editor-head">
+          <div>
+            <h1>Explore</h1>
+            <p class="microcopy">Browse the dataset as entity tables, and the community pyramid as nested clusters of clusters.</p>
+          </div>
+        </div>
+        <h3>Entity tables</h3>
+        <p class="microcopy">One table per <code>rdf:type</code> class: entities as rows, their properties as columns.</p>
+        <div id="exploreClasses" class="filter-row"></div>
+        <div id="exploreTable"></div>
+        <h3 style="margin-top:20px">Community pyramid</h3>
+        <p class="microcopy" id="pyramidNote"></p>
+        <div id="pyramidLegend" class="viz-legend"></div>
+        <div id="pyramidViz" class="ontology-diagram"></div>
+        <div id="pyramidLevels" style="margin-top:10px"></div>
+        <div class="section-title" style="margin-top:20px">
+          <h3 style="margin:0">File byte map</h3>
+          <label>
+            <span>Cell size</span>
+            <select id="layoutCell">
+              <option value="auto">auto</option>
+              <option value="64">64 B</option>
+              <option value="256">256 B</option>
+              <option value="1024">1 KB</option>
+              <option value="4096">4 KB</option>
+              <option value="16384">16 KB</option>
+              <option value="65536">64 KB</option>
+            </select>
+          </label>
+        </div>
+        <p class="microcopy" id="layoutNote"></p>
+        <div id="layoutLegend" class="viz-legend"></div>
+        <div id="layoutViz" class="ontology-diagram"></div>
+        <div id="layoutTable" style="margin-top:10px"></div>
       </div>
 
       <div class="panel" data-panel="shacl">
@@ -185,6 +216,7 @@ __PLAYGROUND_CSS__
             <p class="microcopy">Explain triple-pattern matches with selected index permutation and byte ranges.</p>
           </div>
         </div>
+        <div id="provExamples" class="example-list compact"></div>
         <div class="form-grid provenance-form">
           <label>
             <span>Subject</span>
@@ -271,7 +303,97 @@ __PLAYGROUND_CSS__
     </aside>
   </main>
 
-  <script>
+  <div id="sourceModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sourceModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="sourceModalTitle">Choose a data source</h3>
+        <button id="sourceModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="source-choice">
+        <h4>Bundled datasets</h4>
+        <p class="microcopy">Small example graphs embedded in this page — load instantly, query in memory.</p>
+        <div id="sourceBundled" class="filter-row"></div>
+      </div>
+      <div class="source-choice">
+        <h4>Local file</h4>
+        <p class="microcopy">Drop or pick a <code>.rete</code> file — it never leaves your browser.</p>
+        <label class="file-zone" id="dropZone">
+          <input id="fileInput" type="file" accept=".rete,application/octet-stream" />
+          <span>Drop a .rete file here, or click to choose</span>
+        </label>
+      </div>
+      <div class="source-choice">
+        <h4>Remote .rete (lazy, over HTTP range)</h4>
+        <p class="microcopy">Connect to a <code>.rete</code> URL and query it <strong>without downloading it</strong> —
+          a Web Worker range-fetches only the dictionary chunks and index tiles each query touches
+          (the same trick DuckDB uses on remote Parquet). The host must allow CORS and honor
+          <code>Range</code> (S3, GitHub, Hugging Face all do). The prefilled graph and its
+          companion Parquet / DuckDB / SQLite live in this
+          <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs/tree/wikidata-100MB" target="_blank" rel="noopener">Hugging Face bucket</a>;
+          explore all four side by side in the <a href="explore-100mb.html">lazy explorer</a>.</p>
+        <div class="url-loader">
+          <input id="remoteUrl" type="text" spellcheck="false"
+            placeholder="https://…/graph.rete"
+            value="https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-1gb.rete?download=true" />
+          <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+            <button id="remoteConnect" type="button">Connect (lazy)</button>
+            <button id="urlLoad" type="button" class="secondary" title="Download the whole file into memory instead">Download fully</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="strategyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="strategyModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="strategyModalTitle">Evaluation strategies</h3>
+        <button id="strategyModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <dl class="strategy-list">
+        <dt>Whole index</dt>
+        <dd>
+          The default and the reference answer. Evaluates against the full SPO/POS/OSP
+          permutation indexes with the complete engine — every supported SPARQL form and
+          feature. When in doubt, use this.
+        </dd>
+        <dt>Progressive summary</dt>
+        <dd>
+          A <strong>contract, not a speedup</strong>: answer <em>exactly</em> from the pyramid
+          summary — community structure and per-predicate counts, fetched in ~3 small range
+          reads — and <strong>never touch the triple index</strong>. Only shapes the summary can
+          answer qualify (counting triples or a predicate's total, ASK-style existence). A query
+          that returns <em>values</em> (titles, scores, IRIs) needs dictionary and index bytes, so
+          it falls back to the whole index — and says so in a banner. The Progressive Metadata
+          panel shows the exactness, bytes, and range reads of a summary-served answer.
+        </dd>
+        <dt>Round (split by community)</dt>
+        <dd>
+          The pyramid is built by repeated Louvain clustering: <strong>round 0</strong> is the
+          finest partition (many small communities); each higher round merges communities into
+          coarser "clusters of clusters", up to the top of the dendrogram. The Round field picks
+          which level the split uses — fewer, bigger partials at higher rounds; more, smaller
+          ones at round 0. Left empty, it uses the same round the file build chose for its
+          ~64&nbsp;KiB tile budget. The answer is identical at every round; only the
+          decomposition changes. The Explore tab visualizes these levels.
+        </dd>
+        <dt>Split by community</dt>
+        <dd>
+          Decomposes each basic graph pattern into <em>subject stars</em>, evaluates every star
+          per pyramid community (the community's subjects pushed in as a VALUES binding), and
+          recombines the partials with global hash joins; FILTER / UNION / OPTIONAL / MINUS
+          recurse, paths and GRAPH evaluate globally inside the split, and ORDER BY / GROUP BY /
+          LIMIT run once on the merged rows — so the rows are <strong>identical to the
+          whole-index answer</strong>, with a per-community contribution table below the result.
+          In this single-threaded page it illustrates the decomposition; natively the same
+          partials are the seam for parallel evaluation. Refused only when nothing in the query
+          can split (e.g. a pure property path).
+        </dd>
+      </dl>
+    </div>
+  </div>
+
+  <script id="reteGlue">
 __GLUE_JS__
   </script>
   <script>

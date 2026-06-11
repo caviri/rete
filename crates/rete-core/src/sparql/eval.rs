@@ -1,11 +1,11 @@
-//! Plan evaluation: turn a lowered [`Select`]/[`Plan`] into solution rows.
+﻿//! Plan evaluation: turn a lowered [`Select`]/[`Plan`] into solution rows.
 //!
 //! Evaluation is a lazy pull pipeline (volcano model): every algebra node in
 //! [`eval_plan_iter`] yields an iterator of integer slot [`Row`]s, so `LIMIT`,
-//! `ASK` and `DISTINCT … LIMIT` propagate demand all the way down to the index
+//! `ASK` and `DISTINCT â€¦ LIMIT` propagate demand all the way down to the index
 //! scan and stop early. Blocking points are only what the semantics force:
 //! aggregation, ORDER BY (top-k when a LIMIT bounds it), and the *build* side
-//! of hash joins / MINUS — their probe sides stream. Terms are resolved to
+//! of hash joins / MINUS â€” their probe sides stream. Terms are resolved to
 //! strings only at the projection boundary (late materialization). Aggregates,
 //! expressions and property paths live in the sibling `aggregate`/`expr`/`path`
 //! modules.
@@ -143,7 +143,7 @@ fn collect_expr_slots(e: &FExpr, slots: &mut Slots) {
 // Streaming joins need their hash key before any left row arrives, so the key
 // is the slots a plan *always* binds (`certain`) rather than the slots its
 // materialized rows happen to bind. A maybe-bound shared slot simply isn't part
-// of the bucket key — `merge_rows`/`minus_compatible` still verify it per
+// of the bucket key â€” `merge_rows`/`minus_compatible` still verify it per
 // candidate, so the result is unchanged; the bucket is just less selective for
 // those (rare, OPTIONAL/UNION-shaped) rows.
 
@@ -268,11 +268,11 @@ pub(super) fn ask_solution(rete: &Rete, sel: &Select) -> bool {
     let ctx = query_ctx(rete, sel);
     // A grouped query always yields at least one group (so ASK over it hinges on
     // HAVING); BIND aliases may be referenced by HAVING. These need the full
-    // aggregate path — fall back to materializing.
+    // aggregate path â€” fall back to materializing.
     if sel.group.is_some() || !sel.having.is_empty() || !sel.extends.is_empty() {
         return !raw_solutions_in(&ctx, sel).is_empty();
     }
-    // ASK pulls exactly one solution — let joins probe instead of scan.
+    // ASK pulls exactly one solution â€” let joins probe instead of scan.
     ctx.limit_hint.set(Some(1));
     let merged = if sel.from.is_empty() {
         None
@@ -317,7 +317,7 @@ fn raw_solutions_in(ctx: &Ctx, sel: &Select) -> Vec<Row> {
     let nf = sel.from_named.as_deref();
 
     let mut raw = match &sel.group {
-        // Grouping runs directly on the integer rows — only group keys and the
+        // Grouping runs directly on the integer rows â€” only group keys and the
         // values an aggregate needs are ever resolved.
         Some(g) => aggregate(ctx, eval_plan_iter(ctx, active, nf, &sel.plan).collect(), g),
         None => eval_plan_iter(ctx, active, nf, &sel.plan).collect(),
@@ -337,7 +337,7 @@ fn raw_solutions_in(ctx: &Ctx, sel: &Select) -> Vec<Row> {
     raw
 }
 
-/// Apply BIND/alias assignments to one row (columns only — never drops rows).
+/// Apply BIND/alias assignments to one row (columns only â€” never drops rows).
 fn apply_extends_row(ctx: &Ctx, row: &mut Row, extends: &[(String, FExpr)]) {
     for (var, expr) in extends.iter().rev() {
         if let Some(slot) = ctx.slots.slot(var) {
@@ -410,13 +410,13 @@ fn inst_named(ctx: &Ctx, n: &NamedNodePattern, b: &Row) -> Option<String> {
 }
 
 /// Run a lowered SELECT as a lazy modifier pipeline over the plan iterator:
-/// extends → HAVING → ORDER BY (top-k under LIMIT) → projection → DISTINCT →
-/// slice → late materialization. Only ORDER BY and aggregation block; every
+/// extends â†’ HAVING â†’ ORDER BY (top-k under LIMIT) â†’ projection â†’ DISTINCT â†’
+/// slice â†’ late materialization. Only ORDER BY and aggregation block; every
 /// other stage streams, so the slice's demand reaches the index scan.
 pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding>) {
     let ctx = query_ctx(rete, sel);
     // A pure LIMIT/OFFSET (no ORDER BY/DISTINCT/aggregate/HAVING, which all
-    // consume their input fully) bounds how many rows the pipeline will pull —
+    // consume their input fully) bounds how many rows the pipeline will pull â€”
     // joins below may switch to index probing. BIND only adds columns.
     if sel.order.is_empty() && !sel.distinct && sel.group.is_none() && sel.having.is_empty() {
         ctx.limit_hint
@@ -429,51 +429,54 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
     };
     let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
     let nf = sel.from_named.as_deref();
+    let source = eval_plan_iter(&ctx, active, nf, &sel.plan);
+    finish_select(&ctx, active, sel, source)
+}
 
+/// Apply a SELECT's solution modifiers â€” aggregation, BIND, HAVING, ORDER BY,
+/// projection, DISTINCT, OFFSET/LIMIT â€” to already-evaluated plan rows, then
+/// resolve the survivors. Split from [`run_select`] so the community-split
+/// evaluator can feed it the *union* of per-community plan rows: modifiers
+/// must run once, globally, for exact semantics.
+fn finish_select<'a, 'q>(
+    ctx: &'q Ctx<'a>,
+    active: &'q GraphIndex,
+    sel: &'q Select,
+    source: RowIter<'q>,
+) -> (Vec<String>, Vec<Binding>) {
     // Source rows: aggregation is blocking; everything else streams.
-    let mut source: RowIter = match &sel.group {
-        Some(g) => Box::new(
-            aggregate(
-                &ctx,
-                eval_plan_iter(&ctx, active, nf, &sel.plan).collect(),
-                g,
-            )
-            .into_iter(),
-        ),
-        None => eval_plan_iter(&ctx, active, nf, &sel.plan),
+    let mut source: RowIter<'q> = match &sel.group {
+        Some(g) => Box::new(aggregate(ctx, source.collect(), g).into_iter()),
+        None => source,
     };
 
-    // BIND/aliases add columns per row — streaming.
+    // BIND/aliases add columns per row â€” streaming.
     if !sel.extends.is_empty() {
-        let ctx_ref = &ctx;
         let extends = &sel.extends;
         source = Box::new(source.map(move |mut row| {
-            apply_extends_row(ctx_ref, &mut row, extends);
+            apply_extends_row(ctx, &mut row, extends);
             row
         }));
     }
 
-    // HAVING filters aggregated rows — streaming.
+    // HAVING filters aggregated rows â€” streaming.
     if !sel.having.is_empty() {
-        let ctx_ref = &ctx;
         let having = &sel.having;
         let mut cache = ExistsCache::new();
-        source = Box::new(source.filter(move |b| {
-            having
-                .iter()
-                .all(|f| f.boolean(ctx_ref, active, b, &mut cache))
-        }));
+        source = Box::new(
+            source.filter(move |b| having.iter().all(|f| f.boolean(ctx, active, b, &mut cache))),
+        );
     }
 
     // ORDER BY blocks, but with a LIMIT (and no DISTINCT, which would dedup
-    // *after* the cut) only the top `offset + limit` rows are kept — O(n·k)
+    // *after* the cut) only the top `offset + limit` rows are kept â€” O(nÂ·k)
     // bounded insertion instead of a full sort.
     if !sel.order.is_empty() {
         let sorted = match (sel.limit, sel.distinct) {
             (Some(limit), false) => {
-                top_k(&ctx, source, &sel.order, sel.offset.saturating_add(limit))
+                top_k(ctx, source, &sel.order, sel.offset.saturating_add(limit))
             }
-            _ => sort_all(&ctx, source, &sel.order),
+            _ => sort_all(ctx, source, &sel.order),
         };
         source = Box::new(sorted.into_iter());
     }
@@ -481,17 +484,16 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
     // Project to the requested slots (SELECT * keeps everything). Only DISTINCT
     // needs the materialized projected row (its identity is the projection);
     // otherwise the final conversion below reads the projected slots straight
-    // off the raw row — no per-row clone.
+    // off the raw row â€” no per-row clone.
     let proj_slots: Vec<usize> = sel
         .project
         .iter()
         .filter_map(|v| ctx.slots.slot(v))
         .collect();
     if !sel.project.is_empty() && sel.distinct {
-        let ctx_ref = &ctx;
         let ps = proj_slots.clone();
         source = Box::new(source.map(move |b| {
-            let mut p = ctx_ref.slots.empty_row();
+            let mut p = ctx.slots.empty_row();
             for &slot in &ps {
                 p[slot] = b[slot].clone();
             }
@@ -499,20 +501,36 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
         }));
     }
 
-    // DISTINCT dedups on the integer rows — streaming, so DISTINCT … LIMIT
+    // DISTINCT dedups on the integer rows â€” streaming, so DISTINCT â€¦ LIMIT
     // stops the scan as soon as enough distinct rows have surfaced.
     if sel.distinct {
         let mut seen: std::collections::HashSet<Row> = std::collections::HashSet::new();
         source = Box::new(source.filter(move |row| seen.insert(row.clone())));
     }
 
-    // Slice, then resolve only the surviving rows' projected values.
-    let rows: Vec<Binding> = source
+    // Slice to the bounded result page first, then coalesce the dictionary
+    // chunk faults for just those rows before resolving them — one batch of
+    // (coalesced) range reads instead of one fetch per distinct output term,
+    // which over a remote file is the difference between a few requests and
+    // hundreds. Then resolve only the surviving rows' projected values.
+    let raw: Vec<Row> = source
         .skip(sel.offset)
         .take(sel.limit.unwrap_or(usize::MAX))
+        .collect();
+    if sel.project.is_empty() {
+        ctx.resolver
+            .prefetch(raw.iter().flat_map(|r| r.iter().filter_map(|v| v.as_ref())));
+    } else {
+        ctx.resolver.prefetch(
+            raw.iter()
+                .flat_map(|r| proj_slots.iter().filter_map(|&slot| r[slot].as_ref())),
+        );
+    }
+    let rows: Vec<Binding> = raw
+        .into_iter()
         .map(|row| {
             if sel.project.is_empty() {
-                row_to_binding(&ctx, &row)
+                row_to_binding(ctx, &row)
             } else {
                 let mut b = Binding::new();
                 for (v, &slot) in sel.project.iter().zip(&proj_slots) {
@@ -528,6 +546,316 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
         .collect();
 
     (sel.project.clone(), rows)
+}
+
+/// One community's subject membership: the VALUES rows that restrict a star's
+/// subject variable to this community's members.
+struct CommunityMembers {
+    community: usize,
+    subjects: usize,
+    members: Vec<Vec<Option<String>>>,
+}
+
+/// Bookkeeping for a split evaluation: rows contributed per community across
+/// every split star, and whether anything actually split.
+#[derive(Default)]
+struct SplitStats {
+    rows_by_community: std::collections::BTreeMap<usize, usize>,
+    split_any: bool,
+}
+
+/// Slots bound in **every** row â€” the safe hash-key candidates for row-level
+/// joins ([`bound_mask`] is "bound in at least one").
+fn all_bound_mask(rows: &[Row], n: usize) -> Vec<bool> {
+    let mut m = vec![!rows.is_empty(); n];
+    for r in rows {
+        for (i, slot) in m.iter_mut().enumerate() {
+            *slot &= r[i].is_some();
+        }
+    }
+    m
+}
+
+/// Row-level hash join over already-materialized sides â€” the same semantics
+/// as the engine's streaming `JoinIter`. Right rows are bucketed by the slots
+/// bound in every row of both sides; `merge_rows` re-validates every shared
+/// slot, so the key is only a pruning device. `optional = true` is a left
+/// join: an unmatched left row is emitted unchanged, and `cond` (the
+/// OPTIONAL's filter) decides which merges count as matches.
+fn join_rows(
+    ctx: &Ctx,
+    active: &GraphIndex,
+    left: Vec<Row>,
+    right: Vec<Row>,
+    optional: bool,
+    cond: Option<&FExpr>,
+) -> Vec<Row> {
+    use std::collections::HashMap;
+    if right.is_empty() {
+        return if optional { left } else { Vec::new() };
+    }
+    let n = ctx.slots.len();
+    let lmask = all_bound_mask(&left, n);
+    let rmask = all_bound_mask(&right, n);
+    let key: Vec<usize> = (0..n).filter(|&i| lmask[i] && rmask[i]).collect();
+    let mut buckets: HashMap<Vec<Val>, Vec<usize>> = HashMap::new();
+    let mut partial: Vec<usize> = Vec::new();
+    for (i, row) in right.iter().enumerate() {
+        match key
+            .iter()
+            .map(|&s| row[s].clone())
+            .collect::<Option<Vec<Val>>>()
+        {
+            Some(k) => buckets.entry(k).or_default().push(i),
+            None => partial.push(i),
+        }
+    }
+    let mut cache = ExistsCache::new();
+    let mut out = Vec::new();
+    for lb in left {
+        let candidates: Vec<usize> = match key
+            .iter()
+            .map(|&s| lb[s].clone())
+            .collect::<Option<Vec<Val>>>()
+        {
+            Some(k) => buckets
+                .get(&k)
+                .into_iter()
+                .flatten()
+                .chain(partial.iter())
+                .copied()
+                .collect(),
+            None => (0..right.len()).collect(),
+        };
+        let mut matched = false;
+        for i in candidates {
+            if let Some(m) = merge_rows(&lb, &right[i]) {
+                if cond.is_none_or(|f| f.boolean(ctx, active, &m, &mut cache)) {
+                    matched = true;
+                    out.push(m);
+                }
+            }
+        }
+        if optional && !matched {
+            out.push(lb);
+        }
+    }
+    out
+}
+
+/// Row-level `MINUS` over materialized sides, mirroring [`minus_iter`]'s
+/// semantics: a left row is eliminated iff some right row shares at least one
+/// bound slot and agrees on every shared slot.
+fn minus_rows(ctx: &Ctx, left: Vec<Row>, right: Vec<Row>) -> Vec<Row> {
+    use std::collections::HashMap;
+    if right.is_empty() {
+        return left;
+    }
+    let n = ctx.slots.len();
+    let lmask = all_bound_mask(&left, n);
+    let rmask = bound_mask(&right, n);
+    let key: Vec<usize> = (0..n).filter(|&i| lmask[i] && rmask[i]).collect();
+    let mut buckets: HashMap<Vec<Val>, Vec<usize>> = HashMap::new();
+    let mut partial: Vec<usize> = Vec::new();
+    for (i, row) in right.iter().enumerate() {
+        match key
+            .iter()
+            .map(|&s| row[s].clone())
+            .collect::<Option<Vec<Val>>>()
+        {
+            Some(k) => buckets.entry(k).or_default().push(i),
+            None => partial.push(i),
+        }
+    }
+    left.into_iter()
+        .filter(|lb| {
+            let eliminated = match key
+                .iter()
+                .map(|&s| lb[s].clone())
+                .collect::<Option<Vec<Val>>>()
+            {
+                Some(k) => {
+                    buckets
+                        .get(&k)
+                        .is_some_and(|c| c.iter().any(|&i| minus_compatible(lb, &right[i])))
+                        || partial.iter().any(|&i| minus_compatible(lb, &right[i]))
+                }
+                None => right.iter().any(|rb| minus_compatible(lb, rb)),
+            };
+            !eliminated
+        })
+        .collect()
+}
+
+/// Recursive split evaluation: **split where sound, evaluate globally where
+/// not â€” always exact.**
+///
+/// The one place a community partition genuinely applies is a *subject star*:
+/// a group of triple patterns sharing one variable subject. Tiles partition
+/// triples by their subject's community, so a star's solutions partition by
+/// the subject's community and pushing each community's members in as a
+/// VALUES binding enumerates them all, exactly once, with index probes. A BGP
+/// is decomposed into its stars (plus a constant-subject residue), each star
+/// is split-evaluated, and the stars are recombined with a global hash join â€”
+/// so multi-hop joins work and cross-community rows survive. FILTER / UNION /
+/// OPTIONAL / MINUS recurse; anything with no subject partition (paths,
+/// VALUES, GRAPH) evaluates globally inside the recursion, which is exact by
+/// definition.
+fn eval_split(
+    ctx: &Ctx,
+    active: &GraphIndex,
+    plan: &Plan,
+    parts: &[CommunityMembers],
+    stats: &mut SplitStats,
+) -> Vec<Row> {
+    match plan {
+        Plan::Bgp(pats) => {
+            let mut groups: std::collections::BTreeMap<&str, Vec<TriplePattern>> =
+                std::collections::BTreeMap::new();
+            let mut residue: Vec<TriplePattern> = Vec::new();
+            for p in pats {
+                match &p.s {
+                    PatternTerm::Var(v) => groups.entry(v.as_str()).or_default().push(p.clone()),
+                    PatternTerm::Const(_) => residue.push(p.clone()),
+                }
+            }
+            if groups.is_empty() {
+                return eval_plan_in(ctx, active, None, plan);
+            }
+            stats.split_any = true;
+            let mut pieces: Vec<Vec<Row>> = Vec::new();
+            for (var, star) in &groups {
+                let star_plan = Plan::Bgp(star.clone());
+                let mut rows: Vec<Row> = Vec::new();
+                for part in parts {
+                    // VALUES pushdown probes the star per member, so only this
+                    // community's solutions come back and the total work stays
+                    // one pass over the star â€” not one pass per community.
+                    let plan_c = Plan::Join(
+                        Box::new(Plan::Values(vec![var.to_string()], part.members.clone())),
+                        Box::new(star_plan.clone()),
+                    );
+                    let before = rows.len();
+                    rows.extend(eval_plan_iter(ctx, active, None, &plan_c));
+                    *stats.rows_by_community.entry(part.community).or_default() +=
+                        rows.len() - before;
+                }
+                pieces.push(rows);
+            }
+            if !residue.is_empty() {
+                pieces.push(eval_plan_in(ctx, active, None, &Plan::Bgp(residue)));
+            }
+            // Recombine the stars: global hash joins, smallest side first.
+            pieces.sort_by_key(Vec::len);
+            let mut acc = pieces.remove(0);
+            for piece in pieces {
+                acc = join_rows(ctx, active, acc, piece, false, None);
+            }
+            acc
+        }
+        Plan::Filter(e, inner) => {
+            let rows = eval_split(ctx, active, inner, parts, stats);
+            let mut cache = ExistsCache::new();
+            rows.into_iter()
+                .filter(|b| e.boolean(ctx, active, b, &mut cache))
+                .collect()
+        }
+        Plan::Union(l, r) => {
+            let mut rows = eval_split(ctx, active, l, parts, stats);
+            rows.extend(eval_split(ctx, active, r, parts, stats));
+            rows
+        }
+        Plan::Join(l, r) => {
+            let lrows = eval_split(ctx, active, l, parts, stats);
+            let rrows = eval_split(ctx, active, r, parts, stats);
+            join_rows(ctx, active, lrows, rrows, false, None)
+        }
+        Plan::LeftJoin(l, r, cond) => {
+            let lrows = eval_split(ctx, active, l, parts, stats);
+            let rrows = eval_split(ctx, active, r, parts, stats);
+            join_rows(ctx, active, lrows, rrows, true, cond.as_ref())
+        }
+        Plan::Minus(l, r) => {
+            let lrows = eval_split(ctx, active, l, parts, stats);
+            let rrows = eval_split(ctx, active, r, parts, stats);
+            minus_rows(ctx, lrows, rrows)
+        }
+        // Paths, inline VALUES, GRAPH: no subject partition applies â€” these
+        // evaluate globally inside the recursion (exact; the splittable parts
+        // of the query still split around them).
+        _ => eval_plan_in(ctx, active, None, plan),
+    }
+}
+
+/// Evaluate a SELECT **per pyramid community where the partition is sound**,
+/// recombine globally, and apply the solution modifiers once on the merged
+/// rows â€” identical answers to [`run_select`], with per-community
+/// contribution counts. See [`eval_split`] for the decomposition; refuses
+/// only when *nothing* in the query splits (no BGP with a variable subject),
+/// since the strategy would add nothing over a whole-index run.
+pub(super) fn run_select_communities(
+    rete: &Rete,
+    sel: &Select,
+    round: Option<usize>,
+) -> Result<CommunitySelect, SparqlError> {
+    if !sel.from.is_empty() || sel.from_named.is_some() {
+        return Err(SparqlError::Unsupported(
+            "community-split evaluation works on the default graph only (no FROM / FROM NAMED)",
+        ));
+    }
+
+    // Partition subjects by pyramid community â€” the same dendrogram + round
+    // policy the file build uses.
+    let dict = rete.dictionary();
+    let ids = rete.match_ids((None, None, None));
+    let g = crate::pyramid::project_graph(dict, &ids);
+    let dend = crate::pyramid::build_dendrogram(&g);
+    let round = round.unwrap_or_else(|| {
+        crate::tiling::choose_round_for_budget(dict, &ids, &dend, crate::file::DEFAULT_TILE_BUDGET)
+    });
+    let tiles = crate::tiling::tile_by_community(dict, &ids, &dend, round);
+    let parts: Vec<CommunityMembers> = tiles
+        .iter()
+        .map(|tile| {
+            let subjects: std::collections::BTreeSet<u32> =
+                tile.triples.iter().map(|&(s, _, _)| s).collect();
+            let members: Vec<Vec<Option<String>>> = subjects
+                .iter()
+                .filter_map(|&s| dict.subject_term(s))
+                .map(|t| vec![Some(t)])
+                .collect();
+            CommunityMembers {
+                community: tile.community,
+                subjects: members.len(),
+                members,
+            }
+        })
+        .collect();
+
+    let ctx = query_ctx(rete, sel);
+    let active = rete.default_index();
+    let mut stats = SplitStats::default();
+    let all = eval_split(&ctx, active, &sel.plan, &parts, &mut stats);
+    if !stats.split_any {
+        return Err(SparqlError::Unsupported(
+            "nothing to split: the query has no basic graph pattern with a variable subject â€” \
+             run it with the whole-index strategy",
+        ));
+    }
+    let partials: Vec<CommunityPartial> = parts
+        .iter()
+        .map(|p| CommunityPartial {
+            community: p.community,
+            subjects: p.subjects,
+            rows: stats
+                .rows_by_community
+                .get(&p.community)
+                .copied()
+                .unwrap_or(0),
+        })
+        .collect();
+    let (vars, rows) = finish_select(&ctx, active, sel, Box::new(all.into_iter()));
+    Ok((vars, rows, partials))
 }
 
 /// Compare two decorated rows by the ORDER BY spec, with the arrival sequence
@@ -547,7 +875,7 @@ fn cmp_keyed(
     a.1.cmp(&b.1)
 }
 
-/// Decorate–sort–undecorate: resolve each row's sort keys *once* (numeric value
+/// Decorateâ€“sortâ€“undecorate: resolve each row's sort keys *once* (numeric value
 /// pre-parsed) instead of re-evaluating them on every comparison.
 fn sort_all(ctx: &Ctx, rows: RowIter, order: &[(FExpr, bool)]) -> Vec<Row> {
     let mut keyed: Vec<(Vec<SortKey>, usize, Row)> = rows
@@ -564,7 +892,7 @@ fn sort_all(ctx: &Ctx, rows: RowIter, order: &[(FExpr, bool)]) -> Vec<Row> {
     keyed.into_iter().map(|(_, _, b)| b).collect()
 }
 
-/// The first `k` rows of the stable sort order, via bounded insertion — O(n·k)
+/// The first `k` rows of the stable sort order, via bounded insertion â€” O(nÂ·k)
 /// worst case with k = LIMIT + OFFSET (small), instead of sorting all n rows.
 fn top_k(ctx: &Ctx, rows: RowIter, order: &[(FExpr, bool)], k: usize) -> Vec<Row> {
     if k == 0 {
@@ -606,7 +934,7 @@ fn values_rows(ctx: &Ctx, vars: &[String], rows: &[Vec<Option<String>>]) -> Vec<
 }
 
 /// Evaluate a plan eagerly to a row vector (used by EXISTS, whose solutions are
-/// cached and probed repeatedly). The demand bound is suspended — this consumes
+/// cached and probed repeatedly). The demand bound is suspended â€” this consumes
 /// everything, so hash joins beat per-row probing here.
 pub(crate) fn eval_plan_in(
     ctx: &Ctx,
@@ -818,7 +1146,7 @@ fn minus_iter<'q>(
     }
     let n = ctx.slots.len();
     let rmask = bound_mask(&right, n);
-    // Disjoint domains ⇒ MINUS eliminates nothing.
+    // Disjoint domains â‡’ MINUS eliminates nothing.
     let lposs = possible_bound(ctx, l, n);
     if !(0..n).any(|i| lposs[i] && rmask[i]) {
         return eval_plan_iter(ctx, index, nf, l);
@@ -861,7 +1189,7 @@ fn minus_iter<'q>(
 
 /// A streaming hash join: the right side is materialized into buckets keyed by
 /// the slots both sides *always* bind; left rows are then pulled one at a time,
-/// each probing its bucket — so a `LIMIT` above the join stops the left scan.
+/// each probing its bucket â€” so a `LIMIT` above the join stops the left scan.
 /// `optional = true` is a left join (OPTIONAL): a left row with no surviving
 /// match is emitted unchanged, and `cond` (the OPTIONAL's filter) decides which
 /// merges count as a match. `merge_rows` re-checks every shared slot, so
@@ -872,7 +1200,7 @@ struct JoinIter<'q> {
     left: RowIter<'q>,
     right: Vec<Row>,
     buckets: std::collections::HashMap<Vec<Val>, Vec<usize>>,
-    /// Right rows not fully bound on `jv` — candidates for every left row.
+    /// Right rows not fully bound on `jv` â€” candidates for every left row.
     partial: Vec<usize>,
     jv: Vec<usize>,
     optional: bool,

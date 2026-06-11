@@ -911,6 +911,186 @@ pre {
   color: var(--accent-dark);
 }
 
+/* Collapsed tables: hidden tail rows + the "Show more" reveal button. */
+.tr-hidden {
+  display: none;
+}
+
+/* Result tables scroll horizontally rather than wrapping wide IRI/value cells.
+   The scroll container only clips if its ancestors allow shrinking below their
+   content — grid/flex items default to min-width:auto, which would otherwise let
+   a wide table push the whole column out. */
+.workbench,
+.results-band,
+.result-pane {
+  min-width: 0;
+}
+
+.tbl {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.tbl table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.tbl th,
+.tbl td {
+  white-space: nowrap;
+  max-width: 560px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: normal;
+}
+
+.tbl-more {
+  margin-top: 8px;
+  min-height: 30px;
+  font-size: 12px;
+}
+
+/* Legends for the Explore visualizations. */
+.viz-legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 6px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.viz-legend .lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.viz-legend .sw {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+  border: 1px solid rgba(23, 33, 29, .18);
+}
+
+.viz-legend .sw-pyr-outer {
+  background: rgba(20, 125, 105, .15);
+  border-color: var(--accent);
+}
+
+.viz-legend .sw-pyr-inner {
+  background: rgba(200, 79, 47, .3);
+  border-color: var(--accent-2);
+}
+
+/* Community-pyramid bubbles (Explore tab). */
+.pyr-outer {
+  fill: rgba(20, 125, 105, .07);
+  stroke: var(--accent);
+  stroke-width: 1.4;
+}
+
+.pyr-inner {
+  fill: rgba(200, 79, 47, .16);
+  stroke: var(--accent-2);
+  stroke-width: 1;
+}
+
+.pyr-label {
+  font: 11px "Cascadia Mono", Consolas, monospace;
+  fill: var(--accent-dark);
+  pointer-events: none;
+}
+
+/* The strategy-help "?" button and its explanation modal. */
+.help-button {
+  width: 28px;
+  min-height: 28px;
+  align-self: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent-dark);
+  font-weight: 800;
+  padding: 0;
+}
+
+.help-button:hover {
+  background: var(--side);
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(23, 33, 29, .45);
+}
+
+.modal-card {
+  width: min(640px, 100%);
+  max-height: 86vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.modal-head h3 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 19px;
+}
+
+.strategy-list {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.source-choice {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.source-choice:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.source-choice h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--accent-dark);
+}
+
+.strategy-list dt {
+  margin-top: 12px;
+  font-weight: 800;
+  color: var(--accent-dark);
+}
+
+.strategy-list dd {
+  margin: 4px 0 0;
+  color: var(--ink);
+}
+
 .hidden,
 .visually-hidden {
   display: none !important;

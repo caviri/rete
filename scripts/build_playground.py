@@ -30,6 +30,12 @@ SRC = WEB / "playground-src"
 NOMOD = WEB / "pkg-nomodules"
 TEMPLATE = WEB / "playground.template.html"
 OUT = ROOT / "docs" / "playground.html"
+# The Wikidata-100MB lazy explorer: a self-contained static page (inlines the
+# wasm glue + binary; rete worker built from a blob; DuckDB-WASM from CDN).
+# Rendered into both docs/ (the published site) and web/ (local serving, so the
+# index.html link works there too).
+EXPLORE_TEMPLATE = WEB / "explore-100mb.template.html"
+EXPLORE_OUTS = (ROOT / "docs" / "explore-100mb.html", WEB / "explore-100mb.html")
 
 GLUE_JS = NOMOD / "rete_wasm.js"
 WASM = NOMOD / "rete_wasm_bg.wasm"
@@ -132,6 +138,31 @@ def main() -> None:
     print(f"  wasm: {WASM.stat().st_size} bytes -> {len(wasm_b64)} base64 chars")
     print(f"  datasets: {sizes}")
     print(f"  output: {OUT.stat().st_size} bytes")
+
+    # The lazy explorer: inline the same glue + wasm + shared widgets module.
+    if EXPLORE_TEMPLATE.exists():
+        widgets = (SRC / "widgets.js").read_text(encoding="utf-8").rstrip()
+        ex = (
+            EXPLORE_TEMPLATE.read_text(encoding="utf-8")
+            .replace("__GLUE_JS__", glue)
+            .replace("__WASM_B64__", wasm_b64)
+            .replace("__WIDGETS_JS__", widgets)
+        )
+        leftover = [p for p in ("__GLUE_JS__", "__WASM_B64__", "__WIDGETS_JS__") if p in ex]
+        if leftover:
+            die("unreplaced explore placeholder(s): " + ", ".join(leftover))
+        # The COI service worker must sit beside the explorer (same origin) so
+        # the page can register it to gain cross-origin isolation (→ parallel
+        # range reads). Copy it next to each explorer output.
+        coi_src = WEB / "coi-serviceworker.js"
+        coi_text = coi_src.read_text(encoding="utf-8") if coi_src.exists() else None
+        for out in EXPLORE_OUTS:
+            out.write_text(ex, encoding="utf-8")
+            print(f"  explorer: wrote {out} ({out.stat().st_size} bytes)")
+            if coi_text is not None:
+                coi_out = out.parent / "coi-serviceworker.js"
+                coi_out.write_text(coi_text, encoding="utf-8")
+                print(f"  explorer: wrote {coi_out}")
 
 
 if __name__ == "__main__":

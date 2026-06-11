@@ -360,6 +360,43 @@ fn lazy_sparql_open_fetches_only_touched_tiles() {
     );
 }
 
+/// The pyramid meta (community structure) is large on real graphs and SPARQL
+/// never reads it, so a lazy open must NOT fetch it — neither on open nor while
+/// evaluating a query. It must still fault in when `pyramid()` is actually
+/// called (community / pyramid_tree / inspect queries).
+#[test]
+fn lazy_open_defers_the_pyramid_until_needed() {
+    let image = image_with_pyramid();
+    let h = Rete::open(&image).unwrap().header().clone();
+    let pyr = (
+        h.pyramid_meta_offset,
+        h.pyramid_meta_offset + h.pyramid_meta_len,
+    );
+    assert!(pyr.1 > pyr.0, "fixture should carry a pyramid");
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+
+    // Open + a bound SPARQL query: the pyramid region must stay untouched.
+    let q = "SELECT ?o WHERE { <http://ex/n0> <http://ex/knows> ?o }";
+    let _ = eval_query(&rete, q).unwrap();
+    assert!(
+        !reader.reads().iter().any(|r| overlaps(*r, pyr)),
+        "lazy SPARQL open/eval fetched the pyramid region {pyr:?}: {:?}",
+        reader.reads()
+    );
+
+    // Asking for the pyramid faults it in (and matches a full open).
+    let got = rete.pyramid().expect("pyramid faults in on demand");
+    let want = Rete::open(&image).unwrap();
+    assert_eq!(got.summary.len(), want.pyramid().unwrap().summary.len());
+    assert!(!got.summary.is_empty(), "fixture pyramid has super-edges");
+    assert!(
+        reader.reads().iter().any(|r| overlaps(*r, pyr)),
+        "pyramid() should have fetched the pyramid region {pyr:?}"
+    );
+}
+
 /// A full unbound scan over a lazily-opened multi-tile file must coalesce its
 /// tile fetches: adjacent tile ranges batch into single range reads, so the
 /// request count stays a small constant instead of one per tile.
@@ -396,10 +433,94 @@ fn full_scan_coalesces_tile_fetches() {
         .iter()
         .filter(|r| overlaps(**r, (idx_start, idx_end)))
         .count();
+    // The scan ramps its prefetch window geometrically (4, 8, 16, … tiles),
+    // so a full sweep costs O(log tiles) coalesced batch reads plus the tile
+    // directories — a small constant, NOT one read per tile (which over 700+
+    // tiles would be in the hundreds).
     assert!(
-        index_reads < 20,
+        index_reads < 32,
         "full scan issued {index_reads} index-region reads over {spo_tiles} tiles — \
-         expected the tile directories plus a few coalesced batch reads"
+         expected the tile directories plus O(log n) coalesced batch reads"
+    );
+}
+
+/// A small `LIMIT` on an unbound scan must not fault the whole index: the
+/// geometric prefetch ramp stops as soon as the pipeline stops pulling rows,
+/// so `LIMIT 1` fetches only the first window of tiles, not every tile.
+#[test]
+fn small_limit_does_not_fetch_the_whole_index() {
+    let image = multi_tile_image();
+    let (idx_start, idx_end) = index_region(&image);
+    let index_len = idx_end - idx_start;
+    let spo_tiles = Rete::open(&image).unwrap().default_index().tile_sections()[0].len();
+    assert!(
+        spo_tiles > 100,
+        "expected a many-tile fixture, got {spo_tiles}"
+    );
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let q = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1";
+    let rows = match eval_query(&rete, q).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(rows.len(), 1);
+    assert!(!rete.index_incomplete());
+
+    let index_bytes_read: u64 = reader
+        .reads()
+        .iter()
+        .filter(|r| overlaps(**r, (idx_start, idx_end)))
+        .map(|&(_, l)| l)
+        .sum();
+    assert!(
+        index_bytes_read < index_len / 4,
+        "LIMIT 1 read {index_bytes_read} of {index_len} index bytes over \
+         {spo_tiles} tiles — expected only the first prefetch window"
+    );
+}
+
+/// Resolving a many-row result must coalesce its dictionary faults: the engine
+/// gathers the bounded page's term IDs and batch-faults their chunks in a few
+/// coalesced range reads, instead of one fetch per distinct term (which over a
+/// remote file is hundreds of sequential requests).
+#[test]
+fn multi_term_output_coalesces_dictionary_faults() {
+    let image = multi_tile_image();
+    let h = Rete::open(&image).unwrap().header().clone();
+    let dict = (h.dictionary_offset, h.dictionary_offset + h.dictionary_len);
+
+    // 400 rows, each a distinct (subject, object) of scrambled IRIs — their
+    // terms land in many chunks spread across the dictionary sections.
+    let q = "SELECT ?s ?o WHERE { ?s <http://ex/knows> ?o } LIMIT 400";
+    let plain = Rete::open(&image).unwrap();
+    let expected = match eval_query(&plain, q).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(expected.len(), 400);
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let got = match eval_query(&rete, q).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(got, expected);
+    assert!(!rete.index_incomplete());
+
+    // 800 cells (400 subjects + 400 objects) resolve in far fewer than 800
+    // dictionary reads — the per-section chunk batches coalesce adjacent runs.
+    let dict_reads = reader
+        .reads()
+        .iter()
+        .filter(|r| overlaps(**r, dict))
+        .count();
+    assert!(
+        dict_reads < 24,
+        "resolving 800 output terms issued {dict_reads} dictionary reads — \
+         expected a few coalesced chunk batches, not one per term/chunk"
     );
 }
 
@@ -420,9 +541,9 @@ fn dump_over_lazy_open_coalesces_fetches() {
 
     let total_reads = reader.reads().len();
     assert!(
-        total_reads < 40,
+        total_reads < 56,
         "lazy dump issued {total_reads} range reads — expected directories \
-         plus coalesced chunk/tile batches"
+         plus coalesced chunk batches and O(log n) tile-prefetch batches"
     );
 }
 

@@ -8,6 +8,13 @@ window.RETE_PLAYGROUND_CATALOG = {
       description: "250 papers, 137 authors, 36 venues from scripts/synth_graph.py (seed 42): power-law citations, field communities, Zipfian venues, and typed literals."
     },
     {
+      key: "wikidata",
+      kind: "remote-lazy",
+      url: "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-1gb.rete?download=true",
+      label: "wikidata - real Wikidata (remote, lazy)",
+      description: "A real slice of the Wikidata truthy dump hosted on Hugging Face, queried lazily over HTTP range - only the dictionary chunks and index tiles each query touches are fetched, never the whole file. Pick selective patterns (a bound subject); SPARQL tab only."
+    },
+    {
       key: "scholar-noisy",
       label: "scholar-noisy.rete - same world, 25% noise",
       description: "The same generator at --noise 0.25: rewired citations (incl. temporal violations), missing ORCIDs and ISSNs, and whitespace-mangled titles - for SHACL and data-quality demos."
@@ -29,6 +36,45 @@ window.RETE_PLAYGROUND_CATALOG = {
     }
   ],
   examples: {
+    wikidata: [
+      {
+        family: "Select",
+        label: "All facts about an entity",
+        view: "table",
+        tip: "A bound subject (Bemelen, Q100001) routes to just the tiles holding it - a few range reads of the whole file. The coordinate comes back as a geo:wktLiteral (recovered datatype).",
+        q: `SELECT ?p ?o WHERE { <http://www.wikidata.org/entity/Q100001> ?p ?o }`
+      },
+      {
+        family: "Select",
+        label: "English labels of an entity",
+        view: "table",
+        tip: "Bound subject + bound predicate: the most selective shape - minimal bytes fetched.",
+        q: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?label WHERE {
+  <http://www.wikidata.org/entity/Q100001> rdfs:label ?label
+} LIMIT 50`
+      },
+      {
+        family: "Select",
+        label: "Coordinates of a place",
+        view: "table",
+        tip: "Returns a geo:wktLiteral - the datatype recovered during the parquet->rete conversion.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+SELECT ?coord WHERE {
+  <http://www.wikidata.org/entity/Q100001> wdt:P625 ?coord
+}`
+      },
+      {
+        family: "Path",
+        label: "Subclasses of a class",
+        view: "table",
+        tip: "Reverse bound-object lookup (P279 = subclass of): who declares this as their superclass.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+SELECT ?sub WHERE {
+  ?sub wdt:P279 <http://www.wikidata.org/entity/Q515>
+} LIMIT 50`
+      }
+    ],
     scholar: [
       {
         family: "Summary",
@@ -57,6 +103,20 @@ SELECT ?author ?name ?h ?institution WHERE {
         label: "High-novelty papers",
         view: "table",
         tip: "FILTER over an xsd:double literal (noveltyScore is log-normal, so the tail is short).",
+        q: `PREFIX ex: <http://ex/>
+PREFIX dct: <http://purl.org/dc/terms/>
+SELECT ?title ?score WHERE {
+  ?paper ex:noveltyScore ?score ;
+    dct:title ?title .
+  FILTER(?score > 2.0)
+} ORDER BY DESC(?score)`
+      },
+      {
+        family: "Select",
+        label: "High-novelty, split by community",
+        strategy: "community",
+        view: "table",
+        tip: "The split strategy: subject stars evaluate per pyramid community, joins recombine the partials globally, FILTER/ORDER BY semantics intact — identical rows to the whole-index run.",
         q: `PREFIX ex: <http://ex/>
 PREFIX dct: <http://purl.org/dc/terms/>
 SELECT ?title ?score WHERE {
@@ -502,10 +562,92 @@ ex:ApplicationDependencyShape
     }
   },
   provenance: {
-    scholar: { predicate: "<http://purl.org/spar/cito/cites>", object: "<http://ex/paper/15>" },
-    "scholar-noisy": { predicate: "<http://purl.org/spar/cito/cites>", object: "<http://ex/paper/14>" },
-    citations: { predicate: "<http://purl.org/spar/cito/cites>", object: "<https://doi.org/10.1038/s41586-021-03819-2>" },
-    typed: { predicate: "<http://ex/knows>" },
-    deps: { predicate: "<http://ex/dependsOn>" }
+    scholar: {
+      predicate: "<http://purl.org/spar/cito/cites>",
+      object: "<http://ex/paper/15>",
+      examples: [
+        {
+          label: "Who cites the most-cited paper",
+          tip: "Object-bound pattern: routed to the OSP permutation; each match shows its tile and byte range.",
+          predicate: "<http://purl.org/spar/cito/cites>",
+          object: "<http://ex/paper/15>"
+        },
+        {
+          label: "Everything about the hub author",
+          tip: "Subject-bound pattern: routed to SPO — one author's facts live in one a-group of one tile.",
+          subject: "<http://ex/author/105>"
+        },
+        {
+          label: "All coauthor edges",
+          tip: "Predicate-bound pattern: routed to POS — the whole relation is one contiguous run.",
+          predicate: "<http://ex/coauthor>"
+        }
+      ]
+    },
+    "scholar-noisy": {
+      predicate: "<http://purl.org/spar/cito/cites>",
+      object: "<http://ex/paper/14>",
+      examples: [
+        {
+          label: "Who cites paper 14",
+          tip: "Object-bound: OSP permutation, with the matching tile and byte range per row.",
+          predicate: "<http://purl.org/spar/cito/cites>",
+          object: "<http://ex/paper/14>"
+        },
+        {
+          label: "Everything about the hub author",
+          tip: "Subject-bound: SPO routing to a single tile.",
+          subject: "<http://ex/author/120>"
+        }
+      ]
+    },
+    citations: {
+      predicate: "<http://purl.org/spar/cito/cites>",
+      object: "<https://doi.org/10.1038/s41586-021-03819-2>",
+      examples: [
+        {
+          label: "Who cites AlphaFold",
+          tip: "Object-bound over ~539k triples: OSP routes to the one tile holding the DOI's a-group.",
+          predicate: "<http://purl.org/spar/cito/cites>",
+          object: "<https://doi.org/10.1038/s41586-021-03819-2>"
+        },
+        {
+          label: "One author's facts",
+          tip: "Subject-bound: SPO — compare the byte ranges with the predicate-bound example.",
+          subject: "<http://ex/author/1235>"
+        }
+      ]
+    },
+    typed: {
+      predicate: "<http://ex/knows>",
+      examples: [
+        {
+          label: "All knows edges",
+          tip: "Predicate-bound: POS permutation; a tiny file is still one tile per permutation.",
+          predicate: "<http://ex/knows>"
+        },
+        {
+          label: "Everything about Alice",
+          tip: "Subject-bound: SPO routing.",
+          subject: "<http://ex/Alice>"
+        }
+      ]
+    },
+    deps: {
+      predicate: "<http://ex/dependsOn>",
+      examples: [
+        {
+          label: "All dependency edges",
+          tip: "Predicate-bound: POS permutation.",
+          predicate: "<http://ex/dependsOn>"
+        },
+        {
+          label: "Who depends on log4x",
+          tip: "Object-bound: OSP — the impact-analysis pattern at the byte level.",
+          predicate: "<http://ex/dependsOn>",
+          object: "<http://ex/log4x>"
+        }
+      ]
+    }
   }
 };

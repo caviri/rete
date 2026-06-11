@@ -4,10 +4,17 @@
 **/*.rs.bk
 .venv/
 __pycache__/
+# Built static pages rendered by scripts/build_playground.py (docs/ copies are
+# committed; the web/ copy is a local-serving convenience, regenerated).
+/web/explore-100mb.html
 
 # Built graph files are artifacts of the .nt/.nq sources in examples/ — rebuild
 # with `rete build` (see README). The sources, not the binaries, are tracked.
 *.rete
+# Exception: a pyramid-less ~74 MB build is committed so the explorer's
+# same-origin "GitHub Pages" source has a real file to range-query (see the
+# Source modal). Regenerate with: rete build <data>.nq -o … --no-pyramid
+!/docs/wikidata-100MB/wikidata.rete
 
 # Cargo.lock IS committed: this workspace ships a binary (rete-cli), so a locked
 # dependency set gives reproducible builds and a stable CI cache key. (It would

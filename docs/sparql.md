@@ -22,7 +22,7 @@ SELECT-only wrapper).
 | **Query forms** | `SELECT`, `ASK`, `CONSTRUCT`, `DESCRIBE` |
 | **Patterns** | Triple patterns and BGPs evaluated as integer-space hash joins on shared variables; blank nodes as non-distinguished variables |
 | **Algebra** | `OPTIONAL` (left join), `UNION`, `MINUS`, `FILTER EXISTS` / `NOT EXISTS` |
-| **Filters** | Comparisons, `&&`/`\|\|`/`!`, arithmetic, `BOUND`, `COALESCE`; built-ins incl. `CONTAINS`, `STRLEN`, `SUBSTR`, `CONCAT`, `STR`, `isIRI`/`isLiteral`/`isBlank`, `REGEX` |
+| **Filters** | Comparisons, `&&`/`\|\|`/`!`, arithmetic, `BOUND`, `COALESCE`; built-ins incl. `CONTAINS`, `STRLEN`, `SUBSTR`, `CONCAT`, `STR`, `isIRI`/`isLiteral`/`isBlank`, `DATATYPE`, `LANG`, `REGEX` |
 | **Property paths** | `p+`, `p*`, `p?` (zero-length included for `*`/`?`), reverse `^p`, sequence `a/b`, alternative `a\|b` — evaluated goal-directed from a bound endpoint |
 | **Solution modifiers** | `DISTINCT`, `ORDER BY` (ASC/DESC), `LIMIT`, `OFFSET`, `VALUES`, `BIND` |
 | **Aggregation** | `GROUP BY`, `HAVING`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` (incl. `COUNT(DISTINCT …)`) |
@@ -64,6 +64,26 @@ resolved to strings only at projection. It is still not a *cost-based* planner �
 join order is a selectivity heuristic — and the benchmark page separates
 correctness coverage from latency and calls out the shapes where Oxigraph still
 wins.
+
+### Community-split evaluation
+
+`eval_select_communities` evaluates a SELECT with a **split-where-sound,
+global-where-not** strategy that always returns exactly the whole-graph
+answer. The one place the pyramid partition genuinely applies is a *subject
+star* — a group of triple patterns sharing one variable subject — because
+tiles partition triples by their subject's community, so a star's solutions
+partition cleanly by community. Each BGP is decomposed into its stars; each
+star is evaluated per community (the community's subjects pushed in as a
+`VALUES` binding, which the engine turns into index probes); and the stars
+are recombined with **global hash joins**, so multi-hop joins work and
+solutions that cross communities survive. `FILTER` / `UNION` / `OPTIONAL` /
+`MINUS` recurse through the same machinery; property paths, inline `VALUES`,
+and `GRAPH` blocks evaluate globally inside the split (exact by definition);
+and `GROUP BY` / `ORDER BY` / `LIMIT` / `DISTINCT` run once on the merged
+rows. A query is refused only when nothing in it can split (no BGP with a
+variable subject — the strategy would add nothing) or under `FROM` / `FROM
+NAMED`. The playground's "Split by community" strategy uses this; natively
+the per-star, per-community partials are the seam for parallel evaluation.
 
 ## Not supported
 

@@ -25,6 +25,14 @@ pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
 /// section: ~64 KiB matches both zstd's sweet spot and one HTTP range read.
 pub const INDEX_TILE_BUDGET: usize = 64 * 1024;
 
+/// Geometric tile-prefetch ramp for an unbound (multi-tile) scan (see
+/// [`GraphIndex::scan_iter`]). The first coalesced batch faults this many
+/// tiles; each subsequent batch doubles up to [`PREFETCH_WINDOW_MAX`]. Small
+/// enough that `LIMIT 1` fetches only a few tiles, large enough that a full
+/// scan still coalesces into a handful of range reads.
+const PREFETCH_WINDOW_START: usize = 4;
+const PREFETCH_WINDOW_MAX: usize = 512;
+
 /// Fetches one tile's (uncompressed) block image on demand: the bridge that
 /// lets a remote `GraphIndex` fault tiles in over a `RangeReader` without this
 /// module knowing about I/O. `None` = the fetch failed; the index records the
@@ -472,14 +480,24 @@ impl GraphIndex {
         let [pa, pb, pc] = perm.order_pattern(pattern);
         let si = perm.section_index();
         let (start, end) = self.tile_span(si, pa);
-        // A multi-tile span (unbound leading component) batch-faults its
-        // missing tiles in coalesced range reads instead of one per tile.
-        self.prefetch_span(si, start, end);
+        // Coalesce tile faults, but ramp the prefetch window geometrically as
+        // the scan advances rather than fetching the whole span up front: a
+        // small `LIMIT` (which stops pulling early) then never faults tiles
+        // past the rows it needs, while a full scan still batches into a
+        // handful of coalesced reads (4, 8, 16, … tiles). A bound leading scan
+        // spans a single tile, so the prefetch no-ops and it faults just that
+        // one tile, unchanged.
+        let window = std::cell::Cell::new(PREFETCH_WINDOW_START);
         (start..end)
             .flat_map(move |ti| {
                 // Fault in (if remote), parse (untrusted bytes ⇒ `None` on
                 // malformed), and zone-prune per tile, then stream the
                 // matching groups.
+                if self.sections[si][ti].data.get().is_none() {
+                    let w = window.get();
+                    self.prefetch_span(si, ti, (ti + w).min(end));
+                    window.set(w.saturating_mul(2).min(PREFETCH_WINDOW_MAX));
+                }
                 let tile = &self.sections[si][ti];
                 TripleBlock::parse(self.tile_data(si, ti))
                     .ok()

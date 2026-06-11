@@ -402,6 +402,8 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
                 Function::IsBlank => Builtin::IsBlank,
                 Function::IsLiteral => Builtin::IsLiteral,
                 Function::IsNumeric => Builtin::IsNumeric,
+                Function::Datatype => Builtin::Datatype,
+                Function::Lang => Builtin::Lang,
                 Function::Regex => Builtin::Regex,
                 _ => return Err(SparqlError::Unsupported("built-in function")),
             };

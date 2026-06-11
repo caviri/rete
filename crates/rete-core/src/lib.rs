@@ -30,8 +30,8 @@ pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 pub use file::{
     build_pyramid_meta, schema_classes, schema_summary, verify, write_dataset,
-    write_dataset_with_metadata, write_file, ByteRange, Rete, SummaryView, TermTriple,
-    TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
+    write_dataset_with_metadata, write_file, ByteRange, LayoutSegment, Rete, SummaryView,
+    TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 pub use header::{Header, HeaderError, MAGIC, VERSION};
 pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern};
@@ -47,9 +47,10 @@ pub use shacl::{
     ValidationResult,
 };
 pub use sparql::{
-    eval_query, eval_sparql, parse_select, query_predicates, routed_triple_pattern,
-    summary_query_shape, Agg, FExpr, GraphTarget, GroupSpec, Op, PathAst, Plan, QueryOutput, Rep,
-    RoutedTriplePattern, Select, SparqlError, SummaryQueryShape,
+    eval_query, eval_select_communities, eval_sparql, parse_select, query_predicates,
+    routed_triple_pattern, summary_query_shape, Agg, CommunityPartial, CommunitySelect, FExpr,
+    GraphTarget, GroupSpec, Op, PathAst, Plan, QueryOutput, Rep, RoutedTriplePattern, Select,
+    SparqlError, SummaryQueryShape,
 };
 pub use tiling::{choose_round_for_budget, summarize, tile_by_community, SuperEdge, Tile};
 pub use triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder, ZoneMap};

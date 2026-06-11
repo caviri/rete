@@ -27,6 +27,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("getting-started.md", "Getting started"),
             ("scenario.md", "Real-world scenario"),
             ("playground.html", "Interactive playground"),
+            ("explore-100mb.html", "Wikidata lazy explorer"),
         ],
     ),
     (

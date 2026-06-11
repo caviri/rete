@@ -12,8 +12,73 @@
     schema: null,
     lastProgressive: null,
     lastProvenance: null,
-    built: null
+    built: null,
+    exploreClass: null,
+    exploreReady: false,
+    remote: null
   };
+
+  const RDF_TYPE = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+
+  // --- Remote lazy SPARQL worker ----------------------------------------
+  // The engine is synchronous and wasm can't block on fetch, so remote
+  // range-querying uses synchronous XHR — allowed only inside a Web Worker.
+  // We build that worker from the page's own inlined wasm glue (the #reteGlue
+  // script's source) plus a tiny harness, so the offline single-file page
+  // gains real lazy remote querying with no extra files. Same mechanism
+  // DuckDB uses over httpfs: fetch only the bytes a query touches.
+  const REMOTE_HARNESS = `
+;(function () {
+  var ready = null;
+  self.onmessage = function (e) {
+    var m = e.data;
+    if (m.type === "init") {
+      ready = wasm_bindgen(m.bytes);
+      ready.then(function () { self.postMessage({ type: "ready" }); });
+      return;
+    }
+    if (m.type === "query") {
+      Promise.resolve(ready).then(function () {
+        try {
+          self.postMessage({ type: "result", id: m.id, ok: true,
+            json: wasm_bindgen.sparql_url(m.url, m.query, m.format) });
+        } catch (err) {
+          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err) });
+        }
+      });
+    }
+  };
+})();`;
+  let remoteWorker = null, remoteReady = null, remoteResolveReady = null, remoteSeq = 0;
+  const remotePending = new Map();
+
+  function ensureRemoteWorker() {
+    if (remoteWorker) return remoteReady;
+    const glue = document.getElementById("reteGlue").textContent;
+    const blob = new Blob([glue + REMOTE_HARNESS], { type: "text/javascript" });
+    remoteWorker = new Worker(URL.createObjectURL(blob));
+    remoteWorker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "ready") { if (remoteResolveReady) remoteResolveReady(); return; }
+      if (m.type === "result") {
+        const p = remotePending.get(m.id);
+        if (!p) return;
+        remotePending.delete(m.id);
+        m.ok ? p.resolve(m.json) : p.reject(new Error(m.error));
+      }
+    };
+    remoteReady = new Promise((res) => { remoteResolveReady = res; });
+    remoteWorker.postMessage({ type: "init", bytes: b64ToBytes(RETE_WASM_B64) });
+    return remoteReady;
+  }
+
+  function remoteSparql(url, query, fmt) {
+    return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
+      const id = ++remoteSeq;
+      remotePending.set(id, { resolve, reject });
+      remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table" });
+    }));
+  }
 
   const BUILD_SAMPLE = `# Paste N-Triples here (or open a file), pick the format, then Build.
 <http://ex/Alice> <http://ex/knows> <http://ex/Bob> .
@@ -69,6 +134,7 @@
     if (state.activeSource === "file") return "local file";
     if (state.activeSource === "url") return "url";
     if (state.activeSource === "built") return "built in browser";
+    if (state.activeSource === "remote") return "remote (lazy)";
     return "bundled";
   }
 
@@ -347,6 +413,8 @@
   function loadBytes(bytes, source) {
     state.bytes = bytes;
     state.activeSource = source;
+    state.remote = null; // an in-memory load leaves remote-lazy mode
+    state.exploreReady = false;
     updateSourcePill();
 
     const info = JSON.parse(W().info(bytes));
@@ -356,7 +424,10 @@
 
     const schema = JSON.parse(W().schema(bytes));
     state.schema = schema;
+    state.exploreClass = null;
+    state.exploreReady = false;
     renderSchema(schema);
+    if (state.mode === "explore") ensureExplore();
     renderProgressiveInfo(null);
     renderProvenanceSummary(null);
     renderReachDefaults();
@@ -385,18 +456,77 @@
   }
 
   async function loadFromUrl() {
-    const url = $("urlInput").value.trim();
+    const url = $("remoteUrl").value.trim();
     if (!url) return;
-    setStatus("loading url...");
+    setStatus("downloading...");
     try {
       const res = await fetch(url);
       if (!res.ok) throw new Error(res.status + " " + res.statusText);
       const buf = new Uint8Array(await res.arrayBuffer());
       loadBytes(buf, "url");
-      state.dataset = $("ds").value;
+      closeSource();
     } catch (e) {
       showError("out", "URL load failed: " + e.message);
     }
+  }
+
+  // Enter remote lazy mode: query a remote .rete over HTTP range via the
+  // worker, no full download. Only the SPARQL tab applies (the other tabs need
+  // the whole graph in memory). `datasetKey` ties it to a catalog entry so its
+  // example query library shows; a custom URL (no key) gets no library.
+  function enterRemote(url, datasetKey) {
+    if (!url) return;
+    state.bytes = null;
+    state.remote = { url };
+    state.activeSource = "remote";
+    state.schema = null;
+    if (datasetKey) {
+      state.dataset = datasetKey;
+      $("ds").value = datasetKey;
+    }
+    state.selectedExample = -1;
+    updateSourcePill();
+    setStatus("remote (lazy) — queries range-fetch only what they touch");
+    const info = datasetKey ? datasetInfo(datasetKey) : null;
+    $("dsDesc").textContent = info ? info.description : "Remote graph, queried lazily over HTTP range: " + url;
+    renderExamples();
+    closeSource();
+    setMode("sparql");
+    const lib = examplesForDataset().length
+      ? "Pick an example from the library, or write your own."
+      : "Write a SPARQL query (a bound subject keeps the fetch small). No example library for a custom URL.";
+    $("out").innerHTML = `<div class="note">Connected to a remote .rete, queried lazily — ` +
+      `each query fetches only the dictionary chunks and index tiles it touches (the first also ` +
+      `pulls the header and directories). ${lib} Other tabs need a graph loaded into memory.</div>`;
+  }
+
+  function connectRemote() {
+    enterRemote($("remoteUrl").value.trim(), null);
+  }
+
+  // Dataset dropdown / catalog selection: bundled keys load into memory;
+  // remote-lazy keys connect over HTTP range.
+  function selectDataset(key) {
+    const info = datasetInfo(key);
+    if (info && info.kind === "remote-lazy") {
+      enterRemote(info.url, key);
+    } else {
+      loadDataset(key);
+    }
+  }
+
+  function openSource() {
+    $("sourceBundled").innerHTML = CATALOG.datasets.map((d) =>
+      `<button type="button" data-ds="${esc(d.key)}" class="${!state.remote && d.key === state.dataset ? "active" : ""}">${esc(d.label.split(" - ")[0])}</button>`
+    ).join("");
+    $$("#sourceBundled [data-ds]").forEach((btn) => {
+      btn.onclick = () => { loadDataset(btn.dataset.ds); closeSource(); };
+    });
+    $("sourceModal").classList.remove("hidden");
+  }
+
+  function closeSource() {
+    $("sourceModal").classList.add("hidden");
   }
 
   async function loadFromFile(file) {
@@ -478,8 +608,297 @@
     state.mode = mode;
     $$("#modeTabs button").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
     $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === mode));
+    if (mode === "explore") ensureExplore();
     updateResultVisibility();
     updateHash();
+  }
+
+  // --- Explore: entity tables + the community pyramid -------------------
+  function ensureExplore() {
+    if (!state.bytes || state.exploreReady) return;
+    state.exploreReady = true;
+    renderExploreClasses();
+    renderPyramid();
+    renderLayout();
+  }
+
+  function renderExploreClasses() {
+    const classes = ((state.schema && state.schema.classes) || []).slice(0, 12);
+    if (!classes.length) {
+      $("exploreClasses").innerHTML =
+        `<p class="microcopy">No rdf:type classes in this graph — showing raw triples.</p>`;
+      const res = JSON.parse(W().query(state.bytes, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 300", "table"));
+      $("exploreTable").innerHTML = renderTable(res.vars || [], res.rows || []);
+      return;
+    }
+    if (!state.exploreClass) state.exploreClass = classes[0][0];
+    $("exploreClasses").innerHTML = classes.map(([c, n]) =>
+      `<button type="button" data-cls="${esc(c)}" class="${c === state.exploreClass ? "active" : ""}">` +
+        `${esc(shorten(localName(c), 22))} (${esc(n)})` +
+      `</button>`).join("");
+    $$("#exploreClasses [data-cls]").forEach((btn) => {
+      btn.onclick = () => {
+        state.exploreClass = btn.dataset.cls;
+        renderExploreClasses();
+      };
+    });
+    renderEntityTable(state.exploreClass);
+  }
+
+  // Pivot one class's instances into an entity table: rows = entities,
+  // columns = their most frequent properties (multi-values joined).
+  function renderEntityTable(cls) {
+    let res;
+    try {
+      res = JSON.parse(W().query(state.bytes,
+        `SELECT ?s ?p ?o WHERE { ?s ${RDF_TYPE} ${cls} . ?s ?p ?o } LIMIT 6000`, "table"));
+    } catch (e) {
+      $("exploreTable").innerHTML = `<div class="error-box">${esc(String(e))}</div>`;
+      return;
+    }
+    const entities = new Map();
+    const predCount = new Map();
+    for (const row of res.rows || []) {
+      if (row.p === RDF_TYPE) continue;
+      if (!entities.has(row.s)) entities.set(row.s, new Map());
+      const props = entities.get(row.s);
+      if (!props.has(row.p)) props.set(row.p, []);
+      props.get(row.p).push(row.o);
+      predCount.set(row.p, (predCount.get(row.p) || 0) + 1);
+    }
+    const cols = Array.from(predCount.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([p]) => p);
+    const rows = Array.from(entities.entries()).slice(0, 100);
+    const cell = (vals) => {
+      if (!vals) return "";
+      const shown = vals.slice(0, 3).map((v) => shorten(v, 44)).join("; ");
+      return vals.length > 3 ? `${shown} (+${vals.length - 3})` : shown;
+    };
+    const sampled = (res.rows || []).length >= 6000 ? " (sampled)" : "";
+    const head = `<tr><th>${esc(localName(cls))}</th>` +
+      cols.map((c) => `<th>${esc(shorten(localName(c), 20))}</th>`).join("") + `</tr>`;
+    const rowHtmls = rows.map(([s, props]) =>
+      `<tr><td class="iri">${esc(shorten(s, 42))}</td>` +
+      cols.map((c) => `<td>${esc(cell(props.get(c)))}</td>`).join("") +
+      `</tr>`);
+    $("exploreTable").innerHTML = collapsedTable(head, rowHtmls,
+      `<p class="microcopy">${entities.size} ${esc(localName(cls))} entit${entities.size === 1 ? "y" : "ies"}${sampled} — ` +
+      `showing up to ${rows.length}, top ${cols.length} properties. Use the SPARQL tab for full values.</p>`);
+  }
+
+  // The "cluster of clusters": outer circles are the coarsest dendrogram
+  // round; nested circles are the next finer round's communities they merge.
+  function renderPyramid() {
+    let tree;
+    try {
+      tree = JSON.parse(W().pyramid_tree(state.bytes));
+    } catch (e) {
+      $("pyramidNote").textContent = "pyramid error: " + String(e);
+      return;
+    }
+    if (!tree.rounds) {
+      $("pyramidNote").textContent = "This graph has no community structure (one community holds everything).";
+      $("pyramidViz").innerHTML = "";
+      $("pyramidLevels").innerHTML = "";
+      return;
+    }
+    const chain = tree.levels.map((l) => l.length).reverse().join(" → ");
+    $("pyramidNote").textContent =
+      `A community is a group of subjects more densely connected to each other than to the rest ` +
+      `of the graph, found by repeated Louvain clustering. Each clustering round merges ` +
+      `communities into coarser ones — the pyramid. This file: ${tree.rounds} round(s), ` +
+      `coarsest → finest ${chain} communities. These are the same rounds the “Split by ` +
+      `community” Round field selects, and the units the pyramid summary aggregates.`;
+    $("pyramidLegend").innerHTML =
+      `<span class="lg"><span class="sw sw-pyr-outer"></span>outer circle = one coarsest-round community (area ∝ member nodes)</span>` +
+      `<span class="lg"><span class="sw sw-pyr-inner"></span>nested bubble = a finer-round community it absorbs — the cluster of clusters</span>` +
+      `<span class="lg">hover any circle for its exact node and triple counts</span>`;
+
+    const outer = tree.levels[tree.rounds - 1].slice().sort((a, b) => b.nodes - a.nodes);
+    const inner = tree.rounds >= 2 ? tree.levels[tree.rounds - 2] : null;
+    const children = new Map();
+    if (inner) {
+      for (const c of inner) {
+        if (!children.has(c.parent)) children.set(c.parent, []);
+        children.get(c.parent).push(c);
+      }
+    }
+    const shown = outer.slice(0, 24);
+    const totalNodes = shown.reduce((a, c) => a + c.nodes, 0) || 1;
+    const width = 920;
+    const items = shown.map((c) => ({ c, R: Math.max(24, Math.sqrt(c.nodes / totalNodes) * 240) }));
+    let x = 14, y = 16, rowH = 0;
+    for (const it of items) {
+      const d = it.R * 2 + 14;
+      if (x + d > width) { x = 14; y += rowH + 14; rowH = 0; }
+      it.cx = x + it.R;
+      it.cy = y + it.R;
+      x += d;
+      rowH = Math.max(rowH, it.R * 2);
+    }
+    const height = y + rowH + 16;
+    let svg = `<svg viewBox="0 0 ${width} ${Math.max(height, 140)}" role="img" aria-label="Community pyramid">`;
+    for (const it of items) {
+      svg += `<circle class="pyr-outer" cx="${it.cx.toFixed(1)}" cy="${it.cy.toFixed(1)}" r="${it.R.toFixed(1)}">` +
+        `<title>round ${tree.rounds - 1} community C${it.c.id}: ${it.c.nodes} nodes, ${it.c.triples} triples</title></circle>`;
+      const kids = (children.get(it.c.id) || []).sort((a, b) => b.nodes - a.nodes).slice(0, 40);
+      const kTotal = kids.reduce((a, k) => a + k.nodes, 0) || 1;
+      kids.forEach((k, i) => {
+        const angle = i * 2.399963;
+        const dist = (it.R * 0.6) * Math.sqrt((i + 0.5) / kids.length);
+        const r = Math.max(3, Math.sqrt(k.nodes / kTotal) * it.R * 0.42);
+        svg += `<circle class="pyr-inner" cx="${(it.cx + Math.cos(angle) * dist).toFixed(1)}" ` +
+          `cy="${(it.cy + Math.sin(angle) * dist).toFixed(1)}" r="${r.toFixed(1)}">` +
+          `<title>round ${tree.rounds - 2} community C${k.id}: ${k.nodes} nodes, ${k.triples} triples</title></circle>`;
+      });
+      if (it.R >= 30) {
+        svg += `<text class="pyr-label" x="${it.cx.toFixed(1)}" y="${(it.cy - it.R + 14).toFixed(1)}" text-anchor="middle">C${it.c.id}</text>`;
+      }
+    }
+    svg += `</svg>`;
+    $("pyramidViz").innerHTML = svg +
+      (outer.length > 24 ? `<p class="microcopy" style="padding:4px 10px">Showing the 24 largest of ${outer.length} top-level communities.</p>` : "");
+    $("pyramidLevels").innerHTML =
+      `<table><thead><tr><th>round</th><th>communities</th><th>largest (nodes)</th><th>largest (triples)</th></tr></thead><tbody>` +
+      tree.levels.map((l, r) =>
+        `<tr><td>${r}${r === tree.rounds - 1 ? " (coarsest)" : r === 0 ? " (finest)" : ""}</td>` +
+        `<td>${l.length}</td><td>${Math.max(...l.map((c) => c.nodes))}</td>` +
+        `<td>${Math.max(...l.map((c) => c.triples))}</td></tr>`).join("") +
+      `</tbody></table>`;
+  }
+
+  // The byte map: every byte of the file as a wrapped grid of cells, colored
+  // by the section it belongs to — where the data physically lives.
+  const LAYOUT_COLORS = {
+    header: "#17211d",
+    metadata: "#7b5ea7",
+    dictionary: "#147d69",
+    directory: "#9fb5ac",
+    pyramid: "#b98112",
+    "named-graphs": "#235c7c",
+    framing: "#e3e9e6"
+  };
+  const TILE_COLORS = ["#c84f2f", "#e0876a"];
+
+  // Byte ranges the last Provenance run touched — the heat overlay.
+  function touchedRanges() {
+    const results = (state.lastProvenance && state.lastProvenance.results) || [];
+    const out = [];
+    for (const r of results.slice(0, 500)) {
+      const p = r.provenance || {};
+      for (const key of ["dictionaryRange", "indexSectionRange"]) {
+        if (p[key]) out.push(p[key]);
+      }
+      if (p.tile && p.tile.range) out.push(p.tile.range);
+    }
+    return out;
+  }
+
+  function renderLayout() {
+    if (!state.bytes) return;
+    let lay;
+    try {
+      lay = JSON.parse(W().file_layout(state.bytes));
+    } catch (e) {
+      $("layoutNote").textContent = "layout error: " + String(e);
+      return;
+    }
+    const segs = lay.segments;
+    const total = lay.fileLength || 1;
+    // Pre-index tiles for alternating shades.
+    let tileSeq = 0;
+    segs.forEach((s) => { if (s.kind === "tile") s.tile = tileSeq++; });
+
+    // Cell size: each square is exactly `perCell` bytes. Auto picks the
+    // smallest power of two that keeps the grid under ~1536 cells; an explicit
+    // choice that would exceed 4096 cells falls back to auto with a note.
+    const MAX_CELLS = 4096;
+    const choice = $("layoutCell").value;
+    const autoSize = () => {
+      let s = 16;
+      while (Math.ceil(total / s) > 1536) s *= 2;
+      return s;
+    };
+    let perCell = choice === "auto" ? autoSize() : Number(choice);
+    let fellBackCell = false;
+    if (Math.ceil(total / perCell) > MAX_CELLS) {
+      perCell = autoSize();
+      fellBackCell = true;
+    }
+    const cells = Math.max(1, Math.ceil(total / perCell));
+    const cols = Math.min(96, Math.max(24, Math.ceil(Math.sqrt(cells * 3))));
+    const size = 9;
+    const rows = Math.ceil(cells / cols);
+
+    // Heat overlay: cells intersecting the byte ranges of the last
+    // Provenance run (what a remote client would actually fetch).
+    const hot = touchedRanges();
+    const isHot = (lo, hi) => hot.some((r) => r.offset < hi && lo < r.offset + r.len);
+
+    // Dominant-section coloring: a cell takes the section owning most of its
+    // bytes; its opacity is that section's share, so paler = a boundary cell.
+    let si = 0;
+    let svg = `<svg viewBox="0 0 ${cols * size} ${rows * size}" role="img" aria-label="File byte map" style="max-width:100%">`;
+    for (let i = 0; i < cells; i++) {
+      const lo = i * perCell;
+      const hi = Math.min(total, lo + perCell);
+      while (si < segs.length && segs[si].offset + segs[si].len <= lo) si++;
+      let best = null, bestBytes = 0, covered = 0;
+      for (let j = si; j < segs.length && segs[j].offset < hi; j++) {
+        const ov = Math.min(hi, segs[j].offset + segs[j].len) - Math.max(lo, segs[j].offset);
+        if (ov > 0) {
+          covered += ov;
+          if (ov > bestBytes) { bestBytes = ov; best = segs[j]; }
+        }
+      }
+      const framingBytes = (hi - lo) - covered;
+      const useFraming = framingBytes > bestBytes;
+      const frac = (useFraming ? framingBytes : bestBytes) / (hi - lo);
+      const color = useFraming || !best ? LAYOUT_COLORS.framing
+        : best.kind === "tile" ? TILE_COLORS[best.tile % 2]
+        : (LAYOUT_COLORS[best.kind] || LAYOUT_COLORS.framing);
+      const label = (useFraming || !best
+        ? "container framing (section directories, length fields)"
+        : `${best.label} — bytes ${best.offset}–${best.offset + best.len} (${formatBytes(best.len)})`) +
+        ` | cell: bytes ${lo}–${hi}` + (frac < 1 ? ` (${Math.round(frac * 100)}% of cell)` : "");
+      const heat = isHot(lo, hi);
+      svg += `<rect x="${(i % cols) * size}" y="${Math.floor(i / cols) * size}" width="${size - 1}" height="${size - 1}" ` +
+        `fill="${color}" fill-opacity="${(0.35 + 0.65 * frac).toFixed(2)}"` +
+        (heat ? ` stroke="#17211d" stroke-width="1.4"` : "") +
+        `><title>${esc(label + (heat ? " | touched by your last Provenance query" : ""))}</title></rect>`;
+    }
+    svg += `</svg>`;
+    $("layoutViz").innerHTML = svg;
+    $("layoutNote").textContent =
+      `Each square is exactly ${formatBytes(perCell)} of the ${formatBytes(total)} file, in byte order ` +
+      `(left→right, top→bottom)${fellBackCell ? " — the requested cell size was too fine for this file, using auto" : ""}. ` +
+      `A paler square spans a section boundary. This is the surface a range query navigates: read the ` +
+      `header, then jump straight to the squares you need.` +
+      (hot.length ? " Outlined squares are the bytes your last Provenance query touched." :
+        " Run a Provenance example and come back: the touched bytes get outlined.");
+    const legendKinds = [
+      ["header", "header"], ["metadata", "metadata"], ["dictionary", "dictionary"],
+      ["directory", "tile directories"], ["tile", "index tiles (alternating per tile)"],
+      ["pyramid", "pyramid summary"], ["named-graphs", "named graphs"], ["framing", "framing"]
+    ];
+    $("layoutLegend").innerHTML = legendKinds
+      .filter(([k]) => k === "framing" || k === "tile" || segs.some((s) => s.kind === k))
+      .map(([k, label]) =>
+        `<span class="lg"><span class="sw" style="background:${k === "tile" ? TILE_COLORS[0] : LAYOUT_COLORS[k]}"></span>${esc(label)}</span>`)
+      .join("") +
+      (hot.length ? `<span class="lg"><span class="sw" style="background:#fff;border:2px solid #17211d"></span>touched by last Provenance query</span>` : "");
+    // Per-kind byte totals.
+    const sums = new Map();
+    segs.forEach((s) => sums.set(s.kind, (sums.get(s.kind) || 0) + s.len));
+    const coveredTotal = Array.from(sums.values()).reduce((a, b) => a + b, 0);
+    sums.set("framing", Math.max(0, total - coveredTotal));
+    $("layoutTable").innerHTML = collapsedTable(
+      `<tr><th>section</th><th>bytes</th><th>share</th></tr>`,
+      Array.from(sums.entries()).sort((a, b) => b[1] - a[1]).map(([k, n]) =>
+        `<tr><td>${esc(k)}</td><td>${formatBytes(n)}</td><td>${(100 * n / total).toFixed(1)}%</td></tr>`)
+    );
   }
 
   function updateResultVisibility() {
@@ -507,32 +926,53 @@
 
   function setStrategy(strategy) {
     $("strategy").value = strategy || "whole";
-    $("roundWrap").classList.toggle("hidden", $("strategy").value !== "community");
+    const noRound = $("strategy").value !== "community";
+    $("roundWrap").classList.toggle("hidden", noRound);
+    $("roundHelp").classList.toggle("hidden", noRound);
+  }
+
+  // How many rows a table shows before its "Show more" button, and how many
+  // each click reveals.
+  const TABLE_HEAD_ROWS = 12;
+  const TABLE_MORE_STEP = 50;
+
+  /// Wrap table row strings into a collapsed table: the first TABLE_HEAD_ROWS
+  /// rows show; the rest hide behind a "Show more" button (a delegated click
+  /// handler in wireEvents reveals them in steps).
+  function collapsedTable(headRowHtml, rowHtmls, note) {
+    const hidden = Math.max(0, rowHtmls.length - TABLE_HEAD_ROWS);
+    const body = rowHtmls
+      .map((r, i) => (i < TABLE_HEAD_ROWS ? r : r.replace("<tr", `<tr class="tr-hidden"`)))
+      .join("");
+    return (note || "") +
+      `<div class="tbl"><table><thead>${headRowHtml}</thead><tbody>${body}</tbody></table>` +
+      (hidden > 0
+        ? `<button type="button" class="tbl-more secondary">Show ${Math.min(hidden, TABLE_MORE_STEP)} more (${hidden} hidden)</button>`
+        : "") +
+      `</div>`;
   }
 
   function renderTable(vars, rows) {
     const cap = 500;
     const shown = (rows || []).slice(0, cap);
-    const head = (vars || []).map((v) => `<th>${esc(v)}</th>`).join("");
-    const body = shown.map((row) =>
-      `<tr>${(vars || []).map((v) => `<td class="iri">${esc(shorten(row[v], 120))}</td>`).join("")}</tr>`
-    ).join("");
-    const more = (rows || []).length > cap
+    const head = `<tr>${(vars || []).map((v) => `<th>${esc(v)}</th>`).join("")}</tr>`;
+    const rowHtmls = shown.map((row) =>
+      `<tr>${(vars || []).map((v) => `<td class="iri">${esc(shorten(row[v], 120))}</td>`).join("")}</tr>`);
+    const note = (rows || []).length > cap
       ? `<p class="microcopy">Showing first ${cap} of ${rows.length} rows.</p>`
       : "";
-    return more + `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    return collapsedTable(head, rowHtmls, note);
   }
 
   function renderTriplesTable(triples) {
     const cap = 500;
     const shown = (triples || []).slice(0, cap);
-    const body = shown.map((t) =>
-      `<tr><td class="iri">${esc(shorten(t[0], 120))}</td><td class="iri">${esc(shorten(t[1], 120))}</td><td class="iri">${esc(shorten(t[2], 120))}</td></tr>`
-    ).join("");
-    const more = (triples || []).length > cap
+    const rowHtmls = shown.map((t) =>
+      `<tr><td class="iri">${esc(shorten(t[0], 120))}</td><td class="iri">${esc(shorten(t[1], 120))}</td><td class="iri">${esc(shorten(t[2], 120))}</td></tr>`);
+    const note = (triples || []).length > cap
       ? `<p class="microcopy">Showing first ${cap} of ${triples.length} triples.</p>`
       : "";
-    return more + `<table><thead><tr><th>subject</th><th>predicate</th><th>object</th></tr></thead><tbody>${body}</tbody></table>`;
+    return collapsedTable(`<tr><th>subject</th><th>predicate</th><th>object</th></tr>`, rowHtmls, note);
   }
 
   function triplesForGraph(res) {
@@ -739,10 +1179,33 @@
   }
 
   function runQuery() {
-    if (!state.bytes) return showError("out", "Load a graph first.");
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
     const fmt = $("fmt").value;
+
+    // Remote lazy mode: route through the worker (range reads), render async.
+    if (state.remote) {
+      $("commOut").innerHTML = "";
+      updateResultVisibility();
+      $("qmeta").textContent = "querying remote…";
+      const t0 = performance.now();
+      remoteSparql(state.remote.url, q, "table").then((raw) => {
+        const res = JSON.parse(raw);
+        const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
+        const r = res.remote || {};
+        const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
+        const dt = performance.now() - t0;
+        $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
+          `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} (${pct}%) · ${dt.toFixed(0)} ms`;
+        saveHistory({ query: q, format: fmt, strategy: "remote", dataset: "(remote)", ts: Date.now(), resultSummary: summary });
+      }).catch((e) => {
+        $("qmeta").textContent = "";
+        showError("out", "Remote query failed: " + String(e.message || e));
+      });
+      return;
+    }
+
+    if (!state.bytes) return showError("out", "Load a graph first.");
     const strategy = $("strategy").value;
     const queryFmt = strategy === "progressive" || fmt === "graph" ? "table" : fmt;
     $("commOut").innerHTML = "";
@@ -750,40 +1213,73 @@
 
     const t0 = performance.now();
     try {
-      const raw = strategy === "progressive"
-        ? W().progressive_query(state.bytes, q)
-        : W().query(state.bytes, q, queryFmt);
+      let raw;
+      let fellBack = false;
+      if (strategy === "progressive") {
+        // Progressive is a contract, not a speedup: answer exactly from the
+        // pyramid summary or don't. Shapes that need index/dictionary bytes
+        // (any query returning values) fall back to the whole index — run,
+        // and *say so* rather than refusing.
+        try {
+          raw = W().progressive_query(state.bytes, q);
+        } catch (pe) {
+          const m = String(pe);
+          if (m.includes("not exactly answerable") || m.includes("no pyramid summary")) {
+            raw = W().query(state.bytes, q, queryFmt);
+            fellBack = true;
+          } else {
+            throw pe;
+          }
+        }
+      } else if (strategy === "community") {
+        const roundText = $("round").value.trim();
+        raw = W().query_communities(state.bytes, q, roundText === "" ? undefined : Number(roundText));
+      } else {
+        raw = W().query(state.bytes, q, queryFmt);
+      }
       const res = JSON.parse(raw);
-      const summary = renderResult(res, strategy === "progressive" && fmt === "graph" ? "table" : fmt);
+      const summary = renderResult(res, strategy !== "whole" && fmt === "graph" ? "table" : fmt);
       const dt = performance.now() - t0;
-      $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms`;
-      if (strategy === "community") runCommunity();
+      $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms${fellBack ? " | fell back to whole index" : ""}`;
+      if (fellBack) {
+        $("out").innerHTML =
+          `<div class="note">Not summary-answerable: this query returns values (titles, scores, …), ` +
+          `which live in the dictionary and triple index — the pyramid summary holds only community ` +
+          `structure and per-predicate counts, so the progressive contract (answer from the summary ` +
+          `alone, never touch the index) cannot apply. <strong>Ran the whole index instead.</strong> ` +
+          `Progressive shines on shapes like the “Predicate totals” example.</div>` +
+          $("out").innerHTML;
+        $("progressiveInfo").innerHTML =
+          `<div>Fell back to the whole index — this query needs index bytes the summary does not hold.</div>`;
+      }
+      if (strategy === "community") renderCommunityPartials(res.communities);
       saveHistory({ query: q, format: fmt, strategy, dataset: state.dataset, ts: Date.now(), resultSummary: summary });
       updateHash();
     } catch (e) {
       $("qmeta").textContent = "";
-      showError("out", String(e));
+      let msg = String(e);
+      if (strategy === "progressive") {
+        msg += " — Progressive answers COUNT/ASK shapes straight from the pyramid summary.";
+      }
+      showError("out", msg);
       renderProgressiveInfo(null);
     }
   }
 
-  function runCommunity() {
-    const roundText = $("round").value.trim();
-    const round = roundText === "" ? undefined : Number(roundText);
-    const t0 = performance.now();
-    try {
-      const rows = JSON.parse(W().communities(state.bytes, round));
-      const dt = performance.now() - t0;
-      $("commOut").innerHTML =
-        `<div class="note">Community split is shown as decomposition metadata in this single-threaded static build.</div>` +
-        `<p class="microcopy">${rows.length} communities | ${dt.toFixed(1)} ms</p>` +
-        `<table><thead><tr><th>community</th><th>members</th><th>triples</th></tr></thead><tbody>` +
-        rows.map((r) => `<tr><td>C${r.community}</td><td>${r.size}</td><td>${r.triples}</td></tr>`).join("") +
-        `</tbody></table>`;
-      updateResultVisibility();
-    } catch (e) {
-      showError("commOut", "community error: " + e.message);
-    }
+  function renderCommunityPartials(parts) {
+    if (!parts || !parts.length) return;
+    const total = parts.reduce((a, p) => a + p.rows, 0);
+    const contributing = parts.filter((p) => p.rows > 0);
+    $("commOut").innerHTML =
+      `<div class="banner">Subject stars computed per pyramid community, recombined with global ` +
+      `joins, modifiers applied once: ${contributing.length} of ${parts.length} communities ` +
+      `contributed ${total} partial row(s) — the merged result is identical to the whole-index answer.</div>` +
+      collapsedTable(
+        `<tr><th>community</th><th>subjects</th><th>partial rows</th></tr>`,
+        contributing.map((p) =>
+          `<tr><td>C${p.community}</td><td>${p.subjects}</td><td>${p.rows}</td></tr>`)
+      );
+    updateResultVisibility();
   }
 
   function renderShaclExamples() {
@@ -1019,6 +1515,21 @@
     $("whySubject").value = cfg.subject || "";
     $("whyPredicate").value = cfg.predicate || "";
     $("whyObject").value = cfg.object || "";
+    const list = cfg.examples || [];
+    $("provExamples").innerHTML = list.map((ex, i) =>
+      `<article class="example-card"><button type="button" class="example-button" data-prov="${i}">${esc(ex.label)}</button>` +
+      `<div class="tagline">${esc(ex.tip)}</div></article>`).join("");
+    $$("#provExamples [data-prov]").forEach((btn) => {
+      btn.onclick = () => {
+        const ex = list[Number(btn.dataset.prov)];
+        $("whySubject").value = ex.subject || "";
+        $("whyPredicate").value = ex.predicate || "";
+        $("whyObject").value = ex.object || "";
+        $("exampleInfo").innerHTML = `<strong>${esc(ex.label)}</strong><div>${esc(ex.tip)}</div>`;
+        setMode("provenance");
+        runProvenance();
+      };
+    });
   }
 
   function optText(id) {
@@ -1037,6 +1548,8 @@
       const dt = performance.now() - t0;
       renderProvenance(out);
       $("whyMeta").textContent = `${out.resultCount} match(es) | ${dt.toFixed(1)} ms`;
+      // Refresh the Explore byte map so the touched ranges light up there.
+      if (state.exploreReady) renderLayout();
       updateResultVisibility();
     } catch (e) {
       $("whyMeta").textContent = "";
@@ -1248,7 +1761,8 @@
   }
 
   function wireEvents() {
-    $("ds").onchange = () => loadDataset($("ds").value);
+    $("ds").onchange = () => selectDataset($("ds").value);
+    $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
     $("strategy").onchange = () => setStrategy($("strategy").value);
     $$("#viewSeg button").forEach((btn) => {
@@ -1268,6 +1782,39 @@
     $("buildDownload").onclick = downloadBuilt;
     $("buildOpen").onclick = openBuilt;
     $("buildFile").onchange = (e) => loadBuildFile(e.target.files[0]);
+
+    $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
+    $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
+    $("layoutCell").onchange = renderLayout;
+    $("openSource").onclick = openSource;
+    $("sourceModalClose").onclick = closeSource;
+    $("remoteConnect").onclick = connectRemote;
+    $("sourceModal").addEventListener("click", (e) => {
+      if (e.target === $("sourceModal")) closeSource();
+    });
+    $("strategyModalClose").onclick = () => $("strategyModal").classList.add("hidden");
+    $("strategyModal").addEventListener("click", (e) => {
+      if (e.target === $("strategyModal")) $("strategyModal").classList.add("hidden");
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        $("strategyModal").classList.add("hidden");
+        closeSource();
+      }
+    });
+
+    // Collapsed tables: every "Show more" button reveals the next step of
+    // hidden rows (delegated, so it works for any dynamically-rendered table).
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest(".tbl-more");
+      if (!btn) return;
+      const wrap = btn.closest(".tbl");
+      const hidden = $$("tr.tr-hidden", wrap);
+      hidden.slice(0, TABLE_MORE_STEP).forEach((tr) => tr.classList.remove("tr-hidden"));
+      const left = Math.max(0, hidden.length - TABLE_MORE_STEP);
+      if (left === 0) btn.remove();
+      else btn.textContent = `Show ${Math.min(left, TABLE_MORE_STEP)} more (${left} hidden)`;
+    });
     $("clearHist").onclick = () => {
       localStorage.removeItem(HIST_KEY);
       renderHistory();

@@ -1,0 +1,900 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wikidata-100MB - lazy explorer</title>
+<script>
+/* Cross-origin isolation unlocks SharedArrayBuffer, which lets the rete worker
+   fetch a query's byte ranges in parallel (Atomics-coordinated fetch workers)
+   instead of one synchronous XHR at a time. But isolation (COEP) breaks the
+   cross-origin CDN modules the Tables (DuckDB-WASM) and SQLite backends load,
+   so it is OPT-IN: add ?parallel=1 to the URL to enable it (graph reads only).
+   By default we stay un-isolated AND actively unregister any leftover COI
+   worker, so the DuckDB/SQLite backends always work out of the box. */
+(function () {
+  if (!("serviceWorker" in navigator)) return;
+  var want = /[?&]parallel(=1)?\b/.test(location.search);
+  if (want) {
+    if (window.crossOriginIsolated) return;
+    navigator.serviceWorker.register("coi-serviceworker.js").then(function (reg) {
+      if (reg.active && !navigator.serviceWorker.controller) location.reload();
+    }).catch(function () {});
+  } else {
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      var had = false;
+      regs.forEach(function (r) {
+        var s = (r.active && r.active.scriptURL) || "";
+        if (/coi-serviceworker/.test(s)) { r.unregister(); had = true; }
+      });
+      if (had) location.reload();
+    }).catch(function () {});
+  }
+})();
+</script>
+<style>
+  :root {
+    --ink:#17211d; --muted:#66746e; --paper:#f6f8f7; --surface:#fff; --side:#eef4ef;
+    --line:#d9e2de; --line-strong:#aebfb8; --accent:#147d69; --accent-dark:#0b4f42; --accent-2:#c84f2f;
+    --code:#eef3f1; --code-border:#cfd9d5;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font:14px/1.55 "Aptos","Segoe UI",system-ui,sans-serif; }
+  header { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+    padding:12px 20px; background:var(--side); border-bottom:1px solid var(--line); }
+  header h1 { font:700 20px Georgia,serif; margin:0; }
+  header .sub { color:var(--muted); font-size:13px; }
+  header a { color:var(--accent-dark); }
+  .shell { display:grid; grid-template-columns:300px minmax(0,1fr); gap:16px; padding:16px 20px 40px; align-items:start; }
+  @media (max-width:860px){ .shell { grid-template-columns:1fr; } }
+  .side { display:grid; gap:12px; }
+  .side .about { border:1px solid var(--line); border-radius:10px; background:var(--surface); padding:12px 14px; font-size:12.5px; color:var(--muted); }
+  .side .about b { color:var(--ink); }
+  .card { border:1px solid var(--line); border-radius:10px; background:var(--surface); padding:11px 13px; cursor:pointer; }
+  .card.active { border-color:var(--accent); box-shadow:0 0 0 2px rgba(20,125,105,.16); }
+  .card h3 { margin:0 0 2px; font-size:14px; }
+  .card .tech { font-size:11.5px; color:var(--accent-dark); font-weight:700; }
+  .card .desc { font-size:12px; color:var(--muted); margin-top:3px; }
+  .card .stat { font-size:11px; color:var(--muted); margin-top:5px; }
+  .card .sub-opt { margin-top:7px; font-size:12px; }
+  .work { border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:0 14px 38px rgba(32,47,41,.08);
+    padding:16px; min-width:0; }
+  .work h2 { font-size:16px; margin:0 0 2px; }
+  .work .desc { color:var(--muted); font-size:12.5px; margin:0 0 10px; }
+  .examples { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+  button { min-height:32px; border:1px solid var(--accent-dark); border-radius:6px; background:var(--accent);
+    color:#f4faf8; font-weight:700; padding:5px 13px; cursor:pointer; font-size:13px; }
+  button:hover { background:var(--accent-dark); }
+  button.ex, select { border:1px solid var(--line-strong); background:var(--surface); color:var(--ink);
+    font-weight:600; border-radius:6px; min-height:28px; padding:4px 8px; cursor:pointer; font-size:12px; }
+  .meta { color:var(--muted); font-size:12px; }
+  .out { margin-top:8px; border:1px solid var(--line); border-radius:8px; min-width:0; }
+  .resbar { display:flex; justify-content:flex-end; gap:8px; align-items:center; margin-top:8px; }
+  .microcopy { color:var(--muted); font-size:12px; }
+  table { border-collapse:collapse; width:max-content; min-width:100%; font:12px/1.4 "Cascadia Mono",Consolas,monospace; }
+  th,td { border:1px solid var(--line); padding:5px 7px; text-align:left; vertical-align:top;
+    max-width:520px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  th { background:#eaf1ed; position:sticky; top:0; }
+  .err { color:#b42318; padding:8px; white-space:pre-wrap; }
+  .exp { color:var(--accent-2); font-weight:700; }
+  code { background:var(--code); border:1px solid var(--code-border); border-radius:4px; padding:1px 4px; }
+  .tbl { overflow-x:auto; max-width:100%; }
+  /* Code editor (gutter + highlight overlay + suggestions) - shared with the playground. */
+  .ed { display:grid; grid-template-columns:auto minmax(0,1fr); border:1px solid var(--code-border);
+    border-radius:8px; background:var(--code); overflow:hidden; }
+  .ed-gutter { min-width:38px; padding:10px 7px 10px 4px; border-right:1px solid var(--code-border);
+    background:rgba(20,125,105,.05); color:#8ba197; text-align:right; white-space:pre; user-select:none;
+    font:13px/1.46 "Cascadia Mono",Consolas,monospace; overflow:hidden; }
+  .ed-body { position:relative; min-width:0; }
+  .ed-hl { position:absolute; inset:0; margin:0; border:0; padding:10px; overflow:hidden; pointer-events:none;
+    white-space:pre; font:13px/1.46 "Cascadia Mono",Consolas,monospace; }
+  /* The overlay <code> must carry NO box styling, or it shifts the highlighted
+     text out of register with the (transparent) textarea caret. */
+  .ed-hl code { background:none; border:0; padding:0; margin:0; font:inherit; color:inherit; }
+  .ed textarea { position:relative; min-height:150px; border:0; border-radius:0; background:transparent;
+    color:transparent; caret-color:var(--ink); white-space:pre; overflow:auto; resize:vertical; width:100%;
+    font:13px/1.46 "Cascadia Mono",Consolas,monospace; padding:10px; }
+  .ed textarea::selection { background:rgba(20,125,105,.22); color:transparent; }
+  .tok-com{color:#78877f;font-style:italic} .tok-str{color:#0b745f} .tok-kw{color:#8a3d5a;font-weight:700}
+  .tok-num{color:#a85424} .tok-fn{color:#0b6f5e} .tok-iri{color:#0b6f5e} .tok-var{color:#a85424}
+  .ed-suggest { position:absolute; z-index:30; min-width:200px; max-height:200px; overflow:auto;
+    border:1px solid var(--line-strong); border-radius:7px; background:var(--surface); box-shadow:0 14px 38px rgba(32,47,41,.18);
+    font:12.5px/1.4 "Cascadia Mono",Consolas,monospace; left:44px; top:30px; }
+  .ed-suggest .sg { display:flex; gap:10px; justify-content:space-between; padding:4px 9px; cursor:pointer; white-space:nowrap; }
+  .ed-suggest .sg.active { background:#e3f0ec; }
+  .ed-suggest .sg-k { color:var(--muted); font-size:10.5px; text-transform:uppercase; }
+  .hidden { display:none !important; }
+  .pg-graph { width:100%; height:480px; display:block; }
+  .gnode { fill:var(--accent); stroke:var(--surface); stroke-width:1.6; }
+  .gnode-label { font:10px "Cascadia Mono",Consolas,monospace; fill:var(--ink); }
+  .gedge { stroke:#9fb5ac; stroke-width:1.3; }
+  .seg button { border:1px solid var(--line-strong); background:var(--surface); color:var(--muted);
+    border-radius:6px; min-height:28px; padding:3px 10px; font-size:12px; cursor:pointer; }
+  .seg button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .notice { border:1px solid #e0b48a; background:#fbf3e9; color:#6f441c; border-radius:8px;
+    padding:10px 13px; margin:0 0 12px; font-size:12.5px; line-height:1.55; }
+  .notice b { color:#7a3d12; } .notice code { background:#f1e2cf; border-color:#e3c9a6; }
+  .notice a { color:#9a3b18; }
+  #subsetEd { width:100%; min-height:96px; resize:vertical; margin-bottom:10px;
+    font:12.5px/1.46 "Cascadia Mono",Consolas,monospace; padding:9px; border:1px solid var(--line-strong);
+    border-radius:8px; background:var(--surface); color:var(--ink); white-space:pre; }
+  .out-pre { white-space:pre-wrap; word-break:break-word; margin:0; padding:10px;
+    font:12px/1.5 "Cascadia Mono",Consolas,monospace; color:var(--ink); }
+  .spin { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:7px;
+    border:2px solid var(--line-strong); border-top-color:var(--accent); border-radius:50%;
+    animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .srcbtn { margin-left:auto; border:1px solid var(--line-strong); background:var(--surface); color:var(--ink);
+    border-radius:7px; padding:5px 11px; font-size:12.5px; cursor:pointer; }
+  .srcbtn:hover { border-color:var(--accent); color:var(--accent); }
+  .modal { position:fixed; inset:0; background:rgba(20,33,29,.42); display:flex; align-items:center;
+    justify-content:center; z-index:60; padding:16px; }
+  .modal.hidden { display:none; }
+  .modal-box { background:var(--surface); border:1px solid var(--line-strong); border-radius:11px;
+    padding:18px 20px; max-width:580px; box-shadow:0 18px 50px rgba(32,47,41,.28); }
+  .src-opt { display:flex; gap:9px; align-items:flex-start; padding:9px 10px; border:1px solid var(--line);
+    border-radius:8px; margin-bottom:8px; cursor:pointer; }
+  .src-opt:hover { border-color:var(--line-strong); }
+  .src-opt input { margin-top:3px; }
+  .src-badge { font-size:10.5px; padding:1px 6px; border-radius:5px; vertical-align:1px; }
+  .src-badge.ok { background:#dff0e8; color:#0b6f5e; } .src-badge.no { background:#f7e3da; color:#9a3b18; }
+  .src-badge.wait { background:var(--code); color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Wikidata-100MB</h1>
+  <span class="sub">one ~12M-triple graph, queried lazily over HTTP range - pick a backend on the left</span>
+  <a href="index.html">&larr; playground</a>
+  <a href="https://huggingface.co/datasets/katospiegel/knowledge-graphs/tree/main/wikidata-100MB" target="_blank" rel="noopener">data on Hugging Face &#8599;</a>
+  <button id="srcBtn" class="srcbtn">Source: HF Bucket</button>
+</header>
+<div id="srcModal" class="modal hidden">
+  <div class="modal-box">
+    <h3 style="margin:0 0 6px">Data source</h3>
+    <p class="microcopy" style="margin:0 0 12px">The same 100 MB bundle, served three ways. Switch to compare how each host's CORS / Range support behaves in <em>this</em> browser — the lazy backends fetch from whichever you pick. (The rete CLI is unaffected.)</p>
+    <div id="srcList"></div>
+    <div style="text-align:right; margin-top:14px"><button id="srcClose" class="ex">Close</button></div>
+  </div>
+</div>
+<div class="shell">
+  <aside class="side">
+    <div class="about">
+      The same Wikidata slice in four lossless encodings on Hugging Face. Every query below fetches
+      <b>only the bytes it touches</b> - nothing is downloaded whole. Pick a backend; the example
+      buttons load the <b>analogous</b> query for it. Type tables are named by Q-id
+      (<code>Q5</code>=human, <code>Q16521</code>=taxon).
+    </div>
+    <div class="card active" data-backend="graph">
+      <h3>Graph</h3>
+      <div class="tech">rete &middot; SPARQL &middot; SHACL</div>
+      <div class="desc">Lazy tasks over <code>wikidata.rete</code> (105 MB).</div>
+      <label class="sub-opt">task:
+        <select id="graphTask">
+          <option value="sparql">SPARQL</option>
+          <option value="shacl">SHACL validate</option>
+          <option value="shacl-subset">SHACL on a CONSTRUCT subset</option>
+          <option value="why">Provenance (why)</option>
+          <option value="reach">Reachability</option>
+        </select>
+      </label>
+      <label class="sub-opt">read:
+        <select id="graphSrc">
+          <option value="lazy">lazy remote (range)</option>
+          <option value="cached" disabled>cached full copy</option>
+        </select>
+      </label>
+      <div class="sub-opt" style="display:flex; gap:6px; flex-wrap:wrap">
+        <button class="ex" id="cacheBtn">Cache locally</button>
+      </div>
+      <progress id="cacheProg" max="100" value="0" hidden style="width:100%; margin-top:6px"></progress>
+      <div class="stat" id="statGraph">ready (lazy)</div>
+      <div class="stat" id="statPar"></div>
+    </div>
+    <div class="card" data-backend="tables">
+      <h3>Tables</h3>
+      <div class="tech">DuckDB-WASM &middot; Parquet</div>
+      <div class="desc">SQL over the per-type columnar entity-tables — the <code>.parquet</code> files
+        (115 MB), read lazily over HTTP range.</div>
+      <div class="stat" id="statTables">initializing...</div>
+    </div>
+    <div class="card" data-backend="duckdb">
+      <h3>DuckDB</h3>
+      <div class="tech">DuckDB-WASM &middot; .duckdb</div>
+      <div class="desc">The same tables in one <code>wikidata.duckdb</code> file (214 MB).</div>
+      <label class="sub-opt">read:
+        <select id="duckdbSrc">
+          <option value="lazy">lazy remote (range)</option>
+          <option value="cached" disabled>cached full copy</option>
+        </select>
+      </label>
+      <div class="sub-opt" style="display:flex; gap:6px; flex-wrap:wrap">
+        <button class="ex" id="cacheDuckBtn">Cache locally</button>
+      </div>
+      <progress id="cacheDuckProg" max="100" value="0" hidden style="width:100%; margin-top:6px"></progress>
+      <div class="stat" id="statDuckdb">initializing...</div>
+    </div>
+    <div class="card" data-backend="sqlite">
+      <h3>SQLite <span class="exp">experimental</span></h3>
+      <div class="tech">sql.js-httpvfs &middot; sql.js</div>
+      <div class="desc">SQL over <code>wikidata.sqlite</code> (475 MB); list/map columns are JSON text.
+        <a id="sqliteDl" href="#" target="_blank" rel="noopener">download</a></div>
+      <label class="sub-opt">read:
+        <select id="sqliteSrc">
+          <option value="lazy">lazy remote (httpvfs)</option>
+          <option value="cached" disabled>cached full copy</option>
+        </select>
+      </label>
+      <div class="sub-opt" style="display:flex; gap:6px; flex-wrap:wrap">
+        <button class="ex" id="cacheSqliteBtn">Cache locally</button>
+      </div>
+      <progress id="cacheSqliteProg" max="100" value="0" hidden style="width:100%; margin-top:6px"></progress>
+      <div class="stat" id="statSqlite">initializing...</div>
+    </div>
+  </aside>
+
+  <main class="work">
+    <h2 id="workTitle">Graph - SPARQL</h2>
+    <p class="desc" id="workDesc">Lazy SPARQL over the .rete graph.</p>
+    <div class="notice hidden" id="remoteWarn">
+      <b>Remote data isn't reachable from this browser</b> for the current source
+      (<span id="warnSrc">HF Bucket</span>) — a range fetch returned an error/405, so the lazy
+      <b>Graph</b>, <b>Tables</b> and <b>SQLite</b> backends can't fetch it here. (The
+      <code>rete</code> CLI works fine: it isn't subject to CORS.) Try another host with the
+      <b>Source</b> button (top-right) — HF Datasets or same-origin GitHub Pages — or cache a
+      copy locally. You can still browse the example queries below.
+    </div>
+    <div class="examples" id="exBar"></div>
+    <p class="microcopy" id="exNote"></p>
+    <div id="subsetWrap" class="hidden">
+      <p class="microcopy" style="margin:0 0 3px">subset — a CONSTRUCT; SHACL validates only the triples it builds (so only those tiles are fetched):</p>
+      <textarea id="subsetEd"></textarea>
+    </div>
+    <p class="microcopy hidden" id="mainLabel"></p>
+    <textarea id="editor"></textarea>
+    <div class="row"><button id="run">Run</button><span class="spin hidden" id="spin"></span><span class="meta" id="meta"></span></div>
+    <div class="resbar" id="resbar">
+      <span class="seg" id="viewSeg"><button data-v="table" class="active">Table</button><button data-v="graph">Graph</button></span>
+      <button class="ex" id="dlResult">Download CSV</button>
+    </div>
+    <div class="out" id="out"></div>
+  </main>
+</div>
+
+<script type="text/plain" id="reteGlue">__GLUE_JS__</script>
+<script>window.RETE_WASM_B64 = "__WASM_B64__";</script>
+<script>__WIDGETS_JS__</script>
+<script type="module">
+import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
+
+const $ = (id) => document.getElementById(id);
+// The same 100 MB bundle served three ways. Switch with the "Source" button to
+// compare how each host's CORS / Range support behaves in this browser. (The
+// rete CLI is unaffected — it sends no Origin; this is purely the fetch story.)
+const SOURCES = {
+  bucket: { label: "HF Bucket", base: "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-100MB", dl: "?download=true",
+    info: "Hugging Face <b>bucket</b> (resolve). The rete CLI reads it fine, but its resolve endpoint returns <code>405</code> to a cross-origin browser GET — so the browser backends can't fetch it here." },
+  datasets: { label: "HF Datasets", base: "https://huggingface.co/datasets/katospiegel/knowledge-graphs/resolve/main/wikidata-100MB", dl: "?download=true",
+    info: "Hugging Face <b>dataset</b> repo (resolve/main), public — the standard browser-fetchable HF path. Whether it answers a cross-origin browser <em>range</em> GET from this origin is exactly what this switch lets you test." },
+  github: { label: "GitHub Pages", base: "wikidata-100MB", dl: "",
+    info: "<b>Same-origin</b> on GitHub Pages (no CORS; Pages serves <code>206</code> Range). A pyramid-less <b>~74 MB</b> build of <code>wikidata.rete</code> is committed here under <code>wikidata-100MB/</code> (GitHub blocks &gt;100 MiB; dropping the unused community pyramid fits it under the cap), so the <b>Graph</b> backend works directly — verified end-to-end. Tables / DuckDB / SQLite aren't hosted here (too big), so use an HF source for those." },
+};
+let SRC = "bucket", RETE_URL, DUCKDB_URL, SQLITE_URL;
+// Always absolute: the rete worker resolves URLs against its blob: base, so a
+// relative GitHub-Pages path (resolved against the page here) must be absolute
+// before it reaches the worker's XHR.
+const fileUrl = (name) => { const s = SOURCES[SRC]; return new URL(`${s.base}/${name}${s.dl}`, location.href).href; };
+const PARQUET = (f) => fileUrl("parquet/" + f);
+function applySource() {
+  RETE_URL = fileUrl("wikidata.rete");
+  DUCKDB_URL = fileUrl("wikidata.duckdb");
+  SQLITE_URL = fileUrl("wikidata.sqlite");
+  if ($("sqliteDl")) $("sqliteDl").href = SQLITE_URL;
+  if ($("srcBtn")) $("srcBtn").textContent = "Source: " + SOURCES[SRC].label;
+}
+applySource();
+
+const Q859 = "http://www.wikidata.org/entity/Q859"; // Plato, a human (table Q5)
+const META = {
+  graph: { title: "Graph - SPARQL", desc: "Lazy SPARQL over the .rete graph (rete sparql_url)." },
+  tables: { title: "Tables - SQL (DuckDB-WASM, Parquet)", desc: "SQL over the per-type Parquet entity-tables, read lazily over HTTP." },
+  duckdb: { title: "DuckDB - SQL (.duckdb database)", desc: "SQL over the single wikidata.duckdb file - lazy range reads, or a cached full copy." },
+  sqlite: { title: "SQLite - SQL (sql.js)", desc: "SQL over the remote SQLite - lazy (httpvfs) or a cached full copy; list/map columns are JSON text." },
+};
+
+// Object references are stored in the entity tables as N-Triples term tokens
+// (`<iri>`), so SQL matches occupations by the bracketed IRI.
+const OCC = (q) => `<http://www.wikidata.org/entity/${q}>`;
+const PHILOSOPHER = "Q4964182", PHYSICIST = "Q169470", WRITER = "Q36180", POLITICIAN = "Q82955";
+
+// Interesting questions over the ~19k people in this Wikidata slice, posed
+// analogously on each backend. Labels resolve for people (the table subjects);
+// occupations referenced as objects are Q-ids unless their own label triple is
+// also in this 100 MB slice — itself a lesson about partial graphs.
+const EX = [
+  { label: "Everything about Plato (Q859)", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `SELECT ?p ?o WHERE {\n  <${Q859}> ?p ?o\n}`,
+    duck: `SELECT *\nFROM {T}\nWHERE entity = '${Q859}';`,
+    sqlite: `SELECT *\nFROM "Q5"\nWHERE entity = '${Q859}';`,
+    note: "One entity, every fact. The graph is tall (a row per predicate/object); the table is one wide row — the shape difference itself." },
+
+  { label: "Biggest polymaths", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who (COUNT(?occ) AS ?jobs) WHERE {\n  ?p wdt:P106 ?occ ;\n     rdfs:label ?who .\n  FILTER(LANG(?who) = "en")\n}\nGROUP BY ?who\nORDER BY DESC(?jobs)\nLIMIT 15`,
+    duck: `SELECT label AS who, len(P106) AS jobs\nFROM {T}\nWHERE label IS NOT NULL\nORDER BY jobs DESC\nLIMIT 15;`,
+    sqlite: `SELECT label AS who, json_array_length(P106) AS jobs\nFROM "Q5"\nWHERE label IS NOT NULL\nORDER BY jobs DESC\nLIMIT 15;`,
+    note: "Who wears the most hats? Counts each person's occupations — B. R. Ambedkar, David Bowie, Jack Black… The graph counts P106 edges; the tables read len(P106) off the row." },
+
+  { label: "Physicists who were also philosophers", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who WHERE {\n  ?p wdt:P106 wd:${PHYSICIST} ;     # physicist\n     wdt:P106 wd:${PHILOSOPHER} ;   # philosopher\n     rdfs:label ?who .\n  FILTER(LANG(?who) = "en")\n}\nLIMIT 30`,
+    duck: `SELECT entity, label\nFROM {T}\nWHERE list_contains(P106, '${OCC(PHYSICIST)}')\n  AND list_contains(P106, '${OCC(PHILOSOPHER)}');`,
+    sqlite: `SELECT entity, label\nFROM "Q5"\nWHERE EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '${OCC(PHYSICIST)}')\n  AND EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '${OCC(PHILOSOPHER)}');`,
+    note: "Both physicist (Q169470) AND philosopher (Q4964182) — Al-Farabi, Prigogine, Archytas, Mersenne… An occupation intersection every backend expresses directly." },
+
+  { label: "Writers who went into politics", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who WHERE {\n  ?p wdt:P106 wd:${WRITER} ;        # writer\n     wdt:P106 wd:${POLITICIAN} ;    # politician\n     rdfs:label ?who .\n  FILTER(LANG(?who) = "en")\n}\nLIMIT 30`,
+    duck: `SELECT entity, label\nFROM {T}\nWHERE list_contains(P106, '${OCC(WRITER)}')\n  AND list_contains(P106, '${OCC(POLITICIAN)}');`,
+    sqlite: `SELECT entity, label\nFROM "Q5"\nWHERE EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '${OCC(WRITER)}')\n  AND EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '${OCC(POLITICIAN)}');`,
+    note: "The pen and the podium: people whose occupations include both writer (Q36180) and politician (Q82955)." },
+
+  { label: "Most common occupations", table: { file: "Q5_.parquet", name: "Q5" },
+    sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occupation (COUNT(?p) AS ?people) WHERE {\n  ?p wdt:P106 ?occupation\n}\nGROUP BY ?occupation\nORDER BY DESC(?people)\nLIMIT 15`,
+    duck: `SELECT unnest(P106) AS occupation, count(*) AS people\nFROM {T}\nGROUP BY occupation\nORDER BY people DESC\nLIMIT 15;`,
+    sqlite: `SELECT je.value AS occupation, count(*) AS people\nFROM "Q5", json_each(P106) je\nGROUP BY occupation\nORDER BY people DESC\nLIMIT 15;`,
+    note: "What do these ~19k people do? The occupations come back as Q-ids — their own label triples aren't all in this 100 MB slice, a reminder you only fetched a slice." },
+];
+
+// Graph-backend tasks — all run lazily over the remote .rete (range reads).
+const SHAPES = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+
+# Every entity with an occupation (P106) should have a date of birth (P569).
+[] a sh:NodeShape ;
+   sh:targetSubjectsOf wdt:P106 ;
+   sh:property [ sh:path wdt:P569 ; sh:minCount 1 ;
+                 sh:message "person with no date of birth (P569)" ] .`;
+const TASKS = {
+  sparql: { title: "Graph - SPARQL", desc: "Lazy SPARQL over the .rete graph (sparql_url) - only the touched tiles are fetched." },
+  shacl: { title: "Graph - SHACL validate", desc: "Validate the whole graph against SHACL shapes, lazily (shacl_url).",
+    main: SHAPES, mainLabel: "SHACL shapes (Turtle):",
+    note: "Whole-graph SHACL: served over range reads (lazy), but it reads the entire dataset to validate every target." },
+  "shacl-subset": { title: "Graph - SHACL on a subset", desc: "CONSTRUCT a subgraph, then SHACL over just that (shacl_construct_url).",
+    main: SHAPES, mainLabel: "SHACL shapes (Turtle), validated against the CONSTRUCT above:", subset: true,
+    subsetMain: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nCONSTRUCT { ?s wdt:P106 ?o ; wdt:P569 ?d }\nWHERE {\n  ?s wdt:P106 ?o .\n  OPTIONAL { ?s wdt:P569 ?d }\n}\nLIMIT 1000`,
+    note: "Selective-lazy: the CONSTRUCT touches only its patterns' tiles; SHACL then validates just that subgraph - not the whole file." },
+  why: { title: "Graph - Provenance (why)", desc: "How the file answers a triple pattern (why_url): permutation, section, byte ranges.",
+    main: "<http://www.wikidata.org/entity/Q859> <http://www.wikidata.org/prop/direct/P106> ?",
+    mainLabel: "triple pattern: subject predicate object   (use ? for a wildcard)",
+    note: "Provenance for a triple pattern - which index permutation/section and byte ranges answer it." },
+  reach: { title: "Graph - Reachability", desc: "Transitive reach from seed(s) over one predicate (reach_url).",
+    main: "<http://www.wikidata.org/prop/direct/P737>\n<http://www.wikidata.org/entity/Q859>",
+    mainLabel: "line 1: predicate IRI   ·   following lines: seed IRIs",
+    note: "Who Plato (Q859) transitively reaches via 'influenced by' (P737)." },
+};
+
+const state = { backend: "graph", exIdx: 0, graphTask: "sparql", graphSource: "lazy", duckSource: "lazy", sqliteSource: "lazy" };
+let ED = null, lastCols = [], lastRows = [], view = "table";
+
+// Tables reads the Parquet files via read_parquet(); DuckDB reads the attached
+// wikidata.duckdb database as wd."<table>". Both run on DuckDB-WASM.
+function duckRef(ex) {
+  return state.backend === "duckdb" ? `wd."${ex.table.name}"` : `read_parquet('${PARQUET(ex.table.file)}')`;
+}
+function editorText() {
+  const ex = EX[state.exIdx];
+  if (state.backend === "graph") return state.graphTask === "sparql" ? ex.sparql : TASKS[state.graphTask].main;
+  if (state.backend === "sqlite") return ex.sqlite;
+  return ex.duck.replace("{T}", duckRef(ex)); // tables (parquet) or duckdb (.duckdb)
+}
+function refresh() {
+  const graph = state.backend === "graph", task = state.graphTask;
+  const sparqlMode = !graph || task === "sparql"; // SPARQL examples + table/graph output
+  $("workTitle").textContent = graph ? TASKS[task].title : META[state.backend].title;
+  $("workDesc").textContent = graph ? TASKS[task].desc : META[state.backend].desc;
+  const isSubset = graph && task === "shacl-subset";
+  $("subsetWrap").classList.toggle("hidden", !isSubset);
+  if (isSubset && !$("subsetEd").value) $("subsetEd").value = TASKS["shacl-subset"].subsetMain;
+  const ml = graph && task !== "sparql" ? TASKS[task].mainLabel : "";
+  $("mainLabel").textContent = ml; $("mainLabel").classList.toggle("hidden", !ml);
+  $("exBar").classList.toggle("hidden", !sparqlMode);
+  $("resbar").classList.toggle("hidden", !sparqlMode); // view toggle + CSV only for tabular results
+  $("editor").value = editorText();
+  $("exNote").textContent = sparqlMode ? (EX[state.exIdx].note || "") : (TASKS[task].note || "");
+  if (ED) ED.refresh();
+  document.querySelectorAll(".card").forEach((c) => c.classList.toggle("active", c.dataset.backend === state.backend));
+}
+
+function triplesFromRows(cols, rows) {
+  if (cols.length >= 3) return rows.map((r) => [r[cols[0]], r[cols[1]], r[cols[2]]]);
+  if (cols.length === 2) return rows.map((r) => [r[cols[0]], "-", r[cols[1]]]);
+  return [];
+}
+function show(cols, rows) {
+  lastCols = cols; lastRows = rows;
+  if (view === "graph") RetePG.renderGraph($("out"), triplesFromRows(cols, rows));
+  else RetePG.renderTable($("out"), cols, rows);
+}
+const showErr = (m) => { if (typeof busyStop === "function") busyStop(); $("meta").textContent = ""; $("out").innerHTML = `<p class="err">${m}</p>`; };
+
+const SPARQL_KW = ["SELECT","WHERE","PREFIX","FILTER","OPTIONAL","UNION","MINUS","ORDER BY","GROUP BY",
+  "LIMIT","DISTINCT","COUNT","DATATYPE","LANG","REGEX","BIND","wdt:","wd:","rdfs:label"].map((t) => ({ text: t, kind: "kw" }));
+const SQL_TERMS = [
+  ...["SELECT","FROM","WHERE","ORDER BY","GROUP BY","LIMIT","COUNT","DISTINCT","AS","read_parquet","len",
+    "json_array_length","unnest","map_keys","map_values","ATTACH"].map((t) => ({ text: t, kind: "kw" })),
+  ...["Q5","Q16521","Q11424","Q3863","Q484170","Q4022","_manifest","wd"].map((t) => ({ text: t, kind: "table" })),
+  ...["entity","label","types","extra","P106","P27","P569","P19","P21","P735","class","entities","file"].map((t) => ({ text: t, kind: "col" })),
+];
+const completions = () => (state.backend === "graph" ? SPARQL_KW : SQL_TERMS);
+
+$("exBar").innerHTML = EX.map((e, i) => `<button class="ex" data-i="${i}">${e.label}</button>`).join("");
+$("exBar").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => { state.exIdx = +b.dataset.i; state.graphTask = "sparql"; $("graphTask").value = "sparql"; refresh(); });
+document.querySelectorAll(".card").forEach((c) => c.onclick = (e) => {
+  if (["SELECT", "OPTION", "A"].includes(e.target.tagName)) return;
+  state.backend = c.dataset.backend; refresh();
+});
+$("graphTask").onchange = () => { state.graphTask = $("graphTask").value; state.backend = "graph"; refresh(); };
+$("duckdbSrc").onchange = () => { state.duckSource = $("duckdbSrc").value; };
+$("sqliteSrc").onchange = () => { state.sqliteSource = $("sqliteSrc").value; };
+
+/* ---- rete graph: lazy remote (sparql_url) or a cached full copy (query) ----
+   The worker holds the wasm; for "cached" it also holds the full .rete bytes
+   and answers from memory. The cached copy lives in IndexedDB (localStorage
+   caps at ~5 MB, far below 105 MB). */
+const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
+
+/* A fetch worker: pulls its assigned ranges with *synchronous* XHR (sequential
+   within the worker, parallel across the pool) and writes the bytes straight
+   into a shared output buffer at each range's known offset, signalling the
+   coordinator via Atomics. Any 206-miss / short read flips the error flag; the
+   coordinator then returns null and the engine falls back to sequential reads. */
+const FETCH_WORKER_SRC = `
+self.onmessage = function (e) {
+  var m = e.data, data = new Uint8Array(m.data), ctrl = new Int32Array(m.ctrl);
+  for (var k = 0; k < m.spans.length; k++) {
+    var s = m.spans[k];
+    try {
+      var x = new XMLHttpRequest();
+      x.open("GET", m.url, false);
+      x.responseType = "arraybuffer";
+      x.setRequestHeader("Range", "bytes=" + s.off + "-" + (s.off + s.len - 1));
+      x.send();
+      if (x.status !== 206) { Atomics.store(ctrl, 1, 1); }
+      else {
+        var b = new Uint8Array(x.response);
+        if (b.length < s.len) { Atomics.store(ctrl, 1, 1); }
+        else { data.set(b.subarray(0, s.len), s.pos); }
+      }
+    } catch (err) { Atomics.store(ctrl, 1, 1); }
+    Atomics.add(ctrl, 0, 1); Atomics.notify(ctrl, 0);
+  }
+};`;
+
+/* Installed on the rete worker as globalThis.reteReadMany, which the wasm
+   XhrRangeReader calls for a batch of ranges. Fetches them in parallel across
+   a fetch-worker pool and blocks (Atomics.wait) until done — the only way a
+   synchronous engine can parallelise network in the browser. Returns a single
+   buffer with the spans concatenated in order, or null on anything that isn't a
+   clean full success (no cross-origin isolation, a failed range, a timeout) so
+   the engine falls back to sequential reads. */
+const POOL_INSTALL_SRC =
+  "var __pool=null;" +
+  "function __ensurePool(src){if(__pool)return __pool;var P=(self.navigator&&navigator.hardwareConcurrency)||4;P=Math.max(2,Math.min(8,P));__pool=[];" +
+  "var u=URL.createObjectURL(new Blob([src],{type:'text/javascript'}));for(var i=0;i<P;i++)__pool.push(new Worker(u));return __pool;}" +
+  "self.reteReadMany=function(url,offs,lens){try{" +
+  "if(!self.crossOriginIsolated||typeof SharedArrayBuffer==='undefined')return null;" +
+  "var n=offs.length;if(!n)return null;var pos=new Array(n),total=0;for(var i=0;i<n;i++){pos[i]=total;total+=lens[i];}" +
+  "var data=new Uint8Array(new SharedArrayBuffer(total));var ctrl=new Int32Array(new SharedArrayBuffer(8));" +
+  "var pool=__ensurePool(self.__fetchSrc),P=pool.length;var jobs=[];for(var w=0;w<P;w++)jobs.push([]);" +
+  "for(var i=0;i<n;i++)jobs[i%P].push({off:offs[i],len:lens[i],pos:pos[i]});" +
+  "for(var w=0;w<P;w++)pool[w].postMessage({url:url,data:data.buffer,ctrl:ctrl.buffer,spans:jobs[w]});" +
+  "var deadline=Date.now()+120000;while(true){var c=Atomics.load(ctrl,0);if(c>=n)break;Atomics.wait(ctrl,0,c,3000);if(Date.now()>deadline)return null;}" +
+  "if(Atomics.load(ctrl,1)!==0)return null;return data;" +
+  "}catch(err){return null;}};";
+
+const RETE_HARNESS =
+  ";(function(){var ready=null,MEM=null,REQ=0,BYTES=0;" +
+  // Forwarded by the wasm reader per range fetch — works mid-sync-call because
+  // postMessage only enqueues; the main thread renders the live counter.
+  "self.reteProgress=function(b){REQ++;BYTES+=b;self.postMessage({type:'progress',requests:REQ,bytes:BYTES});};" +
+  "self.onmessage=function(e){var m=e.data;" +
+  "if(m.type==='init'){self.__fetchSrc=m.fetchSrc;ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
+  "if(m.type==='memload'){Promise.resolve(ready).then(function(){MEM=m.bytes;self.postMessage({type:'memready'});});return;}" +
+  "Promise.resolve(ready).then(function(){try{REQ=0;BYTES=0;var t=m.task||'sparql';self.postMessage({type:'start',task:t});" +
+  "var j;" +
+  "if(t==='shacl')j=wasm_bindgen.shacl_url(m.url,m.shapes,undefined,'text');" +
+  "else if(t==='shacl-subset')j=wasm_bindgen.shacl_construct_url(m.url,m.construct,m.shapes,'text');" +
+  "else if(t==='why')j=wasm_bindgen.why_url(m.url,m.s,m.p,m.o);" +
+  "else if(t==='reach')j=wasm_bindgen.reach_url(m.url,m.predicate,m.seeds,false);" +
+  "else j=m.mode==='mem'?wasm_bindgen.query(MEM,m.query,'table'):wasm_bindgen.sparql_url(m.url,m.query,'table');" +
+  "self.postMessage({ok:true,json:j,task:t});}catch(err){self.postMessage({ok:false,error:String(err)});}});};})();" +
+  POOL_INSTALL_SRC;
+let _rw = null, _rwReady = null, _memReady = null;
+function ensureRete() {
+  if (_rw) return _rwReady;
+  const glue = document.getElementById("reteGlue").textContent;
+  _rw = new Worker(URL.createObjectURL(new Blob([glue + RETE_HARNESS], { type: "text/javascript" })));
+  let res; _rwReady = new Promise((r) => { res = r; });
+  _rw.addEventListener("message", function onr(e) { if (e.data && e.data.type === "ready") { res(); _rw.removeEventListener("message", onr); } });
+  _rw.postMessage({ type: "init", bytes: b64ToBytes(window.RETE_WASM_B64), fetchSrc: FETCH_WORKER_SRC });
+  return _rwReady;
+}
+function ensureMem() {
+  return ensureRete().then(() => {
+    if (_memReady) return _memReady;
+    _memReady = new Promise((res) => {
+      _rw.addEventListener("message", function onm(e) { if (e.data && e.data.type === "memready") { _rw.removeEventListener("message", onm); res(); } });
+      _rw.postMessage({ type: "memload", bytes: window.__reteBytes });
+    });
+    return _memReady;
+  });
+}
+/* A spinner + live elapsed/progress status while a query runs. */
+let _tick = null;
+function busyStart(fmt) {
+  const t0 = performance.now();
+  $("spin").classList.remove("hidden");
+  if (_tick) clearInterval(_tick);
+  const upd = () => { $("meta").textContent = fmt((performance.now() - t0) / 1000); };
+  upd(); _tick = setInterval(upd, 120);
+  return () => (performance.now() - t0);
+}
+function busyStop() { $("spin").classList.add("hidden"); if (_tick) { clearInterval(_tick); _tick = null; } }
+
+// Build the worker message for the active graph task. SPARQL can use the cached
+// in-memory copy; the SHACL/why/reach tasks always run lazily over the URL.
+function graphMsg() {
+  const task = state.graphTask, ed = $("editor").value;
+  if (task === "shacl") return { type: "query", task, url: RETE_URL, shapes: ed };
+  if (task === "shacl-subset") return { type: "query", task, url: RETE_URL, construct: $("subsetEd").value, shapes: ed };
+  if (task === "why") {
+    const p = ed.trim().split(/\s+/);
+    const w = (t) => (!t || t.startsWith("?")) ? undefined : t;
+    return { type: "query", task, url: RETE_URL, s: w(p[0]), p: w(p[1]), o: w(p[2]) };
+  }
+  if (task === "reach") {
+    const lines = ed.split("\n").map((x) => x.trim()).filter(Boolean);
+    return { type: "query", task, url: RETE_URL, predicate: lines[0] || "", seeds: JSON.stringify(lines.slice(1)) };
+  }
+  const cached = state.graphSource === "cached" && window.__reteBytes;
+  return cached ? { type: "query", task, mode: "mem", query: ed }
+                : { type: "query", task, url: RETE_URL, query: ed };
+}
+// Render a non-SPARQL task result (SHACL report text, or why/reach JSON) into
+// the output as a readable block.
+function showText(s) { $("out").innerHTML = ""; const pre = document.createElement("pre"); pre.className = "out-pre"; pre.textContent = s; $("out").appendChild(pre); }
+function runGraph() {
+  const task = state.graphTask;
+  const msg = graphMsg();
+  const cached = msg.mode === "mem";
+  const prog = { requests: 0, bytes: 0 };
+  const verb = { sparql: "querying", shacl: "validating", "shacl-subset": "validating subset", why: "tracing", reach: "reaching" }[task];
+  const fmt = (s) => cached
+    ? `${verb} cached copy… ${s.toFixed(1)}s`
+    : `${verb}… ${s.toFixed(1)}s · ${prog.requests} request${prog.requests === 1 ? "" : "s"} · ${(prog.bytes / 1048576).toFixed(2)} MB fetched`;
+  const elapsed = busyStart(fmt);
+  (cached ? ensureMem() : ensureRete()).then(() => {
+    _rw.onmessage = (e) => {
+      const d = e.data;
+      if (d.type === "start") return;
+      if (d.type === "progress") { prog.requests = d.requests; prog.bytes = d.bytes; return; }
+      busyStop();
+      const dt = elapsed().toFixed(0);
+      if (!d.ok) return showErr(d.error);
+      const reqInfo = `${prog.requests} req · ${(prog.bytes / 1048576).toFixed(2)} MB · ${dt} ms`;
+      if (task === "shacl" || task === "shacl-subset") {
+        const conforms = /^conforms:\s*true/.test(d.json);
+        const n = (d.json.match(/^conforms: false\nresults: (\d+)/) || [])[1];
+        $("meta").textContent = `${conforms ? "conforms ✓" : (n || "?") + " violation(s)"} · ${reqInfo}`;
+        return showText(d.json);
+      }
+      if (task === "why" || task === "reach") {
+        let obj; try { obj = JSON.parse(d.json); } catch (_) { return showText(d.json); }
+        const n = task === "why" ? obj.resultCount : (Array.isArray(obj) ? obj.reduce((a, x) => a + (x.count || 0), 0) : 0);
+        $("meta").textContent = `${task === "why" ? n + " match(es)" : n + " reached"} · ${reqInfo}`;
+        return showText(JSON.stringify(obj, null, 2));
+      }
+      const r0 = JSON.parse(d.json), r = r0.remote;
+      $("meta").textContent = r
+        ? `${(r0.rows || []).length} rows · ${r.requests || 0} req · ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${r.fileLength ? (100*r.bytes/r.fileLength).toFixed(1) : "?"}%) · ${dt} ms`
+        : `${(r0.rows || []).length} rows · cached, in-memory · ${dt} ms`;
+      show(r0.vars || [], r0.rows || []);
+    };
+    _rw.postMessage(msg);
+  });
+}
+
+/* ---- cache the .rete in IndexedDB (with progress) + source switch ---- */
+const RKEY = "wikidata.rete";
+function idb() { return new Promise((res, rej) => { const r = indexedDB.open("reteCache", 1); r.onupgradeneeded = () => r.result.createObjectStore("f"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbGet(k) { const db = await idb(); return new Promise((res) => { const t = db.transaction("f").objectStore("f").get(k); t.onsuccess = () => res(t.result || null); t.onerror = () => res(null); }); }
+async function idbPut(k, v) { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction("f", "readwrite").objectStore("f").put(v, k); t.onsuccess = () => res(); t.onerror = () => rej(t.error); }); }
+async function idbDel(k) { const db = await idb(); return new Promise((res) => { const t = db.transaction("f", "readwrite").objectStore("f").delete(k); t.onsuccess = () => res(); t.onerror = () => res(); }); }
+// A cache button toggles between "Cache locally" (download) and "Remove cache"
+// (drop the local copy) depending on whether a cached copy exists.
+function setCacheBtn(btnId, cached, cacheFn, removeFn) {
+  const b = $(btnId);
+  b.textContent = cached ? "Remove cache" : "Cache locally";
+  b.onclick = cached ? removeFn : cacheFn;
+}
+function enableCached(mb) {
+  $("graphSrc").querySelector('[value="cached"]').disabled = false;
+  setCacheBtn("cacheBtn", true, cacheRete, removeRete);
+  $("statGraph").textContent = `cached copy ready (${mb} MB) — set read to "cached"`;
+}
+async function cacheRete() {
+  const prog = $("cacheProg"); prog.hidden = false; prog.value = 0; $("statGraph").textContent = "caching…";
+  try {
+    const resp = await fetch(RETE_URL);
+    if (!resp.ok) throw new Error(`fetch ${resp.status} (host not browser-reachable?)`);
+    const total = +resp.headers.get("content-length") || 0;
+    const reader = resp.body.getReader(); const chunks = []; let got = 0;
+    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; if (total) prog.value = Math.round(100 * got / total); }
+    const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
+    window.__reteBytes = buf; _memReady = null;
+    await idbPut(RKEY, buf.buffer);
+    enableCached((got / 1048576).toFixed(0));
+  } catch (e) { $("statGraph").textContent = "cache failed: " + e; }
+  finally { prog.hidden = true; }
+}
+async function removeRete() {
+  await idbDel(RKEY);
+  window.__reteBytes = null; _memReady = null;
+  const sel = $("graphSrc"); sel.value = "lazy"; sel.querySelector('[value="cached"]').disabled = true;
+  state.graphSource = "lazy";
+  setCacheBtn("cacheBtn", false, cacheRete, removeRete);
+  $("statGraph").textContent = "cache removed — ready (lazy)";
+}
+$("cacheBtn").onclick = cacheRete;
+$("graphSrc").onchange = () => { state.graphSource = $("graphSrc").value; $("statGraph").textContent = state.graphSource === "cached" ? "reading cached full copy" : "ready (lazy)"; };
+(async () => { const ab = await idbGet(RKEY); if (ab) { window.__reteBytes = new Uint8Array(ab); enableCached((ab.byteLength / 1048576).toFixed(0)); } })();
+$("statPar").textContent = window.crossOriginIsolated
+  ? "parallel range reads on (cross-origin isolated)"
+  : "sequential range reads · add ?parallel=1 for parallel (graph only)";
+
+/* Can this browser range-fetch the given source's bundle? Some hosts (HF
+   buckets/datasets) 405 a cross-origin browser GET even though the CLI works. */
+async function probeSource(name) {
+  const s = SOURCES[name];
+  try {
+    const url = new URL(`${s.base}/wikidata.rete${s.dl}`, location.href).href;
+    const r = await fetch(url, { headers: { Range: "bytes=0-0" }, cache: "no-store" });
+    return r.status === 206 || r.status === 200;
+  } catch (e) { return false; }
+}
+// Probe the active source and show/hide the "not reachable" banner accordingly.
+async function probeRemote() {
+  $("warnSrc").textContent = SOURCES[SRC].label;
+  const ok = await probeSource(SRC);
+  $("remoteWarn").classList.toggle("hidden", ok);
+}
+probeRemote();
+
+/* ---- download the current result table as CSV ---- */
+$("dlResult").onclick = () => {
+  if (!lastRows.length) return;
+  const q = (v) => { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const csv = [lastCols.join(",")].concat(lastRows.map((r) => lastCols.map((c) => q(r[c])).join(","))).join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = "result.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+};
+
+/* Stream a remote file into IndexedDB with a progress bar; return the bytes.
+   Powers "Cache locally" for the .duckdb and .sqlite (same pattern as the
+   .rete cache), so both can then be queried fully in the browser. */
+async function cacheToIdb(url, key, statId, progId) {
+  const prog = $(progId), stat = $(statId);
+  prog.hidden = false; prog.value = 0; stat.textContent = "caching…";
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`fetch ${resp.status} (host not browser-reachable?)`);
+  const total = +resp.headers.get("content-length") || 0;
+  const reader = resp.body.getReader(); const chunks = []; let got = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; if (total) prog.value = Math.round(100 * got / total); }
+  const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
+  await idbPut(key, buf.buffer);
+  prog.hidden = true;
+  return buf;
+}
+function enableCachedOpt(selId, statId, mb, btnId, cacheFn, removeFn) {
+  $(selId).querySelector('[value="cached"]').disabled = false;
+  if (btnId) setCacheBtn(btnId, true, cacheFn, removeFn);
+  $(statId).textContent = `cached copy available (${mb} MB) — set read to "cached"`;
+}
+
+/* ---- DuckDB-WASM: Tables (Parquet) and DuckDB (.duckdb) share one engine ---- */
+let db = null, conn = null, duckAttachedSource = null, duckRegistered = false;
+duckdb.selectBundle(duckdb.getJsDelivrBundles()).then(async (b) => {
+  const w = await duckdb.createWorker(b.mainWorker);
+  db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), w);
+  await db.instantiate(b.mainModule, b.pthreadWorker);
+  conn = await db.connect();
+  $("statTables").textContent = "ready";
+  if (!/cached/.test($("statDuckdb").textContent)) $("statDuckdb").textContent = "ready (lazy)";
+}).catch((e) => { $("statTables").textContent = "init failed: " + e; $("statDuckdb").textContent = "init failed"; });
+
+function duckRows(res) {
+  const cols = res.schema.fields.map((f) => f.name);
+  const rows = res.toArray().map((r) => { const o = r.toJSON(); for (const k of cols) if (o[k] && typeof o[k] === "object") o[k] = JSON.stringify(o[k]); return o; });
+  return [cols, rows];
+}
+async function runTables() {
+  if (!conn) return showErr("DuckDB still initializing...");
+  const elapsed = busyStart((s) => `querying Parquet via DuckDB… ${s.toFixed(1)}s`);
+  try {
+    const [cols, rows] = duckRows(await conn.query($("editor").value));
+    busyStop(); $("meta").textContent = `${rows.length} rows · ${elapsed().toFixed(0)} ms`; show(cols, rows);
+  } catch (e) { busyStop(); showErr(String(e)); }
+}
+// Attach the .duckdb either lazily (httpfs range over the URL) or from the
+// cached buffer registered in DuckDB's virtual FS; re-attach when switching.
+async function ensureDuckAttach() {
+  if (duckAttachedSource === state.duckSource) return;
+  if (duckAttachedSource) await conn.query("DETACH wd");
+  if (state.duckSource === "cached") {
+    if (!window.__duckBytes) throw new Error("no cached .duckdb — click ‘Cache locally’ first");
+    if (!duckRegistered) { await db.registerFileBuffer("wikidata.duckdb", window.__duckBytes); duckRegistered = true; }
+    await conn.query("ATTACH 'wikidata.duckdb' AS wd (READ_ONLY)");
+  } else {
+    await conn.query(`ATTACH '${DUCKDB_URL}' AS wd (READ_ONLY)`);
+  }
+  duckAttachedSource = state.duckSource;
+}
+async function runDuckdb() {
+  if (!conn) return showErr("DuckDB still initializing...");
+  const elapsed = busyStart((s) => `querying .duckdb (${state.duckSource})… ${s.toFixed(1)}s`);
+  try {
+    await ensureDuckAttach();
+    const [cols, rows] = duckRows(await conn.query($("editor").value));
+    busyStop(); $("meta").textContent = `${rows.length} rows · ${state.duckSource} · ${elapsed().toFixed(0)} ms`; show(cols, rows);
+  } catch (e) { busyStop(); showErr(String(e)); }
+}
+async function cacheDuckdb() {
+  try {
+    const buf = await cacheToIdb(DUCKDB_URL, "wikidata.duckdb", "statDuckdb", "cacheDuckProg");
+    window.__duckBytes = buf; duckRegistered = false; if (duckAttachedSource === "cached") duckAttachedSource = null;
+    $("duckdbSrc").value = "cached"; state.duckSource = "cached";
+    enableCachedOpt("duckdbSrc", "statDuckdb", (buf.length / 1048576).toFixed(0), "cacheDuckBtn", cacheDuckdb, removeDuckdb);
+    $("statDuckdb").textContent = `cached full copy ready (${(buf.length / 1048576).toFixed(0)} MB)`;
+  } catch (e) { $("cacheDuckProg").hidden = true; $("statDuckdb").textContent = "cache failed: " + e; }
+}
+async function removeDuckdb() {
+  await idbDel("wikidata.duckdb");
+  if (duckAttachedSource === "cached" && conn) { try { await conn.query("DETACH wd"); } catch (e) {} duckAttachedSource = null; }
+  if (db && duckRegistered) { try { await db.dropFile("wikidata.duckdb"); } catch (e) {} }
+  window.__duckBytes = null; duckRegistered = false;
+  const sel = $("duckdbSrc"); sel.value = "lazy"; sel.querySelector('[value="cached"]').disabled = true;
+  state.duckSource = "lazy";
+  setCacheBtn("cacheDuckBtn", false, cacheDuckdb, removeDuckdb);
+  $("statDuckdb").textContent = "cache removed — ready (lazy)";
+}
+setCacheBtn("cacheDuckBtn", false, cacheDuckdb, removeDuckdb);
+
+/* ---- SQLite: lazy (sql.js-httpvfs) or a cached full copy (sql.js) ---- */
+let sqliteWorker = null, sqliteFull = null;
+// Init (or re-init, on a source switch) the lazy httpvfs reader against SQLITE_URL.
+async function initSqliteLazy() {
+  sqliteWorker = null;
+  if (!/cached/.test($("statSqlite").textContent)) $("statSqlite").textContent = "initializing...";
+  try {
+    const mod = await import("https://esm.sh/sql.js-httpvfs@0.8.12");
+    const createDbWorker = mod.createDbWorker || (mod.default && mod.default.createDbWorker);
+    if (!createDbWorker) throw new Error("createDbWorker export not found");
+    // `new Worker(url)` requires a same-origin script, but the worker lives on a
+    // CDN — so fetch it and wrap it in a same-origin blob URL. (The wasm URL,
+    // passed separately, is fetched by the worker with CORS, so it can stay
+    // cross-origin.) Without this, init throws before any network request.
+    const WBASE = "https://cdn.jsdelivr.net/npm/sql.js-httpvfs@0.8.12/dist";
+    const workerSrc = await (await fetch(`${WBASE}/sqlite.worker.js`)).text();
+    const workerUrl = URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" }));
+    sqliteWorker = await createDbWorker(
+      [{ from: "inline", config: { serverMode: "full", url: SQLITE_URL, requestChunkSize: 4096 } }],
+      workerUrl,
+      `${WBASE}/sql-wasm.wasm`
+    );
+    if (!/cached/.test($("statSqlite").textContent)) $("statSqlite").textContent = "ready (lazy)";
+  } catch (e) {
+    if (!/cached/.test($("statSqlite").textContent)) $("statSqlite").textContent = "lazy unavailable — cache locally to query";
+    sqliteWorker = { err: String(e) };
+  }
+}
+initSqliteLazy();
+// The cached full copy runs on plain sql.js (the whole DB in memory).
+async function ensureSqliteFull() {
+  if (sqliteFull) return;
+  if (!window.__sqliteBytes) throw new Error("no cached SQLite — click ‘Cache locally’ first");
+  const initSqlJs = (await import("https://esm.sh/sql.js@1.12.0")).default;
+  const SQL = await initSqlJs({ locateFile: (f) => "https://esm.sh/sql.js@1.12.0/dist/" + f });
+  sqliteFull = new SQL.Database(new Uint8Array(window.__sqliteBytes));
+}
+async function runSqlite() {
+  const elapsed = busyStart((s) => `querying SQLite (${state.sqliteSource})… ${s.toFixed(1)}s`);
+  try {
+    let cols, rows;
+    if (state.sqliteSource === "cached") {
+      await ensureSqliteFull();
+      const res = sqliteFull.exec($("editor").value);
+      cols = res.length ? res[0].columns : [];
+      rows = res.length ? res[0].values.map((v) => Object.fromEntries(cols.map((c, i) => [c, v[i]]))) : [];
+    } else {
+      if (!sqliteWorker) { busyStop(); return showErr("SQLite still initializing..."); }
+      if (sqliteWorker.err) { busyStop(); return showErr("SQLite lazy reader unavailable: " + sqliteWorker.err + "\n(sql.js-httpvfs is finicky from a CDN and won't follow a signed-URL redirect — ‘Cache locally’ then set read to ‘cached’, or use the download link.)"); }
+      rows = await sqliteWorker.db.query($("editor").value);
+      cols = rows.length ? Object.keys(rows[0]) : [];
+    }
+    busyStop(); $("meta").textContent = `${rows.length} rows · ${state.sqliteSource} · ${elapsed().toFixed(0)} ms`; show(cols, rows);
+  } catch (e) { busyStop(); showErr(String(e)); }
+}
+async function cacheSqlite() {
+  try {
+    const buf = await cacheToIdb(SQLITE_URL, "wikidata.sqlite", "statSqlite", "cacheSqliteProg");
+    window.__sqliteBytes = buf; sqliteFull = null;
+    $("sqliteSrc").value = "cached"; state.sqliteSource = "cached";
+    enableCachedOpt("sqliteSrc", "statSqlite", (buf.length / 1048576).toFixed(0), "cacheSqliteBtn", cacheSqlite, removeSqlite);
+    $("statSqlite").textContent = `cached full copy ready (${(buf.length / 1048576).toFixed(0)} MB)`;
+  } catch (e) { $("cacheSqliteProg").hidden = true; $("statSqlite").textContent = "cache failed: " + e; }
+}
+async function removeSqlite() {
+  await idbDel("wikidata.sqlite");
+  if (sqliteFull) { try { sqliteFull.close(); } catch (e) {} sqliteFull = null; }
+  window.__sqliteBytes = null;
+  const sel = $("sqliteSrc"); sel.value = "lazy"; sel.querySelector('[value="cached"]').disabled = true;
+  state.sqliteSource = "lazy";
+  setCacheBtn("cacheSqliteBtn", false, cacheSqlite, removeSqlite);
+  $("statSqlite").textContent = sqliteWorker && !sqliteWorker.err ? "cache removed — ready (lazy)" : "cache removed — lazy unavailable";
+}
+setCacheBtn("cacheSqliteBtn", false, cacheSqlite, removeSqlite);
+
+// Re-enable the "cached" option on load if a copy is already in IndexedDB.
+(async () => {
+  const d = await idbGet("wikidata.duckdb");
+  if (d) { window.__duckBytes = new Uint8Array(d); enableCachedOpt("duckdbSrc", "statDuckdb", (d.byteLength / 1048576).toFixed(0), "cacheDuckBtn", cacheDuckdb, removeDuckdb); }
+  const s = await idbGet("wikidata.sqlite");
+  if (s) { window.__sqliteBytes = new Uint8Array(s); enableCachedOpt("sqliteSrc", "statSqlite", (s.byteLength / 1048576).toFixed(0), "cacheSqliteBtn", cacheSqlite, removeSqlite); }
+})();
+
+/* ---- source switch (HF Bucket / HF Datasets / GitHub) + modal ---- */
+function switchSource(name) {
+  if (!SOURCES[name] || name === SRC) return;
+  SRC = name; applySource();
+  // Rebind backends to the new URLs: re-attach DuckDB on next query, re-init the
+  // lazy SQLite reader, refresh the reachability banner. (Local caches are the
+  // same file regardless of source, so they stay valid.)
+  duckAttachedSource = null; sqliteFull = null;
+  initSqliteLazy();
+  probeRemote();
+}
+function renderSrcList() {
+  $("srcList").innerHTML = Object.entries(SOURCES).map(([k, s]) =>
+    `<label class="src-opt"><input type="radio" name="src" value="${k}" ${k === SRC ? "checked" : ""}>` +
+    `<span><b>${s.label}</b> <span class="src-badge wait" id="badge-${k}">checking…</span><br>` +
+    `<span class="microcopy">${s.info}</span></span></label>`).join("");
+  $("srcList").querySelectorAll("input[name=src]").forEach((r) => r.onchange = () => { switchSource(r.value); });
+  // Probe each source's reachability and badge it.
+  Object.keys(SOURCES).forEach(async (k) => {
+    const ok = await probeSource(k); const b = $("badge-" + k); if (!b) return;
+    b.className = "src-badge " + (ok ? "ok" : "no");
+    b.textContent = ok ? "reachable ✓" : "not reachable (405/CORS)";
+  });
+}
+$("srcBtn").onclick = () => { renderSrcList(); $("srcModal").classList.remove("hidden"); };
+$("srcClose").onclick = () => $("srcModal").classList.add("hidden");
+$("srcModal").onclick = (e) => { if (e.target.id === "srcModal") $("srcModal").classList.add("hidden"); };
+
+$("run").onclick = () => {
+  $("out").innerHTML = "";
+  ({ graph: runGraph, tables: runTables, duckdb: runDuckdb, sqlite: runSqlite }[state.backend])();
+};
+$("viewSeg").querySelectorAll("[data-v]").forEach((b) => b.onclick = () => {
+  view = b.dataset.v;
+  $("viewSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x.dataset.v === view));
+  show(lastCols, lastRows);
+});
+
+ED = RetePG.enhanceEditor($("editor"), {
+  lang: () => (state.backend === "graph" ? "sparql" : "sql"),
+  completions,
+});
+refresh();
+</script>
+</body>
+</html>

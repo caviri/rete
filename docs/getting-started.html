@@ -188,6 +188,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="getting-started.html" class="active">Getting started</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li><a href="playground.html">Interactive playground</a></li>
+        <li><a href="explore-100mb.html">Wikidata lazy explorer</a></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
@@ -317,9 +318,115 @@ give natural variability at the same size/noise point. A per-kind breakdown of
 every noise event goes to stderr, so a test knows exactly what mess it got.
 (<code>scripts/gen_graph.py</code> is the older, simpler social-graph generator used by
 <code>scripts/bench.sh</code>.)</p>
+<h3>Scaling to ~1 GB</h3>
+<p>The generator and <code>rete build</code> scale linearly, so a big stress-test graph is
+just a bigger <code>--papers</code>. Output is roughly <strong>85 bytes/triple</strong> as N-Triples
+and <strong>31 triples/paper</strong>, so ~1 GB is about 400k papers / 12.5M triples:</p>
+<pre><code class="language-sh">uv run python scripts/synth_graph.py --papers 400000 --seed 1 -o big.nt  # ~1.1 GB, ~22 s
+rete build big.nt -o big.rete                                            # ~56 s -&gt; ~100 MB
+</code></pre>
+<p>Measured on the dev container (12.5M triples, 2.0M terms, ~30k communities):
+build is ~56 s and the <code>.rete</code> is ~100 MB (zstd). The point of the size is what
+querying it then <em>doesn't</em> read: a selective pattern answers in under a second,
+<code>rete predicates</code> reads ~20 MB of summary rather than the 80 MB index, and a
+lazy query open (<code>rete cost big.rete "&lt;query&gt;"</code>) touches ~7 MB in ~50 range
+requests instead of the whole file — the range-query promise, at 1 GB.</p>
 <p>The playground's <code>scholar</code> / <code>scholar-noisy</code> demo datasets are built with this
 generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
 the <code>scripts/build_playground.py</code> docstring).</p>
+<h2>Lossless entity tables (the best of both worlds)</h2>
+<p><code>scripts/rdf_to_entity_tables.py</code> is the <em>lossless</em> counterpart: it keeps the
+readable one-table-per-type shape <strong>without dropping anything</strong>. Each class
+table has the frequent properties as named <code>LIST</code> columns (occupation,
+citizenship, date of birth…) plus three things that make it complete: a
+<code>types</code> column (all <code>P31</code> values, so a multi-typed entity lives in exactly one
+table, never duplicated), an <code>extra</code> <code>MAP(predicate → objects)</code> column that
+catches every other property (rare ones, all the multilingual labels), and an
+<code>_untyped</code> residual table for subjects with no type. Object values are stored
+as N-Triples term tokens (<code>&lt;iri&gt;</code>, <code>"lit"</code>, <code>"lit"@en</code>), so IRIs, literals and
+language tags round-trip. Explode <code>types</code> + every column + <code>extra</code> across all
+tables and you get back <strong>exactly</strong> the triples — <code>--verify</code> checks that
+(reconstructed == input). It can emit Parquet, a DuckDB file, and a SQLite file
+(list/map columns as JSON text) in one run:</p>
+<pre><code class="language-sh">uv run python scripts/rdf_to_entity_tables.py --parts 1 --limit 12000000 --props 24 \
+  --min-entities 50 -o data/ent --duckdb data/ent.duckdb --sqlite data/ent.sqlite --verify
+</code></pre>
+<p><code>--props</code> only changes how many properties get their own column vs. land in
+<code>extra</code> — it never affects losslessness. The <code>_manifest.parquet</code> records each
+class's column → predicate map so reconstruction is mechanical, and N-Triples
+is the interchange hub (<code>rete export</code> ↔ <code>rete build</code> ↔ these tables).</p>
+<h2>Companion: columnar property tables (Parquet, split by type)</h2>
+<p>To compare the <code>.rete</code> graph against a columnar layout,
+<code>scripts/rdf_to_property_tables.py</code> denormalizes the same Wikidata triples into
+<strong>one Parquet table per entity type</strong> (the classic RDF "property table"): rows
+are entities, grouped by <code>wdt:P31</code> (instance-of); columns are that class's most
+common structured properties, multi-valued as <code>LIST(VARCHAR)</code>; an English
+<code>label</code> column is added and the labelling/description predicates are excluded
+so the columns are the real properties. It runs entirely in DuckDB from the
+source Parquet:</p>
+<pre><code class="language-sh">pip install --break-system-packages duckdb
+uv run python scripts/rdf_to_property_tables.py --parts 10 --limit 120000000 -o data/wd-tables
+# -&gt; data/wd-tables/Q5.parquet (human), Q16521.parquet (taxon), … + _manifest.parquet
+</code></pre>
+<p>Each class table is independently queryable (<code>SELECT … FROM 'Q5.parquet'</code>), the
+<code>_manifest.parquet</code> maps class IRI → label/entity-count/file and each column id
+back to its predicate, and a single DuckDB over the set is just views:
+<code>CREATE VIEW human AS SELECT * FROM 'data/wd-tables/Q5.parquet'</code>. Match the
+<code>.rete</code> slice by passing the same <code>--parts</code>/<code>--limit</code>. This is a property-table
+companion for benchmarking storage/query tech against the graph format — not a
+lossless graph encoding (sparse properties become NULLs, heterogeneous classes
+get wide; that's the point of the comparison).</p>
+<h2>A real-world graph: a Wikidata biology slice</h2>
+<p>For a genuinely large, real dataset, <code>scripts/fetch_wikidata_bio.py</code> pulls a
+life-sciences slice from the <a href="https://query.wikidata.org">Wikidata Query Service</a>:
+genes, the proteins they encode, the diseases they associate with, drugs that
+treat those diseases, and a disease subclass hierarchy — one connected graph,
+every entity labelled in English. It runs a handful of bounded <code>CONSTRUCT</code>
+queries (each well under the WDQS timeout) and merges them as N-Triples.</p>
+<pre><code class="language-sh">uv run python scripts/fetch_wikidata_bio.py --limit 4000 -o data/wikidata-bio.nt
+rete build data/wikidata-bio.nt -o bio.rete
+rete stats bio.rete        # ~40k triples, ~27k terms, hundreds of communities
+</code></pre>
+<p>A <code>--limit 4000</code> run is roughly 40,000 triples (≈2,800 genes, ≈4,000 proteins,
+≈3,600 diseases) — the community pyramid finds hundreds of organism/disease
+clusters, and it exercises every surface: typed-class queries, label joins, the
+disease hierarchy via <code>wdt:P279</code>, and HTTP range queries over a real graph.
+<code>--taxon Q83310</code> fetches mouse instead of human; <code>--limit</code> trades size against
+WDQS time. Output lands in <code>data/</code> (git-ignored, like all fetched datasets —
+the script is tracked, the bytes are regenerated on demand). Be a good WDQS
+citizen: it is rate-limited, so fetch a slice, not a firehose.</p>
+<h3>Real Wikidata at gigabyte scale (Parquet)</h3>
+<p>The Query Service is for slices, not bulk. For a genuinely large, real
+linked-data graph, <code>scripts/wikidata_parquet_to_nt.py</code> reads the full Wikidata
+"truthy" dump from the
+<a href="https://huggingface.co/datasets/piebro/wikidata-extraction"><code>piebro/wikidata-extraction</code></a>
+Parquet conversion on Hugging Face (~80 partitions, <code>subject/predicate/object/ language</code> columns) with DuckDB — <code>httpfs</code> streams the remote files, so a bounded
+slice needs no full download — and writes N-Triples.</p>
+<pre><code class="language-sh">pip install --break-system-packages duckdb
+uv run python scripts/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  # ~1 GB
+rete build data/wd.nt -o wd.rete
+</code></pre>
+<p>The source Parquet drops literal datatypes, so the converter <strong>recovers them</strong>
+(<code>--datatypes</code>, default <code>auto</code>): it resolves each property's datatype from a
+local cache or one WDQS <code>wikibase:propertyType</code> query (~13.5k properties,
+cached for reuse) and re-types each literal — dates <code>xsd:dateTime</code>, quantities
+<code>xsd:decimal</code>, coordinates <code>geo:wktLiteral</code>; strings stay plain, monolingual
+text keeps its language tag, entity values are IRIs. If that map is
+unavailable (e.g. WDQS rate-limited), it falls back to an <strong>offline heuristic</strong>
+that types the unambiguous values — ISO timestamps and WKT geometries — leaving
+numbers plain (a bare number is indistinguishable from a numeric external-id
+without the map). <code>--datatypes heuristic</code> forces the offline path; <code>none</code> emits
+plain literals. Once typed, the engine's <code>DATATYPE(?o)</code> / <code>LANG(?o)</code> filters
+can select by datatype.</p>
+<p>Measured on the dev container, the full <code>--limit 12000000</code> (~1 GB) run:
+converting streams in <strong>~24 s</strong> (1.25 GB N-Triples, datatypes recovered) and
+builds in <strong>~52 s</strong> to a <strong>110 MB <code>.rete</code></strong> — 5 pyramid levels, ~115k
+communities — with typed literals intact (<code>"1830-10-04T00:00:00Z"^^xsd:dateTime</code>,
+<code>"Point(5.47 49.50)"^^geo:wktLiteral</code>) and a selective lookup answering in
+under a second. The slice is a real cross-section of <em>all</em> of Wikidata (people,
+places, works, taxa, …); for a curated biology-only graph use the WDQS fetcher
+above. <code>--parts N</code> draws from N whole partitions; <code>--local-dir</code> reads partitions
+you have already downloaded.</p>
 <h2>Testing</h2>
 <pre><code class="language-sh">cargo test            # full suite (unit, round-trip, robustness, ranged, HTTP)
 cargo clippy --workspace --all-targets -- -D warnings

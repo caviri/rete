@@ -107,17 +107,32 @@ fn decompress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
     }
 }
 
-/// Fetch a set of ascending, disjoint byte ranges, coalescing ranges whose
-/// gap is at most [`COALESCE_GAP`] into one `read_at` (tiles/chunks are laid
-/// out back-to-back, so a full-section sweep collapses into a single read).
-/// Returns each requested range's bytes in order; `None` if any read fails.
+/// Bytes this close are cheaper fetched as one read than as two round trips:
+/// tiles are laid back-to-back so this only ever bridges a tile already made
+/// resident by an earlier window — keep it tight to avoid re-fetching it.
+const TILE_COALESCE_GAP: u64 = 4096;
+
+/// The dictionary chunks a query's output terms touch are scattered across the
+/// section (terms are sorted, output ids are not), so byte-adjacency is rare.
+/// A wider gap trades a little over-fetch for far fewer round trips — the right
+/// call on a latency-bound remote read, where one skipped 64 KiB chunk is much
+/// cheaper than another request's RTT.
+const DICT_COALESCE_GAP: u64 = 64 * 1024;
+
+/// Fetch a set of ascending, disjoint byte ranges, coalescing ranges whose gap
+/// is at most `gap` into one span, then fetching the spans through
+/// [`RangeReader::read_many`] (which a parallelizable reader issues
+/// concurrently). Returns each requested range's bytes in order; `None` if any
+/// read fails.
 fn read_coalesced<R: RangeReader + ?Sized>(
     reader: &R,
     ranges: &[ByteRange],
+    gap: u64,
 ) -> Option<Vec<Vec<u8>>> {
-    /// Two ranges this close are cheaper as one read than as two round trips.
-    const COALESCE_GAP: u64 = 4096;
-    let mut out = Vec::with_capacity(ranges.len());
+    // Build the coalesced spans and remember which span each input range maps
+    // into, so the fetched span blobs can be sliced back apart in order.
+    let mut spans: Vec<(u64, u64)> = Vec::new();
+    let mut span_of: Vec<usize> = Vec::with_capacity(ranges.len());
     let mut i = 0;
     while i < ranges.len() {
         let start = ranges[i].offset;
@@ -125,19 +140,30 @@ fn read_coalesced<R: RangeReader + ?Sized>(
         let mut j = i + 1;
         while j < ranges.len() {
             let r = &ranges[j];
-            if r.offset < end || r.offset - end > COALESCE_GAP {
+            if r.offset < end || r.offset - end > gap {
                 break;
             }
             end = r.offset.checked_add(r.len)?;
             j += 1;
         }
-        let blob = reader.read_at(start, end - start).ok()?;
-        for r in &ranges[i..j] {
-            let lo = (r.offset - start) as usize;
-            let hi = lo.checked_add(r.len as usize)?;
-            out.push(blob.get(lo..hi)?.to_vec());
+        let si = spans.len();
+        spans.push((start, end - start));
+        for _ in i..j {
+            span_of.push(si);
         }
         i = j;
+    }
+    let blobs = reader.read_many(&spans).ok()?;
+    if blobs.len() != spans.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(ranges.len());
+    for (k, r) in ranges.iter().enumerate() {
+        let (span_start, _) = spans[span_of[k]];
+        let blob = &blobs[span_of[k]];
+        let lo = (r.offset - span_start) as usize;
+        let hi = lo.checked_add(r.len as usize)?;
+        out.push(blob.get(lo..hi)?.to_vec());
     }
     Some(out)
 }
@@ -156,6 +182,17 @@ fn content_hash(parts: &[&[u8]]) -> [u8; 16] {
 
 /// A resolved triple as terms.
 pub type TermTriple = (String, String, String);
+
+/// One labelled byte region of a `.rete` file image (see
+/// [`Rete::file_layout`]). `kind` is a stable machine tag: `header`,
+/// `metadata`, `dictionary`, `directory`, `tile`, `pyramid`, `named-graphs`.
+#[derive(Debug, Clone)]
+pub struct LayoutSegment {
+    pub kind: &'static str,
+    pub label: String,
+    pub offset: u64,
+    pub len: u64,
+}
 
 /// A byte range in the `.rete` file image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1018,6 +1055,22 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     Ok(content_hash(&parts) == header.content_hash)
 }
 
+/// Faults the pyramid meta in on first access. `None` = the fetch failed.
+type PyramidLoader = Box<dyn Fn() -> Option<PyramidMeta> + Send + Sync>;
+
+/// The pyramid-meta section, held either resident (eager opens) or deferred
+/// (the lazy remote open). SPARQL never touches the pyramid, but on a Wikidata
+/// file it can be tens of MB (114k communities, millions of superedges), so a
+/// remote SPARQL query must not pay to fetch it — it faults in only when a
+/// community/pyramid query actually calls [`Rete::pyramid`].
+enum PyramidSlot {
+    Resident(Option<PyramidMeta>),
+    Lazy {
+        loader: PyramidLoader,
+        cell: std::sync::OnceLock<Option<PyramidMeta>>,
+    },
+}
+
 /// A read-only, in-memory view over a `.rete` file image.
 pub struct Rete {
     header: Header,
@@ -1028,7 +1081,7 @@ pub struct Rete {
     /// (`(min_a, max_a, compressed-tile range)`), for provenance. Empty for
     /// pre-tiling (v0.1) files.
     tile_ranges: [Vec<(u32, u32, ByteRange)>; 3],
-    pyramid: Option<PyramidMeta>,
+    pyramid: PyramidSlot,
     named_graphs: Vec<(String, GraphIndex)>,
     /// Raw bytes of the metadata section (empty if the file has none). The
     /// application layer decodes this (the CLI stores a JSON Dataset Card here).
@@ -1066,14 +1119,14 @@ impl Rete {
         let index_section_ranges =
             decode_index_section_ranges(index_bytes, header.root_dir_offset)?;
 
-        let pyramid = if header.pyramid_meta_len > 0 {
+        let pyramid = PyramidSlot::Resident(if header.pyramid_meta_len > 0 {
             Some(
                 PyramidMeta::decode(region(header.pyramid_meta_offset, header.pyramid_meta_len)?)
                     .map_err(|_| FileError::Container("malformed pyramid meta"))?,
             )
         } else {
             None
-        };
+        });
 
         let named_graphs = if header.named_graphs_len > 0 {
             decode_named_graphs(
@@ -1113,6 +1166,92 @@ impl Rete {
         &self.header
     }
 
+    /// The file's byte layout, for visualization: header, metadata,
+    /// dictionary, each index permutation's tile directory and individual
+    /// tiles, pyramid summary, and named graphs — sorted by offset. Bytes not
+    /// covered by any segment are container framing (section directories and
+    /// length fields).
+    pub fn file_layout(&self) -> Vec<LayoutSegment> {
+        let h = &self.header;
+        let seg = |kind: &'static str, label: String, offset: u64, len: u64| LayoutSegment {
+            kind,
+            label,
+            offset,
+            len,
+        };
+        let mut out = vec![seg(
+            "header",
+            "header (fixed 128 bytes)".into(),
+            0,
+            crate::header::HEADER_LEN as u64,
+        )];
+        if h.metadata_len > 0 {
+            out.push(seg(
+                "metadata",
+                "metadata (dataset card)".into(),
+                h.metadata_offset,
+                h.metadata_len,
+            ));
+        }
+        out.push(seg(
+            "dictionary",
+            "dictionary (4 front-coded term sections)".into(),
+            h.dictionary_offset,
+            h.dictionary_len,
+        ));
+        for (si, perm) in [
+            IndexPermutation::Spo,
+            IndexPermutation::Pos,
+            IndexPermutation::Osp,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let sec = self.index_section_ranges[si];
+            if sec.len == 0 {
+                continue;
+            }
+            let first_tile = self.tile_ranges[si]
+                .first()
+                .map(|&(_, _, r)| r.offset)
+                .unwrap_or(sec.offset + sec.len);
+            if first_tile > sec.offset {
+                out.push(seg(
+                    "directory",
+                    format!("{} tile directory", perm.name()),
+                    sec.offset,
+                    first_tile - sec.offset,
+                ));
+            }
+            for (ti, &(min_a, max_a, r)) in self.tile_ranges[si].iter().enumerate() {
+                out.push(seg(
+                    "tile",
+                    format!("{} tile {ti} (leading ids {min_a}..{max_a})", perm.name()),
+                    r.offset,
+                    r.len,
+                ));
+            }
+        }
+        if h.pyramid_meta_len > 0 {
+            out.push(seg(
+                "pyramid",
+                "pyramid summary (communities + superedges)".into(),
+                h.pyramid_meta_offset,
+                h.pyramid_meta_len,
+            ));
+        }
+        if h.named_graphs_len > 0 {
+            out.push(seg(
+                "named-graphs",
+                format!("named graphs ({})", self.named_graphs.len()),
+                h.named_graphs_offset,
+                h.named_graphs_len,
+            ));
+        }
+        out.sort_by_key(|s| s.offset);
+        out
+    }
+
     /// Raw bytes of the file's metadata section, or `None` if it has none. The
     /// CLI stores a JSON Dataset Card here; `rete-core` treats it as opaque.
     /// Populated by [`Rete::open`] only â€” an [`Rete::open_ranged`] view returns
@@ -1131,7 +1270,11 @@ impl Rete {
 
     /// The pyramid metadata (summary graph + tiles), if the file has a pyramid.
     pub fn pyramid(&self) -> Option<&PyramidMeta> {
-        self.pyramid.as_ref()
+        match &self.pyramid {
+            PyramidSlot::Resident(p) => p.as_ref(),
+            // Faults the (possibly large) pyramid section on first access only.
+            PyramidSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),
+        }
     }
 
     /// The default-graph permutation index.
@@ -1223,7 +1366,7 @@ impl Rete {
         let index_section_ranges =
             decode_index_section_ranges(&index_bytes, header.root_dir_offset)?;
 
-        let pyramid = if header.pyramid_meta_len > 0 {
+        let pyramid = PyramidSlot::Resident(if header.pyramid_meta_len > 0 {
             let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
             Some(
                 PyramidMeta::decode(&mb)
@@ -1231,7 +1374,7 @@ impl Rete {
             )
         } else {
             None
-        };
+        });
 
         let named_graphs = if header.named_graphs_len > 0 {
             let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
@@ -1323,7 +1466,7 @@ impl Rete {
             let bulk: crate::dict::ChunkBulkLoader = Box::new(move |cis| {
                 let want: Option<Vec<ByteRange>> =
                     cis.iter().map(|&ci| ranges.get(ci).copied()).collect();
-                let blobs = read_coalesced(bulk_reader.as_ref(), &want?)?;
+                let blobs = read_coalesced(bulk_reader.as_ref(), &want?, DICT_COALESCE_GAP)?;
                 blobs.iter().map(|b| decompress(codec, b).ok()).collect()
             });
             dict_sections.push(
@@ -1367,14 +1510,22 @@ impl Rete {
                 .collect();
         }
 
+        // The pyramid meta is large on real graphs (tens of MB) and SPARQL never
+        // reads it, so defer its fetch: it faults in only if `pyramid()` is
+        // called (community / pyramid_tree / inspect queries).
         let pyramid = if header.pyramid_meta_len > 0 {
-            let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
-            Some(
-                PyramidMeta::decode(&mb)
-                    .map_err(|_| FileError::Container("malformed pyramid meta"))?,
-            )
+            let pyr_reader = reader.clone();
+            let pyr_off = header.pyramid_meta_offset;
+            let pyr_len = header.pyramid_meta_len;
+            PyramidSlot::Lazy {
+                loader: Box::new(move || {
+                    let mb = pyr_reader.read_at(pyr_off, pyr_len).ok()?;
+                    PyramidMeta::decode(&mb).ok()
+                }),
+                cell: std::sync::OnceLock::new(),
+            }
         } else {
-            None
+            PyramidSlot::Resident(None)
         };
 
         let named_graphs = if header.named_graphs_len > 0 {
@@ -1403,7 +1554,7 @@ impl Rete {
                 .iter()
                 .map(|&ti| section.get(ti).map(|&(_, _, r)| r))
                 .collect();
-            let blobs = read_coalesced(reader.as_ref(), &want?)?;
+            let blobs = read_coalesced(reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
             blobs.iter().map(|b| decompress(codec, b).ok()).collect()
         });
         let index = GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
@@ -1788,6 +1939,37 @@ mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
     use crate::index::GraphIndexBuilder;
+
+    #[test]
+    fn read_coalesced_merges_within_gap_and_splits_beyond() {
+        use crate::reader::{CountingReader, SliceReader};
+        let bytes = vec![0u8; 4096];
+        // Three 16-byte ranges: A..B gap = 32, B..C gap = 1024.
+        let ranges = [
+            ByteRange { offset: 0, len: 16 },
+            ByteRange {
+                offset: 48,
+                len: 16,
+            },
+            ByteRange {
+                offset: 1088,
+                len: 16,
+            },
+        ];
+        // Tight gap (16): nothing merges → one read per range.
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let out = read_coalesced(&r, &ranges, 16).unwrap();
+        assert_eq!(out.len(), 3);
+        assert_eq!(r.requests(), 3);
+        // Gap 64 merges A+B (gap 32) but not C (gap 1024) → two reads.
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        read_coalesced(&r, &ranges, 64).unwrap();
+        assert_eq!(r.requests(), 2);
+        // Gap 4096 merges all three into one read, over-fetching the gaps.
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        read_coalesced(&r, &ranges, 4096).unwrap();
+        assert_eq!(r.requests(), 1);
+    }
 
     fn build_image() -> Vec<u8> {
         let triples = [
