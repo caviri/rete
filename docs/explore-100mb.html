@@ -1665,10 +1665,13 @@ const SOURCES = {
   datasets: { label: "HF Datasets", base: "https://huggingface.co/datasets/katospiegel/knowledge-graphs/resolve/main/wikidata-100MB", dl: "?download=true",
     info: "Hugging Face <b>dataset</b> repo (resolve/main), public — the standard browser-fetchable HF path. Whether it answers a cross-origin browser <em>range</em> GET from this origin is exactly what this switch lets you test." },
   github: { label: "GitHub Pages", base: "wikidata-100MB", dl: "",
-    info: "<b>Same-origin</b> on GitHub Pages (no CORS; Pages serves <code>206</code> Range). Needs the bundle hosted under this site at <code>wikidata-100MB/</code>. Caveat: GitHub blocks files &gt;100 MiB and this .rete is ~104 MB, so the full file needs Git LFS + a CDN or a smaller build." },
+    info: "<b>Same-origin</b> on GitHub Pages (no CORS; Pages serves <code>206</code> Range). A pyramid-less <b>~74 MB</b> build of <code>wikidata.rete</code> is committed here under <code>wikidata-100MB/</code> (GitHub blocks &gt;100 MiB; dropping the unused community pyramid fits it under the cap), so the <b>Graph</b> backend works directly — verified end-to-end. Tables / DuckDB / SQLite aren't hosted here (too big), so use an HF source for those." },
 };
 let SRC = "bucket", RETE_URL, DUCKDB_URL, SQLITE_URL;
-const fileUrl = (name) => { const s = SOURCES[SRC]; return `${s.base}/${name}${s.dl}`; };
+// Always absolute: the rete worker resolves URLs against its blob: base, so a
+// relative GitHub-Pages path (resolved against the page here) must be absolute
+// before it reaches the worker's XHR.
+const fileUrl = (name) => { const s = SOURCES[SRC]; return new URL(`${s.base}/${name}${s.dl}`, location.href).href; };
 const PARQUET = (f) => fileUrl("parquet/" + f);
 function applySource() {
   RETE_URL = fileUrl("wikidata.rete");
@@ -2040,7 +2043,8 @@ $("statPar").textContent = window.crossOriginIsolated
 async function probeSource(name) {
   const s = SOURCES[name];
   try {
-    const r = await fetch(`${s.base}/wikidata.rete${s.dl}`, { headers: { Range: "bytes=0-0" }, cache: "no-store" });
+    const url = new URL(`${s.base}/wikidata.rete${s.dl}`, location.href).href;
+    const r = await fetch(url, { headers: { Range: "bytes=0-0" }, cache: "no-store" });
     return r.status === 206 || r.status === 200;
   } catch (e) { return false; }
 }
