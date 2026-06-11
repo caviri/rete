@@ -1273,7 +1273,7 @@ impl Rete {
         match &self.pyramid {
             PyramidSlot::Resident(p) => p.as_ref(),
             // Faults the (possibly large) pyramid section on first access only.
-            PyramidSlot::Lazy { loader, cell } => cell.get_or_init(|| loader()).as_ref(),
+            PyramidSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),
         }
     }
 
