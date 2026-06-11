@@ -37,6 +37,13 @@ enum Command {
         /// reasoning. Aborts if the graph is logically incoherent.
         #[arg(long)]
         materialize: bool,
+        /// Skip the community pyramid — no pyramid section is written. SPARQL /
+        /// SHACL / triple / reachability queries don't use it, so the file stays
+        /// fully queryable and is markedly smaller (the pyramid is the largest
+        /// section on dense graphs). Only community / summary / progressive
+        /// queries need the pyramid.
+        #[arg(long = "no-pyramid")]
+        no_pyramid: bool,
         /// Embed a **Dataset Card** (data-catalog metadata) in the file. Auto
         /// fields — triple/term counts, top predicates and classes, vocabularies
         /// — are derived from the data; the curated fields below are optional.
@@ -391,6 +398,7 @@ fn main() -> anyhow::Result<()> {
             output,
             format,
             materialize,
+            no_pyramid,
             card,
             card_file,
             title,
@@ -403,6 +411,7 @@ fn main() -> anyhow::Result<()> {
             &output,
             format.as_deref(),
             materialize,
+            no_pyramid,
             commands::card::CardArgs {
                 enabled: card,
                 file: card_file,

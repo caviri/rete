@@ -79,6 +79,7 @@ pub(crate) fn build(
     output: &str,
     format: Option<&str>,
     materialize: bool,
+    no_pyramid: bool,
     card_args: CardArgs,
 ) -> anyhow::Result<()> {
     // 1. Parse every input into quads (triples → default graph, `None`).
@@ -123,20 +124,21 @@ pub(crate) fn build(
     } else {
         None
     };
-    let (bytes, stats) = ingest::assemble_dataset_with(&quads, |stats| match curated {
-        Some(curated) => {
-            let dataset_card = card::derive_card(
-                &quads,
-                stats.terms as u64,
-                stats.named_graphs as u64,
-                curated,
-            );
-            let blob = dataset_card.to_json_bytes();
-            eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
-            blob
-        }
-        None => Vec::new(),
-    });
+    let (bytes, stats) =
+        ingest::assemble_dataset_with_opts(&quads, !no_pyramid, |stats| match curated {
+            Some(curated) => {
+                let dataset_card = card::derive_card(
+                    &quads,
+                    stats.terms as u64,
+                    stats.named_graphs as u64,
+                    curated,
+                );
+                let blob = dataset_card.to_json_bytes();
+                eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                blob
+            }
+            None => Vec::new(),
+        });
     std::fs::write(output, &bytes)?;
 
     if stats.named_graphs > 0 {
@@ -182,6 +184,7 @@ mod tests {
             out.to_str().unwrap(),
             None,
             true,
+            false,
             CardArgs::default(),
         )
         .unwrap();
@@ -196,6 +199,7 @@ mod tests {
             &[inp.to_str().unwrap().to_string()],
             out.to_str().unwrap(),
             None,
+            false,
             false,
             CardArgs::default(),
         )

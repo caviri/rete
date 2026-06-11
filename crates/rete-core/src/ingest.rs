@@ -195,6 +195,20 @@ pub fn assemble_dataset_with(
     quads: &[RawQuad],
     metadata: impl FnOnce(&BuildStats) -> Vec<u8>,
 ) -> (Vec<u8>, BuildStats) {
+    assemble_dataset_with_opts(quads, true, metadata)
+}
+
+/// Like [`assemble_dataset_with`], but `with_pyramid = false` skips the Louvain
+/// community pyramid entirely — no pyramid section is written (header length 0).
+/// SPARQL / SHACL / triple / reachability queries don't use the pyramid, so a
+/// pyramid-less file is fully queryable and markedly smaller (the pyramid is the
+/// largest section on highly-connected graphs). Only the community / summary /
+/// progressive paths need it.
+pub fn assemble_dataset_with_opts(
+    quads: &[RawQuad],
+    with_pyramid: bool,
+    metadata: impl FnOnce(&BuildStats) -> Vec<u8>,
+) -> (Vec<u8>, BuildStats) {
     use std::collections::BTreeMap;
 
     let mut db = DictionaryBuilder::new();
@@ -229,7 +243,11 @@ pub fn assemble_dataset_with(
         })
         .collect();
 
-    let (meta, levels) = build_pyramid_meta(&dict, &default_triples, DEFAULT_TILE_BUDGET);
+    let (meta, levels) = if with_pyramid {
+        build_pyramid_meta(&dict, &default_triples, DEFAULT_TILE_BUDGET)
+    } else {
+        (Vec::new(), 0)
+    };
     let stats = BuildStats {
         statements: quads.len(),
         default_triples: default_triples.len(),
