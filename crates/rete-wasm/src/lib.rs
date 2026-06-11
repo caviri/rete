@@ -539,6 +539,66 @@ impl XhrRangeReader {
 /// only, so call it from a Web Worker. A failed range fetch mid-query is an
 /// error, never a silently incomplete result. The host must answer `Range`
 /// requests with `206` (and send CORS headers if cross-origin).
+/// Open a remote `.rete` lazily over HTTP range reads, returning the counting
+/// reader (for byte/request stats) and the `Rete`. The seam every `*_url`
+/// task shares with [`sparql_url`].
+fn open_url(url: &str) -> Result<(std::sync::Arc<CountingReader<XhrRangeReader>>, Rete), JsValue> {
+    let reader = std::sync::Arc::new(CountingReader::new(XhrRangeReader::open(url)?));
+    let rete = Rete::open_ranged_lazy(reader.clone()).map_err(err)?;
+    Ok((reader, rete))
+}
+
+/// Turn a partial lazy fetch into a hard error: a `*_url` task must never
+/// return a result computed over silently-incomplete data.
+fn incomplete_guard(rete: &Rete, what: &str) -> Result<(), JsValue> {
+    if rete.index_incomplete() {
+        return Err(JsValue::from_str(&format!(
+            "a range fetch failed mid-{what}; refusing to return incomplete results"
+        )));
+    }
+    Ok(())
+}
+
+/// Triple-pattern provenance over a **remote** `.rete` URL (lazy range reads):
+/// which permutation/section/byte-ranges answer the pattern. Worker-only.
+#[wasm_bindgen]
+pub fn why_url(
+    url: &str,
+    subject: Option<String>,
+    predicate: Option<String>,
+    object: Option<String>,
+) -> Result<String, JsValue> {
+    let (reader, rete) = open_url(url)?;
+    let out = why_triples_rete(
+        &rete,
+        subject.as_deref(),
+        predicate.as_deref(),
+        object.as_deref(),
+    )
+    .map_err(|e| JsValue::from_str(&e))?;
+    incomplete_guard(&rete, "query")?;
+    let _ = reader;
+    Ok(out)
+}
+
+/// Provenance over an already-open `Rete` (shared by [`why_triples`] in-memory
+/// and [`why_url`] remote).
+fn why_triples_rete(
+    rete: &Rete,
+    subject: Option<&str>,
+    predicate: Option<&str>,
+    object: Option<&str>,
+) -> Result<String, String> {
+    use serde_json::json;
+    let results = rete.query_with_provenance(subject, predicate, object);
+    let out = json!({
+        "pattern": { "subject": subject, "predicate": predicate, "object": object },
+        "resultCount": results.len(),
+        "results": results.iter().map(provenance_json).collect::<Vec<_>>(),
+    });
+    serde_json::to_string(&out).map_err(|e| e.to_string())
+}
+
 #[wasm_bindgen]
 pub fn sparql_url(url: &str, query: &str, format: &str) -> Result<String, JsValue> {
     let reader = std::sync::Arc::new(CountingReader::new(XhrRangeReader::open(url)?));
@@ -735,8 +795,23 @@ pub fn communities(bytes: &[u8], round: Option<usize>) -> Result<String, JsValue
 /// instead of failing the whole call.
 #[wasm_bindgen]
 pub fn reach(bytes: &[u8], predicate: &str, seeds: &str, reverse: bool) -> Result<String, JsValue> {
+    reach_rete(&open(bytes)?, predicate, seeds, reverse)
+}
+
+/// Multi-source reachability over a **remote** `.rete` URL (lazy HTTP range
+/// reads): builds adjacency for `predicate` by faulting only that predicate's
+/// tiles, then BFS from each seed. Worker-only (synchronous XHR).
+#[wasm_bindgen]
+pub fn reach_url(url: &str, predicate: &str, seeds: &str, reverse: bool) -> Result<String, JsValue> {
+    let (reader, rete) = open_url(url)?;
+    let out = reach_rete(&rete, predicate, seeds, reverse)?;
+    incomplete_guard(&rete, "reach")?;
+    let _ = reader;
+    Ok(out)
+}
+
+fn reach_rete(rete: &Rete, predicate: &str, seeds: &str, reverse: bool) -> Result<String, JsValue> {
     use std::collections::HashMap;
-    let rete = open(bytes)?;
     let dict = rete.dictionary();
 
     // Accept either a JSON array of IRIs or a single bare IRI string.
@@ -813,8 +888,37 @@ pub fn shacl(
     graph: Option<String>,
     format: &str,
 ) -> Result<String, JsValue> {
-    let rete = open(bytes)?;
-    let data = DataGraph::from_rete(&rete, graph.as_deref());
+    shacl_rete(&open(bytes)?, shapes_turtle, graph.as_deref(), format)
+}
+
+/// Validate a **remote** `.rete` graph (lazy HTTP range reads) against SHACL
+/// Core shapes written in Turtle. The validator materializes the data graph,
+/// so this faults in the dataset's chunks/tiles as it reads — heavier than a
+/// point query, but still range-served. Worker-only (synchronous XHR).
+#[wasm_bindgen]
+pub fn shacl_url(
+    url: &str,
+    shapes_turtle: &str,
+    graph: Option<String>,
+    format: &str,
+) -> Result<String, JsValue> {
+    let (reader, rete) = open_url(url)?;
+    let out = shacl_rete(&rete, shapes_turtle, graph.as_deref(), format)?;
+    incomplete_guard(&rete, "validation")?;
+    let _ = reader;
+    Ok(out)
+}
+
+fn shacl_rete(
+    rete: &Rete,
+    shapes_turtle: &str,
+    graph: Option<&str>,
+    format: &str,
+) -> Result<String, JsValue> {
+    shacl_over(DataGraph::from_rete(rete, graph), shapes_turtle, format)
+}
+
+fn shacl_over(data: DataGraph, shapes_turtle: &str, format: &str) -> Result<String, JsValue> {
     let shapes = ShaclShapes::parse_turtle(shapes_turtle).map_err(err)?;
     let report = validate_shacl(&data, &shapes);
     Ok(match format {
@@ -822,6 +926,34 @@ pub fn shacl(
         "ttl" => report.to_turtle(),
         _ => format_shacl_text(&report),
     })
+}
+
+/// **Chain a SPARQL subset, then SHACL over it — selectively lazy.** Evaluates
+/// a `CONSTRUCT` over the remote `.rete` (touching only the tiles its patterns
+/// need), then validates the resulting subgraph against the Turtle `shapes`.
+/// Unlike [`shacl_url`] (which dumps the whole graph), this fetches only the
+/// slice the `CONSTRUCT` selects — the "validate just this subset, in place"
+/// path. Worker-only (synchronous XHR).
+#[wasm_bindgen]
+pub fn shacl_construct_url(
+    url: &str,
+    construct: &str,
+    shapes_turtle: &str,
+    format: &str,
+) -> Result<String, JsValue> {
+    let (reader, rete) = open_url(url)?;
+    let triples = match eval_query(&rete, construct).map_err(err)? {
+        QueryOutput::Construct(t) => t,
+        _ => {
+            return Err(JsValue::from_str(
+                "the subset query must be a CONSTRUCT — it builds the subgraph SHACL validates",
+            ))
+        }
+    };
+    incomplete_guard(&rete, "query")?;
+    let out = shacl_over(DataGraph::from_triples(triples), shapes_turtle, format)?;
+    let _ = reader;
+    Ok(out)
 }
 
 fn format_shacl_text(report: &ValidationReport) -> String {

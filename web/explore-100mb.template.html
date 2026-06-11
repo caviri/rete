@@ -117,6 +117,11 @@
     padding:10px 13px; margin:0 0 12px; font-size:12.5px; line-height:1.55; }
   .notice b { color:#7a3d12; } .notice code { background:#f1e2cf; border-color:#e3c9a6; }
   .notice a { color:#9a3b18; }
+  #subsetEd { width:100%; min-height:96px; resize:vertical; margin-bottom:10px;
+    font:12.5px/1.46 "Cascadia Mono",Consolas,monospace; padding:9px; border:1px solid var(--line-strong);
+    border-radius:8px; background:var(--surface); color:var(--ink); white-space:pre; }
+  .out-pre { white-space:pre-wrap; word-break:break-word; margin:0; padding:10px;
+    font:12px/1.5 "Cascadia Mono",Consolas,monospace; color:var(--ink); }
   .spin { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:7px;
     border:2px solid var(--line-strong); border-top-color:var(--accent); border-radius:50%;
     animation:spin .7s linear infinite; }
@@ -140,8 +145,17 @@
     </div>
     <div class="card active" data-backend="graph">
       <h3>Graph</h3>
-      <div class="tech">rete &middot; SPARQL</div>
-      <div class="desc">SPARQL over <code>wikidata.rete</code> (105 MB).</div>
+      <div class="tech">rete &middot; SPARQL &middot; SHACL</div>
+      <div class="desc">Lazy tasks over <code>wikidata.rete</code> (105 MB).</div>
+      <label class="sub-opt">task:
+        <select id="graphTask">
+          <option value="sparql">SPARQL</option>
+          <option value="shacl">SHACL validate</option>
+          <option value="shacl-subset">SHACL on a CONSTRUCT subset</option>
+          <option value="why">Provenance (why)</option>
+          <option value="reach">Reachability</option>
+        </select>
+      </label>
       <label class="sub-opt">read:
         <select id="graphSrc">
           <option value="lazy">lazy remote (range)</option>
@@ -210,9 +224,14 @@
     </div>
     <div class="examples" id="exBar"></div>
     <p class="microcopy" id="exNote"></p>
+    <div id="subsetWrap" class="hidden">
+      <p class="microcopy" style="margin:0 0 3px">subset — a CONSTRUCT; SHACL validates only the triples it builds (so only those tiles are fetched):</p>
+      <textarea id="subsetEd"></textarea>
+    </div>
+    <p class="microcopy hidden" id="mainLabel"></p>
     <textarea id="editor"></textarea>
     <div class="row"><button id="run">Run</button><span class="spin hidden" id="spin"></span><span class="meta" id="meta"></span></div>
-    <div class="resbar">
+    <div class="resbar" id="resbar">
       <span class="seg" id="viewSeg"><button data-v="table" class="active">Table</button><button data-v="graph">Graph</button></span>
       <button class="ex" id="dlResult">Download CSV</button>
     </div>
@@ -283,7 +302,36 @@ const EX = [
     note: "What do these ~19k people do? The occupations come back as Q-ids — their own label triples aren't all in this 100 MB slice, a reminder you only fetched a slice." },
 ];
 
-const state = { backend: "graph", exIdx: 0, graphSource: "lazy", duckSource: "lazy", sqliteSource: "lazy" };
+// Graph-backend tasks — all run lazily over the remote .rete (range reads).
+const SHAPES = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+
+# Every entity that has an occupation (P106) must carry a label.
+[] a sh:NodeShape ;
+   sh:targetSubjectsOf wdt:P106 ;
+   sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+                 sh:message "has an occupation but no rdfs:label" ] .`;
+const TASKS = {
+  sparql: { title: "Graph - SPARQL", desc: "Lazy SPARQL over the .rete graph (sparql_url) - only the touched tiles are fetched." },
+  shacl: { title: "Graph - SHACL validate", desc: "Validate the whole graph against SHACL shapes, lazily (shacl_url).",
+    main: SHAPES, mainLabel: "SHACL shapes (Turtle):",
+    note: "Whole-graph SHACL: served over range reads (lazy), but it reads the entire dataset to validate every target." },
+  "shacl-subset": { title: "Graph - SHACL on a subset", desc: "CONSTRUCT a subgraph, then SHACL over just that (shacl_construct_url).",
+    main: SHAPES, mainLabel: "SHACL shapes (Turtle), validated against the CONSTRUCT above:", subset: true,
+    subsetMain: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nCONSTRUCT { ?s rdfs:label ?l ; wdt:P106 ?o }\nWHERE {\n  ?s wdt:P106 ?o .\n  OPTIONAL { ?s rdfs:label ?l }\n}\nLIMIT 1000`,
+    note: "Selective-lazy: the CONSTRUCT touches only its patterns' tiles; SHACL then validates just that subgraph - not the whole file." },
+  why: { title: "Graph - Provenance (why)", desc: "How the file answers a triple pattern (why_url): permutation, section, byte ranges.",
+    main: "<http://www.wikidata.org/entity/Q859> <http://www.wikidata.org/prop/direct/P106> ?",
+    mainLabel: "triple pattern: subject predicate object   (use ? for a wildcard)",
+    note: "Provenance for a triple pattern - which index permutation/section and byte ranges answer it." },
+  reach: { title: "Graph - Reachability", desc: "Transitive reach from seed(s) over one predicate (reach_url).",
+    main: "<http://www.wikidata.org/prop/direct/P737>\n<http://www.wikidata.org/entity/Q859>",
+    mainLabel: "line 1: predicate IRI   ·   following lines: seed IRIs",
+    note: "Who Plato (Q859) transitively reaches via 'influenced by' (P737)." },
+};
+
+const state = { backend: "graph", exIdx: 0, graphTask: "sparql", graphSource: "lazy", duckSource: "lazy", sqliteSource: "lazy" };
 let ED = null, lastCols = [], lastRows = [], view = "table";
 
 // Tables reads the Parquet files via read_parquet(); DuckDB reads the attached
@@ -293,15 +341,24 @@ function duckRef(ex) {
 }
 function editorText() {
   const ex = EX[state.exIdx];
-  if (state.backend === "graph") return ex.sparql;
+  if (state.backend === "graph") return state.graphTask === "sparql" ? ex.sparql : TASKS[state.graphTask].main;
   if (state.backend === "sqlite") return ex.sqlite;
   return ex.duck.replace("{T}", duckRef(ex)); // tables (parquet) or duckdb (.duckdb)
 }
 function refresh() {
-  $("workTitle").textContent = META[state.backend].title;
-  $("workDesc").textContent = META[state.backend].desc;
+  const graph = state.backend === "graph", task = state.graphTask;
+  const sparqlMode = !graph || task === "sparql"; // SPARQL examples + table/graph output
+  $("workTitle").textContent = graph ? TASKS[task].title : META[state.backend].title;
+  $("workDesc").textContent = graph ? TASKS[task].desc : META[state.backend].desc;
+  const isSubset = graph && task === "shacl-subset";
+  $("subsetWrap").classList.toggle("hidden", !isSubset);
+  if (isSubset && !$("subsetEd").value) $("subsetEd").value = TASKS["shacl-subset"].subsetMain;
+  const ml = graph && task !== "sparql" ? TASKS[task].mainLabel : "";
+  $("mainLabel").textContent = ml; $("mainLabel").classList.toggle("hidden", !ml);
+  $("exBar").classList.toggle("hidden", !sparqlMode);
+  $("resbar").classList.toggle("hidden", !sparqlMode); // view toggle + CSV only for tabular results
   $("editor").value = editorText();
-  $("exNote").textContent = EX[state.exIdx].note || "";
+  $("exNote").textContent = sparqlMode ? (EX[state.exIdx].note || "") : (TASKS[task].note || "");
   if (ED) ED.refresh();
   document.querySelectorAll(".card").forEach((c) => c.classList.toggle("active", c.dataset.backend === state.backend));
 }
@@ -329,11 +386,12 @@ const SQL_TERMS = [
 const completions = () => (state.backend === "graph" ? SPARQL_KW : SQL_TERMS);
 
 $("exBar").innerHTML = EX.map((e, i) => `<button class="ex" data-i="${i}">${e.label}</button>`).join("");
-$("exBar").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => { state.exIdx = +b.dataset.i; refresh(); });
+$("exBar").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => { state.exIdx = +b.dataset.i; state.graphTask = "sparql"; $("graphTask").value = "sparql"; refresh(); });
 document.querySelectorAll(".card").forEach((c) => c.onclick = (e) => {
   if (["SELECT", "OPTION", "A"].includes(e.target.tagName)) return;
   state.backend = c.dataset.backend; refresh();
 });
+$("graphTask").onchange = () => { state.graphTask = $("graphTask").value; state.backend = "graph"; refresh(); };
 $("duckdbSrc").onchange = () => { state.duckSource = $("duckdbSrc").value; };
 $("sqliteSrc").onchange = () => { state.sqliteSource = $("sqliteSrc").value; };
 
@@ -400,9 +458,14 @@ const RETE_HARNESS =
   "self.onmessage=function(e){var m=e.data;" +
   "if(m.type==='init'){self.__fetchSrc=m.fetchSrc;ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
   "if(m.type==='memload'){Promise.resolve(ready).then(function(){MEM=m.bytes;self.postMessage({type:'memready'});});return;}" +
-  "Promise.resolve(ready).then(function(){try{REQ=0;BYTES=0;self.postMessage({type:'start',mode:m.mode});" +
-  "var j=m.mode==='mem'?wasm_bindgen.query(MEM,m.query,'table'):wasm_bindgen.sparql_url(m.url,m.query,'table');" +
-  "self.postMessage({ok:true,json:j});}catch(err){self.postMessage({ok:false,error:String(err)});}});};})();" +
+  "Promise.resolve(ready).then(function(){try{REQ=0;BYTES=0;var t=m.task||'sparql';self.postMessage({type:'start',task:t});" +
+  "var j;" +
+  "if(t==='shacl')j=wasm_bindgen.shacl_url(m.url,m.shapes,undefined,'text');" +
+  "else if(t==='shacl-subset')j=wasm_bindgen.shacl_construct_url(m.url,m.construct,m.shapes,'text');" +
+  "else if(t==='why')j=wasm_bindgen.why_url(m.url,m.s,m.p,m.o);" +
+  "else if(t==='reach')j=wasm_bindgen.reach_url(m.url,m.predicate,m.seeds,false);" +
+  "else j=m.mode==='mem'?wasm_bindgen.query(MEM,m.query,'table'):wasm_bindgen.sparql_url(m.url,m.query,'table');" +
+  "self.postMessage({ok:true,json:j,task:t});}catch(err){self.postMessage({ok:false,error:String(err)});}});};})();" +
   POOL_INSTALL_SRC;
 let _rw = null, _rwReady = null, _memReady = null;
 function ensureRete() {
@@ -436,14 +499,37 @@ function busyStart(fmt) {
 }
 function busyStop() { $("spin").classList.add("hidden"); if (_tick) { clearInterval(_tick); _tick = null; } }
 
-function runGraph() {
+// Build the worker message for the active graph task. SPARQL can use the cached
+// in-memory copy; the SHACL/why/reach tasks always run lazily over the URL.
+function graphMsg() {
+  const task = state.graphTask, ed = $("editor").value;
+  if (task === "shacl") return { type: "query", task, url: RETE_URL, shapes: ed };
+  if (task === "shacl-subset") return { type: "query", task, url: RETE_URL, construct: $("subsetEd").value, shapes: ed };
+  if (task === "why") {
+    const p = ed.trim().split(/\s+/);
+    const w = (t) => (!t || t.startsWith("?")) ? undefined : t;
+    return { type: "query", task, url: RETE_URL, s: w(p[0]), p: w(p[1]), o: w(p[2]) };
+  }
+  if (task === "reach") {
+    const lines = ed.split("\n").map((x) => x.trim()).filter(Boolean);
+    return { type: "query", task, url: RETE_URL, predicate: lines[0] || "", seeds: JSON.stringify(lines.slice(1)) };
+  }
   const cached = state.graphSource === "cached" && window.__reteBytes;
+  return cached ? { type: "query", task, mode: "mem", query: ed }
+                : { type: "query", task, url: RETE_URL, query: ed };
+}
+// Render a non-SPARQL task result (SHACL report text, or why/reach JSON) into
+// the output as a readable block.
+function showText(s) { $("out").innerHTML = ""; const pre = document.createElement("pre"); pre.className = "out-pre"; pre.textContent = s; $("out").appendChild(pre); }
+function runGraph() {
+  const task = state.graphTask;
+  const msg = graphMsg();
+  const cached = msg.mode === "mem";
   const prog = { requests: 0, bytes: 0 };
-  // While the (synchronous) query runs, the worker streams progress events for
-  // the lazy path; the cached path is in-memory so we just tick elapsed time.
+  const verb = { sparql: "querying", shacl: "validating", "shacl-subset": "validating subset", why: "tracing", reach: "reaching" }[task];
   const fmt = (s) => cached
-    ? `querying cached copy… ${s.toFixed(1)}s`
-    : `streaming… ${s.toFixed(1)}s · ${prog.requests} request${prog.requests === 1 ? "" : "s"} · ${(prog.bytes / 1048576).toFixed(2)} MB fetched`;
+    ? `${verb} cached copy… ${s.toFixed(1)}s`
+    : `${verb}… ${s.toFixed(1)}s · ${prog.requests} request${prog.requests === 1 ? "" : "s"} · ${(prog.bytes / 1048576).toFixed(2)} MB fetched`;
   const elapsed = busyStart(fmt);
   (cached ? ensureMem() : ensureRete()).then(() => {
     _rw.onmessage = (e) => {
@@ -453,14 +539,26 @@ function runGraph() {
       busyStop();
       const dt = elapsed().toFixed(0);
       if (!d.ok) return showErr(d.error);
+      const reqInfo = `${prog.requests} req · ${(prog.bytes / 1048576).toFixed(2)} MB · ${dt} ms`;
+      if (task === "shacl" || task === "shacl-subset") {
+        const conforms = /^conforms:\s*true/.test(d.json);
+        const n = (d.json.match(/^conforms: false\nresults: (\d+)/) || [])[1];
+        $("meta").textContent = `${conforms ? "conforms ✓" : (n || "?") + " violation(s)"} · ${reqInfo}`;
+        return showText(d.json);
+      }
+      if (task === "why" || task === "reach") {
+        let obj; try { obj = JSON.parse(d.json); } catch (_) { return showText(d.json); }
+        const n = task === "why" ? obj.resultCount : (Array.isArray(obj) ? obj.reduce((a, x) => a + (x.count || 0), 0) : 0);
+        $("meta").textContent = `${task === "why" ? n + " match(es)" : n + " reached"} · ${reqInfo}`;
+        return showText(JSON.stringify(obj, null, 2));
+      }
       const r0 = JSON.parse(d.json), r = r0.remote;
       $("meta").textContent = r
         ? `${(r0.rows || []).length} rows · ${r.requests || 0} req · ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${r.fileLength ? (100*r.bytes/r.fileLength).toFixed(1) : "?"}%) · ${dt} ms`
         : `${(r0.rows || []).length} rows · cached, in-memory · ${dt} ms`;
       show(r0.vars || [], r0.rows || []);
     };
-    _rw.postMessage(cached ? { type: "query", mode: "mem", query: $("editor").value }
-                           : { type: "query", mode: "lazy", url: RETE_URL, query: $("editor").value });
+    _rw.postMessage(msg);
   });
 }
 
