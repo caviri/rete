@@ -126,6 +126,21 @@
     border:2px solid var(--line-strong); border-top-color:var(--accent); border-radius:50%;
     animation:spin .7s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  .srcbtn { margin-left:auto; border:1px solid var(--line-strong); background:var(--surface); color:var(--ink);
+    border-radius:7px; padding:5px 11px; font-size:12.5px; cursor:pointer; }
+  .srcbtn:hover { border-color:var(--accent); color:var(--accent); }
+  .modal { position:fixed; inset:0; background:rgba(20,33,29,.42); display:flex; align-items:center;
+    justify-content:center; z-index:60; padding:16px; }
+  .modal.hidden { display:none; }
+  .modal-box { background:var(--surface); border:1px solid var(--line-strong); border-radius:11px;
+    padding:18px 20px; max-width:580px; box-shadow:0 18px 50px rgba(32,47,41,.28); }
+  .src-opt { display:flex; gap:9px; align-items:flex-start; padding:9px 10px; border:1px solid var(--line);
+    border-radius:8px; margin-bottom:8px; cursor:pointer; }
+  .src-opt:hover { border-color:var(--line-strong); }
+  .src-opt input { margin-top:3px; }
+  .src-badge { font-size:10.5px; padding:1px 6px; border-radius:5px; vertical-align:1px; }
+  .src-badge.ok { background:#dff0e8; color:#0b6f5e; } .src-badge.no { background:#f7e3da; color:#9a3b18; }
+  .src-badge.wait { background:var(--code); color:var(--muted); }
 </style>
 </head>
 <body>
@@ -133,8 +148,17 @@
   <h1>Wikidata-100MB</h1>
   <span class="sub">one ~12M-triple graph, queried lazily over HTTP range - pick a backend on the left</span>
   <a href="index.html">&larr; playground</a>
-  <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs/tree/wikidata-100MB" target="_blank" rel="noopener">data on Hugging Face &#8599;</a>
+  <a href="https://huggingface.co/datasets/katospiegel/knowledge-graphs/tree/main/wikidata-100MB" target="_blank" rel="noopener">data on Hugging Face &#8599;</a>
+  <button id="srcBtn" class="srcbtn">Source: HF Bucket</button>
 </header>
+<div id="srcModal" class="modal hidden">
+  <div class="modal-box">
+    <h3 style="margin:0 0 6px">Data source</h3>
+    <p class="microcopy" style="margin:0 0 12px">The same 100 MB bundle, served three ways. Switch to compare how each host's CORS / Range support behaves in <em>this</em> browser — the lazy backends fetch from whichever you pick. (The rete CLI is unaffected.)</p>
+    <div id="srcList"></div>
+    <div style="text-align:right; margin-top:14px"><button id="srcClose" class="ex">Close</button></div>
+  </div>
+</div>
 <div class="shell">
   <aside class="side">
     <div class="about">
@@ -215,12 +239,12 @@
     <h2 id="workTitle">Graph - SPARQL</h2>
     <p class="desc" id="workDesc">Lazy SPARQL over the .rete graph.</p>
     <div class="notice hidden" id="remoteWarn">
-      <b>Remote data isn't reachable from this browser.</b> The bundle is hosted on a
-      Hugging Face <i>bucket</i>, whose <code>resolve</code> endpoint returns <code>405</code>
-      to cross-origin browser range requests — so the lazy <b>Graph</b>, <b>Tables</b> and
-      <b>SQLite</b> backends can't fetch it here. (The <code>rete</code> CLI works fine: it
-      isn't subject to CORS.) To run these in the browser, host the bundle on a CORS-enabled
-      direct server (S3/R2/GCS) or same-origin. You can still browse the example queries below.
+      <b>Remote data isn't reachable from this browser</b> for the current source
+      (<span id="warnSrc">HF Bucket</span>) — a range fetch returned an error/405, so the lazy
+      <b>Graph</b>, <b>Tables</b> and <b>SQLite</b> backends can't fetch it here. (The
+      <code>rete</code> CLI works fine: it isn't subject to CORS.) Try another host with the
+      <b>Source</b> button (top-right) — HF Datasets or same-origin GitHub Pages — or cache a
+      copy locally. You can still browse the example queries below.
     </div>
     <div class="examples" id="exBar"></div>
     <p class="microcopy" id="exNote"></p>
@@ -245,13 +269,29 @@
 <script type="module">
 import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
 
-const BUCKET = "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-100MB";
-const RETE_URL = `${BUCKET}/wikidata.rete?download=true`;
-const PARQUET = (f) => `${BUCKET}/parquet/${f}?download=true`;
-const DUCKDB_URL = `${BUCKET}/wikidata.duckdb?download=true`;
-const SQLITE_URL = `${BUCKET}/wikidata.sqlite?download=true`;
 const $ = (id) => document.getElementById(id);
-$("sqliteDl").href = SQLITE_URL;
+// The same 100 MB bundle served three ways. Switch with the "Source" button to
+// compare how each host's CORS / Range support behaves in this browser. (The
+// rete CLI is unaffected — it sends no Origin; this is purely the fetch story.)
+const SOURCES = {
+  bucket: { label: "HF Bucket", base: "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-100MB", dl: "?download=true",
+    info: "Hugging Face <b>bucket</b> (resolve). The rete CLI reads it fine, but its resolve endpoint returns <code>405</code> to a cross-origin browser GET — so the browser backends can't fetch it here." },
+  datasets: { label: "HF Datasets", base: "https://huggingface.co/datasets/katospiegel/knowledge-graphs/resolve/main/wikidata-100MB", dl: "?download=true",
+    info: "Hugging Face <b>dataset</b> repo (resolve/main), public — the standard browser-fetchable HF path. Whether it answers a cross-origin browser <em>range</em> GET from this origin is exactly what this switch lets you test." },
+  github: { label: "GitHub Pages", base: "wikidata-100MB", dl: "",
+    info: "<b>Same-origin</b> on GitHub Pages (no CORS; Pages serves <code>206</code> Range). Needs the bundle hosted under this site at <code>wikidata-100MB/</code>. Caveat: GitHub blocks files &gt;100 MiB and this .rete is ~104 MB, so the full file needs Git LFS + a CDN or a smaller build." },
+};
+let SRC = "bucket", RETE_URL, DUCKDB_URL, SQLITE_URL;
+const fileUrl = (name) => { const s = SOURCES[SRC]; return `${s.base}/${name}${s.dl}`; };
+const PARQUET = (f) => fileUrl("parquet/" + f);
+function applySource() {
+  RETE_URL = fileUrl("wikidata.rete");
+  DUCKDB_URL = fileUrl("wikidata.duckdb");
+  SQLITE_URL = fileUrl("wikidata.sqlite");
+  if ($("sqliteDl")) $("sqliteDl").href = SQLITE_URL;
+  if ($("srcBtn")) $("srcBtn").textContent = "Source: " + SOURCES[SRC].label;
+}
+applySource();
 
 const Q859 = "http://www.wikidata.org/entity/Q859"; // Plato, a human (table Q5)
 const META = {
@@ -304,14 +344,13 @@ const EX = [
 
 // Graph-backend tasks — all run lazily over the remote .rete (range reads).
 const SHAPES = `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix wdt: <http://www.wikidata.org/prop/direct/> .
 
-# Every entity that has an occupation (P106) must carry a label.
+# Every entity with an occupation (P106) should have a date of birth (P569).
 [] a sh:NodeShape ;
    sh:targetSubjectsOf wdt:P106 ;
-   sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
-                 sh:message "has an occupation but no rdfs:label" ] .`;
+   sh:property [ sh:path wdt:P569 ; sh:minCount 1 ;
+                 sh:message "person with no date of birth (P569)" ] .`;
 const TASKS = {
   sparql: { title: "Graph - SPARQL", desc: "Lazy SPARQL over the .rete graph (sparql_url) - only the touched tiles are fetched." },
   shacl: { title: "Graph - SHACL validate", desc: "Validate the whole graph against SHACL shapes, lazily (shacl_url).",
@@ -319,7 +358,7 @@ const TASKS = {
     note: "Whole-graph SHACL: served over range reads (lazy), but it reads the entire dataset to validate every target." },
   "shacl-subset": { title: "Graph - SHACL on a subset", desc: "CONSTRUCT a subgraph, then SHACL over just that (shacl_construct_url).",
     main: SHAPES, mainLabel: "SHACL shapes (Turtle), validated against the CONSTRUCT above:", subset: true,
-    subsetMain: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nCONSTRUCT { ?s rdfs:label ?l ; wdt:P106 ?o }\nWHERE {\n  ?s wdt:P106 ?o .\n  OPTIONAL { ?s rdfs:label ?l }\n}\nLIMIT 1000`,
+    subsetMain: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nCONSTRUCT { ?s wdt:P106 ?o ; wdt:P569 ?d }\nWHERE {\n  ?s wdt:P106 ?o .\n  OPTIONAL { ?s wdt:P569 ?d }\n}\nLIMIT 1000`,
     note: "Selective-lazy: the CONSTRUCT touches only its patterns' tiles; SHACL then validates just that subgraph - not the whole file." },
   why: { title: "Graph - Provenance (why)", desc: "How the file answers a triple pattern (why_url): permutation, section, byte ranges.",
     main: "<http://www.wikidata.org/entity/Q859> <http://www.wikidata.org/prop/direct/P106> ?",
@@ -610,18 +649,22 @@ $("statPar").textContent = window.crossOriginIsolated
   ? "parallel range reads on (cross-origin isolated)"
   : "sequential range reads · add ?parallel=1 for parallel (graph only)";
 
-/* Runtime check: can this browser actually range-fetch the remote bundle? Some
-   hosts (HF buckets) return 405 to cross-origin browser GET even though the CLI
-   works — in that case the remote backends can't run here, so show the banner.
-   When the bundle is later moved to a CORS-friendly host this passes and the
-   banner stays hidden. */
-(async () => {
+/* Can this browser range-fetch the given source's bundle? Some hosts (HF
+   buckets/datasets) 405 a cross-origin browser GET even though the CLI works. */
+async function probeSource(name) {
+  const s = SOURCES[name];
   try {
-    const r = await fetch(RETE_URL, { headers: { Range: "bytes=0-0" }, cache: "no-store" });
-    if (r.status === 206 || r.status === 200) return;
-  } catch (e) { /* network/CORS failure → unreachable */ }
-  $("remoteWarn").classList.remove("hidden");
-})();
+    const r = await fetch(`${s.base}/wikidata.rete${s.dl}`, { headers: { Range: "bytes=0-0" }, cache: "no-store" });
+    return r.status === 206 || r.status === 200;
+  } catch (e) { return false; }
+}
+// Probe the active source and show/hide the "not reachable" banner accordingly.
+async function probeRemote() {
+  $("warnSrc").textContent = SOURCES[SRC].label;
+  const ok = await probeSource(SRC);
+  $("remoteWarn").classList.toggle("hidden", ok);
+}
+probeRemote();
 
 /* ---- download the current result table as CSV ---- */
 $("dlResult").onclick = () => {
@@ -724,7 +767,10 @@ setCacheBtn("cacheDuckBtn", false, cacheDuckdb, removeDuckdb);
 
 /* ---- SQLite: lazy (sql.js-httpvfs) or a cached full copy (sql.js) ---- */
 let sqliteWorker = null, sqliteFull = null;
-(async () => {
+// Init (or re-init, on a source switch) the lazy httpvfs reader against SQLITE_URL.
+async function initSqliteLazy() {
+  sqliteWorker = null;
+  if (!/cached/.test($("statSqlite").textContent)) $("statSqlite").textContent = "initializing...";
   try {
     const mod = await import("https://esm.sh/sql.js-httpvfs@0.8.12");
     const createDbWorker = mod.createDbWorker || (mod.default && mod.default.createDbWorker);
@@ -746,7 +792,8 @@ let sqliteWorker = null, sqliteFull = null;
     if (!/cached/.test($("statSqlite").textContent)) $("statSqlite").textContent = "lazy unavailable — cache locally to query";
     sqliteWorker = { err: String(e) };
   }
-})();
+}
+initSqliteLazy();
 // The cached full copy runs on plain sql.js (the whole DB in memory).
 async function ensureSqliteFull() {
   if (sqliteFull) return;
@@ -800,6 +847,34 @@ setCacheBtn("cacheSqliteBtn", false, cacheSqlite, removeSqlite);
   const s = await idbGet("wikidata.sqlite");
   if (s) { window.__sqliteBytes = new Uint8Array(s); enableCachedOpt("sqliteSrc", "statSqlite", (s.byteLength / 1048576).toFixed(0), "cacheSqliteBtn", cacheSqlite, removeSqlite); }
 })();
+
+/* ---- source switch (HF Bucket / HF Datasets / GitHub) + modal ---- */
+function switchSource(name) {
+  if (!SOURCES[name] || name === SRC) return;
+  SRC = name; applySource();
+  // Rebind backends to the new URLs: re-attach DuckDB on next query, re-init the
+  // lazy SQLite reader, refresh the reachability banner. (Local caches are the
+  // same file regardless of source, so they stay valid.)
+  duckAttachedSource = null; sqliteFull = null;
+  initSqliteLazy();
+  probeRemote();
+}
+function renderSrcList() {
+  $("srcList").innerHTML = Object.entries(SOURCES).map(([k, s]) =>
+    `<label class="src-opt"><input type="radio" name="src" value="${k}" ${k === SRC ? "checked" : ""}>` +
+    `<span><b>${s.label}</b> <span class="src-badge wait" id="badge-${k}">checking…</span><br>` +
+    `<span class="microcopy">${s.info}</span></span></label>`).join("");
+  $("srcList").querySelectorAll("input[name=src]").forEach((r) => r.onchange = () => { switchSource(r.value); });
+  // Probe each source's reachability and badge it.
+  Object.keys(SOURCES).forEach(async (k) => {
+    const ok = await probeSource(k); const b = $("badge-" + k); if (!b) return;
+    b.className = "src-badge " + (ok ? "ok" : "no");
+    b.textContent = ok ? "reachable ✓" : "not reachable (405/CORS)";
+  });
+}
+$("srcBtn").onclick = () => { renderSrcList(); $("srcModal").classList.remove("hidden"); };
+$("srcClose").onclick = () => $("srcModal").classList.add("hidden");
+$("srcModal").onclick = (e) => { if (e.target.id === "srcModal") $("srcModal").classList.add("hidden"); };
 
 $("run").onclick = () => {
   $("out").innerHTML = "";
