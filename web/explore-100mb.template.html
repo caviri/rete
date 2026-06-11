@@ -631,10 +631,17 @@ let sqliteWorker = null, sqliteFull = null;
     const mod = await import("https://esm.sh/sql.js-httpvfs@0.8.12");
     const createDbWorker = mod.createDbWorker || (mod.default && mod.default.createDbWorker);
     if (!createDbWorker) throw new Error("createDbWorker export not found");
+    // `new Worker(url)` requires a same-origin script, but the worker lives on a
+    // CDN — so fetch it and wrap it in a same-origin blob URL. (The wasm URL,
+    // passed separately, is fetched by the worker with CORS, so it can stay
+    // cross-origin.) Without this, init throws before any network request.
+    const WBASE = "https://cdn.jsdelivr.net/npm/sql.js-httpvfs@0.8.12/dist";
+    const workerSrc = await (await fetch(`${WBASE}/sqlite.worker.js`)).text();
+    const workerUrl = URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" }));
     sqliteWorker = await createDbWorker(
       [{ from: "inline", config: { serverMode: "full", url: SQLITE_URL, requestChunkSize: 4096 } }],
-      "https://esm.sh/sql.js-httpvfs@0.8.12/dist/sqlite.worker.js",
-      "https://esm.sh/sql.js-httpvfs@0.8.12/dist/sql-wasm.wasm"
+      workerUrl,
+      `${WBASE}/sql-wasm.wasm`
     );
     if (!/cached/.test($("statSqlite").textContent)) $("statSqlite").textContent = "ready (lazy)";
   } catch (e) {
