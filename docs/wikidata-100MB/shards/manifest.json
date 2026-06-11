@@ -1,0 +1,20 @@
+{
+  "format": "rete-shards/1",
+  "shardedBy": "subject-hash",
+  "note": "Each shard is a self-contained pyramid-less .rete; a query runs on every shard and results are term-merged (union). Cross-shard joins are not resolved.",
+  "count": 3,
+  "shards": [
+    {
+      "file": "wikidata_00001.rete",
+      "bytes": 26524019
+    },
+    {
+      "file": "wikidata_00002.rete",
+      "bytes": 26535707
+    },
+    {
+      "file": "wikidata_00003.rete",
+      "bytes": 26404956
+    }
+  ]
+}

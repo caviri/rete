@@ -15,6 +15,9 @@ __pycache__/
 # same-origin "GitHub Pages" source has a real file to range-query (see the
 # Source modal). Regenerate with: rete build <data>.nq -o … --no-pyramid
 !/docs/wikidata-100MB/wikidata.rete
+# …and the numbered shards behind the explorer's "GitHub (3 shards)" federated
+# source (manifest.json links them). Regenerate with dev/make_shards.sh.
+!/docs/wikidata-100MB/shards/*.rete
 
 # Cargo.lock IS committed: this workspace ships a binary (rete-cli), so a locked
 # dependency set gives reproducible builds and a stable CI cache key. (It would

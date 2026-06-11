@@ -278,6 +278,8 @@ const SOURCES = {
     info: "Hugging Face <b>bucket</b> (resolve). The rete CLI reads it fine, but its resolve endpoint returns <code>405</code> to a cross-origin browser GET — so the browser backends can't fetch it here." },
   datasets: { label: "HF Datasets", base: "https://huggingface.co/datasets/katospiegel/knowledge-graphs/resolve/main/wikidata-100MB", dl: "?download=true",
     info: "Hugging Face <b>dataset</b> repo (resolve/main), public — the standard browser-fetchable HF path. Whether it answers a cross-origin browser <em>range</em> GET from this origin is exactly what this switch lets you test." },
+  sharded: { label: "GitHub (3 shards)", base: "wikidata-100MB/shards", dl: "", manifest: "manifest.json",
+    info: "Same-origin GitHub Pages, but the dataset is <b>split into 3 numbered pyramid-less <code>.rete</code> shards</b> (by subject hash) with a <code>manifest.json</code> that links them. The Graph backend <b>federates</b>: it runs the SPARQL on every shard (lazily, in parallel-ish) and <b>term-merges</b> the results (union). Cross-shard joins aren't resolved, and LIMIT/COUNT are per-shard — but single-entity and star queries are exact. (Graph/SPARQL only.)" },
   github: { label: "GitHub Pages", base: "wikidata-100MB", dl: "",
     info: "<b>Same-origin</b> on GitHub Pages (no CORS; Pages serves <code>206</code> Range). A pyramid-less <b>~74 MB</b> build of <code>wikidata.rete</code> is committed here under <code>wikidata-100MB/</code> (GitHub blocks &gt;100 MiB; dropping the unused community pyramid fits it under the cap), so the <b>Graph</b> backend works directly — verified end-to-end. Tables / DuckDB / SQLite aren't hosted here (too big), so use an HF source for those." },
 };
@@ -502,7 +504,14 @@ const RETE_HARNESS =
   "if(m.type==='memload'){Promise.resolve(ready).then(function(){MEM=m.bytes;self.postMessage({type:'memready'});});return;}" +
   "Promise.resolve(ready).then(function(){try{REQ=0;BYTES=0;var t=m.task||'sparql';self.postMessage({type:'start',task:t});" +
   "var j;" +
-  "if(t==='shacl')j=wasm_bindgen.shacl_url(m.url,m.shapes,undefined,'text');" +
+  // Federate: run the SPARQL on every shard, term-merge (dedup) the rows, sum
+  // the remote stats. Union semantics — exact for single-entity / star queries.
+  "if(m.mode==='federate'){var rows=[],vars=null,seen={},rq=0,by=0,fl=0;" +
+  "for(var i=0;i<m.urls.length;i++){var jr=JSON.parse(wasm_bindgen.sparql_url(m.urls[i],m.query,'table'));" +
+  "vars=vars||jr.vars;var rm=jr.remote||{};rq+=rm.requests||0;by+=rm.bytes||0;fl+=rm.fileLength||0;" +
+  "(jr.rows||[]).forEach(function(r){var k=JSON.stringify(r);if(!seen[k]){seen[k]=1;rows.push(r);}});}" +
+  "j=JSON.stringify({vars:vars||[],rows:rows,remote:{requests:rq,bytes:by,fileLength:fl,shards:m.urls.length}});}" +
+  "else if(t==='shacl')j=wasm_bindgen.shacl_url(m.url,m.shapes,undefined,'text');" +
   "else if(t==='shacl-subset')j=wasm_bindgen.shacl_construct_url(m.url,m.construct,m.shapes,'text');" +
   "else if(t==='why')j=wasm_bindgen.why_url(m.url,m.s,m.p,m.o);" +
   "else if(t==='reach')j=wasm_bindgen.reach_url(m.url,m.predicate,m.seeds,false);" +
@@ -565,15 +574,22 @@ function graphMsg() {
 function showText(s) { $("out").innerHTML = ""; const pre = document.createElement("pre"); pre.className = "out-pre"; pre.textContent = s; $("out").appendChild(pre); }
 function runGraph() {
   const task = state.graphTask;
-  const msg = graphMsg();
-  const cached = msg.mode === "mem";
+  const sharded = !!SOURCES[SRC].manifest;
+  if (sharded && task !== "sparql")
+    return showErr("Sharded federation supports the SPARQL task only — switch task to SPARQL, or pick a single-file source.");
+  const cached = !sharded && state.graphSource === "cached" && window.__reteBytes;
   const prog = { requests: 0, bytes: 0 };
-  const verb = { sparql: "querying", shacl: "validating", "shacl-subset": "validating subset", why: "tracing", reach: "reaching" }[task];
+  const verb = sharded ? "federating shards" : { sparql: "querying", shacl: "validating", "shacl-subset": "validating subset", why: "tracing", reach: "reaching" }[task];
   const fmt = (s) => cached
     ? `${verb} cached copy… ${s.toFixed(1)}s`
     : `${verb}… ${s.toFixed(1)}s · ${prog.requests} request${prog.requests === 1 ? "" : "s"} · ${(prog.bytes / 1048576).toFixed(2)} MB fetched`;
   const elapsed = busyStart(fmt);
-  (cached ? ensureMem() : ensureRete()).then(() => {
+  // Sharded: resolve the manifest to shard URLs, then federate; else the normal
+  // single-file message.
+  const msgP = sharded
+    ? shardUrls().then((urls) => ({ type: "query", task: "sparql", mode: "federate", urls, query: $("editor").value }))
+    : Promise.resolve(graphMsg());
+  Promise.all([cached ? ensureMem() : ensureRete(), msgP]).then(([, msg]) => {
     _rw.onmessage = (e) => {
       const d = e.data;
       if (d.type === "start") return;
@@ -595,13 +611,14 @@ function runGraph() {
         return showText(JSON.stringify(obj, null, 2));
       }
       const r0 = JSON.parse(d.json), r = r0.remote;
+      const shards = r && r.shards ? `${r.shards} shards · ` : "";
       $("meta").textContent = r
-        ? `${(r0.rows || []).length} rows · ${r.requests || 0} req · ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${r.fileLength ? (100*r.bytes/r.fileLength).toFixed(1) : "?"}%) · ${dt} ms`
+        ? `${(r0.rows || []).length} rows · ${shards}${r.requests || 0} req · ${((r.bytes||0)/1048576).toFixed(1)}/${((r.fileLength||0)/1048576).toFixed(0)} MB (${r.fileLength ? (100*r.bytes/r.fileLength).toFixed(1) : "?"}%) · ${dt} ms`
         : `${(r0.rows || []).length} rows · cached, in-memory · ${dt} ms`;
       show(r0.vars || [], r0.rows || []);
     };
     _rw.postMessage(msg);
-  });
+  }).catch((err) => { busyStop(); showErr(String(err)); });
 }
 
 /* ---- cache the .rete in IndexedDB (with progress) + source switch ---- */
@@ -657,10 +674,26 @@ $("statPar").textContent = window.crossOriginIsolated
 async function probeSource(name) {
   const s = SOURCES[name];
   try {
+    // Sharded sources probe their manifest; single-file sources probe a 1-byte range.
+    if (s.manifest) {
+      const r = await fetch(new URL(`${s.base}/${s.manifest}`, location.href).href, { cache: "no-store" });
+      return r.ok;
+    }
     const url = new URL(`${s.base}/wikidata.rete${s.dl}`, location.href).href;
     const r = await fetch(url, { headers: { Range: "bytes=0-0" }, cache: "no-store" });
     return r.status === 206 || r.status === 200;
   } catch (e) { return false; }
+}
+// Resolve a sharded source's manifest to absolute shard URLs (cached).
+const _manifestCache = {};
+async function shardUrls() {
+  const s = SOURCES[SRC];
+  if (_manifestCache[SRC]) return _manifestCache[SRC];
+  const murl = new URL(`${s.base}/${s.manifest}`, location.href).href;
+  const m = await (await fetch(murl, { cache: "no-store" })).json();
+  const urls = m.shards.map((sh) => new URL(`${s.base}/${sh.file}`, location.href).href);
+  _manifestCache[SRC] = urls;
+  return urls;
 }
 // Probe the active source and show/hide the "not reachable" banner accordingly.
 async function probeRemote() {
