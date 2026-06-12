@@ -213,15 +213,13 @@ fn build(p: &GraphPattern, sel: &mut Select, in_where: bool) -> Result<Plan, Spa
         }
         // Transparent solution-modifier wrappers: record and descend.
         GraphPattern::Project { inner, variables } => {
-            // The first Project is the query's own projection. A *second* one
-            // reached during descent is a nested SELECT (subquery), which we do
-            // not evaluate as an independent scope — reject it clearly instead of
-            // silently flattening its variables into the outer projection (which
-            // would produce wrong results, not an error).
-            if !sel.project.is_empty() {
-                return Err(SparqlError::Unsupported(
-                    "subqueries (nested SELECT) are not supported",
-                ));
+            // A Project reached *inside* the graph pattern (or after the query's
+            // own projection is already set) is a nested SELECT: lower it into
+            // its own independent `Select` and evaluate it as a subquery whose
+            // projected solutions join with the surrounding pattern.
+            if in_where || !sel.project.is_empty() {
+                let sub = lower_pattern(p)?;
+                return Ok(Plan::Subquery(Box::new(sub)));
             }
             for v in variables {
                 sel.project.push(v.as_str().to_string());
@@ -311,9 +309,11 @@ fn convert_agg(ae: &AggregateExpression) -> Result<Agg, SparqlError> {
                 AggregateFunction::Min => Agg::Min(var),
                 AggregateFunction::Max => Agg::Max(var),
                 AggregateFunction::Sample => Agg::Sample(var),
-                AggregateFunction::GroupConcat { separator } => {
-                    Agg::GroupConcat(var, separator.clone().unwrap_or_else(|| " ".to_string()))
-                }
+                AggregateFunction::GroupConcat { separator } => Agg::GroupConcat(
+                    var,
+                    separator.clone().unwrap_or_else(|| " ".to_string()),
+                    *distinct,
+                ),
                 _ => return Err(SparqlError::Unsupported("aggregate function")),
             })
         }

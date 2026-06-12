@@ -141,15 +141,42 @@ fn property_path_zero_length_semantics() {
 }
 
 #[test]
-fn subquery_is_rejected_cleanly() {
-    // A nested SELECT (subquery) is unsupported. It must return a clear error
-    // rather than silently mis-evaluating by flattening the inner projection.
+fn subquery_evaluates_and_joins_with_the_outer_pattern() {
+    // A nested SELECT is evaluated independently; its projected solutions join
+    // with the surrounding pattern on shared variables.
     let rete = Rete::open(&dataset()).unwrap();
-    let q = format!("{PREFIX}SELECT ?p WHERE {{ {{ SELECT ?p WHERE {{ ?p ex:knows ?f }} }} }}");
-    let err = eval_sparql(&rete, &q).unwrap_err();
-    assert!(
-        err.to_string().contains("subqueries"),
-        "expected a clear subquery-unsupported error, got: {err}"
+
+    // A bare subquery yields the same solutions as the equivalent flat query.
+    let direct = col(
+        &rete,
+        &format!("{PREFIX}SELECT ?p WHERE {{ ?p ex:knows ?f }}"),
+        "p",
+    );
+    let nested = col(
+        &rete,
+        &format!("{PREFIX}SELECT ?p WHERE {{ {{ SELECT ?p WHERE {{ ?p ex:knows ?f }} }} }}"),
+        "p",
+    );
+    assert_eq!(nested, direct);
+    assert!(direct.contains(&"<http://ex/Alice>".to_string()));
+
+    // The outer pattern joins on the subquery's projected variable: only people
+    // Alice knows, intersected with people who know someone.
+    let knowers = col(
+        &rete,
+        &format!(
+            "{PREFIX}SELECT ?f WHERE {{ ex:Alice ex:knows ?f . \
+             {{ SELECT ?f WHERE {{ ?f ex:knows ?g }} }} }}"
+        ),
+        "f",
+    );
+    // Alice knows Bob and Carol; both in turn know someone, so both survive.
+    assert_eq!(
+        knowers,
+        vec![
+            "<http://ex/Bob>".to_string(),
+            "<http://ex/Carol>".to_string()
+        ]
     );
 }
 

@@ -98,9 +98,18 @@ fn compute_agg(ctx: &Ctx, agg: &Agg, members: &[Row]) -> Option<String> {
             Some(fmt_num_typed(nums.iter().sum()))
         }
         Agg::Avg(var) => {
+            // AVG of an empty group is defined to be 0; a group that *has* bound
+            // values but some aren't numeric is a type error (unbound).
             let slot = slot_of(var)?;
-            let v = agg_nums(ctx, members, slot);
-            (!v.is_empty()).then(|| fmt_num_typed(v.iter().sum::<f64>() / v.len() as f64))
+            let bound = members.iter().filter(|m| m[slot].is_some()).count();
+            if bound == 0 {
+                return Some(fmt_num_typed(0.0));
+            }
+            let nums = agg_nums(ctx, members, slot);
+            if nums.len() != bound {
+                return None;
+            }
+            Some(fmt_num_typed(nums.iter().sum::<f64>() / nums.len() as f64))
         }
         Agg::Sample(var) => {
             let slot = slot_of(var)?;
@@ -110,18 +119,18 @@ fn compute_agg(ctx: &Ctx, agg: &Agg, members: &[Row]) -> Option<String> {
                 .and_then(|v| ctx.resolver.str_of(v))
                 .map(|t| t.to_string())
         }
-        Agg::GroupConcat(var, sep) => {
+        Agg::GroupConcat(var, sep, distinct) => {
             let terms = match slot_of(var) {
                 Some(slot) => agg_terms(ctx, members, slot),
                 None => Vec::new(),
             };
-            Some(
-                terms
-                    .iter()
-                    .map(|t| lexical(t))
-                    .collect::<Vec<_>>()
-                    .join(sep),
-            )
+            let mut parts: Vec<String> = terms.iter().map(|t| lexical(t)).collect();
+            if *distinct {
+                let mut seen = std::collections::HashSet::new();
+                parts.retain(|p| seen.insert(p.clone()));
+            }
+            // The concatenation is a simple literal (no datatype or language tag).
+            Some(crate::terms::make_literal(&parts.join(sep), None, None))
         }
         Agg::Min(var) | Agg::Max(var) => {
             let want_min = matches!(agg, Agg::Min(_));

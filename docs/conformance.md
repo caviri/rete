@@ -31,20 +31,32 @@ python scripts/sparql_conformance.py \
 | cast | 6 / 6 | 0 | ✅ full — xsd:integer/decimal/float/double/boolean/string |
 | bind | 10 / 10 | 0 | ✅ full — in-pattern BIND visible to later FILTER/join |
 | grouping | 4 / 4 | 0 | ✅ full |
-| bindings (VALUES) | 9 / 11 | 2 | |
+| bindings (VALUES) | 10 / 11 | 1 | |
+| aggregates | 39 / 42 | 3 | GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT |
 | property-path | 21 / 33 | 7 | strong |
 | construct | 3 / 5 | 1 | graph-isomorphism check |
 | exists | 4 / 6 | 1 | |
 | project-expression | 6 / 7 | 0 | |
-| aggregates | 27 / 42 | 4 | |
 | functions | 64 / 75 | 7 | string/cast/hash/datetime + IF/IN/sameTerm |
 | entailment | 28 / 70 | 4 | needs `build --materialize` |
-| subquery | 1 / 14 | 12 | not supported |
+| subquery | 2 / 14 | 12 | nested SELECT joins; GRAPH-scoped + RDF/XML data n/a |
 | service | 0 / 7 | 7 | SPARQL federation (N/A) |
 | csv-tsv-res | 0 / 3 | 3 | CSV/TSV result format |
-| **TOTAL** | **199 / 309 (64.4%)** | 48 | |
+| **TOTAL** | **213 / 309 (68.9%)** | 44 | |
 
 ## Findings
+
+- **Subqueries + aggregate completeness (fixed — +9 tests, → 68.9%).** A nested
+  `SELECT` is now lowered to an in-tree `Plan::Subquery`, evaluated independently
+  to its projected solutions, which then join with the surrounding pattern on
+  shared variables (so `{ {SELECT (GROUP_CONCAT(?o) AS ?g)…} FILTER(?g=…) }`
+  works). On the back of that, the aggregate set was finished: `GROUP_CONCAT`
+  returns a real simple literal and honours `DISTINCT`/`SEPARATOR`, `AVG` of an
+  empty group is `0` (and a non-numeric value is a type error), and computed
+  decimals round-trip through 15 significant digits so a sum like `11.1` no
+  longer serializes as `11.100000000000001`. `aggregates` 27 → 39, `grouping`
+  100%. Remaining subquery gaps are GRAPH-scoped subqueries and tests whose data
+  ships as RDF/XML.
 
 0. **In-pattern `BIND` scoping (fixed — +10 tests, → 64.4%).** A `BIND(expr AS
    ?v)` written *inside* a WHERE pattern is now an in-tree plan node, so a

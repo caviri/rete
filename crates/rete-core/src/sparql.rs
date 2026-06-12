@@ -106,8 +106,9 @@ pub enum Agg {
     Max(String),
     /// SAMPLE(?v) — any one value from the group.
     Sample(String),
-    /// GROUP_CONCAT(?v; SEPARATOR=...) — values joined by the separator.
-    GroupConcat(String, String),
+    /// GROUP_CONCAT(\[DISTINCT\] ?v; SEPARATOR=...) — values joined by the
+    /// separator (deduplicated when `distinct`).
+    GroupConcat(String, String, bool),
 }
 
 /// A SPARQL graph-pattern evaluation plan (the supported algebra subset).
@@ -139,6 +140,10 @@ pub enum Plan {
     Minus(Box<Plan>, Box<Plan>),
     /// `GRAPH <iri>|?g { … }` — evaluate the inner pattern against a named graph.
     Graph(GraphTarget, Box<Plan>),
+    /// A nested `SELECT` subquery: evaluated independently to its projected
+    /// solutions, which then join with the surrounding pattern on shared
+    /// variables (only the subquery's projected variables are visible outside).
+    Subquery(Box<Select>),
 }
 
 /// The target of a `GRAPH` block.
@@ -777,7 +782,11 @@ pub(crate) fn fmt_num_typed(x: f64) -> String {
             x as i64
         )
     } else {
-        format!("\"{x}\"^^<http://www.w3.org/2001/XMLSchema#decimal>")
+        // Round to 15 significant digits before emitting the shortest form, so a
+        // sum/avg of decimals that lands on a binary-float artifact (e.g.
+        // 11.100000000000001) serializes as the intended "11.1".
+        let cleaned: f64 = format!("{x:.14e}").parse().unwrap_or(x);
+        format!("\"{cleaned}\"^^<http://www.w3.org/2001/XMLSchema#decimal>")
     }
 }
 
@@ -1009,7 +1018,9 @@ mod tests {
                  SELECT (GROUP_CONCAT(?f; SEPARATOR=\"|\") AS ?fs) WHERE { ex:Alice ex:knows ?f }";
         let (_, sols) = eval_sparql(&rete, q).unwrap();
         assert_eq!(sols.len(), 1);
-        let mut parts: Vec<&str> = sols[0]["fs"].split('|').collect();
+        // GROUP_CONCAT yields a simple literal — strip the quotes before splitting.
+        let fs = sols[0]["fs"].trim_matches('"');
+        let mut parts: Vec<&str> = fs.split('|').collect();
         parts.sort();
         assert_eq!(parts, vec!["<http://ex/Bob>", "<http://ex/Carol>"]);
     }
