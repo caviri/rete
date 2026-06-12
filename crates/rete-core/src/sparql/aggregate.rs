@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use crate::row::{Ctx, Row, Val};
 
-use super::{as_number, fmt_num, lexical, Agg, GroupSpec};
+use super::{as_number, fmt_num_typed, lexical, Agg, GroupSpec};
 
 /// Group `rows` and compute aggregates, producing one row per group (group-by
 /// slots keep their values; each aggregate's result lands in its result slot).
@@ -74,10 +74,10 @@ fn agg_terms(ctx: &Ctx, members: &[Row], slot: usize) -> Vec<Rc<str>> {
 fn compute_agg(ctx: &Ctx, agg: &Agg, members: &[Row]) -> Option<String> {
     let slot_of = |var: &str| ctx.slots.slot(var);
     match agg {
-        Agg::CountStar { .. } => Some(fmt_num(members.len() as f64)),
+        Agg::CountStar { .. } => Some(fmt_num_typed(members.len() as f64)),
         Agg::Count(var, distinct) => {
             let Some(slot) = slot_of(var) else {
-                return Some(fmt_num(0.0));
+                return Some(fmt_num_typed(0.0));
             };
             let n = if *distinct {
                 members
@@ -88,19 +88,19 @@ fn compute_agg(ctx: &Ctx, agg: &Agg, members: &[Row]) -> Option<String> {
             } else {
                 members.iter().filter(|m| m[slot].is_some()).count()
             };
-            Some(fmt_num(n as f64))
+            Some(fmt_num_typed(n as f64))
         }
         Agg::Sum(var) => {
             let nums = match slot_of(var) {
                 Some(slot) => agg_nums(ctx, members, slot),
                 None => Vec::new(), // never-bound variable sums to 0
             };
-            Some(fmt_num(nums.iter().sum()))
+            Some(fmt_num_typed(nums.iter().sum()))
         }
         Agg::Avg(var) => {
             let slot = slot_of(var)?;
             let v = agg_nums(ctx, members, slot);
-            (!v.is_empty()).then(|| fmt_num(v.iter().sum::<f64>() / v.len() as f64))
+            (!v.is_empty()).then(|| fmt_num_typed(v.iter().sum::<f64>() / v.len() as f64))
         }
         Agg::Sample(var) => {
             let slot = slot_of(var)?;

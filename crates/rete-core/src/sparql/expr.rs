@@ -32,7 +32,7 @@ impl FExpr {
                     ArithOp::Div if c == 0.0 => return None,
                     ArithOp::Div => a / c,
                 };
-                Some(Rc::from(fmt_num(v)))
+                Some(Rc::from(fmt_num_typed(v)))
             }
             FExpr::Func(f, args) => func_value(*f, args, ctx, b),
             FExpr::Coalesce(args) => args.iter().find_map(|e| e.value(ctx, b)),
@@ -82,7 +82,7 @@ impl FExpr {
 /// Evaluate a value-returning built-in (string/numeric); `None` for predicates.
 fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>> {
     let a0 = || args.first().and_then(|e| e.value(ctx, b));
-    let num = |x: f64| -> Option<Rc<str>> { Some(Rc::from(fmt_num(x))) };
+    let num = |x: f64| -> Option<Rc<str>> { Some(Rc::from(fmt_num_typed(x))) };
     let s = |x: String| -> Option<Rc<str>> { Some(Rc::from(x)) };
     match f {
         Builtin::Str => s(lexical(&a0()?)),

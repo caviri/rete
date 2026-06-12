@@ -8,6 +8,10 @@ __pycache__/
 # committed; the web/ copy is a local-serving convenience, regenerated).
 /web/explore-100mb.html
 
+# The Hugging Face Space (FastAPI Range+CORS file server) is deployed straight
+# to HF, not tracked here.
+/hf-space/
+
 # Built graph files are artifacts of the .nt/.nq sources in examples/ — rebuild
 # with `rete build` (see README). The sources, not the binaries, are tracked.
 *.rete
@@ -15,6 +19,9 @@ __pycache__/
 # same-origin "GitHub Pages" source has a real file to range-query (see the
 # Source modal). Regenerate with: rete build <data>.nq -o … --no-pyramid
 !/docs/wikidata-100MB/wikidata.rete
+# …and the numbered shards behind the explorer's "GitHub (3 shards)" federated
+# source (manifest.json links them). Regenerate with dev/make_shards.sh.
+!/docs/wikidata-100MB/shards/*.rete
 
 # Cargo.lock IS committed: this workspace ships a binary (rete-cli), so a locked
 # dependency set gives reproducible builds and a stable CI cache key. (It would
@@ -30,3 +37,6 @@ __pycache__/
 
 # Local engineering notes / scratch plans — not part of the published repo.
 /dev/
+
+# Local secrets (JWT_TOKEN etc.) — never commit.
+.env
