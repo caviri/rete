@@ -237,6 +237,21 @@ fn main() -> Result<()> {
     // ---- Load both engines (one-time cost + memory, reported separately) ----
     let heap0 = mem::live();
     let bytes = std::fs::read(&rete_path).with_context(|| format!("read {rete_path}"))?;
+    // provenance so a run is reproducible: content hash of the queried .rete and
+    // the repo commit (best-effort `git`, else $GITHUB_SHA, else "unknown").
+    let rete_sha256 = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(&bytes))
+    };
+    let git_commit = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| option_env!("GITHUB_SHA").map(|s| s.chars().take(7).collect()))
+        .unwrap_or_else(|| "unknown".to_string());
     let t = Instant::now();
     let rete = Rete::open(&bytes).context("Rete::open")?;
     let rete_open_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -256,8 +271,10 @@ fn main() -> Result<()> {
         println!("# Benchmark: rete vs rete (parallel) vs Oxigraph\n");
         println!(
             "Data: `{rete_path}` ({} bytes) / `{nt_path}` · Oxigraph store: {oxi_len} triples · \
-             {threads} logical cores · median ±sd of {reps} warm runs.\n",
-            bytes.len()
+             {threads} logical cores · median ±sd of {reps} warm runs.\n\n\
+             _commit `{git_commit}` · .rete sha256 `{}`_\n",
+            bytes.len(),
+            &rete_sha256[..16]
         );
 
         println!("## Load / open (one-time)\n");
@@ -478,12 +495,14 @@ fn main() -> Result<()> {
                 "rete_path": rete_path,
                 "nt_path": nt_path,
                 "rete_bytes": bytes.len(),
+                "rete_sha256": rete_sha256,
                 "oxigraph_triples": oxi_len,
             },
             "environment": {
                 "logical_cores": threads,
                 "query_repetitions": reps,
                 "reach_repetitions": reach_reps,
+                "git_commit": git_commit,
             },
             "load_open": {
                 "rete_ms": rete_open_ms,

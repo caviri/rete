@@ -988,6 +988,7 @@ dependencies = [
  "oxigraph",
  "rete-core",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
