@@ -454,6 +454,10 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
                 Function::Seconds => Builtin::Seconds,
                 Function::Timezone => Builtin::Timezone,
                 Function::Tz => Builtin::Tz,
+                Function::Rand => Builtin::Rand,
+                Function::Uuid => Builtin::Uuid,
+                Function::StrUuid => Builtin::StrUuid,
+                Function::BNode => Builtin::BNode,
                 // An `xsd:<type>(expr)` constructor parses as a call to the
                 // datatype IRI — map the supported XSD casts.
                 Function::Custom(nn) => match nn.as_str() {

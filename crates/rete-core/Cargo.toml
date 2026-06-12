@@ -24,6 +24,9 @@ regex-lite = "0.1"
 md-5 = "0.10"
 sha1 = "0.10"
 sha2 = "0.10"
+# Randomness for the SPARQL RAND/UUID/STRUUID/BNODE built-ins. On wasm the
+# browser backend is enabled via the `js` feature in the wasm-target block below.
+getrandom = "0.2"
 zstd = { workspace = true, optional = true }
 # Data-parallel query evaluator (prototype). Behind the `parallel` feature so it
 # is never pulled into wasm (the wasm crate builds with --no-default-features).

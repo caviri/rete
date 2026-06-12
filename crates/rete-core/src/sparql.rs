@@ -257,6 +257,10 @@ pub enum Builtin {
     CastDouble,
     CastBoolean,
     CastString,
+    Rand,
+    Uuid,
+    StrUuid,
+    BNode,
 }
 
 /// A small boolean/comparison expression for FILTER (a subset of SPARQL exprs).

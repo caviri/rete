@@ -37,12 +37,12 @@ python scripts/sparql_conformance.py \
 | construct | 3 / 5 | 1 | graph-isomorphism check |
 | exists | 4 / 6 | 1 | |
 | project-expression | 7 / 7 | 0 | ✅ full |
-| functions | 66 / 75 | 7 | string/cast/hash/datetime + IF/IN/sameTerm |
+| functions | 72 / 75 | 1 | nearly full — RAND/UUID/STRUUID/BNODE added |
 | entailment | 28 / 70 | 4 | needs `build --materialize` |
 | subquery | 2 / 14 | 12 | nested SELECT joins; GRAPH-scoped + RDF/XML data n/a |
 | service | 0 / 7 | 7 | SPARQL federation (N/A) |
 | csv-tsv-res | 0 / 3 | 3 | CSV/TSV result format |
-| **TOTAL** | **225 / 309 (72.8%)** | 39 | |
+| **TOTAL** | **231 / 309 (74.8%)** | 33 | |
 
 ## Findings
 
@@ -116,10 +116,12 @@ python scripts/sparql_conformance.py \
    - **subquery** (≈12) — nested `SELECT` is rejected rather than evaluated.
    - **csv-tsv-res** (3) — the CSV/TSV result serialization isn't implemented.
 
-4. **What's left in `functions` (11):** the non-deterministic builtins
-   (`NOW`, `RAND`, `UUID`/`STRUUID`, `BNODE`), `IRI()` relative-base resolution,
-   and `IF`-error-propagation edge cases — honest "not yet" rather than silent
-   bugs (an unimplemented function errors rather than returning a wrong answer).
+4. **What's left in `functions` (3):** `NOW()` (no wall clock on the
+   `wasm32-unknown-unknown` target the engine must also compile to), `IRI()`
+   relative-base resolution, and one `IF`-error-propagation edge case. The other
+   non-deterministic builtins — `RAND`, `UUID`/`STRUUID`, `BNODE` — are
+   implemented on `getrandom` (browser backend via its `js` feature, so they
+   work in the WASM client too).
 
 ## The same answers, lazily and remotely
 

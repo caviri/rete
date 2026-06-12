@@ -282,6 +282,29 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         | Builtin::CastDouble
         | Builtin::CastBoolean
         | Builtin::CastString => cast_to(&a0()?, f),
+        // RAND() → an xsd:double in [0, 1).
+        Builtin::Rand => {
+            let r = (random_u64() >> 11) as f64 / (1u64 << 53) as f64;
+            Some(Rc::from(make_literal(
+                &format!("{r}"),
+                None,
+                Some("http://www.w3.org/2001/XMLSchema#double"),
+            )))
+        }
+        // UUID() → a urn:uuid: IRI; STRUUID() → the bare UUID as a simple literal.
+        Builtin::Uuid => Some(Rc::from(format!("<urn:uuid:{}>", uuid_v4()))),
+        Builtin::StrUuid => s(uuid_v4()),
+        // BNODE(): a fresh blank node; BNODE("str"): a blank node keyed by the
+        // string (same string → same node within a result, via a stable hash).
+        Builtin::BNode => match args.first().and_then(|e| e.value(ctx, b)) {
+            Some(v) => {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                lex(&v).hash(&mut h);
+                Some(Rc::from(format!("_:b{:016x}", h.finish())))
+            }
+            None => Some(Rc::from(format!("_:b{:016x}", random_u64()))),
+        },
         // DATATYPE(literal) → the datatype IRI term (`<...>`): the explicit
         // `^^<dt>`, else `rdf:langString` for a language-tagged literal, else
         // `xsd:string` for a plain one. A non-literal (IRI/blank) is a type
@@ -404,6 +427,31 @@ fn tz_to_duration(tz: &str) -> Option<String> {
         out.push_str(&format!("{m}M"));
     }
     Some(out)
+}
+
+/// 8 random bytes as a `u64` (0 on the unlikely RNG failure — keeps the builtin
+/// total rather than erroring).
+fn random_u64() -> u64 {
+    let mut buf = [0u8; 8];
+    let _ = getrandom::getrandom(&mut buf);
+    u64::from_le_bytes(buf)
+}
+
+/// A random version-4 UUID in canonical `8-4-4-4-12` hex form.
+fn uuid_v4() -> String {
+    let mut b = [0u8; 16];
+    let _ = getrandom::getrandom(&mut b);
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // variant 1
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    )
 }
 
 /// Numeric value of a term for **arithmetic** (`+ - * /`): only numeric-typed
