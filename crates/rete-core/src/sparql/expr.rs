@@ -36,13 +36,13 @@ impl FExpr {
             }
             FExpr::Func(f, args) => func_value(*f, args, ctx, b),
             FExpr::Coalesce(args) => args.iter().find_map(|e| e.value(ctx, b)),
-            FExpr::If(c, t, e) => {
-                if c.ebv(ctx, b) {
-                    t.value(ctx, b)
-                } else {
-                    e.value(ctx, b)
-                }
-            }
+            // IF propagates an error in the condition (e.g. `IF(1/0, …)` is a
+            // type error, not the else-branch).
+            FExpr::If(c, t, e) => match c.ebv_opt(ctx, b) {
+                Some(true) => t.value(ctx, b),
+                Some(false) => e.value(ctx, b),
+                None => None,
+            },
             // A boolean expression in value position (e.g. `(?y = ?z AS ?eq)`)
             // yields a typed xsd:boolean.
             FExpr::In(..)
@@ -54,6 +54,15 @@ impl FExpr {
             | FExpr::Bound(..) => Some(Rc::from(bool_literal(self.ebv(ctx, b)))),
             _ => None,
         }
+    }
+
+    /// Three-valued effective boolean value: `None` is an *error* (a missing
+    /// value, or a term with no EBV), distinct from `Some(false)`. Used where the
+    /// distinction matters — the condition of `IF`. Boolean-form sub-expressions
+    /// produce a typed `xsd:boolean` through [`Self::value`], so the EBV reduces
+    /// to inspecting that term.
+    fn ebv_opt(&self, ctx: &Ctx, b: &Row) -> Option<bool> {
+        term_ebv(&self.value(ctx, b)?)
     }
 
     /// Effective boolean value **without** access to the active graph, so EXISTS
@@ -427,6 +436,23 @@ fn tz_to_duration(tz: &str) -> Option<String> {
         out.push_str(&format!("{m}M"));
     }
     Some(out)
+}
+
+/// The effective boolean value of a term, or `None` (a type error) for a term
+/// that has no EBV (an IRI, blank node, or non-boolean/numeric/string literal).
+fn term_ebv(token: &str) -> Option<bool> {
+    match datatype_iri(token).as_deref() {
+        Some("http://www.w3.org/2001/XMLSchema#boolean") => {
+            match crate::terms::lexical(token).as_ref() {
+                "true" | "1" => Some(true),
+                "false" | "0" => Some(false),
+                _ => None,
+            }
+        }
+        Some(dt) if is_numeric_dt(Some(dt)) => as_number(token).map(|n| n != 0.0 && !n.is_nan()),
+        Some(XSD_STRING) => Some(!crate::terms::lexical(token).is_empty()),
+        _ => None,
+    }
 }
 
 /// 8 random bytes as a `u64` (0 on the unlikely RNG failure — keeps the builtin
