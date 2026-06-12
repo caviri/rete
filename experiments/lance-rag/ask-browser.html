@@ -16,6 +16,8 @@
   .ask { display:flex; gap:8px; margin:14px 0; }
   #q { flex:1; background:var(--panel); border:1px solid #313244; color:var(--ink);
        border-radius:8px; padding:9px 12px; font:14px ui-monospace,monospace; }
+  #ds { background:var(--panel); border:1px solid #313244; color:var(--ink);
+        border-radius:8px; padding:0 8px; font:13px ui-monospace,monospace; }
   button { background:#313244; color:var(--ink); border:0; border-radius:8px;
     padding:9px 16px; cursor:pointer; font:14px ui-monospace,monospace; }
   button:hover { background:#45475a; } button:disabled { opacity:.5; cursor:default; }
@@ -85,36 +87,57 @@ const FALLBACK = `
 <http://ex/p9> <http://ex/cites> <http://ex/p8> .
 `;
 
-const COLORS = ["#89b4fa", "#f38ba8", "#a6e3a1", "#fab387", "#cba6f7", "#f9e2af"];
-const local = (iri) => iri.replace(/^<|>$/g, "").replace(/.*[/#]/, "");
+const COLORS = ["#89b4fa", "#f38ba8", "#a6e3a1", "#fab387", "#cba6f7", "#f9e2af", "#94e2d5", "#eba0ac"];
+const local = (iri) => String(iri).replace(/^<|>$/g, "").replace(/\/$/, "").replace(/.*[/#]/, "");
 
-function parseNT(text) {
+// Datasets: the bundled demo is parsed + embedded in-browser; the Wikidata tiers
+// load a PRECOMPUTED bundle (entities + L2-normalised vectors + edges) range-read
+// from the HF Space — only the question is embedded client-side.
+const SPACE = "https://katospiegel-rete.hf.space/data";
+const TOK = "?token=sfdbgf1094by21hd128ru39802";
+const DATASETS = {
+  demo: { label: "demo · 9 papers (in-browser embed)", kind: "nt", nt: DATA_URL ? null : FALLBACK, url: DATA_URL },
+  "wikidata-100MB": { label: "Wikidata · 100MB", kind: "bundle", base: `${SPACE}/wikidata-100MB/wikidata-100MB.rag` },
+  "wikidata-1GB": { label: "Wikidata · 1GB", kind: "bundle", base: `${SPACE}/wikidata-1GB/wikidata-1GB.rag` },
+};
+
+function parseNT(text) {                       // -> {ents:[{id,label,_t}], edges:[[i,j,pred]]}
   const re = /^\s*(<[^>]+>|_:\S+)\s+(<[^>]+>)\s+(.+?)\s*\.\s*$/;
-  const ents = new Map();   // iri -> {iri, label, text:[]}
-  const edges = [];         // {s,p,o}
-  const ent = (i) => { if (!ents.has(i)) ents.set(i, { iri: i, label: "", text: [] }); return ents.get(i); };
+  const idx = new Map(), ents = [], edges = [];
+  const get = (iri) => { if (!idx.has(iri)) { idx.set(iri, ents.length); ents.push({ id: iri, label: "", _t: [] }); } return idx.get(iri); };
   for (const line of text.split("\n")) {
     const m = re.exec(line); if (!m) continue;
     const [, s, p, o] = m;
     if (o.startsWith('"')) {
       const lit = (o.match(/^"((?:[^"\\]|\\.)*)"/) || [, ""])[1].replace(/\\"/g, '"');
-      ent(s).text.push(lit);
-      if (!ent(s).label && /title|label|name/i.test(p)) ent(s).label = lit;
-    } else if (o.startsWith("<")) {
-      if (!/#type$/.test(p)) { edges.push({ s, p, o }); ent(s); ent(o); }
+      const i = get(s); ents[i]._t.push(lit);
+      if (!ents[i].label && /title|label|name/i.test(p)) ents[i].label = lit;
+    } else if (o.startsWith("<") && !/#type$/.test(p)) {
+      edges.push([get(s), get(o), local(p)]);
     }
   }
-  for (const e of ents.values()) if (!e.label) e.label = local(e.iri);
-  return { ents: [...ents.values()], edges };
+  ents.forEach((e) => { if (!e.label) e.label = local(e.id); });
+  return { ents, edges };
 }
 
-function cosineTopK(qv, vecs, k) {  // vectors are L2-normalised -> dot product
-  const scored = vecs.map((v, i) => {
-    let d = 0; for (let j = 0; j < v.length; j++) d += v[j] * qv[j];
-    return [i, d];
-  });
-  scored.sort((a, b) => b[1] - a[1]);
-  return scored.slice(0, k);
+function buildAdj(n, edges) {                  // index -> [[nb, pred, dir]]
+  const adj = new Map();
+  const add = (a, b, p, d) => { if (!adj.has(a)) adj.set(a, []); adj.get(a).push([b, p, d]); };
+  for (const [s, o, p] of edges) { add(s, o, p, "out"); add(o, s, p, "in"); }
+  return adj;
+}
+
+function components(n, adj) {                  // index -> component id (for colour)
+  const comp = new Int32Array(n).fill(-1); let c = -1;
+  for (let i = 0; i < n; i++) if (comp[i] < 0) { c++; const st = [i]; while (st.length) { const u = st.pop(); if (comp[u] >= 0) continue; comp[u] = c; for (const [v] of adj.get(u) || []) st.push(v); } }
+  return comp;
+}
+
+function cosineTopK(qv, flat, n, dim, k) {     // vectors L2-normalised -> dot product
+  const s = [];
+  for (let i = 0; i < n; i++) { let d = 0, b = i * dim; for (let j = 0; j < dim; j++) d += flat[b + j] * qv[j]; s.push([i, d]); }
+  s.sort((a, b) => b[1] - a[1]);
+  return s.slice(0, k);
 }
 
 function bfsPath(adj, src, dst, maxHops = 5) {
@@ -133,74 +156,84 @@ function bfsPath(adj, src, dst, maxHops = 5) {
   return null;
 }
 
-let G, vecs, extractor, cluster;
+let G = null, extractor = null;
 
-async function boot() {
-  // 1. fetch the remote graph file (or the bundled fallback)
-  let nt = FALLBACK;
-  if (DATA_URL) { $("status").innerHTML = `fetching <code>${DATA_URL}</code>…`; nt = await (await fetch(DATA_URL)).text(); }
-  G = parseNT(nt);
-
-  // adjacency for path-finding (undirected, remembers edge direction + predicate)
-  G.adj = new Map();
-  const add = (a, p, b, dir) => { if (!G.adj.has(a)) G.adj.set(a, []); G.adj.get(a).push([b, p, dir]); };
-  for (const { s, p, o } of G.edges) { add(s, p, o, "out"); add(o, p, s, "in"); }
-
-  // 2. load the embedding model (WebGPU if available, else WASM)
+async function loadModel() {
+  if (extractor) return;
   let device = "wasm";
   try { if (navigator.gpu && await navigator.gpu.requestAdapter()) device = "webgpu"; } catch {}
   $("status").innerHTML = `loading embedder (<b>${device.toUpperCase()}</b>)…`;
   extractor = await pipeline("feature-extraction", "Xenova/bge-small-en-v1.5", { device });
+  extractor._device = device;
+}
 
-  // 3. embed every entity once (title + text) — this is the in-browser index
-  $("status").innerHTML = `embedding ${G.ents.length} entities (${device.toUpperCase()})…`;
-  const docs = G.ents.map((e) => (e.label + ". " + e.text.join(" ")).slice(0, 1200));
-  const out = await extractor(docs, { pooling: "mean", normalize: true });
-  vecs = out.tolist();
-
-  // colour by connected component (a cheap stand-in for "cluster")
-  cluster = new Map(); let c = -1;
-  for (const e of G.ents) if (!cluster.has(e.iri)) { c++; const st = [e.iri]; while (st.length) { const n = st.pop(); if (cluster.has(n)) continue; cluster.set(n, c); for (const [nb] of G.adj.get(n) || []) st.push(nb); } }
-
-  $("status").innerHTML = `<span class="ok">ready</span> · ${G.ents.length} entities · ${G.edges.length} edges · ${device.toUpperCase()} · all in-browser, no server`;
-  $("q").disabled = false; $("go").disabled = false; $("q").focus();
+async function loadDataset(key) {
+  $("q").disabled = $("go").disabled = true; $("out").innerHTML = "";
+  await loadModel();
+  const ds = DATASETS[key], dev = (extractor._device || "wasm").toUpperCase();
+  let ents, edges, dim, flat;
+  if (ds.kind === "nt") {
+    const nt = ds.url ? await (await fetch(ds.url)).text() : ds.nt;
+    const g = parseNT(nt); ents = g.ents; edges = g.edges;
+    $("status").innerHTML = `embedding ${ents.length} entities (${dev})…`;
+    const out = await extractor(ents.map((e) => (e.label + ". " + e._t.join(" ")).slice(0, 400)), { pooling: "mean", normalize: true });
+    const a = out.tolist(); dim = a[0].length; flat = new Float32Array(ents.length * dim);
+    a.forEach((v, i) => flat.set(v, i * dim));
+  } else {
+    $("status").innerHTML = `fetching ${ds.label} bundle from the HF Space…`;
+    const meta = await (await fetch(ds.base + ".json" + TOK)).json();
+    ents = meta.entities; edges = meta.edges; dim = meta.dim;
+    flat = new Float32Array(await (await fetch(ds.base + ".f32" + TOK)).arrayBuffer());
+  }
+  const adj = buildAdj(ents.length, edges);
+  G = { ents, edges, dim, flat, adj, comp: components(ents.length, adj) };
+  $("status").innerHTML = `<span class="ok">ready</span> · ${ents.length} nodes · ${edges.length} edges · ${dim}-dim · ${dev} · in-browser, no server`;
+  $("q").disabled = $("go").disabled = false; $("q").focus();
 }
 
 async function ask() {
-  const q = $("q").value.trim(); if (!q || !vecs) return;
+  const q = $("q").value.trim(); if (!q || !G) return;
   $("go").disabled = true;
   const qv = (await extractor([q], { pooling: "mean", normalize: true })).tolist()[0];
-  const top = cosineTopK(qv, vecs, Math.min(6, G.ents.length));
-  const anchor = G.ents[top[0][0]];
+  const top = cosineTopK(qv, G.flat, G.ents.length, G.dim, Math.min(6, G.ents.length));
 
   let html = `<div class="card"><div class="mut">ranked nodes for “${q}”</div>`;
   top.forEach(([i, score], rank) => {
-    const e = G.ents[i]; const col = COLORS[(cluster.get(e.iri) || 0) % COLORS.length];
+    const e = G.ents[i], col = COLORS[(G.comp[i] || 0) % COLORS.length];
     html += `<div class="rank"><span class="n">${rank + 1}</span>` +
       `<span class="badge" style="background:${col}"></span><b>${e.label}</b>` +
-      `<span class="s">${score.toFixed(3)} · ${local(e.iri)}</span></div>`;
+      `<span class="s">${score.toFixed(3)} · ${local(e.id)}</span></div>`;
   });
   html += `</div>`;
 
-  html += `<div class="card"><div class="mut">paths from #1 (<b>${anchor.label}</b>) — how the graph connects the answers</div>`;
+  const a = top[0][0];
+  html += `<div class="card"><div class="mut">paths from #1 (<b>${G.ents[a].label}</b>) — how the graph connects the answers</div>`;
+  let any = false;
   for (const [i] of top.slice(1)) {
-    const tgt = G.ents[i];
-    const path = bfsPath(G.adj, anchor.iri, tgt.iri);
-    if (!path) { html += `<div class="path">→ ${tgt.label}: <i>no path</i></div>`; continue; }
+    const path = bfsPath(G.adj, a, i);
+    if (!path) { html += `<div class="path">→ ${G.ents[i].label}: <i>no path</i></div>`; continue; }
     if (!path.length) continue;
-    const chain = path.map(([s, p, o]) => `<span class="e">${G.ents.find(x=>x.iri===s)?.label||local(s)}</span> <span class="p">${local(p)}</span> <span class="e">${G.ents.find(x=>x.iri===o)?.label||local(o)}</span>`).join("  ·  ");
-    html += `<div class="path">→ <b>${tgt.label}</b> (${path.length} hop${path.length>1?"s":""}): ${chain}</div>`;
+    any = true;
+    const chain = path.map(([s, p, o]) => `<span class="e">${G.ents[s].label}</span> <span class="p">${p}</span> <span class="e">${G.ents[o].label}</span>`).join("  ·  ");
+    html += `<div class="path">→ <b>${G.ents[i].label}</b> (${path.length} hop${path.length > 1 ? "s" : ""}): ${chain}</div>`;
   }
+  if (!any && G.edges.length === 0) html += `<div class="path"><i>this graph slice has no entity↔entity edges (link-sparse) — ranking only</i></div>`;
   html += `</div>`;
   $("out").innerHTML = html;
   $("go").disabled = false;
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  const sel = $("ds");
+  for (const [k, d] of Object.entries(DATASETS)) sel.add(new Option(d.label, k));
+  const fail = (e) => { $("status").innerHTML = `<span style="color:#f38ba8">error: ${e.message}</span>`; };
+  sel.onchange = () => loadDataset(sel.value).catch(fail);
   $("go").onclick = ask;
   $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
   document.querySelectorAll(".ex").forEach((el) => el.onclick = () => { $("q").value = el.textContent; ask(); });
-  boot().catch((e) => { $("status").innerHTML = `<span style="color:#f38ba8">error: ${e.message}</span>`; });
+  const start = DATASETS[params.get("ds")] ? params.get("ds") : "demo";
+  sel.value = start;
+  loadDataset(start).catch(fail);
 });
 </script>
 </head>
@@ -212,6 +245,7 @@ window.addEventListener("DOMContentLoaded", () => {
     no server, no Lance.</div>
   <div id="status">booting…</div>
   <div class="ask">
+    <select id="ds" title="dataset"></select>
     <input id="q" placeholder="ask something…" disabled />
     <button id="go" disabled>Ask</button>
   </div>

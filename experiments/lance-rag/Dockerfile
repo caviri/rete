@@ -13,9 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
-        lancedb==0.13.* \
-        fastembed==0.3.* \
-        scikit-learn==1.5.* \
-        numpy==2.*
+        lancedb \
+        fastembed \
+        scikit-learn \
+        "numpy<2"
 
 WORKDIR /work
