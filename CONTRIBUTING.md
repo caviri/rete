@@ -1,0 +1,65 @@
+# Contributing
+
+Thanks for your interest in rete. This is an experimental project; the notes
+below keep changes reviewable and the build reproducible.
+
+## Everything builds in Docker
+
+Nothing builds on the host. Use the dev container (see the README "Develop"
+section). The common loop:
+
+```sh
+cargo fmt --all                 # required: CI fails on any diff
+cargo clippy --workspace --exclude rete-bench --all-targets -- -D warnings
+cargo test --workspace --exclude rete-bench   # round-trip, robustness, range, SPARQL
+bash scripts/smoke.sh           # end-to-end over every CLI subcommand
+```
+
+CI (`.github/workflows/ci.yml`) runs fmt, clippy, the test matrix, the smoke
+test, a `--no-default-features` build, and the WASM build — all in containers.
+
+## Generated files: keep them out of source commits
+
+Two kinds of files in the tree are **generated, not hand-edited**. To keep
+reviews honest, generation must be deterministic and committed *separately* from
+the source changes that motivated it — never interleave a generated-file diff
+with logic changes in the same commit.
+
+### `docs/*.html` — the doc site
+
+Authored docs are the `docs/*.md` files. The HTML site is rendered from them by
+the `docgen` crate:
+
+```sh
+cargo run -p docgen             # docs/<name>.md -> docs/<name>.html
+```
+
+Generation is deterministic, and CI enforces that the committed HTML matches a
+fresh render (the **"Docs HTML in sync"** step): if you edit a `.md`, re-run
+`docgen` and commit the regenerated `.html` — ideally as its own commit
+(`docs: regenerate HTML`). Don't hand-edit the `.html`.
+
+A few nav entries (e.g. `playground.html`, `explore-100mb.html`) are *not*
+rendered by docgen — they are pre-built pages with inlined WASM (next section)
+and docgen only links to them.
+
+### Playground / explorer pages — inlined WASM
+
+`docs/playground.html` and the explorer pages are built by
+`scripts/build_playground.py`, which inlines the compiled WASM engine:
+
+```sh
+uv run python scripts/build_playground.py
+```
+
+Because the WASM blob is large and the build is not part of the Rust workspace,
+these pages are committed rather than produced in CI. Treat them like the doc
+HTML: regenerate with the script and commit on their own, never by hand.
+
+## Commit hygiene
+
+- Source/logic, authored docs (`.md`), and generated artifacts (`.html`,
+  playground) belong in **separate commits**.
+- Keep the working tree clean (`cargo fmt`, no clippy warnings) before pushing.
+- Conventional-commit prefixes (`feat:`, `fix:`, `refactor:`, `docs:`, …) are
+  used throughout the history.
