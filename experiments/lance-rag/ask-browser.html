@@ -5,31 +5,49 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>rete · ask the graph (browser graphRAG)</title>
 <style>
-  :root { --bg:#070912; --panel:#11131f; --ink:#cdd6f4; --mut:#9399b2; --acc:#89b4fa; --grn:#a6e3a1; }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
-    font:14px/1.5 ui-monospace,monospace; }
-  #wrap { max-width:900px; margin:0 auto; padding:22px 18px 60px; }
-  h1 { font-size:18px; margin:0 0 4px; } h1 b { color:var(--acc); }
-  .mut { color:var(--mut); }
-  #status { margin:10px 0; font-size:12px; color:var(--mut); }
-  #status .ok { color:var(--grn); }
-  .ask { display:flex; gap:8px; margin:14px 0; }
-  #q { flex:1; background:var(--panel); border:1px solid #313244; color:var(--ink);
-       border-radius:8px; padding:9px 12px; font:14px ui-monospace,monospace; }
-  #ds { background:var(--panel); border:1px solid #313244; color:var(--ink);
-        border-radius:8px; padding:0 8px; font:13px ui-monospace,monospace; }
-  #dl, #del { padding:3px 9px; font-size:12px; margin-left:6px; }
-  button { background:#313244; color:var(--ink); border:0; border-radius:8px;
-    padding:9px 16px; cursor:pointer; font:14px ui-monospace,monospace; }
-  button:hover { background:#45475a; } button:disabled { opacity:.5; cursor:default; }
-  .ex { color:var(--acc); cursor:pointer; } .ex:hover { text-decoration:underline; }
-  .card { background:var(--panel); border-radius:10px; padding:12px 14px; margin:10px 0; }
-  .rank { display:flex; align-items:baseline; gap:10px; padding:5px 0; border-bottom:1px solid #1e2030; }
-  .rank .n { color:var(--acc); width:20px; } .rank .s { color:var(--mut); font-size:12px; margin-left:auto; }
-  .rank b { color:#fff; }
-  .path { margin:6px 0 6px 14px; color:var(--mut); }
-  .path .e { color:var(--ink); } .path .p { color:var(--grn); }
-  .badge { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; }
+  /* matches the rete docs / playground theme (light, green accent, Aptos) */
+  :root { --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#fff; --side:#eef4ef;
+    --accent:#147d69; --accent-dark:#0b4f42; --accent2:#c84f2f; --border:#d9e2de; --code:#eef3f1; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; min-height:100%; background:var(--bg); color:var(--fg);
+    font:16px/1.62 "Aptos","Segoe UI",system-ui,sans-serif; text-rendering:optimizeLegibility; }
+  #wrap { max-width:900px; margin:0 auto; padding:28px 20px 72px; }
+  h1 { font:700 1.6rem Georgia,"Times New Roman",serif; margin:0 0 .15rem; }
+  h1::after { content:""; display:block; width:2.2rem; height:3px; margin-top:.5rem; background:var(--accent2); }
+  .mut { color:var(--muted); font-size:.92rem; }
+  code { font-family:"Cascadia Mono",Consolas,ui-monospace,monospace; background:var(--code); padding:0 .3em; border-radius:4px; font-size:.85em; }
+  #status { margin:12px 0; font-size:.82rem; color:var(--muted); }
+  #status .ok { color:var(--accent); font-weight:700; }
+  .ask { display:flex; gap:8px; margin:16px 0 8px; }
+  #q { flex:1; background:var(--panel); border:1px solid var(--border); color:var(--fg);
+       border-radius:8px; padding:10px 13px; font:1rem "Aptos",system-ui,sans-serif; }
+  #q:focus { outline:2px solid rgba(20,125,105,.35); border-color:var(--accent); }
+  #ds { background:var(--panel); border:1px solid var(--border); color:var(--fg);
+        border-radius:8px; padding:0 8px; font:.9rem inherit; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px;
+    padding:10px 18px; cursor:pointer; font:.95rem "Aptos",system-ui,sans-serif; }
+  button:hover { background:var(--accent-dark); } button:disabled { opacity:.5; cursor:default; }
+  #dl,#del { background:var(--side); color:var(--accent-dark); border:1px solid var(--border);
+    padding:4px 10px; font-size:.78rem; margin-left:6px; }
+  #dl:hover,#del:hover { background:#e2ece7; }
+  .ex { color:var(--accent); cursor:pointer; } .ex:hover { text-decoration:underline; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    padding:14px 16px; margin:12px 0; box-shadow:0 10px 28px rgba(32,47,41,.06); }
+  .rank { display:flex; align-items:baseline; gap:10px; padding:7px 6px; border-bottom:1px solid var(--border);
+    cursor:pointer; border-radius:6px; }
+  .rank:last-child { border-bottom:0; } .rank:hover { background:#f0f5f2; }
+  .rank .n { color:var(--accent); width:22px; font-weight:700; }
+  .rank .s { color:var(--muted); font-size:.8rem; margin-left:auto; }
+  .rank b { color:var(--fg); }
+  .path { margin:7px 0 7px 16px; color:var(--muted); font-size:.9rem; }
+  .path .e { color:var(--fg); } .path .p { color:var(--accent); font-weight:600; }
+  .badge { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+  .explore { margin:8px 0; padding:10px 12px; background:var(--side); border-radius:10px; }
+  .chip { display:inline-block; background:var(--panel); border:1px solid var(--border); border-radius:999px;
+    padding:3px 10px; margin:3px 4px 3px 0; cursor:pointer; font-size:.82rem; }
+  .chip:hover { border-color:var(--accent); color:var(--accent-dark); }
+  .chip .p { color:var(--accent); font-weight:600; }
+  .back { color:var(--accent); cursor:pointer; font-size:.85rem; } .back:hover { text-decoration:underline; }
 </style>
 <script type="module">
 import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2";
@@ -211,36 +229,67 @@ async function loadDataset(key) {
   $("q").disabled = $("go").disabled = false; $("q").focus();
 }
 
-async function ask() {
-  const q = $("q").value.trim(); if (!q || !G) return;
-  $("go").disabled = true;
-  const qv = (await extractor([q], { pooling: "mean", normalize: true })).tolist()[0];
-  const top = cosineTopK(qv, G.flat, G.ents.length, G.dim, Math.min(6, G.ents.length));
+const vecAt = (i) => G.flat.subarray(i * G.dim, (i + 1) * G.dim);
+let lastRanked = "";
 
-  let html = `<div class="card"><div class="mut">ranked nodes for “${q}”</div>`;
+function rankCard(title, top) {
+  let h = `<div class="card"><div class="mut">${title}</div>`;
   top.forEach(([i, score], rank) => {
     const e = G.ents[i], col = COLORS[(G.comp[i] || 0) % COLORS.length];
-    html += `<div class="rank"><span class="n">${rank + 1}</span>` +
+    h += `<div class="rank" data-node="${i}"><span class="n">${rank + 1}</span>` +
       `<span class="badge" style="background:${col}"></span><b>${e.label}</b>` +
       `<span class="s">${score.toFixed(3)} · ${local(e.id)}</span></div>`;
   });
-  html += `</div>`;
+  return h + `<div class="mut" style="margin-top:6px;font-size:.78rem">↳ click a result to explore its graph neighbours &amp; similar entities</div></div>`;
+}
 
+function pathsCard(top) {
   const a = top[0][0];
-  html += `<div class="card"><div class="mut">paths from #1 (<b>${G.ents[a].label}</b>) — how the graph connects the answers</div>`;
+  let h = `<div class="card"><div class="mut">paths from #1 (<b>${G.ents[a].label}</b>) — how the graph connects the answers</div>`;
   let any = false;
   for (const [i] of top.slice(1)) {
     const path = bfsPath(G.adj, a, i);
-    if (!path) { html += `<div class="path">→ ${G.ents[i].label}: <i>no path</i></div>`; continue; }
+    if (!path) { h += `<div class="path">→ ${G.ents[i].label}: <i>no path</i></div>`; continue; }
     if (!path.length) continue;
     any = true;
     const chain = path.map(([s, p, o]) => `<span class="e">${G.ents[s].label}</span> <span class="p">${p}</span> <span class="e">${G.ents[o].label}</span>`).join("  ·  ");
-    html += `<div class="path">→ <b>${G.ents[i].label}</b> (${path.length} hop${path.length > 1 ? "s" : ""}): ${chain}</div>`;
+    h += `<div class="path">→ <b>${G.ents[i].label}</b> (${path.length} hop${path.length > 1 ? "s" : ""}): ${chain}</div>`;
   }
-  if (!any && G.edges.length === 0) html += `<div class="path"><i>this graph slice has no entity↔entity edges (link-sparse) — ranking only</i></div>`;
-  html += `</div>`;
-  $("out").innerHTML = html;
+  if (!any && G.edges.length === 0) h += `<div class="path"><i>this slice has no entity↔entity edges (link-sparse) — ranking only</i></div>`;
+  return h + `</div>`;
+}
+
+async function ask() {
+  const q = $("q").value.trim(); if (!q || !G) return;
+  $("go").disabled = true;
+  const t0 = performance.now();
+  const qv = (await extractor([q], { pooling: "mean", normalize: true })).tolist()[0];
+  const tEmb = performance.now() - t0, t1 = performance.now();
+  const top = cosineTopK(qv, G.flat, G.ents.length, G.dim, Math.min(6, G.ents.length));
+  const tSearch = performance.now() - t1;
+  lastRanked = rankCard(`ranked nodes for “${q}” <span style="float:right;font-size:.78rem">embed <b>${tEmb.toFixed(0)} ms</b> · search <b>${tSearch.toFixed(1)} ms</b></span>`, top) + pathsCard(top);
+  $("out").innerHTML = lastRanked;
   $("go").disabled = false;
+}
+
+// Click a result/chip → "query the graph" about that node: its 1-hop neighbours
+// (from the .rete edges) + its nearest entities (vector search), both clickable.
+function explore(i) {
+  const e = G.ents[i], col = COLORS[(G.comp[i] || 0) % COLORS.length];
+  const nbrs = G.adj.get(i) || [];
+  const t0 = performance.now();
+  const sim = cosineTopK(vecAt(i), G.flat, G.ents.length, G.dim, 8).filter(([j]) => j !== i).slice(0, 6);
+  const ms = (performance.now() - t0).toFixed(1);
+  let h = `<div class="card"><span class="back" data-back="1">← back to results</span>` +
+    `<h3 style="margin:.4rem 0 .2rem"><span class="badge" style="background:${col}"></span>${e.label} <span class="mut" style="font-weight:400">· ${local(e.id)}</span></h3>` +
+    `<div class="explore"><div class="mut">graph neighbours · ${nbrs.length} (1-hop, from the graph edges)</div>` +
+    (nbrs.length ? nbrs.slice(0, 30).map(([j, p, d]) => `<span class="chip" data-node="${j}"><span class="p">${p}${d === "in" ? "⁻¹" : ""}</span> ${G.ents[j].label}</span>`).join("")
+                 : `<div class="mut"><i>no graph neighbours in this slice</i></div>`) +
+    `</div>` +
+    `<div class="explore"><div class="mut">semantically similar · top ${sim.length} (vector search · ${ms} ms)</div>` +
+    sim.map(([j, s]) => `<span class="chip" data-node="${j}">${G.ents[j].label} <span class="mut">${s.toFixed(2)}</span></span>`).join("") +
+    `</div></div>`;
+  $("out").innerHTML = h;
 }
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -251,6 +300,11 @@ window.addEventListener("DOMContentLoaded", () => {
   $("go").onclick = ask;
   $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
   document.querySelectorAll(".ex").forEach((el) => el.onclick = () => { $("q").value = el.textContent; ask(); });
+  $("out").addEventListener("click", (ev) => {
+    const r = ev.target.closest("[data-node]");
+    if (r) { explore(+r.dataset.node); return; }
+    if (ev.target.closest("[data-back]")) $("out").innerHTML = lastRanked;
+  });
   $("dl").onclick = () => loadModel().then(modelStatus).catch(fail);
   $("del").onclick = async () => { extractor = null; try { await caches.delete(CACHE); } catch {} ; $("status").innerHTML = "model cache deleted — re-downloads on next use"; modelStatus(); };
   modelStatus();

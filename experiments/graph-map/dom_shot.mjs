@@ -17,5 +17,7 @@ await p.waitForFunction(() => (document.getElementById("out")?.children.length |
 await p.waitForTimeout(800);
 await p.screenshot({ path: OUT, fullPage: true });
 console.log("SHOT", OUT);
+const node = await p.$("[data-node]");           // explore the first ranked result
+if (node) { await node.click(); await p.waitForTimeout(700); await p.screenshot({ path: OUT.replace(/\.png$/, "-explore.png"), fullPage: true }); console.log("SHOT explore"); }
 await b.close();
 process.exit(0);
