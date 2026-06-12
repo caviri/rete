@@ -80,7 +80,43 @@ runtime (the documented serverless-on-S3 pattern).
 |------|------|
 | `build_vectors.py` | `rete export` → per-entity literal text → fastembed (ONNX, no torch) → Lance `(entity, label, vector)` [+ optional IVF-PQ] |
 | `rag_demo.py` | rete 1-hop → Lance vectors → k-means cluster → optional ANN expand |
+| `ask.py` | **GraphRAG agent query**: a question → Lance ANN ranked nodes → rete BFS **paths (triples)** connecting them |
 | `Dockerfile` | lancedb + fastembed + scikit-learn (calls the mounted `rete` binary) |
+
+## Asking questions (the agent loop)
+
+```sh
+docker run --rm -v "${PWD}:/work" -w /work rete-lancerag \
+  python experiments/lance-rag/ask.py experiments/lance-rag/out/papers.rete \
+  "deep learning for images" --lance experiments/lance-rag/out/vectors.lance --topk 5
+```
+
+A question → embed → **Lance ANN ranks the entity nodes** → rete BFS returns the
+**path of triples** between the top node and the others. So the answer is grounded
+*structure* — ranked nodes **and** how the graph connects them — which is exactly
+what an LLM agent wants as context (wrap `ask.py`'s output with the Claude API to
+phrase the final answer; that LLM step is deliberately out of scope here).
+
+## Browser / playground — can this run in WASM?
+
+**Lance has no WASM build** (lancedb/lance#680, closed *not planned*), so you
+can't read a `.lance` dataset directly in the browser the way the playground
+reads a `.rete`. But a **fully in-browser GraphRAG is still possible** — just with
+a browser-native vector backend instead of Lance:
+
+| step | server (this experiment) | browser / playground |
+|------|--------------------------|----------------------|
+| graph 1-hop / paths | `rete` CLI | **rete WASM** (already in the playground) |
+| embed the question | fastembed (ONNX) | **transformers.js** (same ONNX model, in WASM) |
+| vector store + ANN | **Lance** (IVF-PQ, range-read S3/HF) | a vectors **Parquet via DuckDB-WASM** (already loaded for Tables), **or** a flat `Float32Array` blob with brute-force cosine, **or** a WASM ANN lib (voy / hnswlib-wasm) |
+
+So the split is: **Lance is the server-side publish-and-range-read format** (great
+for big datasets + a Lambda/HF-Space endpoint); for the **static playground**,
+export the same vectors to a DuckDB-WASM-friendly Parquet (or a small binary) and
+do embedding + search entirely client-side, composed with rete's existing WASM
+graph engine. The graph half is already WASM; only the vector half needs the
+swap. A playground "ask a question → ranked nodes + path" panel would call:
+`transformers.js(question) → DuckDB-WASM/voy ANN → rete-WASM paths` — no server.
 
 ## Caveats
 
