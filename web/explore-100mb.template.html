@@ -289,7 +289,12 @@ let SRC = "hfspace", RETE_URL, DUCKDB_URL, SQLITE_URL;
 // If the HF Space is JWT-protected, the token is entered at runtime (never
 // committed) and appended as ?token=… to every request — query-param so there's
 // no CORS preflight and the DuckDB/SQLite range reads carry it too.
-let hfToken = (typeof localStorage !== "undefined" && localStorage.getItem("hfspaceToken")) || "";
+// Prefilled with the demo Space's token so the example works out of the box.
+// NOTE: this ships publicly, so it's a soft/demo gate, not real protection —
+// rotate the JWT_TOKEN secret (and clear this) if the Space holds anything
+// sensitive. A user can still override it in the Source modal (localStorage).
+const HFSPACE_DEMO_TOKEN = "sfdbgf1094by21hd128ru39802";
+let hfToken = (typeof localStorage !== "undefined" && localStorage.getItem("hfspaceToken")) || HFSPACE_DEMO_TOKEN;
 function srcQuery(name) {
   let q = SOURCES[name].dl || "";
   if (name === "hfspace" && hfToken) q += (q ? "&" : "?") + "token=" + encodeURIComponent(hfToken);
