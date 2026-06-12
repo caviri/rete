@@ -82,57 +82,69 @@ maplibregl.addProtocol("pmtiles", protocol.tile);
     map.addSource("t", { type: "vector", url: "pmtiles://" + PM });
     const SL = "topics";
 
-    // z0 — coarse meta-topic regions (the zoom-out level)
+    // The three levels CROSS-FADE by zoom so you actually see the pyramid:
+    // z0–2 meta-topics, ~2–4 topics, 4+ communities + connections. Each level's
+    // fill/line/labels fade out as the next fades in (upper labels disappear as
+    // you zoom in). zf() = a zoom→opacity ramp.
+    const zf = (...stops) => ["interpolate", ["linear"], ["zoom"], ...stops];
+
+    // z0 — coarse meta-topic regions (visible only when zoomed out)
     map.addLayer({ id: "meta-fill", type: "fill", source: "t", "source-layer": SL,
       filter: ["==", ["get", "kind"], "meta"],
-      paint: { "fill-color": ["get", "color"], "fill-opacity": 0.10 } });
+      paint: { "fill-color": ["get", "color"], "fill-opacity": zf(0, 0.14, 1.8, 0.14, 2.8, 0) } });
     map.addLayer({ id: "meta-line", type: "line", source: "t", "source-layer": SL,
       filter: ["==", ["get", "kind"], "meta"],
-      paint: { "line-color": ["get", "color"], "line-opacity": 0.45, "line-width": 1.4, "line-dasharray": [3, 2] } });
+      paint: { "line-color": ["get", "color"], "line-width": 1.4, "line-dasharray": [3, 2],
+               "line-opacity": zf(0, 0.5, 1.8, 0.5, 2.8, 0) } });
 
-    // z1 — topic regions
+    // z1–4 — topic regions
     map.addLayer({ id: "topic-fill", type: "fill", source: "t", "source-layer": SL,
       filter: ["==", ["get", "kind"], "topic"],
-      paint: { "fill-color": ["get", "color"], "fill-opacity": 0.15 } });
+      paint: { "fill-color": ["get", "color"], "fill-opacity": zf(1.4, 0, 2.2, 0.16, 4.5, 0.16, 5.6, 0.03) } });
     map.addLayer({ id: "topic-line", type: "line", source: "t", "source-layer": SL,
       filter: ["==", ["get", "kind"], "topic"],
-      paint: { "line-color": ["get", "color"], "line-opacity": 0.5, "line-width": 1 } });
+      paint: { "line-color": ["get", "color"], "line-width": 1,
+               "line-opacity": zf(1.4, 0, 2.2, 0.5, 5, 0.5, 6, 0) } });
 
-    // z2 — connections (k-nearest in topic space), under the community dots
+    // z2+ — connections (k-nearest in topic space), under the community dots
     map.addLayer({ id: "edges", type: "line", source: "t", "source-layer": SL,
       filter: ["==", ["get", "kind"], "edge"],
-      paint: { "line-color": "#7f849c",
-               "line-opacity": ["interpolate", ["linear"], ["get", "w"], 0.3, 0.12, 1, 0.5],
-               "line-width": 0.7 } });
+      paint: { "line-color": "#9399b2",
+               "line-width": ["interpolate", ["linear"], ["get", "w"], 0.3, 0.4, 1, 1.6],
+               "line-opacity": zf(2.2, 0, 3, 0.45) } });
 
+    // z2+ — communities (points)
     map.addLayer({ id: "communities", type: "circle", source: "t", "source-layer": SL,
       filter: ["==", ["get", "kind"], "community"],
       paint: {
         "circle-radius": ["interpolate", ["linear"], ["zoom"],
           0, ["interpolate", ["linear"], ["sqrt", ["get", "size"]], 0, 1.5, 200, 9],
           14, ["interpolate", ["linear"], ["sqrt", ["get", "size"]], 0, 3, 200, 22]],
-        "circle-color": ["get", "color"], "circle-opacity": 0.85,
+        "circle-color": ["get", "color"], "circle-opacity": zf(2.2, 0, 3, 0.9),
         "circle-stroke-color": "#0b0e17", "circle-stroke-width": 0.3 } });
 
-    // community word-labels appear once zoomed in a bit
+    // z5+ — community word-labels
     map.addLayer({ id: "comm-labels", type: "symbol", source: "t", "source-layer": SL,
-      filter: ["==", ["get", "kind"], "community"], minzoom: 6,
+      filter: ["==", ["get", "kind"], "community"],
       layout: { "text-field": ["get", "label"], "text-size": 10, "text-font": ["Open Sans Regular"] },
-      paint: { "text-color": "#e6e9f5", "text-halo-color": "#070912", "text-halo-width": 1.2 } });
+      paint: { "text-color": "#e6e9f5", "text-halo-color": "#070912", "text-halo-width": 1.2,
+               "text-opacity": zf(4.4, 0, 5.2, 1) } });
 
-    // topic region labels (the 6 LDA keywords), visible when zoomed out
+    // z1–4 — topic keyword labels (fade in after meta, out before deep zoom)
     map.addLayer({ id: "topic-labels", type: "symbol", source: "t", "source-layer": SL,
-      filter: ["==", ["get", "kind"], "topic-label"], maxzoom: 7,
+      filter: ["==", ["get", "kind"], "topic-label"],
       layout: { "text-field": ["get", "label"], "text-size": 13, "text-font": ["Open Sans Regular"],
                 "text-max-width": 9, "text-allow-overlap": false },
-      paint: { "text-color": "#ffffff", "text-halo-color": "#070912", "text-halo-width": 1.6 } });
+      paint: { "text-color": "#ffffff", "text-halo-color": "#070912", "text-halo-width": 1.6,
+               "text-opacity": zf(1.5, 0, 2.2, 1, 4.2, 1, 5, 0) } });
 
-    // z0 meta-topic labels — the broad themes, shown only when zoomed out
+    // z0–2 — meta-topic labels (the broad themes; gone once you zoom into topics)
     map.addLayer({ id: "meta-labels", type: "symbol", source: "t", "source-layer": SL,
-      filter: ["==", ["get", "kind"], "meta-label"], maxzoom: 4,
+      filter: ["==", ["get", "kind"], "meta-label"],
       layout: { "text-field": ["get", "label"], "text-size": 16, "text-font": ["Open Sans Regular"],
                 "text-max-width": 8, "text-transform": "uppercase", "text-letter-spacing": 0.05 },
-      paint: { "text-color": "#ffffff", "text-halo-color": "#070912", "text-halo-width": 2 } });
+      paint: { "text-color": "#ffffff", "text-halo-color": "#070912", "text-halo-width": 2,
+               "text-opacity": zf(0, 1, 1.8, 1, 2.5, 0) } });
 
     // ---- legend + topic isolation
     const rows = document.getElementById("rows");
