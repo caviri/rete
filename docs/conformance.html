@@ -255,7 +255,7 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <tr><td>grouping</td><td style="text-align: right">4 / 4</td><td style="text-align: right">0</td><td>✅ full</td></tr>
 <tr><td>bindings (VALUES)</td><td style="text-align: right">10 / 11</td><td style="text-align: right">1</td><td></td></tr>
 <tr><td>aggregates</td><td style="text-align: right">39 / 42</td><td style="text-align: right">3</td><td>GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT</td></tr>
-<tr><td>property-path</td><td style="text-align: right">21 / 33</td><td style="text-align: right">7</td><td>strong</td></tr>
+<tr><td>property-path</td><td style="text-align: right">30 / 33</td><td style="text-align: right">2</td><td>incl. negated property sets + zero-length on empty data</td></tr>
 <tr><td>construct</td><td style="text-align: right">3 / 5</td><td style="text-align: right">1</td><td>graph-isomorphism check</td></tr>
 <tr><td>exists</td><td style="text-align: right">4 / 6</td><td style="text-align: right">1</td><td></td></tr>
 <tr><td>project-expression</td><td style="text-align: right">6 / 7</td><td style="text-align: right">0</td><td></td></tr>
@@ -264,11 +264,20 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <tr><td>subquery</td><td style="text-align: right">2 / 14</td><td style="text-align: right">12</td><td>nested SELECT joins; GRAPH-scoped + RDF/XML data n/a</td></tr>
 <tr><td>service</td><td style="text-align: right">0 / 7</td><td style="text-align: right">7</td><td>SPARQL federation (N/A)</td></tr>
 <tr><td>csv-tsv-res</td><td style="text-align: right">0 / 3</td><td style="text-align: right">3</td><td>CSV/TSV result format</td></tr>
-<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>213 / 309 (68.9%)</strong></td><td style="text-align: right">44</td><td></td></tr>
+<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>222 / 309 (71.8%)</strong></td><td style="text-align: right">39</td><td></td></tr>
 </tbody></table>
 <h2>Findings</h2>
 <ul>
-<li><strong>Subqueries + aggregate completeness (fixed — +9 tests, → 68.9%).</strong> A nested
+<li>
+<p><strong>Property paths — negated sets + zero-length on empty data (fixed — +9
+tests, → 71.8%).</strong> <code>!(:p1|…|:pn)</code> (and its inverse members, which <code>spargebra</code>
+wraps in a <code>Reverse</code>) is now a <code>PathAst::NegatedSet</code> evaluated as one step over
+any predicate not in the set. And a zero-length-capable path (<code>*</code>/<code>?</code>) with a
+constant endpoint that isn't in the graph now yields the identity solution
+(<code>:x :p* ?o</code> ⇒ <code>?o = :x</code>, even on an empty dataset). <code>property-path</code> 21 → 30.</p>
+</li>
+<li>
+<p><strong>Subqueries + aggregate completeness (fixed — +9 tests, → 68.9%).</strong> A nested
 <code>SELECT</code> is now lowered to an in-tree <code>Plan::Subquery</code>, evaluated independently
 to its projected solutions, which then join with the surrounding pattern on
 shared variables (so <code>{ {SELECT (GROUP_CONCAT(?o) AS ?g)…} FILTER(?g=…) }</code>
@@ -278,7 +287,8 @@ empty group is <code>0</code> (and a non-numeric value is a type error), and com
 decimals round-trip through 15 significant digits so a sum like <code>11.1</code> no
 longer serializes as <code>11.100000000000001</code>. <code>aggregates</code> 27 → 39, <code>grouping</code>
 100%. Remaining subquery gaps are GRAPH-scoped subqueries and tests whose data
-ships as RDF/XML.</li>
+ships as RDF/XML.</p>
+</li>
 </ul>
 <ol start="0">
 <li>
