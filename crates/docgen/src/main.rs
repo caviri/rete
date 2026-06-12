@@ -161,7 +161,14 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
                 let mut sub = String::new();
                 for (h, l) in subs {
                     let a = if h == "graph-map.html" { active } else { "" };
-                    sub.push_str(&format!("<li><a href=\"{h}\"{a}>{l}</a></li>"));
+                    // the interactive viewer apps open in a new tab (full-screen,
+                    // not doc pages); the "overview" stays in-page.
+                    let tgt = if h.starts_with("graph-map/") {
+                        " target=\"_blank\" rel=\"noopener\""
+                    } else {
+                        ""
+                    };
+                    sub.push_str(&format!("<li><a href=\"{h}\"{a}{tgt}>{l}</a></li>"));
                 }
                 nav_items.push(format!(
                     "<li class=\"nav-group\"><details{open}><summary>{t}</summary><ul class=\"nav-sub\">{sub}</ul></details></li>"

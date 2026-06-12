@@ -3,118 +3,128 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>rete · ask the graph (browser graphRAG)</title>
+<title>rete · ask the graph</title>
 <style>
   /* matches the rete docs / playground theme (light, green accent, Aptos) */
   :root { --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#fff; --side:#eef4ef;
     --accent:#147d69; --accent-dark:#0b4f42; --accent2:#c84f2f; --border:#d9e2de; --code:#eef3f1; }
   * { box-sizing:border-box; }
   html,body { margin:0; min-height:100%; background:var(--bg); color:var(--fg);
-    font:16px/1.62 "Aptos","Segoe UI",system-ui,sans-serif; text-rendering:optimizeLegibility; }
-  #wrap { max-width:900px; margin:0 auto; padding:28px 20px 72px; }
-  h1 { font:700 1.6rem Georgia,"Times New Roman",serif; margin:0 0 .15rem; }
-  h1::after { content:""; display:block; width:2.2rem; height:3px; margin-top:.5rem; background:var(--accent2); }
-  .mut { color:var(--muted); font-size:.92rem; }
+    font:16px/1.6 "Aptos","Segoe UI",system-ui,sans-serif; text-rendering:optimizeLegibility; }
   code { font-family:"Cascadia Mono",Consolas,ui-monospace,monospace; background:var(--code); padding:0 .3em; border-radius:4px; font-size:.85em; }
-  #status { margin:12px 0; font-size:.82rem; color:var(--muted); }
-  #status .ok { color:var(--accent); font-weight:700; }
-  .ask { display:flex; gap:8px; margin:16px 0 8px; }
-  #q { flex:1; background:var(--panel); border:1px solid var(--border); color:var(--fg);
-       border-radius:8px; padding:10px 13px; font:1rem "Aptos",system-ui,sans-serif; }
-  #q:focus { outline:2px solid rgba(20,125,105,.35); border-color:var(--accent); }
-  #ds { background:var(--panel); border:1px solid var(--border); color:var(--fg);
-        border-radius:8px; padding:0 8px; font:.9rem inherit; }
-  button { background:var(--accent); color:#fff; border:0; border-radius:8px;
-    padding:10px 18px; cursor:pointer; font:.95rem "Aptos",system-ui,sans-serif; }
-  button:hover { background:var(--accent-dark); } button:disabled { opacity:.5; cursor:default; }
-  #dl,#del { background:var(--side); color:var(--accent-dark); border:1px solid var(--border);
-    padding:4px 10px; font-size:.78rem; margin-left:6px; }
+  .app { display:flex; min-height:100vh; }
+  /* sidebar */
+  .side { width:288px; flex:0 0 288px; background:var(--side); border-right:1px solid var(--border);
+    padding:1.4rem 1.1rem; }
+  .side .brand { font:700 1.5rem Georgia,serif; color:var(--fg); }
+  .side .brand::after { content:""; display:block; width:2.2rem; height:3px; margin:.5rem 0 .8rem; background:var(--accent2); }
+  .side h4 { font-size:.66rem; font-weight:800; letter-spacing:.09em; text-transform:uppercase; color:#52625b; margin:1.3rem 0 .45rem; }
+  .side p { font-size:.86rem; color:var(--muted); margin:.4rem 0; }
+  .side ol { font-size:.84rem; color:var(--muted); margin:.3rem 0; padding-left:1.1rem; }
+  .side ol li { margin:.35rem 0; } .side ol b { color:var(--fg); }
+  #ds { width:100%; background:var(--panel); border:1px solid var(--border); color:var(--fg);
+        border-radius:8px; padding:7px 9px; font:.9rem inherit; }
+  .mstatline { font-size:.8rem; color:var(--muted); margin-top:.5rem; }
+  .mstatline .ok { color:var(--accent); font-weight:700; }
+  #dl,#del { background:var(--panel); color:var(--accent-dark); border:1px solid var(--border);
+    padding:4px 9px; font-size:.74rem; border-radius:7px; margin:.4rem 6px 0 0; cursor:pointer; }
   #dl:hover,#del:hover { background:#e2ece7; }
+  .legend span { display:inline-flex; align-items:center; gap:5px; font-size:.78rem; color:var(--muted); margin:.15rem .6rem .15rem 0; }
+  /* main */
+  main { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .topbar { position:sticky; top:0; z-index:5; padding:.9rem 1.4rem; background:rgba(246,248,247,.93);
+    backdrop-filter:blur(6px); border-bottom:1px solid var(--border); }
+  .ask { display:flex; gap:8px; max-width:1000px; }
+  #q { flex:1; background:var(--panel); border:1px solid var(--border); color:var(--fg);
+       border-radius:9px; padding:11px 14px; font:1.02rem "Aptos",system-ui,sans-serif; }
+  #q:focus { outline:2px solid rgba(20,125,105,.35); border-color:var(--accent); }
+  button.go { background:var(--accent); color:#fff; border:0; border-radius:9px; padding:11px 22px;
+    cursor:pointer; font:.98rem "Aptos",system-ui,sans-serif; }
+  button.go:hover { background:var(--accent-dark); } button.go:disabled { opacity:.5; cursor:default; }
+  #status { font-size:.8rem; color:var(--muted); margin:.55rem 0 0; } #status .ok { color:var(--accent); font-weight:700; }
+  #examples { }
   .ex { color:var(--accent); cursor:pointer; } .ex:hover { text-decoration:underline; }
+  .content { padding:1.2rem 1.4rem 4.5rem; max-width:1000px; }
+  .lead { color:var(--muted); font-size:.95rem; margin:0 0 .4rem; }
   .card { background:var(--panel); border:1px solid var(--border); border-radius:12px;
     padding:14px 16px; margin:12px 0; box-shadow:0 10px 28px rgba(32,47,41,.06); }
+  .card .cap { color:var(--muted); font-size:.84rem; margin-bottom:.3rem; }
   .rank { display:flex; align-items:baseline; gap:10px; padding:7px 6px; border-bottom:1px solid var(--border);
-    cursor:pointer; border-radius:6px; }
-  .rank:last-child { border-bottom:0; } .rank:hover { background:#f0f5f2; }
+    cursor:pointer; border-radius:6px; } .rank:last-of-type { border-bottom:0; } .rank:hover { background:#f0f5f2; }
   .rank .n { color:var(--accent); width:22px; font-weight:700; }
-  .rank .s { color:var(--muted); font-size:.8rem; margin-left:auto; }
-  .rank b { color:var(--fg); }
+  .rank .s { color:var(--muted); font-size:.8rem; margin-left:auto; } .rank b { color:var(--fg); }
   .path { margin:7px 0 7px 16px; color:var(--muted); font-size:.9rem; }
   .path .e { color:var(--fg); } .path .p { color:var(--accent); font-weight:600; }
   .badge { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:middle; }
-  .explore { margin:8px 0; padding:10px 12px; background:var(--side); border-radius:10px; }
   .chip { display:inline-block; background:var(--panel); border:1px solid var(--border); border-radius:999px;
     padding:3px 10px; margin:3px 4px 3px 0; cursor:pointer; font-size:.82rem; }
-  .chip:hover { border-color:var(--accent); color:var(--accent-dark); }
-  .chip .p { color:var(--accent); font-weight:600; }
+  .chip:hover { border-color:var(--accent); color:var(--accent-dark); } .chip .p { color:var(--accent); font-weight:600; }
   .back { color:var(--accent); cursor:pointer; font-size:.85rem; } .back:hover { text-decoration:underline; }
+  .sub { color:var(--muted); font-size:.82rem; margin:.6rem 0 .2rem; }
+  /* ego-graph viz */
+  svg.ego { width:100%; max-width:560px; height:auto; display:block; margin:.4rem auto; }
+  .e-edge { stroke:var(--accent); stroke-width:1.6; opacity:.55; }
+  .e-sim { stroke:#b9c7c0; stroke-width:1; stroke-dasharray:3 3; }
+  .e-pred { font:9px "Cascadia Mono",monospace; fill:var(--accent-dark); text-anchor:middle; }
+  .e-lab { font-size:10px; fill:var(--fg); text-anchor:middle; }
+  .e-focus { font-size:12px; font-weight:700; fill:var(--fg); text-anchor:middle; }
+  .e-node { cursor:pointer; } .e-node:hover circle { stroke:var(--accent-dark); stroke-width:2; }
+  @media (max-width:760px){ .side{display:none} }
 </style>
 <script type="module">
 import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-// Load the embedding model from a SAME-ORIGIN path (bundled beside the page) so
-// there's no cross-origin HF `resolve` 405 — "our files, served simply".
-// Override with ?model=<base-url> to point at a hosted copy (CORS host / Space).
+const DATA_URL = params.get("data");
 const MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";   // 384-dim, multilingual
 const MODEL_BASE = params.get("model") || "models/";
 env.allowLocalModels = true;
-env.allowRemoteModels = true;   // local (bundled) model first; else HF (works in a real browser)
+env.allowRemoteModels = true;     // local (bundled) model first; else HF (real browser)
 env.localModelPath = MODEL_BASE;
-env.useBrowserCache = true;               // cache model files in the browser (Cache API)
-env.backends.onnx.wasm.numThreads = 1;   // headless/CI-friendly; bump in real use
-const CACHE = "transformers-cache";       // transformers.js Cache-API store
-// "simple file remote": point ?data= at any N-Triples URL (e.g. on the HF Space).
-const DATA_URL = params.get("data");
+env.useBrowserCache = true;
+env.backends.onnx.wasm.numThreads = 1;
+const CACHE = "transformers-cache";
 
-// Bundled fallback so the page works with zero setup (the topic-modeling demo:
-// 9 papers in 3 clusters — ML / databases / biology).
 const FALLBACK = `
 <http://ex/p1> <http://ex/title> "Deep neural networks for image classification" .
-<http://ex/p1> <http://ex/abstract> "We train a deep neural network model on labeled images. The network learns features through gradient descent and backpropagation. Our classifier improves accuracy on the benchmark dataset using convolutional layers and dropout regularization." .
+<http://ex/p1> <http://ex/abstract> "We train a deep neural network on labeled images with gradient descent, backpropagation, convolutional layers and dropout." .
 <http://ex/p1> <http://ex/cites> <http://ex/p2> .
 <http://ex/p1> <http://ex/cites> <http://ex/p3> .
 <http://ex/p2> <http://ex/title> "Reinforcement learning with neural network policies" .
-<http://ex/p2> <http://ex/abstract> "A reinforcement learning agent learns a policy by maximizing reward. We use a neural network to approximate the value function and train with gradient descent. The model generalizes across tasks and improves sample efficiency during training." .
+<http://ex/p2> <http://ex/abstract> "A reinforcement learning agent learns a policy by maximizing reward; a neural network approximates the value function, trained with gradient descent." .
 <http://ex/p2> <http://ex/cites> <http://ex/p1> .
 <http://ex/p2> <http://ex/cites> <http://ex/p3> .
 <http://ex/p3> <http://ex/title> "Training transformer models for language" .
-<http://ex/p3> <http://ex/abstract> "Transformer neural network models are trained on text using attention. We optimize the model with gradient descent and study how the network learns representations. Our deep learning approach improves accuracy on language modeling benchmarks." .
+<http://ex/p3> <http://ex/abstract> "Transformer neural networks are trained on text with attention; we optimize with gradient descent and study how the network learns representations for language modeling." .
 <http://ex/p3> <http://ex/cites> <http://ex/p1> .
 <http://ex/p3> <http://ex/cites> <http://ex/p2> .
 <http://ex/p4> <http://ex/title> "Query optimization in relational databases" .
-<http://ex/p4> <http://ex/abstract> "We present a query optimizer for a relational database. The system uses indexes and a cost model to plan joins. Our approach reduces query latency and improves throughput for transactional workloads on the storage engine." .
+<http://ex/p4> <http://ex/abstract> "A query optimizer for a relational database uses indexes and a cost model to plan joins, reducing query latency and improving throughput on the storage engine." .
 <http://ex/p4> <http://ex/cites> <http://ex/p5> .
 <http://ex/p4> <http://ex/cites> <http://ex/p6> .
 <http://ex/p5> <http://ex/title> "Indexing strategies for transactional storage" .
-<http://ex/p5> <http://ex/abstract> "An index accelerates lookups in a database storage engine. We compare B-tree and hash index structures for transactional workloads. The query planner chooses indexes to lower latency and improve throughput of joins." .
+<http://ex/p5> <http://ex/abstract> "An index accelerates lookups in a database storage engine; we compare B-tree and hash indexes for transactional workloads, lowering latency and improving join throughput." .
 <http://ex/p5> <http://ex/cites> <http://ex/p4> .
 <http://ex/p5> <http://ex/cites> <http://ex/p6> .
 <http://ex/p6> <http://ex/title> "Concurrency control for database transactions" .
-<http://ex/p6> <http://ex/abstract> "We study concurrency control in a relational database. The transaction manager uses locking and the storage engine maintains indexes for joins. Our query scheduler improves throughput and reduces latency under high transactional load." .
+<http://ex/p6> <http://ex/abstract> "Concurrency control in a relational database: the transaction manager uses locking, the storage engine maintains indexes for joins, improving throughput under high transactional load." .
 <http://ex/p6> <http://ex/cites> <http://ex/p4> .
 <http://ex/p6> <http://ex/cites> <http://ex/p5> .
 <http://ex/p7> <http://ex/title> "Gene expression in cancer cells" .
-<http://ex/p7> <http://ex/abstract> "We measure gene expression in cancer cells using sequencing. The protein levels reveal how the cell regulates its genome. Mutations in the DNA drive tumor growth and we study the molecular pathways of the disease in tissue samples." .
+<http://ex/p7> <http://ex/abstract> "We measure gene expression in cancer cells by sequencing; protein levels reveal genome regulation, and DNA mutations drive tumor growth and disease in tissue." .
 <http://ex/p7> <http://ex/cites> <http://ex/p8> .
 <http://ex/p7> <http://ex/cites> <http://ex/p9> .
 <http://ex/p8> <http://ex/title> "Protein folding and molecular structure" .
-<http://ex/p8> <http://ex/abstract> "A protein folds into a molecular structure determined by its gene sequence. We model how the cell synthesizes protein from DNA and how mutations alter folding. The study links genome variation to disease in living tissue." .
+<http://ex/p8> <http://ex/abstract> "A protein folds into a molecular structure set by its gene sequence; the cell synthesizes protein from DNA, and mutations alter folding, linking genome variation to disease." .
 <http://ex/p8> <http://ex/cites> <http://ex/p7> .
 <http://ex/p8> <http://ex/cites> <http://ex/p9> .
 <http://ex/p9> <http://ex/title> "DNA sequencing of the human genome" .
-<http://ex/p9> <http://ex/abstract> "DNA sequencing reveals the genome of a cell. We analyze gene mutations linked to cancer and disease across tissue samples. The protein products of each gene help explain the molecular biology of the cell and its growth." .
+<http://ex/p9> <http://ex/abstract> "DNA sequencing reveals the genome of a cell; we analyze gene mutations linked to cancer and disease across tissue, and the protein products of each gene." .
 <http://ex/p9> <http://ex/cites> <http://ex/p7> .
 <http://ex/p9> <http://ex/cites> <http://ex/p8> .
 `;
 
-const COLORS = ["#89b4fa", "#f38ba8", "#a6e3a1", "#fab387", "#cba6f7", "#f9e2af", "#94e2d5", "#eba0ac"];
-const local = (iri) => String(iri).replace(/^<|>$/g, "").replace(/\/$/, "").replace(/.*[/#]/, "");
-
-// Datasets: the bundled demo is parsed + embedded in-browser; the Wikidata tiers
-// load a PRECOMPUTED bundle (entities + L2-normalised vectors + edges) range-read
-// from the HF Space — only the question is embedded client-side.
 const SPACE = "https://katospiegel-rete.hf.space/data";
 const TOK = "?token=sfdbgf1094by21hd128ru39802";
 const WD_EXAMPLES = ["country in europe", "a river", "capital city", "football player",
@@ -122,13 +132,15 @@ const WD_EXAMPLES = ["country in europe", "a river", "capital city", "football p
 const DATASETS = {
   demo: { label: "demo · 9 papers (in-browser embed)", kind: "nt", nt: DATA_URL ? null : FALLBACK, url: DATA_URL,
     examples: ["neural networks for images", "database query speed", "cancer and DNA"] },
-  "wikidata-100MB": { label: "Wikidata · 100MB", kind: "bundle", base: `${SPACE}/wikidata-100MB/wikidata-100MB.rag`,
-    examples: WD_EXAMPLES },
-  "wikidata-1GB": { label: "Wikidata · 1GB", kind: "bundle", base: `${SPACE}/wikidata-1GB/wikidata-1GB.rag`,
-    examples: WD_EXAMPLES },
+  "wikidata-100MB": { label: "Wikidata · 100MB", kind: "bundle", base: `${SPACE}/wikidata-100MB/wikidata-100MB.rag`, examples: WD_EXAMPLES },
+  "wikidata-1GB": { label: "Wikidata · 1GB", kind: "bundle", base: `${SPACE}/wikidata-1GB/wikidata-1GB.rag`, examples: WD_EXAMPLES },
 };
 
-function parseNT(text) {                       // -> {ents:[{id,label,_t}], edges:[[i,j,pred]]}
+const COLORS = ["#147d69", "#c84f2f", "#3b7dd8", "#b5890b", "#7a4fb5", "#0e8a8a", "#a8478f", "#6b8e23"];
+const local = (iri) => String(iri).replace(/^<|>$/g, "").replace(/\/$/, "").replace(/.*[/#]/, "");
+const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : (s || ""));
+
+function parseNT(text) {
   const re = /^\s*(<[^>]+>|_:\S+)\s+(<[^>]+>)\s+(.+?)\s*\.\s*$/;
   const idx = new Map(), ents = [], edges = [];
   const get = (iri) => { if (!idx.has(iri)) { idx.set(iri, ents.length); ents.push({ id: iri, label: "", _t: [] }); } return idx.get(iri); };
@@ -139,204 +151,199 @@ function parseNT(text) {                       // -> {ents:[{id,label,_t}], edge
       const lit = (o.match(/^"((?:[^"\\]|\\.)*)"/) || [, ""])[1].replace(/\\"/g, '"');
       const i = get(s); ents[i]._t.push(lit);
       if (!ents[i].label && /title|label|name/i.test(p)) ents[i].label = lit;
-    } else if (o.startsWith("<") && !/#type$/.test(p)) {
-      edges.push([get(s), get(o), local(p)]);
-    }
+    } else if (o.startsWith("<") && !/#type$/.test(p)) { edges.push([get(s), get(o), local(p)]); }
   }
   ents.forEach((e) => { if (!e.label) e.label = local(e.id); });
   return { ents, edges };
 }
-
-function buildAdj(n, edges) {                  // index -> [[nb, pred, dir]]
-  const adj = new Map();
-  const add = (a, b, p, d) => { if (!adj.has(a)) adj.set(a, []); adj.get(a).push([b, p, d]); };
-  for (const [s, o, p] of edges) { add(s, o, p, "out"); add(o, s, p, "in"); }
-  return adj;
+function buildAdj(n, edges) {
+  const adj = new Map(); const add = (a, b, p, d) => { if (!adj.has(a)) adj.set(a, []); adj.get(a).push([b, p, d]); };
+  for (const [s, o, p] of edges) { add(s, o, p, "out"); add(o, s, p, "in"); } return adj;
 }
-
-function components(n, adj) {                  // index -> component id (for colour)
+function components(n, adj) {
   const comp = new Int32Array(n).fill(-1); let c = -1;
   for (let i = 0; i < n; i++) if (comp[i] < 0) { c++; const st = [i]; while (st.length) { const u = st.pop(); if (comp[u] >= 0) continue; comp[u] = c; for (const [v] of adj.get(u) || []) st.push(v); } }
   return comp;
 }
-
-function cosineTopK(qv, flat, n, dim, k) {     // vectors L2-normalised -> dot product
-  const s = [];
-  for (let i = 0; i < n; i++) { let d = 0, b = i * dim; for (let j = 0; j < dim; j++) d += flat[b + j] * qv[j]; s.push([i, d]); }
-  s.sort((a, b) => b[1] - a[1]);
-  return s.slice(0, k);
+function cosineTopK(qv, flat, n, dim, k) {
+  const s = []; for (let i = 0; i < n; i++) { let d = 0, b = i * dim; for (let j = 0; j < dim; j++) d += flat[b + j] * qv[j]; s.push([i, d]); }
+  s.sort((a, b) => b[1] - a[1]); return s.slice(0, k);
 }
-
 function bfsPath(adj, src, dst, maxHops = 5) {
-  if (src === dst) return [];
-  const prev = new Map([[src, null]]); let frontier = [src];
-  for (let h = 0; h < maxHops; h++) {
-    const next = [];
+  if (src === dst) return []; const prev = new Map([[src, null]]); let frontier = [src];
+  for (let h = 0; h < maxHops; h++) { const next = [];
     for (const n of frontier) for (const [nb, pred, dir] of adj.get(n) || []) {
-      if (prev.has(nb)) continue;
-      prev.set(nb, [n, pred, dir]);
+      if (prev.has(nb)) continue; prev.set(nb, [n, pred, dir]);
       if (nb === dst) { const out = []; let c = dst; while (prev.get(c)) { const [par, pr, di] = prev.get(c); out.push(di === "out" ? [par, pr, c] : [c, pr, par]); c = par; } return out.reverse(); }
       next.push(nb);
-    }
-    frontier = next; if (!frontier.length) break;
-  }
-  return null;
+    } frontier = next; if (!frontier.length) break;
+  } return null;
 }
 
-let G = null, extractor = null;
+let G = null, extractor = null, lastRanked = "";
+const vecAt = (i) => G.flat.subarray(i * G.dim, (i + 1) * G.dim);
 
 async function loadModel() {
-  if (extractor) return;
-  let device = "wasm";
+  if (extractor) return; let device = "wasm";
   try { if (navigator.gpu && await navigator.gpu.requestAdapter()) device = "webgpu"; } catch {}
-  const prog = (p) => { if (p.status === "progress") $("status").innerHTML =
-    `downloading model · <code>${p.file}</code> ${Math.round(p.progress || 0)}% (${device.toUpperCase()})`; };
+  const prog = (p) => { if (p.status === "progress") $("status").innerHTML = `downloading the AI model · <code>${p.file}</code> ${Math.round(p.progress || 0)}% — one-time, then cached in your browser`; };
   extractor = await pipeline("feature-extraction", MODEL, { device, progress_callback: prog });
-  extractor._device = device;
-  modelStatus();
+  extractor._device = device; modelStatus();
 }
-
-// ---- browser model cache (Cache API): show size, (re)download, delete
-async function cacheBytes() {
-  try {
-    const c = await caches.open(CACHE); let n = 0;
-    for (const req of await c.keys()) { const r = await c.match(req); const b = await r.clone().arrayBuffer(); n += b.byteLength; }
-    return n;
-  } catch { return 0; }
-}
+async function cacheBytes() { try { const c = await caches.open(CACHE); let n = 0; for (const req of await c.keys()) n += (await (await c.match(req)).clone().arrayBuffer()).byteLength; return n; } catch { return 0; } }
 async function modelStatus() {
   const mb = (await cacheBytes()) / 1e6;
-  $("mstat").innerHTML = (extractor ? `<span class="ok">loaded</span>` : "not loaded") +
-    (mb > 0.1 ? ` · cached <b>${mb.toFixed(1)} MB</b>` : " · not cached");
+  $("mstat").innerHTML = (extractor ? `<span class="ok">model loaded</span>` : "model not loaded") + (mb > 0.1 ? ` · cached <b>${mb.toFixed(0)} MB</b>` : " · not cached yet");
 }
 
 async function loadDataset(key) {
   $("q").disabled = $("go").disabled = true; $("out").innerHTML = "";
-  await loadModel();
+  $("status").innerHTML = "starting the in-browser AI model…"; await loadModel();
   const ds = DATASETS[key], dev = (extractor._device || "wasm").toUpperCase();
   let ents, edges, dim, flat;
   if (ds.kind === "nt") {
     const nt = ds.url ? await (await fetch(ds.url)).text() : ds.nt;
     const g = parseNT(nt); ents = g.ents; edges = g.edges;
-    $("status").innerHTML = `embedding ${ents.length} entities (${dev})…`;
+    $("status").innerHTML = `reading the graph &amp; turning ${ents.length} entities into vectors (${dev})…`;
     const out = await extractor(ents.map((e) => (e.label + ". " + e._t.join(" ")).slice(0, 400)), { pooling: "mean", normalize: true });
-    const a = out.tolist(); dim = a[0].length; flat = new Float32Array(ents.length * dim);
-    a.forEach((v, i) => flat.set(v, i * dim));
+    const a = out.tolist(); dim = a[0].length; flat = new Float32Array(ents.length * dim); a.forEach((v, i) => flat.set(v, i * dim));
   } else {
-    $("status").innerHTML = `fetching ${ds.label} bundle from the HF Space…`;
+    $("status").innerHTML = `fetching the ${ds.label} graph + vectors from the HF Space…`;
     const meta = await (await fetch(ds.base + ".json" + TOK)).json();
     ents = meta.entities; edges = meta.edges; dim = meta.dim;
     flat = new Float32Array(await (await fetch(ds.base + ".f32" + TOK)).arrayBuffer());
   }
   const adj = buildAdj(ents.length, edges);
   G = { ents, edges, dim, flat, adj, comp: components(ents.length, adj) };
-  $("status").innerHTML = `<span class="ok">ready</span> · ${ents.length} nodes · ${edges.length} edges · ${dim}-dim · ${dev} · in-browser, no server`;
+  $("status").innerHTML = `<span class="ok">ready</span> · ${ents.length.toLocaleString()} entities · ${edges.length.toLocaleString()} graph links · ${dev} · everything runs in your browser`;
   $("examples").innerHTML = (ds.examples || []).map((x) => `<span class="ex">${x}</span>`).join(" · ");
+  $("out").innerHTML = `<p class="lead">Type a question above (or pick an example). I'll find the entities whose <b>meaning</b> is closest, then show how the graph <b>links</b> them.</p>`;
   $("q").disabled = $("go").disabled = false; $("q").focus();
 }
 
-const vecAt = (i) => G.flat.subarray(i * G.dim, (i + 1) * G.dim);
-let lastRanked = "";
-
 function rankCard(title, top) {
-  let h = `<div class="card"><div class="mut">${title}</div>`;
+  let h = `<div class="card"><div class="cap">${title}</div>` +
+    `<div class="cap">These entities are the closest in meaning to your question (cosine similarity over the in-browser vectors). <b>Click one</b> to explore its graph neighbourhood.</div>`;
   top.forEach(([i, score], rank) => {
     const e = G.ents[i], col = COLORS[(G.comp[i] || 0) % COLORS.length];
-    h += `<div class="rank" data-node="${i}"><span class="n">${rank + 1}</span>` +
-      `<span class="badge" style="background:${col}"></span><b>${e.label}</b>` +
-      `<span class="s">${score.toFixed(3)} · ${local(e.id)}</span></div>`;
+    h += `<div class="rank" data-node="${i}"><span class="n">${rank + 1}</span><span class="badge" style="background:${col}"></span><b>${e.label}</b><span class="s">${score.toFixed(3)} · ${local(e.id)}</span></div>`;
   });
-  return h + `<div class="mut" style="margin-top:6px;font-size:.78rem">↳ click a result to explore its graph neighbours &amp; similar entities</div></div>`;
+  return h + `</div>`;
 }
-
 function pathsCard(top) {
   const a = top[0][0];
-  let h = `<div class="card"><div class="mut">paths from #1 (<b>${G.ents[a].label}</b>) — how the graph connects the answers</div>`;
+  let h = `<div class="card"><div class="cap">How the graph connects the answers — each step below is a real triple (<i>subject → predicate → object</i>) read from the <code>.rete</code> file, tracing from the #1 result to the others.</div>`;
   let any = false;
   for (const [i] of top.slice(1)) {
     const path = bfsPath(G.adj, a, i);
-    if (!path) { h += `<div class="path">→ ${G.ents[i].label}: <i>no path</i></div>`; continue; }
-    if (!path.length) continue;
-    any = true;
+    if (!path) { h += `<div class="path">→ ${G.ents[i].label}: <i>not reachable in the graph</i></div>`; continue; }
+    if (!path.length) continue; any = true;
     const chain = path.map(([s, p, o]) => `<span class="e">${G.ents[s].label}</span> <span class="p">${p}</span> <span class="e">${G.ents[o].label}</span>`).join("  ·  ");
     h += `<div class="path">→ <b>${G.ents[i].label}</b> (${path.length} hop${path.length > 1 ? "s" : ""}): ${chain}</div>`;
   }
-  if (!any && G.edges.length === 0) h += `<div class="path"><i>this slice has no entity↔entity edges (link-sparse) — ranking only</i></div>`;
+  if (!any) h += `<div class="path"><i>the top answers aren't directly linked in this graph slice — they're related by meaning, not by an edge</i></div>`;
   return h + `</div>`;
 }
-
 async function ask() {
   const q = $("q").value.trim(); if (!q || !G) return;
-  $("go").disabled = true;
+  $("go").disabled = true; $("status").innerHTML = "embedding your question &amp; ranking the graph…";
   const t0 = performance.now();
   const qv = (await extractor([q], { pooling: "mean", normalize: true })).tolist()[0];
   const tEmb = performance.now() - t0, t1 = performance.now();
   const top = cosineTopK(qv, G.flat, G.ents.length, G.dim, Math.min(6, G.ents.length));
   const tSearch = performance.now() - t1;
-  lastRanked = rankCard(`ranked nodes for “${q}” <span style="float:right;font-size:.78rem">embed <b>${tEmb.toFixed(0)} ms</b> · search <b>${tSearch.toFixed(1)} ms</b></span>`, top) + pathsCard(top);
+  lastRanked = rankCard(`Ranked answers for “${q}” <span style="float:right;font-weight:400">embedded in <b>${tEmb.toFixed(0)} ms</b> · searched ${G.ents.length.toLocaleString()} vectors in <b>${tSearch.toFixed(1)} ms</b></span>`, top) + pathsCard(top);
   $("out").innerHTML = lastRanked;
+  $("status").innerHTML = `<span class="ok">done</span> · embedded the question, ranked ${G.ents.length.toLocaleString()} entities, traced the paths — all locally`;
   $("go").disabled = false;
 }
 
-// Click a result/chip → "query the graph" about that node: its 1-hop neighbours
-// (from the .rete edges) + its nearest entities (vector search), both clickable.
+// ego-network graph for one node: graph neighbours (solid edges + predicate) +
+// semantically-similar entities (dashed). Every node is clickable.
+function egoSVG(i) {
+  const nbrs = (G.adj.get(i) || []).slice(0, 10).map(([j, p, d]) => ({ j, p, d, kind: "edge" }));
+  const sim = cosineTopK(vecAt(i), G.flat, G.ents.length, G.dim, 10).filter(([j]) => j !== i)
+    .filter(([j]) => !nbrs.some((n) => n.j === j)).slice(0, 8).map(([j]) => ({ j, kind: "sim" }));
+  const items = [...nbrs, ...sim]; const W = 560, H = 380, cx = W / 2, cy = H / 2, R = 140;
+  let edges = "", nodes = "";
+  items.forEach((it, k) => {
+    const a = -Math.PI / 2 + 2 * Math.PI * k / Math.max(1, items.length);
+    const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
+    if (it.kind === "edge") {
+      edges += `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(0)}" y2="${y.toFixed(0)}" class="e-edge"/>`;
+      edges += `<text x="${((cx + x) / 2).toFixed(0)}" y="${((cy + y) / 2 - 2).toFixed(0)}" class="e-pred">${it.p}${it.d === "in" ? "⁻¹" : ""}</text>`;
+    } else edges += `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(0)}" y2="${y.toFixed(0)}" class="e-sim"/>`;
+    const c = COLORS[(G.comp[it.j] || 0) % COLORS.length];
+    nodes += `<g class="e-node" data-node="${it.j}"><circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="7" fill="${c}"/>` +
+      `<text x="${x.toFixed(0)}" y="${(y - 11).toFixed(0)}" class="e-lab">${trunc(G.ents[it.j].label, 16)}</text></g>`;
+  });
+  const fc = COLORS[(G.comp[i] || 0) % COLORS.length];
+  return `<svg viewBox="0 0 ${W} ${H}" class="ego">${edges}` +
+    `<circle cx="${cx}" cy="${cy}" r="11" fill="${fc}" stroke="#fff" stroke-width="2"/>` +
+    `<text x="${cx}" y="${cy + 26}" class="e-focus">${trunc(G.ents[i].label, 24)}</text>${nodes}</svg>`;
+}
 function explore(i) {
   const e = G.ents[i], col = COLORS[(G.comp[i] || 0) % COLORS.length];
   const nbrs = G.adj.get(i) || [];
-  const t0 = performance.now();
   const sim = cosineTopK(vecAt(i), G.flat, G.ents.length, G.dim, 8).filter(([j]) => j !== i).slice(0, 6);
-  const ms = (performance.now() - t0).toFixed(1);
-  let h = `<div class="card"><span class="back" data-back="1">← back to results</span>` +
-    `<h3 style="margin:.4rem 0 .2rem"><span class="badge" style="background:${col}"></span>${e.label} <span class="mut" style="font-weight:400">· ${local(e.id)}</span></h3>` +
-    `<div class="explore"><div class="mut">graph neighbours · ${nbrs.length} (1-hop, from the graph edges)</div>` +
-    (nbrs.length ? nbrs.slice(0, 30).map(([j, p, d]) => `<span class="chip" data-node="${j}"><span class="p">${p}${d === "in" ? "⁻¹" : ""}</span> ${G.ents[j].label}</span>`).join("")
-                 : `<div class="mut"><i>no graph neighbours in this slice</i></div>`) +
-    `</div>` +
-    `<div class="explore"><div class="mut">semantically similar · top ${sim.length} (vector search · ${ms} ms)</div>` +
-    sim.map(([j, s]) => `<span class="chip" data-node="${j}">${G.ents[j].label} <span class="mut">${s.toFixed(2)}</span></span>`).join("") +
-    `</div></div>`;
-  $("out").innerHTML = h;
+  $("out").innerHTML =
+    `<div class="card"><span class="back" data-back="1">← back to results</span>` +
+    `<h3 style="margin:.35rem 0 .1rem"><span class="badge" style="background:${col}"></span>${e.label} <span class="cap" style="font-weight:400">· ${local(e.id)}</span></h3>` +
+    `<div class="cap">Exploring this entity. <b>Solid green</b> links are real graph edges (1 hop, labelled with the predicate); <b>dashed</b> links are entities closest in meaning. Click any node to hop there.</div>` +
+    egoSVG(i) +
+    `<div class="sub">graph neighbours · ${nbrs.length} (1-hop)</div>` +
+    (nbrs.length ? nbrs.slice(0, 30).map(([j, p, d]) => `<span class="chip" data-node="${j}"><span class="p">${p}${d === "in" ? "⁻¹" : ""}</span> ${G.ents[j].label}</span>`).join("") : `<span class="cap"><i>none in this slice</i></span>`) +
+    `<div class="sub">similar in meaning</div>` +
+    sim.map(([j, s]) => `<span class="chip" data-node="${j}">${G.ents[j].label} <span class="cap">${s.toFixed(2)}</span></span>`).join("") +
+    `</div>`;
 }
 
 window.addEventListener("DOMContentLoaded", () => {
-  const sel = $("ds");
-  for (const [k, d] of Object.entries(DATASETS)) sel.add(new Option(d.label, k));
-  const fail = (e) => { $("status").innerHTML = `<span style="color:#f38ba8">error: ${e.message}</span>`; };
+  const sel = $("ds"); for (const [k, d] of Object.entries(DATASETS)) sel.add(new Option(d.label, k));
+  const fail = (e) => { $("status").innerHTML = `<span style="color:#c84f2f">error: ${e.message}</span>`; };
   sel.onchange = () => loadDataset(sel.value).catch(fail);
   $("go").onclick = ask;
   $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
   $("examples").addEventListener("click", (e) => { if (e.target.classList.contains("ex")) { $("q").value = e.target.textContent; ask(); } });
-  $("out").addEventListener("click", (ev) => {
-    const r = ev.target.closest("[data-node]");
-    if (r) { explore(+r.dataset.node); return; }
-    if (ev.target.closest("[data-back]")) $("out").innerHTML = lastRanked;
-  });
+  $("out").addEventListener("click", (ev) => { const r = ev.target.closest("[data-node]"); if (r) return explore(+r.dataset.node); if (ev.target.closest("[data-back]")) $("out").innerHTML = lastRanked; });
   $("dl").onclick = () => loadModel().then(modelStatus).catch(fail);
-  $("del").onclick = async () => { extractor = null; try { await caches.delete(CACHE); } catch {} ; $("status").innerHTML = "model cache deleted — re-downloads on next use"; modelStatus(); };
+  $("del").onclick = async () => { extractor = null; try { await caches.delete(CACHE); } catch {} $("status").innerHTML = "model cache deleted — it re-downloads on next use"; modelStatus(); };
   modelStatus();
-  const start = DATASETS[params.get("ds")] ? params.get("ds") : "demo";
-  sel.value = start;
+  const start = DATASETS[params.get("ds")] ? params.get("ds") : "demo"; sel.value = start;
   loadDataset(start).catch(fail);
 });
 </script>
 </head>
 <body>
-<div id="wrap">
-  <h1><b>rete</b> · ask the graph <span class="mut">— browser graphRAG</span></h1>
-  <div class="mut">A question → <b>transformers.js</b> (WebGPU/WASM) embeds it → cosine-rank the graph's
-    entities → <b>graph paths</b> (triples) connecting the answers. Remote file in, all logic in the browser —
-    no server, no Lance.</div>
-  <div id="status">booting…</div>
-  <div class="ask">
+<div class="app">
+  <aside class="side">
+    <div class="brand">rete · ask</div>
+    <p>A <b>knowledge-graph search</b> that runs entirely in your browser — no server, no database.</p>
+    <h4>How it works</h4>
+    <ol>
+      <li>A small <b>AI model</b> (in your browser) turns your question into a <b>vector</b> — numbers capturing its meaning.</li>
+      <li>It does the same for every entity in the graph, then <b>ranks</b> the closest matches.</li>
+      <li>It walks the graph's <b>links</b> to show how the top answers connect, as a chain of triples.</li>
+    </ol>
+    <h4>Dataset</h4>
     <select id="ds" title="dataset"></select>
-    <input id="q" placeholder="ask something…" disabled />
-    <button id="go" disabled>Ask</button>
-  </div>
-  <div class="mut">try: <span id="examples"></span></div>
-  <div class="mut" style="margin-top:8px">model: <span id="mstat">…</span>
-    <button id="dl">download / load</button>
-    <button id="del">delete cache</button></div>
-  <div id="out"></div>
+    <h4>Model (cached in browser)</h4>
+    <div class="mstatline" id="mstat">…</div>
+    <button id="dl">download / load</button><button id="del">delete cache</button>
+    <h4>Colour</h4>
+    <p>Dot colour = graph component (a connected cluster of entities).</p>
+  </aside>
+  <main>
+    <div class="topbar">
+      <div class="ask">
+        <input id="q" placeholder="ask the graph…" disabled />
+        <button id="go" class="go" disabled>Ask</button>
+      </div>
+      <div id="status">booting…</div>
+      <div class="mut" style="margin-top:.45rem">try: <span id="examples"></span></div>
+    </div>
+    <div class="content"><div id="out"></div></div>
+  </main>
 </div>
 </body>
 </html>
