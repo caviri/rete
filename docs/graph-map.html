@@ -242,7 +242,13 @@ itself: no server, no full download.</p>
 <a href="graph-map/viewer.html">structural map</a> ·
 <a href="graph-map/viewer-topics.html">topic map (pyramidal LDA)</a> ·
 <a href="graph-map/viewer-3d.html">3D side-elevation — deck.gl</a> ·
-<a href="graph-map/viewer-3d-three.html">3D — three.js + fog</a></p>
+<a href="graph-map/viewer-3d-three.html">3D — three.js + fog</a> ·
+<a href="graph-map/ask-browser.html"><strong>ask the graph</strong> — browser graphRAG</a></p>
+<p>The last one (<a href="https://github.com/caviri/rete/tree/main/experiments/lance-rag"><code>lance-rag</code></a>)
+is a different lens: ask a question, <strong>transformers.js</strong> (WebGPU/WASM) embeds it
+in-browser, cosine-ranks the graph's entities, and walks <strong>triple paths</strong> between
+the answers — entities + vectors range-read from the Space (Wikidata-100MB / 1GB),
+all logic client-side.</p>
 </blockquote>
 <h2>Why a map at all</h2>
 <p>Force-directed pictures of a big graph collapse into a hairball. A map fixes

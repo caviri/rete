@@ -49,7 +49,7 @@ def main():
     ap.add_argument("--rete-bin", default="./target/release/rete")
     ap.add_argument("-o", "--output", default="experiments/lance-rag/out")
     ap.add_argument("--top", type=int, default=10000, help="keep the top-N most-connected labelled entities")
-    ap.add_argument("--model", default="BAAI/bge-small-en-v1.5")
+    ap.add_argument("--model", default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
     args = ap.parse_args()
 
     import numpy as np
