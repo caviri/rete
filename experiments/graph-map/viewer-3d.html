@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>rete graph-map — 3D side elevation</title>
+<script src="https://unpkg.com/deck.gl@9.0.38/dist.min.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #070912; overflow: hidden; }
+  #deck { position: absolute; inset: 0; }
+  .panel { position: absolute; z-index: 2; color: #cdd6f4;
+           font: 12px/1.5 ui-monospace, monospace; background: rgba(10,13,24,.86);
+           padding: 10px 12px; border-radius: 8px; }
+  #hud { top: 10px; left: 10px; max-width: 340px; }
+  #hud b { color: #89b4fa; }
+  #ctl { top: 10px; right: 10px; width: 220px; }
+  #ctl button { font: 12px monospace; background: #313244; color: #cdd6f4; border: 0;
+                border-radius: 6px; padding: 6px 10px; cursor: pointer; width: 100%; margin-bottom: 8px; }
+  #ctl button:hover { background: #45475a; }
+  #ctl label { display: flex; align-items: center; gap: 6px; margin: 3px 0; cursor: pointer; }
+  #ctl input[type=range] { width: 100%; }
+  #ctl .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  #ctl hr { border: 0; border-top: 1px solid #313244; margin: 9px 0; }
+  #ctl .lab { color: #9399b2; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="hud" class="panel">
+  <b>rete graph-map · 3D</b> — the community pyramid as stacked strata: each zoom
+  level is a horizontal plane, the lines between planes are <b>parent→child</b>
+  links. Drag to orbit. <b>Rotate 90°</b> snaps to the orthographic side view.
+  <div id="z" class="lab" style="margin-top:6px"></div>
+</div>
+<div id="ctl" class="panel">
+  <button id="rot">⟲ Rotate 90° (top ⇄ side)</button>
+  <div class="lab">View depth (how far you see in)</div>
+  <input id="depth" type="range" min="0" max="100" value="100" />
+  <hr />
+  <div class="lab">Layers</div>
+  <label><input type="checkbox" id="L-nodes" checked /> community nodes</label>
+  <label><input type="checkbox" id="L-hulls" checked /> level hulls (floors)</label>
+  <label><input type="checkbox" id="L-labels" checked /> size labels</label>
+  <label><input type="checkbox" id="L-edges" checked /> intra-level links</label>
+  <label><input type="checkbox" id="L-links" checked /> parent→child links</label>
+  <label><input type="checkbox" id="L-base" checked /> base→L3 links (60k)</label>
+  <hr />
+  <div class="lab">Strata (top → bottom)</div>
+  <div id="legend"></div>
+</div>
+<div id="deck"></div>
+<script>
+const params = new URLSearchParams(location.search);
+const SPACE = "https://katospiegel-rete.hf.space/data/graph-map";
+const TOKEN = "sfdbgf1094by21hd128ru39802";   // demo Space token (public soft gate)
+const LOCAL = location.protocol === "file:" || /^(localhost|127|0\.0\.0\.0)/.test(location.hostname);
+const SRC = params.get("data") || (LOCAL ? "out/graphmap-3d.json" : `${SPACE}/graphmap-3d.json?token=${TOKEN}`);
+const LEVEL_COLORS = [[243,139,168],[250,179,135],[249,226,175],[166,227,161],[137,180,250],[203,166,247]];
+
+(async () => {
+  const D = await (await fetch(SRC)).json();
+  const MAXLEVEL = D.levels - 1;
+  const GAP = Math.max(12, D.footprint[0] * 0.35);
+  const levelZ = (l) => (MAXLEVEL - l) * GAP;          // coarse on top, fine at the base
+  const NX = {}; D.nodes.forEach((n) => { NX[n.level + ":" + n.id] = [n.x, n.y]; });
+  const col = (l) => LEVEL_COLORS[l % LEVEL_COLORS.length];
+
+  const ys = D.nodes.map((n) => n.y);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  let cutoff = maxY;                                    // depth slider plane (along y)
+  const show = { nodes: true, hulls: true, labels: true, edges: true, links: true, base: true };
+  const vis = (y) => y <= cutoff;
+
+  const { Deck, OrbitView, ScatterplotLayer, LineLayer, PolygonLayer, TextLayer, LinearInterpolator } = deck;
+
+  // per-level convex hull ("glass floor" per stratum), computed client-side
+  function convexHull(pts) {
+    if (pts.length < 3) return pts;
+    pts = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = []; for (const p of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    const up = []; for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+    lo.pop(); up.pop(); return lo.concat(up);
+  }
+  const byLevel = {};
+  D.nodes.forEach((n) => { (byLevel[n.level] ||= []).push([n.x, n.y]); });
+  const hulls = Object.entries(byLevel).map(([l, pts]) => ({ level: +l, ring: convexHull(pts) }));
+
+  let viewState = { target: [0, 0, (MAXLEVEL * GAP) / 2], rotationX: 90, rotationOrbit: 0,
+                    zoom: Math.log2(820 / (D.footprint[0] * 2.2)), minZoom: -2, maxZoom: 8 };
+
+  function layers() {
+    const L = [];
+    if (show.hulls) L.push(new PolygonLayer({
+      id: "hulls", data: hulls, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
+      getPolygon: (d) => d.ring.map(([x, y]) => [x, y, levelZ(d.level)]),
+      getFillColor: (d) => [...col(d.level), 22], getLineColor: (d) => [...col(d.level), 150],
+      getLineWidth: 0.4, lineWidthUnits: "common", stroked: true, filled: true, extruded: false }));
+    if (show.base && D.baselinks) L.push(new LineLayer({
+      id: "baselinks", data: D.baselinks, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
+      getSourcePosition: (d) => [...NX[d.from.level + ":" + d.from.id], levelZ(d.from.level)],
+      getTargetPosition: (d) => [...NX[d.to.level + ":" + d.to.id], levelZ(d.to.level)],
+      getColor: (d) => [137, 180, 250, NX[d.from.level + ":" + d.from.id] && vis(NX[d.from.level + ":" + d.from.id][1]) ? 22 : 0],
+      getWidth: 0.5, updateTriggers: { getColor: cutoff } }));
+    if (show.links) L.push(new LineLayer({
+      id: "links", data: D.links, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
+      getSourcePosition: (d) => [...NX[d.from.level + ":" + d.from.id], levelZ(d.from.level)],
+      getTargetPosition: (d) => [...NX[d.to.level + ":" + d.to.id], levelZ(d.to.level)],
+      getColor: (d) => [249, 226, 175, NX[d.from.level + ":" + d.from.id] && vis(NX[d.from.level + ":" + d.from.id][1]) ? 90 : 0],
+      getWidth: 1, updateTriggers: { getColor: cutoff } }));
+    if (show.edges) L.push(new LineLayer({
+      id: "edges", data: D.edges, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
+      getSourcePosition: (d) => [...NX[d.level + ":" + d.a], levelZ(d.level)],
+      getTargetPosition: (d) => [...NX[d.level + ":" + d.b], levelZ(d.level)],
+      getColor: (d) => [...col(d.level), vis(NX[d.level + ":" + d.a][1]) ? 70 : 0],
+      getWidth: 1, updateTriggers: { getColor: cutoff } }));
+    if (show.nodes) L.push(new ScatterplotLayer({
+      id: "nodes", data: D.nodes, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
+      getPosition: (d) => [d.x, d.y, levelZ(d.level)],
+      getRadius: (d) => Math.sqrt(d.size) + 0.6, radiusUnits: "common", radiusScale: 0.5,
+      radiusMinPixels: 1.4, radiusMaxPixels: 14,
+      getFillColor: (d) => [...col(d.level), vis(d.y) ? 220 : 0],
+      pickable: true, updateTriggers: { getFillColor: cutoff } }));
+    if (show.labels) L.push(new TextLayer({
+      id: "labels", coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
+      data: D.nodes.filter((n) => n.level <= 2),   // coarse strata only — readable
+      getPosition: (d) => [d.x, d.y, levelZ(d.level) + 1],
+      getText: (d) => String(d.size), getSize: 11, sizeUnits: "pixels",
+      getColor: (d) => [235, 238, 248, vis(d.y) ? 235 : 0],
+      getTextAnchor: "middle", fontFamily: "monospace", updateTriggers: { getColor: cutoff } }));
+    return L;
+  }
+
+  const deckgl = new Deck({
+    parent: document.getElementById("deck"), views: new OrbitView({ orthographic: true }),
+    initialViewState: viewState, controller: true,
+    onViewStateChange: ({ viewState: vs }) => { viewState = vs; updHud(); },
+    getTooltip: ({ object }) => object && object.size !== undefined && {
+      html: `level ${object.level} · size ${object.size}<br>C${object.id}`,
+      style: { background: "#11131f", color: "#cdd6f4", font: "12px monospace", borderRadius: "6px" } },
+    layers: layers(),
+  });
+  const render = () => deckgl.setProps({ layers: layers() });
+
+  // rotate button: animate rotationX between top-down (90) and side (6)
+  let side = false;
+  document.getElementById("rot").onclick = () => {
+    side = !side;
+    viewState = { ...viewState, rotationX: side ? 6 : 90, rotationOrbit: side ? 25 : 0,
+                  transitionDuration: 900, transitionInterpolator: new LinearInterpolator(["rotationX", "rotationOrbit"]) };
+    deckgl.setProps({ viewState });
+  };
+  document.getElementById("depth").oninput = (e) => {
+    cutoff = minY + (e.target.value / 100) * (maxY - minY); render();
+  };
+  ["nodes", "hulls", "labels", "edges", "links", "base"].forEach((k) => {
+    document.getElementById("L-" + k).onchange = (e) => { show[k] = e.target.checked; render(); };
+  });
+
+  // legend (coarse on top)
+  const lg = document.getElementById("legend");
+  const counts = {}; D.nodes.forEach((n) => counts[n.level] = (counts[n.level] || 0) + 1);
+  Object.keys(counts).sort((a, b) => a - b).forEach((l) => {
+    const c = col(+l); const d = document.createElement("div");
+    d.innerHTML = `<span class="sw" style="background:rgb(${c[0]},${c[1]},${c[2]})"></span> ` +
+      `level ${l} <span class="lab">(${counts[l]})</span>`;
+    lg.appendChild(d);
+  });
+
+  const zEl = document.getElementById("z");
+  const updHud = () => { zEl.textContent = `rotX ${Math.round(viewState.rotationX)}° · ${D.nodes.length} nodes · ${D.links.length} links`; };
+  updHud();
+})();
+</script>
+</body>
+</html>

@@ -40,3 +40,11 @@ __pycache__/
 
 # Local secrets (JWT_TOKEN etc.) — never commit.
 .env
+
+# graph-map experiment: track the code (Dockerfile/build_map.py/viewer.html),
+# not the generated tiles/logs. Regenerate with experiments/graph-map/README.md.
+/experiments/graph-map/out/
+/experiments/graph-map/_*.log
+/experiments/graph-map/_*.json
+/experiments/graph-map/_*.err
+/experiments/graph-map/node_modules/

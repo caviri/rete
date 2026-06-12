@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>rete graph-map — 3D (three.js prototype)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #04060d; overflow: hidden; color: #cdd6f4;
+               font: 12px/1.5 ui-monospace, monospace; }
+  #c { position: absolute; inset: 0; }
+  .panel { position: absolute; z-index: 2; background: rgba(8,11,20,.82); padding: 10px 12px;
+           border-radius: 8px; }
+  #hud { top: 10px; left: 10px; max-width: 340px; }
+  #hud b { color: #89b4fa; }
+  #ctl { top: 10px; right: 10px; width: 210px; }
+  #ctl button { font: 12px monospace; background: #313244; color: #cdd6f4; border: 0;
+                border-radius: 6px; padding: 6px 10px; cursor: pointer; width: 100%; margin-bottom: 8px; }
+  #ctl button:hover { background: #45475a; }
+  #ctl label { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+  #ctl input[type=range] { width: 100%; }
+  #ctl .lab { color: #9399b2; font-size: 11px; }
+  #ctl hr { border: 0; border-top: 1px solid #313244; margin: 9px 0; }
+  .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="hud" class="panel">
+  <b>rete graph-map · 3D (three.js)</b> — the community pyramid as glowing stacked
+  strata. Drag to orbit; scroll to zoom. <b>Rotate 90°</b> snaps to the side view.
+  The <b>view-depth</b> slider is real <b>camera fog</b> — pull it in to see only
+  the near strata, push it out to see the whole volume.
+  <div id="z" class="lab" style="margin-top:6px"></div>
+</div>
+<div id="ctl" class="panel">
+  <button id="rot">⟲ Rotate 90° (top ⇄ side)</button>
+  <div class="lab">View depth (fog)</div>
+  <input id="depth" type="range" min="0" max="100" value="100" />
+  <hr />
+  <div class="lab">Layers</div>
+  <label><input type="checkbox" id="L-nodes" checked /> nodes (glow)</label>
+  <label><input type="checkbox" id="L-hulls" checked /> level floors</label>
+  <label><input type="checkbox" id="L-edges" checked /> intra-level links</label>
+  <label><input type="checkbox" id="L-links" checked /> parent→child links</label>
+  <label><input type="checkbox" id="L-base" checked /> base→L3 links</label>
+  <hr />
+  <div class="lab">Strata (top → bottom)</div>
+  <div id="legend"></div>
+</div>
+<div id="c"></div>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const params = new URLSearchParams(location.search);
+const SPACE = "https://katospiegel-rete.hf.space/data/graph-map";
+const TOKEN = "sfdbgf1094by21hd128ru39802";   // demo Space token (public soft gate)
+const LOCAL = location.protocol === "file:" || /^(localhost|127|0\.0\.0\.0)/.test(location.hostname);
+const SRC = params.get("data") || (LOCAL ? "out/graphmap-3d.json" : `${SPACE}/graphmap-3d.json?token=${TOKEN}`);
+const PAL = [[230,25,75],[245,130,49],[255,225,25],[60,180,75],[67,99,216],[145,30,180]];
+const D = await (await fetch(SRC)).json();
+const MAXLEVEL = D.levels - 1;
+const GAP = Math.max(14, D.footprint[0] * 0.42);
+const yOf = (l) => (MAXLEVEL - l) * GAP;            // coarse on top, base at bottom
+const NX = {}; D.nodes.forEach((n) => { NX[n.level + ":" + n.id] = [n.x, n.y]; });
+const col = (l) => PAL[l % PAL.length];
+const R = D.footprint[0] * 1.5, cy = (MAXLEVEL * GAP) / 2;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio); renderer.setSize(innerWidth, innerHeight);
+document.getElementById("c").appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x04060d, 0.0);       // density driven by the slider
+
+const aspect = innerWidth / innerHeight, F = R * 1.15;
+const camera = new THREE.OrthographicCamera(-F * aspect, F * aspect, F, -F, -2000, 4000);
+camera.position.set(0, cy, R * 1.7);                // start: side elevation
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, cy, 0); controls.update();
+
+// soft round sprite for glowing points
+function disc() {
+  const c = document.createElement("canvas"); c.width = c.height = 64;
+  const g = c.getContext("2d"), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, "rgba(255,255,255,1)"); gr.addColorStop(.35, "rgba(255,255,255,.55)");
+  gr.addColorStop(1, "rgba(255,255,255,0)"); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+const SPRITE = disc();
+
+function points(nodes, size, opacity) {
+  const pos = new Float32Array(nodes.length * 3), c = new Float32Array(nodes.length * 3);
+  nodes.forEach((n, i) => {
+    pos[i*3] = n.x; pos[i*3+1] = yOf(n.level); pos[i*3+2] = n.y;
+    const k = col(n.level); c[i*3] = k[0]/255; c[i*3+1] = k[1]/255; c[i*3+2] = k[2]/255;
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.setAttribute("color", new THREE.BufferAttribute(c, 3));
+  // pixel sizes + normal blending: soft glow from the sprite without the
+  // additive blow-out that turns a dense graph into a white blob.
+  const m = new THREE.PointsMaterial({ size, map: SPRITE, vertexColors: true, transparent: true,
+    opacity, depthWrite: false, sizeAttenuation: false, fog: true });
+  return new THREE.Points(g, m);
+}
+const superN = points(D.nodes.filter((n) => n.level < MAXLEVEL), 9, 0.95);
+const baseN = points(D.nodes.filter((n) => n.level === MAXLEVEL), 2.6, 0.45);
+const nodeGroup = new THREE.Group(); nodeGroup.add(superN, baseN); scene.add(nodeGroup);
+
+function lines(arr, src, dst, lvl, rgba) {
+  const pos = new Float32Array(arr.length * 6), c = new Float32Array(arr.length * 6);
+  let n = 0;
+  for (const d of arr) {
+    const a = NX[src(d)], b = NX[dst(d)]; if (!a || !b) continue;
+    pos[n*6] = a[0]; pos[n*6+1] = yOf(lvl(d, 0)); pos[n*6+2] = a[1];
+    pos[n*6+3] = b[0]; pos[n*6+4] = yOf(lvl(d, 1)); pos[n*6+5] = b[1];
+    for (let j = 0; j < 2; j++) { c[n*6+j*3] = rgba[0]; c[n*6+j*3+1] = rgba[1]; c[n*6+j*3+2] = rgba[2]; }
+    n++;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos.subarray(0, n*6), 3));
+  g.setAttribute("color", new THREE.BufferAttribute(c.subarray(0, n*6), 3));
+  const m = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: rgba[3],
+    depthWrite: false, blending: THREE.AdditiveBlending, fog: true });
+  return new THREE.LineSegments(g, m);
+}
+const edges = lines(D.edges, (d) => d.level + ":" + d.a, (d) => d.level + ":" + d.b,
+  (d) => d.level, [0.42, 0.45, 0.55, 0.22]);
+const links = lines(D.links, (d) => d.from.level + ":" + d.from.id, (d) => d.to.level + ":" + d.to.id,
+  (d, i) => i === 0 ? d.from.level : d.to.level, [0.98, 0.89, 0.69, 0.45]);
+const base = lines(D.baselinks || [], (d) => d.from.level + ":" + d.from.id, (d) => d.to.level + ":" + d.to.id,
+  (d, i) => i === 0 ? d.from.level : d.to.level, [0.54, 0.7, 0.98, 0.07]);
+scene.add(edges, links, base);
+
+// translucent "floor" per stratum (convex hull of that level's nodes)
+function convexHull(pts) {
+  if (pts.length < 3) return pts;
+  pts = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]);
+  const lo = []; for (const p of pts) { while (lo.length>=2 && cr(lo[lo.length-2],lo[lo.length-1],p)<=0) lo.pop(); lo.push(p); }
+  const up = []; for (let i=pts.length-1;i>=0;i--){ const p=pts[i]; while (up.length>=2 && cr(up[up.length-2],up[up.length-1],p)<=0) up.pop(); up.push(p);}
+  lo.pop(); up.pop(); return lo.concat(up);
+}
+const byLevel = {}; D.nodes.forEach((n) => (byLevel[n.level] ||= []).push([n.x, n.y]));
+const floors = new THREE.Group();
+for (const [l, pts] of Object.entries(byLevel)) {
+  const ring = convexHull(pts); if (ring.length < 3) continue;
+  const shape = new THREE.Shape(ring.map(([x, y]) => new THREE.Vector2(x, y)));
+  const geo = new THREE.ShapeGeometry(shape);
+  geo.rotateX(-Math.PI / 2); geo.translate(0, yOf(+l), 0);   // lay flat at the stratum height
+  const k = col(+l);
+  floors.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    color: new THREE.Color(k[0]/255, k[1]/255, k[2]/255), transparent: true, opacity: 0.03,
+    side: THREE.DoubleSide, depthWrite: false, fog: true })));
+}
+scene.add(floors);
+
+// ---- controls: layer toggles, rotate, fog-depth
+const objs = { nodes: nodeGroup, hulls: floors, edges, links, base };
+Object.keys(objs).forEach((k) => document.getElementById("L-" + k).onchange =
+  (e) => { objs[k].visible = e.target.checked; });
+
+let side = true, anim = null;   // starts in the side elevation
+document.getElementById("rot").onclick = () => {
+  side = !side;
+  const toPos = side ? new THREE.Vector3(0, cy, R * 1.7) : new THREE.Vector3(0.01, cy + R * 1.7, 0.01);
+  const fromPos = camera.position.clone(); let t = 0;
+  cancelAnimationFrame(anim);
+  (function step() {
+    t = Math.min(1, t + 0.025); const e = t * t * (3 - 2 * t);
+    camera.position.lerpVectors(fromPos, toPos, e); controls.update();
+    if (t < 1) anim = requestAnimationFrame(step);
+  })();
+};
+document.getElementById("depth").oninput = (e) => {
+  // slider 100 = no fog (see all); 0 = thick fog (see only near strata)
+  scene.fog.density = (1 - e.target.value / 100) * (2.2 / R);
+};
+
+const lg = document.getElementById("legend");
+const counts = {}; D.nodes.forEach((n) => counts[n.level] = (counts[n.level] || 0) + 1);
+Object.keys(counts).sort((a, b) => a - b).forEach((l) => {
+  const k = col(+l), d = document.createElement("div");
+  d.innerHTML = `<span class="sw" style="background:rgb(${k[0]},${k[1]},${k[2]})"></span> level ${l} ` +
+    `<span class="lab">(${counts[l]})</span>`;
+  lg.appendChild(d);
+});
+document.getElementById("z").textContent =
+  `${D.nodes.length} nodes · ${(D.edges.length + D.links.length + (D.baselinks||[]).length)} lines`;
+
+addEventListener("resize", () => {
+  const a = innerWidth / innerHeight;
+  camera.left = -F * a; camera.right = F * a; camera.top = F; camera.bottom = -F;
+  camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+});
+(function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+window._ready = true;
+</script>
+</body>
+</html>

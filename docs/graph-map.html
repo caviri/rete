@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Topic modeling (LDA) · rete docs</title>
+  <title>Graph-map & topic-map (exp.) · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -190,7 +190,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Interactive explorations</li>
         <li><a href="playground.html">Interactive playground</a></li>
         <li><a href="explore-100mb.html">Wikidata lazy explorer (100MB / 1GB)</a></li>
-        <li><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></li>
+        <li><a href="graph-map.html" class="active">Graph-map, topic-map & 3D (exp.)</a></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
@@ -200,9 +200,9 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
         <li class="nav-h">Graph analysis</li>
-        <li><a href="topic-modeling.html" class="active">Topic modeling (LDA)</a></li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li><a href="graph-map.html">Graph-map & topic-map (exp.)</a></li>
+        <li><a href="graph-map.html" class="active">Graph-map & topic-map (exp.)</a></li>
         <li class="nav-h">In the browser</li>
         <li><a href="browser.html">Browser / WASM</a></li>
         <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
@@ -217,147 +217,174 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Topic modeling over communities (LDA)</h1>
-<figure class="fig-right">
-  <img src="img/topics.svg" alt="Three structural node communities feed into an LDA topic model, which emits a topic card of keywords for each community.">
-  <figcaption>Communities are <em>structural</em> (link topology); topics are <em>latent themes</em> in the text on their nodes. LDA labels each community with its dominant theme.</figcaption>
-</figure>
-<p>A graph has two complementary notions of "cluster":</p>
-<ul>
-<li><strong>Communities</strong> — <em>structural</em> groups found from the link topology. Densely
-connected nodes (here: papers that cite each other) fall into the same Louvain
-community. This is what <code>rete</code> computes for its pyramid summary (see
-<a href="cli.html#coarse-graphs-no-index-read"><code>rete summary</code></a> and
-<a href="intro.html">the pyramid idea</a>).</li>
-<li><strong>Topics</strong> — <em>latent themes</em> in the <strong>text</strong> attached to those nodes (titles,
-abstracts, labels). "Machine learning", "databases", "biology" are topics, not
-links.</li>
-</ul>
-<p>They often line up — a citation cluster usually shares a theme — but nothing
-guarantees it. This tutorial uses <code>rete</code> to get <strong>(a)</strong> the community partition
-and <strong>(b)</strong> each community's text in one shot, then runs
-<a href="https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.LatentDirichletAllocation.html">Latent Dirichlet Allocation (LDA)</a>
-to <strong>label each community with its dominant theme</strong>.</p>
+<h1>Graph-map &amp; topic-map (experiment)</h1>
 <blockquote>
-<p><code>rete</code> supplies the two hard parts: the partition (Louvain) and the
-per-community text extraction. LDA is a standard downstream step —
-<code>rete</code> is a graph file format, not an ML engine.</p>
+<p><strong>Side experiment, not part of the core tool.</strong> Everything here only <em>reads</em> a
+<code>.rete</code> (and the community pyramid already inside it) and emits a standalone
+<a href="https://github.com/protomaps/PMTiles">PMTiles</a> archive + a static viewer. The
+format and CLI are untouched. Code: <a href="https://github.com/caviri/rete/tree/main/experiments/graph-map"><code>experiments/graph-map/</code></a>.</p>
 </blockquote>
-<p>The example graph, <a href="https://github.com/caviri/rete/blob/main/examples/papers.nt"><code>examples/papers.nt</code></a>,
-is 9 "papers" in 3 citation clusters (ML, databases, biology). Citations are
-dense <em>within</em> a cluster and sparse <em>across</em>, so Louvain recovers the 3 groups;
-each paper carries a <code>title</code> and an <code>abstract</code> literal with cluster-specific
-vocabulary.</p>
-<h2>Quick path: structural profiles (no ML)</h2>
-<p>Before reaching for LDA, <code>rete communities --profile</code> gives each community a
-no-ML "topic" label straight from the graph: its most frequent literal words,
-<code>rdf:type</code> classes, and predicates. No Python, no dependencies.</p>
-<pre><code class="language-sh">rete build examples/papers.nt -o papers.rete
-rete communities papers.rete --profile
+<p>A <code>.rete</code> file already carries a <strong>Louvain community pyramid</strong> — a multi-level
+clustering of the graph. This experiment turns that into a <strong>slippy map</strong>: pan
+and zoom a graph like a web map, where each zoom band is a coarser/finer level
+of the hierarchy. Two complementary lenses ship:</p>
+<table><thead><tr><th></th><th><strong>structural graph-map</strong></th><th><strong>semantic topic-map</strong></th></tr></thead><tbody>
+<tr><td>groups by</td><td><strong>link topology</strong> (community pyramid)</td><td><strong>text similarity</strong> (community literals)</td></tr>
+<tr><td>colour</td><td>level / connectivity</td><td><strong>LDA topic</strong></td></tr>
+<tr><td>label</td><td>size / connectivity</td><td><strong>top words</strong></td></tr>
+<tr><td>answers</td><td>"how is it wired?"</td><td>"what is it about?"</td></tr>
+</tbody></table>
+<p>Both deliver as a single HTTP <strong>range-readable</strong> <code>.pmtiles</code> rendered by MapLibre
+GL in the browser — the same publish-and-query-by-byte-range story as <code>.rete</code>
+itself: no server, no full download.</p>
+<blockquote>
+<p><strong>Open the live viewers</strong> (tiles range-read from the HF Space):
+<a href="graph-map/viewer.html">structural map</a> ·
+<a href="graph-map/viewer-topics.html">topic map (pyramidal LDA)</a> ·
+<a href="graph-map/viewer-3d.html">3D side-elevation — deck.gl</a> ·
+<a href="graph-map/viewer-3d-three.html">3D — three.js + fog</a></p>
+</blockquote>
+<h2>Why a map at all</h2>
+<p>Force-directed pictures of a big graph collapse into a hairball. A map fixes
+that with <strong>levels of detail</strong>: zoomed out you see a handful of coarse regions
+(the "continents"); as you zoom in, finer structure resolves — exactly how a
+web map goes country → city → street. rete's pyramid <em>is</em> that level hierarchy,
+so the mapping is direct. (Prior art: GMap, <em>"Visualizing Graphs and Clusters
+as Maps"</em>.)</p>
+<hr />
+<h2>1. Structural graph-map — the community pyramid</h2>
+<p>Nodes are rete's pyramid communities; the most-connected hubs dominate when
+zoomed out. Each super-community is drawn as a translucent <strong>convex-hull
+boundary</strong>, with its finer child communities rendering <em>inside</em> it as you zoom.</p>
+<p><strong>Pipeline</strong> (<a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/build_map.py"><code>build_map.py</code></a>):</p>
+<pre><code>rete summary &lt;file&gt;            → weighted community graph (pyramid round 0)
+igraph multilevel Louvain      → coarser super-communities (extra zoom levels)
+igraph DRL layout              → 2D coords for the base communities
+size-weighted centroids upward → coords for every coarser level
+convex hulls + GeoJSON         → tippecanoe → graphmap.pmtiles
 </code></pre>
-<pre><code>community 0: 3 members, 6 literals
-    topic words : network (6), neural (5), deep (3), gradient (3), learning (3) …
-    classes     : &lt;http://ex/Paper&gt; (3)
-    predicates  : &lt;http://ex/cites&gt; (6), &lt;http://ex/abstract&gt; (3), &lt;http://ex/title&gt; (3) …
-community 1: 3 members, 6 literals
-    topic words : query (5), database (4), storage (4), transactional (4) …
-community 2: 3 members, 6 literals
-    topic words : gene (5), protein (5), cell (4), dna (4), genome (4) …
+<p>On the 12M-triple Wikidata slice that becomes 4 zoom bands — 38 → 103 → 2,198
+super-communities over 60,000 base communities (a 12 MB <code>.pmtiles</code>).</p>
+<p><img src="img/graphmap-zoomout.png" alt="Structural graph-map, zoomed out — coarse super-communities as hulls" />
+<em>Zoomed out: coarse super-communities as translucent hulls, sized by connectivity.</em></p>
+<p><img src="img/graphmap-detail.png" alt="Structural graph-map, zoomed in — finer communities inside the boundaries" />
+<em>Zoomed in: finer pyramid communities resolve inside their parent boundary.</em></p>
+<p><strong>In the viewer</strong> (<a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/viewer.html"><code>viewer.html</code></a>):
+zoom-out shows the whole graph as a small island; <strong>hover</strong> a node for level /
+size / sub-community count; <strong>click</strong> a node to highlight all its links, then a
+2nd/3rd to show only the links <em>among</em> the selected set. A <strong>round minimap</strong>
+(bottom-right) shows the whole graph with a viewport box; a <strong>clear</strong> button and
+<strong>layer toggles</strong> (boundaries / links / nodes / labels) control what's drawn.</p>
+<hr />
+<h2>2. Semantic topic-map — communities by LDA topic</h2>
+<p>The structural map says how the graph is <em>wired</em>; this says what each cluster is
+<em>about</em>. rete supplies the two hard parts — the Louvain partition <strong>and</strong> the
+per-community text — and LDA is the standard downstream step (see
+<a href="topic-modeling.html">Topic modeling</a>). Communities are laid out by <strong>text
+similarity</strong>, coloured by their dominant <strong>LDA topic</strong>, and labelled by top
+words; a <strong>legend</strong> maps each colour to its topic keywords.</p>
+<p><strong>Pipeline</strong> (<a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/build_topic_map.py"><code>build_topic_map.py</code></a>):</p>
+<pre><code>rete communities --json --profile        → communities w/ members, text, profile
+CountVectorizer + LatentDirichletAllocation (scikit-learn) → topic per community
+TruncatedSVD(2) over TF-IDF               → 2D text-similarity layout
+per-topic convex hulls + GeoJSON          → tippecanoe → topicmap.pmtiles
 </code></pre>
-<p>That already separates ML / databases / biology cleanly — word frequency over a
-community's text is a strong baseline. Reach for LDA below when you want <em>latent</em>
-topics (themes that span words and are shared across communities) rather than
-just the top terms. <code>--json --profile</code> adds a <code>"profile": { types, predicates, terms }</code> object to each community for programmatic use.</p>
-<h2>Step 1 — build the file</h2>
-<pre><code class="language-sh">rete build examples/papers.nt -o papers.rete
-</code></pre>
-<p>Peek at the structure (no index read needed):</p>
-<pre><code class="language-sh">rete summary papers.rete
-</code></pre>
-<pre><code>pyramid round 0 — 3 communities summarized as 12 superedge(s):
-  C0 (internal) C0  via &lt;http://ex/cites&gt;  x6
-  C1 (internal) C1  via &lt;http://ex/cites&gt;  x6
-  C2 (internal) C2  via &lt;http://ex/cites&gt;  x6
-  ...
-</code></pre>
-<p>Three communities, each internally dense on <code>cites</code> — exactly the citation
-clusters.</p>
-<h2>Step 2 — extract per-community membership + text</h2>
-<pre><code class="language-sh">rete communities papers.rete --json &gt; communities.json
-</code></pre>
-<p>Each element is one community: its <code>members</code> (subject IRIs) and <code>text</code> (the
-lexical values of all literal objects — the topic corpus):</p>
-<pre><code class="language-json">[
-  {
-    "community": 0,
-    "size": 3,
-    "members": ["&lt;http://ex/p1&gt;", "&lt;http://ex/p2&gt;", "&lt;http://ex/p3&gt;"],
-    "text": [
-      "We train a deep neural network model on labeled images...",
-      "Deep neural networks for image classification",
-      "A reinforcement learning agent learns a policy by maximizing reward...",
-      ...
-    ]
-  },
-  ...
-]
-</code></pre>
-<p><code>--round N</code> cuts the dendrogram at a specific round (default: the round chosen
-for the tile budget); <code>--min-size N</code> drops tiny communities. Without <code>--json</code>
-you get a human summary (members + literal counts).</p>
-<h2>Step 3 — run LDA</h2>
-<p><a href="https://github.com/caviri/rete/blob/main/scripts/lda_topics.py"><code>scripts/lda_topics.py</code></a>
-treats <strong>each community as one document</strong> (its <code>text</code> joined), builds a
-document-term matrix (English stopwords), fits LDA, and prints the top words per
-topic plus each community's dominant topic.</p>
-<pre><code class="language-sh">pip install scikit-learn
-rete communities papers.rete --json | python3 scripts/lda_topics.py --topics 3
-</code></pre>
-<pre><code>== 3 topic(s) over 3 community document(s) ==
-  topic 0: network, neural, improves, query, model, transactional, database, storage
-  topic 1: using, study, model, tree, transaction, strategies, structures, load
-  topic 2: protein, gene, genome, molecular, dna, cell, tissue, mutations
-
-== community → dominant topic ==
-  community 0: topic 0  [network, neural, improves]  (p=0.99)
-  community 1: topic 0  [network, neural, improves]  (p=0.99)
-  community 2: topic 2  [protein, gene, genome]  (p=0.99)
-</code></pre>
-<p>Community 2 is cleanly the <em>biology</em> cluster (<code>gene, genome, dna, protein</code>).
-The script reads from stdin or a file (<code>lda_topics.py communities.json</code>), and
-<code>--topics</code> / <code>--top-words</code> are tunable.</p>
-<h2>Step 4 (optional) — write topics back as queryable RDF</h2>
-<p>Once you have a label per community, you can attach it to each member and rebuild
-so the topic becomes <strong>queryable with SPARQL</strong>:</p>
-<pre><code class="language-sh"># e.g. community 2 → "biology"
-cat &gt;&gt; topics.nt &lt;&lt;'EOF'
-&lt;http://ex/p7&gt; &lt;http://ex/topic&gt; "biology" .
-&lt;http://ex/p8&gt; &lt;http://ex/topic&gt; "biology" .
-&lt;http://ex/p9&gt; &lt;http://ex/topic&gt; "biology" .
-EOF
-
-rete build examples/papers.nt topics.nt -o papers-topics.rete
-
-rete sparql papers-topics.rete \
-  'PREFIX e: &lt;http://ex/&gt; SELECT ?p WHERE { ?p e:topic "biology" }'
-</code></pre>
-<p>The topic is now a first-class edge: filter, join, and traverse it like any
-other relation.</p>
-<h2>Honest notes</h2>
 <ul>
-<li><strong>LDA needs real text and volume.</strong> This 9-paper demo is <em>illustrative</em>: with
-only 3 documents LDA cannot reliably split the two technical clusters (ML vs.
-databases often land on one topic), though the lexically distinct biology
-cluster separates perfectly. On a real corpus (hundreds of documents per
-community, longer abstracts) topics become sharp.</li>
-<li><strong>Communities ≠ topics.</strong> They coincide <em>here</em> by construction; on real data
-compare them — a structural community spanning two topics is itself a finding.</li>
-<li>LDA is non-deterministic up to its random seed (the script fixes
-<code>random_state=0</code> for reproducibility) and the topic <em>count</em> is a
-hyperparameter you choose.</li>
+<li><strong>z0</strong> — one translucent hull per LDA topic (the legend colours), labelled
+with that topic's keywords.</li>
+<li><strong>z1+</strong> — the communities inside, coloured by topic, labelled by top words.
+<strong>Hovering</strong> a community shows what it <em>is</em> — its dominant <code>rdf:type</code> and its
+characteristic <strong>properties</strong> (top predicates), both straight from
+<code>rete communities --profile</code>. A <strong>legend</strong> lists every topic's keywords;
+clicking a topic (or its region) isolates it, and <strong>layer toggles</strong> + a
+<strong>show-all</strong> button control the view.</li>
 </ul>
-<p>See also: <a href="intro.html">Graph data 101</a>, <a href="cli.html">CLI reference</a>,
-<a href="compatibility.html">Compatibility &amp; interop</a>.</p>
+<p>Run on the <strong>1 GB Wikidata bundle</strong> (120 M triples → 140 communities of ≥5
+members, 10 LDA topics), real themes separate cleanly — e.g. rivers
+(<em>river, abhainn, ruda</em>), villages (<em>india, gujarat, village, dorf</em>),
+settlements (<em>pierre, saint, selo, oleksandrivka</em>), people (<em>michael, richard,
+robert, actor</em>), British footballers (<em>brit, futbolista, britanski</em>), and
+Wikimedia disambiguation pages.</p>
+<p><img src="img/topicmap.png" alt="Semantic topic-map with LDA legend" />
+<em>Topic regions coloured by LDA topic; the legend lists each topic's keywords.
+Click a region or legend row to isolate one topic.</em></p>
+<blockquote>
+<p><strong>Data note.</strong> Topic modelling wants a <em>densely linked</em> graph with rich text.
+The Wikidata <em>truthy</em> slice is link-sparse, so most communities are small;
+the 1 GB tier still surfaces a handful of large, coherent ones. A citation
+network (dense links + abstracts) is the canonical fit — see
+<a href="topic-modeling.html">Topic modeling</a>.</p>
+</blockquote>
+<hr />
+<h2>3. 3D side-elevation — the pyramid as stacked strata</h2>
+<p>A button to <strong>rotate the map 90°</strong> and see it from the side: each zoom level
+becomes a <strong>horizontal plane</strong> stacked in 3D, and the lines between planes are
+the <strong>parent→child</strong> links of the community hierarchy. Built with
+<a href="https://deck.gl">deck.gl</a>'s orthographic <code>OrbitView</code> (MapLibre is 2D-only), so
+it's a true projection you can orbit by dragging.</p>
+<p><img src="img/graphmap-3d.png" alt="3D stacked-strata side elevation" />
+<em>Level 0 (coarse super-communities) on top down to the 60k base communities as
+the bottom plane; tan lines are parent→child links between strata.</em></p>
+<p><strong>In the viewer</strong> (<a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/viewer-3d.html"><code>viewer-3d.html</code></a>):</p>
+<ul>
+<li><strong>Rotate 90°</strong> snaps between the top-down view and the orthographic side view.</li>
+<li>A <strong>view-depth slider</strong> controls how far <em>into</em> the stack you can see (a
+clipping plane sweeping along the depth axis) — peer at the front strata or
+reveal the whole volume.</li>
+<li><strong>Layer toggles</strong> for nodes / <strong>level-floor hulls</strong> / <strong>size labels</strong> /
+intra-level links / parent→child links / <strong>base→L3 links</strong> (the 60k base
+communities tethered to their level-3 parents), and a per-level legend.</li>
+</ul>
+<p>There are <strong>two implementations</strong> of the 3D view:</p>
+<ul>
+<li><a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/viewer-3d.html"><code>viewer-3d.html</code></a>
+— <strong>deck.gl</strong> orthographic <code>OrbitView</code>: data-layer abstractions + built-in
+picking/tooltips; the depth slider is an alpha cutoff along the depth axis.</li>
+<li><a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/viewer-3d-three.html"><code>viewer-3d-three.html</code></a>
+— a <strong>three.js</strong> prototype: glowing points, and the depth slider is
+<strong>real camera fog</strong> (<code>FogExp2</code>) so "how far you can see" is physically correct
+— pull it in to fade out the far strata, push it out to see the whole volume.</li>
+</ul>
+<p><img src="img/graphmap-3d-three.png" alt="three.js 3D side elevation" />
+<em>The three.js prototype: glowing stacked strata with camera-fog depth.</em></p>
+<hr />
+<h2>Run it</h2>
+<p>Both maps share a standalone toolchain image (tippecanoe + python-igraph +
+scikit-learn + pmtiles) and call the rete binary already built at
+<code>target/release/rete</code>.</p>
+<pre><code class="language-sh">docker build -t rete-graphmap -f experiments/graph-map/Dockerfile experiments/graph-map
+
+# structural map
+docker run --rm -v "${PWD}:/work" -w /work rete-graphmap \
+  data/wikidata-100MB/wikidata.rete -o experiments/graph-map/out
+
+# topic map (LDA)
+docker run --rm -v "${PWD}:/work" -w /work --entrypoint python rete-graphmap \
+  experiments/graph-map/build_topic_map.py data/wikidata-100MB/wikidata.rete \
+  --topics 12 -o experiments/graph-map/out
+</code></pre>
+<p>View with the Range-capable static server (PMTiles needs <code>206</code> responses):</p>
+<pre><code class="language-sh">python experiments/graph-map/serve.py 8000
+#  http://localhost:8000/viewer.html          (structural map + minimap)
+#  http://localhost:8000/viewer-topics.html   (LDA topics + legend)
+#  http://localhost:8000/viewer-3d.html        (3D stacked-strata side view, deck.gl)
+#  http://localhost:8000/viewer-3d-three.html   (3D prototype, three.js + camera fog)
+</code></pre>
+<p>The 3D viewer reads <code>graphmap-3d.json</code> (node positions per level + intra-level
+edges + parent→child links), which <code>build_map.py</code> emits alongside the
+<code>.pmtiles</code>.</p>
+<p>See <a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/README.html"><code>experiments/graph-map/README.md</code></a>
+for all flags (<code>--max-base</code>, <code>--footprint</code>, <code>--topics</code>, <code>--maxzoom</code>, …).</p>
+<h2>Caveats (it's an experiment)</h2>
+<ul>
+<li><strong>Layout is the cost, not the tiling.</strong> DRL handles ~100k base communities;
+past that, <code>--max-base</code> keeps the most-connected ones.</li>
+<li><strong>Coordinates are a layout, not a measurement</strong> — proximity ≈ relatedness,
+axes mean nothing.</li>
+<li><strong><code>rete communities</code> recomputes Louvain</strong>, so the topic map's partition is not
+byte-identical to the stored pyramid <code>summary</code> uses; the two maps are
+complementary views, not the same nodes.</li>
+</ul>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -365,7 +392,7 @@ hyperparameter you choose.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/topic-modeling.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/graph-map.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

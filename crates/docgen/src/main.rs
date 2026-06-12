@@ -26,8 +26,14 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("intro.md", "Graph data 101"),
             ("getting-started.md", "Getting started"),
             ("scenario.md", "Real-world scenario"),
+        ],
+    ),
+    (
+        "Interactive explorations",
+        &[
             ("playground.html", "Interactive playground"),
-            ("explore-100mb.html", "Wikidata lazy explorer"),
+            ("explore-100mb.html", "Wikidata lazy explorer (100MB / 1GB)"),
+            ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
         ],
     ),
     (
@@ -47,6 +53,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("topic-modeling.md", "Topic modeling (LDA)"),
             ("multi-criteria.md", "Multi-criteria communities"),
+            ("graph-map.md", "Graph-map & topic-map (exp.)"),
         ],
     ),
     (
