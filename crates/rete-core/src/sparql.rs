@@ -736,12 +736,19 @@ pub fn eval_sparql(rete: &Rete, query: &str) -> Result<(Vec<String>, Vec<Binding
     Ok(run_select(rete, &sel))
 }
 
-/// Format a numeric aggregate result (drop the fraction for integral values).
-fn fmt_num(x: f64) -> String {
+/// Format a computed number as an N-Triples *typed* literal so the result
+/// serializer emits its datatype (SPARQL requires arithmetic/aggregates/numeric
+/// functions to yield typed numerics, not bare strings). Whole values are
+/// `xsd:integer`; fractional ones `xsd:decimal` — the common cases in the data
+/// (`xsd:double` would need operand-type tracking we don't carry through `f64`).
+pub(crate) fn fmt_num_typed(x: f64) -> String {
     if x.fract() == 0.0 {
-        format!("{}", x as i64)
+        format!(
+            "\"{}\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            x as i64
+        )
     } else {
-        format!("{x}")
+        format!("\"{x}\"^^<http://www.w3.org/2001/XMLSchema#decimal>")
     }
 }
 
@@ -997,7 +1004,10 @@ mod tests {
         let (_, sols) = eval_sparql(&rete, q).unwrap();
         assert_eq!(sols.len(), 1);
         assert_eq!(sols[0]["p"], "<http://ex/Alice>");
-        assert_eq!(sols[0]["n"], "2");
+        assert_eq!(
+            sols[0]["n"],
+            "\"2\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+        );
     }
 
     #[test]
@@ -1024,8 +1034,14 @@ mod tests {
         assert_eq!(
             counts,
             vec![
-                ("<http://ex/Alice>".into(), "2".into()),
-                ("<http://ex/Bob>".into(), "1".into()),
+                (
+                    "<http://ex/Alice>".into(),
+                    "\"2\"^^<http://www.w3.org/2001/XMLSchema#integer>".into()
+                ),
+                (
+                    "<http://ex/Bob>".into(),
+                    "\"1\"^^<http://www.w3.org/2001/XMLSchema#integer>".into()
+                ),
             ]
         );
     }
@@ -1039,7 +1055,10 @@ mod tests {
         let rete = Rete::open(&bytes).unwrap();
         let (_, sols) = eval_sparql(&rete, "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }").unwrap();
         assert_eq!(sols.len(), 1);
-        assert_eq!(sols[0]["n"], "2");
+        assert_eq!(
+            sols[0]["n"],
+            "\"2\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+        );
     }
 
     #[test]
@@ -1491,7 +1510,10 @@ mod tests {
         let (_, sols) = eval_sparql(&rete, q).unwrap();
         assert_eq!(sols.len(), 1);
         assert_eq!(sols[0]["p"], "<http://ex/Alice>");
-        assert_eq!(sols[0]["len"], "11"); // "Alice Smith"
+        assert_eq!(
+            sols[0]["len"],
+            "\"11\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+        ); // "Alice Smith"
     }
 
     #[test]
@@ -1508,7 +1530,10 @@ mod tests {
                  SELECT ?next WHERE { ?p ex:age ?age . BIND(?age + 1 AS ?next) FILTER(?age * 2 > 50) }";
         let (_, sols) = eval_sparql(&rete, q).unwrap();
         assert_eq!(sols.len(), 1);
-        assert_eq!(sols[0]["next"], "31");
+        assert_eq!(
+            sols[0]["next"],
+            "\"31\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+        );
     }
 
     #[test]
