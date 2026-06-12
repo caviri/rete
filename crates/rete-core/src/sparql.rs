@@ -180,6 +180,10 @@ pub enum PathAst {
     Seq(Box<PathAst>, Box<PathAst>),
     /// Alternative `a|b` (union).
     Alt(Box<PathAst>, Box<PathAst>),
+    /// Negated property set `!(p1|…|pn)` — one step over any predicate **not**
+    /// in the set, in the given direction (`reversed` for the `^p` members,
+    /// which `spargebra` wraps in a `Reverse`).
+    NegatedSet(Vec<String>, bool),
 }
 
 /// Comparison operators supported in FILTER.
@@ -797,6 +801,7 @@ fn reverse(ast: PathAst) -> PathAst {
         PathAst::Rep(inner, rep) => PathAst::Rep(Box::new(reverse(*inner)), rep),
         PathAst::Seq(a, b) => PathAst::Seq(Box::new(reverse(*b)), Box::new(reverse(*a))),
         PathAst::Alt(a, b) => PathAst::Alt(Box::new(reverse(*a)), Box::new(reverse(*b))),
+        PathAst::NegatedSet(s, r) => PathAst::NegatedSet(s, !r),
     }
 }
 

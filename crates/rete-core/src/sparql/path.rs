@@ -50,6 +50,40 @@ fn successors(
         .unwrap_or_default()
 }
 
+/// Successors of `start` over a **negated property set**: any predicate not in
+/// `set`, in direction `rev`. The non-excluded adjacency is built once (over
+/// every triple) and cached under a synthetic key.
+fn negated_successors(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    cache: &mut AdjCache,
+    set: &[String],
+    rev: bool,
+    start: u32,
+) -> Vec<u32> {
+    let key = (format!("!\u{1}{}", set.join("\u{1}")), rev);
+    if !cache.contains_key(&key) {
+        let dict = ctx.rete.dictionary();
+        let excluded: std::collections::HashSet<u32> =
+            set.iter().filter_map(|p| dict.predicate_id(p)).collect();
+        let mut adj: std::collections::BTreeMap<u32, Vec<u32>> = Default::default();
+        for (s, p, o) in index.match_pattern((None, None, None)) {
+            if excluded.contains(&p) {
+                continue;
+            }
+            let (sn, on) = (dict.subject_node(s), dict.object_node(o));
+            let (from, to) = if rev { (on, sn) } else { (sn, on) };
+            adj.entry(from).or_default().push(to);
+        }
+        cache.insert(key.clone(), adj);
+    }
+    cache
+        .get(&key)
+        .and_then(|a| a.get(&start))
+        .cloned()
+        .unwrap_or_default()
+}
+
 /// Nodes reachable from `start` along `ast` — forward from the start node, so a
 /// bound endpoint never triggers a global closure. Integer node space.
 fn reach_from(
@@ -62,6 +96,9 @@ fn reach_from(
     use std::collections::BTreeSet;
     match ast {
         PathAst::Pred(p, rev) => successors(ctx, index, cache, p, *rev, start)
+            .into_iter()
+            .collect(),
+        PathAst::NegatedSet(set, rev) => negated_successors(ctx, index, cache, set, *rev, start)
             .into_iter()
             .collect(),
         PathAst::Alt(a, b) => {
@@ -124,6 +161,45 @@ fn bind_pair(ctx: &Ctx, subj: &PatternTerm, obj: &PatternTerm, a: u32, b: u32) -
     Some(row)
 }
 
+/// Can `ast` relate a node to *itself* via a zero-length path (`*`/`?`)? Used so
+/// a constant endpoint that isn't even in the graph still yields the identity
+/// solution (`:x :p* ?o` ⇒ `?o = :x`, even on an empty dataset).
+fn matches_zero_length(ast: &PathAst) -> bool {
+    match ast {
+        PathAst::Rep(_, Rep::ZeroOrMore | Rep::ZeroOrOne) => true,
+        PathAst::Rep(inner, Rep::One) => matches_zero_length(inner),
+        PathAst::Rep(_, Rep::OneOrMore) => false,
+        PathAst::Seq(a, b) => matches_zero_length(a) && matches_zero_length(b),
+        PathAst::Alt(a, b) => matches_zero_length(a) || matches_zero_length(b),
+        PathAst::Pred(..) | PathAst::NegatedSet(..) => false,
+    }
+}
+
+/// The zero-length self-solution for a constant `term` not present in the graph:
+/// both endpoints must equal `term`. Binds an endpoint variable to the term;
+/// a constant other endpoint must match it.
+fn bind_self_const(ctx: &Ctx, subj: &PatternTerm, obj: &PatternTerm, term: &str) -> Option<Row> {
+    let v = ctx.resolver.canon_term(term);
+    let mut row = ctx.slots.empty_row();
+    for pt in [subj, obj] {
+        match pt {
+            PatternTerm::Var(name) => {
+                let slot = ctx.slots.slot(name)?;
+                match &row[slot] {
+                    Some(existing) if *existing != v => return None,
+                    _ => row[slot] = Some(v.clone()),
+                }
+            }
+            PatternTerm::Const(c) => {
+                if ctx.resolver.canon_term(c) != v {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(row)
+}
+
 /// Evaluate a property path to solution rows. Traversal runs on integer node
 /// IDs. A constant endpoint is pushed down so unbounded paths don't enumerate
 /// the whole graph.
@@ -142,7 +218,13 @@ pub(super) fn eval_path(
         // Bound subject: forward search from its node.
         (PatternTerm::Const(s), _) => {
             let Some(sn) = dict.node_of_term(s) else {
-                return Vec::new();
+                // Absent from the graph: only a zero-length self-match is possible.
+                if matches_zero_length(ast) {
+                    if let Some(b) = bind_self_const(ctx, subj, obj, s) {
+                        out.push(b);
+                    }
+                }
+                return out;
             };
             let obj_node = match obj {
                 PatternTerm::Const(o) => Some(dict.node_of_term(o)),
@@ -162,7 +244,12 @@ pub(super) fn eval_path(
         // Bound object only: search backward along the reversed path.
         (PatternTerm::Var(_), PatternTerm::Const(o)) => {
             let Some(on) = dict.node_of_term(o) else {
-                return Vec::new();
+                if matches_zero_length(ast) {
+                    if let Some(b) = bind_self_const(ctx, subj, obj, o) {
+                        out.push(b);
+                    }
+                }
+                return out;
             };
             let rev = reverse(ast.clone());
             for s in reach_from(ctx, index, &rev, on, &mut cache) {

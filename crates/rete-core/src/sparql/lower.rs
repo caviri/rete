@@ -340,8 +340,8 @@ fn lower_path(p: &PropertyPathExpression) -> Result<PathAst, SparqlError> {
         PropertyPathExpression::Alternative(a, b) => {
             PathAst::Alt(Box::new(lower_path(a)?), Box::new(lower_path(b)?))
         }
-        PropertyPathExpression::NegatedPropertySet(_) => {
-            return Err(SparqlError::Unsupported("negated property set path"))
+        PropertyPathExpression::NegatedPropertySet(preds) => {
+            PathAst::NegatedSet(preds.iter().map(|n| n.to_string()).collect(), false)
         }
     })
 }

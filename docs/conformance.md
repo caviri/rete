@@ -33,7 +33,7 @@ python scripts/sparql_conformance.py \
 | grouping | 4 / 4 | 0 | ✅ full |
 | bindings (VALUES) | 10 / 11 | 1 | |
 | aggregates | 39 / 42 | 3 | GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT |
-| property-path | 21 / 33 | 7 | strong |
+| property-path | 30 / 33 | 2 | incl. negated property sets + zero-length on empty data |
 | construct | 3 / 5 | 1 | graph-isomorphism check |
 | exists | 4 / 6 | 1 | |
 | project-expression | 6 / 7 | 0 | |
@@ -42,9 +42,16 @@ python scripts/sparql_conformance.py \
 | subquery | 2 / 14 | 12 | nested SELECT joins; GRAPH-scoped + RDF/XML data n/a |
 | service | 0 / 7 | 7 | SPARQL federation (N/A) |
 | csv-tsv-res | 0 / 3 | 3 | CSV/TSV result format |
-| **TOTAL** | **213 / 309 (68.9%)** | 44 | |
+| **TOTAL** | **222 / 309 (71.8%)** | 39 | |
 
 ## Findings
+
+- **Property paths — negated sets + zero-length on empty data (fixed — +9
+  tests, → 71.8%).** `!(:p1|…|:pn)` (and its inverse members, which `spargebra`
+  wraps in a `Reverse`) is now a `PathAst::NegatedSet` evaluated as one step over
+  any predicate not in the set. And a zero-length-capable path (`*`/`?`) with a
+  constant endpoint that isn't in the graph now yields the identity solution
+  (`:x :p* ?o` ⇒ `?o = :x`, even on an empty dataset). `property-path` 21 → 30.
 
 - **Subqueries + aggregate completeness (fixed — +9 tests, → 68.9%).** A nested
   `SELECT` is now lowered to an in-tree `Plan::Subquery`, evaluated independently
