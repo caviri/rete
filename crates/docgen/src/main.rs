@@ -53,7 +53,6 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("topic-modeling.md", "Topic modeling (LDA)"),
             ("multi-criteria.md", "Multi-criteria communities"),
-            ("graph-map.md", "Graph-map & topic-map (exp.)"),
         ],
     ),
     (
@@ -148,8 +147,16 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
             // graph-map is a collapsible group (the experiment viewers as
             // sub-items; the <details> is closed until the section is clicked).
             if *md == "graph-map.md" {
-                let open = if current_md.starts_with("graph-map") { " open" } else { "" };
-                let active = if *md == current_md { " class=\"active\"" } else { "" };
+                let open = if current_md.starts_with("graph-map") {
+                    " open"
+                } else {
+                    ""
+                };
+                let active = if *md == current_md {
+                    " class=\"active\""
+                } else {
+                    ""
+                };
                 let subs = [
                     ("graph-map.html", "overview"),
                     ("graph-map/viewer.html", "structural map"),
