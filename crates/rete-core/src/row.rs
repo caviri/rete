@@ -180,6 +180,31 @@ impl<'a> Resolver<'a> {
         m.is_match(text)
     }
 
+    /// SPARQL `REPLACE(text, pattern, replacement [, flags])`: every match of
+    /// `pattern` (with the i/m/s/x flag subset) is replaced, `$N` referring to
+    /// capture groups. Returns `None` for an invalid pattern (a type error).
+    /// Not memoized — REPLACE always needs the full engine (no substring fast
+    /// path) and is rare relative to FILTER REGEX.
+    pub(crate) fn regex_replace(
+        &self,
+        pattern: &str,
+        flags: &str,
+        text: &str,
+        replacement: &str,
+    ) -> Option<String> {
+        let on: String = ['i', 'm', 's', 'x']
+            .iter()
+            .filter(|c| flags.contains(**c))
+            .collect();
+        let inline = if on.is_empty() {
+            String::new()
+        } else {
+            format!("(?{on})")
+        };
+        let re = regex_lite::Regex::new(&format!("{inline}{pattern}")).ok()?;
+        Some(re.replace_all(text, replacement).into_owned())
+    }
+
     /// Coalesce the dictionary chunk faults for a set of values about to be
     /// resolved (a bounded result page): batch-fault their chunks in a few
     /// range reads instead of one per distinct term. Strings carry their own

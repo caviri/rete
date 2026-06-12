@@ -51,3 +51,8 @@ __pycache__/
 # lance-rag experiment: track the code, not the generated Lance dataset / graph.
 /experiments/lance-rag/out/
 /experiments/lance-rag/models/
+
+# W3C SPARQL test suite, cloned locally for conformance runs (scripts/sparql_conformance.py)
+/rdf-tests/
+# Locally-built rete binary used by the conformance harness
+/rete-bin

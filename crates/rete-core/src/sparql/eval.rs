@@ -124,11 +124,26 @@ fn collect_expr_slots(e: &FExpr, slots: &mut Slots) {
             slots.add(v);
         }
         FExpr::Const(_) => {}
-        FExpr::Arith(_, l, r) | FExpr::Compare(_, l, r) | FExpr::And(l, r) | FExpr::Or(l, r) => {
+        FExpr::Arith(_, l, r)
+        | FExpr::Compare(_, l, r)
+        | FExpr::And(l, r)
+        | FExpr::Or(l, r)
+        | FExpr::SameTerm(l, r) => {
             collect_expr_slots(l, slots);
             collect_expr_slots(r, slots);
         }
         FExpr::Not(inner) => collect_expr_slots(inner, slots),
+        FExpr::If(c, t, e) => {
+            collect_expr_slots(c, slots);
+            collect_expr_slots(t, slots);
+            collect_expr_slots(e, slots);
+        }
+        FExpr::In(e, list) => {
+            collect_expr_slots(e, slots);
+            for x in list {
+                collect_expr_slots(x, slots);
+            }
+        }
         FExpr::Func(_, args) | FExpr::Coalesce(args) => {
             for a in args {
                 collect_expr_slots(a, slots);

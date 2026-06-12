@@ -218,6 +218,31 @@ pub enum Builtin {
     Datatype,
     Lang,
     Regex,
+    LangMatches,
+    StrDt,
+    StrLang,
+    Iri,
+    EncodeForUri,
+    Replace,
+    Md5,
+    Sha1,
+    Sha256,
+    Sha384,
+    Sha512,
+    Year,
+    Month,
+    Day,
+    Hours,
+    Minutes,
+    Seconds,
+    Timezone,
+    Tz,
+    CastInteger,
+    CastDecimal,
+    CastFloat,
+    CastDouble,
+    CastBoolean,
+    CastString,
 }
 
 /// A small boolean/comparison expression for FILTER (a subset of SPARQL exprs).
@@ -232,6 +257,12 @@ pub enum FExpr {
     Func(Builtin, Vec<FExpr>),
     /// `COALESCE(...)` — first sub-expression that yields a value.
     Coalesce(Vec<FExpr>),
+    /// `IF(cond, then, else)` — evaluate `cond` as a boolean and pick a branch.
+    If(Box<FExpr>, Box<FExpr>, Box<FExpr>),
+    /// `expr IN (a, b, …)` — true if `expr` value-equals any list member.
+    In(Box<FExpr>, Vec<FExpr>),
+    /// `sameTerm(a, b)` — strict term identity (no value coercion).
+    SameTerm(Box<FExpr>, Box<FExpr>),
     Compare(Op, Box<FExpr>, Box<FExpr>),
     And(Box<FExpr>, Box<FExpr>),
     Or(Box<FExpr>, Box<FExpr>),
@@ -1466,9 +1497,10 @@ mod tests {
             BIND(STRAFTER(?n, \" \") AS ?last) \
             BIND(SUBSTR(?n, 1, 1) AS ?ini) }";
         let (_, sols) = eval_sparql(&rete, q).unwrap();
-        assert_eq!(sols[0]["first"], "Alice");
-        assert_eq!(sols[0]["last"], "Smith");
-        assert_eq!(sols[0]["ini"], "A");
+        // String built-ins return proper literal terms (quoted), not bare text.
+        assert_eq!(sols[0]["first"], "\"Alice\"");
+        assert_eq!(sols[0]["last"], "\"Smith\"");
+        assert_eq!(sols[0]["ini"], "\"A\"");
     }
 
     #[test]
@@ -1487,7 +1519,7 @@ mod tests {
         let (_, sols) = eval_sparql(&rete, q).unwrap();
         let mut labels: Vec<&str> = sols.iter().map(|b| b["label"].as_str()).collect();
         labels.sort();
-        assert_eq!(labels, vec!["@Al", "@Bob"]);
+        assert_eq!(labels, vec!["\"@Al\"", "\"@Bob\""]);
     }
 
     #[test]

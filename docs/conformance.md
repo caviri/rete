@@ -28,39 +28,50 @@ python scripts/sparql_conformance.py \
 |---|--:|--:|---|
 | negation | 12 / 12 | 0 | ✅ full |
 | json-res | 4 / 4 | 0 | ✅ full |
+| cast | 6 / 6 | 0 | ✅ full — xsd:integer/decimal/float/double/boolean/string |
 | bindings (VALUES) | 9 / 11 | 2 | |
 | property-path | 21 / 33 | 7 | strong |
 | grouping | 3 / 4 | 0 | |
 | construct | 3 / 5 | 1 | graph-isomorphism check |
 | exists | 4 / 6 | 1 | |
 | project-expression | 6 / 7 | 0 | |
-| aggregates | 27 / 42 | 5 | |
-| functions | 19 / 75 | 45 | many builtins missing |
+| aggregates | 27 / 42 | 4 | |
+| functions | 64 / 75 | 7 | string/cast/hash/datetime + IF/IN/sameTerm |
 | bind | 5 / 10 | 0 | |
 | entailment | 24 / 70 | 4 | needs `build --materialize` |
-| subquery | 0 / 14 | 13 | not supported |
-| cast | 0 / 6 | 6 | xsd cast fns missing |
+| subquery | 1 / 14 | 12 | not supported |
 | service | 0 / 7 | 7 | SPARQL federation (N/A) |
 | csv-tsv-res | 0 / 3 | 3 | CSV/TSV result format |
-| **TOTAL** | **137 / 309 (44.3%)** | 94 | |
+| **TOTAL** | **189 / 309 (61.2%)** | 48 | |
 
 ## Findings
 
-1. **Computed numerics are now typed (fixed — +30 tests).** rete used to
-   evaluate arithmetic / aggregates / numeric functions to the right *value* but
-   serialize it as a plain literal (`"11"`) instead of `"11"^^xsd:integer`,
-   strictly failing ~30 otherwise-correct tests. `sparql::fmt_num_typed` now
-   tags computed numerics with `xsd:integer` (whole) or `xsd:decimal`
-   (fractional) so the result serializer emits the datatype — lifting strict
-   conformance **34.6% → 44.3%** (aggregates 12→27, functions 13→19, bind 2→5,
-   project-expression 3→6) with no new operators. (A few `xsd:double` cases
-   still differ — exact promotion needs operand-type tracking we don't carry
-   through `f64`.)
+1. **Built-in function coverage (fixed — +52 tests).** Two pushes lifted strict
+   conformance from **44.3% → 61.2%**:
+   - **Computed numerics are typed.** Arithmetic / aggregates / numeric
+     functions evaluate to the right *value*; `sparql::fmt_num_typed` tags the
+     result `xsd:integer` (whole) or `xsd:decimal` (fractional) so the
+     serializer emits the datatype (34.6% → 44.3%).
+   - **The string/cast/hash/datetime built-ins now exist, and return proper
+     terms** (44.3% → 61.2%). `functions` went 19 → 64 and `cast` 0 → 6:
+     - **Strings:** `STRBEFORE`/`STRAFTER` (with the SPARQL argument-compatibility
+       and language-tag rules), `REPLACE`, `CONCAT`, `UCASE`/`LCASE`/`SUBSTR`
+       now preserve the language tag and emit a real literal term (`"FOO"@en`)
+       rather than bare text; `STRDT`/`STRLANG`, `IRI`/`URI`, `ENCODE_FOR_URI`,
+       `LANGMATCHES`.
+     - **Hashes:** `MD5`, `SHA1`, `SHA256`, `SHA384`, `SHA512` (pure-Rust
+       RustCrypto, so they compile to wasm too).
+     - **Date/time:** `YEAR`/`MONTH`/`DAY`/`HOURS`/`MINUTES`/`SECONDS`/`TZ`/
+       `TIMEZONE` over `xsd:dateTime`.
+     - **XSD casts:** `xsd:integer/decimal/float/double/boolean/string(...)`,
+       with strict lexical validation (a non-conforming string is a type error)
+       and canonicalization on cast-to-string.
+     - **Expression forms:** `IF`, `IN`/`NOT IN`, `sameTerm`.
 
-2. **Genuinely strong areas:** negation (`MINUS` / `NOT EXISTS`) and the JSON
-   results format are 100%; property paths (21/26), VALUES, GROUP BY, and
-   CONSTRUCT (verified by graph isomorphism) are solid. This matches the
-   24-operator cross-check against Oxigraph in [BENCHMARK](BENCHMARK.html).
+2. **Genuinely strong areas:** negation (`MINUS` / `NOT EXISTS`), JSON results,
+   and the XSD casts are 100%; property paths, VALUES, GROUP BY, and CONSTRUCT
+   (verified by graph isomorphism) are solid. This matches the 24-operator
+   cross-check against Oxigraph in [BENCHMARK](BENCHMARK.html).
 
 3. **Out of scope (counted, but not engine bugs):**
    - **SERVICE** (7) — SPARQL federation to a remote endpoint; rete is a file,
@@ -69,13 +80,13 @@ python scripts/sparql_conformance.py \
    - **entailment** (≈49) — RDFS/OWL entailment regimes; rete answers these only
      when entailments are baked in at build time (`rete build --materialize`),
      which this run does not do.
-   - **subquery** (14) — nested `SELECT` is rejected rather than evaluated.
-   - **cast** (6), **csv-tsv-res** (3) — xsd cast functions and the CSV/TSV
-     result serialization aren't implemented.
+   - **subquery** (≈12) — nested `SELECT` is rejected rather than evaluated.
+   - **csv-tsv-res** (3) — the CSV/TSV result serialization isn't implemented.
 
-4. **Missing builtins** account for most of the `functions` shortfall (45 n/s) —
-   each unimplemented function (string, hash, datetime, etc.) errors rather than
-   returning a wrong answer, so they're honest "not yet" rather than silent bugs.
+4. **What's left in `functions` (11):** the non-deterministic builtins
+   (`NOW`, `RAND`, `UUID`/`STRUUID`, `BNODE`), `IRI()` relative-base resolution,
+   and `IF`-error-propagation edge cases — honest "not yet" rather than silent
+   bugs (an unimplemented function errors rather than returning a wrong answer).
 
 ## The same answers, lazily and remotely
 

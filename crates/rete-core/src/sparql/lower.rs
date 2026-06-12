@@ -374,6 +374,18 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
             Box::new(FExpr::Const("0".into())),
             Box::new(convert_expr(e)?),
         ),
+        Expression::If(c, t, e) => FExpr::If(
+            Box::new(convert_expr(c)?),
+            Box::new(convert_expr(t)?),
+            Box::new(convert_expr(e)?),
+        ),
+        Expression::In(e, list) => FExpr::In(
+            Box::new(convert_expr(e)?),
+            list.iter().map(convert_expr).collect::<Result<_, _>>()?,
+        ),
+        Expression::SameTerm(l, r) => {
+            FExpr::SameTerm(Box::new(convert_expr(l)?), Box::new(convert_expr(r)?))
+        }
         Expression::Exists(pattern) => {
             // Build the sub-plan with a throwaway Select (its modifiers don't
             // escape the EXISTS).
@@ -405,6 +417,36 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
                 Function::Datatype => Builtin::Datatype,
                 Function::Lang => Builtin::Lang,
                 Function::Regex => Builtin::Regex,
+                Function::LangMatches => Builtin::LangMatches,
+                Function::StrDt => Builtin::StrDt,
+                Function::StrLang => Builtin::StrLang,
+                Function::Iri => Builtin::Iri,
+                Function::EncodeForUri => Builtin::EncodeForUri,
+                Function::Replace => Builtin::Replace,
+                Function::Md5 => Builtin::Md5,
+                Function::Sha1 => Builtin::Sha1,
+                Function::Sha256 => Builtin::Sha256,
+                Function::Sha384 => Builtin::Sha384,
+                Function::Sha512 => Builtin::Sha512,
+                Function::Year => Builtin::Year,
+                Function::Month => Builtin::Month,
+                Function::Day => Builtin::Day,
+                Function::Hours => Builtin::Hours,
+                Function::Minutes => Builtin::Minutes,
+                Function::Seconds => Builtin::Seconds,
+                Function::Timezone => Builtin::Timezone,
+                Function::Tz => Builtin::Tz,
+                // An `xsd:<type>(expr)` constructor parses as a call to the
+                // datatype IRI — map the supported XSD casts.
+                Function::Custom(nn) => match nn.as_str() {
+                    "http://www.w3.org/2001/XMLSchema#integer" => Builtin::CastInteger,
+                    "http://www.w3.org/2001/XMLSchema#decimal" => Builtin::CastDecimal,
+                    "http://www.w3.org/2001/XMLSchema#float" => Builtin::CastFloat,
+                    "http://www.w3.org/2001/XMLSchema#double" => Builtin::CastDouble,
+                    "http://www.w3.org/2001/XMLSchema#boolean" => Builtin::CastBoolean,
+                    "http://www.w3.org/2001/XMLSchema#string" => Builtin::CastString,
+                    _ => return Err(SparqlError::Unsupported("built-in function")),
+                },
                 _ => return Err(SparqlError::Unsupported("built-in function")),
             };
             let args = params
@@ -413,7 +455,6 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
                 .collect::<Result<Vec<_>, _>>()?;
             FExpr::Func(builtin, args)
         }
-        _ => return Err(SparqlError::Unsupported("filter expression form")),
     })
 }
 

@@ -162,6 +162,41 @@ pub fn as_number(token: &TermToken) -> Option<f64> {
     lex.parse::<f64>().ok()
 }
 
+/// Escape a string for use as the body of an N-Triples literal (`"…"`): the
+/// inverse of [`unescape_literal`] for the characters that must be escaped
+/// (`\`, `"`, newline, carriage return, tab). The common case (no special
+/// characters) returns the input untouched.
+pub fn escape_literal(s: &str) -> String {
+    if !s.contains(['\\', '"', '\n', '\r', '\t']) {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Build a literal term token from a (raw, unescaped) lexical value, attaching
+/// an optional non-empty language tag (`@lang`) or datatype IRI content
+/// (`^^<dt>`). `lang` wins over `datatype` if both are given (a tagged literal
+/// is implicitly `rdf:langString`).
+pub fn make_literal(lexical: &str, lang: Option<&str>, datatype: Option<&str>) -> String {
+    let body = escape_literal(lexical);
+    match (lang.filter(|l| !l.is_empty()), datatype) {
+        (Some(l), _) => format!("\"{body}\"@{l}"),
+        (None, Some(dt)) => format!("\"{body}\"^^<{dt}>"),
+        (None, None) => format!("\"{body}\""),
+    }
+}
+
 /// Resolve the N-Triples escape sequences in a literal's body to actual chars
 /// (`\n`, `\t`, `\"`, `\\`, `\uXXXX`, `\UXXXXXXXX`, …). Strings without a
 /// backslash — the overwhelming majority — are returned untouched.
