@@ -117,10 +117,15 @@ const local = (iri) => String(iri).replace(/^<|>$/g, "").replace(/\/$/, "").repl
 // from the HF Space — only the question is embedded client-side.
 const SPACE = "https://katospiegel-rete.hf.space/data";
 const TOK = "?token=sfdbgf1094by21hd128ru39802";
+const WD_EXAMPLES = ["country in europe", "a river", "capital city", "football player",
+  "writer or scientist", "village in poland", "island", "film or album"];
 const DATASETS = {
-  demo: { label: "demo · 9 papers (in-browser embed)", kind: "nt", nt: DATA_URL ? null : FALLBACK, url: DATA_URL },
-  "wikidata-100MB": { label: "Wikidata · 100MB", kind: "bundle", base: `${SPACE}/wikidata-100MB/wikidata-100MB.rag` },
-  "wikidata-1GB": { label: "Wikidata · 1GB", kind: "bundle", base: `${SPACE}/wikidata-1GB/wikidata-1GB.rag` },
+  demo: { label: "demo · 9 papers (in-browser embed)", kind: "nt", nt: DATA_URL ? null : FALLBACK, url: DATA_URL,
+    examples: ["neural networks for images", "database query speed", "cancer and DNA"] },
+  "wikidata-100MB": { label: "Wikidata · 100MB", kind: "bundle", base: `${SPACE}/wikidata-100MB/wikidata-100MB.rag`,
+    examples: WD_EXAMPLES },
+  "wikidata-1GB": { label: "Wikidata · 1GB", kind: "bundle", base: `${SPACE}/wikidata-1GB/wikidata-1GB.rag`,
+    examples: WD_EXAMPLES },
 };
 
 function parseNT(text) {                       // -> {ents:[{id,label,_t}], edges:[[i,j,pred]]}
@@ -226,6 +231,7 @@ async function loadDataset(key) {
   const adj = buildAdj(ents.length, edges);
   G = { ents, edges, dim, flat, adj, comp: components(ents.length, adj) };
   $("status").innerHTML = `<span class="ok">ready</span> · ${ents.length} nodes · ${edges.length} edges · ${dim}-dim · ${dev} · in-browser, no server`;
+  $("examples").innerHTML = (ds.examples || []).map((x) => `<span class="ex">${x}</span>`).join(" · ");
   $("q").disabled = $("go").disabled = false; $("q").focus();
 }
 
@@ -299,7 +305,7 @@ window.addEventListener("DOMContentLoaded", () => {
   sel.onchange = () => loadDataset(sel.value).catch(fail);
   $("go").onclick = ask;
   $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
-  document.querySelectorAll(".ex").forEach((el) => el.onclick = () => { $("q").value = el.textContent; ask(); });
+  $("examples").addEventListener("click", (e) => { if (e.target.classList.contains("ex")) { $("q").value = e.target.textContent; ask(); } });
   $("out").addEventListener("click", (ev) => {
     const r = ev.target.closest("[data-node]");
     if (r) { explore(+r.dataset.node); return; }
@@ -326,7 +332,7 @@ window.addEventListener("DOMContentLoaded", () => {
     <input id="q" placeholder="ask something…" disabled />
     <button id="go" disabled>Ask</button>
   </div>
-  <div class="mut">try: <span class="ex">neural networks for images</span> · <span class="ex">database query speed</span> · <span class="ex">cancer and DNA</span></div>
+  <div class="mut">try: <span id="examples"></span></div>
   <div class="mut" style="margin-top:8px">model: <span id="mstat">…</span>
     <button id="dl">download / load</button>
     <button id="del">delete cache</button></div>
