@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>rete · ask the graph (browser graphRAG)</title>
+<style>
+  :root { --bg:#070912; --panel:#11131f; --ink:#cdd6f4; --mut:#9399b2; --acc:#89b4fa; --grn:#a6e3a1; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font:14px/1.5 ui-monospace,monospace; }
+  #wrap { max-width:900px; margin:0 auto; padding:22px 18px 60px; }
+  h1 { font-size:18px; margin:0 0 4px; } h1 b { color:var(--acc); }
+  .mut { color:var(--mut); }
+  #status { margin:10px 0; font-size:12px; color:var(--mut); }
+  #status .ok { color:var(--grn); }
+  .ask { display:flex; gap:8px; margin:14px 0; }
+  #q { flex:1; background:var(--panel); border:1px solid #313244; color:var(--ink);
+       border-radius:8px; padding:9px 12px; font:14px ui-monospace,monospace; }
+  button { background:#313244; color:var(--ink); border:0; border-radius:8px;
+    padding:9px 16px; cursor:pointer; font:14px ui-monospace,monospace; }
+  button:hover { background:#45475a; } button:disabled { opacity:.5; cursor:default; }
+  .ex { color:var(--acc); cursor:pointer; } .ex:hover { text-decoration:underline; }
+  .card { background:var(--panel); border-radius:10px; padding:12px 14px; margin:10px 0; }
+  .rank { display:flex; align-items:baseline; gap:10px; padding:5px 0; border-bottom:1px solid #1e2030; }
+  .rank .n { color:var(--acc); width:20px; } .rank .s { color:var(--mut); font-size:12px; margin-left:auto; }
+  .rank b { color:#fff; }
+  .path { margin:6px 0 6px 14px; color:var(--mut); }
+  .path .e { color:var(--ink); } .path .p { color:var(--grn); }
+  .badge { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; }
+</style>
+<script type="module">
+import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2";
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+// Load the embedding model from a SAME-ORIGIN path (bundled beside the page) so
+// there's no cross-origin HF `resolve` 405 — "our files, served simply".
+// Override with ?model=<base-url> to point at a hosted copy (CORS host / Space).
+const MODEL_BASE = params.get("model") || "models/";
+env.allowLocalModels = true;
+env.allowRemoteModels = false;
+env.localModelPath = MODEL_BASE;
+env.backends.onnx.wasm.numThreads = 1;   // headless/CI-friendly; bump in real use
+// "simple file remote": point ?data= at any N-Triples URL (e.g. on the HF Space).
+const DATA_URL = params.get("data");
+
+// Bundled fallback so the page works with zero setup (the topic-modeling demo:
+// 9 papers in 3 clusters — ML / databases / biology).
+const FALLBACK = `
+<http://ex/p1> <http://ex/title> "Deep neural networks for image classification" .
+<http://ex/p1> <http://ex/abstract> "We train a deep neural network model on labeled images. The network learns features through gradient descent and backpropagation. Our classifier improves accuracy on the benchmark dataset using convolutional layers and dropout regularization." .
+<http://ex/p1> <http://ex/cites> <http://ex/p2> .
+<http://ex/p1> <http://ex/cites> <http://ex/p3> .
+<http://ex/p2> <http://ex/title> "Reinforcement learning with neural network policies" .
+<http://ex/p2> <http://ex/abstract> "A reinforcement learning agent learns a policy by maximizing reward. We use a neural network to approximate the value function and train with gradient descent. The model generalizes across tasks and improves sample efficiency during training." .
+<http://ex/p2> <http://ex/cites> <http://ex/p1> .
+<http://ex/p2> <http://ex/cites> <http://ex/p3> .
+<http://ex/p3> <http://ex/title> "Training transformer models for language" .
+<http://ex/p3> <http://ex/abstract> "Transformer neural network models are trained on text using attention. We optimize the model with gradient descent and study how the network learns representations. Our deep learning approach improves accuracy on language modeling benchmarks." .
+<http://ex/p3> <http://ex/cites> <http://ex/p1> .
+<http://ex/p3> <http://ex/cites> <http://ex/p2> .
+<http://ex/p4> <http://ex/title> "Query optimization in relational databases" .
+<http://ex/p4> <http://ex/abstract> "We present a query optimizer for a relational database. The system uses indexes and a cost model to plan joins. Our approach reduces query latency and improves throughput for transactional workloads on the storage engine." .
+<http://ex/p4> <http://ex/cites> <http://ex/p5> .
+<http://ex/p4> <http://ex/cites> <http://ex/p6> .
+<http://ex/p5> <http://ex/title> "Indexing strategies for transactional storage" .
+<http://ex/p5> <http://ex/abstract> "An index accelerates lookups in a database storage engine. We compare B-tree and hash index structures for transactional workloads. The query planner chooses indexes to lower latency and improve throughput of joins." .
+<http://ex/p5> <http://ex/cites> <http://ex/p4> .
+<http://ex/p5> <http://ex/cites> <http://ex/p6> .
+<http://ex/p6> <http://ex/title> "Concurrency control for database transactions" .
+<http://ex/p6> <http://ex/abstract> "We study concurrency control in a relational database. The transaction manager uses locking and the storage engine maintains indexes for joins. Our query scheduler improves throughput and reduces latency under high transactional load." .
+<http://ex/p6> <http://ex/cites> <http://ex/p4> .
+<http://ex/p6> <http://ex/cites> <http://ex/p5> .
+<http://ex/p7> <http://ex/title> "Gene expression in cancer cells" .
+<http://ex/p7> <http://ex/abstract> "We measure gene expression in cancer cells using sequencing. The protein levels reveal how the cell regulates its genome. Mutations in the DNA drive tumor growth and we study the molecular pathways of the disease in tissue samples." .
+<http://ex/p7> <http://ex/cites> <http://ex/p8> .
+<http://ex/p7> <http://ex/cites> <http://ex/p9> .
+<http://ex/p8> <http://ex/title> "Protein folding and molecular structure" .
+<http://ex/p8> <http://ex/abstract> "A protein folds into a molecular structure determined by its gene sequence. We model how the cell synthesizes protein from DNA and how mutations alter folding. The study links genome variation to disease in living tissue." .
+<http://ex/p8> <http://ex/cites> <http://ex/p7> .
+<http://ex/p8> <http://ex/cites> <http://ex/p9> .
+<http://ex/p9> <http://ex/title> "DNA sequencing of the human genome" .
+<http://ex/p9> <http://ex/abstract> "DNA sequencing reveals the genome of a cell. We analyze gene mutations linked to cancer and disease across tissue samples. The protein products of each gene help explain the molecular biology of the cell and its growth." .
+<http://ex/p9> <http://ex/cites> <http://ex/p7> .
+<http://ex/p9> <http://ex/cites> <http://ex/p8> .
+`;
+
+const COLORS = ["#89b4fa", "#f38ba8", "#a6e3a1", "#fab387", "#cba6f7", "#f9e2af"];
+const local = (iri) => iri.replace(/^<|>$/g, "").replace(/.*[/#]/, "");
+
+function parseNT(text) {
+  const re = /^\s*(<[^>]+>|_:\S+)\s+(<[^>]+>)\s+(.+?)\s*\.\s*$/;
+  const ents = new Map();   // iri -> {iri, label, text:[]}
+  const edges = [];         // {s,p,o}
+  const ent = (i) => { if (!ents.has(i)) ents.set(i, { iri: i, label: "", text: [] }); return ents.get(i); };
+  for (const line of text.split("\n")) {
+    const m = re.exec(line); if (!m) continue;
+    const [, s, p, o] = m;
+    if (o.startsWith('"')) {
+      const lit = (o.match(/^"((?:[^"\\]|\\.)*)"/) || [, ""])[1].replace(/\\"/g, '"');
+      ent(s).text.push(lit);
+      if (!ent(s).label && /title|label|name/i.test(p)) ent(s).label = lit;
+    } else if (o.startsWith("<")) {
+      if (!/#type$/.test(p)) { edges.push({ s, p, o }); ent(s); ent(o); }
+    }
+  }
+  for (const e of ents.values()) if (!e.label) e.label = local(e.iri);
+  return { ents: [...ents.values()], edges };
+}
+
+function cosineTopK(qv, vecs, k) {  // vectors are L2-normalised -> dot product
+  const scored = vecs.map((v, i) => {
+    let d = 0; for (let j = 0; j < v.length; j++) d += v[j] * qv[j];
+    return [i, d];
+  });
+  scored.sort((a, b) => b[1] - a[1]);
+  return scored.slice(0, k);
+}
+
+function bfsPath(adj, src, dst, maxHops = 5) {
+  if (src === dst) return [];
+  const prev = new Map([[src, null]]); let frontier = [src];
+  for (let h = 0; h < maxHops; h++) {
+    const next = [];
+    for (const n of frontier) for (const [nb, pred, dir] of adj.get(n) || []) {
+      if (prev.has(nb)) continue;
+      prev.set(nb, [n, pred, dir]);
+      if (nb === dst) { const out = []; let c = dst; while (prev.get(c)) { const [par, pr, di] = prev.get(c); out.push(di === "out" ? [par, pr, c] : [c, pr, par]); c = par; } return out.reverse(); }
+      next.push(nb);
+    }
+    frontier = next; if (!frontier.length) break;
+  }
+  return null;
+}
+
+let G, vecs, extractor, cluster;
+
+async function boot() {
+  // 1. fetch the remote graph file (or the bundled fallback)
+  let nt = FALLBACK;
+  if (DATA_URL) { $("status").innerHTML = `fetching <code>${DATA_URL}</code>…`; nt = await (await fetch(DATA_URL)).text(); }
+  G = parseNT(nt);
+
+  // adjacency for path-finding (undirected, remembers edge direction + predicate)
+  G.adj = new Map();
+  const add = (a, p, b, dir) => { if (!G.adj.has(a)) G.adj.set(a, []); G.adj.get(a).push([b, p, dir]); };
+  for (const { s, p, o } of G.edges) { add(s, p, o, "out"); add(o, p, s, "in"); }
+
+  // 2. load the embedding model (WebGPU if available, else WASM)
+  let device = "wasm";
+  try { if (navigator.gpu && await navigator.gpu.requestAdapter()) device = "webgpu"; } catch {}
+  $("status").innerHTML = `loading embedder (<b>${device.toUpperCase()}</b>)…`;
+  extractor = await pipeline("feature-extraction", "Xenova/bge-small-en-v1.5", { device });
+
+  // 3. embed every entity once (title + text) — this is the in-browser index
+  $("status").innerHTML = `embedding ${G.ents.length} entities (${device.toUpperCase()})…`;
+  const docs = G.ents.map((e) => (e.label + ". " + e.text.join(" ")).slice(0, 1200));
+  const out = await extractor(docs, { pooling: "mean", normalize: true });
+  vecs = out.tolist();
+
+  // colour by connected component (a cheap stand-in for "cluster")
+  cluster = new Map(); let c = -1;
+  for (const e of G.ents) if (!cluster.has(e.iri)) { c++; const st = [e.iri]; while (st.length) { const n = st.pop(); if (cluster.has(n)) continue; cluster.set(n, c); for (const [nb] of G.adj.get(n) || []) st.push(nb); } }
+
+  $("status").innerHTML = `<span class="ok">ready</span> · ${G.ents.length} entities · ${G.edges.length} edges · ${device.toUpperCase()} · all in-browser, no server`;
+  $("q").disabled = false; $("go").disabled = false; $("q").focus();
+}
+
+async function ask() {
+  const q = $("q").value.trim(); if (!q || !vecs) return;
+  $("go").disabled = true;
+  const qv = (await extractor([q], { pooling: "mean", normalize: true })).tolist()[0];
+  const top = cosineTopK(qv, vecs, Math.min(6, G.ents.length));
+  const anchor = G.ents[top[0][0]];
+
+  let html = `<div class="card"><div class="mut">ranked nodes for “${q}”</div>`;
+  top.forEach(([i, score], rank) => {
+    const e = G.ents[i]; const col = COLORS[(cluster.get(e.iri) || 0) % COLORS.length];
+    html += `<div class="rank"><span class="n">${rank + 1}</span>` +
+      `<span class="badge" style="background:${col}"></span><b>${e.label}</b>` +
+      `<span class="s">${score.toFixed(3)} · ${local(e.iri)}</span></div>`;
+  });
+  html += `</div>`;
+
+  html += `<div class="card"><div class="mut">paths from #1 (<b>${anchor.label}</b>) — how the graph connects the answers</div>`;
+  for (const [i] of top.slice(1)) {
+    const tgt = G.ents[i];
+    const path = bfsPath(G.adj, anchor.iri, tgt.iri);
+    if (!path) { html += `<div class="path">→ ${tgt.label}: <i>no path</i></div>`; continue; }
+    if (!path.length) continue;
+    const chain = path.map(([s, p, o]) => `<span class="e">${G.ents.find(x=>x.iri===s)?.label||local(s)}</span> <span class="p">${local(p)}</span> <span class="e">${G.ents.find(x=>x.iri===o)?.label||local(o)}</span>`).join("  ·  ");
+    html += `<div class="path">→ <b>${tgt.label}</b> (${path.length} hop${path.length>1?"s":""}): ${chain}</div>`;
+  }
+  html += `</div>`;
+  $("out").innerHTML = html;
+  $("go").disabled = false;
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  $("go").onclick = ask;
+  $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
+  document.querySelectorAll(".ex").forEach((el) => el.onclick = () => { $("q").value = el.textContent; ask(); });
+  boot().catch((e) => { $("status").innerHTML = `<span style="color:#f38ba8">error: ${e.message}</span>`; });
+});
+</script>
+</head>
+<body>
+<div id="wrap">
+  <h1><b>rete</b> · ask the graph <span class="mut">— browser graphRAG</span></h1>
+  <div class="mut">A question → <b>transformers.js</b> (WebGPU/WASM) embeds it → cosine-rank the graph's
+    entities → <b>graph paths</b> (triples) connecting the answers. Remote file in, all logic in the browser —
+    no server, no Lance.</div>
+  <div id="status">booting…</div>
+  <div class="ask">
+    <input id="q" placeholder="ask something…" disabled />
+    <button id="go" disabled>Ask</button>
+  </div>
+  <div class="mut">try: <span class="ex">neural networks for images</span> · <span class="ex">database query speed</span> · <span class="ex">cancer and DNA</span></div>
+  <div id="out"></div>
+</div>
+</body>
+</html>

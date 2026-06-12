@@ -118,6 +118,31 @@ graph engine. The graph half is already WASM; only the vector half needs the
 swap. A playground "ask a question → ranked nodes + path" panel would call:
 `transformers.js(question) → DuckDB-WASM/voy ANN → rete-WASM paths` — no server.
 
+### `ask-browser.html` — the working browser prototype
+
+A self-contained page that proves the whole loop with **zero server**:
+**transformers.js** (WebGPU → WASM) embeds the question *and* the graph's
+entities in-browser, cosine-ranks them, and walks **graph paths (triples)** to
+connect the answers. Ships with a bundled 9-paper demo graph; point `?data=<url>`
+at any remote N-Triples file ("simple file remote, logic in the browser").
+
+```sh
+# serve the folder (any static server with Range works; GitHub Pages too)
+python -m http.server -d experiments/lance-rag 8000   # → /ask-browser.html
+```
+
+Verified end-to-end (headless): *"neural networks for images"* ranks the three ML
+papers top and shows `cites` paths between them, while the database / biology
+papers correctly return **no path** (different citation cluster).
+
+> **Model hosting.** The embedding model is loaded **same-origin** (bundled under
+> `models/`, gitignored — fetching it from HF's `resolve/` endpoint hits the
+> cross-origin **405** we see all over this project). To deploy, co-host the
+> ~33 MB model beside the page (or a CORS host) and set `?model=<base-url>`.
+> Download it with: `hf download Xenova/bge-small-en-v1.5 config.json
+> tokenizer.json tokenizer_config.json special_tokens_map.json
+> onnx/model_quantized.onnx --local-dir experiments/lance-rag/models/Xenova/bge-small-en-v1.5`
+
 ## Caveats
 
 - **Server-side only** (no Lance WASM) — fine for batch/RAG, not a static
