@@ -21,6 +21,12 @@
   .row.off { opacity: .35; }
   .sw { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
   .row small { color: #9399b2; }
+  #ctl .ctlrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+  #ctl .grp { color: #89b4fa; width: 40px; font-size: 11px; }
+  #ctl label { display: inline-flex; align-items: center; gap: 4px; }
+  #ctl button { font: 11px monospace; background: #313244; color: #cdd6f4; border: 0;
+                border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+  #ctl button:hover { background: #45475a; }
   #minimap { position: absolute; right: 16px; bottom: 16px; width: 168px; height: 168px;
              border-radius: 50%; overflow: hidden; z-index: 2;
              border: 2px solid #585b70; box-shadow: 0 4px 18px rgba(0,0,0,.6); }
@@ -38,11 +44,17 @@
   their <b>k-nearest connections</b>. Coloured by LDA topic, labelled by keywords.
   Click a legend row or region to isolate a topic; hover a community for its
   type &amp; properties.
-  <div id="ctl" style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center">
-    <button id="clear">↺ show all</button>
-    <label><input type="checkbox" id="T-regions" checked /> regions</label>
-    <label><input type="checkbox" id="T-comm" checked /> communities</label>
-    <label><input type="checkbox" id="T-labels" checked /> labels</label>
+  <div id="ctl" style="margin-top:8px">
+    <div class="ctlrow"><button id="clear">↺ show all</button><button id="reset">⤢ fit view</button></div>
+    <div class="ctlrow"><span class="grp">show</span>
+      <label><input type="checkbox" id="S-meta" checked /> meta</label>
+      <label><input type="checkbox" id="S-topic" checked /> topics</label>
+      <label><input type="checkbox" id="S-node" checked /> nodes</label>
+      <label><input type="checkbox" id="S-edge" checked /> links</label></div>
+    <div class="ctlrow"><span class="grp">labels</span>
+      <label><input type="checkbox" id="L-meta" checked /> meta</label>
+      <label><input type="checkbox" id="L-topic" checked /> topics</label>
+      <label><input type="checkbox" id="L-node" checked /> nodes</label></div>
   </div>
   <div style="margin-top:6px;opacity:.6" id="z"></div>
 </div>
@@ -178,9 +190,15 @@ maplibregl.addProtocol("pmtiles", protocol.tile);
     };
     const toggle = (id, lyrs) => { document.getElementById(id).onchange = (e) =>
       lyrs.forEach((l) => map.setLayoutProperty(l, "visibility", e.target.checked ? "visible" : "none")); };
-    toggle("T-regions", ["topic-fill", "topic-line", "meta-fill", "meta-line"]);
-    toggle("T-comm", ["communities", "edges"]);
-    toggle("T-labels", ["topic-labels", "comm-labels", "meta-labels"]);
+    toggle("S-meta", ["meta-fill", "meta-line"]);
+    toggle("S-topic", ["topic-fill", "topic-line"]);
+    toggle("S-node", ["communities"]);
+    toggle("S-edge", ["edges"]);
+    toggle("L-meta", ["meta-labels"]);
+    toggle("L-topic", ["topic-labels"]);
+    toggle("L-node", ["comm-labels"]);
+    document.getElementById("reset").onclick = () =>
+      map.fitBounds([[-hx, -hy], [hx, hy]], { padding: 40, duration: 600 });
 
     // click any topic region, keyword label, or community to isolate that topic
     ["topic-fill", "topic-labels", "communities"].forEach((layer) => {
@@ -213,9 +231,11 @@ maplibregl.addProtocol("pmtiles", protocol.tile);
     mini.on("load", () => {
       mini.fitBounds([[-hx, -hy], [hx, hy]], { padding: 6, duration: 0 });
       mini.addSource("t", { type: "vector", url: "pmtiles://" + PM });
-      mini.addLayer({ id: "mdots", type: "circle", source: "t", "source-layer": "topics",
-        filter: ["==", ["get", "kind"], "community"],
-        paint: { "circle-radius": 1.6, "circle-color": ["get", "color"], "circle-opacity": 0.85 } });
+      // show the topic/meta REGIONS (they exist at the minimap's low zoom;
+      // community dots only tile at z>=2, so they'd be invisible here)
+      mini.addLayer({ id: "mfill", type: "fill", source: "t", "source-layer": "topics",
+        filter: ["in", ["get", "kind"], ["literal", ["meta", "topic"]]],
+        paint: { "fill-color": ["get", "color"], "fill-opacity": 0.55 } });
       mini.addSource("vp", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       mini.addLayer({ id: "vpbox", type: "line", source: "vp",
         paint: { "line-color": "#f9e2af", "line-width": 1.4, "line-opacity": 0.9 } });
