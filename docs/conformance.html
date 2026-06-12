@@ -250,41 +250,57 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <table><thead><tr><th>Category</th><th style="text-align: right">pass</th><th style="text-align: right">n/s</th><th>notes</th></tr></thead><tbody>
 <tr><td>negation</td><td style="text-align: right">12 / 12</td><td style="text-align: right">0</td><td>✅ full</td></tr>
 <tr><td>json-res</td><td style="text-align: right">4 / 4</td><td style="text-align: right">0</td><td>✅ full</td></tr>
+<tr><td>cast</td><td style="text-align: right">6 / 6</td><td style="text-align: right">0</td><td>✅ full — xsd:integer/decimal/float/double/boolean/string</td></tr>
 <tr><td>bindings (VALUES)</td><td style="text-align: right">9 / 11</td><td style="text-align: right">2</td><td></td></tr>
 <tr><td>property-path</td><td style="text-align: right">21 / 33</td><td style="text-align: right">7</td><td>strong</td></tr>
 <tr><td>grouping</td><td style="text-align: right">3 / 4</td><td style="text-align: right">0</td><td></td></tr>
 <tr><td>construct</td><td style="text-align: right">3 / 5</td><td style="text-align: right">1</td><td>graph-isomorphism check</td></tr>
 <tr><td>exists</td><td style="text-align: right">4 / 6</td><td style="text-align: right">1</td><td></td></tr>
 <tr><td>project-expression</td><td style="text-align: right">6 / 7</td><td style="text-align: right">0</td><td></td></tr>
-<tr><td>aggregates</td><td style="text-align: right">27 / 42</td><td style="text-align: right">5</td><td></td></tr>
-<tr><td>functions</td><td style="text-align: right">19 / 75</td><td style="text-align: right">45</td><td>many builtins missing</td></tr>
+<tr><td>aggregates</td><td style="text-align: right">27 / 42</td><td style="text-align: right">4</td><td></td></tr>
+<tr><td>functions</td><td style="text-align: right">64 / 75</td><td style="text-align: right">7</td><td>string/cast/hash/datetime + IF/IN/sameTerm</td></tr>
 <tr><td>bind</td><td style="text-align: right">5 / 10</td><td style="text-align: right">0</td><td></td></tr>
 <tr><td>entailment</td><td style="text-align: right">24 / 70</td><td style="text-align: right">4</td><td>needs <code>build --materialize</code></td></tr>
-<tr><td>subquery</td><td style="text-align: right">0 / 14</td><td style="text-align: right">13</td><td>not supported</td></tr>
-<tr><td>cast</td><td style="text-align: right">0 / 6</td><td style="text-align: right">6</td><td>xsd cast fns missing</td></tr>
+<tr><td>subquery</td><td style="text-align: right">1 / 14</td><td style="text-align: right">12</td><td>not supported</td></tr>
 <tr><td>service</td><td style="text-align: right">0 / 7</td><td style="text-align: right">7</td><td>SPARQL federation (N/A)</td></tr>
 <tr><td>csv-tsv-res</td><td style="text-align: right">0 / 3</td><td style="text-align: right">3</td><td>CSV/TSV result format</td></tr>
-<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>137 / 309 (44.3%)</strong></td><td style="text-align: right">94</td><td></td></tr>
+<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>189 / 309 (61.2%)</strong></td><td style="text-align: right">48</td><td></td></tr>
 </tbody></table>
 <h2>Findings</h2>
 <ol>
 <li>
-<p><strong>Computed numerics are now typed (fixed — +30 tests).</strong> rete used to
-evaluate arithmetic / aggregates / numeric functions to the right <em>value</em> but
-serialize it as a plain literal (<code>"11"</code>) instead of <code>"11"^^xsd:integer</code>,
-strictly failing ~30 otherwise-correct tests. <code>sparql::fmt_num_typed</code> now
-tags computed numerics with <code>xsd:integer</code> (whole) or <code>xsd:decimal</code>
-(fractional) so the result serializer emits the datatype — lifting strict
-conformance <strong>34.6% → 44.3%</strong> (aggregates 12→27, functions 13→19, bind 2→5,
-project-expression 3→6) with no new operators. (A few <code>xsd:double</code> cases
-still differ — exact promotion needs operand-type tracking we don't carry
-through <code>f64</code>.)</p>
+<p><strong>Built-in function coverage (fixed — +52 tests).</strong> Two pushes lifted strict
+conformance from <strong>44.3% → 61.2%</strong>:</p>
+<ul>
+<li><strong>Computed numerics are typed.</strong> Arithmetic / aggregates / numeric
+functions evaluate to the right <em>value</em>; <code>sparql::fmt_num_typed</code> tags the
+result <code>xsd:integer</code> (whole) or <code>xsd:decimal</code> (fractional) so the
+serializer emits the datatype (34.6% → 44.3%).</li>
+<li><strong>The string/cast/hash/datetime built-ins now exist, and return proper
+terms</strong> (44.3% → 61.2%). <code>functions</code> went 19 → 64 and <code>cast</code> 0 → 6:
+<ul>
+<li><strong>Strings:</strong> <code>STRBEFORE</code>/<code>STRAFTER</code> (with the SPARQL argument-compatibility
+and language-tag rules), <code>REPLACE</code>, <code>CONCAT</code>, <code>UCASE</code>/<code>LCASE</code>/<code>SUBSTR</code>
+now preserve the language tag and emit a real literal term (<code>"FOO"@en</code>)
+rather than bare text; <code>STRDT</code>/<code>STRLANG</code>, <code>IRI</code>/<code>URI</code>, <code>ENCODE_FOR_URI</code>,
+<code>LANGMATCHES</code>.</li>
+<li><strong>Hashes:</strong> <code>MD5</code>, <code>SHA1</code>, <code>SHA256</code>, <code>SHA384</code>, <code>SHA512</code> (pure-Rust
+RustCrypto, so they compile to wasm too).</li>
+<li><strong>Date/time:</strong> <code>YEAR</code>/<code>MONTH</code>/<code>DAY</code>/<code>HOURS</code>/<code>MINUTES</code>/<code>SECONDS</code>/<code>TZ</code>/
+<code>TIMEZONE</code> over <code>xsd:dateTime</code>.</li>
+<li><strong>XSD casts:</strong> <code>xsd:integer/decimal/float/double/boolean/string(...)</code>,
+with strict lexical validation (a non-conforming string is a type error)
+and canonicalization on cast-to-string.</li>
+<li><strong>Expression forms:</strong> <code>IF</code>, <code>IN</code>/<code>NOT IN</code>, <code>sameTerm</code>.</li>
+</ul>
+</li>
+</ul>
 </li>
 <li>
-<p><strong>Genuinely strong areas:</strong> negation (<code>MINUS</code> / <code>NOT EXISTS</code>) and the JSON
-results format are 100%; property paths (21/26), VALUES, GROUP BY, and
-CONSTRUCT (verified by graph isomorphism) are solid. This matches the
-24-operator cross-check against Oxigraph in <a href="BENCHMARK.html">BENCHMARK</a>.</p>
+<p><strong>Genuinely strong areas:</strong> negation (<code>MINUS</code> / <code>NOT EXISTS</code>), JSON results,
+and the XSD casts are 100%; property paths, VALUES, GROUP BY, and CONSTRUCT
+(verified by graph isomorphism) are solid. This matches the 24-operator
+cross-check against Oxigraph in <a href="BENCHMARK.html">BENCHMARK</a>.</p>
 </li>
 <li>
 <p><strong>Out of scope (counted, but not engine bugs):</strong></p>
@@ -295,15 +311,15 @@ not an endpoint. (Cross-<em>file</em> federation is a different feature — see
 <li><strong>entailment</strong> (≈49) — RDFS/OWL entailment regimes; rete answers these only
 when entailments are baked in at build time (<code>rete build --materialize</code>),
 which this run does not do.</li>
-<li><strong>subquery</strong> (14) — nested <code>SELECT</code> is rejected rather than evaluated.</li>
-<li><strong>cast</strong> (6), <strong>csv-tsv-res</strong> (3) — xsd cast functions and the CSV/TSV
-result serialization aren't implemented.</li>
+<li><strong>subquery</strong> (≈12) — nested <code>SELECT</code> is rejected rather than evaluated.</li>
+<li><strong>csv-tsv-res</strong> (3) — the CSV/TSV result serialization isn't implemented.</li>
 </ul>
 </li>
 <li>
-<p><strong>Missing builtins</strong> account for most of the <code>functions</code> shortfall (45 n/s) —
-each unimplemented function (string, hash, datetime, etc.) errors rather than
-returning a wrong answer, so they're honest "not yet" rather than silent bugs.</p>
+<p><strong>What's left in <code>functions</code> (11):</strong> the non-deterministic builtins
+(<code>NOW</code>, <code>RAND</code>, <code>UUID</code>/<code>STRUUID</code>, <code>BNODE</code>), <code>IRI()</code> relative-base resolution,
+and <code>IF</code>-error-propagation edge cases — honest "not yet" rather than silent
+bugs (an unimplemented function errors rather than returning a wrong answer).</p>
 </li>
 </ol>
 <h2>The same answers, lazily and remotely</h2>
