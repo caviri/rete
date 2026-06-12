@@ -48,3 +48,5 @@ __pycache__/
 /experiments/graph-map/_*.json
 /experiments/graph-map/_*.err
 /experiments/graph-map/node_modules/
+# lance-rag experiment: track the code, not the generated Lance dataset / graph.
+/experiments/lance-rag/out/

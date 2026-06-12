@@ -126,14 +126,14 @@ maplibregl.addProtocol("pmtiles", protocol.tile);
     // z5+ — community word-labels
     map.addLayer({ id: "comm-labels", type: "symbol", source: "t", "source-layer": SL,
       filter: ["==", ["get", "kind"], "community"],
-      layout: { "text-field": ["get", "label"], "text-size": 10, "text-font": ["Open Sans Regular"] },
+      layout: { "text-field": ["get", "label"], "text-size": 13, "text-font": ["Open Sans Regular"] },
       paint: { "text-color": "#e6e9f5", "text-halo-color": "#070912", "text-halo-width": 1.2,
                "text-opacity": zf(4.4, 0, 5.2, 1) } });
 
     // z1–4 — topic keyword labels (fade in after meta, out before deep zoom)
     map.addLayer({ id: "topic-labels", type: "symbol", source: "t", "source-layer": SL,
       filter: ["==", ["get", "kind"], "topic-label"],
-      layout: { "text-field": ["get", "label"], "text-size": 13, "text-font": ["Open Sans Regular"],
+      layout: { "text-field": ["get", "label"], "text-size": 18, "text-font": ["Open Sans Regular"],
                 "text-max-width": 9, "text-allow-overlap": false },
       paint: { "text-color": "#ffffff", "text-halo-color": "#070912", "text-halo-width": 1.6,
                "text-opacity": zf(1.5, 0, 2.2, 1, 4.2, 1, 5, 0) } });
@@ -141,7 +141,7 @@ maplibregl.addProtocol("pmtiles", protocol.tile);
     // z0–2 — meta-topic labels (the broad themes; gone once you zoom into topics)
     map.addLayer({ id: "meta-labels", type: "symbol", source: "t", "source-layer": SL,
       filter: ["==", ["get", "kind"], "meta-label"],
-      layout: { "text-field": ["get", "label"], "text-size": 16, "text-font": ["Open Sans Regular"],
+      layout: { "text-field": ["get", "label"], "text-size": 23, "text-font": ["Open Sans Regular"],
                 "text-max-width": 8, "text-transform": "uppercase", "text-letter-spacing": 0.05 },
       paint: { "text-color": "#ffffff", "text-halo-color": "#070912", "text-halo-width": 2,
                "text-opacity": zf(0, 1, 1.8, 1, 2.5, 0) } });
@@ -156,16 +156,18 @@ maplibregl.addProtocol("pmtiles", protocol.tile);
         map.setFilter(l, base(l === "topic-labels" ? "topic-label" : "topic")));
       ["communities", "comm-labels"].forEach(l => map.setFilter(l, base("community")));
     }
+    function isolate(t) {
+      if (t === undefined || t === null) return;
+      only = (only === t) ? null : t;
+      [...rows.children].forEach(r => r.classList.toggle("off", only !== null && +r.dataset.t !== only));
+      applyFilter();
+    }
     (meta.topics || []).forEach(tp => {
       const row = document.createElement("div");
       row.className = "row"; row.dataset.t = tp.id;
       row.innerHTML = `<span class="sw" style="background:${tp.color}"></span>` +
         `<span>${tp.words} <small>(${tp.communities})</small></span>`;
-      row.onclick = () => {
-        only = (only === tp.id) ? null : tp.id;
-        [...rows.children].forEach(r => r.classList.toggle("off", only !== null && +r.dataset.t !== only));
-        applyFilter();
-      };
+      row.onclick = () => isolate(tp.id);
       rows.appendChild(row);
     });
 
@@ -180,11 +182,11 @@ maplibregl.addProtocol("pmtiles", protocol.tile);
     toggle("T-comm", ["communities", "edges"]);
     toggle("T-labels", ["topic-labels", "comm-labels", "meta-labels"]);
 
-    map.on("click", "topic-fill", (e) => {
-      const t = e.features[0].properties.topic;
-      only = (only === t) ? null : t;
-      [...rows.children].forEach(r => r.classList.toggle("off", only !== null && +r.dataset.t !== only));
-      applyFilter();
+    // click any topic region, keyword label, or community to isolate that topic
+    ["topic-fill", "topic-labels", "communities"].forEach((layer) => {
+      map.on("click", layer, (e) => isolate(e.features[0].properties.topic));
+      map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
+      map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
     });
 
     const popup = new maplibregl.Popup({ closeButton: false });
