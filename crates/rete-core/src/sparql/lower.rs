@@ -16,7 +16,7 @@ use spargebra::Query;
 /// Lower a graph pattern (with its solution modifiers) into a [`Select`].
 pub(super) fn lower_pattern(pattern: &GraphPattern) -> Result<Select, SparqlError> {
     let mut sel = Select::default();
-    let plan = build(pattern, &mut sel)?;
+    let plan = build(pattern, &mut sel, false)?;
     sel.plan = plan;
     Ok(sel)
 }
@@ -134,27 +134,33 @@ fn collect_path_predicates(
 
 /// Build the evaluation [`Plan`] for a graph pattern, capturing the solution
 /// modifiers (projection/DISTINCT/slice) into `sel` as transparent wrappers.
-fn build(p: &GraphPattern, sel: &mut Select) -> Result<Plan, SparqlError> {
+///
+/// `in_where` is true once we have descended into the graph-pattern body (past
+/// any pattern operator or a GROUP BY's inner). It decides where an `Extend`
+/// (`BIND`) lands: an in-pattern BIND becomes an in-tree [`Plan::Extend`] so a
+/// following FILTER/join sees it, while a top-level projection alias goes to the
+/// post-evaluation [`Select::extends`] list (applied after any aggregation).
+fn build(p: &GraphPattern, sel: &mut Select, in_where: bool) -> Result<Plan, SparqlError> {
     match p {
         GraphPattern::Bgp { patterns } => Ok(Plan::Bgp(patterns.iter().map(convert).collect())),
         GraphPattern::Join { left, right } => Ok(Plan::Join(
-            Box::new(build(left, sel)?),
-            Box::new(build(right, sel)?),
+            Box::new(build(left, sel, true)?),
+            Box::new(build(right, sel, true)?),
         )),
         GraphPattern::Union { left, right } => Ok(Plan::Union(
-            Box::new(build(left, sel)?),
-            Box::new(build(right, sel)?),
+            Box::new(build(left, sel, true)?),
+            Box::new(build(right, sel, true)?),
         )),
         GraphPattern::Minus { left, right } => Ok(Plan::Minus(
-            Box::new(build(left, sel)?),
-            Box::new(build(right, sel)?),
+            Box::new(build(left, sel, true)?),
+            Box::new(build(right, sel, true)?),
         )),
         GraphPattern::Graph { name, inner } => {
             let target = match name {
                 NamedNodePattern::NamedNode(n) => GraphTarget::Named(n.to_string()),
                 NamedNodePattern::Variable(v) => GraphTarget::Var(v.as_str().to_string()),
             };
-            Ok(Plan::Graph(target, Box::new(build(inner, sel)?)))
+            Ok(Plan::Graph(target, Box::new(build(inner, sel, true)?)))
         }
         GraphPattern::LeftJoin {
             left,
@@ -163,8 +169,8 @@ fn build(p: &GraphPattern, sel: &mut Select) -> Result<Plan, SparqlError> {
         } => {
             let cond = expression.as_ref().map(convert_expr).transpose()?;
             Ok(Plan::LeftJoin(
-                Box::new(build(left, sel)?),
-                Box::new(build(right, sel)?),
+                Box::new(build(left, sel, true)?),
+                Box::new(build(right, sel, true)?),
                 cond,
             ))
         }
@@ -196,7 +202,7 @@ fn build(p: &GraphPattern, sel: &mut Select) -> Result<Plan, SparqlError> {
             // A filter sitting *above* a GROUP BY is a HAVING: it must run after
             // aggregation, not on the raw bindings.
             let had_group = sel.group.is_some();
-            let inner_plan = build(inner, sel)?;
+            let inner_plan = build(inner, sel, true)?;
             let fexpr = convert_expr(expr)?;
             if sel.group.is_some() && !had_group {
                 sel.having.push(fexpr);
@@ -220,11 +226,11 @@ fn build(p: &GraphPattern, sel: &mut Select) -> Result<Plan, SparqlError> {
             for v in variables {
                 sel.project.push(v.as_str().to_string());
             }
-            build(inner, sel)
+            build(inner, sel, in_where)
         }
         GraphPattern::Distinct { inner } | GraphPattern::Reduced { inner } => {
             sel.distinct = true;
-            build(inner, sel)
+            build(inner, sel, in_where)
         }
         GraphPattern::Slice {
             inner,
@@ -233,7 +239,7 @@ fn build(p: &GraphPattern, sel: &mut Select) -> Result<Plan, SparqlError> {
         } => {
             sel.offset = *start;
             sel.limit = *length;
-            build(inner, sel)
+            build(inner, sel, in_where)
         }
         GraphPattern::Group {
             inner,
@@ -246,16 +252,27 @@ fn build(p: &GraphPattern, sel: &mut Select) -> Result<Plan, SparqlError> {
                 aggs.push((var.as_str().to_string(), convert_agg(ae)?));
             }
             sel.group = Some(GroupSpec { by, aggs });
-            build(inner, sel)
+            // The group's inner *is* the WHERE pattern — any BIND inside it must
+            // run per-row before aggregation, so descend as in-pattern.
+            build(inner, sel, true)
         }
         GraphPattern::Extend {
             inner,
             variable,
             expression,
         } => {
-            sel.extends
-                .push((variable.as_str().to_string(), convert_expr(expression)?));
-            build(inner, sel)
+            let var = variable.as_str().to_string();
+            let fexpr = convert_expr(expression)?;
+            if in_where {
+                // A BIND inside the graph pattern: keep it in the plan tree so a
+                // following FILTER or join observes the bound variable.
+                Ok(Plan::Extend(var, fexpr, Box::new(build(inner, sel, true)?)))
+            } else {
+                // A top-level projection alias `(expr AS ?v)`: applied after the
+                // pattern (and after any aggregation) at projection time.
+                sel.extends.push((var, fexpr));
+                build(inner, sel, in_where)
+            }
         }
         GraphPattern::OrderBy { inner, expression } => {
             for oe in expression {
@@ -265,7 +282,7 @@ fn build(p: &GraphPattern, sel: &mut Select) -> Result<Plan, SparqlError> {
                 };
                 sel.order.push((convert_expr(e)?, desc));
             }
-            build(inner, sel)
+            build(inner, sel, in_where)
         }
         _ => Err(SparqlError::Unsupported(
             "unsupported SPARQL construct (e.g. SERVICE federation)",
@@ -388,9 +405,10 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
         }
         Expression::Exists(pattern) => {
             // Build the sub-plan with a throwaway Select (its modifiers don't
-            // escape the EXISTS).
+            // escape the EXISTS). The whole body is a WHERE pattern, so any BIND
+            // must stay in-tree (the discarded `sub.extends` would be lost).
             let mut sub = Select::default();
-            let plan = build(pattern, &mut sub)?;
+            let plan = build(pattern, &mut sub, true)?;
             FExpr::Exists(Box::new(plan))
         }
         Expression::FunctionCall(func, params) => {

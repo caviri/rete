@@ -29,25 +29,33 @@ python scripts/sparql_conformance.py \
 | negation | 12 / 12 | 0 | ✅ full |
 | json-res | 4 / 4 | 0 | ✅ full |
 | cast | 6 / 6 | 0 | ✅ full — xsd:integer/decimal/float/double/boolean/string |
+| bind | 10 / 10 | 0 | ✅ full — in-pattern BIND visible to later FILTER/join |
+| grouping | 4 / 4 | 0 | ✅ full |
 | bindings (VALUES) | 9 / 11 | 2 | |
 | property-path | 21 / 33 | 7 | strong |
-| grouping | 3 / 4 | 0 | |
 | construct | 3 / 5 | 1 | graph-isomorphism check |
 | exists | 4 / 6 | 1 | |
 | project-expression | 6 / 7 | 0 | |
 | aggregates | 27 / 42 | 4 | |
 | functions | 64 / 75 | 7 | string/cast/hash/datetime + IF/IN/sameTerm |
-| bind | 5 / 10 | 0 | |
-| entailment | 24 / 70 | 4 | needs `build --materialize` |
+| entailment | 28 / 70 | 4 | needs `build --materialize` |
 | subquery | 1 / 14 | 12 | not supported |
 | service | 0 / 7 | 7 | SPARQL federation (N/A) |
 | csv-tsv-res | 0 / 3 | 3 | CSV/TSV result format |
-| **TOTAL** | **189 / 309 (61.2%)** | 48 | |
+| **TOTAL** | **199 / 309 (64.4%)** | 48 | |
 
 ## Findings
 
+0. **In-pattern `BIND` scoping (fixed — +10 tests, → 64.4%).** A `BIND(expr AS
+   ?v)` written *inside* a WHERE pattern is now an in-tree plan node, so a
+   *following* `FILTER` or join sees the bound variable (previously the BIND was
+   deferred to projection time, after filtering — so `{ ?s :v ?o BIND(?o+1 AS
+   ?z) FILTER(?z=3) }` wrongly returned nothing). Top-level projection aliases
+   (`SELECT (expr AS ?v)`) still apply after aggregation, unchanged. This took
+   `bind` and `grouping` to 100% and lifted four entailment BIND tests.
+
 1. **Built-in function coverage (fixed — +52 tests).** Two pushes lifted strict
-   conformance from **44.3% → 61.2%**:
+   conformance from **34.6% → 61.2%**:
    - **Computed numerics are typed.** Arithmetic / aggregates / numeric
      functions evaluate to the right *value*; `sparql::fmt_num_typed` tags the
      result `xsd:integer` (whole) or `xsd:decimal` (fractional) so the

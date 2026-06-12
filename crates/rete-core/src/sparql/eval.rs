@@ -97,6 +97,11 @@ fn collect_plan_slots(plan: &Plan, slots: &mut Slots) {
             collect_expr_slots(e, slots);
             collect_plan_slots(inner, slots);
         }
+        Plan::Extend(var, e, inner) => {
+            slots.add(var);
+            collect_expr_slots(e, slots);
+            collect_plan_slots(inner, slots);
+        }
         Plan::Path(s, _, o) => {
             for t in [s, o] {
                 if let PatternTerm::Var(v) = t {
@@ -203,6 +208,9 @@ fn mark_certain(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
             }
         }
         Plan::Filter(_, inner) => mark_certain(ctx, inner, m),
+        // A BIND may error (leaving its var unbound), so it is never *certain* —
+        // only the inner's certain slots carry through.
+        Plan::Extend(_, _, inner) => mark_certain(ctx, inner, m),
         Plan::Union(l, r) => {
             // Certain only when certain in *both* branches.
             let a = certain_bound(ctx, l, m.len());
@@ -262,6 +270,10 @@ fn mark_possible(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
             }
         }
         Plan::Filter(_, inner) => mark_possible(ctx, inner, m),
+        Plan::Extend(var, _, inner) => {
+            mark_var(var, m);
+            mark_possible(ctx, inner, m);
+        }
         Plan::Union(l, r) | Plan::Join(l, r) | Plan::LeftJoin(l, r, _) => {
             mark_possible(ctx, l, m);
             mark_possible(ctx, r, m);
@@ -992,6 +1004,18 @@ pub(crate) fn eval_plan_iter<'q>(
             Box::new(
                 eval_plan_iter(ctx, index, named_filter, inner)
                     .filter(move |b| expr.boolean(ctx, index, b, &mut cache)),
+            )
+        }
+        // In-pattern BIND: set `var` from `expr` per row (unbound where it errors).
+        Plan::Extend(var, expr, inner) => {
+            let slot = ctx.slots.slot(var);
+            Box::new(
+                eval_plan_iter(ctx, index, named_filter, inner).map(move |mut row| {
+                    if let Some(slot) = slot {
+                        row[slot] = expr.value(ctx, &row).map(|v| ctx.resolver.canon_term(&v));
+                    }
+                    row
+                }),
             )
         }
         Plan::Union(l, r) => Box::new(

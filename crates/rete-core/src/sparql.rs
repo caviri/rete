@@ -124,6 +124,11 @@ pub enum Plan {
     LeftJoin(Box<Plan>, Box<Plan>, Option<FExpr>),
     /// FILTER over an inner pattern.
     Filter(FExpr, Box<Plan>),
+    /// In-pattern `BIND(expr AS ?var)`: each inner solution extended with `?var`
+    /// (left unbound where `expr` errors). Distinct from the projection-time
+    /// alias list (`Select::extends`) — this one is *inside* the graph pattern,
+    /// so a following FILTER or join sees the bound variable.
+    Extend(String, FExpr, Box<Plan>),
     /// A property path `subject <path> object`.
     Path(PatternTerm, PathAst, PatternTerm),
     /// Inline `VALUES`: variable names and rows of optional ground-term tokens
@@ -1558,6 +1563,49 @@ mod tests {
         assert_eq!(
             sols[0]["next"],
             "\"31\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+        );
+    }
+
+    #[test]
+    fn bind_value_is_visible_to_a_following_filter_and_join() {
+        // A BIND inside the WHERE pattern must be evaluated before a *following*
+        // FILTER (and join) can reference it — the bound var is in-tree, not a
+        // projection-time alias.
+        let xsd = "<http://www.w3.org/2001/XMLSchema#integer>";
+        let n = |v: i32| format!("\"{v}\"^^{xsd}");
+        let bytes = rete_from(&[
+            ("<http://ex/a>", "<http://ex/v>", &n(1)),
+            ("<http://ex/b>", "<http://ex/v>", &n(2)),
+            ("<http://ex/c>", "<http://ex/v>", &n(3)),
+            // a node whose :v equals b's value+1, for the join case
+            ("<http://ex/x>", "<http://ex/v>", &n(3)),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+
+        // FILTER references the BIND'd ?z.
+        let q1 = "PREFIX ex: <http://ex/> SELECT ?s WHERE { \
+            ?s ex:v ?o . BIND(?o + 1 AS ?z) FILTER(?z = 3) }";
+        let (_, s1) = eval_sparql(&rete, q1).unwrap();
+        assert_eq!(s1.len(), 1, "only b (2+1=3) passes");
+        assert_eq!(s1[0]["s"], "<http://ex/b>");
+
+        // A following triple pattern joins on the BIND'd ?z.
+        let q2 = "PREFIX ex: <http://ex/> SELECT ?s ?s2 WHERE { \
+            ?s ex:v ?o . BIND(?o + 1 AS ?z) ?s2 ex:v ?z }";
+        let (_, s2) = eval_sparql(&rete, q2).unwrap();
+        // a (1→2) joins b (:v 2); b (2→3) joins c and x (:v 3); c (3→4) no match.
+        let mut pairs: Vec<(String, String)> = s2
+            .iter()
+            .map(|b| (b["s"].clone(), b["s2"].clone()))
+            .collect();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            vec![
+                ("<http://ex/a>".to_string(), "<http://ex/b>".to_string()),
+                ("<http://ex/b>".to_string(), "<http://ex/c>".to_string()),
+                ("<http://ex/b>".to_string(), "<http://ex/x>".to_string()),
+            ]
         );
     }
 
