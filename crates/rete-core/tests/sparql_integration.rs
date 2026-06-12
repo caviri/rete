@@ -205,7 +205,10 @@ fn aggregate_path_order_union_minus() {
     )
     .unwrap();
     let alice = deg.iter().find(|b| b["p"] == "<http://ex/Alice>").unwrap();
-    assert_eq!(alice["n"], "\"2\"^^<http://www.w3.org/2001/XMLSchema#integer>");
+    assert_eq!(
+        alice["n"],
+        "\"2\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+    );
 
     // Transitive reach from Alice (everyone downstream).
     assert_eq!(
