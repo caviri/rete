@@ -259,12 +259,12 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <tr><td>construct</td><td style="text-align: right">3 / 5</td><td style="text-align: right">1</td><td>graph-isomorphism check</td></tr>
 <tr><td>exists</td><td style="text-align: right">4 / 6</td><td style="text-align: right">1</td><td></td></tr>
 <tr><td>project-expression</td><td style="text-align: right">7 / 7</td><td style="text-align: right">0</td><td>✅ full</td></tr>
-<tr><td>functions</td><td style="text-align: right">66 / 75</td><td style="text-align: right">7</td><td>string/cast/hash/datetime + IF/IN/sameTerm</td></tr>
+<tr><td>functions</td><td style="text-align: right">72 / 75</td><td style="text-align: right">1</td><td>nearly full — RAND/UUID/STRUUID/BNODE added</td></tr>
 <tr><td>entailment</td><td style="text-align: right">28 / 70</td><td style="text-align: right">4</td><td>needs <code>build --materialize</code></td></tr>
 <tr><td>subquery</td><td style="text-align: right">2 / 14</td><td style="text-align: right">12</td><td>nested SELECT joins; GRAPH-scoped + RDF/XML data n/a</td></tr>
 <tr><td>service</td><td style="text-align: right">0 / 7</td><td style="text-align: right">7</td><td>SPARQL federation (N/A)</td></tr>
 <tr><td>csv-tsv-res</td><td style="text-align: right">0 / 3</td><td style="text-align: right">3</td><td>CSV/TSV result format</td></tr>
-<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>225 / 309 (72.8%)</strong></td><td style="text-align: right">39</td><td></td></tr>
+<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>231 / 309 (74.8%)</strong></td><td style="text-align: right">33</td><td></td></tr>
 </tbody></table>
 <h2>Findings</h2>
 <ul>
@@ -353,10 +353,12 @@ which this run does not do.</li>
 </ul>
 </li>
 <li>
-<p><strong>What's left in <code>functions</code> (11):</strong> the non-deterministic builtins
-(<code>NOW</code>, <code>RAND</code>, <code>UUID</code>/<code>STRUUID</code>, <code>BNODE</code>), <code>IRI()</code> relative-base resolution,
-and <code>IF</code>-error-propagation edge cases — honest "not yet" rather than silent
-bugs (an unimplemented function errors rather than returning a wrong answer).</p>
+<p><strong>What's left in <code>functions</code> (3):</strong> <code>NOW()</code> (no wall clock on the
+<code>wasm32-unknown-unknown</code> target the engine must also compile to), <code>IRI()</code>
+relative-base resolution, and one <code>IF</code>-error-propagation edge case. The other
+non-deterministic builtins — <code>RAND</code>, <code>UUID</code>/<code>STRUUID</code>, <code>BNODE</code> — are
+implemented on <code>getrandom</code> (browser backend via its <code>js</code> feature, so they
+work in the WASM client too).</p>
 </li>
 </ol>
 <h2>The same answers, lazily and remotely</h2>
