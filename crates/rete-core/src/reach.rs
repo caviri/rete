@@ -14,13 +14,14 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
 use crate::file::Rete;
+use crate::terms::NodeId;
 
 /// Forward adjacency in unified node space for one predicate: `node -> [succ]`.
 /// Built once and shared (read-only) across all seeds. For reverse reachability
 /// ("who reaches the seed?"), build the map yourself from
 /// [`Rete::predicate_pairs`] swapping `(s, o) -> (o, s)`.
-pub fn build_adjacency(rete: &Rete, pred: &str) -> HashMap<u32, Vec<u32>> {
-    let mut adj: HashMap<u32, Vec<u32>> = HashMap::new();
+pub fn build_adjacency(rete: &Rete, pred: &str) -> HashMap<NodeId, Vec<NodeId>> {
+    let mut adj: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
     for (s, o) in rete.predicate_pairs(pred) {
         adj.entry(s).or_default().push(o);
     }
@@ -30,7 +31,7 @@ pub fn build_adjacency(rete: &Rete, pred: &str) -> HashMap<u32, Vec<u32>> {
 /// Transitive reach of `seed` over the adjacency (excludes the seed itself).
 /// Plain BFS; deterministic `BTreeSet` result. This is the single shared BFS
 /// used by both the serial and parallel batch drivers.
-pub fn reach_one(adj: &HashMap<u32, Vec<u32>>, seed: u32) -> BTreeSet<u32> {
+pub fn reach_one(adj: &HashMap<NodeId, Vec<NodeId>>, seed: NodeId) -> BTreeSet<NodeId> {
     let mut visited = BTreeSet::new();
     let mut queue = VecDeque::new();
     if let Some(succ) = adj.get(&seed) {
@@ -55,7 +56,10 @@ pub fn reach_one(adj: &HashMap<u32, Vec<u32>>, seed: u32) -> BTreeSet<u32> {
 /// Per-seed transitive reach, serial loop (reference). Results are returned in
 /// seed order. The parallel sibling [`crate::parallel::batch_reach_parallel`]
 /// produces an identical result.
-pub fn batch_reach_serial(adj: &HashMap<u32, Vec<u32>>, seeds: &[u32]) -> Vec<BTreeSet<u32>> {
+pub fn batch_reach_serial(
+    adj: &HashMap<NodeId, Vec<NodeId>>,
+    seeds: &[NodeId],
+) -> Vec<BTreeSet<NodeId>> {
     seeds.iter().map(|&s| reach_one(adj, s)).collect()
 }
 

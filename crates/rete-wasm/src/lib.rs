@@ -1366,42 +1366,7 @@ fn object_to_jsonld(token: &str) -> serde_json::Value {
 
 /// Resolve the N-Triples escape sequences in a literal's body to actual chars.
 fn unescape_nt(s: &str) -> String {
-    if !s.contains('\\') {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        let unicode = |chars: &mut std::str::Chars, n: usize, out: &mut String| {
-            let hex: String = chars.take(n).collect();
-            match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
-                Some(ch) => out.push(ch),
-                None => out.push('\u{FFFD}'),
-            }
-        };
-        match chars.next() {
-            Some('t') => out.push('\t'),
-            Some('b') => out.push('\u{08}'),
-            Some('n') => out.push('\n'),
-            Some('r') => out.push('\r'),
-            Some('f') => out.push('\u{0C}'),
-            Some('"') => out.push('"'),
-            Some('\'') => out.push('\''),
-            Some('\\') => out.push('\\'),
-            Some('u') => unicode(&mut chars, 4, &mut out),
-            Some('U') => unicode(&mut chars, 8, &mut out),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
+    rete_core::terms::unescape_literal(s)
 }
 
 fn open(bytes: &[u8]) -> Result<Rete, JsValue> {

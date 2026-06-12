@@ -1207,13 +1207,7 @@ fn set(values: &[String]) -> BTreeSet<String> {
     values.iter().cloned().collect()
 }
 
-fn is_iri(t: &str) -> bool {
-    t.starts_with('<') && t.ends_with('>')
-}
-
-fn strip_iri(t: &str) -> Option<&str> {
-    t.strip_prefix('<').and_then(|s| s.strip_suffix('>'))
-}
+use crate::terms::{iri_content as strip_iri, is_iri};
 
 fn bool_param(v: Option<&String>) -> bool {
     v.is_some_and(|t| {
@@ -1318,40 +1312,5 @@ fn escape_string(s: &str) -> String {
 }
 
 fn unescape_nt(s: &str) -> String {
-    if !s.contains('\\') {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        let unicode = |chars: &mut std::str::Chars, n: usize, out: &mut String| {
-            let hex: String = chars.take(n).collect();
-            match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
-                Some(ch) => out.push(ch),
-                None => out.push('\u{FFFD}'),
-            }
-        };
-        match chars.next() {
-            Some('t') => out.push('\t'),
-            Some('b') => out.push('\u{08}'),
-            Some('n') => out.push('\n'),
-            Some('r') => out.push('\r'),
-            Some('f') => out.push('\u{0C}'),
-            Some('"') => out.push('"'),
-            Some('\'') => out.push('\''),
-            Some('\\') => out.push('\\'),
-            Some('u') => unicode(&mut chars, 4, &mut out),
-            Some('U') => unicode(&mut chars, 8, &mut out),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
+    crate::terms::unescape_literal(s)
 }

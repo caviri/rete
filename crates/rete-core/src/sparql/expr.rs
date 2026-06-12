@@ -136,38 +136,9 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
     }
 }
 
-const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
-const RDF_LANGSTRING: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
-
-/// The part of a literal term token after its closing quote (`"x"^^<dt>` →
-/// `^^<dt>`, `"x"@en` → `@en`, `"x"` → ``), or `None` if `t` is not a literal.
-/// Uses the last quote so embedded escaped quotes don't confuse the split.
-fn literal_suffix(t: &str) -> Option<&str> {
-    if !t.starts_with('"') {
-        return None;
-    }
-    let close = t.rfind('"')?;
-    (close > 0).then(|| &t[close + 1..])
-}
-
-/// The datatype IRI of a literal term (see [`Builtin::Datatype`]).
-fn datatype_iri(t: &str) -> Option<String> {
-    let suffix = literal_suffix(t)?;
-    if let Some(dt) = suffix.strip_prefix("^^<").and_then(|s| s.strip_suffix('>')) {
-        Some(dt.to_string())
-    } else if suffix.starts_with('@') {
-        Some(RDF_LANGSTRING.to_string())
-    } else if suffix.is_empty() {
-        Some(XSD_STRING.to_string())
-    } else {
-        None
-    }
-}
-
-/// The language tag of a literal term, `""` when untagged (see [`Builtin::Lang`]).
-fn lang_of(t: &str) -> Option<String> {
-    literal_suffix(t).map(|suffix| suffix.strip_prefix('@').unwrap_or("").to_string())
-}
+/// The datatype IRI of a literal term (see [`Builtin::Datatype`]). Returns the
+/// IRI content without angle brackets; the call site adds them.
+use crate::terms::{lang_tag as lang_of, literal_datatype as datatype_iri};
 
 /// Evaluate a boolean built-in (type checks / string predicates).
 fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {

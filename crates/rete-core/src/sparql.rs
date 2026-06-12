@@ -337,14 +337,7 @@ pub(crate) fn term_number(s: &str) -> Option<f64> {
     as_number(s)
 }
 
-fn as_number(s: &str) -> Option<f64> {
-    let lex = if let Some(rest) = s.strip_prefix('"') {
-        &rest[..rest.find('"')?]
-    } else {
-        s
-    };
-    lex.parse::<f64>().ok()
-}
+use crate::terms::as_number;
 
 /// Compare two term values numerically when both are numbers, else lexically.
 fn compare(op: Op, a: &str, b: &str) -> bool {

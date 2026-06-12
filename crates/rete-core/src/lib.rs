@@ -21,6 +21,7 @@ pub mod reason;
 mod row;
 pub mod shacl;
 pub mod sparql;
+pub mod terms;
 pub mod tiling;
 pub mod triples;
 pub mod varint;
@@ -52,5 +53,6 @@ pub use sparql::{
     GraphTarget, GroupSpec, Op, PathAst, Plan, QueryOutput, Rep, RoutedTriplePattern, Select,
     SparqlError, SummaryQueryShape,
 };
+pub use terms::{NodeId, ObjectId, PredicateId, SubjectId, TermToken};
 pub use tiling::{choose_round_for_budget, summarize, tile_by_community, SuperEdge, Tile};
 pub use triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder, ZoneMap};
