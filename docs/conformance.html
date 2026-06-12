@@ -253,20 +253,33 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <tr><td>cast</td><td style="text-align: right">6 / 6</td><td style="text-align: right">0</td><td>✅ full — xsd:integer/decimal/float/double/boolean/string</td></tr>
 <tr><td>bind</td><td style="text-align: right">10 / 10</td><td style="text-align: right">0</td><td>✅ full — in-pattern BIND visible to later FILTER/join</td></tr>
 <tr><td>grouping</td><td style="text-align: right">4 / 4</td><td style="text-align: right">0</td><td>✅ full</td></tr>
-<tr><td>bindings (VALUES)</td><td style="text-align: right">9 / 11</td><td style="text-align: right">2</td><td></td></tr>
+<tr><td>bindings (VALUES)</td><td style="text-align: right">10 / 11</td><td style="text-align: right">1</td><td></td></tr>
+<tr><td>aggregates</td><td style="text-align: right">39 / 42</td><td style="text-align: right">3</td><td>GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT</td></tr>
 <tr><td>property-path</td><td style="text-align: right">21 / 33</td><td style="text-align: right">7</td><td>strong</td></tr>
 <tr><td>construct</td><td style="text-align: right">3 / 5</td><td style="text-align: right">1</td><td>graph-isomorphism check</td></tr>
 <tr><td>exists</td><td style="text-align: right">4 / 6</td><td style="text-align: right">1</td><td></td></tr>
 <tr><td>project-expression</td><td style="text-align: right">6 / 7</td><td style="text-align: right">0</td><td></td></tr>
-<tr><td>aggregates</td><td style="text-align: right">27 / 42</td><td style="text-align: right">4</td><td></td></tr>
 <tr><td>functions</td><td style="text-align: right">64 / 75</td><td style="text-align: right">7</td><td>string/cast/hash/datetime + IF/IN/sameTerm</td></tr>
 <tr><td>entailment</td><td style="text-align: right">28 / 70</td><td style="text-align: right">4</td><td>needs <code>build --materialize</code></td></tr>
-<tr><td>subquery</td><td style="text-align: right">1 / 14</td><td style="text-align: right">12</td><td>not supported</td></tr>
+<tr><td>subquery</td><td style="text-align: right">2 / 14</td><td style="text-align: right">12</td><td>nested SELECT joins; GRAPH-scoped + RDF/XML data n/a</td></tr>
 <tr><td>service</td><td style="text-align: right">0 / 7</td><td style="text-align: right">7</td><td>SPARQL federation (N/A)</td></tr>
 <tr><td>csv-tsv-res</td><td style="text-align: right">0 / 3</td><td style="text-align: right">3</td><td>CSV/TSV result format</td></tr>
-<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>199 / 309 (64.4%)</strong></td><td style="text-align: right">48</td><td></td></tr>
+<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>213 / 309 (68.9%)</strong></td><td style="text-align: right">44</td><td></td></tr>
 </tbody></table>
 <h2>Findings</h2>
+<ul>
+<li><strong>Subqueries + aggregate completeness (fixed — +9 tests, → 68.9%).</strong> A nested
+<code>SELECT</code> is now lowered to an in-tree <code>Plan::Subquery</code>, evaluated independently
+to its projected solutions, which then join with the surrounding pattern on
+shared variables (so <code>{ {SELECT (GROUP_CONCAT(?o) AS ?g)…} FILTER(?g=…) }</code>
+works). On the back of that, the aggregate set was finished: <code>GROUP_CONCAT</code>
+returns a real simple literal and honours <code>DISTINCT</code>/<code>SEPARATOR</code>, <code>AVG</code> of an
+empty group is <code>0</code> (and a non-numeric value is a type error), and computed
+decimals round-trip through 15 significant digits so a sum like <code>11.1</code> no
+longer serializes as <code>11.100000000000001</code>. <code>aggregates</code> 27 → 39, <code>grouping</code>
+100%. Remaining subquery gaps are GRAPH-scoped subqueries and tests whose data
+ships as RDF/XML.</li>
+</ul>
 <ol start="0">
 <li>
 <p><strong>In-pattern <code>BIND</code> scoping (fixed — +10 tests, → 64.4%).</strong> A <code>BIND(expr AS ?v)</code> written <em>inside</em> a WHERE pattern is now an in-tree plan node, so a
