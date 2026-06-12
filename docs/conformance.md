@@ -36,15 +36,21 @@ python scripts/sparql_conformance.py \
 | property-path | 30 / 33 | 2 | incl. negated property sets + zero-length on empty data |
 | construct | 3 / 5 | 1 | graph-isomorphism check |
 | exists | 4 / 6 | 1 | |
-| project-expression | 6 / 7 | 0 | |
-| functions | 64 / 75 | 7 | string/cast/hash/datetime + IF/IN/sameTerm |
+| project-expression | 7 / 7 | 0 | ✅ full |
+| functions | 66 / 75 | 7 | string/cast/hash/datetime + IF/IN/sameTerm |
 | entailment | 28 / 70 | 4 | needs `build --materialize` |
 | subquery | 2 / 14 | 12 | nested SELECT joins; GRAPH-scoped + RDF/XML data n/a |
 | service | 0 / 7 | 7 | SPARQL federation (N/A) |
 | csv-tsv-res | 0 / 3 | 3 | CSV/TSV result format |
-| **TOTAL** | **222 / 309 (71.8%)** | 39 | |
+| **TOTAL** | **225 / 309 (72.8%)** | 39 | |
 
 ## Findings
+
+- **Boolean-valued projections + strict arithmetic (fixed — +3 tests).** A
+  comparison or logical expression in value position — `(?y = ?z AS ?eq)` —
+  yields a typed `xsd:boolean`, and arithmetic (`+ - * /`) now requires
+  numeric-typed operands (a `"1"^^xsd:string` is a type error, not 1), matching
+  the RDF 1.1 "corrected" expectations. `project-expression` is now 100%.
 
 - **Property paths — negated sets + zero-length on empty data (fixed — +9
   tests, → 71.8%).** `!(:p1|…|:pn)` (and its inverse members, which `spargebra`

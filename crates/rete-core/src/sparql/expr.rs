@@ -23,8 +23,8 @@ impl FExpr {
             }
             FExpr::Const(c) => Some(Rc::from(c.as_str())),
             FExpr::Arith(op, l, r) => {
-                let a = as_number(&l.value(ctx, b)?)?;
-                let c = as_number(&r.value(ctx, b)?)?;
+                let a = arith_number(&l.value(ctx, b)?)?;
+                let c = arith_number(&r.value(ctx, b)?)?;
                 let v = match op {
                     ArithOp::Add => a + c,
                     ArithOp::Sub => a - c,
@@ -43,8 +43,15 @@ impl FExpr {
                     e.value(ctx, b)
                 }
             }
-            // A boolean expression in value position yields a typed boolean.
-            FExpr::In(..) | FExpr::SameTerm(..) => Some(Rc::from(bool_literal(self.ebv(ctx, b)))),
+            // A boolean expression in value position (e.g. `(?y = ?z AS ?eq)`)
+            // yields a typed xsd:boolean.
+            FExpr::In(..)
+            | FExpr::SameTerm(..)
+            | FExpr::Compare(..)
+            | FExpr::And(..)
+            | FExpr::Or(..)
+            | FExpr::Not(..)
+            | FExpr::Bound(..) => Some(Rc::from(bool_literal(self.ebv(ctx, b)))),
             _ => None,
         }
     }
@@ -397,6 +404,17 @@ fn tz_to_duration(tz: &str) -> Option<String> {
         out.push_str(&format!("{m}M"));
     }
     Some(out)
+}
+
+/// Numeric value of a term for **arithmetic** (`+ - * /`): only numeric-typed
+/// literals count; a string (or other non-numeric) literal is a type error
+/// (`None`). This is stricter than the lenient [`as_number`] used for ordering
+/// and REGEX flags, which parses any literal's lexical form.
+fn arith_number(token: &str) -> Option<f64> {
+    match datatype_iri(token) {
+        Some(dt) => is_numeric_dt(Some(&dt)).then(|| as_number(token)).flatten(),
+        None => as_number(token),
+    }
 }
 
 /// The XSD numeric datatype IRIs accepted as a numeric *source* for a cast.
