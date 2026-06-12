@@ -135,6 +135,38 @@ Verified end-to-end (headless): *"neural networks for images"* ranks the three M
 papers top and shows `cites` paths between them, while the database / biology
 papers correctly return **no path** (different citation cluster).
 
+### Datasets — the real Wikidata graphs
+
+A **dataset switcher** (`?ds=demo|wikidata-100MB|wikidata-1GB`) loads precomputed
+**RAG bundles** range-read from the HF Space — the demo is parsed+embedded
+in-browser; the Wikidata tiers load a bundle and only the *question* is embedded:
+
+```
+wikidata-100MB/wikidata-100MB.rag.json   # {dim, entities:[{id,label}], edges:[[i,j,pred]]}
+wikidata-100MB/wikidata-100MB.rag.f32    # N×384 L2-normalised float32 vectors
+wikidata-1GB/wikidata-1GB.rag.json + .rag.f32
+```
+
+Build a bundle from any `.rete` (top-N most-connected labelled entities, embedded,
+with the edges among them) and upload it beside the dataset:
+
+```sh
+docker run --rm -v "${PWD}:/work" -w /work --entrypoint python rete-lancerag \
+  experiments/lance-rag/build_browser_bundle.py data/wikidata-100MB/wikidata.rete \
+  --name wikidata-100MB --top 10000 -o experiments/lance-rag/out
+hf buckets cp experiments/lance-rag/out/wikidata-100MB.rag.json hf://buckets/.../wikidata-100MB/...
+hf buckets cp experiments/lance-rag/out/wikidata-100MB.rag.f32  hf://buckets/.../wikidata-100MB/...
+```
+
+Verified on Wikidata-100MB (10k nodes, 15.6k edges): ranking + multi-hop triple
+paths (`P17` country, `P27` citizenship, …), all in-browser.
+
+**Caveats:** the demo model `bge-small-en` is English-leaning, so ranking over
+Wikidata's **multilingual** labels is a bit noisy — a multilingual embedding model
+would sharpen it. And to deploy the page (GitHub Pages), co-host the ~33 MB model
+same-origin (or `?model=<cors-url>`); the bundle + graph are already remote on the
+Space.
+
 > **Model hosting.** The embedding model is loaded **same-origin** (bundled under
 > `models/`, gitignored — fetching it from HF's `resolve/` endpoint hits the
 > cross-origin **405** we see all over this project). To deploy, co-host the
