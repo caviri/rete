@@ -34,7 +34,6 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("playground.html", "Interactive playground"),
             ("explore-100mb.html", "Wikidata lazy explorer (100MB / 1GB)"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
-            ("graph-map/ask-browser.html", "↳ Ask the graph · graphRAG (exp.)"),
         ],
     ),
     (
@@ -146,6 +145,29 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
     for (section, pages) in SECTIONS {
         nav_items.push(format!("<li class=\"nav-h\">{section}</li>"));
         for (md, t) in *pages {
+            // graph-map is a collapsible group (the experiment viewers as
+            // sub-items; the <details> is closed until the section is clicked).
+            if *md == "graph-map.md" {
+                let open = if current_md.starts_with("graph-map") { " open" } else { "" };
+                let active = if *md == current_md { " class=\"active\"" } else { "" };
+                let subs = [
+                    ("graph-map.html", "overview"),
+                    ("graph-map/viewer.html", "structural map"),
+                    ("graph-map/viewer-topics.html", "topic map (LDA)"),
+                    ("graph-map/viewer-3d.html", "3D — deck.gl"),
+                    ("graph-map/viewer-3d-three.html", "3D — three.js + fog"),
+                    ("graph-map/ask-browser.html", "ask the graph (graphRAG)"),
+                ];
+                let mut sub = String::new();
+                for (h, l) in subs {
+                    let a = if h == "graph-map.html" { active } else { "" };
+                    sub.push_str(&format!("<li><a href=\"{h}\"{a}>{l}</a></li>"));
+                }
+                nav_items.push(format!(
+                    "<li class=\"nav-group\"><details{open}><summary>{t}</summary><ul class=\"nav-sub\">{sub}</ul></details></li>"
+                ));
+                continue;
+            }
             let href = md.replace(".md", ".html");
             let class = if *md == current_md {
                 " class=\"active\""
@@ -256,6 +278,18 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 }
 .sidebar a:hover { background:rgba(20,125,105,.09); color:#0b4f42; }
 .sidebar a.active { background:#fff; border-left-color:var(--accent); color:#0b4f42; font-weight:700; box-shadow:0 6px 18px rgba(20,125,105,.10); }
+.sidebar .nav-group summary {
+  cursor:pointer; list-style:none; padding:.42rem .62rem; font-size:.93rem; line-height:1.25;
+  color:var(--side-fg); border-left:3px solid transparent; border-radius:0 6px 6px 0;
+}
+.sidebar .nav-group summary::-webkit-details-marker { display:none; }
+.sidebar .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
+.sidebar .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
+.sidebar .nav-group summary:hover { background:rgba(20,125,105,.09); color:#0b4f42; }
+.sidebar .nav-sub { padding-left:.55rem; margin:.1rem 0 .35rem .55rem; border-left:1px solid var(--border); }
+.sidebar .nav-sub a { font-size:.85rem; padding:.3rem .6rem; color:var(--muted); }
+.sidebar .nav-sub a:hover { color:#0b4f42; }
+.sidebar .nav-sub a.active { font-weight:700; color:#0b4f42; }
 .sidebar .foot { margin-top:1.3rem; font-size:.85rem; }
 .sidebar .foot a { display:inline; padding:0; border:0; color:var(--muted); }
 

@@ -51,6 +51,18 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 }
 .sidebar a:hover { background:rgba(20,125,105,.09); color:#0b4f42; }
 .sidebar a.active { background:#fff; border-left-color:var(--accent); color:#0b4f42; font-weight:700; box-shadow:0 6px 18px rgba(20,125,105,.10); }
+.sidebar .nav-group summary {
+  cursor:pointer; list-style:none; padding:.42rem .62rem; font-size:.93rem; line-height:1.25;
+  color:var(--side-fg); border-left:3px solid transparent; border-radius:0 6px 6px 0;
+}
+.sidebar .nav-group summary::-webkit-details-marker { display:none; }
+.sidebar .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
+.sidebar .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
+.sidebar .nav-group summary:hover { background:rgba(20,125,105,.09); color:#0b4f42; }
+.sidebar .nav-sub { padding-left:.55rem; margin:.1rem 0 .35rem .55rem; border-left:1px solid var(--border); }
+.sidebar .nav-sub a { font-size:.85rem; padding:.3rem .6rem; color:var(--muted); }
+.sidebar .nav-sub a:hover { color:#0b4f42; }
+.sidebar .nav-sub a.active { font-weight:700; color:#0b4f42; }
 .sidebar .foot { margin-top:1.3rem; font-size:.85rem; }
 .sidebar .foot a { display:inline; padding:0; border:0; color:var(--muted); }
 
@@ -190,8 +202,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Interactive explorations</li>
         <li><a href="playground.html">Interactive playground</a></li>
         <li><a href="explore-100mb.html">Wikidata lazy explorer (100MB / 1GB)</a></li>
-        <li><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></li>
-        <li><a href="graph-map/ask-browser.html">↳ Ask the graph · graphRAG (exp.)</a></li>
+        <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html">structural map</a></li><li><a href="graph-map/viewer-topics.html">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html">3D — three.js + fog</a></li><li><a href="graph-map/ask-browser.html">ask the graph (graphRAG)</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
@@ -203,7 +214,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html" class="active">Multi-criteria communities</a></li>
-        <li><a href="graph-map.html">Graph-map & topic-map (exp.)</a></li>
+        <li class="nav-group"><details><summary>Graph-map & topic-map (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html">structural map</a></li><li><a href="graph-map/viewer-topics.html">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html">3D — three.js + fog</a></li><li><a href="graph-map/ask-browser.html">ask the graph (graphRAG)</a></li></ul></details></li>
         <li class="nav-h">In the browser</li>
         <li><a href="browser.html">Browser / WASM</a></li>
         <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
