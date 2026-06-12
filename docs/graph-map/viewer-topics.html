@@ -191,11 +191,10 @@ maplibregl.addProtocol("pmtiles", protocol.tile);
     map.on("mousemove", "communities", (e) => {
       const p = e.features[0].properties; map.getCanvas().style.cursor = "pointer";
       popup.setLngLat(e.lngLat).setHTML(
-        `<b>community C${p.id}</b><br>` +
-        (p.etype ? `type: <b>${p.etype}</b><br>` : "") +
-        `size ${p.size}<br>` +
-        (p.props ? `properties: ${p.props}<br>` : "") +
-        `topic ${p.topic}: ${p.label}`).addTo(map);
+        `<b>${p.label || "community"}</b>` + (p.etype ? ` · <span style="color:#a6e3a1">${p.etype}</span>` : "") + `<br>` +
+        `${p.size} entities · topic ${p.topic}<br>` +
+        (p.props ? `<span style="opacity:.8">properties: ${p.props}</span><br>` : "") +
+        `<span style="opacity:.55">community C${p.id}</span>`).addTo(map);
     });
     map.on("mouseleave", "communities", () => { map.getCanvas().style.cursor = ""; popup.remove(); });
 

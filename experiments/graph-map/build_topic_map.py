@@ -46,11 +46,11 @@ def run_communities(rete_bin, rete_file, round_, min_size):
     return comms
 
 
-def top_terms(profile, k=2):
-    """Top-k literal words from a community's --profile (list of [word,count])."""
+def top_terms(profile, k=3):
+    """A short human label from a community's top literal words (Title-cased)."""
     terms = (profile or {}).get("terms") or []
     words = [t[0] if isinstance(t, list) else t for t in terms][:k]
-    return " ".join(words) if words else "?"
+    return " ".join(w.title() for w in words) if words else "?"
 
 
 def _localname(iri):
@@ -159,7 +159,7 @@ def main() -> None:
     topic_words = []
     for t in range(args.topics):
         top = lda.components_[t].argsort()[::-1][:6]
-        topic_words.append(", ".join(vocab[top]))
+        topic_words.append(", ".join(w.title() for w in vocab[top]))
 
     # Layout: each LDA topic gets an anchor on a ring; its communities scatter in
     # a disc around it (golden-angle fill, area ∝ topic size). Clean topic regions
