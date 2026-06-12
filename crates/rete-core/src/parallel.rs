@@ -32,6 +32,7 @@ use rayon::prelude::*;
 
 use crate::file::Rete;
 use crate::reach::reach_one;
+use crate::terms::NodeId;
 use crate::tiling::Tile;
 
 // ---------------------------------------------------------------------------
@@ -110,7 +111,10 @@ pub fn out_degree_parallel(tiles: &[Tile]) -> BTreeMap<u32, u64> {
 /// Per-seed transitive reach, one rayon task per seed. Results are returned in
 /// seed order and are identical to [`crate::reach::batch_reach_serial`]. The BFS
 /// itself ([`reach_one`]) is shared with the serial module.
-pub fn batch_reach_parallel(adj: &HashMap<u32, Vec<u32>>, seeds: &[u32]) -> Vec<BTreeSet<u32>> {
+pub fn batch_reach_parallel(
+    adj: &HashMap<NodeId, Vec<NodeId>>,
+    seeds: &[NodeId],
+) -> Vec<BTreeSet<NodeId>> {
     seeds.par_iter().map(|&s| reach_one(adj, s)).collect()
 }
 
