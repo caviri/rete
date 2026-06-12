@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>rete graph-map — zoomable community pyramid</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+<style>
+  html, body, #map { margin: 0; height: 100%; background: #070912; }
+  #hud { position: absolute; top: 10px; left: 10px; z-index: 1; color: #cdd6f4;
+         font: 12px/1.5 ui-monospace, monospace; background: rgba(10,13,24,.85);
+         padding: 9px 12px; border-radius: 8px; max-width: 330px; }
+  #hud b { color: #89b4fa; } #hud .k { color: #a6e3a1; }
+  #sel { margin-top: 7px; color: #f9e2af; }
+  #sel button, #ctl button { font: 11px monospace; background: #313244; color: #cdd6f4;
+                border: 0; border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+  #ctl button:hover { background: #45475a; }
+  #ctl label { display: inline-flex; align-items: center; gap: 4px; }
+  .maplibregl-popup-content { background: #11131f; color: #cdd6f4;
+        font: 12px/1.4 monospace; border-radius: 7px; }
+  .maplibregl-popup-content b { color: #89b4fa; }
+  /* round minimap, bottom-right */
+  #minimap { position: absolute; right: 16px; bottom: 16px; width: 168px; height: 168px;
+             border-radius: 50%; overflow: hidden; z-index: 2;
+             border: 2px solid #585b70; box-shadow: 0 4px 18px rgba(0,0,0,.6); }
+  #minimap::after { content: ""; position: absolute; inset: 0; border-radius: 50%;
+             pointer-events: none; box-shadow: inset 0 0 0 1px rgba(137,180,250,.25); }
+  #mini-x { position: absolute; right: 16px; bottom: 16px; width: 168px; height: 168px;
+            z-index: 3; pointer-events: none; }
+  #mini-x::before, #mini-x::after { content: ""; position: absolute; left: 50%; top: 50%;
+            background: rgba(249,226,175,.5); transform: translate(-50%,-50%); }
+  #mini-x::before { width: 9px; height: 1px; } #mini-x::after { width: 1px; height: 9px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <b>rete graph-map</b> — a community pyramid as a zoomable map.<br />
+  Zoom out for the coarse super-communities (translucent <b>boundaries</b>);
+  zoom in and the finer communities resolve <b>inside</b> them. Dot/area ∝
+  connectivity.<br />
+  <b>Click</b> a node → its connections. Click 2–3 → only the links
+  <b>among</b> them. <span id="sel"></span>
+  <div id="ctl" style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+    <button id="clear">↺ clear selection</button>
+    <label><input type="checkbox" id="L-hulls" checked /> boundaries</label>
+    <label><input type="checkbox" id="L-edges" checked /> links</label>
+    <label><input type="checkbox" id="L-nodes" checked /> nodes</label>
+    <label><input type="checkbox" id="L-labels" checked /> labels</label>
+  </div>
+  <div style="margin-top:6px;opacity:.65" id="z"></div>
+  <div style="opacity:.55">coords are a layout, not a measurement.</div>
+</div>
+<div id="map"></div>
+<div id="minimap"></div>
+<div id="mini-x"></div>
+<script>
+const params = new URLSearchParams(location.search);
+// served locally -> local tiles; hosted anywhere else -> the HF Space (bucket
+// via CORS+Range). Override either with ?pmtiles=… / ?meta=…
+const SPACE = "https://katospiegel-rete.hf.space/data/graph-map";
+const TOKEN = "sfdbgf1094by21hd128ru39802";   // demo Space token (public soft gate)
+const LOCAL = location.protocol === "file:" || /^(localhost|127|0\.0\.0\.0)/.test(location.hostname);
+const BASE = LOCAL ? "out" : SPACE, TOK = LOCAL ? "" : `?token=${TOKEN}`;
+const PM = params.get("pmtiles") || `${BASE}/graphmap.pmtiles${TOK}`;
+const META = params.get("meta") || `${BASE}/graphmap.json${TOK}`;
+
+const protocol = new pmtiles.Protocol();
+maplibregl.addProtocol("pmtiles", protocol.tile);
+
+// per-level colours (coarse -> fine)
+const LEVEL_COLORS = ["#f38ba8", "#fab387", "#f9e2af", "#a6e3a1", "#89b4fa", "#cba6f7"];
+const colorByLevel = ["match", ["get", "level"]];
+LEVEL_COLORS.forEach((c, i) => colorByLevel.push(i, c));
+colorByLevel.push("#89b4fa");
+
+(async () => {
+  let meta = { footprint: [55, 38], maxzoom: 8 };
+  try { meta = Object.assign(meta, await (await fetch(META)).json()); } catch (e) {}
+  const [hx, hy] = meta.footprint;
+
+  const map = new maplibregl.Map({
+    container: "map", renderWorldCopies: false, minZoom: 0, maxZoom: 22,
+    style: { version: 8, glyphs: "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
+             sources: {}, layers: [
+               { id: "bg", type: "background", paint: { "background-color": "#070912" } } ] },
+    center: [0, 0], zoom: 0,
+  });
+  map.addControl(new maplibregl.NavigationControl());
+  window._map = map;  // exposed for scripted screenshots
+
+  map.on("load", () => {
+    // see-it-little: start fully zoomed to the whole graph with breathing room
+    map.fitBounds([[-hx, -hy], [hx, hy]], { padding: 70, duration: 0 });
+    map.addSource("graph", { type: "vector", url: "pmtiles://" + PM });
+    const SL = "graph";
+
+    // 1) super-community boundary polygons (children sit inside)
+    map.addLayer({ id: "hull-fill", type: "fill", source: "graph", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "hull"],
+      paint: { "fill-color": colorByLevel, "fill-opacity": 0.10 } });
+    map.addLayer({ id: "hull-line", type: "line", source: "graph", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "hull"],
+      paint: { "line-color": colorByLevel, "line-opacity": 0.45, "line-width": 1 } });
+
+    // 2) ambient links (faint) — the whole community-to-community graph
+    map.addLayer({ id: "edges", type: "line", source: "graph", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "edge"],
+      paint: { "line-color": "#585b70", "line-opacity": 0.18,
+               "line-width": ["interpolate", ["linear"], ["get", "weight"], 1, 0.25, 5000, 2] } });
+
+    // 3) highlighted links (set on selection)
+    map.addLayer({ id: "edges-sel", type: "line", source: "graph", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "__none__"],
+      paint: { "line-color": "#f9e2af", "line-opacity": 0.95,
+               "line-width": ["interpolate", ["linear"], ["get", "weight"], 1, 0.8, 5000, 4] } });
+
+    // 4) nodes
+    const radius = ["interpolate", ["linear"], ["zoom"],
+      0, ["interpolate", ["linear"], ["sqrt", ["get", "size"]], 0, 1.8, 300, 13],
+      12, ["interpolate", ["linear"], ["sqrt", ["get", "size"]], 0, 3, 300, 24]];
+    map.addLayer({ id: "nodes", type: "circle", source: "graph", "source-layer": SL,
+      filter: ["in", ["get", "kind"], ["literal", ["community", "super"]]],
+      paint: { "circle-radius": radius, "circle-color": colorByLevel,
+               "circle-opacity": 0.82, "circle-stroke-color": "#0b0e17", "circle-stroke-width": 0.4 } });
+
+    // 5) selection ring
+    map.addLayer({ id: "nodes-sel", type: "circle", source: "graph", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "__none__"],
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"],
+                 0, ["interpolate", ["linear"], ["sqrt", ["get", "size"]], 0, 5, 300, 17],
+                 12, ["interpolate", ["linear"], ["sqrt", ["get", "size"]], 0, 7, 300, 30]],
+               "circle-color": "rgba(0,0,0,0)",
+               "circle-stroke-color": "#f9e2af", "circle-stroke-width": 2.2 } });
+
+    // 6) labels for super-communities (size)
+    map.addLayer({ id: "labels", type: "symbol", source: "graph", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "super"],
+      layout: { "text-field": ["get", "label"], "text-size": 11,
+                "text-font": ["Open Sans Regular"], "text-allow-overlap": false },
+      paint: { "text-color": "#e6e9f5", "text-halo-color": "#070912", "text-halo-width": 1.3 } });
+
+    // ---- selection: click a node -> its links; 2-3 nodes -> links among them
+    let sel = [];  // [{level, id}]
+    const same = (a, b) => a.level === b.level && a.id === b.id;
+    const selEl = document.getElementById("sel");
+
+    function apply() {
+      if (sel.length === 0) {
+        map.setFilter("edges-sel", ["==", ["get", "kind"], "__none__"]);
+        map.setFilter("nodes-sel", ["==", ["get", "kind"], "__none__"]);
+        map.setPaintProperty("edges", "line-opacity", 0.18);
+        selEl.innerHTML = "";
+        return;
+      }
+      const ids = sel.map(s => s.id);
+      let edgeFilter;
+      if (sel.length === 1) {                              // all incident links
+        const s = sel[0];
+        edgeFilter = ["all", ["==", ["get", "kind"], "edge"], ["==", ["get", "level"], s.level],
+          ["any", ["==", ["get", "src"], s.id], ["==", ["get", "dst"], s.id]]];
+      } else {                                             // only links among the selected
+        edgeFilter = ["all", ["==", ["get", "kind"], "edge"],
+          ["in", ["get", "src"], ["literal", ids]], ["in", ["get", "dst"], ["literal", ids]]];
+      }
+      map.setFilter("edges-sel", edgeFilter);
+      map.setPaintProperty("edges", "line-opacity", 0.05);   // dim the ambient web
+      map.setFilter("nodes-sel", ["any", ...sel.map(s =>
+        ["all", ["==", ["get", "level"], s.level], ["==", ["get", "id"], s.id]])]);
+      selEl.innerHTML = `selected ${sel.length} · <button id="clr">clear</button>`;
+      document.getElementById("clr").onclick = () => { sel = []; apply(); };
+    }
+
+    map.on("click", "nodes", (e) => {
+      const p = e.features[0].properties;
+      const node = { level: p.level, id: p.id };
+      const at = sel.findIndex(s => same(s, node));
+      if (at >= 0) sel.splice(at, 1);          // toggle off
+      else sel.push(node);
+      apply();
+    });
+    map.on("click", (e) => {                    // click empty space clears
+      if (!map.queryRenderedFeatures(e.point, { layers: ["nodes"] }).length) { sel = []; apply(); }
+    });
+
+    const popup = new maplibregl.Popup({ closeButton: false });
+    map.on("mousemove", "nodes", (e) => {
+      const p = e.features[0].properties;
+      map.getCanvas().style.cursor = "pointer";
+      popup.setLngLat(e.lngLat).setHTML(
+        `<b>${p.kind === "super" ? "super-community" : "community"}</b> · level ${p.level}<br>` +
+        `size <b>${p.size}</b>${p.members ? " · " + p.members + " sub-communities" : ""}<br>` +
+        `id C${p.id}`).addTo(map);
+    });
+    map.on("mouseleave", "nodes", () => { map.getCanvas().style.cursor = ""; popup.remove(); });
+
+    // clear-selection button + layer toggles
+    document.getElementById("clear").onclick = () => { sel = []; apply(); };
+    const toggle = (id, lyrs) => { document.getElementById(id).onchange = (e) =>
+      lyrs.forEach((l) => map.getLayer(l) && map.setLayoutProperty(l, "visibility", e.target.checked ? "visible" : "none")); };
+    toggle("L-hulls", ["hull-fill", "hull-line"]);
+    toggle("L-edges", ["edges", "edges-sel"]);
+    toggle("L-nodes", ["nodes", "nodes-sel"]);
+    toggle("L-labels", ["labels"]);
+
+    const z = document.getElementById("z");
+    const upd = () => { z.textContent = "zoom " + map.getZoom().toFixed(1) + " · maxzoom " + meta.maxzoom; };
+    map.on("zoom", upd); upd();
+
+    // --- round minimap: whole-graph overview + a viewport box for guidance
+    const mini = new maplibregl.Map({
+      container: "minimap", interactive: false, attributionControl: false,
+      renderWorldCopies: false,
+      style: { version: 8, sources: {}, layers: [{ id: "bg", type: "background",
+               paint: { "background-color": "#0b0e17" } }] },
+      center: [0, 0], zoom: 0,
+    });
+    mini.on("load", () => {
+      mini.fitBounds([[-hx, -hy], [hx, hy]], { padding: 6, duration: 0 });
+      mini.addSource("graph", { type: "vector", url: "pmtiles://" + PM });
+      mini.addLayer({ id: "mdots", type: "circle", source: "graph", "source-layer": "graph",
+        filter: ["in", ["get", "kind"], ["literal", ["community", "super"]]],
+        paint: { "circle-radius": 1.6, "circle-color": colorByLevel, "circle-opacity": 0.85 } });
+      mini.addSource("vp", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      mini.addLayer({ id: "vpbox", type: "line", source: "vp",
+        paint: { "line-color": "#f9e2af", "line-width": 1.4, "line-opacity": 0.9 } });
+      const sync = () => {
+        const b = map.getBounds();
+        mini.getSource("vp").setData({ type: "Feature", geometry: { type: "Polygon", coordinates: [[
+          [b.getWest(), b.getNorth()], [b.getEast(), b.getNorth()],
+          [b.getEast(), b.getSouth()], [b.getWest(), b.getSouth()], [b.getWest(), b.getNorth()]]] } });
+      };
+      map.on("move", sync); sync();
+    });
+  });
+})();
+</script>
+</body>
+</html>

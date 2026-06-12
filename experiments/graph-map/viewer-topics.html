@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>rete topic-map — communities by LDA topic</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+<style>
+  html, body, #map { margin: 0; height: 100%; background: #070912; }
+  .panel { position: absolute; z-index: 1; color: #cdd6f4;
+           font: 12px/1.5 ui-monospace, monospace; background: rgba(10,13,24,.86);
+           padding: 9px 12px; border-radius: 8px; }
+  #hud { top: 10px; left: 10px; max-width: 330px; }
+  #hud b { color: #89b4fa; }
+  #legend { bottom: 10px; left: 10px; max-width: 340px; max-height: 46vh; overflow: auto; }
+  #legend h4 { margin: 0 0 6px; color: #89b4fa; font-size: 12px; }
+  .row { display: flex; align-items: center; gap: 7px; cursor: pointer; padding: 1px 2px; border-radius: 4px; }
+  .row:hover { background: #1e2030; }
+  .row.off { opacity: .35; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
+  .row small { color: #9399b2; }
+  #ctl .ctlrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+  #ctl .grp { color: #89b4fa; width: 40px; font-size: 11px; }
+  #ctl label { display: inline-flex; align-items: center; gap: 4px; }
+  #ctl button { font: 11px monospace; background: #313244; color: #cdd6f4; border: 0;
+                border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+  #ctl button:hover { background: #45475a; }
+  #minimap { position: absolute; right: 16px; bottom: 16px; width: 168px; height: 168px;
+             border-radius: 50%; overflow: hidden; z-index: 2;
+             border: 2px solid #585b70; box-shadow: 0 4px 18px rgba(0,0,0,.6); }
+  #mini-x { position: absolute; right: 16px; bottom: 16px; width: 168px; height: 168px;
+            z-index: 3; pointer-events: none; }
+  #mini-x::before, #mini-x::after { content: ""; position: absolute; left: 50%; top: 50%;
+            background: rgba(249,226,175,.5); transform: translate(-50%,-50%); }
+  #mini-x::before { width: 9px; height: 1px; } #mini-x::after { width: 1px; height: 9px; }
+</style>
+</head>
+<body>
+<div id="hud" class="panel">
+  <b>rete topic-map</b> — a <b>topic pyramid</b> from one shared LDA. Zoom out →
+  broad <b>meta-topics</b>; mid → <b>topics</b>; in → the <b>communities</b> with
+  their <b>k-nearest connections</b>. Coloured by LDA topic, labelled by keywords.
+  Click a legend row or region to isolate a topic; hover a community for its
+  type &amp; properties.
+  <div id="ctl" style="margin-top:8px">
+    <div class="ctlrow"><button id="clear">↺ show all</button><button id="reset">⤢ fit view</button></div>
+    <div class="ctlrow"><span class="grp">show</span>
+      <label><input type="checkbox" id="S-meta" checked /> meta</label>
+      <label><input type="checkbox" id="S-topic" checked /> topics</label>
+      <label><input type="checkbox" id="S-node" checked /> nodes</label>
+      <label><input type="checkbox" id="S-edge" checked /> links</label></div>
+    <div class="ctlrow"><span class="grp">labels</span>
+      <label><input type="checkbox" id="L-meta" checked /> meta</label>
+      <label><input type="checkbox" id="L-topic" checked /> topics</label>
+      <label><input type="checkbox" id="L-node" checked /> nodes</label></div>
+  </div>
+  <div style="margin-top:6px;opacity:.6" id="z"></div>
+</div>
+<div id="legend" class="panel"><h4>LDA topics</h4><div id="rows"></div></div>
+<div id="map"></div>
+<div id="minimap"></div>
+<div id="mini-x"></div>
+<script>
+const params = new URLSearchParams(location.search);
+// local serve -> local tiles; hosted elsewhere -> HF Space (bucket via CORS+Range)
+const SPACE = "https://katospiegel-rete.hf.space/data/graph-map";
+const TOKEN = "sfdbgf1094by21hd128ru39802";   // demo Space token (public soft gate)
+const LOCAL = location.protocol === "file:" || /^(localhost|127|0\.0\.0\.0)/.test(location.hostname);
+const BASE = LOCAL ? "out" : SPACE, TOK = LOCAL ? "" : `?token=${TOKEN}`;
+const PM = params.get("pmtiles") || `${BASE}/topicmap.pmtiles${TOK}`;
+const META = params.get("meta") || `${BASE}/topicmap.json${TOK}`;
+
+const protocol = new pmtiles.Protocol();
+maplibregl.addProtocol("pmtiles", protocol.tile);
+
+(async () => {
+  let meta = { footprint: [55, 38], maxzoom: 20, topics: [] };
+  try { meta = Object.assign(meta, await (await fetch(META)).json()); } catch (e) {}
+  const [hx, hy] = meta.footprint;
+
+  const map = new maplibregl.Map({
+    container: "map", renderWorldCopies: false, minZoom: 0, maxZoom: 22,
+    style: { version: 8, glyphs: "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
+             sources: {}, layers: [{ id: "bg", type: "background", paint: { "background-color": "#070912" } }] },
+    center: [0, 0], zoom: 0,
+  });
+  map.addControl(new maplibregl.NavigationControl());
+  window._map = map;  // exposed for scripted screenshots
+
+  map.on("load", () => {
+    map.fitBounds([[-hx, -hy], [hx, hy]], { padding: 60, duration: 0 });
+    map.addSource("t", { type: "vector", url: "pmtiles://" + PM });
+    const SL = "topics";
+
+    // The three levels CROSS-FADE by zoom so you actually see the pyramid:
+    // z0–2 meta-topics, ~2–4 topics, 4+ communities + connections. Each level's
+    // fill/line/labels fade out as the next fades in (upper labels disappear as
+    // you zoom in). zf() = a zoom→opacity ramp.
+    const zf = (...stops) => ["interpolate", ["linear"], ["zoom"], ...stops];
+
+    // z0 — coarse meta-topic regions (visible only when zoomed out)
+    map.addLayer({ id: "meta-fill", type: "fill", source: "t", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "meta"],
+      paint: { "fill-color": ["get", "color"], "fill-opacity": zf(0, 0.14, 1.8, 0.14, 2.8, 0) } });
+    map.addLayer({ id: "meta-line", type: "line", source: "t", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "meta"],
+      paint: { "line-color": ["get", "color"], "line-width": 1.4, "line-dasharray": [3, 2],
+               "line-opacity": zf(0, 0.5, 1.8, 0.5, 2.8, 0) } });
+
+    // z1–4 — topic regions
+    map.addLayer({ id: "topic-fill", type: "fill", source: "t", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "topic"],
+      paint: { "fill-color": ["get", "color"], "fill-opacity": zf(1.4, 0, 2.2, 0.16, 4.5, 0.16, 5.6, 0.03) } });
+    map.addLayer({ id: "topic-line", type: "line", source: "t", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "topic"],
+      paint: { "line-color": ["get", "color"], "line-width": 1,
+               "line-opacity": zf(1.4, 0, 2.2, 0.5, 5, 0.5, 6, 0) } });
+
+    // z2+ — connections (k-nearest in topic space), under the community dots
+    map.addLayer({ id: "edges", type: "line", source: "t", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "edge"],
+      paint: { "line-color": "#9399b2",
+               "line-width": ["interpolate", ["linear"], ["get", "w"], 0.3, 0.4, 1, 1.6],
+               "line-opacity": zf(2.2, 0, 3, 0.45) } });
+
+    // z2+ — communities (points)
+    map.addLayer({ id: "communities", type: "circle", source: "t", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "community"],
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"],
+          0, ["interpolate", ["linear"], ["sqrt", ["get", "size"]], 0, 1.5, 200, 9],
+          14, ["interpolate", ["linear"], ["sqrt", ["get", "size"]], 0, 3, 200, 22]],
+        "circle-color": ["get", "color"], "circle-opacity": zf(2.2, 0, 3, 0.9),
+        "circle-stroke-color": "#0b0e17", "circle-stroke-width": 0.3 } });
+
+    // z5+ — community word-labels
+    map.addLayer({ id: "comm-labels", type: "symbol", source: "t", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "community"],
+      layout: { "text-field": ["get", "label"], "text-size": 13, "text-font": ["Open Sans Regular"] },
+      paint: { "text-color": "#e6e9f5", "text-halo-color": "#070912", "text-halo-width": 1.2,
+               "text-opacity": zf(4.4, 0, 5.2, 1) } });
+
+    // z1–4 — topic keyword labels (fade in after meta, out before deep zoom)
+    map.addLayer({ id: "topic-labels", type: "symbol", source: "t", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "topic-label"],
+      layout: { "text-field": ["get", "label"], "text-size": 18, "text-font": ["Open Sans Regular"],
+                "text-max-width": 9, "text-allow-overlap": false },
+      paint: { "text-color": "#ffffff", "text-halo-color": "#070912", "text-halo-width": 1.6,
+               "text-opacity": zf(1.5, 0, 2.2, 1, 4.2, 1, 5, 0) } });
+
+    // z0–2 — meta-topic labels (the broad themes; gone once you zoom into topics)
+    map.addLayer({ id: "meta-labels", type: "symbol", source: "t", "source-layer": SL,
+      filter: ["==", ["get", "kind"], "meta-label"],
+      layout: { "text-field": ["get", "label"], "text-size": 23, "text-font": ["Open Sans Regular"],
+                "text-max-width": 8, "text-transform": "uppercase", "text-letter-spacing": 0.05 },
+      paint: { "text-color": "#ffffff", "text-halo-color": "#070912", "text-halo-width": 2,
+               "text-opacity": zf(0, 1, 1.8, 1, 2.5, 0) } });
+
+    // ---- legend + topic isolation
+    const rows = document.getElementById("rows");
+    let only = null;  // isolated topic id, or null
+    function applyFilter() {
+      const base = (k) => only === null ? ["==", ["get", "kind"], k]
+        : ["all", ["==", ["get", "kind"], k], ["==", ["get", "topic"], only]];
+      ["topic-fill", "topic-line", "topic-labels"].forEach(l =>
+        map.setFilter(l, base(l === "topic-labels" ? "topic-label" : "topic")));
+      ["communities", "comm-labels"].forEach(l => map.setFilter(l, base("community")));
+    }
+    function isolate(t) {
+      if (t === undefined || t === null) return;
+      only = (only === t) ? null : t;
+      [...rows.children].forEach(r => r.classList.toggle("off", only !== null && +r.dataset.t !== only));
+      applyFilter();
+    }
+    (meta.topics || []).forEach(tp => {
+      const row = document.createElement("div");
+      row.className = "row"; row.dataset.t = tp.id;
+      row.innerHTML = `<span class="sw" style="background:${tp.color}"></span>` +
+        `<span>${tp.words} <small>(${tp.communities})</small></span>`;
+      row.onclick = () => isolate(tp.id);
+      rows.appendChild(row);
+    });
+
+    document.getElementById("clear").onclick = () => {
+      only = null;
+      [...rows.children].forEach((r) => r.classList.remove("off"));
+      applyFilter();
+    };
+    const toggle = (id, lyrs) => { document.getElementById(id).onchange = (e) =>
+      lyrs.forEach((l) => map.setLayoutProperty(l, "visibility", e.target.checked ? "visible" : "none")); };
+    toggle("S-meta", ["meta-fill", "meta-line"]);
+    toggle("S-topic", ["topic-fill", "topic-line"]);
+    toggle("S-node", ["communities"]);
+    toggle("S-edge", ["edges"]);
+    toggle("L-meta", ["meta-labels"]);
+    toggle("L-topic", ["topic-labels"]);
+    toggle("L-node", ["comm-labels"]);
+    document.getElementById("reset").onclick = () =>
+      map.fitBounds([[-hx, -hy], [hx, hy]], { padding: 40, duration: 600 });
+
+    // click any topic region, keyword label, or community to isolate that topic
+    ["topic-fill", "topic-labels", "communities"].forEach((layer) => {
+      map.on("click", layer, (e) => isolate(e.features[0].properties.topic));
+      map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
+      map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
+    });
+
+    const popup = new maplibregl.Popup({ closeButton: false });
+    map.on("mousemove", "communities", (e) => {
+      const p = e.features[0].properties; map.getCanvas().style.cursor = "pointer";
+      popup.setLngLat(e.lngLat).setHTML(
+        `<b>${p.label || "community"}</b>` + (p.etype ? ` · <span style="color:#a6e3a1">${p.etype}</span>` : "") + `<br>` +
+        `${p.size} entities · topic ${p.topic}<br>` +
+        (p.props ? `<span style="opacity:.8">properties: ${p.props}</span><br>` : "") +
+        `<span style="opacity:.55">community C${p.id}</span>`).addTo(map);
+    });
+    map.on("mouseleave", "communities", () => { map.getCanvas().style.cursor = ""; popup.remove(); });
+
+    const z = document.getElementById("z");
+    const upd = () => z.textContent = `zoom ${map.getZoom().toFixed(1)} · ${meta.communities} communities · ${(meta.topics||[]).length} topics`;
+    map.on("zoom", upd); upd();
+
+    // --- round minimap: topic overview + viewport box
+    const mini = new maplibregl.Map({
+      container: "minimap", interactive: false, attributionControl: false, renderWorldCopies: false,
+      style: { version: 8, sources: {}, layers: [{ id: "bg", type: "background",
+               paint: { "background-color": "#0b0e17" } }] }, center: [0, 0], zoom: 0,
+    });
+    mini.on("load", () => {
+      mini.fitBounds([[-hx, -hy], [hx, hy]], { padding: 6, duration: 0 });
+      mini.addSource("t", { type: "vector", url: "pmtiles://" + PM });
+      // show the topic/meta REGIONS (they exist at the minimap's low zoom;
+      // community dots only tile at z>=2, so they'd be invisible here)
+      mini.addLayer({ id: "mfill", type: "fill", source: "t", "source-layer": "topics",
+        filter: ["in", ["get", "kind"], ["literal", ["meta", "topic"]]],
+        paint: { "fill-color": ["get", "color"], "fill-opacity": 0.55 } });
+      mini.addSource("vp", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      mini.addLayer({ id: "vpbox", type: "line", source: "vp",
+        paint: { "line-color": "#f9e2af", "line-width": 1.4, "line-opacity": 0.9 } });
+      const sync = () => {
+        const b = map.getBounds();
+        mini.getSource("vp").setData({ type: "Feature", geometry: { type: "Polygon", coordinates: [[
+          [b.getWest(), b.getNorth()], [b.getEast(), b.getNorth()],
+          [b.getEast(), b.getSouth()], [b.getWest(), b.getSouth()], [b.getWest(), b.getNorth()]]] } });
+      };
+      map.on("move", sync); sync();
+    });
+  });
+})();
+</script>
+</body>
+</html>

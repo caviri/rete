@@ -44,6 +44,9 @@
   header { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
     padding:12px 20px; background:var(--side); border-bottom:1px solid var(--line); }
   header h1 { font:700 20px Georgia,serif; margin:0; }
+  header .dsswitch, header .parctl { font-size:13px; color:var(--muted); }
+  header .parctl { display:inline-flex; align-items:center; gap:5px; cursor:pointer; }
+  header .dsswitch a { font-weight:500; }
   header .sub { color:var(--muted); font-size:13px; }
   header a { color:var(--accent-dark); }
   .shell { display:grid; grid-template-columns:300px minmax(0,1fr); gap:16px; padding:16px 20px 40px; align-items:start; }
@@ -145,9 +148,14 @@
 </head>
 <body>
 <header>
-  <h1>Wikidata-100MB</h1>
-  <span class="sub">one ~12M-triple graph, queried lazily over HTTP range - pick a backend on the left</span>
+  <h1 id="title">Wikidata-100MB</h1>
+  <span class="sub">one graph, queried lazily over HTTP range - pick a backend on the left</span>
   <a href="index.html">&larr; playground</a>
+  <span class="dsswitch">tier:
+    <a id="ds-100" href="?dataset=wikidata-100MB">100MB</a> ·
+    <a id="ds-1g" href="?dataset=wikidata-1GB">1GB</a></span>
+  <label class="parctl" title="Parallel range reads via SharedArrayBuffer (reloads to toggle cross-origin isolation; Graph backend only — disables Tables/DuckDB/SQLite)"><input type="checkbox" id="parToggle" /> parallel reads</label>
+  <label class="parctl" title="Fetch-worker pool size for parallel reads (1–32; blank = auto from CPU cores). Reloads to apply."><input type="number" id="workCount" min="1" max="32" placeholder="auto" style="width:3.4em" /> workers</label>
   <a href="https://huggingface.co/datasets/katospiegel/knowledge-graphs/tree/main/wikidata-100MB" target="_blank" rel="noopener">data on Hugging Face &#8599;</a>
   <button id="srcBtn" class="srcbtn">Source: HF Space (CORS)</button>
 </header>
@@ -1659,8 +1667,52 @@ const $ = (id) => document.getElementById(id);
 // The same 100 MB bundle served three ways. Switch with the "Source" button to
 // compare how each host's CORS / Range support behaves in this browser. (The
 // rete CLI is unaffected — it sends no Origin; this is purely the fetch story.)
+// Dataset tier, selectable via ?dataset= — the HF Space serves both
+// wikidata-100MB and wikidata-1GB from /data (the GitHub sources only host the
+// 100MB demo, so they stay pinned to it).
+const DATASET = (new URLSearchParams(location.search).get("dataset") || "wikidata-100MB")
+  .replace(/[^a-zA-Z0-9_-]/g, "");
+// fetch-worker pool size for parallel reads (?workers=N, 1..32); null = auto
+// (hardwareConcurrency). Passed to the rete worker at init.
+const WORKERS = (() => { const w = parseInt(new URLSearchParams(location.search).get("workers"), 10);
+  return (w >= 1 && w <= 32) ? w : null; })();
+// reflect the chosen tier in the header (title + active link)
+{
+  const nice = DATASET === "wikidata-1GB" ? "Wikidata-1GB" : "Wikidata-100MB";
+  if ($("title")) $("title").textContent = nice;
+  document.title = nice + " - lazy explorer";
+  const a = $(DATASET === "wikidata-1GB" ? "ds-1g" : "ds-100");
+  if (a) { a.style.fontWeight = "700"; a.style.textDecoration = "underline"; }
+  // parallel-reads toggle: reflects cross-origin isolation; flips the ?parallel
+  // flag and reloads (isolation can't be toggled without a navigation).
+  const par = $("parToggle");
+  if (par) {
+    par.checked = !!window.crossOriginIsolated;
+    par.onchange = () => {
+      const u = new URL(location.href);
+      if (par.checked) u.searchParams.set("parallel", "1");
+      else u.searchParams.delete("parallel");
+      location.href = u.href;
+    };
+  }
+  // worker-pool size: number input -> ?workers=N + reload (pool is built once
+  // at worker init). Disabled unless parallel reads are active.
+  const wc = $("workCount");
+  if (wc) {
+    if (WORKERS) wc.value = WORKERS;
+    wc.disabled = !window.crossOriginIsolated;
+    const applyWorkers = () => {
+      const u = new URL(location.href);
+      const n = parseInt(wc.value, 10);
+      if (n >= 1 && n <= 32) u.searchParams.set("workers", String(n));
+      else u.searchParams.delete("workers");
+      location.href = u.href;
+    };
+    wc.onchange = applyWorkers;
+  }
+}
 const SOURCES = {
-  hfspace: { label: "HF Space (CORS)", base: "https://katospiegel-rete.hf.space/data/wikidata-100MB", dl: "",
+  hfspace: { label: "HF Space (CORS)", base: `https://katospiegel-rete.hf.space/data/${DATASET}`, dl: "",
     info: "A tiny <b>FastAPI Space</b> in front of the bucket that adds <b>CORS + Range</b> (which HF's own resolve endpoint won't give a browser). Serves the whole bundle — <code>.rete</code>, parquet, <code>.duckdb</code>, <code>.sqlite</code> — so <b>every backend works in the browser</b> here. This is the recommended source." },
   bucket: { label: "HF Bucket", base: "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-100MB", dl: "?download=true",
     info: "Hugging Face <b>bucket</b> (resolve). The rete CLI reads it fine, but its resolve endpoint returns <code>405</code> to a cross-origin browser GET — so the browser backends can't fetch it here." },
@@ -1883,7 +1935,7 @@ self.onmessage = function (e) {
    the engine falls back to sequential reads. */
 const POOL_INSTALL_SRC =
   "var __pool=null;" +
-  "function __ensurePool(src){if(__pool)return __pool;var P=(self.navigator&&navigator.hardwareConcurrency)||4;P=Math.max(2,Math.min(8,P));__pool=[];" +
+  "function __ensurePool(src){if(__pool)return __pool;var P=self.__poolSize||((self.navigator&&navigator.hardwareConcurrency)||4);P=Math.max(1,Math.min(32,P));__pool=[];" +
   "var u=URL.createObjectURL(new Blob([src],{type:'text/javascript'}));for(var i=0;i<P;i++)__pool.push(new Worker(u));return __pool;}" +
   "self.reteReadMany=function(url,offs,lens){try{" +
   "if(!self.crossOriginIsolated||typeof SharedArrayBuffer==='undefined')return null;" +
@@ -1902,7 +1954,7 @@ const RETE_HARNESS =
   // postMessage only enqueues; the main thread renders the live counter.
   "self.reteProgress=function(b){REQ++;BYTES+=b;self.postMessage({type:'progress',requests:REQ,bytes:BYTES});};" +
   "self.onmessage=function(e){var m=e.data;" +
-  "if(m.type==='init'){self.__fetchSrc=m.fetchSrc;ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
+  "if(m.type==='init'){self.__fetchSrc=m.fetchSrc;self.__poolSize=m.poolSize;ready=wasm_bindgen(m.bytes);ready.then(function(){self.postMessage({type:'ready'});});return;}" +
   "if(m.type==='memload'){Promise.resolve(ready).then(function(){MEM=m.bytes;self.postMessage({type:'memready'});});return;}" +
   "Promise.resolve(ready).then(function(){try{REQ=0;BYTES=0;var t=m.task||'sparql';self.postMessage({type:'start',task:t});" +
   "var j;" +
@@ -1927,7 +1979,7 @@ function ensureRete() {
   _rw = new Worker(URL.createObjectURL(new Blob([glue + RETE_HARNESS], { type: "text/javascript" })));
   let res; _rwReady = new Promise((r) => { res = r; });
   _rw.addEventListener("message", function onr(e) { if (e.data && e.data.type === "ready") { res(); _rw.removeEventListener("message", onr); } });
-  _rw.postMessage({ type: "init", bytes: b64ToBytes(window.RETE_WASM_B64), fetchSrc: FETCH_WORKER_SRC });
+  _rw.postMessage({ type: "init", bytes: b64ToBytes(window.RETE_WASM_B64), fetchSrc: FETCH_WORKER_SRC, poolSize: WORKERS });
   return _rwReady;
 }
 function ensureMem() {
@@ -2068,8 +2120,8 @@ $("cacheBtn").onclick = cacheRete;
 $("graphSrc").onchange = () => { state.graphSource = $("graphSrc").value; $("statGraph").textContent = state.graphSource === "cached" ? "reading cached full copy" : "ready (lazy)"; };
 (async () => { const ab = await idbGet(RKEY); if (ab) { window.__reteBytes = new Uint8Array(ab); enableCached((ab.byteLength / 1048576).toFixed(0)); } })();
 $("statPar").textContent = window.crossOriginIsolated
-  ? "parallel range reads on (cross-origin isolated)"
-  : "sequential range reads · add ?parallel=1 for parallel (graph only)";
+  ? `parallel range reads on · ${WORKERS || (navigator.hardwareConcurrency || 4)} fetch workers`
+  : "sequential range reads · enable “parallel reads” for parallel (graph only)";
 
 /* Can this browser range-fetch the given source's bundle? Some hosts (HF
    buckets/datasets) 405 a cross-origin browser GET even though the CLI works. */
