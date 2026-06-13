@@ -67,6 +67,13 @@ DATASETS = [
     #     --max-per-year 90 -o dev/geo/history.nt
     #   rete build dev/geo/history.nt -o web/history.rete
     ("history", "history.rete"),
+    # Real-world knowledge graphs ingested for the playground (subgraphs built by the
+    # fetch recipes in scripts/; see web/playground-src/catalog.js for the example queries):
+    ("linked-jazz", "linked-jazz.rete"),     # jazz musician social network (Linked Jazz, CC BY-SA)
+    ("nomisma", "nomisma.rete"),             # coinage of Alexander the Great (Nomisma PELLA, CC-BY)
+    ("mimotext", "mimotext.rete"),           # French Enlightenment novels + stylometry (MiMoText, CC0)
+    ("mmm", "mmm.rete"),                     # medieval manuscript provenance (Mapping Manuscript Migrations)
+    # getty-ulan is remote-lazy (2.96 MB, in the bucket) — not embedded; see catalog.js.
 ]
 
 
