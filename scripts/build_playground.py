@@ -75,6 +75,11 @@ DATASETS = [
     ("mmm", "mmm.rete"),                     # medieval manuscript provenance (Mapping Manuscript Migrations)
     ("openalex-astrocytes", "openalex-astrocytes.rete"),  # astrocyte research citation graph (OpenAlex, CC0)
     ("antarctic-expeditions", "antarctic-expeditions.rete"),  # Heroic-Age expeditions, crews & ships (Wikidata, CC0)
+    ("factgrid-illuminati", "factgrid-illuminati.rete"),
+    ("theographic-graph", "theographic-graph.rete"),
+    ("monarch", "monarch.rete"),
+    ("opencitations", "opencitations.rete"),
+    ("orkg", "orkg.rete"),
     # getty-ulan is remote-lazy (2.96 MB, in the bucket) — not embedded; see catalog.js.
 ]
 
