@@ -157,6 +157,49 @@ SELECT ?field (COUNT(?paper) AS ?papers) WHERE {
 } GROUP BY ?field ORDER BY DESC(?papers)`
       },
       {
+        family: "Aggregate",
+        label: "Authors above the mean h-index",
+        view: "table",
+        tip: "A subquery computes the average h-index in its own scope; the outer query keeps only authors beating it. Nested SELECT support makes this one query.",
+        q: `PREFIX ex: <http://ex/>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+SELECT ?name ?h WHERE {
+  ?a foaf:name ?name ; ex:hIndex ?h .
+  { SELECT (AVG(?x) AS ?avg) WHERE { ?p ex:hIndex ?x } }
+  FILTER(?h > ?avg)
+} ORDER BY DESC(?h) LIMIT 20`
+      },
+      {
+        family: "Select",
+        label: "Novelty tiers (IF)",
+        view: "table",
+        tip: "Nested IF() buckets each paper's xsd:double novelty score into high / medium / low — a BIND the rest of the query can see.",
+        q: `PREFIX ex: <http://ex/>
+PREFIX dct: <http://purl.org/dc/terms/>
+SELECT ?title ?tier WHERE {
+  ?paper dct:title ?title ; ex:noveltyScore ?score .
+  BIND(IF(?score > 2.0, "high", IF(?score > 1.0, "medium", "low")) AS ?tier)
+} LIMIT 50`
+      },
+      {
+        family: "Select",
+        label: "Title fingerprints (SHA-256)",
+        view: "table",
+        tip: "SHA256 (and MD5 / SHA1 / SHA384 / SHA512) plus STRLEN are part of the SPARQL 1.1 function library — a content hash of each title and its length.",
+        q: `PREFIX dct: <http://purl.org/dc/terms/>
+SELECT ?title (SHA256(STR(?title)) AS ?fingerprint) (STRLEN(?title) AS ?len) WHERE {
+  ?paper dct:title ?title
+} LIMIT 20`
+      },
+      {
+        family: "Path",
+        label: "Everything but citations",
+        view: "table",
+        tip: "A negated property set !(cito:cites) walks one step over every predicate except citation edges — all the non-citation facts of one paper.",
+        q: `PREFIX cito: <http://purl.org/spar/cito/>
+SELECT ?o WHERE { <http://ex/paper/15> !(cito:cites) ?o }`
+      },
+      {
         family: "Construct",
         label: "Coauthor ego network",
         view: "graph",
@@ -292,6 +335,19 @@ SELECT ?year (COUNT(?paper) AS ?n) WHERE {
 SELECT DISTINCT ?collaborator WHERE {
   <http://ex/author/1235> ex:coauthor+ ?collaborator
 } LIMIT 100`
+      },
+      {
+        family: "Aggregate",
+        label: "Papers above average citations",
+        view: "table",
+        tip: "A subquery computes the mean citation count; the outer query keeps the papers beating it — the new nested-SELECT support makes this a single query.",
+        q: `PREFIX ex: <http://ex/>
+PREFIX dct: <http://purl.org/dc/terms/>
+SELECT ?title ?c WHERE {
+  ?p ex:citationCount ?c ; dct:title ?title .
+  { SELECT (AVG(?x) AS ?avg) WHERE { ?q ex:citationCount ?x } }
+  FILTER(?c > ?avg)
+} ORDER BY DESC(?c) LIMIT 20`
       },
       {
         family: "Construct",
