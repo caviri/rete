@@ -1696,7 +1696,8 @@ let wasm_bindgen = (function(exports) {
   // FNV-1a hash → stable index into the curated palette (same colour every visit).
   function colorFor(name) { let h = 2166136261; for (let i = 0; i < name.length; i++) { h ^= name.charCodeAt(i); h = Math.imul(h, 16777619); } return PALETTE[(h >>> 0) % PALETTE.length]; }
   function yearLabel(y) { return y < 0 ? `${-y} BCE` : `${y} CE`; }
-  function escapeHtml(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function escapeHtml(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
+  function safeUrl(u) { return typeof u === "string" && /^https?:\/\//i.test(u) ? u : "#"; }   // block javascript:/data: in hrefs
   const easeInOut = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
 
   // Shoelace area + centroid of one ring (lon/lat); degenerate rings fall back to vertex mean.
@@ -2013,10 +2014,14 @@ let wasm_bindgen = (function(exports) {
     spinTick = setInterval(() => { $("spintime").textContent = ((performance.now() - t0) / 1000).toFixed(1) + "s"; }, 100);
   }
   function spinProgress(loaded, total) {   // determinate (download) progress
-    $("spinbar").style.display = "block";
-    const pct = total ? Math.round(loaded / total * 100) : 0;
-    $("spinfill").style.width = pct + "%";
-    $("spinsub").textContent = (loaded / 1048576).toFixed(1) + (total ? " / " + (total / 1048576).toFixed(1) : "") + " MB" + (total ? " · " + pct + "%" : "");
+    if (total > 0) {
+      $("spinbar").style.display = "block";
+      const pct = Math.round(loaded / total * 100); $("spinfill").style.width = pct + "%";
+      $("spinsub").textContent = (loaded / 1048576).toFixed(1) + " / " + (total / 1048576).toFixed(1) + " MB · " + pct + "%";
+    } else {   // server gave no Content-Length → spinner stays indeterminate, show bytes only
+      $("spinbar").style.display = "none";
+      $("spinsub").textContent = (loaded / 1048576).toFixed(1) + " MB downloaded";
+    }
   }
   function stopSpin() { clearInterval(spinTick); spinTick = null; $("spin").hidden = true; }
 
@@ -2314,7 +2319,7 @@ let wasm_bindgen = (function(exports) {
     $("setmodal").addEventListener("click", (e) => { if (e.target === $("setmodal")) $("setmodal").hidden = true; });
     $("setcache").addEventListener("change", (e) => { cacheOn = e.target.checked; if (!cacheOn) qcache.clear(); renderSettings(); });
     $("setclear").addEventListener("click", () => { qcache.clear(); renderSettings(); });
-    $("setdrop").addEventListener("click", () => { cachedBytes = null; if (mode === "cached") { mode = "embedded"; $("src").value = "embedded"; runQuery(); } renderSettings(); });
+    $("setdrop").addEventListener("click", () => { cachedBytes = null; for (const k of [...qcache.keys()]) if (k.startsWith("cached\n")) qcache.delete(k); if (mode === "cached") { mode = "embedded"; $("src").value = "embedded"; runQuery(); } renderSettings(); });
     // dismiss the click-to-identify metadata panel
     $("ident").addEventListener("click", async (e) => {
       if (e.target.classList.contains("idclose")) { $("ident").style.display = "none"; return; }
@@ -2322,7 +2327,7 @@ let wasm_bindgen = (function(exports) {
       const out = b.nextElementSibling; out.innerHTML = '<span class="mut">searching Wikidata…</span>';
       try {
         const res = await wdSearch(b.dataset.label);
-        out.innerHTML = res.length ? res.slice(0, 3).map((r) => `<div class="wd1"><a href="${r.url}" target="_blank" rel="noopener">${escapeHtml(r.label)} (${escapeHtml(r.id)}) ↗</a>${r.desc ? ` — <span class="mut">${escapeHtml(r.desc)}</span>` : ""}</div>`).join("") : '<span class="mut">no Wikidata match</span>';
+        out.innerHTML = res.length ? res.slice(0, 3).map((r) => `<div class="wd1"><a href="${escapeHtml(safeUrl(r.url))}" target="_blank" rel="noopener">${escapeHtml(r.label)} (${escapeHtml(r.id)}) ↗</a>${r.desc ? ` — <span class="mut">${escapeHtml(r.desc)}</span>` : ""}</div>`).join("") : '<span class="mut">no Wikidata match</span>';
       } catch (err) { out.innerHTML = '<span class="mut">Wikidata lookup failed (offline?)</span>'; }
     });
     // federate the visible territories with Wikidata (a real local⋈remote SPARQL query)
@@ -2336,7 +2341,7 @@ let wasm_bindgen = (function(exports) {
         const r = await wdFederate(labels); stopSpin();
         $("wdquery").href = "https://query.wikidata.org/#" + encodeURIComponent(r.query); $("wdquery").style.display = "inline";
         $("wdbody").innerHTML = r.rows.length
-          ? `<p class="mut">${r.rows.length} of the first ${r.queried} names (of ${labels.length} on the map) matched a Wikidata entity by exact English label.</p><table><thead><tr><th>territory</th><th>Wikidata</th><th>population</th></tr></thead><tbody>${r.rows.map((x) => `<tr><td>${escapeHtml(x.name || "")}</td><td><a href="${escapeHtml(x.item)}" target="_blank" rel="noopener">${escapeHtml(x.label || "")} ↗</a></td><td>${x.pop ? (+x.pop).toLocaleString() : '<span class="mut">—</span>'}</td></tr>`).join("")}</tbody></table>`
+          ? `<p class="mut">${r.rows.length} of the first ${r.queried} names (of ${labels.length} on the map) matched a Wikidata entity by exact English label.</p><table><thead><tr><th>territory</th><th>Wikidata</th><th>population</th></tr></thead><tbody>${r.rows.map((x) => `<tr><td>${escapeHtml(x.name || "")}</td><td><a href="${escapeHtml(safeUrl(x.item))}" target="_blank" rel="noopener">${escapeHtml(x.label || "")} ↗</a></td><td>${x.pop ? (+x.pop).toLocaleString() : '<span class="mut">—</span>'}</td></tr>`).join("")}</tbody></table>`
           : '<p class="mut">No exact-label matches for this era (works best on modern eras like 1994 / 2010; historical names rarely match Wikidata\'s English labels).</p>';
       } catch (err) { stopSpin(); $("wdbody").innerHTML = '<p class="mut">Federation failed (offline, or Wikidata rate-limited).</p>'; }
     });
