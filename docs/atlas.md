@@ -45,10 +45,12 @@ whatever your query binds to `?wkt`.
    Constantinople, 1789, 1914, the fall of the USSR…) sit on the track — hover for
    the full name, click to jump (arrow keys nudge ±1/±10 years; Space toggles play).
    Because the data is discrete, **▶ Play steps era to era** (each press visibly
-   cross-fades to the next snapshot; the **speed** select is the dwell per era).
-   **Zoom** the axis with `＋`/`－`/`⤢`, or drag the **context strip** beneath it —
-   move the window to pan, drag its edges to zoom into a span (the dense modern eras
-   spread out as you zoom in).
+   cross-fades to the next snapshot; the **speed** select is the dwell per era), and
+   **⏮ / ⏭** jump one snapshot at a time with a *"→ next 1492 CE (+213 yr)"* readout.
+   **Zoom** the axis with `＋`/`－`/`⤢`, with the mouse wheel (vertical = zoom,
+   horizontal = pan), or by dragging the **context strip** beneath it — move the
+   window to pan, drag its edges to zoom (the dense modern eras spread out as you
+   zoom in).
 3. **Changes are highlighted as they happen.** When the era changes, the map
    **cross-fades** and flags the difference: territories that **appear** glow
    green (and pulse briefly once they've settled), ones that **disappear** glow
@@ -77,8 +79,12 @@ whatever your query binds to `?wkt`.
    queries three ways: **embedded** (the `.rete` baked into the page, fully
    offline), **remote · lazy** (the file stays on remote storage and each query
    faults in only the byte ranges it touches, over a Web Worker), or
-   **remote · cached** (download the file once, then query locally). It's the
-   "simple file, remote; logic in the browser" story made switchable.
+   **remote · cached** (download the file once — with a progress bar — then query
+   locally). It's the "simple file, remote; logic in the browser" story made
+   switchable. Slow operations (a lazy query, the cached download) show a **loader**
+   that explains what's happening; identical queries are **cached** (re-running is
+   instant), and a **⚙ Settings** modal inspects/clears the query cache and the
+   cached `.rete`.
 
 <figure class="fig-center">
   <img src="img/atlas-table.png" alt="The Historical Atlas in Table view at 1492 CE: a label column and a wkt column where each row renders a small teal geometry thumbnail of that territory's border polygon, captioned with its kind and vertex count (e.g. MULTIPOLYGON · 388 pts).">

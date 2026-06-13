@@ -272,10 +272,12 @@ row of <strong>labelled historical-event markers</strong> (death of Alexander, f
 Constantinople, 1789, 1914, the fall of the USSR…) sit on the track — hover for
 the full name, click to jump (arrow keys nudge ±1/±10 years; Space toggles play).
 Because the data is discrete, <strong>▶ Play steps era to era</strong> (each press visibly
-cross-fades to the next snapshot; the <strong>speed</strong> select is the dwell per era).
-<strong>Zoom</strong> the axis with <code>＋</code>/<code>－</code>/<code>⤢</code>, or drag the <strong>context strip</strong> beneath it —
-move the window to pan, drag its edges to zoom into a span (the dense modern eras
-spread out as you zoom in).</li>
+cross-fades to the next snapshot; the <strong>speed</strong> select is the dwell per era), and
+<strong>⏮ / ⏭</strong> jump one snapshot at a time with a <em>"→ next 1492 CE (+213 yr)"</em> readout.
+<strong>Zoom</strong> the axis with <code>＋</code>/<code>－</code>/<code>⤢</code>, with the mouse wheel (vertical = zoom,
+horizontal = pan), or by dragging the <strong>context strip</strong> beneath it — move the
+window to pan, drag its edges to zoom (the dense modern eras spread out as you
+zoom in).</li>
 <li><strong>Changes are highlighted as they happen.</strong> When the era changes, the map
 <strong>cross-fades</strong> and flags the difference: territories that <strong>appear</strong> glow
 green (and pulse briefly once they've settled), ones that <strong>disappear</strong> glow
@@ -304,8 +306,12 @@ superimposed, so you can see directly how the map changed between them.</li>
 queries three ways: <strong>embedded</strong> (the <code>.rete</code> baked into the page, fully
 offline), <strong>remote · lazy</strong> (the file stays on remote storage and each query
 faults in only the byte ranges it touches, over a Web Worker), or
-<strong>remote · cached</strong> (download the file once, then query locally). It's the
-"simple file, remote; logic in the browser" story made switchable.</li>
+<strong>remote · cached</strong> (download the file once — with a progress bar — then query
+locally). It's the "simple file, remote; logic in the browser" story made
+switchable. Slow operations (a lazy query, the cached download) show a <strong>loader</strong>
+that explains what's happening; identical queries are <strong>cached</strong> (re-running is
+instant), and a <strong>⚙ Settings</strong> modal inspects/clears the query cache and the
+cached <code>.rete</code>.</li>
 </ol>
 <figure class="fig-center">
   <img src="img/atlas-table.png" alt="The Historical Atlas in Table view at 1492 CE: a label column and a wkt column where each row renders a small teal geometry thumbnail of that territory's border polygon, captioned with its kind and vertex count (e.g. MULTIPOLYGON · 388 pts).">

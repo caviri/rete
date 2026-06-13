@@ -137,6 +137,45 @@
   .wkttop #wktmclose { color:var(--mut); font-size:16px; line-height:1; padding:1px 9px; }
   #wktmtext { margin:0; padding:12px; overflow:auto; font:12px/1.5 ui-monospace,Consolas,monospace;
     color:#cdd9e5; white-space:pre-wrap; word-break:break-word; }
+  header button#setopen { background:transparent; border:1px solid var(--line); color:var(--mut);
+    font-weight:600; font-size:12px; padding:3px 9px; border-radius:6px; cursor:pointer; }
+  header button#setopen:hover { color:var(--ink); border-color:var(--accent); }
+  .tlbtns { display:flex; gap:4px; }
+  .tlbtns button { padding:5px 0; flex:1; }
+  .tlbtns .zbtn { flex:0 0 26px; }
+  .tlnext { color:var(--accent2); font-variant-numeric:tabular-nums; margin-left:8px; }
+  #spin { position:fixed; inset:0; z-index:70; background:rgba(4,8,12,.55); display:flex;
+    align-items:center; justify-content:center; }
+  #spin[hidden] { display:none; }
+  .spinbox { display:flex; align-items:center; gap:16px; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:18px 22px; max-width:380px; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+  .spinner { width:30px; height:30px; flex:0 0 auto; border:3px solid var(--line); border-top-color:var(--accent);
+    border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .spintxt { font-size:13px; } .spintxt #spinmsg { color:var(--ink); font-weight:600; margin-bottom:3px; }
+  .spintxt #spinmsg code { color:var(--accent); }
+  #spinbar { display:none; height:6px; background:#0c1116; border-radius:3px; margin-top:8px; overflow:hidden; }
+  #spinfill { height:100%; width:0; background:linear-gradient(90deg,var(--accent),var(--accent2)); transition:width .15s; }
+  #setmodal { position:fixed; inset:0; z-index:65; background:rgba(4,8,12,.7); display:flex;
+    align-items:center; justify-content:center; }
+  #setmodal[hidden] { display:none; }
+  .setbox { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:560px;
+    max-width:92vw; max-height:82vh; display:flex; flex-direction:column; overflow:hidden; }
+  .settop { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); }
+  .settop .sp { flex:1; } .settop b { font-size:14px; color:var(--ink); }
+  .settop #setclose { background:#0c1116; border:1px solid var(--line); color:var(--mut); border-radius:5px;
+    font-size:16px; line-height:1; padding:1px 9px; cursor:pointer; }
+  .setbody { padding:12px 16px; overflow:auto; }
+  .setbody h3 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--mut); margin:14px 0 6px; }
+  .setrow { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:12.5px; color:#cdd9e5; }
+  .setrow .sp { flex:1; } .setrow input { accent-color:var(--accent); }
+  .setbtn { background:#0c1116; border:1px solid var(--line); color:var(--accent); border-radius:6px;
+    padding:3px 10px; font-size:12px; cursor:pointer; } .setbtn:hover { color:#04110f; background:var(--accent); }
+  .setlist { font-size:12px; }
+  .setlist .qrow { display:flex; gap:8px; padding:5px 0; border-bottom:1px solid #1c2530; align-items:baseline; }
+  .setlist .qrow code { color:#bcccd9; font-size:11px; flex:1; white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; font-family:ui-monospace,Consolas,monospace; }
+  .setlist .qrow .qmeta { color:var(--mut); font-size:10.5px; white-space:nowrap; }
   .tlhead { display:flex; align-items:center; gap:5px; font-size:10.5px; color:var(--mut); margin-bottom:3px; }
   .tlhead .sp { flex:1; }
   .tlrange { font-variant-numeric:tabular-nums; }
@@ -167,6 +206,7 @@
   <h1><b>rete</b> · Historical Atlas</h1>
   <span class="sub">SPARQL + GeoSPARQL over a <code>.rete</code> — in your browser. Drag the timeline · click the map · pick an example.</span>
   <span class="sp"></span>
+  <button id="setopen" title="Settings &amp; query cache">⚙ Settings</button>
   <a href="playground.html">← Playground</a>
 </header>
 <main>
@@ -218,7 +258,11 @@
 </main>
 <div class="timeline">
   <div class="tlctl">
-    <button id="play" class="ghost">▶ Play</button>
+    <div class="tlbtns">
+      <button id="stepb" class="zbtn" title="Previous era">⏮</button>
+      <button id="play" class="ghost">▶ Play</button>
+      <button id="stepf" class="zbtn" title="Next era">⏭</button>
+    </div>
     <select id="speed" title="play dwell per era">
       <option value="2400">slow</option>
       <option value="1400" selected>medium</option>
@@ -229,7 +273,9 @@
   <span class="yr" id="yr">—<small id="eraLabel"></small></span>
   <div class="tlcol">
     <div class="tlhead">
-      <span class="tlrange" id="tlrange"></span><span class="sp"></span>
+      <span class="tlrange" id="tlrange"></span>
+      <span id="tlnext" class="tlnext"></span>
+      <span class="sp"></span>
       <button id="zoomout" class="zbtn" title="Zoom out">−</button>
       <button id="zoomin" class="zbtn" title="Zoom in">+</button>
       <button id="zoomreset" class="zbtn" title="Show the full range">⤢</button>
@@ -249,6 +295,29 @@
   <div class="wktbox">
     <div class="wkttop"><b id="wkttitle">WKT</b><span class="sp"></span><button id="wktmcopy">⧉ copy</button><button id="wktmclose" title="close">×</button></div>
     <pre id="wktmtext"></pre>
+  </div>
+</div>
+<div id="spin" hidden>
+  <div class="spinbox">
+    <div class="spinner"></div>
+    <div class="spintxt">
+      <div id="spinmsg"></div>
+      <div id="spinsub" class="mut"></div>
+      <div id="spinbar"><div id="spinfill"></div></div>
+      <div class="mut" style="font-size:11px;margin-top:5px">elapsed <span id="spintime">0.0s</span></div>
+    </div>
+  </div>
+</div>
+<div id="setmodal" hidden>
+  <div class="setbox">
+    <div class="settop"><b>Settings &amp; query cache</b><span class="sp"></span><button id="setclose" title="close">×</button></div>
+    <div class="setbody">
+      <label class="setrow"><input type="checkbox" id="setcache" checked> Cache query results — re-running an identical query (per data source) is instant</label>
+      <div class="setrow"><span id="setcacheinfo" class="mut"></span><span class="sp"></span><button id="setclear" class="setbtn">Clear query cache</button></div>
+      <div class="setrow"><span id="setreteinfo" class="mut"></span><span class="sp"></span><button id="setdrop" class="setbtn">Drop cached .rete</button></div>
+      <h3>Cached queries</h3>
+      <div id="setlist" class="setlist"><p class="mut">No queries cached yet.</p></div>
+    </div>
   </div>
 </div>
 
@@ -1587,6 +1656,9 @@ let wasm_bindgen = (function(exports) {
   };
   let proj = "equi";
   const layers = { fill: true, labels: true, graticule: true, glow: true, events: true };
+  // query result cache (key = mode + query) + a loader for slow (lazy / download) ops
+  const qcache = new Map(); const QCACHE_MAX = 80; let cacheOn = true, lastFromCache = false;
+  let spinTick = null;
 
   // ---- term / WKT helpers ----
   function lit(term) {
@@ -1667,10 +1739,24 @@ let wasm_bindgen = (function(exports) {
     }));
   }
   async function runRaw(q) {
-    const full = PREFIXES + q;
-    if (mode === "lazy") return JSON.parse(await remoteSparql(REMOTE_URL, full));
-    const bytes = mode === "cached" ? cachedBytes : localBytes;
-    return JSON.parse(wasm_bindgen.query(bytes, full, "json"));
+    const full = PREFIXES + q, key = mode + "\n" + full;
+    if (cacheOn && qcache.has(key)) {   // serve from cache (and bump LRU recency)
+      const v = qcache.get(key); qcache.delete(key); qcache.set(key, v); lastFromCache = true; return JSON.parse(v.json);
+    }
+    lastFromCache = false;
+    let json;
+    if (mode === "lazy") {   // worker keeps the main thread free → the spinner can animate
+      startSpin("Faulting byte ranges from the remote <code>.rete</code>", "HTTP Range reads run synchronously inside a Web Worker — only the bytes this query touches are fetched.");
+      try { json = await remoteSparql(REMOTE_URL, full); } finally { stopSpin(); }
+    } else {
+      json = wasm_bindgen.query(mode === "cached" ? cachedBytes : localBytes, full, "json");
+    }
+    if (cacheOn) {   // remember it (cap with simple LRU eviction)
+      const rows = (() => { try { return (JSON.parse(json).rows || []).length; } catch (e) { return 0; } })();
+      qcache.set(key, { json, mode, q, rows, bytes: json.length });
+      while (qcache.size > QCACHE_MAX) qcache.delete(qcache.keys().next().value);
+    }
+    return JSON.parse(json);
   }
 
   // ---- run the editor's query → map + table ----
@@ -1708,7 +1794,7 @@ let wasm_bindgen = (function(exports) {
       _tween = { old: prev, t0: performance.now(), dur: 350 }; _anim = true;
     }
     $("status").textContent =
-      `✓ ${rows.length} row${rows.length === 1 ? "" : "s"}, ${features.length} drawn · ${(performance.now() - t0).toFixed(0)} ms · ${mode}` +
+      `✓ ${rows.length} row${rows.length === 1 ? "" : "s"}, ${features.length} drawn · ${(performance.now() - t0).toFixed(0)} ms · ${mode}${lastFromCache ? " · cache" : ""}` +
       (delta ? ` · +${delta.in} −${delta.out}` : "");
     fitIfNeeded(); legend(); if (!$("tableView").classList.contains("hidden")) renderTable();
     requestDraw();
@@ -1852,6 +1938,19 @@ let wasm_bindgen = (function(exports) {
     view.scale = s; view.ox = W / 2 - cx * s; view.oy = H / 2 - cy * s; fitted = true; requestDraw();
   }
   function setProjection(name) { if (!PROJECTIONS[name]) return; proj = name; _oceanGrad = null; resetView(); }
+  // ---- settings + query-cache inspector ----
+  function renderSettings() {
+    $("setcache").checked = cacheOn;
+    let total = 0; for (const v of qcache.values()) total += v.bytes;
+    $("setcacheinfo").textContent = `${qcache.size} cached quer${qcache.size === 1 ? "y" : "ies"} · ${(total / 1024).toFixed(1)} KB`;
+    $("setreteinfo").textContent = cachedBytes ? `Cached .rete in memory · ${(cachedBytes.length / 1048576).toFixed(2)} MB` : "No cached .rete (use the 'remote · cached' data source to download it)";
+    const entries = [...qcache.values()];
+    $("setlist").innerHTML = entries.length ? entries.reverse().map((v) => {
+      const q1 = v.q.replace(/\s+/g, " ").trim();
+      return `<div class="qrow"><code title="${escapeHtml(v.q)}">${escapeHtml(v.mode)} · ${escapeHtml(q1.slice(0, 90))}</code><span class="qmeta">${v.rows} rows · ${(v.bytes / 1024).toFixed(1)} KB</span></div>`;
+    }).join("") : '<p class="mut">No queries cached yet.</p>';
+  }
+  function openSettings() { renderSettings(); $("setmodal").hidden = false; }
   function resetView() { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; requestDraw(); }
   function legend() {
     const seen = new Map();
@@ -1888,6 +1987,21 @@ let wasm_bindgen = (function(exports) {
     return { svg, pts, bbox };
   }
   const fmtDeg = (v) => Math.round(v) + "°";
+  // ---- loader for slow operations (lazy query / cached download) ----
+  function startSpin(msg, sub) {
+    const t0 = performance.now();
+    $("spinmsg").innerHTML = msg; $("spinsub").textContent = sub || "";
+    $("spinbar").style.display = "none"; $("spin").hidden = false;
+    clearInterval(spinTick);
+    spinTick = setInterval(() => { $("spintime").textContent = ((performance.now() - t0) / 1000).toFixed(1) + "s"; }, 100);
+  }
+  function spinProgress(loaded, total) {   // determinate (download) progress
+    $("spinbar").style.display = "block";
+    const pct = total ? Math.round(loaded / total * 100) : 0;
+    $("spinfill").style.width = pct + "%";
+    $("spinsub").textContent = (loaded / 1048576).toFixed(1) + (total ? " / " + (total / 1048576).toFixed(1) : "") + " MB" + (total ? " · " + pct + "%" : "");
+  }
+  function stopSpin() { clearInterval(spinTick); spinTick = null; $("spin").hidden = true; }
   function copyText(s) {
     try { if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(s); } catch (e) {}
     const ta = document.createElement("textarea"); ta.value = s; ta.style.position = "fixed"; ta.style.opacity = "0";
@@ -1933,6 +2047,8 @@ let wasm_bindgen = (function(exports) {
     const era = nearestEra(curScrub);
     $("yr").firstChild.textContent = yearLabel(curScrub);
     $("eraLabel").textContent = era === curScrub ? "" : "borders of " + yearLabel(era);
+    const ei = years.indexOf(era), nx = ei >= 0 && ei < years.length - 1 ? years[ei + 1] : null;
+    $("tlnext").textContent = nx != null ? `→ next ${yearLabel(nx)} (+${nx - curScrub} yr)` : "→ last era";
     const prevA = $("marks").querySelector(".m.snap.active"); if (prevA) prevA.classList.remove("active");
     if (era === curScrub) { const am = $("marks").querySelector('.m.snap[data-y="' + era + '"]'); if (am) am.classList.add("active"); }
     if (era !== curEra || force) {
@@ -2074,6 +2190,11 @@ let wasm_bindgen = (function(exports) {
     };
     step();   // advance immediately so Play feels responsive
   }
+  function stepEra(dir) {   // jump one snapshot back / forward (clamped)
+    let idx = years.indexOf(nearestEra(curScrub)) + dir;
+    idx = Math.max(0, Math.min(years.length - 1, idx));
+    setScrub(years[idx]);
+  }
 
   // ---- data source ----
   async function setMode(m) {
@@ -2081,8 +2202,16 @@ let wasm_bindgen = (function(exports) {
     mode = m;
     if (m === "cached" && !cachedBytes) {
       $("status").className = ""; $("status").textContent = "downloading the full .rete once…";
-      try { const r = await fetch(REMOTE_URL); cachedBytes = new Uint8Array(await r.arrayBuffer()); }
-      catch (e) { $("status").className = "err"; $("status").textContent = "✗ download failed: " + (e.message || e); mode = "embedded"; $("src").value = "embedded"; return; }
+      startSpin("Downloading the full <code>.rete</code> once", "After this, every query runs locally against the cached file — no more network.");
+      try {
+        const r = await fetch(REMOTE_URL); const total = +(r.headers.get("content-length") || 0);
+        if (r.body && r.body.getReader) {   // stream with a real progress bar
+          const reader = r.body.getReader(), chunks = []; let got = 0;
+          for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; spinProgress(got, total); }
+          cachedBytes = new Uint8Array(got); let off = 0; for (const c of chunks) { cachedBytes.set(c, off); off += c.length; }
+        } else { cachedBytes = new Uint8Array(await r.arrayBuffer()); }
+      } catch (e) { stopSpin(); $("status").className = "err"; $("status").textContent = "✗ download failed: " + (e.message || e); mode = "embedded"; $("src").value = "embedded"; return; }
+      stopSpin();
     }
     if (m === "lazy") ensureWorker();
     runQuery();
@@ -2129,6 +2258,22 @@ let wasm_bindgen = (function(exports) {
     $("zoomin").addEventListener("click", () => zoomBy(0.6));
     $("zoomout").addEventListener("click", () => zoomBy(1 / 0.6));
     $("zoomreset").addEventListener("click", () => setWindow(minY, maxY));
+    // step one era back / forward
+    $("stepb").addEventListener("click", () => stepEra(-1));
+    $("stepf").addEventListener("click", () => stepEra(1));
+    // coherent wheel on the timeline: vertical scroll zooms the window, horizontal scroll pans it
+    document.querySelector(".tlcol").addEventListener("wheel", (e) => {
+      e.preventDefault();
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) { const d = (e.deltaX / 700) * tspan(); setWindow(vStart + d, vEnd + d); }
+      else zoomBy(e.deltaY < 0 ? 0.85 : 1 / 0.85);
+    }, { passive: false });
+    // settings + cache modal
+    $("setopen").addEventListener("click", openSettings);
+    $("setclose").addEventListener("click", () => { $("setmodal").hidden = true; });
+    $("setmodal").addEventListener("click", (e) => { if (e.target === $("setmodal")) $("setmodal").hidden = true; });
+    $("setcache").addEventListener("change", (e) => { cacheOn = e.target.checked; if (!cacheOn) qcache.clear(); renderSettings(); });
+    $("setclear").addEventListener("click", () => { qcache.clear(); renderSettings(); });
+    $("setdrop").addEventListener("click", () => { cachedBytes = null; if (mode === "cached") { mode = "embedded"; $("src").value = "embedded"; runQuery(); } renderSettings(); });
     // dismiss the click-to-identify metadata panel
     $("ident").addEventListener("click", (e) => { if (e.target.classList.contains("idclose")) $("ident").style.display = "none"; });
     // table: copy / view the full WKT behind a geometry thumbnail
@@ -2148,6 +2293,7 @@ let wasm_bindgen = (function(exports) {
     // control where it owns the key (SPARQL editor, the slider, the speed select,
     // a button) so we never double-handle.
     document.addEventListener("keydown", (e) => {
+      if (!$("setmodal").hidden) { if (e.key === "Escape") { $("setmodal").hidden = true; e.preventDefault(); } return; }
       if (!$("wktmodal").hidden) { if (e.key === "Escape") { $("wktmodal").hidden = true; e.preventDefault(); } return; }
       const ae = document.activeElement, tag = ae ? ae.tagName : "";
       if (ae === $("q")) return;
