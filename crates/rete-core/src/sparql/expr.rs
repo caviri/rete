@@ -322,6 +322,77 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         // LANG(literal) → its language tag as a plain literal (`"en"`), or `""`
         // for a non-language-tagged literal; non-literal → `None`.
         Builtin::Lang => lang_of(&a0()?).map(|l| Rc::from(format!("\"{l}\""))),
+        // GeoSPARQL relations in value position (e.g. `BIND(geof:sfWithin(..) AS ?x)`)
+        // → a typed xsd:boolean; a type error → None (unbound).
+        Builtin::GeoSfContains
+        | Builtin::GeoSfWithin
+        | Builtin::GeoSfIntersects
+        | Builtin::GeoSfDisjoint
+        | Builtin::GeoSfEquals => {
+            let r = geo_relation(f, &a0()?, &args.get(1)?.value(ctx, b)?)?;
+            Some(Rc::from(bool_literal(r)))
+        }
+        // geof:distance(g1, g2, unitIRI) → xsd:double.
+        Builtin::GeoDistance => {
+            let unit = geo_unit(&args.get(2)?.value(ctx, b)?)?;
+            let d = crate::geo::distance(
+                &wkt_arg(&a0()?)?,
+                &wkt_arg(&args.get(1)?.value(ctx, b)?)?,
+                unit,
+            )?;
+            Some(Rc::from(make_literal(
+                &fmt_plain(d),
+                None,
+                Some(XSD_DOUBLE),
+            )))
+        }
+        // geof:envelope(g) → the bounding box as a geo:wktLiteral POLYGON.
+        Builtin::GeoEnvelope => {
+            let wkt = crate::geo::envelope_wkt(&wkt_arg(&a0()?)?)?;
+            Some(Rc::from(make_literal(
+                &wkt,
+                None,
+                Some(crate::geo::GEO_WKT),
+            )))
+        }
+        _ => None,
+    }
+}
+
+const XSD_DOUBLE: &str = "http://www.w3.org/2001/XMLSchema#double";
+
+/// A `geo:wktLiteral` (leniently: also a plain/`xsd:string`) literal term →
+/// [`crate::geo::Geometry`]. `None` for a non-literal, an other-typed literal
+/// (e.g. `geo:gmlLiteral`), or malformed WKT — all type errors.
+fn wkt_arg(token: &str) -> Option<crate::geo::Geometry> {
+    if !token.starts_with('"') {
+        return None;
+    }
+    match datatype_iri(token).as_deref() {
+        Some(crate::geo::GEO_WKT) | Some(XSD_STRING) | None => {}
+        Some(_) => return None,
+    }
+    crate::geo::parse_wkt(&crate::terms::lexical(token))
+}
+
+/// Evaluate a GeoSPARQL relation builtin on two term tokens.
+fn geo_relation(f: Builtin, t1: &str, t2: &str) -> Option<bool> {
+    let rel = match f {
+        Builtin::GeoSfContains => crate::geo::Rel::Contains,
+        Builtin::GeoSfWithin => crate::geo::Rel::Within,
+        Builtin::GeoSfIntersects => crate::geo::Rel::Intersects,
+        Builtin::GeoSfDisjoint => crate::geo::Rel::Disjoint,
+        Builtin::GeoSfEquals => crate::geo::Rel::Equals,
+        _ => return None,
+    };
+    crate::geo::relate(rel, &wkt_arg(t1)?, &wkt_arg(t2)?)
+}
+
+/// A units IRI term (`<…/metre>` / `<…/degree>`) → [`crate::geo::Unit`].
+fn geo_unit(token: &str) -> Option<crate::geo::Unit> {
+    match iri_content(token)? {
+        crate::geo::UOM_METRE => Some(crate::geo::Unit::Metre),
+        crate::geo::UOM_DEGREE => Some(crate::geo::Unit::Degree),
         _ => None,
     }
 }
@@ -704,6 +775,16 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
         // (case-insensitive; "*" matches any non-empty tag).
         Builtin::LangMatches => match (val(0), val(1)) {
             (Some(tag), Some(range)) => lang_matches(&lexical(&tag), &lexical(&range)),
+            _ => false,
+        },
+        // GeoSPARQL topological relations in FILTER context: a type error
+        // (malformed/non-geometry argument) drops the row (→ false).
+        Builtin::GeoSfContains
+        | Builtin::GeoSfWithin
+        | Builtin::GeoSfIntersects
+        | Builtin::GeoSfDisjoint
+        | Builtin::GeoSfEquals => match (val(0), val(1)) {
+            (Some(a), Some(c)) => geo_relation(f, &a, &c).unwrap_or(false),
             _ => false,
         },
         _ => false,

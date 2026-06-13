@@ -8,6 +8,7 @@ pub mod bgp;
 pub mod dict;
 pub mod dictionary;
 pub mod file;
+pub mod geo;
 pub mod header;
 pub mod index;
 pub mod ingest;

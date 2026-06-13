@@ -261,6 +261,15 @@ pub enum Builtin {
     Uuid,
     StrUuid,
     BNode,
+    // GeoSPARQL (geof:) — topological relations → xsd:boolean, distance →
+    // xsd:double, envelope → geo:wktLiteral. See crate::geo.
+    GeoSfContains,
+    GeoSfWithin,
+    GeoSfIntersects,
+    GeoSfDisjoint,
+    GeoSfEquals,
+    GeoDistance,
+    GeoEnvelope,
 }
 
 /// A small boolean/comparison expression for FILTER (a subset of SPARQL exprs).
@@ -1564,6 +1573,131 @@ mod tests {
             sols[0]["len"],
             "\"11\"^^<http://www.w3.org/2001/XMLSchema#integer>"
         ); // "Alice Smith"
+    }
+
+    #[test]
+    fn geosparql_filter_and_functions() {
+        let wkt = "\"POLYGON((0 0,10 0,10 10,0 10,0 0))\"^^\
+            <http://www.opengis.net/ont/geosparql#wktLiteral>";
+        let bytes = rete_from(&[
+            (
+                "<http://ex/f>",
+                "<http://www.opengis.net/ont/geosparql#hasGeometry>",
+                "<http://ex/f/g>",
+            ),
+            (
+                "<http://ex/f/g>",
+                "<http://www.opengis.net/ont/geosparql#asWKT>",
+                wkt,
+            ),
+            (
+                "<http://ex/f>",
+                "<http://ex/year>",
+                "\"1815\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            ),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let pre = "PREFIX geo: <http://www.opengis.net/ont/geosparql#> \
+            PREFIX geof: <http://www.opengis.net/def/function/geosparql/> \
+            PREFIX uom: <http://www.opengis.net/def/uom/OGC/1.0/> PREFIX ex: <http://ex/> ";
+
+        // Headline: temporal FILTER + spatial point-in-polygon compose.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?f WHERE {{ ?f ex:year ?y ; \
+            geo:hasGeometry/geo:asWKT ?w . \
+            FILTER(?y = 1815 && geof:sfContains(?w, \"POINT(5 5)\"^^geo:wktLiteral)) }}"
+            ),
+        )
+        .unwrap();
+        assert_eq!(s.len(), 1, "point inside the polygon in year 1815");
+        assert_eq!(s[0]["f"], "<http://ex/f>");
+
+        // Point outside → no rows.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?f WHERE {{ \
+            ?f geo:hasGeometry/geo:asWKT ?w . \
+            FILTER(geof:sfContains(?w, \"POINT(50 50)\"^^geo:wktLiteral)) }}"
+            ),
+        )
+        .unwrap();
+        assert!(s.is_empty());
+
+        // sfWithin is the argument-swapped relation.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?f WHERE {{ \
+            ?f geo:hasGeometry/geo:asWKT ?w . \
+            FILTER(geof:sfWithin(\"POINT(5 5)\"^^geo:wktLiteral, ?w)) }}"
+            ),
+        )
+        .unwrap();
+        assert_eq!(s.len(), 1);
+
+        // Malformed WKT is a type error → 0 rows, but the query must NOT error.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?f WHERE {{ \
+            ?f geo:hasGeometry/geo:asWKT ?w . \
+            FILTER(geof:sfContains(?w, \"garbage\"^^geo:wktLiteral)) }}"
+            ),
+        )
+        .unwrap();
+        assert!(s.is_empty());
+
+        // Relation in BIND (value position) → typed xsd:boolean.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?hit WHERE {{ \
+            ?f geo:hasGeometry/geo:asWKT ?w . \
+            BIND(geof:sfContains(?w, \"POINT(5 5)\"^^geo:wktLiteral) AS ?hit) }}"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            s[0]["hit"],
+            "\"true\"^^<http://www.w3.org/2001/XMLSchema#boolean>"
+        );
+
+        // distance → xsd:double; envelope → geo:wktLiteral.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?d WHERE {{ BIND(geof:distance(\
+            \"POINT(0 0)\"^^geo:wktLiteral, \"POINT(0 1)\"^^geo:wktLiteral, uom:metre) AS ?d) }}"
+            ),
+        )
+        .unwrap();
+        assert!(
+            s[0]["d"].ends_with("XMLSchema#double>"),
+            "distance is xsd:double: {}",
+            s[0]["d"]
+        );
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?e WHERE {{ \
+            ?f geo:hasGeometry/geo:asWKT ?w . BIND(geof:envelope(?w) AS ?e) }}"
+            ),
+        )
+        .unwrap();
+        assert!(s[0]["e"].contains("wktLiteral") && s[0]["e"].contains("POLYGON"));
+
+        // An unsupported geof: function is rejected cleanly at parse/lower time.
+        assert!(eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?x WHERE {{ \
+            BIND(geof:buffer(\"POINT(0 0)\"^^geo:wktLiteral, 1) AS ?x) }}"
+            )
+        )
+        .is_err());
     }
 
     #[test]

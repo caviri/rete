@@ -467,6 +467,28 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
                     "http://www.w3.org/2001/XMLSchema#double" => Builtin::CastDouble,
                     "http://www.w3.org/2001/XMLSchema#boolean" => Builtin::CastBoolean,
                     "http://www.w3.org/2001/XMLSchema#string" => Builtin::CastString,
+                    // GeoSPARQL geof: functions.
+                    "http://www.opengis.net/def/function/geosparql/sfContains" => {
+                        Builtin::GeoSfContains
+                    }
+                    "http://www.opengis.net/def/function/geosparql/sfWithin" => {
+                        Builtin::GeoSfWithin
+                    }
+                    "http://www.opengis.net/def/function/geosparql/sfIntersects" => {
+                        Builtin::GeoSfIntersects
+                    }
+                    "http://www.opengis.net/def/function/geosparql/sfDisjoint" => {
+                        Builtin::GeoSfDisjoint
+                    }
+                    "http://www.opengis.net/def/function/geosparql/sfEquals" => {
+                        Builtin::GeoSfEquals
+                    }
+                    "http://www.opengis.net/def/function/geosparql/distance" => {
+                        Builtin::GeoDistance
+                    }
+                    "http://www.opengis.net/def/function/geosparql/envelope" => {
+                        Builtin::GeoEnvelope
+                    }
                     _ => return Err(SparqlError::Unsupported("built-in function")),
                 },
                 _ => return Err(SparqlError::Unsupported("built-in function")),
