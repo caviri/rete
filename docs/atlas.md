@@ -99,12 +99,20 @@ whatever your query binds to `?wkt`.
    [query.wikidata.org](https://query.wikidata.org), joins the matches back, and
    shows each territory's Wikidata entity + population (works best on modern eras;
    it's online-only and fuzzy on historical names).
-10. **Stack data-layer overlays.** Beyond the borders, you can switch on **73
-    extra datasets** as **overlays** — **Battles**, **Archaeological sites**,
-    **Historical states** and **Pleiades ancient places**, **two cross-provider
-    DBpedia layers** (conflicts and power plants, CC-BY-SA — proving the same
-    GeoSPARQL shape works from a *second* SPARQL endpoint), plus **67 Wikidata
-    temporal+spatial themes** (CC0) spanning *conflict* (military operations,
+10. **Stack data-layer overlays — across three providers, with real lifespans.**
+    Beyond the borders, you can switch on **74 extra datasets** as **overlays**,
+    drawn from **three sources**: **Wikidata** (CC0), **DBpedia** (conflicts and
+    power plants — proving the same GeoSPARQL shape works from a *second* SPARQL
+    endpoint), and **OpenHistoricalMap** (CC0; OSM features dated by their
+    `start_date`/`end_date` tags, fetched via Overpass — and drawn as their **real
+    geometry**: historical boundaries as polygons, routes as lines, places as dots).
+    The base four are **Battles**, **Archaeological sites**, **Historical states**
+    and **Pleiades ancient places**. Crucially, things that *persist* — buildings,
+    institutions, polities, OHM features — are modelled as a **lifespan
+    `[startYear, endYear]`** (founded → demolished/dissolved/closed, or to "present"
+    when still standing) and shown across that whole span, while point-in-time
+    **events** keep a single year. The Wikidata themes (CC0) span *conflict*
+    (military operations,
     sieges, massacres, terrorist attacks, coups, revolutions, assassinations,
     nuclear explosions), *disasters* (earthquakes, volcanic eruptions, tsunamis,
     floods, wildfires, explosions, aviation & rail accidents, epidemics, meteorite
@@ -121,9 +129,11 @@ whatever your query binds to `?wkt`.
     (events within a window of the playhead; places active across their
     `[startYear,endYear]`). Each active layer gets a **histogram track** beneath the
     timeline — like a clip in a video editor — showing *when* its data is
-    concentrated, with a playhead. Every theme is reproducible from one CONSTRUCT
-    each — see `scripts/fetch_wikidata_themes.sh` (Wikidata) and
-    `scripts/fetch_dbpedia_themes.sh` (DBpedia).
+    concentrated, with a playhead. Every theme is reproducible from one query each —
+    see `scripts/fetch_wikidata_themes.sh` (Wikidata, instant `emit` + interval
+    `emiti`), `scripts/fetch_dbpedia_themes.sh` (DBpedia), and
+    `scripts/fetch_ohm.sh` + `scripts/ohm_overpass_to_nt.py` (OpenHistoricalMap
+    Overpass → atlas N-Triples, with EDTF date and geometry conversion).
 
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">

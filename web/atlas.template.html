@@ -610,6 +610,17 @@ __GLUE_JS__
   let previewsOn = false; const miniCache = new Map();
   // ---- data-layer overlays: extra datasets dotted over the borders, filtered by year ----
   const REMOTE_DIR = "https://katospiegel-rete.hf.space/data/atlas/", REMOTE_TOK = "?token=sfdbgf1094by21hd128ru39802";
+  // Themes modelled as a lifespan [startYear,endYear] (founded → demolished/dissolved/closed,
+  // else "present") rather than a single point-in-time year. Events stay instant.
+  const INTERVAL_THEMES = new Set([
+    "castles", "fortifications", "lighthouses", "cathedrals", "monasteries", "abbeys", "palaces",
+    "forts", "universities", "world-heritage-sites", "pyramids", "polities", "churches", "hospitals",
+    "cemeteries", "gardens", "city-gates", "power-stations", "factories", "breweries", "shipyards",
+    "airports", "monuments", "memorials", "mosques", "synagogues", "temples", "towers", "theatres",
+    "observatories", "railway-stations", "amphitheatres", "aqueducts", "canals", "windmills",
+    "botanical-gardens", "megaliths", "museums", "libraries", "stadiums", "prisons", "mines",
+    "bridges", "dams", "dbpedia-power", "ohm",
+  ]);
   const LAYER_DEFS = [
     { key: "battles", name: "Battles", file: "history-events.rete", kind: "instant", color: "#ff6b6b",
       q: "SELECT ?label ?year ?wkt WHERE { ?b a ex:Battle ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }" },
@@ -692,10 +703,19 @@ __GLUE_JS__
       // DBpedia (CC-BY-SA) — a second provider, same GeoSPARQL shape.
       ["dbpedia-conflicts", "Conflicts (DBpedia)", "DbpConflict", "#ff8a65"],
       ["dbpedia-power", "Power plants (DBpedia)", "DbpPowerPlant", "#ffd54f"],
-    ].map(([key, name, type, color]) => ({
-      key, name, file: "themes/" + key + ".rete", kind: "instant", color,
-      q: "SELECT ?label ?year ?wkt WHERE { ?x a ex:" + type + " ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }",
-    })),
+      // OpenHistoricalMap (ODbL) — a third provider; OSM features dated by start_date/end_date.
+      ["ohm", "OpenHistoricalMap", "OhmFeature", "#00e5ff"],
+    ].map(([key, name, type, color]) => {
+      // Persistent things (structures, institutions, polities, OHM features) carry a
+      // lifespan [startYear,endYear] and render across it; point-in-time events keep ex:year.
+      const interval = INTERVAL_THEMES.has(key);
+      return {
+        key, name, file: "themes/" + key + ".rete", kind: interval ? "interval" : "instant", color,
+        q: interval
+          ? "SELECT ?label ?s ?e ?wkt WHERE { ?x a ex:" + type + " ; rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ; geo:hasGeometry/geo:asWKT ?wkt }"
+          : "SELECT ?label ?year ?wkt WHERE { ?x a ex:" + type + " ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }",
+      };
+    }),
   ];
   const overlays = LAYER_DEFS.map((d) => ({ def: d, on: false, loaded: false, loading: false, feats: null }));
   const dsBytes = new Map();   // dataset file → fetched-once Uint8Array
@@ -1306,8 +1326,16 @@ __GLUE_JS__
       const rows = (JSON.parse(wasm_bindgen.query(bytes, PREFIXES + layer.def.q, "json")).rows) || [];
       const feats = [];
       for (const r of rows) {
-        const pt = parsePt(lit(r.wkt || "")); if (!pt || !isFinite(pt[0]) || !isFinite(pt[1])) continue;
-        const f = { lon: pt[0], lat: pt[1], label: lit(r.label || "") };
+        const wkt = lit(r.wkt || ""), head = wkt.replace(/^\s+/, "").slice(0, 12).toUpperCase();
+        let f;
+        if (head && !head.startsWith("POINT")) {   // real geometry (polygon / line / multipolygon — e.g. OHM)
+          const rings = wktRings(wkt); if (!rings.length) continue;
+          f = { rings, line: head.startsWith("LINE"), label: lit(r.label || "") };
+          computeGeom(f); f.lon = f.cxLL; f.lat = f.cyLL;   // largest-ring centroid = the feature's anchor point
+        } else {                                   // point overlay (every other layer)
+          const pt = parsePt(wkt); if (!pt || !isFinite(pt[0]) || !isFinite(pt[1])) continue;
+          f = { lon: pt[0], lat: pt[1], label: lit(r.label || "") };
+        }
         if (layer.def.kind === "interval") { f.s = parseInt(lit(r.s), 10); f.e = parseInt(lit(r.e), 10); if (isNaN(f.s) || isNaN(f.e)) continue; }
         else { f.year = parseInt(lit(r.year), 10); if (isNaN(f.year)) continue; }
         feats.push(f);
@@ -1330,9 +1358,25 @@ __GLUE_JS__
     for (const layer of overlays) {
       if (!layer.on || !layer.feats) continue;
       const fts = layerActiveFeats(layer);
-      ctx.fillStyle = layer.def.color; ctx.beginPath();
+      const col = layer.def.color;
       let n = 0;
+      // 1) features with real geometry (OHM polygons / boundaries / lines) drawn individually
       for (const f of fts) {
+        if (!f.rings) continue;
+        if (n >= OVL_CAP) break; n++;
+        const path = new Path2D();
+        for (const ring of f.rings) {
+          for (let i = 0; i < ring.length; i++) { const [x, y] = project(ring[i][0], ring[i][1]); if (i) path.lineTo(x, y); else path.moveTo(x, y); }
+          if (!f.line) path.closePath();
+        }
+        ctx.strokeStyle = col; ctx.lineWidth = f.line ? 1.1 : 0.8;
+        if (!f.line) { ctx.globalAlpha = 0.18; ctx.fillStyle = col; ctx.fill(path, "evenodd"); }
+        ctx.globalAlpha = 0.85; ctx.stroke(path);
+      }
+      // 2) point features batched into one path (fast — every non-OHM layer)
+      ctx.fillStyle = col; ctx.beginPath();
+      for (const f of fts) {
+        if (f.rings) continue;
         if (n >= OVL_CAP) break;
         const [x, y] = project(f.lon, f.lat);
         if (!isFinite(x) || !isFinite(y) || x < -4 || x > W + 4 || y < -4 || y > H + 4) continue;

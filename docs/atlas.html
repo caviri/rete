@@ -326,12 +326,20 @@ era's territory names as <code>VALUES</code> into a query against
 <a href="https://query.wikidata.org">query.wikidata.org</a>, joins the matches back, and
 shows each territory's Wikidata entity + population (works best on modern eras;
 it's online-only and fuzzy on historical names).</li>
-<li><strong>Stack data-layer overlays.</strong> Beyond the borders, you can switch on <strong>73
-extra datasets</strong> as <strong>overlays</strong> — <strong>Battles</strong>, <strong>Archaeological sites</strong>,
-<strong>Historical states</strong> and <strong>Pleiades ancient places</strong>, <strong>two cross-provider
-DBpedia layers</strong> (conflicts and power plants, CC-BY-SA — proving the same
-GeoSPARQL shape works from a <em>second</em> SPARQL endpoint), plus <strong>67 Wikidata
-temporal+spatial themes</strong> (CC0) spanning <em>conflict</em> (military operations,
+<li><strong>Stack data-layer overlays — across three providers, with real lifespans.</strong>
+Beyond the borders, you can switch on <strong>74 extra datasets</strong> as <strong>overlays</strong>,
+drawn from <strong>three sources</strong>: <strong>Wikidata</strong> (CC0), <strong>DBpedia</strong> (conflicts and
+power plants — proving the same GeoSPARQL shape works from a <em>second</em> SPARQL
+endpoint), and <strong>OpenHistoricalMap</strong> (CC0; OSM features dated by their
+<code>start_date</code>/<code>end_date</code> tags, fetched via Overpass — and drawn as their <strong>real
+geometry</strong>: historical boundaries as polygons, routes as lines, places as dots).
+The base four are <strong>Battles</strong>, <strong>Archaeological sites</strong>, <strong>Historical states</strong>
+and <strong>Pleiades ancient places</strong>. Crucially, things that <em>persist</em> — buildings,
+institutions, polities, OHM features — are modelled as a <strong>lifespan
+<code>[startYear, endYear]</code></strong> (founded → demolished/dissolved/closed, or to "present"
+when still standing) and shown across that whole span, while point-in-time
+<strong>events</strong> keep a single year. The Wikidata themes (CC0) span <em>conflict</em>
+(military operations,
 sieges, massacres, terrorist attacks, coups, revolutions, assassinations,
 nuclear explosions), <em>disasters</em> (earthquakes, volcanic eruptions, tsunamis,
 floods, wildfires, explosions, aviation &amp; rail accidents, epidemics, meteorite
@@ -348,9 +356,11 @@ locally, and dotted on the map in its own colour, filtered to the scrub year
 (events within a window of the playhead; places active across their
 <code>[startYear,endYear]</code>). Each active layer gets a <strong>histogram track</strong> beneath the
 timeline — like a clip in a video editor — showing <em>when</em> its data is
-concentrated, with a playhead. Every theme is reproducible from one CONSTRUCT
-each — see <code>scripts/fetch_wikidata_themes.sh</code> (Wikidata) and
-<code>scripts/fetch_dbpedia_themes.sh</code> (DBpedia).</li>
+concentrated, with a playhead. Every theme is reproducible from one query each —
+see <code>scripts/fetch_wikidata_themes.sh</code> (Wikidata, instant <code>emit</code> + interval
+<code>emiti</code>), <code>scripts/fetch_dbpedia_themes.sh</code> (DBpedia), and
+<code>scripts/fetch_ohm.sh</code> + <code>scripts/ohm_overpass_to_nt.py</code> (OpenHistoricalMap
+Overpass → atlas N-Triples, with EDTF date and geometry conversion).</li>
 </ol>
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">
