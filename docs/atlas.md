@@ -62,10 +62,11 @@ whatever your query binds to `?wkt`.
    **copy** buttons. So a `geof:distance` ranking reads as an ordered list and a
    borders query reads as a column of little shapes you can inspect.
 5. **Re-project and toggle layers.** A projection dropdown re-draws the whole map
-   in **Equirectangular, Web Mercator, Mollweide, or Sinusoidal** (the graticule
-   curves and the land is clipped to the world's shape; click-to-identify keeps
-   working through each projection's inverse). A **Layers** menu toggles the fill,
-   labels, graticule, glow, and event markers.
+   in **Equirectangular, Web Mercator, Mollweide, Sinusoidal, or the Dymaxion
+   (Fuller) icosahedral net** (the graticule curves and the land is clipped to the
+   world's shape; click-to-identify keeps working through each projection's
+   inverse — even Dymaxion's per-face gnomonic inverse). A **Layers** menu toggles
+   the fill, labels, graticule, glow, and event markers.
 6. **Click to identify — with metadata.** A click runs
    [`geof:sfContains`](geosparql.html) for the current era against every border
    polygon and opens a panel for the territory under the point — its name, year,
@@ -106,6 +107,11 @@ whatever your query binds to `?wkt`.
 <figure class="fig-center">
   <img src="img/atlas-mollweide.png" alt="The Historical Atlas re-projected to the Mollweide equal-area projection: the world is an ellipse with a curved graticule and the land clipped to the lens, the 1914 borders coloured by territory.">
   <figcaption>The same map and queries re-projected to <b>Mollweide</b> (equal-area) — the projection dropdown also offers Web Mercator and Sinusoidal; the graticule curves and click-to-identify still works through each projection's inverse.</figcaption>
+</figure>
+
+<figure class="fig-center">
+  <img src="img/atlas-dymaxion.png" alt="The Historical Atlas in the Dymaxion (Fuller) projection at 1994 CE: the world's borders laid out across the unfolded icosahedral net of triangular faces, continents edge-to-edge with country outlines and labels.">
+  <figcaption>The <b>Dymaxion / Fuller</b> projection — an unfolded icosahedron (ported from d3-geo-polygon's <code>geoAirocean</code>). Each point is gnomonically projected onto its icosahedral face; territory edges are broken at the net's cut seams, and clicking still identifies the country via the exact per-face inverse.</figcaption>
 </figure>
 
 Everything is computed by the same Rust engine that powers the CLI, compiled to

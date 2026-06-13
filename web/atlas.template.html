@@ -253,6 +253,7 @@
           <option value="merc">Web Mercator</option>
           <option value="moll">Mollweide</option>
           <option value="sinu">Sinusoidal</option>
+          <option value="dymaxion">Dymaxion (Fuller)</option>
         </select>
         <details class="layers"><summary>Layers ▾</summary>
           <label><input type="checkbox" data-layer="fill" checked> Fill</label>
@@ -347,6 +348,143 @@ __GLUE_JS__
   const REMOTE_URL = "https://katospiegel-rete.hf.space/data/atlas/history.rete?token=sfdbgf1094by21hd128ru39802";
 </script>
 <script>
+// Dymaxion / Fuller (Airocean) projection — ported from d3-geo-polygon's geoAirocean
+// (MIT; B. Fuller arrangement, d3 impl by Jason Davies / E. Spinielli / P. Rivière).
+// Self-contained: exposes Dymaxion.{dymaxion:{name,fwd,inv}, FACES_2D, faceOf}.
+(function (global) {
+  "use strict";
+  var pi = Math.PI, halfPi = pi / 2, radians = pi / 180, degrees = 180 / pi;
+  var sin = Math.sin, cos = Math.cos, atan = Math.atan, atan2 = Math.atan2, asin = Math.asin, sqrt = Math.sqrt, abs = Math.abs;
+  var theta = atan(0.5) * degrees;
+  var vertices = [[0, 90], [0, -90]];
+  for (var i = 0; i < 10; ++i) vertices.push([((i * 36 + 180) % 360) - 180, (i & 1) ? theta : -theta]);
+  var polyIdx = [[0, 3, 11], [0, 5, 3], [0, 7, 5], [0, 9, 7], [0, 11, 9], [2, 11, 3], [3, 4, 2], [4, 3, 5], [5, 6, 4], [6, 5, 7], [7, 8, 6], [8, 7, 9], [9, 10, 8], [10, 9, 11], [11, 2, 10], [1, 2, 4], [1, 4, 6], [1, 6, 8], [1, 8, 10], [1, 10, 2]];
+  function toCart(p) { var l = p[0] * radians, f = p[1] * radians, cf = cos(f); return [cf * cos(l), cf * sin(l), sin(f)]; }
+  function fromCart(v) { var m = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) || 1; return [atan2(v[1], v[0]) * degrees, asin(Math.max(-1, Math.min(1, v[2] / m))) * degrees]; }
+  function sphericalCentroid(pts) { var x = 0, y = 0, z = 0; for (var k = 0; k < pts.length; ++k) { var v = toCart(pts[k]); x += v[0]; y += v[1]; z += v[2]; } return fromCart([x, y, z]); }
+  function rotation(dLamDeg, dPhiDeg, dGamDeg) {
+    var dL = dLamDeg * radians, dP = dPhiDeg * radians, dG = (dGamDeg || 0) * radians, cP = cos(dP), sP = sin(dP), cG = cos(dG), sG = sin(dG);
+    function fwd(lambda, phi) { lambda += dL; if (abs(lambda) > pi) lambda -= Math.round(lambda / (2 * pi)) * 2 * pi; var cf = cos(phi), x = cos(lambda) * cf, y = sin(lambda) * cf, z = sin(phi), k = z * cP + x * sP; return [atan2(y * cG - k * sG, x * cP - z * sP), asin(k * cG + y * sG)]; }
+    fwd.invert = function (lambda, phi) { var cf = cos(phi), x = cos(lambda) * cf, y = sin(lambda) * cf, z = sin(phi), k = z * cG - y * sG, l = atan2(y * cG + z * sG, x * cP + k * sP) - dL; if (abs(l) > pi) l -= Math.round(l / (2 * pi)) * 2 * pi; return [l, asin(k * cP - x * sP)]; };
+    return fwd;
+  }
+  function gnomonicRaw(x, y) { var cy = cos(y), k = cos(x) * cy; return [cy * sin(x) / k, sin(y) / k]; }
+  gnomonicRaw.invert = function (x, y) { var z = sqrt(x * x + y * y), c = atan(z), sc = sin(c), cc = cos(c); return [atan2(x * sc, z * cc), asin(z && y * sc / z)]; };
+  function makeFaceProject(centroid) {
+    var rot = rotation(-centroid[0], -centroid[1], 0);
+    function project(coords) { var r = rot(coords[0] * radians, coords[1] * radians); return gnomonicRaw(r[0], r[1]); }
+    project.invert = function (xy) { var g = gnomonicRaw.invert(xy[0], xy[1]); var r = rot.invert(g[0], g[1]); return [r[0] * degrees, r[1] * degrees]; };
+    return project;
+  }
+  function matSub(a, b) { return [a[0] - b[0], a[1] - b[1]]; }
+  function matLen(v) { return sqrt(v[0] * v[0] + v[1] * v[1]); }
+  function matAngle(a, b) { return atan2(a[0] * b[1] - a[1] * b[0], a[0] * b[0] + a[1] * b[1]); }
+  function matMul(a, b) { return [a[0] * b[0] + a[1] * b[3], a[0] * b[1] + a[1] * b[4], a[0] * b[2] + a[1] * b[5] + a[2], a[3] * b[0] + a[4] * b[3], a[3] * b[1] + a[4] * b[4], a[3] * b[2] + a[4] * b[5] + a[5]]; }
+  function matrix(a, b) { var u = matSub(a[1], a[0]), v = matSub(b[1], b[0]), phi = matAngle(u, v), s = matLen(u) / matLen(v); return matMul([1, 0, a[0][0], 0, 1, a[0][1]], matMul([s, 0, 0, 0, s, 0], matMul([cos(phi), sin(phi), 0, -sin(phi), cos(phi), 0], [1, 0, -b[0][0], 0, 1, -b[0][1]]))); }
+  function matInv(m) { var k = 1 / (m[0] * m[4] - m[1] * m[3]); return [k * m[4], -k * m[1], k * (m[1] * m[5] - m[2] * m[4]), -k * m[3], k * m[0], k * (m[2] * m[3] - m[0] * m[5])]; }
+  function pointEqual(a, b) { return a && b && a[0] === b[0] && a[1] === b[1]; }
+  function buildPolyhedron() {
+    var poly = polyIdx.map(function (f) { return f.map(function (vi) { return vertices[vi].slice(); }); });
+    poly.forEach(function (face) { face.centroid = sphericalCentroid(face); });
+    var face, tmp, mid, centroid;
+    face = poly[15]; centroid = face.centroid; tmp = face.slice(); face[0] = centroid;
+    var f20 = [tmp[0], centroid, tmp[2]]; f20.centroid = centroid; poly.push(f20);
+    var f21 = [tmp[0], tmp[1], centroid]; f21.centroid = centroid; poly.push(f21);
+    face = poly[14]; centroid = face.centroid; tmp = face.slice();
+    var proj = makeFaceProject(centroid), a = proj(face[1]), b = proj(face[2]);
+    mid = proj.invert([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]); face[1] = mid;
+    var f22 = [tmp[0], tmp[1], mid]; f22.centroid = centroid; poly.push(f22);
+    face = poly[19]; centroid = face.centroid; tmp = face.slice(); face[1] = mid;
+    var f23 = [mid, tmp[0], tmp[1]]; f23.centroid = centroid; poly.push(f23);
+    return poly;
+  }
+  var parents = [-1, 0, 1, 11, 13, 6, 7, 1, 7, 8, 9, 10, 11, 12, 13, 6, 8, 10, 17, 21, 16, 15, 19, 19];
+  var tau = 2 * pi, quarterPi = pi / 4, epsilon = 1e-6, epsilon2 = 1e-12;
+  function sign(x) { return x > 0 ? 1 : x < 0 ? -1 : 0; }
+  function cartesian(p) { var l = p[0], f = p[1], cf = cos(f); return [cf * cos(l), cf * sin(l), sin(f)]; }
+  function cartesianCross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+  function cartesianNormalizeInPlace(d) { var l = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]); d[0] /= l; d[1] /= l; d[2] /= l; }
+  function longitude(point) { return abs(point[0]) <= pi ? point[0] : sign(point[0]) * ((abs(point[0]) + pi) % tau - pi); }
+  function polygonContains(polygon, point) {
+    var lambda = longitude(point), phi = point[1], sinPhi = sin(phi), normal = [sin(lambda), -cos(lambda), 0], angle = 0, winding = 0, sum = 0;
+    if (sinPhi === 1) phi = halfPi + epsilon; else if (sinPhi === -1) phi = -halfPi - epsilon;
+    for (var i = 0, n = polygon.length; i < n; ++i) {
+      var ring = polygon[i], m = ring.length; if (!m) continue;
+      var point0 = ring[m - 1], lambda0 = longitude(point0), phi0 = point0[1] / 2 + quarterPi, sinPhi0 = sin(phi0), cosPhi0 = cos(phi0);
+      for (var j = 0; j < m; ++j) {
+        var point1 = ring[j], lambda1 = longitude(point1), phi1 = point1[1] / 2 + quarterPi, sinPhi1 = sin(phi1), cosPhi1 = cos(phi1), delta = lambda1 - lambda0, sgn = delta >= 0 ? 1 : -1, absDelta = sgn * delta, antimeridian = absDelta > pi, k = sinPhi0 * sinPhi1;
+        sum += atan2(k * sgn * sin(absDelta), cosPhi0 * cosPhi1 + k * cos(absDelta));
+        angle += antimeridian ? delta + sgn * tau : delta;
+        if ((antimeridian ^ (lambda0 >= lambda)) ^ (lambda1 >= lambda)) {
+          var arc = cartesianCross(cartesian(point0), cartesian(point1)); cartesianNormalizeInPlace(arc);
+          var intersection = cartesianCross(normal, arc); cartesianNormalizeInPlace(intersection);
+          var phiArc = ((antimeridian ^ (delta >= 0)) ? -1 : 1) * asin(intersection[2]);
+          if (phi > phiArc || (phi === phiArc && (arc[0] || arc[1]))) winding += (antimeridian ^ (delta >= 0)) ? 1 : -1;
+        }
+        lambda0 = lambda1; sinPhi0 = sinPhi1; cosPhi0 = cosPhi1; point0 = point1;
+      }
+    }
+    return ((angle < -epsilon || (angle < epsilon && sum < -epsilon2)) ^ (winding & 1)) !== 0;
+  }
+  function makeContains(face) { var ring = [face[0], face[1], face[2], face[0]].map(function (p) { return [p[0] * radians, p[1] * radians]; }); var poly = [ring]; return function (lonDeg, latDeg) { return polygonContains(poly, [lonDeg * radians, latDeg * radians]); }; }
+  function build() {
+    var poly = buildPolyhedron();
+    var faces = poly.map(function (face, idx) { return { face: face, id: idx, centroid: face.centroid, project: makeFaceProject(face.centroid), contains: makeContains(face), children: null, transform: null, edges: null }; });
+    parents.forEach(function (d, idx) { if (d < 0) return; var node = faces[d]; (node.children || (node.children = [])).push(faces[idx]); });
+    function faceEdges(f) { var n = f.length, edges = [], a = f[n - 1]; for (var k = 0; k < n; ++k) edges.push([a, a = f[k]]); return edges; }
+    function sharedEdge(a, b) { var found = null; for (var k = 0; k < a.length; ++k) { var x = a[k]; for (var j = b.length; --j >= 0;) { var y = b[j]; if (x[0] === y[0] && x[1] === y[1]) { if (found) return [found, x]; found = x; } } } return null; }
+    var root = faces[0];
+    (function recurse(node, parent) {
+      node.edges = faceEdges(node.face);
+      if (parent.face) {
+        var shared = node.shared = sharedEdge(node.face, parent.face);
+        var m = matrix(shared.map(parent.project), shared.map(node.project));
+        node.transform = parent.transform ? matMul(parent.transform, m) : m;
+        var edges = parent.edges, k, n;
+        for (k = 0, n = edges.length; k < n; ++k) { if (pointEqual(shared[0], edges[k][1]) && pointEqual(shared[1], edges[k][0])) edges[k] = node; if (pointEqual(shared[0], edges[k][0]) && pointEqual(shared[1], edges[k][1])) edges[k] = node; }
+        edges = node.edges;
+        for (k = 0, n = edges.length; k < n; ++k) { if (pointEqual(shared[0], edges[k][0]) && pointEqual(shared[1], edges[k][1])) edges[k] = parent; if (pointEqual(shared[0], edges[k][1]) && pointEqual(shared[1], edges[k][0])) edges[k] = parent; }
+      } else node.transform = parent.transform;
+      if (node.children) node.children.forEach(function (ch) { recurse(ch, node); });
+    })(root, { transform: null, face: null });
+    return { faces: faces, root: root };
+  }
+  var BUILD = build(), FACES = BUILD.faces;
+  var preRotate = rotation(-83.65929, 25.44458, -87.45184), angleDeg = -60, ca = cos(angleDeg * radians), sa = sin(angleDeg * radians);
+  function faceOfLonLat(lonDeg, latDeg) { for (var k = 0; k < FACES.length; ++k) if (FACES[k].contains(lonDeg, latDeg)) return FACES[k]; return null; }
+  function rawForward(lonDeg, latDeg) {
+    var r = preRotate(lonDeg * radians, latDeg * radians), lon = r[0] * degrees, lat = r[1] * degrees, node = faceOfLonLat(lon, lat);
+    if (!node) return null;
+    var point = node.project([lon, lat]), t = node.transform;
+    var xy = t ? [t[0] * point[0] + t[1] * point[1] + t[2], -(t[3] * point[0] + t[4] * point[1] + t[5])] : [point[0], -point[1]];
+    return [ca * xy[0] - sa * xy[1], sa * xy[0] + ca * xy[1]];
+  }
+  function rawInvert(px, py) { var x = ca * px + sa * py, y = -sa * px + ca * py, coords = faceInvert(BUILD.root, [x, -y]); if (!coords) return null; var r = preRotate.invert(coords[0] * radians, coords[1] * radians); return [r[0] * degrees, r[1] * degrees]; }
+  function faceInvert(node, coordinates) {
+    var invert = node.project.invert, point = coordinates, t = node.transform, p;
+    if (t) { var it = matInv(t); point = [it[0] * point[0] + it[1] * point[1] + it[2], (it[3] * point[0] + it[4] * point[1] + it[5])]; }
+    if (invert) { p = invert(point); if (node === faceOfLonLat(p[0], p[1])) return p; }
+    var children = node.children;
+    for (var k = 0, n = children ? children.length : 0; k < n; ++k) { var q = faceInvert(children[k], coordinates); if (q) return q; }
+    return null;
+  }
+  function rawFaceCorners() {
+    return FACES.map(function (node) { var t = node.transform; return node.face.slice(0, 3).map(function (corner) { var pt = node.project(corner); var xy = t ? [t[0] * pt[0] + t[1] * pt[1] + t[2], -(t[3] * pt[0] + t[4] * pt[1] + t[5])] : [pt[0], -pt[1]]; return [ca * xy[0] - sa * xy[1], sa * xy[0] + ca * xy[1]]; }); });
+  }
+  var rawCorners = rawFaceCorners(), minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  rawCorners.forEach(function (tri) { tri.forEach(function (pt) { if (pt[0] < minX) minX = pt[0]; if (pt[0] > maxX) maxX = pt[0]; if (pt[1] < minY) minY = pt[1]; if (pt[1] > maxY) maxY = pt[1]; }); });
+  var spanX = maxX - minX, spanY = maxY - minY, span = Math.max(spanX, spanY), offX = (span - spanX) / 2, offY = (span - spanY) / 2;
+  function normX(x) { return (x - minX + offX) / span; } function normY(y) { return (y - minY + offY) / span; }
+  function denormX(nx) { return nx * span - offX + minX; } function denormY(ny) { return ny * span - offY + minY; }
+  var FACES_2D = rawCorners.map(function (tri) { return tri.map(function (pt) { return [normX(pt[0]), normY(pt[1])]; }); });
+  function pointInTri(px, py, a, b, c) { var v0x = c[0] - a[0], v0y = c[1] - a[1], v1x = b[0] - a[0], v1y = b[1] - a[1], v2x = px - a[0], v2y = py - a[1], d00 = v0x * v0x + v0y * v0y, d01 = v0x * v1x + v0y * v1y, d02 = v0x * v2x + v0y * v2y, d11 = v1x * v1x + v1y * v1y, d12 = v1x * v2x + v1y * v2y, denom = d00 * d11 - d01 * d01; if (denom === 0) return false; var inv = 1 / denom, u = (d11 * d02 - d01 * d12) * inv, v = (d00 * d12 - d01 * d02) * inv, e = 1e-7; return u >= -e && v >= -e && u + v <= 1 + e; }
+  function faceOf(nx, ny) { for (var k = 0; k < FACES_2D.length; ++k) { var tri = FACES_2D[k]; if (pointInTri(nx, ny, tri[0], tri[1], tri[2])) return k; } return -1; }
+  function fwd(lonDeg, latDeg) { var xy = rawForward(lonDeg, latDeg); if (!xy) return [NaN, NaN]; return [normX(xy[0]), normY(xy[1])]; }
+  function inv(nx, ny) { if (faceOf(nx, ny) < 0) return [NaN, NaN]; var ll = rawInvert(denormX(nx), denormY(ny)); if (!ll) return [NaN, NaN]; return ll; }
+  global.Dymaxion = { dymaxion: { name: "Dymaxion (Fuller)", fwd: fwd, inv: inv }, FACES_2D: FACES_2D, faceOf: faceOf };
+})(typeof globalThis !== "undefined" ? globalThis : window);
+</script>
+<script>
 "use strict";
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -435,8 +573,9 @@ __GLUE_JS__
     sinu: { name: "Sinusoidal",
       fwd: (lo, la) => { const phi = la * D2R; return [(lo * D2R * Math.cos(phi)) / Math.PI / 2 + 0.5, 0.5 - phi / Math.PI] },
       inv: (x, y) => { const phi = (0.5 - y) * Math.PI; const cp = Math.cos(phi); return [cp < 1e-6 ? NaN : ((x - 0.5) * 2 * Math.PI / cp) * R2D, phi * R2D] } },
+    dymaxion: Dymaxion.dymaxion,   // icosahedral net (separate module); polyhedral → seam-aware drawing below
   };
-  let proj = "equi";
+  let proj = "equi", POLY = false, projVer = 0;   // POLY = polyhedral (Dymaxion); projVer bumps the net-coord cache
   const layers = { fill: true, labels: true, graticule: true, glow: true, events: true };
   // query result cache (key = mode + query) + a loader for slow (lazy / download) ops
   const qcache = new Map(); const QCACHE_MAX = 80; let cacheOn = true, lastFromCache = false;
@@ -596,16 +735,29 @@ __GLUE_JS__
   // animations (cross-fade) re-arm it at the end of draw() and stop when idle.
   function requestDraw() { if (_rafPending) return; _rafPending = true; requestAnimationFrame(() => { _rafPending = false; draw(); }); }
 
+  // Per-feature normalised (projection-space) ring coords, cached and recomputed
+  // only when the projection changes — Dymaxion's fwd() is expensive (24-face search).
+  function featNet(f) { if (f._pv !== projVer) { f._pv = projVer; f._nr = f.rings.map((r) => r.map((c) => projNorm(c[0], c[1]))); } return f._nr; }
+  const SEAM = 0.25;   // net-space jump that means an edge crossed a Dymaxion cut → pen up
   function buildPath(f) {
-    const p = new Path2D();
-    for (const ring of f.rings) { ring.forEach((co, i) => { const [x, y] = project(co[0], co[1]); i ? p.lineTo(x, y) : p.moveTo(x, y); }); p.closePath(); }
+    const [W, H] = baseDims(), nr = featNet(f), p = new Path2D();
+    for (const ring of nr) {
+      let pn = null;
+      for (let i = 0; i < ring.length; i++) {
+        const n = ring[i], x = n[0] * W * view.scale + view.ox, y = n[1] * H * view.scale + view.oy;
+        const move = i === 0 || (POLY && pn && Math.abs(n[0] - pn[0]) + Math.abs(n[1] - pn[1]) > SEAM);
+        move ? p.moveTo(x, y) : p.lineTo(x, y); pn = n;
+      }
+      p.closePath();
+    }
     return p;
   }
   // Draw one territory: fill + (selection/change/hover/land) glow under a crisp hairline.
   function drawFeature(ctx, f, alpha, glow) {
     const p = buildPath(f); f.path = p;
     const emph = f.label === highlight, hov = f.label === hoverLabel;
-    if (layers.fill) { ctx.fillStyle = f.color; ctx.globalAlpha = alpha * (emph ? 0.95 : f.chg ? 0.85 : hov ? 0.82 : 0.7); ctx.fill(p, "evenodd"); }
+    if (layers.fill && !POLY) { ctx.fillStyle = f.color; ctx.globalAlpha = alpha * (emph ? 0.95 : f.chg ? 0.85 : hov ? 0.82 : 0.7); ctx.fill(p, "evenodd"); }
+    else if (POLY) { ctx.globalAlpha = alpha * (emph ? 0.9 : f.chg ? 0.8 : hov ? 0.7 : 0.55); ctx.lineWidth = emph ? 2 : 1.1; ctx.strokeStyle = emph ? "#fff" : f.chg === "in" ? "#62e08a" : f.chg === "out" ? "#ff6b6b" : f.color; ctx.stroke(p); ctx.globalAlpha = 1; return; }
     if (emph) { ctx.globalAlpha = alpha * 0.32; ctx.lineWidth = 6; ctx.strokeStyle = "rgba(63,182,168,1)"; ctx.stroke(p); }
     else if (f.chg === "in") { ctx.globalAlpha = alpha * 0.7; ctx.lineWidth = 3.5; ctx.strokeStyle = "#62e08a"; ctx.stroke(p); }
     else if (f.chg === "out") { ctx.globalAlpha = alpha * 0.7; ctx.lineWidth = 3; ctx.strokeStyle = "#ff6b6b"; ctx.stroke(p); }
@@ -617,7 +769,17 @@ __GLUE_JS__
   }
   // world boundary (projected sphere outline) + a sampled (curved) graticule
   function worldOutlinePath() {
-    const p = new Path2D(); let first = true;
+    const [W, H] = baseDims(), p = new Path2D();
+    if (POLY) {   // Dymaxion: the net = 24 face triangles (winding-normalised so a nonzero clip = their union)
+      for (const tri of Dymaxion.FACES_2D) {
+        const s = tri.map((c) => [c[0] * W * view.scale + view.ox, c[1] * H * view.scale + view.oy]);
+        const area = (s[1][0] - s[0][0]) * (s[2][1] - s[0][1]) - (s[2][0] - s[0][0]) * (s[1][1] - s[0][1]);
+        const o = area < 0 ? [s[0], s[2], s[1]] : s;
+        p.moveTo(o[0][0], o[0][1]); p.lineTo(o[1][0], o[1][1]); p.lineTo(o[2][0], o[2][1]); p.closePath();
+      }
+      return p;
+    }
+    let first = true;
     const add = (lon, lat) => { const [x, y] = project(lon, lat); first ? (p.moveTo(x, y), first = false) : p.lineTo(x, y); };
     for (let lat = 90; lat >= -90; lat -= 3) add(-180, lat);
     for (let lon = -180; lon <= 180; lon += 3) add(lon, -90);
@@ -625,15 +787,32 @@ __GLUE_JS__
     for (let lon = 180; lon >= -180; lon -= 3) add(lon, 90);
     p.closePath(); return p;
   }
+  let _gratVer = -1, _grat = null;
+  function graticuleNet() {   // cache the graticule in projection space (recompute only on projection change)
+    if (_gratVer === projVer) return _grat;
+    _gratVer = projVer; const grid = [], emph = [];
+    for (let lon = -180; lon <= 180; lon += 30) { const pl = []; for (let lat = -90; lat <= 90; lat += 5) pl.push(projNorm(lon, lat)); grid.push(pl); }
+    for (let lat = -90; lat <= 90; lat += 30) { const pl = []; for (let lon = -180; lon <= 180; lon += 5) pl.push(projNorm(lon, lat)); grid.push(pl); }
+    const e1 = []; for (let lon = -180; lon <= 180; lon += 5) e1.push(projNorm(lon, 0)); emph.push(e1);
+    const e2 = []; for (let lat = -90; lat <= 90; lat += 5) e2.push(projNorm(0, lat)); emph.push(e2);
+    _grat = { grid, emph }; return _grat;
+  }
+  function strokeNetLines(ctx, lines) {
+    const [W, H] = baseDims(); ctx.beginPath();
+    for (const pl of lines) {
+      let pn = null;
+      for (let i = 0; i < pl.length; i++) {
+        const n = pl[i], x = n[0] * W * view.scale + view.ox, y = n[1] * H * view.scale + view.oy;
+        const move = i === 0 || (POLY && pn && Math.abs(n[0] - pn[0]) + Math.abs(n[1] - pn[1]) > SEAM);
+        move ? ctx.moveTo(x, y) : ctx.lineTo(x, y); pn = n;
+      }
+    }
+    ctx.stroke();
+  }
   function drawGraticule(ctx) {
-    ctx.strokeStyle = "rgba(255,255,255,.05)"; ctx.lineWidth = 1; ctx.beginPath();
-    for (let lon = -180; lon <= 180; lon += 30) for (let lat = -90; lat <= 90; lat += 5) { const [x, y] = project(lon, lat); lat === -90 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
-    for (let lat = -90; lat <= 90; lat += 30) for (let lon = -180; lon <= 180; lon += 5) { const [x, y] = project(lon, lat); lon === -180 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(255,255,255,.09)"; ctx.beginPath();
-    for (let lon = -180; lon <= 180; lon += 5) { const [x, y] = project(lon, 0); lon === -180 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
-    for (let lat = -90; lat <= 90; lat += 5) { const [x, y] = project(0, lat); lat === -90 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
-    ctx.stroke();
+    const g = graticuleNet();
+    ctx.strokeStyle = "rgba(255,255,255,.05)"; ctx.lineWidth = 1; strokeNetLines(ctx, g.grid);
+    ctx.strokeStyle = "rgba(255,255,255,.09)"; strokeNetLines(ctx, g.emph);
   }
   // Centroid labels, largest-area first, greedily declutter by AABB overlap.
   function drawLabels(ctx, alpha) {
@@ -697,7 +876,7 @@ __GLUE_JS__
     }
     if (layers.labels) drawLabels(ctx, labelAlpha);
     ctx.restore();   // end world clip
-    ctx.strokeStyle = "rgba(63,182,168,.30)"; ctx.lineWidth = 1.2; ctx.stroke(outline);   // world boundary
+    ctx.strokeStyle = POLY ? "rgba(63,182,168,.22)" : "rgba(63,182,168,.30)"; ctx.lineWidth = POLY ? 0.7 : 1.2; ctx.stroke(outline);   // world boundary (Dymaxion: the icosahedral net wireframe)
     // vignette + accent frame (last, so it sits over land + labels)
     if (!_vig || _vigW !== W || _vigH !== H) { _vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, 0.85 * Math.hypot(W / 2, H / 2)); _vig.addColorStop(0, "rgba(0,0,0,0)"); _vig.addColorStop(1, "rgba(0,0,0,.24)"); _vigW = W; _vigH = H; }
     ctx.fillStyle = _vig; ctx.fillRect(0, 0, W, H);
@@ -720,7 +899,7 @@ __GLUE_JS__
     const cx = (xmin + xmax) / 2 * W, cy = (ymin + ymax) / 2 * H;
     view.scale = s; view.ox = W / 2 - cx * s; view.oy = H / 2 - cy * s; fitted = true; requestDraw();
   }
-  function setProjection(name) { if (!PROJECTIONS[name]) return; proj = name; _oceanGrad = null; resetView(); }
+  function setProjection(name) { if (!PROJECTIONS[name]) return; proj = name; POLY = name === "dymaxion"; projVer++; _oceanGrad = null; resetView(); }
   // ---- settings + query-cache inspector ----
   function renderSettings() {
     $("setcache").checked = cacheOn;
