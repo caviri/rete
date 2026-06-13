@@ -37,14 +37,16 @@ whatever your query binds to `?wkt`.
    **example picker** ships six ready-made queries (era borders, nearest
    territories to London, what touches Europe, empires by name, bounding boxes,
    a count); each carries a `{YEAR}` placeholder the timeline fills in.
-2. **The timeline is the temporal control — and it's continuous.** It runs
-   year-by-year from 2000 BCE to 2010 CE; the discovered `ex:year` snapshots and a row
-   of **historical-event markers** (death of Alexander, fall of Constantinople,
-   1789, 1914, the fall of the USSR…) sit on the track — hover a marker for its
-   name, click it to jump there (arrow keys nudge ±1/±10 years; Space toggles
-   play). Scrub to any year and the map **cross-fades** to the nearest snapshot
-   ("borders of 1815 CE"); **▶ Play** animates through history at a **speed** you
-   choose (slow → very fast).
+2. **The timeline is the temporal control — and it adapts to the data.** It runs
+   year-by-year from 2000 BCE to 2010 CE; the **eighteen `ex:year` snapshots** and a
+   row of **labelled historical-event markers** (death of Alexander, fall of
+   Constantinople, 1789, 1914, the fall of the USSR…) sit on the track — hover for
+   the full name, click to jump (arrow keys nudge ±1/±10 years; Space toggles play).
+   Because the data is discrete, **▶ Play steps era to era** (each press visibly
+   cross-fades to the next snapshot; the **speed** select is the dwell per era).
+   **Zoom** the axis with `＋`/`－`/`⤢`, or drag the **context strip** beneath it —
+   move the window to pan, drag its edges to zoom into a span (the dense modern eras
+   spread out as you zoom in).
 3. **Changes are highlighted as they happen.** When the era changes, the map
    **cross-fades** and flags the difference: territories that **appear** glow
    green (and pulse briefly once they've settled), ones that **disappear** glow
@@ -54,11 +56,16 @@ whatever your query binds to `?wkt`.
    **geometry thumbnail** (with its kind and vertex count), so a `geof:distance`
    ranking reads as an ordered list and a borders query reads as a column of
    little shapes.
-5. **Click to identify.** A click runs
+5. **Click to identify — with metadata.** A click runs
    [`geof:sfContains`](geosparql.html) for the current era against every border
-   polygon and reports the territory the point fell inside — e.g. clicking North
-   Africa in 1000 CE returns *Fatimid Caliphate*, Paris in 1914 returns *France*.
-6. **Pick where the data lives.** The data-source selector runs the *same*
+   polygon and opens a panel for the territory under the point — its name, year,
+   and the rest of its properties (`partOf`, `subjectTo`, type…) straight from the
+   graph. Clicking North Africa in 1000 CE returns *Fatimid Caliphate*; French West
+   Africa in 1914 shows *partOf France · subjectTo France*.
+6. **Pin a reference era to compare.** **📌 Ref** pins the current borders as a
+   translucent amber overlay; navigate to any other era and the two are
+   superimposed, so you can see directly how the map changed between them.
+7. **Pick where the data lives.** The data-source selector runs the *same*
    queries three ways: **embedded** (the `.rete` baked into the page, fully
    offline), **remote · lazy** (the file stays on remote storage and each query
    faults in only the byte ranges it touches, over a Web Worker), or

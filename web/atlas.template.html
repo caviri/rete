@@ -73,14 +73,16 @@
   .tlcol { flex:1; display:flex; flex-direction:column; }
   .track { position:relative; }
   .track input[type=range] { width:100%; accent-color:var(--accent); position:relative; z-index:2; }
-  .marks { position:absolute; left:0; right:0; top:-9px; height:10px; pointer-events:none; }
-  .marks .m { position:absolute; transform:translateX(-50%); pointer-events:auto; cursor:pointer; }
+  .marks { position:absolute; left:0; right:0; top:-26px; height:26px; pointer-events:none; }
+  .marks .m { position:absolute; bottom:0; transform:translateX(-50%); pointer-events:auto; cursor:pointer; }
   .marks .m.ev { width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent;
-    border-bottom:7px solid var(--accent2); top:2px; }
-  .marks .m.snap { width:2px; height:9px; background:var(--accent); top:1px; border-radius:1px; }
+    border-bottom:7px solid var(--accent2); }
+  .marks .m.snap { width:2px; height:9px; background:var(--accent); border-radius:1px; }
   .marks .m:hover.ev { border-bottom-color:#ffd9b0; }
-  .ticks { display:flex; justify-content:space-between; font-size:11px; color:var(--mut); margin-top:3px; overflow:hidden; }
-  .ticks span { white-space:nowrap; }
+  .marks .m.ev .lbl { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); white-space:nowrap;
+    font-size:9px; color:var(--accent2); background:rgba(12,17,22,.72); padding:0 3px; border-radius:3px; pointer-events:none; }
+  .ticks { position:relative; height:14px; font-size:11px; color:var(--mut); margin-top:3px; overflow:hidden; }
+  .ticks span { position:absolute; transform:translateX(-50%); white-space:nowrap; }
   #mtip { position:fixed; z-index:30; background:#04110f; color:#e6edf3; border:1px solid var(--accent2);
     border-radius:6px; padding:4px 9px; font-size:12px; max-width:240px; transform:translate(-50%,-115%);
     pointer-events:none; display:none; }
@@ -105,6 +107,28 @@
   #tableView td .wktthumb polyline { fill:none; stroke:var(--accent); stroke-width:1; }
   #tableView td .wktmeta { color:var(--mut); margin-left:8px; font-size:11px; }
   #tableView td.geo { white-space:normal; }
+  .tlhead { display:flex; align-items:center; gap:5px; font-size:10.5px; color:var(--mut); margin-bottom:3px; }
+  .tlhead .sp { flex:1; }
+  .tlrange { font-variant-numeric:tabular-nums; }
+  .zbtn { background:#0c1116; border:1px solid var(--line); color:var(--mut); border-radius:5px;
+    padding:1px 8px; font-size:13px; font-weight:700; cursor:pointer; line-height:1.35; }
+  .zbtn:hover { color:var(--ink); border-color:var(--accent); }
+  .ctx { position:relative; height:13px; margin-top:6px; background:#0c1116; border:1px solid var(--line);
+    border-radius:5px; overflow:hidden; }
+  .ctx .ctxsnap { position:absolute; top:3px; width:1px; height:7px; background:rgba(63,182,168,.5); }
+  .ctxwin { position:absolute; top:-1px; bottom:-1px; background:rgba(63,182,168,.16);
+    border-left:2px solid var(--accent); border-right:2px solid var(--accent); cursor:grab; }
+  .ctxwin:active { cursor:grabbing; }
+  .ctxwin .ch { position:absolute; top:0; bottom:0; width:9px; cursor:ew-resize; }
+  .ctxwin .ch.l { left:-5px; } .ctxwin .ch.r { right:-5px; }
+  .mapctl button.on { color:#04110f; background:var(--accent2); border-color:var(--accent2); }
+  #ident .idhead { font-size:13px; margin-bottom:5px; }
+  #ident .idclose { float:right; cursor:pointer; color:var(--mut); margin:-2px -4px 0 8px; font-size:15px; line-height:1; }
+  #ident .idclose:hover { color:var(--ink); }
+  #ident table.idmeta { border-collapse:collapse; width:100%; max-width:280px; }
+  #ident table.idmeta td { padding:2px 0; vertical-align:top; font-size:12px; }
+  #ident table.idmeta td:first-child { color:var(--accent); white-space:nowrap; padding-right:12px; }
+  #ident table.idmeta td:last-child { color:#cdd9e5; word-break:break-word; }
 </style>
 </head>
 <body>
@@ -142,7 +166,7 @@
       <canvas id="map"></canvas>
       <div id="tip"></div>
       <div id="ident"></div>
-      <div class="mapctl"><button id="fit" title="Zoom to fit all territories">⤢ Fit</button><button id="home" title="Reset the view">⌂ Reset</button></div>
+      <div class="mapctl"><button id="fit" title="Zoom to fit all territories">⤢ Fit</button><button id="home" title="Reset the view">⌂ Reset</button><button id="refbtn" title="Pin this era as a transparent reference overlay to compare against">📌 Ref</button></div>
     </div>
     <div class="view hidden" id="tableView"></div>
   </section>
@@ -150,20 +174,29 @@
 <div class="timeline">
   <div class="tlctl">
     <button id="play" class="ghost">▶ Play</button>
-    <select id="speed" title="play speed (years per second)">
-      <option value="50">slow</option>
-      <option value="150" selected>medium</option>
-      <option value="400">fast</option>
-      <option value="1000">very fast</option>
+    <select id="speed" title="play dwell per era">
+      <option value="2400">slow</option>
+      <option value="1400" selected>medium</option>
+      <option value="800">fast</option>
+      <option value="450">very fast</option>
     </select>
   </div>
   <span class="yr" id="yr">—<small id="eraLabel"></small></span>
   <div class="tlcol">
+    <div class="tlhead">
+      <span class="tlrange" id="tlrange"></span><span class="sp"></span>
+      <button id="zoomout" class="zbtn" title="Zoom out">−</button>
+      <button id="zoomin" class="zbtn" title="Zoom in">+</button>
+      <button id="zoomreset" class="zbtn" title="Show the full range">⤢</button>
+    </div>
     <div class="track">
       <div class="marks" id="marks"></div>
       <input type="range" id="tl" min="0" max="100" step="1" value="0">
     </div>
     <div class="ticks" id="ticks"></div>
+    <div class="ctx" id="ctx" title="Drag the window to pan; drag its edges to zoom">
+      <div class="ctxwin" id="ctxwin"><span class="ch l" id="chl"></span><span class="ch r" id="chr"></span></div>
+    </div>
   </div>
 </div>
 <div id="mtip"></div>
@@ -195,13 +228,13 @@ __GLUE_JS__
   // Curated example queries — {YEAR} is replaced with the current era.
   const EXAMPLES = [
     { label: "Borders of the era (map)",
-      q: `SELECT ?label ?wkt WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ;\n     geo:hasGeometry/geo:asWKT ?wkt .\n}` },
+      q: `SELECT ?label ?year ?wkt WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ;\n     geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(?year = {YEAR})\n}` },
     { label: "Nearest territories to London (table)",
       q: `SELECT ?label (geof:distance(?w, "POINT(0 51)"^^geo:wktLiteral, uom:metre)/1000 AS ?km) WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?w .\n} ORDER BY ?km LIMIT 15` },
     { label: "Territories touching Europe (sfIntersects)",
-      q: `SELECT ?label ?wkt WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(geof:sfIntersects(?wkt,\n    "POLYGON((-11 35, 32 35, 32 60, -11 60, -11 35))"^^geo:wktLiteral))\n}` },
+      q: `SELECT ?label ?year ?wkt WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(?year = {YEAR})\n  FILTER(geof:sfIntersects(?wkt,\n    "POLYGON((-11 35, 32 35, 32 60, -11 60, -11 35))"^^geo:wktLiteral))\n}` },
     { label: "Empires & kingdoms (name search)",
-      q: `SELECT ?label ?wkt WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(REGEX(?label, "empire|king|caliph|dynasty", "i"))\n}` },
+      q: `SELECT ?label ?year ?wkt WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(?year = {YEAR})\n  FILTER(REGEX(?label, "empire|king|caliph|dynasty", "i"))\n}` },
     { label: "Bounding box of each territory (geof:envelope)",
       q: `SELECT ?label (geof:envelope(?wkt) AS ?bbox) WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n} LIMIT 30` },
     { label: "How many territories this era? (count)",
@@ -241,6 +274,8 @@ __GLUE_JS__
   let _oceanGrad = null, _oceanH = 0, _vig = null, _vigW = 0, _vigH = 0;
   // change-highlight: territories that appeared this era, pulsed until _pulseUntil
   let _appeared = null, _pulseUntil = 0;
+  // timeline view window [vStart,vEnd] (zoom/pan); a pinned reference era overlay
+  let vStart = 0, vEnd = 1, refFeatures = null, refEra = null;
 
   // ---- term / WKT helpers ----
   function lit(term) {
@@ -457,6 +492,12 @@ __GLUE_JS__
         ctx.globalAlpha = ph; for (const f of _appeared) if (f.path) ctx.stroke(f.path); ctx.globalAlpha = 1;
       } else if (_appeared) { _appeared = null; }
     }
+    // pinned reference era — a translucent amber overlay to compare against
+    if (refFeatures && refFeatures.length) {
+      ctx.save(); ctx.setLineDash([5, 4]); ctx.lineWidth = 1.4;
+      for (const f of refFeatures) { const p = buildPath(f); ctx.globalAlpha = 0.10; ctx.fillStyle = "#f0a35e"; ctx.fill(p, "evenodd"); ctx.globalAlpha = 0.55; ctx.strokeStyle = "#f0a35e"; ctx.stroke(p); }
+      ctx.restore(); ctx.globalAlpha = 1;
+    }
     drawLabels(ctx, labelAlpha);
     // vignette + accent frame (last, so it sits over land + labels)
     if (!_vig || _vigW !== W || _vigH !== H) { _vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, 0.85 * Math.hypot(W / 2, H / 2)); _vig.addColorStop(0, "rgba(0,0,0,0)"); _vig.addColorStop(1, "rgba(0,0,0,.24)"); _vigW = W; _vigH = H; }
@@ -523,9 +564,13 @@ __GLUE_JS__
       "</tbody></table>" + (lastRows.length > 1000 ? `<p class="hint">… ${lastRows.length - 1000} more rows</p>` : "");
   }
 
-  // ---- timeline (continuous year axis; era = nearest snapshot) ----
+  // ---- timeline: continuous year axis with a zoomable / pannable view window ----
   function nearestEra(y) { let best = years[0], bd = Infinity; for (const s of years) { const d = Math.abs(s - y); if (d < bd) { bd = d; best = s; } } return best; }
   function applyTemplate() { $("q").value = tmpl.replace(/\{YEAR\}/g, curEra); }
+  function tspan() { return (vEnd - vStart) || 1; }
+  function tpct(y) { return ((y - vStart) / tspan()) * 100; }      // position within the visible window
+  function cpct(y) { return ((y - minY) / ((maxY - minY) || 1)) * 100; }   // position within the full range (context strip)
+
   function setScrub(y, force) {
     curScrub = Math.max(minY, Math.min(maxY, Math.round(y)));
     $("tl").value = curScrub;
@@ -534,15 +579,77 @@ __GLUE_JS__
     $("eraLabel").textContent = era === curScrub ? "" : "borders of " + yearLabel(era);
     const prevA = $("marks").querySelector(".m.snap.active"); if (prevA) prevA.classList.remove("active");
     if (era === curScrub) { const am = $("marks").querySelector('.m.snap[data-y="' + era + '"]'); if (am) am.classList.add("active"); }
-    if (era !== curEra || force) { curEra = era; applyTemplate(); runQuery(); }
+    if (era !== curEra || force) {
+      curEra = era; applyTemplate(); runQuery();
+      if (curEra < vStart || curEra > vEnd) { const sp = vEnd - vStart; setWindow(curEra - sp / 2, curEra + sp / 2); }  // keep the playing/jumped era in view
+    }
   }
-  function placeMarks() {
-    const span = maxY - minY || 1;
-    const pct = (y) => ((y - minY) / span) * 100;
-    let html = years.map((y) => `<div class="m snap" style="left:${pct(y)}%" data-y="${y}" title="snapshot · ${yearLabel(y)}"></div>`).join("");
-    html += EVENTS.filter((e) => e.y >= minY && e.y <= maxY)
-      .map((e) => `<div class="m ev" style="left:${pct(e.y)}%" data-y="${e.y}" data-t="${escapeHtml(e.t)} · ${yearLabel(e.y)}"></div>`).join("");
+
+  const MIN_SPAN = 30;   // tightest zoom, in years
+  function setWindow(a, b) {
+    a = Math.max(minY, a); b = Math.min(maxY, b);
+    if (b - a < MIN_SPAN && maxY - minY >= MIN_SPAN) { const c = (a + b) / 2; a = c - MIN_SPAN / 2; b = c + MIN_SPAN / 2; if (a < minY) { a = minY; b = minY + MIN_SPAN; } if (b > maxY) { b = maxY; a = maxY - MIN_SPAN; } }
+    vStart = Math.max(minY, a); vEnd = Math.min(maxY, b);
+    $("tl").min = vStart; $("tl").max = vEnd; $("tl").value = Math.max(vStart, Math.min(vEnd, curScrub));
+    $("tlrange").textContent = yearLabel(Math.round(vStart)) + " – " + yearLabel(Math.round(vEnd));
+    renderTicks(); placeMarks(); renderCtx();
+  }
+  function zoomBy(factor) {
+    const c = (curScrub >= vStart && curScrub <= vEnd) ? curScrub : (vStart + vEnd) / 2;
+    const half = (tspan() * factor) / 2; setWindow(c - half, c + half);
+  }
+  function renderCtx() {
+    const l = cpct(vStart), r = cpct(vEnd);
+    $("ctxwin").style.left = l + "%"; $("ctxwin").style.width = Math.max(1, r - l) + "%";
+  }
+  function renderTicks() {   // snapshot-year labels in the window, decluttered + aligned to the marks
+    const W = $("ticks").clientWidth || 600, inWin = years.filter((y) => y >= vStart && y <= vEnd);
+    let html = "", placedR = -1e9;
+    for (const y of inWin) {
+      const x = (tpct(y) / 100) * W, lab = yearLabel(y), est = lab.length * 5.5;
+      if (x - est / 2 < placedR + 4) continue;
+      placedR = x + est / 2; html += `<span style="left:${tpct(y)}%">${lab}</span>`;
+    }
+    $("ticks").innerHTML = html;
+  }
+  function placeMarks() {   // snapshot ticks + event triangles (with decluttered name labels), windowed
+    const W = $("marks").clientWidth || 600;
+    let html = "";
+    for (const y of years) if (y >= vStart && y <= vEnd) html += `<div class="m snap${y === curEra ? " active" : ""}" style="left:${tpct(y)}%" data-y="${y}" title="snapshot · ${yearLabel(y)}"></div>`;
+    const evs = EVENTS.filter((e) => e.y >= vStart && e.y <= vEnd).sort((a, b) => a.y - b.y);
+    let placedR = -1e9;
+    for (const e of evs) {
+      const x = (tpct(e.y) / 100) * W, txt = e.t.length > 24 ? e.t.slice(0, 23) + "…" : e.t, est = txt.length * 5.0;
+      const show = x - est / 2 > placedR + 4; if (show) placedR = x + est / 2;
+      html += `<div class="m ev" style="left:${tpct(e.y)}%" data-y="${e.y}" data-t="${escapeHtml(e.t)} · ${yearLabel(e.y)}">${show ? `<span class="lbl">${escapeHtml(txt)}</span>` : ""}</div>`;
+    }
     $("marks").innerHTML = html;
+  }
+  // context strip (full range): drag the window body to pan, drag its edges to zoom
+  function setupCtx() {
+    const ctxEl = $("ctx");
+    let frag = ""; for (const y of years) frag += `<div class="ctxsnap" style="left:${cpct(y)}%"></div>`;
+    $("ctxwin").insertAdjacentHTML("beforebegin", frag);
+    let mode = null, sx = 0, sVS = 0, sVE = 0;
+    const dxToYr = (dx) => (dx / ctxEl.getBoundingClientRect().width) * (maxY - minY);
+    const move = (e) => {
+      const dy = dxToYr(e.clientX - sx), sp = sVE - sVS;
+      if (mode === "move") { let a = sVS + dy, b = sVE + dy; if (a < minY) { a = minY; b = minY + sp; } if (b > maxY) { b = maxY; a = maxY - sp; } setWindow(a, b); }
+      else if (mode === "l") setWindow(sVS + dy, sVE);
+      else if (mode === "r") setWindow(sVS, sVE + dy);
+    };
+    const up = () => { mode = null; document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
+    const down = (m) => (e) => { mode = m; sx = e.clientX; sVS = vStart; sVE = vEnd; e.preventDefault(); e.stopPropagation(); document.addEventListener("mousemove", move); document.addEventListener("mouseup", up); };
+    $("ctxwin").addEventListener("mousedown", down("move"));
+    $("chl").addEventListener("mousedown", down("l"));
+    $("chr").addEventListener("mousedown", down("r"));
+    ctxEl.addEventListener("mousedown", (e) => { if (e.target !== ctxEl) return; const r = ctxEl.getBoundingClientRect(); const c = minY + ((e.clientX - r.left) / r.width) * (maxY - minY); const half = tspan() / 2; setWindow(c - half, c + half); });
+  }
+  // pin / unpin the current era as a translucent reference overlay
+  function toggleRef() {
+    if (refFeatures) { refFeatures = null; refEra = null; $("refbtn").classList.remove("on"); $("refbtn").textContent = "📌 Ref"; }
+    else { refFeatures = features.map((f) => ({ rings: f.rings, label: f.label })); refEra = curEra; $("refbtn").classList.add("on"); $("refbtn").textContent = "📌 " + yearLabel(refEra) + " ✕"; }
+    requestDraw();
   }
 
   // ---- map interaction ----
@@ -570,34 +677,48 @@ __GLUE_JS__
     if (lab) { tip.textContent = lab; tip.style.left = mx + "px"; tip.style.top = my + "px"; tip.style.display = "block"; } else tip.style.display = "none";
     if (lab !== hoverLabel) { hoverLabel = lab; requestDraw(); }
   }
+  // local part of an IRI/term, for a readable property/value label
+  function localName(term) { const s = lit(term); const m = s.split(/[#/]/).pop(); return m || s; }
   async function identify(mx, my) {
     const [lon, lat] = unproject(mx, my);
-    const q = `SELECT ?label WHERE { ?t ex:year ${curEra} ; rdfs:label ?label ;\n  geo:hasGeometry/geo:asWKT ?w . FILTER(geof:sfContains(?w, "POINT(${lon.toFixed(3)} ${lat.toFixed(3)})"^^geo:wktLiteral)) }`;
+    // one query: pick the territory under the point, then list all its direct properties
+    const q = `SELECT ?label ?p ?o WHERE { ?t ex:year ${curEra} ; rdfs:label ?label ;\n  geo:hasGeometry/geo:asWKT ?w . FILTER(geof:sfContains(?w, "POINT(${lon.toFixed(3)} ${lat.toFixed(3)})"^^geo:wktLiteral)) ?t ?p ?o }`;
     let rows = []; try { rows = (await runRaw(q)).rows || []; } catch (e) {}
     const box = $("ident");
     if (rows.length) {
       highlight = lit(rows[0].label);
-      box.innerHTML = `In <b>${yearLabel(curEra)}</b>, (${lon.toFixed(2)}, ${lat.toFixed(2)}) was in<br><b>${escapeHtml(highlight)}</b><br><span class="mut">via geof:sfContains</span>`;
-    } else { highlight = null; box.innerHTML = `(${lon.toFixed(2)}, ${lat.toFixed(2)}) — no mapped territory in <b>${yearLabel(curEra)}</b>.`; }
+      const skip = new Set(["hasGeometry", "label", "asWKT"]), seen = new Set(), props = [];
+      for (const r of rows) {
+        const pk = localName(r.p); if (skip.has(pk)) continue;
+        const key = pk + " " + r.o; if (seen.has(key)) continue; seen.add(key);
+        props.push([pk, r.o[0] === "<" ? localName(r.o) : lit(r.o)]);
+      }
+      box.innerHTML =
+        `<div class="idhead"><span class="idclose" title="close">×</span><b>${escapeHtml(highlight)}</b><span class="mut"> · ${yearLabel(curEra)}</span></div>` +
+        `<table class="idmeta">${props.map(([k, vv]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(vv)}</td></tr>`).join("")}</table>` +
+        `<div class="mut" style="margin-top:6px">(${lon.toFixed(2)}, ${lat.toFixed(2)}) · via geof:sfContains</div>`;
+    } else { highlight = null; box.innerHTML = `<span class="mut">(${lon.toFixed(2)}, ${lat.toFixed(2)}) — no mapped territory in </span><b>${yearLabel(curEra)}</b>.`; }
     box.style.display = "block"; requestDraw();
   }
 
-  // ---- play (rAF + delta-time; speed is years/second, applied live) ----
-  let playing = null, lastPlayTime = 0;
+  // ---- play: step through the actual era snapshots (dwell per era = speed) so
+  // every press visibly changes the map; data is discrete, so play is discrete. ----
+  let playing = null;
   function togglePlay() {
-    if (playing) { cancelAnimationFrame(playing); playing = null; $("play").textContent = "▶ Play"; return; }
-    $("play").textContent = "⏸ Pause"; lastPlayTime = performance.now();
-    const frame = (now) => {
-      const dt = Math.min(0.1, (now - lastPlayTime) / 1000); lastPlayTime = now;
-      let n = curScrub + (+$("speed").value) * dt; if (n > maxY) n = minY;
-      setScrub(n); playing = requestAnimationFrame(frame);
+    if (playing) { clearTimeout(playing); playing = null; $("play").textContent = "▶ Play"; return; }
+    $("play").textContent = "⏸ Pause";
+    const step = () => {
+      if (busy) { playing = setTimeout(step, 150); return; }   // wait out a slow (lazy) query so no era is skipped
+      const idx = (years.indexOf(nearestEra(curScrub)) + 1) % years.length;
+      setScrub(years[idx]);
+      playing = setTimeout(step, +$("speed").value);
     };
-    playing = requestAnimationFrame(frame);
+    step();   // advance immediately so Play feels responsive
   }
 
   // ---- data source ----
   async function setMode(m) {
-    if (playing) { cancelAnimationFrame(playing); playing = null; $("play").textContent = "▶ Play"; }  // don't keep playing across a source switch
+    if (playing) { clearTimeout(playing); playing = null; $("play").textContent = "▶ Play"; }  // don't keep playing across a source switch
     mode = m;
     if (m === "cached" && !cachedBytes) {
       $("status").className = ""; $("status").textContent = "downloading the full .rete once…";
@@ -617,11 +738,8 @@ __GLUE_JS__
     years = (yr.rows || []).map((r) => parseInt(lit(r.y), 10)).filter((n) => !isNaN(n));
     if (!years.length) { $("boot").remove(); $("status").textContent = "no ex:year values"; return; }
     minY = years[0]; maxY = years[years.length - 1];
-    $("tl").min = minY; $("tl").max = maxY; $("tl").step = 1;
-    // every snapshot gets a marker, but thin the tick *labels* so many eras don't crowd
-    const tickYears = years.filter((y, i) => years.length <= 10 || i % 2 === 0 || i === years.length - 1);
-    $("ticks").innerHTML = tickYears.map((y) => `<span>${yearLabel(y)}</span>`).join("");
-    placeMarks();
+    $("tl").step = 1; vStart = minY; vEnd = maxY;
+    setupCtx(); setWindow(minY, maxY);   // renders ticks + marks + the context window
     // examples
     $("ex").innerHTML = EXAMPLES.map((e, i) => `<option value="${i}">${escapeHtml(e.label)}</option>`).join("");
     $("ex").onchange = () => { tmpl = EXAMPLES[+$("ex").value].q; applyTemplate(); runQuery(); };
@@ -640,6 +758,13 @@ __GLUE_JS__
     // map controls
     $("fit").addEventListener("click", () => zoomToFit(features));
     $("home").addEventListener("click", resetView);
+    $("refbtn").addEventListener("click", toggleRef);
+    // timeline zoom controls (drag the context window below to pan/zoom too)
+    $("zoomin").addEventListener("click", () => zoomBy(0.6));
+    $("zoomout").addEventListener("click", () => zoomBy(1 / 0.6));
+    $("zoomreset").addEventListener("click", () => setWindow(minY, maxY));
+    // dismiss the click-to-identify metadata panel
+    $("ident").addEventListener("click", (e) => { if (e.target.classList.contains("idclose")) $("ident").style.display = "none"; });
     // keyboard: ←/→ ±1yr, ↓/↑ ±10yr, Space toggles play. Defer to the focused
     // control where it owns the key (SPARQL editor, the slider, the speed select,
     // a button) so we never double-handle.

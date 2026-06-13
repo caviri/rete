@@ -149,7 +149,9 @@ def do_basemaps(args, out):
             if not wkt:
                 continue
             props = f.get("properties", {})
-            name = props.get("NAME") or props.get("name") or "Unknown"
+            name = (props.get("NAME") or props.get("name") or "").strip()
+            if not name or name.lower() in ("unknown", "unclaimed", "uninhabited"):
+                continue  # skip unnamed regions — they only add noise to the map/legend
             feats.append((bbox_area(coords), name, wkt, props))
         feats.sort(key=lambda t: t[0], reverse=True)
         if args.max_per_year:
