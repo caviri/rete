@@ -31,7 +31,7 @@ query the file directly with no backend**.
   excluding the RDFS/OWL-entailment and SERVICE-federation regimes rete leaves
   out by design).
 - **Small + fast to open.** Compressed (~zstd) with indexes prebuilt, so it
-  *opens in ~15 ms* — no load/index step. (See [benchmarks](#how-fast).)
+  *opens in ~16 ms* — no load/index step. (See [benchmarks](#how-fast).)
 - **Runs in the browser.** Same engine in WASM — try the
   **[interactive playground](https://caviri.github.io/rete/playground.html)** (a single offline HTML page).
 
@@ -115,8 +115,8 @@ rete opens ~100–160× faster, and after the 2026-06 engine rework (lazy
 slot-row pipeline, adaptive index-nested-loop joins, top-k ORDER BY) it wins
 or ties most SPARQL shapes — aggregates, GROUP BY, DISTINCT, OPTIONAL,
 UNION/VALUES, paths, sorted pagination. Oxigraph keeps a fractional edge on
-ASK, the tightest LIMIT joins, and non-literal REGEX scans. File size: ~11.8×
-smaller than raw N-Triples, ~1.25× of `gzip` — but *queryable*.
+ASK, the tightest LIMIT joins, and non-literal REGEX scans. File size: ~11.7×
+smaller than raw N-Triples, ~1.27× of `gzip` — but *queryable*.
 
 ## Documentation
 
