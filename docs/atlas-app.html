@@ -51,6 +51,7 @@
   .layerlist .lyr input { accent-color:var(--accent); }
   .layerlist .lyr .sw { width:10px; height:10px; border-radius:3px; flex:0 0 auto; outline:1px solid rgba(255,255,255,.15); }
   .layerlist .lyr .cnt { margin-left:auto; color:var(--mut); font-size:10.5px; font-variant-numeric:tabular-nums; }
+  .layerlist .lyr.err .cnt { color:#ff6b6b; }
   .layerlist .lyr.loading .cnt::after { content:"…"; }
   .tracks { display:flex; flex-direction:column; gap:3px; margin-top:6px; }
   .tracks .trk { position:relative; height:22px; background:#0c1116; border:1px solid var(--line); border-radius:4px; overflow:hidden; }
@@ -1856,6 +1857,7 @@ let wasm_bindgen = (function(exports) {
   ];
   const overlays = LAYER_DEFS.map((d) => ({ def: d, on: false, loaded: false, loading: false, feats: null }));
   const dsBytes = new Map();   // dataset file → fetched-once Uint8Array
+  const dsFetching = new Map();   // dataset file → in-flight fetch Promise (dedupe shared files)
   // map projection (lon/lat ↔ normalised [0,1]²) + toggleable draw layers
   const D2R = Math.PI / 180, R2D = 180 / Math.PI, S2 = Math.SQRT2;
   const MERC_YMAX = Math.log(Math.tan(Math.PI / 4 + 85 * D2R / 2));
@@ -2442,36 +2444,44 @@ let wasm_bindgen = (function(exports) {
   function requestStrip() { if (_stripPending) return; _stripPending = true; requestAnimationFrame(() => { _stripPending = false; renderStrip(); renderTracks(); }); }
 
   // ---- data-layer overlays ----
-  async function loadDsBytes(file) {   // fetch a layer's .rete from the bucket, once
+  const OVL_CAP = 6000;   // max points drawn per layer per frame
+  async function loadDsBytes(file) {   // fetch a layer's .rete from the bucket, once; dedupe concurrent same-file loads
     if (dsBytes.has(file)) return dsBytes.get(file);
-    startSpin("Loading layer <code>" + escapeHtml(file) + "</code>", "Fetching the dataset's .rete from the bucket (downloaded once, then queried locally).");
-    try { const r = await fetch(REMOTE_DIR + file + REMOTE_TOK); const b = new Uint8Array(await r.arrayBuffer()); dsBytes.set(file, b); return b; }
-    finally { stopSpin(); }
+    if (dsFetching.has(file)) return dsFetching.get(file);
+    const p = (async () => {
+      startSpin("Loading layer <code>" + escapeHtml(file) + "</code>", "Fetching the dataset's .rete from the bucket (downloaded once, then queried locally).");
+      try { const r = await fetch(REMOTE_DIR + file + REMOTE_TOK); if (!r.ok) throw new Error("HTTP " + r.status); const b = new Uint8Array(await r.arrayBuffer()); dsBytes.set(file, b); return b; }
+      finally { dsFetching.delete(file); stopSpin(); }
+    })();
+    dsFetching.set(file, p); return p;
   }
   function parsePt(wkt) { const m = String(wkt).match(/-?\d+\.?\d*/g); return m && m.length >= 2 ? [parseFloat(m[0]), parseFloat(m[1])] : null; }
   async function loadLayer(layer) {
     if (layer.loaded || layer.loading) return;
-    layer.loading = true; renderLayerList();
+    layer.loading = true; layer.err = null; renderLayerList();
     try {
       const bytes = await loadDsBytes(layer.def.file);
       const rows = (JSON.parse(wasm_bindgen.query(bytes, PREFIXES + layer.def.q, "json")).rows) || [];
       const feats = [];
       for (const r of rows) {
-        const pt = parsePt(lit(r.wkt || "")); if (!pt) continue;
+        const pt = parsePt(lit(r.wkt || "")); if (!pt || !isFinite(pt[0]) || !isFinite(pt[1])) continue;
         const f = { lon: pt[0], lat: pt[1], label: lit(r.label || "") };
         if (layer.def.kind === "interval") { f.s = parseInt(lit(r.s), 10); f.e = parseInt(lit(r.e), 10); if (isNaN(f.s) || isNaN(f.e)) continue; }
         else { f.year = parseInt(lit(r.year), 10); if (isNaN(f.year)) continue; }
         feats.push(f);
       }
-      layer.feats = feats; layer.loaded = true;
-    } catch (e) { layer.on = false; }
-    layer.loading = false;
+      layer.feats = feats; layer.loaded = true; layer.activeBuf = null;
+    } catch (e) { layer.on = false; layer.err = (e && e.message) || "load failed"; }
+    layer.loading = false; renderLayerList();
   }
-  function layerActiveFeats(layer) {   // features visible at the current scrub year
+  function layerActiveFeats(layer) {   // features visible at the current scrub year (cached by scrub+window)
     if (!layer.feats) return [];
-    if (layer.def.kind === "interval") return layer.feats.filter((f) => f.s <= curScrub && f.e >= curScrub);
-    const win = Math.max(20, (vEnd - vStart) / 12);   // instant: a window around the playhead
-    return layer.feats.filter((f) => Math.abs(f.year - curScrub) <= win);
+    const key = curScrub + "|" + vStart + "|" + vEnd;
+    if (layer.activeBuf && layer.activeBuf.key === key) return layer.activeBuf.r;
+    let r;
+    if (layer.def.kind === "interval") r = layer.feats.filter((f) => f.s <= curScrub && f.e >= curScrub);
+    else { const win = Math.max(20, (vEnd - vStart) / 12); r = layer.feats.filter((f) => Math.abs(f.year - curScrub) <= win); }   // instant: a window around the playhead
+    layer.activeBuf = { key, r }; return r;
   }
   function drawOverlays(ctx) {
     const [W, H] = baseDims();
@@ -2481,19 +2491,25 @@ let wasm_bindgen = (function(exports) {
       ctx.fillStyle = layer.def.color; ctx.beginPath();
       let n = 0;
       for (const f of fts) {
-        if (n++ > 6000) break;
+        if (n >= OVL_CAP) break;
         const [x, y] = project(f.lon, f.lat);
-        if (x < -4 || x > W + 4 || y < -4 || y > H + 4) continue;
-        ctx.moveTo(x + 2.4, y); ctx.arc(x, y, 2.4, 0, 6.2832);
+        if (!isFinite(x) || !isFinite(y) || x < -4 || x > W + 4 || y < -4 || y > H + 4) continue;
+        ctx.moveTo(x + 2.4, y); ctx.arc(x, y, 2.4, 0, 6.2832); n++;
       }
       ctx.globalAlpha = 0.85; ctx.fill();
       ctx.globalAlpha = 0.6; ctx.lineWidth = 0.6; ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.stroke();
       ctx.globalAlpha = 1;
     }
   }
+  function layerCount(l) {   // what to show in the list / track label
+    if (l.err) return "✗ " + l.err;
+    if (!l.loaded) return "";
+    const act = layerActiveFeats(l).length;
+    return (act > OVL_CAP ? OVL_CAP.toLocaleString() + " of " : "") + l.feats.length.toLocaleString();
+  }
   function renderLayerList() {
     $("layerlist").innerHTML = overlays.map((l, i) =>
-      `<label class="lyr${l.loading ? " loading" : ""}" data-i="${i}"><input type="checkbox"${l.on ? " checked" : ""}><span class="sw" style="background:${l.def.color}"></span>${escapeHtml(l.def.name)}<span class="cnt">${l.loaded && l.on ? l.feats.length.toLocaleString() : ""}</span></label>`).join("");
+      `<label class="lyr${l.loading ? " loading" : ""}${l.err ? " err" : ""}" data-i="${i}" title="${l.err ? escapeHtml(l.err) : escapeHtml(l.def.file)}"><input type="checkbox"${l.on ? " checked" : ""}><span class="sw" style="background:${l.def.color}"></span>${escapeHtml(l.def.name)}<span class="cnt">${l.on || l.err ? escapeHtml(layerCount(l)) : ""}</span></label>`).join("");
   }
   function renderTracks() {   // a histogram "audio track" per active layer, aligned to the timeline window
     const host = $("tracks"), on = overlays.filter((l) => l.on);
@@ -2503,7 +2519,7 @@ let wasm_bindgen = (function(exports) {
     for (const layer of on) {
       const trk = document.createElement("div"); trk.className = "trk";
       const cv = document.createElement("canvas"); const lbl = document.createElement("span"); lbl.className = "lbl";
-      lbl.textContent = layer.def.name + (layer.feats ? " · " + layer.feats.length.toLocaleString() : " · loading…");
+      lbl.textContent = layer.def.name + (layer.feats ? " · " + layerCount(layer) : " · loading…");
       trk.appendChild(cv); trk.appendChild(lbl); host.appendChild(trk);
       drawTrackHist(cv, layer, W);
     }
@@ -2521,9 +2537,9 @@ let wasm_bindgen = (function(exports) {
     const max = Math.max(1, ...arr); ctx.fillStyle = layer.def.color; ctx.globalAlpha = 0.8;
     const bw = W / bins;
     for (let i = 0; i < bins; i++) { const h = arr[i] / max * (H - 2); if (h > 0) ctx.fillRect(i * bw, H - h, bw + 0.5, h); }
-    // playhead at the current scrub year
-    ctx.globalAlpha = 0.9; ctx.fillStyle = "#e6edf3"; const px = (curScrub - vStart) / span * W;
-    if (px >= 0 && px <= W) ctx.fillRect(px - 0.5, 0, 1, H);
+    // playhead at the current scrub year (clamped to the track so it never vanishes off-window)
+    ctx.globalAlpha = 0.9; ctx.fillStyle = "#e6edf3";
+    const px = Math.max(0, Math.min(W, (curScrub - vStart) / span * W)); ctx.fillRect(px - 0.5, 0, 1, H);
     ctx.globalAlpha = 1;
   }
   // context strip (full range): drag the window body to pan, drag its edges to zoom
@@ -2559,7 +2575,7 @@ let wasm_bindgen = (function(exports) {
     function resize() {
       const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
       c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
-      c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0); c._cssW = r.width; c._cssH = r.height; draw();
+      c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0); c._cssW = r.width; c._cssH = r.height; draw(); requestStrip();
     }
     new ResizeObserver(resize).observe(c); resize();
     let drag = null;
@@ -2697,7 +2713,8 @@ let wasm_bindgen = (function(exports) {
     $("layerlist").addEventListener("change", async (e) => {
       const lab = e.target.closest(".lyr"); if (!lab) return;
       const layer = overlays[+lab.dataset.i]; layer.on = e.target.checked;
-      if (layer.on && !layer.loaded) { try { await loadLayer(layer); } catch (err) {} }
+      if (layer.on) { if (!layer.loaded) { try { await loadLayer(layer); } catch (err) {} } }
+      else { layer.feats = null; layer.loaded = false; layer.activeBuf = null; }   // free memory; re-toggle re-queries the cached bytes
       renderLayerList(); renderTracks(); requestDraw();
     });
     // step one era back / forward
