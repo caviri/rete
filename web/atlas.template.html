@@ -79,7 +79,8 @@
     border-bottom:7px solid var(--accent2); top:2px; }
   .marks .m.snap { width:2px; height:9px; background:var(--accent); top:1px; border-radius:1px; }
   .marks .m:hover.ev { border-bottom-color:#ffd9b0; }
-  .ticks { display:flex; justify-content:space-between; font-size:11px; color:var(--mut); margin-top:3px; }
+  .ticks { display:flex; justify-content:space-between; font-size:11px; color:var(--mut); margin-top:3px; overflow:hidden; }
+  .ticks span { white-space:nowrap; }
   #mtip { position:fixed; z-index:30; background:#04110f; color:#e6edf3; border:1px solid var(--accent2);
     border-radius:6px; padding:4px 9px; font-size:12px; max-width:240px; transform:translate(-50%,-115%);
     pointer-events:none; display:none; }
@@ -95,6 +96,15 @@
     animation:snapPop .45s ease-out; }
   @keyframes snapPop { 0% { transform:translateX(-50%) scaleY(2.4); }
     100% { transform:translateX(-50%) scaleY(1); } }
+  .tlctl { display:flex; flex-direction:column; gap:5px; flex:0 0 auto; width:98px; }
+  .tlctl button, .tlctl select { width:100%; padding:5px 6px; }
+  #tableView td .wktthumb { vertical-align:middle; background:#0a1622; border:1px solid var(--line);
+    border-radius:4px; }
+  #tableView td .wktthumb path { fill:rgba(63,182,168,.34); stroke:var(--accent);
+    stroke-width:.8; stroke-linejoin:round; }
+  #tableView td .wktthumb polyline { fill:none; stroke:var(--accent); stroke-width:1; }
+  #tableView td .wktmeta { color:var(--mut); margin-left:8px; font-size:11px; }
+  #tableView td.geo { white-space:normal; }
 </style>
 </head>
 <body>
@@ -138,6 +148,15 @@
   </section>
 </main>
 <div class="timeline">
+  <div class="tlctl">
+    <button id="play" class="ghost">▶ Play</button>
+    <select id="speed" title="play speed (years per second)">
+      <option value="50">slow</option>
+      <option value="150" selected>medium</option>
+      <option value="400">fast</option>
+      <option value="1000">very fast</option>
+    </select>
+  </div>
   <span class="yr" id="yr">—<small id="eraLabel"></small></span>
   <div class="tlcol">
     <div class="track">
@@ -146,13 +165,6 @@
     </div>
     <div class="ticks" id="ticks"></div>
   </div>
-  <button id="play" class="ghost">▶ Play</button>
-  <select id="speed" title="play speed (years per second)">
-    <option value="50">slow</option>
-    <option value="150" selected>medium</option>
-    <option value="400">fast</option>
-    <option value="1000">very fast</option>
-  </select>
 </div>
 <div id="mtip"></div>
 
@@ -227,6 +239,8 @@ __GLUE_JS__
   // animation / cached-gradient state
   let _rafPending = false, _anim = false, _tween = null, _dragging = false;
   let _oceanGrad = null, _oceanH = 0, _vig = null, _vigW = 0, _vigH = 0;
+  // change-highlight: territories that appeared this era, pulsed until _pulseUntil
+  let _appeared = null, _pulseUntil = 0;
 
   // ---- term / WKT helpers ----
   function lit(term) {
@@ -318,6 +332,7 @@ __GLUE_JS__
     if (q === undefined) q = $("q").value;     // capture at call time (immune to a later manual edit)
     if (busy) { pendingRun = q; return; }      // serialize; coalesce fast re-requests
     busy = true;
+    _tween = null; _appeared = null; _pulseUntil = 0;   // discard any in-flight fade/pulse before a new era
     const t0 = performance.now();
     let res;
     try { res = await runRaw(q); }
@@ -335,10 +350,20 @@ __GLUE_JS__
       computeGeom(f); next.push(f);
     }
     features = next;
-    // Cross-fade from whatever was on screen → the new era's borders.
-    if (prev && prev.length) { _tween = { old: prev, t0: performance.now(), dur: 350 }; _anim = true; }
+    // Cross-fade old→new and flag what CHANGED: appeared (in new, not old) glow in
+    // green; disappeared (in old, not new) glow red as they fade out.
+    let delta = null;
+    if (prev && prev.length) {
+      const pl = new Set(prev.map((f) => f.label)), nl = new Set(next.map((f) => f.label));
+      for (const f of next) f.chg = (f.label && !pl.has(f.label)) ? "in" : null;
+      for (const f of prev) f.chg = (f.label && !nl.has(f.label)) ? "out" : null;
+      const nin = next.filter((f) => f.chg === "in").length, nout = prev.filter((f) => f.chg === "out").length;
+      if (nin || nout) delta = { in: nin, out: nout };
+      _tween = { old: prev, t0: performance.now(), dur: 350 }; _anim = true;
+    }
     $("status").textContent =
-      `✓ ${rows.length} row${rows.length === 1 ? "" : "s"}, ${features.length} drawn · ${(performance.now() - t0).toFixed(0)} ms · ${mode}`;
+      `✓ ${rows.length} row${rows.length === 1 ? "" : "s"}, ${features.length} drawn · ${(performance.now() - t0).toFixed(0)} ms · ${mode}` +
+      (delta ? ` · +${delta.in} −${delta.out}` : "");
     fitIfNeeded(); legend(); if (!$("tableView").classList.contains("hidden")) renderTable();
     requestDraw();
     busy = false;
@@ -360,15 +385,18 @@ __GLUE_JS__
     for (const ring of f.rings) { ring.forEach((co, i) => { const [x, y] = project(co[0], co[1]); i ? p.lineTo(x, y) : p.moveTo(x, y); }); p.closePath(); }
     return p;
   }
-  // Draw one territory: fill + (selection/hover/land) glow under a crisp hairline.
+  // Draw one territory: fill + (selection/change/hover/land) glow under a crisp hairline.
   function drawFeature(ctx, f, alpha, glow) {
     const p = buildPath(f); f.path = p;
     const emph = f.label === highlight, hov = f.label === hoverLabel;
-    ctx.fillStyle = f.color; ctx.globalAlpha = alpha * (emph ? 0.95 : hov ? 0.82 : 0.7); ctx.fill(p, "evenodd");
+    ctx.fillStyle = f.color; ctx.globalAlpha = alpha * (emph ? 0.95 : f.chg ? 0.85 : hov ? 0.82 : 0.7); ctx.fill(p, "evenodd");
     if (emph) { ctx.globalAlpha = alpha * 0.32; ctx.lineWidth = 6; ctx.strokeStyle = "rgba(63,182,168,1)"; ctx.stroke(p); }
+    else if (f.chg === "in") { ctx.globalAlpha = alpha * 0.7; ctx.lineWidth = 3.5; ctx.strokeStyle = "#62e08a"; ctx.stroke(p); }
+    else if (f.chg === "out") { ctx.globalAlpha = alpha * 0.7; ctx.lineWidth = 3; ctx.strokeStyle = "#ff6b6b"; ctx.stroke(p); }
     else if (hov) { ctx.globalAlpha = alpha * 0.5; ctx.lineWidth = 2.2; ctx.strokeStyle = "rgba(63,182,168,.9)"; ctx.stroke(p); }
     else if (glow && view.scale <= 4) { ctx.save(); ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = alpha * 0.16; ctx.lineWidth = 2.5; ctx.strokeStyle = "rgba(150,210,230,1)"; ctx.stroke(p); ctx.restore(); }
-    ctx.globalAlpha = alpha; ctx.lineWidth = emph ? 2.4 : 0.6; ctx.strokeStyle = emph ? "#fff" : "rgba(0,0,0,.45)"; ctx.stroke(p);
+    ctx.globalAlpha = alpha; ctx.lineWidth = emph ? 2.4 : f.chg ? 1.4 : 0.6;
+    ctx.strokeStyle = emph ? "#fff" : f.chg === "in" ? "#62e08a" : f.chg === "out" ? "#ff6b6b" : "rgba(0,0,0,.45)"; ctx.stroke(p);
     ctx.globalAlpha = 1;
   }
   // Centroid labels, largest-area first, greedily declutter by AABB overlap.
@@ -411,22 +439,30 @@ __GLUE_JS__
     { const [, ey] = project(0, 0); ctx.moveTo(0, ey); ctx.lineTo(W, ey); const [ex] = project(0, 0); ctx.moveTo(ex, 0); ctx.lineTo(ex, H); }
     ctx.stroke();
     // territories (cross-fade old→new when an era change is in flight)
-    let labelAlpha = 1;
+    let labelAlpha = 1; const now = performance.now();
     if (_tween) {
-      const k = Math.min(1, (performance.now() - _tween.t0) / _tween.dur), e = easeInOut(k);
+      const k = Math.min(1, (now - _tween.t0) / _tween.dur), e = easeInOut(k);
       for (const f of _tween.old) drawFeature(ctx, f, 1 - e, false);
       for (const f of features) drawFeature(ctx, f, e, true);
       labelAlpha = e;
-      if (k >= 1) _tween = null;
+      if (k >= 1) {   // fade done: hold a pulsing ring on the territories that appeared
+        _tween = null; _appeared = features.filter((f) => f.chg === "in");
+        for (const f of features) f.chg = null; _pulseUntil = now + 1500;
+      }
     } else {
       for (const f of features) drawFeature(ctx, f, 1, true);
+      if (_appeared && _appeared.length && now < _pulseUntil) {
+        const ph = 0.3 + 0.45 * (0.5 + 0.5 * Math.sin(now / 140));
+        ctx.lineWidth = 3; ctx.strokeStyle = "#62e08a"; ctx.lineJoin = "round";
+        ctx.globalAlpha = ph; for (const f of _appeared) if (f.path) ctx.stroke(f.path); ctx.globalAlpha = 1;
+      } else if (_appeared) { _appeared = null; }
     }
     drawLabels(ctx, labelAlpha);
     // vignette + accent frame (last, so it sits over land + labels)
     if (!_vig || _vigW !== W || _vigH !== H) { _vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, 0.85 * Math.hypot(W / 2, H / 2)); _vig.addColorStop(0, "rgba(0,0,0,0)"); _vig.addColorStop(1, "rgba(0,0,0,.24)"); _vigW = W; _vigH = H; }
     ctx.fillStyle = _vig; ctx.fillRect(0, 0, W, H);
     ctx.strokeStyle = "rgba(63,182,168,.26)"; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
-    _anim = !!_tween; if (_anim) requestDraw();
+    _anim = !!_tween || !!(_appeared && now < _pulseUntil); if (_anim) requestDraw();
   }
   // Frame the view on a set of features (legend click / double-click / Fit).
   function zoomToFit(list) {
@@ -447,13 +483,43 @@ __GLUE_JS__
     $("legend").innerHTML = [...seen.entries()].sort((x, y) => y[1].a - x[1].a).slice(0, 200)
       .map(([n, v]) => `<div class="it" data-n="${n.replace(/"/g, "&quot;")}"><span class="sw" style="background:${v.c}"></span>${escapeHtml(n)}</div>`).join("");
   }
+  // A WKT-literal term → tiny inline-SVG sketch of its geometry (for table cells).
+  function isWktTerm(t) { return typeof t === "string" && (/wktLiteral/.test(t) || /^"?\s*(MULTIPOLYGON|POLYGON|MULTILINESTRING|LINESTRING|MULTIPOINT|POINT)\s*\(/i.test(t)); }
+  function wktThumb(wktVal) {
+    const rings = wktRings(wktVal); if (!rings.length) return null;
+    let aLon = Infinity, bLon = -Infinity, aLat = Infinity, bLat = -Infinity, pts = 0;
+    for (const r of rings) { pts += r.length; for (const p of r) { if (p[0] < aLon) aLon = p[0]; if (p[0] > bLon) bLon = p[0]; if (p[1] < aLat) aLat = p[1]; if (p[1] > bLat) bLat = p[1]; } }
+    if (!isFinite(aLon)) return null;
+    const W = 88, H = 46, pad = 3, sx = (bLon - aLon) || 1, sy = (bLat - aLat) || 1;
+    const s = Math.min((W - 2 * pad) / sx, (H - 2 * pad) / sy);
+    const ox = (W - sx * s) / 2, oy = (H - sy * s) / 2;
+    const px = (lon) => (ox + (lon - aLon) * s).toFixed(1), py = (lat) => (oy + (bLat - lat) * s).toFixed(1);
+    let svg;
+    if (/LINESTRING|POINT/i.test(wktVal)) {   // open geometries: stroked polylines, no fill
+      const shapes = rings.map((r) => `<polyline points="${r.map((p) => `${px(p[0])},${py(p[1])}`).join(" ")}"/>`).join("");
+      svg = `<svg class="wktthumb" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${shapes}</svg>`;
+    } else {   // one even-odd path over all rings → holes & multi-parts render correctly
+      const d = rings.map((r) => "M" + r.map((p) => `${px(p[0])} ${py(p[1])}`).join("L") + "Z").join(" ");
+      svg = `<svg class="wktthumb" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><path d="${d}" fill-rule="evenodd"/></svg>`;
+    }
+    return { svg, pts };
+  }
   function renderTable() {
     const v = $("tableView");
     if (!lastRows.length) { v.innerHTML = '<p class="hint">No rows.</p>'; return; }
     const cols = lastVars.length ? lastVars : Object.keys(lastRows[0]);
-    const cell = (t) => { let s = lit(t || ""); if (s.length > 90) s = s.slice(0, 88) + "…"; return escapeHtml(s); };
+    const cell = (t) => {
+      if (isWktTerm(t)) {
+        const val = lit(t).split("^^")[0], thumb = wktThumb(val);
+        if (thumb) {
+          const kind = (val.match(/^\s*([A-Za-z]+)/) || [, "GEOM"])[1].toUpperCase();
+          return `<td class="geo">${thumb.svg}<span class="wktmeta">${escapeHtml(kind)} · ${thumb.pts} pts</span></td>`;
+        }
+      }
+      let s = lit(t || ""); if (s.length > 90) s = s.slice(0, 88) + "…"; return `<td>${escapeHtml(s)}</td>`;
+    };
     v.innerHTML = "<table><thead><tr>" + cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("") + "</tr></thead><tbody>" +
-      lastRows.slice(0, 1000).map((r) => "<tr>" + cols.map((c) => `<td>${cell(r[c])}</td>`).join("") + "</tr>").join("") +
+      lastRows.slice(0, 1000).map((r) => "<tr>" + cols.map((c) => cell(r[c])).join("") + "</tr>").join("") +
       "</tbody></table>" + (lastRows.length > 1000 ? `<p class="hint">… ${lastRows.length - 1000} more rows</p>` : "");
   }
 
@@ -552,7 +618,9 @@ __GLUE_JS__
     if (!years.length) { $("boot").remove(); $("status").textContent = "no ex:year values"; return; }
     minY = years[0]; maxY = years[years.length - 1];
     $("tl").min = minY; $("tl").max = maxY; $("tl").step = 1;
-    $("ticks").innerHTML = years.map((y) => `<span>${yearLabel(y)}</span>`).join("");
+    // every snapshot gets a marker, but thin the tick *labels* so many eras don't crowd
+    const tickYears = years.filter((y, i) => years.length <= 10 || i % 2 === 0 || i === years.length - 1);
+    $("ticks").innerHTML = tickYears.map((y) => `<span>${yearLabel(y)}</span>`).join("");
     placeMarks();
     // examples
     $("ex").innerHTML = EXAMPLES.map((e, i) => `<option value="${i}">${escapeHtml(e.label)}</option>`).join("");

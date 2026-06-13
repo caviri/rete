@@ -250,8 +250,8 @@ query results.</p>
   <figcaption>The atlas at <b>1914 CE</b> — every border polygon comes from a GeoSPARQL query over the <code>history.rete</code>, drawn on a dependency-free canvas. Left: the example picker, the live query, the data-source selector, and the territory legend. Bottom: the era timeline, with historical-event markers (hover for a tooltip).</figcaption>
 </figure>
 <h2>What you're looking at</h2>
-<p>The dataset is <code>history.rete</code> — world territorial borders at seven snapshots
-from <strong>323 BCE to 1994 CE</strong> (<a href="https://github.com/aourednik/historical-basemaps">aourednik/historical-basemaps</a>,
+<p>The dataset is <code>history.rete</code> — world territorial borders at <strong>eighteen snapshots
+from 2000 BCE to 2010 CE</strong> (<a href="https://github.com/aourednik/historical-basemaps">aourednik/historical-basemaps</a>,
 GPL-3.0). Each border is stored as a GeoSPARQL <code>geo:wktLiteral</code> polygon with an
 integer <code>ex:year</code>, so a snapshot is just <code>FILTER(?year = …)</code> and the geometry is
 whatever your query binds to <code>?wkt</code>.</p>
@@ -265,16 +265,22 @@ ranking, a <code>geof:envelope</code>, a <code>FILTER</code> on the label, anyth
 territories to London, what touches Europe, empires by name, bounding boxes,
 a count); each carries a <code>{YEAR}</code> placeholder the timeline fills in.</li>
 <li><strong>The timeline is the temporal control — and it's continuous.</strong> It runs
-year-by-year from −323 to 1994; the discovered <code>ex:year</code> snapshots and a row
+year-by-year from 2000 BCE to 2010 CE; the discovered <code>ex:year</code> snapshots and a row
 of <strong>historical-event markers</strong> (death of Alexander, fall of Constantinople,
 1789, 1914, the fall of the USSR…) sit on the track — hover a marker for its
 name, click it to jump there (arrow keys nudge ±1/±10 years; Space toggles
 play). Scrub to any year and the map <strong>cross-fades</strong> to the nearest snapshot
 ("borders of 1815 CE"); <strong>▶ Play</strong> animates through history at a <strong>speed</strong> you
 choose (slow → very fast).</li>
+<li><strong>Changes are highlighted as they happen.</strong> When the era changes, the map
+<strong>cross-fades</strong> and flags the difference: territories that <strong>appear</strong> glow
+green (and pulse briefly once they've settled), ones that <strong>disappear</strong> glow
+red as they fade out, and the status line tallies the delta (e.g. <code>+87 −125</code>).</li>
 <li><strong>Two views of every result.</strong> <strong>Map</strong> draws the polygons; <strong>Table</strong> shows the
-raw result rows — so a <code>geof:distance</code> ranking reads as an ordered list of
-territories and kilometres, not just shapes.</li>
+raw result rows — and any cell holding a <code>geo:wktLiteral</code> renders an inline
+<strong>geometry thumbnail</strong> (with its kind and vertex count), so a <code>geof:distance</code>
+ranking reads as an ordered list and a borders query reads as a column of
+little shapes.</li>
 <li><strong>Click to identify.</strong> A click runs
 <a href="geosparql.html"><code>geof:sfContains</code></a> for the current era against every border
 polygon and reports the territory the point fell inside — e.g. clicking North
@@ -287,8 +293,8 @@ faults in only the byte ranges it touches, over a Web Worker), or
 "simple file, remote; logic in the browser" story made switchable.</li>
 </ol>
 <figure class="fig-center">
-  <img src="img/atlas-table.png" alt="The Historical Atlas in Table view: the 'nearest territories to London' GeoSPARQL distance query at 1000 CE, listing England at 0 km, Kingdom of France at 113 km, Holy Roman Empire at 240 km, and so on down the result rows.">
-  <figcaption>The same query as a <b>table</b>: <code>geof:distance(?w, "POINT(0 51)", uom:metre)</code> ranks the territories of 1000 CE by distance to London — England 0 km, France 113 km, the Holy Roman Empire 240 km — straight from the embedded <code>.rete</code>.</figcaption>
+  <img src="img/atlas-table.png" alt="The Historical Atlas in Table view at 1492 CE: a label column and a wkt column where each row renders a small teal geometry thumbnail of that territory's border polygon, captioned with its kind and vertex count (e.g. MULTIPOLYGON · 388 pts).">
+  <figcaption>The <b>Table</b> view of the borders query at 1492 CE — every <code>geo:wktLiteral</code> cell renders an inline <b>geometry thumbnail</b> (kind + vertex count), so the result set reads as a column of little shapes, not opaque WKT strings.</figcaption>
 </figure>
 <p>Everything is computed by the same Rust engine that powers the CLI, compiled to
 WebAssembly — see <a href="geosparql.html">GeoSPARQL</a> for the spatial functions and
@@ -298,10 +304,10 @@ the lazy HTTP-range reader).</p>
 <p>The page is assembled by inlining the no-modules WASM engine and the embedded
 <code>.rete</code> into a template (the same offline-only pattern as the playground); the
 remote <code>lazy</code>/<code>cached</code> modes point at the same file served by HTTP range:</p>
-<pre><code class="language-sh"># 1. the embedded dataset (simplified for an in-browser-sized file)
+<pre><code class="language-sh"># 1. the embedded dataset (simplified to an in-browser-sized ~1.5 MB file)
 python3 scripts/geo_to_rete.py basemaps \
-  --years bc323,1000,1492,1815,1914,1945,1994 --prec 2 --min-bbox 0.3 \
-  --max-per-year 90 -o dev/geo/history.nt
+  --years bc2000,bc500,bc323,500,1000,1279,1492,1600,1715,1815,1880,1900,1914,1938,1945,1960,1994,2010 \
+  --prec 3 --min-bbox 0.12 --max-per-year 130 -o dev/geo/history.nt
 rete build dev/geo/history.nt -o web/history.rete
 
 # 2. the browser engine, then the page

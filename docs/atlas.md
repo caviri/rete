@@ -22,8 +22,8 @@ query results.
 
 ## What you're looking at
 
-The dataset is `history.rete` — world territorial borders at seven snapshots
-from **323 BCE to 1994 CE** ([aourednik/historical-basemaps](https://github.com/aourednik/historical-basemaps),
+The dataset is `history.rete` — world territorial borders at **eighteen snapshots
+from 2000 BCE to 2010 CE** ([aourednik/historical-basemaps](https://github.com/aourednik/historical-basemaps),
 GPL-3.0). Each border is stored as a GeoSPARQL `geo:wktLiteral` polygon with an
 integer `ex:year`, so a snapshot is just `FILTER(?year = …)` and the geometry is
 whatever your query binds to `?wkt`.
@@ -38,21 +38,27 @@ whatever your query binds to `?wkt`.
    territories to London, what touches Europe, empires by name, bounding boxes,
    a count); each carries a `{YEAR}` placeholder the timeline fills in.
 2. **The timeline is the temporal control — and it's continuous.** It runs
-   year-by-year from −323 to 1994; the discovered `ex:year` snapshots and a row
+   year-by-year from 2000 BCE to 2010 CE; the discovered `ex:year` snapshots and a row
    of **historical-event markers** (death of Alexander, fall of Constantinople,
    1789, 1914, the fall of the USSR…) sit on the track — hover a marker for its
    name, click it to jump there (arrow keys nudge ±1/±10 years; Space toggles
    play). Scrub to any year and the map **cross-fades** to the nearest snapshot
    ("borders of 1815 CE"); **▶ Play** animates through history at a **speed** you
    choose (slow → very fast).
-3. **Two views of every result.** **Map** draws the polygons; **Table** shows the
-   raw result rows — so a `geof:distance` ranking reads as an ordered list of
-   territories and kilometres, not just shapes.
-4. **Click to identify.** A click runs
+3. **Changes are highlighted as they happen.** When the era changes, the map
+   **cross-fades** and flags the difference: territories that **appear** glow
+   green (and pulse briefly once they've settled), ones that **disappear** glow
+   red as they fade out, and the status line tallies the delta (e.g. `+87 −125`).
+4. **Two views of every result.** **Map** draws the polygons; **Table** shows the
+   raw result rows — and any cell holding a `geo:wktLiteral` renders an inline
+   **geometry thumbnail** (with its kind and vertex count), so a `geof:distance`
+   ranking reads as an ordered list and a borders query reads as a column of
+   little shapes.
+5. **Click to identify.** A click runs
    [`geof:sfContains`](geosparql.html) for the current era against every border
    polygon and reports the territory the point fell inside — e.g. clicking North
    Africa in 1000 CE returns *Fatimid Caliphate*, Paris in 1914 returns *France*.
-5. **Pick where the data lives.** The data-source selector runs the *same*
+6. **Pick where the data lives.** The data-source selector runs the *same*
    queries three ways: **embedded** (the `.rete` baked into the page, fully
    offline), **remote · lazy** (the file stays on remote storage and each query
    faults in only the byte ranges it touches, over a Web Worker), or
@@ -60,8 +66,8 @@ whatever your query binds to `?wkt`.
    "simple file, remote; logic in the browser" story made switchable.
 
 <figure class="fig-center">
-  <img src="img/atlas-table.png" alt="The Historical Atlas in Table view: the 'nearest territories to London' GeoSPARQL distance query at 1000 CE, listing England at 0 km, Kingdom of France at 113 km, Holy Roman Empire at 240 km, and so on down the result rows.">
-  <figcaption>The same query as a <b>table</b>: <code>geof:distance(?w, "POINT(0 51)", uom:metre)</code> ranks the territories of 1000 CE by distance to London — England 0 km, France 113 km, the Holy Roman Empire 240 km — straight from the embedded <code>.rete</code>.</figcaption>
+  <img src="img/atlas-table.png" alt="The Historical Atlas in Table view at 1492 CE: a label column and a wkt column where each row renders a small teal geometry thumbnail of that territory's border polygon, captioned with its kind and vertex count (e.g. MULTIPOLYGON · 388 pts).">
+  <figcaption>The <b>Table</b> view of the borders query at 1492 CE — every <code>geo:wktLiteral</code> cell renders an inline <b>geometry thumbnail</b> (kind + vertex count), so the result set reads as a column of little shapes, not opaque WKT strings.</figcaption>
 </figure>
 
 Everything is computed by the same Rust engine that powers the CLI, compiled to
@@ -76,10 +82,10 @@ The page is assembled by inlining the no-modules WASM engine and the embedded
 remote `lazy`/`cached` modes point at the same file served by HTTP range:
 
 ```sh
-# 1. the embedded dataset (simplified for an in-browser-sized file)
+# 1. the embedded dataset (simplified to an in-browser-sized ~1.5 MB file)
 python3 scripts/geo_to_rete.py basemaps \
-  --years bc323,1000,1492,1815,1914,1945,1994 --prec 2 --min-bbox 0.3 \
-  --max-per-year 90 -o dev/geo/history.nt
+  --years bc2000,bc500,bc323,500,1000,1279,1492,1600,1715,1815,1880,1900,1914,1938,1945,1960,1994,2010 \
+  --prec 3 --min-bbox 0.12 --max-per-year 130 -o dev/geo/history.nt
 rete build dev/geo/history.nt -o web/history.rete
 
 # 2. the browser engine, then the page
