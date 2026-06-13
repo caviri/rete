@@ -1855,6 +1855,7 @@ let wasm_bindgen = (function(exports) {
     "observatories", "railway-stations", "amphitheatres", "aqueducts", "canals", "windmills",
     "botanical-gardens", "megaliths", "museums", "libraries", "stadiums", "prisons", "mines",
     "bridges", "dams", "dbpedia-power", "ohm", "nomisma", "factgrid", "samian-ware",
+    "antarctic-claims", "antarctic-stations", "antarctic-sites", "antarctic-places",
   ]);
   const LAYER_DEFS = [
     { key: "battles", name: "Battles", file: "history-events.rete", kind: "instant", color: "#ff6b6b",
@@ -1945,6 +1946,12 @@ let wasm_bindgen = (function(exports) {
       ["factgrid", "Places & events (FactGrid)", "Place", "#6a1b9a"],
       ["theographic-bible", "Bible events (Theographic)", "BibleEvent", "#d4af37"],
       ["samian-ware", "Roman potters (Samian)", "Potter", "#c1440e"],
+      // Antarctica: territorial claims, research stations, deaths, historic sites, and the SCAR gazetteer.
+      ["antarctic-claims", "Antarctic claims", "Claim", "#80d8ff"],
+      ["antarctic-stations", "Antarctic stations", "Station", "#40c4ff"],
+      ["antarctic-deaths", "Antarctic deaths", "Death", "#ff5252"],
+      ["antarctic-sites", "Antarctic historic sites", "Site", "#b388ff"],
+      ["antarctic-places", "Antarctic place names (SCAR)", "AntarcticPlace", "#82b1ff"],
     ].map(([key, name, type, color]) => {
       // Persistent things (structures, institutions, polities, OHM features) carry a
       // lifespan [startYear,endYear] and render across it; point-in-time events keep ex:year.

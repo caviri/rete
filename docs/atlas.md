@@ -100,8 +100,13 @@ whatever your query binds to `?wkt`.
    shows each territory's Wikidata entity + population (works best on modern eras;
    it's online-only and fuzzy on historical names).
 10. **Stack data-layer overlays — across many providers, with real lifespans.**
-    Beyond the borders, you can switch on **78 extra datasets** as **overlays**,
-    drawn from **seven sources**: **Wikidata** (CC0), **DBpedia** (conflicts and
+    Beyond the borders, you can switch on **83 extra datasets** as **overlays**,
+    including a five-layer **Antarctica** set — territorial-claim sectors as dated
+    wedges (British 1908 → Argentine 1942), research stations (founded→present),
+    people who died on the ice (Scott's party, 1912), Historic Sites & Monuments
+    (Amundsen's *Polheim* tent, Mawson's huts), and the ~20k-feature **SCAR
+    Composite Gazetteer** (the authoritative Antarctic place-name map) — plus the
+    other **seven sources**: **Wikidata** (CC0), **DBpedia** (conflicts and
     power plants — the same GeoSPARQL shape from a *second* SPARQL endpoint),
     **OpenHistoricalMap** (CC0; OSM features dated by their `start_date`/`end_date`
     tags, fetched via Overpass — and drawn as their **real geometry**: historical
