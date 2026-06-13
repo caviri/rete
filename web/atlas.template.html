@@ -93,6 +93,18 @@
   .mapctl button { background:rgba(12,17,22,.82); border:1px solid var(--line); color:var(--mut);
     font-weight:600; padding:4px 10px; font-size:12px; backdrop-filter:blur(2px); }
   .mapctl button:hover { color:var(--ink); border-color:var(--accent); }
+  .maptools { position:absolute; right:10px; top:46px; z-index:6; display:flex; flex-direction:column;
+    gap:6px; align-items:flex-end; }
+  .maptools select { background:rgba(12,17,22,.88); color:#cdd9e5; border:1px solid var(--line);
+    border-radius:7px; padding:4px 8px; font-size:12px; backdrop-filter:blur(2px); }
+  .layers { background:rgba(12,17,22,.88); border:1px solid var(--line); border-radius:7px;
+    font-size:12px; backdrop-filter:blur(2px); }
+  .layers summary { cursor:pointer; padding:4px 10px; color:var(--mut); list-style:none; user-select:none; }
+  .layers summary::-webkit-details-marker { display:none; }
+  .layers summary:hover { color:var(--ink); }
+  .layers[open] summary { color:var(--ink); border-bottom:1px solid var(--line); }
+  .layers label { display:block; padding:3px 10px; color:#cdd9e5; white-space:nowrap; cursor:pointer; }
+  .layers label input { vertical-align:-1px; margin-right:5px; accent-color:var(--accent); }
   .track input[type=range] { height:16px; }
   .marks .m.snap.active { background:var(--accent2); box-shadow:0 0 9px var(--accent2);
     animation:snapPop .45s ease-out; }
@@ -105,8 +117,26 @@
   #tableView td .wktthumb path { fill:rgba(63,182,168,.34); stroke:var(--accent);
     stroke-width:.8; stroke-linejoin:round; }
   #tableView td .wktthumb polyline { fill:none; stroke:var(--accent); stroke-width:1; }
-  #tableView td .wktmeta { color:var(--mut); margin-left:8px; font-size:11px; }
-  #tableView td.geo { white-space:normal; }
+  #tableView td .wktthumb .wktax { stroke:rgba(240,163,94,.5); stroke-width:.6; stroke-dasharray:2 2; }
+  #tableView td.geo { white-space:normal; display:flex; align-items:flex-start; gap:10px; }
+  #tableView td .wktmeta { display:flex; flex-direction:column; gap:2px; color:#bcccd9; font-size:11px; }
+  #tableView td .wktbbox { color:var(--mut); font-size:10.5px; font-variant-numeric:tabular-nums; }
+  #tableView td .wktbtn { align-self:flex-start; margin-top:1px; background:#0c1116; border:1px solid var(--line);
+    color:var(--accent); border-radius:4px; padding:1px 7px; font-size:10.5px; cursor:pointer; }
+  #tableView td .wktbtn:hover { color:#04110f; background:var(--accent); }
+  #wktmodal { position:fixed; inset:0; z-index:60; background:rgba(4,8,12,.7);
+    display:flex; align-items:center; justify-content:center; }
+  #wktmodal[hidden] { display:none; }
+  .wktbox { background:var(--panel); border:1px solid var(--line); border-radius:10px; max-width:80vw;
+    max-height:75vh; display:flex; flex-direction:column; overflow:hidden; }
+  .wkttop { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); }
+  .wkttop .sp { flex:1; } .wkttop b { font-size:13px; color:var(--ink); }
+  .wkttop button { background:#0c1116; border:1px solid var(--line); color:var(--accent); border-radius:5px;
+    padding:3px 10px; cursor:pointer; font-size:12px; }
+  .wkttop button:hover { color:#04110f; background:var(--accent); }
+  .wkttop #wktmclose { color:var(--mut); font-size:16px; line-height:1; padding:1px 9px; }
+  #wktmtext { margin:0; padding:12px; overflow:auto; font:12px/1.5 ui-monospace,Consolas,monospace;
+    color:#cdd9e5; white-space:pre-wrap; word-break:break-word; }
   .tlhead { display:flex; align-items:center; gap:5px; font-size:10.5px; color:var(--mut); margin-bottom:3px; }
   .tlhead .sp { flex:1; }
   .tlrange { font-variant-numeric:tabular-nums; }
@@ -166,6 +196,21 @@
       <canvas id="map"></canvas>
       <div id="tip"></div>
       <div id="ident"></div>
+      <div class="maptools">
+        <select id="proj" title="Map projection">
+          <option value="equi">Equirectangular</option>
+          <option value="merc">Web Mercator</option>
+          <option value="moll">Mollweide</option>
+          <option value="sinu">Sinusoidal</option>
+        </select>
+        <details class="layers"><summary>Layers ▾</summary>
+          <label><input type="checkbox" data-layer="fill" checked> Fill</label>
+          <label><input type="checkbox" data-layer="labels" checked> Labels</label>
+          <label><input type="checkbox" data-layer="graticule" checked> Graticule</label>
+          <label><input type="checkbox" data-layer="glow" checked> Glow</label>
+          <label><input type="checkbox" data-layer="events" checked> Events</label>
+        </details>
+      </div>
       <div class="mapctl"><button id="fit" title="Zoom to fit all territories">⤢ Fit</button><button id="home" title="Reset the view">⌂ Reset</button><button id="refbtn" title="Pin this era as a transparent reference overlay to compare against">📌 Ref</button></div>
     </div>
     <div class="view hidden" id="tableView"></div>
@@ -200,6 +245,12 @@
   </div>
 </div>
 <div id="mtip"></div>
+<div id="wktmodal" hidden>
+  <div class="wktbox">
+    <div class="wkttop"><b id="wkttitle">WKT</b><span class="sp"></span><button id="wktmcopy">⧉ copy</button><button id="wktmclose" title="close">×</button></div>
+    <pre id="wktmtext"></pre>
+  </div>
+</div>
 
 <script id="reteGlue">
 __GLUE_JS__
@@ -239,6 +290,14 @@ __GLUE_JS__
       q: `SELECT ?label (geof:envelope(?wkt) AS ?bbox) WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n} LIMIT 30` },
     { label: "How many territories this era? (count)",
       q: `SELECT (COUNT(*) AS ?territories) WHERE { ?t ex:year {YEAR} }` },
+    { label: "Who ruled Paris? — every era (time × place)",
+      q: `SELECT ?year ?label ?wkt WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(geof:sfContains(?wkt, "POINT(2.35 48.85)"^^geo:wktLiteral))\n} ORDER BY ?year` },
+    { label: "Transcontinental — touches Europe AND Asia ({YEAR})",
+      q: `SELECT ?label ?year ?wkt WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(?year = {YEAR})\n  FILTER(geof:sfIntersects(?wkt, "POLYGON((-10 36, 40 36, 40 60, -10 60, -10 36))"^^geo:wktLiteral))\n  FILTER(geof:sfIntersects(?wkt, "POLYGON((60 20, 140 20, 140 60, 60 60, 60 20))"^^geo:wktLiteral))\n}` },
+    { label: "Within 2500 km of Rome ({YEAR})",
+      q: `SELECT ?label ?year ?wkt (geof:distance(?wkt, "POINT(12.5 41.9)"^^geo:wktLiteral, uom:metre)/1000 AS ?km) WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(?year = {YEAR})\n  FILTER(geof:distance(?wkt, "POINT(12.5 41.9)"^^geo:wktLiteral, uom:metre)/1000 < 2500)\n} ORDER BY ?km` },
+    { label: "Territories per era — count over all of time",
+      q: `SELECT ?year (COUNT(?t) AS ?territories) WHERE {\n  ?t ex:year ?year .\n} GROUP BY ?year ORDER BY ?year` },
   ];
 
   // Historical events shown as timeline markers (tooltip = name).
@@ -276,6 +335,23 @@ __GLUE_JS__
   let _appeared = null, _pulseUntil = 0;
   // timeline view window [vStart,vEnd] (zoom/pan); a pinned reference era overlay
   let vStart = 0, vEnd = 1, refFeatures = null, refEra = null;
+  // map projection (lon/lat ↔ normalised [0,1]²) + toggleable draw layers
+  const D2R = Math.PI / 180, R2D = 180 / Math.PI, S2 = Math.SQRT2;
+  const MERC_YMAX = Math.log(Math.tan(Math.PI / 4 + 85 * D2R / 2));
+  const PROJECTIONS = {
+    equi: { name: "Equirectangular", fwd: (lo, la) => [(lo + 180) / 360, (90 - la) / 180], inv: (x, y) => [x * 360 - 180, 90 - y * 180] },
+    merc: { name: "Web Mercator",
+      fwd: (lo, la) => { const l = Math.max(-85, Math.min(85, la)) * D2R; return [(lo + 180) / 360, 0.5 - Math.log(Math.tan(Math.PI / 4 + l / 2)) / (2 * MERC_YMAX)]; },
+      inv: (x, y) => [x * 360 - 180, (2 * Math.atan(Math.exp((0.5 - y) * 2 * MERC_YMAX)) - Math.PI / 2) * R2D] },
+    moll: { name: "Mollweide",
+      fwd: (lo, la) => { const phi = la * D2R; let th = phi; for (let i = 0; i < 6; i++) { const d = (2 * th + Math.sin(2 * th) - Math.PI * Math.sin(phi)) / (2 + 2 * Math.cos(2 * th)); th -= d; if (Math.abs(d) < 1e-6) break; } const X = (2 * S2 / Math.PI) * (lo * D2R) * Math.cos(th), Y = S2 * Math.sin(th); return [X / (2 * S2) + 0.5, 0.5 - Y / (2 * S2)]; },
+      inv: (x, y) => { const X = (x - 0.5) * 2 * S2, Y = (0.5 - y) * 2 * S2; const th = Math.asin(Math.max(-1, Math.min(1, Y / S2))); const la = Math.asin(Math.max(-1, Math.min(1, (2 * th + Math.sin(2 * th)) / Math.PI))) * R2D; const ct = Math.cos(th); return [ct < 1e-6 ? NaN : (Math.PI * X / (2 * S2 * ct)) * R2D, la]; } },
+    sinu: { name: "Sinusoidal",
+      fwd: (lo, la) => { const phi = la * D2R; return [(lo * D2R * Math.cos(phi)) / Math.PI / 2 + 0.5, 0.5 - phi / Math.PI] },
+      inv: (x, y) => { const phi = (0.5 - y) * Math.PI; const cp = Math.cos(phi); return [cp < 1e-6 ? NaN : ((x - 0.5) * 2 * Math.PI / cp) * R2D, phi * R2D] } },
+  };
+  let proj = "equi";
+  const layers = { fill: true, labels: true, graticule: true, glow: true, events: true };
 
   // ---- term / WKT helpers ----
   function lit(term) {
@@ -407,8 +483,9 @@ __GLUE_JS__
 
   // ---- projection / draw (CSS px; ctx is dpr-scaled) ----
   function baseDims() { const c = $("map"); return [c._cssW || c.clientWidth, c._cssH || c.clientHeight]; }
-  function project(lon, lat) { const [W, H] = baseDims(); return [((lon + 180) / 360 * W) * view.scale + view.ox, ((90 - lat) / 180 * H) * view.scale + view.oy]; }
-  function unproject(px, py) { const [W, H] = baseDims(); const bx = (px - view.ox) / view.scale, by = (py - view.oy) / view.scale; return [bx / W * 360 - 180, 90 - by / H * 180]; }
+  function projNorm(lon, lat) { return PROJECTIONS[proj].fwd(lon, lat); }      // → [nx,ny] in ~[0,1]²
+  function project(lon, lat) { const [W, H] = baseDims(), p = projNorm(lon, lat); return [p[0] * W * view.scale + view.ox, p[1] * H * view.scale + view.oy]; }
+  function unproject(px, py) { const [W, H] = baseDims(); return PROJECTIONS[proj].inv((px - view.ox) / view.scale / W, (py - view.oy) / view.scale / H); }
   function fitIfNeeded() { if (!fitted) { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; } }
 
   // Single rAF-coalesced render loop: interactions request a frame; active
@@ -424,15 +501,35 @@ __GLUE_JS__
   function drawFeature(ctx, f, alpha, glow) {
     const p = buildPath(f); f.path = p;
     const emph = f.label === highlight, hov = f.label === hoverLabel;
-    ctx.fillStyle = f.color; ctx.globalAlpha = alpha * (emph ? 0.95 : f.chg ? 0.85 : hov ? 0.82 : 0.7); ctx.fill(p, "evenodd");
+    if (layers.fill) { ctx.fillStyle = f.color; ctx.globalAlpha = alpha * (emph ? 0.95 : f.chg ? 0.85 : hov ? 0.82 : 0.7); ctx.fill(p, "evenodd"); }
     if (emph) { ctx.globalAlpha = alpha * 0.32; ctx.lineWidth = 6; ctx.strokeStyle = "rgba(63,182,168,1)"; ctx.stroke(p); }
     else if (f.chg === "in") { ctx.globalAlpha = alpha * 0.7; ctx.lineWidth = 3.5; ctx.strokeStyle = "#62e08a"; ctx.stroke(p); }
     else if (f.chg === "out") { ctx.globalAlpha = alpha * 0.7; ctx.lineWidth = 3; ctx.strokeStyle = "#ff6b6b"; ctx.stroke(p); }
     else if (hov) { ctx.globalAlpha = alpha * 0.5; ctx.lineWidth = 2.2; ctx.strokeStyle = "rgba(63,182,168,.9)"; ctx.stroke(p); }
-    else if (glow && view.scale <= 4) { ctx.save(); ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = alpha * 0.16; ctx.lineWidth = 2.5; ctx.strokeStyle = "rgba(150,210,230,1)"; ctx.stroke(p); ctx.restore(); }
+    else if (glow && layers.glow && view.scale <= 4) { ctx.save(); ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = alpha * 0.16; ctx.lineWidth = 2.5; ctx.strokeStyle = "rgba(150,210,230,1)"; ctx.stroke(p); ctx.restore(); }
     ctx.globalAlpha = alpha; ctx.lineWidth = emph ? 2.4 : f.chg ? 1.4 : 0.6;
-    ctx.strokeStyle = emph ? "#fff" : f.chg === "in" ? "#62e08a" : f.chg === "out" ? "#ff6b6b" : "rgba(0,0,0,.45)"; ctx.stroke(p);
+    ctx.strokeStyle = emph ? "#fff" : f.chg === "in" ? "#62e08a" : f.chg === "out" ? "#ff6b6b" : (layers.fill ? "rgba(0,0,0,.45)" : "rgba(120,200,210,.7)"); ctx.stroke(p);
     ctx.globalAlpha = 1;
+  }
+  // world boundary (projected sphere outline) + a sampled (curved) graticule
+  function worldOutlinePath() {
+    const p = new Path2D(); let first = true;
+    const add = (lon, lat) => { const [x, y] = project(lon, lat); first ? (p.moveTo(x, y), first = false) : p.lineTo(x, y); };
+    for (let lat = 90; lat >= -90; lat -= 3) add(-180, lat);
+    for (let lon = -180; lon <= 180; lon += 3) add(lon, -90);
+    for (let lat = -90; lat <= 90; lat += 3) add(180, lat);
+    for (let lon = 180; lon >= -180; lon -= 3) add(lon, 90);
+    p.closePath(); return p;
+  }
+  function drawGraticule(ctx) {
+    ctx.strokeStyle = "rgba(255,255,255,.05)"; ctx.lineWidth = 1; ctx.beginPath();
+    for (let lon = -180; lon <= 180; lon += 30) for (let lat = -90; lat <= 90; lat += 5) { const [x, y] = project(lon, lat); lat === -90 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+    for (let lat = -90; lat <= 90; lat += 30) for (let lon = -180; lon <= 180; lon += 5) { const [x, y] = project(lon, lat); lon === -180 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,.09)"; ctx.beginPath();
+    for (let lon = -180; lon <= 180; lon += 5) { const [x, y] = project(lon, 0); lon === -180 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+    for (let lat = -90; lat <= 90; lat += 5) { const [x, y] = project(0, lat); lat === -90 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+    ctx.stroke();
   }
   // Centroid labels, largest-area first, greedily declutter by AABB overlap.
   function drawLabels(ctx, alpha) {
@@ -462,17 +559,13 @@ __GLUE_JS__
   function draw() {
     const c = $("map"), ctx = c.getContext("2d"), [W, H] = baseDims();
     ctx.clearRect(0, 0, c.width, c.height);
-    if (!_oceanGrad || _oceanH !== H) { _oceanGrad = ctx.createLinearGradient(0, 0, 0, H); _oceanGrad.addColorStop(0, "#0a1622"); _oceanGrad.addColorStop(0.5, "#0e1d2b"); _oceanGrad.addColorStop(1, "#0a1622"); _oceanH = H; }
-    ctx.fillStyle = _oceanGrad; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#070d14"; ctx.fillRect(0, 0, W, H);   // void outside the projected world
     ctx.lineJoin = "round"; ctx.lineCap = "round";
-    // graticule + emphasised equator / prime meridian
-    ctx.strokeStyle = "rgba(255,255,255,.045)"; ctx.lineWidth = 1; ctx.beginPath();
-    for (let lon = -180; lon <= 180; lon += 30) { const [x] = project(lon, 0); ctx.moveTo(x, 0); ctx.lineTo(x, H); }
-    for (let lat = -90; lat <= 90; lat += 30) { const [, y] = project(0, lat); ctx.moveTo(0, y); ctx.lineTo(W, y); }
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(255,255,255,.08)"; ctx.beginPath();
-    { const [, ey] = project(0, 0); ctx.moveTo(0, ey); ctx.lineTo(W, ey); const [ex] = project(0, 0); ctx.moveTo(ex, 0); ctx.lineTo(ex, H); }
-    ctx.stroke();
+    const outline = worldOutlinePath();
+    if (!_oceanGrad || _oceanH !== H) { _oceanGrad = ctx.createLinearGradient(0, 0, 0, H); _oceanGrad.addColorStop(0, "#0a1622"); _oceanGrad.addColorStop(0.5, "#0e1d2b"); _oceanGrad.addColorStop(1, "#0a1622"); _oceanH = H; }
+    ctx.save(); ctx.clip(outline);                          // confine sea / land / graticule to the world shape
+    ctx.fillStyle = _oceanGrad; ctx.fillRect(0, 0, W, H);
+    if (layers.graticule) drawGraticule(ctx);
     // territories (cross-fade old→new when an era change is in flight)
     let labelAlpha = 1; const now = performance.now();
     if (_tween) {
@@ -498,25 +591,32 @@ __GLUE_JS__
       for (const f of refFeatures) { const p = buildPath(f); ctx.globalAlpha = 0.10; ctx.fillStyle = "#f0a35e"; ctx.fill(p, "evenodd"); ctx.globalAlpha = 0.55; ctx.strokeStyle = "#f0a35e"; ctx.stroke(p); }
       ctx.restore(); ctx.globalAlpha = 1;
     }
-    drawLabels(ctx, labelAlpha);
+    if (layers.labels) drawLabels(ctx, labelAlpha);
+    ctx.restore();   // end world clip
+    ctx.strokeStyle = "rgba(63,182,168,.30)"; ctx.lineWidth = 1.2; ctx.stroke(outline);   // world boundary
     // vignette + accent frame (last, so it sits over land + labels)
     if (!_vig || _vigW !== W || _vigH !== H) { _vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, 0.85 * Math.hypot(W / 2, H / 2)); _vig.addColorStop(0, "rgba(0,0,0,0)"); _vig.addColorStop(1, "rgba(0,0,0,.24)"); _vigW = W; _vigH = H; }
     ctx.fillStyle = _vig; ctx.fillRect(0, 0, W, H);
     ctx.strokeStyle = "rgba(63,182,168,.26)"; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
     _anim = !!_tween || !!(_appeared && now < _pulseUntil); if (_anim) requestDraw();
   }
-  // Frame the view on a set of features (legend click / double-click / Fit).
+  // Frame the view on a set of features (legend click / double-click / Fit) — in
+  // the CURRENT projection's normalised space, so it works for any projection.
   function zoomToFit(list) {
     if (!list || !list.length) return;
-    let aLon = Infinity, bLon = -Infinity, aLat = Infinity, bLat = -Infinity;
-    for (const f of list) for (const ring of f.rings) for (const c of ring) { if (c[0] < aLon) aLon = c[0]; if (c[0] > bLon) bLon = c[0]; if (c[1] < aLat) aLat = c[1]; if (c[1] > bLat) bLat = c[1]; }
-    if (!isFinite(aLon)) return;
-    const [W, H] = baseDims(), wLon = (bLon - aLon) || 1, hLat = (bLat - aLat) || 1;
-    let s = Math.min(0.9 * 360 / wLon, 0.9 * 180 / hLat); s = Math.max(0.4, Math.min(8, s));
-    const cLon = (aLon + bLon) / 2, cLat = (aLat + bLat) / 2;
-    const bx = (cLon + 180) / 360 * W, by = (90 - cLat) / 180 * H;
-    view.scale = s; view.ox = W / 2 - bx * s; view.oy = H / 2 - by * s; fitted = true; requestDraw();
+    let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+    for (const f of list) for (const ring of f.rings) for (const c of ring) { const q = projNorm(c[0], c[1]); if (q[0] < xmin) xmin = q[0]; if (q[0] > xmax) xmax = q[0]; if (q[1] < ymin) ymin = q[1]; if (q[1] > ymax) ymax = q[1]; }
+    if (!isFinite(xmin)) return;
+    const [W, H] = baseDims();
+    if (xmax - xmin < 1e-6 && ymax - ymin < 1e-6) {   // a single point → centre at a readable zoom
+      view.scale = 3; view.ox = W / 2 - (xmin * W) * 3; view.oy = H / 2 - (ymin * H) * 3; fitted = true; requestDraw(); return;
+    }
+    const bw = (xmax - xmin) * W, bh = (ymax - ymin) * H;
+    let s = Math.min(0.9 * W / bw, 0.9 * H / bh); s = Math.max(0.4, Math.min(8, s));
+    const cx = (xmin + xmax) / 2 * W, cy = (ymin + ymax) / 2 * H;
+    view.scale = s; view.ox = W / 2 - cx * s; view.oy = H / 2 - cy * s; fitted = true; requestDraw();
   }
+  function setProjection(name) { if (!PROJECTIONS[name]) return; proj = name; _oceanGrad = null; resetView(); }
   function resetView() { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; requestDraw(); }
   function legend() {
     const seen = new Map();
@@ -534,33 +634,54 @@ __GLUE_JS__
     const W = 88, H = 46, pad = 3, sx = (bLon - aLon) || 1, sy = (bLat - aLat) || 1;
     const s = Math.min((W - 2 * pad) / sx, (H - 2 * pad) / sy);
     const ox = (W - sx * s) / 2, oy = (H - sy * s) / 2;
-    const px = (lon) => (ox + (lon - aLon) * s).toFixed(1), py = (lat) => (oy + (bLat - lat) * s).toFixed(1);
-    let svg;
+    const pxf = (lon) => (ox + (lon - aLon) * s), pyf = (lat) => (oy + (bLat - lat) * s);
+    const px = (lon) => pxf(lon).toFixed(1), py = (lat) => pyf(lat).toFixed(1);
+    // faint reference axes so the sketch reads as geographic: equator / prime meridian when in frame
+    let refs = "";
+    if (aLat < 0 && bLat > 0) refs += `<line class="wktax" x1="0" y1="${py(0)}" x2="${W}" y2="${py(0)}"/>`;
+    if (aLon < 0 && bLon > 0) refs += `<line class="wktax" x1="${px(0)}" y1="0" x2="${px(0)}" y2="${H}"/>`;
+    let shapes;
     if (/LINESTRING|POINT/i.test(wktVal)) {   // open geometries: stroked polylines, no fill
-      const shapes = rings.map((r) => `<polyline points="${r.map((p) => `${px(p[0])},${py(p[1])}`).join(" ")}"/>`).join("");
-      svg = `<svg class="wktthumb" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${shapes}</svg>`;
+      shapes = rings.map((r) => `<polyline points="${r.map((p) => `${px(p[0])},${py(p[1])}`).join(" ")}"/>`).join("");
     } else {   // one even-odd path over all rings → holes & multi-parts render correctly
       const d = rings.map((r) => "M" + r.map((p) => `${px(p[0])} ${py(p[1])}`).join("L") + "Z").join(" ");
-      svg = `<svg class="wktthumb" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><path d="${d}" fill-rule="evenodd"/></svg>`;
+      shapes = `<path d="${d}" fill-rule="evenodd"/>`;
     }
-    return { svg, pts };
+    const bbox = [aLon, aLat, bLon, bLat];
+    const title = `lon ${Math.round(aLon)}°→${Math.round(bLon)}°, lat ${Math.round(aLat)}°→${Math.round(bLat)}°`;
+    const svg = `<svg class="wktthumb" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><title>${title}</title>${refs}${shapes}</svg>`;
+    return { svg, pts, bbox };
+  }
+  const fmtDeg = (v) => Math.round(v) + "°";
+  function copyText(s) {
+    try { if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(s); } catch (e) {}
+    const ta = document.createElement("textarea"); ta.value = s; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand("copy"); } catch (e) {} ta.remove();
+    return ok ? Promise.resolve() : Promise.reject(new Error("copy unavailable"));
   }
   function renderTable() {
     const v = $("tableView");
     if (!lastRows.length) { v.innerHTML = '<p class="hint">No rows.</p>'; return; }
     const cols = lastVars.length ? lastVars : Object.keys(lastRows[0]);
-    const cell = (t) => {
+    const cell = (t, ri, col) => {
       if (isWktTerm(t)) {
         const val = lit(t).split("^^")[0], thumb = wktThumb(val);
         if (thumb) {
           const kind = (val.match(/^\s*([A-Za-z]+)/) || [, "GEOM"])[1].toUpperCase();
-          return `<td class="geo">${thumb.svg}<span class="wktmeta">${escapeHtml(kind)} · ${thumb.pts} pts</span></td>`;
+          const [aLon, aLat, bLon, bLat] = thumb.bbox;
+          const da = `data-r="${ri}" data-c="${escapeHtml(col)}"`;
+          return `<td class="geo">${thumb.svg}<div class="wktmeta">` +
+            `<span>${escapeHtml(kind)} · ${thumb.pts} pts</span>` +
+            `<span class="wktbbox">↔ ${fmtDeg(aLon)}→${fmtDeg(bLon)} · ↕ ${fmtDeg(aLat)}→${fmtDeg(bLat)}</span>` +
+            `<button class="wktbtn wktview" ${da}>view</button><button class="wktbtn wktcopy" ${da}>⧉ copy</button>` +
+            `</div></td>`;
         }
       }
       let s = lit(t || ""); if (s.length > 90) s = s.slice(0, 88) + "…"; return `<td>${escapeHtml(s)}</td>`;
     };
     v.innerHTML = "<table><thead><tr>" + cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("") + "</tr></thead><tbody>" +
-      lastRows.slice(0, 1000).map((r) => "<tr>" + cols.map((c) => cell(r[c])).join("") + "</tr>").join("") +
+      lastRows.slice(0, 1000).map((r, ri) => "<tr>" + cols.map((c) => cell(r[c], ri, c)).join("") + "</tr>").join("") +
       "</tbody></table>" + (lastRows.length > 1000 ? `<p class="hint">… ${lastRows.length - 1000} more rows</p>` : "");
   }
 
@@ -616,7 +737,7 @@ __GLUE_JS__
     const W = $("marks").clientWidth || 600;
     let html = "";
     for (const y of years) if (y >= vStart && y <= vEnd) html += `<div class="m snap${y === curEra ? " active" : ""}" style="left:${tpct(y)}%" data-y="${y}" title="snapshot · ${yearLabel(y)}"></div>`;
-    const evs = EVENTS.filter((e) => e.y >= vStart && e.y <= vEnd).sort((a, b) => a.y - b.y);
+    const evs = layers.events ? EVENTS.filter((e) => e.y >= vStart && e.y <= vEnd).sort((a, b) => a.y - b.y) : [];
     let placedR = -1e9;
     for (const e of evs) {
       const x = (tpct(e.y) / 100) * W, txt = e.t.length > 24 ? e.t.slice(0, 23) + "…" : e.t, est = txt.length * 5.0;
@@ -681,6 +802,9 @@ __GLUE_JS__
   function localName(term) { const s = lit(term); const m = s.split(/[#/]/).pop(); return m || s; }
   async function identify(mx, my) {
     const [lon, lat] = unproject(mx, my);
+    if (!isFinite(lon) || !isFinite(lat) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {  // clicked off the projected world
+      const box = $("ident"); highlight = null; box.innerHTML = `<span class="mut">Click inside the mapped world.</span>`; box.style.display = "block"; requestDraw(); return;
+    }
     // one query: pick the territory under the point, then list all its direct properties
     const q = `SELECT ?label ?p ?o WHERE { ?t ex:year ${curEra} ; rdfs:label ?label ;\n  geo:hasGeometry/geo:asWKT ?w . FILTER(geof:sfContains(?w, "POINT(${lon.toFixed(3)} ${lat.toFixed(3)})"^^geo:wktLiteral)) ?t ?p ?o }`;
     let rows = []; try { rows = (await runRaw(q)).rows || []; } catch (e) {}
@@ -690,7 +814,7 @@ __GLUE_JS__
       const skip = new Set(["hasGeometry", "label", "asWKT"]), seen = new Set(), props = [];
       for (const r of rows) {
         const pk = localName(r.p); if (skip.has(pk)) continue;
-        const key = pk + " " + r.o; if (seen.has(key)) continue; seen.add(key);
+        const key = pk + " " + r.o; if (seen.has(key)) continue; seen.add(key);
         props.push([pk, r.o[0] === "<" ? localName(r.o) : lit(r.o)]);
       }
       box.innerHTML =
@@ -759,16 +883,37 @@ __GLUE_JS__
     $("fit").addEventListener("click", () => zoomToFit(features));
     $("home").addEventListener("click", resetView);
     $("refbtn").addEventListener("click", toggleRef);
+    // projection + layer toggles
+    $("proj").addEventListener("change", (e) => setProjection(e.target.value));
+    document.querySelectorAll(".layers input[data-layer]").forEach((cb) => cb.addEventListener("change", () => {
+      layers[cb.dataset.layer] = cb.checked;
+      if (cb.dataset.layer === "events") placeMarks();
+      requestDraw();
+    }));
     // timeline zoom controls (drag the context window below to pan/zoom too)
     $("zoomin").addEventListener("click", () => zoomBy(0.6));
     $("zoomout").addEventListener("click", () => zoomBy(1 / 0.6));
     $("zoomreset").addEventListener("click", () => setWindow(minY, maxY));
     // dismiss the click-to-identify metadata panel
     $("ident").addEventListener("click", (e) => { if (e.target.classList.contains("idclose")) $("ident").style.display = "none"; });
+    // table: copy / view the full WKT behind a geometry thumbnail
+    const wktAt = (r, c) => { const row = lastRows[+r]; return row ? lit(row[c] || "").split("^^")[0] : ""; };
+    const flash = (b, t) => { const o = b.textContent; b.textContent = t; setTimeout(() => (b.textContent = o), 1200); };
+    let wktCur = "";
+    $("tableView").addEventListener("click", (e) => {
+      const b = e.target.closest(".wktbtn"); if (!b) return;
+      const w = wktAt(b.dataset.r, b.dataset.c); if (!w) return;
+      if (b.classList.contains("wktcopy")) copyText(w).then(() => flash(b, "✓ copied"), () => flash(b, "✗ failed"));
+      else { wktCur = w; $("wkttitle").textContent = (w.match(/^\s*([A-Za-z]+)/) || [, "WKT"])[1].toUpperCase(); $("wktmtext").textContent = w; $("wktmodal").hidden = false; }
+    });
+    $("wktmclose").addEventListener("click", () => { $("wktmodal").hidden = true; });
+    $("wktmodal").addEventListener("click", (e) => { if (e.target === $("wktmodal")) $("wktmodal").hidden = true; });
+    $("wktmcopy").addEventListener("click", () => copyText(wktCur).then(() => flash($("wktmcopy"), "✓ copied"), () => flash($("wktmcopy"), "✗ failed")));
     // keyboard: ←/→ ±1yr, ↓/↑ ±10yr, Space toggles play. Defer to the focused
     // control where it owns the key (SPARQL editor, the slider, the speed select,
     // a button) so we never double-handle.
     document.addEventListener("keydown", (e) => {
+      if (!$("wktmodal").hidden) { if (e.key === "Escape") { $("wktmodal").hidden = true; e.preventDefault(); } return; }
       const ae = document.activeElement, tag = ae ? ae.tagName : "";
       if (ae === $("q")) return;
       if (e.key === " ") { if (tag === "BUTTON" || tag === "SELECT") return; togglePlay(); e.preventDefault(); return; }

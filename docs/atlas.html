@@ -260,10 +260,12 @@ whatever your query binds to <code>?wkt</code>.</p>
 <li><strong>The map is driven by SPARQL.</strong> The editor holds a query; <em>every row it
 returns that binds <code>?wkt</code></em> is parsed (a tiny in-page WKT reader) and drawn —
 so you can swap in any query: a bbox <code>geof:sfIntersects</code>, a <code>geof:distance</code>
-ranking, a <code>geof:envelope</code>, a <code>FILTER</code> on the label, anything. The
-<strong>example picker</strong> ships six ready-made queries (era borders, nearest
-territories to London, what touches Europe, empires by name, bounding boxes,
-a count); each carries a <code>{YEAR}</code> placeholder the timeline fills in.</li>
+ranking, a <code>geof:envelope</code>, a <code>FILTER</code> on the label, anything. The <strong>example
+picker</strong> ships ten ready-made queries, including several that ask <strong>time ×
+place</strong> questions: <em>Who ruled Paris? — every era</em> (one <code>geof:sfContains</code> point,
+no year filter, ordered through history), <em>Transcontinental — touches Europe
+AND Asia</em> (two <code>sfIntersects</code>), <em>Within 2500 km of Rome</em>, and <em>Territories per
+era</em> (a <code>GROUP BY ?year</code> count over all of time).</li>
 <li><strong>The timeline is the temporal control — and it adapts to the data.</strong> It runs
 year-by-year from 2000 BCE to 2010 CE; the <strong>eighteen <code>ex:year</code> snapshots</strong> and a
 row of <strong>labelled historical-event markers</strong> (death of Alexander, fall of
@@ -280,9 +282,15 @@ green (and pulse briefly once they've settled), ones that <strong>disappear</str
 red as they fade out, and the status line tallies the delta (e.g. <code>+87 −125</code>).</li>
 <li><strong>Two views of every result.</strong> <strong>Map</strong> draws the polygons; <strong>Table</strong> shows the
 raw result rows — and any cell holding a <code>geo:wktLiteral</code> renders an inline
-<strong>geometry thumbnail</strong> (with its kind and vertex count), so a <code>geof:distance</code>
-ranking reads as an ordered list and a borders query reads as a column of
-little shapes.</li>
+<strong>geometry thumbnail</strong> (its kind, vertex count, lon/lat extent, and faint
+equator / prime-meridian guides) with <strong>view</strong> (the raw WKT in a panel) and
+<strong>copy</strong> buttons. So a <code>geof:distance</code> ranking reads as an ordered list and a
+borders query reads as a column of little shapes you can inspect.</li>
+<li><strong>Re-project and toggle layers.</strong> A projection dropdown re-draws the whole map
+in <strong>Equirectangular, Web Mercator, Mollweide, or Sinusoidal</strong> (the graticule
+curves and the land is clipped to the world's shape; click-to-identify keeps
+working through each projection's inverse). A <strong>Layers</strong> menu toggles the fill,
+labels, graticule, glow, and event markers.</li>
 <li><strong>Click to identify — with metadata.</strong> A click runs
 <a href="geosparql.html"><code>geof:sfContains</code></a> for the current era against every border
 polygon and opens a panel for the territory under the point — its name, year,
@@ -301,7 +309,11 @@ faults in only the byte ranges it touches, over a Web Worker), or
 </ol>
 <figure class="fig-center">
   <img src="img/atlas-table.png" alt="The Historical Atlas in Table view at 1492 CE: a label column and a wkt column where each row renders a small teal geometry thumbnail of that territory's border polygon, captioned with its kind and vertex count (e.g. MULTIPOLYGON · 388 pts).">
-  <figcaption>The <b>Table</b> view of the borders query at 1492 CE — every <code>geo:wktLiteral</code> cell renders an inline <b>geometry thumbnail</b> (kind + vertex count), so the result set reads as a column of little shapes, not opaque WKT strings.</figcaption>
+  <figcaption>The <b>Table</b> view of the borders query at 1492 CE — every <code>geo:wktLiteral</code> cell renders an inline <b>geometry thumbnail</b> (kind + vertex count + lon/lat extent) with view/copy buttons, so the result set reads as a column of little shapes, not opaque WKT strings.</figcaption>
+</figure>
+<figure class="fig-center">
+  <img src="img/atlas-mollweide.png" alt="The Historical Atlas re-projected to the Mollweide equal-area projection: the world is an ellipse with a curved graticule and the land clipped to the lens, the 1914 borders coloured by territory.">
+  <figcaption>The same map and queries re-projected to <b>Mollweide</b> (equal-area) — the projection dropdown also offers Web Mercator and Sinusoidal; the graticule curves and click-to-identify still works through each projection's inverse.</figcaption>
 </figure>
 <p>Everything is computed by the same Rust engine that powers the CLI, compiled to
 WebAssembly — see <a href="geosparql.html">GeoSPARQL</a> for the spatial functions and
