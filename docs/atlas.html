@@ -239,9 +239,12 @@ browser over a <code>.rete</code> file through the WebAssembly engine — either
 storage</strong> by HTTP range.</p>
 <p>It is <strong>half SPARQL, half GIS</strong>: a query editor on the left, a world map in the
 centre, and a <strong>temporal timeline</strong> along the bottom. Pick one of the bundled
-example queries, drag the timeline and the borders of the world redraw for that
-era, hit <strong>▶ Play</strong> to sweep through history, or click anywhere on the map and it
-names the territory under your cursor.</p>
+example queries, drag the timeline and the borders of the world <strong>cross-fade</strong> to
+that era, hit <strong>▶ Play</strong> to sweep through history, or click anywhere on the map
+and it names the territory under your cursor. The map is a dependency-free canvas
+— a curated palette, an ocean gradient, decluttered on-map labels, hover/selection
+highlighting, <strong>zoom-to-fit</strong> (and keyboard timeline nav) — drawn entirely from
+query results.</p>
 <figure class="fig-center">
   <img src="img/atlas-1914.png" alt="The Historical Atlas at 1914 CE: a SPARQL example-query picker and editor on the left over a world map of the empires of 1914, with a temporal timeline at the bottom whose markers include an 'Outbreak of World War I · 1914 CE' event tooltip.">
   <figcaption>The atlas at <b>1914 CE</b> — every border polygon comes from a GeoSPARQL query over the <code>history.rete</code>, drawn on a dependency-free canvas. Left: the example picker, the live query, the data-source selector, and the territory legend. Bottom: the era timeline, with historical-event markers (hover for a tooltip).</figcaption>
@@ -265,9 +268,10 @@ a count); each carries a <code>{YEAR}</code> placeholder the timeline fills in.<
 year-by-year from −323 to 1994; the discovered <code>ex:year</code> snapshots and a row
 of <strong>historical-event markers</strong> (death of Alexander, fall of Constantinople,
 1789, 1914, the fall of the USSR…) sit on the track — hover a marker for its
-name, click it to jump there. Scrub to any year and the map snaps to the
-nearest snapshot ("borders of 1815 CE"); <strong>▶ Play</strong> animates through history
-at a <strong>speed</strong> you choose (slow → very fast).</li>
+name, click it to jump there (arrow keys nudge ±1/±10 years; Space toggles
+play). Scrub to any year and the map <strong>cross-fades</strong> to the nearest snapshot
+("borders of 1815 CE"); <strong>▶ Play</strong> animates through history at a <strong>speed</strong> you
+choose (slow → very fast).</li>
 <li><strong>Two views of every result.</strong> <strong>Map</strong> draws the polygons; <strong>Table</strong> shows the
 raw result rows — so a <code>geof:distance</code> ranking reads as an ordered list of
 territories and kilometres, not just shapes.</li>

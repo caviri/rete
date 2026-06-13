@@ -8,9 +8,12 @@ storage** by HTTP range.
 
 It is **half SPARQL, half GIS**: a query editor on the left, a world map in the
 centre, and a **temporal timeline** along the bottom. Pick one of the bundled
-example queries, drag the timeline and the borders of the world redraw for that
-era, hit **▶ Play** to sweep through history, or click anywhere on the map and it
-names the territory under your cursor.
+example queries, drag the timeline and the borders of the world **cross-fade** to
+that era, hit **▶ Play** to sweep through history, or click anywhere on the map
+and it names the territory under your cursor. The map is a dependency-free canvas
+— a curated palette, an ocean gradient, decluttered on-map labels, hover/selection
+highlighting, **zoom-to-fit** (and keyboard timeline nav) — drawn entirely from
+query results.
 
 <figure class="fig-center">
   <img src="img/atlas-1914.png" alt="The Historical Atlas at 1914 CE: a SPARQL example-query picker and editor on the left over a world map of the empires of 1914, with a temporal timeline at the bottom whose markers include an 'Outbreak of World War I · 1914 CE' event tooltip.">
@@ -38,9 +41,10 @@ whatever your query binds to `?wkt`.
    year-by-year from −323 to 1994; the discovered `ex:year` snapshots and a row
    of **historical-event markers** (death of Alexander, fall of Constantinople,
    1789, 1914, the fall of the USSR…) sit on the track — hover a marker for its
-   name, click it to jump there. Scrub to any year and the map snaps to the
-   nearest snapshot ("borders of 1815 CE"); **▶ Play** animates through history
-   at a **speed** you choose (slow → very fast).
+   name, click it to jump there (arrow keys nudge ±1/±10 years; Space toggles
+   play). Scrub to any year and the map **cross-fades** to the nearest snapshot
+   ("borders of 1815 CE"); **▶ Play** animates through history at a **speed** you
+   choose (slow → very fast).
 3. **Two views of every result.** **Map** draws the polygons; **Table** shows the
    raw result rows — so a `geof:distance` ranking reads as an ordered list of
    territories and kilometres, not just shapes.

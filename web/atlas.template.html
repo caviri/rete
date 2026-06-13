@@ -86,6 +86,15 @@
   .hint { color:var(--mut); font-size:11px; padding:6px 12px 8px; }
   .boot { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
     background:var(--bg); color:var(--mut); z-index:50; font-size:14px; }
+  .mapctl { position:absolute; left:12px; bottom:12px; z-index:6; display:flex; gap:6px; }
+  .mapctl button { background:rgba(12,17,22,.82); border:1px solid var(--line); color:var(--mut);
+    font-weight:600; padding:4px 10px; font-size:12px; backdrop-filter:blur(2px); }
+  .mapctl button:hover { color:var(--ink); border-color:var(--accent); }
+  .track input[type=range] { height:16px; }
+  .marks .m.snap.active { background:var(--accent2); box-shadow:0 0 9px var(--accent2);
+    animation:snapPop .45s ease-out; }
+  @keyframes snapPop { 0% { transform:translateX(-50%) scaleY(2.4); }
+    100% { transform:translateX(-50%) scaleY(1); } }
 </style>
 </head>
 <body>
@@ -123,6 +132,7 @@
       <canvas id="map"></canvas>
       <div id="tip"></div>
       <div id="ident"></div>
+      <div class="mapctl"><button id="fit" title="Zoom to fit all territories">⤢ Fit</button><button id="home" title="Reset the view">⌂ Reset</button></div>
     </div>
     <div class="view hidden" id="tableView"></div>
   </section>
@@ -137,11 +147,11 @@
     <div class="ticks" id="ticks"></div>
   </div>
   <button id="play" class="ghost">▶ Play</button>
-  <select id="speed" title="play speed">
-    <option value="8">slow</option>
-    <option value="30" selected>medium</option>
-    <option value="90">fast</option>
-    <option value="250">very fast</option>
+  <select id="speed" title="play speed (years per second)">
+    <option value="50">slow</option>
+    <option value="150" selected>medium</option>
+    <option value="400">fast</option>
+    <option value="1000">very fast</option>
   </select>
 </div>
 <div id="mtip"></div>
@@ -203,11 +213,20 @@ __GLUE_JS__
     { y: 1991, t: "Dissolution of the USSR" },
   ];
 
+  // Curated qualitative palette (tuned for the dark theme); a territory keeps its
+  // colour across every era so the eye can track it while scrubbing.
+  const PALETTE = ["#3fb6a8", "#f0a35e", "#a371d7", "#ff6b6b", "#51cf66", "#ff922b",
+    "#4ecdc4", "#ffd93d", "#c06c84", "#7a9e7e", "#5d8aa8", "#e8705b", "#95b8d1",
+    "#d4a574", "#b088c9", "#6cc4b0"];
+
   let localBytes = null, cachedBytes = null, years = [], minY = 0, maxY = 1;
   let curEra = null, curScrub = 0, tmpl = EXAMPLES[0].q, lastRows = [], lastVars = [];
-  let features = [], highlight = null, busy = false;
+  let features = [], highlight = null, hoverLabel = null, busy = false, pendingRun = null;
   const view = { scale: 1, ox: 0, oy: 0 }; let fitted = false;
   let mode = "embedded";
+  // animation / cached-gradient state
+  let _rafPending = false, _anim = false, _tween = null, _dragging = false;
+  let _oceanGrad = null, _oceanH = 0, _vig = null, _vigW = 0, _vigH = 0;
 
   // ---- term / WKT helpers ----
   function lit(term) {
@@ -225,9 +244,29 @@ __GLUE_JS__
     }
     return rings;
   }
-  function colorFor(name) { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360; return `hsl(${h}, 52%, 58%)`; }
+  // FNV-1a hash → stable index into the curated palette (same colour every visit).
+  function colorFor(name) { let h = 2166136261; for (let i = 0; i < name.length; i++) { h ^= name.charCodeAt(i); h = Math.imul(h, 16777619); } return PALETTE[(h >>> 0) % PALETTE.length]; }
   function yearLabel(y) { return y < 0 ? `${-y} BCE` : `${y} CE`; }
   function escapeHtml(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  const easeInOut = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
+
+  // Shoelace area + centroid of one ring (lon/lat); degenerate rings fall back to vertex mean.
+  function ringStats(ring) {
+    let A = 0, cx = 0, cy = 0; const n = ring.length;
+    for (let i = 0; i < n; i++) {
+      const x0 = ring[i][0], y0 = ring[i][1], x1 = ring[(i + 1) % n][0], y1 = ring[(i + 1) % n][1];
+      const cr = x0 * y1 - x1 * y0; A += cr; cx += (x0 + x1) * cr; cy += (y0 + y1) * cr;
+    }
+    A *= 0.5;
+    if (Math.abs(A) < 1e-9) { let mx = 0, my = 0; for (const p of ring) { mx += p[0]; my += p[1]; } return { a: 0, cx: mx / n, cy: my / n }; }
+    return { a: Math.abs(A), cx: cx / (6 * A), cy: cy / (6 * A) };
+  }
+  // Total area (declutter priority) + centroid of the largest ring (label anchor).
+  function computeGeom(f) {
+    let best = null, total = 0;
+    for (const ring of f.rings) { const s = ringStats(ring); total += s.a; if (!best || s.a > best.a) best = s; }
+    f.area = total; f.cxLL = best ? best.cx : 0; f.cyLL = best ? best.cy : 0;
+  }
 
   // ---- the engine: one row-shape for all three data sources ----
   // embedded / cached → query(bytes,…,"json"); lazy → sparql_url in a worker.
@@ -275,26 +314,35 @@ __GLUE_JS__
   }
 
   // ---- run the editor's query → map + table ----
-  async function runQuery() {
-    if (busy) return; busy = true;
+  async function runQuery(q) {
+    if (q === undefined) q = $("q").value;     // capture at call time (immune to a later manual edit)
+    if (busy) { pendingRun = q; return; }      // serialize; coalesce fast re-requests
+    busy = true;
     const t0 = performance.now();
     let res;
-    try { res = await runRaw($("q").value); }
+    try { res = await runRaw(q); }
     catch (e) { $("status").className = "err"; $("status").textContent = "✗ " + (e.message || e); busy = false; return; }
-    busy = false;
     $("status").className = "";
     const rows = res.rows || []; lastRows = rows; lastVars = res.vars || (rows[0] ? Object.keys(rows[0]) : []);
-    features = [];
+    const prev = features;
+    const next = [];
     for (const r of rows) {
       const wktTerm = r.wkt || r.geom || r.g;
       if (!wktTerm) continue;
       const rings = wktRings(lit(wktTerm)); if (!rings.length) continue;
       const label = lit(r.label || r.name || r.l || "");
-      features.push({ label, rings, color: colorFor(label || "?"), path: null });
+      const f = { label, rings, color: colorFor(label || "?"), path: null };
+      computeGeom(f); next.push(f);
     }
+    features = next;
+    // Cross-fade from whatever was on screen → the new era's borders.
+    if (prev && prev.length) { _tween = { old: prev, t0: performance.now(), dur: 350 }; _anim = true; }
     $("status").textContent =
       `✓ ${rows.length} row${rows.length === 1 ? "" : "s"}, ${features.length} drawn · ${(performance.now() - t0).toFixed(0)} ms · ${mode}`;
-    fitIfNeeded(); draw(); legend(); if (!$("tableView").classList.contains("hidden")) renderTable();
+    fitIfNeeded(); legend(); if (!$("tableView").classList.contains("hidden")) renderTable();
+    requestDraw();
+    busy = false;
+    if (pendingRun !== null) { const nq = pendingRun; pendingRun = null; runQuery(nq); }   // run the era the user landed on
   }
 
   // ---- projection / draw (CSS px; ctx is dpr-scaled) ----
@@ -302,27 +350,102 @@ __GLUE_JS__
   function project(lon, lat) { const [W, H] = baseDims(); return [((lon + 180) / 360 * W) * view.scale + view.ox, ((90 - lat) / 180 * H) * view.scale + view.oy]; }
   function unproject(px, py) { const [W, H] = baseDims(); const bx = (px - view.ox) / view.scale, by = (py - view.oy) / view.scale; return [bx / W * 360 - 180, 90 - by / H * 180]; }
   function fitIfNeeded() { if (!fitted) { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; } }
-  function draw() {
-    const c = $("map"), ctx = c.getContext("2d");
-    ctx.clearRect(0, 0, c.width, c.height); ctx.fillStyle = "#0c141c"; ctx.fillRect(0, 0, c.width, c.height);
-    ctx.strokeStyle = "rgba(255,255,255,.05)"; ctx.lineWidth = 1; ctx.beginPath();
-    for (let lon = -180; lon <= 180; lon += 30) { const [x] = project(lon, 0); ctx.moveTo(x, 0); ctx.lineTo(x, c.height); }
-    for (let lat = -90; lat <= 90; lat += 30) { const [, y] = project(0, lat); ctx.moveTo(0, y); ctx.lineTo(c.width, y); }
-    ctx.stroke();
-    for (const f of features) {
-      const p = new Path2D();
-      for (const ring of f.rings) { ring.forEach((co, i) => { const [x, y] = project(co[0], co[1]); i ? p.lineTo(x, y) : p.moveTo(x, y); }); p.closePath(); }
-      f.path = p;
-      ctx.fillStyle = f.color; ctx.globalAlpha = f.label === highlight ? 0.95 : 0.62; ctx.fill(p, "evenodd");
-      ctx.globalAlpha = 1; ctx.lineWidth = f.label === highlight ? 2.4 : 0.6;
-      ctx.strokeStyle = f.label === highlight ? "#fff" : "rgba(0,0,0,.45)"; ctx.stroke(p);
-    }
+
+  // Single rAF-coalesced render loop: interactions request a frame; active
+  // animations (cross-fade) re-arm it at the end of draw() and stop when idle.
+  function requestDraw() { if (_rafPending) return; _rafPending = true; requestAnimationFrame(() => { _rafPending = false; draw(); }); }
+
+  function buildPath(f) {
+    const p = new Path2D();
+    for (const ring of f.rings) { ring.forEach((co, i) => { const [x, y] = project(co[0], co[1]); i ? p.lineTo(x, y) : p.moveTo(x, y); }); p.closePath(); }
+    return p;
   }
+  // Draw one territory: fill + (selection/hover/land) glow under a crisp hairline.
+  function drawFeature(ctx, f, alpha, glow) {
+    const p = buildPath(f); f.path = p;
+    const emph = f.label === highlight, hov = f.label === hoverLabel;
+    ctx.fillStyle = f.color; ctx.globalAlpha = alpha * (emph ? 0.95 : hov ? 0.82 : 0.7); ctx.fill(p, "evenodd");
+    if (emph) { ctx.globalAlpha = alpha * 0.32; ctx.lineWidth = 6; ctx.strokeStyle = "rgba(63,182,168,1)"; ctx.stroke(p); }
+    else if (hov) { ctx.globalAlpha = alpha * 0.5; ctx.lineWidth = 2.2; ctx.strokeStyle = "rgba(63,182,168,.9)"; ctx.stroke(p); }
+    else if (glow && view.scale <= 4) { ctx.save(); ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = alpha * 0.16; ctx.lineWidth = 2.5; ctx.strokeStyle = "rgba(150,210,230,1)"; ctx.stroke(p); ctx.restore(); }
+    ctx.globalAlpha = alpha; ctx.lineWidth = emph ? 2.4 : 0.6; ctx.strokeStyle = emph ? "#fff" : "rgba(0,0,0,.45)"; ctx.stroke(p);
+    ctx.globalAlpha = 1;
+  }
+  // Centroid labels, largest-area first, greedily declutter by AABB overlap.
+  function drawLabels(ctx, alpha) {
+    if (_dragging || view.scale < 0.6 || !features.length || alpha <= 0.05) return;
+    ctx.font = "600 12px ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+    const [W, H] = baseDims();
+    const cand = features.filter((f) => f.label).slice().sort((a, b) => b.area - a.area);
+    const placed = []; let drawn = 0;
+    for (const f of cand) {
+      if (drawn >= 28) break;
+      const [x, y] = project(f.cxLL, f.cyLL);
+      if (x < 4 || x > W - 4 || y < 8 || y > H - 8) continue;
+      const txt = f.label.length > 22 ? f.label.slice(0, 21) + "…" : f.label;
+      const w = ctx.measureText(txt).width, box = { x: x - w / 2, y: y - 7, w, h: 14 };
+      let clash = false;
+      for (const b of placed) { if (box.x < b.x + b.w && box.x + box.w > b.x && box.y < b.y + b.h && box.y + box.h > b.y) { clash = true; break; } }
+      if (clash) continue;
+      placed.push(box);
+      const rx = Math.round(x), ry = Math.round(y);
+      ctx.globalAlpha = alpha; ctx.lineWidth = 3; ctx.strokeStyle = "rgba(8,14,20,.88)"; ctx.strokeText(txt, rx, ry);
+      ctx.fillStyle = f.label === highlight ? "#fff" : "#eaf1f6"; ctx.fillText(txt, rx, ry);
+      drawn++;
+    }
+    ctx.globalAlpha = 1;
+  }
+  function draw() {
+    const c = $("map"), ctx = c.getContext("2d"), [W, H] = baseDims();
+    ctx.clearRect(0, 0, c.width, c.height);
+    if (!_oceanGrad || _oceanH !== H) { _oceanGrad = ctx.createLinearGradient(0, 0, 0, H); _oceanGrad.addColorStop(0, "#0a1622"); _oceanGrad.addColorStop(0.5, "#0e1d2b"); _oceanGrad.addColorStop(1, "#0a1622"); _oceanH = H; }
+    ctx.fillStyle = _oceanGrad; ctx.fillRect(0, 0, W, H);
+    ctx.lineJoin = "round"; ctx.lineCap = "round";
+    // graticule + emphasised equator / prime meridian
+    ctx.strokeStyle = "rgba(255,255,255,.045)"; ctx.lineWidth = 1; ctx.beginPath();
+    for (let lon = -180; lon <= 180; lon += 30) { const [x] = project(lon, 0); ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+    for (let lat = -90; lat <= 90; lat += 30) { const [, y] = project(0, lat); ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,.08)"; ctx.beginPath();
+    { const [, ey] = project(0, 0); ctx.moveTo(0, ey); ctx.lineTo(W, ey); const [ex] = project(0, 0); ctx.moveTo(ex, 0); ctx.lineTo(ex, H); }
+    ctx.stroke();
+    // territories (cross-fade old→new when an era change is in flight)
+    let labelAlpha = 1;
+    if (_tween) {
+      const k = Math.min(1, (performance.now() - _tween.t0) / _tween.dur), e = easeInOut(k);
+      for (const f of _tween.old) drawFeature(ctx, f, 1 - e, false);
+      for (const f of features) drawFeature(ctx, f, e, true);
+      labelAlpha = e;
+      if (k >= 1) _tween = null;
+    } else {
+      for (const f of features) drawFeature(ctx, f, 1, true);
+    }
+    drawLabels(ctx, labelAlpha);
+    // vignette + accent frame (last, so it sits over land + labels)
+    if (!_vig || _vigW !== W || _vigH !== H) { _vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, 0.85 * Math.hypot(W / 2, H / 2)); _vig.addColorStop(0, "rgba(0,0,0,0)"); _vig.addColorStop(1, "rgba(0,0,0,.24)"); _vigW = W; _vigH = H; }
+    ctx.fillStyle = _vig; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(63,182,168,.26)"; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+    _anim = !!_tween; if (_anim) requestDraw();
+  }
+  // Frame the view on a set of features (legend click / double-click / Fit).
+  function zoomToFit(list) {
+    if (!list || !list.length) return;
+    let aLon = Infinity, bLon = -Infinity, aLat = Infinity, bLat = -Infinity;
+    for (const f of list) for (const ring of f.rings) for (const c of ring) { if (c[0] < aLon) aLon = c[0]; if (c[0] > bLon) bLon = c[0]; if (c[1] < aLat) aLat = c[1]; if (c[1] > bLat) bLat = c[1]; }
+    if (!isFinite(aLon)) return;
+    const [W, H] = baseDims(), wLon = (bLon - aLon) || 1, hLat = (bLat - aLat) || 1;
+    let s = Math.min(0.9 * 360 / wLon, 0.9 * 180 / hLat); s = Math.max(0.4, Math.min(8, s));
+    const cLon = (aLon + bLon) / 2, cLat = (aLat + bLat) / 2;
+    const bx = (cLon + 180) / 360 * W, by = (90 - cLat) / 180 * H;
+    view.scale = s; view.ox = W / 2 - bx * s; view.oy = H / 2 - by * s; fitted = true; requestDraw();
+  }
+  function resetView() { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; requestDraw(); }
   function legend() {
     const seen = new Map();
-    for (const f of features) if (f.label && !seen.has(f.label)) seen.set(f.label, f.color);
-    $("legend").innerHTML = [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(0, 200)
-      .map(([n, c]) => `<div class="it" data-n="${n.replace(/"/g, "&quot;")}"><span class="sw" style="background:${c}"></span>${escapeHtml(n)}</div>`).join("");
+    for (const f of features) if (f.label && !seen.has(f.label)) seen.set(f.label, { c: f.color, a: f.area || 0 });
+    $("legend").innerHTML = [...seen.entries()].sort((x, y) => y[1].a - x[1].a).slice(0, 200)
+      .map(([n, v]) => `<div class="it" data-n="${n.replace(/"/g, "&quot;")}"><span class="sw" style="background:${v.c}"></span>${escapeHtml(n)}</div>`).join("");
   }
   function renderTable() {
     const v = $("tableView");
@@ -343,6 +466,8 @@ __GLUE_JS__
     const era = nearestEra(curScrub);
     $("yr").firstChild.textContent = yearLabel(curScrub);
     $("eraLabel").textContent = era === curScrub ? "" : "borders of " + yearLabel(era);
+    const prevA = $("marks").querySelector(".m.snap.active"); if (prevA) prevA.classList.remove("active");
+    if (era === curScrub) { const am = $("marks").querySelector('.m.snap[data-y="' + era + '"]'); if (am) am.classList.add("active"); }
     if (era !== curEra || force) { curEra = era; applyTemplate(); runQuery(); }
   }
   function placeMarks() {
@@ -365,17 +490,19 @@ __GLUE_JS__
     new ResizeObserver(resize).observe(c); resize();
     let drag = null;
     c.addEventListener("mousedown", (e) => { drag = { x: e.offsetX, y: e.offsetY, ox: view.ox, oy: view.oy, moved: false }; c.classList.add("drag"); });
-    window.addEventListener("mouseup", () => { c.classList.remove("drag"); setTimeout(() => (drag = null), 0); });
-    c.addEventListener("mousemove", (e) => { if (drag) { view.ox = drag.ox + (e.offsetX - drag.x); view.oy = drag.oy + (e.offsetY - drag.y); drag.moved = true; draw(); } else hover(e.offsetX, e.offsetY); });
-    c.addEventListener("mouseleave", () => { $("tip").style.display = "none"; });
-    c.addEventListener("wheel", (e) => { e.preventDefault(); const f = e.deltaY < 0 ? 1.15 : 1 / 1.15; view.ox = e.offsetX - (e.offsetX - view.ox) * f; view.oy = e.offsetY - (e.offsetY - view.oy) * f; view.scale *= f; draw(); }, { passive: false });
+    window.addEventListener("mouseup", () => { c.classList.remove("drag"); if (_dragging) { _dragging = false; requestDraw(); } setTimeout(() => (drag = null), 0); });
+    c.addEventListener("mousemove", (e) => { if (drag) { view.ox = drag.ox + (e.offsetX - drag.x); view.oy = drag.oy + (e.offsetY - drag.y); drag.moved = true; _dragging = true; requestDraw(); } else hover(e.offsetX, e.offsetY); });
+    c.addEventListener("mouseleave", () => { $("tip").style.display = "none"; if (hoverLabel) { hoverLabel = null; requestDraw(); } });
+    c.addEventListener("wheel", (e) => { e.preventDefault(); const f = e.deltaY < 0 ? 1.15 : 1 / 1.15; view.ox = e.offsetX - (e.offsetX - view.ox) * f; view.oy = e.offsetY - (e.offsetY - view.oy) * f; view.scale = Math.max(0.4, Math.min(12, view.scale * f)); requestDraw(); }, { passive: false });
     c.addEventListener("click", (e) => { if (drag && drag.moved) return; identify(e.offsetX, e.offsetY); });
+    c.addEventListener("dblclick", () => zoomToFit(features));
   }
   function hover(mx, my) {
     const ctx = $("map").getContext("2d"); let lab = null;
     for (const f of features) if (f.path && ctx.isPointInPath(f.path, mx, my, "evenodd")) { lab = f.label; break; }
     const tip = $("tip");
     if (lab) { tip.textContent = lab; tip.style.left = mx + "px"; tip.style.top = my + "px"; tip.style.display = "block"; } else tip.style.display = "none";
+    if (lab !== hoverLabel) { hoverLabel = lab; requestDraw(); }
   }
   async function identify(mx, my) {
     const [lon, lat] = unproject(mx, my);
@@ -386,19 +513,25 @@ __GLUE_JS__
       highlight = lit(rows[0].label);
       box.innerHTML = `In <b>${yearLabel(curEra)}</b>, (${lon.toFixed(2)}, ${lat.toFixed(2)}) was in<br><b>${escapeHtml(highlight)}</b><br><span class="mut">via geof:sfContains</span>`;
     } else { highlight = null; box.innerHTML = `(${lon.toFixed(2)}, ${lat.toFixed(2)}) — no mapped territory in <b>${yearLabel(curEra)}</b>.`; }
-    box.style.display = "block"; draw();
+    box.style.display = "block"; requestDraw();
   }
 
-  // ---- play ----
-  let playing = null;
+  // ---- play (rAF + delta-time; speed is years/second, applied live) ----
+  let playing = null, lastPlayTime = 0;
   function togglePlay() {
-    if (playing) { clearInterval(playing); playing = null; $("play").textContent = "▶ Play"; return; }
-    $("play").textContent = "⏸ Pause";
-    playing = setInterval(() => { const step = +$("speed").value; let n = curScrub + step; if (n > maxY) n = minY; setScrub(n); }, 240);
+    if (playing) { cancelAnimationFrame(playing); playing = null; $("play").textContent = "▶ Play"; return; }
+    $("play").textContent = "⏸ Pause"; lastPlayTime = performance.now();
+    const frame = (now) => {
+      const dt = Math.min(0.1, (now - lastPlayTime) / 1000); lastPlayTime = now;
+      let n = curScrub + (+$("speed").value) * dt; if (n > maxY) n = minY;
+      setScrub(n); playing = requestAnimationFrame(frame);
+    };
+    playing = requestAnimationFrame(frame);
   }
 
   // ---- data source ----
   async function setMode(m) {
+    if (playing) { cancelAnimationFrame(playing); playing = null; $("play").textContent = "▶ Play"; }  // don't keep playing across a source switch
     mode = m;
     if (m === "cached" && !cachedBytes) {
       $("status").className = ""; $("status").textContent = "downloading the full .rete once…";
@@ -432,7 +565,26 @@ __GLUE_JS__
     $("src").addEventListener("change", (e) => setMode(e.target.value));
     $("tabMap").addEventListener("click", () => { $("tabMap").classList.add("on"); $("tabTable").classList.remove("on"); $("mapView").classList.remove("hidden"); $("tableView").classList.add("hidden"); });
     $("tabTable").addEventListener("click", () => { $("tabTable").classList.add("on"); $("tabMap").classList.remove("on"); $("tableView").classList.remove("hidden"); $("mapView").classList.add("hidden"); renderTable(); });
-    $("legend").addEventListener("click", (e) => { const it = e.target.closest(".it"); if (it) { highlight = it.dataset.n; draw(); } });
+    // legend: hover to glow, click to highlight + zoom to that territory
+    $("legend").addEventListener("mouseover", (e) => { const it = e.target.closest(".it"); if (it && it.dataset.n !== hoverLabel) { hoverLabel = it.dataset.n; requestDraw(); } });
+    $("legend").addEventListener("mouseout", (e) => { if (e.target.closest(".it") && hoverLabel) { hoverLabel = null; requestDraw(); } });
+    $("legend").addEventListener("click", (e) => { const it = e.target.closest(".it"); if (it) { highlight = it.dataset.n; const fs = features.filter((f) => f.label === highlight); zoomToFit(fs.length ? fs : features); } });
+    // map controls
+    $("fit").addEventListener("click", () => zoomToFit(features));
+    $("home").addEventListener("click", resetView);
+    // keyboard: ←/→ ±1yr, ↓/↑ ±10yr, Space toggles play. Defer to the focused
+    // control where it owns the key (SPARQL editor, the slider, the speed select,
+    // a button) so we never double-handle.
+    document.addEventListener("keydown", (e) => {
+      const ae = document.activeElement, tag = ae ? ae.tagName : "";
+      if (ae === $("q")) return;
+      if (e.key === " ") { if (tag === "BUTTON" || tag === "SELECT") return; togglePlay(); e.preventDefault(); return; }
+      if (ae === $("tl") || tag === "SELECT") return;   // native arrows for slider / select
+      if (e.key === "ArrowLeft") { setScrub(curScrub - 1); e.preventDefault(); }
+      else if (e.key === "ArrowRight") { setScrub(curScrub + 1); e.preventDefault(); }
+      else if (e.key === "ArrowDown") { setScrub(curScrub - 10); e.preventDefault(); }
+      else if (e.key === "ArrowUp") { setScrub(curScrub + 10); e.preventDefault(); }
+    });
     // marker tooltips + click-to-jump
     const mtip = $("mtip");
     $("marks").addEventListener("mouseover", (e) => { const m = e.target.closest(".m"); if (!m || !m.dataset.t) return; const r = m.getBoundingClientRect(); mtip.textContent = m.dataset.t; mtip.style.left = (r.left + r.width / 2) + "px"; mtip.style.top = r.top + "px"; mtip.style.display = "block"; });
