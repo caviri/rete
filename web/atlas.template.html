@@ -730,7 +730,7 @@ __GLUE_JS__
     const t0 = performance.now();
     let res;
     try { res = await runRaw(q); }
-    catch (e) { $("status").className = "err"; $("status").textContent = "✗ " + (e.message || e); busy = false; return; }
+    catch (e) { $("status").className = "err"; $("status").textContent = "✗ " + (e.message || e); $("iotag").innerHTML = ""; busy = false; return; }
     $("status").className = "";
     const rows = res.rows || []; lastRows = rows; lastVars = res.vars || (rows[0] ? Object.keys(rows[0]) : []);
     const prev = features;
@@ -755,11 +755,11 @@ __GLUE_JS__
       if (nin || nout) delta = { in: nin, out: nout };
       _tween = { old: prev, t0: performance.now(), dur: 350 }; _anim = true;
     }
-    // tag the result's dimensions: space = a WKT column, time = a year/date-like column
-    const r0 = rows[0] || {};
+    // tag the result's dimensions: time = a year/date-like column name; space = any
+    // WKT cell (sampled across rows, since row 0 may lack the geometry).
     const rio = [];
-    if (lastVars.some((v) => /^(year|date|time|era|start|end|when|inception)/i.test(v))) rio.push("time");
-    if (lastVars.some((v) => isWktTerm(r0[v]))) rio.push("space");
+    if (lastVars.some((v) => /(year|date|time)$/i.test(v) || /^(era|when|inception|start|end)$/i.test(v))) rio.push("time");
+    if (rows.slice(0, 80).some((r) => lastVars.some((v) => isWktTerm(r[v])))) rio.push("space");
     if (!rio.length) rio.push("table");
     $("iotag").innerHTML = chipsHtml(rio);
     $("status").textContent =
@@ -1088,8 +1088,9 @@ __GLUE_JS__
     const prevA = $("marks").querySelector(".m.snap.active"); if (prevA) prevA.classList.remove("active");
     if (era === curScrub) { const am = $("marks").querySelector('.m.snap[data-y="' + era + '"]'); if (am) am.classList.add("active"); }
     if (era !== curEra || force) {
-      curEra = era; applyTemplate(); runQuery(); markStripCur();
-      if (curEra < vStart || curEra > vEnd) { const sp = vEnd - vStart; setWindow(curEra - sp / 2, curEra + sp / 2); }  // keep the playing/jumped era in view
+      curEra = era; applyTemplate(); runQuery();
+      if (curEra < vStart || curEra > vEnd) { const sp = vEnd - vStart; setWindow(curEra - sp / 2, curEra + sp / 2); }  // keep the playing/jumped era in view (setWindow → renderStrip re-marks .cur)
+      else markStripCur();   // era stayed in view: just move the filmstrip's current marker
     }
   }
 
@@ -1100,7 +1101,7 @@ __GLUE_JS__
     vStart = Math.max(minY, a); vEnd = Math.min(maxY, b);
     $("tl").min = vStart; $("tl").max = vEnd; $("tl").value = Math.max(vStart, Math.min(vEnd, curScrub));
     $("tlrange").textContent = yearLabel(Math.round(vStart)) + " – " + yearLabel(Math.round(vEnd));
-    renderTicks(); placeMarks(); renderCtx(); renderStrip();
+    renderTicks(); placeMarks(); renderCtx(); requestStrip();
   }
   function zoomBy(factor) {
     const c = (curScrub >= vStart && curScrub <= vEnd) ? curScrub : (vStart + vEnd) / 2;
@@ -1170,6 +1171,10 @@ __GLUE_JS__
     const prev = $("strip").querySelector(".thumb.cur"); if (prev) prev.classList.remove("cur");
     const t = $("strip").querySelector('.thumb[data-y="' + curEra + '"]'); if (t) t.classList.add("cur");
   }
+  // coalesce filmstrip rebuilds to one per frame (it's called from setWindow → every
+  // ctx-brush mousemove) and let layout settle (clientWidth) after the toggle transition
+  let _stripPending = false;
+  function requestStrip() { if (_stripPending) return; _stripPending = true; requestAnimationFrame(() => { _stripPending = false; renderStrip(); }); }
   // context strip (full range): drag the window body to pan, drag its edges to zoom
   function setupCtx() {
     const ctxEl = $("ctx");
@@ -1308,7 +1313,7 @@ __GLUE_JS__
     showAbout(0);
     // controls
     $("tl").addEventListener("input", (e) => setScrub(+e.target.value));
-    $("run").addEventListener("click", () => { tmpl = $("q").value; runQuery(); });
+    $("run").addEventListener("click", () => { tmpl = $("q").value; showAbout(-1); runQuery(); });
     $("reset").addEventListener("click", () => { tmpl = EXAMPLES[0].q; $("ex").value = "0"; showAbout(0); applyTemplate(); runQuery(); });
     $("play").addEventListener("click", togglePlay);
     $("src").addEventListener("change", (e) => setMode(e.target.value));
@@ -1334,7 +1339,7 @@ __GLUE_JS__
     $("zoomout").addEventListener("click", () => zoomBy(1 / 0.6));
     $("zoomreset").addEventListener("click", () => setWindow(minY, maxY));
     // snapshot-preview filmstrip toggle + click-to-jump
-    $("strips").addEventListener("click", () => { previewsOn = !previewsOn; $("strips").classList.toggle("on", previewsOn); renderStrip(); });
+    $("strips").addEventListener("click", () => { previewsOn = !previewsOn; $("strips").classList.toggle("on", previewsOn); requestStrip(); });
     $("strip").addEventListener("click", (e) => { const t = e.target.closest(".thumb"); if (t) setScrub(+t.dataset.y); });
     // step one era back / forward
     $("stepb").addEventListener("click", () => stepEra(-1));
