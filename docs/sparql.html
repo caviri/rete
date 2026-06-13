@@ -206,6 +206,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html" class="active">SPARQL support</a></li>
+        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
@@ -237,6 +238,9 @@ only for final bindings.</p>
 <p>Run via the CLI (<code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json]</code>) or in the browser
 (<code>query</code> in <code>rete-wasm</code> for any query form; <code>query_sparql</code> is the older
 SELECT-only wrapper).</p>
+<p>Spatial queries over <code>geo:wktLiteral</code> geometry — point-in-polygon, intersection,
+distance — are covered by a focused set of GeoSPARQL functions; see
+<a href="geosparql.html">GeoSPARQL (geometry + time)</a>.</p>
 <figure class="fig-right">
   <img src="img/bgp-join.svg" alt="Two triple patterns sharing the variable ?f are joined on it, producing a binding table with columns for the bound variables.">
   <figcaption>A basic graph pattern is a join on shared variables: patterns that share <code>?f</code> are intersected via the permutation indexes.</figcaption>

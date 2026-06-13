@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dataset Cards · rete docs</title>
+  <title>GeoSPARQL (geometry + time) · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -206,9 +206,9 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
-        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
+        <li><a href="geosparql.html" class="active">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="dataset-cards.html" class="active">Dataset Cards</a></li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
@@ -229,118 +229,113 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Dataset Cards</h1>
-<p>A <strong>Dataset Card</strong> is a small, embeddable data-catalog record carried <em>inside</em> a
-<code>.rete</code> file. It turns an opaque graph blob into a <strong>self-describing dataset</strong>:
-who made it, under what license, where it came from — plus an auto-computed
-profile of what's in it (counts, the predicates and classes actually used, the
-vocabularies they belong to). One <code>rete card</code> (or <code>rete info</code>) reads it back, so a
-<code>.rete</code> file doubles as its own mini data catalog.</p>
-<p>The card lives in the file's <strong>metadata section</strong> — a slot the format reserves
-right after the 128-byte header. Adding a card is <strong>not a format change</strong>: a file
-without one is byte-for-byte identical to a pre-card build, and an older reader
-simply ignores the section. The card is folded into the file's <code>blake3</code> content
-hash, so <code>rete verify</code> covers it and it is <strong>tamper-evident</strong>.</p>
-<h2>Building a card</h2>
-<p>Cards are <strong>opt-in</strong>: a plain <code>rete build</code> writes no card and is unchanged. Pass
-any card flag to embed one. The statistics are derived from the data; the curated
-fields (title, license, …) are yours to supply.</p>
-<pre><code class="language-sh"># Auto-derived stats only (no curated fields):
-rete build data.nt -o data.rete --card
-
-# With curated catalog metadata:
-rete build data.nt -o data.rete \
-  --title "Citation graph 2021" \
-  --license "CC0-1.0" \
-  --source "https://example.org/citations" \
-  --description "Open citations sharded by year" \
-  --created 2026-06-08
+<h1>GeoSPARQL (geometry + time)</h1>
+<p>rete stores geometry as standard <a href="https://www.ogc.org/standard/geosparql/">GeoSPARQL</a>
+<code>geo:wktLiteral</code> values and answers a focused set of <strong>GeoSPARQL filter
+functions</strong> — so you can ask spatial questions (<em>point-in-polygon</em>,
+<em>intersection</em>, <em>distance</em>) and combine them with ordinary SPARQL, including
+temporal filters. The whole thing runs in the <strong>browser/WASM</strong> engine too: the
+geometry code is pure Rust (<code>core</code> + <code>f64</code>, no GIS C libraries), so a <code>.rete</code>
+file of polygons-with-time is queryable in place, offline.</p>
+<p>Try it in the <strong><a href="playground.html">playground</a></strong> — pick the <em>history.rete</em>
+dataset and the <strong>Geo</strong> examples.</p>
+<h2>Data model</h2>
+<p>Geometry follows the GeoSPARQL convention — a feature links to a geometry node
+that carries a WKT literal:</p>
+<pre><code class="language-turtle">&lt;http://ex/terr/France_1914&gt;
+  rdfs:label "France" ;
+  ex:year 1914 ;                                   # plain xsd:integer — filter on it
+  geo:hasGeometry [ geo:asWKT
+    "POLYGON((-4.79 48.32, 2.55 51.09, 7.59 47.59, ...))"^^geo:wktLiteral ] .
 </code></pre>
-<p>For the curated fields — including a list of <strong>example queries</strong>, which has no
-flag — supply a small JSON file with <code>--card-file</code>. Explicit flags override
-whatever the file provides:</p>
-<pre><code class="language-json">{
-  "title": "Citation graph 2021",
-  "license": "CC0-1.0",
-  "source": "https://example.org/citations",
-  "description": "Open citations sharded by year",
-  "example_queries": [
-    "SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt; ?cited }"
-  ]
-}
-</code></pre>
-<pre><code class="language-sh">rete build data.nt -o data.rete --card-file card.json --title "Override title"
-</code></pre>
-<p>Any of <code>--card</code>, <code>--card-file</code>, <code>--title</code>, <code>--license</code>, <code>--source</code>,
-<code>--description</code>, or <code>--created</code> opts the build into writing a card.</p>
-<h2>What's in a card</h2>
-<table><thead><tr><th>Field</th><th>Source</th><th>Meaning</th></tr></thead><tbody>
-<tr><td><code>title</code>, <code>description</code>, <code>license</code>, <code>source</code>, <code>created</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>Free-text catalog metadata. Omitted fields are absent from the JSON.</td></tr>
-<tr><td><code>example_queries</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Sample queries a consumer can run.</td></tr>
-<tr><td><code>triple_count</code></td><td>derived</td><td>Triples in the <strong>default graph</strong>.</td></tr>
-<tr><td><code>quad_count</code>, <code>named_graph_count</code></td><td>derived</td><td>Total statements and number of named graphs.</td></tr>
-<tr><td><code>term_count</code></td><td>derived</td><td>Distinct dictionary terms.</td></tr>
-<tr><td><code>predicates</code></td><td>derived</td><td>Each predicate IRI with its default-graph triple count, <strong>descending</strong>.</td></tr>
-<tr><td><code>classes</code></td><td>derived</td><td>Each <code>rdf:type</code> object (class) with its instance count, descending.</td></tr>
-<tr><td><code>vocabularies</code></td><td>derived</td><td>Distinct <strong>namespaces</strong> of the predicate and class IRIs (the prefix up to the last <code>#</code> or <code>/</code>).</td></tr>
-<tr><td><code>format_version</code></td><td>derived</td><td>The <code>.rete</code> format version the card was written against.</td></tr>
-</tbody></table>
-<p>The per-predicate and per-class statistics are computed over the <strong>default
-graph</strong> (named-graph contents are summarized only by <code>quad_count</code> /
-<code>named_graph_count</code>), matching <code>rete stats</code> and <code>rete predicates</code>.</p>
-<h2>Reading a card</h2>
-<p><code>rete card</code> prints a human-readable catalog; <code>--json</code> emits the raw card:</p>
-<pre><code class="language-sh">rete card data.rete
-#  Dataset Card
-#    title        : Citation graph 2021
-#    license      : CC0-1.0
-#    source       : https://example.org/citations
-#    triples      : 12048
-#    terms        : 9571
-#    checksum     : 8f5b97374ac5f5e324b5cc53f592e96c  (blake3-16 content hash)
-#    vocabularies : 2
-#        http://purl.org/spar/cito/
-#        http://purl.org/dc/terms/
-#    predicates (2):
-#           11020  &lt;http://purl.org/spar/cito/cites&gt;
-#            1028  &lt;http://purl.org/dc/terms/date&gt;
-#    ...
-
-rete card data.rete --json     # the embedded JSON, pretty-printed
-</code></pre>
-<p><code>rete info</code> prints the file header and, when a card is present, appends the same
-catalog — so <code>info</code> is a one-shot overview of <em>what the file is</em> as well as <em>how
-it's laid out</em>. A file with no card just shows the header.</p>
-<p>The <code>checksum</code> line is the file's <code>blake3</code> content hash (the same value
-<code>rete verify</code> checks) — it identifies the exact bytes, card included.</p>
-<h2>How it sits in the file</h2>
-<p>The card is stored as compact <strong>JSON</strong> in the metadata section, which sits
-between the header and the dictionary:</p>
-<pre><code class="language-text">[0..128)      header              (metadata_offset = 128, metadata_len = card bytes)
-[128 .. 128+L)  Dataset Card JSON   (L = metadata_len; absent when no card)
-[dictionary]    front-coded terms   (shifts to offset 128 + L)
-[index]         permutation blocks
-[pyramid-meta]  community summary
-[named graphs]  (if any)
-[footer]        trailing magic
-</code></pre>
-<p>A few properties worth knowing:</p>
 <ul>
-<li><strong>No format break.</strong> Without a card, <code>metadata_len</code> is <code>0</code> and the dictionary
-starts at offset 128 exactly as before — the output is byte-identical to a
-pre-card build, and existing files keep verifying unchanged.</li>
-<li><strong>Integrity-covered.</strong> The card bytes are part of the <code>blake3</code> content hash, so
-<code>rete verify</code> validates the card too and any edit to it is detected.</li>
-<li><strong>Off the query path.</strong> Range-reading opens (<code>rete query-url</code>, <code>sparql-url</code>,
-<code>summary-url</code>, federation routing) fetch sections by offset and <strong>never read
-the card</strong>, so embedding one adds nothing to query-time bytes-on-the-wire. The
-card is a full-open / <code>rete card</code> artifact.</li>
-<li><strong>Opaque to the engine.</strong> <code>rete-core</code> treats the section as raw bytes; the card
-schema lives entirely in the CLI. The metadata section is a general extension
-point — a card is just its first use.</li>
+<li><code>geo:</code> = <code>http://www.opengis.net/ont/geosparql#</code></li>
+<li>The functions operate on a <code>geo:wktLiteral</code> term, normally reached with the
+property path <code>?f geo:hasGeometry/geo:asWKT ?wkt</code>. A plain or <code>xsd:string</code>
+literal whose value happens to be WKT is also accepted.</li>
+<li><strong>Axis order is CRS84 lon/lat, always.</strong> A CRS-URI prefix on a literal
+(<code>&lt;http://…/CRS84&gt; POINT(…)</code>) is accepted but ignored — rete never swaps
+axes, so do <strong>not</strong> feed it lat/lon EPSG:4326 data.</li>
+<li>Time is just an ordinary literal (<code>ex:year 1914</code>, or <code>ex:startYear</code>/
+<code>ex:endYear</code>), so a temporal slice is a plain <code>FILTER(?year = 1914)</code>.</li>
 </ul>
-<p>See <a href="SPEC.html">the format specification</a> for the header layout and
-<a href="cli.html">the CLI reference</a> for every flag.</p>
+<h2>Functions</h2>
+<table><thead><tr><th>Function</th><th>Returns</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>geof:sfContains(g1, g2)</code></td><td><code>xsd:boolean</code></td><td><code>g2</code> inside/on <code>g1</code> (POLYGON ⊇ POINT is the common case)</td></tr>
+<tr><td><code>geof:sfWithin(g1, g2)</code></td><td><code>xsd:boolean</code></td><td><code>sfContains(g2, g1)</code></td></tr>
+<tr><td><code>geof:sfIntersects(g1, g2)</code></td><td><code>xsd:boolean</code></td><td>share any point (boundary contact counts)</td></tr>
+<tr><td><code>geof:sfDisjoint(g1, g2)</code></td><td><code>xsd:boolean</code></td><td><code>!sfIntersects</code></td></tr>
+<tr><td><code>geof:sfEquals(g1, g2)</code></td><td><code>xsd:boolean</code></td><td>structural equality within ε</td></tr>
+<tr><td><code>geof:distance(g1, g2, unit)</code></td><td><code>xsd:double</code></td><td>min distance; <code>unit</code> = <code>uom:metre</code> (haversine) or <code>uom:degree</code> (planar)</td></tr>
+<tr><td><code>geof:envelope(g)</code></td><td><code>geo:wktLiteral</code></td><td>axis-aligned bounding box as a <code>POLYGON</code></td></tr>
+</tbody></table>
+<p><code>geof:</code> = <code>http://www.opengis.net/def/function/geosparql/</code>,
+<code>uom:</code> = <code>http://www.opengis.net/def/uom/OGC/1.0/</code>.</p>
+<p>WKT parsing covers <code>POINT</code>, <code>MULTIPOINT</code>, <code>LINESTRING</code>, <code>POLYGON</code> (with holes),
+<code>MULTIPOLYGON</code>, <code>GEOMETRYCOLLECTION</code>, the <code>EMPTY</code> keyword, and <code>Z</code>/<code>M</code>
+ordinates (dropped). A malformed or non-geometry argument is a type error: the
+row drops out of a <code>FILTER</code> and the variable is left unbound in a <code>BIND</code> — never
+an engine error.</p>
+<h2>Example — "which territory contained this point in year Y?"</h2>
+<p>The headline query combines a temporal filter and a spatial predicate in one
+<code>FILTER</code>:</p>
+<pre><code class="language-sparql">PREFIX geo:  &lt;http://www.opengis.net/ont/geosparql#&gt;
+PREFIX geof: &lt;http://www.opengis.net/def/function/geosparql/&gt;
+PREFIX ex:   &lt;http://ex/&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+
+SELECT ?territory WHERE {
+  ?t ex:year 1914 ; rdfs:label ?territory ;
+     geo:hasGeometry/geo:asWKT ?w .
+  FILTER(geof:sfContains(?w, "POINT(2.35 48.85)"^^geo:wktLiteral))
+}
+# → France   (the same point resolves to "Kingdom of France" in the year-1000 snapshot,
+#    and "Liao" / "Qing" / … for Beijing across the era snapshots)
+</code></pre>
+<p>Distance ranking (metres → km), bounding boxes, and bbox intersection work the
+same way:</p>
+<pre><code class="language-sparql"># nearest territories to a point over London, 1914
+SELECT ?territory ?km WHERE {
+  ?t ex:year 1914 ; rdfs:label ?territory ; geo:hasGeometry/geo:asWKT ?w .
+  BIND(geof:distance(?w, "POINT(0 51)"^^geo:wktLiteral,
+       &lt;http://www.opengis.net/def/uom/OGC/1.0/metre&gt;) / 1000 AS ?km)
+} ORDER BY ?km LIMIT 8
+</code></pre>
+<h2>The example dataset</h2>
+<p><code>history.rete</code> (embedded in the playground) is built from
+<a href="https://github.com/aourednik/historical-basemaps"><strong>aourednik/historical-basemaps</strong></a>
+(GPL-3.0) — world territorial borders at snapshots from 323 BCE to 1994 CE. Each
+border polygon becomes a <code>geo:wktLiteral</code>, the snapshot year an <code>xsd:integer</code>,
+geometry simplified to ~1 km for an in-browser-sized file. Build it with:</p>
+<pre><code class="language-sh">python3 scripts/geo_to_rete.py basemaps \
+  --years bc323,1000,1492,1815,1914,1945,1994 --prec 2 --min-bbox 0.3 \
+  --max-per-year 90 -o history.nt
+rete build history.nt -o web/history.rete
+</code></pre>
+<p>The same script also converts an
+<a href="https://www.openhistoricalmap.org/"><strong>OpenHistoricalMap</strong></a> extract — real dated
+administrative boundaries pulled from its public
+<a href="https://qlever.dev/api/ohm-planet">QLever endpoint</a> (<code>geo:hasGeometry/geo:asWKT</code></p>
+<ul>
+<li><code>start_date</code>/<code>end_date</code>) — via the <code>ohm</code> subcommand.</li>
+</ul>
+<h2>Scope &amp; limitations</h2>
+<p>v1 is deliberately tight and exact for the common cases rather than broad:</p>
+<ul>
+<li><strong>Planar</strong> Cartesian computation on lon/lat (haversine only for the metre
+distance). No CRS reprojection — <code>geof:transform</code> and non-CRS84 axis handling
+are out of scope.</li>
+<li>The five topological relations are computed directly (point-in-polygon +
+segment crossing), not via a full DE-9IM matrix. Exact for the dominant
+polygon ⊇ point / nested-territory cases; <code>sfTouches</code>/<code>sfCrosses</code>/<code>sfOverlaps</code>,
+<code>geof:relate</code>, constructive geometry (<code>buffer</code>/<code>union</code>/<code>boundary</code>/…),
+<code>geof:area</code>/<code>length</code>, and <code>geof:getSRID</code> are <strong>not</strong> implemented — an
+unsupported <code>geof:</code> IRI is rejected at parse time.</li>
+<li>No spatial index: filters scan the candidate rows (fine for the curated demo
+data and for queries already narrowed by a non-spatial pattern).</li>
+</ul>
+<p>Performance of the non-spatial engine is covered in <a href="BENCHMARK.html">Benchmarks</a>;
+overall SPARQL coverage in the <a href="conformance.html">conformance scorecard</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -348,7 +343,7 @@ point — a card is just its first use.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/dataset-cards.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/geosparql.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {
