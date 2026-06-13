@@ -46,7 +46,7 @@
   button:hover { filter:brightness(1.08); }
   #status { color:var(--mut); font-size:12px; padding:0 12px 8px; min-height:18px; }
   #status.err { color:var(--accent2); }
-  .layerlist { padding:2px 12px 6px; }
+  .layerlist { padding:2px 12px 6px; max-height:208px; overflow-y:auto; }
   .layerlist .lyr { display:flex; align-items:center; gap:7px; padding:3px 0; font-size:12px; color:#cdd9e5; cursor:pointer; }
   .layerlist .lyr input { accent-color:var(--accent); }
   .layerlist .lyr .sw { width:10px; height:10px; border-radius:3px; flex:0 0 auto; outline:1px solid rgba(255,255,255,.15); }
@@ -1854,6 +1854,37 @@ let wasm_bindgen = (function(exports) {
       q: "SELECT ?label ?year ?wkt WHERE { ?b a ex:State ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }" },
     { key: "pleiades", name: "Pleiades ancient places", file: "pleiades.rete", kind: "interval", color: "#4ecdc4",
       q: "SELECT ?label ?s ?e ?wkt WHERE { ?p a ex:Place ; rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ; geo:hasGeometry/geo:asWKT ?wkt }" },
+    // Wikidata temporal+spatial themes (CC0) — one .rete each in the bucket's atlas/themes/,
+    // all in the instant GeoSPARQL shape: ?x a ex:TYPE ; rdfs:label ; ex:year ; geo:hasGeometry/geo:asWKT.
+    ...[
+      ["military-operations", "Military operations", "MilitaryOp", "#e74c3c"],
+      ["sieges", "Sieges", "Siege", "#c0392b"],
+      ["castles", "Castles", "Castle", "#d4a017"],
+      ["fortifications", "Fortifications", "Fortification", "#b8860b"],
+      ["lighthouses", "Lighthouses", "Lighthouse", "#f1c40f"],
+      ["cathedrals", "Cathedrals", "Cathedral", "#9b59b6"],
+      ["monasteries", "Monasteries", "Monastery", "#8e44ad"],
+      ["abbeys", "Abbeys", "Abbey", "#6c5ce7"],
+      ["palaces", "Palaces", "Palace", "#e84393"],
+      ["forts", "Forts", "Fort", "#a0522d"],
+      ["universities", "Universities", "University", "#2980b9"],
+      ["world-heritage-sites", "World Heritage Sites", "WorldHeritageSite", "#16a085"],
+      ["earthquakes", "Earthquakes", "Earthquake", "#d35400"],
+      ["disasters", "Disasters", "Disaster", "#e67e22"],
+      ["floods", "Floods", "Flood", "#3498db"],
+      ["meteorite-falls", "Meteorite falls", "MeteoriteFall", "#95a5a6"],
+      ["volcanic-eruptions", "Volcanic eruptions", "VolcanicEruption", "#ff5e3a"],
+      ["nuclear-explosions", "Nuclear explosions", "NuclearExplosion", "#f39c12"],
+      ["assassinations", "Assassinations", "Assassination", "#7f8c8d"],
+      ["treaties", "Treaties", "Treaty", "#27ae60"],
+      ["epidemics", "Epidemics", "Epidemic", "#2ecc71"],
+      ["pyramids", "Pyramids", "Pyramid", "#cd853f"],
+      ["polities", "Polities & states", "Polity", "#1abc9c"],
+      ["shipwrecks", "Shipwrecks", "Shipwreck", "#34495e"],
+    ].map(([key, name, type, color]) => ({
+      key, name, file: "themes/" + key + ".rete", kind: "instant", color,
+      q: "SELECT ?label ?year ?wkt WHERE { ?x a ex:" + type + " ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }",
+    })),
   ];
   const overlays = LAYER_DEFS.map((d) => ({ def: d, on: false, loaded: false, loading: false, feats: null }));
   const dsBytes = new Map();   // dataset file → fetched-once Uint8Array

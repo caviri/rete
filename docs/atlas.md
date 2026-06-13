@@ -99,14 +99,20 @@ whatever your query binds to `?wkt`.
    [query.wikidata.org](https://query.wikidata.org), joins the matches back, and
    shows each territory's Wikidata entity + population (works best on modern eras;
    it's online-only and fuzzy on historical names).
-10. **Stack data-layer overlays.** Beyond the borders, you can switch on extra
-    datasets as **overlays** — **Battles** and **Archaeological sites** and
-    **Historical states** (from a Wikidata CONSTRUCT subset) and **Pleiades ancient
-    places** — each a separate `.rete` fetched once from the bucket, queried locally,
-    and dotted on the map in its own colour, filtered to the scrub year (events
-    within a window of the playhead; places active across their `[startYear,endYear]`).
-    Each active layer gets a **histogram track** beneath the timeline — like a clip
-    in a video editor — showing *when* its data is concentrated, with a playhead.
+10. **Stack data-layer overlays.** Beyond the borders, you can switch on **28
+    extra datasets** as **overlays** — **Battles**, **Archaeological sites**,
+    **Historical states** and **Pleiades ancient places**, plus **24 Wikidata
+    temporal+spatial themes** (CC0): military operations, sieges, castles,
+    fortifications, lighthouses, cathedrals, monasteries, abbeys, palaces, forts,
+    universities, World Heritage Sites, earthquakes, disasters, floods, meteorite
+    falls, volcanic eruptions, nuclear explosions, assassinations, treaties,
+    epidemics, pyramids, polities and shipwrecks. Each is a separate `.rete`
+    fetched once from the bucket, queried locally, and dotted on the map in its own
+    colour, filtered to the scrub year (events within a window of the playhead;
+    places active across their `[startYear,endYear]`). Each active layer gets a
+    **histogram track** beneath the timeline — like a clip in a video editor —
+    showing *when* its data is concentrated, with a playhead. Every theme is
+    reproducible from one CONSTRUCT each — see `scripts/fetch_wikidata_themes.sh`.
 
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">
