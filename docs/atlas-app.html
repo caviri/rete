@@ -1854,7 +1854,7 @@ let wasm_bindgen = (function(exports) {
     "airports", "monuments", "memorials", "mosques", "synagogues", "temples", "towers", "theatres",
     "observatories", "railway-stations", "amphitheatres", "aqueducts", "canals", "windmills",
     "botanical-gardens", "megaliths", "museums", "libraries", "stadiums", "prisons", "mines",
-    "bridges", "dams", "dbpedia-power", "ohm",
+    "bridges", "dams", "dbpedia-power", "ohm", "nomisma", "factgrid", "samian-ware",
   ]);
   const LAYER_DEFS = [
     { key: "battles", name: "Battles", file: "history-events.rete", kind: "instant", color: "#ff6b6b",
@@ -1938,8 +1938,13 @@ let wasm_bindgen = (function(exports) {
       // DBpedia (CC-BY-SA) — a second provider, same GeoSPARQL shape.
       ["dbpedia-conflicts", "Conflicts (DBpedia)", "DbpConflict", "#ff8a65"],
       ["dbpedia-power", "Power plants (DBpedia)", "DbpPowerPlant", "#ffd54f"],
-      // OpenHistoricalMap (ODbL) — a third provider; OSM features dated by start_date/end_date.
+      // OpenHistoricalMap (CC0) — a third provider; OSM features dated by start_date/end_date.
       ["ohm", "OpenHistoricalMap", "OhmFeature", "#00e5ff"],
+      // More providers: ancient coins, an independent history Wikibase, biblical events, Roman pottery.
+      ["nomisma", "Coin types (Nomisma)", "CoinType", "#cd7f32"],
+      ["factgrid", "Places & events (FactGrid)", "Place", "#6a1b9a"],
+      ["theographic-bible", "Bible events (Theographic)", "BibleEvent", "#d4af37"],
+      ["samian-ware", "Roman potters (Samian)", "Potter", "#c1440e"],
     ].map(([key, name, type, color]) => {
       // Persistent things (structures, institutions, polities, OHM features) carry a
       // lifespan [startYear,endYear] and render across it; point-in-time events keep ex:year.

@@ -99,13 +99,17 @@ whatever your query binds to `?wkt`.
    [query.wikidata.org](https://query.wikidata.org), joins the matches back, and
    shows each territory's Wikidata entity + population (works best on modern eras;
    it's online-only and fuzzy on historical names).
-10. **Stack data-layer overlays — across three providers, with real lifespans.**
-    Beyond the borders, you can switch on **74 extra datasets** as **overlays**,
-    drawn from **three sources**: **Wikidata** (CC0), **DBpedia** (conflicts and
-    power plants — proving the same GeoSPARQL shape works from a *second* SPARQL
-    endpoint), and **OpenHistoricalMap** (CC0; OSM features dated by their
-    `start_date`/`end_date` tags, fetched via Overpass — and drawn as their **real
-    geometry**: historical boundaries as polygons, routes as lines, places as dots).
+10. **Stack data-layer overlays — across many providers, with real lifespans.**
+    Beyond the borders, you can switch on **78 extra datasets** as **overlays**,
+    drawn from **seven sources**: **Wikidata** (CC0), **DBpedia** (conflicts and
+    power plants — the same GeoSPARQL shape from a *second* SPARQL endpoint),
+    **OpenHistoricalMap** (CC0; OSM features dated by their `start_date`/`end_date`
+    tags, fetched via Overpass — and drawn as their **real geometry**: historical
+    boundaries as polygons, routes as lines, places as dots), **Nomisma.org**
+    (CC-BY; ~10k ancient coin *types* placed at their mints, deep into BCE),
+    **FactGrid** (CC0; an *independent* historical Wikibase with its own property
+    space), **Theographic** (CC-BY-SA; biblical events located and dated), and
+    **Samian ware** (Roman terra-sigillata potters at their production centres).
     The base four are **Battles**, **Archaeological sites**, **Historical states**
     and **Pleiades ancient places**. Crucially, things that *persist* — buildings,
     institutions, polities, OHM features — are modelled as a **lifespan
@@ -129,11 +133,13 @@ whatever your query binds to `?wkt`.
     (events within a window of the playhead; places active across their
     `[startYear,endYear]`). Each active layer gets a **histogram track** beneath the
     timeline — like a clip in a video editor — showing *when* its data is
-    concentrated, with a playhead. Every theme is reproducible from one query each —
-    see `scripts/fetch_wikidata_themes.sh` (Wikidata, instant `emit` + interval
-    `emiti`), `scripts/fetch_dbpedia_themes.sh` (DBpedia), and
-    `scripts/fetch_ohm.sh` + `scripts/ohm_overpass_to_nt.py` (OpenHistoricalMap
-    Overpass → atlas N-Triples, with EDTF date and geometry conversion).
+    concentrated, with a playhead. Every theme is reproducible from one
+    query/recipe each — see `scripts/fetch_wikidata_themes.sh` (Wikidata, instant
+    `emit` + interval `emiti`), `scripts/fetch_dbpedia_themes.sh` (DBpedia),
+    `scripts/fetch_ohm.sh` + `scripts/ohm_overpass_to_nt.py` (OpenHistoricalMap),
+    `scripts/fetch_atlas_extra.sh` (Nomisma / FactGrid / Getty TGN SPARQL), and
+    `scripts/fetch_dumps_extra.sh` + `scripts/{theographic,samian}_to_nt.py`
+    (the GitHub-dump providers).
 
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">
