@@ -142,11 +142,18 @@ impl Parser<'_> {
         if self.i == start {
             return None;
         }
-        let v: f64 = std::str::from_utf8(&self.b[start..self.i])
-            .ok()?
-            .parse()
-            .ok()?;
-        v.is_finite().then_some(v)
+        // Restore the cursor on a malformed run (e.g. "9.9.9") so coord()'s
+        // extra-ordinate drop-loop can't silently swallow it and accept garbage.
+        match std::str::from_utf8(&self.b[start..self.i])
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+        {
+            Some(v) if v.is_finite() => Some(v),
+            _ => {
+                self.i = start;
+                None
+            }
+        }
     }
 
     /// One coordinate: two ordinates; any extra (Z/M) ordinates are consumed and
@@ -415,6 +422,19 @@ fn point_in_any(p: Coord, polys: &[&Vec<Ring>]) -> bool {
     polys.iter().any(|rings| point_in_polygon(p, rings))
 }
 
+/// Strictly inside the filled area (interior of the exterior ring, and not on or
+/// inside any hole).
+fn point_strictly_in_polygon(p: Coord, rings: &[Ring]) -> bool {
+    matches!(rings.first().map(|ext| point_in_ring(p, ext)), Some(1))
+        && !rings[1..].iter().any(|h| point_in_ring(p, h) >= 0)
+}
+
+fn point_strictly_in_any(p: Coord, polys: &[&Vec<Ring>]) -> bool {
+    polys
+        .iter()
+        .any(|rings| point_strictly_in_polygon(p, rings))
+}
+
 /// Do segments `p1p2` and `q1q2` intersect (including touching at an endpoint)?
 fn seg_intersect(p1: Coord, p2: Coord, q1: Coord, q2: Coord) -> bool {
     let d1 = orient(q1, q2, p1);
@@ -461,8 +481,9 @@ pub(crate) fn relate(rel: Rel, a: &Geometry, b: &Geometry) -> Option<bool> {
     })
 }
 
-/// `a` contains `b`: `b` ⊆ filled `a`. Requires `a` areal. Every vertex of `b`
-/// in-or-on `a`, and no edge of `b` transversally crosses an edge of `a`.
+/// `a` contains `b`: `b` ⊆ filled `a`. Requires `a` areal. Approximate for the
+/// polygon/polygon case (sound for nested territories — the data here); exact
+/// for the polygon ⊇ point path.
 fn contains(a: &Geometry, b: &Geometry) -> bool {
     let Some(polys) = polygons(a) else {
         return false;
@@ -471,13 +492,41 @@ fn contains(a: &Geometry, b: &Geometry) -> bool {
     if bcoords.is_empty() {
         return false;
     }
+    // (1) every vertex of b is in-or-on a.
     if !bcoords.iter().all(|&p| point_in_any(p, &polys)) {
         return false;
     }
+    // (2) no edge of b leaves a: its midpoint must stay in-or-on a, and it must
+    // not transversally cross an a-edge. Midpoint sampling catches a b-edge that
+    // exits and re-enters a through vertex/collinear touches (e.g. spanning the
+    // mouth of a concavity), which the crossing test alone misses.
     let a_edges = edges(a);
-    !edges(b)
-        .iter()
-        .any(|&(p1, p2)| a_edges.iter().any(|&(q1, q2)| proper_cross(p1, p2, q1, q2)))
+    for &(p1, p2) in &edges(b) {
+        let mid = Coord {
+            x: (p1.x + p2.x) / 2.0,
+            y: (p1.y + p2.y) / 2.0,
+        };
+        if !point_in_any(mid, &polys) {
+            return false;
+        }
+        if a_edges.iter().any(|&(q1, q2)| proper_cross(p1, p2, q1, q2)) {
+            return false;
+        }
+    }
+    // (3) areal b must not engulf a hole of a: a vertex of one of a's holes
+    // strictly inside b means b covers void that a doesn't fill (donut case).
+    if let Some(bpolys) = polygons(b) {
+        for rings in &polys {
+            if rings[1..]
+                .iter()
+                .flatten()
+                .any(|&h| point_strictly_in_any(h, &bpolys))
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn intersects(a: &Geometry, b: &Geometry) -> bool {
@@ -571,40 +620,45 @@ pub(crate) fn distance(a: &Geometry, b: &Geometry, unit: Unit) -> Option<f64> {
     if intersects(a, b) {
         return Some(0.0);
     }
-    // Closest pair: every vertex of one against every edge of the other, plus
-    // vertex↔vertex (for geometries with no edges, e.g. points).
+    // Candidate closest points: every vertex of one against every edge of the
+    // other (planar projection), plus vertex↔vertex (geometries with no edges).
+    // Each candidate is SCORED by the requested metric — not always planar — so
+    // the chosen pair is the one minimal in that metric. Haversine's periodic
+    // sin also makes the metre score correct across the ±180° antimeridian,
+    // where a raw planar longitude difference would pick the wrong pair.
     let (ea, eb) = (edges(a), edges(b));
+    let metric = |p: Coord, q: Coord| -> f64 {
+        match unit {
+            Unit::Degree => {
+                let (dx, dy) = (p.x - q.x, p.y - q.y);
+                (dx * dx + dy * dy).sqrt()
+            }
+            Unit::Metre => haversine(p, q),
+        }
+    };
     let mut best = f64::INFINITY;
-    let mut pair = (ca[0], cb[0]);
-    let mut consider = |p: Coord, q: Coord, d2: f64| {
-        if d2 < best {
-            best = d2;
-            pair = (p, q);
+    let mut consider = |p: Coord, q: Coord| {
+        let d = metric(p, q);
+        if d < best {
+            best = d;
         }
     };
     for &p in &ca {
         for &(q1, q2) in &eb {
-            let (q, d2) = closest_on_seg(p, q1, q2);
-            consider(p, q, d2);
+            consider(p, closest_on_seg(p, q1, q2).0);
         }
     }
     for &q in &cb {
         for &(p1, p2) in &ea {
-            let (p, d2) = closest_on_seg(q, p1, p2);
-            consider(p, q, d2);
+            consider(closest_on_seg(q, p1, p2).0, q);
         }
     }
     for &p in &ca {
         for &q in &cb {
-            let (dx, dy) = (p.x - q.x, p.y - q.y);
-            consider(p, q, dx * dx + dy * dy);
+            consider(p, q);
         }
     }
-    let (p, q) = pair;
-    Some(match unit {
-        Unit::Degree => best.sqrt(),
-        Unit::Metre => haversine(p, q),
-    })
+    Some(best)
 }
 
 fn haversine(p: Coord, q: Coord) -> f64 {
@@ -859,5 +913,62 @@ mod tests {
             relate(Rel::Contains, &g, &parse_wkt("POINT(1 1)").unwrap()),
             Some(true)
         );
+    }
+
+    // Regressions for bugs found by the adversarial review.
+    #[test]
+    fn contains_rejects_concavity_mouth_span() {
+        // A b-edge spanning the open mouth of a concavity leaves `a` between its
+        // (boundary-touching) endpoints — vertex + crossing checks alone miss it.
+        let slot = "POLYGON((0 0,10 0,10 10,6 10,6 3,4 3,4 10,0 10,0 0))";
+        assert_eq!(
+            rel(Rel::Contains, slot, "LINESTRING(4 10,6 10)"),
+            Some(false)
+        );
+        assert_eq!(
+            rel(Rel::Contains, slot, "LINESTRING(2 10,8 10)"),
+            Some(false)
+        );
+        // A genuinely-contained inner segment is still true.
+        assert_eq!(rel(Rel::Contains, slot, "LINESTRING(1 1,3 1)"), Some(true));
+    }
+
+    #[test]
+    fn contains_rejects_b_bridging_a_hole() {
+        let donut = "POLYGON((0 0,20 0,20 20,0 20,0 0),(8 8,12 8,12 12,8 12,8 8))";
+        // b brackets the hole → not contained (its interior covers a's void).
+        assert_eq!(
+            rel(Rel::Contains, donut, "POLYGON((4 4,16 4,16 16,4 16,4 4))"),
+            Some(false)
+        );
+        assert_eq!(
+            rel(Rel::Within, "POLYGON((4 4,16 4,16 16,4 16,4 4))", donut),
+            Some(false)
+        );
+        // A small b in the solid annulus is still contained.
+        assert_eq!(
+            rel(Rel::Contains, donut, "POLYGON((1 1,3 1,3 3,1 3,1 1))"),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn distance_metre_ranks_by_great_circle() {
+        // Off the equator the planar-nearest vertex is not the geodesic-nearest:
+        // (11.8,60) is ~100 km away, (10,61.2) ~133 km; metre must pick 100 km.
+        let d = dist("POINT(10 60)", "MULTIPOINT(11.8 60, 10 61.2)", Unit::Metre).unwrap();
+        assert!((d - 100_072.0).abs() < 300.0, "off-equator nearest: {d}");
+        // Across the antimeridian, (-179.5,0) is 1° away, (178,0) is 1.5°.
+        let d = dist("POINT(179.5 0)", "MULTIPOINT(-179.5 0, 178 0)", Unit::Metre).unwrap();
+        assert!((d - 111_195.0).abs() < 100.0, "antimeridian nearest: {d}");
+    }
+
+    #[test]
+    fn parser_rejects_malformed_extra_ordinate() {
+        // A malformed extra (Z/M) ordinate must fail the parse, not be swallowed.
+        assert!(parse_wkt("POINT(1 2 9.9.9)").is_none());
+        assert!(parse_wkt("LINESTRING(0 0,1 1 9.9.9,2 2)").is_none());
+        // A well-formed Z ordinate is still accepted (and dropped).
+        assert!(parse_wkt("POINT Z (1 2 3)").is_some());
     }
 }
