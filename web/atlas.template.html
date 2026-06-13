@@ -27,6 +27,14 @@
   select, .side select { background:#0c1116; color:#cdd9e5; border:1px solid var(--line);
     border-radius:6px; padding:4px 7px; font-size:12.5px; }
   .selrow { padding:4px 12px 8px; }
+  .exabout { padding:0 12px 6px; color:var(--mut); font-size:11.5px; line-height:1.45; }
+  .exabout .chips { margin-top:4px; display:flex; gap:5px; flex-wrap:wrap; }
+  .chip { display:inline-flex; align-items:center; gap:3px; font-size:10px; font-weight:600; padding:1px 7px;
+    border-radius:10px; border:1px solid var(--line); color:var(--mut); white-space:nowrap; }
+  .chip.time { color:var(--accent2); border-color:rgba(240,163,94,.4); }
+  .chip.space { color:var(--accent); border-color:rgba(63,182,168,.4); }
+  .chip.ts { color:#04110f; background:linear-gradient(90deg,var(--accent),var(--accent2)); border:0; }
+  .iotag { display:inline-flex; gap:5px; }
   .selrow select { width:100%; }
   #q { flex:1; min-height:120px; width:100%; resize:none; border:0; outline:0;
     background:#0c1116; color:#cdd9e5; font:12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;
@@ -193,6 +201,15 @@
   .zbtn { background:#0c1116; border:1px solid var(--line); color:var(--mut); border-radius:5px;
     padding:1px 8px; font-size:13px; font-weight:700; cursor:pointer; line-height:1.35; }
   .zbtn:hover { color:var(--ink); border-color:var(--accent); }
+  .filmstrip { position:relative; height:0; overflow:hidden; transition:height .18s ease; margin-top:0; }
+  .filmstrip.on { height:56px; margin-top:6px; }
+  .filmstrip .thumb { position:absolute; transform:translateX(-50%); cursor:pointer; text-align:center; top:0; }
+  .filmstrip .thumb canvas { display:block; width:72px; height:40px; border:1px solid var(--line); border-radius:4px;
+    background:#0a1622; }
+  .filmstrip .thumb.cur canvas { border-color:var(--accent2); box-shadow:0 0 7px rgba(240,163,94,.5); }
+  .filmstrip .thumb:hover canvas { border-color:var(--accent); }
+  .filmstrip .thumb span { display:block; font-size:9.5px; color:var(--mut); margin-top:1px; white-space:nowrap; }
+  .zbtn.on { color:#04110f; background:var(--accent); border-color:var(--accent); }
   .ctx { position:relative; height:13px; margin-top:6px; background:#0c1116; border:1px solid var(--line);
     border-radius:5px; overflow:hidden; }
   .ctx .ctxsnap { position:absolute; top:3px; width:1px; height:7px; background:rgba(63,182,168,.5); }
@@ -224,7 +241,8 @@
   <section class="side">
     <h2>Example queries</h2>
     <div class="selrow"><select id="ex"></select></div>
-    <h2>SPARQL <span class="sp"></span><span class="mut" style="font-size:11px;font-weight:400">{YEAR} = current era</span></h2>
+    <div id="exabout" class="exabout"></div>
+    <h2>SPARQL <span id="iotag" class="iotag"></span><span class="sp"></span><span class="mut" style="font-size:11px;font-weight:400">{YEAR} = era</span></h2>
     <textarea id="q" spellcheck="false"></textarea>
     <div class="row">
       <button id="run">Run ▸</button>
@@ -288,6 +306,7 @@
       <span class="tlrange" id="tlrange"></span>
       <span id="tlnext" class="tlnext"></span>
       <span class="sp"></span>
+      <button id="strips" class="zbtn" title="Show a preview of the map at each snapshot">🎞</button>
       <button id="zoomout" class="zbtn" title="Zoom out">−</button>
       <button id="zoomin" class="zbtn" title="Zoom in">+</button>
       <button id="zoomreset" class="zbtn" title="Show the full range">⤢</button>
@@ -297,6 +316,7 @@
       <input type="range" id="tl" min="0" max="100" step="1" value="0">
     </div>
     <div class="ticks" id="ticks"></div>
+    <div class="filmstrip" id="strip"></div>
     <div class="ctx" id="ctx" title="Drag the window to pan; drag its edges to zoom">
       <div class="ctxwin" id="ctxwin"><span class="ch l" id="chl"></span><span class="ch r" id="chr"></span></div>
     </div>
@@ -501,26 +521,38 @@ __GLUE_JS__
     'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n';
 
   // Curated example queries — {YEAR} is replaced with the current era.
+  // io: which dimensions the result carries — "time" (a year/era), "space" (a geometry),
+  // "table" (tabular only). about: a plain-language description of what the query asks.
   const EXAMPLES = [
-    { label: "Borders of the era (map)",
+    { label: "Borders of the era (map)", io: ["time", "space"],
+      about: "Every territory's border polygon for the selected year — the base map.",
       q: `SELECT ?label ?year ?wkt WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ;\n     geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(?year = {YEAR})\n}` },
-    { label: "Nearest territories to London (table)",
+    { label: "Nearest territories to London (table)", io: ["space", "table"],
+      about: "Ranks the era's territories by great-circle distance from London (geof:distance) — a table.",
       q: `SELECT ?label (geof:distance(?w, "POINT(0 51)"^^geo:wktLiteral, uom:metre)/1000 AS ?km) WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?w .\n} ORDER BY ?km LIMIT 15` },
-    { label: "Territories touching Europe (sfIntersects)",
+    { label: "Territories touching Europe (sfIntersects)", io: ["time", "space"],
+      about: "Territories whose border intersects a box around Europe (geof:sfIntersects).",
       q: `SELECT ?label ?year ?wkt WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(?year = {YEAR})\n  FILTER(geof:sfIntersects(?wkt,\n    "POLYGON((-11 35, 32 35, 32 60, -11 60, -11 35))"^^geo:wktLiteral))\n}` },
-    { label: "Empires & kingdoms (name search)",
+    { label: "Empires & kingdoms (name search)", io: ["time", "space"],
+      about: "Borders whose name matches empire / kingdom / caliphate / dynasty (REGEX on the label).",
       q: `SELECT ?label ?year ?wkt WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(?year = {YEAR})\n  FILTER(REGEX(?label, "empire|king|caliph|dynasty", "i"))\n}` },
-    { label: "Bounding box of each territory (geof:envelope)",
+    { label: "Bounding box of each territory (geof:envelope)", io: ["space", "table"],
+      about: "The axis-aligned bounding box (geof:envelope) of each territory's geometry.",
       q: `SELECT ?label (geof:envelope(?wkt) AS ?bbox) WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n} LIMIT 30` },
-    { label: "How many territories this era? (count)",
+    { label: "How many territories this era? (count)", io: ["time", "table"],
+      about: "Counts how many territories the dataset records for this single era (COUNT).",
       q: `SELECT (COUNT(*) AS ?territories) WHERE { ?t ex:year {YEAR} }` },
-    { label: "Who ruled Paris? — every era (time × place)",
+    { label: "Who ruled Paris? — every era (time × place)", io: ["time", "space"],
+      about: "The sequence of polities that held one point (Paris) across every era — a time × place trace.",
       q: `SELECT ?year ?label ?wkt WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(geof:sfContains(?wkt, "POINT(2.35 48.85)"^^geo:wktLiteral))\n} ORDER BY ?year` },
-    { label: "Transcontinental — touches Europe AND Asia ({YEAR})",
+    { label: "Transcontinental — touches Europe AND Asia ({YEAR})", io: ["time", "space"],
+      about: "Territories that intersect BOTH a Europe box and an Asia box — transcontinental powers.",
       q: `SELECT ?label ?year ?wkt WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(?year = {YEAR})\n  FILTER(geof:sfIntersects(?wkt, "POLYGON((-10 36, 40 36, 40 60, -10 60, -10 36))"^^geo:wktLiteral))\n  FILTER(geof:sfIntersects(?wkt, "POLYGON((60 20, 140 20, 140 60, 60 60, 60 20))"^^geo:wktLiteral))\n}` },
-    { label: "Within 2500 km of Rome ({YEAR})",
+    { label: "Within 2500 km of Rome ({YEAR})", io: ["time", "space"],
+      about: "Territories within 2500 km of Rome, ranked by distance (geof:distance in a FILTER + ORDER BY).",
       q: `SELECT ?label ?year ?wkt (geof:distance(?wkt, "POINT(12.5 41.9)"^^geo:wktLiteral, uom:metre)/1000 AS ?km) WHERE {\n  ?t ex:year ?year ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(?year = {YEAR})\n  FILTER(geof:distance(?wkt, "POINT(12.5 41.9)"^^geo:wktLiteral, uom:metre)/1000 < 2500)\n} ORDER BY ?km` },
-    { label: "Territories per era — count over all of time",
+    { label: "Territories per era — count over all of time", io: ["time", "table"],
+      about: "How many mapped territories exist in each era — an aggregate across all of time (GROUP BY).",
       q: `SELECT ?year (COUNT(?t) AS ?territories) WHERE {\n  ?t ex:year ?year .\n} GROUP BY ?year ORDER BY ?year` },
   ];
 
@@ -559,6 +591,8 @@ __GLUE_JS__
   let _appeared = null, _pulseUntil = 0;
   // timeline view window [vStart,vEnd] (zoom/pan); a pinned reference era overlay
   let vStart = 0, vEnd = 1, refFeatures = null, refEra = null;
+  // timeline snapshot-preview filmstrip
+  let previewsOn = false; const miniCache = new Map();
   // map projection (lon/lat ↔ normalised [0,1]²) + toggleable draw layers
   const D2R = Math.PI / 180, R2D = 180 / Math.PI, S2 = Math.SQRT2;
   const MERC_YMAX = Math.log(Math.tan(Math.PI / 4 + 85 * D2R / 2));
@@ -602,6 +636,12 @@ __GLUE_JS__
   function yearLabel(y) { return y < 0 ? `${-y} BCE` : `${y} CE`; }
   function escapeHtml(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
   function safeUrl(u) { return typeof u === "string" && /^https?:\/\//i.test(u) ? u : "#"; }   // block javascript:/data: in hrefs
+  // io chips: time / space / table — a combined "time × space" chip when both.
+  function chipsHtml(io) {
+    if (io && io.indexOf("time") >= 0 && io.indexOf("space") >= 0) return `<span class="chip ts" title="result carries both a time and a space dimension">⏱ × 🗺 time + space</span>`;
+    return (io || []).map((t) => t === "time" ? `<span class="chip time">⏱ time</span>` : t === "space" ? `<span class="chip space">🗺 space</span>` : `<span class="chip">▦ table</span>`).join("");
+  }
+  function showAbout(i) { const e = EXAMPLES[i]; $("exabout").innerHTML = e ? `${escapeHtml(e.about || "")}<div class="chips">${chipsHtml(e.io)}</div>` : ""; }
   const easeInOut = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
 
   // Shoelace area + centroid of one ring (lon/lat); degenerate rings fall back to vertex mean.
@@ -715,6 +755,13 @@ __GLUE_JS__
       if (nin || nout) delta = { in: nin, out: nout };
       _tween = { old: prev, t0: performance.now(), dur: 350 }; _anim = true;
     }
+    // tag the result's dimensions: space = a WKT column, time = a year/date-like column
+    const r0 = rows[0] || {};
+    const rio = [];
+    if (lastVars.some((v) => /^(year|date|time|era|start|end|when|inception)/i.test(v))) rio.push("time");
+    if (lastVars.some((v) => isWktTerm(r0[v]))) rio.push("space");
+    if (!rio.length) rio.push("table");
+    $("iotag").innerHTML = chipsHtml(rio);
     $("status").textContent =
       `✓ ${rows.length} row${rows.length === 1 ? "" : "s"}, ${features.length} drawn · ${(performance.now() - t0).toFixed(0)} ms · ${mode}${lastFromCache ? " · cache" : ""}` +
       (delta ? ` · +${delta.in} −${delta.out}` : "");
@@ -1041,7 +1088,7 @@ __GLUE_JS__
     const prevA = $("marks").querySelector(".m.snap.active"); if (prevA) prevA.classList.remove("active");
     if (era === curScrub) { const am = $("marks").querySelector('.m.snap[data-y="' + era + '"]'); if (am) am.classList.add("active"); }
     if (era !== curEra || force) {
-      curEra = era; applyTemplate(); runQuery();
+      curEra = era; applyTemplate(); runQuery(); markStripCur();
       if (curEra < vStart || curEra > vEnd) { const sp = vEnd - vStart; setWindow(curEra - sp / 2, curEra + sp / 2); }  // keep the playing/jumped era in view
     }
   }
@@ -1053,7 +1100,7 @@ __GLUE_JS__
     vStart = Math.max(minY, a); vEnd = Math.min(maxY, b);
     $("tl").min = vStart; $("tl").max = vEnd; $("tl").value = Math.max(vStart, Math.min(vEnd, curScrub));
     $("tlrange").textContent = yearLabel(Math.round(vStart)) + " – " + yearLabel(Math.round(vEnd));
-    renderTicks(); placeMarks(); renderCtx();
+    renderTicks(); placeMarks(); renderCtx(); renderStrip();
   }
   function zoomBy(factor) {
     const c = (curScrub >= vStart && curScrub <= vEnd) ? curScrub : (vStart + vEnd) / 2;
@@ -1085,6 +1132,43 @@ __GLUE_JS__
       html += `<div class="m ev" style="left:${tpct(e.y)}%" data-y="${e.y}" data-t="${escapeHtml(e.t)} · ${yearLabel(e.y)}">${show ? `<span class="lbl">${escapeHtml(txt)}</span>` : ""}</div>`;
     }
     $("marks").innerHTML = html;
+  }
+  // ---- snapshot-preview filmstrip: a little map of each era along the timeline ----
+  function renderMini(year) {   // a cached mini-map of the borders at `year` (always from the embedded data — fast)
+    if (miniCache.has(year)) return miniCache.get(year);
+    const cv = document.createElement("canvas"); cv.width = 144; cv.height = 80;
+    const ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+    ctx.fillStyle = "#0a1622"; ctx.fillRect(0, 0, W, H);
+    let rows = [];
+    try { rows = (JSON.parse(wasm_bindgen.query(localBytes, PREFIXES + `SELECT ?label ?wkt WHERE { ?t ex:year ${year} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt }`, "json")).rows) || []; } catch (e) {}
+    for (const r of rows) {
+      const rings = wktRings(lit(r.wkt)); if (!rings.length) continue;
+      const p = new Path2D();
+      for (const ring of rings) ring.forEach((c, i) => { const x = (c[0] + 180) / 360 * W, y = (90 - c[1]) / 180 * H; i ? p.lineTo(x, y) : p.moveTo(x, y); });
+      ctx.fillStyle = colorFor(lit(r.label) || "?"); ctx.globalAlpha = 0.85; ctx.fill(p, "evenodd");
+    }
+    ctx.globalAlpha = 1; miniCache.set(year, cv); return cv;
+  }
+  function renderStrip() {
+    const strip = $("strip");
+    if (!previewsOn) { strip.classList.remove("on"); strip.innerHTML = ""; return; }
+    strip.classList.add("on");
+    const W = strip.clientWidth || 600, frag = document.createDocumentFragment();
+    let placedR = -1e9;
+    for (const y of years) {   // close snapshots collapse to the first — zoom in to reveal the rest
+      if (y < vStart || y > vEnd) continue;
+      const x = (tpct(y) / 100) * W; if (x - 38 < placedR) continue; placedR = x + 38;
+      const d = document.createElement("div"); d.className = "thumb" + (y === curEra ? " cur" : ""); d.style.left = tpct(y) + "%"; d.dataset.y = y;
+      const cv = document.createElement("canvas"); cv.width = 144; cv.height = 80; cv.getContext("2d").drawImage(renderMini(y), 0, 0);
+      d.appendChild(cv); const cap = document.createElement("span"); cap.textContent = yearLabel(y); d.appendChild(cap);
+      frag.appendChild(d);
+    }
+    strip.innerHTML = ""; strip.appendChild(frag);
+  }
+  function markStripCur() {
+    if (!previewsOn) return;
+    const prev = $("strip").querySelector(".thumb.cur"); if (prev) prev.classList.remove("cur");
+    const t = $("strip").querySelector('.thumb[data-y="' + curEra + '"]'); if (t) t.classList.add("cur");
   }
   // context strip (full range): drag the window body to pan, drag its edges to zoom
   function setupCtx() {
@@ -1220,11 +1304,12 @@ __GLUE_JS__
     setupCtx(); setWindow(minY, maxY);   // renders ticks + marks + the context window
     // examples
     $("ex").innerHTML = EXAMPLES.map((e, i) => `<option value="${i}">${escapeHtml(e.label)}</option>`).join("");
-    $("ex").onchange = () => { tmpl = EXAMPLES[+$("ex").value].q; applyTemplate(); runQuery(); };
+    $("ex").onchange = () => { tmpl = EXAMPLES[+$("ex").value].q; showAbout(+$("ex").value); applyTemplate(); runQuery(); };
+    showAbout(0);
     // controls
     $("tl").addEventListener("input", (e) => setScrub(+e.target.value));
     $("run").addEventListener("click", () => { tmpl = $("q").value; runQuery(); });
-    $("reset").addEventListener("click", () => { tmpl = EXAMPLES[0].q; $("ex").value = "0"; applyTemplate(); runQuery(); });
+    $("reset").addEventListener("click", () => { tmpl = EXAMPLES[0].q; $("ex").value = "0"; showAbout(0); applyTemplate(); runQuery(); });
     $("play").addEventListener("click", togglePlay);
     $("src").addEventListener("change", (e) => setMode(e.target.value));
     $("tabMap").addEventListener("click", () => { $("tabMap").classList.add("on"); $("tabTable").classList.remove("on"); $("mapView").classList.remove("hidden"); $("tableView").classList.add("hidden"); });
@@ -1248,6 +1333,9 @@ __GLUE_JS__
     $("zoomin").addEventListener("click", () => zoomBy(0.6));
     $("zoomout").addEventListener("click", () => zoomBy(1 / 0.6));
     $("zoomreset").addEventListener("click", () => setWindow(minY, maxY));
+    // snapshot-preview filmstrip toggle + click-to-jump
+    $("strips").addEventListener("click", () => { previewsOn = !previewsOn; $("strips").classList.toggle("on", previewsOn); renderStrip(); });
+    $("strip").addEventListener("click", (e) => { const t = e.target.closest(".thumb"); if (t) setScrub(+t.dataset.y); });
     // step one era back / forward
     $("stepb").addEventListener("click", () => stepEra(-1));
     $("stepf").addEventListener("click", () => stepEra(1));

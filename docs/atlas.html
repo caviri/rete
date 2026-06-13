@@ -265,7 +265,11 @@ picker</strong> ships ten ready-made queries, including several that ask <strong
 place</strong> questions: <em>Who ruled Paris? — every era</em> (one <code>geof:sfContains</code> point,
 no year filter, ordered through history), <em>Transcontinental — touches Europe
 AND Asia</em> (two <code>sfIntersects</code>), <em>Within 2500 km of Rome</em>, and <em>Territories per
-era</em> (a <code>GROUP BY ?year</code> count over all of time).</li>
+era</em> (a <code>GROUP BY ?year</code> count over all of time). Each example carries a
+plain-language description and a <strong>time / space tag</strong>, and the SPARQL header
+shows a live <strong>⏱ × 🗺 time + space</strong> badge whenever a result carries both a
+year-like column and a geometry — so you can see at a glance what a query
+<em>outputs</em>, not just what it says.</li>
 <li><strong>The timeline is the temporal control — and it adapts to the data.</strong> It runs
 year-by-year from 2000 BCE to 2010 CE; the <strong>eighteen <code>ex:year</code> snapshots</strong> and a
 row of <strong>labelled historical-event markers</strong> (death of Alexander, fall of
@@ -277,7 +281,9 @@ cross-fades to the next snapshot; the <strong>speed</strong> select is the dwell
 <strong>Zoom</strong> the axis with <code>＋</code>/<code>－</code>/<code>⤢</code>, with the mouse wheel (vertical = zoom,
 horizontal = pan), or by dragging the <strong>context strip</strong> beneath it — move the
 window to pan, drag its edges to zoom (the dense modern eras spread out as you
-zoom in).</li>
+zoom in). A <strong>🎞 previews</strong> toggle drops a <strong>filmstrip of mini-maps</strong> under the
+track — a thumbnail of the world's borders at each snapshot, decluttered so
+close eras collapse to the first until you zoom in.</li>
 <li><strong>Changes are highlighted as they happen.</strong> When the era changes, the map
 <strong>cross-fades</strong> and flags the difference: territories that <strong>appear</strong> glow
 green (and pulse briefly once they've settled), ones that <strong>disappear</strong> glow
@@ -336,6 +342,10 @@ it's online-only and fuzzy on historical names).</li>
 <figure class="fig-center">
   <img src="img/atlas-dymaxion.png" alt="The Historical Atlas in the Dymaxion (Fuller) projection at 1994 CE: the world's borders laid out across the unfolded icosahedral net of triangular faces, continents edge-to-edge with country outlines and labels.">
   <figcaption>The <b>Dymaxion / Fuller</b> projection — an unfolded icosahedron (ported from d3-geo-polygon's <code>geoAirocean</code>). Each point is gnomonically projected onto its icosahedral face; territory edges are broken at the net's cut seams, and clicking still identifies the country via the exact per-face inverse.</figcaption>
+</figure>
+<figure class="fig-center">
+  <img src="img/atlas-filmstrip.png" alt="The Historical Atlas with the snapshot-preview filmstrip open: a row of small map thumbnails along the timeline, one per era from 2000 BCE to 2010 CE, each showing the world's coloured borders at that time with a year caption.">
+  <figcaption>The <b>🎞 preview filmstrip</b> — a thumbnail of the world at each snapshot along the timeline (each a tiny SPARQL query rendered to a mini-canvas), decluttered so close eras collapse until you zoom in.</figcaption>
 </figure>
 <p>Everything is computed by the same Rust engine that powers the CLI, compiled to
 WebAssembly — see <a href="geosparql.html">GeoSPARQL</a> for the spatial functions and
