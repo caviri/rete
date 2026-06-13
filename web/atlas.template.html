@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rete · Historical Atlas — SPARQL + GIS over time</title>
+<style>
+  :root { --bg:#0f1419; --panel:#161c24; --line:#26303c; --ink:#e6edf3; --mut:#8b9aa9;
+          --accent:#3fb6a8; --accent2:#f0a35e; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font:14px/1.5 ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif; }
+  body { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+  header { padding:8px 14px; border-bottom:1px solid var(--line); display:flex;
+    align-items:baseline; gap:12px; flex:0 0 auto; }
+  header h1 { font-size:15px; margin:0; font-weight:650; letter-spacing:.2px; }
+  header h1 b { color:var(--accent); }
+  header .sub { color:var(--mut); font-size:12px; }
+  header .sp { flex:1; }
+  header a { color:var(--accent); text-decoration:none; font-size:12px; }
+  main { flex:1; display:flex; min-height:0; }
+  .side { width:360px; flex:0 0 360px; border-right:1px solid var(--line);
+    display:flex; flex-direction:column; min-height:0; background:var(--panel); }
+  .side h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--mut); margin:0; padding:10px 12px 4px; }
+  #q { flex:1; min-height:120px; width:100%; resize:none; border:0; outline:0;
+    background:#0c1116; color:#cdd9e5; font:12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;
+    padding:10px 12px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .row { display:flex; gap:8px; padding:8px 12px; align-items:center; }
+  button { background:var(--accent); color:#04110f; border:0; border-radius:6px;
+    padding:6px 12px; font-weight:650; cursor:pointer; font-size:13px; }
+  button.ghost { background:transparent; color:var(--mut); border:1px solid var(--line); font-weight:500; }
+  button:hover { filter:brightness(1.08); }
+  #status { color:var(--mut); font-size:12px; padding:0 12px 8px; min-height:18px; }
+  .legend { padding:8px 12px; border-top:1px solid var(--line); overflow:auto; }
+  .legend .it { display:flex; align-items:center; gap:7px; font-size:12px; padding:1px 0;
+    color:#cdd9e5; cursor:default; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .legend .sw { width:11px; height:11px; border-radius:2px; flex:0 0 auto; outline:1px solid rgba(255,255,255,.15); }
+  .mapwrap { flex:1; position:relative; min-width:0; }
+  canvas { display:block; width:100%; height:100%; cursor:grab; }
+  canvas.drag { cursor:grabbing; }
+  #tip { position:absolute; pointer-events:none; background:#04110f; color:#e6edf3;
+    border:1px solid var(--accent); border-radius:5px; padding:2px 7px; font-size:12px;
+    transform:translate(-50%,-150%); white-space:nowrap; display:none; z-index:5; }
+  #ident { position:absolute; left:12px; top:12px; background:rgba(12,17,22,.92);
+    border:1px solid var(--line); border-radius:8px; padding:8px 12px; max-width:280px;
+    font-size:12.5px; display:none; z-index:5; }
+  #ident b { color:var(--accent2); }
+  .timeline { flex:0 0 auto; border-top:1px solid var(--line); background:var(--panel);
+    padding:10px 16px 12px; display:flex; align-items:center; gap:14px; }
+  .timeline .yr { font-size:20px; font-weight:700; min-width:96px; color:var(--accent2);
+    font-variant-numeric:tabular-nums; }
+  .timeline input[type=range] { flex:1; accent-color:var(--accent); }
+  .timeline .ticks { display:flex; justify-content:space-between; font-size:11px;
+    color:var(--mut); margin-top:3px; }
+  .tlcol { flex:1; display:flex; flex-direction:column; }
+  .hint { color:var(--mut); font-size:11px; padding:6px 12px 10px; }
+  .boot { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    background:var(--bg); color:var(--mut); z-index:50; font-size:14px; }
+</style>
+</head>
+<body>
+<div class="boot" id="boot">Loading the engine + atlas…</div>
+<header>
+  <h1><b>rete</b> · Historical Atlas</h1>
+  <span class="sub">SPARQL + GeoSPARQL over a <code>.rete</code> file — entirely in your browser, offline. Drag a year; click the map.</span>
+  <span class="sp"></span>
+  <a href="playground.html">← Playground</a>
+</header>
+<main>
+  <section class="side">
+    <h2>SPARQL — anything that binds <code>?wkt</code> is drawn</h2>
+    <textarea id="q" spellcheck="false"></textarea>
+    <div class="row">
+      <button id="run">Run query ▸</button>
+      <button id="reset" class="ghost">Reset to era map</button>
+    </div>
+    <div id="status"></div>
+    <div class="hint">Tip: the timeline rewrites the <code>ex:year</code> in this query. Click a territory on the map to identify it with <code>geof:sfContains</code>.</div>
+    <h2>Territories</h2>
+    <div class="legend" id="legend"></div>
+  </section>
+  <section class="mapwrap">
+    <canvas id="map"></canvas>
+    <div id="tip"></div>
+    <div id="ident"></div>
+  </section>
+</main>
+<div class="timeline">
+  <span class="yr" id="yr">—</span>
+  <div class="tlcol">
+    <input type="range" id="tl" min="0" max="0" step="1" value="0">
+    <div class="ticks" id="ticks"></div>
+  </div>
+  <button id="play" class="ghost">▶ Play</button>
+</div>
+
+<script id="reteGlue">
+__GLUE_JS__
+</script>
+<script>
+  const RETE_WASM_B64 = "__WASM_B64__";
+  const HISTORY_B64 = "__RETE_B64__";
+</script>
+<script>
+"use strict";
+(function () {
+  const $ = (id) => document.getElementById(id);
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  const PREFIXES =
+    'PREFIX geo: <http://www.opengis.net/ont/geosparql#>\n' +
+    'PREFIX geof: <http://www.opengis.net/def/function/geosparql/>\n' +
+    'PREFIX ex: <http://ex/>\n' +
+    'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n';
+
+  let bytes = null;            // the history.rete bytes
+  let years = [];              // distinct ex:year values, ascending
+  let idx = 0;                 // current timeline index
+  let features = [];           // {label, rings:[[ [lon,lat],… ],…], path, color}
+  let highlight = null;        // label to flash
+  const view = { scale: 1, ox: 0, oy: 0 };   // pan/zoom over the base equirectangular projection
+
+  // ---- term / WKT helpers ----
+  function lit(term) {                         // "France"^^… → France ; <iri> → iri
+    if (!term) return "";
+    if (term[0] === '"') { const e = term.lastIndexOf('"'); return term.slice(1, e); }
+    if (term[0] === '<') return term.slice(1, -1);
+    return term;
+  }
+  function wktRings(wkt) {                      // POLYGON/MULTIPOLYGON → array of rings (lon/lat)
+    const rings = [];
+    const re = /\(([^()]*)\)/g; let m;
+    while ((m = re.exec(wkt))) {
+      const pts = m[1].trim().split(",").map((p) => {
+        const a = p.trim().split(/\s+/); return [parseFloat(a[0]), parseFloat(a[1])];
+      }).filter((p) => isFinite(p[0]) && isFinite(p[1]));
+      if (pts.length >= 2) rings.push(pts);
+    }
+    return rings;
+  }
+  function colorFor(name) {
+    let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+    return `hsl(${h}, 52%, 58%)`;
+  }
+  function yearLabel(y) { return y < 0 ? `${-y} BCE` : `${y} CE`; }
+
+  // ---- engine ----
+  function sparql(q) {
+    try { return JSON.parse(wasm_bindgen.query_sparql(bytes, PREFIXES + q)); }
+    catch (e) { $("status").textContent = "✗ " + (e && e.message ? e.message : e); return null; }
+  }
+
+  const mapQueryFor = (y) =>
+    `SELECT ?label ?wkt WHERE {\n` +
+    `  ?t ex:year ${y} ; rdfs:label ?label ;\n` +
+    `     geo:hasGeometry/geo:asWKT ?wkt .\n}`;
+
+  // Run whatever is in the editor; draw every row that binds ?wkt.
+  function runQuery() {
+    const t0 = performance.now();
+    const rows = sparql($("q").value);
+    if (!rows) return;
+    features = [];
+    for (const r of rows) {
+      const wktTerm = r.wkt || r.geom || r.g;
+      if (!wktTerm) continue;
+      const rings = wktRings(lit(wktTerm));
+      if (!rings.length) continue;
+      const label = lit(r.label || r.name || r.l || "");
+      features.push({ label, rings, color: colorFor(label || "?"), path: null });
+    }
+    $("status").textContent =
+      `✓ ${features.length} geometr${features.length === 1 ? "y" : "ies"} · ${(performance.now() - t0).toFixed(1)} ms`;
+    fitIfNeeded();
+    draw();
+    legend();
+  }
+
+  // ---- projection ---- (CSS pixels; the 2D context is dpr-scaled separately)
+  function baseDims() { const c = $("map"); return [c._cssW || c.clientWidth, c._cssH || c.clientHeight]; }
+  function project(lon, lat) {              // lon/lat → screen px (with pan/zoom)
+    const [W, H] = baseDims();
+    const bx = (lon + 180) / 360 * W, by = (90 - lat) / 180 * H;
+    return [bx * view.scale + view.ox, by * view.scale + view.oy];
+  }
+  function unproject(px, py) {               // screen px → lon/lat
+    const [W, H] = baseDims();
+    const bx = (px - view.ox) / view.scale, by = (py - view.oy) / view.scale;
+    return [bx / W * 360 - 180, 90 - by / H * 180];
+  }
+  let fitted = false;
+  function fitIfNeeded() { if (!fitted) { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; } }
+
+  // ---- draw ----
+  function buildPaths() {
+    for (const f of features) {
+      const p = new Path2D();
+      for (const ring of f.rings) {
+        ring.forEach((c, i) => { const [x, y] = project(c[0], c[1]); i ? p.lineTo(x, y) : p.moveTo(x, y); });
+        p.closePath();
+      }
+      f.path = p;
+    }
+  }
+  function draw() {
+    const c = $("map"), ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.fillStyle = "#0c141c"; ctx.fillRect(0, 0, c.width, c.height);
+    // graticule every 30°
+    ctx.strokeStyle = "rgba(255,255,255,.05)"; ctx.lineWidth = 1; ctx.beginPath();
+    for (let lon = -180; lon <= 180; lon += 30) { const [x] = project(lon, 0); ctx.moveTo(x, 0); ctx.lineTo(x, c.height); }
+    for (let lat = -90; lat <= 90; lat += 30) { const [, y] = project(0, lat); ctx.moveTo(0, y); ctx.lineTo(c.width, y); }
+    ctx.stroke();
+    buildPaths();
+    for (const f of features) {
+      ctx.fillStyle = f.color; ctx.globalAlpha = f.label === highlight ? 0.95 : 0.62;
+      ctx.fill(f.path, "evenodd");
+      ctx.globalAlpha = 1; ctx.lineWidth = f.label === highlight ? 2.4 : 0.6;
+      ctx.strokeStyle = f.label === highlight ? "#fff" : "rgba(0,0,0,.45)";
+      ctx.stroke(f.path);
+    }
+  }
+  function legend() {
+    const seen = new Map();
+    for (const f of features) if (f.label && !seen.has(f.label)) seen.set(f.label, f.color);
+    const items = [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(0, 200);
+    $("legend").innerHTML = items.map(([n, col]) =>
+      `<div class="it" data-n="${n.replace(/"/g, "&quot;")}"><span class="sw" style="background:${col}"></span>${n}</div>`).join("");
+  }
+
+  // ---- timeline ----
+  function setYear(i) {
+    idx = Math.max(0, Math.min(years.length - 1, i));
+    $("tl").value = idx; $("yr").textContent = yearLabel(years[idx]);
+    $("q").value = mapQueryFor(years[idx]);
+    highlight = null; $("ident").style.display = "none";
+    runQuery();
+  }
+
+  // ---- map interaction ----
+  function setupCanvas() {
+    const c = $("map");
+    function resize() {
+      const r = c.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+      const ctx = c.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c._cssW = r.width; c._cssH = r.height;   // project() works in CSS px
+      draw();
+    }
+    new ResizeObserver(resize).observe(c);
+    resize();
+
+    let drag = null;
+    c.addEventListener("mousedown", (e) => { drag = { x: e.offsetX, y: e.offsetY, ox: view.ox, oy: view.oy, moved: false }; c.classList.add("drag"); });
+    window.addEventListener("mouseup", () => { c.classList.remove("drag"); setTimeout(() => (drag = null), 0); });
+    c.addEventListener("mousemove", (e) => {
+      if (drag) { view.ox = drag.ox + (e.offsetX - drag.x); view.oy = drag.oy + (e.offsetY - drag.y); drag.moved = true; draw(); return; }
+      hover(e.offsetX, e.offsetY);
+    });
+    c.addEventListener("mouseleave", () => { $("tip").style.display = "none"; });
+    c.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const f = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      view.ox = e.offsetX - (e.offsetX - view.ox) * f;
+      view.oy = e.offsetY - (e.offsetY - view.oy) * f;
+      view.scale *= f; draw();
+    }, { passive: false });
+    c.addEventListener("click", (e) => {
+      if (drag && drag.moved) return;            // ignore drag-release clicks
+      identify(e.offsetX, e.offsetY);
+    });
+  }
+  function hover(mx, my) {
+    const ctx = $("map").getContext("2d"); let lab = null;
+    for (const f of features) if (f.path && ctx.isPointInPath(f.path, mx, my, "evenodd")) { lab = f.label; break; }
+    const tip = $("tip");
+    if (lab) { tip.textContent = lab; tip.style.left = mx + "px"; tip.style.top = my + "px"; tip.style.display = "block"; }
+    else tip.style.display = "none";
+  }
+  function identify(mx, my) {
+    const [lon, lat] = unproject(mx, my);
+    const q = `SELECT ?label WHERE { ?t ex:year ${years[idx]} ; rdfs:label ?label ;\n` +
+      `  geo:hasGeometry/geo:asWKT ?w . FILTER(geof:sfContains(?w, "POINT(${lon.toFixed(3)} ${lat.toFixed(3)})"^^geo:wktLiteral)) }`;
+    const rows = sparql(q);
+    const box = $("ident");
+    if (rows && rows.length) {
+      highlight = lit(rows[0].label);
+      box.innerHTML = `In <b>${yearLabel(years[idx])}</b>, (${lon.toFixed(2)}, ${lat.toFixed(2)}) was in<br><b>${highlight}</b>` +
+        `<br><span style="color:var(--mut)">via geof:sfContains</span>`;
+      box.style.display = "block";
+    } else {
+      highlight = null;
+      box.innerHTML = `(${lon.toFixed(2)}, ${lat.toFixed(2)}) — no mapped territory in <b>${yearLabel(years[idx])}</b>.`;
+      box.style.display = "block";
+    }
+    draw();
+  }
+
+  // ---- play ----
+  let playing = null;
+  function togglePlay() {
+    if (playing) { clearInterval(playing); playing = null; $("play").textContent = "▶ Play"; return; }
+    $("play").textContent = "⏸ Pause";
+    playing = setInterval(() => { setYear(idx + 1 >= years.length ? 0 : idx + 1); }, 1400);
+  }
+
+  // ---- boot ----
+  async function boot() {
+    await wasm_bindgen(b64ToBytes(RETE_WASM_B64));
+    bytes = b64ToBytes(HISTORY_B64);
+    setupCanvas();
+    const yrows = sparql("SELECT DISTINCT ?y WHERE { ?t ex:year ?y } ORDER BY ?y");
+    years = (yrows || []).map((r) => parseInt(lit(r.y), 10)).filter((n) => !isNaN(n));
+    if (!years.length) { $("status").textContent = "no ex:year values found"; return; }
+    $("tl").max = years.length - 1;
+    $("ticks").innerHTML = years.map(yearLabel).map((s) => `<span>${s}</span>`).join("");
+    $("tl").addEventListener("input", (e) => setYear(+e.target.value));
+    $("run").addEventListener("click", runQuery);
+    $("reset").addEventListener("click", () => setYear(idx));
+    $("play").addEventListener("click", togglePlay);
+    // legend click → flash that territory
+    $("legend").addEventListener("click", (e) => {
+      const it = e.target.closest(".it"); if (!it) return;
+      highlight = it.dataset.n; draw();
+    });
+    const def = years.indexOf(1914) >= 0 ? years.indexOf(1914) : Math.floor(years.length / 2);
+    $("boot").remove();
+    setYear(def);
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

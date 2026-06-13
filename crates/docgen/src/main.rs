@@ -32,6 +32,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Interactive explorations",
         &[
             ("playground.html", "Interactive playground"),
+            ("atlas.html", "Historical atlas (SPARQL + GeoSPARQL + time)"),
             ("explore-100mb.html", "Wikidata lazy explorer (100MB / 1GB)"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
         ],
