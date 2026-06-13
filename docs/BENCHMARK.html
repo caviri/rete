@@ -313,6 +313,10 @@ engines. Row counts are a cross-engine correctness check across the
 language surface, not just a speed race.
 Median ±sd of 5 warm runs; <code>peak heap</code> is each query's exact
 allocation high-water mark (counting allocator), engine-comparable.</p>
+<p>This table measures <strong>speed</strong> on a curated set; for <strong>coverage</strong> — how much of
+SPARQL rete answers correctly — see the <a href="conformance.html">conformance scorecard</a>,
+which scores the official W3C SPARQL 1.1 query-evaluation suite (~75% overall,
+≈89% of the in-scope surface).</p>
 <table><thead><tr><th>Operator / form</th><th style="text-align: right">rete</th><th style="text-align: right">Oxigraph</th><th style="text-align: right">rete vs oxi</th><th style="text-align: right">peak heap MiB (rete / oxi)</th><th style="text-align: right">rows</th><th style="text-align: center">ok</th></tr></thead><tbody>
 <tr><td>SELECT count (aggregate)</td><td style="text-align: right"><strong>2.29 ±0.13 ms</strong></td><td style="text-align: right">5.67 ±0.57 ms</td><td style="text-align: right">2.5x</td><td style="text-align: right">3.75 / 0.01</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
 <tr><td>SELECT DISTINCT</td><td style="text-align: right"><strong>3.48 ±0.04 ms</strong></td><td style="text-align: right">5.05 ±0.79 ms</td><td style="text-align: right">1.4x</td><td style="text-align: right">0.01 / 0.00</td><td style="text-align: right">6</td><td style="text-align: center">yes</td></tr>
