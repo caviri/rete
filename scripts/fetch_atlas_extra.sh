@@ -70,9 +70,11 @@ fi
 
 if want getty-tgn; then
   echo "== getty-tgn (historical places) =="
-  PAGE=2000   # TGN query uses LIMIT 2000; offset step must match
-  paginate "https://vocab.getty.edu/sparql" "$OUTDIR/getty-tgn.ttl" "${PAGES:-4}" \
-'PREFIX gvp: <http://vocab.getty.edu/ontology#>
+  # vocab.getty.edu MUST be POSTed from a file: a GET --data-urlencode mangles the
+  # FILTER(LANG=\"en\") backslashes and silently returns 0 rows. It is also flaky
+  # (HTTP 499 "Service temporarily degraded") — retry a few times.
+  cat > "$OUTDIR/getty-tgn.rq" <<'RQ'
+PREFIX gvp: <http://vocab.getty.edu/ontology#>
 PREFIX xl: <http://www.w3.org/2008/05/skos-xl#>
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 PREFIX wgs: <http://www.w3.org/2003/01/geo/wgs84_pos#>
@@ -87,6 +89,13 @@ WHERE { ?subj xl:prefLabel|xl:altLabel ?term . ?term gvp:estStart ?sy . ?term gv
   BIND(xsd:integer(STR(?sy)) AS ?syi) BIND(xsd:integer(STR(?ey)) AS ?eyi)
   BIND(IRI(CONCAT(STR(?subj),"/geom")) AS ?geom)
   BIND(STRDT(CONCAT("Point(", STR(?lon), " ", STR(?lat), ")"), gs:wktLiteral) AS ?wkt) }
-ORDER BY ?subj LIMIT 2000 OFFSET __OFF__'
+ORDER BY ?subj LIMIT 6000
+RQ
+  for i in 1 2 3 4 5; do
+    curl -sL https://vocab.getty.edu/sparql --data-urlencode "query@$OUTDIR/getty-tgn.rq" -H "Accept: text/turtle" -H "User-Agent: $UA" -o "$OUTDIR/getty-tgn.ttl"
+    [ "$(grep -c asWKT "$OUTDIR/getty-tgn.ttl" || true)" -gt 0 ] && break
+    sleep 5
+  done
+  printf '%-12s %s asWKT triples -> %s\n' "getty-tgn" "$(grep -c asWKT "$OUTDIR/getty-tgn.ttl" || true)" "$OUTDIR/getty-tgn.ttl"
 fi
 echo "--- done ---"
