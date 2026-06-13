@@ -33,8 +33,10 @@ __pycache__/
 .claude/settings.local.json
 
 
-# Generated datasets (regenerate with scripts/fetch_opencitations.py)
-/data/
+# Generated datasets (regenerate with scripts/fetch_opencitations.py).
+# Ignore the *contents* (not the dir itself) so the catalog README can be re-included.
+/data/*
+!/data/README.md
 
 # Local engineering notes / scratch plans — not part of the published repo.
 /dev/
