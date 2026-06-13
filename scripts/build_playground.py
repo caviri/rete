@@ -73,6 +73,7 @@ DATASETS = [
     ("nomisma", "nomisma.rete"),             # coinage of Alexander the Great (Nomisma PELLA, CC-BY)
     ("mimotext", "mimotext.rete"),           # French Enlightenment novels + stylometry (MiMoText, CC0)
     ("mmm", "mmm.rete"),                     # medieval manuscript provenance (Mapping Manuscript Migrations)
+    ("openalex-astrocytes", "openalex-astrocytes.rete"),  # astrocyte research citation graph (OpenAlex, CC0)
     # getty-ulan is remote-lazy (2.96 MB, in the bucket) — not embedded; see catalog.js.
 ]
 
