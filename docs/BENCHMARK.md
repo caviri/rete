@@ -109,6 +109,11 @@ language surface, not just a speed race.
 Median ±sd of 5 warm runs; `peak heap` is each query's exact
 allocation high-water mark (counting allocator), engine-comparable.
 
+This table measures **speed** on a curated set; for **coverage** — how much of
+SPARQL rete answers correctly — see the [conformance scorecard](conformance.html),
+which scores the official W3C SPARQL 1.1 query-evaluation suite (~75% overall,
+≈89% of the in-scope surface).
+
 | Operator / form | rete | Oxigraph | rete vs oxi | peak heap MiB (rete / oxi) | rows | ok |
 |---|--:|--:|--:|--:|--:|:--:|
 | SELECT count (aggregate) | **2.29 ±0.13 ms** | 5.67 ±0.57 ms | 2.5x | 3.75 / 0.01 | 1 | yes |

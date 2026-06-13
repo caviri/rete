@@ -25,7 +25,11 @@ query the file directly with no backend**.
 
 - **No server.** The file *is* the database. Publish once to static hosting.
 - **Query in place.** SELECT / ASK / CONSTRUCT / DESCRIBE, joins, OPTIONAL,
-  UNION, MINUS, FILTER, property paths, GROUP BY / aggregates, named graphs.
+  UNION, MINUS, FILTER, subqueries, property paths, GROUP BY / aggregates, XSD
+  casts and the SPARQL 1.1 function library, named graphs — **[~75% of the W3C
+  query-evaluation suite](https://caviri.github.io/rete/conformance.html)** (≈89%
+  excluding the RDFS/OWL-entailment and SERVICE-federation regimes rete leaves
+  out by design).
 - **Small + fast to open.** Compressed (~zstd) with indexes prebuilt, so it
   *opens in ~15 ms* — no load/index step. (See [benchmarks](#how-fast).)
 - **Runs in the browser.** Same engine in WASM — try the
@@ -120,7 +124,7 @@ smaller than raw N-Triples, ~1.25× of `gzip` — but *queryable*.
 - **[Getting started](https://caviri.github.io/rete/getting-started.html)** · **[Architecture](https://caviri.github.io/rete/architecture.html)** · **[CLI reference](https://caviri.github.io/rete/cli.html)** · **[SPARQL support](https://caviri.github.io/rete/sparql.html)** · **[SHACL validation](https://caviri.github.io/rete/shacl.html)** · **[Dataset Cards](https://caviri.github.io/rete/dataset-cards.html)**
 - **[Interactive playground](https://caviri.github.io/rete/playground.html)** — query in the browser, offline.
 - **[Real-world scenario](https://caviri.github.io/rete/scenario.html)** · **[Federated queries](https://caviri.github.io/rete/federation.html)** · **[Reasoning & coherence](https://caviri.github.io/rete/reasoning.html)**
-- **[Format spec](https://caviri.github.io/rete/SPEC.html)** · **[Benchmarks](https://caviri.github.io/rete/BENCHMARK.html)** · **[Browser / WASM](https://caviri.github.io/rete/browser.html)**
+- **[Format spec](https://caviri.github.io/rete/SPEC.html)** · **[Benchmarks](https://caviri.github.io/rete/BENCHMARK.html)** · **[SPARQL conformance](https://caviri.github.io/rete/conformance.html)** · **[Browser / WASM](https://caviri.github.io/rete/browser.html)**
 
 The docs render as Markdown on GitHub, or as an HTML site (`docs/*.html`,
 regenerated with `cargo run -p docgen`).
