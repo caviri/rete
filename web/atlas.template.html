@@ -19,42 +19,71 @@
   header .sp { flex:1; }
   header a { color:var(--accent); text-decoration:none; font-size:12px; }
   main { flex:1; display:flex; min-height:0; }
-  .side { width:360px; flex:0 0 360px; border-right:1px solid var(--line);
+  .side { width:370px; flex:0 0 370px; border-right:1px solid var(--line);
     display:flex; flex-direction:column; min-height:0; background:var(--panel); }
   .side h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
-    color:var(--mut); margin:0; padding:10px 12px 4px; }
+    color:var(--mut); margin:0; padding:10px 12px 4px; display:flex; gap:8px; align-items:center; }
+  .side h2 .sp { flex:1; }
+  select, .side select { background:#0c1116; color:#cdd9e5; border:1px solid var(--line);
+    border-radius:6px; padding:4px 7px; font-size:12.5px; }
+  .selrow { padding:4px 12px 8px; }
+  .selrow select { width:100%; }
   #q { flex:1; min-height:120px; width:100%; resize:none; border:0; outline:0;
     background:#0c1116; color:#cdd9e5; font:12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;
     padding:10px 12px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
-  .row { display:flex; gap:8px; padding:8px 12px; align-items:center; }
+  .row { display:flex; gap:8px; padding:8px 12px; align-items:center; flex-wrap:wrap; }
   button { background:var(--accent); color:#04110f; border:0; border-radius:6px;
     padding:6px 12px; font-weight:650; cursor:pointer; font-size:13px; }
   button.ghost { background:transparent; color:var(--mut); border:1px solid var(--line); font-weight:500; }
   button:hover { filter:brightness(1.08); }
   #status { color:var(--mut); font-size:12px; padding:0 12px 8px; min-height:18px; }
-  .legend { padding:8px 12px; border-top:1px solid var(--line); overflow:auto; }
+  #status.err { color:var(--accent2); }
+  .legend { padding:8px 12px; border-top:1px solid var(--line); overflow:auto; flex:1; min-height:60px; }
   .legend .it { display:flex; align-items:center; gap:7px; font-size:12px; padding:1px 0;
     color:#cdd9e5; cursor:default; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .legend .sw { width:11px; height:11px; border-radius:2px; flex:0 0 auto; outline:1px solid rgba(255,255,255,.15); }
-  .mapwrap { flex:1; position:relative; min-width:0; }
+  .mapwrap { flex:1; position:relative; min-width:0; display:flex; flex-direction:column; }
+  .tabs { position:absolute; right:10px; top:10px; z-index:6; display:flex; gap:4px;
+    background:rgba(12,17,22,.85); border:1px solid var(--line); border-radius:7px; padding:3px; }
+  .tabs button { background:transparent; color:var(--mut); font-weight:600; padding:3px 10px; }
+  .tabs button.on { background:var(--accent); color:#04110f; }
+  .view { flex:1; position:relative; min-height:0; }
+  .view.hidden { display:none; }
   canvas { display:block; width:100%; height:100%; cursor:grab; }
   canvas.drag { cursor:grabbing; }
+  #tableView { overflow:auto; background:#0c141c; }
+  #tableView table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  #tableView th { position:sticky; top:0; background:#161c24; color:#cdd9e5; text-align:left;
+    padding:6px 10px; border-bottom:1px solid var(--line); font-weight:650; }
+  #tableView td { padding:5px 10px; border-bottom:1px solid #1c2530; color:#bcccd9;
+    font-family:ui-monospace,Consolas,monospace; white-space:nowrap; }
+  #tableView tr:hover td { background:#121a22; }
   #tip { position:absolute; pointer-events:none; background:#04110f; color:#e6edf3;
     border:1px solid var(--accent); border-radius:5px; padding:2px 7px; font-size:12px;
-    transform:translate(-50%,-150%); white-space:nowrap; display:none; z-index:5; }
+    transform:translate(-50%,-150%); white-space:nowrap; display:none; z-index:7; }
   #ident { position:absolute; left:12px; top:12px; background:rgba(12,17,22,.92);
     border:1px solid var(--line); border-radius:8px; padding:8px 12px; max-width:280px;
-    font-size:12.5px; display:none; z-index:5; }
+    font-size:12.5px; display:none; z-index:6; }
   #ident b { color:var(--accent2); }
   .timeline { flex:0 0 auto; border-top:1px solid var(--line); background:var(--panel);
-    padding:10px 16px 12px; display:flex; align-items:center; gap:14px; }
-  .timeline .yr { font-size:20px; font-weight:700; min-width:96px; color:var(--accent2);
-    font-variant-numeric:tabular-nums; }
-  .timeline input[type=range] { flex:1; accent-color:var(--accent); }
-  .timeline .ticks { display:flex; justify-content:space-between; font-size:11px;
-    color:var(--mut); margin-top:3px; }
+    padding:8px 16px 12px; display:flex; align-items:center; gap:14px; }
+  .timeline .yr { font-size:20px; font-weight:700; min-width:120px; color:var(--accent2);
+    font-variant-numeric:tabular-nums; line-height:1.1; }
+  .timeline .yr small { display:block; font-size:10.5px; color:var(--mut); font-weight:500; min-height:13px; }
   .tlcol { flex:1; display:flex; flex-direction:column; }
-  .hint { color:var(--mut); font-size:11px; padding:6px 12px 10px; }
+  .track { position:relative; }
+  .track input[type=range] { width:100%; accent-color:var(--accent); position:relative; z-index:2; }
+  .marks { position:absolute; left:0; right:0; top:-9px; height:10px; pointer-events:none; }
+  .marks .m { position:absolute; transform:translateX(-50%); pointer-events:auto; cursor:pointer; }
+  .marks .m.ev { width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent;
+    border-bottom:7px solid var(--accent2); top:2px; }
+  .marks .m.snap { width:2px; height:9px; background:var(--accent); top:1px; border-radius:1px; }
+  .marks .m:hover.ev { border-bottom-color:#ffd9b0; }
+  .ticks { display:flex; justify-content:space-between; font-size:11px; color:var(--mut); margin-top:3px; }
+  #mtip { position:fixed; z-index:30; background:#04110f; color:#e6edf3; border:1px solid var(--accent2);
+    border-radius:6px; padding:4px 9px; font-size:12px; max-width:240px; transform:translate(-50%,-115%);
+    pointer-events:none; display:none; }
+  .hint { color:var(--mut); font-size:11px; padding:6px 12px 8px; }
   .boot { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
     background:var(--bg); color:var(--mut); z-index:50; font-size:14px; }
 </style>
@@ -63,37 +92,59 @@
 <div class="boot" id="boot">Loading the engine + atlas…</div>
 <header>
   <h1><b>rete</b> · Historical Atlas</h1>
-  <span class="sub">SPARQL + GeoSPARQL over a <code>.rete</code> file — entirely in your browser, offline. Drag a year; click the map.</span>
+  <span class="sub">SPARQL + GeoSPARQL over a <code>.rete</code> — in your browser. Drag the timeline · click the map · pick an example.</span>
   <span class="sp"></span>
   <a href="playground.html">← Playground</a>
 </header>
 <main>
   <section class="side">
-    <h2>SPARQL — anything that binds <code>?wkt</code> is drawn</h2>
+    <h2>Example queries</h2>
+    <div class="selrow"><select id="ex"></select></div>
+    <h2>SPARQL <span class="sp"></span><span class="mut" style="font-size:11px;font-weight:400">{YEAR} = current era</span></h2>
     <textarea id="q" spellcheck="false"></textarea>
     <div class="row">
-      <button id="run">Run query ▸</button>
+      <button id="run">Run ▸</button>
       <button id="reset" class="ghost">Reset to era map</button>
     </div>
+    <h2>Data source</h2>
+    <div class="selrow"><select id="src">
+      <option value="embedded">embedded — in this page (offline)</option>
+      <option value="lazy">remote · lazy — HTTP range reads</option>
+      <option value="cached">remote · cached — download once</option>
+    </select></div>
     <div id="status"></div>
-    <div class="hint">Tip: the timeline rewrites the <code>ex:year</code> in this query. Click a territory on the map to identify it with <code>geof:sfContains</code>.</div>
+    <div class="hint">The timeline rewrites <code>{YEAR}</code> in the query. Click a territory to identify it with <code>geof:sfContains</code>. Lazy mode fetches only the bytes each query touches.</div>
     <h2>Territories</h2>
     <div class="legend" id="legend"></div>
   </section>
   <section class="mapwrap">
-    <canvas id="map"></canvas>
-    <div id="tip"></div>
-    <div id="ident"></div>
+    <div class="tabs"><button id="tabMap" class="on">Map</button><button id="tabTable">Table</button></div>
+    <div class="view" id="mapView">
+      <canvas id="map"></canvas>
+      <div id="tip"></div>
+      <div id="ident"></div>
+    </div>
+    <div class="view hidden" id="tableView"></div>
   </section>
 </main>
 <div class="timeline">
-  <span class="yr" id="yr">—</span>
+  <span class="yr" id="yr">—<small id="eraLabel"></small></span>
   <div class="tlcol">
-    <input type="range" id="tl" min="0" max="0" step="1" value="0">
+    <div class="track">
+      <div class="marks" id="marks"></div>
+      <input type="range" id="tl" min="0" max="100" step="1" value="0">
+    </div>
     <div class="ticks" id="ticks"></div>
   </div>
   <button id="play" class="ghost">▶ Play</button>
+  <select id="speed" title="play speed">
+    <option value="8">slow</option>
+    <option value="30" selected>medium</option>
+    <option value="90">fast</option>
+    <option value="250">very fast</option>
+  </select>
 </div>
+<div id="mtip"></div>
 
 <script id="reteGlue">
 __GLUE_JS__
@@ -101,205 +152,241 @@ __GLUE_JS__
 <script>
   const RETE_WASM_B64 = "__WASM_B64__";
   const HISTORY_B64 = "__RETE_B64__";
+  const REMOTE_URL = "https://katospiegel-rete.hf.space/data/atlas/history.rete?token=sfdbgf1094by21hd128ru39802";
 </script>
 <script>
 "use strict";
 (function () {
   const $ = (id) => document.getElementById(id);
   function b64ToBytes(b64) {
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
+    const bin = atob(b64); const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }
   const PREFIXES =
     'PREFIX geo: <http://www.opengis.net/ont/geosparql#>\n' +
     'PREFIX geof: <http://www.opengis.net/def/function/geosparql/>\n' +
+    'PREFIX uom: <http://www.opengis.net/def/uom/OGC/1.0/>\n' +
     'PREFIX ex: <http://ex/>\n' +
     'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n';
 
-  let bytes = null;            // the history.rete bytes
-  let years = [];              // distinct ex:year values, ascending
-  let idx = 0;                 // current timeline index
-  let features = [];           // {label, rings:[[ [lon,lat],… ],…], path, color}
-  let highlight = null;        // label to flash
-  const view = { scale: 1, ox: 0, oy: 0 };   // pan/zoom over the base equirectangular projection
+  // Curated example queries — {YEAR} is replaced with the current era.
+  const EXAMPLES = [
+    { label: "Borders of the era (map)",
+      q: `SELECT ?label ?wkt WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ;\n     geo:hasGeometry/geo:asWKT ?wkt .\n}` },
+    { label: "Nearest territories to London (table)",
+      q: `SELECT ?label (geof:distance(?w, "POINT(0 51)"^^geo:wktLiteral, uom:metre)/1000 AS ?km) WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?w .\n} ORDER BY ?km LIMIT 15` },
+    { label: "Territories touching Europe (sfIntersects)",
+      q: `SELECT ?label ?wkt WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(geof:sfIntersects(?wkt,\n    "POLYGON((-11 35, 32 35, 32 60, -11 60, -11 35))"^^geo:wktLiteral))\n}` },
+    { label: "Empires & kingdoms (name search)",
+      q: `SELECT ?label ?wkt WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n  FILTER(REGEX(?label, "empire|king|caliph|dynasty", "i"))\n}` },
+    { label: "Bounding box of each territory (geof:envelope)",
+      q: `SELECT ?label (geof:envelope(?wkt) AS ?bbox) WHERE {\n  ?t ex:year {YEAR} ; rdfs:label ?label ; geo:hasGeometry/geo:asWKT ?wkt .\n} LIMIT 30` },
+    { label: "How many territories this era? (count)",
+      q: `SELECT (COUNT(*) AS ?territories) WHERE { ?t ex:year {YEAR} }` },
+  ];
+
+  // Historical events shown as timeline markers (tooltip = name).
+  const EVENTS = [
+    { y: -323, t: "Death of Alexander the Great" },
+    { y: -221, t: "Qin unifies China" },
+    { y: 476, t: "Fall of the Western Roman Empire" },
+    { y: 800, t: "Charlemagne crowned" },
+    { y: 1206, t: "Mongol Empire founded" },
+    { y: 1453, t: "Fall of Constantinople" },
+    { y: 1492, t: "Columbus reaches the Americas" },
+    { y: 1648, t: "Peace of Westphalia" },
+    { y: 1789, t: "French Revolution" },
+    { y: 1815, t: "Congress of Vienna" },
+    { y: 1914, t: "Outbreak of World War I" },
+    { y: 1945, t: "End of World War II" },
+    { y: 1991, t: "Dissolution of the USSR" },
+  ];
+
+  let localBytes = null, cachedBytes = null, years = [], minY = 0, maxY = 1;
+  let curEra = null, curScrub = 0, tmpl = EXAMPLES[0].q, lastRows = [], lastVars = [];
+  let features = [], highlight = null, busy = false;
+  const view = { scale: 1, ox: 0, oy: 0 }; let fitted = false;
+  let mode = "embedded";
 
   // ---- term / WKT helpers ----
-  function lit(term) {                         // "France"^^… → France ; <iri> → iri
+  function lit(term) {
     if (!term) return "";
     if (term[0] === '"') { const e = term.lastIndexOf('"'); return term.slice(1, e); }
     if (term[0] === '<') return term.slice(1, -1);
     return term;
   }
-  function wktRings(wkt) {                      // POLYGON/MULTIPOLYGON → array of rings (lon/lat)
-    const rings = [];
-    const re = /\(([^()]*)\)/g; let m;
+  function wktRings(wkt) {
+    const rings = []; const re = /\(([^()]*)\)/g; let m;
     while ((m = re.exec(wkt))) {
-      const pts = m[1].trim().split(",").map((p) => {
-        const a = p.trim().split(/\s+/); return [parseFloat(a[0]), parseFloat(a[1])];
-      }).filter((p) => isFinite(p[0]) && isFinite(p[1]));
+      const pts = m[1].trim().split(",").map((p) => { const a = p.trim().split(/\s+/); return [parseFloat(a[0]), parseFloat(a[1])]; })
+        .filter((p) => isFinite(p[0]) && isFinite(p[1]));
       if (pts.length >= 2) rings.push(pts);
     }
     return rings;
   }
-  function colorFor(name) {
-    let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-    return `hsl(${h}, 52%, 58%)`;
-  }
+  function colorFor(name) { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360; return `hsl(${h}, 52%, 58%)`; }
   function yearLabel(y) { return y < 0 ? `${-y} BCE` : `${y} CE`; }
+  function escapeHtml(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
-  // ---- engine ----
-  function sparql(q) {
-    try { return JSON.parse(wasm_bindgen.query_sparql(bytes, PREFIXES + q)); }
-    catch (e) { $("status").textContent = "✗ " + (e && e.message ? e.message : e); return null; }
+  // ---- the engine: one row-shape for all three data sources ----
+  // embedded / cached → query(bytes,…,"json"); lazy → sparql_url in a worker.
+  // Both return { kind:"select", vars:[…], rows:[{var:term}] }.
+  const REMOTE_HARNESS = `
+;(function () {
+  var ready = null;
+  self.onmessage = function (e) {
+    var m = e.data;
+    if (m.type === "init") { ready = wasm_bindgen(m.bytes); ready.then(function () { self.postMessage({ type: "ready" }); }); return; }
+    if (m.type === "query") {
+      Promise.resolve(ready).then(function () {
+        try { self.postMessage({ type: "result", id: m.id, ok: true, json: wasm_bindgen.sparql_url(m.url, m.query, m.format) }); }
+        catch (err) { self.postMessage({ type: "result", id: m.id, ok: false, error: String(err) }); }
+      });
+    }
+  };
+})();`;
+  let worker = null, workerReady = null, seq = 0; const pending = new Map();
+  function ensureWorker() {
+    if (worker) return workerReady;
+    const glue = $("reteGlue").textContent;
+    const blob = new Blob([glue + REMOTE_HARNESS], { type: "text/javascript" });
+    worker = new Worker(URL.createObjectURL(blob));
+    worker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "ready") { worker._res && worker._res(); return; }
+      if (m.type === "result") { const p = pending.get(m.id); if (!p) return; pending.delete(m.id); m.ok ? p.resolve(m.json) : p.reject(new Error(m.error)); }
+    };
+    workerReady = new Promise((r) => (worker._res = r));
+    worker.postMessage({ type: "init", bytes: b64ToBytes(RETE_WASM_B64) });
+    return workerReady;
+  }
+  function remoteSparql(url, q) {
+    return ensureWorker().then(() => new Promise((resolve, reject) => {
+      const id = ++seq; pending.set(id, { resolve, reject });
+      worker.postMessage({ type: "query", id, url, query: q, format: "json" });
+    }));
+  }
+  async function runRaw(q) {
+    const full = PREFIXES + q;
+    if (mode === "lazy") return JSON.parse(await remoteSparql(REMOTE_URL, full));
+    const bytes = mode === "cached" ? cachedBytes : localBytes;
+    return JSON.parse(wasm_bindgen.query(bytes, full, "json"));
   }
 
-  const mapQueryFor = (y) =>
-    `SELECT ?label ?wkt WHERE {\n` +
-    `  ?t ex:year ${y} ; rdfs:label ?label ;\n` +
-    `     geo:hasGeometry/geo:asWKT ?wkt .\n}`;
-
-  // Run whatever is in the editor; draw every row that binds ?wkt.
-  function runQuery() {
+  // ---- run the editor's query → map + table ----
+  async function runQuery() {
+    if (busy) return; busy = true;
     const t0 = performance.now();
-    const rows = sparql($("q").value);
-    if (!rows) return;
+    let res;
+    try { res = await runRaw($("q").value); }
+    catch (e) { $("status").className = "err"; $("status").textContent = "✗ " + (e.message || e); busy = false; return; }
+    busy = false;
+    $("status").className = "";
+    const rows = res.rows || []; lastRows = rows; lastVars = res.vars || (rows[0] ? Object.keys(rows[0]) : []);
     features = [];
     for (const r of rows) {
       const wktTerm = r.wkt || r.geom || r.g;
       if (!wktTerm) continue;
-      const rings = wktRings(lit(wktTerm));
-      if (!rings.length) continue;
+      const rings = wktRings(lit(wktTerm)); if (!rings.length) continue;
       const label = lit(r.label || r.name || r.l || "");
       features.push({ label, rings, color: colorFor(label || "?"), path: null });
     }
     $("status").textContent =
-      `✓ ${features.length} geometr${features.length === 1 ? "y" : "ies"} · ${(performance.now() - t0).toFixed(1)} ms`;
-    fitIfNeeded();
-    draw();
-    legend();
+      `✓ ${rows.length} row${rows.length === 1 ? "" : "s"}, ${features.length} drawn · ${(performance.now() - t0).toFixed(0)} ms · ${mode}`;
+    fitIfNeeded(); draw(); legend(); if (!$("tableView").classList.contains("hidden")) renderTable();
   }
 
-  // ---- projection ---- (CSS pixels; the 2D context is dpr-scaled separately)
+  // ---- projection / draw (CSS px; ctx is dpr-scaled) ----
   function baseDims() { const c = $("map"); return [c._cssW || c.clientWidth, c._cssH || c.clientHeight]; }
-  function project(lon, lat) {              // lon/lat → screen px (with pan/zoom)
-    const [W, H] = baseDims();
-    const bx = (lon + 180) / 360 * W, by = (90 - lat) / 180 * H;
-    return [bx * view.scale + view.ox, by * view.scale + view.oy];
-  }
-  function unproject(px, py) {               // screen px → lon/lat
-    const [W, H] = baseDims();
-    const bx = (px - view.ox) / view.scale, by = (py - view.oy) / view.scale;
-    return [bx / W * 360 - 180, 90 - by / H * 180];
-  }
-  let fitted = false;
+  function project(lon, lat) { const [W, H] = baseDims(); return [((lon + 180) / 360 * W) * view.scale + view.ox, ((90 - lat) / 180 * H) * view.scale + view.oy]; }
+  function unproject(px, py) { const [W, H] = baseDims(); const bx = (px - view.ox) / view.scale, by = (py - view.oy) / view.scale; return [bx / W * 360 - 180, 90 - by / H * 180]; }
   function fitIfNeeded() { if (!fitted) { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; } }
-
-  // ---- draw ----
-  function buildPaths() {
-    for (const f of features) {
-      const p = new Path2D();
-      for (const ring of f.rings) {
-        ring.forEach((c, i) => { const [x, y] = project(c[0], c[1]); i ? p.lineTo(x, y) : p.moveTo(x, y); });
-        p.closePath();
-      }
-      f.path = p;
-    }
-  }
   function draw() {
     const c = $("map"), ctx = c.getContext("2d");
-    ctx.clearRect(0, 0, c.width, c.height);
-    ctx.fillStyle = "#0c141c"; ctx.fillRect(0, 0, c.width, c.height);
-    // graticule every 30°
+    ctx.clearRect(0, 0, c.width, c.height); ctx.fillStyle = "#0c141c"; ctx.fillRect(0, 0, c.width, c.height);
     ctx.strokeStyle = "rgba(255,255,255,.05)"; ctx.lineWidth = 1; ctx.beginPath();
     for (let lon = -180; lon <= 180; lon += 30) { const [x] = project(lon, 0); ctx.moveTo(x, 0); ctx.lineTo(x, c.height); }
     for (let lat = -90; lat <= 90; lat += 30) { const [, y] = project(0, lat); ctx.moveTo(0, y); ctx.lineTo(c.width, y); }
     ctx.stroke();
-    buildPaths();
     for (const f of features) {
-      ctx.fillStyle = f.color; ctx.globalAlpha = f.label === highlight ? 0.95 : 0.62;
-      ctx.fill(f.path, "evenodd");
+      const p = new Path2D();
+      for (const ring of f.rings) { ring.forEach((co, i) => { const [x, y] = project(co[0], co[1]); i ? p.lineTo(x, y) : p.moveTo(x, y); }); p.closePath(); }
+      f.path = p;
+      ctx.fillStyle = f.color; ctx.globalAlpha = f.label === highlight ? 0.95 : 0.62; ctx.fill(p, "evenodd");
       ctx.globalAlpha = 1; ctx.lineWidth = f.label === highlight ? 2.4 : 0.6;
-      ctx.strokeStyle = f.label === highlight ? "#fff" : "rgba(0,0,0,.45)";
-      ctx.stroke(f.path);
+      ctx.strokeStyle = f.label === highlight ? "#fff" : "rgba(0,0,0,.45)"; ctx.stroke(p);
     }
   }
   function legend() {
     const seen = new Map();
     for (const f of features) if (f.label && !seen.has(f.label)) seen.set(f.label, f.color);
-    const items = [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(0, 200);
-    $("legend").innerHTML = items.map(([n, col]) =>
-      `<div class="it" data-n="${n.replace(/"/g, "&quot;")}"><span class="sw" style="background:${col}"></span>${n}</div>`).join("");
+    $("legend").innerHTML = [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(0, 200)
+      .map(([n, c]) => `<div class="it" data-n="${n.replace(/"/g, "&quot;")}"><span class="sw" style="background:${c}"></span>${escapeHtml(n)}</div>`).join("");
+  }
+  function renderTable() {
+    const v = $("tableView");
+    if (!lastRows.length) { v.innerHTML = '<p class="hint">No rows.</p>'; return; }
+    const cols = lastVars.length ? lastVars : Object.keys(lastRows[0]);
+    const cell = (t) => { let s = lit(t || ""); if (s.length > 90) s = s.slice(0, 88) + "…"; return escapeHtml(s); };
+    v.innerHTML = "<table><thead><tr>" + cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("") + "</tr></thead><tbody>" +
+      lastRows.slice(0, 1000).map((r) => "<tr>" + cols.map((c) => `<td>${cell(r[c])}</td>`).join("") + "</tr>").join("") +
+      "</tbody></table>" + (lastRows.length > 1000 ? `<p class="hint">… ${lastRows.length - 1000} more rows</p>` : "");
   }
 
-  // ---- timeline ----
-  function setYear(i) {
-    idx = Math.max(0, Math.min(years.length - 1, i));
-    $("tl").value = idx; $("yr").textContent = yearLabel(years[idx]);
-    $("q").value = mapQueryFor(years[idx]);
-    highlight = null; $("ident").style.display = "none";
-    runQuery();
+  // ---- timeline (continuous year axis; era = nearest snapshot) ----
+  function nearestEra(y) { let best = years[0], bd = Infinity; for (const s of years) { const d = Math.abs(s - y); if (d < bd) { bd = d; best = s; } } return best; }
+  function applyTemplate() { $("q").value = tmpl.replace(/\{YEAR\}/g, curEra); }
+  function setScrub(y, force) {
+    curScrub = Math.max(minY, Math.min(maxY, Math.round(y)));
+    $("tl").value = curScrub;
+    const era = nearestEra(curScrub);
+    $("yr").firstChild.textContent = yearLabel(curScrub);
+    $("eraLabel").textContent = era === curScrub ? "" : "borders of " + yearLabel(era);
+    if (era !== curEra || force) { curEra = era; applyTemplate(); runQuery(); }
+  }
+  function placeMarks() {
+    const span = maxY - minY || 1;
+    const pct = (y) => ((y - minY) / span) * 100;
+    let html = years.map((y) => `<div class="m snap" style="left:${pct(y)}%" data-y="${y}" title="snapshot · ${yearLabel(y)}"></div>`).join("");
+    html += EVENTS.filter((e) => e.y >= minY && e.y <= maxY)
+      .map((e) => `<div class="m ev" style="left:${pct(e.y)}%" data-y="${e.y}" data-t="${escapeHtml(e.t)} · ${yearLabel(e.y)}"></div>`).join("");
+    $("marks").innerHTML = html;
   }
 
   // ---- map interaction ----
   function setupCanvas() {
     const c = $("map");
     function resize() {
-      const r = c.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+      const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
       c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
-      const ctx = c.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      c._cssW = r.width; c._cssH = r.height;   // project() works in CSS px
-      draw();
+      c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0); c._cssW = r.width; c._cssH = r.height; draw();
     }
-    new ResizeObserver(resize).observe(c);
-    resize();
-
+    new ResizeObserver(resize).observe(c); resize();
     let drag = null;
     c.addEventListener("mousedown", (e) => { drag = { x: e.offsetX, y: e.offsetY, ox: view.ox, oy: view.oy, moved: false }; c.classList.add("drag"); });
     window.addEventListener("mouseup", () => { c.classList.remove("drag"); setTimeout(() => (drag = null), 0); });
-    c.addEventListener("mousemove", (e) => {
-      if (drag) { view.ox = drag.ox + (e.offsetX - drag.x); view.oy = drag.oy + (e.offsetY - drag.y); drag.moved = true; draw(); return; }
-      hover(e.offsetX, e.offsetY);
-    });
+    c.addEventListener("mousemove", (e) => { if (drag) { view.ox = drag.ox + (e.offsetX - drag.x); view.oy = drag.oy + (e.offsetY - drag.y); drag.moved = true; draw(); } else hover(e.offsetX, e.offsetY); });
     c.addEventListener("mouseleave", () => { $("tip").style.display = "none"; });
-    c.addEventListener("wheel", (e) => {
-      e.preventDefault();
-      const f = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      view.ox = e.offsetX - (e.offsetX - view.ox) * f;
-      view.oy = e.offsetY - (e.offsetY - view.oy) * f;
-      view.scale *= f; draw();
-    }, { passive: false });
-    c.addEventListener("click", (e) => {
-      if (drag && drag.moved) return;            // ignore drag-release clicks
-      identify(e.offsetX, e.offsetY);
-    });
+    c.addEventListener("wheel", (e) => { e.preventDefault(); const f = e.deltaY < 0 ? 1.15 : 1 / 1.15; view.ox = e.offsetX - (e.offsetX - view.ox) * f; view.oy = e.offsetY - (e.offsetY - view.oy) * f; view.scale *= f; draw(); }, { passive: false });
+    c.addEventListener("click", (e) => { if (drag && drag.moved) return; identify(e.offsetX, e.offsetY); });
   }
   function hover(mx, my) {
     const ctx = $("map").getContext("2d"); let lab = null;
     for (const f of features) if (f.path && ctx.isPointInPath(f.path, mx, my, "evenodd")) { lab = f.label; break; }
     const tip = $("tip");
-    if (lab) { tip.textContent = lab; tip.style.left = mx + "px"; tip.style.top = my + "px"; tip.style.display = "block"; }
-    else tip.style.display = "none";
+    if (lab) { tip.textContent = lab; tip.style.left = mx + "px"; tip.style.top = my + "px"; tip.style.display = "block"; } else tip.style.display = "none";
   }
-  function identify(mx, my) {
+  async function identify(mx, my) {
     const [lon, lat] = unproject(mx, my);
-    const q = `SELECT ?label WHERE { ?t ex:year ${years[idx]} ; rdfs:label ?label ;\n` +
-      `  geo:hasGeometry/geo:asWKT ?w . FILTER(geof:sfContains(?w, "POINT(${lon.toFixed(3)} ${lat.toFixed(3)})"^^geo:wktLiteral)) }`;
-    const rows = sparql(q);
+    const q = `SELECT ?label WHERE { ?t ex:year ${curEra} ; rdfs:label ?label ;\n  geo:hasGeometry/geo:asWKT ?w . FILTER(geof:sfContains(?w, "POINT(${lon.toFixed(3)} ${lat.toFixed(3)})"^^geo:wktLiteral)) }`;
+    let rows = []; try { rows = (await runRaw(q)).rows || []; } catch (e) {}
     const box = $("ident");
-    if (rows && rows.length) {
+    if (rows.length) {
       highlight = lit(rows[0].label);
-      box.innerHTML = `In <b>${yearLabel(years[idx])}</b>, (${lon.toFixed(2)}, ${lat.toFixed(2)}) was in<br><b>${highlight}</b>` +
-        `<br><span style="color:var(--mut)">via geof:sfContains</span>`;
-      box.style.display = "block";
-    } else {
-      highlight = null;
-      box.innerHTML = `(${lon.toFixed(2)}, ${lat.toFixed(2)}) — no mapped territory in <b>${yearLabel(years[idx])}</b>.`;
-      box.style.display = "block";
-    }
-    draw();
+      box.innerHTML = `In <b>${yearLabel(curEra)}</b>, (${lon.toFixed(2)}, ${lat.toFixed(2)}) was in<br><b>${escapeHtml(highlight)}</b><br><span class="mut">via geof:sfContains</span>`;
+    } else { highlight = null; box.innerHTML = `(${lon.toFixed(2)}, ${lat.toFixed(2)}) — no mapped territory in <b>${yearLabel(curEra)}</b>.`; }
+    box.style.display = "block"; draw();
   }
 
   // ---- play ----
@@ -307,31 +394,52 @@ __GLUE_JS__
   function togglePlay() {
     if (playing) { clearInterval(playing); playing = null; $("play").textContent = "▶ Play"; return; }
     $("play").textContent = "⏸ Pause";
-    playing = setInterval(() => { setYear(idx + 1 >= years.length ? 0 : idx + 1); }, 1400);
+    playing = setInterval(() => { const step = +$("speed").value; let n = curScrub + step; if (n > maxY) n = minY; setScrub(n); }, 240);
+  }
+
+  // ---- data source ----
+  async function setMode(m) {
+    mode = m;
+    if (m === "cached" && !cachedBytes) {
+      $("status").className = ""; $("status").textContent = "downloading the full .rete once…";
+      try { const r = await fetch(REMOTE_URL); cachedBytes = new Uint8Array(await r.arrayBuffer()); }
+      catch (e) { $("status").className = "err"; $("status").textContent = "✗ download failed: " + (e.message || e); mode = "embedded"; $("src").value = "embedded"; return; }
+    }
+    if (m === "lazy") ensureWorker();
+    runQuery();
   }
 
   // ---- boot ----
   async function boot() {
     await wasm_bindgen(b64ToBytes(RETE_WASM_B64));
-    bytes = b64ToBytes(HISTORY_B64);
+    localBytes = b64ToBytes(HISTORY_B64);
     setupCanvas();
-    const yrows = sparql("SELECT DISTINCT ?y WHERE { ?t ex:year ?y } ORDER BY ?y");
-    years = (yrows || []).map((r) => parseInt(lit(r.y), 10)).filter((n) => !isNaN(n));
-    if (!years.length) { $("status").textContent = "no ex:year values found"; return; }
-    $("tl").max = years.length - 1;
-    $("ticks").innerHTML = years.map(yearLabel).map((s) => `<span>${s}</span>`).join("");
-    $("tl").addEventListener("input", (e) => setYear(+e.target.value));
-    $("run").addEventListener("click", runQuery);
-    $("reset").addEventListener("click", () => setYear(idx));
+    const yr = JSON.parse(wasm_bindgen.query(localBytes, PREFIXES + "SELECT DISTINCT ?y WHERE { ?t ex:year ?y } ORDER BY ?y", "json"));
+    years = (yr.rows || []).map((r) => parseInt(lit(r.y), 10)).filter((n) => !isNaN(n));
+    if (!years.length) { $("boot").remove(); $("status").textContent = "no ex:year values"; return; }
+    minY = years[0]; maxY = years[years.length - 1];
+    $("tl").min = minY; $("tl").max = maxY; $("tl").step = 1;
+    $("ticks").innerHTML = years.map((y) => `<span>${yearLabel(y)}</span>`).join("");
+    placeMarks();
+    // examples
+    $("ex").innerHTML = EXAMPLES.map((e, i) => `<option value="${i}">${escapeHtml(e.label)}</option>`).join("");
+    $("ex").onchange = () => { tmpl = EXAMPLES[+$("ex").value].q; applyTemplate(); runQuery(); };
+    // controls
+    $("tl").addEventListener("input", (e) => setScrub(+e.target.value));
+    $("run").addEventListener("click", () => { tmpl = $("q").value; runQuery(); });
+    $("reset").addEventListener("click", () => { tmpl = EXAMPLES[0].q; $("ex").value = "0"; applyTemplate(); runQuery(); });
     $("play").addEventListener("click", togglePlay);
-    // legend click → flash that territory
-    $("legend").addEventListener("click", (e) => {
-      const it = e.target.closest(".it"); if (!it) return;
-      highlight = it.dataset.n; draw();
-    });
-    const def = years.indexOf(1914) >= 0 ? years.indexOf(1914) : Math.floor(years.length / 2);
+    $("src").addEventListener("change", (e) => setMode(e.target.value));
+    $("tabMap").addEventListener("click", () => { $("tabMap").classList.add("on"); $("tabTable").classList.remove("on"); $("mapView").classList.remove("hidden"); $("tableView").classList.add("hidden"); });
+    $("tabTable").addEventListener("click", () => { $("tabTable").classList.add("on"); $("tabMap").classList.remove("on"); $("tableView").classList.remove("hidden"); $("mapView").classList.add("hidden"); renderTable(); });
+    $("legend").addEventListener("click", (e) => { const it = e.target.closest(".it"); if (it) { highlight = it.dataset.n; draw(); } });
+    // marker tooltips + click-to-jump
+    const mtip = $("mtip");
+    $("marks").addEventListener("mouseover", (e) => { const m = e.target.closest(".m"); if (!m || !m.dataset.t) return; const r = m.getBoundingClientRect(); mtip.textContent = m.dataset.t; mtip.style.left = (r.left + r.width / 2) + "px"; mtip.style.top = r.top + "px"; mtip.style.display = "block"; });
+    $("marks").addEventListener("mouseout", () => { mtip.style.display = "none"; });
+    $("marks").addEventListener("click", (e) => { const m = e.target.closest(".m"); if (m) setScrub(+m.dataset.y); });
     $("boot").remove();
-    setYear(def);
+    setScrub(years.indexOf(1914) >= 0 ? 1914 : years[Math.floor(years.length / 2)], true);
   }
   boot();
 })();

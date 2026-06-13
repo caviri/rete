@@ -57,3 +57,5 @@ __pycache__/
 /rdf-tests/
 # Locally-built rete binary used by the conformance harness
 /rete-bin
+# Docker cargo cache (CARGO_HOME mounted into the rust image for docgen/builds)
+/.cargo-home/
