@@ -7,7 +7,7 @@ __pycache__/
 # Built static pages rendered by scripts/build_playground.py (docs/ copies are
 # committed; the web/ copy is a local-serving convenience, regenerated).
 /web/explore-100mb.html
-/web/atlas.html
+/web/atlas-app.html
 
 # The Hugging Face Space (FastAPI Range+CORS file server) is deployed straight
 # to HF, not tracked here.

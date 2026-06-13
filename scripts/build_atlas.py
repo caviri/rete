@@ -26,8 +26,8 @@ TEMPLATE = WEB / "atlas.template.html"
 GLUE_JS = NOMOD / "rete_wasm.js"
 WASM = NOMOD / "rete_wasm_bg.wasm"
 RETE = WEB / "history.rete"
-OUT = ROOT / "docs" / "atlas.html"
-WEB_OUT = WEB / "atlas.html"
+OUT = ROOT / "docs" / "atlas-app.html"
+WEB_OUT = WEB / "atlas-app.html"
 
 
 def die(msg: str) -> None:
