@@ -85,6 +85,18 @@ whatever your query binds to `?wkt`.
    that explains what's happening; identical queries are **cached** (re-running is
    instant), and a **⚙ Settings** modal inspects/clears the query cache and the
    cached `.rete`.
+9. **Federate with Wikidata.** Engine-level `SERVICE` isn't built, so federation is
+   done **client-side**: the identify panel's **🔎 Wikidata** button looks an entity
+   up by name, and **🔗 Wikidata** runs a real federated SPARQL query — it feeds the
+   era's territory names as `VALUES` into a query against
+   [query.wikidata.org](https://query.wikidata.org), joins the matches back, and
+   shows each territory's Wikidata entity + population (works best on modern eras;
+   it's online-only and fuzzy on historical names).
+
+<figure class="fig-center">
+  <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">
+  <figcaption>Client-side federation: the era's territory names are fed as <code>VALUES</code> into a SPARQL query run against Wikidata's public endpoint, then joined back — each territory linked to its Wikidata entity with population. (Engine-side <code>SERVICE</code> is on the roadmap; this is the browser doing the join.)</figcaption>
+</figure>
 
 <figure class="fig-center">
   <img src="img/atlas-table.png" alt="The Historical Atlas in Table view at 1492 CE: a label column and a wkt column where each row renders a small teal geometry thumbnail of that territory's border polygon, captioned with its kind and vertex count (e.g. MULTIPOLYGON · 388 pts).">
