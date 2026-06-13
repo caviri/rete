@@ -41,6 +41,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("cli.md", "CLI reference"),
             ("sparql.md", "SPARQL support"),
+            ("geosparql.md", "GeoSPARQL (geometry + time)"),
             ("shacl.md", "SHACL validation"),
             ("dataset-cards.md", "Dataset Cards"),
             ("reasoning.md", "Reasoning & coherence"),

@@ -10,6 +10,10 @@ Run via the CLI (`rete sparql <file> "<query>" [--json]`) or in the browser
 (`query` in `rete-wasm` for any query form; `query_sparql` is the older
 SELECT-only wrapper).
 
+Spatial queries over `geo:wktLiteral` geometry — point-in-polygon, intersection,
+distance — are covered by a focused set of GeoSPARQL functions; see
+[GeoSPARQL (geometry + time)](geosparql.html).
+
 <figure class="fig-right">
   <img src="img/bgp-join.svg" alt="Two triple patterns sharing the variable ?f are joined on it, producing a binding table with columns for the bound variables.">
   <figcaption>A basic graph pattern is a join on shared variables: patterns that share <code>?f</code> are intersected via the permutation indexes.</figcaption>
