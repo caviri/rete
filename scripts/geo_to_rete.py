@@ -21,6 +21,11 @@ Usage:
   geo_to_rete.py basemaps --dir dev/geo/basemaps --years 1,1000,1492,1815,1914,1945,1994 \
       --prec 2 --min-bbox 0.2 -o out.nt
   geo_to_rete.py ohm --csv dev/geo/ohm-admin.csv --prec 4 -o ohm.nt
+
+  # Pleiades ancient-places gazetteer (CC-BY, ~35 MB GIS zip → ~35k places w/ year bounds):
+  #   curl -sL https://atlantides.org/downloads/pleiades/gis/pleiades_gis_data.zip -o p.zip
+  #   unzip p.zip -d dev/geo/pleiades/          # → dev/geo/pleiades/data/gis/location_*.csv
+  geo_to_rete.py pleiades --dir dev/geo/pleiades/data/gis --prec 4 -o data/pleiades/pleiades.nt
 """
 from __future__ import annotations
 
@@ -107,8 +112,8 @@ def lit(v, dt=None):
     return f'"{esc(v)}"^^<{dt}>' if dt else f'"{esc(v)}"'
 
 
-def emit_feature(out, iri, name, year_props, wkt, extra):
-    out.write(triple(iri, RDF_TYPE, f"<{EX}Territory>"))
+def emit_feature(out, iri, name, year_props, wkt, extra, rtype="Territory"):
+    out.write(triple(iri, RDF_TYPE, f"<{EX}{rtype}>"))
     out.write(triple(iri, RDFS_LABEL, lit(name)))
     for p, v in extra.items():
         if v:
@@ -193,6 +198,41 @@ def do_ohm(args, out):
     print(f"ohm: {n} features", file=sys.stderr)
 
 
+_PLEIADES_GEOM = ("POINT", "LINESTRING", "POLYGON", "MULTIPOINT", "MULTILINESTRING", "MULTIPOLYGON")
+
+
+def do_pleiades(args, out):
+    """Pleiades ancient-places GIS dump: location_{points,polygons,linestrings}.csv,
+    each with geometry_wkt + year_after_which/year_before_which (negative = BCE).
+    Emits ex:Place with ex:startYear/ex:endYear and a GeoSPARQL geometry."""
+    n = 0
+    for fn in ("location_points", "location_polygons", "location_linestrings"):
+        path = Path(args.dir) / f"{fn}.csv"
+        if not path.exists():
+            print(f"  skip (missing): {path}", file=sys.stderr)
+            continue
+        with open(path, newline="", encoding="utf-8-sig") as fh:
+            for row in csv.DictReader(fh):
+                wkt = (row.get("geometry_wkt") or "").strip()
+                if not wkt.upper().startswith(_PLEIADES_GEOM):
+                    continue
+                iri = (row.get("uri") or "").strip()
+                if not iri:
+                    continue
+                wkt = re.sub(r"-?\d+\.\d+", lambda m: f"{round(float(m.group()), args.prec)}", wkt)
+                ys = {}
+                s, e = year_of(row.get("year_after_which")), year_of(row.get("year_before_which"))
+                # clamp out absurd deep-prehistory / future bounds so the timeline stays usable
+                if s is not None and -10000 <= s <= 2100:
+                    ys["startYear"] = s
+                if e is not None and -10000 <= e <= 2100:
+                    ys["endYear"] = e
+                emit_feature(out, iri, (row.get("title") or "").strip() or "Unknown", ys, wkt, {}, rtype="Place")
+                n += 1
+        print(f"  {fn}: {n} cumulative", file=sys.stderr)
+    print(f"pleiades: {n} features", file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -207,9 +247,14 @@ def main():
     o.add_argument("--csv", default="dev/geo/ohm-admin.csv")
     o.add_argument("--prec", type=int, default=4)
     o.add_argument("-o", "--out", required=True)
+    p = sub.add_parser("pleiades")
+    p.add_argument("--dir", default="dev/geo/pleiades/data/gis", help="dir holding location_*.csv")
+    p.add_argument("--prec", type=int, default=4)
+    p.add_argument("-o", "--out", required=True)
     args = ap.parse_args()
+    do = {"basemaps": do_basemaps, "ohm": do_ohm, "pleiades": do_pleiades}[args.cmd]
     with open(args.out, "w", encoding="utf-8") as out:
-        (do_basemaps if args.cmd == "basemaps" else do_ohm)(args, out)
+        do(args, out)
 
 
 if __name__ == "__main__":
