@@ -326,20 +326,26 @@ era's territory names as <code>VALUES</code> into a query against
 <a href="https://query.wikidata.org">query.wikidata.org</a>, joins the matches back, and
 shows each territory's Wikidata entity + population (works best on modern eras;
 it's online-only and fuzzy on historical names).</li>
-<li><strong>Stack data-layer overlays.</strong> Beyond the borders, you can switch on <strong>28
+<li><strong>Stack data-layer overlays.</strong> Beyond the borders, you can switch on <strong>58
 extra datasets</strong> as <strong>overlays</strong> — <strong>Battles</strong>, <strong>Archaeological sites</strong>,
-<strong>Historical states</strong> and <strong>Pleiades ancient places</strong>, plus <strong>24 Wikidata
-temporal+spatial themes</strong> (CC0): military operations, sieges, castles,
-fortifications, lighthouses, cathedrals, monasteries, abbeys, palaces, forts,
-universities, World Heritage Sites, earthquakes, disasters, floods, meteorite
-falls, volcanic eruptions, nuclear explosions, assassinations, treaties,
-epidemics, pyramids, polities and shipwrecks. Each is a separate <code>.rete</code>
-fetched once from the bucket, queried locally, and dotted on the map in its own
-colour, filtered to the scrub year (events within a window of the playhead;
-places active across their <code>[startYear,endYear]</code>). Each active layer gets a
-<strong>histogram track</strong> beneath the timeline — like a clip in a video editor —
-showing <em>when</em> its data is concentrated, with a playhead. Every theme is
-reproducible from one CONSTRUCT each — see <code>scripts/fetch_wikidata_themes.sh</code>.</li>
+<strong>Historical states</strong> and <strong>Pleiades ancient places</strong>, plus <strong>54 Wikidata
+temporal+spatial themes</strong> (CC0) spanning <em>conflict</em> (military operations,
+sieges, massacres, terrorist attacks, coups, revolutions, assassinations,
+nuclear explosions), <em>disasters</em> (earthquakes, volcanic eruptions, tsunamis,
+floods, wildfires, explosions, aviation &amp; rail accidents, epidemics, meteorite
+falls, shipwrecks), <em>built heritage</em> (castles, forts, fortifications, palaces,
+cathedrals, monasteries, abbeys, mosques, synagogues, temples, towers,
+lighthouses, bridges, dams, aqueducts, canals, windmills, amphitheatres,
+pyramids, megaliths), and <em>institutions</em> (universities, museums, libraries,
+theatres, observatories, stadiums, prisons, mines, railway stations, botanical
+gardens, World Heritage Sites), as well as treaties, expeditions and polities.
+Each is a separate <code>.rete</code> fetched once from the bucket, queried locally, and
+dotted on the map in its own colour, filtered to the scrub year (events within
+a window of the playhead; places active across their <code>[startYear,endYear]</code>).
+Each active layer gets a <strong>histogram track</strong> beneath the timeline — like a clip
+in a video editor — showing <em>when</em> its data is concentrated, with a playhead.
+Every theme is reproducible from one CONSTRUCT each — see
+<code>scripts/fetch_wikidata_themes.sh</code>.</li>
 </ol>
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">
