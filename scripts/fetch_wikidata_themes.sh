@@ -95,5 +95,21 @@ emit botanical-gardens     BotanicalGarden    '?x wdt:P31/wdt:P279* wd:Q167346 ;
 emit megaliths             Megalith           '?x wdt:P31/wdt:P279* wd:Q726870 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
 # (world-fairs Q56862 + hillforts Q1130484 + famines Q168247 dropped: empty or too few features.)
 
+# --- batch 3: big remaining building/event classes (events P585, structures P571) ---
+emit churches              Church             '?x wdt:P31/wdt:P279* wd:Q16970 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit hospitals             Hospital           '?x wdt:P31/wdt:P279* wd:Q16917 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit cemeteries            Cemetery           '?x wdt:P31/wdt:P279* wd:Q39614 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit gardens               Garden             '?x wdt:P31/wdt:P279* wd:Q1107656 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit city-gates            CityGate           '?x wdt:P31/wdt:P279* wd:Q82117 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit power-stations        PowerStation       '?x wdt:P31/wdt:P279* wd:Q159719 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit factories             Factory            '?x wdt:P31/wdt:P279* wd:Q83405 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit breweries             Brewery            '?x wdt:P31/wdt:P279* wd:Q131734 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit conferences           Conference         '?x wdt:P31/wdt:P279* wd:Q2020153 ; wdt:P585 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit landslides            Landslide          '?x wdt:P31/wdt:P279* wd:Q167903 ; wdt:P585 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit shipyards             Shipyard           '?x wdt:P31/wdt:P279* wd:Q190928 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit airports              Airport            '?x wdt:P31/wdt:P279* wd:Q1248784 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit monuments             Monument           '?x wdt:P31/wdt:P279* wd:Q4989906 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+emit memorials             Memorial           '?x wdt:P31/wdt:P279* wd:Q5003624 ; wdt:P571 ?date ; wdt:P625 ?coord ; rdfs:label ?label .'
+
 echo "---"
 echo "themes: $(ls "$OUT"/*.nt | wc -l) files, $(cat "$OUT"/*.nt | wc -l) total triples in $OUT"
