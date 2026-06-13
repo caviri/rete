@@ -99,10 +99,23 @@ whatever your query binds to `?wkt`.
    [query.wikidata.org](https://query.wikidata.org), joins the matches back, and
    shows each territory's Wikidata entity + population (works best on modern eras;
    it's online-only and fuzzy on historical names).
+10. **Stack data-layer overlays.** Beyond the borders, you can switch on extra
+    datasets as **overlays** — **Battles** and **Archaeological sites** and
+    **Historical states** (from a Wikidata CONSTRUCT subset) and **Pleiades ancient
+    places** — each a separate `.rete` fetched once from the bucket, queried locally,
+    and dotted on the map in its own colour, filtered to the scrub year (events
+    within a window of the playhead; places active across their `[startYear,endYear]`).
+    Each active layer gets a **histogram track** beneath the timeline — like a clip
+    in a video editor — showing *when* its data is concentrated, with a playhead.
 
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">
   <figcaption>Client-side federation: the era's territory names are fed as <code>VALUES</code> into a SPARQL query run against Wikidata's public endpoint, then joined back — each territory linked to its Wikidata entity with population. (Engine-side <code>SERVICE</code> is on the roadmap; this is the browser doing the join.)</figcaption>
+</figure>
+
+<figure class="fig-center">
+  <img src="img/atlas-layers.png" alt="The Historical Atlas with data-layer overlays at 1815 CE: battles (red dots) and archaeological sites (purple dots) scattered over the borders, a 'Data layers' panel in the sidebar with per-layer counts, and two histogram tracks beneath the timeline showing each layer's temporal distribution with a playhead.">
+  <figcaption>Data-layer overlays — Battles (red) and Archaeological sites (purple) from separate <code>.rete</code> files dotted over the 1815 borders, each with a <b>histogram track</b> beneath the timeline (the "video-editor layer" view) showing when its events cluster. Toggle layers on/off; points follow the scrub year.</figcaption>
 </figure>
 
 <figure class="fig-center">
