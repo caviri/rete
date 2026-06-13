@@ -371,7 +371,12 @@ query/recipe each — see <code>scripts/fetch_wikidata_themes.sh</code> (Wikidat
 <code>scripts/fetch_ohm.sh</code> + <code>scripts/ohm_overpass_to_nt.py</code> (OpenHistoricalMap),
 <code>scripts/fetch_atlas_extra.sh</code> (Nomisma / FactGrid / Getty TGN SPARQL), and
 <code>scripts/fetch_dumps_extra.sh</code> + <code>scripts/{theographic,samian}_to_nt.py</code>
-(the GitHub-dump providers).</li>
+(the GitHub-dump providers). Because a layer <em>is</em> a SPARQL query, the <strong>＋</strong>
+button lets you <strong>author your own</strong> — name it, pick a colour and instant/interval
+kind, point it at the embedded borders (offline) or any bucket <code>.rete</code>, and write
+the <code>SELECT … ?wkt</code>. The layer list is scrollable and <strong>drag-to-reorder</strong> (which
+sets draw order), and <strong>clicking any overlay feature</strong> opens an info card with its
+label, date/span, layer, coordinates and source IRI.</li>
 </ol>
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">

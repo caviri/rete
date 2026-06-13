@@ -46,13 +46,36 @@
   button:hover { filter:brightness(1.08); }
   #status { color:var(--mut); font-size:12px; padding:0 12px 8px; min-height:18px; }
   #status.err { color:var(--accent2); }
-  .layerlist { padding:2px 12px 6px; max-height:208px; overflow-y:auto; }
-  .layerlist .lyr { display:flex; align-items:center; gap:7px; padding:3px 0; font-size:12px; color:#cdd9e5; cursor:pointer; }
+  .layerlist { padding:2px 12px 6px; max-height:260px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.2) transparent; }
+  .layerlist::-webkit-scrollbar { width:8px; }
+  .layerlist::-webkit-scrollbar-thumb { background:rgba(255,255,255,.18); border-radius:4px; }
+  .layerlist .lyr { display:flex; align-items:center; gap:6px; padding:3px 2px; font-size:12px; color:#cdd9e5; cursor:pointer; border-radius:4px; }
+  .layerlist .lyr.dragging { opacity:.4; }
+  .layerlist .lyr.dragover { background:rgba(96,165,250,.16); box-shadow:inset 0 1px 0 var(--accent); }
   .layerlist .lyr input { accent-color:var(--accent); }
+  .layerlist .lyr .grip { color:var(--mut); cursor:grab; font-size:11px; opacity:.5; flex:0 0 auto; }
+  .layerlist .lyr:hover .grip { opacity:.9; }
   .layerlist .lyr .sw { width:10px; height:10px; border-radius:3px; flex:0 0 auto; outline:1px solid rgba(255,255,255,.15); }
-  .layerlist .lyr .cnt { margin-left:auto; color:var(--mut); font-size:10.5px; font-variant-numeric:tabular-nums; }
+  .layerlist .lyr .lyrname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .layerlist .lyr .cnt { color:var(--mut); font-size:10.5px; font-variant-numeric:tabular-nums; flex:0 0 auto; }
   .layerlist .lyr.err .cnt { color:#ff6b6b; }
   .layerlist .lyr.loading .cnt::after { content:"…"; }
+  .layerlist .lyr .lyrdel { flex:0 0 auto; color:var(--mut); padding:0 3px; border-radius:3px; }
+  .layerlist .lyr .lyrdel:hover { color:#ff6b6b; background:rgba(255,107,107,.15); }
+  .addbtn { background:var(--accent); color:#08121e; border:none; border-radius:5px; width:20px; height:20px; font-size:15px; line-height:1; cursor:pointer; font-weight:700; padding:0; }
+  .addbtn:hover { filter:brightness(1.12); }
+  #ident .idhead .sw { width:11px; height:11px; border-radius:3px; display:inline-block; vertical-align:-1px; margin-right:5px; outline:1px solid rgba(255,255,255,.2); }
+  #ident .idiri a { color:var(--accent); word-break:break-all; }
+  /* + Add-layer modal */
+  #layermodal { position:fixed; inset:0; background:rgba(4,8,12,.6); display:flex; align-items:center; justify-content:center; z-index:50; }
+  #layermodal[hidden] { display:none; }
+  .lmbox { width:min(560px,92vw); }
+  .lmrow { display:flex; align-items:center; gap:10px; margin:7px 0; }
+  .lmrow > label { flex:0 0 64px; color:var(--mut); font-size:12px; }
+  .lmrow input[type=text], .lmrow select { flex:1; background:#0a141e; border:1px solid var(--line); color:var(--ink); border-radius:5px; padding:5px 7px; font:inherit; }
+  .lmrow input[type=color] { width:42px; height:28px; padding:0; border:1px solid var(--line); border-radius:5px; background:#0a141e; }
+  .lmqrow { align-items:stretch; }
+  .lmqrow textarea { flex:1; background:#0a141e; border:1px solid var(--line); color:var(--ink); border-radius:5px; padding:7px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; resize:vertical; }
   .tracks { display:flex; flex-direction:column; gap:3px; margin-top:6px; }
   .tracks .trk { position:relative; height:22px; background:#0c1116; border:1px solid var(--line); border-radius:4px; overflow:hidden; }
   .tracks .trk canvas { display:block; width:100%; height:100%; }
@@ -268,7 +291,7 @@
     </select></div>
     <div id="status"></div>
     <div class="hint">The timeline rewrites <code>{YEAR}</code> in the query. Click a territory to identify it with <code>geof:sfContains</code>. Lazy mode fetches only the bytes each query touches.</div>
-    <h2>Data layers <span class="sp"></span><span class="mut" style="font-size:10.5px;font-weight:400">overlays · time × space</span></h2>
+    <h2>Data layers <button id="addlayer" class="addbtn" title="Add a custom SPARQL layer">＋</button><span class="sp"></span><span class="mut" style="font-size:10.5px;font-weight:400">overlays · SPARQL · drag to reorder</span></h2>
     <div class="layerlist" id="layerlist"></div>
     <h2>Territories</h2>
     <div class="legend" id="legend"></div>
@@ -370,6 +393,22 @@
       <div class="setrow"><span id="setreteinfo" class="mut"></span><span class="sp"></span><button id="setdrop" class="setbtn">Drop cached .rete</button></div>
       <h3>Cached queries</h3>
       <div id="setlist" class="setlist"><p class="mut">No queries cached yet.</p></div>
+    </div>
+  </div>
+</div>
+
+<div id="layermodal" hidden>
+  <div class="setbox lmbox">
+    <div class="settop"><b>＋ Add a data layer</b><span class="sp"></span><button id="lmclose" title="close">×</button></div>
+    <div class="setbody">
+      <p class="mut" style="margin:0 0 8px">A layer <em>is</em> a SPARQL query: every row that binds <code>?wkt</code> is plotted, filtered to the timeline year. Bind <code>?label</code>, <code>?wkt</code>, and either <code>?year</code> (instant) or <code>?s</code>/<code>?e</code> (interval). <code>?x</code> (the subject) makes features clickable.</p>
+      <div class="lmrow"><label>Name</label><input id="lmname" type="text" placeholder="My layer"></div>
+      <div class="lmrow"><label>Colour</label><input id="lmcolor" type="color" value="#00e5ff"></div>
+      <div class="lmrow"><label>Kind</label><select id="lmkind"><option value="instant">instant — a year (ex:year)</option><option value="interval">interval — a span (ex:startYear/endYear)</option></select></div>
+      <div class="lmrow"><label>Source</label><input id="lmsrc" type="text" value="embedded" title="'embedded' = the in-page borders (offline); or a bucket path like themes/castles.rete"></div>
+      <div class="lmrow lmqrow"><label>SPARQL</label><textarea id="lmq" spellcheck="false" rows="7"></textarea></div>
+      <div id="lmerr" class="err" style="min-height:16px"></div>
+      <div class="setrow"><span class="mut">Prefixes (ex:, rdfs:, geo:, geof:…) are added for you.</span><span class="sp"></span><button id="lmadd" class="setbtn">Add layer</button></div>
     </div>
   </div>
 </div>
@@ -624,13 +663,13 @@ __GLUE_JS__
   ]);
   const LAYER_DEFS = [
     { key: "battles", name: "Battles", file: "history-events.rete", kind: "instant", color: "#ff6b6b",
-      q: "SELECT ?label ?year ?wkt WHERE { ?b a ex:Battle ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }" },
+      q: "SELECT ?x ?label ?year ?wkt WHERE { ?x a ex:Battle ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }" },
     { key: "sites", name: "Archaeological sites", file: "history-events.rete", kind: "instant", color: "#b088c9",
-      q: "SELECT ?label ?year ?wkt WHERE { ?b a ex:Site ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }" },
+      q: "SELECT ?x ?label ?year ?wkt WHERE { ?x a ex:Site ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }" },
     { key: "states", name: "Historical states (capital)", file: "history-events.rete", kind: "instant", color: "#f0a35e",
-      q: "SELECT ?label ?year ?wkt WHERE { ?b a ex:State ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }" },
+      q: "SELECT ?x ?label ?year ?wkt WHERE { ?x a ex:State ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }" },
     { key: "pleiades", name: "Pleiades ancient places", file: "pleiades.rete", kind: "interval", color: "#4ecdc4",
-      q: "SELECT ?label ?s ?e ?wkt WHERE { ?p a ex:Place ; rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ; geo:hasGeometry/geo:asWKT ?wkt }" },
+      q: "SELECT ?x ?label ?s ?e ?wkt WHERE { ?x a ex:Place ; rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ; geo:hasGeometry/geo:asWKT ?wkt }" },
     // Wikidata temporal+spatial themes (CC0) — one .rete each in the bucket's atlas/themes/,
     // all in the instant GeoSPARQL shape: ?x a ex:TYPE ; rdfs:label ; ex:year ; geo:hasGeometry/geo:asWKT.
     ...[
@@ -725,8 +764,8 @@ __GLUE_JS__
       return {
         key, name, file: "themes/" + key + ".rete", kind: interval ? "interval" : "instant", color,
         q: interval
-          ? "SELECT ?label ?s ?e ?wkt WHERE { ?x a ex:" + type + " ; rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ; geo:hasGeometry/geo:asWKT ?wkt }"
-          : "SELECT ?label ?year ?wkt WHERE { ?x a ex:" + type + " ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }",
+          ? "SELECT ?x ?label ?s ?e ?wkt WHERE { ?x a ex:" + type + " ; rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ; geo:hasGeometry/geo:asWKT ?wkt }"
+          : "SELECT ?x ?label ?year ?wkt WHERE { ?x a ex:" + type + " ; rdfs:label ?label ; ex:year ?year ; geo:hasGeometry/geo:asWKT ?wkt }",
       };
     }),
   ];
@@ -1335,7 +1374,8 @@ __GLUE_JS__
     if (layer.loaded || layer.loading) return;
     layer.loading = true; layer.err = null; renderLayerList();
     try {
-      const bytes = await loadDsBytes(layer.def.file);
+      // source: an embedded query against the in-page borders, or a .rete fetched once from the bucket
+      const bytes = layer.def.embedded ? localBytes : await loadDsBytes(layer.def.file);
       const rows = (JSON.parse(wasm_bindgen.query(bytes, PREFIXES + layer.def.q, "json")).rows) || [];
       const feats = [];
       for (const r of rows) {
@@ -1349,6 +1389,7 @@ __GLUE_JS__
           const pt = parsePt(wkt); if (!pt || !isFinite(pt[0]) || !isFinite(pt[1])) continue;
           f = { lon: pt[0], lat: pt[1], label: lit(r.label || "") };
         }
+        if (r.x) f.iri = lit(r.x);   // the feature's subject IRI — for click-to-identify
         if (layer.def.kind === "interval") { f.s = parseInt(lit(r.s), 10); f.e = parseInt(lit(r.e), 10); if (isNaN(f.s) || isNaN(f.e)) continue; }
         else { f.year = parseInt(lit(r.year), 10); if (isNaN(f.year)) continue; }
         feats.push(f);
@@ -1408,7 +1449,23 @@ __GLUE_JS__
   }
   function renderLayerList() {
     $("layerlist").innerHTML = overlays.map((l, i) =>
-      `<label class="lyr${l.loading ? " loading" : ""}${l.err ? " err" : ""}" data-i="${i}" title="${l.err ? escapeHtml(l.err) : escapeHtml(l.def.file)}"><input type="checkbox"${l.on ? " checked" : ""}><span class="sw" style="background:${l.def.color}"></span>${escapeHtml(l.def.name)}<span class="cnt">${l.on || l.err ? escapeHtml(layerCount(l)) : ""}</span></label>`).join("");
+      `<label class="lyr${l.loading ? " loading" : ""}${l.err ? " err" : ""}" data-i="${i}" draggable="true" title="${l.err ? escapeHtml(l.err) : escapeHtml(l.def.embedded ? "embedded query" : l.def.file)}">` +
+      `<span class="grip" title="drag to reorder">⠿</span><input type="checkbox"${l.on ? " checked" : ""}>` +
+      `<span class="sw" style="background:${l.def.color}"></span><span class="lyrname">${escapeHtml(l.def.name)}</span>` +
+      `<span class="cnt">${l.on || l.err ? escapeHtml(layerCount(l)) : ""}</span>` +
+      (l.def.custom ? `<span class="lyrdel" title="remove this custom layer">×</span>` : "") +
+      `</label>`).join("");
+  }
+  // ---- custom layers (+ button) and drag-to-reorder ----
+  let customSeq = 0;
+  function addCustomLayer(def) {
+    overlays.push({ def, on: false, loaded: false, loading: false, feats: null });
+    renderLayerList();
+  }
+  function reorderLayers(from, to) {
+    if (from === to || from < 0 || to < 0 || from >= overlays.length || to >= overlays.length) return;
+    const [m] = overlays.splice(from, 1); overlays.splice(to, 0, m);
+    renderLayerList(); renderTracks(); requestDraw();
   }
   function renderTracks() {   // a histogram "audio track" per active layer, aligned to the timeline window
     const host = $("tracks"), on = overlays.filter((l) => l.on);
@@ -1495,7 +1552,49 @@ __GLUE_JS__
   }
   // local part of an IRI/term, for a readable property/value label
   function localName(term) { const s = lit(term); const m = s.split(/[#/]/).pop(); return m || s; }
+  // ---- click-to-identify an overlay feature (a dot / shape from a data layer) ----
+  function overlayHit(mx, my) {   // topmost active layer wins; polygons by containment, points by proximity
+    const ctx = $("map").getContext("2d");
+    for (let li = overlays.length - 1; li >= 0; li--) {
+      const layer = overlays[li];
+      if (!layer.on || !layer.feats) continue;
+      let best = null, bestD = 81, n = 0;   // 9px pick radius
+      for (const f of layerActiveFeats(layer)) {
+        if (n++ > OVL_CAP) break;
+        if (f.rings && !f.line) {            // filled shape — a click inside it counts
+          const path = new Path2D();
+          for (const ring of f.rings) { for (let i = 0; i < ring.length; i++) { const [x, y] = project(ring[i][0], ring[i][1]); i ? path.lineTo(x, y) : path.moveTo(x, y); } path.closePath(); }
+          if (ctx.isPointInPath(path, mx, my)) return { layer, feat: f };
+        }
+        const [x, y] = project(f.lon, f.lat);
+        if (!isFinite(x) || !isFinite(y)) continue;
+        const d = (x - mx) * (x - mx) + (y - my) * (y - my);
+        if (d < bestD) { bestD = d; best = f; }
+      }
+      if (best) return { layer, feat: best };
+    }
+    return null;
+  }
+  function featSpan(layer, f) {
+    if (layer.def.kind === "interval") return yearLabel(f.s) + " – " + (f.e >= 2100 ? "present" : yearLabel(f.e));
+    return yearLabel(f.year);
+  }
+  function showFeatureInfo(layer, f) {
+    const box = $("ident"), iri = f.iri || "";
+    const link = /^https?:\/\//i.test(iri)
+      ? `<a href="${escapeHtml(safeUrl(iri))}" target="_blank" rel="noopener">${escapeHtml(iri)} ↗</a>`
+      : (iri ? `<span class="mut">${escapeHtml(iri)}</span>` : "");
+    box.innerHTML =
+      `<div class="idhead"><span class="idclose" title="close">×</span><span class="sw" style="background:${layer.def.color}"></span><b>${escapeHtml(f.label || "(unnamed)")}</b></div>` +
+      `<table class="idmeta"><tr><td>layer</td><td>${escapeHtml(layer.def.name)}</td></tr>` +
+      `<tr><td>${layer.def.kind === "interval" ? "span" : "year"}</td><td>${escapeHtml(featSpan(layer, f))}</td></tr>` +
+      `<tr><td>coords</td><td>${f.lon.toFixed(3)}, ${f.lat.toFixed(3)}</td></tr></table>` +
+      (link ? `<div class="mut idiri" style="margin-top:6px">${link}</div>` : "");
+    box.style.display = "block";
+  }
   async function identify(mx, my) {
+    const hit = overlayHit(mx, my);   // a data-layer feature under the cursor takes priority over the border
+    if (hit) { showFeatureInfo(hit.layer, hit.feat); return; }
     const [lon, lat] = unproject(mx, my);
     if (!isFinite(lon) || !isFinite(lat) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {  // clicked off the projected world
       const box = $("ident"); highlight = null; box.innerHTML = `<span class="mut">Click inside the mapped world.</span>`; box.style.display = "block"; requestDraw(); return;
@@ -1616,6 +1715,43 @@ __GLUE_JS__
       else { layer.feats = null; layer.loaded = false; layer.activeBuf = null; }   // free memory; re-toggle re-queries the cached bytes
       renderLayerList(); renderTracks(); requestDraw();
     });
+    // remove a custom layer (× on its row)
+    $("layerlist").addEventListener("click", (e) => {
+      if (!e.target.classList.contains("lyrdel")) return;
+      e.preventDefault();
+      const lab = e.target.closest(".lyr"); if (!lab) return;
+      overlays.splice(+lab.dataset.i, 1); renderLayerList(); renderTracks(); requestDraw();
+    });
+    // drag to reorder (sets draw order / z-stacking + track order)
+    let dragFrom = null;
+    $("layerlist").addEventListener("dragstart", (e) => { const l = e.target.closest(".lyr"); if (l) { dragFrom = +l.dataset.i; e.dataTransfer.effectAllowed = "move"; l.classList.add("dragging"); } });
+    $("layerlist").addEventListener("dragend", () => { dragFrom = null; document.querySelectorAll("#layerlist .lyr").forEach((l) => l.classList.remove("dragging", "dragover")); });
+    $("layerlist").addEventListener("dragover", (e) => { e.preventDefault(); const l = e.target.closest(".lyr"); document.querySelectorAll("#layerlist .lyr").forEach((x) => x.classList.toggle("dragover", x === l)); });
+    $("layerlist").addEventListener("drop", (e) => { e.preventDefault(); const l = e.target.closest(".lyr"); if (l && dragFrom != null) reorderLayers(dragFrom, +l.dataset.i); dragFrom = null; });
+    // + Add layer: a custom SPARQL overlay
+    const lmTemplate = (kind) => kind === "interval"
+      ? "SELECT ?x ?label ?s ?e ?wkt WHERE {\n  ?x rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ;\n     geo:hasGeometry/geo:asWKT ?wkt\n} LIMIT 2000"
+      : "SELECT ?x ?label ?year ?wkt WHERE {\n  ?x rdfs:label ?label ; ex:year ?year ;\n     geo:hasGeometry/geo:asWKT ?wkt\n} LIMIT 2000";
+    const openLayerModal = () => { $("lmerr").textContent = ""; if (!$("lmq").value.trim()) $("lmq").value = lmTemplate($("lmkind").value); $("layermodal").hidden = false; $("lmname").focus(); };
+    $("addlayer").addEventListener("click", openLayerModal);
+    $("lmclose").addEventListener("click", () => { $("layermodal").hidden = true; });
+    $("layermodal").addEventListener("click", (e) => { if (e.target === $("layermodal")) $("layermodal").hidden = true; });
+    $("lmkind").addEventListener("change", () => { const cur = $("lmq").value.trim(); if (!cur || cur === lmTemplate("instant") || cur === lmTemplate("interval")) $("lmq").value = lmTemplate($("lmkind").value); });
+    $("lmadd").addEventListener("click", async () => {
+      const name = $("lmname").value.trim() || "Custom layer", kind = $("lmkind").value;
+      const src = $("lmsrc").value.trim() || "embedded", q = $("lmq").value.trim();
+      const need = kind === "interval" ? /\?s\b/.test(q) && /\?e\b/.test(q) : /\?year\b/.test(q);
+      if (!q || !/\?wkt\b/.test(q) || !need) { $("lmerr").textContent = "Query must bind ?wkt and " + (kind === "interval" ? "?s + ?e" : "?year") + "."; return; }
+      const def = { key: "custom-" + (++customSeq), name, kind, color: $("lmcolor").value, q, custom: true,
+        embedded: src === "embedded", file: src === "embedded" ? null : src };
+      $("lmerr").textContent = "loading…";
+      addCustomLayer(def);
+      const layer = overlays[overlays.length - 1]; layer.on = true;
+      try { await loadLayer(layer); } catch (err) {}
+      if (layer.err) { overlays.pop(); $("lmerr").textContent = "Layer error: " + layer.err; renderLayerList(); return; }   // drop the broken layer, keep the modal open
+      $("layermodal").hidden = true; $("lmname").value = ""; $("lmq").value = "";
+      renderLayerList(); renderTracks(); requestDraw();
+    });
     // step one era back / forward
     $("stepb").addEventListener("click", () => stepEra(-1));
     $("stepf").addEventListener("click", () => stepEra(1));
@@ -1695,6 +1831,8 @@ __GLUE_JS__
     $("marks").addEventListener("click", (e) => { const m = e.target.closest(".m"); if (m) setScrub(+m.dataset.y); });
     $("boot").remove();
     setScrub(years.indexOf(1914) >= 0 ? 1914 : years[Math.floor(years.length / 2)], true);
+    // read-only hooks for headless tests / debugging (screen position of overlay features, etc.)
+    window.__atlas = { overlays, project, layerActiveFeats, baseDims, identify };
   }
   boot();
 })();
