@@ -201,9 +201,10 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li class="nav-h">Interactive explorations</li>
         <li><a href="playground.html">Interactive playground</a></li>
-        <li><a href="atlas.html">Historical atlas (SPARQL + GeoSPARQL + time)</a></li>
+        <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li><a href="explore-100mb.html">Wikidata lazy explorer (100MB / 1GB)</a></li>
-        <li class="nav-group"><details open><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html" class="active">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li><li><a href="graph-map/ask-browser.html" target="_blank" rel="noopener">ask the graph (graphRAG)</a></li></ul></details></li>
+        <li class="nav-group"><details open><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html" class="active">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
@@ -255,13 +256,9 @@ itself: no server, no full download.</p>
 <a href="graph-map/viewer.html">structural map</a> ·
 <a href="graph-map/viewer-topics.html">topic map (pyramidal LDA)</a> ·
 <a href="graph-map/viewer-3d.html">3D side-elevation — deck.gl</a> ·
-<a href="graph-map/viewer-3d-three.html">3D — three.js + fog</a> ·
-<a href="graph-map/ask-browser.html"><strong>ask the graph</strong> — browser graphRAG</a></p>
-<p>The last one (<a href="https://github.com/caviri/rete/tree/main/experiments/lance-rag"><code>lance-rag</code></a>)
-is a different lens: ask a question, <strong>transformers.js</strong> (WebGPU/WASM) embeds it
-in-browser, cosine-ranks the graph's entities, and walks <strong>triple paths</strong> between
-the answers — entities + vectors range-read from the Space (Wikidata-100MB / 1GB),
-all logic client-side.</p>
+<a href="graph-map/viewer-3d-three.html">3D — three.js + fog</a></p>
+<p>A different browser lens on the same graphs — <a href="ask-the-graph.html"><strong>ask the graph</strong></a>,
+a transformers.js graphRAG search — has its own page now.</p>
 </blockquote>
 <h2>Why a map at all</h2>
 <p>Force-directed pictures of a big graph collapse into a hairball. A map fixes
