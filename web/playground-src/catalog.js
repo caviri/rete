@@ -1,6 +1,6 @@
 window.RETE_PLAYGROUND_CATALOG = {
   defaultDataset: "scholar",
-  families: ["Summary", "Select", "Path", "Aggregate", "Construct"],
+  families: ["Summary", "Select", "Path", "Aggregate", "Geo", "Construct"],
   datasets: [
     {
       key: "scholar",
@@ -33,6 +33,11 @@ window.RETE_PLAYGROUND_CATALOG = {
       key: "deps",
       label: "deps.rete - dependency graph",
       description: "Package dependency graph for impact analysis, transitive reachability, and CVE-style examples."
+    },
+    {
+      key: "history",
+      label: "history.rete - historical world borders (GeoSPARQL)",
+      description: "World territorial borders at 7 snapshots from 323 BCE to 1994 CE (aourednik/historical-basemaps, GPL-3.0), each polygon stored as a geo:wktLiteral with an integer year. Query it with GeoSPARQL: point-in-polygon containment, bbox intersection, and distance — combined with temporal filters. Coordinates are CRS84 lon/lat, simplified to ~1 km."
     }
   ],
   examples: {
@@ -442,6 +447,95 @@ SELECT ?package (COUNT(?dependency) AS ?deps) WHERE {
         tip: "Draws the dependency graph.",
         q: `PREFIX ex: <http://ex/>
 CONSTRUCT { ?a ex:dependsOn ?b } WHERE { ?a ex:dependsOn ?b }`
+      }
+    ],
+    history: [
+      {
+        family: "Geo",
+        label: "Who ruled Paris in 1914?",
+        view: "table",
+        tip: "GeoSPARQL point-in-polygon: geof:sfContains tests the (2.35, 48.85) point against every 1914 border polygon — a temporal filter (year = 1914) and a spatial predicate composed in one FILTER.",
+        q: `PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX ex: <http://ex/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?territory WHERE {
+  ?t ex:year 1914 ; rdfs:label ?territory ;
+     geo:hasGeometry/geo:asWKT ?w .
+  FILTER(geof:sfContains(?w, "POINT(2.35 48.85)"^^geo:wktLiteral))
+}`
+      },
+      {
+        family: "Geo",
+        label: "Empires over Beijing through time",
+        view: "table",
+        tip: "The same point (116.4, 39.9) against every era's borders — watch the polity change across snapshots (Liao, Jin, Yuan, Ming, Qing, …).",
+        q: `PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX ex: <http://ex/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?year ?territory WHERE {
+  ?t ex:year ?year ; rdfs:label ?territory ;
+     geo:hasGeometry/geo:asWKT ?w .
+  FILTER(geof:sfContains(?w, "POINT(116.4 39.9)"^^geo:wktLiteral))
+} ORDER BY ?year`
+      },
+      {
+        family: "Geo",
+        label: "Territories around the British Isles (1815)",
+        view: "table",
+        tip: "geof:sfIntersects against a bounding-box polygon — every 1815 territory whose borders overlap a box drawn around the British Isles.",
+        q: `PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX ex: <http://ex/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?territory WHERE {
+  ?t ex:year 1815 ; rdfs:label ?territory ;
+     geo:hasGeometry/geo:asWKT ?w .
+  FILTER(geof:sfIntersects(?w,
+    "POLYGON((-11 49, 2 49, 2 61, -11 61, -11 49))"^^geo:wktLiteral))
+}`
+      },
+      {
+        family: "Geo",
+        label: "Nearest neighbours of London, 1914",
+        view: "table",
+        tip: "geof:distance returns metres (haversine on the closest point of each border); divide by 1000 for km and sort — the territories nearest a point over London in 1914.",
+        q: `PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX uom: <http://www.opengis.net/def/uom/OGC/1.0/>
+PREFIX ex: <http://ex/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?territory ?km WHERE {
+  ?t ex:year 1914 ; rdfs:label ?territory ;
+     geo:hasGeometry/geo:asWKT ?w .
+  BIND(geof:distance(?w, "POINT(0 51)"^^geo:wktLiteral, uom:metre) / 1000 AS ?km)
+} ORDER BY ?km LIMIT 8`
+      },
+      {
+        family: "Geo",
+        label: "Bounding box of each 1492 territory",
+        view: "table",
+        tip: "geof:envelope returns each polygon's axis-aligned bounding box as a new geo:wktLiteral — a cheap spatial summary.",
+        q: `PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX ex: <http://ex/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?territory ?bbox WHERE {
+  ?t ex:year 1492 ; rdfs:label ?territory ;
+     geo:hasGeometry/geo:asWKT ?w .
+  BIND(geof:envelope(?w) AS ?bbox)
+} LIMIT 12`
+      },
+      {
+        family: "Aggregate",
+        label: "Territories per era",
+        view: "table",
+        tip: "The temporal axis: how many mapped territories each snapshot carries (capped at the 90 largest per era in this demo build).",
+        q: `PREFIX ex: <http://ex/>
+SELECT ?year (COUNT(*) AS ?territories) WHERE {
+  ?t ex:year ?year
+} GROUP BY ?year ORDER BY ?year`
       }
     ]
   },

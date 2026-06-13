@@ -60,6 +60,13 @@ DATASETS = [
     ("typed", "typed.rete"),
     ("deps", "deps.rete"),
     ("citations", "enriched-all.rete"),
+    # Historical world borders (aourednik/historical-basemaps, GPL-3.0) as
+    # GeoSPARQL geometry + time — built by scripts/geo_to_rete.py:
+    #   python3 scripts/geo_to_rete.py basemaps \
+    #     --years bc323,1000,1492,1815,1914,1945,1994 --prec 2 --min-bbox 0.3 \
+    #     --max-per-year 90 -o dev/geo/history.nt
+    #   rete build dev/geo/history.nt -o web/history.rete
+    ("history", "history.rete"),
 ]
 
 
