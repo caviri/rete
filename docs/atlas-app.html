@@ -2351,7 +2351,7 @@ let wasm_bindgen = (function(exports) {
     $("tlnext").textContent = nx != null ? `→ next ${yearLabel(nx)} (+${nx - curScrub} yr)` : "→ last era";
     const prevA = $("marks").querySelector(".m.snap.active"); if (prevA) prevA.classList.remove("active");
     if (era === curScrub) { const am = $("marks").querySelector('.m.snap[data-y="' + era + '"]'); if (am) am.classList.add("active"); }
-    if (overlays.some((l) => l.on)) { requestDraw(); renderTracks(); }   // overlays + track playhead follow the scrub year
+    if (overlays.some((l) => l.on)) { requestDraw(); requestStrip(); }   // overlays + track playhead follow the scrub year (coalesced)
     if (era !== curEra || force) {
       curEra = era; applyTemplate(); runQuery();
       if (curEra < vStart || curEra > vEnd) { const sp = vEnd - vStart; setWindow(curEra - sp / 2, curEra + sp / 2); }  // keep the playing/jumped era in view (setWindow → renderStrip re-marks .cur)
