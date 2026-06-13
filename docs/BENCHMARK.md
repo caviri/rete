@@ -12,9 +12,9 @@ Synthetic social graph, **139,093 triples** (20k people in ~200 communities,
 |---|--:|--:|
 | raw N-Triples | 8,384,101 | 1.0× |
 | `gzip -9` of the N-Triples | 564,590 | 14.8× |
-| **`.rete`** (zstd + pyramid summary) | 708,682 | **11.8×** |
+| **`.rete`** (zstd + pyramid summary) | 715,959 | **11.7×** |
 
-`.rete` is only ~1.25× larger than `gzip` while being *queryable in place and
+`.rete` is only ~1.27× larger than `gzip` while being *queryable in place and
 over HTTP ranges* (gzip answers no query without a full download + scan). It
 stores three permutation indexes (SPO/POS/OSP) — each triple ~3× — plus the
 dictionary and the small pyramid summary. Per-community tiles remain out of the
@@ -26,11 +26,10 @@ container, while physical community-tile directories are the next storage step.
 
 | Step | Time |
 |---|--:|
-| `rete build` (parse → dict → 3 indexes → Louvain pyramid → zstd) | 660 ms |
+| `rete build` (parse → dict → 3 indexes → Louvain pyramid → zstd) | 365 ms |
 
 Result: 3 pyramid levels, 137,512 quads, 40,063 terms.
-(Build was 2,225 ms before dictionary section metadata was cached — 3.4×; see
-finding 1.)
+(Caching the dictionary section metadata cut build time ~3.4× — see finding 1.)
 
 ## Query latency (end-to-end: open + decompress + evaluate)
 
@@ -38,19 +37,17 @@ finding 1.)
 
 | Query | Time |
 |---|--:|
-| triple pattern (`?s knows p100`) | 20 ms |
-| 2-hop BGP join (`p0 knows ?y . ?y knows ?z`) | 27 ms |
-| property path (`p0 knows+ ?y`, reaches whole graph) | **53 ms** |
-| GROUP BY COUNT (degree of every node) | **93 ms** |
-| per-predicate totals (**summary only, index not read**) | 15 ms |
+| triple pattern (`?s knows p100`) | 12 ms |
+| 2-hop BGP join (`p0 knows ?y . ?y knows ?z`) | 12 ms |
+| property path (`p0 knows+ ?y`, reaches whole graph) | **37 ms** |
+| GROUP BY COUNT (degree of every node) | **71 ms** |
+| per-predicate totals (**summary only, index not read**) | 7 ms |
 
-These are ~10–15 % higher than the pre-hardening figures for the
-resolution-heavy queries (GROUP BY was 82 ms, build 614 ms): the malformed-input
-hardening pass made every dictionary lookup and triple-block decode
-bounds-checked (`slice.get(..)?` instead of raw indexing), which costs a little
-on the hot path. Resolution-light queries (triple pattern, summary) are
-unchanged. A guaranteed no-panic reader on untrusted input is worth the few
-percent — see finding 5.
+Every dictionary lookup and triple-block decode is bounds-checked
+(`slice.get(..)?` instead of raw indexing) so the reader cannot panic on
+malformed input — a few percent on the resolution-heavy hot path, and worth it
+(see finding 5). Resolution-light queries (triple pattern, summary) are
+unaffected.
 
 ## HTTP range
 
@@ -65,14 +62,14 @@ index never fetched** — the "overview first, drill down later" promise.
 ## Scaling
 
 At **347,884 triples** (2.5× the table above) everything scales ~linearly, with
-no pathological blowup: build 1.63 s, triple query 31 ms, property path 107 ms,
-GROUP BY 526 ms, predicate totals 17 ms (summary stays cheap regardless of size),
-file 1.80 MB (same 11.8× vs raw / ~1.27× vs gzip ratios).
+no pathological blowup: build 925 ms, triple query 27 ms, property path 91 ms,
+GROUP BY 219 ms, predicate totals 13 ms (summary stays cheap regardless of size),
+file 1.80 MB (same ~11.7× vs raw / ~1.27× vs gzip ratios).
 
 <!-- benchmark:opencitations:start -->
 ## Comparison vs Oxigraph (real OpenCitations network)
 
-Dataset: the benchmark N-Triples input loaded into both engines
+Dataset: the real OpenCitations citation network for the AlphaFold paper (Nature 2021), enriched with disciplines, authors, venues and citation counts (539,246 triples loaded into both engines)
 
 This pits rete (a queryable *file*) against Oxigraph (a full in-memory
 triplestore with a mature SPARQL planner). Honest summary: rete opens
@@ -84,15 +81,15 @@ reachability.
 This section is generated from
 `docs/benchmark-opencitations.json` with
 `scripts/render_benchmark_doc.py`. Latest run:
-**unknown**. **Oxigraph 0.5**, in-memory store
+**2026-06-13**. **Oxigraph 0.5**, in-memory store
 (no RocksDB). Machine: 32 logical cores.
 
 ### Load / open (one-time)
 
 | Engine | Step | Time | Resident heap after load |
 |---|---|--:|--:|
-| **rete** | `Rete::open` - indexes already built in the file | **15.2 ms** | 12.71 MiB |
-| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2002 ms | 144.98 MiB |
+| **rete** | `Rete::open` - indexes already built in the file | **16.5 ms** | 12.07 MiB |
+| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2184 ms | 144.98 MiB |
 
 Process peak RSS after both loads (`VmHWM`): 207 MiB.
 
@@ -109,37 +106,32 @@ language surface, not just a speed race.
 Median ±sd of 5 warm runs; `peak heap` is each query's exact
 allocation high-water mark (counting allocator), engine-comparable.
 
-This table measures **speed** on a curated set; for **coverage** — how much of
-SPARQL rete answers correctly — see the [conformance scorecard](conformance.html),
-which scores the official W3C SPARQL 1.1 query-evaluation suite (~75% overall,
-≈89% of the in-scope surface).
-
 | Operator / form | rete | Oxigraph | rete vs oxi | peak heap MiB (rete / oxi) | rows | ok |
 |---|--:|--:|--:|--:|--:|:--:|
-| SELECT count (aggregate) | **2.29 ±0.13 ms** | 5.67 ±0.57 ms | 2.5x | 3.75 / 0.01 | 1 | yes |
-| SELECT DISTINCT | **3.48 ±0.04 ms** | 5.05 ±0.79 ms | 1.4x | 0.01 / 0.00 | 6 | yes |
-| ASK | 0.03 ±0.01 ms | **0.01 ±0.01 ms** | 0.3x | 0.00 / 0.00 | 1 | yes |
-| CONSTRUCT | **0.01 ±0.03 ms** | 0.02 ±0.02 ms | 1.4x | 0.01 / 0.01 | 9 | yes |
-| DESCRIBE (impl-defined) | **0.01 ±0.00 ms** | 0.01 ±0.00 ms | 1.3x | 0.01 / 0.00 | 11 | yes |
-| VALUES (inline data) | **3.25 ±0.38 ms** | 4.22 ±0.90 ms | 1.3x | 6.77 / 0.01 | 10962 | yes |
-| UNION | **3.24 ±0.23 ms** | 4.12 ±0.92 ms | 1.3x | 6.54 / 0.00 | 10993 | yes |
-| OPTIONAL (left join) | **0.18 ±0.02 ms** | 0.19 ±0.04 ms | 1.1x | 0.13 / 0.01 | 200 | yes |
-| MINUS | 2.02 ±0.32 ms | **1.95 ±0.50 ms** | 1.0x | 2.23 / 0.81 | 2728 | yes |
-| FILTER NOT EXISTS | **1.84 ±0.05 ms** | 6.00 ±0.48 ms | 3.3x | 2.05 / 0.01 | 2728 | yes |
-| 3-way join + LIMIT | 0.17 ±0.02 ms | **0.11 ±0.02 ms** | 0.7x | 0.04 / 0.01 | 50 | yes |
-| FILTER REGEX (case-insens.) | 5.37 ±0.06 ms | **0.52 ±0.17 ms** | 0.1x | 0.13 / 0.02 | 200 | yes |
-| FILTER arith + logical | **0.16 ±0.03 ms** | 0.79 ±0.17 ms | 5.1x | 0.13 / 0.01 | 200 | yes |
-| BIND + SUBSTR + CONCAT | 0.31 ±0.02 ms | **0.26 ±0.02 ms** | 0.8x | 0.13 / 0.01 | 200 | yes |
-| path sequence a/b | **0.13 ±0.02 ms** | 0.23 ±0.02 ms | 1.8x | 0.12 / 0.01 | 200 | yes |
-| path inverse ^p (count) | **2.33 ±0.02 ms** | 5.34 ±0.91 ms | 2.3x | 3.75 / 0.01 | 1 | yes |
-| path + transitive (count) | **5.69 ±0.10 ms** | 8.01 ±1.02 ms | 1.4x | 1.23 / 0.81 | 1 | yes |
-| path * zero-or-more (count) | **5.68 ±0.19 ms** | 6.89 ±1.40 ms | 1.2x | 1.23 / 0.81 | 1 | yes |
-| GROUP BY + ORDER BY | **2.97 ±0.04 ms** | 4.97 ±1.25 ms | 1.7x | 4.88 / 0.01 | 6 | yes |
-| GROUP BY + HAVING | **2.98 ±0.42 ms** | 7.91 ±0.24 ms | 2.7x | 4.88 / 0.01 | 5 | yes |
-| AVG per group | **18.0 ±1.5 ms** | 35.9 ±0.6 ms | 2.0x | 13.56 / 0.01 | 6 | yes |
-| MIN/MAX/SUM | **4.57 ±1.09 ms** | 10.2 ±0.2 ms | 2.2x | 7.50 / 0.01 | 1 | yes |
-| COUNT(DISTINCT) | **2.50 ±0.10 ms** | 7.03 ±0.80 ms | 2.8x | 4.50 / 0.01 | 1 | yes |
-| ORDER BY + LIMIT + OFFSET | **4.11 ±0.18 ms** | 19.2 ±0.8 ms | 4.7x | 0.04 / 5.75 | 10 | yes |
+| SELECT count (aggregate) | **2.47 ±0.05 ms** | 6.64 ±0.27 ms | 2.7x | 3.75 / 0.01 | 1 | yes |
+| SELECT DISTINCT | **3.51 ±0.05 ms** | 7.05 ±0.47 ms | 2.0x | 0.01 / 0.00 | 6 | yes |
+| ASK | 0.03 ±0.00 ms | **0.01 ±0.00 ms** | 0.2x | 0.00 / 0.00 | 1 | yes |
+| CONSTRUCT | **0.01 ±0.00 ms** | 0.01 ±0.00 ms | 1.4x | 0.01 / 0.01 | 9 | yes |
+| DESCRIBE (impl-defined) | **0.01 ±0.00 ms** | 0.01 ±0.01 ms | 1.4x | 0.01 / 0.00 | 11 | yes |
+| VALUES (inline data) | **3.14 ±0.06 ms** | 5.04 ±0.63 ms | 1.6x | 6.40 / 0.01 | 10962 | yes |
+| UNION | **2.94 ±0.13 ms** | 3.94 ±1.42 ms | 1.3x | 6.54 / 0.00 | 10993 | yes |
+| OPTIONAL (left join) | **0.16 ±0.03 ms** | 0.19 ±0.03 ms | 1.2x | 0.13 / 0.01 | 200 | yes |
+| MINUS | **1.76 ±0.03 ms** | 1.93 ±0.38 ms | 1.1x | 1.63 / 0.81 | 2728 | yes |
+| FILTER NOT EXISTS | **1.76 ±0.04 ms** | 6.77 ±0.22 ms | 3.8x | 1.63 / 0.01 | 2728 | yes |
+| 3-way join + LIMIT | 0.15 ±0.02 ms | **0.11 ±0.02 ms** | 0.7x | 0.03 / 0.01 | 50 | yes |
+| FILTER REGEX (case-insens.) | 5.27 ±0.33 ms | **0.69 ±0.19 ms** | 0.1x | 0.13 / 0.02 | 200 | yes |
+| FILTER arith + logical | **0.17 ±0.02 ms** | 0.73 ±0.10 ms | 4.4x | 0.13 / 0.01 | 200 | yes |
+| BIND + SUBSTR + CONCAT | 0.33 ±0.01 ms | **0.23 ±0.04 ms** | 0.7x | 0.12 / 0.01 | 200 | yes |
+| path sequence a/b | **0.12 ±0.02 ms** | 0.24 ±0.03 ms | 1.9x | 0.12 / 0.01 | 200 | yes |
+| path inverse ^p (count) | **2.32 ±0.04 ms** | 6.64 ±0.18 ms | 2.9x | 3.75 / 0.01 | 1 | yes |
+| path + transitive (count) | **5.71 ±0.06 ms** | 8.99 ±0.75 ms | 1.6x | 1.23 / 0.81 | 1 | yes |
+| path * zero-or-more (count) | **5.78 ±0.07 ms** | 8.87 ±0.67 ms | 1.5x | 1.23 / 0.81 | 1 | yes |
+| GROUP BY + ORDER BY | **2.98 ±0.08 ms** | 7.11 ±0.66 ms | 2.4x | 4.88 / 0.01 | 6 | yes |
+| GROUP BY + HAVING | **2.99 ±0.07 ms** | 7.36 ±0.60 ms | 2.5x | 4.88 / 0.01 | 5 | yes |
+| AVG per group | **16.4 ±1.5 ms** | 37.0 ±0.8 ms | 2.3x | 13.56 / 0.01 | 6 | yes |
+| MIN/MAX/SUM | **4.47 ±0.07 ms** | 9.83 ±0.54 ms | 2.2x | 7.50 / 0.01 | 1 | yes |
+| COUNT(DISTINCT) | **2.50 ±0.16 ms** | 6.56 ±0.52 ms | 2.6x | 4.50 / 0.01 | 1 | yes |
+| ORDER BY + LIMIT + OFFSET | **4.08 ±0.09 ms** | 19.4 ±0.4 ms | 4.8x | 0.04 / 5.75 | 10 | yes |
 
 **24 / 24 identical row counts** across
 SELECT/ASK/CONSTRUCT/DESCRIBE, algebra operators, filters/functions,
@@ -167,9 +159,9 @@ Oxigraph it is a `coauthor+` property path evaluated per seed.
 
 | Engine / mode | Time | vs rete-serial |
 |---|--:|--:|
-| rete - `batch_reach_serial` (1 core) | 445 ±3 ms | 1.0x |
-| **rete - `batch_reach_parallel` (32 cores)** | **34.1 ±5.0 ms** | **13.1x** |
-| Oxigraph - `coauthor+` property path, per seed | 2199 ±52 ms | 0.2x |
+| rete - `batch_reach_serial` (1 core) | 453 ±2 ms | 1.0x |
+| **rete - `batch_reach_parallel` (32 cores)** | **36.1 ±4.3 ms** | **12.5x** |
+| Oxigraph - `coauthor+` property path, per seed | 2591 ±92 ms | 0.2x |
 
 rete serial and parallel both reached 1,636,200 nodes;
 Oxigraph touched 1,636,200 result cells. The dedicated

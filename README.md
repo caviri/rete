@@ -107,9 +107,9 @@ container — full writeup in [Benchmarks](https://caviri.github.io/rete/BENCHMA
 
 | | rete | Oxigraph |
 |---|--:|--:|
-| **Open / load the graph** | **15 ms** (indexes prebuilt in the file) | ~1,700–2,500 ms (parse + index) |
-| SPARQL queries (24 operators) | **wins or ties 21/24** · 24/24 results identical | sub-ms to tens of ms |
-| Batch reachability, 300 seeds | 450 ms → **30 ms** with `--parallel` | 1,606 ms |
+| **Open / load the graph** | **16 ms** (indexes prebuilt in the file) | ~2,200 ms (parse + index) |
+| SPARQL queries (24 operators) | **wins or ties 20/24** · 24/24 results identical | sub-ms to tens of ms |
+| Batch reachability, 300 seeds | 453 ms → **36 ms** with `--parallel` | 2,591 ms |
 
 rete opens ~100–160× faster, and after the 2026-06 engine rework (lazy
 slot-row pipeline, adaptive index-nested-loop joins, top-k ORDER BY) it wins
