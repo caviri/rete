@@ -67,11 +67,65 @@ Any of `--card`, `--card-file`, `--title`, `--license`, `--source`,
 | `predicates` | derived | Each predicate IRI with its default-graph triple count, **descending**. |
 | `classes` | derived | Each `rdf:type` object (class) with its instance count, descending. |
 | `vocabularies` | derived | Distinct **namespaces** of the predicate and class IRIs (the prefix up to the last `#` or `/`). |
+| `datatypes` | derived | `DATATYPE(o)` histogram over literal objects (bracketed datatype IRIs; `…#langString` for language-tagged), descending. |
+| `languages` | derived | `LANG(o)` histogram over literal objects (`""` = untagged/typed), descending. |
+| `class_links` | derived | The **effective schema**: `(s_class, predicate, o_class, count)` rows — the class-to-class quotient (same as `rete schema` / `schema_summary`, with `(literal)`/`(untyped)` sentinels). |
+| `top_hubs`, `in_hubs` | derived | Top subjects by out-degree and top non-literal objects by in-degree. |
+| `signals` | derived | Detected **affordances**: `label_predicate`, `base_iri`, `default_lang`, ranked `time_predicates` / `numeric_predicates`, present `link_predicates`, `geo_wkt` / `geo_latlong`, `temporal_extent`, `spatial_bbox` (CRS84 lon/lat). |
+| `queries` | derived | The auto-generated, **tiered starter-query library** (see below). |
+| `truncated` | derived | `true` iff any capped list was actually cut (the profile is partial). |
 | `format_version` | derived | The `.rete` format version the card was written against. |
 
 The per-predicate and per-class statistics are computed over the **default
 graph** (named-graph contents are summarized only by `quad_count` /
-`named_graph_count`), matching `rete stats` and `rete predicates`.
+`named_graph_count`), matching `rete stats` and `rete predicates`. Every derived
+list is **capped** and **deterministically ordered** (count-descending, ties
+broken lexically), so building the same input twice yields a **byte-identical**
+card — the card folds into a reproducible content hash. Counts are over the raw
+(pre-dedup) multiset, matching `rete progressive`.
+
+## The three-tier exploration model
+
+The enriched card exists to fix a graph's **cold-start problem**: a newcomer who
+opens a `.rete` has no reference for what to ask. Every exploration question is
+answerable from one of three tiers, in increasing cost — and the card makes that
+explicit so a client knows what is free before it runs anything:
+
+| Tier | Source | Cost |
+|------|--------|------|
+| 🟢 **Card** | this metadata section, read once on open | index-free, instant |
+| 🔵 **Summary** | the pyramid superedge totals **and the [schema pyramid](semantic-zoom.md)** — a leveled `rdf:type` histogram (`rete summary [--level k]` / `summary-url`) | index-free |
+| 🟠 **Index** | the triple index (range-fetched tiles) | O(touched tiles) |
+
+`rete card-url <url>` reads the **Card tier** over HTTP in two small range
+requests — header + metadata — and **never touches the index**, so a remote/S3
+client gets the whole self-description (counts, vocabulary, class graph, signals,
+starter queries) without downloading the file.
+
+## The starter-query library
+
+`queries` is a vetted set of starter SPARQL queries, **auto-instantiated at
+build** with the dataset's own vocabulary (`{{TOP_CLASS}}` → the most populous
+class, `{{LABEL_PRED}}` → the detected label predicate, and so on) and emitted
+**only when the required signal is present** — no geometry query without
+geometry, no time query without a time predicate — so the shipped set is
+guaranteed to return rows. Each query carries:
+
+- a full **PREFIX block** (the engine injects none, so every query is runnable as-is);
+- a `dimension` (overview / identity / labels / types / topology / links / literals / time / space / graphs);
+- a `tier` tag (`card` / `summary` / `index`) — the cheapest tier that answers it;
+- the `requires` capability keys that gated its emission.
+
+A publisher's own `example_queries` (curated, `--card-file`) are kept alongside
+the generated library, unchanged.
+
+## Back-compatibility
+
+All enriched fields are additive with serde defaults, so a card written by an
+older `rete` (plain `example_queries`, none of the new fields) still
+deserializes. Because the new fields change the card JSON, they change the
+`blake3` content hash of every **card-bearing** file — cardless builds are
+unaffected and remain byte-identical to a pre-card build.
 
 ## Reading a card
 
@@ -128,8 +182,9 @@ A few properties worth knowing:
   `rete verify` validates the card too and any edit to it is detected.
 - **Off the query path.** Range-reading opens (`rete query-url`, `sparql-url`,
   `summary-url`, federation routing) fetch sections by offset and **never read
-  the card**, so embedding one adds nothing to query-time bytes-on-the-wire. The
-  card is a full-open / `rete card` artifact.
+  the card**, so embedding one adds nothing to query-time bytes-on-the-wire. To
+  read the card remotely without downloading the file, `rete card-url` fetches
+  just the header + metadata range (two ranges, index untouched).
 - **Opaque to the engine.** `rete-core` treats the section as raw bytes; the card
   schema lives entirely in the CLI. The metadata section is a general extension
   point — a card is just its first use.

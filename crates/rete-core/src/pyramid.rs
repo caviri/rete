@@ -45,9 +45,19 @@ impl Graph {
                 degree[u] += w;
             }
         }
+        // Sort each node's neighbour list by index: a canonical adjacency order
+        // so every downstream traversal (gain sums, modularity, quotient) is
+        // order-stable — floating-point addition is not associative, so a
+        // randomised neighbour order would otherwise perturb sums in the low
+        // bits and make the whole pyramid (and the file's content hash)
+        // non-reproducible.
         let adj = adj_w
             .into_iter()
-            .map(|h| h.into_iter().collect::<Vec<_>>())
+            .map(|h| {
+                let mut nbrs: Vec<(usize, f64)> = h.into_iter().collect();
+                nbrs.sort_unstable_by_key(|&(j, _)| j);
+                nbrs
+            })
             .collect();
         Graph { n, adj, degree, m }
     }
@@ -97,8 +107,10 @@ impl Graph {
                 }
             }
         }
-        let edge_vec: Vec<(usize, usize, f64)> =
+        // Canonical edge order → deterministic accumulation in `from_edges`.
+        let mut edge_vec: Vec<(usize, usize, f64)> =
             edges.into_iter().map(|((a, b), w)| (a, b, w)).collect();
+        edge_vec.sort_unstable_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
         Graph::from_edges(k, &edge_vec)
     }
 }
@@ -151,9 +163,15 @@ pub fn louvain_one_level(g: &Graph) -> Partition {
             let gain = |c: usize| -> f64 {
                 k_to.get(&c).copied().unwrap_or(0.0) - sigma_tot[c] * ki / two_m
             };
+            // Scan candidate communities in a deterministic (sorted) order so an
+            // equal-gain tie always resolves to the same community across runs —
+            // the second half of making the pyramid reproducible. Strict `>`
+            // keeps the first (smallest-id) community on ties.
             let mut best_c = ci;
             let mut best_gain = gain(ci);
-            for &c in k_to.keys() {
+            let mut cands: Vec<usize> = k_to.keys().copied().collect();
+            cands.sort_unstable();
+            for &c in &cands {
                 let gc = gain(c);
                 if gc > best_gain {
                     best_gain = gc;
@@ -282,6 +300,33 @@ mod tests {
         assert_ne!(p.comm[2], p.comm[3]);
         // Modularity of the found partition beats the all-in-one partition.
         assert!(g.modularity(&p.comm) > g.modularity(&[0; 6]));
+    }
+
+    #[test]
+    fn dendrogram_is_deterministic_across_runs() {
+        // A tie-prone graph: six 6-cliques in a ring, joined by single bridges,
+        // so many local moves have equal-gain candidates. Two builds in the same
+        // process use different HashMap seeds — they must still agree exactly, or
+        // the pyramid (and the file's content hash) is not reproducible.
+        let mut edges = Vec::new();
+        let clusters = 6;
+        let size = 6;
+        for c in 0..clusters {
+            let base = c * size;
+            for i in 0..size {
+                for j in (i + 1)..size {
+                    edges.push((base + i, base + j, 1.0));
+                }
+            }
+            // bridge to the next cluster (ring).
+            let next = ((c + 1) % clusters) * size;
+            edges.push((base, next, 1.0));
+        }
+        let g = Graph::from_edges(clusters * size, &edges);
+        let a = build_dendrogram(&g);
+        let b = build_dendrogram(&g);
+        assert_eq!(a.levels, b.levels, "dendrogram must be reproducible");
+        assert!(!a.levels.is_empty(), "the ring of cliques should compress");
     }
 
     #[test]

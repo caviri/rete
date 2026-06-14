@@ -211,6 +211,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="dataset-cards.html" class="active">Dataset Cards</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
@@ -285,11 +286,57 @@ whatever the file provides:</p>
 <tr><td><code>predicates</code></td><td>derived</td><td>Each predicate IRI with its default-graph triple count, <strong>descending</strong>.</td></tr>
 <tr><td><code>classes</code></td><td>derived</td><td>Each <code>rdf:type</code> object (class) with its instance count, descending.</td></tr>
 <tr><td><code>vocabularies</code></td><td>derived</td><td>Distinct <strong>namespaces</strong> of the predicate and class IRIs (the prefix up to the last <code>#</code> or <code>/</code>).</td></tr>
+<tr><td><code>datatypes</code></td><td>derived</td><td><code>DATATYPE(o)</code> histogram over literal objects (bracketed datatype IRIs; <code>…#langString</code> for language-tagged), descending.</td></tr>
+<tr><td><code>languages</code></td><td>derived</td><td><code>LANG(o)</code> histogram over literal objects (<code>""</code> = untagged/typed), descending.</td></tr>
+<tr><td><code>class_links</code></td><td>derived</td><td>The <strong>effective schema</strong>: <code>(s_class, predicate, o_class, count)</code> rows — the class-to-class quotient (same as <code>rete schema</code> / <code>schema_summary</code>, with <code>(literal)</code>/<code>(untyped)</code> sentinels).</td></tr>
+<tr><td><code>top_hubs</code>, <code>in_hubs</code></td><td>derived</td><td>Top subjects by out-degree and top non-literal objects by in-degree.</td></tr>
+<tr><td><code>signals</code></td><td>derived</td><td>Detected <strong>affordances</strong>: <code>label_predicate</code>, <code>base_iri</code>, <code>default_lang</code>, ranked <code>time_predicates</code> / <code>numeric_predicates</code>, present <code>link_predicates</code>, <code>geo_wkt</code> / <code>geo_latlong</code>, <code>temporal_extent</code>, <code>spatial_bbox</code> (CRS84 lon/lat).</td></tr>
+<tr><td><code>queries</code></td><td>derived</td><td>The auto-generated, <strong>tiered starter-query library</strong> (see below).</td></tr>
+<tr><td><code>truncated</code></td><td>derived</td><td><code>true</code> iff any capped list was actually cut (the profile is partial).</td></tr>
 <tr><td><code>format_version</code></td><td>derived</td><td>The <code>.rete</code> format version the card was written against.</td></tr>
 </tbody></table>
 <p>The per-predicate and per-class statistics are computed over the <strong>default
 graph</strong> (named-graph contents are summarized only by <code>quad_count</code> /
-<code>named_graph_count</code>), matching <code>rete stats</code> and <code>rete predicates</code>.</p>
+<code>named_graph_count</code>), matching <code>rete stats</code> and <code>rete predicates</code>. Every derived
+list is <strong>capped</strong> and <strong>deterministically ordered</strong> (count-descending, ties
+broken lexically), so building the same input twice yields a <strong>byte-identical</strong>
+card — the card folds into a reproducible content hash. Counts are over the raw
+(pre-dedup) multiset, matching <code>rete progressive</code>.</p>
+<h2>The three-tier exploration model</h2>
+<p>The enriched card exists to fix a graph's <strong>cold-start problem</strong>: a newcomer who
+opens a <code>.rete</code> has no reference for what to ask. Every exploration question is
+answerable from one of three tiers, in increasing cost — and the card makes that
+explicit so a client knows what is free before it runs anything:</p>
+<table><thead><tr><th>Tier</th><th>Source</th><th>Cost</th></tr></thead><tbody>
+<tr><td>🟢 <strong>Card</strong></td><td>this metadata section, read once on open</td><td>index-free, instant</td></tr>
+<tr><td>🔵 <strong>Summary</strong></td><td>the pyramid superedge totals <strong>and the <a href="semantic-zoom.html">schema pyramid</a></strong> — a leveled <code>rdf:type</code> histogram (<code>rete summary [--level k]</code> / <code>summary-url</code>)</td><td>index-free</td></tr>
+<tr><td>🟠 <strong>Index</strong></td><td>the triple index (range-fetched tiles)</td><td>O(touched tiles)</td></tr>
+</tbody></table>
+<p><code>rete card-url &lt;url&gt;</code> reads the <strong>Card tier</strong> over HTTP in two small range
+requests — header + metadata — and <strong>never touches the index</strong>, so a remote/S3
+client gets the whole self-description (counts, vocabulary, class graph, signals,
+starter queries) without downloading the file.</p>
+<h2>The starter-query library</h2>
+<p><code>queries</code> is a vetted set of starter SPARQL queries, <strong>auto-instantiated at
+build</strong> with the dataset's own vocabulary (<code>{{TOP_CLASS}}</code> → the most populous
+class, <code>{{LABEL_PRED}}</code> → the detected label predicate, and so on) and emitted
+<strong>only when the required signal is present</strong> — no geometry query without
+geometry, no time query without a time predicate — so the shipped set is
+guaranteed to return rows. Each query carries:</p>
+<ul>
+<li>a full <strong>PREFIX block</strong> (the engine injects none, so every query is runnable as-is);</li>
+<li>a <code>dimension</code> (overview / identity / labels / types / topology / links / literals / time / space / graphs);</li>
+<li>a <code>tier</code> tag (<code>card</code> / <code>summary</code> / <code>index</code>) — the cheapest tier that answers it;</li>
+<li>the <code>requires</code> capability keys that gated its emission.</li>
+</ul>
+<p>A publisher's own <code>example_queries</code> (curated, <code>--card-file</code>) are kept alongside
+the generated library, unchanged.</p>
+<h2>Back-compatibility</h2>
+<p>All enriched fields are additive with serde defaults, so a card written by an
+older <code>rete</code> (plain <code>example_queries</code>, none of the new fields) still
+deserializes. Because the new fields change the card JSON, they change the
+<code>blake3</code> content hash of every <strong>card-bearing</strong> file — cardless builds are
+unaffected and remain byte-identical to a pre-card build.</p>
 <h2>Reading a card</h2>
 <p><code>rete card</code> prints a human-readable catalog; <code>--json</code> emits the raw card:</p>
 <pre><code class="language-sh">rete card data.rete
@@ -335,8 +382,9 @@ pre-card build, and existing files keep verifying unchanged.</li>
 <code>rete verify</code> validates the card too and any edit to it is detected.</li>
 <li><strong>Off the query path.</strong> Range-reading opens (<code>rete query-url</code>, <code>sparql-url</code>,
 <code>summary-url</code>, federation routing) fetch sections by offset and <strong>never read
-the card</strong>, so embedding one adds nothing to query-time bytes-on-the-wire. The
-card is a full-open / <code>rete card</code> artifact.</li>
+the card</strong>, so embedding one adds nothing to query-time bytes-on-the-wire. To
+read the card remotely without downloading the file, <code>rete card-url</code> fetches
+just the header + metadata range (two ranges, index untouched).</li>
 <li><strong>Opaque to the engine.</strong> <code>rete-core</code> treats the section as raw bytes; the card
 schema lives entirely in the CLI. The metadata section is a general extension
 point — a card is just its first use.</li>

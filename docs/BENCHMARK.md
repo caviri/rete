@@ -66,6 +66,49 @@ no pathological blowup: build 925 ms, triple query 27 ms, property path 91 ms,
 GROUP BY 219 ms, predicate totals 13 ms (summary stays cheap regardless of size),
 file 1.80 MB (same ~11.7× vs raw / ~1.27× vs gzip ratios).
 
+## The pyramid: cost vs benefit
+
+A `.rete` carries **two** pyramidal structures with very different economics. This
+measures both, against `--no-pyramid`, on a typed `subClassOf` ontology fixture
+(`dev/gen_ontology_demo.py`, scaled by entity count).
+
+**Bytes** — file overhead, the growing super-edge summary, and what each read tier
+fetches over HTTP (`q ±pyr` = a node-selective query with / without the pyramid):
+
+| triples | file +pyr | file −pyr | pyr % | pyramid-meta | super-edges | card-url | summary-url | q +pyr | q −pyr |
+|--------:|----------:|----------:|------:|-------------:|------------:|---------:|------------:|-------:|-------:|
+| 8,595 | 99 KB | 90 KB | 9.6% | 8.7 KB | 1,364 | **32.7 KB** | 17 KB | 43,823 | 43,823 |
+| 34,354 | 282 KB | 264 KB | 7.2% | 19 KB | 3,455 | **32.8 KB** | 43 KB | 68,295 | 68,295 |
+| 137,279 | 990 KB | 946 KB | 4.6% | 43.6 KB | 8,580 | **33.0 KB** | 116 KB | 111,054 | 111,054 |
+
+**Time** (release build; median) — what the pyramid costs to *build* (Louvain
+community detection + schema rollup, vs `--no-pyramid`) and how fast each read is:
+
+| triples | build +pyr | build −pyr | pyramid cost | card read | summary read | selective query |
+|--------:|-----------:|-----------:|-------------:|----------:|-------------:|----------------:|
+| 8,595 | 70 ms | 51 ms | +19 ms | 19 ms | 23 ms | 28 ms |
+| 34,354 | 222 ms | 109 ms | +113 ms | 19 ms | 24 ms | 30 ms |
+| 137,279 | 1,352 ms | 353 ms | +999 ms | 22 ms | 30 ms | 41 ms |
+
+What the numbers say:
+
+- **The community super-edge summary scales with the graph** — in bytes (super-edges
+  1.4k → 8.6k; `summary-url` 17 KB → 116 KB) *and* in time (the Louvain build cost
+  is super-linear: +19 ms → +999 ms, ~4× the `--no-pyramid` build at 137k triples).
+- **It gives node-selective lazy queries nothing** — `q +pyr` and `q −pyr` are
+  byte-for-byte identical (`43,823 == 43,823`, …). For pure selective serving the
+  pyramid is overhead; `--no-pyramid` is smaller and builds far faster.
+- **The schema pyramid is the bounded one** — its size and read cost track the
+  *ontology*, not the graph, so the leveled type/relation legend stays cheap at any
+  scale. The flat-cost champion is the **card** (`card-url` ≈ 33 KB and ≈ 20 ms read
+  at every size — it skips the dictionary and super-edges entirely).
+
+**Rule of thumb:** keep the pyramid for index-free **overview / exploration**; build
+with `--no-pyramid` when you only serve **selective queries at scale** (smaller file,
+~4× faster build, identical query latency). See the
+[Semantic zoom guide](semantic-zoom.md) for the schema-pyramid side of this. Repro:
+`dev/bench_pyramid_value.sh` (bytes) and `dev/bench_pyramid_time.sh` (time).
+
 <!-- benchmark:opencitations:start -->
 ## Comparison vs Oxigraph (real OpenCitations network)
 

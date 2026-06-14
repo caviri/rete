@@ -17,7 +17,7 @@
 use crate::dictionary::Dictionary;
 use crate::header::{Header, FLAG_HAS_QUADS, HEADER_LEN, MAGIC};
 use crate::index::{GraphIndex, IndexPermutation, Pattern};
-use crate::meta::PyramidMeta;
+use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
 use crate::pyramid::{build_dendrogram, project_graph};
 use crate::reader::RangeReader;
 use crate::tiling::{choose_round_for_budget, summarize, SuperEdge};
@@ -44,7 +44,17 @@ pub fn build_pyramid_meta(
     let dend = build_dendrogram(&g);
     let round = choose_round_for_budget(dict, triples, &dend, budget);
     let summary = summarize(dict, triples, &dend, round);
-    let meta = PyramidMeta::new(round as u32, summary, &[]);
+    // Attach the v2 schema pyramid (the non-exclusive subClassOf DAG + per-level
+    // type rollups + per-level lateral class relations + per-community
+    // descriptors). Empty when the graph has no rdf:type, in which case the
+    // encoding stays byte-identical to a v1 pyramid-meta.
+    let sp = crate::schema_pyramid::build_schema_pyramid(dict, triples, &dend, round);
+    let meta = PyramidMeta::new(round as u32, summary, &[]).with_schema(
+        sp.class_hierarchy,
+        sp.level_rollups,
+        sp.level_links,
+        sp.descriptors,
+    );
     (meta.encode(), dend.rounds() as u16)
 }
 
@@ -1024,6 +1034,25 @@ pub fn schema_classes(rete: &Rete) -> Vec<(String, u32)> {
     out
 }
 
+/// Fetch **only** the metadata section (the opaque Dataset Card blob) via a
+/// [`RangeReader`]: read the 128-byte header, then the metadata byte range â€”
+/// nothing else. This is the index-free CARD tier of the exploration model: a
+/// remote/S3 client learns the dataset's self-description in **two small range
+/// requests**, never touching the dictionary, index, or pyramid. Returns `None`
+/// when the file carries no metadata.
+///
+/// Companion to [`Rete::open_ranged`] (which deliberately *skips* the card to
+/// keep the query path minimal); this is the explicit "I want the card" path.
+pub fn read_metadata_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>>, FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+    if header.metadata_len == 0 {
+        return Ok(None);
+    }
+    let bytes = reader.read_at(header.metadata_offset, header.metadata_len)?;
+    Ok(Some(bytes))
+}
+
 /// Recompute the content hash from a file image and check it against the header
 /// â€” detects corruption or truncation of the payload sections.
 pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
@@ -1864,6 +1893,14 @@ fn resolve_query_pattern(
 pub struct SummaryView {
     pub round: u32,
     pub summary: Vec<SuperEdge>,
+    /// The shipped `subClassOf` hierarchy (v2 schema pyramid; empty on v1 files).
+    pub class_hierarchy: Vec<ClassNode>,
+    /// Per-level type rollups — the leveled legend, read index-free.
+    pub level_rollups: Vec<LevelRollup>,
+    /// Per-level lateral class-relation graph (the non-`is-a` connections).
+    pub level_links: Vec<LevelLinks>,
+    /// Per-community descriptors (Phase 4 progressive refinement; may be empty).
+    pub descriptors: Vec<CommunityDescriptor>,
     dict: Dictionary,
 }
 
@@ -1886,8 +1923,23 @@ impl SummaryView {
         Ok(Some(SummaryView {
             round: meta.round,
             summary: meta.summary,
+            class_hierarchy: meta.class_hierarchy,
+            level_rollups: meta.level_rollups,
+            level_links: meta.level_links,
+            descriptors: meta.descriptors,
             dict,
         }))
+    }
+
+    /// Number of semantic-zoom levels in the schema pyramid (0 if none shipped).
+    pub fn level_count(&self) -> usize {
+        self.level_rollups.len()
+    }
+
+    /// The type rollup at semantic level `k` (0 = coarsest/most abstract), or
+    /// `None` if `k` is out of range. Index-free — answered from the pyramid-meta.
+    pub fn level_rollup(&self, k: usize) -> Option<&LevelRollup> {
+        self.level_rollups.get(k)
     }
 
     /// Resolve a predicate ID in the summary to its term.
@@ -2429,6 +2481,32 @@ mod tests {
     }
 
     #[test]
+    fn metadata_ranged_fetches_only_header_and_card() {
+        use crate::reader::{CountingReader, SliceReader};
+        // The CARD tier: fetch the self-description over a RangeReader touching
+        // only the header + metadata range â€” never the dictionary/index/pyramid.
+        let card = vec![0xCDu8; 384];
+        let bytes = build_with_metadata(&card);
+
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let got = read_metadata_ranged(&r).unwrap().unwrap();
+        assert_eq!(got, card, "the card reads back verbatim");
+        assert_eq!(r.requests(), 2, "exactly header + metadata ranges");
+        assert_eq!(
+            r.bytes_read(),
+            HEADER_LEN as u64 + card.len() as u64,
+            "no dictionary/index/pyramid bytes are touched"
+        );
+
+        // A cardless file resolves to None after a single header read.
+        let plain = build_image();
+        let rp = CountingReader::new(SliceReader::new(&plain));
+        assert!(read_metadata_ranged(&rp).unwrap().is_none());
+        assert_eq!(rp.requests(), 1, "header only for a cardless file");
+        assert_eq!(rp.bytes_read(), HEADER_LEN as u64);
+    }
+
+    #[test]
     fn schema_summary_groups_by_type() {
         let rt = RDF_TYPE;
         let bytes = build_from(&[
@@ -2521,6 +2599,53 @@ mod tests {
         assert_eq!(total, 3);
         assert!(!pyr.summary.is_empty());
         assert!(pyr.tiles.is_empty());
+    }
+
+    #[test]
+    fn schema_pyramid_round_trips_through_file_index_free() {
+        use crate::reader::{CountingReader, SliceReader};
+        let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let q = |s: &str, p: &str, o: &str| {
+            (s.to_string(), p.to_string(), o.to_string(), None::<String>)
+        };
+        // Astronomer ⊑ Scientist ⊑ Person ⊑ Agent, instances at the leaves.
+        let quads = vec![
+            q("<a>", RDF_TYPE, "<Astronomer>"),
+            q("<b>", RDF_TYPE, "<Astronomer>"),
+            q("<c>", RDF_TYPE, "<Person>"),
+            q("<Astronomer>", sub, "<Scientist>"),
+            q("<Scientist>", sub, "<Person>"),
+            q("<Person>", sub, "<Agent>"),
+            q("<a>", "<knows>", "<b>"),
+            q("<b>", "<knows>", "<c>"),
+        ];
+        let (bytes, _) = crate::ingest::assemble_dataset_with_opts(&quads, true, |_| Vec::new());
+
+        // The v2 schema pyramid round-trips through the built file.
+        let rete = Rete::open(&bytes).unwrap();
+        let pyr = rete.pyramid().expect("pyramid present");
+        assert!(!pyr.level_rollups.is_empty(), "schema pyramid shipped");
+        assert!(pyr
+            .class_hierarchy
+            .iter()
+            .any(|n| n.class == "<Agent>" && n.depth == 0));
+
+        // It reads index-free: a SummaryView open never touches the index section.
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let view = SummaryView::open_ranged(&r).unwrap().unwrap();
+        assert!(view.level_count() >= 2, "multi-level pyramid");
+        let coarse = view.level_rollup(0).unwrap();
+        assert!(
+            coarse.classes.iter().any(|(c, _)| c == "<Agent>"),
+            "coarsest level rolls up to the root Agent"
+        );
+        let h = Header::from_bytes(&bytes).unwrap();
+        assert!(
+            r.bytes_read() <= bytes.len() as u64 - h.root_dir_len,
+            "summary read {} bytes; the {}-byte index section must be skipped",
+            r.bytes_read(),
+            h.root_dir_len
+        );
     }
 
     #[test]

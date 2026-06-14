@@ -5,10 +5,42 @@
 //! `CountingReader` and reports bytes fetched + range-request count. The on-disk
 //! variants live in `commands::query` / `commands::inspect`.
 
-use rete_core::{eval_query, CountingReader, RangeReader, Rete, SummaryView};
+use rete_core::{eval_query, CountingReader, Header, RangeReader, Rete, SummaryView, HEADER_LEN};
 
+use crate::commands::card;
 use crate::commands::render::print_query_output;
 use crate::http::HttpRangeReader;
+
+/// Fetch just the embedded Dataset Card over HTTP — the index-free CARD tier.
+/// Reads only the 128-byte header and the metadata range (two small range
+/// requests), never the dictionary, index, or pyramid: the cold-start
+/// self-description a newcomer needs before they know what to query.
+pub(crate) fn card_url(url: &str, json: bool) -> anyhow::Result<()> {
+    let reader = CountingReader::new(HttpRangeReader::open(url)?);
+    let total = reader.len();
+    match card::load_card_ranged(&reader)? {
+        None => println!("(no dataset card)"),
+        Some(dataset_card) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&dataset_card)?);
+            } else {
+                // The content hash is carried in the header we already fetched.
+                let head = reader.read_at(0, HEADER_LEN as u64)?;
+                let checksum = Header::from_bytes(&head)
+                    .map(|h| card::hex16(&h.content_hash))
+                    .unwrap_or_default();
+                println!("{}", card::format_card(&dataset_card, &checksum));
+            }
+        }
+    }
+    eprintln!(
+        "fetched {} of {} bytes in {} range request(s) — index NOT fetched",
+        reader.bytes_read(),
+        total,
+        reader.requests()
+    );
+    Ok(())
+}
 
 /// Fetch just the pyramid summary (coarse graph) over HTTP — header, dictionary,
 /// and summary only, skipping the (large) triple index.
@@ -37,6 +69,9 @@ pub(crate) fn summary_url(url: &str) -> anyhow::Result<()> {
                     e.s_comm, e.o_comm, e.count
                 );
             }
+            // The schema pyramid (leveled type histogram) rides the same
+            // index-free fetch — show it after the super-edge graph.
+            crate::commands::inspect::render_schema_overview(&view);
             eprintln!(
                 "fetched {} of {} bytes in {} range request(s) — index NOT fetched",
                 reader.bytes_read(),

@@ -211,6 +211,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
@@ -532,13 +533,64 @@ up answers via superedges) or be <strong>routed</strong> — use level 0 to find
 communities can satisfy the pattern, then descend only into those tiles. This
 is the graph analog of Parquet block-skipping.</li>
 </ul>
-<h3>7.3 Level descriptor (in pyramid-meta)</h3>
-<pre><code>level {
-  id, node_count, edge_count,
-  tiles: [ tile { id, member_supernode_ids, dir_key } ],
-  parent_level, child_level
-}
+<h3>7.3 The pyramid-meta section (on disk)</h3>
+<p>The pyramid-meta section (<code>crates/rete-core/src/meta.rs</code>) is a flat varint stream.
+<strong>v1</strong> carries the chosen round, the summary super-edges, and (reserved) per-tile
+triple blocks:</p>
+<pre><code class="language-text">varint round                       # the materialized dendrogram round
+varint num_superedges;  per: varint s_comm, predicate, o_comm, count
+varint num_tiles;       per: varint community, block_len, block_bytes   # currently empty
 </code></pre>
+<p><strong>v2</strong> appends a <strong>schema pyramid</strong> (§7.4) after the tiles. The v2 block is written
+<strong>only when schema content exists</strong>, so a typeless graph encodes byte-for-byte as
+v1. A v1 reader stops after the tiles loop and silently ignores the appended bytes,
+so v2 files remain readable by older clients — the upgrade is additive both ways.</p>
+<pre><code class="language-text">--- v2 (optional) ---
+u8 schema_version (= 2)
+varint num_strings;        per: len-prefixed UTF-8 IRI/sentinel     # local table: classes + predicates
+varint num_hierarchy;      per: varint class_idx, num_parents, parent_idx…, depth   # non-exclusive DAG
+varint num_rollups;        per: varint round, depth, num_entries, (class_idx, count)…
+varint num_level_links;    per: varint round, depth, num_links, (s_idx, pred_idx, o_idx, count)…
+varint num_descriptors;    per: varint community, dominant_idx+1 (0 = none),
+                                num_class_counts, (class_idx, count)…,
+                                u8 has_bbox [+ 4×f64 le],
+                                u8 has_time [+ from(str) + to(str)]
+</code></pre>
+<p>The string table holds both class and predicate IRIs, so the schema pyramid decodes
+<strong>without the dictionary</strong> — the ontology travels as self-contained text.</p>
+<h3>7.4 The schema pyramid — semantic zoom (v2)</h3>
+<p>The community pyramid (§7.1) is <strong>topological</strong>; the schema pyramid is the
+<strong>ontology, leveled</strong> — upper-level classes describe coarse zoom, leaf classes
+resolve as you zoom in. It is built once, index-free, into pyramid-meta:</p>
+<ul>
+<li><strong><code>class_hierarchy</code></strong> — the <strong>non-exclusive</strong> <code>subClassOf</code> DAG over the classes
+that actually have instances (plus their ancestors), each with <strong>all</strong> its
+direct parents and a computed <strong>depth</strong> (0 = root). Multiple inheritance is
+preserved (<code>parents: Vec</code>); a canonical (lexicographically smallest) parent
+drives the deterministic depth/rollup spanning tree, while the other parents stay
+as navigable cross-links.</li>
+<li><strong><code>level_rollups</code></strong> — one type histogram per <strong>semantic level</strong>, the instance
+counts rolled up the <code>subClassOf</code> chain to the level's depth. Level 0 is the
+most abstract (<code>{Agent: 12k, Place: 8k}</code>); each finer level resolves one step
+(<code>Agent → {Person: 9k, Organisation: 3k}</code>, then <code>Person → {Scientist, Artist}</code>).
+Counts conserve up the hierarchy. With <strong>no</strong> <code>subClassOf</code> in the data every
+class is a depth-0 root and this degrades to a single flat histogram (= the
+Dataset Card's <code>classes</code>).</li>
+<li><strong><code>level_links</code></strong> — the <strong>lateral</strong> class-relation graph rolled up per level: the
+non-<code>is-a</code> connections <code>(s_class, predicate, o_class, count)</code> between abstract
+classes, so a level is a leveled <em>graph</em> not just a histogram (<code>Person memberOf Organisation</code> at a fine level becomes <code>Agent memberOf Agent</code> at a coarse one).
+<code>rdf:type</code> and <code>rdfs:subClassOf</code> triples are excluded — they are the hierarchy
+itself, not data relations.</li>
+<li><strong><code>descriptors</code></strong> (Phase 4) — a per-community refinement index: the dominant
+class, local type histogram, and optional CRS84 <code>bbox</code> / temporal <code>time_range</code>,
+for progressive zoom into a region without fetching its triples. (Physical
+per-community triple tiles remain future work; these descriptors ship in the
+index-free pyramid-meta and are ready to attach to those tiles.)</li>
+</ul>
+<p>A client reads the leveled legend over the same index-free range fetch as the
+summary: <code>rete summary --level k</code> (and <code>summary-url</code>) render it without touching
+the triple index. The <code>subClassOf</code> axioms come from the data, or from
+<code>rete build --materialize</code> (the OWL-RL reasoner).</p>
 <hr />
 <h2>8. SPARQL evaluation (staged)</h2>
 <p>Implemented in <code>rete-core::sparql</code> (parses with <code>spargebra</code>, lowers to a small

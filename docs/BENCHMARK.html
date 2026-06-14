@@ -211,6 +211,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
@@ -283,6 +284,42 @@ index never fetched</strong> — the "overview first, drill down later" promise.
 no pathological blowup: build 925 ms, triple query 27 ms, property path 91 ms,
 GROUP BY 219 ms, predicate totals 13 ms (summary stays cheap regardless of size),
 file 1.80 MB (same ~11.7× vs raw / ~1.27× vs gzip ratios).</p>
+<h2>The pyramid: cost vs benefit</h2>
+<p>A <code>.rete</code> carries <strong>two</strong> pyramidal structures with very different economics. This
+measures both, against <code>--no-pyramid</code>, on a typed <code>subClassOf</code> ontology fixture
+(<code>dev/gen_ontology_demo.py</code>, scaled by entity count).</p>
+<p><strong>Bytes</strong> — file overhead, the growing super-edge summary, and what each read tier
+fetches over HTTP (<code>q ±pyr</code> = a node-selective query with / without the pyramid):</p>
+<table><thead><tr><th style="text-align: right">triples</th><th style="text-align: right">file +pyr</th><th style="text-align: right">file −pyr</th><th style="text-align: right">pyr %</th><th style="text-align: right">pyramid-meta</th><th style="text-align: right">super-edges</th><th style="text-align: right">card-url</th><th style="text-align: right">summary-url</th><th style="text-align: right">q +pyr</th><th style="text-align: right">q −pyr</th></tr></thead><tbody>
+<tr><td style="text-align: right">8,595</td><td style="text-align: right">99 KB</td><td style="text-align: right">90 KB</td><td style="text-align: right">9.6%</td><td style="text-align: right">8.7 KB</td><td style="text-align: right">1,364</td><td style="text-align: right"><strong>32.7 KB</strong></td><td style="text-align: right">17 KB</td><td style="text-align: right">43,823</td><td style="text-align: right">43,823</td></tr>
+<tr><td style="text-align: right">34,354</td><td style="text-align: right">282 KB</td><td style="text-align: right">264 KB</td><td style="text-align: right">7.2%</td><td style="text-align: right">19 KB</td><td style="text-align: right">3,455</td><td style="text-align: right"><strong>32.8 KB</strong></td><td style="text-align: right">43 KB</td><td style="text-align: right">68,295</td><td style="text-align: right">68,295</td></tr>
+<tr><td style="text-align: right">137,279</td><td style="text-align: right">990 KB</td><td style="text-align: right">946 KB</td><td style="text-align: right">4.6%</td><td style="text-align: right">43.6 KB</td><td style="text-align: right">8,580</td><td style="text-align: right"><strong>33.0 KB</strong></td><td style="text-align: right">116 KB</td><td style="text-align: right">111,054</td><td style="text-align: right">111,054</td></tr>
+</tbody></table>
+<p><strong>Time</strong> (release build; median) — what the pyramid costs to <em>build</em> (Louvain
+community detection + schema rollup, vs <code>--no-pyramid</code>) and how fast each read is:</p>
+<table><thead><tr><th style="text-align: right">triples</th><th style="text-align: right">build +pyr</th><th style="text-align: right">build −pyr</th><th style="text-align: right">pyramid cost</th><th style="text-align: right">card read</th><th style="text-align: right">summary read</th><th style="text-align: right">selective query</th></tr></thead><tbody>
+<tr><td style="text-align: right">8,595</td><td style="text-align: right">70 ms</td><td style="text-align: right">51 ms</td><td style="text-align: right">+19 ms</td><td style="text-align: right">19 ms</td><td style="text-align: right">23 ms</td><td style="text-align: right">28 ms</td></tr>
+<tr><td style="text-align: right">34,354</td><td style="text-align: right">222 ms</td><td style="text-align: right">109 ms</td><td style="text-align: right">+113 ms</td><td style="text-align: right">19 ms</td><td style="text-align: right">24 ms</td><td style="text-align: right">30 ms</td></tr>
+<tr><td style="text-align: right">137,279</td><td style="text-align: right">1,352 ms</td><td style="text-align: right">353 ms</td><td style="text-align: right">+999 ms</td><td style="text-align: right">22 ms</td><td style="text-align: right">30 ms</td><td style="text-align: right">41 ms</td></tr>
+</tbody></table>
+<p>What the numbers say:</p>
+<ul>
+<li><strong>The community super-edge summary scales with the graph</strong> — in bytes (super-edges
+1.4k → 8.6k; <code>summary-url</code> 17 KB → 116 KB) <em>and</em> in time (the Louvain build cost
+is super-linear: +19 ms → +999 ms, ~4× the <code>--no-pyramid</code> build at 137k triples).</li>
+<li><strong>It gives node-selective lazy queries nothing</strong> — <code>q +pyr</code> and <code>q −pyr</code> are
+byte-for-byte identical (<code>43,823 == 43,823</code>, …). For pure selective serving the
+pyramid is overhead; <code>--no-pyramid</code> is smaller and builds far faster.</li>
+<li><strong>The schema pyramid is the bounded one</strong> — its size and read cost track the
+<em>ontology</em>, not the graph, so the leveled type/relation legend stays cheap at any
+scale. The flat-cost champion is the <strong>card</strong> (<code>card-url</code> ≈ 33 KB and ≈ 20 ms read
+at every size — it skips the dictionary and super-edges entirely).</li>
+</ul>
+<p><strong>Rule of thumb:</strong> keep the pyramid for index-free <strong>overview / exploration</strong>; build
+with <code>--no-pyramid</code> when you only serve <strong>selective queries at scale</strong> (smaller file,
+~4× faster build, identical query latency). See the
+<a href="semantic-zoom.html">Semantic zoom guide</a> for the schema-pyramid side of this. Repro:
+<code>dev/bench_pyramid_value.sh</code> (bytes) and <code>dev/bench_pyramid_time.sh</code> (time).</p>
 <!-- benchmark:opencitations:start -->
 <h2>Comparison vs Oxigraph (real OpenCitations network)</h2>
 <p>Dataset: the real OpenCitations citation network for the AlphaFold paper (Nature 2021), enriched with disciplines, authors, venues and citation counts (539,246 triples loaded into both engines)</p>

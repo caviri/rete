@@ -329,14 +329,74 @@ The headline feature. "Zoom" = level of graph detail.
   communities can satisfy the pattern, then descend only into those tiles. This
   is the graph analog of Parquet block-skipping.
 
-### 7.3 Level descriptor (in pyramid-meta)
+### 7.3 The pyramid-meta section (on disk)
+
+The pyramid-meta section (`crates/rete-core/src/meta.rs`) is a flat varint stream.
+**v1** carries the chosen round, the summary super-edges, and (reserved) per-tile
+triple blocks:
+
+```text
+varint round                       # the materialized dendrogram round
+varint num_superedges;  per: varint s_comm, predicate, o_comm, count
+varint num_tiles;       per: varint community, block_len, block_bytes   # currently empty
 ```
-level {
-  id, node_count, edge_count,
-  tiles: [ tile { id, member_supernode_ids, dir_key } ],
-  parent_level, child_level
-}
+
+**v2** appends a **schema pyramid** (§7.4) after the tiles. The v2 block is written
+**only when schema content exists**, so a typeless graph encodes byte-for-byte as
+v1. A v1 reader stops after the tiles loop and silently ignores the appended bytes,
+so v2 files remain readable by older clients — the upgrade is additive both ways.
+
+```text
+--- v2 (optional) ---
+u8 schema_version (= 2)
+varint num_strings;        per: len-prefixed UTF-8 IRI/sentinel     # local table: classes + predicates
+varint num_hierarchy;      per: varint class_idx, num_parents, parent_idx…, depth   # non-exclusive DAG
+varint num_rollups;        per: varint round, depth, num_entries, (class_idx, count)…
+varint num_level_links;    per: varint round, depth, num_links, (s_idx, pred_idx, o_idx, count)…
+varint num_descriptors;    per: varint community, dominant_idx+1 (0 = none),
+                                num_class_counts, (class_idx, count)…,
+                                u8 has_bbox [+ 4×f64 le],
+                                u8 has_time [+ from(str) + to(str)]
 ```
+
+The string table holds both class and predicate IRIs, so the schema pyramid decodes
+**without the dictionary** — the ontology travels as self-contained text.
+
+### 7.4 The schema pyramid — semantic zoom (v2)
+
+The community pyramid (§7.1) is **topological**; the schema pyramid is the
+**ontology, leveled** — upper-level classes describe coarse zoom, leaf classes
+resolve as you zoom in. It is built once, index-free, into pyramid-meta:
+
+- **`class_hierarchy`** — the **non-exclusive** `subClassOf` DAG over the classes
+  that actually have instances (plus their ancestors), each with **all** its
+  direct parents and a computed **depth** (0 = root). Multiple inheritance is
+  preserved (`parents: Vec`); a canonical (lexicographically smallest) parent
+  drives the deterministic depth/rollup spanning tree, while the other parents stay
+  as navigable cross-links.
+- **`level_rollups`** — one type histogram per **semantic level**, the instance
+  counts rolled up the `subClassOf` chain to the level's depth. Level 0 is the
+  most abstract (`{Agent: 12k, Place: 8k}`); each finer level resolves one step
+  (`Agent → {Person: 9k, Organisation: 3k}`, then `Person → {Scientist, Artist}`).
+  Counts conserve up the hierarchy. With **no** `subClassOf` in the data every
+  class is a depth-0 root and this degrades to a single flat histogram (= the
+  Dataset Card's `classes`).
+- **`level_links`** — the **lateral** class-relation graph rolled up per level: the
+  non-`is-a` connections `(s_class, predicate, o_class, count)` between abstract
+  classes, so a level is a leveled *graph* not just a histogram (`Person memberOf
+  Organisation` at a fine level becomes `Agent memberOf Agent` at a coarse one).
+  `rdf:type` and `rdfs:subClassOf` triples are excluded — they are the hierarchy
+  itself, not data relations.
+- **`descriptors`** (Phase 4) — a per-community refinement index: the dominant
+  class, local type histogram, and optional CRS84 `bbox` / temporal `time_range`,
+  for progressive zoom into a region without fetching its triples. (Physical
+  per-community triple tiles remain future work; these descriptors ship in the
+  index-free pyramid-meta and are ready to attach to those tiles.)
+
+A client reads the leveled legend over the same index-free range fetch as the
+summary: `rete summary --level k` (and `summary-url`) render it without touching
+the triple index. The `subClassOf` axioms come from the data, or from
+`rete build --materialize` (the OWL-RL reasoner).
 
 ---
 

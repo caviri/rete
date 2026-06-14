@@ -211,6 +211,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
@@ -408,9 +409,13 @@ rete shacl data.rete --shapes shapes.ttl --format json
 rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/snapshot&gt;'
 </code></pre>
 <h2>Coarse graphs (no index read)</h2>
-<h3><code>rete summary &lt;file&gt;</code></h3>
+<h3><code>rete summary &lt;file&gt; [--level k]</code></h3>
 <p>Print the <strong>structural</strong> coarse graph: the Louvain community quotient graph
-(community → community relations with counts).</p>
+(community → community relations with counts), plus — for v2 files — the <strong>schema
+pyramid</strong>: a leveled <code>rdf:type</code> histogram where abstract classes describe coarse
+levels and leaf classes resolve as you zoom in (e.g. <code>Agent → Person → Scientist → Astronomer</code>). <code>--level k</code> prints just level <code>k</code>'s type histogram (<code>0</code> =
+coarsest / most abstract). Everything here reads <strong>index-free</strong> from the
+pyramid-meta — <code>summary-url</code> shows the same over HTTP without fetching the index.</p>
 <h3><code>rete schema &lt;file&gt;</code></h3>
 <p>Print the <strong>semantic</strong> coarse graph: classes (by <code>rdf:type</code>) with instance
 counts, and the class→predicate→class relations between them — the dataset's
@@ -450,6 +455,14 @@ rete reach g.rete --predicate '&lt;http://ex/knows&gt;' --seeds-file seeds.txt -
 <h2>Over HTTP</h2>
 <p>Both URL commands work against <code>http://</code> and <code>https://</code> hosts that honor <code>Range</code>
 requests (S3, GitHub, any CDN).</p>
+<h3><code>rete card-url &lt;url&gt; [--json]</code></h3>
+<p>Fetch only the embedded <a href="dataset-cards.html">Dataset Card</a> — the header and the
+metadata range, in <strong>two small range requests</strong>. The dictionary, index, and
+pyramid are never fetched: this is the index-free <strong>CARD tier</strong>, the cold-start
+self-description (counts, vocabulary, class graph, signals, starter queries) a
+client reads before it knows what to query. Reports bytes fetched + range count.</p>
+<pre><code class="language-sh">rete card-url https://host/data.rete --json
+</code></pre>
 <h3><code>rete summary-url &lt;url&gt;</code></h3>
 <p>Fetch only the header + dictionary + pyramid summary and print the coarse graph.
 The (large) index is never fetched — the "overview first" path.</p>

@@ -43,7 +43,131 @@ pub(crate) struct DatasetCard {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub example_queries: Vec<String>,
 
+    // --- Enriched, auto-derived profile (all additive; `#[serde(default)]` so
+    // older cards without these fields still deserialize). Every list is capped
+    // (see `CARD_TOP_N`) and deterministically ordered so the card folds into a
+    // reproducible content hash; `truncated` records whether any list was cut. ---
+    /// `DATATYPE(o)` histogram over literal objects, descending by count. Keys are
+    /// bracketed datatype IRIs (`<…#integer>`, `<…#langString>` for `@lang`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datatypes: Vec<(String, u64)>,
+    /// `LANG(o)` histogram over literal objects, descending by count. The empty
+    /// string `""` counts untagged/typed literals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<(String, u64)>,
+    /// The effective schema: `(s_class, predicate, o_class, count)` over the
+    /// default graph, the same quotient as [`rete_core::schema_summary`]. Object
+    /// classes use the `(literal)`/`(untyped)` sentinels of that function.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub class_links: Vec<ClassLink>,
+    /// Top subjects by out-degree (how many statements they make), descending.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_hubs: Vec<(String, u64)>,
+    /// Top non-literal objects by in-degree (how often referenced), descending.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub in_hubs: Vec<(String, u64)>,
+    /// Detected affordances — which exploration query families the data supports
+    /// and the vocabulary to instantiate them with.
+    #[serde(default, skip_serializing_if = "Signals::is_empty")]
+    pub signals: Signals,
+    /// Auto-generated, tiered starter-query library — vetted SPARQL with the
+    /// dataset's own vocabulary substituted in, each tagged with the cheapest
+    /// tier that can answer it. The cold-start "what do I ask?" fix.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queries: Vec<ExampleQuery>,
+    /// Set iff any capped list was actually truncated (the profile is partial).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+
     pub format_version: u8,
+}
+
+/// Which tier of the three-tier exploration model can answer a query cheapest:
+/// `Card` (precomputed in this metadata section, index-free), `Summary` (the
+/// pyramid superedge totals, index-free), or `Index` (needs the triple index).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Tier {
+    Card,
+    Summary,
+    Index,
+}
+
+/// One vetted starter query, instantiated with the dataset's real vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ExampleQuery {
+    /// Stable identifier (e.g. `ov-triples`).
+    pub id: String,
+    /// Short human title.
+    pub title: String,
+    /// Exploration dimension (overview/identity/labels/types/topology/…).
+    pub dimension: String,
+    /// The plain-language question a newcomer would ask.
+    pub question: String,
+    /// Full runnable SPARQL, PREFIX block included, placeholders substituted.
+    pub sparql: String,
+    /// The cheapest tier that can answer it.
+    pub tier: Tier,
+    /// Capability keys that had to be present to emit this query.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+}
+
+/// One edge of the effective schema graph: a `predicate` connecting subjects of
+/// class `s_class` to objects of class `o_class`, with the instance `count`.
+/// Mirrors [`rete_core::schema_summary`] rows (sentinels `(literal)`/`(untyped)`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ClassLink {
+    pub s_class: String,
+    pub predicate: String,
+    pub o_class: String,
+    pub count: u64,
+}
+
+/// Detected affordances — the index-free hints a newcomer (or the query-library
+/// generator) needs to know what the data supports and how to address it. Every
+/// field is optional/empty when the corresponding signal is absent, so geo/time
+/// query families are emitted only when the data actually has geometry/time.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Signals {
+    /// Most frequent labelling predicate (`rdfs:label`/`skos:prefLabel`/…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_predicate: Option<String>,
+    /// Dominant non-empty language tag over literal objects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_lang: Option<String>,
+    /// Dominant subject namespace — the dataset's own base IRI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_iri: Option<String>,
+    /// Temporal predicates, ranked by frequency (most-used first).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub time_predicates: Vec<String>,
+    /// Predicates whose objects are numeric (xsd integer/decimal/double/float),
+    /// ranked by frequency — candidates for `MIN/AVG/MAX` value-range queries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub numeric_predicates: Vec<String>,
+    /// Cross-dataset link predicates present (`owl:sameAs`/`skos:exactMatch`/…).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_predicates: Vec<String>,
+    /// Any `geo:asWKT` / `geo:wktLiteral` geometry present.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub geo_wkt: bool,
+    /// Both `wgs84:lat` and `wgs84:long` present.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub geo_latlong: bool,
+    /// MIN/MAX lexical extent over the dominant time predicate (same datatype).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal_extent: Option<(String, String)>,
+    /// `[minLon, minLat, maxLon, maxLat]` over wgs84 lat/long objects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spatial_bbox: Option<[f64; 4]>,
+}
+
+impl Signals {
+    /// True when no affordance was detected (lets the whole block be omitted).
+    fn is_empty(&self) -> bool {
+        *self == Signals::default()
+    }
 }
 
 /// The curated subset, as supplied by a `--card-file` JSON document (every field
@@ -129,32 +253,191 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
     Ok(c)
 }
 
+/// Cap for every top-N list embedded in the card. The metadata section is
+/// fetched on **every** overview (it is part of the index-free CARD tier), so an
+/// unbounded `class_links` (O(classes × predicates × classes)) or predicate list
+/// would bloat that fetch on a large schema (CIDOC-CRM/MMM). Capping keeps the
+/// card small and bounded; `truncated` flags when a list was actually cut.
+const CARD_TOP_N: usize = 100;
+
+// Well-known IRIs (bracketed N-Triples term form, as they appear in the quads).
+const RDFS_LABEL: &str = "<http://www.w3.org/2000/01/rdf-schema#label>";
+const SKOS_PREFLABEL: &str = "<http://www.w3.org/2004/02/skos/core#prefLabel>";
+const SCHEMA_NAME: &str = "<http://schema.org/name>";
+const FOAF_NAME: &str = "<http://xmlns.com/foaf/0.1/name>";
+const DCT_TITLE: &str = "<http://purl.org/dc/terms/title>";
+const OWL_SAMEAS: &str = "<http://www.w3.org/2002/07/owl#sameAs>";
+const SKOS_EXACTMATCH: &str = "<http://www.w3.org/2004/02/skos/core#exactMatch>";
+const SKOS_CLOSEMATCH: &str = "<http://www.w3.org/2004/02/skos/core#closeMatch>";
+const RDFS_SEEALSO: &str = "<http://www.w3.org/2000/01/rdf-schema#seeAlso>";
+const WGS_LAT: &str = "<http://www.w3.org/2003/01/geo/wgs84_pos#lat>";
+const WGS_LONG: &str = "<http://www.w3.org/2003/01/geo/wgs84_pos#long>";
+const GEO_ASWKT: &str = "<http://www.opengis.net/ont/geosparql#asWKT>";
+const GEO_HASGEOMETRY: &str = "<http://www.opengis.net/ont/geosparql#hasGeometry>";
+// Datatype IRIs (unbracketed — as they appear after `^^` in a literal term).
+const GEO_WKTLITERAL: &str = "http://www.opengis.net/ont/geosparql#wktLiteral";
+const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
+const RDF_LANGSTRING: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
+
+/// Label predicates in priority order; the most frequent **present** one wins.
+const LABEL_PREDICATES: &[&str] = &[
+    SKOS_PREFLABEL,
+    RDFS_LABEL,
+    SCHEMA_NAME,
+    FOAF_NAME,
+    DCT_TITLE,
+];
+/// Cross-dataset linking predicates (emitted in `signals.link_predicates`).
+const LINK_PREDICATES: &[&str] = &[OWL_SAMEAS, SKOS_EXACTMATCH, SKOS_CLOSEMATCH, RDFS_SEEALSO];
+
 /// Derive a full card from the parsed quads plus a few build-time counts. The
 /// per-predicate and per-class statistics are computed over the **default graph**
 /// only (named-graph statistics are summarized by `quad_count`/`named_graph_count`),
 /// matching `rete stats`/`rete predicates`.
+///
+/// Two passes over the quads: the first builds the subject→class map needed to
+/// classify both endpoints of every relation (the `class_links` quotient — the
+/// same logic as [`rete_core::schema_summary`], folded in here to avoid a second
+/// full materialization); the second tallies everything else. All counts are over
+/// the raw (pre-dedup) default-graph multiset, matching the existing card stats
+/// and `rete progressive`.
 pub(crate) fn derive_card(
     quads: &[(String, String, String, Option<String>)],
     term_count: u64,
     named_graph_count: u64,
     curated: CardInput,
 ) -> DatasetCard {
+    // --- Pass 1: subject → class (last type wins, matching `schema_summary`). ---
+    let mut class_of: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for (s, p, o, g) in quads {
+        if g.is_none() && p == RDF_TYPE {
+            class_of.insert(s.as_str(), o.as_str());
+        }
+    }
+    let classify = |t: &str| -> String {
+        if let Some(c) = class_of.get(t) {
+            (*c).to_string()
+        } else if t.starts_with('"') {
+            "(literal)".to_string()
+        } else {
+            "(untyped)".to_string()
+        }
+    };
+
+    // --- Pass 2: every other statistic, in one sweep. ---
     let mut pred_counts: BTreeMap<&str, u64> = BTreeMap::new();
     let mut class_counts: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut datatype_counts: BTreeMap<String, u64> = BTreeMap::new();
+    let mut lang_counts: BTreeMap<String, u64> = BTreeMap::new();
+    let mut out_degree: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut in_degree: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut link_rows: BTreeMap<(String, String, String), u64> = BTreeMap::new();
+    let mut subject_ns: BTreeMap<String, u64> = BTreeMap::new();
+    // Per-predicate temporal evidence: object-shape hits and a name hint.
+    let mut time_obj_hits: BTreeMap<&str, u64> = BTreeMap::new();
+    // Per-predicate numeric-object hits (for value-range queries).
+    let mut num_obj_hits: BTreeMap<&str, u64> = BTreeMap::new();
+    // Objects of each candidate time predicate, grouped by datatype, for extent.
+    let mut time_values: BTreeMap<&str, (Option<String>, Option<String>)> = BTreeMap::new();
+    let mut time_value_dt: BTreeMap<&str, String> = BTreeMap::new();
+    let mut lat_lo = f64::INFINITY;
+    let mut lat_hi = f64::NEG_INFINITY;
+    let mut lon_lo = f64::INFINITY;
+    let mut lon_hi = f64::NEG_INFINITY;
+    let mut have_lat = false;
+    let mut have_lon = false;
+    let mut geo_wkt = false;
     let mut triple_count = 0u64;
-    for (_s, p, o, g) in quads {
+
+    for (s, p, o, g) in quads {
         if g.is_some() {
             continue; // default-graph statistics only
         }
         triple_count += 1;
         *pred_counts.entry(p.as_str()).or_default() += 1;
+        *out_degree.entry(s.as_str()).or_default() += 1;
+        if let Some(ns) = split_namespace(s) {
+            *subject_ns.entry(ns).or_default() += 1;
+        }
+
+        // In-degree: every non-literal object referenced. Matches the
+        // `top-in-hubs` query (`FILTER(!isLiteral(?o))`), which does not
+        // special-case rdf:type, so the card precompute equals the query result.
+        if !o.starts_with('"') {
+            *in_degree.entry(o.as_str()).or_default() += 1;
+        }
+
         if p == RDF_TYPE {
             *class_counts.entry(o.as_str()).or_default() += 1;
+            continue; // type assertions define classes, not data relations
+        }
+
+        // Class-to-class quotient (the effective schema).
+        *link_rows
+            .entry((classify(s), p.clone(), classify(o)))
+            .or_default() += 1;
+
+        if p == GEO_ASWKT || p == GEO_HASGEOMETRY {
+            geo_wkt = true;
+        }
+
+        // Literal objects: datatype / language / temporal / geo analysis.
+        if let Some(lit) = parse_literal(o) {
+            *datatype_counts
+                .entry(format!("<{}>", lit.datatype))
+                .or_default() += 1;
+            *lang_counts.entry(lit.lang.clone()).or_default() += 1;
+            if lit.datatype == GEO_WKTLITERAL {
+                geo_wkt = true;
+            }
+            // Temporal object-shape: a date/year datatype or a year-like value.
+            if is_temporal_datatype(&lit.datatype) || looks_like_year(&lit.value) {
+                *time_obj_hits.entry(p.as_str()).or_default() += 1;
+                update_time_extent(p.as_str(), &lit, &mut time_values, &mut time_value_dt);
+            } else if is_numeric_datatype(&lit.datatype) {
+                // A year-shaped value is temporal, not "numeric range" material,
+                // so this is an `else if` — `birthYear` is a time predicate.
+                *num_obj_hits.entry(p.as_str()).or_default() += 1;
+            }
+            // wgs84 lat/long numeric extent.
+            if p == WGS_LAT {
+                if let Ok(v) = lit.value.parse::<f64>() {
+                    have_lat = true;
+                    lat_lo = lat_lo.min(v);
+                    lat_hi = lat_hi.max(v);
+                }
+            } else if p == WGS_LONG {
+                if let Ok(v) = lit.value.parse::<f64>() {
+                    have_lon = true;
+                    lon_lo = lon_lo.min(v);
+                    lon_hi = lon_hi.max(v);
+                }
+            }
         }
     }
 
-    let predicates = sort_desc(pred_counts);
-    let classes = sort_desc(class_counts);
+    // Signal lookups that need the raw per-predicate counts — computed before
+    // `pred_counts` is consumed by the sort below.
+    let pred_count = |iri: &str| pred_counts.get(iri).copied().unwrap_or(0);
+    let label_predicate = LABEL_PREDICATES
+        .iter()
+        .filter(|&&iri| pred_count(iri) > 0)
+        .max_by_key(|&&iri| pred_count(iri))
+        .map(|s| s.to_string());
+    let link_predicates: Vec<String> = LINK_PREDICATES
+        .iter()
+        .filter(|&&iri| pred_count(iri) > 0)
+        .map(|s| s.to_string())
+        .collect();
+
+    let mut truncated = false;
+    let predicates = cap(sort_desc(pred_counts), &mut truncated);
+    let classes = cap(sort_desc(class_counts), &mut truncated);
+    let datatypes = cap(sort_desc_owned(datatype_counts), &mut truncated);
+    let languages = cap(sort_desc_owned(lang_counts), &mut truncated);
+    let top_hubs = cap(sort_desc(out_degree), &mut truncated);
+    let in_hubs = cap(sort_desc(in_degree), &mut truncated);
+    let class_links = cap(sort_links(link_rows), &mut truncated);
 
     // Vocabularies: distinct namespaces of the predicate and class IRIs.
     let mut vocab: BTreeSet<String> = BTreeSet::new();
@@ -163,8 +446,55 @@ pub(crate) fn derive_card(
             vocab.insert(ns);
         }
     }
+    let vocabularies = cap(vocab.into_iter().collect(), &mut truncated);
 
-    DatasetCard {
+    // --- Signals (index-free affordances for the query-library generator). ---
+    let default_lang = languages
+        .iter()
+        .find(|(l, _)| !l.is_empty())
+        .map(|(l, _)| l.clone());
+    let base_iri = derive_base_iri(&subject_ns);
+    let mut time_ranked: Vec<(&str, u64)> = time_obj_hits.into_iter().collect();
+    time_ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    // Cap through the shared helper so an over-long list also flips `truncated`.
+    let time_predicates = cap(
+        time_ranked.iter().map(|(p, _)| p.to_string()).collect(),
+        &mut truncated,
+    );
+    let mut num_ranked: Vec<(&str, u64)> = num_obj_hits.into_iter().collect();
+    num_ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    let numeric_predicates = cap(
+        num_ranked.iter().map(|(p, _)| p.to_string()).collect(),
+        &mut truncated,
+    );
+    let geo_latlong = have_lat && have_lon;
+    let temporal_extent = time_ranked
+        .first()
+        .and_then(|(p, _)| time_values.get(p))
+        .and_then(|(lo, hi)| match (lo, hi) {
+            (Some(lo), Some(hi)) => Some((lo.clone(), hi.clone())),
+            _ => None,
+        });
+    let spatial_bbox = if geo_latlong && lon_lo.is_finite() && lat_lo.is_finite() {
+        Some([lon_lo, lat_lo, lon_hi, lat_hi])
+    } else {
+        None
+    };
+
+    let signals = Signals {
+        label_predicate,
+        default_lang,
+        base_iri,
+        time_predicates,
+        numeric_predicates,
+        link_predicates,
+        geo_wkt,
+        geo_latlong,
+        temporal_extent,
+        spatial_bbox,
+    };
+
+    let mut card = DatasetCard {
         title: curated.title,
         description: curated.description,
         license: curated.license,
@@ -176,13 +506,33 @@ pub(crate) fn derive_card(
         term_count,
         predicates,
         classes,
-        vocabularies: vocab.into_iter().collect(),
+        vocabularies,
         example_queries: curated.example_queries,
+        datatypes,
+        languages,
+        class_links,
+        top_hubs,
+        in_hubs,
+        signals,
+        queries: Vec::new(),
+        truncated,
         format_version: rete_core::VERSION,
-    }
+    };
+    // The tiered starter-query library, instantiated from the profile above.
+    card.queries = super::queries::generate(&card);
+    card
 }
 
-/// Sort a count map descending by count, then ascending by term, into owned pairs.
+/// Cap a top-N list, flagging `truncated` if anything was dropped.
+fn cap<T>(mut v: Vec<T>, truncated: &mut bool) -> Vec<T> {
+    if v.len() > CARD_TOP_N {
+        v.truncate(CARD_TOP_N);
+        *truncated = true;
+    }
+    v
+}
+
+/// Sort a `&str`-keyed count map descending by count, then ascending by term.
 fn sort_desc(counts: BTreeMap<&str, u64>) -> Vec<(String, u64)> {
     let mut v: Vec<(String, u64)> = counts
         .into_iter()
@@ -190,6 +540,195 @@ fn sort_desc(counts: BTreeMap<&str, u64>) -> Vec<(String, u64)> {
         .collect();
     v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     v
+}
+
+/// Sort an owned-`String`-keyed count map descending by count, then by term.
+fn sort_desc_owned(counts: BTreeMap<String, u64>) -> Vec<(String, u64)> {
+    let mut v: Vec<(String, u64)> = counts.into_iter().collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v
+}
+
+/// Sort the class-link quotient deterministically: descending by count, then by
+/// the `(s_class, predicate, o_class)` key — a total order for a stable hash.
+fn sort_links(rows: BTreeMap<(String, String, String), u64>) -> Vec<ClassLink> {
+    let mut v: Vec<ClassLink> = rows
+        .into_iter()
+        .map(|((s, p, o), count)| ClassLink {
+            s_class: s,
+            predicate: p,
+            o_class: o,
+            count,
+        })
+        .collect();
+    v.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.s_class.cmp(&b.s_class))
+            .then_with(|| a.predicate.cmp(&b.predicate))
+            .then_with(|| a.o_class.cmp(&b.o_class))
+    });
+    v
+}
+
+/// The dataset's own base IRI, for the `{{BASE_IRI}}` substitution (and the
+/// "links pointing outside the dataset" query). The longest common prefix of all
+/// subject namespaces, truncated to a `/`/`#` boundary — `http://ex/` for
+/// subjects under `http://ex/person/`, `http://ex/place/`, … When the LCP is
+/// coarser than `scheme://host/` (subjects span unrelated hosts), fall back to
+/// the single most-frequent namespace so the value stays a usable prefix.
+fn derive_base_iri(ns: &BTreeMap<String, u64>) -> Option<String> {
+    if ns.is_empty() {
+        return None;
+    }
+    // Dominant namespace: highest count, ties broken by the smaller string.
+    let dominant = ns
+        .iter()
+        .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(k, _)| k.clone())?;
+    // Longest common prefix across every subject namespace.
+    let mut lcp_len = dominant.len();
+    for k in ns.keys() {
+        let common = dominant
+            .bytes()
+            .zip(k.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        lcp_len = lcp_len.min(common);
+    }
+    let lcp = &dominant[..lcp_len];
+    // Truncate to the last namespace delimiter so we never cut mid-segment.
+    let base = match lcp.rfind(['/', '#']) {
+        Some(i) => &lcp[..=i],
+        None => "",
+    };
+    // Require at least `scheme://host/` (three slashes); else the LCP collapsed
+    // across hosts — the dominant namespace is the more useful prefix.
+    if base.matches('/').count() >= 3 {
+        Some(base.to_string())
+    } else {
+        Some(dominant)
+    }
+}
+
+/// The decomposed parts of an RDF literal term.
+struct Literal {
+    /// Lexical value with the surrounding quotes and escapes removed.
+    value: String,
+    /// Datatype IRI (unbracketed): `xsd:string` for plain, `rdf:langString` for
+    /// language-tagged, else the explicit `^^<…>` type.
+    datatype: String,
+    /// Language tag (`""` when none).
+    lang: String,
+}
+
+/// Decompose an N-Triples literal term (`"…"`, `"…"@lang`, `"…"^^<dt>`) into its
+/// value, datatype, and language. Returns `None` for non-literal terms.
+fn parse_literal(term: &str) -> Option<Literal> {
+    let bytes = term.as_bytes();
+    if bytes.first() != Some(&b'"') {
+        return None;
+    }
+    // Find the closing unescaped quote.
+    let mut i = 1usize;
+    let mut esc = false;
+    let mut close = None;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => esc = !esc,
+            b'"' if !esc => {
+                close = Some(i);
+                break;
+            }
+            _ => esc = false,
+        }
+        i += 1;
+    }
+    let close = close?;
+    let value = term[1..close].to_string();
+    let suffix = &term[close + 1..];
+    if let Some(lang) = suffix.strip_prefix('@') {
+        Some(Literal {
+            value,
+            datatype: RDF_LANGSTRING.to_string(),
+            lang: lang.to_string(),
+        })
+    } else if let Some(dt) = suffix.strip_prefix("^^") {
+        let dt = dt.trim_start_matches('<').trim_end_matches('>').to_string();
+        Some(Literal {
+            value,
+            datatype: dt,
+            lang: String::new(),
+        })
+    } else {
+        Some(Literal {
+            value,
+            datatype: XSD_STRING.to_string(),
+            lang: String::new(),
+        })
+    }
+}
+
+/// True for XSD date/time/year datatypes — the strong temporal signal.
+fn is_temporal_datatype(dt: &str) -> bool {
+    matches!(
+        dt,
+        "http://www.w3.org/2001/XMLSchema#date"
+            | "http://www.w3.org/2001/XMLSchema#dateTime"
+            | "http://www.w3.org/2001/XMLSchema#gYear"
+            | "http://www.w3.org/2001/XMLSchema#gYearMonth"
+            | "http://www.w3.org/2001/XMLSchema#gMonthDay"
+    )
+}
+
+/// True for XSD numeric datatypes — candidates for value-range aggregates.
+fn is_numeric_datatype(dt: &str) -> bool {
+    matches!(
+        dt,
+        "http://www.w3.org/2001/XMLSchema#integer"
+            | "http://www.w3.org/2001/XMLSchema#decimal"
+            | "http://www.w3.org/2001/XMLSchema#double"
+            | "http://www.w3.org/2001/XMLSchema#float"
+            | "http://www.w3.org/2001/XMLSchema#long"
+            | "http://www.w3.org/2001/XMLSchema#int"
+            | "http://www.w3.org/2001/XMLSchema#short"
+            | "http://www.w3.org/2001/XMLSchema#nonNegativeInteger"
+            | "http://www.w3.org/2001/XMLSchema#positiveInteger"
+    )
+}
+
+/// A weak temporal signal: a value whose leading token is a 4-digit year
+/// (optionally BCE-negative), e.g. `1492`, `1492-10-12`, `-0044-03-15`.
+fn looks_like_year(value: &str) -> bool {
+    let v = value.strip_prefix('-').unwrap_or(value);
+    let head: String = v.chars().take(4).collect();
+    head.len() == 4 && head.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Fold one temporal literal into the per-predicate MIN/MAX extent, keeping the
+/// extent within a single datatype (the predicate's first-seen one) so a lexical
+/// compare never mixes incompatible value spaces (Risk R4).
+fn update_time_extent<'a>(
+    pred: &'a str,
+    lit: &Literal,
+    values: &mut BTreeMap<&'a str, (Option<String>, Option<String>)>,
+    value_dt: &mut BTreeMap<&'a str, String>,
+) {
+    let dt = value_dt.entry(pred).or_insert_with(|| lit.datatype.clone());
+    if *dt != lit.datatype {
+        return; // a different value space for this predicate — skip for extent
+    }
+    let entry = values.entry(pred).or_insert((None, None));
+    match &mut entry.0 {
+        Some(lo) if lit.value < *lo => *lo = lit.value.clone(),
+        None => entry.0 = Some(lit.value.clone()),
+        _ => {}
+    }
+    match &mut entry.1 {
+        Some(hi) if lit.value > *hi => *hi = lit.value.clone(),
+        None => entry.1 = Some(lit.value.clone()),
+        _ => {}
+    }
 }
 
 /// The namespace of an IRI term: the prefix up to and including the last `#` or
@@ -224,6 +763,19 @@ pub(crate) fn load_card(bytes: &[u8]) -> anyhow::Result<Option<DatasetCard>> {
         .filter(|&e| e <= bytes.len())
         .ok_or_else(|| anyhow::anyhow!("metadata section out of bounds"))?;
     Ok(Some(DatasetCard::from_json_bytes(&bytes[start..end])?))
+}
+
+/// Read the dataset card via a [`rete_core::RangeReader`] — fetching only the
+/// header and metadata range (the index-free CARD tier), never the
+/// dictionary/index/pyramid. The remote/S3 companion to [`load_card`], which
+/// needs the whole file in memory. Returns `None` when the file has no card.
+pub(crate) fn load_card_ranged<R: rete_core::RangeReader>(
+    reader: &R,
+) -> anyhow::Result<Option<DatasetCard>> {
+    match rete_core::read_metadata_ranged(reader)? {
+        None => Ok(None),
+        Some(bytes) => Ok(Some(DatasetCard::from_json_bytes(&bytes)?)),
+    }
 }
 
 /// Render a card as a human-readable catalog. `checksum` is the file's content
@@ -276,8 +828,84 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
             let _ = writeln!(out, "      {count:>8}  {iri}");
         }
     }
+    if !card.datatypes.is_empty() {
+        let _ = writeln!(out, "  datatypes ({}):", card.datatypes.len());
+        for (dt, count) in &card.datatypes {
+            let _ = writeln!(out, "      {count:>8}  {dt}");
+        }
+    }
+    if !card.languages.is_empty() {
+        let _ = writeln!(out, "  languages ({}):", card.languages.len());
+        for (lang, count) in &card.languages {
+            let shown = if lang.is_empty() { "(untagged)" } else { lang };
+            let _ = writeln!(out, "      {count:>8}  {shown}");
+        }
+    }
+    if !card.class_links.is_empty() {
+        let _ = writeln!(out, "  class links ({}):", card.class_links.len());
+        for l in &card.class_links {
+            let _ = writeln!(
+                out,
+                "      {:>8}  {} --{}-> {}",
+                l.count, l.s_class, l.predicate, l.o_class
+            );
+        }
+    }
+    if !card.top_hubs.is_empty() {
+        let _ = writeln!(out, "  top hubs (out-degree):");
+        for (iri, d) in &card.top_hubs {
+            let _ = writeln!(out, "      {d:>8}  {iri}");
+        }
+    }
+    if !card.in_hubs.is_empty() {
+        let _ = writeln!(out, "  top hubs (in-degree):");
+        for (iri, d) in &card.in_hubs {
+            let _ = writeln!(out, "      {d:>8}  {iri}");
+        }
+    }
+    if !card.signals.is_empty() {
+        let s = &card.signals;
+        let _ = writeln!(out, "  signals:");
+        let opt = |out: &mut String, label: &str, v: &Option<String>| {
+            if let Some(v) = v {
+                let _ = writeln!(out, "      {label:<11}: {v}");
+            }
+        };
+        opt(&mut out, "label pred", &s.label_predicate);
+        opt(&mut out, "base IRI", &s.base_iri);
+        opt(&mut out, "default lang", &s.default_lang);
+        if !s.time_predicates.is_empty() {
+            let _ = writeln!(out, "      time preds : {}", s.time_predicates.join(", "));
+        }
+        if !s.link_predicates.is_empty() {
+            let _ = writeln!(out, "      link preds : {}", s.link_predicates.join(", "));
+        }
+        if let Some((from, to)) = &s.temporal_extent {
+            let _ = writeln!(out, "      time extent: {from} … {to}");
+        }
+        if let Some([min_lon, min_lat, max_lon, max_lat]) = s.spatial_bbox {
+            let _ = writeln!(
+                out,
+                "      bbox       : lon [{min_lon}, {max_lon}], lat [{min_lat}, {max_lat}] (CRS84 lon/lat)"
+            );
+        }
+        if s.geo_wkt {
+            let _ = writeln!(out, "      geometry   : geo:asWKT present");
+        }
+    }
+    if !card.queries.is_empty() {
+        let _ = writeln!(out, "  starter queries ({}):", card.queries.len());
+        for q in &card.queries {
+            let tier = match q.tier {
+                Tier::Card => "card",
+                Tier::Summary => "summary",
+                Tier::Index => "index",
+            };
+            let _ = writeln!(out, "      [{tier:^7}] {} — {}", q.id, q.question);
+        }
+    }
     if !card.example_queries.is_empty() {
-        let _ = writeln!(out, "  example queries:");
+        let _ = writeln!(out, "  curated queries:");
         for q in &card.example_queries {
             let _ = writeln!(out, "      {q}");
         }
@@ -406,6 +1034,246 @@ mod tests {
         assert_eq!(card.quad_count, 2);
         assert_eq!(card.named_graph_count, 1);
         assert_eq!(card.predicates[0].1, 1);
+    }
+
+    /// A literal-bearing triple helper for the enriched-profile tests.
+    const LABEL: &str = "<http://www.w3.org/2000/01/rdf-schema#label>";
+    const SAMEAS: &str = "<http://www.w3.org/2002/07/owl#sameAs>";
+    const XSD_INT: &str = "http://www.w3.org/2001/XMLSchema#integer";
+    const XSD_GYEAR: &str = "http://www.w3.org/2001/XMLSchema#gYear";
+
+    fn enriched_fixture() -> Vec<(String, String, String, Option<String>)> {
+        vec![
+            q("<http://ex/a>", TYPE, "<http://ex/Person>"),
+            q("<http://ex/b>", TYPE, "<http://ex/Person>"),
+            q("<http://ex/c>", TYPE, "<http://ex/City>"),
+            q("<http://ex/a>", LABEL, "\"Alice\"@en"),
+            q("<http://ex/b>", LABEL, "\"Bob\"@en"),
+            q(
+                "<http://ex/a>",
+                "<http://ex/age>",
+                &format!("\"30\"^^<{XSD_INT}>"),
+            ),
+            q(
+                "<http://ex/a>",
+                "<http://ex/birthYear>",
+                &format!("\"1850\"^^<{XSD_GYEAR}>"),
+            ),
+            q(
+                "<http://ex/b>",
+                "<http://ex/birthYear>",
+                &format!("\"1875\"^^<{XSD_GYEAR}>"),
+            ),
+            q("<http://ex/a>", "<http://ex/knows>", "<http://ex/b>"),
+            q("<http://ex/a>", "<http://ex/livesIn>", "<http://ex/c>"),
+            q("<http://ex/a>", SAMEAS, "<http://other/a>"),
+        ]
+    }
+
+    #[test]
+    fn enriched_profile_is_populated() {
+        let quads = enriched_fixture();
+        let card = derive_card(&quads, 12, 0, CardInput::default());
+
+        assert!(!card.datatypes.is_empty(), "datatypes derived");
+        assert!(!card.languages.is_empty(), "languages derived");
+        assert!(!card.class_links.is_empty(), "class_links derived");
+        assert!(!card.top_hubs.is_empty(), "out-degree hubs derived");
+        assert!(!card.in_hubs.is_empty(), "in-degree hubs derived");
+
+        // Effective schema: Person --knows--> Person, Person --livesIn--> City.
+        assert!(card
+            .class_links
+            .iter()
+            .any(|l| l.s_class == "<http://ex/Person>"
+                && l.predicate == "<http://ex/knows>"
+                && l.o_class == "<http://ex/Person>"
+                && l.count == 1));
+        assert!(card
+            .class_links
+            .iter()
+            .any(|l| l.o_class == "<http://ex/City>"));
+        // Untyped external object is the `(untyped)` sentinel.
+        assert!(card.class_links.iter().any(|l| l.o_class == "(untyped)"));
+
+        // Datatypes: integer, gYear, and langString from the @en labels.
+        assert!(card.datatypes.iter().any(|(d, _)| d.contains("integer")));
+        assert!(card.datatypes.iter().any(|(d, _)| d.contains("gYear")));
+        assert!(card.datatypes.iter().any(|(d, _)| d.contains("langString")));
+        // Languages: "en" present, plus untagged "".
+        assert!(card.languages.iter().any(|(l, _)| l == "en"));
+
+        // Signals.
+        let s = &card.signals;
+        assert_eq!(s.label_predicate.as_deref(), Some(LABEL));
+        assert_eq!(s.default_lang.as_deref(), Some("en"));
+        assert_eq!(s.base_iri.as_deref(), Some("http://ex/"));
+        assert!(s.link_predicates.iter().any(|p| p.contains("sameAs")));
+        assert!(s.time_predicates.iter().any(|p| p.contains("birthYear")));
+        assert_eq!(
+            s.temporal_extent,
+            Some(("1850".to_string(), "1875".to_string())),
+            "extent over the dominant time predicate"
+        );
+        // No geometry in this fixture.
+        assert!(!s.geo_wkt && !s.geo_latlong);
+        assert!(s.spatial_bbox.is_none());
+    }
+
+    #[test]
+    fn signals_detect_geometry() {
+        let wkt = "http://www.opengis.net/ont/geosparql#wktLiteral";
+        let quads = vec![
+            q("<http://ex/p>", TYPE, "<http://ex/Place>"),
+            q(
+                "<http://ex/p>",
+                "<http://www.w3.org/2003/01/geo/wgs84_pos#lat>",
+                "\"41.9\"^^<http://www.w3.org/2001/XMLSchema#double>",
+            ),
+            q(
+                "<http://ex/p>",
+                "<http://www.w3.org/2003/01/geo/wgs84_pos#long>",
+                "\"12.5\"^^<http://www.w3.org/2001/XMLSchema#double>",
+            ),
+            q(
+                "<http://ex/p>",
+                "<http://www.opengis.net/ont/geosparql#asWKT>",
+                &format!("\"POINT(12.5 41.9)\"^^<{wkt}>"),
+            ),
+        ];
+        let card = derive_card(&quads, 6, 0, CardInput::default());
+        assert!(card.signals.geo_wkt, "asWKT/wktLiteral detected");
+        assert!(card.signals.geo_latlong, "wgs84 lat+long detected");
+        let bbox = card.signals.spatial_bbox.expect("bbox derived");
+        assert_eq!(
+            bbox,
+            [12.5, 41.9, 12.5, 41.9],
+            "[minLon,minLat,maxLon,maxLat]"
+        );
+    }
+
+    #[test]
+    fn class_links_match_schema_summary() {
+        use rete_core::{ingest, schema_summary, Rete};
+        let quads = enriched_fixture();
+        let card = derive_card(&quads, 12, 0, CardInput::default());
+
+        // Build the same data and compute the reference quotient from the index.
+        let (bytes, _) = ingest::assemble_dataset_with_opts(&quads, true, |_| Vec::new());
+        let rete = Rete::open(&bytes).unwrap();
+        let reference: BTreeSet<(String, String, String, u64)> = schema_summary(&rete)
+            .into_iter()
+            .map(|(s, p, o, c)| (s, p, o, c as u64))
+            .collect();
+
+        let derived: BTreeSet<(String, String, String, u64)> = card
+            .class_links
+            .iter()
+            .map(|l| {
+                (
+                    l.s_class.clone(),
+                    l.predicate.clone(),
+                    l.o_class.clone(),
+                    l.count,
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            derived, reference,
+            "card class_links must equal schema_summary's quotient row-for-row"
+        );
+    }
+
+    #[test]
+    fn derive_is_deterministic() {
+        // The card folds into the content hash, so the same input must yield
+        // byte-identical JSON across rebuilds (no map-iteration nondeterminism).
+        let quads = enriched_fixture();
+        let a = derive_card(&quads, 12, 0, CardInput::default()).to_json_bytes();
+        let b = derive_card(&quads, 12, 0, CardInput::default()).to_json_bytes();
+        assert_eq!(a, b, "enriched card derivation must be deterministic");
+        assert!(!a.is_empty());
+    }
+
+    #[test]
+    fn old_plain_string_card_still_parses() {
+        // A pre-enrichment card: example_queries as plain strings, none of the
+        // new fields present. Serde `default`s must keep it deserializing.
+        let json = r#"{
+            "title":"Legacy",
+            "triple_count":3,"quad_count":3,"named_graph_count":0,"term_count":5,
+            "predicates":[["<http://ex/p>",2]],
+            "example_queries":["SELECT * WHERE { ?s ?p ?o }"],
+            "format_version":1
+        }"#;
+        let card = DatasetCard::from_json_bytes(json.as_bytes()).unwrap();
+        assert_eq!(card.title.as_deref(), Some("Legacy"));
+        assert_eq!(card.example_queries.len(), 1);
+        // Every enriched field defaults to empty/false when absent from the JSON.
+        assert!(card.datatypes.is_empty());
+        assert!(card.languages.is_empty());
+        assert!(card.class_links.is_empty());
+        assert!(card.top_hubs.is_empty());
+        assert!(card.in_hubs.is_empty());
+        assert!(card.queries.is_empty());
+        assert!(card.signals.is_empty());
+        assert!(!card.truncated);
+    }
+
+    #[test]
+    fn base_iri_is_common_prefix_with_fallback() {
+        // Subjects under several sibling namespaces → their common root.
+        let mut ns = BTreeMap::new();
+        ns.insert("http://ex/person/".to_string(), 2000u64);
+        ns.insert("http://ex/place/".to_string(), 600);
+        ns.insert("http://ex/org/".to_string(), 120);
+        assert_eq!(derive_base_iri(&ns).as_deref(), Some("http://ex/"));
+
+        // A single namespace is its own base.
+        let mut one = BTreeMap::new();
+        one.insert("http://data.example.org/id/".to_string(), 10u64);
+        assert_eq!(
+            derive_base_iri(&one).as_deref(),
+            Some("http://data.example.org/id/")
+        );
+
+        // Subjects across unrelated hosts: the LCP collapses to `http://`, so we
+        // fall back to the dominant namespace rather than ship a useless prefix.
+        let mut multi = BTreeMap::new();
+        multi.insert("http://a.example/".to_string(), 100u64);
+        multi.insert("http://b.other/".to_string(), 5);
+        assert_eq!(
+            derive_base_iri(&multi).as_deref(),
+            Some("http://a.example/")
+        );
+
+        assert_eq!(derive_base_iri(&BTreeMap::new()), None);
+    }
+
+    #[test]
+    fn parse_literal_decomposes_forms() {
+        let plain = parse_literal("\"hello\"").unwrap();
+        assert_eq!(plain.value, "hello");
+        assert!(plain.datatype.ends_with("XMLSchema#string"));
+        assert_eq!(plain.lang, "");
+
+        let tagged = parse_literal("\"bonjour\"@fr").unwrap();
+        assert_eq!(tagged.lang, "fr");
+        assert!(tagged.datatype.ends_with("#langString"));
+
+        let typed = parse_literal("\"42\"^^<http://www.w3.org/2001/XMLSchema#integer>").unwrap();
+        assert_eq!(typed.value, "42");
+        assert_eq!(typed.datatype, "http://www.w3.org/2001/XMLSchema#integer");
+
+        // Escaped quote inside the value is not mistaken for the terminator.
+        let esc = parse_literal("\"a\\\"b\"@en").unwrap();
+        assert_eq!(esc.value, "a\\\"b");
+        assert_eq!(esc.lang, "en");
+
+        // Non-literals decline.
+        assert!(parse_literal("<http://ex/x>").is_none());
+        assert!(parse_literal("_:b0").is_none());
     }
 
     #[test]

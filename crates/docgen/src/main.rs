@@ -46,6 +46,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("geosparql.md", "GeoSPARQL (geometry + time)"),
             ("shacl.md", "SHACL validation"),
             ("dataset-cards.md", "Dataset Cards"),
+            ("semantic-zoom.md", "Semantic zoom (schema pyramid)"),
             ("reasoning.md", "Reasoning & coherence"),
             ("federation.md", "Federated queries"),
             ("compatibility.md", "Compatibility & interop"),
