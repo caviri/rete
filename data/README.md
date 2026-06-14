@@ -170,6 +170,88 @@ Aggregate, Construct), surfaced in the playground's example picker.
 
 ---
 
+## Full-graph dataset — Mapping Manuscript Migrations (MMM)
+
+The **complete** MMM knowledge graph — not the tiny `mmm` playground sample above
+(which CONSTRUCTs a 4-place slice). MMM unified three manuscript-provenance databases
+into one CIDOC-CRM + FRBRoo graph: [SDBM](https://sdbm.library.upenn.edu/) (Schoenberg
+Database of Manuscripts, U. Penn), [Bibale](http://bibale.irht.cnrs.fr/) (IRHT-CNRS),
+and [Medieval Manuscripts in Oxford Libraries](https://medieval.bodleian.ox.ac.uk/)
+(Bodleian). Source: Zenodo [DOI 10.5281/zenodo.4019643](https://doi.org/10.5281/zenodo.4019643)
+(v2.1.0, 2020-09-08), **CC BY-NC 4.0**. One command builds everything:
+`scripts/fetch_mmm_full.sh` (steps: `fetch` | `build` | `export` | `tables`).
+
+### Pipeline & artifacts (all under `data/mmm/`, gitignored & regenerable)
+```
+Zenodo mmm_data_v2.1.0.zip (66.5 MB, md5 2f97635f…)
+  └─ unzip → mmm_{sdbm,bibale,bodley,places}.ttl + mmm-schema.ttl       (~1.3 GB; sdbm.ttl alone is 1.19 GB)
+       └─ rete build … --no-pyramid --card   →  mmm-full.rete           (77 MB · 23,349,356 triples · 5.15M terms)
+            ├─ rete export                    →  mmm-full.nt             (3.1 GB · lossless N-Triples)
+            │    └─ scripts/mmm_to_tables.py  →  tables/*.parquet        (43 per-rdf:type tables + _untyped + _manifest · 164 MB)
+            │                                    mmm-tables.duckdb       (44 entity tables, one per class)
+            └─ (RDF/XML cidoc-crm.rdf / frbroo.rdf ontologies are TBox-only — not ingested)
+```
+- Build runs the Linux `rete` ELF in Docker (`rust:1.92-bookworm`): ~10 GB RAM, ~80 s.
+- Export writes to container-local tmpfs then copies out once — Rust's line-buffered
+  stdout over the Windows bind mount is otherwise ~30× slower (23.3M flushes).
+
+### Graph shape — top classes (`rete sparql mmm-full.rete "SELECT ?class (COUNT(?s)…"`, 2.1 s)
+| class | n | what |
+|---|--:|---|
+| `mmms:ManuscriptActivity` | 668,393 | provenance activity events |
+| `frbroo:F1_Work` · `F2_Expression` · `F28_Expression_Creation` | 435,045 · 451,824 · 451,041 | the texts |
+| `ecrm:E12_Production` | 225,520 | manuscript production events |
+| **`frbroo:F4_Manifestation_Singleton`** | **221,721** | **the manuscripts** — SDBM 195,842 · Bibale 16,351 · Bodley 13,347 |
+| `ecrm:E97_Monetary_Amount` | 54,264 | sale prices |
+| `ecrm:E10_Transfer_of_Custody` | 30,603 | ownership transfers |
+| `ecrm:E21_Person` · `E74_Group` | 27,152 · 6,069 | actors (cross-linked by `owl:sameAs` to VIAF/BnF and across sources) |
+| `ecrm:E78_Collection` | 5,953 | collections |
+| `ecrm:E53_Place` | 5,050 | geocoded places (`wgs84:lat`/`long`) |
+
+166,450 manuscripts carry ≥1 former/current owner (`ecrm:P51`). Namespaces: `ecrm =
+http://erlangen-crm.org/current/`, `frbroo = http://erlangen-crm.org/efrbroo/`,
+`mmms = http://ldf.fi/schema/mmm/`.
+
+### Related tables — `scripts/mmm_to_tables.py` (lossless)
+The MMM-shaped sibling of `rdf_to_entity_tables.py`: reads the graph's N-Triples export
+and emits **one Parquet table per `rdf:type`** — the class's top-24 properties as named
+`LIST` columns (manuscripts get `source`, `P51_has_former_or_current_owner`,
+`manuscript_work`, `manuscript_author`, `folios`/`height`/`width`, shelfmarks, …), all
+`rdf:type`s in a `types` list, *every other* predicate in an `extra` MAP, and a
+`skos:prefLabel` `label` column. Objects are stored as N-Triples tokens, so the set is
+**lossless**: explode every column across all tables and you recover exactly the
+23,349,356 triples (`--verify` confirms it; `_manifest.parquet` maps column→predicate).
+`_untyped.parquet` holds the 11,371 no-`rdf:type` subjects (mostly schema TBox). The
+DuckDB file (`--duckdb`) materializes one native table per class; `--sqlite` is also
+available (LIST/MAP columns as JSON text).
+
+### Example questions
+```sparql
+# (graph) Where were manuscripts produced? — production → place → coordinates
+PREFIX ecrm: <http://erlangen-crm.org/current/>  PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX wgs: <http://www.w3.org/2003/01/geo/wgs84_pos#>
+SELECT ?placeL ?lat ?long (COUNT(?ms) AS ?n) WHERE {
+  ?prod a ecrm:E12_Production ; ecrm:P108_has_produced ?ms ; ecrm:P7_took_place_at ?pl .
+  ?pl skos:prefLabel ?placeL ; wgs:lat ?lat ; wgs:long ?long .
+} GROUP BY ?placeL ?lat ?long ORDER BY DESC(?n) LIMIT 12
+# → Italy 16247, England 14654, France 11392, Germany 4791, Paris 2946, Florence, Venice…
+```
+```sql
+-- (tables) Manuscripts and their former/current owners, from mmm-tables.duckdb
+SELECT m.label AS manuscript, o.label AS owner
+FROM F4_Manifestation_Singleton m, UNNEST(m.P51_has_former_or_current_owner) AS t(owner_iri)
+JOIN E21_Person o ON o.entity = t.owner_iri
+WHERE m.label IS NOT NULL AND o.label IS NOT NULL LIMIT 20;
+-- → SDBM_MS_1731 ← "Phillipps, Thomas, Sir, 1792-1872"; … ← "Ashmole, Elias, 1617-1692"; …
+```
+
+> **Publishing (not done here — outward-facing).** The 77 MB `.rete` is remote-lazy tier.
+> To serve it in the playground/atlas, upload to the HF bucket
+> (`hf buckets cp data/mmm/mmm-full.rete hf://buckets/katospiegel/knowledge-graphs/playground/mmm-full.rete`)
+> and register it in `web/playground-src/catalog.js` as a remote-lazy dataset.
+
+---
+
 ## Verification
 
 - Atlas: `dev/geo/verify_atlas.mjs` (+ `run_verify_atlas.sh`) — boots the page, asserts the
