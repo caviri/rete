@@ -103,8 +103,18 @@
   .tabs button.on { background:var(--accent); color:#04110f; }
   .view { flex:1; position:relative; min-height:0; }
   .view.hidden { display:none; }
-  canvas { display:block; width:100%; height:100%; cursor:grab; }
+  canvas { display:block; width:100%; height:100%; cursor:crosshair; }
   canvas.drag { cursor:grabbing; }
+  /* map HUD: zoom + cursor readout (bottom-left), viewport corner coords (NW / SE) */
+  #hudbar { position:absolute; left:10px; bottom:10px; z-index:6; pointer-events:none;
+    background:rgba(8,14,20,.78); border:1px solid var(--line); border-radius:6px;
+    padding:3px 9px; font-size:11.5px; font-variant-numeric:tabular-nums; display:flex; gap:10px; }
+  #hudZoom { color:var(--accent); font-weight:650; }
+  #hudCur { color:var(--mut); }
+  .hudcorner { position:absolute; z-index:5; pointer-events:none; color:#8aa0b4;
+    font-size:10.5px; font-variant-numeric:tabular-nums; text-shadow:0 1px 2px rgba(0,0,0,.85); opacity:.85; }
+  #hudNW { left:8px; top:6px; }
+  #hudSE { right:8px; bottom:32px; text-align:right; }
   #tableView { overflow:auto; background:#0c141c; }
   #tableView table { border-collapse:collapse; width:100%; font-size:12.5px; }
   #tableView th { position:sticky; top:0; background:#161c24; color:#cdd9e5; text-align:left;
@@ -313,6 +323,9 @@
       <canvas id="map"></canvas>
       <div id="tip"></div>
       <div id="ident"></div>
+      <div id="hudNW" class="hudcorner"></div>
+      <div id="hudSE" class="hudcorner"></div>
+      <div id="hudbar"><span id="hudZoom"></span><span id="hudCur"></span></div>
       <div class="maptools">
         <select id="proj" title="Map projection">
           <option value="equi">Equirectangular</option>
@@ -980,6 +993,18 @@ __GLUE_JS__
   function project(lon, lat) { const [W, H] = baseDims(), p = projNorm(lon, lat); return [p[0] * W * view.scale + view.ox, p[1] * H * view.scale + view.oy]; }
   function unproject(px, py) { const [W, H] = baseDims(); return PROJECTIONS[proj].inv((px - view.ox) / view.scale / W, (py - view.oy) / view.scale / H); }
   function fitIfNeeded() { if (!fitted) { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; } }
+  // ---- HUD: zoom level + viewport corner coords + live cursor coord ----
+  function fmtLL(c) {
+    if (!c || !isFinite(c[0]) || !isFinite(c[1]) || Math.abs(c[1]) > 90) return "—";
+    const la = c[1], lo = (((c[0] % 360) + 540) % 360) - 180;   // wrap longitude into [-180,180]
+    return Math.abs(la).toFixed(2) + "°" + (la >= 0 ? "N" : "S") + " " + Math.abs(lo).toFixed(2) + "°" + (lo >= 0 ? "E" : "W");
+  }
+  function updateHUD() {
+    const [W, H] = baseDims();
+    $("hudNW").textContent = fmtLL(unproject(0, 0));
+    $("hudSE").textContent = fmtLL(unproject(W, H));
+    $("hudZoom").textContent = "🔍 " + view.scale.toFixed(view.scale < 10 ? 2 : 1) + "×";
+  }
 
   // Single rAF-coalesced render loop: interactions request a frame; active
   // animations (cross-fade) re-arm it at the end of draw() and stop when idle.
@@ -1132,6 +1157,7 @@ __GLUE_JS__
     if (!_vig || _vigW !== W || _vigH !== H) { _vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, 0.85 * Math.hypot(W / 2, H / 2)); _vig.addColorStop(0, "rgba(0,0,0,0)"); _vig.addColorStop(1, "rgba(0,0,0,.24)"); _vigW = W; _vigH = H; }
     ctx.fillStyle = _vig; ctx.fillRect(0, 0, W, H);
     ctx.strokeStyle = "rgba(63,182,168,.26)"; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+    updateHUD();
     _anim = !!_tween || !!(_appeared && now < _pulseUntil); if (_anim) requestDraw();
   }
   // Frame the view on a set of features (legend click / double-click / Fit) — in
@@ -1453,16 +1479,17 @@ __GLUE_JS__
         ctx.globalAlpha = 0.85; ctx.stroke(path);
       }
       // 2) point features batched into one path (fast — every non-OHM layer)
+      const dotR = Math.max(3, Math.min(8, 3.2 + view.scale * 0.4));   // bigger dots, growing with zoom so they stay clickable
       ctx.fillStyle = col; ctx.beginPath();
       for (const f of fts) {
         if (f.rings) continue;
         if (n >= OVL_CAP) break;
         const [x, y] = project(f.lon, f.lat);
         if (!isFinite(x) || !isFinite(y) || x < -4 || x > W + 4 || y < -4 || y > H + 4) continue;
-        ctx.moveTo(x + 2.4, y); ctx.arc(x, y, 2.4, 0, 6.2832); n++;
+        ctx.moveTo(x + dotR, y); ctx.arc(x, y, dotR, 0, 6.2832); n++;
       }
-      ctx.globalAlpha = 0.85; ctx.fill();
-      ctx.globalAlpha = 0.6; ctx.lineWidth = 0.6; ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.stroke();
+      ctx.globalAlpha = 0.9; ctx.fill();
+      ctx.globalAlpha = 0.7; ctx.lineWidth = 0.8; ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.stroke();
       ctx.globalAlpha = 1;
     }
   }
@@ -1549,7 +1576,7 @@ __GLUE_JS__
       if (typeof S.y === "number" && isFinite(S.y)) setScrub(Math.max(minY, Math.min(maxY, S.y)));
       renderLayerList();
       await Promise.all(toLoad.map(async (l) => { if (!l.on) { l.on = true; try { await loadLayer(l); } catch (e) {} } }));
-      if (S.view && isFinite(S.view.s)) { view.scale = Math.max(0.4, Math.min(12, S.view.s)); view.ox = +S.view.x || 0; view.oy = +S.view.y || 0; fitted = true; }   // pin so the boot auto-fit can't clobber the restored view
+      if (S.view && isFinite(S.view.s)) { view.scale = Math.max(0.4, Math.min(64, S.view.s)); view.ox = +S.view.x || 0; view.oy = +S.view.y || 0; fitted = true; }   // pin so the boot auto-fit can't clobber the restored view
       renderLayerList(); renderTracks(); requestDraw();
     } finally { restoring = false; }
   }
@@ -1649,16 +1676,40 @@ __GLUE_JS__
     window.addEventListener("mouseup", () => { c.classList.remove("drag"); if (_dragging) { _dragging = false; requestDraw(); saveLocal(); } setTimeout(() => (drag = null), 0); });
     c.addEventListener("mousemove", (e) => { if (drag) { view.ox = drag.ox + (e.offsetX - drag.x); view.oy = drag.oy + (e.offsetY - drag.y); drag.moved = true; _dragging = true; requestDraw(); } else hover(e.offsetX, e.offsetY); });
     c.addEventListener("mouseleave", () => { $("tip").style.display = "none"; if (hoverLabel) { hoverLabel = null; requestDraw(); } });
-    c.addEventListener("wheel", (e) => { e.preventDefault(); const f = e.deltaY < 0 ? 1.15 : 1 / 1.15; view.ox = e.offsetX - (e.offsetX - view.ox) * f; view.oy = e.offsetY - (e.offsetY - view.oy) * f; view.scale = Math.max(0.4, Math.min(12, view.scale * f)); requestDraw(); saveLocal(); }, { passive: false });
+    c.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const f = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const ns = Math.max(0.4, Math.min(64, view.scale * f)), ef = ns / view.scale;   // clamp scale FIRST, then pan by the *effective* factor so the view never drifts at the zoom cap
+      view.ox = e.offsetX - (e.offsetX - view.ox) * ef;
+      view.oy = e.offsetY - (e.offsetY - view.oy) * ef;
+      view.scale = ns; requestDraw(); saveLocal();
+    }, { passive: false });
     c.addEventListener("click", (e) => { if (drag && drag.moved) return; identify(e.offsetX, e.offsetY); });
     c.addEventListener("dblclick", () => zoomToFit(features));
   }
   function hover(mx, my) {
-    const ctx = $("map").getContext("2d"); let lab = null;
-    for (const f of features) if (f.path && ctx.isPointInPath(f.path, mx, my, "evenodd")) { lab = f.label; break; }
-    const tip = $("tip");
-    if (lab) { tip.textContent = lab; tip.style.left = mx + "px"; tip.style.top = my + "px"; tip.style.display = "block"; } else tip.style.display = "none";
-    if (lab !== hoverLabel) { hoverLabel = lab; requestDraw(); }
+    $("hudCur").textContent = "⌖ " + fmtLL(unproject(mx, my));
+    const tip = $("tip"), c = $("map");
+    // a data-layer feature (the clickable dots/shapes) takes tooltip priority over a border
+    const hit = overlayHit(mx, my);
+    let lab = null, ax = mx, ay = my, onPoint = false;
+    if (hit) {
+      lab = hit.feat.label || "(unnamed)";
+      const [px, py] = project(hit.feat.lon, hit.feat.lat);
+      if (isFinite(px) && isFinite(py)) { ax = px; ay = py; }   // anchor the tip on the feature, not the cursor
+      onPoint = true;
+    } else {
+      const ctx = c.getContext("2d");
+      for (const f of features) if (f.path && ctx.isPointInPath(f.path, mx, my, "evenodd")) { lab = f.label; break; }
+    }
+    c.style.cursor = onPoint ? "pointer" : "";   // "" → CSS crosshair
+    if (lab) {
+      tip.textContent = lab; tip.style.left = ax + "px"; tip.style.top = ay + "px";
+      tip.style.transform = ay < 46 ? "translate(-50%,60%)" : "translate(-50%,-150%)";   // above the point if there's room, else below
+      tip.style.display = "block";
+    } else tip.style.display = "none";
+    const hl = hit ? null : lab;   // border glow only for border territories
+    if (hl !== hoverLabel) { hoverLabel = hl; requestDraw(); }
   }
   // local part of an IRI/term, for a readable property/value label
   function localName(term) { const s = lit(term); const m = s.split(/[#/]/).pop(); return m || s; }
@@ -1689,6 +1740,16 @@ __GLUE_JS__
     if (layer.def.kind === "interval") return yearLabel(f.s) + " – " + (f.e >= 2100 ? "present" : yearLabel(f.e));
     return yearLabel(f.year);
   }
+  // place the identify card near the clicked point: above it if there's room, else below; clamped to the view
+  function positionIdent(ax, ay) {
+    const box = $("ident"), [W, H] = baseDims();
+    box.style.display = "block";
+    const bw = box.offsetWidth, bh = box.offsetHeight;
+    const left = Math.max(8, Math.min(W - bw - 8, ax - bw / 2));
+    let top = ay - bh - 12;                                   // above
+    if (top < 8) top = Math.min(H - bh - 8, ay + 16);         // not enough room above → below
+    box.style.left = left + "px"; box.style.top = Math.max(8, top) + "px";
+  }
   function showFeatureInfo(layer, f) {
     const box = $("ident"), iri = f.iri || "";
     const link = /^https?:\/\//i.test(iri)
@@ -1700,7 +1761,8 @@ __GLUE_JS__
       `<tr><td>${layer.def.kind === "interval" ? "span" : "year"}</td><td>${escapeHtml(featSpan(layer, f))}</td></tr>` +
       `<tr><td>coords</td><td>${f.lon.toFixed(3)}, ${f.lat.toFixed(3)}</td></tr></table>` +
       (link ? `<div class="mut idiri" style="margin-top:6px">${link}</div>` : "");
-    box.style.display = "block";
+    const [px, py] = project(f.lon, f.lat);
+    positionIdent(isFinite(px) ? px : 0, isFinite(py) ? py : 0);
   }
   async function identify(mx, my) {
     const hit = overlayHit(mx, my);   // a data-layer feature under the cursor takes priority over the border
@@ -1727,7 +1789,7 @@ __GLUE_JS__
         `<div class="mut" style="margin-top:6px">(${lon.toFixed(2)}, ${lat.toFixed(2)}) · via geof:sfContains</div>` +
         `<button class="wktbtn wdlookup" data-label="${escapeHtml(highlight)}" style="margin-top:6px">🔎 Wikidata</button><div class="wdresult"></div>`;
     } else { highlight = null; box.innerHTML = `<span class="mut">(${lon.toFixed(2)}, ${lat.toFixed(2)}) — no mapped territory in </span><b>${yearLabel(curEra)}</b>.`; }
-    box.style.display = "block"; requestDraw();
+    positionIdent(mx, my); requestDraw();
   }
 
   // ---- play: step through the actual era snapshots (dwell per era = speed) so
@@ -1979,7 +2041,7 @@ __GLUE_JS__
     try { await restoreSession(); } catch (e) {}
     window.addEventListener("hashchange", () => { const m = location.hash.match(/[#&]s=([^&]+)/); if (m) { const S = decodeState(m[1]); if (S) applyState(S); } });
     // read-only hooks for headless tests / debugging (screen position of overlay features, etc.)
-    window.__atlas = { overlays, project, layerActiveFeats, baseDims, identify, atlasState, applyState, shareUrl };
+    window.__atlas = { overlays, project, unproject, layerActiveFeats, baseDims, identify, atlasState, applyState, shareUrl };
   }
   boot();
 })();
