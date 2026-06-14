@@ -140,6 +140,13 @@
   #tip { position:absolute; pointer-events:none; background:#04110f; color:#e6edf3;
     border:1px solid var(--accent); border-radius:5px; padding:2px 7px; font-size:12px;
     transform:translate(-50%,-150%); white-space:nowrap; display:none; z-index:7; }
+  /* hover list for a clustered "…" badge of overlapping points */
+  #clustip { position:absolute; background:rgba(6,12,18,.96); border:1px solid var(--accent);
+    border-radius:7px; padding:5px 4px 5px 8px; font-size:12px; display:none; z-index:9;
+    max-width:240px; max-height:230px; overflow:auto; box-shadow:0 8px 28px rgba(0,0,0,.55); }
+  #clustip .ctt { color:var(--mut); font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; padding:0 0 3px; }
+  #clustip .ci { display:flex; align-items:center; gap:6px; padding:1.5px 0; color:#dce6ef; white-space:nowrap; }
+  #clustip .ci .cd { width:8px; height:8px; border-radius:2px; flex:0 0 auto; outline:1px solid rgba(255,255,255,.2); }
   #ident { position:absolute; left:12px; top:12px; background:rgba(12,17,22,.92);
     border:1px solid var(--line); border-radius:8px; padding:8px 12px; max-width:280px;
     font-size:12.5px; display:none; z-index:6; }
@@ -290,9 +297,18 @@
   .ctxwin .ch { position:absolute; top:0; bottom:0; width:9px; cursor:ew-resize; }
   .ctxwin .ch.l { left:-5px; } .ctxwin .ch.r { right:-5px; }
   .mapctl button.on { color:#04110f; background:var(--accent2); border-color:var(--accent2); }
-  #ident .idhead { font-size:13px; margin-bottom:5px; }
-  #ident .idclose { float:right; cursor:pointer; color:var(--mut); margin:-2px -4px 0 8px; font-size:15px; line-height:1; }
-  #ident .idclose:hover { color:var(--ink); }
+  #ident.pinned { border-color:var(--accent2); box-shadow:0 0 0 1px rgba(240,163,94,.35), 0 8px 26px rgba(0,0,0,.45); }
+  #ident .idhead { font-size:13px; margin-bottom:5px; padding-right:38px; }
+  #ident .idbtns { position:absolute; top:6px; right:8px; display:flex; gap:2px; }
+  #ident .idclose, #ident .idpin { cursor:pointer; color:var(--mut); font-size:14px; line-height:1; padding:1px 3px; border-radius:4px; }
+  #ident .idclose:hover, #ident .idpin:hover { color:var(--ink); background:rgba(255,255,255,.08); }
+  #ident .idpin.on { color:var(--accent2); }
+  #ident .idlink { color:var(--accent2); text-decoration:none; font-weight:650; }
+  #ident .idlink:hover { text-decoration:underline; }
+  #ident .idcode { color:var(--mut); font-size:10.5px; font-family:ui-monospace,Consolas,monospace; margin-left:5px; }
+  #ident .idspark { margin-top:7px; display:flex; align-items:center; gap:7px; }
+  #ident .idspark svg { display:block; flex:0 0 auto; }
+  #ident .idspark .sl { color:var(--mut); font-size:11px; font-variant-numeric:tabular-nums; }
   #ident table.idmeta { border-collapse:collapse; width:100%; max-width:280px; }
   #ident table.idmeta td { padding:2px 0; vertical-align:top; font-size:12px; }
   #ident table.idmeta td:first-child { color:var(--accent); white-space:nowrap; padding-right:12px; }
@@ -371,6 +387,7 @@
     <div class="view" id="mapView">
       <canvas id="map" tabindex="0" role="application" aria-label="Interactive historical world map. Arrow keys pan, plus and minus zoom, Enter identifies the centre, 0 resets the view."></canvas>
       <div id="tip"></div>
+      <div id="clustip"></div>
       <div id="ident"></div>
       <div id="hudNW" class="hudcorner"></div>
       <div id="hudSE" class="hudcorner"></div>
@@ -2450,7 +2467,7 @@ let wasm_bindgen = (function(exports) {
     if (!_vig || _vigW !== W || _vigH !== H) { _vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, 0.85 * Math.hypot(W / 2, H / 2)); _vig.addColorStop(0, "rgba(0,0,0,0)"); _vig.addColorStop(1, "rgba(0,0,0,.24)"); _vigW = W; _vigH = H; }
     ctx.fillStyle = _vig; ctx.fillRect(0, 0, W, H);
     ctx.strokeStyle = "rgba(63,182,168,.26)"; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
-    updateHUD();
+    updateHUD(); repositionIdent();
     _anim = !!_tween || !!(_appeared && now < _pulseUntil); if (_anim) requestDraw();
   }
   // Frame the view on a set of features (legend click / double-click / Fit) — in
@@ -2778,6 +2795,7 @@ let wasm_bindgen = (function(exports) {
   }
   function drawOverlays(ctx) {
     const [W, H] = baseDims();
+    const labelPts = [];   // visible point features across all layers, for on-map labelling + decluttering
     for (const layer of overlays) {
       if (!layer.on || !layer.feats) continue;
       const fts = layerActiveFeats(layer);
@@ -2808,11 +2826,67 @@ let wasm_bindgen = (function(exports) {
         if (!isFinite(x) || !isFinite(y) || x < -4 || x > W + 4 || y < -4 || y > H + 4) continue;   // off-screen: doesn't consume the cap
         if (n >= OVL_CAP) break;
         addGlyph(ctx, shape, x, y, dotR); n++;
+        if (f.label) labelPts.push({ x, y, label: f.label, color: col, feat: f, layer });
       }
       ctx.globalAlpha = 0.9; ctx.fill();
       ctx.globalAlpha = 0.7; ctx.lineWidth = 0.8; ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.stroke();
       ctx.globalAlpha = 1;
     }
+    drawPointLabels(ctx, labelPts, W, H);
+  }
+  // Label isolated points; replace dense groups with a clickable/hoverable "…" badge that lists its members.
+  let _clusters = [];   // [{x,y,r,items:[{label,color,feat,layer}]}] — hover targets for the cluster list
+  function drawPointLabels(ctx, pts, W, H) {
+    _clusters = [];
+    if (_dragging || !pts.length || pts.length > 9000) return;   // skip while panning (kept smooth) or in a pathological flood
+    const R = 15;   // points within this many px merge into one cluster
+    const cell = R, hash = new Map();
+    pts.forEach((p, i) => { const k = Math.floor(p.x / cell) + "," + Math.floor(p.y / cell); let a = hash.get(k); if (!a) hash.set(k, a = []); a.push(i); });
+    const used = new Uint8Array(pts.length), singles = [];
+    for (let i = 0; i < pts.length; i++) {
+      if (used[i]) continue;
+      const p = pts[i], cx = Math.floor(p.x / cell), cy = Math.floor(p.y / cell), grp = [i]; used[i] = 1;
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { const a = hash.get((cx + dx) + "," + (cy + dy)); if (!a) continue; for (const j of a) { if (used[j]) continue; const q = pts[j]; if ((q.x - p.x) ** 2 + (q.y - p.y) ** 2 < R * R) { grp.push(j); used[j] = 1; } } }
+      if (grp.length === 1) singles.push(i);
+      else { let mx = 0, my = 0; for (const j of grp) { mx += pts[j].x; my += pts[j].y; } _clusters.push({ x: mx / grp.length, y: my / grp.length, r: 10, items: grp.map((j) => pts[j]) }); }
+    }
+    // 1) cluster "…" badges (drawn first so single labels can avoid them)
+    const placed = [];
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (const cl of _clusters) {
+      const x = Math.round(cl.x), y = Math.round(cl.y);
+      ctx.beginPath(); ctx.arc(x, y, 9, 0, 6.2832);
+      ctx.fillStyle = "rgba(8,14,20,.9)"; ctx.fill();
+      ctx.lineWidth = 1; ctx.strokeStyle = "rgba(63,182,168,.8)"; ctx.stroke();
+      ctx.fillStyle = "#cfe6e2"; ctx.font = "700 12px ui-sans-serif,system-ui,sans-serif"; ctx.fillText("…", x, y - 1);
+      const n = ("" + cl.items.length);   // small amber count badge in the corner
+      ctx.fillStyle = "#f0a35e"; ctx.beginPath(); ctx.arc(x + 9, y - 8, 7, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = "#08121e"; ctx.font = "700 9px ui-sans-serif,system-ui,sans-serif"; ctx.fillText(cl.items.length > 99 ? "99+" : n, x + 9, y - 7);
+      placed.push({ x0: x - 11, y0: y - 16, x1: x + 17, y1: y + 11 });
+    }
+    // 2) labels for isolated points, collision-avoided, layer-coloured, capped
+    ctx.font = "600 11px ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif";
+    ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+    let drawn = 0; const CAP = 26, pad = 8;
+    for (const i of singles) {
+      if (drawn >= CAP) break;
+      const p = pts[i]; if (p.x < 2 || p.x > W - 2 || p.y < 8 || p.y > H - 8) continue;
+      const txt = p.label.length > 26 ? p.label.slice(0, 25) + "…" : p.label;
+      const tw = ctx.measureText(txt).width;
+      const opts = [[p.x + pad, "left"], [p.x - pad - tw, "left"]];   // right of the dot, else left
+      let box = null;
+      for (const [bx] of opts) {
+        const r = { x0: bx - 2, y0: p.y - 8, x1: bx + tw + 2, y1: p.y + 8 };
+        if (r.x0 < 0 || r.x1 > W) continue;
+        if (!placed.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0)) { box = { bx, r }; break; }
+      }
+      if (!box) continue;
+      placed.push(box.r);
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(6,12,18,.92)"; ctx.strokeText(txt, box.bx, p.y);
+      ctx.fillStyle = p.color; ctx.fillText(txt, box.bx, p.y);
+      drawn++;
+    }
+    ctx.globalAlpha = 1;
   }
   function layerCount(l) {   // visible-at-the-current-year / total — so the number tracks the map (and reads 0 when nothing shows here)
     if (l.err) return "✗ " + l.err;
@@ -3022,7 +3096,7 @@ let wasm_bindgen = (function(exports) {
     }
     new ResizeObserver(resize).observe(c); resize();
     let drag = null;
-    c.addEventListener("mousedown", (e) => { drag = { x: e.offsetX, y: e.offsetY, ox: view.ox, oy: view.oy, moved: false }; c.classList.add("drag"); });
+    c.addEventListener("mousedown", (e) => { drag = { x: e.offsetX, y: e.offsetY, ox: view.ox, oy: view.oy, moved: false }; c.classList.add("drag"); $("clustip").style.display = "none"; });
     window.addEventListener("mouseup", () => { c.classList.remove("drag"); if (_dragging) { _dragging = false; requestDraw(); saveLocal(); } setTimeout(() => (drag = null), 0); });
     c.addEventListener("mousemove", (e) => { if (drag) { view.ox = drag.ox + (e.offsetX - drag.x); view.oy = drag.oy + (e.offsetY - drag.y); clampView(); drag.moved = true; _dragging = true; requestDraw(); } else hover(e.offsetX, e.offsetY); });
     c.addEventListener("mouseleave", () => { $("tip").style.display = "none"; if (hoverLabel) { hoverLabel = null; requestDraw(); } });
@@ -3077,6 +3151,22 @@ let wasm_bindgen = (function(exports) {
       clampView(); requestDraw(); saveLocal(); e.preventDefault(); e.stopPropagation();   // stopPropagation so arrows don't also scrub the timeline
     });
   }
+  // ---- cluster "…" badge: hover shows the full list of the points stacked underneath ----
+  function clusterHit(mx, my) { for (const cl of _clusters) { const dx = mx - cl.x, dy = my - cl.y; if (dx * dx + dy * dy <= 14 * 14) return cl; } return null; }
+  let _clustipHover = false, _clusHideT = null;
+  function showClusTip(cl) {
+    const box = $("clustip"), [W, H] = baseDims(); clearTimeout(_clusHideT);
+    const cap = 18, items = cl.items.slice(0, cap);
+    box.innerHTML = `<div class="ctt">${cl.items.length} points here</div>` +
+      items.map((it) => `<div class="ci"><span class="cd" style="background:${it.color}"></span>${escapeHtml(it.label)}</div>`).join("") +
+      (cl.items.length > cap ? `<div class="ci" style="color:var(--mut)">+${cl.items.length - cap} more…</div>` : "");
+    box.style.display = "block";
+    const bw = box.offsetWidth, bh = box.offsetHeight;
+    let left = cl.x + 14; if (left + bw > W - 6) left = cl.x - 14 - bw; left = Math.max(6, Math.min(W - bw - 6, left));
+    let top = cl.y - 12; top = Math.max(6, Math.min(H - bh - 6, top));
+    box.style.left = left + "px"; box.style.top = top + "px";
+  }
+  function hideClusTip() { clearTimeout(_clusHideT); _clusHideT = setTimeout(() => { if (!_clustipHover) $("clustip").style.display = "none"; }, 150); }
   let _hoverT = 0;
   function hover(mx, my) {
     $("hudCur").textContent = "⌖ " + fmtLL(unproject(mx, my));   // cursor read-out is always immediate
@@ -3084,6 +3174,9 @@ let wasm_bindgen = (function(exports) {
     if (now - _hoverT < 30) return;   // throttle the (polygon-heavy) hit-test to ~33 Hz
     _hoverT = now;
     const tip = $("tip"), c = $("map");
+    const cl = clusterHit(mx, my);   // a clustered "…" badge takes priority — show the stacked list
+    if (cl) { showClusTip(cl); tip.style.display = "none"; c.style.cursor = "pointer"; if (hoverLabel) { hoverLabel = null; requestDraw(); } return; }
+    if (!_clustipHover) hideClusTip();
     // a data-layer feature (the clickable dots/shapes) takes tooltip priority over a border
     const hit = overlayHit(mx, my);
     let lab = null, ax = mx, ay = my, onPoint = false;
@@ -3136,7 +3229,28 @@ let wasm_bindgen = (function(exports) {
     if (layer.def.kind === "interval") return yearLabel(f.s) + " – " + (f.e >= 2100 ? "present" : yearLabel(f.e));
     return yearLabel(f.year);
   }
-  // place the identify card near the clicked point: above it if there's room, else below; clamped to the view
+  // a small layer-coloured sparkline of the feature's instant/interval span within the full timeline, with a current-year marker
+  function spanSparkline(layer, f) {
+    const lo = minY, hi = maxY, span = (hi - lo) || 1, w = 132, h = 16, col = layer.def.color;
+    const X = (v) => ((Math.max(lo, Math.min(hi, v)) - lo) / span) * (w - 2) + 1;
+    let mark;
+    if (layer.def.kind === "interval") { const x0 = X(f.s), x1 = X(f.e >= 2100 ? hi : f.e); mark = `<rect x="${x0.toFixed(1)}" y="5" width="${Math.max(2, x1 - x0).toFixed(1)}" height="6" rx="2" fill="${col}"/>`; }
+    else { mark = `<circle cx="${X(f.year).toFixed(1)}" cy="8" r="3.2" fill="${col}"/>`; }
+    const cxn = X(curEra).toFixed(1), cur = `<line x1="${cxn}" y1="1" x2="${cxn}" y2="${h - 1}" stroke="#f0a35e" stroke-width="1"/>`;
+    return `<div class="idspark" title="time span over ${escapeHtml(yearLabel(lo))} – ${escapeHtml(yearLabel(hi))} (amber line = current year)"><svg width="${w}" height="${h}"><rect x="1" y="7" width="${w - 2}" height="2" rx="1" fill="rgba(255,255,255,.13)"/>${mark}${cur}</svg><span class="sl">${escapeHtml(featSpan(layer, f))}</span></div>`;
+  }
+  // a human label that links out, with its identifier code shown small (Wikidata Q-ids, IRIs, …)
+  function labelCodeLink(label, iri) {
+    const t = escapeHtml(label || "(unnamed)");
+    if (/^https?:\/\//i.test(iri)) return `<a class="idlink" href="${escapeHtml(safeUrl(iri))}" target="_blank" rel="noopener">${t}</a><span class="idcode">${escapeHtml(localName(iri))} ↗</span>`;
+    return `<b>${t}</b>`;
+  }
+  const idHead = (inner) => `<div class="idbtns"><span class="idpin" title="Pin — keep this card while you pan/zoom">📌</span><span class="idclose" title="close">×</span></div><div class="idhead">${inner}</div>`;
+  // ---- the identify card tracks a geo-anchor: it follows the map when pinned, and vanishes on a move when not ----
+  let _ident = null;   // { lon, lat, pinned, sig }
+  function viewSig() { return Math.round(view.ox) + "_" + Math.round(view.oy) + "_" + view.scale.toFixed(3); }
+  function setAnchor(lon, lat) { _ident = { lon, lat, pinned: false, sig: viewSig() }; $("ident").classList.remove("pinned"); }
+  // place the identify card near the anchor point: above it if there's room, else below; clamped to the view
   function positionIdent(ax, ay) {
     const box = $("ident"), [W, H] = baseDims();
     box.style.display = "block";
@@ -3145,18 +3259,22 @@ let wasm_bindgen = (function(exports) {
     let top = ay - bh - 12;                                   // above
     if (top < 8) top = Math.min(H - bh - 8, ay + 16);         // not enough room above → below
     box.style.left = left + "px"; box.style.top = Math.max(8, top) + "px";
+    if (_ident) _ident.sig = viewSig();
+  }
+  function repositionIdent() {   // called each draw: keep a pinned card glued to its point; drop an unpinned one once the view moves
+    const box = $("ident");
+    if (!_ident || box.style.display === "none") return;
+    if (_ident.pinned) { const [px, py] = project(_ident.lon, _ident.lat); positionIdent(isFinite(px) ? px : 0, isFinite(py) ? py : 0); }
+    else if (_ident.sig !== viewSig()) { box.style.display = "none"; box.classList.remove("pinned"); _ident = null; }
   }
   function showFeatureInfo(layer, f) {
-    const box = $("ident"), iri = f.iri || "";
-    const link = /^https?:\/\//i.test(iri)
-      ? `<a href="${escapeHtml(safeUrl(iri))}" target="_blank" rel="noopener">${escapeHtml(iri)} ↗</a>`
-      : (iri ? `<span class="mut">${escapeHtml(iri)}</span>` : "");
+    const box = $("ident");
+    setAnchor(f.lon, f.lat);
     box.innerHTML =
-      `<div class="idhead"><span class="idclose" title="close">×</span>${glyphSvg(glyphShape(layer.def.key || layer.def.name), layer.def.color)}<b>${escapeHtml(f.label || "(unnamed)")}</b></div>` +
+      idHead(`${glyphSvg(glyphShape(layer.def.key || layer.def.name), layer.def.color)}${labelCodeLink(f.label, f.iri || "")}`) +
       `<table class="idmeta"><tr><td>layer</td><td>${escapeHtml(layer.def.name)}</td></tr>` +
-      `<tr><td>${layer.def.kind === "interval" ? "span" : "year"}</td><td>${escapeHtml(featSpan(layer, f))}</td></tr>` +
       `<tr><td>coords</td><td>${f.lon.toFixed(3)}, ${f.lat.toFixed(3)}</td></tr></table>` +
-      (link ? `<div class="mut idiri" style="margin-top:6px">${link}</div>` : "");
+      spanSparkline(layer, f);
     const [px, py] = project(f.lon, f.lat);
     positionIdent(isFinite(px) ? px : 0, isFinite(py) ? py : 0);
   }
@@ -3169,8 +3287,9 @@ let wasm_bindgen = (function(exports) {
     if (hit) { showFeatureInfo(hit.layer, hit.feat); return; }
     const [lon, lat] = unproject(mx, my);
     if (!isFinite(lon) || !isFinite(lat) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {  // clicked off the projected world
-      const box = $("ident"); highlight = null; box.innerHTML = `<span class="mut">Click inside the mapped world.</span>`; box.style.display = "block"; requestDraw(); return;
+      const box = $("ident"); highlight = null; _ident = null; box.classList.remove("pinned"); box.innerHTML = `<span class="mut">Click inside the mapped world.</span>`; box.style.display = "block"; requestDraw(); return;
     }
+    setAnchor(lon, lat);   // territory card follows this geo-point when pinned
     // one query: pick the territory under the point, then list all its direct properties
     const q = `SELECT ?label ?p ?o WHERE { ?t ex:year ${curEra} ; rdfs:label ?label ;\n  geo:hasGeometry/geo:asWKT ?w . FILTER(geof:sfContains(?w, "POINT(${lon.toFixed(3)} ${lat.toFixed(3)})"^^geo:wktLiteral)) ?t ?p ?o }`;
     let rows = []; try { rows = (await runRaw(q)).rows || []; } catch (e) {}
@@ -3184,7 +3303,7 @@ let wasm_bindgen = (function(exports) {
         props.push([pk, r.o[0] === "<" ? localName(r.o) : lit(r.o)]);
       }
       box.innerHTML =
-        `<div class="idhead"><span class="idclose" title="close">×</span><b>${escapeHtml(highlight)}</b><span class="mut"> · ${yearLabel(curEra)}</span></div>` +
+        idHead(`<b>${escapeHtml(highlight)}</b><span class="mut"> · ${yearLabel(curEra)}</span>`) +
         `<table class="idmeta">${props.map(([k, vv]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(vv)}</td></tr>`).join("")}</table>` +
         `<div class="mut" style="margin-top:6px">(${lon.toFixed(2)}, ${lat.toFixed(2)}) · via geof:sfContains</div>` +
         `<button class="wktbtn wdlookup" data-label="${escapeHtml(highlight)}" style="margin-top:6px">🔎 Wikidata</button><div class="wdresult"></div>`;
@@ -3368,6 +3487,9 @@ let wasm_bindgen = (function(exports) {
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) { const d = (e.deltaX / 700) * tspan(); setWindow(vStart + d, vEnd + d); }
       else zoomBy(e.deltaY < 0 ? 0.85 : 1 / 0.85);
     }, { passive: false });
+    // keep the cluster list open while the pointer is over it (so it can be read / scrolled)
+    $("clustip").addEventListener("mouseenter", () => { _clustipHover = true; });
+    $("clustip").addEventListener("mouseleave", () => { _clustipHover = false; $("clustip").style.display = "none"; });
     // responsive sidebar drawer (narrow screens)
     const setSide = (open) => { document.body.classList.toggle("side-open", open); $("sidetoggle").setAttribute("aria-expanded", open ? "true" : "false"); };
     $("sidetoggle").addEventListener("click", () => setSide(!document.body.classList.contains("side-open")));
@@ -3381,12 +3503,13 @@ let wasm_bindgen = (function(exports) {
     $("setdrop").addEventListener("click", () => { cachedBytes = null; for (const k of [...qcache.keys()]) if (k.startsWith("cached\n")) qcache.delete(k); if (mode === "cached") { mode = "embedded"; $("src").value = "embedded"; runQuery(); } renderSettings(); });
     // dismiss the click-to-identify metadata panel
     $("ident").addEventListener("click", async (e) => {
-      if (e.target.classList.contains("idclose")) { $("ident").style.display = "none"; return; }
+      if (e.target.classList.contains("idclose")) { $("ident").style.display = "none"; $("ident").classList.remove("pinned"); _ident = null; return; }
+      if (e.target.classList.contains("idpin")) { if (_ident) { _ident.pinned = !_ident.pinned; e.target.classList.toggle("on", _ident.pinned); $("ident").classList.toggle("pinned", _ident.pinned); _ident.sig = viewSig(); } return; }
       const b = e.target.closest(".wdlookup"); if (!b) return;
       const out = b.nextElementSibling; out.innerHTML = '<span class="mut">searching Wikidata…</span>';
       try {
         const res = await wdSearch(b.dataset.label);
-        out.innerHTML = res.length ? res.slice(0, 3).map((r) => `<div class="wd1"><a href="${escapeHtml(safeUrl(r.url))}" target="_blank" rel="noopener">${escapeHtml(r.label)} (${escapeHtml(r.id)}) ↗</a>${r.desc ? ` — <span class="mut">${escapeHtml(r.desc)}</span>` : ""}</div>`).join("") : '<span class="mut">no Wikidata match</span>';
+        out.innerHTML = res.length ? res.slice(0, 3).map((r) => `<div class="wd1"><a class="idlink" href="${escapeHtml(safeUrl(r.url))}" target="_blank" rel="noopener">${escapeHtml(r.label)}</a><span class="idcode">${escapeHtml(r.id)} ↗</span>${r.desc ? `<div class="mut" style="font-size:11px;margin-top:1px">${escapeHtml(r.desc)}</div>` : ""}</div>`).join("") : '<span class="mut">no Wikidata match</span>';
       } catch (err) { out.innerHTML = '<span class="mut">Wikidata lookup failed (offline?)</span>'; }
     });
     // federate the visible territories with Wikidata (a real local⋈remote SPARQL query)
@@ -3449,7 +3572,7 @@ let wasm_bindgen = (function(exports) {
     try { await restoreSession(); } catch (e) {}
     window.addEventListener("hashchange", () => { const m = location.hash.match(/[#&]s=([^&]+)/); if (m) { const S = decodeState(m[1]); if (S) applyState(S); } });
     // read-only hooks for headless tests / debugging (screen position of overlay features, etc.)
-    window.__atlas = { overlays, project, unproject, layerActiveFeats, baseDims, identify, atlasState, applyState, shareUrl };
+    window.__atlas = { overlays, project, unproject, layerActiveFeats, baseDims, identify, atlasState, applyState, shareUrl, hover, get clusters() { return _clusters; }, get ident() { return _ident; } };
   }
   boot().catch((err) => {   // never leave the boot overlay spinning silently
     const b = $("boot");
