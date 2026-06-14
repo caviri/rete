@@ -149,7 +149,11 @@ whatever your query binds to `?wkt`.
     kind, point it at the embedded borders (offline) or any bucket `.rete`, and write
     the `SELECT … ?wkt`. The layer list is scrollable and **drag-to-reorder** (which
     sets draw order), and **clicking any overlay feature** opens an info card with its
-    label, date/span, layer, coordinates and source IRI.
+    label, date/span, layer, coordinates and source IRI. Your scene — year,
+    projection, active and custom layers, view — is **remembered in `localStorage`**
+    across reloads, and **🔗 Share** copies a link that encodes the whole view in the
+    URL hash (`#s=…`), so a custom-layer setup is reproducible by anyone who opens it
+    (the restore path hard-sanitises the incoming state).
 
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">

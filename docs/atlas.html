@@ -376,7 +376,11 @@ button lets you <strong>author your own</strong> — name it, pick a colour and 
 kind, point it at the embedded borders (offline) or any bucket <code>.rete</code>, and write
 the <code>SELECT … ?wkt</code>. The layer list is scrollable and <strong>drag-to-reorder</strong> (which
 sets draw order), and <strong>clicking any overlay feature</strong> opens an info card with its
-label, date/span, layer, coordinates and source IRI.</li>
+label, date/span, layer, coordinates and source IRI. Your scene — year,
+projection, active and custom layers, view — is <strong>remembered in <code>localStorage</code></strong>
+across reloads, and <strong>🔗 Share</strong> copies a link that encodes the whole view in the
+URL hash (<code>#s=…</code>), so a custom-layer setup is reproducible by anyone who opens it
+(the restore path hard-sanitises the incoming state).</li>
 </ol>
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">

@@ -318,7 +318,7 @@
           <label><input type="checkbox" data-layer="events" checked> Events</label>
         </details>
       </div>
-      <div class="mapctl"><button id="fit" title="Zoom to fit all territories">⤢ Fit</button><button id="home" title="Reset the view">⌂ Reset</button><button id="refbtn" title="Pin this era as a transparent reference overlay to compare against">📌 Ref</button><button id="wdbtn" title="Federate the visible territories with Wikidata (online)">🔗 Wikidata</button></div>
+      <div class="mapctl"><button id="fit" title="Zoom to fit all territories">⤢ Fit</button><button id="home" title="Reset the view">⌂ Reset</button><button id="refbtn" title="Pin this era as a transparent reference overlay to compare against">📌 Ref</button><button id="sharebtn" title="Copy a shareable link to this exact view (year, projection, layers, custom layers)">🔗 Share</button><button id="wdbtn" title="Federate the visible territories with Wikidata (online)">🔗 Wikidata</button></div>
     </div>
     <div class="view hidden" id="tableView"></div>
   </section>
@@ -2361,7 +2361,7 @@ let wasm_bindgen = (function(exports) {
     const cx = (xmin + xmax) / 2 * W, cy = (ymin + ymax) / 2 * H;
     view.scale = s; view.ox = W / 2 - cx * s; view.oy = H / 2 - cy * s; fitted = true; requestDraw();
   }
-  function setProjection(name) { if (!PROJECTIONS[name]) return; proj = name; POLY = name === "dymaxion"; projVer++; _oceanGrad = null; resetView(); }
+  function setProjection(name) { if (!PROJECTIONS[name]) return; proj = name; POLY = name === "dymaxion"; projVer++; _oceanGrad = null; resetView(); saveLocal(); }
   // ---- settings + query-cache inspector ----
   function renderSettings() {
     $("setcache").checked = cacheOn;
@@ -2508,6 +2508,7 @@ let wasm_bindgen = (function(exports) {
       if (curEra < vStart || curEra > vEnd) { const sp = vEnd - vStart; setWindow(curEra - sp / 2, curEra + sp / 2); }  // keep the playing/jumped era in view (setWindow → renderStrip re-marks .cur)
       else markStripCur();   // era stayed in view: just move the filmstrip's current marker
     }
+    saveLocal();
   }
 
   const MIN_SPAN = 30;   // tightest zoom, in years
@@ -2700,7 +2701,74 @@ let wasm_bindgen = (function(exports) {
   function reorderLayers(from, to) {
     if (from === to || from < 0 || to < 0 || from >= overlays.length || to >= overlays.length) return;
     const [m] = overlays.splice(from, 1); overlays.splice(to, 0, m);
-    renderLayerList(); renderTracks(); requestDraw();
+    renderLayerList(); renderTracks(); requestDraw(); saveLocal();
+  }
+  // ---- session state: localStorage persistence + a shareable #hash URL ----
+  const STATE_KEY = "rete-atlas-state";
+  let restoring = false;   // suppress saves while applying a restored/shared state
+  function atlasState() {
+    return {
+      v: 1, y: curScrub, proj, draw: { ...layers },
+      view: { s: +view.scale.toFixed(3), x: Math.round(view.ox), y: Math.round(view.oy) },
+      on: overlays.filter((l) => l.on).map((l) => l.def.key),
+      custom: overlays.filter((l) => l.def.custom).map((l) => ({
+        key: l.def.key, name: l.def.name, kind: l.def.kind, color: l.def.color,
+        q: l.def.q, embedded: !!l.def.embedded, file: l.def.file || null })),
+    };
+  }
+  // a custom-layer def from an UNTRUSTED source (shared URL / localStorage) — sanitised hard
+  function sanitizeCustom(d) {
+    if (!d || typeof d !== "object") return null;
+    const color = /^#[0-9a-fA-F]{3,8}$/.test(d.color) ? d.color : "#00e5ff";   // hex only — it lands in an inline style=
+    const kind = d.kind === "interval" ? "interval" : "instant";
+    const name = String(d.name == null ? "Custom layer" : d.name).slice(0, 80);
+    const q = String(d.q == null ? "" : d.q).slice(0, 4000);
+    if (!/\bSELECT\b/i.test(q) || !/\?wkt\b/.test(q)) return null;              // must be a SELECT binding ?wkt (a query, never JS)
+    const embedded = d.embedded === true;
+    let file = null;
+    if (!embedded) { file = String(d.file == null ? "" : d.file); if (!/^[\w][\w./-]{0,119}\.rete$/.test(file) || file.indexOf("..") >= 0) return null; }   // a bucket-relative .rete path, no traversal/cross-origin
+    return { key: "custom-" + (++customSeq), name, kind, color, q, custom: true, embedded, file };
+  }
+  let _saveT = null;
+  function saveLocal() {
+    if (restoring) return;
+    clearTimeout(_saveT);
+    _saveT = setTimeout(() => { try { localStorage.setItem(STATE_KEY, JSON.stringify(atlasState())); } catch (e) {} }, 400);
+  }
+  const b64u = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const unb64u = (s) => decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))));
+  function encodeState(S) { return b64u(JSON.stringify(S)); }
+  function decodeState(s) { try { return JSON.parse(unb64u(s)); } catch (e) { return null; } }
+  function shareUrl() { return location.origin + location.pathname + "#s=" + encodeState(atlasState()); }
+  async function applyState(S) {
+    if (!S || typeof S !== "object") return;
+    restoring = true;
+    try {
+      const onArr = (Array.isArray(S.on) ? S.on : []).slice(0, 64);   // cap so a giant shared array can't freeze the tab
+      const onSet = new Set(onArr);
+      const toLoad = [];
+      if (Array.isArray(S.custom)) for (const d of S.custom.slice(0, 16)) {
+        const def = sanitizeCustom(d); if (!def) continue;
+        const dup = overlays.find((o) => o.def.custom && o.def.q === def.q && o.def.name === def.name);
+        if (dup) { if (onSet.has(d.key)) toLoad.push(dup); continue; }   // already present — still honour its active state
+        addCustomLayer(def);
+        if (onSet.has(d.key)) toLoad.push(overlays[overlays.length - 1]);   // it was active in the saved state
+      }
+      for (const key of onArr) { const l = overlays.find((o) => o.def.key === key && !o.def.custom); if (l) toLoad.push(l); }
+      if (S.proj && PROJECTIONS[S.proj]) { setProjection(S.proj); $("proj").value = S.proj; }
+      if (S.draw && typeof S.draw === "object") { for (const k of ["fill", "labels", "graticule", "glow", "events"]) if (typeof S.draw[k] === "boolean") { layers[k] = S.draw[k]; const cb = document.querySelector(`.layers input[data-layer="${k}"]`); if (cb) cb.checked = S.draw[k]; } placeMarks(); }
+      if (typeof S.y === "number" && isFinite(S.y)) setScrub(Math.max(minY, Math.min(maxY, S.y)));
+      renderLayerList();
+      await Promise.all(toLoad.map(async (l) => { if (!l.on) { l.on = true; try { await loadLayer(l); } catch (e) {} } }));
+      if (S.view && isFinite(S.view.s)) { view.scale = Math.max(0.4, Math.min(12, S.view.s)); view.ox = +S.view.x || 0; view.oy = +S.view.y || 0; fitted = true; }   // pin so the boot auto-fit can't clobber the restored view
+      renderLayerList(); renderTracks(); requestDraw();
+    } finally { restoring = false; }
+  }
+  function restoreSession() {   // a shared #s=… hash wins over the last local session
+    const m = location.hash.match(/[#&]s=([^&]+)/);
+    if (m) { const S = decodeState(m[1]); if (S) return applyState(S); }
+    let S = null; try { S = JSON.parse(localStorage.getItem(STATE_KEY) || "null"); } catch (e) {}
+    return S ? applyState(S) : Promise.resolve();
   }
   function renderTracks() {   // a histogram "audio track" per active layer, aligned to the timeline window
     const host = $("tracks"), on = overlays.filter((l) => l.on);
@@ -2771,10 +2839,10 @@ let wasm_bindgen = (function(exports) {
     new ResizeObserver(resize).observe(c); resize();
     let drag = null;
     c.addEventListener("mousedown", (e) => { drag = { x: e.offsetX, y: e.offsetY, ox: view.ox, oy: view.oy, moved: false }; c.classList.add("drag"); });
-    window.addEventListener("mouseup", () => { c.classList.remove("drag"); if (_dragging) { _dragging = false; requestDraw(); } setTimeout(() => (drag = null), 0); });
+    window.addEventListener("mouseup", () => { c.classList.remove("drag"); if (_dragging) { _dragging = false; requestDraw(); saveLocal(); } setTimeout(() => (drag = null), 0); });
     c.addEventListener("mousemove", (e) => { if (drag) { view.ox = drag.ox + (e.offsetX - drag.x); view.oy = drag.oy + (e.offsetY - drag.y); drag.moved = true; _dragging = true; requestDraw(); } else hover(e.offsetX, e.offsetY); });
     c.addEventListener("mouseleave", () => { $("tip").style.display = "none"; if (hoverLabel) { hoverLabel = null; requestDraw(); } });
-    c.addEventListener("wheel", (e) => { e.preventDefault(); const f = e.deltaY < 0 ? 1.15 : 1 / 1.15; view.ox = e.offsetX - (e.offsetX - view.ox) * f; view.oy = e.offsetY - (e.offsetY - view.oy) * f; view.scale = Math.max(0.4, Math.min(12, view.scale * f)); requestDraw(); }, { passive: false });
+    c.addEventListener("wheel", (e) => { e.preventDefault(); const f = e.deltaY < 0 ? 1.15 : 1 / 1.15; view.ox = e.offsetX - (e.offsetX - view.ox) * f; view.oy = e.offsetY - (e.offsetY - view.oy) * f; view.scale = Math.max(0.4, Math.min(12, view.scale * f)); requestDraw(); saveLocal(); }, { passive: false });
     c.addEventListener("click", (e) => { if (drag && drag.moved) return; identify(e.offsetX, e.offsetY); });
     c.addEventListener("dblclick", () => zoomToFit(features));
   }
@@ -2932,8 +3000,14 @@ let wasm_bindgen = (function(exports) {
     document.querySelectorAll(".layers input[data-layer]").forEach((cb) => cb.addEventListener("change", () => {
       layers[cb.dataset.layer] = cb.checked;
       if (cb.dataset.layer === "events") placeMarks();
-      requestDraw();
+      requestDraw(); saveLocal();
     }));
+    // 🔗 Share — copy a link encoding this exact view; reflect it in the address bar
+    $("sharebtn").addEventListener("click", () => {
+      const enc = encodeState(atlasState());
+      if (history.replaceState) history.replaceState(null, "", "#s=" + enc);
+      copyText(location.origin + location.pathname + "#s=" + enc).then(() => flash($("sharebtn"), "✓ link copied"), () => flash($("sharebtn"), "✗ copy failed"));
+    });
     // timeline zoom controls (drag the context window below to pan/zoom too)
     $("zoomin").addEventListener("click", () => zoomBy(0.6));
     $("zoomout").addEventListener("click", () => zoomBy(1 / 0.6));
@@ -2948,14 +3022,14 @@ let wasm_bindgen = (function(exports) {
       const layer = overlays[+lab.dataset.i]; layer.on = e.target.checked;
       if (layer.on) { if (!layer.loaded) { try { await loadLayer(layer); } catch (err) {} } }
       else { layer.feats = null; layer.loaded = false; layer.activeBuf = null; }   // free memory; re-toggle re-queries the cached bytes
-      renderLayerList(); renderTracks(); requestDraw();
+      renderLayerList(); renderTracks(); requestDraw(); saveLocal();
     });
     // remove a custom layer (× on its row)
     $("layerlist").addEventListener("click", (e) => {
       if (!e.target.classList.contains("lyrdel")) return;
       e.preventDefault();
       const lab = e.target.closest(".lyr"); if (!lab) return;
-      overlays.splice(+lab.dataset.i, 1); renderLayerList(); renderTracks(); requestDraw();
+      overlays.splice(+lab.dataset.i, 1); renderLayerList(); renderTracks(); requestDraw(); saveLocal();
     });
     // drag to reorder (sets draw order / z-stacking + track order)
     let dragFrom = null;
@@ -2985,7 +3059,7 @@ let wasm_bindgen = (function(exports) {
       try { await loadLayer(layer); } catch (err) {}
       if (layer.err) { overlays.pop(); $("lmerr").textContent = "Layer error: " + layer.err; renderLayerList(); return; }   // drop the broken layer, keep the modal open
       $("layermodal").hidden = true; $("lmname").value = ""; $("lmq").value = "";
-      renderLayerList(); renderTracks(); requestDraw();
+      renderLayerList(); renderTracks(); requestDraw(); saveLocal();
     });
     // step one era back / forward
     $("stepb").addEventListener("click", () => stepEra(-1));
@@ -3066,8 +3140,11 @@ let wasm_bindgen = (function(exports) {
     $("marks").addEventListener("click", (e) => { const m = e.target.closest(".m"); if (m) setScrub(+m.dataset.y); });
     $("boot").remove();
     setScrub(years.indexOf(1914) >= 0 ? 1914 : years[Math.floor(years.length / 2)], true);
+    // restore a shared #s=… view (wins) or the last local session, then start persisting
+    try { await restoreSession(); } catch (e) {}
+    window.addEventListener("hashchange", () => { const m = location.hash.match(/[#&]s=([^&]+)/); if (m) { const S = decodeState(m[1]); if (S) applyState(S); } });
     // read-only hooks for headless tests / debugging (screen position of overlay features, etc.)
-    window.__atlas = { overlays, project, layerActiveFeats, baseDims, identify };
+    window.__atlas = { overlays, project, layerActiveFeats, baseDims, identify, atlasState, applyState, shareUrl };
   }
   boot();
 })();
