@@ -106,8 +106,11 @@
   .tabs button.on { background:var(--accent); color:#04110f; }
   .view { flex:1; position:relative; min-height:0; }
   .view.hidden { display:none; }
-  canvas { display:block; width:100%; height:100%; cursor:crosshair; touch-action:none; }
+  canvas { display:block; width:100%; height:100%; cursor:crosshair; touch-action:none; outline:none; }
   canvas.drag { cursor:grabbing; }
+  canvas:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  /* colour-blind aid: each overlay carries a marker shape, not just a hue */
+  .gsw { flex:0 0 auto; vertical-align:-2px; }
   /* map HUD: zoom + cursor readout (bottom-left), viewport corner coords (NW / SE) */
   #hudbar { position:absolute; left:10px; bottom:10px; z-index:6; pointer-events:none;
     background:rgba(8,14,20,.78); border:1px solid var(--line); border-radius:6px;
@@ -366,7 +369,7 @@
   <section class="mapwrap">
     <div class="tabs"><button id="tabMap" class="on">Map</button><button id="tabTable">Table</button></div>
     <div class="view" id="mapView">
-      <canvas id="map"></canvas>
+      <canvas id="map" tabindex="0" role="application" aria-label="Interactive historical world map. Arrow keys pan, plus and minus zoom, Enter identifies the centre, 0 resets the view."></canvas>
       <div id="tip"></div>
       <div id="ident"></div>
       <div id="hudNW" class="hudcorner"></div>
@@ -434,7 +437,7 @@
 </div>
 <div id="mtip"></div>
 <div id="wktmodal" hidden>
-  <div class="wktbox">
+  <div class="wktbox" role="dialog" aria-modal="true" aria-label="WKT geometry">
     <div class="wkttop"><b id="wkttitle">WKT</b><span class="sp"></span><button id="wktmcopy">⧉ copy</button><button id="wktmclose" title="close">×</button></div>
     <pre id="wktmtext"></pre>
   </div>
@@ -451,13 +454,13 @@
   </div>
 </div>
 <div id="wdmodal" hidden>
-  <div class="wktbox">
+  <div class="wktbox" role="dialog" aria-modal="true" aria-label="Wikidata federation">
     <div class="wkttop"><b id="wdtitle">Wikidata federation</b><span class="sp"></span><a id="wdquery" href="#" target="_blank" rel="noopener" style="color:var(--accent);font-size:12px;text-decoration:none">open query ↗</a><button id="wdclose" title="close">×</button></div>
     <div id="wdbody"></div>
   </div>
 </div>
 <div id="setmodal" hidden>
-  <div class="setbox">
+  <div class="setbox" role="dialog" aria-modal="true" aria-label="Settings and query cache">
     <div class="settop"><b>Settings &amp; query cache</b><span class="sp"></span><button id="setclose" title="close">×</button></div>
     <div class="setbody">
       <label class="setrow"><input type="checkbox" id="setcache" checked> Cache query results — re-running an identical query (per data source) is instant</label>
@@ -471,7 +474,7 @@
 </div>
 
 <div id="layermodal" hidden>
-  <div class="setbox lmbox">
+  <div class="setbox lmbox" role="dialog" aria-modal="true" aria-label="Add a data layer">
     <div class="settop"><b>＋ Add a data layer</b><span class="sp"></span><button id="lmclose" title="close">×</button></div>
     <div class="setbody">
       <p class="mut" style="margin:0 0 8px">A layer <em>is</em> a SPARQL query: every row that binds <code>?wkt</code> is plotted, filtered to the timeline year. Bind <code>?label</code>, <code>?wkt</code>, and either <code>?year</code> (instant) or <code>?s</code>/<code>?e</code> (interval). <code>?x</code> (the subject) makes features clickable.</p>
@@ -487,7 +490,7 @@
 </div>
 
 <div id="viewsmodal" hidden>
-  <div class="setbox lmbox">
+  <div class="setbox lmbox" role="dialog" aria-modal="true" aria-label="Saved views">
     <div class="settop"><b>📑 Saved views</b><span class="sp"></span><button id="vmclose" title="close">×</button></div>
     <div class="setbody">
       <div class="lmrow"><input id="vmname" type="text" placeholder="Name this view (e.g. WWI empires + battles)"><button id="vmsave" class="setbtn">Save current</button></div>
@@ -1244,7 +1247,7 @@ __GLUE_JS__
       return `<div class="qrow"><code title="${escapeHtml(v.q)}">${escapeHtml(v.mode)} · ${escapeHtml(q1.slice(0, 90))}</code><span class="qmeta">${v.rows} rows · ${(v.bytes / 1024).toFixed(1)} KB</span></div>`;
     }).join("") : '<p class="mut">No queries cached yet.</p>';
   }
-  function openSettings() { renderSettings(); $("setmodal").hidden = false; }
+  function openSettings() { renderSettings(); $("setmodal").hidden = false; $("setclose").focus(); }
   function resetView() { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; requestDraw(); }
   function legend() {
     const seen = new Map();
@@ -1513,6 +1516,31 @@ __GLUE_JS__
     else { const win = Math.max(20, (vEnd - vStart) / 12); r = layer.feats.filter((f) => Math.abs(f.year - curScrub) <= win); }   // instant: a window around the playhead
     layer.activeBuf = { key, r }; return r;
   }
+  // ── colour-blind aid: a stable marker shape per layer, so layers differ by shape as well as hue ──
+  const GLYPHS = ["circle", "square", "triangle", "diamond", "wedge", "hex"];
+  function glyphShape(key) { let h = 0; const k = key || ""; for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) >>> 0; return GLYPHS[h % GLYPHS.length]; }
+  function addGlyph(ctx, shape, x, y, r) {   // append the shape's subpath to the current canvas path (filled)
+    switch (shape) {
+      case "square": ctx.rect(x - r, y - r, 2 * r, 2 * r); break;
+      case "triangle": ctx.moveTo(x, y - r); ctx.lineTo(x + r, y + r * 0.8); ctx.lineTo(x - r, y + r * 0.8); ctx.closePath(); break;
+      case "wedge": ctx.moveTo(x, y + r); ctx.lineTo(x + r, y - r * 0.8); ctx.lineTo(x - r, y - r * 0.8); ctx.closePath(); break;
+      case "diamond": ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); break;
+      case "hex": for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3, px = x + r * Math.cos(a), py = y + r * Math.sin(a); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); } ctx.closePath(); break;
+      default: ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, 6.2832);
+    }
+  }
+  function glyphSvg(shape, color, size) {   // matching inline-SVG swatch for the HTML legends
+    size = size || 12; const r = 4.4, x = 5, y = 5; let inner;
+    switch (shape) {
+      case "square": inner = `<rect x="${x - r}" y="${y - r}" width="${2 * r}" height="${2 * r}" rx="1"/>`; break;
+      case "triangle": inner = `<polygon points="${x},${y - r} ${x + r},${y + r * 0.8} ${x - r},${y + r * 0.8}"/>`; break;
+      case "wedge": inner = `<polygon points="${x},${y + r} ${x + r},${y - r * 0.8} ${x - r},${y - r * 0.8}"/>`; break;
+      case "diamond": inner = `<polygon points="${x},${y - r} ${x + r},${y} ${x},${y + r} ${x - r},${y}"/>`; break;
+      case "hex": { const p = []; for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; p.push((x + r * Math.cos(a)).toFixed(1) + "," + (y + r * Math.sin(a)).toFixed(1)); } inner = `<polygon points="${p.join(" ")}"/>`; break; }
+      default: inner = `<circle cx="${x}" cy="${y}" r="${r}"/>`;
+    }
+    return `<svg class="gsw" width="${size}" height="${size}" viewBox="0 0 10 10" aria-hidden="true"><g fill="${color}" stroke="rgba(0,0,0,.5)" stroke-width=".7">${inner}</g></svg>`;
+  }
   function drawOverlays(ctx) {
     const [W, H] = baseDims();
     for (const layer of overlays) {
@@ -1537,13 +1565,14 @@ __GLUE_JS__
       }
       // 2) point features batched into one path, from the cached net projection; cull to the viewport BEFORE the cap so high zoom keeps on-screen points
       const dotR = Math.max(3, Math.min(8, 3.2 + view.scale * 0.4));   // bigger dots, growing with zoom so they stay clickable
+      const shape = glyphShape(layer.def.key || layer.def.name);   // layers differ by shape, not just hue (colour-blind aid)
       ctx.fillStyle = col; ctx.beginPath();
       for (const f of fts) {
         if (f.rings) continue;
         const np = ovPt(f), x = np[0] * sx + ox, y = np[1] * sy + oy;
         if (!isFinite(x) || !isFinite(y) || x < -4 || x > W + 4 || y < -4 || y > H + 4) continue;   // off-screen: doesn't consume the cap
         if (n >= OVL_CAP) break;
-        ctx.moveTo(x + dotR, y); ctx.arc(x, y, dotR, 0, 6.2832); n++;
+        addGlyph(ctx, shape, x, y, dotR); n++;
       }
       ctx.globalAlpha = 0.9; ctx.fill();
       ctx.globalAlpha = 0.7; ctx.lineWidth = 0.8; ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.stroke();
@@ -1560,7 +1589,7 @@ __GLUE_JS__
     $("layerlist").innerHTML = overlays.map((l, i) =>
       `<label class="lyr${l.loading ? " loading" : ""}${l.err ? " err" : ""}" data-i="${i}" draggable="true" title="${l.err ? escapeHtml(l.err) : escapeHtml(l.def.embedded ? "embedded query" : l.def.file)}">` +
       `<span class="grip" title="drag to reorder">⠿</span><input type="checkbox"${l.on ? " checked" : ""}>` +
-      `<span class="sw" style="background:${l.def.color}"></span><span class="lyrname">${escapeHtml(l.def.name)}</span>` +
+      `${glyphSvg(glyphShape(l.def.key || l.def.name), l.def.color)}<span class="lyrname">${escapeHtml(l.def.name)}</span>` +
       `<span class="cnt">${l.on || l.err ? escapeHtml(layerCount(l)) : ""}</span>` +
       (l.def.custom ? `<span class="lyrdel" title="remove this custom layer">×</span>` : "") +
       `</label>`).join("");
@@ -1680,7 +1709,7 @@ __GLUE_JS__
     const host = $("ovlegend"), on = overlays.filter((l) => l.on && l.loaded);
     if (!on.length) { host.innerHTML = ""; host.style.display = "none"; return; }
     host.style.display = "block";
-    host.innerHTML = on.map((l) => `<div class="ovl"><span class="sw" style="background:${l.def.color}"></span><span class="ovn">${escapeHtml(l.def.name)}</span><span class="ovc">${escapeHtml(layerCount(l))}</span></div>`).join("");
+    host.innerHTML = on.map((l) => `<div class="ovl">${glyphSvg(glyphShape(l.def.key || l.def.name), l.def.color, 11)}<span class="ovn">${escapeHtml(l.def.name)}</span><span class="ovc">${escapeHtml(layerCount(l))}</span></div>`).join("");
   }
   function renderTracks() {   // a histogram "audio track" per active layer, aligned to the timeline window
     renderOverlayLegend(); updateLayerCounts();
@@ -1797,6 +1826,21 @@ __GLUE_JS__
       else if (ptrs.size === 0) { if (!tmoved) identify(e.offsetX, e.offsetY); tpan = null; saveLocal(); }
     };
     c.addEventListener("pointerup", ptrEnd); c.addEventListener("pointercancel", ptrEnd);
+    // ---- keyboard control (when the map is focused): arrows pan, +/- zoom, Enter identifies the centre, 0 resets ----
+    c.addEventListener("keydown", (e) => {
+      const [W, H] = baseDims(), step = e.shiftKey ? 160 : 60, k = e.key;
+      const zc = (f) => { const ns = Math.max(0.4, Math.min(64, view.scale * f)), ef = ns / view.scale; view.ox = W / 2 - (W / 2 - view.ox) * ef; view.oy = H / 2 - (H / 2 - view.oy) * ef; view.scale = ns; };
+      if (k === "ArrowLeft") view.ox += step;
+      else if (k === "ArrowRight") view.ox -= step;
+      else if (k === "ArrowUp") view.oy += step;
+      else if (k === "ArrowDown") view.oy -= step;
+      else if (k === "+" || k === "=") zc(1.2);
+      else if (k === "-" || k === "_") zc(1 / 1.2);
+      else if (k === "Enter" || k === " ") { identify(W / 2, H / 2); e.preventDefault(); e.stopPropagation(); return; }
+      else if (k === "0" || k === "Home") { resetView(); e.preventDefault(); e.stopPropagation(); return; }
+      else return;
+      clampView(); requestDraw(); saveLocal(); e.preventDefault(); e.stopPropagation();   // stopPropagation so arrows don't also scrub the timeline
+    });
   }
   let _hoverT = 0;
   function hover(mx, my) {
@@ -1873,7 +1917,7 @@ __GLUE_JS__
       ? `<a href="${escapeHtml(safeUrl(iri))}" target="_blank" rel="noopener">${escapeHtml(iri)} ↗</a>`
       : (iri ? `<span class="mut">${escapeHtml(iri)}</span>` : "");
     box.innerHTML =
-      `<div class="idhead"><span class="idclose" title="close">×</span><span class="sw" style="background:${layer.def.color}"></span><b>${escapeHtml(f.label || "(unnamed)")}</b></div>` +
+      `<div class="idhead"><span class="idclose" title="close">×</span>${glyphSvg(glyphShape(layer.def.key || layer.def.name), layer.def.color)}<b>${escapeHtml(f.label || "(unnamed)")}</b></div>` +
       `<table class="idmeta"><tr><td>layer</td><td>${escapeHtml(layer.def.name)}</td></tr>` +
       `<tr><td>${layer.def.kind === "interval" ? "span" : "year"}</td><td>${escapeHtml(featSpan(layer, f))}</td></tr>` +
       `<tr><td>coords</td><td>${f.lon.toFixed(3)}, ${f.lat.toFixed(3)}</td></tr></table>` +

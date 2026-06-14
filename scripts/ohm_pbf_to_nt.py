@@ -69,23 +69,38 @@ _WKT = osmium.geom.WKTFactory()
 # OHM_SIMPLIFY_TOL (0 disables).
 SIMPLIFY_TOL = float(os.environ.get("OHM_SIMPLIFY_TOL", "0.0005"))
 _COORD_PRECISION = 6
+# Hard cap on a single WKT literal (chars). At the base tolerance ~9,600 huge
+# multi-part admin boundaries still average ~240 KB (2.3 GB total); we coarsen
+# those progressively until each fits. Bounds the .nt, the in-memory build, and
+# the atlas's naive WKT parser. Override via OHM_MAX_WKT_CHARS.
+MAX_WKT_CHARS = int(os.environ.get("OHM_MAX_WKT_CHARS", "20000"))
 
 
 def _simplify(raw_wkt: str) -> str:
-    """Simplify (Douglas-Peucker) + round a line/polygon WKT. Falls back to the
-    raw geometry on any parse/simplify error so a feature is never silently lost."""
+    """Simplify (Douglas-Peucker) + round a line/polygon WKT, coarsening
+    progressively until the literal is under MAX_WKT_CHARS. Falls back to the raw
+    geometry on any parse error so a feature is never silently lost."""
     try:
         g = _shapely_wkt.loads(raw_wkt)
-        if SIMPLIFY_TOL > 0:
-            s = g.simplify(SIMPLIFY_TOL, preserve_topology=True)
-            if not s.is_empty:
-                g = s
-        # trim=True drops trailing zeros; strip Shapely's space after the type
-        # keyword ("POLYGON (" -> "POLYGON(") so WKT matches the other overlays.
-        out = _shapely_wkt.dumps(g, trim=True, rounding_precision=_COORD_PRECISION)
-        return re.sub(r"^([A-Z]+) ", r"\1", out, count=1)
     except Exception:  # noqa: BLE001 — keep the feature with its original geometry
         return raw_wkt
+    if SIMPLIFY_TOL <= 0:
+        return raw_wkt
+    tol = SIMPLIFY_TOL
+    out = raw_wkt
+    for _ in range(6):
+        try:
+            s = g.simplify(tol, preserve_topology=True)
+        except Exception:  # noqa: BLE001
+            break
+        if not s.is_empty:
+            g = s
+        out = _shapely_wkt.dumps(g, trim=True, rounding_precision=_COORD_PRECISION)
+        if len(out) <= MAX_WKT_CHARS:
+            break
+        tol *= 4  # still too big — coarsen and retry
+    # strip Shapely's space after the type keyword ("POLYGON (" -> "POLYGON(")
+    return re.sub(r"^([A-Z]+) ", r"\1", out, count=1)
 
 
 def _name(tags):
