@@ -6,7 +6,10 @@
 <title>rete · Historical Atlas — SPARQL + GIS over time</title>
 <style>
   :root { --bg:#0f1419; --panel:#161c24; --line:#26303c; --ink:#e6edf3; --mut:#a7b4c2;
-          --accent:#3fb6a8; --accent2:#f0a35e; }
+          --accent:#3fb6a8; --accent2:#f0a35e;
+          --side:370px;   /* sidebar width = the map's left border */
+          --tlgut:370px;  /* timeline left gutter: channel heads live here so every time-axis starts at the map border */
+          --tlpad:16px; } /* matching right padding for ruler + rack so playheads line up */
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
     font:14px/1.5 ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif; }
@@ -19,7 +22,7 @@
   header .sp { flex:1; }
   header a { color:var(--accent); text-decoration:none; font-size:12px; }
   main { flex:1; display:flex; min-height:0; }
-  .side { width:370px; flex:0 0 370px; border-right:1px solid var(--line);
+  .side { width:var(--side); flex:0 0 var(--side); border-right:1px solid var(--line);
     display:flex; flex-direction:column; min-height:0; background:var(--panel); }
   .side h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
     color:var(--mut); margin:0; padding:10px 12px 4px; display:flex; gap:8px; align-items:center; }
@@ -153,7 +156,7 @@
   #ident b { color:var(--accent2); }
   .timeline { flex:0 0 auto; border-top:1px solid var(--line); background:var(--panel);
     display:flex; flex-direction:column; align-items:stretch; }
-  .tlcol { display:flex; flex-direction:column; padding:14px 16px 6px; }
+  .tlcol { display:flex; flex-direction:column; padding:14px var(--tlpad) 6px 0; margin-left:var(--tlgut); }
   .timeline .yr { font-size:20px; font-weight:700; min-width:120px; color:var(--accent2);
     font-variant-numeric:tabular-nums; line-height:1.1; }
   .timeline .yr small { display:block; font-size:10.5px; color:var(--mut); font-weight:500; min-height:13px; }
@@ -251,7 +254,11 @@
   .settop .sp { flex:1; } .settop b { font-size:14px; color:var(--ink); }
   .settop #setclose { background:#0c1116; border:1px solid var(--line); color:var(--mut); border-radius:5px;
     font-size:16px; line-height:1; padding:1px 9px; cursor:pointer; }
-  .setbody { padding:12px 16px; overflow:auto; }
+  .setbody { padding:12px 16px; overflow:auto; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.22) transparent; }
+  .setbody::-webkit-scrollbar { width:9px; height:9px; }
+  .setbody::-webkit-scrollbar-thumb { background:rgba(255,255,255,.2); border-radius:5px; border:2px solid var(--panel); }
+  .setbody::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,.32); }
+  .setbody::-webkit-scrollbar-track { background:transparent; }
   .setbody h3 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--mut); margin:14px 0 6px; }
   .setrow { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:12.5px; color:#cdd9e5; }
   .setrow .sp { flex:1; } .setrow input { accent-color:var(--accent); }
@@ -320,6 +327,7 @@
   #sidescrim { display:none; }
   /* ── Responsive: collapse the fixed 370px sidebar into a slide-in drawer ── */
   @media (max-width:820px) {
+    :root { --tlgut:132px; --tlpad:10px; }   /* map fills width under the drawer → compact channel-head gutter */
     header { gap:8px; }
     header .sub { display:none; }
     header h1 { font-size:14px; }
@@ -383,13 +391,13 @@
   .tlbar .sp { flex:1; }
   .tlbar .rng { color:var(--mut); font-size:11px; font-variant-numeric:tabular-nums; }
   .tlbar .tlnext { color:var(--accent2); }
-  .rack { display:flex; flex-direction:column; gap:2px; padding:6px 12px 4px; max-height:34vh; overflow-y:auto;
+  .rack { display:flex; flex-direction:column; gap:2px; padding:6px var(--tlpad) 6px 0; max-height:34vh; overflow-y:auto;
     scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.2) transparent; }
   .rack::-webkit-scrollbar { width:8px; } .rack::-webkit-scrollbar-thumb { background:rgba(255,255,255,.18); border-radius:4px; }
   .chan { border:1px solid var(--line); border-radius:6px; background:#0c1116; overflow:hidden; }
   .chan.sel { border-color:rgba(63,182,168,.5); }
   .chanrow { display:flex; align-items:stretch; height:30px; }
-  .chanhead { display:flex; align-items:center; gap:5px; width:236px; flex:0 0 236px; padding:0 7px; border-right:1px solid var(--line); }
+  .chanhead { display:flex; align-items:center; gap:5px; width:calc(var(--tlgut) - 1px); flex:0 0 calc(var(--tlgut) - 1px); padding:0 9px 0 7px; border-right:1px solid var(--line); }
   .chanhead .chexp { background:none; border:none; color:var(--mut); cursor:pointer; font-size:10px; padding:0 1px; width:14px; flex:0 0 auto; transition:transform .15s; }
   .chanhead .chexp.open { transform:rotate(90deg); color:var(--ink); }
   .chanhead .cheye { background:none; border:none; cursor:pointer; font-size:13px; padding:0; width:18px; flex:0 0 auto; opacity:.85; }
@@ -397,8 +405,12 @@
   .chanhead .chname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:#dce6ef; }
   .chanhead .chcnt { color:var(--mut); font-size:10px; font-variant-numeric:tabular-nums; flex:0 0 auto; }
   .chanhead.err .chcnt { color:#ff6b6b; }
-  .chanhead .chedit { background:none; border:none; color:var(--mut); cursor:pointer; font-size:12px; padding:0 2px; flex:0 0 auto; opacity:0; }
-  .chanrow:hover .chedit { opacity:.8; } .chanhead .chedit:hover { color:var(--accent); }
+  .chanhead .chedit, .chanhead .chdel { background:none; border:none; color:var(--mut); cursor:pointer; font-size:12px; padding:0 3px; flex:0 0 auto; opacity:.7; border-radius:4px; }
+  .chanrow:hover .chedit, .chanrow:hover .chdel { opacity:1; }
+  .chanhead .chedit:hover { color:var(--accent); background:rgba(255,255,255,.07); }
+  .chanhead .chdel:hover { color:#ff6b6b; background:rgba(255,107,107,.15); }
+  .chanhead .cheye { border-radius:4px; }
+  .chanhead .cheye:hover { background:rgba(255,255,255,.07); }
   .chtrack { flex:1; position:relative; min-width:0; background:#0a1019; }
   .chtrack canvas { display:block; width:100%; height:100%; }
   .chbody { border-top:1px solid var(--line); background:#0a0f16; max-height:190px; overflow-y:auto;
@@ -413,20 +425,35 @@
   .chbody .feat .fn { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .chbody .feat .fy { color:var(--mut); font-size:10.5px; font-variant-numeric:tabular-nums; flex:0 0 auto; }
   .chbody .feat .go { color:var(--accent); flex:0 0 auto; opacity:0; } .chbody .feat:hover .go { opacity:1; }
-  .chbody .cbmaps { display:flex; flex-wrap:wrap; gap:6px; padding:6px 10px 10px; }
+  /* time-aligned thumbnail strip — positioned along the same axis as the channel track above */
+  .chbody .cbstrip { position:relative; height:72px; margin:8px var(--tlpad) 12px var(--tlgut); }
+  .chbody .cbstrip .mth { position:absolute; top:0; transform:translateX(-50%); text-align:center; cursor:pointer; }
+  .chbody .cbstrip .mth canvas { display:block; width:92px; height:52px; border:1px solid var(--line); border-radius:4px; background:#0a1622; }
+  .chbody .cbstrip .mth.cur canvas { border-color:var(--accent2); box-shadow:0 0 6px rgba(240,163,94,.5); }
+  .chbody .cbstrip .mth span { display:block; font-size:9.5px; color:var(--mut); margin-top:1px; white-space:nowrap; }
+  .chbody .cbmaps { display:flex; flex-wrap:wrap; gap:6px; padding:6px 10px 10px var(--tlgut); }
   .chbody .cbmaps .mth { text-align:center; cursor:pointer; }
   .chbody .cbmaps .mth canvas { display:block; width:96px; height:54px; border:1px solid var(--line); border-radius:4px; background:#0a1622; }
-  .chbody .cbmaps .mth.cur canvas { border-color:var(--accent2); box-shadow:0 0 6px rgba(240,163,94,.5); }
   .chbody .cbmaps .mth span { display:block; font-size:9.5px; color:var(--mut); margin-top:1px; }
   .chbody .cbempty { padding:8px 10px; color:var(--mut); font-size:11.5px; }
   /* + / edit channel modal: source + templates + table preview */
   #lmsource { flex:1; }
   .lmtpl { flex:1; }
-  #lmpreviewwrap { margin-top:8px; border:1px solid var(--line); border-radius:6px; overflow:auto; max-height:220px; display:none; }
+  #lmpreviewwrap { margin-top:8px; border:1px solid var(--line); border-radius:8px; overflow:auto; max-height:240px; display:none;
+    background:#0b1118; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.22) transparent; box-shadow:inset 0 0 0 1px rgba(255,255,255,.02); }
   #lmpreviewwrap.on { display:block; }
-  #lmpreviewwrap table { border-collapse:collapse; width:100%; font-size:11.5px; }
-  #lmpreviewwrap th { position:sticky; top:0; background:#161c24; color:#cdd9e5; text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
-  #lmpreviewwrap td { padding:3px 8px; border-bottom:1px solid #1c2530; color:#bcccd9; font-family:ui-monospace,Consolas,monospace; white-space:nowrap; max-width:240px; overflow:hidden; text-overflow:ellipsis; }
+  #lmpreviewwrap::-webkit-scrollbar { width:10px; height:10px; }
+  #lmpreviewwrap::-webkit-scrollbar-thumb { background:rgba(255,255,255,.2); border-radius:5px; border:2px solid #0b1118; }
+  #lmpreviewwrap::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,.32); }
+  #lmpreviewwrap::-webkit-scrollbar-corner { background:transparent; }
+  #lmpreviewwrap table { border-collapse:separate; border-spacing:0; width:100%; font-size:11.5px; }
+  #lmpreviewwrap th { position:sticky; top:0; z-index:1; background:#1a2330; color:#e6edf3; text-align:left; font-weight:650;
+    padding:6px 10px; border-bottom:2px solid var(--accent); white-space:nowrap; letter-spacing:.02em; }
+  #lmpreviewwrap td { padding:4px 10px; border-bottom:1px solid #161f29; color:#c4d2df; font-family:ui-monospace,Consolas,monospace;
+    white-space:nowrap; max-width:260px; overflow:hidden; text-overflow:ellipsis; }
+  #lmpreviewwrap tbody tr:nth-child(odd) td { background:rgba(255,255,255,.018); }
+  #lmpreviewwrap tbody tr:hover td { background:rgba(63,182,168,.1); color:#eaf1f6; }
+  #lmpreviewwrap tbody tr:last-child td { border-bottom:0; }
   #lmprevmeta { color:var(--mut); font-size:11px; margin-top:5px; }
 </style>
 </head>
@@ -571,7 +598,9 @@
         <option value="lazy">remote · lazy — HTTP range reads (base data)</option>
         <option value="cached">remote · cached — download once (base data)</option>
       </select></div>
-      <div class="lmrow" id="lmfilerow" hidden><label>.rete path</label><input id="lmsrc" type="text" placeholder="themes/castles.rete" title="a bucket-relative .rete path, e.g. themes/castles.rete"></div>
+      <div class="lmrow" id="lmfilerow" hidden><label>Dataset</label><input id="lmsrc" list="lmsrclist" type="text" placeholder="pick a suggested dataset…" title="choose a suggestion, or type a bucket-relative .rete path"></div>
+      <datalist id="lmsrclist"></datalist>
+      <div class="lmrow" id="lmsrchelp" hidden><label></label><span class="mut" style="font-size:11px">Remote <code>.rete</code> datasets are <b>downloaded once and cached locally</b> in your browser, then queried offline. Pick a suggestion above or paste a bucket path.</span></div>
       <div class="lmrow lmqrow"><label>SPARQL</label><textarea id="lmq" spellcheck="false" rows="7"></textarea></div>
       <div id="lmerr" class="err" style="min-height:16px"></div>
       <div class="setrow"><span class="mut">Prefixes (ex:, rdfs:, geo:, geof:…) are added for you. <code>{YEAR}</code> = current era.</span><span class="sp"></span><button id="lmpreview" class="setbtn">▦ Preview table</button><button id="lmadd" class="setbtn">Insert channel</button></div>
@@ -1882,7 +1911,9 @@ __GLUE_JS__
           `<button class="cheye" title="show / hide">${on ? "👁" : "🚫"}</button>` +
           chanGlyph(d) + `<span class="chname">${escapeHtml(d.name)}</span>` +
           `<span class="chcnt">${escapeHtml(chanCount(d) || "")}</span>` +
-          `<button class="chedit" title="edit query / source">✎</button></div>` +
+          `<button class="chedit" title="edit query / source">✎</button>` +
+          (d.type === "overlay" ? `<button class="chdel" title="${d.custom ? "delete this channel" : "remove from the rack"}">🗑</button>` : "") +
+          `</div>` +
           `<div class="chtrack"><canvas></canvas></div></div>` +
         (open ? `<div class="chbody"></div>` : "") + `</div>`;
     }).join("") + `<button class="laddbtn" id="rackadd">＋ Add channel</button>`;
@@ -1928,7 +1959,7 @@ __GLUE_JS__
     const el = chanEl.querySelector(".chbody"); if (!el) return;
     const mode = chanView[d.id] || "list", supportsMaps = d.type === "borders" || d.type === "overlay";
     const tog = supportsMaps ? `<div class="cbtog"><button data-v="list" class="${mode === "list" ? "on" : ""}">≣ list</button><button data-v="maps" class="${mode === "maps" ? "on" : ""}">🗺 maps</button></div>` : "";
-    if (mode === "maps" && supportsMaps) { el.innerHTML = tog + `<div class="cbmaps"></div>`; fillChannelMaps(d, el); }
+    if (mode === "maps" && supportsMaps) { el.innerHTML = tog + (d.type === "borders" ? `<div class="cbstrip"></div>` : `<div class="cbmaps"></div>`); fillChannelMaps(d, el); }
     else el.innerHTML = tog + channelListHtml(d);
   }
   function channelListHtml(d) {
@@ -1943,11 +1974,18 @@ __GLUE_JS__
     return list.slice(0, 400).map((f) => `<div class="feat" data-lon="${f.lon}" data-lat="${f.lat}"><span class="fsw" style="background:${d.color}"></span><span class="fn">${escapeHtml(f.label || "(unnamed)")}</span><span class="fy">${escapeHtml(featSpan(L, f))}</span><span class="go">→</span></div>`).join("") + (list.length > 400 ? `<div class="cbempty">+${(list.length - 400).toLocaleString()} more</div>` : "");
   }
   function fillChannelMaps(d, el) {
-    const host = el.querySelector(".cbmaps"); if (!host) return;
-    if (d.type === "borders") {
-      const ys = years.filter((y) => y >= vStart && y <= vEnd); let placed = 0;
-      for (const y of ys) { if (placed++ > 60) break; const th = document.createElement("div"); th.className = "mth" + (y === curEra ? " cur" : ""); th.dataset.y = y; const cv = document.createElement("canvas"); cv.width = 144; cv.height = 80; cv.getContext("2d").drawImage(renderMini(y), 0, 0); th.appendChild(cv); const s = document.createElement("span"); s.textContent = yearLabel(y); th.appendChild(s); host.appendChild(th); }
+    if (d.type === "borders") {   // snapshot thumbnails positioned along the SAME time axis as the track (decluttered like the filmstrip)
+      const host = el.querySelector(".cbstrip"); if (!host) return;
+      const W = host.clientWidth || 600; let placedR = -1e9;
+      for (const y of years) {
+        if (y < vStart || y > vEnd) continue;
+        const x = (tpct(y) / 100) * W; if (x - 50 < placedR) continue; placedR = x + 50;   // 92px thumb → ~50px half-pitch
+        const th = document.createElement("div"); th.className = "mth" + (y === curEra ? " cur" : ""); th.dataset.y = y; th.style.left = tpct(y) + "%";
+        const cv = document.createElement("canvas"); cv.width = 144; cv.height = 80; cv.getContext("2d").drawImage(renderMini(y), 0, 0);
+        th.appendChild(cv); const s = document.createElement("span"); s.textContent = yearLabel(y); th.appendChild(s); host.appendChild(th);
+      }
     } else if (d.type === "overlay") {
+      const host = el.querySelector(".cbmaps"); if (!host) return;
       const th = document.createElement("div"); th.className = "mth"; const cv = document.createElement("canvas"); cv.width = 144; cv.height = 80; drawLayerMini(cv, d.layer); th.appendChild(cv); const s = document.createElement("span"); s.textContent = "spatial footprint"; th.appendChild(s); host.appendChild(th);
     }
   }
@@ -2362,6 +2400,12 @@ __GLUE_JS__
       renderChannels(); requestDraw(); saveLocal();
     }
     function toggleExpand(id) { if (expanded.has(id)) expanded.delete(id); else expanded.add(id); renderChannels(); }
+    function deleteChannel(d) {   // 🗑 on an overlay channel: custom → drop from the catalog · built-in → just turn it off (leaves the catalog)
+      if (d.type !== "overlay") return;
+      if (d.custom) { overlays.splice(d.i, 1); expanded.delete(d.id); }
+      else { d.layer.on = false; d.layer.feats = null; d.layer.loaded = false; d.layer.activeBuf = null; expanded.delete(d.id); }
+      renderChannels(); requestDraw(); saveLocal();
+    }
     function clickFeature(d, fe) {   // a row in an expanded channel body
       if (d.type === "borders") { const n = fe.dataset.n; highlight = n; const fs = features.filter((f) => f.label === n); zoomToFit(fs.length ? fs : features); }
       else if (d.type === "events") { setScrub(+fe.dataset.y); }
@@ -2377,7 +2421,7 @@ __GLUE_JS__
         if (e.target.classList.contains("eye") || e.target.classList.contains("cheye")) { toggleChannel(d.id); return; }
         if (e.target.classList.contains("chexp")) { toggleExpand(d.id); return; }
         if (e.target.classList.contains("ledit") || e.target.classList.contains("chedit")) { openChannelModal(d); return; }
-        if (e.target.classList.contains("ldel")) { if (d.type === "overlay") { overlays.splice(d.i, 1); expanded.delete(d.id); renderChannels(); requestDraw(); saveLocal(); } return; }
+        if (e.target.classList.contains("ldel") || e.target.classList.contains("chdel")) { deleteChannel(d); return; }
         const tg = e.target.closest(".cbtog button"); if (tg) { chanView[d.id] = tg.dataset.v; renderChannels(); return; }
         const fe = e.target.closest(".feat"); if (fe) { clickFeature(d, fe); return; }
         const mt = e.target.closest(".mth"); if (mt && mt.dataset.y) { setScrub(+mt.dataset.y); return; }
@@ -2398,10 +2442,13 @@ __GLUE_JS__
     let editingChannel = null;   // null = new · "borders" · or an overlay layer object
     function setModalSource(forBorders) {
       $("lmsource").innerHTML = forBorders
-        ? `<option value="embedded">embedded — in-page base data</option><option value="lazy">remote · lazy — range reads</option><option value="cached">remote · cached — download once</option>`
-        : `<option value="embedded">embedded — the in-page base data</option><option value="file">remote · a bucket .rete file</option>`;
+        ? `<option value="embedded">📦 Embedded — the in-page base data (offline)</option><option value="lazy">🛰 Remote · lazy — stream only the byte-ranges each query touches</option><option value="cached">⬇ Remote · cache locally — download the whole .rete once</option>`
+        : `<option value="embedded">📦 Embedded — query the in-page base data (offline)</option><option value="file">⬇ Remote .rete — download once &amp; cache locally</option>`;
     }
-    function syncFileRow() { $("lmfilerow").hidden = $("lmsource").value !== "file"; }
+    function syncFileRow() { const remote = $("lmsource").value === "file"; $("lmfilerow").hidden = !remote; $("lmsrchelp").hidden = !remote; }
+    // suggestions of known datasets so nobody has to memorise a path
+    $("lmsrclist").innerHTML = [...new Map(LAYER_DEFS.filter((d) => d.file && /\.rete$/.test(d.file)).map((d) => [d.file, d.name])).entries()]
+      .map(([file, name]) => `<option value="${escapeHtml(file)}">${escapeHtml(name)}</option>`).join("");
     function openChannelModal(d) {
       editingChannel = null; $("lmerr").textContent = ""; $("lmprevmeta").textContent = ""; $("lmpreviewwrap").classList.remove("on"); $("lmpreviewwrap").innerHTML = "";
       $("lmtpl").value = "";
