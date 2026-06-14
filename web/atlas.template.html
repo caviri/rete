@@ -1039,7 +1039,8 @@ __GLUE_JS__
       let pn = null;
       for (let i = 0; i < ring.length; i++) {
         const n = ring[i], x = n[0] * W * view.scale + view.ox, y = n[1] * H * view.scale + view.oy;
-        const move = i === 0 || (POLY && pn && Math.abs(n[0] - pn[0]) + Math.abs(n[1] - pn[1]) > SEAM);
+        // pen up across a seam: a Dymaxion cut (both axes) or, in a flat projection, an antimeridian wrap (a >½-world jump in x)
+        const move = i === 0 || (pn && (POLY ? Math.abs(n[0] - pn[0]) + Math.abs(n[1] - pn[1]) > SEAM : Math.abs(n[0] - pn[0]) > 0.5));
         move ? p.moveTo(x, y) : p.lineTo(x, y); pn = n;
       }
       p.closePath();
@@ -1488,9 +1489,10 @@ __GLUE_JS__
       for (const f of fts) {
         if (!f.rings) continue;
         if (n >= OVL_CAP) break; n++;
-        const path = new Path2D();
+        const path = new Path2D(), halfW = W * view.scale * 0.5;
         for (const ring of f.rings) {
-          for (let i = 0; i < ring.length; i++) { const [x, y] = project(ring[i][0], ring[i][1]); if (i) path.lineTo(x, y); else path.moveTo(x, y); }
+          let px = null;   // pen up across a seam (antimeridian / projection cut = a >½-world jump in x)
+          for (let i = 0; i < ring.length; i++) { const [x, y] = project(ring[i][0], ring[i][1]); (i && px !== null && Math.abs(x - px) <= halfW) ? path.lineTo(x, y) : path.moveTo(x, y); px = x; }
           if (!f.line) path.closePath();
         }
         ctx.strokeStyle = col; ctx.lineWidth = f.line ? 1.1 : 0.8;
@@ -1756,7 +1758,7 @@ __GLUE_JS__
   function localName(term) { const s = lit(term); const m = s.split(/[#/]/).pop(); return m || s; }
   // ---- click-to-identify an overlay feature (a dot / shape from a data layer) ----
   function overlayHit(mx, my) {   // topmost active layer wins; polygons by containment, points by proximity
-    const ctx = $("map").getContext("2d");
+    const ctx = $("map").getContext("2d"), [W] = baseDims();
     for (let li = overlays.length - 1; li >= 0; li--) {
       const layer = overlays[li];
       if (!layer.on || !layer.feats) continue;
@@ -1765,8 +1767,8 @@ __GLUE_JS__
       for (const f of layerActiveFeats(layer)) {
         if (n++ > OVL_CAP) break;
         if (f.rings && !f.line) {            // filled shape — a click inside it counts
-          const path = new Path2D();
-          for (const ring of f.rings) { for (let i = 0; i < ring.length; i++) { const [x, y] = project(ring[i][0], ring[i][1]); i ? path.lineTo(x, y) : path.moveTo(x, y); } path.closePath(); }
+          const path = new Path2D(), halfW = W * view.scale * 0.5;
+          for (const ring of f.rings) { let px = null; for (let i = 0; i < ring.length; i++) { const [x, y] = project(ring[i][0], ring[i][1]); (i && px !== null && Math.abs(x - px) <= halfW) ? path.lineTo(x, y) : path.moveTo(x, y); px = x; } path.closePath(); }
           if (ctx.isPointInPath(path, mx, my)) return { layer, feat: f };
         }
         const [x, y] = project(f.lon, f.lat);
