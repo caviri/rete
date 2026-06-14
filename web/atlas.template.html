@@ -1160,12 +1160,21 @@ __GLUE_JS__
 
   // ---- projection / draw (CSS px; ctx is dpr-scaled) ----
   function baseDims() { const c = $("map"); return [c._cssW || c.clientWidth, c._cssH || c.clientHeight]; }
+  // each projection's normalised [0,1]² content has a TRUE width:height ratio; render it with one
+  // uniform fit so the map keeps that ratio on any window size (letterboxed, never stretched).
+  const PROJ_ASPECT = { equi: 2, merc: 1, moll: 2, sinu: 2, dymaxion: 1 };
+  function projAspect() { return PROJ_ASPECT[proj] || 1; }
+  function mapWH() {   // [cw, ch] = the fitted content size in px at view.scale = 1 (aspect preserved)
+    const [W, H] = baseDims(), R = projAspect(), u = Math.min(W / R, H);
+    return [R * u, u];
+  }
   function projNorm(lon, lat) { return PROJECTIONS[proj].fwd(lon, lat); }      // → [nx,ny] in ~[0,1]²
-  function project(lon, lat) { const [W, H] = baseDims(), p = projNorm(lon, lat); return [p[0] * W * view.scale + view.ox, p[1] * H * view.scale + view.oy]; }
-  function unproject(px, py) { const [W, H] = baseDims(); if (!(W > 0) || !(H > 0)) return [NaN, NaN]; return PROJECTIONS[proj].inv((px - view.ox) / view.scale / W, (py - view.oy) / view.scale / H); }
-  function fitIfNeeded() { if (!fitted) { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; } }
+  function project(lon, lat) { const [cw, ch] = mapWH(), p = projNorm(lon, lat); return [p[0] * cw * view.scale + view.ox, p[1] * ch * view.scale + view.oy]; }
+  function unproject(px, py) { const [cw, ch] = mapWH(); if (!(cw > 0) || !(ch > 0)) return [NaN, NaN]; return PROJECTIONS[proj].inv((px - view.ox) / view.scale / cw, (py - view.oy) / view.scale / ch); }
+  function centerView() { const [W, H] = baseDims(), [cw, ch] = mapWH(); view.ox = (W - cw * view.scale) / 2; view.oy = (H - ch * view.scale) / 2; }   // centre the (letterboxed) content
+  function fitIfNeeded() { if (!fitted) { view.scale = 1; centerView(); fitted = true; } }
   function clampView() {   // keep ≥15% of the projected world on-screen so panning/deep-zoom can't lose it
-    const [W, H] = baseDims(), m = 0.15, cw = W * view.scale, ch = H * view.scale;
+    const [W, H] = baseDims(), [cw0, ch0] = mapWH(), m = 0.15, cw = cw0 * view.scale, ch = ch0 * view.scale;
     view.ox = Math.max(m * W - cw, Math.min((1 - m) * W, view.ox));
     view.oy = Math.max(m * H - ch, Math.min((1 - m) * H, view.oy));
   }
@@ -1192,11 +1201,11 @@ __GLUE_JS__
   function ovPt(f) { if (f._pvp !== projVer) { f._pvp = projVer; f._np = projNorm(f.lon, f.lat); } return f._np; }   // cached point/centroid projection (net space); own version key so it doesn't clash with featNet's _pv
   const SEAM = 0.25;   // net-space jump that means an edge crossed a Dymaxion cut → pen up
   function buildPath(f) {
-    const [W, H] = baseDims(), nr = featNet(f), p = new Path2D();
+    const [cw, ch] = mapWH(), nr = featNet(f), p = new Path2D();
     for (const ring of nr) {
       let pn = null;
       for (let i = 0; i < ring.length; i++) {
-        const n = ring[i], x = n[0] * W * view.scale + view.ox, y = n[1] * H * view.scale + view.oy;
+        const n = ring[i], x = n[0] * cw * view.scale + view.ox, y = n[1] * ch * view.scale + view.oy;
         // pen up across a seam: a Dymaxion cut (both axes) or, in a flat projection, an antimeridian wrap (a >½-world jump in x)
         const move = i === 0 || (pn && (POLY ? Math.abs(n[0] - pn[0]) + Math.abs(n[1] - pn[1]) > SEAM : Math.abs(n[0] - pn[0]) > 0.5));
         move ? p.moveTo(x, y) : p.lineTo(x, y); pn = n;
@@ -1222,10 +1231,10 @@ __GLUE_JS__
   }
   // world boundary (projected sphere outline) + a sampled (curved) graticule
   function worldOutlinePath() {
-    const [W, H] = baseDims(), p = new Path2D();
+    const [cw, ch] = mapWH(), p = new Path2D();
     if (POLY) {   // Dymaxion: the net = 24 face triangles (winding-normalised so a nonzero clip = their union)
       for (const tri of Dymaxion.FACES_2D) {
-        const s = tri.map((c) => [c[0] * W * view.scale + view.ox, c[1] * H * view.scale + view.oy]);
+        const s = tri.map((c) => [c[0] * cw * view.scale + view.ox, c[1] * ch * view.scale + view.oy]);
         const area = (s[1][0] - s[0][0]) * (s[2][1] - s[0][1]) - (s[2][0] - s[0][0]) * (s[1][1] - s[0][1]);
         const o = area < 0 ? [s[0], s[2], s[1]] : s;
         p.moveTo(o[0][0], o[0][1]); p.lineTo(o[1][0], o[1][1]); p.lineTo(o[2][0], o[2][1]); p.closePath();
@@ -1251,11 +1260,11 @@ __GLUE_JS__
     _grat = { grid, emph }; return _grat;
   }
   function strokeNetLines(ctx, lines) {
-    const [W, H] = baseDims(); ctx.beginPath();
+    const [cw, ch] = mapWH(); ctx.beginPath();
     for (const pl of lines) {
       let pn = null;
       for (let i = 0; i < pl.length; i++) {
-        const n = pl[i], x = n[0] * W * view.scale + view.ox, y = n[1] * H * view.scale + view.oy;
+        const n = pl[i], x = n[0] * cw * view.scale + view.ox, y = n[1] * ch * view.scale + view.oy;
         const move = i === 0 || (POLY && pn && Math.abs(n[0] - pn[0]) + Math.abs(n[1] - pn[1]) > SEAM);
         move ? ctx.moveTo(x, y) : ctx.lineTo(x, y); pn = n;
       }
@@ -1346,13 +1355,13 @@ __GLUE_JS__
     let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
     for (const f of list) for (const ring of f.rings) for (const c of ring) { const q = projNorm(c[0], c[1]); if (q[0] < xmin) xmin = q[0]; if (q[0] > xmax) xmax = q[0]; if (q[1] < ymin) ymin = q[1]; if (q[1] > ymax) ymax = q[1]; }
     if (!isFinite(xmin)) return;
-    const [W, H] = baseDims();
+    const [W, H] = baseDims(), [cw, ch] = mapWH();   // content px-scale (aspect-preserved) vs screen size
     if (xmax - xmin < 1e-6 && ymax - ymin < 1e-6) {   // a single point → centre at a readable zoom
-      view.scale = 3; view.ox = W / 2 - (xmin * W) * 3; view.oy = H / 2 - (ymin * H) * 3; fitted = true; requestDraw(); return;
+      view.scale = 3; view.ox = W / 2 - (xmin * cw) * 3; view.oy = H / 2 - (ymin * ch) * 3; fitted = true; requestDraw(); return;
     }
-    const bw = (xmax - xmin) * W, bh = (ymax - ymin) * H;
+    const bw = (xmax - xmin) * cw, bh = (ymax - ymin) * ch;
     let s = Math.min(0.9 * W / bw, 0.9 * H / bh); s = Math.max(0.4, Math.min(8, s));
-    const cx = (xmin + xmax) / 2 * W, cy = (ymin + ymax) / 2 * H;
+    const cx = (xmin + xmax) / 2 * cw, cy = (ymin + ymax) / 2 * ch;
     view.scale = s; view.ox = W / 2 - cx * s; view.oy = H / 2 - cy * s; fitted = true; requestDraw();
   }
   function setProjection(name) { if (!PROJECTIONS[name]) return; proj = name; POLY = name === "dymaxion"; projVer++; _oceanGrad = null; resetView(); saveLocal(); }
@@ -1369,7 +1378,7 @@ __GLUE_JS__
     }).join("") : '<p class="mut">No queries cached yet.</p>';
   }
   function openSettings() { renderSettings(); $("setmodal").hidden = false; $("setclose").focus(); }
-  function resetView() { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; requestDraw(); }
+  function resetView() { view.scale = 1; centerView(); fitted = true; requestDraw(); }
   function territoryList() {   // current era's unique territories, largest first — for the Borders channel's expanded list
     const seen = new Map();
     for (const f of features) if (f.label && !seen.has(f.label)) seen.set(f.label, { c: f.color, a: f.area || 0 });
@@ -1656,14 +1665,14 @@ __GLUE_JS__
     return `<svg class="gsw" width="${size}" height="${size}" viewBox="0 0 10 10" aria-hidden="true"><g fill="${color}" stroke="rgba(0,0,0,.5)" stroke-width=".7">${inner}</g></svg>`;
   }
   function drawOverlays(ctx) {
-    const [W, H] = baseDims();
+    const [W, H] = baseDims(), [cw, ch] = mapWH();
     const labelPts = [];   // visible point features across all layers, for on-map labelling + decluttering
     for (const layer of overlays) {
       if (!layer.on || !layer.feats) continue;
       const fts = layerActiveFeats(layer);
       const col = layer.def.color;
       let n = 0;
-      const sx = W * view.scale, sy = H * view.scale, ox = view.ox, oy = view.oy;   // net→screen: n[0]*sx+ox
+      const sx = cw * view.scale, sy = ch * view.scale, ox = view.ox, oy = view.oy;   // net→screen: n[0]*sx+ox (aspect-preserved)
       // 1) features with real geometry (OHM polygons / boundaries / lines) drawn individually, from the cached net projection
       for (const f of fts) {
         if (!f.rings) continue;
@@ -2059,8 +2068,13 @@ __GLUE_JS__
     const c = $("map");
     function resize() {
       const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+      // keep the world-point at the screen centre fixed across the resize (no jump, no stretch)
+      let anchor = null;
+      if (c._cssW > 0 && c._cssH > 0 && fitted) { const u = unproject(c._cssW / 2, c._cssH / 2); if (u && isFinite(u[0]) && isFinite(u[1])) anchor = u; }
       c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
-      c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0); c._cssW = r.width; c._cssH = r.height; draw(); requestStrip();
+      c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0); c._cssW = r.width; c._cssH = r.height;
+      if (anchor) { const [cw, ch] = mapWH(), p = projNorm(anchor[0], anchor[1]); view.ox = r.width / 2 - p[0] * cw * view.scale; view.oy = r.height / 2 - p[1] * ch * view.scale; clampView(); }
+      draw(); requestStrip();
     }
     new ResizeObserver(resize).observe(c); resize();
     let drag = null;
@@ -2170,8 +2184,8 @@ __GLUE_JS__
   function localName(term) { const s = lit(term); const m = s.split(/[#/]/).pop(); return m || s; }
   // ---- click-to-identify an overlay feature (a dot / shape from a data layer) ----
   function overlayHit(mx, my) {   // topmost active layer wins; polygons by containment, points by proximity
-    const ctx = $("map").getContext("2d"), [W, H] = baseDims();
-    const sx = W * view.scale, sy = H * view.scale, ox = view.ox, oy = view.oy;
+    const ctx = $("map").getContext("2d"), [cw, ch] = mapWH();
+    const sx = cw * view.scale, sy = ch * view.scale, ox = view.ox, oy = view.oy;
     for (let li = overlays.length - 1; li >= 0; li--) {
       const layer = overlays[li];
       if (!layer.on || !layer.feats) continue;
