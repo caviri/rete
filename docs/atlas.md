@@ -12,9 +12,10 @@ example queries, drag the timeline and the borders of the world **cross-fade** t
 that era, hit **▶ Play** to sweep through history, or click anywhere on the map
 and it names the territory under your cursor. The map is a dependency-free canvas
 — a curated palette, an ocean gradient, decluttered on-map labels, hover/selection
-highlighting, **cursor-locked wheel zoom** (to 64×) with a **HUD** showing the zoom
-level, the viewport's corner coordinates and a live cursor read-out, **zoom-to-fit**
-(and keyboard timeline nav) — drawn entirely from query results.
+highlighting, **cursor-locked wheel zoom** (to 64×, the world stays in view) with a
+**HUD** showing the zoom level, the viewport's corner coordinates and a live cursor
+read-out, an **on-map legend** of the active overlays, **zoom-to-fit** (and keyboard
+timeline nav) — drawn entirely from query results.
 
 <figure class="fig-center">
   <img src="img/atlas-1914.png" alt="The Historical Atlas at 1914 CE: a SPARQL example-query picker and editor on the left over a world map of the empires of 1914, with a temporal timeline at the bottom whose markers include an 'Outbreak of World War I · 1914 CE' event tooltip.">

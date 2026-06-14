@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>rete · Historical Atlas — SPARQL + GIS over time</title>
 <style>
-  :root { --bg:#0f1419; --panel:#161c24; --line:#26303c; --ink:#e6edf3; --mut:#8b9aa9;
+  :root { --bg:#0f1419; --panel:#161c24; --line:#26303c; --ink:#e6edf3; --mut:#a7b4c2;
           --accent:#3fb6a8; --accent2:#f0a35e; }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
@@ -114,7 +114,16 @@
   .hudcorner { position:absolute; z-index:5; pointer-events:none; color:#8aa0b4;
     font-size:10.5px; font-variant-numeric:tabular-nums; text-shadow:0 1px 2px rgba(0,0,0,.85); opacity:.85; }
   #hudNW { left:8px; top:6px; }
+  #hudNW::before { content:"NW "; opacity:.55; }
   #hudSE { right:8px; bottom:32px; text-align:right; }
+  #hudSE::before { content:"SE "; opacity:.55; }
+  #ovlegend { position:absolute; left:10px; top:24px; z-index:6; pointer-events:none; max-width:220px;
+    max-height:46%; overflow:hidden; background:rgba(8,14,20,.74); border:1px solid var(--line);
+    border-radius:7px; padding:5px 8px; font-size:11px; display:none; }
+  #ovlegend .ovl { display:flex; align-items:center; gap:6px; padding:1.5px 0; color:#cdd9e5; }
+  #ovlegend .ovl .sw { width:9px; height:9px; border-radius:2px; flex:0 0 auto; outline:1px solid rgba(255,255,255,.15); }
+  #ovlegend .ovl .ovn { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #ovlegend .ovl .ovc { color:var(--mut); font-variant-numeric:tabular-nums; flex:0 0 auto; }
   #tableView { overflow:auto; background:#0c141c; }
   #tableView table { border-collapse:collapse; width:100%; font-size:12.5px; }
   #tableView th { position:sticky; top:0; background:#161c24; color:#cdd9e5; text-align:left;
@@ -326,6 +335,7 @@
       <div id="hudNW" class="hudcorner"></div>
       <div id="hudSE" class="hudcorner"></div>
       <div id="hudbar"><span id="hudZoom"></span><span id="hudCur"></span></div>
+      <div id="ovlegend"></div>
       <div class="maptools">
         <select id="proj" title="Map projection">
           <option value="equi">Equirectangular</option>
@@ -2226,8 +2236,13 @@ let wasm_bindgen = (function(exports) {
   function baseDims() { const c = $("map"); return [c._cssW || c.clientWidth, c._cssH || c.clientHeight]; }
   function projNorm(lon, lat) { return PROJECTIONS[proj].fwd(lon, lat); }      // → [nx,ny] in ~[0,1]²
   function project(lon, lat) { const [W, H] = baseDims(), p = projNorm(lon, lat); return [p[0] * W * view.scale + view.ox, p[1] * H * view.scale + view.oy]; }
-  function unproject(px, py) { const [W, H] = baseDims(); return PROJECTIONS[proj].inv((px - view.ox) / view.scale / W, (py - view.oy) / view.scale / H); }
+  function unproject(px, py) { const [W, H] = baseDims(); if (!(W > 0) || !(H > 0)) return [NaN, NaN]; return PROJECTIONS[proj].inv((px - view.ox) / view.scale / W, (py - view.oy) / view.scale / H); }
   function fitIfNeeded() { if (!fitted) { view.scale = 1; view.ox = 0; view.oy = 0; fitted = true; } }
+  function clampView() {   // keep ≥15% of the projected world on-screen so panning/deep-zoom can't lose it
+    const [W, H] = baseDims(), m = 0.15, cw = W * view.scale, ch = H * view.scale;
+    view.ox = Math.max(m * W - cw, Math.min((1 - m) * W, view.ox));
+    view.oy = Math.max(m * H - ch, Math.min((1 - m) * H, view.oy));
+  }
   // ---- HUD: zoom level + viewport corner coords + live cursor coord ----
   function fmtLL(c) {
     if (!c || !isFinite(c[0]) || !isFinite(c[1]) || Math.abs(c[1]) > 90) return "—";
@@ -2728,11 +2743,11 @@ let wasm_bindgen = (function(exports) {
       ctx.globalAlpha = 1;
     }
   }
-  function layerCount(l) {   // what to show in the list / track label
+  function layerCount(l) {   // visible-at-the-current-year / total — so the number tracks the map (and reads 0 when nothing shows here)
     if (l.err) return "✗ " + l.err;
     if (!l.loaded) return "";
     const act = layerActiveFeats(l).length;
-    return (act > OVL_CAP ? OVL_CAP.toLocaleString() + " of " : "") + l.feats.length.toLocaleString();
+    return act.toLocaleString() + " / " + l.feats.length.toLocaleString();
   }
   function renderLayerList() {
     $("layerlist").innerHTML = overlays.map((l, i) =>
@@ -2811,7 +2826,7 @@ let wasm_bindgen = (function(exports) {
       if (typeof S.y === "number" && isFinite(S.y)) setScrub(Math.max(minY, Math.min(maxY, S.y)));
       renderLayerList();
       await Promise.all(toLoad.map(async (l) => { if (!l.on) { l.on = true; try { await loadLayer(l); } catch (e) {} } }));
-      if (S.view && isFinite(S.view.s)) { view.scale = Math.max(0.4, Math.min(64, S.view.s)); view.ox = +S.view.x || 0; view.oy = +S.view.y || 0; fitted = true; }   // pin so the boot auto-fit can't clobber the restored view
+      if (S.view && isFinite(S.view.s)) { view.scale = Math.max(0.4, Math.min(64, S.view.s)); view.ox = +S.view.x || 0; view.oy = +S.view.y || 0; clampView(); fitted = true; }   // pin so the boot auto-fit can't clobber the restored view
       renderLayerList(); renderTracks(); requestDraw();
     } finally { restoring = false; }
   }
@@ -2839,7 +2854,20 @@ let wasm_bindgen = (function(exports) {
     if (!r.ok || !/^https?:\/\//.test(t)) throw new Error(t || ("HTTP " + r.status));
     return t;
   }
+  function updateLayerCounts() {   // refresh the sidebar counts live (called each scrub frame via renderTracks)
+    document.querySelectorAll("#layerlist .lyr").forEach((row) => {
+      const l = overlays[+row.dataset.i], c = row.querySelector(".cnt");
+      if (l && c && (l.on || l.err)) c.textContent = layerCount(l);
+    });
+  }
+  function renderOverlayLegend() {   // on-map key for the active overlays (so the coloured dots aren't a mystery)
+    const host = $("ovlegend"), on = overlays.filter((l) => l.on && l.loaded);
+    if (!on.length) { host.innerHTML = ""; host.style.display = "none"; return; }
+    host.style.display = "block";
+    host.innerHTML = on.map((l) => `<div class="ovl"><span class="sw" style="background:${l.def.color}"></span><span class="ovn">${escapeHtml(l.def.name)}</span><span class="ovc">${escapeHtml(layerCount(l))}</span></div>`).join("");
+  }
   function renderTracks() {   // a histogram "audio track" per active layer, aligned to the timeline window
+    renderOverlayLegend(); updateLayerCounts();
     const host = $("tracks"), on = overlays.filter((l) => l.on);
     if (!on.length) { host.innerHTML = ""; return; }
     const W = host.clientWidth || 600;
@@ -2909,7 +2937,7 @@ let wasm_bindgen = (function(exports) {
     let drag = null;
     c.addEventListener("mousedown", (e) => { drag = { x: e.offsetX, y: e.offsetY, ox: view.ox, oy: view.oy, moved: false }; c.classList.add("drag"); });
     window.addEventListener("mouseup", () => { c.classList.remove("drag"); if (_dragging) { _dragging = false; requestDraw(); saveLocal(); } setTimeout(() => (drag = null), 0); });
-    c.addEventListener("mousemove", (e) => { if (drag) { view.ox = drag.ox + (e.offsetX - drag.x); view.oy = drag.oy + (e.offsetY - drag.y); drag.moved = true; _dragging = true; requestDraw(); } else hover(e.offsetX, e.offsetY); });
+    c.addEventListener("mousemove", (e) => { if (drag) { view.ox = drag.ox + (e.offsetX - drag.x); view.oy = drag.oy + (e.offsetY - drag.y); clampView(); drag.moved = true; _dragging = true; requestDraw(); } else hover(e.offsetX, e.offsetY); });
     c.addEventListener("mouseleave", () => { $("tip").style.display = "none"; if (hoverLabel) { hoverLabel = null; requestDraw(); } });
     c.addEventListener("wheel", (e) => {
       e.preventDefault();
@@ -2917,7 +2945,7 @@ let wasm_bindgen = (function(exports) {
       const ns = Math.max(0.4, Math.min(64, view.scale * f)), ef = ns / view.scale;   // clamp scale FIRST, then pan by the *effective* factor so the view never drifts at the zoom cap
       view.ox = e.offsetX - (e.offsetX - view.ox) * ef;
       view.oy = e.offsetY - (e.offsetY - view.oy) * ef;
-      view.scale = ns; requestDraw(); saveLocal();
+      view.scale = ns; clampView(); requestDraw(); saveLocal();
     }, { passive: false });
     c.addEventListener("click", (e) => { if (drag && drag.moved) return; identify(e.offsetX, e.offsetY); });
     c.addEventListener("dblclick", () => zoomToFit(features));
@@ -2954,7 +2982,8 @@ let wasm_bindgen = (function(exports) {
     for (let li = overlays.length - 1; li >= 0; li--) {
       const layer = overlays[li];
       if (!layer.on || !layer.feats) continue;
-      let best = null, bestD = 81, n = 0;   // 9px pick radius
+      const pr = Math.max(3, Math.min(8, 3.2 + view.scale * 0.4)) + 3;   // pick radius tracks the rendered dot size (+3px slack)
+      let best = null, bestD = pr * pr, n = 0;
       for (const f of layerActiveFeats(layer)) {
         if (n++ > OVL_CAP) break;
         if (f.rings && !f.line) {            // filled shape — a click inside it counts
@@ -2999,7 +3028,11 @@ let wasm_bindgen = (function(exports) {
     const [px, py] = project(f.lon, f.lat);
     positionIdent(isFinite(px) ? px : 0, isFinite(py) ? py : 0);
   }
+  let _lastId = { mx: -1, my: -1, era: null, t: 0 };
   async function identify(mx, my) {
+    const now = performance.now();   // ignore the 2nd click of a double-click (which would re-run the async SPARQL)
+    if (Math.abs(mx - _lastId.mx) < 3 && Math.abs(my - _lastId.my) < 3 && _lastId.era === curEra && now - _lastId.t < 450) return;
+    _lastId = { mx, my, era: curEra, t: now };
     const hit = overlayHit(mx, my);   // a data-layer feature under the cursor takes priority over the border
     if (hit) { showFeatureInfo(hit.layer, hit.feat); return; }
     const [lon, lat] = unproject(mx, my);
@@ -3256,6 +3289,8 @@ let wasm_bindgen = (function(exports) {
       if (!$("wdmodal").hidden) { if (e.key === "Escape") { $("wdmodal").hidden = true; e.preventDefault(); } return; }
       if (!$("setmodal").hidden) { if (e.key === "Escape") { $("setmodal").hidden = true; e.preventDefault(); } return; }
       if (!$("wktmodal").hidden) { if (e.key === "Escape") { $("wktmodal").hidden = true; e.preventDefault(); } return; }
+      if (!$("layermodal").hidden) { if (e.key === "Escape") { $("layermodal").hidden = true; e.preventDefault(); } return; }
+      if (!$("viewsmodal").hidden) { if (e.key === "Escape") { $("viewsmodal").hidden = true; e.preventDefault(); } return; }
       const ae = document.activeElement, tag = ae ? ae.tagName : "";
       if (ae === $("q")) return;
       if (e.key === " ") { if (tag === "BUTTON" || tag === "SELECT") return; togglePlay(); e.preventDefault(); return; }
@@ -3278,7 +3313,10 @@ let wasm_bindgen = (function(exports) {
     // read-only hooks for headless tests / debugging (screen position of overlay features, etc.)
     window.__atlas = { overlays, project, unproject, layerActiveFeats, baseDims, identify, atlasState, applyState, shareUrl };
   }
-  boot();
+  boot().catch((err) => {   // never leave the boot overlay spinning silently
+    const b = $("boot");
+    if (b) { b.classList.add("err"); b.textContent = "Couldn't start the atlas — " + ((err && err.message) || err) + ". (Your browser may not support WebAssembly.)"; }
+  });
 })();
 </script>
 </body>
