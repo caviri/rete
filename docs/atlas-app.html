@@ -3115,6 +3115,7 @@ let wasm_bindgen = (function(exports) {
   const expanded = new Set();   // channel ids currently expanded
   const chanView = {};          // id → "list" | "maps"
   let eraCounts = {};           // year → territory count (for the Borders histogram)
+  let _lastWinKey = "", _lastEraBodies = null;   // detect window-zoom / era changes to refresh expanded bodies
   function channelDescs() {
     const out = [{ id: "borders", type: "borders", name: "Borders (era map)", color: "#6ca8c4", builtin: true }];
     overlays.forEach((l, i) => out.push({ id: l.def.key, type: "overlay", layer: l, i, name: l.def.name, color: l.def.color, custom: !!l.def.custom }));
@@ -3164,14 +3165,19 @@ let wasm_bindgen = (function(exports) {
     document.querySelectorAll("#rack .chan").forEach((el) => { const d = descs.find((x) => x.id === el.dataset.id); if (!d) return; const cv = el.querySelector(".chtrack canvas"); if (cv) drawChannelTrack(cv, d); if (expanded.has(d.id)) renderChannelBody(d, el); });
     renderOverlayLegend();
   }
-  function refreshChannels() {   // light per-scrub update: redraw tracks + counts, refresh the era-dependent Borders body
+  function refreshChannels() {   // light per-scrub update: redraw tracks + counts, refresh expanded bodies when the window/era moves
     const descs = channelDescs(), byId = {}; descs.forEach((d) => byId[d.id] = d);
+    const winChanged = _lastWinKey !== vStart + "|" + vEnd; _lastWinKey = vStart + "|" + vEnd;
+    const eraChanged = _lastEraBodies !== curEra; _lastEraBodies = curEra;
     document.querySelectorAll("#rack .chan").forEach((el) => {
       const d = byId[el.dataset.id]; if (!d) return;
       const cv = el.querySelector(".chtrack canvas"); if (cv) drawChannelTrack(cv, d);
       const cnt = el.querySelector(".chcnt"); if (cnt) cnt.textContent = chanCount(d) || "";
       el.querySelector(".chanhead").classList.toggle("off", !chanOn(d));
-      if (d.type === "borders" && expanded.has(d.id) && (chanView[d.id] || "list") === "list") renderChannelBody(d, el);
+      if (!expanded.has(d.id)) return;
+      // window zoom/pan → re-render every expanded body (maps reposition, overlay lists re-filter to the window);
+      // era-only change → just the Borders body (its list + current snapshot depend on the era).
+      if (winChanged || (eraChanged && d.type === "borders")) renderChannelBody(d, el);
     });
     document.querySelectorAll("#layerstack .lrow").forEach((el) => {
       const d = byId[el.dataset.id]; if (!d) return;
