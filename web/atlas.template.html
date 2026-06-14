@@ -1032,6 +1032,7 @@ __GLUE_JS__
   // Per-feature normalised (projection-space) ring coords, cached and recomputed
   // only when the projection changes — Dymaxion's fwd() is expensive (24-face search).
   function featNet(f) { if (f._pv !== projVer) { f._pv = projVer; f._nr = f.rings.map((r) => r.map((c) => projNorm(c[0], c[1]))); } return f._nr; }
+  function ovPt(f) { if (f._pvp !== projVer) { f._pvp = projVer; f._np = projNorm(f.lon, f.lat); } return f._np; }   // cached point/centroid projection (net space); own version key so it doesn't clash with featNet's _pv
   const SEAM = 0.25;   // net-space jump that means an edge crossed a Dymaxion cut → pen up
   function buildPath(f) {
     const [W, H] = baseDims(), nr = featNet(f), p = new Path2D();
@@ -1485,28 +1486,29 @@ __GLUE_JS__
       const fts = layerActiveFeats(layer);
       const col = layer.def.color;
       let n = 0;
-      // 1) features with real geometry (OHM polygons / boundaries / lines) drawn individually
+      const sx = W * view.scale, sy = H * view.scale, ox = view.ox, oy = view.oy;   // net→screen: n[0]*sx+ox
+      // 1) features with real geometry (OHM polygons / boundaries / lines) drawn individually, from the cached net projection
       for (const f of fts) {
         if (!f.rings) continue;
         if (n >= OVL_CAP) break; n++;
-        const path = new Path2D(), halfW = W * view.scale * 0.5;
-        for (const ring of f.rings) {
-          let px = null;   // pen up across a seam (antimeridian / projection cut = a >½-world jump in x)
-          for (let i = 0; i < ring.length; i++) { const [x, y] = project(ring[i][0], ring[i][1]); (i && px !== null && Math.abs(x - px) <= halfW) ? path.lineTo(x, y) : path.moveTo(x, y); px = x; }
+        const nr = featNet(f), path = new Path2D();
+        for (const ring of nr) {
+          let pn = null;   // pen up across a seam (antimeridian / projection cut = a >½-world jump in net-x)
+          for (let i = 0; i < ring.length; i++) { const a = ring[i], x = a[0] * sx + ox, y = a[1] * sy + oy; (i && pn && (POLY ? Math.abs(a[0] - pn[0]) + Math.abs(a[1] - pn[1]) > SEAM : Math.abs(a[0] - pn[0]) > 0.5)) ? path.moveTo(x, y) : (i ? path.lineTo(x, y) : path.moveTo(x, y)); pn = a; }
           if (!f.line) path.closePath();
         }
         ctx.strokeStyle = col; ctx.lineWidth = f.line ? 1.1 : 0.8;
         if (!f.line) { ctx.globalAlpha = 0.18; ctx.fillStyle = col; ctx.fill(path, "evenodd"); }
         ctx.globalAlpha = 0.85; ctx.stroke(path);
       }
-      // 2) point features batched into one path (fast — every non-OHM layer)
+      // 2) point features batched into one path, from the cached net projection; cull to the viewport BEFORE the cap so high zoom keeps on-screen points
       const dotR = Math.max(3, Math.min(8, 3.2 + view.scale * 0.4));   // bigger dots, growing with zoom so they stay clickable
       ctx.fillStyle = col; ctx.beginPath();
       for (const f of fts) {
         if (f.rings) continue;
+        const np = ovPt(f), x = np[0] * sx + ox, y = np[1] * sy + oy;
+        if (!isFinite(x) || !isFinite(y) || x < -4 || x > W + 4 || y < -4 || y > H + 4) continue;   // off-screen: doesn't consume the cap
         if (n >= OVL_CAP) break;
-        const [x, y] = project(f.lon, f.lat);
-        if (!isFinite(x) || !isFinite(y) || x < -4 || x > W + 4 || y < -4 || y > H + 4) continue;
         ctx.moveTo(x + dotR, y); ctx.arc(x, y, dotR, 0, 6.2832); n++;
       }
       ctx.globalAlpha = 0.9; ctx.fill();
@@ -1664,13 +1666,20 @@ __GLUE_JS__
     const H = 22; cv.width = W * 2; cv.height = H * 2; const ctx = cv.getContext("2d"); ctx.setTransform(2, 0, 0, 2, 0, 0);
     ctx.clearRect(0, 0, W, H);
     if (!layer.feats || !layer.feats.length) return;
-    const bins = Math.max(20, Math.floor(W / 5)), arr = new Array(bins).fill(0), span = (vEnd - vStart) || 1;
-    for (const f of layer.feats) {
-      const y = layer.def.kind === "interval" ? (f.s + f.e) / 2 : f.year;
-      if (y < vStart || y > vEnd) continue;
-      arr[Math.max(0, Math.min(bins - 1, Math.floor((y - vStart) / span * bins)))]++;
+    const bins = Math.max(20, Math.floor(W / 5)), span = (vEnd - vStart) || 1;
+    // bin only when the window/size/layer changes — NOT every scrub frame (huge layers were re-binned per frame)
+    const key = bins + "|" + vStart + "|" + vEnd + "|" + layer.feats.length;
+    let h2 = layer._hist;
+    if (!h2 || h2.key !== key) {
+      const arr = new Array(bins).fill(0);
+      for (const f of layer.feats) {
+        const y = layer.def.kind === "interval" ? (f.s + f.e) / 2 : f.year;
+        if (y < vStart || y > vEnd) continue;
+        arr[Math.max(0, Math.min(bins - 1, Math.floor((y - vStart) / span * bins)))]++;
+      }
+      h2 = layer._hist = { key, arr, max: Math.max(1, ...arr) };
     }
-    const max = Math.max(1, ...arr); ctx.fillStyle = layer.def.color; ctx.globalAlpha = 0.8;
+    const arr = h2.arr, max = h2.max; ctx.fillStyle = layer.def.color; ctx.globalAlpha = 0.8;
     const bw = W / bins;
     for (let i = 0; i < bins; i++) { const h = arr[i] / max * (H - 2); if (h > 0) ctx.fillRect(i * bw, H - h, bw + 0.5, h); }
     // playhead at the current scrub year (clamped to the track so it never vanishes off-window)
@@ -1730,8 +1739,12 @@ __GLUE_JS__
     c.addEventListener("click", (e) => { if (drag && drag.moved) return; identify(e.offsetX, e.offsetY); });
     c.addEventListener("dblclick", () => zoomToFit(features));
   }
+  let _hoverT = 0;
   function hover(mx, my) {
-    $("hudCur").textContent = "⌖ " + fmtLL(unproject(mx, my));
+    $("hudCur").textContent = "⌖ " + fmtLL(unproject(mx, my));   // cursor read-out is always immediate
+    const now = performance.now();
+    if (now - _hoverT < 30) return;   // throttle the (polygon-heavy) hit-test to ~33 Hz
+    _hoverT = now;
     const tip = $("tip"), c = $("map");
     // a data-layer feature (the clickable dots/shapes) takes tooltip priority over a border
     const hit = overlayHit(mx, my);
@@ -1758,7 +1771,8 @@ __GLUE_JS__
   function localName(term) { const s = lit(term); const m = s.split(/[#/]/).pop(); return m || s; }
   // ---- click-to-identify an overlay feature (a dot / shape from a data layer) ----
   function overlayHit(mx, my) {   // topmost active layer wins; polygons by containment, points by proximity
-    const ctx = $("map").getContext("2d"), [W] = baseDims();
+    const ctx = $("map").getContext("2d"), [W, H] = baseDims();
+    const sx = W * view.scale, sy = H * view.scale, ox = view.ox, oy = view.oy;
     for (let li = overlays.length - 1; li >= 0; li--) {
       const layer = overlays[li];
       if (!layer.on || !layer.feats) continue;
@@ -1766,12 +1780,12 @@ __GLUE_JS__
       let best = null, bestD = pr * pr, n = 0;
       for (const f of layerActiveFeats(layer)) {
         if (n++ > OVL_CAP) break;
-        if (f.rings && !f.line) {            // filled shape — a click inside it counts
-          const path = new Path2D(), halfW = W * view.scale * 0.5;
-          for (const ring of f.rings) { let px = null; for (let i = 0; i < ring.length; i++) { const [x, y] = project(ring[i][0], ring[i][1]); (i && px !== null && Math.abs(x - px) <= halfW) ? path.lineTo(x, y) : path.moveTo(x, y); px = x; } path.closePath(); }
+        if (f.rings && !f.line) {            // filled shape — a click inside it counts (cached net projection + seam break)
+          const nr = featNet(f), path = new Path2D();
+          for (const ring of nr) { let pn = null; for (let i = 0; i < ring.length; i++) { const a = ring[i], x = a[0] * sx + ox, y = a[1] * sy + oy; (i && pn && (POLY ? Math.abs(a[0] - pn[0]) + Math.abs(a[1] - pn[1]) > SEAM : Math.abs(a[0] - pn[0]) > 0.5)) ? path.moveTo(x, y) : (i ? path.lineTo(x, y) : path.moveTo(x, y)); pn = a; } path.closePath(); }
           if (ctx.isPointInPath(path, mx, my)) return { layer, feat: f };
         }
-        const [x, y] = project(f.lon, f.lat);
+        const np = ovPt(f), x = np[0] * sx + ox, y = np[1] * sy + oy;
         if (!isFinite(x) || !isFinite(y)) continue;
         const d = (x - mx) * (x - mx) + (y - my) * (y - my);
         if (d < bestD) { bestD = d; best = f; }
