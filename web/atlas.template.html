@@ -471,6 +471,10 @@
   #lmpreviewwrap tbody tr:hover td { background:rgba(63,182,168,.1); color:#eaf1f6; }
   #lmpreviewwrap tbody tr:last-child td { border-bottom:0; }
   #lmprevmeta { color:var(--mut); font-size:11px; margin-top:5px; }
+  #lmorigin { flex:1; font-size:11.5px; line-height:1.5; color:#cdd9e5; background:#0b1118; border:1px solid var(--line);
+    border-left:3px solid var(--accent); border-radius:6px; padding:6px 9px; }
+  #lmorigin b { color:var(--accent2); } #lmorigin a { color:var(--accent); text-decoration:none; } #lmorigin a:hover { text-decoration:underline; }
+  #lmorigin .lic { color:var(--mut); font-variant:all-small-caps; letter-spacing:.03em; }
 </style>
 </head>
 <body>
@@ -617,6 +621,7 @@
       <div class="lmrow" id="lmfilerow" hidden><label>Dataset</label><input id="lmsrc" list="lmsrclist" type="text" placeholder="pick a suggested dataset…" title="choose a suggestion, or type a bucket-relative .rete path"></div>
       <datalist id="lmsrclist"></datalist>
       <div class="lmrow" id="lmsrchelp" hidden><label></label><span class="mut" style="font-size:11px">Remote <code>.rete</code> datasets are <b>downloaded once and cached locally</b> in your browser, then queried offline. Pick a suggestion above or paste a bucket path.</span></div>
+      <div class="lmrow" id="lmoriginrow" hidden><label>Origin</label><div id="lmorigin"></div></div>
       <div class="lmrow lmqrow"><label>SPARQL</label><textarea id="lmq" spellcheck="false" rows="7"></textarea></div>
       <div id="lmerr" class="err" style="min-height:16px"></div>
       <div class="setrow"><span class="mut">Prefixes (ex:, rdfs:, geo:, geof:…) are added for you. <code>{YEAR}</code> = current era.</span><span class="sp"></span><button id="lmpreview" class="setbtn">▦ Preview table</button><button id="lmadd" class="setbtn">Insert channel</button></div>
@@ -995,6 +1000,45 @@ __GLUE_JS__
     }),
   ];
   const overlays = LAYER_DEFS.map((d) => ({ def: d, on: false, loaded: false, loading: false, feats: null }));
+  // ── dataset provenance + per-dataset example queries (shown in the +/edit modal) ──
+  const PROVIDERS = {
+    curated:   { label: "rete sample data", license: "open", url: "", desc: "Curated historical events (battles, sites, capitals) bundled with this demo." },
+    pleiades:  { label: "Pleiades", license: "CC-BY", url: "https://pleiades.stoa.org", desc: "A community-built gazetteer of ancient places (Greek/Roman world)." },
+    wikidata:  { label: "Wikidata", license: "CC0", url: "https://www.wikidata.org", desc: "Crowdsourced structured data, harvested via its SPARQL endpoint and reduced to a geo+time .rete." },
+    dbpedia:   { label: "DBpedia", license: "CC-BY-SA", url: "https://www.dbpedia.org", desc: "Structured data extracted from Wikipedia." },
+    ohm:       { label: "OpenHistoricalMap", license: "ODbL", url: "https://www.openhistoricalmap.org", desc: "OSM-style historical features dated by start_date / end_date." },
+    nomisma:   { label: "Nomisma.org", license: "CC-BY", url: "http://nomisma.org", desc: "Linked-open-data definitions for ancient numismatics (coin types)." },
+    factgrid:  { label: "FactGrid", license: "CC0", url: "https://database.factgrid.de", desc: "A Wikibase for historical research, run by the Gotha Research Centre." },
+    theographic:{ label: "Theographic", license: "CC-BY", url: "https://github.com/robertrouse/theographic-bible-metadata", desc: "A knowledge graph of biblical people, places and events." },
+    samian:    { label: "Samian Research", license: "CC-BY", url: "https://www1.rgzm.de/samian/home/frames.htm", desc: "A database of Roman terra-sigillata (samian-ware) potters and stamps." },
+    scar:      { label: "SCAR Composite Gazetteer of Antarctica", license: "CC-BY", url: "https://data.aad.gov.au/aadc/gaz/scar/", desc: "The official multi-national Antarctic place-name gazetteer." },
+    getty:     { label: "Getty Thesaurus of Geographic Names (TGN)", license: "ODC-BY", url: "https://www.getty.edu/research/tools/vocabularies/tgn/", desc: "Getty's vocabulary of historic & current place names." },
+  };
+  function providerOf(def) {
+    const k = def.key || "";
+    if (def.file === "history-events.rete") return PROVIDERS.curated;
+    if (k === "pleiades") return PROVIDERS.pleiades;
+    if (k.indexOf("dbpedia") === 0) return PROVIDERS.dbpedia;
+    if (k === "ohm") return PROVIDERS.ohm;
+    if (k === "nomisma") return PROVIDERS.nomisma;
+    if (k === "factgrid") return PROVIDERS.factgrid;
+    if (k.indexOf("theographic") === 0) return PROVIDERS.theographic;
+    if (k === "samian-ware") return PROVIDERS.samian;
+    if (k === "antarctic-places") return PROVIDERS.scar;
+    if (k === "getty-tgn") return PROVIDERS.getty;
+    return PROVIDERS.wikidata;   // the bulk of the themed datasets
+  }
+  function datasetExamples(def) {   // example queries valid for THIS dataset, generated from its defining query
+    const base = def.q;
+    const count = base.replace(/SELECT[\s\S]*?\bWHERE\b/i, "SELECT (COUNT(*) AS ?count) WHERE");
+    const named = base.replace(/\}\s*$/, 'FILTER(REGEX(?label, "a", "i")) }');   // user edits the regex
+    return [
+      { label: "Plot every feature", q: base },
+      { label: "Count features", q: count },
+      { label: "Filter by name (REGEX — edit me)", q: named },
+    ];
+  }
+  function datasetByFile(file) { return LAYER_DEFS.find((d) => d.file === file) || null; }
   const dsBytes = new Map();   // dataset file → fetched-once Uint8Array
   const dsFetching = new Map();   // dataset file → in-flight fetch Promise (dedupe shared files)
   // map projection (lon/lat ↔ normalised [0,1]²) + toggleable draw layers
@@ -2506,8 +2550,22 @@ __GLUE_JS__
     const lmTemplate = (kind) => kind === "interval"
       ? "SELECT ?x ?label ?s ?e ?wkt WHERE {\n  ?x rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ;\n     geo:hasGeometry/geo:asWKT ?wkt\n} LIMIT 2000"
       : "SELECT ?x ?label ?year ?wkt WHERE {\n  ?x rdfs:label ?label ; ex:year ?year ;\n     geo:hasGeometry/geo:asWKT ?wkt\n} LIMIT 2000";
-    $("lmtpl").innerHTML = `<option value="">— start from a template —</option>` + EXAMPLES.map((e, i) => `<option value="${i}">${escapeHtml(e.label)}</option>`).join("");
     let editingChannel = null;   // null = new · "borders" · or an overlay layer object
+    let currentTemplates = [];
+    function setTemplates(list, prompt) { currentTemplates = list || []; $("lmtpl").innerHTML = `<option value="">${escapeHtml(prompt || "— start from a template —")}</option>` + currentTemplates.map((t, i) => `<option value="${i}">${escapeHtml(t.label)}</option>`).join(""); $("lmtpl").value = ""; }
+    function showOrigin(prov) {
+      if (!prov) { $("lmoriginrow").hidden = true; return; }
+      const link = prov.url ? ` · <a href="${escapeHtml(safeUrl(prov.url))}" target="_blank" rel="noopener">source ↗</a>` : "";
+      $("lmorigin").innerHTML = `<b>${escapeHtml(prov.label)}</b> <span class="lic">${escapeHtml(prov.license)}</span><br>${escapeHtml(prov.desc)}${link}`;
+      $("lmoriginrow").hidden = false;
+    }
+    function refreshDatasetContext() {   // populate the template picker + origin note for the chosen source/dataset
+      if ($("lmsource").value !== "file") { setTemplates(EXAMPLES.map((e) => ({ label: e.label, q: e.q }))); $("lmoriginrow").hidden = true; return; }
+      const def = datasetByFile($("lmsrc").value.trim());
+      if (!def) { setTemplates([], "— pick a dataset to see its examples —"); $("lmoriginrow").hidden = true; return; }
+      setTemplates(datasetExamples(def), "— example queries for " + def.name + " —"); showOrigin(providerOf(def));
+      if (editingChannel === null) { $("lmkind").value = def.kind; if (!$("lmname").value.trim()) $("lmname").value = def.name; if (!$("lmcolor").value || $("lmcolor").value === "#00e5ff") $("lmcolor").value = def.color; }
+    }
     function setModalSource(forBorders) {
       $("lmsource").innerHTML = forBorders
         ? `<option value="embedded">📦 Embedded — the in-page base data (offline)</option><option value="lazy">🛰 Remote · lazy — stream only the byte-ranges each query touches</option><option value="cached">⬇ Remote · cache locally — download the whole .rete once</option>`
@@ -2519,7 +2577,6 @@ __GLUE_JS__
       .map(([file, name]) => `<option value="${escapeHtml(file)}">${escapeHtml(name)}</option>`).join("");
     function openChannelModal(d) {
       editingChannel = null; $("lmerr").textContent = ""; $("lmprevmeta").textContent = ""; $("lmpreviewwrap").classList.remove("on"); $("lmpreviewwrap").innerHTML = "";
-      $("lmtpl").value = "";
       if (!d) {   // new overlay channel
         $("lmtitle").textContent = "＋ Add a channel"; setModalSource(false);
         $("lmname").value = ""; $("lmcolor").value = "#00e5ff"; $("lmkind").value = "instant"; $("lmsource").value = "embedded"; $("lmsrc").value = ""; $("lmq").value = lmTemplate("instant");
@@ -2533,11 +2590,13 @@ __GLUE_JS__
         $("lmname").value = def.name; $("lmcolor").value = /^#/.test(def.color) ? def.color : "#00e5ff"; $("lmkind").value = def.kind; $("lmsource").value = def.embedded ? "embedded" : "file"; $("lmsrc").value = def.file || ""; $("lmq").value = def.q;
       }
       if (editingChannel !== "borders") $("lmname").disabled = false;
-      syncFileRow(); $("layermodal").hidden = false; $((editingChannel === "borders") ? "lmq" : "lmname").focus();
+      syncFileRow(); refreshDatasetContext(); $("layermodal").hidden = false; $((editingChannel === "borders") ? "lmq" : "lmname").focus();
     }
-    $("lmsource").addEventListener("change", syncFileRow);
+    $("lmsource").addEventListener("change", () => { syncFileRow(); refreshDatasetContext(); });
+    $("lmsrc").addEventListener("input", refreshDatasetContext);
+    $("lmsrc").addEventListener("change", refreshDatasetContext);
     $("lmkind").addEventListener("change", () => { const cur = $("lmq").value.trim(); if (!cur || cur === lmTemplate("instant") || cur === lmTemplate("interval")) $("lmq").value = lmTemplate($("lmkind").value); });
-    $("lmtpl").addEventListener("change", () => { const i = +$("lmtpl").value; if ($("lmtpl").value === "" || isNaN(i)) return; const ex = EXAMPLES[i]; if (ex) { $("lmq").value = ex.q; if (!$("lmname").disabled && !$("lmname").value.trim()) $("lmname").value = ex.label; } });
+    $("lmtpl").addEventListener("change", () => { if ($("lmtpl").value === "") return; const t = currentTemplates[+$("lmtpl").value]; if (t) { $("lmq").value = t.q; if (!$("lmname").disabled && !$("lmname").value.trim()) $("lmname").value = t.label; } });
     $("lmclose").addEventListener("click", () => { $("layermodal").hidden = true; });
     $("layermodal").addEventListener("click", (e) => { if (e.target === $("layermodal")) $("layermodal").hidden = true; });
     function renderPreviewTable(rows, vars) {
