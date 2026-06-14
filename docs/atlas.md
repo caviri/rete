@@ -153,7 +153,11 @@ whatever your query binds to `?wkt`.
     projection, active and custom layers, view — is **remembered in `localStorage`**
     across reloads, and **🔗 Share** copies a link that encodes the whole view in the
     URL hash (`#s=…`), so a custom-layer setup is reproducible by anyone who opens it
-    (the restore path hard-sanitises the incoming state).
+    (the restore path hard-sanitises the incoming state). **📑 Views** saves, loads
+    and deletes **named scenes**; **Shorten link** turns the (long) state link into a
+    `da.gd` short URL (using `?s=` so the redirect keeps the state, since shorteners
+    drop the `#` fragment); and **Reset session** (in ⚙ Settings) clears the saved
+    state back to defaults while keeping your named views.
 
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">

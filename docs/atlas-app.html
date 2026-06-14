@@ -76,6 +76,17 @@
   .lmrow input[type=color] { width:42px; height:28px; padding:0; border:1px solid var(--line); border-radius:5px; background:#0a141e; }
   .lmqrow { align-items:stretch; }
   .lmqrow textarea { flex:1; background:#0a141e; border:1px solid var(--line); color:var(--ink); border-radius:5px; padding:7px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; resize:vertical; }
+  /* Saved views modal */
+  #viewsmodal { position:fixed; inset:0; background:rgba(4,8,12,.6); display:flex; align-items:center; justify-content:center; z-index:50; }
+  #viewsmodal[hidden] { display:none; }
+  #vmname { flex:1; background:#0a141e; border:1px solid var(--line); color:var(--ink); border-radius:5px; padding:5px 7px; font:inherit; }
+  .vw { display:flex; align-items:center; gap:8px; padding:5px 4px; border-bottom:1px solid var(--line); font-size:12px; cursor:pointer; }
+  .vw:hover { background:rgba(96,165,250,.1); }
+  .vw .vwname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); }
+  .vw .vwn { font-size:10.5px; flex:0 0 auto; }
+  .vw .vwlink, .vw .vwdel { flex:0 0 auto; background:none; border:none; color:var(--mut); cursor:pointer; font-size:13px; padding:0 4px; border-radius:3px; }
+  .vw .vwlink:hover { color:var(--accent); }
+  .vw .vwdel:hover { color:#ff6b6b; }
   .tracks { display:flex; flex-direction:column; gap:3px; margin-top:6px; }
   .tracks .trk { position:relative; height:22px; background:#0c1116; border:1px solid var(--line); border-radius:4px; overflow:hidden; }
   .tracks .trk canvas { display:block; width:100%; height:100%; }
@@ -318,7 +329,7 @@
           <label><input type="checkbox" data-layer="events" checked> Events</label>
         </details>
       </div>
-      <div class="mapctl"><button id="fit" title="Zoom to fit all territories">⤢ Fit</button><button id="home" title="Reset the view">⌂ Reset</button><button id="refbtn" title="Pin this era as a transparent reference overlay to compare against">📌 Ref</button><button id="sharebtn" title="Copy a shareable link to this exact view (year, projection, layers, custom layers)">🔗 Share</button><button id="wdbtn" title="Federate the visible territories with Wikidata (online)">🔗 Wikidata</button></div>
+      <div class="mapctl"><button id="fit" title="Zoom to fit all territories">⤢ Fit</button><button id="home" title="Reset the view">⌂ Reset</button><button id="refbtn" title="Pin this era as a transparent reference overlay to compare against">📌 Ref</button><button id="viewsbtn" title="Save, load &amp; share named views">📑 Views</button><button id="sharebtn" title="Copy a shareable link to this exact view (year, projection, layers, custom layers)">🔗 Share</button><button id="wdbtn" title="Federate the visible territories with Wikidata (online)">🔗 Wikidata</button></div>
     </div>
     <div class="view hidden" id="tableView"></div>
   </section>
@@ -391,6 +402,7 @@
       <label class="setrow"><input type="checkbox" id="setcache" checked> Cache query results — re-running an identical query (per data source) is instant</label>
       <div class="setrow"><span id="setcacheinfo" class="mut"></span><span class="sp"></span><button id="setclear" class="setbtn">Clear query cache</button></div>
       <div class="setrow"><span id="setreteinfo" class="mut"></span><span class="sp"></span><button id="setdrop" class="setbtn">Drop cached .rete</button></div>
+      <div class="setrow"><span class="mut">Reset the saved session (year, projection, layers, view) to defaults. Named Views are kept.</span><span class="sp"></span><button id="setreset" class="setbtn">Reset session</button></div>
       <h3>Cached queries</h3>
       <div id="setlist" class="setlist"><p class="mut">No queries cached yet.</p></div>
     </div>
@@ -409,6 +421,18 @@
       <div class="lmrow lmqrow"><label>SPARQL</label><textarea id="lmq" spellcheck="false" rows="7"></textarea></div>
       <div id="lmerr" class="err" style="min-height:16px"></div>
       <div class="setrow"><span class="mut">Prefixes (ex:, rdfs:, geo:, geof:…) are added for you.</span><span class="sp"></span><button id="lmadd" class="setbtn">Add layer</button></div>
+    </div>
+  </div>
+</div>
+
+<div id="viewsmodal" hidden>
+  <div class="setbox lmbox">
+    <div class="settop"><b>📑 Saved views</b><span class="sp"></span><button id="vmclose" title="close">×</button></div>
+    <div class="setbody">
+      <div class="lmrow"><input id="vmname" type="text" placeholder="Name this view (e.g. WWI empires + battles)"><button id="vmsave" class="setbtn">Save current</button></div>
+      <div id="vmlist" class="setlist"><p class="mut">No saved views yet — save the current map state above.</p></div>
+      <div class="setrow"><span class="mut">Shorten a link to the <b>current</b> view (sends it to da.gd).</span><span class="sp"></span><button id="vmshorten" class="setbtn">🔗 Shorten link</button></div>
+      <div id="vmshort" class="mut" style="word-break:break-all"></div>
     </div>
   </div>
 </div>
@@ -2764,11 +2788,29 @@ let wasm_bindgen = (function(exports) {
       renderLayerList(); renderTracks(); requestDraw();
     } finally { restoring = false; }
   }
-  function restoreSession() {   // a shared #s=… hash wins over the last local session
+  function restoreSession() {   // a shared link (#s= hash, or ?s= query for shortened links) wins over the local session
     const m = location.hash.match(/[#&]s=([^&]+)/);
-    if (m) { const S = decodeState(m[1]); if (S) return applyState(S); }
+    let qp = null; try { qp = new URLSearchParams(location.search).get("s"); } catch (e) {}
+    const enc = (m && m[1]) || qp;
+    if (enc) { const S = decodeState(enc); if (S) return applyState(S); }
     let S = null; try { S = JSON.parse(localStorage.getItem(STATE_KEY) || "null"); } catch (e) {}
     return S ? applyState(S) : Promise.resolve();
+  }
+  // ---- named saved views + link shortening ----
+  const VIEWS_KEY = "rete-atlas-views";
+  function loadViews() { try { const v = JSON.parse(localStorage.getItem(VIEWS_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+  function storeViews(v) { try { localStorage.setItem(VIEWS_KEY, JSON.stringify(v.slice(0, 50))); } catch (e) {} }
+  function renderViews() {
+    const v = loadViews(), host = $("vmlist");
+    if (!v.length) { host.innerHTML = `<p class="mut">No saved views yet — save the current map state above.</p>`; return; }
+    host.innerHTML = v.map((x, i) =>
+      `<div class="vw" data-i="${i}"><span class="vwname" title="load this view">${escapeHtml(x.name)}</span><span class="vwn mut">${(x.s && Array.isArray(x.s.on) ? x.s.on.length : 0)} layers · ${escapeHtml(yearLabel((x.s && x.s.y) || 0))}</span><button class="vwlink" title="copy a share link to this view">🔗</button><button class="vwdel" title="delete">×</button></div>`).join("");
+  }
+  async function shortenUrl(longUrl) {   // da.gd returns the short URL as plain text + CORS allows the browser call
+    const r = await fetch("https://da.gd/s?url=" + encodeURIComponent(longUrl));
+    const t = (await r.text()).trim();
+    if (!r.ok || !/^https?:\/\//.test(t)) throw new Error(t || ("HTTP " + r.status));
+    return t;
   }
   function renderTracks() {   // a histogram "audio track" per active layer, aligned to the timeline window
     const host = $("tracks"), on = overlays.filter((l) => l.on);
@@ -3007,6 +3049,34 @@ let wasm_bindgen = (function(exports) {
       const enc = encodeState(atlasState());
       if (history.replaceState) history.replaceState(null, "", "#s=" + enc);
       copyText(location.origin + location.pathname + "#s=" + enc).then(() => flash($("sharebtn"), "✓ link copied"), () => flash($("sharebtn"), "✗ copy failed"));
+    });
+    // 📑 Saved views
+    $("viewsbtn").addEventListener("click", () => { renderViews(); $("vmshort").textContent = ""; $("viewsmodal").hidden = false; $("vmname").focus(); });
+    $("vmclose").addEventListener("click", () => { $("viewsmodal").hidden = true; });
+    $("viewsmodal").addEventListener("click", (e) => { if (e.target === $("viewsmodal")) $("viewsmodal").hidden = true; });
+    $("vmsave").addEventListener("click", () => {
+      const name = ($("vmname").value || "").trim(); if (!name) { $("vmname").focus(); return; }
+      const v = loadViews(); v.unshift({ name: name.slice(0, 60), ts: Date.now(), s: atlasState() }); storeViews(v);
+      $("vmname").value = ""; renderViews();
+    });
+    $("vmlist").addEventListener("click", (e) => {
+      const row = e.target.closest(".vw"); if (!row) return; const i = +row.dataset.i, v = loadViews(); const x = v[i]; if (!x) return;
+      if (e.target.classList.contains("vwdel")) { v.splice(i, 1); storeViews(v); renderViews(); return; }
+      if (e.target.classList.contains("vwlink")) { const enc = encodeState(x.s); copyText(location.origin + location.pathname + "#s=" + enc).then(() => flash(e.target, "✓"), () => {}); return; }
+      applyState(x.s); $("viewsmodal").hidden = true;   // click the row → load it
+    });
+    $("vmshorten").addEventListener("click", async () => {
+      const out = $("vmshort"); out.textContent = "shortening…";
+      try {
+        const short = await shortenUrl(location.origin + location.pathname + "?s=" + encodeState(atlasState()));   // ?s= survives the shortener (fragments are dropped)
+        await copyText(short); out.innerHTML = `<a href="${escapeHtml(safeUrl(short))}" target="_blank" rel="noopener">${escapeHtml(short)}</a> — copied`;
+      } catch (e) { out.textContent = "Shortening failed (offline or service down) — the full 🔗 Share link still works."; }
+    });
+    // ♻ Reset session
+    $("setreset").addEventListener("click", () => {
+      if (!confirm("Reset the saved session to defaults? (Named Views are kept.)")) return;
+      try { localStorage.removeItem(STATE_KEY); } catch (e) {}
+      location.href = location.origin + location.pathname;
     });
     // timeline zoom controls (drag the context window below to pan/zoom too)
     $("zoomin").addEventListener("click", () => zoomBy(0.6));
