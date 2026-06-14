@@ -46,7 +46,10 @@
   button:hover { filter:brightness(1.08); }
   #status { color:var(--mut); font-size:12px; padding:0 12px 8px; min-height:18px; }
   #status.err { color:var(--accent2); }
+  .lyrfilter { margin:0 12px 4px; width:calc(100% - 24px); box-sizing:border-box; background:#0a141e; border:1px solid var(--line); color:var(--ink); border-radius:5px; padding:4px 7px; font:inherit; font-size:12px; }
+  .lyrfilter::placeholder { color:var(--mut); }
   .layerlist { padding:2px 12px 6px; max-height:260px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.2) transparent; }
+  .layerlist .lyr.nomatch { display:none; }
   .layerlist::-webkit-scrollbar { width:8px; }
   .layerlist::-webkit-scrollbar-thumb { background:rgba(255,255,255,.18); border-radius:4px; }
   .layerlist .lyr { display:flex; align-items:center; gap:6px; padding:3px 2px; font-size:12px; color:#cdd9e5; cursor:pointer; border-radius:4px; }
@@ -322,6 +325,7 @@
     <div id="status"></div>
     <div class="hint">The timeline rewrites <code>{YEAR}</code> in the query. Click a territory to identify it with <code>geof:sfContains</code>. Lazy mode fetches only the bytes each query touches.</div>
     <h2>Data layers <button id="addlayer" class="addbtn" title="Add a custom SPARQL layer">＋</button><span class="sp"></span><span class="mut" style="font-size:10.5px;font-weight:400">overlays · SPARQL · drag to reorder</span></h2>
+    <input id="lyrfilter" class="lyrfilter" type="text" placeholder="Filter layers…" spellcheck="false">
     <div class="layerlist" id="layerlist"></div>
     <h2>Territories</h2>
     <div class="legend" id="legend"></div>
@@ -2757,6 +2761,15 @@ let wasm_bindgen = (function(exports) {
       `<span class="cnt">${l.on || l.err ? escapeHtml(layerCount(l)) : ""}</span>` +
       (l.def.custom ? `<span class="lyrdel" title="remove this custom layer">×</span>` : "") +
       `</label>`).join("");
+    applyLyrFilter();
+  }
+  let lyrFilter = "";
+  function applyLyrFilter() {   // hide rows whose name doesn't match the filter (keeps overlays[] indices intact)
+    const q = lyrFilter.trim().toLowerCase();
+    document.querySelectorAll("#layerlist .lyr").forEach((row) => {
+      const n = (row.querySelector(".lyrname") || {}).textContent || "";
+      row.classList.toggle("nomatch", !!q && !n.toLowerCase().includes(q));
+    });
   }
   // ---- custom layers (+ button) and drag-to-reorder ----
   let customSeq = 0;
@@ -3208,6 +3221,7 @@ let wasm_bindgen = (function(exports) {
       : "SELECT ?x ?label ?year ?wkt WHERE {\n  ?x rdfs:label ?label ; ex:year ?year ;\n     geo:hasGeometry/geo:asWKT ?wkt\n} LIMIT 2000";
     const openLayerModal = () => { $("lmerr").textContent = ""; if (!$("lmq").value.trim()) $("lmq").value = lmTemplate($("lmkind").value); $("layermodal").hidden = false; $("lmname").focus(); };
     $("addlayer").addEventListener("click", openLayerModal);
+    $("lyrfilter").addEventListener("input", (e) => { lyrFilter = e.target.value; applyLyrFilter(); });
     $("lmclose").addEventListener("click", () => { $("layermodal").hidden = true; });
     $("layermodal").addEventListener("click", (e) => { if (e.target === $("layermodal")) $("layermodal").hidden = true; });
     $("lmkind").addEventListener("change", () => { const cur = $("lmq").value.trim(); if (!cur || cur === lmTemplate("instant") || cur === lmTemplate("interval")) $("lmq").value = lmTemplate($("lmkind").value); });
