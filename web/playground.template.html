@@ -48,6 +48,12 @@ __PLAYGROUND_CSS__
       <section class="source-panel">
         <h2>Source</h2>
         <p id="dsDesc" class="microcopy"></p>
+        <details class="lazy-explainer">
+          <summary>How a remote graph is queried lazily</summary>
+          <img src="img/lazy-query.svg" alt="A browser sends HTTP Range requests to a remote .rete file shown as a stack of tiles; only a few tiles are highlighted as fetched while most are never transferred. Caption: a 100 MB / 1 GB graph stays interactive because only a few MB cross the wire per query."
+               style="display:block;width:100%;height:auto;margin-top:8px;border:1px solid var(--border,#e4e8ec);border-radius:8px" />
+          <p class="microcopy" style="margin-top:6px">Remote datasets (e.g. <b>wikidata-1GB</b>, <b>ohm-full</b>) are never downloaded whole — each query fetches only the dictionary chunks and index tiles it touches.</p>
+        </details>
       </section>
 
       <section class="library">
