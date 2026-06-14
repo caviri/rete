@@ -961,6 +961,131 @@ pub fn shacl_construct_url(
     Ok(out)
 }
 
+// --- OWL RL / RDFS coherence checking ----------------------------------------
+//
+// The reasoner (`rete_core::reason`) is already slice-shaped, so these are near
+// twins of the SHACL functions above: `reason`/`reason_url` materialize the whole
+// graph (Tier-2, the complete check), while `reason_construct_url` validates only
+// the slice a CONSTRUCT selects (Tier-1, selective range reads).
+
+/// The fixed, **selective** coherence subgraph for [`reason_construct_url`]
+/// (Tier-1). A UNION of constant-predicate branches: each routes to exactly one
+/// predicate's index tiles, so the client faults only `rdf:type` + the class/
+/// equality T-Box predicates over one warm lazy cache — not the whole graph.
+///
+/// The T-Box branches are MANDATORY: the reasoner finds disjoint-class clashes
+/// only *after* `subClassOf` type-propagation, so omitting `subClassOf`/
+/// `disjointWith`/`sameAs` would silently miss propagation-dependent
+/// contradictions. Property-characteristic axioms (Functional/Symmetric/
+/// Transitive) ride inside the `rdf:type` slice. Instance-level
+/// FunctionalProperty / domain / range clashes need the property's own
+/// assertions — use [`reason_url`] (Tier-2) for those.
+pub const COHERENCE_CONSTRUCT: &str = r#"
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+CONSTRUCT {
+  ?x rdf:type ?c .
+  ?sub rdfs:subClassOf ?sup .
+  ?c1 owl:disjointWith ?c2 .
+  ?s1 owl:sameAs ?s2 .
+  ?f1 owl:differentFrom ?f2 .
+}
+WHERE {
+  { ?x rdf:type ?c }
+  UNION { ?sub rdfs:subClassOf ?sup }
+  UNION { ?c1 owl:disjointWith ?c2 }
+  UNION { ?s1 owl:sameAs ?s2 }
+  UNION { ?f1 owl:differentFrom ?f2 }
+}
+"#;
+
+/// Build the playground JSON envelope for a [`rete_core::Reasoning`] result,
+/// shared by the in-memory and remote entrypoints. `remote` is
+/// `(fileLength, bytes, requests)` for the `*_url` variants, `None` in-memory.
+/// JSON: `{ "kind":"reasoning", "coherent":bool, "inferredCount":N,
+/// "inconsistencies":[{"kind","detail"}], ["remote":{...}] }`.
+fn reasoning_json(r: &rete_core::Reasoning, remote: Option<(u64, u64, u64)>) -> String {
+    use serde_json::json;
+    let inconsistencies: Vec<serde_json::Value> = r
+        .inconsistencies
+        .iter()
+        .map(|i| json!({ "kind": i.kind, "detail": i.detail }))
+        .collect();
+    let mut v = json!({
+        "kind": "reasoning",
+        "coherent": r.inconsistencies.is_empty(),
+        "inferredCount": r.inferred.len(),
+        "inconsistencies": inconsistencies,
+    });
+    if let (Some(obj), Some((file_length, bytes, requests))) = (v.as_object_mut(), remote) {
+        obj.insert(
+            "remote".to_string(),
+            json!({ "fileLength": file_length, "bytes": bytes, "requests": requests }),
+        );
+    }
+    v.to_string()
+}
+
+/// Run the OWL RL / RDFS reasoner over an **in-memory** `.rete` and report the
+/// inferred-triple count plus any incoherent points (logical contradictions).
+/// `graph` selects a named graph; the default graph is used when omitted. This is
+/// the complete (Tier-2) check — it materializes the whole graph. Returns the
+/// [`reasoning_json`] envelope (no `remote` block).
+#[wasm_bindgen]
+pub fn reason(bytes: &[u8], graph: Option<String>) -> Result<String, JsValue> {
+    let rete = open(bytes)?;
+    let base = rete.dump(graph.as_deref());
+    let result = rete_core::reason(&base);
+    Ok(reasoning_json(&result, None))
+}
+
+/// Run the reasoner over a **remote** `.rete` URL — the complete (Tier-2) check.
+/// It materializes the whole graph, so this faults in the dataset's chunks/tiles
+/// as it reads (≈ the whole file); use [`reason_construct_url`] for the cheaper
+/// selective check. Worker-only (synchronous XHR). A failed range fetch mid-read
+/// is an error, never a silently-incomplete (and thus possibly false "coherent")
+/// result. JSON adds `"remote": { fileLength, bytes, requests }`.
+#[wasm_bindgen]
+pub fn reason_url(url: &str, graph: Option<String>) -> Result<String, JsValue> {
+    let (reader, rete) = open_url(url)?;
+    let base = rete.dump(graph.as_deref());
+    let result = rete_core::reason(&base);
+    incomplete_guard(&rete, "reasoning")?;
+    let out = reasoning_json(
+        &result,
+        Some((reader.len(), reader.bytes_read(), reader.requests())),
+    );
+    let _ = reader;
+    Ok(out)
+}
+
+/// **Selective (Tier-1) coherence check** over a remote `.rete`: evaluate a
+/// CONSTRUCT (touching only the tiles its constant-predicate patterns need), then
+/// reason over just that subgraph. Pass [`COHERENCE_CONSTRUCT`] for the standard
+/// class/equality coherence slice, or a custom CONSTRUCT to scope the check
+/// further. Unlike [`reason_url`] (which materializes the whole graph), this
+/// fetches only the slice the CONSTRUCT selects. Worker-only (synchronous XHR).
+#[wasm_bindgen]
+pub fn reason_construct_url(url: &str, construct: &str) -> Result<String, JsValue> {
+    let (reader, rete) = open_url(url)?;
+    let triples =
+        match eval_query(&rete, construct).map_err(err)? {
+            QueryOutput::Construct(t) => t,
+            _ => return Err(JsValue::from_str(
+                "the subset query must be a CONSTRUCT — it builds the subgraph the reasoner checks",
+            )),
+        };
+    incomplete_guard(&rete, "query")?;
+    let result = rete_core::reason(&triples);
+    let out = reasoning_json(
+        &result,
+        Some((reader.len(), reader.bytes_read(), reader.requests())),
+    );
+    let _ = reader;
+    Ok(out)
+}
+
 fn format_shacl_text(report: &ValidationReport) -> String {
     if report.conforms {
         return "conforms: true\n".to_string();
