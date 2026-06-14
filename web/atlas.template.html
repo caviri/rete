@@ -396,6 +396,8 @@
   .rack::-webkit-scrollbar { width:8px; } .rack::-webkit-scrollbar-thumb { background:rgba(255,255,255,.18); border-radius:4px; }
   .chan { border:1px solid var(--line); border-radius:6px; background:#0c1116; overflow:hidden; }
   .chan.sel { border-color:rgba(63,182,168,.5); }
+  .chan.dragging { opacity:.4; } .chan.dragover { box-shadow:inset 0 2px 0 var(--accent2); }
+  .chanhead[draggable="true"] { cursor:grab; } .chanhead[draggable="true"]:active { cursor:grabbing; }
   .chanrow { display:flex; align-items:stretch; height:30px; }
   .chanhead { display:flex; align-items:center; gap:5px; width:calc(var(--tlgut) - 1px); flex:0 0 calc(var(--tlgut) - 1px); padding:0 9px 0 7px; border-right:1px solid var(--line); }
   .chanhead .chexp { background:none; border:none; color:var(--mut); cursor:pointer; font-size:10px; padding:0 1px; width:14px; flex:0 0 auto; transition:transform .15s; }
@@ -416,7 +418,7 @@
   .chbody { border-top:1px solid var(--line); background:#0a0f16; max-height:190px; overflow-y:auto;
     scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.2) transparent; }
   .chbody::-webkit-scrollbar { width:8px; } .chbody::-webkit-scrollbar-thumb { background:rgba(255,255,255,.18); border-radius:4px; }
-  .chbody .cbtog { display:flex; gap:4px; padding:6px 8px 2px; }
+  .chbody .cbtog { display:flex; gap:4px; padding:6px 8px 0; }
   .chbody .cbtog button { background:#0c1116; border:1px solid var(--line); color:var(--mut); border-radius:5px; padding:2px 9px; font-size:11px; cursor:pointer; }
   .chbody .cbtog button.on { background:var(--accent); color:#04110f; border-color:var(--accent); }
   .chbody .feat { display:flex; align-items:center; gap:7px; padding:3px 10px; font-size:12px; color:#cdd9e5; cursor:pointer; border-radius:4px; }
@@ -425,8 +427,22 @@
   .chbody .feat .fn { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .chbody .feat .fy { color:var(--mut); font-size:10.5px; font-variant-numeric:tabular-nums; flex:0 0 auto; }
   .chbody .feat .go { color:var(--accent); flex:0 0 auto; opacity:0; } .chbody .feat:hover .go { opacity:1; }
+  /* per-channel data table */
+  .chbody .chtwrap { margin:4px var(--tlpad) 10px var(--tlgut); border:1px solid var(--line); border-radius:7px; overflow:auto;
+    max-height:200px; background:#0b1118; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.22) transparent; }
+  .chbody .chtwrap::-webkit-scrollbar { width:9px; height:9px; }
+  .chbody .chtwrap::-webkit-scrollbar-thumb { background:rgba(255,255,255,.2); border-radius:5px; border:2px solid #0b1118; }
+  .chbody .chtwrap::-webkit-scrollbar-corner { background:transparent; }
+  .chbody .chtwrap table { border-collapse:separate; border-spacing:0; width:100%; font-size:11.5px; }
+  .chbody .chtwrap th { position:sticky; top:0; z-index:1; background:#1a2330; color:#e6edf3; text-align:left; font-weight:650; padding:5px 9px; border-bottom:2px solid var(--accent); white-space:nowrap; }
+  .chbody .chtwrap td { padding:3px 9px; border-bottom:1px solid #161f29; color:#c4d2df; font-family:ui-monospace,Consolas,monospace; white-space:nowrap; max-width:240px; overflow:hidden; text-overflow:ellipsis; }
+  .chbody .chtwrap tbody tr { cursor:pointer; }
+  .chbody .chtwrap tbody tr:nth-child(odd) td { background:rgba(255,255,255,.018); }
+  .chbody .chtwrap tbody tr:hover td { background:rgba(63,182,168,.1); color:#eaf1f6; }
+  .chbody .chtwrap td .tsw { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; vertical-align:-1px; outline:1px solid rgba(255,255,255,.2); }
+  .chbody .cbmore { padding:5px 10px 8px var(--tlgut); color:var(--mut); font-size:11px; }
   /* time-aligned thumbnail strip — positioned along the same axis as the channel track above */
-  .chbody .cbstrip { position:relative; height:72px; margin:8px var(--tlpad) 12px var(--tlgut); }
+  .chbody .cbstrip { position:relative; height:72px; margin:2px var(--tlpad) 10px var(--tlgut); }
   .chbody .cbstrip .mth { position:absolute; top:0; transform:translateX(-50%); text-align:center; cursor:pointer; }
   .chbody .cbstrip .mth canvas { display:block; width:92px; height:52px; border:1px solid var(--line); border-radius:4px; background:#0a1622; }
   .chbody .cbstrip .mth.cur canvas { border-color:var(--accent2); box-shadow:0 0 6px rgba(240,163,94,.5); }
@@ -1916,7 +1932,7 @@ __GLUE_JS__
     $("rack").innerHTML = rackDescs.map((d) => {
       const on = chanOn(d), open = expanded.has(d.id), L = d.type === "overlay" ? d.layer : null;
       return `<div class="chan${open ? " open" : ""}" data-id="${escapeHtml(d.id)}">` +
-        `<div class="chanrow"><div class="chanhead${on ? "" : " off"}${L && L.err ? " err" : ""}">` +
+        `<div class="chanrow"><div class="chanhead${on ? "" : " off"}${L && L.err ? " err" : ""}"${d.type === "overlay" ? ' draggable="true" title="drag to reorder"' : ""}>` +
           `<button class="chexp${open ? " open" : ""}" title="expand / collapse">▶</button>` +
           `<button class="cheye" title="show / hide">${on ? "👁" : "🚫"}</button>` +
           chanGlyph(d) + `<span class="chname">${escapeHtml(d.name)}</span>` +
@@ -1972,10 +1988,37 @@ __GLUE_JS__
   }
   function renderChannelBody(d, chanEl) {
     const el = chanEl.querySelector(".chbody"); if (!el) return;
-    const mode = chanView[d.id] || "list", supportsMaps = d.type === "borders" || d.type === "overlay";
-    const tog = supportsMaps ? `<div class="cbtog"><button data-v="list" class="${mode === "list" ? "on" : ""}">≣ list</button><button data-v="maps" class="${mode === "maps" ? "on" : ""}">🗺 maps</button></div>` : "";
-    if (mode === "maps" && supportsMaps) { el.innerHTML = tog + (d.type === "borders" ? `<div class="cbstrip"></div>` : `<div class="cbmaps"></div>`); fillChannelMaps(d, el); }
+    let mode = chanView[d.id] || "list", supportsMaps = d.type === "borders" || d.type === "overlay";
+    if (mode === "maps" && !supportsMaps) mode = "list";
+    const tog = `<div class="cbtog"><button data-v="list" class="${mode === "list" ? "on" : ""}">≣ list</button>` +
+      (supportsMaps ? `<button data-v="maps" class="${mode === "maps" ? "on" : ""}">🗺 maps</button>` : "") +
+      `<button data-v="table" class="${mode === "table" ? "on" : ""}">▦ table</button></div>`;
+    if (mode === "maps") { el.innerHTML = tog + (d.type === "borders" ? `<div class="cbstrip"></div>` : `<div class="cbmaps"></div>`); fillChannelMaps(d, el); }
+    else if (mode === "table") el.innerHTML = tog + channelTableHtml(d);
     else el.innerHTML = tog + channelListHtml(d);
+  }
+  function channelTableHtml(d) {   // the channel's rows as a sortable-looking table (rows fly the map to the feature)
+    const cap = 300, esc = escapeHtml;
+    const wrap = (cols, rows, total) => rows.length
+      ? `<div class="chtwrap"><table><thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>` + (total > cap ? `<div class="cbmore">+${(total - cap).toLocaleString()} more rows</div>` : "")
+      : `<div class="cbempty">no rows in view</div>`;
+    if (d.type === "borders") {
+      const ts = features.slice().filter((f) => f.label).sort((a, b) => (b.area || 0) - (a.area || 0));
+      const rows = ts.slice(0, cap).map((f) => `<tr data-fly data-n="${esc(f.label)}"><td><span class="tsw" style="background:${f.color}"></span>${esc(f.label)}</td><td>${(f.cxLL || 0).toFixed(1)}, ${(f.cyLL || 0).toFixed(1)}</td></tr>`);
+      return wrap(["Territory", "Centre (lon, lat)"], rows, ts.length);
+    }
+    if (d.type === "events") {
+      const ev = EVENTS.slice().sort((a, b) => a.y - b.y);
+      return wrap(["Year", "Landmark"], ev.map((e) => `<tr data-fly data-y="${e.y}"><td>${esc(yearLabel(e.y))}</td><td>${esc(e.t)}</td></tr>`), ev.length);
+    }
+    const L = d.layer; if (!L.feats || !L.feats.length) return `<div class="cbempty">${L.loading ? "loading…" : (L.on ? "no features" : "hidden — turn the eye on")}</div>`;
+    const inWin = L.feats.filter((f) => { const y = L.def.kind === "interval" ? (f.s + f.e) / 2 : f.year; return y >= vStart && y <= vEnd; });
+    const list = inWin.length ? inWin : L.feats, interval = L.def.kind === "interval";
+    const cols = interval ? ["Label", "Start", "End", "Lon", "Lat"] : ["Label", "Year", "Lon", "Lat"];
+    const rows = list.slice(0, cap).map((f) => `<tr data-fly data-lon="${f.lon}" data-lat="${f.lat}"><td><span class="tsw" style="background:${d.color}"></span>${esc(f.label || "(unnamed)")}</td>` +
+      (interval ? `<td>${esc(yearLabel(f.s))}</td><td>${f.e >= 2100 ? "present" : esc(yearLabel(f.e))}</td>` : `<td>${esc(yearLabel(f.year))}</td>`) +
+      `<td>${(+f.lon).toFixed(2)}</td><td>${(+f.lat).toFixed(2)}</td></tr>`);
+    return wrap(cols, rows, list.length);
   }
   function channelListHtml(d) {
     if (d.type === "borders") {
@@ -2443,7 +2486,7 @@ __GLUE_JS__
         if (e.target.classList.contains("ledit") || e.target.classList.contains("chedit")) { openChannelModal(d); return; }
         if (e.target.classList.contains("ldel") || e.target.classList.contains("chdel")) { deleteChannel(d); return; }
         const tg = e.target.closest(".cbtog button"); if (tg) { chanView[d.id] = tg.dataset.v; renderChannels(); return; }
-        const fe = e.target.closest(".feat"); if (fe) { clickFeature(d, fe); return; }
+        const fe = e.target.closest(".feat, tr[data-fly]"); if (fe) { clickFeature(d, fe); return; }
         const mt = e.target.closest(".mth"); if (mt && mt.dataset.y) { setScrub(+mt.dataset.y); return; }
       });
     }
@@ -2454,6 +2497,11 @@ __GLUE_JS__
     $("layerstack").addEventListener("dragend", () => { dragFrom = null; document.querySelectorAll("#layerstack .lrow").forEach((l) => l.classList.remove("dragging", "dragover")); });
     $("layerstack").addEventListener("dragover", (e) => { e.preventDefault(); const r = e.target.closest(".lrow[draggable]"); document.querySelectorAll("#layerstack .lrow").forEach((x) => x.classList.toggle("dragover", x === r)); });
     $("layerstack").addEventListener("drop", (e) => { e.preventDefault(); const r = e.target.closest(".lrow[draggable]"); if (r && dragFrom != null) { const d = descById(r.dataset.id); if (d && d.type === "overlay") reorderLayers(dragFrom, d.i); } dragFrom = null; });
+    // drag-to-reorder overlay channels in the bottom rack too (drag a channel head)
+    $("rack").addEventListener("dragstart", (e) => { const h = e.target.closest('.chanhead[draggable="true"]'); if (!h) return; const chan = h.closest(".chan"); const d = descById(chan.dataset.id); if (d && d.type === "overlay") { dragFrom = d.i; e.dataTransfer.effectAllowed = "move"; chan.classList.add("dragging"); } });
+    $("rack").addEventListener("dragend", () => { dragFrom = null; document.querySelectorAll("#rack .chan").forEach((c) => c.classList.remove("dragging", "dragover")); });
+    $("rack").addEventListener("dragover", (e) => { const chan = e.target.closest(".chan"); const d = chan && descById(chan.dataset.id); document.querySelectorAll("#rack .chan").forEach((c) => c.classList.toggle("dragover", c === chan && d && d.type === "overlay")); if (chan) e.preventDefault(); });
+    $("rack").addEventListener("drop", (e) => { e.preventDefault(); const chan = e.target.closest(".chan"); if (chan && dragFrom != null) { const d = descById(chan.dataset.id); if (d && d.type === "overlay") reorderLayers(dragFrom, d.i); } dragFrom = null; });
     // ── the + / edit channel modal: templates + per-channel source + table preview ──
     const lmTemplate = (kind) => kind === "interval"
       ? "SELECT ?x ?label ?s ?e ?wkt WHERE {\n  ?x rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ;\n     geo:hasGeometry/geo:asWKT ?wkt\n} LIMIT 2000"
