@@ -23,6 +23,10 @@ __pycache__/
 # …and the numbered shards behind the explorer's "GitHub (3 shards)" federated
 # source (manifest.json links them). Regenerate with dev/make_shards.sh.
 !/docs/wikidata-100MB/shards/*.rete
+# …and the tiny causal ontology the explorer's Coherence tasks check, same-origin
+# (it carries OWL axioms the wikidata graph lacks). Rebuild with:
+#   rete build examples/causal.nt -o docs/examples/causal.rete
+!/docs/examples/causal.rete
 
 # Cargo.lock IS committed: this workspace ships a binary (rete-cli), so a locked
 # dependency set gives reproducible builds and a stable CI cache key. (It would

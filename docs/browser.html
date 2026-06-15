@@ -266,6 +266,11 @@ browser reads compressed files fine. <code>rete-wasm</code> depends on <code>ret
 <tr><td><code>reach(bytes, predicate, seeds, reverse)</code></td><td><code>[{ seed, count, reached:["&lt;iri&gt;",…] }, …]</code> (serial transitive reach)</td></tr>
 <tr><td><code>build(text, format)</code></td><td>a complete <code>.rete</code> file image (<code>Uint8Array</code>) built from RDF text</td></tr>
 <tr><td><code>sparql_url(url, query, format)</code></td><td><strong>worker-only</strong>: the <code>query</code> envelope evaluated against a remote URL via lazy HTTP range reads, plus <code>remote: { fileLength, bytes, requests }</code></td></tr>
+<tr><td><code>reason(bytes, graph?)</code></td><td>OWL RL / RDFS coherence over an in-memory graph: <code>{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }</code></td></tr>
+<tr><td><code>check_schema(bytes)</code></td><td>index-free Tier-0 schema coherence: <code>{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], classCount, readsIndex:false }</code></td></tr>
+<tr><td><code>check_schema_url(url)</code></td><td><strong>worker-only</strong>: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus <code>remote:{…}</code></td></tr>
+<tr><td><code>reason_construct_url(url, construct)</code></td><td><strong>worker-only</strong>: Tier-1 <em>selective</em> coherence — reason over just the subgraph a CONSTRUCT selects (only its tiles are fetched), plus <code>remote:{…}</code></td></tr>
+<tr><td><code>reason_url(url, graph?)</code></td><td><strong>worker-only</strong>: Tier-2 <em>full</em> coherence over a remote URL (materializes the whole graph), plus <code>remote:{…}</code></td></tr>
 </tbody></table>
 <p><code>query</code> runs SELECT / ASK / CONSTRUCT / DESCRIBE via <code>eval_query</code> and returns a
 single JSON envelope with a <code>kind</code> field:</p>

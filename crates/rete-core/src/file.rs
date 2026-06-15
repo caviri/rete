@@ -54,6 +54,9 @@ pub fn build_pyramid_meta(
         sp.level_rollups,
         sp.level_links,
         sp.descriptors,
+        sp.subclass_cycles,
+        sp.disjoint_pairs,
+        sp.equivalent_pairs,
     );
     (meta.encode(), dend.rounds() as u16)
 }
@@ -1901,6 +1904,12 @@ pub struct SummaryView {
     pub level_links: Vec<LevelLinks>,
     /// Per-community descriptors (Phase 4 progressive refinement; may be empty).
     pub descriptors: Vec<CommunityDescriptor>,
+    /// `subClassOf` cycles (v2.1; empty on older files).
+    pub subclass_cycles: Vec<Vec<String>>,
+    /// `owl:disjointWith` class pairs (v2.1; empty on older files).
+    pub disjoint_pairs: Vec<(String, String)>,
+    /// `owl:equivalentClass` class pairs (v2.1; empty on older files).
+    pub equivalent_pairs: Vec<(String, String)>,
     dict: Dictionary,
 }
 
@@ -1927,6 +1936,9 @@ impl SummaryView {
             level_rollups: meta.level_rollups,
             level_links: meta.level_links,
             descriptors: meta.descriptors,
+            subclass_cycles: meta.subclass_cycles,
+            disjoint_pairs: meta.disjoint_pairs,
+            equivalent_pairs: meta.equivalent_pairs,
             dict,
         }))
     }
@@ -1983,6 +1995,111 @@ impl SummaryView {
             comms.insert(e.o_comm);
         }
         comms.len()
+    }
+
+    /// **Index-free T-Box coherence (Tier-0).** Detect schema-level incoherent
+    /// points purely from the shipped schema pyramid — no triple index, no
+    /// instance data, O(ontology) regardless of graph size:
+    /// - `subclass-cycle`: a set of classes that are mutually `rdfs:subClassOf`.
+    /// - `unsatisfiable-class`: a class whose ancestor closure (over all parents,
+    ///   folded through `owl:equivalentClass`) contains both ends of an
+    ///   `owl:disjointWith` pair, so no individual can ever be one.
+    ///
+    /// Soundness is bounded by what the pyramid ships: the `subClassOf` hierarchy
+    /// is capped (`MAX_HIERARCHY` in `schema_pyramid`), so on a very large ontology
+    /// a pruned ancestor can hide an unsatisfiable class (a false *coherent*, never
+    /// a false *incoherent*). Instance-level clashes (a node typed into disjoint
+    /// classes, functional-property clashes) are NOT visible here — they need the
+    /// A-Box (Tier-1/Tier-2 `reason`).
+    pub fn tbox_coherence(&self) -> Vec<crate::reason::Inconsistency> {
+        use crate::reason::Inconsistency;
+        use std::collections::{BTreeMap, BTreeSet, VecDeque};
+        const MAX_REACH: usize = 100_000;
+
+        let mut out: Vec<Inconsistency> = Vec::new();
+
+        for cyc in &self.subclass_cycles {
+            let detail = if cyc.len() == 1 {
+                format!("{} is rdfs:subClassOf itself (a cycle)", cyc[0])
+            } else {
+                format!(
+                    "classes {{{}}} are mutually rdfs:subClassOf (a cycle)",
+                    cyc.join(", ")
+                )
+            };
+            out.push(Inconsistency {
+                kind: "subclass-cycle",
+                detail,
+            });
+        }
+
+        if !self.disjoint_pairs.is_empty() {
+            // Upward adjacency: subClassOf parents + bidirectional equivalence.
+            let mut adj: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+            for n in &self.class_hierarchy {
+                let e = adj.entry(n.class.as_str()).or_default();
+                for p in &n.parents {
+                    e.push(p.as_str());
+                }
+            }
+            for (a, b) in &self.equivalent_pairs {
+                adj.entry(a.as_str()).or_default().push(b.as_str());
+                adj.entry(b.as_str()).or_default().push(a.as_str());
+            }
+
+            // Candidate focus classes: every class named anywhere in the schema.
+            let mut focuses: BTreeSet<&str> = self
+                .class_hierarchy
+                .iter()
+                .map(|n| n.class.as_str())
+                .collect();
+            for (a, b) in self.disjoint_pairs.iter().chain(&self.equivalent_pairs) {
+                focuses.insert(a.as_str());
+                focuses.insert(b.as_str());
+            }
+
+            let mut seen: BTreeSet<&str> = BTreeSet::new();
+            for &c in &focuses {
+                // reach(c) = {c} ∪ ancestors (capped BFS over `adj`).
+                let mut reach: BTreeSet<&str> = BTreeSet::new();
+                let mut q: VecDeque<&str> = VecDeque::new();
+                reach.insert(c);
+                q.push_back(c);
+                while let Some(x) = q.pop_front() {
+                    if reach.len() > MAX_REACH {
+                        break;
+                    }
+                    if let Some(ns) = adj.get(x) {
+                        for &p in ns {
+                            if reach.insert(p) {
+                                q.push_back(p);
+                            }
+                        }
+                    }
+                }
+                for (x, y) in &self.disjoint_pairs {
+                    if reach.contains(x.as_str()) && reach.contains(y.as_str()) && seen.insert(c) {
+                        out.push(Inconsistency {
+                            kind: "unsatisfiable-class",
+                            detail: format!(
+                                "{c} is a subclass of both {x} and {y}, which are \
+                                 owl:disjointWith — no individual can be a {c}"
+                            ),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+
+        out.sort_by(|a, b| (a.kind, &a.detail).cmp(&(b.kind, &b.detail)));
+        out
+    }
+
+    /// True when [`tbox_coherence`](Self::tbox_coherence) finds no schema-level
+    /// incoherent point.
+    pub fn tbox_is_coherent(&self) -> bool {
+        self.tbox_coherence().is_empty()
     }
 }
 
@@ -2545,6 +2662,74 @@ mod tests {
             ib.push(dict.encode(s, p, o).unwrap());
         }
         write_file(&dict, &ib.build(), false, &[], 0)
+    }
+
+    /// Build a file WITH a pyramid (so the schema pyramid + coherence axioms ship).
+    fn build_with_pyramid(triples: &[(&str, &str, &str)]) -> Vec<u8> {
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let encoded: Vec<_> = triples
+            .iter()
+            .map(|(s, p, o)| dict.encode(s, p, o).unwrap())
+            .collect();
+        let mut ib = GraphIndexBuilder::new();
+        for t in &encoded {
+            ib.push(*t);
+        }
+        let (meta, levels) = build_pyramid_meta(&dict, &encoded, DEFAULT_TILE_BUDGET);
+        write_dataset(&dict, &ib.build(), &[], false, &meta, levels)
+    }
+
+    #[test]
+    fn tbox_coherence_flags_unsatisfiable_class_index_free() {
+        use crate::reader::{CountingReader, SliceReader};
+        let rt = RDF_TYPE;
+        let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let disj = "<http://www.w3.org/2002/07/owl#disjointWith>";
+        // C ⊑ D, C ⊑ E, D disjointWith E ⇒ C unsatisfiable — schema-only, with one
+        // instance present just so the schema pyramid gets built.
+        let bytes = build_with_pyramid(&[
+            ("<http://ex/C>", sub, "<http://ex/D>"),
+            ("<http://ex/C>", sub, "<http://ex/E>"),
+            ("<http://ex/D>", disj, "<http://ex/E>"),
+            ("<http://ex/x>", rt, "<http://ex/C>"),
+        ]);
+
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let view = SummaryView::open_ranged(&r).unwrap().unwrap();
+        let points = view.tbox_coherence();
+        assert!(
+            points
+                .iter()
+                .any(|i| i.kind == "unsatisfiable-class" && i.detail.contains("http://ex/C>")),
+            "expected C unsatisfiable from the schema alone, got {points:?}"
+        );
+
+        // Proven index-free: bytes read never reach the (root_dir) index section,
+        // mirroring `schema_pyramid_round_trips_through_file_index_free`.
+        let header = Header::from_bytes(&bytes[..HEADER_LEN]).unwrap();
+        assert!(
+            r.bytes_read() <= bytes.len() as u64 - header.root_dir_len,
+            "tbox_coherence must not read the triple index"
+        );
+    }
+
+    #[test]
+    fn tbox_coherence_clean_schema_is_coherent() {
+        use crate::reader::SliceReader;
+        let rt = RDF_TYPE;
+        let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let bytes = build_with_pyramid(&[
+            ("<http://ex/Dog>", sub, "<http://ex/Animal>"),
+            ("<http://ex/x>", rt, "<http://ex/Dog>"),
+        ]);
+        let view = SummaryView::open_ranged(&SliceReader::new(&bytes))
+            .unwrap()
+            .unwrap();
+        assert!(view.tbox_is_coherent(), "a plain hierarchy is coherent");
     }
 
     #[test]

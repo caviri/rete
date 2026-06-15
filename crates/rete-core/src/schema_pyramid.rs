@@ -17,6 +17,8 @@ use crate::pyramid::Dendrogram;
 use crate::RDF_TYPE;
 
 const RDFS_SUBCLASS_OF: &str = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+const OWL_DISJOINT_WITH: &str = "<http://www.w3.org/2002/07/owl#disjointWith>";
+const OWL_EQUIVALENT_CLASS: &str = "<http://www.w3.org/2002/07/owl#equivalentClass>";
 const WGS_LAT: &str = "<http://www.w3.org/2003/01/geo/wgs84_pos#lat>";
 const WGS_LONG: &str = "<http://www.w3.org/2003/01/geo/wgs84_pos#long>";
 
@@ -40,6 +42,14 @@ pub struct SchemaPyramid {
     pub level_rollups: Vec<LevelRollup>,
     pub level_links: Vec<LevelLinks>,
     pub descriptors: Vec<CommunityDescriptor>,
+    // --- v2.1 coherence axioms (the T-Box a remote reader checks index-free) ---
+    /// `subClassOf` cycles: every strongly-connected component of size > 1 in the
+    /// child→parent graph, plus every self-loop (`C ⊑ C`). Each a sorted class set.
+    pub subclass_cycles: Vec<Vec<String>>,
+    /// `owl:disjointWith` class pairs, canonicalized `(min, max)`, deduped + sorted.
+    pub disjoint_pairs: Vec<(String, String)>,
+    /// `owl:equivalentClass` class pairs, canonicalized `(min, max)`, deduped + sorted.
+    pub equivalent_pairs: Vec<(String, String)>,
 }
 
 /// Compute the schema pyramid for a graph at the materialized `round`. Empty when
@@ -81,17 +91,46 @@ pub fn build_schema_pyramid(
 
     // --- subClassOf edges: keep ALL parents (a non-exclusive DAG) ---
     let mut parents: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    let mut self_loops: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     if let Some(sc_pid) = subclass_pid {
         for &(s, p, o) in triples {
             if p == sc_pid {
                 if let (Some(child), Some(parent)) = (dict.subject_term(s), dict.object_term(o)) {
                     if child != parent {
                         parents.entry(child).or_default().insert(parent);
+                    } else {
+                        // `C ⊑ C` is dropped from the DAG (depth/rollup) but is a
+                        // degenerate cycle worth reporting on its own.
+                        self_loops.insert(child);
                     }
                 }
             }
         }
     }
+
+    // --- coherence axioms (v2.1): disjointWith / equivalentClass pairs + cycles ---
+    // Canonicalized (min, max) pairs, deduped — the index-free T-Box that lets a
+    // remote reader flag unsatisfiable classes without touching the triple index.
+    let pair_set = |pid: Option<u32>| -> Vec<(String, String)> {
+        let mut set: std::collections::BTreeSet<(String, String)> =
+            std::collections::BTreeSet::new();
+        if let Some(pid) = pid {
+            for &(s, p, o) in triples {
+                if p == pid {
+                    if let (Some(a), Some(b)) = (dict.subject_term(s), dict.object_term(o)) {
+                        if a != b {
+                            let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+                            set.insert((lo, hi));
+                        }
+                    }
+                }
+            }
+        }
+        set.into_iter().collect()
+    };
+    let disjoint_pairs = pair_set(dict.predicate_id(OWL_DISJOINT_WITH));
+    let equivalent_pairs = pair_set(dict.predicate_id(OWL_EQUIVALENT_CLASS));
+    let subclass_cycles = subclass_cycles_of(&parents, &self_loops);
     // Canonical single parent (smallest) for the deterministic depth/rollup tree.
     let canonical: BTreeMap<String, String> = parents
         .iter()
@@ -248,7 +287,106 @@ pub fn build_schema_pyramid(
         level_rollups,
         level_links,
         descriptors,
+        subclass_cycles,
+        disjoint_pairs,
+        equivalent_pairs,
     }
+}
+
+/// Find `subClassOf` cycles: every strongly-connected component of size > 1 in
+/// the child→parent graph (iterative Tarjan), plus every self-loop. Output is
+/// deterministic — members sorted within a component, components sorted, deduped,
+/// capped at `TOP_CLASSES`.
+fn subclass_cycles_of(
+    parents: &BTreeMap<String, std::collections::BTreeSet<String>>,
+    self_loops: &std::collections::BTreeSet<String>,
+) -> Vec<Vec<String>> {
+    // Node universe = every class that appears as a child or a parent.
+    let mut node_set: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for (c, ps) in parents {
+        node_set.insert(c.as_str());
+        for p in ps {
+            node_set.insert(p.as_str());
+        }
+    }
+    let nodes: Vec<&str> = node_set.into_iter().collect();
+    let idx_of: BTreeMap<&str, usize> = nodes.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+    let adj: Vec<Vec<usize>> = nodes
+        .iter()
+        .map(|&n| {
+            let mut v: Vec<usize> = parents
+                .get(n)
+                .map(|ps| ps.iter().map(|p| idx_of[p.as_str()]).collect())
+                .unwrap_or_default();
+            v.sort_unstable();
+            v
+        })
+        .collect();
+
+    let n = nodes.len();
+    let mut index = vec![usize::MAX; n];
+    let mut low = vec![0usize; n];
+    let mut on_stack = vec![false; n];
+    let mut stack: Vec<usize> = Vec::new();
+    let mut next = 0usize;
+    let mut comps: Vec<Vec<String>> = Vec::new();
+
+    for start in 0..n {
+        if index[start] != usize::MAX {
+            continue;
+        }
+        // Iterative DFS: a call stack of (node, next-child-position).
+        index[start] = next;
+        low[start] = next;
+        next += 1;
+        stack.push(start);
+        on_stack[start] = true;
+        let mut call: Vec<(usize, usize)> = vec![(start, 0)];
+        while let Some(&(v, ci)) = call.last() {
+            if ci < adj[v].len() {
+                call.last_mut().unwrap().1 += 1;
+                let w = adj[v][ci];
+                if index[w] == usize::MAX {
+                    index[w] = next;
+                    low[w] = next;
+                    next += 1;
+                    stack.push(w);
+                    on_stack[w] = true;
+                    call.push((w, 0));
+                } else if on_stack[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+            } else {
+                if low[v] == index[v] {
+                    let mut comp: Vec<String> = Vec::new();
+                    loop {
+                        let w = stack.pop().unwrap();
+                        on_stack[w] = false;
+                        comp.push(nodes[w].to_string());
+                        if w == v {
+                            break;
+                        }
+                    }
+                    if comp.len() > 1 {
+                        comp.sort();
+                        comps.push(comp);
+                    }
+                }
+                call.pop();
+                if let Some(&(parent, _)) = call.last() {
+                    low[parent] = low[parent].min(low[v]);
+                }
+            }
+        }
+    }
+
+    for s in self_loops {
+        comps.push(vec![s.clone()]);
+    }
+    comps.sort();
+    comps.dedup();
+    comps.truncate(TOP_CLASSES);
+    comps
 }
 
 /// Depth of a class = steps up its canonical-parent chain to a root, with a

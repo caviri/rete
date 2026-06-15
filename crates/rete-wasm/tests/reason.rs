@@ -112,6 +112,41 @@ fn coherence_construct_selects_a_sufficient_slice() {
 }
 
 #[test]
+fn check_schema_flags_unsatisfiable_class_tier0() {
+    // C ⊑ D, C ⊑ E, D disjointWith E ⇒ C unsatisfiable — from the schema pyramid
+    // alone (Tier-0), no instance-level clash required. One instance is present
+    // only so the schema pyramid gets built.
+    let bytes = build_rete(&[
+        ("<http://ex/C>", SUBCLASS_OF, "<http://ex/D>"),
+        ("<http://ex/C>", SUBCLASS_OF, "<http://ex/E>"),
+        ("<http://ex/D>", DISJOINT_WITH, "<http://ex/E>"),
+        ("<http://ex/x>", RDF_TYPE, "<http://ex/C>"),
+    ]);
+
+    let report: Value = serde_json::from_str(&rete_wasm::check_schema(&bytes).unwrap()).unwrap();
+
+    assert_eq!(report["kind"], "schemaCoherence");
+    assert_eq!(report["coherent"], false);
+    assert_eq!(report["readsIndex"], false);
+    assert!(report["schemaPoints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["kind"] == "unsatisfiable-class"));
+}
+
+#[test]
+fn check_schema_clean_hierarchy_is_coherent() {
+    let bytes = build_rete(&[
+        ("<http://ex/Dog>", SUBCLASS_OF, "<http://ex/Animal>"),
+        ("<http://ex/rex>", RDF_TYPE, "<http://ex/Dog>"),
+    ]);
+    let report: Value = serde_json::from_str(&rete_wasm::check_schema(&bytes).unwrap()).unwrap();
+    assert_eq!(report["coherent"], true);
+    assert_eq!(report["schemaPoints"].as_array().unwrap().len(), 0);
+}
+
+#[test]
 fn reason_reports_a_coherent_graph_as_coherent() {
     let bytes = build_rete(&[
         ("<http://ex/C>", SUBCLASS_OF, "<http://ex/D>"),

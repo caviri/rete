@@ -122,6 +122,13 @@ pub struct PyramidMeta {
     /// Per-level lateral class-relation graph (the non-`is-a` connections).
     pub level_links: Vec<LevelLinks>,
     pub descriptors: Vec<CommunityDescriptor>,
+    // --- v2.1 coherence axioms (empty on v1 and on v2.0 files) ---
+    /// `subClassOf` cycles — each a sorted class set (SCC > 1, or a self-loop).
+    pub subclass_cycles: Vec<Vec<String>>,
+    /// `owl:disjointWith` class pairs (canonical `(min, max)`).
+    pub disjoint_pairs: Vec<(String, String)>,
+    /// `owl:equivalentClass` class pairs (canonical `(min, max)`).
+    pub equivalent_pairs: Vec<(String, String)>,
 }
 
 impl PyramidMeta {
@@ -141,21 +148,31 @@ impl PyramidMeta {
             level_rollups: Vec::new(),
             level_links: Vec::new(),
             descriptors: Vec::new(),
+            subclass_cycles: Vec::new(),
+            disjoint_pairs: Vec::new(),
+            equivalent_pairs: Vec::new(),
         }
     }
 
     /// Attach the v2 schema pyramid (consuming builder).
+    #[allow(clippy::too_many_arguments)]
     pub fn with_schema(
         mut self,
         class_hierarchy: Vec<ClassNode>,
         level_rollups: Vec<LevelRollup>,
         level_links: Vec<LevelLinks>,
         descriptors: Vec<CommunityDescriptor>,
+        subclass_cycles: Vec<Vec<String>>,
+        disjoint_pairs: Vec<(String, String)>,
+        equivalent_pairs: Vec<(String, String)>,
     ) -> Self {
         self.class_hierarchy = class_hierarchy;
         self.level_rollups = level_rollups;
         self.level_links = level_links;
         self.descriptors = descriptors;
+        self.subclass_cycles = subclass_cycles;
+        self.disjoint_pairs = disjoint_pairs;
+        self.equivalent_pairs = equivalent_pairs;
         self
     }
 
@@ -165,6 +182,9 @@ impl PyramidMeta {
             && self.level_rollups.is_empty()
             && self.level_links.is_empty()
             && self.descriptors.is_empty()
+            && self.subclass_cycles.is_empty()
+            && self.disjoint_pairs.is_empty()
+            && self.equivalent_pairs.is_empty()
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -229,6 +249,17 @@ impl PyramidMeta {
             for (c, _) in &d.class_counts {
                 intern(&mut table, &mut index, c);
             }
+        }
+        // v2.1 coherence axioms must join the SAME first interning pass, or `idx`
+        // below panics on a class string that was never interned.
+        for cyc in &self.subclass_cycles {
+            for c in cyc {
+                intern(&mut table, &mut index, c);
+            }
+        }
+        for (a, b) in self.disjoint_pairs.iter().chain(&self.equivalent_pairs) {
+            intern(&mut table, &mut index, a);
+            intern(&mut table, &mut index, b);
         }
         let idx = |s: &str| *index.get(s).expect("interned");
 
@@ -298,6 +329,32 @@ impl PyramidMeta {
                 None => out.push(0),
             }
         }
+        // --- v2.1 additive extension: subClassOf cycles + disjoint/equivalent ---
+        // Written as ONE block, only when any of the three is present, so existing
+        // v2.0 files (schema but no coherence axioms) stay byte-identical and a
+        // v2.0 reader stops cleanly after the descriptors above.
+        if !self.subclass_cycles.is_empty()
+            || !self.disjoint_pairs.is_empty()
+            || !self.equivalent_pairs.is_empty()
+        {
+            write_uvarint(out, self.subclass_cycles.len() as u64);
+            for cyc in &self.subclass_cycles {
+                write_uvarint(out, cyc.len() as u64);
+                for c in cyc {
+                    write_uvarint(out, idx(c) as u64);
+                }
+            }
+            write_uvarint(out, self.disjoint_pairs.len() as u64);
+            for (a, b) in &self.disjoint_pairs {
+                write_uvarint(out, idx(a) as u64);
+                write_uvarint(out, idx(b) as u64);
+            }
+            write_uvarint(out, self.equivalent_pairs.len() as u64);
+            for (a, b) in &self.equivalent_pairs {
+                write_uvarint(out, idx(a) as u64);
+                write_uvarint(out, idx(b) as u64);
+            }
+        }
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, MetaError> {
@@ -342,6 +399,9 @@ impl PyramidMeta {
             level_rollups: Vec::new(),
             level_links: Vec::new(),
             descriptors: Vec::new(),
+            subclass_cycles: Vec::new(),
+            disjoint_pairs: Vec::new(),
+            equivalent_pairs: Vec::new(),
         };
         // v2 schema pyramid — present iff there are trailing bytes tagged
         // SCHEMA_V2. Best-effort: the v1 fields (round/summary/tiles) are already
@@ -480,10 +540,46 @@ fn decode_schema(bytes: &[u8], pos: &mut usize, meta: &mut PyramidMeta) -> Resul
         });
     }
 
+    // Assign the v2.0 fields BEFORE the best-effort v2.1 extension, so a truncated
+    // or v2.0-only file keeps its fully-decoded hierarchy/rollups/links/descriptors
+    // (the extension reads below must never discard what already decoded cleanly).
     meta.class_hierarchy = class_hierarchy;
     meta.level_rollups = level_rollups;
     meta.level_links = level_links;
     meta.descriptors = descriptors;
+
+    // --- v2.1 additive extension: cycles + disjoint/equivalent pairs ---
+    // A v2.0 file ends exactly here, so stop cleanly at EOF before any new read.
+    if *pos >= bytes.len() {
+        return Ok(());
+    }
+    let n_cycles = g(pos)? as usize;
+    let mut subclass_cycles = Vec::with_capacity(n_cycles.min(bytes.len()));
+    for _ in 0..n_cycles {
+        let k = g(pos)? as usize;
+        let mut members = Vec::with_capacity(k.min(bytes.len()));
+        for _ in 0..k {
+            members.push(lookup(g(pos)?)?);
+        }
+        subclass_cycles.push(members);
+    }
+    let n_disjoint = g(pos)? as usize;
+    let mut disjoint_pairs = Vec::with_capacity(n_disjoint.min(bytes.len()));
+    for _ in 0..n_disjoint {
+        let a = lookup(g(pos)?)?;
+        let b = lookup(g(pos)?)?;
+        disjoint_pairs.push((a, b));
+    }
+    let n_equiv = g(pos)? as usize;
+    let mut equivalent_pairs = Vec::with_capacity(n_equiv.min(bytes.len()));
+    for _ in 0..n_equiv {
+        let a = lookup(g(pos)?)?;
+        let b = lookup(g(pos)?)?;
+        equivalent_pairs.push((a, b));
+    }
+    meta.subclass_cycles = subclass_cycles;
+    meta.disjoint_pairs = disjoint_pairs;
+    meta.equivalent_pairs = equivalent_pairs;
     Ok(())
 }
 
@@ -636,6 +732,9 @@ mod tests {
                 bbox: Some([-10.0, 40.0, 12.5, 51.2]),
                 time_range: Some(("1700".into(), "1900".into())),
             }],
+            vec![],
+            vec![],
+            vec![],
         );
         let bytes = meta.encode();
         // The v2 block is appended → last byte is NOT the v1 tile byte.
@@ -657,6 +756,66 @@ mod tests {
     }
 
     #[test]
+    fn coherence_axioms_round_trip_and_stay_additive() {
+        // Hierarchy names all the classes the axioms reference, so the interned
+        // string table (written at the start of the schema block) is identical with
+        // or without the axioms — the extension is then a pure byte append.
+        let hier = || {
+            vec![
+                ClassNode {
+                    class: "<http://ex/C>".into(),
+                    parents: vec![],
+                    depth: 0,
+                },
+                ClassNode {
+                    class: "<http://ex/D>".into(),
+                    parents: vec![],
+                    depth: 0,
+                },
+                ClassNode {
+                    class: "<http://ex/E>".into(),
+                    parents: vec![],
+                    depth: 0,
+                },
+            ]
+        };
+        // v2.0: hierarchy only, no coherence axioms.
+        let v20 = sample_v1()
+            .with_schema(hier(), vec![], vec![], vec![], vec![], vec![], vec![])
+            .encode();
+        // v2.1: same hierarchy + axioms over hierarchy classes → table unchanged.
+        let full = sample_v1().with_schema(
+            hier(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![("<http://ex/D>".into(), "<http://ex/E>".into())],
+            vec![],
+        );
+        let v21 = full.encode();
+        assert!(
+            v21.starts_with(&v20),
+            "the extension is appended; the v2.0 prefix is byte-identical"
+        );
+        assert!(v21.len() > v20.len());
+
+        let back = PyramidMeta::decode(&v21).unwrap();
+        assert_eq!(back, full, "the coherence axioms round-trip");
+        assert_eq!(
+            back.disjoint_pairs,
+            vec![("<http://ex/D>".to_string(), "<http://ex/E>".to_string())]
+        );
+
+        // The v2.0 bytes (no extension) decode with empty axioms AND an intact
+        // hierarchy — the hoist fix: a missing extension must not discard v2.0.
+        let back20 = PyramidMeta::decode(&v20).unwrap();
+        assert!(back20.disjoint_pairs.is_empty());
+        assert!(back20.subclass_cycles.is_empty());
+        assert_eq!(back20.class_hierarchy.len(), 3, "v2.0 hierarchy intact");
+    }
+
+    #[test]
     fn v2_is_readable_as_v1_prefix() {
         // A v2 file's leading bytes are exactly the v1 encoding, so an old reader
         // that stops after the tiles loop still recovers round/summary/tiles.
@@ -673,6 +832,9 @@ mod tests {
                 depth: 0,
                 classes: vec![("<http://ex/C>".into(), 1)],
             }],
+            vec![],
+            vec![],
+            vec![],
             vec![],
             vec![],
         );

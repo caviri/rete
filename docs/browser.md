@@ -41,6 +41,11 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `reach(bytes, predicate, seeds, reverse)` | `[{ seed, count, reached:["<iri>",…] }, …]` (serial transitive reach) |
 | `build(text, format)` | a complete `.rete` file image (`Uint8Array`) built from RDF text |
 | `sparql_url(url, query, format)` | **worker-only**: the `query` envelope evaluated against a remote URL via lazy HTTP range reads, plus `remote: { fileLength, bytes, requests }` |
+| `reason(bytes, graph?)` | OWL RL / RDFS coherence over an in-memory graph: `{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }` |
+| `check_schema(bytes)` | index-free Tier-0 schema coherence: `{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], classCount, readsIndex:false }` |
+| `check_schema_url(url)` | **worker-only**: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus `remote:{…}` |
+| `reason_construct_url(url, construct)` | **worker-only**: Tier-1 *selective* coherence — reason over just the subgraph a CONSTRUCT selects (only its tiles are fetched), plus `remote:{…}` |
+| `reason_url(url, graph?)` | **worker-only**: Tier-2 *full* coherence over a remote URL (materializes the whole graph), plus `remote:{…}` |
 
 `query` runs SELECT / ASK / CONSTRUCT / DESCRIBE via `eval_query` and returns a
 single JSON envelope with a `kind` field:

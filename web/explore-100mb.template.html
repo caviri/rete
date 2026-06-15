@@ -186,8 +186,9 @@
           <option value="sparql">SPARQL</option>
           <option value="shacl">SHACL validate</option>
           <option value="shacl-subset">SHACL on a CONSTRUCT subset</option>
-          <option value="reason">Coherence — full (Tier-2)</option>
+          <option value="schema-coherence">Coherence — schema (Tier-0)</option>
           <option value="reason-subset">Coherence — selective (Tier-1)</option>
+          <option value="reason">Coherence — full (Tier-2)</option>
           <option value="why">Provenance (why)</option>
           <option value="reach">Reachability</option>
         </select>
@@ -369,6 +370,9 @@ function applySource() {
   if ($("srcBtn")) $("srcBtn").textContent = "Source: " + SOURCES[SRC].label;
 }
 applySource();
+// The Coherence tasks check a tiny same-origin causal ontology that carries real
+// OWL axioms (the 105 MB wikidata graph has none). Committed under docs/examples/.
+const COHERENCE_DEMO_URL = new URL("examples/causal.rete", location.href).href;
 
 const Q859 = "http://www.wikidata.org/entity/Q859"; // Plato, a human (table Q5)
 const META = {
@@ -452,12 +456,15 @@ WHERE {
 }`;
 const TASKS = {
   sparql: { title: "Graph - SPARQL", desc: "Lazy SPARQL over the .rete graph (sparql_url) - only the touched tiles are fetched." },
-  reason: { title: "Graph - Coherence (full)", desc: "Check OWL/RDFS coherence over the whole graph, lazily (reason_url).",
+  "schema-coherence": { title: "Graph - Coherence (schema, Tier-0)", desc: "Index-free T-Box check: subClassOf cycles + unsatisfiable classes, from the schema pyramid (check_schema_url).",
     main: "", mainLabel: "",
-    note: "Tier-2: materializes the whole graph to find every incoherent point - reads ≈ the entire dataset." },
-  "reason-subset": { title: "Graph - Coherence (selective)", desc: "Fetch only rdf:type + the T-Box, then check coherence (reason_construct_url).",
+    note: "Tier-0: reads only header + dictionary + pyramid-meta (~2-3 ranges, O(1) in graph size) — never the triple index. Runs against the hosted causal-ontology demo (examples/causal.rete); finds :Relapsed unsatisfiable (subclass of two disjoint classes)." },
+  "reason-subset": { title: "Graph - Coherence (selective, Tier-1)", desc: "Fetch only rdf:type + the T-Box, then check coherence (reason_construct_url).",
     main: COHERENCE_CONSTRUCT, mainLabel: "coherence slice (CONSTRUCT) - only these predicates' tiles are fetched:",
-    note: "Tier-1: the CONSTRUCT pulls only rdf:type + subClassOf/disjointWith/sameAs/differentFrom tiles; the reasoner checks just that slice." },
+    note: "Tier-1: the CONSTRUCT pulls only rdf:type + subClassOf/disjointWith/sameAs/differentFrom tiles; the reasoner checks just that slice. Runs against the causal-ontology demo." },
+  reason: { title: "Graph - Coherence (full, Tier-2)", desc: "Check OWL/RDFS coherence over the whole graph, lazily (reason_url).",
+    main: "", mainLabel: "",
+    note: "Tier-2: materializes the whole graph to find every incoherent point - reads ≈ the entire dataset. Runs against the causal-ontology demo; finds the instance-level clash (:p is both Healthy and Diseased)." },
   shacl: { title: "Graph - SHACL validate", desc: "Validate the whole graph against SHACL shapes, lazily (shacl_url).",
     main: SHAPES, mainLabel: "SHACL shapes (Turtle):",
     note: "Whole-graph SHACL: served over range reads (lazy), but it reads the entire dataset to validate every target." },
@@ -613,6 +620,7 @@ const RETE_HARNESS =
   "j=JSON.stringify({vars:vars||[],rows:rows,remote:{requests:rq,bytes:by,fileLength:fl,shards:m.urls.length}});}" +
   "else if(t==='shacl')j=wasm_bindgen.shacl_url(m.url,m.shapes,undefined,'text');" +
   "else if(t==='shacl-subset')j=wasm_bindgen.shacl_construct_url(m.url,m.construct,m.shapes,'text');" +
+  "else if(t==='schema-coherence')j=wasm_bindgen.check_schema_url(m.url);" +
   "else if(t==='reason')j=wasm_bindgen.reason_url(m.url,undefined);" +
   "else if(t==='reason-subset')j=wasm_bindgen.reason_construct_url(m.url,m.construct);" +
   "else if(t==='why')j=wasm_bindgen.why_url(m.url,m.s,m.p,m.o);" +
@@ -667,8 +675,9 @@ function graphMsg() {
     const lines = ed.split("\n").map((x) => x.trim()).filter(Boolean);
     return { type: "query", task, url: RETE_URL, predicate: lines[0] || "", seeds: JSON.stringify(lines.slice(1)) };
   }
-  if (task === "reason") return { type: "query", task, url: RETE_URL };
-  if (task === "reason-subset") return { type: "query", task, url: RETE_URL, construct: ed };
+  if (task === "schema-coherence") return { type: "query", task, url: COHERENCE_DEMO_URL };
+  if (task === "reason") return { type: "query", task, url: COHERENCE_DEMO_URL };
+  if (task === "reason-subset") return { type: "query", task, url: COHERENCE_DEMO_URL, construct: ed };
   const cached = state.graphSource === "cached" && window.__reteBytes;
   return cached ? { type: "query", task, mode: "mem", query: ed }
                 : { type: "query", task, url: RETE_URL, query: ed };
@@ -678,12 +687,15 @@ function graphMsg() {
 function showText(s) { $("out").innerHTML = ""; const pre = document.createElement("pre"); pre.className = "out-pre"; pre.textContent = s; $("out").appendChild(pre); }
 function runGraph() {
   const task = state.graphTask;
-  const sharded = !!SOURCES[SRC].manifest;
+  // Coherence tasks always run against the same-origin demo ontology (it has the
+  // OWL axioms wikidata lacks), so they ignore the source and never federate.
+  const coherenceTask = task === "reason" || task === "reason-subset" || task === "schema-coherence";
+  const sharded = !!SOURCES[SRC].manifest && !coherenceTask;
   if (sharded && task !== "sparql")
     return showErr("Sharded federation supports the SPARQL task only — switch task to SPARQL, or pick a single-file source.");
-  const cached = !sharded && state.graphSource === "cached" && window.__reteBytes;
+  const cached = !sharded && !coherenceTask && state.graphSource === "cached" && window.__reteBytes;
   const prog = { requests: 0, bytes: 0 };
-  const verb = sharded ? "federating shards" : { sparql: "querying", shacl: "validating", "shacl-subset": "validating subset", reason: "checking coherence", "reason-subset": "checking coherence (selective)", why: "tracing", reach: "reaching" }[task];
+  const verb = sharded ? "federating shards" : { sparql: "querying", shacl: "validating", "shacl-subset": "validating subset", "schema-coherence": "checking schema", reason: "checking coherence", "reason-subset": "checking coherence (selective)", why: "tracing", reach: "reaching" }[task];
   const fmt = (s) => cached
     ? `${verb} cached copy… ${s.toFixed(1)}s`
     : `${verb}… ${s.toFixed(1)}s · ${prog.requests} request${prog.requests === 1 ? "" : "s"} · ${(prog.bytes / 1048576).toFixed(2)} MB fetched`;
@@ -714,12 +726,15 @@ function runGraph() {
         $("meta").textContent = `${task === "why" ? n + " match(es)" : n + " reached"} · ${reqInfo}`;
         return showText(JSON.stringify(obj, null, 2));
       }
-      if (task === "reason" || task === "reason-subset") {
+      if (task === "reason" || task === "reason-subset" || task === "schema-coherence") {
         let obj; try { obj = JSON.parse(d.json); } catch (_) { return showText(d.json); }
-        const pts = obj.inconsistencies || [];
-        $("meta").textContent = `${obj.coherent ? "coherent ✓" : pts.length + " incoherent point(s)"} · ${obj.inferredCount} inferred · ${reqInfo}`;
+        const pts = obj.inconsistencies || obj.schemaPoints || [];
+        const detail = task === "schema-coherence" ? `${obj.classCount} classes · index-free` : `${obj.inferredCount} inferred`;
+        $("meta").textContent = `${obj.coherent ? "coherent ✓" : pts.length + " incoherent point(s)"} · ${detail} · ${reqInfo}`;
         const body = obj.coherent
-          ? `No incoherent points found.\n\ninferred triples: ${obj.inferredCount}`
+          ? (task === "schema-coherence"
+              ? `Schema is coherent — ${obj.classCount} class(es); no subClassOf cycles or unsatisfiable classes.`
+              : `No incoherent points found.\n\ninferred triples: ${obj.inferredCount}`)
           : pts.map((i) => `[${i.kind}] ${i.detail}`).join("\n");
         return showText(body);
       }

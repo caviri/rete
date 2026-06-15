@@ -325,6 +325,55 @@ rete reason causal.rete
 <p>The entailment count (9) reflects the materialized <code>subClassOf</code> chain
 (<code>Disease ⊑ Condition ⊑ Factor</code>) and the transitive <code>:causes</code> closure
 (<code>a causes c</code>, etc.). Because the graph is incoherent, the command exits non-zero.</p>
+<h2>Remote / in-browser coherence</h2>
+<p>The same coherence checks run <strong>in the browser against a remote <code>.rete</code> over HTTP
+range reads</strong> — drop a file on any range-serving host (S3, GitHub Pages, a CORS
+proxy), hand the client a URL, and check coherence with no server and no full
+download. The WASM build exposes three entry points, tiered by how much of the
+file they touch. They mirror the SHACL family (<code>shacl_url</code> / <code>shacl_construct_url</code>)
+and are <strong>worker-only</strong> (the engine is synchronous and uses blocking XHR, which
+browsers permit only off the main thread). Each returns a JSON envelope with a
+<code>remote: { fileLength, bytes, requests }</code> block so the UI can show exactly how
+little of the file was pulled; a failed range fetch mid-check is an <strong>error</strong>,
+never a silently-incomplete (and so possibly false-"coherent") result.</p>
+<table><thead><tr><th>Tier</th><th>Function</th><th>Reads</th><th>Finds</th></tr></thead><tbody>
+<tr><td><strong>0 — schema</strong></td><td><code>check_schema_url(url)</code></td><td>header + dictionary + pyramid-meta only (~2–3 ranges, <strong>O(1) in graph size</strong>, never the triple index)</td><td>subClassOf cycles; <strong>unsatisfiable classes</strong> (a class that is a subclass of two <code>owl:disjointWith</code> classes)</td></tr>
+<tr><td><strong>1 — selective</strong></td><td><code>reason_construct_url(url, construct)</code></td><td>only the tiles the CONSTRUCT's constant-predicate patterns touch (one warm cache)</td><td>every contradiction visible from <code>rdf:type</code> + the class/equality T-Box (disjoint-class clashes, <code>sameAs</code>/<code>differentFrom</code>)</td></tr>
+<tr><td><strong>2 — full</strong></td><td><code>reason_url(url[, graph])</code></td><td>materializes the whole graph (≈ the entire file)</td><td>every incoherent point the CLI <code>rete reason</code> finds</td></tr>
+</tbody></table>
+<p><strong>Tier 0</strong> is the flagship: it answers <em>"is this ontology coherent?"</em> for a
+multi-GB graph by reading tens of kilobytes, because the <code>subClassOf</code> DAG plus the
+<code>owl:disjointWith</code> / <code>owl:equivalentClass</code> axioms travel <strong>index-free</strong> in the
+schema pyramid (the same section <code>rete summary</code> reads). It cannot see
+instance-level clashes (a node typed into disjoint classes, functional-property
+clashes) — those need the A-Box, i.e. Tier 1 or 2. Soundness is bounded by what the
+pyramid ships: the hierarchy is capped, so on a very large ontology a pruned
+ancestor can hide an unsatisfiable class (a false <em>coherent</em>, never a false
+<em>incoherent</em>).</p>
+<p><strong>Tier 1</strong> is the selective sweet spot. The default slice is a <code>UNION</code> of
+constant-predicate <code>CONSTRUCT</code> branches so each routes to a single predicate's
+tiles:</p>
+<pre><code class="language-sparql">CONSTRUCT { ?x rdf:type ?c . ?sub rdfs:subClassOf ?sup .
+            ?c1 owl:disjointWith ?c2 . ?s1 owl:sameAs ?s2 . ?f1 owl:differentFrom ?f2 }
+WHERE { { ?x rdf:type ?c } UNION { ?sub rdfs:subClassOf ?sup }
+        UNION { ?c1 owl:disjointWith ?c2 } UNION { ?s1 owl:sameAs ?s2 }
+        UNION { ?f1 owl:differentFrom ?f2 } }
+</code></pre>
+<blockquote>
+<p><strong>Slice-correctness invariant.</strong> A Tier-1 CONSTRUCT <strong>must</strong> pull the T-Box
+predicates (<code>rdfs:subClassOf</code>, <code>owl:disjointWith</code>, <code>owl:sameAs</code>) into the slice,
+not just <code>rdf:type</code>. The reasoner detects a disjoint-class clash only <em>after</em>
+<code>subClassOf</code> type-propagation, so a slice missing <code>subClassOf</code> would silently
+miss a propagation-dependent contradiction.</p>
+</blockquote>
+<h3>Try it</h3>
+<p>The <a href="explore-100mb.html">100 MB explorer</a> has a <strong>Coherence</strong> task with all three
+tiers. Because the wikidata graph carries no OWL axioms, the tasks run against a
+tiny same-origin causal ontology (<code>examples/causal.rete</code>) with both kinds of
+defect planted: Tier 0 reports <code>:Relapsed</code> <strong>unsatisfiable</strong> (a subclass of the
+disjoint <code>HealthyState</code> and <code>DiseaseState</code>) from ~2–3 ranges; Tier 1/2 report the
+<strong>instance</strong> clash (<code>:p</code> is both). The live counter shows how few bytes each tier
+fetches.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
