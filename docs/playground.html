@@ -116,6 +116,43 @@ a {
   min-width: 260px;
 }
 
+/* The current-dataset chip (replaces the old dropdown): shows what's loaded and
+   opens the Datasets browser. */
+.dataset-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 340px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.dataset-button:hover {
+  border-color: var(--accent);
+}
+.dataset-button .ds-pre {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.dataset-button #dsName {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dataset-button .ds-caret {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .dataset-picker span,
 label > span {
   color: var(--muted);
@@ -1229,16 +1266,16 @@ pre {
     </a>
 
     <div class="status-cluster" aria-label="Loaded graph status">
-      <label class="dataset-picker">
-        <span>Dataset</span>
-        <select id="ds"></select>
-      </label>
+      <button id="dsButton" class="dataset-button" type="button" title="Browse datasets — what each one is, and its source">
+        <span class="ds-pre">Dataset</span>
+        <span id="dsName">…</span>
+        <span class="ds-caret" aria-hidden="true">▾</span>
+      </button>
       <span id="sourcePill" class="status-pill">bundled</span>
       <span id="meta" class="statline">loading wasm...</span>
     </div>
 
     <div class="top-actions">
-      <button id="openSource" type="button" class="secondary" title="Browse all datasets — what each one is, and its source">Datasets…</button>
       <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
@@ -4313,11 +4350,15 @@ ex:ApplicationDependencyShape
     if (EDITORS[id]) EDITORS[id].refresh();
   }
 
+  // Show the loaded dataset's short name on the topbar chip (which opens the
+  // Datasets browser). Replaces the old <select> dropdown.
+  function setDatasetName(key) {
+    const d = datasetInfo(key);
+    $("dsName").textContent = d ? d.label.split(" - ")[0] : key;
+  }
+
   function renderDatasetOptions() {
-    $("ds").innerHTML = CATALOG.datasets.map((d) =>
-      `<option value="${esc(d.key)}">${esc(d.label)}</option>`
-    ).join("");
-    $("ds").value = state.dataset;
+    setDatasetName(state.dataset);
   }
 
   function loadBytes(bytes, source) {
@@ -4348,6 +4389,9 @@ ex:ApplicationDependencyShape
     $("dsDesc").textContent = source === "bundled"
       ? infoRow.description
       : "Custom graph loaded into the same in-browser engine.";
+    if (source !== "bundled") {
+      $("dsName").textContent = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom";
+    }
   }
 
   function loadDataset(key) {
@@ -4357,7 +4401,7 @@ ex:ApplicationDependencyShape
       return;
     }
     state.dataset = key;
-    $("ds").value = key;
+    setDatasetName(key);
     loadBytes(b64ToBytes(b64), "bundled");
     renderExamples();
     const list = examplesForDataset();
@@ -4392,7 +4436,7 @@ ex:ApplicationDependencyShape
     state.schema = null;
     if (datasetKey) {
       state.dataset = datasetKey;
-      $("ds").value = datasetKey;
+      setDatasetName(datasetKey);
     }
     state.selectedExample = -1;
     updateSourcePill();
@@ -4456,6 +4500,15 @@ ex:ApplicationDependencyShape
       };
     });
     $("sourceModal").classList.remove("hidden");
+    // Show "more/less" only where the description is actually clamped — measured
+    // now that the modal is visible (a hidden element reports zero heights).
+    requestAnimationFrame(() => {
+      $$("#datasetList .ds-card").forEach((card) => {
+        const desc = card.querySelector(".ds-card-desc");
+        const more = card.querySelector(".ds-more");
+        if (more && desc && desc.scrollHeight <= desc.clientHeight + 1) more.style.display = "none";
+      });
+    });
   }
 
   function closeSource() {
@@ -5750,7 +5803,6 @@ ex:ApplicationDependencyShape
   }
 
   function wireEvents() {
-    $("ds").onchange = () => selectDataset($("ds").value);
     $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
     $("strategy").onchange = () => setStrategy($("strategy").value);
@@ -5776,7 +5828,7 @@ ex:ApplicationDependencyShape
     $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("layoutCell").onchange = renderLayout;
-    $("openSource").onclick = openSource;
+    $("dsButton").onclick = openSource;
     $("sourceModalClose").onclick = closeSource;
     $("remoteConnect").onclick = connectRemote;
     $("sourceModal").addEventListener("click", (e) => {

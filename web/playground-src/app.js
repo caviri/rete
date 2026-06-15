@@ -403,11 +403,15 @@
     if (EDITORS[id]) EDITORS[id].refresh();
   }
 
+  // Show the loaded dataset's short name on the topbar chip (which opens the
+  // Datasets browser). Replaces the old <select> dropdown.
+  function setDatasetName(key) {
+    const d = datasetInfo(key);
+    $("dsName").textContent = d ? d.label.split(" - ")[0] : key;
+  }
+
   function renderDatasetOptions() {
-    $("ds").innerHTML = CATALOG.datasets.map((d) =>
-      `<option value="${esc(d.key)}">${esc(d.label)}</option>`
-    ).join("");
-    $("ds").value = state.dataset;
+    setDatasetName(state.dataset);
   }
 
   function loadBytes(bytes, source) {
@@ -438,6 +442,9 @@
     $("dsDesc").textContent = source === "bundled"
       ? infoRow.description
       : "Custom graph loaded into the same in-browser engine.";
+    if (source !== "bundled") {
+      $("dsName").textContent = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom";
+    }
   }
 
   function loadDataset(key) {
@@ -447,7 +454,7 @@
       return;
     }
     state.dataset = key;
-    $("ds").value = key;
+    setDatasetName(key);
     loadBytes(b64ToBytes(b64), "bundled");
     renderExamples();
     const list = examplesForDataset();
@@ -482,7 +489,7 @@
     state.schema = null;
     if (datasetKey) {
       state.dataset = datasetKey;
-      $("ds").value = datasetKey;
+      setDatasetName(datasetKey);
     }
     state.selectedExample = -1;
     updateSourcePill();
@@ -546,6 +553,15 @@
       };
     });
     $("sourceModal").classList.remove("hidden");
+    // Show "more/less" only where the description is actually clamped — measured
+    // now that the modal is visible (a hidden element reports zero heights).
+    requestAnimationFrame(() => {
+      $$("#datasetList .ds-card").forEach((card) => {
+        const desc = card.querySelector(".ds-card-desc");
+        const more = card.querySelector(".ds-more");
+        if (more && desc && desc.scrollHeight <= desc.clientHeight + 1) more.style.display = "none";
+      });
+    });
   }
 
   function closeSource() {
@@ -1840,7 +1856,6 @@
   }
 
   function wireEvents() {
-    $("ds").onchange = () => selectDataset($("ds").value);
     $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
     $("strategy").onchange = () => setStrategy($("strategy").value);
@@ -1866,7 +1881,7 @@
     $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("layoutCell").onchange = renderLayout;
-    $("openSource").onclick = openSource;
+    $("dsButton").onclick = openSource;
     $("sourceModalClose").onclick = closeSource;
     $("remoteConnect").onclick = connectRemote;
     $("sourceModal").addEventListener("click", (e) => {

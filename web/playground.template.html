@@ -16,16 +16,16 @@ __PLAYGROUND_CSS__
     </a>
 
     <div class="status-cluster" aria-label="Loaded graph status">
-      <label class="dataset-picker">
-        <span>Dataset</span>
-        <select id="ds"></select>
-      </label>
+      <button id="dsButton" class="dataset-button" type="button" title="Browse datasets — what each one is, and its source">
+        <span class="ds-pre">Dataset</span>
+        <span id="dsName">…</span>
+        <span class="ds-caret" aria-hidden="true">▾</span>
+      </button>
       <span id="sourcePill" class="status-pill">bundled</span>
       <span id="meta" class="statline">loading wasm...</span>
     </div>
 
     <div class="top-actions">
-      <button id="openSource" type="button" class="secondary" title="Browse all datasets — what each one is, and its source">Datasets…</button>
       <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>

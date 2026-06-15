@@ -109,6 +109,43 @@ a {
   min-width: 260px;
 }
 
+/* The current-dataset chip (replaces the old dropdown): shows what's loaded and
+   opens the Datasets browser. */
+.dataset-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 340px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.dataset-button:hover {
+  border-color: var(--accent);
+}
+.dataset-button .ds-pre {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.dataset-button #dsName {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dataset-button .ds-caret {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .dataset-picker span,
 label > span {
   color: var(--muted);
