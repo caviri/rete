@@ -27,6 +27,12 @@
 
 use std::collections::HashSet;
 
+/// Version tag of this reasoner's rule set. Stamped into a baked coherence card so
+/// a `coherent: true` can never be misread as a guarantee from a *different* set of
+/// rules. **Bump this whenever `materialize`/`detect_inconsistencies` changes** (a
+/// rule added/removed/altered), so `rete reason --verify-card` rejects a stale stamp.
+pub const REASON_RULESET: &str = "owl-rl-subset/v1";
+
 // --- Vocabulary IRIs, as canonical N-Triples tokens -------------------------
 
 const RDF_TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";

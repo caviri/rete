@@ -47,7 +47,7 @@ pub use pyramid::{
 };
 pub use reach::{batch_reach_serial, build_adjacency, reach_one};
 pub use reader::{CountingReader, RangeReader, SliceReader};
-pub use reason::{reason, Inconsistency, Reasoning};
+pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};
 pub use schema_pyramid::build_schema_pyramid;
 pub use shacl::{
     validate_shacl, DataGraph, Severity, ShaclError, ShaclShapes, ValidationReport,

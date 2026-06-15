@@ -203,6 +203,12 @@ check "reason disjoint" "disjoint" -- bash -c "$B reason '$T/causal.rete' ; true
 # Materialization composes the transitive :causes chain (a → b → c ⇒ a causes c) —
 # the entailment side of the same causal-coherence demo the wasm client checks.
 check "reason causal transitive" "ex/a>.*ex/causes>.*ex/c" -- bash -c "$B reason '$T/causal.rete' --materialize ; true"
+# Build-time stamp: --reason embeds the verdict in the card (no abort on
+# incoherence); --verify-card re-checks it; --check is the terse CI gate.
+$B build "$ROOT/examples/causal.nt" -o "$T/causal-stamped.rete" --reason >/dev/null
+check "reason stamp card"  "coherence"        -- $B card "$T/causal-stamped.rete"
+check "reason verify-card" "verified"         -- $B reason "$T/causal-stamped.rete" --verify-card
+check "reason check gate"  "incoherent"       -- bash -c "$B reason '$T/causal-stamped.rete' --check ; true"
 
 echo "== coarse graphs =="
 check "summary"    "round|superedge|knows|community" -- $B summary "$T/g.rete"

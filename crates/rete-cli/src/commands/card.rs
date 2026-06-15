@@ -75,6 +75,11 @@ pub(crate) struct DatasetCard {
     /// tier that can answer it. The cold-start "what do I ask?" fix.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queries: Vec<ExampleQuery>,
+    /// OWL RL / RDFS coherence verdict, stamped at build time by `--reason`. Lets a
+    /// remote reader learn the graph's coherence from the index-free card with zero
+    /// compute; `rete reason --verify-card` recomputes it to guard against drift.
+    #[serde(default, skip_serializing_if = "Coherence::is_empty")]
+    pub coherence: Coherence,
     /// Set iff any capped list was actually truncated (the profile is partial).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
@@ -170,6 +175,54 @@ impl Signals {
     }
 }
 
+/// The build-time OWL RL / RDFS coherence verdict, stamped into the card by
+/// `rete build --reason`. Deterministic and free of free-text detail (only a
+/// sorted `by_kind` histogram + short tags), so it folds into the file's content
+/// hash without destabilizing it. `scope` records what was checked and `rules` the
+/// ruleset version, so `coherent: true` can't be misread as a guarantee from a
+/// different scope or rule set.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Coherence {
+    /// True iff the reasoner found no incoherent point.
+    pub coherent: bool,
+    /// Number of incoherent points found.
+    pub inconsistency_count: u32,
+    /// `(kind, count)` histogram of incoherent points, sorted by kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_kind: Vec<(String, u32)>,
+    /// What was checked, e.g. `"default"` (the default graph).
+    pub scope: String,
+    /// The reasoner ruleset version (`rete_core::REASON_RULESET`).
+    pub rules: String,
+    /// True iff the inferred triples were also materialized into the file.
+    pub materialized: bool,
+}
+
+impl Coherence {
+    /// An unstamped card has the all-default block (omitted from the JSON).
+    pub(crate) fn is_empty(&self) -> bool {
+        *self == Coherence::default()
+    }
+
+    /// Build the verdict from a reasoning result over the default graph. The
+    /// `by_kind` histogram is `BTreeMap`-sourced (sorted) and carries no free-text
+    /// `Inconsistency::detail`, so the stamp is byte-stable across rebuilds.
+    pub(crate) fn from_reasoning(r: &rete_core::Reasoning, materialized: bool) -> Self {
+        let mut hist: BTreeMap<&str, u32> = BTreeMap::new();
+        for inc in &r.inconsistencies {
+            *hist.entry(inc.kind).or_default() += 1;
+        }
+        Coherence {
+            coherent: r.inconsistencies.is_empty(),
+            inconsistency_count: r.inconsistencies.len() as u32,
+            by_kind: hist.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            scope: "default".to_string(),
+            rules: rete_core::REASON_RULESET.to_string(),
+            materialized,
+        }
+    }
+}
+
 /// The curated subset, as supplied by a `--card-file` JSON document (every field
 /// optional). CLI flags override whatever the file provides.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -220,6 +273,12 @@ impl DatasetCard {
     /// Parse a card from the metadata-section bytes.
     pub(crate) fn from_json_bytes(b: &[u8]) -> anyhow::Result<Self> {
         serde_json::from_slice(b).map_err(|e| anyhow::anyhow!("malformed dataset card: {e}"))
+    }
+
+    /// Stamp the build-time coherence verdict (consuming builder).
+    pub(crate) fn with_coherence(mut self, r: &rete_core::Reasoning, materialized: bool) -> Self {
+        self.coherence = Coherence::from_reasoning(r, materialized);
+        self
     }
 }
 
@@ -515,6 +574,9 @@ pub(crate) fn derive_card(
         in_hubs,
         signals,
         queries: Vec::new(),
+        // Stamped later by the build pipeline via `with_coherence` when `--reason`
+        // (or `--materialize`) ran; derive_card itself must not run the reasoner.
+        coherence: Coherence::default(),
         truncated,
         format_version: rete_core::VERSION,
     };
@@ -893,6 +955,31 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
             let _ = writeln!(out, "      geometry   : geo:asWKT present");
         }
     }
+    if !card.coherence.is_empty() {
+        let c = &card.coherence;
+        let verdict = if c.coherent {
+            "coherent".to_string()
+        } else {
+            format!("{} incoherent point(s)", c.inconsistency_count)
+        };
+        let _ = writeln!(out, "  coherence:");
+        let _ = writeln!(out, "      verdict    : {verdict}");
+        if !c.by_kind.is_empty() {
+            let kinds: Vec<String> = c.by_kind.iter().map(|(k, n)| format!("{k}×{n}")).collect();
+            let _ = writeln!(out, "      by kind    : {}", kinds.join(", "));
+        }
+        let _ = writeln!(
+            out,
+            "      scope      : {} · rules {} · {}",
+            c.scope,
+            c.rules,
+            if c.materialized {
+                "materialized"
+            } else {
+                "not materialized"
+            }
+        );
+    }
     if !card.queries.is_empty() {
         let _ = writeln!(out, "  starter queries ({}):", card.queries.len());
         for q in &card.queries {
@@ -1219,6 +1306,37 @@ mod tests {
         assert!(card.queries.is_empty());
         assert!(card.signals.is_empty());
         assert!(!card.truncated);
+    }
+
+    #[test]
+    fn coherence_stamp_is_deterministic_and_additive() {
+        let dis = "<http://www.w3.org/2002/07/owl#disjointWith>";
+        let rt = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let base = vec![
+            ("<http://ex/C>".into(), dis.into(), "<http://ex/D>".into()),
+            ("<http://ex/x>".into(), rt.into(), "<http://ex/C>".into()),
+            ("<http://ex/x>".into(), rt.into(), "<http://ex/D>".into()),
+        ];
+        let r = rete_core::reason(&base);
+        let c1 = Coherence::from_reasoning(&r, false);
+        // Deterministic + the right verdict (no free-text detail in the stamp).
+        assert_eq!(c1, Coherence::from_reasoning(&r, false));
+        assert!(!c1.coherent);
+        assert_eq!(c1.inconsistency_count, 1);
+        assert_eq!(c1.by_kind, vec![("disjoint-classes".to_string(), 1)]);
+        assert_eq!(c1.rules, rete_core::REASON_RULESET);
+
+        // A stamped card round-trips; an unstamped one omits the block entirely.
+        let json = DatasetCard::default()
+            .with_coherence(&r, false)
+            .to_json_bytes();
+        let text = std::str::from_utf8(&json).unwrap();
+        assert!(text.contains("coherence"));
+        assert_eq!(DatasetCard::from_json_bytes(&json).unwrap().coherence, c1);
+
+        let plain = DatasetCard::default().to_json_bytes();
+        assert!(!std::str::from_utf8(&plain).unwrap().contains("coherence"));
+        assert!(DatasetCard::default().coherence.is_empty());
     }
 
     #[test]
