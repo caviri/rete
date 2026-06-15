@@ -47,6 +47,17 @@ def mib(num_bytes: float | None) -> str:
     return f"{num_bytes / (1024 * 1024):.2f}"
 
 
+def fetched(num_bytes: float | None) -> str:
+    """Human byte size for the lazy-fetch column."""
+    if num_bytes is None:
+        return "-"
+    if num_bytes >= 1 << 20:
+        return f"{num_bytes / (1 << 20):.1f} MB"
+    if num_bytes >= 1024:
+        return f"{num_bytes / 1024:.1f} KB"
+    return f"{num_bytes:.0f} B"
+
+
 def maybe_bold(value: str, bold: bool) -> str:
     return f"**{value}**" if bold else value
 
@@ -124,16 +135,18 @@ def render(report: dict) -> str:
             "on every startup. This is the format's core promise: **publish once, open",
             "instantly, query in place**.",
             "",
-            "### SPARQL operator coverage (both single-threaded)",
+            "### SPARQL operator coverage (eager, lazy range-read, and Oxigraph)",
             "",
-            f"{len(queries)} queries spanning supported forms and operators, run on both",
-            "engines. Row counts are a cross-engine correctness check across the",
-            "language surface, not just a speed race.",
-            f"Median ±sd of {query_reps} warm runs; `peak heap` is each query's exact",
-            "allocation high-water mark (counting allocator), engine-comparable.",
+            f"{len(queries)} queries spanning supported forms and operators, on three",
+            "engines: rete **eager** (`Rete::open`, whole file in memory), rete **lazy**",
+            "(`Rete::open_ranged_lazy` — a fresh cold open + HTTP-range-style reads per",
+            "query, the path a browser/remote client runs), and Oxigraph (in-memory). Row",
+            "counts are a cross-engine correctness check across the language surface, not",
+            f"just a speed race. Median ±sd of {query_reps} warm runs. **lazy fetched** is",
+            "the bytes that one query pulled from the file image — the rest is never touched.",
             "",
-            "| Operator / form | rete | Oxigraph | rete vs oxi | peak heap MiB (rete / oxi) | rows | ok |",
-            "|---|--:|--:|--:|--:|--:|:--:|",
+            "| Operator / form | rete eager | rete lazy | lazy fetched | Oxigraph | eager vs oxi | rows | ok |",
+            "|---|--:|--:|--:|--:|--:|--:|:--:|",
         ]
     )
 
@@ -141,27 +154,30 @@ def render(report: dict) -> str:
         if "rete_error" in row or "oxigraph_error" in row:
             rete = row.get("rete_error", "-")
             oxi = row.get("oxigraph_error", "-")
-            lines.append(f"| {row['name']} | {rete} | {oxi} | - | - | - | - |")
+            lines.append(f"| {row['name']} | {rete} | - | - | {oxi} | - | - | - |")
             continue
         rete_wins = row["rete_ms"] < row["oxigraph_ms"]
         rete_cell = maybe_bold(ms_pm(row["rete_ms"], row.get("rete_ms_sd")), rete_wins)
         oxi_cell = maybe_bold(
             ms_pm(row["oxigraph_ms"], row.get("oxigraph_ms_sd")), not rete_wins
         )
-        heap_cell = "{} / {}".format(
-            mib(row.get("rete_peak_heap_bytes")),
-            mib(row.get("oxigraph_peak_heap_bytes")),
+        lazy_cell = (
+            ms_pm(row["rete_lazy_ms"], row.get("rete_lazy_ms_sd"))
+            if "rete_lazy_ms" in row
+            else "-"
         )
+        fetched_cell = fetched(row.get("lazy_bytes_fetched"))
         rows_cell = str(row["rete_rows"])
         if row["rete_rows"] != row["oxigraph_rows"]:
             rows_cell = f"{row['rete_rows']} / {row['oxigraph_rows']}"
         lines.append(
-            "| {name} | {rete} | {oxi} | {ratio} | {heap} | {rows} | {ok} |".format(
+            "| {name} | {rete} | {lazy} | {fetched} | {oxi} | {ratio} | {rows} | {ok} |".format(
                 name=row["name"].replace("|", "\\|"),
                 rete=rete_cell,
+                lazy=lazy_cell,
+                fetched=fetched_cell,
                 oxi=oxi_cell,
                 ratio=speedup(row["speedup"]),
-                heap=heap_cell,
                 rows=rows_cell,
                 ok="yes" if row.get("agree") else "no",
             )
@@ -187,6 +203,11 @@ def render(report: dict) -> str:
             "  patterns use a substring fast path) and, by fractions of a",
             "  millisecond, on ASK and the tightest LIMIT joins — floor effects,",
             "  not the orders-of-magnitude gaps from before the engine rework.",
+            "- The **lazy** range-read engine — what a browser or remote client runs",
+            "  over HTTP — adds only a ~1 ms cold-open tax over eager while fetching",
+            "  single-digit-percent of the file per query (here ~50–205 KB of a 2.8 MB",
+            "  file), and still beats in-memory Oxigraph on most shapes. Querying a",
+            "  `.rete` where it sits (S3 / HTTP, no server) is not a latency compromise.",
             "",
             f"### Batch transitive reachability - `coauthor+` from {reach['seed_count']} seeds",
             "",
@@ -218,7 +239,10 @@ def render(report: dict) -> str:
             "",
             "cargo build --release -p rete-bench",
             "./target/release/rete-bench --json data/opencitations/enriched-clean.rete \\",
-            "  data/opencitations/enriched-clean.nt 300 > docs/benchmark-opencitations.json",
+            "  data/opencitations/enriched-clean.nt 300 > /tmp/bench.json",
+            "# preserve the curated dataset note + run date from the existing JSON:",
+            "uv run python scripts/merge_bench_metadata.py /tmp/bench.json \\",
+            "  docs/benchmark-opencitations.json --date $(date +%F)",
             "uv run python scripts/render_benchmark_doc.py docs/benchmark-opencitations.json \\",
             "  --input docs/BENCHMARK.md --output docs/BENCHMARK.md",
             "cargo run -p docgen",

@@ -172,15 +172,15 @@ reachability.
 This section is generated from
 `docs/benchmark-opencitations.json` with
 `scripts/render_benchmark_doc.py`. Latest run:
-**2026-06-13**. **Oxigraph 0.5**, in-memory store
+**2026-06-15**. **Oxigraph 0.5**, in-memory store
 (no RocksDB). Machine: 32 logical cores.
 
 ### Load / open (one-time)
 
 | Engine | Step | Time | Resident heap after load |
 |---|---|--:|--:|
-| **rete** | `Rete::open` - indexes already built in the file | **16.5 ms** | 12.07 MiB |
-| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2184 ms | 144.98 MiB |
+| **rete** | `Rete::open` - indexes already built in the file | **19.9 ms** | 13.35 MiB |
+| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2437 ms | 144.98 MiB |
 
 Process peak RSS after both loads (`VmHWM`): 207 MiB.
 
@@ -189,40 +189,42 @@ already exist on disk; Oxigraph parses the triples and builds its indexes
 on every startup. This is the format's core promise: **publish once, open
 instantly, query in place**.
 
-### SPARQL operator coverage (both single-threaded)
+### SPARQL operator coverage (eager, lazy range-read, and Oxigraph)
 
-24 queries spanning supported forms and operators, run on both
-engines. Row counts are a cross-engine correctness check across the
-language surface, not just a speed race.
-Median ±sd of 5 warm runs; `peak heap` is each query's exact
-allocation high-water mark (counting allocator), engine-comparable.
+24 queries spanning supported forms and operators, on three
+engines: rete **eager** (`Rete::open`, whole file in memory), rete **lazy**
+(`Rete::open_ranged_lazy` — a fresh cold open + HTTP-range-style reads per
+query, the path a browser/remote client runs), and Oxigraph (in-memory). Row
+counts are a cross-engine correctness check across the language surface, not
+just a speed race. Median ±sd of 5 warm runs. **lazy fetched** is
+the bytes that one query pulled from the file image — the rest is never touched.
 
-| Operator / form | rete | Oxigraph | rete vs oxi | peak heap MiB (rete / oxi) | rows | ok |
-|---|--:|--:|--:|--:|--:|:--:|
-| SELECT count (aggregate) | **2.47 ±0.05 ms** | 6.64 ±0.27 ms | 2.7x | 3.75 / 0.01 | 1 | yes |
-| SELECT DISTINCT | **3.51 ±0.05 ms** | 7.05 ±0.47 ms | 2.0x | 0.01 / 0.00 | 6 | yes |
-| ASK | 0.03 ±0.00 ms | **0.01 ±0.00 ms** | 0.2x | 0.00 / 0.00 | 1 | yes |
-| CONSTRUCT | **0.01 ±0.00 ms** | 0.01 ±0.00 ms | 1.4x | 0.01 / 0.01 | 9 | yes |
-| DESCRIBE (impl-defined) | **0.01 ±0.00 ms** | 0.01 ±0.01 ms | 1.4x | 0.01 / 0.00 | 11 | yes |
-| VALUES (inline data) | **3.14 ±0.06 ms** | 5.04 ±0.63 ms | 1.6x | 6.40 / 0.01 | 10962 | yes |
-| UNION | **2.94 ±0.13 ms** | 3.94 ±1.42 ms | 1.3x | 6.54 / 0.00 | 10993 | yes |
-| OPTIONAL (left join) | **0.16 ±0.03 ms** | 0.19 ±0.03 ms | 1.2x | 0.13 / 0.01 | 200 | yes |
-| MINUS | **1.76 ±0.03 ms** | 1.93 ±0.38 ms | 1.1x | 1.63 / 0.81 | 2728 | yes |
-| FILTER NOT EXISTS | **1.76 ±0.04 ms** | 6.77 ±0.22 ms | 3.8x | 1.63 / 0.01 | 2728 | yes |
-| 3-way join + LIMIT | 0.15 ±0.02 ms | **0.11 ±0.02 ms** | 0.7x | 0.03 / 0.01 | 50 | yes |
-| FILTER REGEX (case-insens.) | 5.27 ±0.33 ms | **0.69 ±0.19 ms** | 0.1x | 0.13 / 0.02 | 200 | yes |
-| FILTER arith + logical | **0.17 ±0.02 ms** | 0.73 ±0.10 ms | 4.4x | 0.13 / 0.01 | 200 | yes |
-| BIND + SUBSTR + CONCAT | 0.33 ±0.01 ms | **0.23 ±0.04 ms** | 0.7x | 0.12 / 0.01 | 200 | yes |
-| path sequence a/b | **0.12 ±0.02 ms** | 0.24 ±0.03 ms | 1.9x | 0.12 / 0.01 | 200 | yes |
-| path inverse ^p (count) | **2.32 ±0.04 ms** | 6.64 ±0.18 ms | 2.9x | 3.75 / 0.01 | 1 | yes |
-| path + transitive (count) | **5.71 ±0.06 ms** | 8.99 ±0.75 ms | 1.6x | 1.23 / 0.81 | 1 | yes |
-| path * zero-or-more (count) | **5.78 ±0.07 ms** | 8.87 ±0.67 ms | 1.5x | 1.23 / 0.81 | 1 | yes |
-| GROUP BY + ORDER BY | **2.98 ±0.08 ms** | 7.11 ±0.66 ms | 2.4x | 4.88 / 0.01 | 6 | yes |
-| GROUP BY + HAVING | **2.99 ±0.07 ms** | 7.36 ±0.60 ms | 2.5x | 4.88 / 0.01 | 5 | yes |
-| AVG per group | **16.4 ±1.5 ms** | 37.0 ±0.8 ms | 2.3x | 13.56 / 0.01 | 6 | yes |
-| MIN/MAX/SUM | **4.47 ±0.07 ms** | 9.83 ±0.54 ms | 2.2x | 7.50 / 0.01 | 1 | yes |
-| COUNT(DISTINCT) | **2.50 ±0.16 ms** | 6.56 ±0.52 ms | 2.6x | 4.50 / 0.01 | 1 | yes |
-| ORDER BY + LIMIT + OFFSET | **4.08 ±0.09 ms** | 19.4 ±0.4 ms | 4.8x | 0.04 / 5.75 | 10 | yes |
+| Operator / form | rete eager | rete lazy | lazy fetched | Oxigraph | eager vs oxi | rows | ok |
+|---|--:|--:|--:|--:|--:|--:|:--:|
+| SELECT count (aggregate) | **3.78 ±0.85 ms** | 4.65 ±0.62 ms | 77.4 KB | 9.14 ±0.62 ms | 2.4x | 1 | yes |
+| SELECT DISTINCT | **4.79 ±0.52 ms** | 5.44 ±0.32 ms | 51.2 KB | 10.6 ±1.9 ms | 2.2x | 6 | yes |
+| ASK | 0.06 ±0.20 ms | 0.67 ±0.03 ms | 51.2 KB | **0.01 ±0.04 ms** | 0.2x | 1 | yes |
+| CONSTRUCT | **0.01 ±0.02 ms** | 1.84 ±1.40 ms | 70.1 KB | 0.05 ±0.51 ms | 3.7x | 9 | yes |
+| DESCRIBE (impl-defined) | **0.01 ±0.00 ms** | 0.64 ±0.02 ms | 70.1 KB | 0.03 ±0.05 ms | 2.8x | 11 | yes |
+| VALUES (inline data) | **5.22 ±0.45 ms** | 6.63 ±1.29 ms | 177.3 KB | 11.0 ±4.4 ms | 2.1x | 10962 | yes |
+| UNION | **7.03 ±1.27 ms** | 7.97 ±1.39 ms | 177.3 KB | 12.9 ±1.7 ms | 1.8x | 10993 | yes |
+| OPTIONAL (left join) | **0.30 ±0.03 ms** | 2.28 ±0.59 ms | 125.6 KB | 0.41 ±0.16 ms | 1.4x | 200 | yes |
+| MINUS | **2.64 ±0.98 ms** | 6.34 ±1.46 ms | 200.5 KB | 3.29 ±2.00 ms | 1.2x | 2728 | yes |
+| FILTER NOT EXISTS | **2.15 ±0.20 ms** | 6.69 ±1.18 ms | 200.5 KB | 10.9 ±4.3 ms | 5.1x | 2728 | yes |
+| 3-way join + LIMIT | **0.18 ±0.04 ms** | 1.75 ±0.16 ms | 143.1 KB | 0.19 ±0.12 ms | 1.0x | 50 | yes |
+| FILTER REGEX (case-insens.) | 6.99 ±0.69 ms | 8.24 ±0.88 ms | 79.5 KB | **0.90 ±0.24 ms** | 0.1x | 200 | yes |
+| FILTER arith + logical | **0.27 ±0.06 ms** | 1.88 ±0.25 ms | 204.5 KB | 0.75 ±0.33 ms | 2.7x | 200 | yes |
+| BIND + SUBSTR + CONCAT | 0.36 ±0.02 ms | 2.56 ±0.61 ms | 151.7 KB | **0.33 ±0.15 ms** | 0.9x | 200 | yes |
+| path sequence a/b | **0.20 ±0.02 ms** | 1.75 ±0.14 ms | 162.5 KB | 0.25 ±0.09 ms | 1.2x | 200 | yes |
+| path inverse ^p (count) | **3.32 ±0.35 ms** | 3.95 ±0.51 ms | 77.4 KB | 9.71 ±0.92 ms | 2.9x | 1 | yes |
+| path + transitive (count) | **6.94 ±0.18 ms** | 8.74 ±0.60 ms | 89.5 KB | 14.0 ±1.6 ms | 2.0x | 1 | yes |
+| path * zero-or-more (count) | **6.55 ±0.27 ms** | 7.03 ±0.16 ms | 89.5 KB | 10.4 ±0.8 ms | 1.6x | 1 | yes |
+| GROUP BY + ORDER BY | **3.81 ±0.60 ms** | 3.53 ±0.07 ms | 51.2 KB | 10.7 ±1.8 ms | 2.8x | 6 | yes |
+| GROUP BY + HAVING | **6.12 ±2.18 ms** | 6.94 ±2.14 ms | 51.2 KB | 10.3 ±0.4 ms | 1.7x | 5 | yes |
+| AVG per group | **27.8 ±7.5 ms** | 31.9 ±5.5 ms | 95.0 KB | 43.9 ±2.3 ms | 1.6x | 6 | yes |
+| MIN/MAX/SUM | **9.14 ±2.02 ms** | 5.51 ±0.91 ms | 78.5 KB | 10.7 ±0.6 ms | 1.2x | 1 | yes |
+| COUNT(DISTINCT) | **2.48 ±0.08 ms** | 2.74 ±0.09 ms | 57.4 KB | 7.73 ±0.29 ms | 3.1x | 1 | yes |
+| ORDER BY + LIMIT + OFFSET | **4.05 ±0.06 ms** | 5.02 ±0.15 ms | 125.0 KB | 22.7 ±1.0 ms | 5.6x | 10 | yes |
 
 **24 / 24 identical row counts** across
 SELECT/ASK/CONSTRUCT/DESCRIBE, algebra operators, filters/functions,
@@ -241,6 +243,11 @@ Reading the times honestly:
   patterns use a substring fast path) and, by fractions of a
   millisecond, on ASK and the tightest LIMIT joins — floor effects,
   not the orders-of-magnitude gaps from before the engine rework.
+- The **lazy** range-read engine — what a browser or remote client runs
+  over HTTP — adds only a ~1 ms cold-open tax over eager while fetching
+  single-digit-percent of the file per query (here ~50–205 KB of a 2.8 MB
+  file), and still beats in-memory Oxigraph on most shapes. Querying a
+  `.rete` where it sits (S3 / HTTP, no server) is not a latency compromise.
 
 ### Batch transitive reachability - `coauthor+` from 300 seeds
 
@@ -250,9 +257,9 @@ Oxigraph it is a `coauthor+` property path evaluated per seed.
 
 | Engine / mode | Time | vs rete-serial |
 |---|--:|--:|
-| rete - `batch_reach_serial` (1 core) | 453 ±2 ms | 1.0x |
-| **rete - `batch_reach_parallel` (32 cores)** | **36.1 ±4.3 ms** | **12.5x** |
-| Oxigraph - `coauthor+` property path, per seed | 2591 ±92 ms | 0.2x |
+| rete - `batch_reach_serial` (1 core) | 641 ±101 ms | 1.0x |
+| **rete - `batch_reach_parallel` (32 cores)** | **39.0 ±12.4 ms** | **16.4x** |
+| Oxigraph - `coauthor+` property path, per seed | 3026 ±48 ms | 0.2x |
 
 rete serial and parallel both reached 1,636,200 nodes;
 Oxigraph touched 1,636,200 result cells. The dedicated
@@ -272,7 +279,10 @@ grep -vE "<[^>]* [^>]*>" data/opencitations/enriched-all.nt \
 
 cargo build --release -p rete-bench
 ./target/release/rete-bench --json data/opencitations/enriched-clean.rete \
-  data/opencitations/enriched-clean.nt 300 > docs/benchmark-opencitations.json
+  data/opencitations/enriched-clean.nt 300 > /tmp/bench.json
+# preserve the curated dataset note + run date from the existing JSON:
+uv run python scripts/merge_bench_metadata.py /tmp/bench.json \
+  docs/benchmark-opencitations.json --date $(date +%F)
 uv run python scripts/render_benchmark_doc.py docs/benchmark-opencitations.json \
   --input docs/BENCHMARK.md --output docs/BENCHMARK.md
 cargo run -p docgen
