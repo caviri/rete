@@ -335,7 +335,12 @@ __PLAYGROUND_CSS__
         HTTP range</b> from a <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs" target="_blank" rel="noopener">Hugging Face bucket</a>
         (served with CORS + Range by an <a href="https://katospiegel-rete.hf.space/" target="_blank" rel="noopener">HF&nbsp;Space</a>) —
         only the bytes a query touches are fetched. Pick one to load it.</p>
+      <div class="ds-viewseg segmented" aria-label="Dataset view">
+        <button type="button" data-dsview="cards" class="active">Cards</button>
+        <button type="button" data-dsview="table">Table</button>
+      </div>
       <div id="datasetList" class="ds-list"></div>
+      <div id="datasetTable" class="hidden"></div>
       <details class="source-advanced">
         <summary>Advanced — load your own data</summary>
         <div class="source-choice" style="border-top:0;padding-top:10px">

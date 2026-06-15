@@ -62,6 +62,34 @@ window.RETE_PLAYGROUND_CATALOG = {
     {"key": "ohm-full", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/ohm-full.rete?token=sfdbgf1094by21hd128ru39802", "label": "ohm-full.rete - all of OpenHistoricalMap (remote, lazy)", "description": "The ENTIRE current OpenHistoricalMap planet (daily snapshot, 2026-06-14) as one range-queried .rete: 1,021,295 named + dated + geolocated historical features (~6.1M triples, 98 MB), queried lazily over HTTP - only the dictionary chunks and index tiles each query touches are fetched, never the whole file. Each feature is openhistoricalmap.org/{node,way,relation}/<id> with rdfs:label, ex:startYear/ex:endYear (signed integers, -10000..2100; 2100 = still present) and GeoSPARQL geometry (176k points, 690k lines, 155k polygons; admin boundaries assembled from multipolygon/boundary relations, simplified to ~50 m). Built from planet.openhistoricalmap.org with PyOsmium (scripts/fetch_ohm_planet.sh). CC0 1.0 - credit OpenHistoricalMap contributors. Pick selective shapes (a bound subject, a name, a point-in-polygon) for snappy lazy reads."},
     {"key": "wikidata-100mb", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/wikidata-100MB/wikidata.rete?token=sfdbgf1094by21hd128ru39802", "typePredicate": "<http://www.wikidata.org/prop/direct/P31>", "label": "wikidata-100MB.rete - a real 100 MB Wikidata slice (remote, lazy)", "description": "A real ~104 MB slice of Wikidata, queried lazily over HTTP range requests straight from a Hugging Face bucket - the browser fetches only the dictionary chunks and index tiles each query touches (a typical selective query reads ~10 MB of the 104 MB), never the whole file. People (wd:Q5 humans) carry rdfs:label (multilingual), occupation (wdt:P106 -> e.g. physicist Q169470, philosopher Q4964182, writer Q36180, politician Q82955), date of birth (wdt:P569), place of birth (wdt:P19), citizenship (wdt:P27) and 'influenced by' (wdt:P737). Entity/property IRIs stay as wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. Pick SELECTIVE shapes (a bound subject/object, an occupation intersection) for snappy reads; aggregates over a whole predicate scan more. CC0 (Wikidata). The 1 GB version (key: wikidata) is the same idea at 10x the data."}
   ],
+  // Structured metadata for the dataset table. `triples`: exact for bundled
+  // graphs (from `rete info`), approximate string for the big remote ones, null
+  // when unknown. `source`: where the data came from ("" = synthetic / internal).
+  // Type (Bundled vs Remote) is derived from each dataset's `kind`.
+  datasetMeta: {
+    "scholar":               { triples: 6954,      size: "51 KB",   license: "synthetic",            source: "" },
+    "scholar-noisy":         { triples: 6671,      size: "50 KB",   license: "synthetic",            source: "" },
+    "typed":                 { triples: 6,         size: "498 B",   license: "example",              source: "" },
+    "deps":                  { triples: 13,        size: "610 B",   license: "example",              source: "" },
+    "causal":                { triples: 13,        size: "1.3 KB",  license: "example",              source: "" },
+    "citations":             { triples: 539334,    size: "1.6 MB",  license: "CC0 + synthetic",      source: "https://opencitations.net" },
+    "history":               { triples: 14430,     size: "1.5 MB",  license: "GPL-3.0",              source: "https://github.com/aourednik/historical-basemaps" },
+    "linked-jazz":           { triples: 9466,      size: "97 KB",   license: "CC BY-SA 3.0",         source: "https://linkedjazz.org" },
+    "getty-ulan":            { triples: "~205,000", size: "2.8 MB",  license: "ODC-BY 1.0",           source: "https://www.getty.edu/research/tools/vocabularies/ulan/" },
+    "nomisma":               { triples: 53535,     size: "76 KB",   license: "ODbL 1.0 + CC-BY 3.0", source: "http://numismatics.org/pella/" },
+    "mimotext":              { triples: 27389,     size: "126 KB",  license: "CC0",                  source: "https://www.mimotext.uni-trier.de" },
+    "mmm":                   { triples: 48191,     size: "375 KB",  license: "CC BY-NC 4.0",         source: "https://mappingmanuscriptmigrations.org" },
+    "openalex-astrocytes":   { triples: 24042,     size: "172 KB",  license: "CC0",                  source: "https://openalex.org" },
+    "antarctic-expeditions": { triples: 275,       size: "3.5 KB",  license: "CC0",                  source: "https://www.wikidata.org" },
+    "factgrid-illuminati":   { triples: 34979,     size: "269 KB",  license: "CC0",                  source: "https://database.factgrid.de" },
+    "theographic-graph":     { triples: 31945,     size: "170 KB",  license: "CC BY-SA",             source: "https://github.com/robertrouse/theographic-bible-metadata" },
+    "monarch":               { triples: 7811,      size: "76 KB",   license: "CC-BY",                source: "https://monarchinitiative.org" },
+    "opencitations":         { triples: 8103,      size: "86 KB",   license: "CC0",                  source: "https://opencitations.net" },
+    "orkg":                  { triples: 37314,     size: "393 KB",  license: "CC-BY",                source: "https://orkg.org" },
+    "ohm-full":              { triples: "~6.1 M",  size: "98 MB",   license: "CC0 1.0",              source: "https://www.openhistoricalmap.org" },
+    "wikidata":              { triples: null,      size: "1.04 GB", license: "CC0",                  source: "https://www.wikidata.org" },
+    "wikidata-100mb":        { triples: null,      size: "104 MB",  license: "CC0",                  source: "https://www.wikidata.org" },
+  },
   examples: {
     "wikidata-100mb": [
       {"family": "Select", "label": "Physicists who are also philosophers", "view": "graph", "tip": "An occupation intersection (wdt:P106 twice). Selective - the lazy reader faults in ~10 MB of the 104 MB file and returns scientist-philosophers like Ilya Prigogine and Marin Mersenne.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who WHERE {\n  ?p wdt:P106 wd:Q169470 ;   # physicist\n     wdt:P106 wd:Q4964182 ;  # philosopher\n     rdfs:label ?who .\n  FILTER(LANG(?who) = \"en\")\n} LIMIT 50"},

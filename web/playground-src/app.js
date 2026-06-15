@@ -522,9 +522,31 @@
     }
   }
 
+  // The dataset metadata table: triples, .rete size, type (bundled/remote),
+  // license, and a link to where the data came from. Driven by CATALOG.datasetMeta.
+  function renderDatasetTable() {
+    const fmtTri = (t) => (t == null ? "—" : typeof t === "number" ? t.toLocaleString() : esc(t));
+    const host = (u) => { try { return new URL(u).host.replace(/^www\./, ""); } catch (e) { return u; } };
+    const rows = CATALOG.datasets.map((d) => {
+      const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[d.key]) || {};
+      const type = d.kind === "remote-lazy" ? "🛰 Remote · lazy" : "📦 Bundled";
+      const src = m.source
+        ? `<a href="${esc(m.source)}" target="_blank" rel="noopener">${esc(host(m.source))} ↗</a>`
+        : "—";
+      return `<tr><td><button type="button" class="ds-rowload" data-ds="${esc(d.key)}">${esc(d.label.split(" - ")[0])}</button></td>` +
+        `<td class="num">${fmtTri(m.triples)}</td>` +
+        `<td class="num">${esc(m.size || "—")}</td>` +
+        `<td>${type}</td><td>${esc(m.license || "—")}</td><td>${src}</td></tr>`;
+    }).join("");
+    return `<table class="ds-table"><thead><tr>` +
+      `<th>Dataset</th><th class="num">Triples</th><th class="num">.rete size</th>` +
+      `<th>Type</th><th>License</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
   // The "Datasets" browser: one card per catalog dataset, with its description
   // and a source badge (the source is part of the dataset). Loading a card calls
   // selectDataset, which picks the right source — bundled→memory, remote→lazy.
+  // A Cards/Table toggle switches to the metadata table above.
   function openSource() {
     $("datasetList").innerHTML = CATALOG.datasets.map((d) => {
       const remote = d.kind === "remote-lazy";
@@ -550,6 +572,19 @@
         const card = btn.closest(".ds-card");
         const open = card.classList.toggle("expanded");
         btn.textContent = open ? "less" : "more";
+      };
+    });
+    // The metadata table (same datasets, at-a-glance) + the Cards/Table toggle.
+    $("datasetTable").innerHTML = renderDatasetTable();
+    $$("#datasetTable .ds-rowload").forEach((b) => {
+      b.onclick = () => { selectDataset(b.dataset.ds); closeSource(); };
+    });
+    $$("#sourceModal [data-dsview]").forEach((b) => {
+      b.onclick = () => {
+        const table = b.dataset.dsview === "table";
+        $("datasetList").classList.toggle("hidden", table);
+        $("datasetTable").classList.toggle("hidden", !table);
+        $$("#sourceModal [data-dsview]").forEach((x) => x.classList.toggle("active", x === b));
       };
     });
     $("sourceModal").classList.remove("hidden");

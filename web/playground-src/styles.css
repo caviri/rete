@@ -1184,6 +1184,52 @@ pre {
   cursor: pointer;
   padding: 0;
 }
+.ds-viewseg {
+  margin: 10px 0 8px;
+}
+.ds-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.ds-table th,
+.ds-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.ds-table th {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.ds-table td.num,
+.ds-table th.num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ds-table tbody tr:hover {
+  background: var(--accent-weak, #f3f7ff);
+}
+.ds-rowload {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  color: var(--accent-dark);
+  cursor: pointer;
+  text-align: left;
+}
+.ds-rowload:hover {
+  text-decoration: underline;
+}
+
 .source-advanced {
   margin-top: 14px;
   padding-top: 12px;
