@@ -933,6 +933,10 @@ pub fn write_dataset_with_metadata(
         parts.push(&named_section);
     }
 
+    // Length of the trailing schema-pyramid block (0 if none), so a reader can
+    // fetch just that block for an index/dictionary/summary-free Tier-0 read.
+    let schema_meta_len = crate::meta::schema_block_len(pyramid_meta);
+
     let header = Header {
         version: crate::header::VERSION,
         flags: if has_quads { FLAG_HAS_QUADS } else { 0 },
@@ -952,6 +956,7 @@ pub fn write_dataset_with_metadata(
         content_hash: content_hash(&parts),
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
         named_graphs_len: named_len,
+        schema_meta_len,
     };
 
     let mut out = Vec::with_capacity(
@@ -2134,6 +2139,23 @@ pub fn read_schema_coherence_ranged<R: RangeReader>(
     if header.pyramid_meta_len == 0 {
         return Ok(None);
     }
+    // Fast path: the header records the trailing schema block's length, so read ONLY
+    // that block (at the end of pyramid-meta) — never the community summary, the
+    // dictionary, or the index. This is what makes Tier-0 flat at any graph size.
+    if header.schema_meta_len > 0 && (header.schema_meta_len as u64) <= header.pyramid_meta_len {
+        let off =
+            header.pyramid_meta_offset + header.pyramid_meta_len - header.schema_meta_len as u64;
+        let block = reader.read_at(off, header.schema_meta_len as u64)?;
+        let (hierarchy, cycles, disjoint, equivalent) = crate::meta::decode_schema_block(&block)
+            .map_err(|_| FileError::Container("malformed schema block"))?;
+        return Ok(Some(schema_coherence(
+            &hierarchy,
+            &cycles,
+            &disjoint,
+            &equivalent,
+        )));
+    }
+    // Fallback (pre-v0.2.1 files with no header field): decode the whole pyramid-meta.
     let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
     let meta =
         PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
@@ -2298,6 +2320,7 @@ mod tests {
             content_hash: content_hash(&[&dict_container, &index_container]),
             named_graphs_offset: 0,
             named_graphs_len: 0,
+            schema_meta_len: 0,
         };
         let mut v1 = Vec::new();
         v1.extend_from_slice(&header.to_bytes());
@@ -2756,6 +2779,59 @@ mod tests {
         assert!(
             r.bytes_read() <= bytes.len() as u64 - header.root_dir_len,
             "tbox_coherence must not read the triple index"
+        );
+    }
+
+    #[test]
+    fn schema_coherence_reads_only_the_schema_block() {
+        use crate::reader::{CountingReader, SliceReader};
+        let rt = RDF_TYPE;
+        let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let disj = "<http://www.w3.org/2002/07/owl#disjointWith>";
+        // 500 instances with unique literals → a sizable dictionary + community
+        // summary, so a whole-pyramid-meta read would be large; the schema block
+        // (bounded by the tiny ontology) stays small.
+        let mut triples: Vec<(String, String, String)> = vec![
+            ("<http://ex/C>".into(), sub.into(), "<http://ex/D>".into()),
+            ("<http://ex/C>".into(), sub.into(), "<http://ex/E>".into()),
+            ("<http://ex/D>".into(), disj.into(), "<http://ex/E>".into()),
+        ];
+        for i in 0..500 {
+            let s = format!("<http://ex/x{i}>");
+            triples.push((s.clone(), rt.into(), "<http://ex/C>".into()));
+            triples.push((
+                s,
+                "<http://ex/label>".into(),
+                format!("\"unique label {i}\""),
+            ));
+        }
+        let trefs: Vec<(&str, &str, &str)> = triples
+            .iter()
+            .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+            .collect();
+        let bytes = build_with_pyramid(&trefs);
+
+        let header = Header::from_bytes(&bytes[..HEADER_LEN]).unwrap();
+        assert!(
+            header.schema_meta_len > 0,
+            "the writer recorded a schema-block length"
+        );
+        assert!(
+            (header.schema_meta_len as u64) < header.pyramid_meta_len,
+            "schema block ({}) should be far smaller than the whole pyramid-meta ({})",
+            header.schema_meta_len,
+            header.pyramid_meta_len
+        );
+
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let points = read_schema_coherence_ranged(&r).unwrap().unwrap();
+        assert!(points.iter().any(|i| i.kind == "unsatisfiable-class"));
+        // It read only the header + the schema block — not the summary or dictionary.
+        assert!(
+            r.bytes_read() <= HEADER_LEN as u64 + header.schema_meta_len as u64,
+            "read {} bytes; expected <= header + schema block ({})",
+            r.bytes_read(),
+            HEADER_LEN as u64 + header.schema_meta_len as u64
         );
     }
 

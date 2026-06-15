@@ -130,7 +130,7 @@ the fuller design and remain future work (see `docs/BENCHMARK.md`).
 | 92 | 16 | content hash (blake3, first 16 bytes) — also an ETag-like id |
 | 108 | 8 | named-graphs section offset (0 if default-graph only) |
 | 116 | 8 | named-graphs section length (0 if default-graph only) |
-| 124 | 4 | reserved |
+| 124 | 4 | schema-pyramid block length (u32, 0 if none) — the trailing schema block within pyramid-meta, so a reader fetches just it at `pyramid_meta_offset + pyramid_meta_len − this` for an index/dictionary/summary-free schema-coherence read |
 
 > Rationale: a fixed 128-byte header means **one tiny range read** (`bytes=0-127`)
 > tells the client where every section lives.

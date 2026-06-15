@@ -10,10 +10,9 @@
 //!
 //! Findings (see docs/BENCHMARK.md): Tier 2's reason scales with the graph; Tier 1
 //! reads only the rdf:type + T-Box tiles (a small, sub-linear slice); Tier 0 reads
-//! only header + pyramid-meta (never the dictionary). Tier 0 is flat for the schema
-//! itself, but pyramid-meta also carries the community summary, which grows with the
-//! number of distinct entities — so on a large, entity-rich graph Tier 1 is the
-//! cheaper remote check until the schema pyramid gets its own addressable section.
+//! only the header + the trailing schema block (the header records its byte length),
+//! so it's a flat ~1–8 KB in 2 ranges at ANY graph size — never the dictionary, the
+//! community summary, or the index.
 //! Run:  cargo run --release --example coherence_bench [n1 n2 …]  (default 1k 10k 100k)
 
 use std::sync::Arc;

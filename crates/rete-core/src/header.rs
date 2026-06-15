@@ -57,6 +57,12 @@ pub struct Header {
     /// Named-graphs section (0 if the file has only the default graph).
     pub named_graphs_offset: u64,
     pub named_graphs_len: u64,
+    /// Byte length of the trailing **schema-pyramid block** within the pyramid-meta
+    /// section (0 if none, e.g. a typeless or pre-v0.2.1 file). It lets a reader
+    /// fetch *only* the schema block — at `pyramid_meta_offset + pyramid_meta_len -
+    /// schema_meta_len` — for an index/dictionary/summary-free Tier-0 coherence
+    /// check, instead of reading the whole (graph-scaling) pyramid-meta.
+    pub schema_meta_len: u32,
 }
 
 impl Header {
@@ -83,7 +89,7 @@ impl Header {
         b[92..108].copy_from_slice(&self.content_hash);
         b[108..116].copy_from_slice(&self.named_graphs_offset.to_le_bytes());
         b[116..124].copy_from_slice(&self.named_graphs_len.to_le_bytes());
-        // bytes 124..128 reserved (zero)
+        b[124..128].copy_from_slice(&self.schema_meta_len.to_le_bytes());
         b
     }
 
@@ -118,6 +124,7 @@ impl Header {
             content_hash: b[92..108].try_into().unwrap(),
             named_graphs_offset: u64_at(108),
             named_graphs_len: u64_at(116),
+            schema_meta_len: u32::from_le_bytes(b[124..128].try_into().unwrap()),
         })
     }
 
@@ -151,6 +158,7 @@ mod tests {
             content_hash: [7u8; 16],
             named_graphs_offset: 2000,
             named_graphs_len: 48,
+            schema_meta_len: 99,
         };
         let bytes = h.to_bytes();
         assert_eq!(bytes.len(), HEADER_LEN);
@@ -184,6 +192,7 @@ mod tests {
             content_hash: [0xCC; 16],
             named_graphs_offset: 0xBEEF,
             named_graphs_len: 0xF00D,
+            schema_meta_len: 0xD00D,
         };
         let b = h.to_bytes();
         let u16_at = |o: usize| u16::from_le_bytes(b[o..o + 2].try_into().unwrap());
@@ -209,6 +218,7 @@ mod tests {
         assert_eq!(&b[92..108], &[0xCC; 16]); // content hash
         assert_eq!(u64_at(108), 0xBEEF); // named-graphs offset
         assert_eq!(u64_at(116), 0xF00D); // named-graphs length
+        assert_eq!(u32::from_le_bytes(b[124..128].try_into().unwrap()), 0xD00D); // schema-meta len
         assert_eq!(b.len(), HEADER_LEN);
     }
 
@@ -243,6 +253,7 @@ mod tests {
             content_hash: [0; 16],
             named_graphs_offset: 0,
             named_graphs_len: 0,
+            schema_meta_len: 0,
         };
         let back = Header::from_bytes(&h.to_bytes()).unwrap();
         assert_eq!(back.version, MIN_READ_VERSION);

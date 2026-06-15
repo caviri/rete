@@ -173,21 +173,19 @@ never a silently-incomplete (and so possibly false-"coherent") result.
 
 | Tier | Function | Reads | Finds |
 |------|----------|-------|-------|
-| **0 — schema** | `check_schema_url(url)` | header + pyramid-meta only (2 ranges, **dictionary-free**, never the triple index) | subClassOf cycles; **unsatisfiable classes** (a class that is a subclass of two `owl:disjointWith` classes) |
+| **0 — schema** | `check_schema_url(url)` | header + the schema block only (2 ranges, **~1–8 KB at any graph size**, never the index, dictionary, or community summary) | subClassOf cycles; **unsatisfiable classes** (a class that is a subclass of two `owl:disjointWith` classes) |
 | **1 — selective** | `reason_construct_url(url, construct)` | only the tiles the CONSTRUCT's constant-predicate patterns touch (one warm cache) | every contradiction visible from `rdf:type` + the class/equality T-Box (disjoint-class clashes, `sameAs`/`differentFrom`) |
 | **2 — full** | `reason_url(url[, graph])` | materializes the whole graph (≈ the entire file) | every incoherent point the CLI `rete reason` finds |
 
 **Tier 0** answers *"is the **ontology** coherent?"* — the `subClassOf` DAG plus the
 `owl:disjointWith` / `owl:equivalentClass` axioms travel in the schema pyramid, which
-decodes **without the dictionary or the index**, so the check reads just the header
-and the pyramid-meta (2 ranges). It cannot see instance-level clashes (a node typed
-into disjoint classes, functional-property clashes) — those need the A-Box (Tier 1/2).
-Two caveats the benchmark surfaced (see [Coherence tier costs](BENCHMARK.md#coherence-checking-tier-costs)):
-the schema portion is bounded by the ontology, but the pyramid-meta currently also
-carries the community summary, which grows with the number of distinct entities — so
-on a large, entity-rich graph **Tier 1 is the cheaper remote check**, and Tier 0 is
-flat only on ontology-bounded files. And soundness is capped: the shipped hierarchy is
-truncated, so on a very large ontology a pruned ancestor can hide an unsatisfiable
+decodes **without the dictionary or the index**. The header records the schema block's
+byte length, so the check fetches just the header and that block (2 ranges) — a flat
+**~1–8 KB at any graph size** (8.1 KB of a 48.8 MB file; see
+[Coherence tier costs](BENCHMARK.md#coherence-checking-tier-costs)). It cannot see
+instance-level clashes (a node typed into disjoint classes, functional-property
+clashes) — those need the A-Box (Tier 1/2). One soundness caveat: the shipped hierarchy
+is truncated, so on a very large ontology a pruned ancestor can hide an unsatisfiable
 class (a false *coherent*, never a false *incoherent*).
 
 **Tier 1** is the selective sweet spot. The default slice is a `UNION` of

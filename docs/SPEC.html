@@ -346,7 +346,7 @@ the fuller design and remain future work (see <code>docs/BENCHMARK.md</code>).</
 <tr><td>92</td><td>16</td><td>content hash (blake3, first 16 bytes) — also an ETag-like id</td></tr>
 <tr><td>108</td><td>8</td><td>named-graphs section offset (0 if default-graph only)</td></tr>
 <tr><td>116</td><td>8</td><td>named-graphs section length (0 if default-graph only)</td></tr>
-<tr><td>124</td><td>4</td><td>reserved</td></tr>
+<tr><td>124</td><td>4</td><td>schema-pyramid block length (u32, 0 if none) — the trailing schema block within pyramid-meta, so a reader fetches just it at <code>pyramid_meta_offset + pyramid_meta_len − this</code> for an index/dictionary/summary-free schema-coherence read</td></tr>
 </tbody></table>
 <blockquote>
 <p>Rationale: a fixed 128-byte header means <strong>one tiny range read</strong> (<code>bytes=0-127</code>)

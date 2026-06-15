@@ -1126,10 +1126,10 @@ pub fn check_schema(bytes: &[u8]) -> Result<String, JsValue> {
 }
 
 /// **Index-free schema coherence (Tier-0) over a remote `.rete` URL.** Reads only
-/// TWO ranges — the header and the pyramid-meta — never the dictionary (which a
-/// literal-heavy file makes large) or the triple index. Flat on ontology-bounded
-/// files; on a large, entity-rich graph the pyramid-meta's community summary grows,
-/// so prefer `reason_construct_url` (Tier-1) there (see docs/BENCHMARK.md).
+/// TWO ranges — the header and the trailing schema block (the header records its
+/// length) — never the dictionary, the community summary, or the triple index. So
+/// it's a flat **~1–8 KB at any graph size** (8.1 KB of a 48.8 MB file; see
+/// docs/BENCHMARK.md), making it the cheap "is the ontology coherent?" gate.
 /// Worker-only (synchronous XHR); a failed range fetch is an error, never a false
 /// "coherent".
 #[wasm_bindgen]

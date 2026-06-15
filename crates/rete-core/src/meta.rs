@@ -583,6 +583,90 @@ fn decode_schema(bytes: &[u8], pos: &mut usize, meta: &mut PyramidMeta) -> Resul
     Ok(())
 }
 
+/// Byte length of the trailing schema-pyramid block within an encoded pyramid-meta
+/// (0 when there is none). The writer records this in the header so a reader can
+/// fetch *only* the schema block (`schema_meta_len` bytes at the end of pyramid-meta)
+/// for a summary-free, dictionary-free Tier-0 read. Re-walks round + summary + tiles
+/// to find where the schema block begins; any malformed prefix yields 0 (the reader
+/// then safely falls back to decoding the whole section).
+pub fn schema_block_len(bytes: &[u8]) -> u32 {
+    fn walk(bytes: &[u8]) -> Option<usize> {
+        let mut pos = 0usize;
+        macro_rules! uv {
+            () => {{
+                let (v, n) = read_uvarint(bytes.get(pos..)?)?;
+                pos += n;
+                v
+            }};
+        }
+        let _round = uv!();
+        let n_edges = uv!() as usize;
+        for _ in 0..n_edges {
+            uv!();
+            uv!();
+            uv!();
+            uv!();
+        }
+        let n_tiles = uv!() as usize;
+        for _ in 0..n_tiles {
+            let _comm = uv!();
+            let len = uv!() as usize;
+            pos = pos.checked_add(len)?;
+            if pos > bytes.len() {
+                return None;
+            }
+        }
+        Some(pos)
+    }
+    match walk(bytes) {
+        Some(start) if start < bytes.len() && bytes[start] == SCHEMA_V2 => {
+            (bytes.len() - start) as u32
+        }
+        _ => 0,
+    }
+}
+
+/// Decode a STANDALONE schema-pyramid block — the `schema_meta_len` bytes the header
+/// points at, beginning with the `SCHEMA_V2` tag — into just the schema fields,
+/// without the surrounding round/summary/tiles. Powers the index/dictionary/summary
+/// -free Tier-0 coherence read.
+#[allow(clippy::type_complexity)]
+pub fn decode_schema_block(
+    block: &[u8],
+) -> Result<
+    (
+        Vec<ClassNode>,
+        Vec<Vec<String>>,
+        Vec<(String, String)>,
+        Vec<(String, String)>,
+    ),
+    MetaError,
+> {
+    if block.first() != Some(&SCHEMA_V2) {
+        return Err(MetaError::Malformed("not a schema block"));
+    }
+    let mut meta = PyramidMeta {
+        round: 0,
+        summary: Vec::new(),
+        tiles: Vec::new(),
+        class_hierarchy: Vec::new(),
+        level_rollups: Vec::new(),
+        level_links: Vec::new(),
+        descriptors: Vec::new(),
+        subclass_cycles: Vec::new(),
+        disjoint_pairs: Vec::new(),
+        equivalent_pairs: Vec::new(),
+    };
+    let mut pos = 1; // skip the SCHEMA_V2 tag
+    decode_schema(block, &mut pos, &mut meta)?;
+    Ok((
+        meta.class_hierarchy,
+        meta.subclass_cycles,
+        meta.disjoint_pairs,
+        meta.equivalent_pairs,
+    ))
+}
+
 fn write_str(out: &mut Vec<u8>, s: &str) {
     write_uvarint(out, s.len() as u64);
     out.extend_from_slice(s.as_bytes());
