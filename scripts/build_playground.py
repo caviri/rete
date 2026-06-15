@@ -59,6 +59,9 @@ DATASETS = [
     ("scholar-noisy", "scholar-noisy.rete"),
     ("typed", "typed.rete"),
     ("deps", "deps.rete"),
+    # A tiny causal ontology with planted coherence defects — powers the Coherence
+    # tab demo (rete build examples/causal.nt -o web/causal.rete).
+    ("causal", "causal.rete"),
     ("citations", "enriched-all.rete"),
     # Historical world borders (aourednik/historical-basemaps, GPL-3.0) as
     # GeoSPARQL geometry + time — built by scripts/geo_to_rete.py:

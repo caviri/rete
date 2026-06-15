@@ -38,6 +38,11 @@ window.RETE_PLAYGROUND_CATALOG = {
       description: "Package dependency graph for impact analysis, transitive reachability, and CVE-style examples."
     },
     {
+      key: "causal",
+      label: "causal.rete - causal ontology with planted coherence defects",
+      description: "A tiny causal medical ontology for the Coherence tab. Schema-level (Tier-0): :Relapsed is a subclass of two owl:disjointWith classes (HealthyState, DiseaseState), so it is UNSATISFIABLE. Instance-level (full reasoner): patient :p is typed as both Healthy and Diseased - a disjoint-class clash. Plus a transitive :causes chain a->b->c->a (a cycle - find it with the SPARQL path ?x e:causes+ ?x). ~13 triples."
+    },
+    {
       key: "history",
       label: "history.rete - historical world borders (GeoSPARQL)",
       description: "World territorial borders at 7 snapshots from 323 BCE to 1994 CE (aourednik/historical-basemaps, GPL-3.0), each polygon stored as a geo:wktLiteral with an integer year. Query it with GeoSPARQL: point-in-polygon containment, bbox intersection, and distance — combined with temporal filters. Coordinates are CRS84 lon/lat, simplified to ~1 km."

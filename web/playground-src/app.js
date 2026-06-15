@@ -938,6 +938,8 @@
       $("reachOut").classList.remove("hidden");
     } else if (state.mode === "schema") {
       $("schemaOut").classList.remove("hidden");
+    } else if (state.mode === "coherence") {
+      $("coherenceOut").classList.remove("hidden");
     } else if (state.mode === "provenance") {
       $("provOut").classList.remove("hidden");
     } else if (state.mode === "build") {
@@ -1361,6 +1363,34 @@
     } catch (e) {
       $("shaclMeta").textContent = "";
       showError("shaclOut", String(e));
+    }
+  }
+
+  function runCoherence() {
+    if (!state.bytes) return showError("coherenceOut", "Load a graph first.");
+    const t0 = performance.now();
+    try {
+      const schema = JSON.parse(W().check_schema(state.bytes));
+      const full = JSON.parse(W().reason(state.bytes, null));
+      const dt = performance.now() - t0;
+      const block = (title, sub, coherent, points) => {
+        const items = (points || []).map((p) =>
+          `<li><code>${esc(p.kind)}</code> — ${esc(p.detail)}</li>`).join("");
+        const verdict = coherent ? "coherent ✓" : `${points.length} incoherent point(s)`;
+        return `<section class="coherence-block"><h3>${esc(title)}</h3>` +
+          `<p class="microcopy">${esc(sub)}</p>` +
+          `<p><strong>${verdict}</strong></p>` +
+          (items ? `<ul>${items}</ul>` : "") + `</section>`;
+      };
+      $("coherenceOut").innerHTML =
+        block("Schema (Tier-0, index-free)", "subClassOf cycles + unsatisfiable classes, from the schema pyramid", schema.coherent, schema.schemaPoints) +
+        block("Full reasoner (instance-level)", `${full.inferredCount} triple(s) entailed; disjoint-class / sameAs / functional clashes`, full.coherent, full.inconsistencies);
+      const ok = schema.coherent && full.coherent;
+      $("coherenceMeta").textContent = `${ok ? "coherent" : "incoherent"} | ${dt.toFixed(1)} ms`;
+      updateResultVisibility();
+    } catch (e) {
+      $("coherenceMeta").textContent = "";
+      showError("coherenceOut", String(e));
     }
   }
 
@@ -1802,6 +1832,7 @@
     $("fileInput").onchange = (e) => loadFromFile(e.target.files[0]);
     $("shareBtn").onclick = shareUrl;
     $("shaclRun").onclick = runShacl;
+    $("coherenceRun").onclick = runCoherence;
     $("reachRun").onclick = runReach;
     $("whyRun").onclick = runProvenance;
     $("buildRun").onclick = runBuild;

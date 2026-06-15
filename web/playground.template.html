@@ -40,6 +40,7 @@ __PLAYGROUND_CSS__
     <button type="button" data-mode="shacl">SHACL</button>
     <button type="button" data-mode="reach">Reach</button>
     <button type="button" data-mode="schema">Schema</button>
+    <button type="button" data-mode="coherence">Coherence</button>
     <button type="button" data-mode="provenance">Provenance</button>
   </nav>
 
@@ -243,6 +244,19 @@ __PLAYGROUND_CSS__
         </div>
       </div>
 
+      <div class="panel" data-panel="coherence">
+        <div class="editor-head">
+          <div>
+            <h1>Coherence</h1>
+            <p class="microcopy">Check the loaded graph for OWL/RDFS incoherent points — schema-level (Tier-0, index-free) and instance-level (full reasoner) — entirely in your browser.</p>
+          </div>
+        </div>
+        <div class="action-row">
+          <button id="coherenceRun" type="button">Check coherence</button>
+          <span id="coherenceMeta" class="run-meta"></span>
+        </div>
+      </div>
+
       <div class="panel" data-panel="build">
         <div class="editor-head">
           <div>
@@ -277,6 +291,7 @@ __PLAYGROUND_CSS__
         <div id="shaclOut" class="result-pane hidden" data-result="shacl"></div>
         <div id="reachOut" class="result-pane hidden" data-result="reach"></div>
         <div id="schemaOut" class="result-pane hidden" data-result="schema"></div>
+        <div id="coherenceOut" class="result-pane hidden" data-result="coherence"></div>
         <div id="provOut" class="result-pane hidden" data-result="provenance"></div>
         <div id="buildOut" class="result-pane hidden" data-result="build"></div>
       </div>
