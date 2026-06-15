@@ -729,11 +729,11 @@ function runGraph() {
       if (task === "reason" || task === "reason-subset" || task === "schema-coherence") {
         let obj; try { obj = JSON.parse(d.json); } catch (_) { return showText(d.json); }
         const pts = obj.inconsistencies || obj.schemaPoints || [];
-        const detail = task === "schema-coherence" ? `${obj.classCount} classes · index-free` : `${obj.inferredCount} inferred`;
+        const detail = task === "schema-coherence" ? "index-free (2 ranges)" : `${obj.inferredCount} inferred`;
         $("meta").textContent = `${obj.coherent ? "coherent ✓" : pts.length + " incoherent point(s)"} · ${detail} · ${reqInfo}`;
         const body = obj.coherent
           ? (task === "schema-coherence"
-              ? `Schema is coherent — ${obj.classCount} class(es); no subClassOf cycles or unsatisfiable classes.`
+              ? "Schema is coherent — no subClassOf cycles or unsatisfiable classes."
               : `No incoherent points found.\n\ninferred triples: ${obj.inferredCount}`)
           : pts.map((i) => `[${i.kind}] ${i.detail}`).join("\n");
         return showText(body);

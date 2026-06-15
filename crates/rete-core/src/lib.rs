@@ -32,10 +32,10 @@ pub use bgp::{eval_bgp, Binding, PatternTerm, TriplePattern};
 pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 pub use file::{
-    build_pyramid_meta, read_metadata_ranged, schema_classes, schema_summary, verify,
-    write_dataset, write_dataset_with_metadata, write_file, ByteRange, LayoutSegment, Rete,
-    SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET,
-    RDF_TYPE,
+    build_pyramid_meta, read_metadata_ranged, read_schema_coherence_ranged, schema_classes,
+    schema_coherence, schema_summary, verify, write_dataset, write_dataset_with_metadata,
+    write_file, ByteRange, LayoutSegment, Rete, SummaryView, TermTriple, TripleProvenance,
+    CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 pub use header::{Header, HeaderError, HEADER_LEN, MAGIC, VERSION};
 pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern};

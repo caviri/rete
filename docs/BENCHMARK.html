@@ -320,6 +320,49 @@ with <code>--no-pyramid</code> when you only serve <strong>selective queries at 
 ~4× faster build, identical query latency). See the
 <a href="semantic-zoom.html">Semantic zoom guide</a> for the schema-pyramid side of this. Repro:
 <code>dev/bench_pyramid_value.sh</code> (bytes) and <code>dev/bench_pyramid_time.sh</code> (time).</p>
+<h2>Coherence checking: tier costs</h2>
+<p>How much of a remote <code>.rete</code> each coherence check actually fetches, as the graph
+grows. A synthetic medical ontology — a fixed T-Box with a planted <strong>unsatisfiable
+class</strong> (<code>:Relapsed ⊑ :Healthy</code> and <code>⊑ :Sick</code>, which are <code>owl:disjointWith</code>) plus a
+few <strong>instance-level</strong> clashes — at increasing instance counts, measured through a
+<code>CountingReader</code> over the file image. Repro:
+<code>cargo run --release --example coherence_bench [n …]</code>.</p>
+<table><thead><tr><th style="text-align: right">instances</th><th style="text-align: right">file</th><th style="text-align: right">Tier-0 schema (index-free)</th><th style="text-align: right">Tier-1 selective slice</th><th style="text-align: right">Tier-2 full graph</th></tr></thead><tbody>
+<tr><td style="text-align: right">1,000</td><td style="text-align: right">33 KB</td><td style="text-align: right"><strong>1.5 KB</strong> · 2 req · 0.04 ms</td><td style="text-align: right">26 KB · 36 req · 7 ms</td><td style="text-align: right">33 KB · 36 req · 12 ms</td></tr>
+<tr><td style="text-align: right">10,000</td><td style="text-align: right">283 KB</td><td style="text-align: right"><strong>2.1 KB</strong> · 2 req · 0.03 ms</td><td style="text-align: right">32 KB · 37 req · 72 ms</td><td style="text-align: right">171 KB · 38 req · 236 ms</td></tr>
+<tr><td style="text-align: right">100,000</td><td style="text-align: right">9.4 MB</td><td style="text-align: right">6.7 MB · 2 req · 7 ms</td><td style="text-align: right"><strong>346 KB</strong> · 53 req · 1.2 s</td><td style="text-align: right">1.8 MB · 48 req · 3.0 s</td></tr>
+<tr><td style="text-align: right">500,000</td><td style="text-align: right">48.8 MB</td><td style="text-align: right">36 MB · 2 req · 32 ms</td><td style="text-align: right"><strong>1.4 MB</strong> · 90 req · 9.0 s</td><td style="text-align: right">8.5 MB · 54 req · 18.4 s</td></tr>
+</tbody></table>
+<p>The three tiers find <strong>different</strong> defects, by design: Tier-0 finds the
+schema-level unsatisfiable class (1 point) from the ontology alone; Tier-1/Tier-2
+also find the instance-level disjoint clashes (3 points). So Tier-0 is a fast
+"is the <em>ontology</em> coherent?" gate, and Tier-1/2 answer "is the <em>data</em> coherent?".</p>
+<h3>Two fixes this benchmark exposed</h3>
+<ul>
+<li><strong><code>detect_inconsistencies</code> was O(types²).</strong> The disjoint-class check looped over
+every pair of <code>rdf:type</code> triples in the whole graph. At 10k instances (~20k type
+triples) that was ~4.3 s. Grouping each individual's class set first and checking
+only the pairs <em>within</em> one individual makes it ~linear: Tier-1 <strong>4320 ms → 72 ms</strong>,
+Tier-2 <strong>4607 ms → 236 ms</strong> at 10k. (The functional-property check had the same
+shape and got the same treatment.)</li>
+<li><strong>Tier-0 was reading the whole dictionary.</strong> <code>check_schema</code> went through
+<code>SummaryView</code>, which fetches <code>header.dictionary_len</code> to label predicates — but
+<code>tbox_coherence</code> needs none of it (the schema pyramid carries its own class-string
+table). A dictionary-free <code>read_schema_coherence_ranged</code> (header + pyramid-meta
+only) cut Tier-0 from <strong>20.9 KB → 2.1 KB</strong> at 10k.</li>
+</ul>
+<h3>Honest analysis</h3>
+<p>Tier-1 (selective) is the robust remote check at scale: it faults only the
+<code>rdf:type</code> + T-Box tiles, so it reads <strong>346 KB of a 9.4 MB file</strong> at 100k and
+<strong>1.4 MB of 48.8 MB</strong> at 500k — a few percent — while Tier-2 reads the whole graph.</p>
+<p>Tier-0 is genuinely flat for <em>small</em> graphs (1.5 KB), but <strong>not</strong> at scale here:
+the schema pyramid is bounded by the ontology, yet it currently shares the
+pyramid-meta section with the <strong>community summary</strong>, whose super-edges grow with the
+number of distinct entities (every unique-labelled patient is a node). So Tier-0
+inherits that growth (6.7 MB at 100k). The fix is to give the schema pyramid its own
+addressable byte range so a reader can fetch <em>only</em> it — tracked as future work; until
+then, prefer Tier-1 for instance-rich graphs, and reserve Tier-0 for the "ontology
+coherence" question on ontology-bounded files.</p>
 <!-- benchmark:opencitations:start -->
 <h2>Comparison vs Oxigraph (real OpenCitations network)</h2>
 <p>Dataset: the real OpenCitations citation network for the AlphaFold paper (Nature 2021), enriched with disciplines, authors, venues and citation counts (539,246 triples loaded into both engines)</p>

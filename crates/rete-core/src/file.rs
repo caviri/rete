@@ -2012,88 +2012,12 @@ impl SummaryView {
     /// classes, functional-property clashes) are NOT visible here — they need the
     /// A-Box (Tier-1/Tier-2 `reason`).
     pub fn tbox_coherence(&self) -> Vec<crate::reason::Inconsistency> {
-        use crate::reason::Inconsistency;
-        use std::collections::{BTreeMap, BTreeSet, VecDeque};
-        const MAX_REACH: usize = 100_000;
-
-        let mut out: Vec<Inconsistency> = Vec::new();
-
-        for cyc in &self.subclass_cycles {
-            let detail = if cyc.len() == 1 {
-                format!("{} is rdfs:subClassOf itself (a cycle)", cyc[0])
-            } else {
-                format!(
-                    "classes {{{}}} are mutually rdfs:subClassOf (a cycle)",
-                    cyc.join(", ")
-                )
-            };
-            out.push(Inconsistency {
-                kind: "subclass-cycle",
-                detail,
-            });
-        }
-
-        if !self.disjoint_pairs.is_empty() {
-            // Upward adjacency: subClassOf parents + bidirectional equivalence.
-            let mut adj: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-            for n in &self.class_hierarchy {
-                let e = adj.entry(n.class.as_str()).or_default();
-                for p in &n.parents {
-                    e.push(p.as_str());
-                }
-            }
-            for (a, b) in &self.equivalent_pairs {
-                adj.entry(a.as_str()).or_default().push(b.as_str());
-                adj.entry(b.as_str()).or_default().push(a.as_str());
-            }
-
-            // Candidate focus classes: every class named anywhere in the schema.
-            let mut focuses: BTreeSet<&str> = self
-                .class_hierarchy
-                .iter()
-                .map(|n| n.class.as_str())
-                .collect();
-            for (a, b) in self.disjoint_pairs.iter().chain(&self.equivalent_pairs) {
-                focuses.insert(a.as_str());
-                focuses.insert(b.as_str());
-            }
-
-            let mut seen: BTreeSet<&str> = BTreeSet::new();
-            for &c in &focuses {
-                // reach(c) = {c} ∪ ancestors (capped BFS over `adj`).
-                let mut reach: BTreeSet<&str> = BTreeSet::new();
-                let mut q: VecDeque<&str> = VecDeque::new();
-                reach.insert(c);
-                q.push_back(c);
-                while let Some(x) = q.pop_front() {
-                    if reach.len() > MAX_REACH {
-                        break;
-                    }
-                    if let Some(ns) = adj.get(x) {
-                        for &p in ns {
-                            if reach.insert(p) {
-                                q.push_back(p);
-                            }
-                        }
-                    }
-                }
-                for (x, y) in &self.disjoint_pairs {
-                    if reach.contains(x.as_str()) && reach.contains(y.as_str()) && seen.insert(c) {
-                        out.push(Inconsistency {
-                            kind: "unsatisfiable-class",
-                            detail: format!(
-                                "{c} is a subclass of both {x} and {y}, which are \
-                                 owl:disjointWith — no individual can be a {c}"
-                            ),
-                        });
-                        break;
-                    }
-                }
-            }
-        }
-
-        out.sort_by(|a, b| (a.kind, &a.detail).cmp(&(b.kind, &b.detail)));
-        out
+        schema_coherence(
+            &self.class_hierarchy,
+            &self.subclass_cycles,
+            &self.disjoint_pairs,
+            &self.equivalent_pairs,
+        )
     }
 
     /// True when [`tbox_coherence`](Self::tbox_coherence) finds no schema-level
@@ -2101,6 +2025,124 @@ impl SummaryView {
     pub fn tbox_is_coherent(&self) -> bool {
         self.tbox_coherence().is_empty()
     }
+}
+
+/// Compute T-Box coherence points from the schema-pyramid fields alone — no
+/// dictionary, no index, no instance data. Shared by [`SummaryView::tbox_coherence`]
+/// and the dictionary-free [`read_schema_coherence_ranged`]. Emits `subclass-cycle`
+/// and `unsatisfiable-class` (a class whose ancestor closure — over all parents,
+/// folded through `owl:equivalentClass` — contains both ends of a disjoint pair).
+pub fn schema_coherence(
+    class_hierarchy: &[ClassNode],
+    subclass_cycles: &[Vec<String>],
+    disjoint_pairs: &[(String, String)],
+    equivalent_pairs: &[(String, String)],
+) -> Vec<crate::reason::Inconsistency> {
+    use crate::reason::Inconsistency;
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+    const MAX_REACH: usize = 100_000;
+
+    let mut out: Vec<Inconsistency> = Vec::new();
+
+    for cyc in subclass_cycles {
+        let detail = if cyc.len() == 1 {
+            format!("{} is rdfs:subClassOf itself (a cycle)", cyc[0])
+        } else {
+            format!(
+                "classes {{{}}} are mutually rdfs:subClassOf (a cycle)",
+                cyc.join(", ")
+            )
+        };
+        out.push(Inconsistency {
+            kind: "subclass-cycle",
+            detail,
+        });
+    }
+
+    if !disjoint_pairs.is_empty() {
+        // Upward adjacency: subClassOf parents + bidirectional equivalence.
+        let mut adj: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for n in class_hierarchy {
+            let e = adj.entry(n.class.as_str()).or_default();
+            for p in &n.parents {
+                e.push(p.as_str());
+            }
+        }
+        for (a, b) in equivalent_pairs {
+            adj.entry(a.as_str()).or_default().push(b.as_str());
+            adj.entry(b.as_str()).or_default().push(a.as_str());
+        }
+
+        // Candidate focus classes: every class named anywhere in the schema.
+        let mut focuses: BTreeSet<&str> =
+            class_hierarchy.iter().map(|n| n.class.as_str()).collect();
+        for (a, b) in disjoint_pairs.iter().chain(equivalent_pairs) {
+            focuses.insert(a.as_str());
+            focuses.insert(b.as_str());
+        }
+
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        for &c in &focuses {
+            // reach(c) = {c} ∪ ancestors (capped BFS over `adj`).
+            let mut reach: BTreeSet<&str> = BTreeSet::new();
+            let mut q: VecDeque<&str> = VecDeque::new();
+            reach.insert(c);
+            q.push_back(c);
+            while let Some(x) = q.pop_front() {
+                if reach.len() > MAX_REACH {
+                    break;
+                }
+                if let Some(ns) = adj.get(x) {
+                    for &p in ns {
+                        if reach.insert(p) {
+                            q.push_back(p);
+                        }
+                    }
+                }
+            }
+            for (x, y) in disjoint_pairs {
+                if reach.contains(x.as_str()) && reach.contains(y.as_str()) && seen.insert(c) {
+                    out.push(Inconsistency {
+                        kind: "unsatisfiable-class",
+                        detail: format!(
+                            "{c} is a subclass of both {x} and {y}, which are \
+                             owl:disjointWith — no individual can be a {c}"
+                        ),
+                    });
+                    break;
+                }
+            }
+        }
+    }
+
+    out.sort_by(|a, b| (a.kind, &a.detail).cmp(&(b.kind, &b.detail)));
+    out
+}
+
+/// **Dictionary-free Tier-0 coherence read.** Fetch only the header and the
+/// pyramid-meta range (2 small range reads) and run [`schema_coherence`] over the
+/// schema pyramid — never touching the **dictionary** (which a literal-heavy file
+/// makes large) or the triple index. `Ok(None)` if the file ships no pyramid.
+///
+/// This is what makes the Tier-0 check cheap on big graphs: the schema pyramid
+/// carries its own class-string table, so coherence needs none of the dictionary.
+pub fn read_schema_coherence_ranged<R: RangeReader>(
+    reader: &R,
+) -> Result<Option<Vec<crate::reason::Inconsistency>>, FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+    if header.pyramid_meta_len == 0 {
+        return Ok(None);
+    }
+    let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
+    let meta =
+        PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
+    Ok(Some(schema_coherence(
+        &meta.class_hierarchy,
+        &meta.subclass_cycles,
+        &meta.disjoint_pairs,
+        &meta.equivalent_pairs,
+    )))
 }
 
 #[cfg(test)]

@@ -369,19 +369,22 @@ browsers permit only off the main thread). Each returns a JSON envelope with a
 little of the file was pulled; a failed range fetch mid-check is an <strong>error</strong>,
 never a silently-incomplete (and so possibly false-"coherent") result.</p>
 <table><thead><tr><th>Tier</th><th>Function</th><th>Reads</th><th>Finds</th></tr></thead><tbody>
-<tr><td><strong>0 — schema</strong></td><td><code>check_schema_url(url)</code></td><td>header + dictionary + pyramid-meta only (~2–3 ranges, <strong>O(1) in graph size</strong>, never the triple index)</td><td>subClassOf cycles; <strong>unsatisfiable classes</strong> (a class that is a subclass of two <code>owl:disjointWith</code> classes)</td></tr>
+<tr><td><strong>0 — schema</strong></td><td><code>check_schema_url(url)</code></td><td>header + pyramid-meta only (2 ranges, <strong>dictionary-free</strong>, never the triple index)</td><td>subClassOf cycles; <strong>unsatisfiable classes</strong> (a class that is a subclass of two <code>owl:disjointWith</code> classes)</td></tr>
 <tr><td><strong>1 — selective</strong></td><td><code>reason_construct_url(url, construct)</code></td><td>only the tiles the CONSTRUCT's constant-predicate patterns touch (one warm cache)</td><td>every contradiction visible from <code>rdf:type</code> + the class/equality T-Box (disjoint-class clashes, <code>sameAs</code>/<code>differentFrom</code>)</td></tr>
 <tr><td><strong>2 — full</strong></td><td><code>reason_url(url[, graph])</code></td><td>materializes the whole graph (≈ the entire file)</td><td>every incoherent point the CLI <code>rete reason</code> finds</td></tr>
 </tbody></table>
-<p><strong>Tier 0</strong> is the flagship: it answers <em>"is this ontology coherent?"</em> for a
-multi-GB graph by reading tens of kilobytes, because the <code>subClassOf</code> DAG plus the
-<code>owl:disjointWith</code> / <code>owl:equivalentClass</code> axioms travel <strong>index-free</strong> in the
-schema pyramid (the same section <code>rete summary</code> reads). It cannot see
-instance-level clashes (a node typed into disjoint classes, functional-property
-clashes) — those need the A-Box, i.e. Tier 1 or 2. Soundness is bounded by what the
-pyramid ships: the hierarchy is capped, so on a very large ontology a pruned
-ancestor can hide an unsatisfiable class (a false <em>coherent</em>, never a false
-<em>incoherent</em>).</p>
+<p><strong>Tier 0</strong> answers <em>"is the <strong>ontology</strong> coherent?"</em> — the <code>subClassOf</code> DAG plus the
+<code>owl:disjointWith</code> / <code>owl:equivalentClass</code> axioms travel in the schema pyramid, which
+decodes <strong>without the dictionary or the index</strong>, so the check reads just the header
+and the pyramid-meta (2 ranges). It cannot see instance-level clashes (a node typed
+into disjoint classes, functional-property clashes) — those need the A-Box (Tier 1/2).
+Two caveats the benchmark surfaced (see <a href="BENCHMARK.html#coherence-checking-tier-costs">Coherence tier costs</a>):
+the schema portion is bounded by the ontology, but the pyramid-meta currently also
+carries the community summary, which grows with the number of distinct entities — so
+on a large, entity-rich graph <strong>Tier 1 is the cheaper remote check</strong>, and Tier 0 is
+flat only on ontology-bounded files. And soundness is capped: the shipped hierarchy is
+truncated, so on a very large ontology a pruned ancestor can hide an unsatisfiable
+class (a false <em>coherent</em>, never a false <em>incoherent</em>).</p>
 <p><strong>Tier 1</strong> is the selective sweet spot. The default slice is a <code>UNION</code> of
 constant-predicate <code>CONSTRUCT</code> branches so each routes to a single predicate's
 tiles:</p>

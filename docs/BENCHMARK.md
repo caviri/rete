@@ -109,6 +109,56 @@ with `--no-pyramid` when you only serve **selective queries at scale** (smaller 
 [Semantic zoom guide](semantic-zoom.md) for the schema-pyramid side of this. Repro:
 `dev/bench_pyramid_value.sh` (bytes) and `dev/bench_pyramid_time.sh` (time).
 
+## Coherence checking: tier costs
+
+How much of a remote `.rete` each coherence check actually fetches, as the graph
+grows. A synthetic medical ontology — a fixed T-Box with a planted **unsatisfiable
+class** (`:Relapsed ⊑ :Healthy` and `⊑ :Sick`, which are `owl:disjointWith`) plus a
+few **instance-level** clashes — at increasing instance counts, measured through a
+`CountingReader` over the file image. Repro:
+`cargo run --release --example coherence_bench [n …]`.
+
+| instances | file | Tier-0 schema (index-free) | Tier-1 selective slice | Tier-2 full graph |
+|----------:|-----:|---------------------------:|-----------------------:|------------------:|
+| 1,000   | 33 KB  | **1.5 KB** · 2 req · 0.04 ms | 26 KB · 36 req · 7 ms   | 33 KB · 36 req · 12 ms |
+| 10,000  | 283 KB | **2.1 KB** · 2 req · 0.03 ms | 32 KB · 37 req · 72 ms  | 171 KB · 38 req · 236 ms |
+| 100,000 | 9.4 MB | 6.7 MB · 2 req · 7 ms        | **346 KB** · 53 req · 1.2 s | 1.8 MB · 48 req · 3.0 s |
+| 500,000 | 48.8 MB| 36 MB · 2 req · 32 ms        | **1.4 MB** · 90 req · 9.0 s | 8.5 MB · 54 req · 18.4 s |
+
+The three tiers find **different** defects, by design: Tier-0 finds the
+schema-level unsatisfiable class (1 point) from the ontology alone; Tier-1/Tier-2
+also find the instance-level disjoint clashes (3 points). So Tier-0 is a fast
+"is the *ontology* coherent?" gate, and Tier-1/2 answer "is the *data* coherent?".
+
+### Two fixes this benchmark exposed
+
+- **`detect_inconsistencies` was O(types²).** The disjoint-class check looped over
+  every pair of `rdf:type` triples in the whole graph. At 10k instances (~20k type
+  triples) that was ~4.3 s. Grouping each individual's class set first and checking
+  only the pairs *within* one individual makes it ~linear: Tier-1 **4320 ms → 72 ms**,
+  Tier-2 **4607 ms → 236 ms** at 10k. (The functional-property check had the same
+  shape and got the same treatment.)
+- **Tier-0 was reading the whole dictionary.** `check_schema` went through
+  `SummaryView`, which fetches `header.dictionary_len` to label predicates — but
+  `tbox_coherence` needs none of it (the schema pyramid carries its own class-string
+  table). A dictionary-free `read_schema_coherence_ranged` (header + pyramid-meta
+  only) cut Tier-0 from **20.9 KB → 2.1 KB** at 10k.
+
+### Honest analysis
+
+Tier-1 (selective) is the robust remote check at scale: it faults only the
+`rdf:type` + T-Box tiles, so it reads **346 KB of a 9.4 MB file** at 100k and
+**1.4 MB of 48.8 MB** at 500k — a few percent — while Tier-2 reads the whole graph.
+
+Tier-0 is genuinely flat for *small* graphs (1.5 KB), but **not** at scale here:
+the schema pyramid is bounded by the ontology, yet it currently shares the
+pyramid-meta section with the **community summary**, whose super-edges grow with the
+number of distinct entities (every unique-labelled patient is a node). So Tier-0
+inherits that growth (6.7 MB at 100k). The fix is to give the schema pyramid its own
+addressable byte range so a reader can fetch *only* it — tracked as future work; until
+then, prefer Tier-1 for instance-rich graphs, and reserve Tier-0 for the "ontology
+coherence" question on ontology-bounded files.
+
 <!-- benchmark:opencitations:start -->
 ## Comparison vs Oxigraph (real OpenCitations network)
 

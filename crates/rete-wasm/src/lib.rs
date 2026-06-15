@@ -1086,11 +1086,13 @@ pub fn reason_construct_url(url: &str, construct: &str) -> Result<String, JsValu
     Ok(out)
 }
 
-/// Build the Tier-0 schema-coherence JSON envelope from a [`SummaryView`].
+/// Build the Tier-0 schema-coherence JSON envelope from the incoherent points.
 /// `remote` is `(fileLength, bytes, requests)` for the `*_url` variant.
-fn schema_coherence_json(view: &SummaryView, remote: Option<(u64, u64, u64)>) -> String {
+fn schema_coherence_json(
+    points: &[rete_core::Inconsistency],
+    remote: Option<(u64, u64, u64)>,
+) -> String {
     use serde_json::json;
-    let points = view.tbox_coherence();
     let schema_points: Vec<serde_json::Value> = points
         .iter()
         .map(|i| json!({ "kind": i.kind, "detail": i.detail }))
@@ -1099,8 +1101,7 @@ fn schema_coherence_json(view: &SummaryView, remote: Option<(u64, u64, u64)>) ->
         "kind": "schemaCoherence",
         "coherent": points.is_empty(),
         "schemaPoints": schema_points,
-        "classCount": view.class_hierarchy.len(),
-        // The defining property: this answer never touched the triple index.
+        // The defining property: this answer never touched the index OR dictionary.
         "readsIndex": false,
     });
     if let (Some(obj), Some((file_length, bytes, requests))) = (v.as_object_mut(), remote) {
@@ -1113,31 +1114,32 @@ fn schema_coherence_json(view: &SummaryView, remote: Option<(u64, u64, u64)>) ->
 }
 
 /// **Index-free schema coherence (Tier-0)** over an in-memory `.rete`: read only
-/// the header + dictionary + pyramid-meta — never the triple index — and report
+/// the header + pyramid-meta (never the dictionary or the triple index) and report
 /// schema-level incoherent points (subClassOf cycles, unsatisfiable classes).
 /// Errors if the file ships no schema pyramid.
 #[wasm_bindgen]
 pub fn check_schema(bytes: &[u8]) -> Result<String, JsValue> {
-    let view = SummaryView::open_ranged(&SliceReader::new(bytes))
+    let points = rete_core::read_schema_coherence_ranged(&SliceReader::new(bytes))
         .map_err(err)?
         .ok_or_else(|| JsValue::from_str("file has no schema pyramid"))?;
-    Ok(schema_coherence_json(&view, None))
+    Ok(schema_coherence_json(&points, None))
 }
 
 /// **Index-free schema coherence (Tier-0) over a remote `.rete` URL.** Reads only
-/// ~2-3 ranges (header + dictionary + pyramid-meta) — O(1) in graph size, never
-/// the triple index — so a multi-GB remote graph reports its ontology coherence
-/// from ~tens of KB. Uses the [`SummaryView`] seam directly (NOT the lazy `Rete`),
-/// so an index read can't sneak in. Worker-only (synchronous XHR); a failed range
-/// fetch is an error, never a false "coherent".
+/// TWO ranges — the header and the pyramid-meta — never the dictionary (which a
+/// literal-heavy file makes large) or the triple index. Flat on ontology-bounded
+/// files; on a large, entity-rich graph the pyramid-meta's community summary grows,
+/// so prefer `reason_construct_url` (Tier-1) there (see docs/BENCHMARK.md).
+/// Worker-only (synchronous XHR); a failed range fetch is an error, never a false
+/// "coherent".
 #[wasm_bindgen]
 pub fn check_schema_url(url: &str) -> Result<String, JsValue> {
     let reader = CountingReader::new(XhrRangeReader::open(url)?);
-    let view = SummaryView::open_ranged(&reader)
+    let points = rete_core::read_schema_coherence_ranged(&reader)
         .map_err(err)?
         .ok_or_else(|| JsValue::from_str("file has no schema pyramid"))?;
     Ok(schema_coherence_json(
-        &view,
+        &points,
         Some((reader.len(), reader.bytes_read(), reader.requests())),
     ))
 }
