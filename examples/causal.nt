@@ -5,10 +5,13 @@
 #   - HealthyState owl:disjointWith DiseaseState (you can't be both).
 #   - :causes is an owl:TransitiveProperty (causation chains compose).
 #
-# Data tells two stories:
-#   1. A causal CYCLE  a → b → c → a  (find with SPARQL `?x :causes+ ?x`).
-#   2. An INCOHERENT POINT: patient :p is typed as both a HealthyState and a
-#      DiseaseState, which are disjoint → `rete reason` flags it.
+# Two LAYERS of incoherence, one per tier of the coherence check:
+#   - SCHEMA (Tier-0, `check_schema` / index-free): :Relapsed is rdfs:subClassOf
+#     BOTH HealthyState and DiseaseState, which are owl:disjointWith → :Relapsed is
+#     UNSATISFIABLE (no individual can ever be one), provable from the schema alone.
+#   - INSTANCE (Tier-1/2, `rete reason`): patient :p is typed as both a HealthyState
+#     and a DiseaseState → a disjoint-class clash on an actual individual.
+# Plus a causal CYCLE  a → b → c → a  (find with SPARQL `?x :causes+ ?x`).
 
 # --- schema -----------------------------------------------------------------
 <http://ex/Disease> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/Condition> .
@@ -16,6 +19,10 @@
 <http://ex/Treatment> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/Factor> .
 <http://ex/HealthyState> <http://www.w3.org/2002/07/owl#disjointWith> <http://ex/DiseaseState> .
 <http://ex/causes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#TransitiveProperty> .
+
+# --- unsatisfiable class (Tier-0): subclass of two disjoint classes ----------
+<http://ex/Relapsed> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/HealthyState> .
+<http://ex/Relapsed> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/DiseaseState> .
 
 # --- causal cycle: a -> b -> c -> a -----------------------------------------
 <http://ex/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Disease> .

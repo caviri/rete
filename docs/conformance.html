@@ -201,13 +201,17 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li class="nav-h">Interactive explorations</li>
         <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li><a href="explore-100mb.html">Wikidata lazy explorer (100MB / 1GB)</a></li>
-        <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li><li><a href="graph-map/ask-browser.html" target="_blank" rel="noopener">ask the graph (graphRAG)</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
@@ -250,41 +254,94 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <table><thead><tr><th>Category</th><th style="text-align: right">pass</th><th style="text-align: right">n/s</th><th>notes</th></tr></thead><tbody>
 <tr><td>negation</td><td style="text-align: right">12 / 12</td><td style="text-align: right">0</td><td>✅ full</td></tr>
 <tr><td>json-res</td><td style="text-align: right">4 / 4</td><td style="text-align: right">0</td><td>✅ full</td></tr>
-<tr><td>bindings (VALUES)</td><td style="text-align: right">9 / 11</td><td style="text-align: right">2</td><td></td></tr>
-<tr><td>property-path</td><td style="text-align: right">21 / 33</td><td style="text-align: right">7</td><td>strong</td></tr>
-<tr><td>grouping</td><td style="text-align: right">3 / 4</td><td style="text-align: right">0</td><td></td></tr>
+<tr><td>cast</td><td style="text-align: right">6 / 6</td><td style="text-align: right">0</td><td>✅ full — xsd:integer/decimal/float/double/boolean/string</td></tr>
+<tr><td>bind</td><td style="text-align: right">10 / 10</td><td style="text-align: right">0</td><td>✅ full — in-pattern BIND visible to later FILTER/join</td></tr>
+<tr><td>grouping</td><td style="text-align: right">4 / 4</td><td style="text-align: right">0</td><td>✅ full</td></tr>
+<tr><td>bindings (VALUES)</td><td style="text-align: right">10 / 11</td><td style="text-align: right">1</td><td></td></tr>
+<tr><td>aggregates</td><td style="text-align: right">39 / 42</td><td style="text-align: right">3</td><td>GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT</td></tr>
+<tr><td>property-path</td><td style="text-align: right">30 / 33</td><td style="text-align: right">2</td><td>incl. negated property sets + zero-length on empty data</td></tr>
 <tr><td>construct</td><td style="text-align: right">3 / 5</td><td style="text-align: right">1</td><td>graph-isomorphism check</td></tr>
 <tr><td>exists</td><td style="text-align: right">4 / 6</td><td style="text-align: right">1</td><td></td></tr>
-<tr><td>project-expression</td><td style="text-align: right">6 / 7</td><td style="text-align: right">0</td><td></td></tr>
-<tr><td>aggregates</td><td style="text-align: right">27 / 42</td><td style="text-align: right">5</td><td></td></tr>
-<tr><td>functions</td><td style="text-align: right">19 / 75</td><td style="text-align: right">45</td><td>many builtins missing</td></tr>
-<tr><td>bind</td><td style="text-align: right">5 / 10</td><td style="text-align: right">0</td><td></td></tr>
-<tr><td>entailment</td><td style="text-align: right">24 / 70</td><td style="text-align: right">4</td><td>needs <code>build --materialize</code></td></tr>
-<tr><td>subquery</td><td style="text-align: right">0 / 14</td><td style="text-align: right">13</td><td>not supported</td></tr>
-<tr><td>cast</td><td style="text-align: right">0 / 6</td><td style="text-align: right">6</td><td>xsd cast fns missing</td></tr>
+<tr><td>project-expression</td><td style="text-align: right">7 / 7</td><td style="text-align: right">0</td><td>✅ full</td></tr>
+<tr><td>functions</td><td style="text-align: right">73 / 75</td><td style="text-align: right">1</td><td>nearly full — only NOW() + IRI() base resolution</td></tr>
+<tr><td>entailment</td><td style="text-align: right">28 / 70</td><td style="text-align: right">4</td><td>needs <code>build --materialize</code></td></tr>
+<tr><td>subquery</td><td style="text-align: right">2 / 14</td><td style="text-align: right">12</td><td>nested SELECT joins; GRAPH-scoped + RDF/XML data n/a</td></tr>
 <tr><td>service</td><td style="text-align: right">0 / 7</td><td style="text-align: right">7</td><td>SPARQL federation (N/A)</td></tr>
 <tr><td>csv-tsv-res</td><td style="text-align: right">0 / 3</td><td style="text-align: right">3</td><td>CSV/TSV result format</td></tr>
-<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>137 / 309 (44.3%)</strong></td><td style="text-align: right">94</td><td></td></tr>
+<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>232 / 309 (75.1%)</strong></td><td style="text-align: right">33</td><td></td></tr>
 </tbody></table>
 <h2>Findings</h2>
-<ol>
+<ul>
 <li>
-<p><strong>Computed numerics are now typed (fixed — +30 tests).</strong> rete used to
-evaluate arithmetic / aggregates / numeric functions to the right <em>value</em> but
-serialize it as a plain literal (<code>"11"</code>) instead of <code>"11"^^xsd:integer</code>,
-strictly failing ~30 otherwise-correct tests. <code>sparql::fmt_num_typed</code> now
-tags computed numerics with <code>xsd:integer</code> (whole) or <code>xsd:decimal</code>
-(fractional) so the result serializer emits the datatype — lifting strict
-conformance <strong>34.6% → 44.3%</strong> (aggregates 12→27, functions 13→19, bind 2→5,
-project-expression 3→6) with no new operators. (A few <code>xsd:double</code> cases
-still differ — exact promotion needs operand-type tracking we don't carry
-through <code>f64</code>.)</p>
+<p><strong>Boolean-valued projections + strict arithmetic (fixed — +3 tests).</strong> A
+comparison or logical expression in value position — <code>(?y = ?z AS ?eq)</code> —
+yields a typed <code>xsd:boolean</code>, and arithmetic (<code>+ - * /</code>) now requires
+numeric-typed operands (a <code>"1"^^xsd:string</code> is a type error, not 1), matching
+the RDF 1.1 "corrected" expectations. <code>project-expression</code> is now 100%.</p>
 </li>
 <li>
-<p><strong>Genuinely strong areas:</strong> negation (<code>MINUS</code> / <code>NOT EXISTS</code>) and the JSON
-results format are 100%; property paths (21/26), VALUES, GROUP BY, and
-CONSTRUCT (verified by graph isomorphism) are solid. This matches the
-24-operator cross-check against Oxigraph in <a href="BENCHMARK.html">BENCHMARK</a>.</p>
+<p><strong>Property paths — negated sets + zero-length on empty data (fixed — +9
+tests, → 71.8%).</strong> <code>!(:p1|…|:pn)</code> (and its inverse members, which <code>spargebra</code>
+wraps in a <code>Reverse</code>) is now a <code>PathAst::NegatedSet</code> evaluated as one step over
+any predicate not in the set. And a zero-length-capable path (<code>*</code>/<code>?</code>) with a
+constant endpoint that isn't in the graph now yields the identity solution
+(<code>:x :p* ?o</code> ⇒ <code>?o = :x</code>, even on an empty dataset). <code>property-path</code> 21 → 30.</p>
+</li>
+<li>
+<p><strong>Subqueries + aggregate completeness (fixed — +9 tests, → 68.9%).</strong> A nested
+<code>SELECT</code> is now lowered to an in-tree <code>Plan::Subquery</code>, evaluated independently
+to its projected solutions, which then join with the surrounding pattern on
+shared variables (so <code>{ {SELECT (GROUP_CONCAT(?o) AS ?g)…} FILTER(?g=…) }</code>
+works). On the back of that, the aggregate set was finished: <code>GROUP_CONCAT</code>
+returns a real simple literal and honours <code>DISTINCT</code>/<code>SEPARATOR</code>, <code>AVG</code> of an
+empty group is <code>0</code> (and a non-numeric value is a type error), and computed
+decimals round-trip through 15 significant digits so a sum like <code>11.1</code> no
+longer serializes as <code>11.100000000000001</code>. <code>aggregates</code> 27 → 39, <code>grouping</code>
+100%. Remaining subquery gaps are GRAPH-scoped subqueries and tests whose data
+ships as RDF/XML.</p>
+</li>
+</ul>
+<ol start="0">
+<li>
+<p><strong>In-pattern <code>BIND</code> scoping (fixed — +10 tests, → 64.4%).</strong> A <code>BIND(expr AS ?v)</code> written <em>inside</em> a WHERE pattern is now an in-tree plan node, so a
+<em>following</em> <code>FILTER</code> or join sees the bound variable (previously the BIND was
+deferred to projection time, after filtering — so <code>{ ?s :v ?o BIND(?o+1 AS ?z) FILTER(?z=3) }</code> wrongly returned nothing). Top-level projection aliases
+(<code>SELECT (expr AS ?v)</code>) still apply after aggregation, unchanged. This took
+<code>bind</code> and <code>grouping</code> to 100% and lifted four entailment BIND tests.</p>
+</li>
+<li>
+<p><strong>Built-in function coverage (fixed — +52 tests).</strong> Two pushes lifted strict
+conformance from <strong>34.6% → 61.2%</strong>:</p>
+<ul>
+<li><strong>Computed numerics are typed.</strong> Arithmetic / aggregates / numeric
+functions evaluate to the right <em>value</em>; <code>sparql::fmt_num_typed</code> tags the
+result <code>xsd:integer</code> (whole) or <code>xsd:decimal</code> (fractional) so the
+serializer emits the datatype (34.6% → 44.3%).</li>
+<li><strong>The string/cast/hash/datetime built-ins now exist, and return proper
+terms</strong> (44.3% → 61.2%). <code>functions</code> went 19 → 64 and <code>cast</code> 0 → 6:
+<ul>
+<li><strong>Strings:</strong> <code>STRBEFORE</code>/<code>STRAFTER</code> (with the SPARQL argument-compatibility
+and language-tag rules), <code>REPLACE</code>, <code>CONCAT</code>, <code>UCASE</code>/<code>LCASE</code>/<code>SUBSTR</code>
+now preserve the language tag and emit a real literal term (<code>"FOO"@en</code>)
+rather than bare text; <code>STRDT</code>/<code>STRLANG</code>, <code>IRI</code>/<code>URI</code>, <code>ENCODE_FOR_URI</code>,
+<code>LANGMATCHES</code>.</li>
+<li><strong>Hashes:</strong> <code>MD5</code>, <code>SHA1</code>, <code>SHA256</code>, <code>SHA384</code>, <code>SHA512</code> (pure-Rust
+RustCrypto, so they compile to wasm too).</li>
+<li><strong>Date/time:</strong> <code>YEAR</code>/<code>MONTH</code>/<code>DAY</code>/<code>HOURS</code>/<code>MINUTES</code>/<code>SECONDS</code>/<code>TZ</code>/
+<code>TIMEZONE</code> over <code>xsd:dateTime</code>.</li>
+<li><strong>XSD casts:</strong> <code>xsd:integer/decimal/float/double/boolean/string(...)</code>,
+with strict lexical validation (a non-conforming string is a type error)
+and canonicalization on cast-to-string.</li>
+<li><strong>Expression forms:</strong> <code>IF</code>, <code>IN</code>/<code>NOT IN</code>, <code>sameTerm</code>.</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>
+<p><strong>Genuinely strong areas:</strong> negation (<code>MINUS</code> / <code>NOT EXISTS</code>), JSON results,
+and the XSD casts are 100%; property paths, VALUES, GROUP BY, and CONSTRUCT
+(verified by graph isomorphism) are solid. This matches the 24-operator
+cross-check against Oxigraph in <a href="BENCHMARK.html">BENCHMARK</a>.</p>
 </li>
 <li>
 <p><strong>Out of scope (counted, but not engine bugs):</strong></p>
@@ -295,15 +352,18 @@ not an endpoint. (Cross-<em>file</em> federation is a different feature — see
 <li><strong>entailment</strong> (≈49) — RDFS/OWL entailment regimes; rete answers these only
 when entailments are baked in at build time (<code>rete build --materialize</code>),
 which this run does not do.</li>
-<li><strong>subquery</strong> (14) — nested <code>SELECT</code> is rejected rather than evaluated.</li>
-<li><strong>cast</strong> (6), <strong>csv-tsv-res</strong> (3) — xsd cast functions and the CSV/TSV
-result serialization aren't implemented.</li>
+<li><strong>subquery</strong> (≈12) — nested <code>SELECT</code> is rejected rather than evaluated.</li>
+<li><strong>csv-tsv-res</strong> (3) — the CSV/TSV result serialization isn't implemented.</li>
 </ul>
 </li>
 <li>
-<p><strong>Missing builtins</strong> account for most of the <code>functions</code> shortfall (45 n/s) —
-each unimplemented function (string, hash, datetime, etc.) errors rather than
-returning a wrong answer, so they're honest "not yet" rather than silent bugs.</p>
+<p><strong>What's left in <code>functions</code> (2):</strong> <code>NOW()</code> (no wall clock on the
+<code>wasm32-unknown-unknown</code> target the engine must also compile to) and <code>IRI()</code>
+relative-base resolution. The non-deterministic builtins <code>RAND</code>,
+<code>UUID</code>/<code>STRUUID</code>, <code>BNODE</code> are implemented on <code>getrandom</code> (browser backend via
+its <code>js</code> feature, so they work in the WASM client too), and <code>IF</code> now
+propagates an error in its condition rather than silently taking the
+else-branch.</p>
 </li>
 </ol>
 <h2>The same answers, lazily and remotely</h2>

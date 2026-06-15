@@ -25,7 +25,13 @@
 //! - `owl:FunctionalProperty` clash
 //! - `owl:Nothing` membership
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+
+/// Version tag of this reasoner's rule set. Stamped into a baked coherence card so
+/// a `coherent: true` can never be misread as a guarantee from a *different* set of
+/// rules. **Bump this whenever `materialize`/`detect_inconsistencies` changes** (a
+/// rule added/removed/altered), so `rete reason --verify-card` rejects a stale stamp.
+pub const REASON_RULESET: &str = "owl-rl-subset/v1";
 
 // --- Vocabulary IRIs, as canonical N-Triples tokens -------------------------
 
@@ -252,17 +258,24 @@ fn detect_inconsistencies(all: &HashSet<Triple>) -> Vec<Inconsistency> {
     }
 
     // --- Disjoint classes: x a c . x a d . c disjointWith d ------------------
-    // Group an individual's class set, then check each unordered class pair.
-    let mut seen_disjoint: HashSet<(&str, &str, &str)> = HashSet::new();
+    // Group each individual's class set, then check only the unordered class pairs
+    // *within one individual* — O(types + Σ classesₓ²), not O(types²) over the whole
+    // graph (the naive double loop was quadratic in the type-triple count).
+    let mut classes_of: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (x, c) in &types {
-        for (x2, d) in &types {
-            if x != x2 || c == d {
-                continue;
-            }
-            if disjoint.contains(&(*c, *d)) {
+        classes_of.entry(*x).or_default().push(*c);
+    }
+    let mut seen_disjoint: HashSet<(&str, &str, &str)> = HashSet::new();
+    for (x, cs) in &classes_of {
+        for i in 0..cs.len() {
+            for j in (i + 1)..cs.len() {
+                let (c, d) = (cs[i], cs[j]);
+                if c == d || !disjoint.contains(&(c, d)) {
+                    continue;
+                }
                 // Canonicalize the (x, class-pair) so we report each clash once.
-                let (lo, hi) = if c < d { (*c, *d) } else { (*d, *c) };
-                if seen_disjoint.insert((*x, lo, hi)) {
+                let (lo, hi) = if c < d { (c, d) } else { (d, c) };
+                if seen_disjoint.insert((x, lo, hi)) {
                     out.push(Inconsistency {
                         kind: "disjoint-classes",
                         detail: format!(
@@ -295,31 +308,36 @@ fn detect_inconsistencies(all: &HashSet<Triple>) -> Vec<Inconsistency> {
         .map(|(s, _, _)| s.as_str())
         .collect();
     if !functional.is_empty() {
-        let mut seen_func: HashSet<(&str, &str, &str, &str)> = HashSet::new();
+        // Group the values of each functional (subject, predicate), then check the
+        // distinct value pairs *within* one (subject, predicate) — O(Σ valuesₛₚ²),
+        // not O(all²) over every triple pair.
+        let mut values_of: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
         for (s, p, o) in all {
-            if !functional.contains(p.as_str()) {
-                continue;
+            if functional.contains(p.as_str()) {
+                values_of
+                    .entry((s.as_str(), p.as_str()))
+                    .or_default()
+                    .push(o.as_str());
             }
-            for (s2, p2, o2) in all {
-                if p2 != p || s2 != s || o2 == o {
-                    continue;
-                }
-                // Not a clash if the two values are asserted owl:sameAs.
-                if same_as.contains(&(o.as_str(), o2.as_str())) {
-                    continue;
-                }
-                let (lo, hi) = if o < o2 {
-                    (o.as_str(), o2.as_str())
-                } else {
-                    (o2.as_str(), o.as_str())
-                };
-                if seen_func.insert((s.as_str(), p.as_str(), lo, hi)) {
-                    out.push(Inconsistency {
-                        kind: "functional-property",
-                        detail: format!(
-                            "functional property {p} on {s} has distinct values {lo} and {hi}"
-                        ),
-                    });
+        }
+        let mut seen_func: HashSet<(&str, &str, &str, &str)> = HashSet::new();
+        for ((s, p), vals) in &values_of {
+            for i in 0..vals.len() {
+                for j in (i + 1)..vals.len() {
+                    let (o, o2) = (vals[i], vals[j]);
+                    // Not a clash if the two values are equal or asserted owl:sameAs.
+                    if o == o2 || same_as.contains(&(o, o2)) {
+                        continue;
+                    }
+                    let (lo, hi) = if o < o2 { (o, o2) } else { (o2, o) };
+                    if seen_func.insert((s, p, lo, hi)) {
+                        out.push(Inconsistency {
+                            kind: "functional-property",
+                            detail: format!(
+                                "functional property {p} on {s} has distinct values {lo} and {hi}"
+                            ),
+                        });
+                    }
                 }
             }
         }

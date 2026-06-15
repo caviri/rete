@@ -12,9 +12,9 @@ Synthetic social graph, **139,093 triples** (20k people in ~200 communities,
 |---|--:|--:|
 | raw N-Triples | 8,384,101 | 1.0× |
 | `gzip -9` of the N-Triples | 564,590 | 14.8× |
-| **`.rete`** (zstd + pyramid summary) | 708,682 | **11.8×** |
+| **`.rete`** (zstd + pyramid summary) | 715,959 | **11.7×** |
 
-`.rete` is only ~1.25× larger than `gzip` while being *queryable in place and
+`.rete` is only ~1.27× larger than `gzip` while being *queryable in place and
 over HTTP ranges* (gzip answers no query without a full download + scan). It
 stores three permutation indexes (SPO/POS/OSP) — each triple ~3× — plus the
 dictionary and the small pyramid summary. Per-community tiles remain out of the
@@ -26,11 +26,10 @@ container, while physical community-tile directories are the next storage step.
 
 | Step | Time |
 |---|--:|
-| `rete build` (parse → dict → 3 indexes → Louvain pyramid → zstd) | 660 ms |
+| `rete build` (parse → dict → 3 indexes → Louvain pyramid → zstd) | 365 ms |
 
 Result: 3 pyramid levels, 137,512 quads, 40,063 terms.
-(Build was 2,225 ms before dictionary section metadata was cached — 3.4×; see
-finding 1.)
+(Caching the dictionary section metadata cut build time ~3.4× — see finding 1.)
 
 ## Query latency (end-to-end: open + decompress + evaluate)
 
@@ -38,19 +37,17 @@ finding 1.)
 
 | Query | Time |
 |---|--:|
-| triple pattern (`?s knows p100`) | 20 ms |
-| 2-hop BGP join (`p0 knows ?y . ?y knows ?z`) | 27 ms |
-| property path (`p0 knows+ ?y`, reaches whole graph) | **53 ms** |
-| GROUP BY COUNT (degree of every node) | **93 ms** |
-| per-predicate totals (**summary only, index not read**) | 15 ms |
+| triple pattern (`?s knows p100`) | 12 ms |
+| 2-hop BGP join (`p0 knows ?y . ?y knows ?z`) | 12 ms |
+| property path (`p0 knows+ ?y`, reaches whole graph) | **37 ms** |
+| GROUP BY COUNT (degree of every node) | **71 ms** |
+| per-predicate totals (**summary only, index not read**) | 7 ms |
 
-These are ~10–15 % higher than the pre-hardening figures for the
-resolution-heavy queries (GROUP BY was 82 ms, build 614 ms): the malformed-input
-hardening pass made every dictionary lookup and triple-block decode
-bounds-checked (`slice.get(..)?` instead of raw indexing), which costs a little
-on the hot path. Resolution-light queries (triple pattern, summary) are
-unchanged. A guaranteed no-panic reader on untrusted input is worth the few
-percent — see finding 5.
+Every dictionary lookup and triple-block decode is bounds-checked
+(`slice.get(..)?` instead of raw indexing) so the reader cannot panic on
+malformed input — a few percent on the resolution-heavy hot path, and worth it
+(see finding 5). Resolution-light queries (triple pattern, summary) are
+unaffected.
 
 ## HTTP range
 
@@ -65,14 +62,105 @@ index never fetched** — the "overview first, drill down later" promise.
 ## Scaling
 
 At **347,884 triples** (2.5× the table above) everything scales ~linearly, with
-no pathological blowup: build 1.63 s, triple query 31 ms, property path 107 ms,
-GROUP BY 526 ms, predicate totals 17 ms (summary stays cheap regardless of size),
-file 1.80 MB (same 11.8× vs raw / ~1.27× vs gzip ratios).
+no pathological blowup: build 925 ms, triple query 27 ms, property path 91 ms,
+GROUP BY 219 ms, predicate totals 13 ms (summary stays cheap regardless of size),
+file 1.80 MB (same ~11.7× vs raw / ~1.27× vs gzip ratios).
+
+## The pyramid: cost vs benefit
+
+A `.rete` carries **two** pyramidal structures with very different economics. This
+measures both, against `--no-pyramid`, on a typed `subClassOf` ontology fixture
+(`dev/gen_ontology_demo.py`, scaled by entity count).
+
+**Bytes** — file overhead, the growing super-edge summary, and what each read tier
+fetches over HTTP (`q ±pyr` = a node-selective query with / without the pyramid):
+
+| triples | file +pyr | file −pyr | pyr % | pyramid-meta | super-edges | card-url | summary-url | q +pyr | q −pyr |
+|--------:|----------:|----------:|------:|-------------:|------------:|---------:|------------:|-------:|-------:|
+| 8,595 | 99 KB | 90 KB | 9.6% | 8.7 KB | 1,364 | **32.7 KB** | 17 KB | 43,823 | 43,823 |
+| 34,354 | 282 KB | 264 KB | 7.2% | 19 KB | 3,455 | **32.8 KB** | 43 KB | 68,295 | 68,295 |
+| 137,279 | 990 KB | 946 KB | 4.6% | 43.6 KB | 8,580 | **33.0 KB** | 116 KB | 111,054 | 111,054 |
+
+**Time** (release build; median) — what the pyramid costs to *build* (Louvain
+community detection + schema rollup, vs `--no-pyramid`) and how fast each read is:
+
+| triples | build +pyr | build −pyr | pyramid cost | card read | summary read | selective query |
+|--------:|-----------:|-----------:|-------------:|----------:|-------------:|----------------:|
+| 8,595 | 70 ms | 51 ms | +19 ms | 19 ms | 23 ms | 28 ms |
+| 34,354 | 222 ms | 109 ms | +113 ms | 19 ms | 24 ms | 30 ms |
+| 137,279 | 1,352 ms | 353 ms | +999 ms | 22 ms | 30 ms | 41 ms |
+
+What the numbers say:
+
+- **The community super-edge summary scales with the graph** — in bytes (super-edges
+  1.4k → 8.6k; `summary-url` 17 KB → 116 KB) *and* in time (the Louvain build cost
+  is super-linear: +19 ms → +999 ms, ~4× the `--no-pyramid` build at 137k triples).
+- **It gives node-selective lazy queries nothing** — `q +pyr` and `q −pyr` are
+  byte-for-byte identical (`43,823 == 43,823`, …). For pure selective serving the
+  pyramid is overhead; `--no-pyramid` is smaller and builds far faster.
+- **The schema pyramid is the bounded one** — its size and read cost track the
+  *ontology*, not the graph, so the leveled type/relation legend stays cheap at any
+  scale. The flat-cost champion is the **card** (`card-url` ≈ 33 KB and ≈ 20 ms read
+  at every size — it skips the dictionary and super-edges entirely).
+
+**Rule of thumb:** keep the pyramid for index-free **overview / exploration**; build
+with `--no-pyramid` when you only serve **selective queries at scale** (smaller file,
+~4× faster build, identical query latency). See the
+[Semantic zoom guide](semantic-zoom.md) for the schema-pyramid side of this. Repro:
+`dev/bench_pyramid_value.sh` (bytes) and `dev/bench_pyramid_time.sh` (time).
+
+## Coherence checking: tier costs
+
+How much of a remote `.rete` each coherence check actually fetches, as the graph
+grows. A synthetic medical ontology — a fixed T-Box with a planted **unsatisfiable
+class** (`:Relapsed ⊑ :Healthy` and `⊑ :Sick`, which are `owl:disjointWith`) plus a
+few **instance-level** clashes — at increasing instance counts, measured through a
+`CountingReader` over the file image. Repro:
+`cargo run --release --example coherence_bench [n …]`.
+
+| instances | file | Tier-0 schema (index-free) | Tier-1 selective slice | Tier-2 full graph |
+|----------:|-----:|---------------------------:|-----------------------:|------------------:|
+| 1,000   | 33 KB  | **986 B** · 2 req · 0.02 ms | 26 KB · 36 req · 7 ms   | 33 KB · 36 req · 10 ms |
+| 10,000  | 283 KB | **996 B** · 2 req · 0.02 ms | 32 KB · 37 req · 54 ms  | 171 KB · 38 req · 186 ms |
+| 100,000 | 9.4 MB | **8.1 KB** · 2 req · 0.09 ms | 346 KB · 53 req · 1.1 s | 1.8 MB · 48 req · 2.9 s |
+| 500,000 | 48.8 MB| **8.1 KB** · 2 req · 0.10 ms | 1.4 MB · 90 req · 7.5 s | 8.5 MB · 54 req · 15.9 s |
+
+The three tiers find **different** defects, by design: Tier-0 finds the
+schema-level unsatisfiable class (1 point) from the ontology alone; Tier-1/Tier-2
+also find the instance-level disjoint clashes (3 points). So Tier-0 is a fast
+"is the *ontology* coherent?" gate, and Tier-1/2 answer "is the *data* coherent?".
+
+**The headline:** Tier-0 reads **~1–8 KB in 2 range requests at *any* graph size** —
+8.1 KB of a 48.8 MB file (0.017%), sub-0.1 ms. The check-an-ontology's-coherence-from-
+a-few-KB-of-a-multi-GB-file claim holds. Tier-1 (selective) is the practical
+*instance*-coherence check: it faults only the `rdf:type` + T-Box tiles — 346 KB of
+9.4 MB at 100k, 1.4 MB of 48.8 MB at 500k — while Tier-2 reads the whole graph.
+
+### Three fixes this benchmark drove
+
+- **`detect_inconsistencies` was O(types²).** The disjoint-class check looped over
+  every pair of `rdf:type` triples in the whole graph (~4.3 s at 10k instances).
+  Grouping each individual's class set first and checking only the pairs *within* one
+  individual makes it ~linear: Tier-1 **4320 ms → 54 ms**, Tier-2 **4607 ms → 186 ms**
+  at 10k. (The functional-property check had the same shape and got the same fix.)
+- **Tier-0 was reading the whole dictionary.** `check_schema` went through
+  `SummaryView`, which fetches the dictionary to label predicates — but coherence
+  needs none of it (the schema pyramid carries its own class-string table). A
+  dictionary-free `read_schema_coherence_ranged` cut Tier-0 from 20.9 KB → ~2 KB at 10k.
+- **Tier-0 then still scaled with the community summary.** The schema pyramid is
+  bounded by the ontology, but it shared the pyramid-meta section with the community
+  super-edge summary, which grows with the entity count (every labelled node is a
+  vertex) — so reading the whole pyramid-meta cost **6.7 MB at 100k, 36 MB at 500k**.
+  The fix: the writer now records the trailing **schema block's byte length** in the
+  header (the 4 previously-reserved bytes), so a reader fetches *only* that block.
+  Tier-0 dropped to a flat **8.1 KB** — a ~4400× cut at 500k. Backward-compatible: a
+  file without the header field (`schema_meta_len == 0`) falls back to the whole-section
+  read, and a typeless file's header byte stays 0, so it remains byte-identical.
 
 <!-- benchmark:opencitations:start -->
 ## Comparison vs Oxigraph (real OpenCitations network)
 
-Dataset: the benchmark N-Triples input loaded into both engines
+Dataset: the real OpenCitations citation network for the AlphaFold paper (Nature 2021), enriched with disciplines, authors, venues and citation counts (539,246 triples loaded into both engines)
 
 This pits rete (a queryable *file*) against Oxigraph (a full in-memory
 triplestore with a mature SPARQL planner). Honest summary: rete opens
@@ -84,15 +172,15 @@ reachability.
 This section is generated from
 `docs/benchmark-opencitations.json` with
 `scripts/render_benchmark_doc.py`. Latest run:
-**unknown**. **Oxigraph 0.5**, in-memory store
+**2026-06-15**. **Oxigraph 0.5**, in-memory store
 (no RocksDB). Machine: 32 logical cores.
 
 ### Load / open (one-time)
 
 | Engine | Step | Time | Resident heap after load |
 |---|---|--:|--:|
-| **rete** | `Rete::open` - indexes already built in the file | **15.2 ms** | 12.71 MiB |
-| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2002 ms | 144.98 MiB |
+| **rete** | `Rete::open` - indexes already built in the file | **19.9 ms** | 13.35 MiB |
+| Oxigraph | bulk-load N-Triples + build in-memory indexes | 2437 ms | 144.98 MiB |
 
 Process peak RSS after both loads (`VmHWM`): 207 MiB.
 
@@ -101,40 +189,42 @@ already exist on disk; Oxigraph parses the triples and builds its indexes
 on every startup. This is the format's core promise: **publish once, open
 instantly, query in place**.
 
-### SPARQL operator coverage (both single-threaded)
+### SPARQL operator coverage (eager, lazy range-read, and Oxigraph)
 
-24 queries spanning supported forms and operators, run on both
-engines. Row counts are a cross-engine correctness check across the
-language surface, not just a speed race.
-Median ±sd of 5 warm runs; `peak heap` is each query's exact
-allocation high-water mark (counting allocator), engine-comparable.
+24 queries spanning supported forms and operators, on three
+engines: rete **eager** (`Rete::open`, whole file in memory), rete **lazy**
+(`Rete::open_ranged_lazy` — a fresh cold open + HTTP-range-style reads per
+query, the path a browser/remote client runs), and Oxigraph (in-memory). Row
+counts are a cross-engine correctness check across the language surface, not
+just a speed race. Median ±sd of 5 warm runs. **lazy fetched** is
+the bytes that one query pulled from the file image — the rest is never touched.
 
-| Operator / form | rete | Oxigraph | rete vs oxi | peak heap MiB (rete / oxi) | rows | ok |
-|---|--:|--:|--:|--:|--:|:--:|
-| SELECT count (aggregate) | **2.29 ±0.13 ms** | 5.67 ±0.57 ms | 2.5x | 3.75 / 0.01 | 1 | yes |
-| SELECT DISTINCT | **3.48 ±0.04 ms** | 5.05 ±0.79 ms | 1.4x | 0.01 / 0.00 | 6 | yes |
-| ASK | 0.03 ±0.01 ms | **0.01 ±0.01 ms** | 0.3x | 0.00 / 0.00 | 1 | yes |
-| CONSTRUCT | **0.01 ±0.03 ms** | 0.02 ±0.02 ms | 1.4x | 0.01 / 0.01 | 9 | yes |
-| DESCRIBE (impl-defined) | **0.01 ±0.00 ms** | 0.01 ±0.00 ms | 1.3x | 0.01 / 0.00 | 11 | yes |
-| VALUES (inline data) | **3.25 ±0.38 ms** | 4.22 ±0.90 ms | 1.3x | 6.77 / 0.01 | 10962 | yes |
-| UNION | **3.24 ±0.23 ms** | 4.12 ±0.92 ms | 1.3x | 6.54 / 0.00 | 10993 | yes |
-| OPTIONAL (left join) | **0.18 ±0.02 ms** | 0.19 ±0.04 ms | 1.1x | 0.13 / 0.01 | 200 | yes |
-| MINUS | 2.02 ±0.32 ms | **1.95 ±0.50 ms** | 1.0x | 2.23 / 0.81 | 2728 | yes |
-| FILTER NOT EXISTS | **1.84 ±0.05 ms** | 6.00 ±0.48 ms | 3.3x | 2.05 / 0.01 | 2728 | yes |
-| 3-way join + LIMIT | 0.17 ±0.02 ms | **0.11 ±0.02 ms** | 0.7x | 0.04 / 0.01 | 50 | yes |
-| FILTER REGEX (case-insens.) | 5.37 ±0.06 ms | **0.52 ±0.17 ms** | 0.1x | 0.13 / 0.02 | 200 | yes |
-| FILTER arith + logical | **0.16 ±0.03 ms** | 0.79 ±0.17 ms | 5.1x | 0.13 / 0.01 | 200 | yes |
-| BIND + SUBSTR + CONCAT | 0.31 ±0.02 ms | **0.26 ±0.02 ms** | 0.8x | 0.13 / 0.01 | 200 | yes |
-| path sequence a/b | **0.13 ±0.02 ms** | 0.23 ±0.02 ms | 1.8x | 0.12 / 0.01 | 200 | yes |
-| path inverse ^p (count) | **2.33 ±0.02 ms** | 5.34 ±0.91 ms | 2.3x | 3.75 / 0.01 | 1 | yes |
-| path + transitive (count) | **5.69 ±0.10 ms** | 8.01 ±1.02 ms | 1.4x | 1.23 / 0.81 | 1 | yes |
-| path * zero-or-more (count) | **5.68 ±0.19 ms** | 6.89 ±1.40 ms | 1.2x | 1.23 / 0.81 | 1 | yes |
-| GROUP BY + ORDER BY | **2.97 ±0.04 ms** | 4.97 ±1.25 ms | 1.7x | 4.88 / 0.01 | 6 | yes |
-| GROUP BY + HAVING | **2.98 ±0.42 ms** | 7.91 ±0.24 ms | 2.7x | 4.88 / 0.01 | 5 | yes |
-| AVG per group | **18.0 ±1.5 ms** | 35.9 ±0.6 ms | 2.0x | 13.56 / 0.01 | 6 | yes |
-| MIN/MAX/SUM | **4.57 ±1.09 ms** | 10.2 ±0.2 ms | 2.2x | 7.50 / 0.01 | 1 | yes |
-| COUNT(DISTINCT) | **2.50 ±0.10 ms** | 7.03 ±0.80 ms | 2.8x | 4.50 / 0.01 | 1 | yes |
-| ORDER BY + LIMIT + OFFSET | **4.11 ±0.18 ms** | 19.2 ±0.8 ms | 4.7x | 0.04 / 5.75 | 10 | yes |
+| Operator / form | rete eager | rete lazy | lazy fetched | Oxigraph | eager vs oxi | rows | ok |
+|---|--:|--:|--:|--:|--:|--:|:--:|
+| SELECT count (aggregate) | **3.78 ±0.85 ms** | 4.65 ±0.62 ms | 77.4 KB | 9.14 ±0.62 ms | 2.4x | 1 | yes |
+| SELECT DISTINCT | **4.79 ±0.52 ms** | 5.44 ±0.32 ms | 51.2 KB | 10.6 ±1.9 ms | 2.2x | 6 | yes |
+| ASK | 0.06 ±0.20 ms | 0.67 ±0.03 ms | 51.2 KB | **0.01 ±0.04 ms** | 0.2x | 1 | yes |
+| CONSTRUCT | **0.01 ±0.02 ms** | 1.84 ±1.40 ms | 70.1 KB | 0.05 ±0.51 ms | 3.7x | 9 | yes |
+| DESCRIBE (impl-defined) | **0.01 ±0.00 ms** | 0.64 ±0.02 ms | 70.1 KB | 0.03 ±0.05 ms | 2.8x | 11 | yes |
+| VALUES (inline data) | **5.22 ±0.45 ms** | 6.63 ±1.29 ms | 177.3 KB | 11.0 ±4.4 ms | 2.1x | 10962 | yes |
+| UNION | **7.03 ±1.27 ms** | 7.97 ±1.39 ms | 177.3 KB | 12.9 ±1.7 ms | 1.8x | 10993 | yes |
+| OPTIONAL (left join) | **0.30 ±0.03 ms** | 2.28 ±0.59 ms | 125.6 KB | 0.41 ±0.16 ms | 1.4x | 200 | yes |
+| MINUS | **2.64 ±0.98 ms** | 6.34 ±1.46 ms | 200.5 KB | 3.29 ±2.00 ms | 1.2x | 2728 | yes |
+| FILTER NOT EXISTS | **2.15 ±0.20 ms** | 6.69 ±1.18 ms | 200.5 KB | 10.9 ±4.3 ms | 5.1x | 2728 | yes |
+| 3-way join + LIMIT | **0.18 ±0.04 ms** | 1.75 ±0.16 ms | 143.1 KB | 0.19 ±0.12 ms | 1.0x | 50 | yes |
+| FILTER REGEX (case-insens.) | 6.99 ±0.69 ms | 8.24 ±0.88 ms | 79.5 KB | **0.90 ±0.24 ms** | 0.1x | 200 | yes |
+| FILTER arith + logical | **0.27 ±0.06 ms** | 1.88 ±0.25 ms | 204.5 KB | 0.75 ±0.33 ms | 2.7x | 200 | yes |
+| BIND + SUBSTR + CONCAT | 0.36 ±0.02 ms | 2.56 ±0.61 ms | 151.7 KB | **0.33 ±0.15 ms** | 0.9x | 200 | yes |
+| path sequence a/b | **0.20 ±0.02 ms** | 1.75 ±0.14 ms | 162.5 KB | 0.25 ±0.09 ms | 1.2x | 200 | yes |
+| path inverse ^p (count) | **3.32 ±0.35 ms** | 3.95 ±0.51 ms | 77.4 KB | 9.71 ±0.92 ms | 2.9x | 1 | yes |
+| path + transitive (count) | **6.94 ±0.18 ms** | 8.74 ±0.60 ms | 89.5 KB | 14.0 ±1.6 ms | 2.0x | 1 | yes |
+| path * zero-or-more (count) | **6.55 ±0.27 ms** | 7.03 ±0.16 ms | 89.5 KB | 10.4 ±0.8 ms | 1.6x | 1 | yes |
+| GROUP BY + ORDER BY | **3.81 ±0.60 ms** | 3.53 ±0.07 ms | 51.2 KB | 10.7 ±1.8 ms | 2.8x | 6 | yes |
+| GROUP BY + HAVING | **6.12 ±2.18 ms** | 6.94 ±2.14 ms | 51.2 KB | 10.3 ±0.4 ms | 1.7x | 5 | yes |
+| AVG per group | **27.8 ±7.5 ms** | 31.9 ±5.5 ms | 95.0 KB | 43.9 ±2.3 ms | 1.6x | 6 | yes |
+| MIN/MAX/SUM | **9.14 ±2.02 ms** | 5.51 ±0.91 ms | 78.5 KB | 10.7 ±0.6 ms | 1.2x | 1 | yes |
+| COUNT(DISTINCT) | **2.48 ±0.08 ms** | 2.74 ±0.09 ms | 57.4 KB | 7.73 ±0.29 ms | 3.1x | 1 | yes |
+| ORDER BY + LIMIT + OFFSET | **4.05 ±0.06 ms** | 5.02 ±0.15 ms | 125.0 KB | 22.7 ±1.0 ms | 5.6x | 10 | yes |
 
 **24 / 24 identical row counts** across
 SELECT/ASK/CONSTRUCT/DESCRIBE, algebra operators, filters/functions,
@@ -153,6 +243,11 @@ Reading the times honestly:
   patterns use a substring fast path) and, by fractions of a
   millisecond, on ASK and the tightest LIMIT joins — floor effects,
   not the orders-of-magnitude gaps from before the engine rework.
+- The **lazy** range-read engine — what a browser or remote client runs
+  over HTTP — adds only a ~1 ms cold-open tax over eager while fetching
+  single-digit-percent of the file per query (here ~50–205 KB of a 2.8 MB
+  file), and still beats in-memory Oxigraph on most shapes. Querying a
+  `.rete` where it sits (S3 / HTTP, no server) is not a latency compromise.
 
 ### Batch transitive reachability - `coauthor+` from 300 seeds
 
@@ -162,9 +257,9 @@ Oxigraph it is a `coauthor+` property path evaluated per seed.
 
 | Engine / mode | Time | vs rete-serial |
 |---|--:|--:|
-| rete - `batch_reach_serial` (1 core) | 445 ±3 ms | 1.0x |
-| **rete - `batch_reach_parallel` (32 cores)** | **34.1 ±5.0 ms** | **13.1x** |
-| Oxigraph - `coauthor+` property path, per seed | 2199 ±52 ms | 0.2x |
+| rete - `batch_reach_serial` (1 core) | 641 ±101 ms | 1.0x |
+| **rete - `batch_reach_parallel` (32 cores)** | **39.0 ±12.4 ms** | **16.4x** |
+| Oxigraph - `coauthor+` property path, per seed | 3026 ±48 ms | 0.2x |
 
 rete serial and parallel both reached 1,636,200 nodes;
 Oxigraph touched 1,636,200 result cells. The dedicated
@@ -184,7 +279,10 @@ grep -vE "<[^>]* [^>]*>" data/opencitations/enriched-all.nt \
 
 cargo build --release -p rete-bench
 ./target/release/rete-bench --json data/opencitations/enriched-clean.rete \
-  data/opencitations/enriched-clean.nt 300 > docs/benchmark-opencitations.json
+  data/opencitations/enriched-clean.nt 300 > /tmp/bench.json
+# preserve the curated dataset note + run date from the existing JSON:
+uv run python scripts/merge_bench_metadata.py /tmp/bench.json \
+  docs/benchmark-opencitations.json --date $(date +%F)
 uv run python scripts/render_benchmark_doc.py docs/benchmark-opencitations.json \
   --input docs/BENCHMARK.md --output docs/BENCHMARK.md
 cargo run -p docgen

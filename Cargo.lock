@@ -988,6 +988,7 @@ dependencies = [
  "oxigraph",
  "rete-core",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1010,12 +1011,15 @@ version = "0.0.1"
 dependencies = [
  "blake3",
  "getrandom 0.2.17",
+ "md-5",
  "oxrdf 0.2.4",
  "oxttl 0.1.8",
  "rayon",
  "regex-lite",
  "ruzstd",
  "serde_json",
+ "sha1",
+ "sha2",
  "spargebra 0.3.5",
  "thiserror",
  "zstd",

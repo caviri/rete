@@ -1,0 +1,755 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Semantic zoom (schema pyramid) · rete docs</title>
+  <style>
+:root {
+  --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
+  --side:#eef4ef; --side-fg:#25342e; --accent:#147d69; --accent-2:#c84f2f;
+  --border:#d9e2de; --code-bg:#eef3f1; --code-border:#cfd9d5;
+  --shadow:0 18px 44px rgba(32,47,41,.10);
+}
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body {
+  margin:0; color:var(--fg); background:linear-gradient(90deg,var(--side) 0 272px,var(--bg) 272px);
+  display:flex; font:16px/1.68 "Aptos","Segoe UI",system-ui,sans-serif;
+  text-rendering:optimizeLegibility;
+}
+code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace; }
+
+.sidebar {
+  width:272px; min-height:100vh; padding:1.45rem 1.1rem;
+  flex:0 0 272px; color:var(--side-fg); border-right:1px solid var(--border);
+}
+.sidebar .brand {
+  color:var(--fg); font-family:Georgia,"Times New Roman",serif; font-size:1.75rem;
+  font-weight:700; text-decoration:none; display:inline-block; line-height:1;
+}
+.sidebar .brand::after { content:""; display:block; width:2.2rem; height:3px; margin-top:.55rem; background:var(--accent-2); }
+.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 .6rem; }
+.sidebar .meta { display:flex; align-items:center; gap:.5rem; font-size:.8rem; margin:0 0 1.1rem; }
+.sidebar .meta .ver {
+  font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
+  font-size:.72rem; font-weight:700; color:#0b4f42; background:#fff;
+  border:1px solid var(--border); border-radius:999px; padding:.06rem .55rem;
+}
+.sidebar .meta a { display:inline; padding:0; border:0; color:#0b6f5e; font-weight:600; }
+.sidebar .meta a:hover { background:none; text-decoration:underline; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.08rem 0; }
+.sidebar li.nav-h {
+  margin:1.15rem 0 .3rem; padding:0 .62rem; font-size:.66rem; font-weight:800;
+  letter-spacing:.09em; text-transform:uppercase; color:#52625b;
+}
+.sidebar li.nav-h:first-child { margin-top:.2rem; }
+.sidebar a {
+  color:var(--side-fg); text-decoration:none; display:block; padding:.42rem .62rem;
+  border-left:3px solid transparent; border-radius:0 6px 6px 0; font-size:.93rem; line-height:1.25;
+}
+.sidebar a:hover { background:rgba(20,125,105,.09); color:#0b4f42; }
+.sidebar a.active { background:#fff; border-left-color:var(--accent); color:#0b4f42; font-weight:700; box-shadow:0 6px 18px rgba(20,125,105,.10); }
+.sidebar .nav-group summary {
+  cursor:pointer; list-style:none; padding:.42rem .62rem; font-size:.93rem; line-height:1.25;
+  color:var(--side-fg); border-left:3px solid transparent; border-radius:0 6px 6px 0;
+}
+.sidebar .nav-group summary::-webkit-details-marker { display:none; }
+.sidebar .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
+.sidebar .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
+.sidebar .nav-group summary:hover { background:rgba(20,125,105,.09); color:#0b4f42; }
+.sidebar .nav-sub { padding-left:.55rem; margin:.1rem 0 .35rem .55rem; border-left:1px solid var(--border); }
+.sidebar .nav-sub a { font-size:.85rem; padding:.3rem .6rem; color:var(--muted); }
+.sidebar .nav-sub a:hover { color:#0b4f42; }
+.sidebar .nav-sub a.active { font-weight:700; color:#0b4f42; }
+.sidebar .foot { margin-top:1.3rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; border:0; color:var(--muted); }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.page {
+  width:min(1320px,100%); margin:0 auto; display:grid;
+  grid-template-columns:minmax(0,980px) 230px;
+  gap:2.4rem; padding:0 2.2rem; align-items:start;
+}
+.content { min-width:0; padding:3.1rem 0 2rem; }
+footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
+
+.rail {
+  margin-top:3.25rem; font-size:.82rem;
+}
+.toc,.keyterms { background:rgba(255,255,255,.72); border:1px solid var(--border); border-radius:8px; padding:.72rem .78rem; box-shadow:var(--shadow); }
+.toc .toc-h,.keyterms .kt-h {
+  font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.08em;
+  color:#52625b; margin-bottom:.55rem;
+}
+.toc ul { list-style:none; margin:0; padding:0; }
+.toc a {
+  display:block; padding:.25rem .35rem; border-left:2px solid transparent;
+  color:var(--muted); text-decoration:none; line-height:1.32;
+}
+.toc a:hover,.toc a.active { color:var(--accent); }
+.toc a.active { border-left-color:var(--accent); font-weight:700; }
+.toc .toc-sub a { padding-left:1rem; font-size:.95em; }
+.keyterms { margin-top:1rem; border-top:3px solid var(--accent-2); }
+.keyterms .kt-i { margin:.45rem 0; line-height:1.42; color:var(--muted); }
+.keyterms .kt-i b { color:var(--fg); }
+
+.content h1,.content h2,.content h3 { scroll-margin-top:1rem; }
+.content h1 {
+  max-width:860px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
+  line-height:1.08; margin:.1rem 0 1.15rem; font-weight:700;
+}
+.content h1::after { content:""; display:block; width:4.4rem; height:4px; margin-top:1rem; background:var(--accent); }
+.content h2 {
+  font-size:1.42rem; margin:2.45rem 0 .75rem; padding-top:.25rem;
+  border-top:1px solid var(--border);
+}
+.content h3 { font-size:1.12rem; margin:1.55rem 0 .5rem; }
+.content a { color:#0b6f5e; text-decoration:none; font-weight:600; }
+.content a:hover { text-decoration:underline; text-underline-offset:.18em; }
+.content p,.content li { color:var(--fg); }
+.content li { margin:.18rem 0; }
+.content code {
+  background:var(--code-bg); border:1px solid var(--code-border); padding:.08em .34em;
+  border-radius:5px; font-size:.88em;
+}
+.content pre {
+  background:#f0f4f2; border:1px solid var(--code-border); border-radius:8px;
+  max-width:100%; padding:1rem 1.1rem; overflow:auto; line-height:1.52;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.8);
+}
+.content pre code { display:block; min-width:100%; width:max-content; background:none; border:0; padding:0; font-size:.85rem; }
+.content blockquote {
+  margin:1.15rem 0; padding:.65rem 1rem; border-left:4px solid var(--accent-2);
+  background:#fff8f4; color:#49362e; border-radius:0 8px 8px 0;
+}
+.content table { border-collapse:separate; border-spacing:0; width:100%; margin:1.1rem 0; font-size:.9rem; overflow:hidden; border:1px solid var(--border); border-radius:8px; }
+.content th,.content td { border-bottom:1px solid var(--border); padding:.52rem .68rem; text-align:left; vertical-align:top; }
+.content th { background:#eaf1ed; color:#26342f; font-weight:800; }
+.content tr:nth-child(even) td { background:#fbfcfb; }
+.content tr:last-child td { border-bottom:0; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2.2rem 0; }
+
+.content figure { margin:0; }
+.content figure.fig-right { float:right; width:min(42%, 390px); margin:.35rem 0 1rem 1.8rem; clear:right; }
+.content figure.fig-center { margin:1.4rem auto; max-width:680px; }
+.content figure img {
+  width:100%; border:1px solid var(--border); border-radius:8px; background:#fff;
+  padding:.55rem; box-shadow:var(--shadow);
+}
+.content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
+.content h2 { clear:right; }
+
+.content img { cursor:zoom-in; }
+.lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out; background:rgba(19,29,25,.86); padding:3vmin; }
+.lightbox.open { display:flex; align-items:center; justify-content:center; }
+.lightbox img { max-width:96vw; max-height:94vh; width:auto; height:auto; border-radius:8px; background:#fff; padding:.5rem; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+.lightbox .lb-close { position:fixed; top:1rem; right:1.25rem; font-size:2rem; line-height:1; color:#fff; opacity:.82; cursor:pointer; user-select:none; }
+.lightbox .lb-close:hover { opacity:1; }
+
+.content .term { border-bottom:1px dotted var(--accent); cursor:help; position:relative; }
+.content .term:focus { outline:2px solid rgba(20,125,105,.32); outline-offset:2px; }
+.content .term .tip {
+  display:none; position:absolute; left:0; top:1.55em; z-index:60; width:max-content; max-width:280px;
+  background:#17211d; color:#eef6f2; padding:.5rem .7rem; border-radius:7px; font-size:.78rem;
+  font-weight:400; line-height:1.45; box-shadow:0 6px 22px rgba(15,22,32,.3);
+  pointer-events:none;
+}
+.content .term:hover .tip,.content .term:focus .tip { display:block; }
+
+.content pre code .tok-com  { color:#78877f; font-style:italic; }
+.content pre code .tok-str  { color:#0b745f; }
+.content pre code .tok-kw   { color:#8a3d5a; font-weight:700; }
+.content pre code .tok-num  { color:#a85424; }
+.content pre code .tok-fn   { color:#0b6f5e; }
+.content pre code .tok-iri  { color:#0b6f5e; }
+.content pre code .tok-var  { color:#a85424; }
+.content pre code .tok-flag { color:#9a5a14; }
+.content pre code .tok-punct{ color:#66746e; }
+
+@media (max-width:1120px) { .page { grid-template-columns:minmax(0,1fr); } .rail { display:none; } }
+@media (max-width:980px) { .content figure.fig-right { float:none; width:100%; margin:1.4rem 0; } }
+@media (max-width:780px) {
+  body { display:block; background:var(--bg); }
+  .sidebar { width:100%; min-height:auto; position:static; border-right:0; border-bottom:1px solid var(--border); background:var(--side); }
+  .sidebar ul { columns:2; column-gap:.7rem; }
+  .sidebar li { break-inside:avoid; }
+  .page { padding:0 1.15rem; }
+  .content { padding-top:2rem; }
+  .content h1 { font-size:2.15rem; }
+  footer { padding-left:1.15rem; padding-right:1.15rem; }
+}
+@media (max-width:520px) {
+  .sidebar ul { columns:1; }
+  .content table { display:block; overflow-x:auto; }
+  .content .term .tip { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; width:auto; max-width:none; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <p class="meta"><span class="ver">v0.0.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <ul>
+        <li class="nav-h">Start here</li>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li class="nav-h">Interactive explorations</li>
+        <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
+        <li><a href="explore-100mb.html">Wikidata lazy explorer (100MB / 1GB)</a></li>
+        <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-h">Guides</li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="semantic-zoom.html" class="active">Semantic zoom (schema pyramid)</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li class="nav-h">Graph analysis</li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li class="nav-h">In the browser</li>
+        <li><a href="browser.html">Browser / WASM</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li class="nav-h">Internals</li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
+  </nav>
+  <main>
+    <div class="page">
+      <article class="content">
+<h1>Semantic zoom — the schema pyramid</h1>
+<blockquote>
+<p><strong>The one-paragraph pitch.</strong> Open any <code>.rete</code> and ask <em>"what kinds of things are
+in here?"</em> — and get an answer that <strong>zooms</strong>. At a glance you see the broad
+strokes (<code>Agent: 4k, Place: 8k</code>); zoom one step and <code>Agent</code> resolves into
+<code>Person</code> and <code>Organisation</code>; zoom again and <code>Person</code> resolves into <code>Scientist</code>,
+<code>Artist</code>, … down to the leaf classes. It's a <strong>map legend with a zoom control</strong>,
+shipped <em>inside the file</em>, and a remote client reads the whole leveled legend in
+<strong>two or three small HTTP range requests — without ever touching the triple
+index.</strong> This is rete's "PMTiles for graphs," applied to <em>types</em>.</p>
+</blockquote>
+<p>The schema pyramid is built automatically whenever your data carries an <code>rdf:type</code>
+hierarchy. There is no flag to remember and nothing extra to host — it travels in
+the file's pyramid section and is served over the same range-request transport as
+everything else.</p>
+<img src="img/semantic-zoom.svg" alt="A four-band pyramid, narrow abstract level at the top widening to detailed leaf classes at the base. Level 0: Agent ×4. Level 1: Person ×3, Organisation ×1. Level 2: Scientist ×2, Artist ×1, Organisation ×1. Level 3: Astronomer ×2, Artist ×1, Organisation ×1. A footer notes it is read index-free from the pyramid-meta over HTTP.">
+<p><em>Each level is one type histogram. Read top to bottom and the same instances
+resolve from abstract classes into leaves — and the whole stack is fetched
+index-free, in a few kilobytes, over HTTP.</em></p>
+<hr />
+<h2>Why it exists</h2>
+<p>A knowledge graph you've never seen is <strong>opaque</strong>: you don't know which classes
+exist, how they relate, or where to start. The flat answer — <em>"here are 200
+classes, alphabetical"</em> — is noise. What you actually want is to start coarse and
+drill down only where it's interesting. That's exactly what a web map gives you for
+geography; the schema pyramid gives it for <strong>ontology</strong>.</p>
+<p>Three things make this work, and they're really one idea:</p>
+<ul>
+<li>The data's <strong><code>rdfs:subClassOf</code></strong> axioms define an abstraction hierarchy
+(<code>Astronomer ⊑ Scientist ⊑ Person ⊑ Agent</code>).</li>
+<li>rete <strong>rolls every instance's type up that hierarchy</strong> to a chosen depth, once,
+at build time, and stores one <strong>type histogram per level</strong>.</li>
+<li>The whole thing lives in the <strong>pyramid-meta</strong> section, which range-reading
+clients fetch <em>without</em> the triple index — so it is <strong>index-free and instant</strong>,
+the cheapest tier of the <a href="dataset-cards.html#the-three-tier-exploration-model">three-tier exploration model</a>.</li>
+</ul>
+<img src="img/schema-rollup.svg" alt="The subClassOf tree laid out by depth — Agent at depth 0, Person and Organisation at depth 1, Scientist and Artist at depth 2, Astronomer at depth 3 — with instance dots at the leaves (ada and edwin are Astronomers, frida an Artist, nasa an Organisation). A panel shows each instance's type rolled up the chain to depth d to form level d's histogram.">
+<p><em>The <code>subClassOf</code> chain is the zoom function: instances live at the leaves, and
+rolling their types up to depth <code>d</code> produces level <code>d</code>'s histogram — <code>Astronomer</code>
+becomes <code>Scientist</code> becomes <code>Person</code> becomes <code>Agent</code>. Nothing is invented; the
+ontology in the data does the work.</em></p>
+<hr />
+<h2>What you need in the data</h2>
+<table><thead><tr><th>Ingredient</th><th>Predicate</th><th>Required?</th></tr></thead><tbody>
+<tr><td><strong>Typed instances</strong></td><td><code>rdf:type</code> (<code>a</code>)</td><td>Yes — no types, no schema pyramid.</td></tr>
+<tr><td><strong>A class hierarchy</strong></td><td><code>rdfs:subClassOf</code></td><td>Optional — without it the pyramid is a single flat level (= the Dataset Card's class list).</td></tr>
+</tbody></table>
+<p>The <code>subClassOf</code> axioms can come straight from your data, from an ontology file you
+merge in at build time, or be <strong>inferred</strong> with <code>rete build --materialize</code> (the
+RDFS/OWL-RL reasoner — see <a href="reasoning.html">Reasoning</a>). Multiple inheritance is
+handled by picking a canonical (lexicographically smallest) parent so the rollup is
+a deterministic tree.</p>
+<hr />
+<h2>Build it</h2>
+<p>Nothing special: it's part of the normal pyramid, so a plain <code>rete build</code> produces
+it. Take this little graph — five classes in a <code>subClassOf</code> tree plus four typed
+people/orgs:</p>
+<pre><code class="language-turtle"># people.nt  (N-Triples; prefixes shown for readability)
+ex:Scientist     rdfs:subClassOf ex:Person .
+ex:Artist        rdfs:subClassOf ex:Person .
+ex:Astronomer    rdfs:subClassOf ex:Scientist .
+ex:Person        rdfs:subClassOf ex:Agent .
+ex:Organisation  rdfs:subClassOf ex:Agent .
+
+ex:ada    a ex:Astronomer .
+ex:edwin  a ex:Astronomer .
+ex:frida  a ex:Artist .
+ex:nasa   a ex:Organisation .
+ex:ada    ex:memberOf ex:nasa .
+ex:ada    ex:knows    ex:edwin .
+ex:frida  ex:knows    ex:ada .
+</code></pre>
+<pre><code class="language-sh">rete build people.nt -o people.rete
+</code></pre>
+<p>That's it — <code>people.rete</code> now carries the schema pyramid. (If your <code>subClassOf</code>
+axioms live in a separate ontology, merge them in the same build:
+<code>rete build people.nt ontology.ttl -o people.rete</code>. If they're only <em>implied</em>,
+<code>rete build people.nt --materialize -o people.rete</code> infers them first.)</p>
+<hr />
+<h2>Use it</h2>
+<h3>Browse every level at once</h3>
+<p><code>rete summary</code> prints the community super-edge graph and then the schema pyramid —
+one line per semantic level, coarse (abstract) at the top:</p>
+<pre><code class="language-text">$ rete summary people.rete
+…
+schema pyramid — 4 level(s), 6 class(es) in the subClassOf hierarchy:
+  level 0 (depth 0, round 1): &lt;http://ex/Agent&gt;×4
+  level 1 (depth 1, round 0): &lt;http://ex/Person&gt;×3, &lt;http://ex/Organisation&gt;×1
+  level 2 (depth 2, round 0): &lt;http://ex/Scientist&gt;×2, &lt;http://ex/Artist&gt;×1, &lt;http://ex/Organisation&gt;×1
+  level 3 (depth 3, round 0): &lt;http://ex/Astronomer&gt;×2, &lt;http://ex/Artist&gt;×1, &lt;http://ex/Organisation&gt;×1
+  + 3 per-community descriptor(s) for progressive zoom
+</code></pre>
+<p>Read it top to bottom and the zoom is visible: <strong>everything is an <code>Agent</code> (×4)</strong>;
+that <code>Agent</code> is <code>Person ×3</code> + <code>Organisation ×1</code>; that <code>Person</code> is <code>Scientist ×2</code> +
+<code>Artist ×1</code>; that <code>Scientist</code> is <code>Astronomer ×2</code>. <strong>Counts conserve up the
+hierarchy</strong> — each level re-partitions the <em>same</em> instances at a finer grain.</p>
+<h3>Zoom to one level</h3>
+<p><code>--level k</code> prints just one level's type histogram (<code>0</code> = coarsest / most abstract):</p>
+<pre><code class="language-text">$ rete summary people.rete --level 0          # the big picture
+schema pyramid level 0 — depth 0 (round 1), 1 class(es):
+           4  &lt;http://ex/Agent&gt;
+
+$ rete summary people.rete --level 1          # one step in
+schema pyramid level 1 — depth 1 (round 0), 2 class(es):
+           3  &lt;http://ex/Person&gt;
+           1  &lt;http://ex/Organisation&gt;
+
+$ rete summary people.rete --level 3          # the leaves
+schema pyramid level 3 — depth 3 (round 0), 3 class(es):
+           2  &lt;http://ex/Astronomer&gt;
+           1  &lt;http://ex/Artist&gt;
+           1  &lt;http://ex/Organisation&gt;
+</code></pre>
+<p>A viewer wires <code>--level k</code> to a zoom slider: render level 0 when zoomed out, fetch
+deeper levels as the user drills in.</p>
+<h3>Over HTTP / S3 — the index-free payoff</h3>
+<p>This is the selling point. The schema pyramid lives in the pyramid-meta section, so
+<code>summary-url</code> fetches it <strong>without downloading the file and without touching the
+triple index</strong> — only the header, dictionary, and pyramid:</p>
+<img src="img/zoom-fetch.svg" alt="A range client over HTTP draws fetch arrows to three small on-disk sections — HEADER, DICTIONARY, and PYRAMID-META (highlighted) — while the large TRIPLE INDEX section is marked 'never fetched'. Caption: the whole leveled legend in a few KB and 3 range requests; the index stays on the server.">
+<p><em>A range client pulls only the header, dictionary, and pyramid-meta. The large
+triple index never leaves the server — so the leveled legend costs the same few
+kilobytes whether the file is a megabyte or a gigabyte.</em></p>
+<p>(The transcript above is from a larger published file — hence the bigger counts —
+to show the real at-scale byte cost: the whole leveled legend in <strong>27 KB and 3
+range requests</strong>, with the triple index untouched.)</p>
+<pre><code class="language-text">$ rete summary-url https://host/people.rete
+…
+schema pyramid — 4 level(s), 6 class(es) in the subClassOf hierarchy:
+  level 0 (depth 0, round 5): &lt;http://ex/Agent&gt;×2847, &lt;http://ex/Place&gt;×1153
+  …
+fetched 27337 of 161420 bytes in 3 range request(s) — index NOT fetched
+</code></pre>
+<p>The bytes-on-the-wire are <strong>bounded by the number of classes, not the size of the
+graph</strong> — the same leveled legend costs roughly the same whether the file is a
+megabyte or a gigabyte. Put the <code>.rete</code> on any range-capable host (S3, a CDN,
+GitHub Pages) and a browser or CLI gets a zoomable type map for the cost of a few
+kilobytes. See <a href="dataset-cards.html#the-three-tier-exploration-model">Dataset Cards → the three-tier model</a>
+for how this tier sits alongside the index-free <code>card-url</code> and the lazy
+<code>sparql-url</code> tiers.</p>
+<h3>Read it programmatically</h3>
+<p>The Rust API exposes the pyramid index-free through <code>SummaryView</code>
+(<code>rete-core</code>), which reads only the header + dictionary + pyramid ranges:</p>
+<pre><code class="language-rust">use rete_core::{SummaryView, SliceReader};
+
+let view = SummaryView::open_ranged(&amp;SliceReader::new(&amp;bytes))?.unwrap();
+for k in 0..view.level_count() {
+    let level = view.level_rollup(k).unwrap();
+    println!("level {k} (depth {}):", level.depth);
+    for (class, n) in &amp;level.classes {
+        println!("  {n:&gt;8}  {class}");
+    }
+}
+// view.class_hierarchy : the subClassOf DAG with per-class depth
+// view.descriptors     : per-community descriptors (below)
+</code></pre>
+<p>Any <code>RangeReader</code> works here — back it with an HTTP client and you read the schema
+pyramid straight off a URL.</p>
+<hr />
+<h2>A graph, not a tree — multiple parents and lateral links</h2>
+<p>A real ontology isn't a strict tree. Two things break the "every class sits in
+exactly one branch" assumption, and the schema pyramid keeps <strong>both</strong>:</p>
+<img src="img/ontology-graph.svg" alt="Class nodes laid out by depth. Solid blue subClassOf edges form the is-a hierarchy, including Astronaut which has TWO parents (Scientist and Explorer). A dashed green edge shows a lateral 'memberOf' relation from Person to Organisation. A legend distinguishes is-a edges from lateral relation edges.">
+<p><strong>1. Non-exclusive <code>subClassOf</code> (multiple inheritance).</strong> A class can be a subclass
+of several others — <code>Astronaut ⊑ Scientist</code> <em>and</em> <code>Astronaut ⊑ Explorer</code>. The
+shipped hierarchy keeps <strong>all</strong> parents, so it is a directed acyclic <em>graph</em>, not a
+tree. (A single canonical parent — the lexicographically smallest — drives the
+deterministic depth/rollup; the rest are preserved as cross-links you can
+navigate.) On <code>ClassNode</code> you get <code>parents: Vec&lt;String&gt;</code> and <code>canonical_parent()</code>.</p>
+<p><strong>2. Lateral connections (the non-<code>is-a</code> relations).</strong> Beyond "is-a", classes are
+<em>connected</em> — <code>Person memberOf Organisation</code>, <code>Person knows Person</code>. The pyramid
+rolls these relations up <strong>per level</strong> too, so each level is a small <strong>graph</strong>, not
+just a histogram. Zoom out and the relations abstract along with the types:</p>
+<pre><code class="language-text">$ rete summary people.rete --level 1          # concrete
+  3  &lt;http://ex/Person&gt;
+  1  &lt;http://ex/Organisation&gt;
+  relations at this level (2):
+       2  &lt;http://ex/Person&gt; --&lt;http://ex/knows&gt;-&gt; &lt;http://ex/Person&gt;
+       1  &lt;http://ex/Person&gt; --&lt;http://ex/memberOf&gt;-&gt; &lt;http://ex/Organisation&gt;
+
+$ rete summary people.rete --level 0          # abstracted
+  4  &lt;http://ex/Agent&gt;
+  relations at this level (2):
+       2  &lt;http://ex/Agent&gt; --&lt;http://ex/knows&gt;-&gt; &lt;http://ex/Agent&gt;
+       1  &lt;http://ex/Agent&gt; --&lt;http://ex/memberOf&gt;-&gt; &lt;http://ex/Agent&gt;
+</code></pre>
+<p><code>Person memberOf Organisation</code> becomes <code>Agent memberOf Agent</code> as you zoom out — the
+<strong>connections are preserved and generalized</strong>, never dropped. So the answer to <em>"can
+the pyramid be non-exclusive and keep connections?"</em> is <strong>yes, by construction</strong>:
+it's a <em>leveled multigraph</em> over the ontology, not a leveled tree. On the API these
+are <code>view.level_links</code> (<code>Vec&lt;LevelLinks&gt;</code>, each a <code>Vec&lt;ClassRelation&gt;</code>).</p>
+<hr />
+<h2>Per-community descriptors (progressive zoom)</h2>
+<p>Alongside the global levels, the pyramid ships a <strong>descriptor per community</strong>: its
+dominant class, local type histogram, and — when the data has them — a geographic
+bounding box (CRS84 lon/lat) and a temporal range. These let a client refine the
+global picture <em>locally</em> — "what's in this region / this cluster?" — again without
+fetching any triples. They're available on <code>view.descriptors</code>.</p>
+<blockquote>
+<p><strong>Status.</strong> The descriptors describe communities and ship in the index-free
+pyramid-meta today. The <em>physical per-community triple tiles</em> they're designed to
+annotate are a separate, in-progress storage step; until those land, a descriptor
+is a standalone summary of its community.</p>
+</blockquote>
+<hr />
+<h2>No hierarchy? It still works</h2>
+<p>If your data has types but <strong>no <code>subClassOf</code></strong>, the pyramid degrades gracefully to
+a <strong>single flat level</strong> — exactly the class histogram you'd get from the Dataset
+Card — so <code>rete summary --level 0</code> always answers. Add a hierarchy (or
+<code>--materialize</code>) later and the levels appear automatically on the next build.</p>
+<hr />
+<h2>How the ontology is embedded in the format</h2>
+<p>The ontology isn't a sidecar — it is <strong>derived once at build time and written into
+the file's own sections</strong>, where range clients read it without the triple index.
+Three <em>orthogonal</em> structures are embedded, each answering a different question:</p>
+<img src="img/ontology-embedding.svg" alt="A .rete file's two index-free sections. The METADATA/Dataset Card section holds class_links (the leaf class-relation graph), class/predicate/datatype histograms, and starter queries (read by card-url). The PYRAMID-META section holds the non-exclusive subClassOf DAG, the per-level type histogram, the per-level lateral class-relation graph, and the community super-edges plus descriptors (read by summary-url). A dashed TRIPLE INDEX box is marked 'not needed to read the ontology'.">
+<table><thead><tr><th>Structure</th><th>Question it answers</th><th>Where it lives</th><th>Read by</th></tr></thead><tbody>
+<tr><td><strong><code>subClassOf</code> DAG</strong> (non-exclusive, with depth)</td><td><em>is-a</em> — how classes generalize</td><td>pyramid-meta (v2)</td><td><code>summary</code> / <code>summary-url</code></td></tr>
+<tr><td><strong>Per-level type + relation rollups</strong></td><td><em>what &amp; how, at each zoom</em></td><td>pyramid-meta (v2)</td><td><code>summary --level k</code></td></tr>
+<tr><td><strong>Per-community descriptors</strong></td><td><em>what's in this cluster/region</em></td><td>pyramid-meta (v2)</td><td><code>SummaryView.descriptors</code></td></tr>
+<tr><td><strong><code>class_links</code></strong> (leaf relation graph)</td><td><em>relates-to</em> — the effective schema</td><td>the Dataset Card (metadata)</td><td><code>card</code> / <code>card-url</code></td></tr>
+<tr><td><strong>Community super-edges</strong></td><td><em>co-occurrence</em> — topological structure</td><td>pyramid-meta (v1)</td><td><code>summary</code> / <code>summary-url</code></td></tr>
+</tbody></table>
+<p>A few properties that make the embedding work:</p>
+<ul>
+<li><strong>Self-contained.</strong> The schema pyramid stores class and predicate IRIs in its own
+<strong>string table</strong>, so it can be decoded <strong>without the dictionary</strong> — the ontology
+travels as plain text, not dictionary IDs.</li>
+<li><strong>Index-free.</strong> Reading any of it never opens the triple index — <code>rete summary [--level k]</code>, <code>summary-url</code>, <code>card-url</code>, and <code>SummaryView</code> keep to the header +
+the small metadata/pyramid ranges. The index stays on the server.</li>
+<li><strong>Physically additive (pyramid-meta v2).</strong> The schema block is appended after the
+v1 summary and written <strong>only when the graph has types</strong>, so a typeless file is
+byte-identical to a v1 build and an older reader silently ignores the new bytes.
+See <a href="SPEC.html#7-4-the-schema-pyramid-semantic-zoom-v2">the format spec §7.4</a> for
+the exact byte layout.</li>
+<li><strong>Provenance.</strong> The <code>subClassOf</code> axioms come straight from the data, from a merged
+ontology file, or from <code>rete build --materialize</code> (the RDFS/OWL-RL reasoner). The
+pyramid never invents structure — it <em>embeds the ontology that's already there</em>.</li>
+<li><strong>Deterministic &amp; bounded.</strong> Same input → byte-identical file (stable content
+hash, safe to cache). Levels (≤ 6), classes/relations per level, and descriptors
+are all capped, so the embedded ontology stays small <strong>regardless of graph size</strong>.</li>
+</ul>
+<h2>Cost vs benefit — is the pyramid worth it?</h2>
+<p>Measured honestly (see the <a href="BENCHMARK.html#the-pyramid-cost-vs-benefit">benchmark</a>),
+the two pyramidal structures have very different economics:</p>
+<ul>
+<li>The <strong>schema pyramid is bounded</strong> — its size and read cost track the <em>ontology</em>
+(classes/relations), not the graph, so it stays cheap (~tens of KB, ~20 ms read)
+at any scale. This is the structure that earns its keep for exploration.</li>
+<li>The <strong>community super-edge summary scales with the graph</strong> and adds build time
+(Louvain), and it gives <strong>no</strong> benefit to node-selective lazy queries. If you only
+serve selective SPARQL, <code>--no-pyramid</code> is smaller and just as fast.</li>
+</ul>
+<p>Rule of thumb: <strong>keep the pyramid when you want index-free overview/exploration;
+drop it (<code>--no-pyramid</code>) when you only serve selective queries at scale.</strong></p>
+<h2>When to reach for it</h2>
+<ul>
+<li><strong>Publishing a dataset</strong> people will explore cold — the schema pyramid is the
+zoomable legend that tells them what to ask.</li>
+<li><strong>A browser/edge client</strong> that should show "the shape of the data" before
+running a single SPARQL query — render level 0 from a few KB, drill down on
+demand.</li>
+<li><strong>Faceted / drill-down UIs</strong> — wire the levels to a type facet that starts
+abstract and refines as the user narrows.</li>
+</ul>
+<p>If your data is <strong>untyped</strong> or has <strong>no class hierarchy</strong>, the payoff is smaller (a
+single flat level); everything else here still applies.</p>
+<hr />
+<p>See also: <a href="dataset-cards.html">Dataset Cards</a> (the self-describing card + starter
+queries that ride the same index-free path), <a href="reasoning.html">Reasoning</a>
+(<code>--materialize</code> to infer <code>subClassOf</code>), and <a href="SPEC.html#7-the-pyramid-community-summarization">the format spec</a>.</p>
+
+      </article>
+      <aside class="rail" aria-label="On this page">
+        <nav class="toc" id="toc"></nav>
+        <div class="keyterms" id="keyterms"></div>
+      </aside>
+    </div>
+    <footer>Generated from <code>docs/semantic-zoom.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+  <script>
+(function () {
+  function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+  // Shared token regexes (sticky: must match at the cursor).
+  var COM_HASH = /#.*/y, COM_SLASH = /\/\/.*/y, COM_BLOCK = /\/\*[\s\S]*?\*\//y;
+  var STR = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/y;
+  var NUM = /\b\d[\d_]*(?:\.\d+)?\b/y;
+  var WS  = /\s+/y, IDENT = /[A-Za-z_]\w*/y;
+  var IRI = /<[^>\s]*>/y, VAR = /[?$][A-Za-z_]\w*/y;
+  var PNAME = /[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*|:[A-Za-z_][\w.-]*/y;
+  var FLAG = /--?[A-Za-z][\w-]*/y;
+  function kw(words, flags){ return new RegExp("\\b(?:" + words.join("|") + ")\\b", (flags||"") + "y"); }
+  var RUST = kw(["as","async","await","break","const","continue","crate","dyn","else","enum","extern","false","fn","for","if","impl","in","let","loop","match","mod","move","mut","pub","ref","return","self","Self","static","struct","super","trait","true","type","unsafe","use","where","while"]);
+  var PY = kw(["def","return","import","from","as","for","in","if","elif","else","while","with","class","lambda","None","True","False","and","or","not","is","pass","break","continue","try","except","finally","raise","yield","global","nonlocal","assert","del","print","async","await"]);
+  var SPARQL = kw(["SELECT","CONSTRUCT","ASK","DESCRIBE","WHERE","PREFIX","BASE","FILTER","OPTIONAL","UNION","MINUS","GRAPH","SERVICE","BIND","VALUES","DISTINCT","REDUCED","ORDER","BY","ASC","DESC","GROUP","HAVING","LIMIT","OFFSET","FROM","NAMED","COUNT","SUM","AVG","MIN","MAX","SAMPLE","STR","LANG","DATATYPE","BOUND","IRI","URI","REGEX","EXISTS","NOT","AS"], "i");
+  var SH = kw(["rete","cargo","docker","python3","python","pip","curl","wget","cd","cp","mv","rm","ls","mkdir","cat","grep","echo","node","git","wasm-pack","jq","tee","export","sudo","bash","sh"]);
+  var JS = kw(["const","let","var","function","return","if","else","for","while","do","switch","case","break","continue","new","class","extends","super","this","typeof","instanceof","in","of","await","async","import","from","export","default","try","catch","finally","throw","yield","true","false","null","undefined","void","delete"]);
+  var RULES = {
+    rust:   [[COM_SLASH,"com"],[COM_BLOCK,"com"],[STR,"str"],[/\b[a-z_]\w*!/y,"fn"],[RUST,"kw"],[NUM,"num"],[IDENT,null]],
+    py:     [[COM_HASH,"com"],[STR,"str"],[/@\w+/y,"fn"],[PY,"kw"],[NUM,"num"],[IDENT,null]],
+    sh:     [[COM_HASH,"com"],[STR,"str"],[FLAG,"flag"],[SH,"fn"],[NUM,"num"],[IDENT,null]],
+    js:     [[COM_SLASH,"com"],[COM_BLOCK,"com"],[STR,"str"],[/`(?:\\.|[^`\\])*`/y,"str"],[JS,"kw"],[/\b[A-Za-z_]\w*(?=\s*\()/y,"fn"],[NUM,"num"],[IDENT,null]],
+    json:   [[STR,"str"],[kw(["true","false","null"]),"kw"],[NUM,"num"],[IDENT,null]],
+    sparql: [[COM_HASH,"com"],[IRI,"iri"],[STR,"str"],[VAR,"var"],[/\ba\b/y,"kw"],[SPARQL,"kw"],[PNAME,"fn"],[NUM,"num"],[IDENT,null]],
+    ttl:    [[COM_HASH,"com"],[IRI,"iri"],[STR,"str"],[/@[A-Za-z]+/y,"kw"],[/\ba\b/y,"kw"],[PNAME,"fn"],[NUM,"num"],[IDENT,null]]
+  };
+  var ALIAS = {bash:"sh",shell:"sh",console:"sh",sh:"sh",rs:"rust",rust:"rust",python:"py",py:"py",js:"js",javascript:"js",mjs:"js",json:"json",sparql:"sparql",turtle:"ttl",ttl:"ttl",nt:"ttl",ntriples:"ttl",nq:"ttl",trig:"ttl"};
+  function highlight(code, rules){
+    var out = "", i = 0, n = code.length;
+    outer: while (i < n){
+      WS.lastIndex = i; var w = WS.exec(code);
+      if (w && w.index === i){ out += w[0]; i += w[0].length; continue; }
+      for (var r = 0; r < rules.length; r++){
+        var re = rules[r][0], cls = rules[r][1];
+        re.lastIndex = i; var m = re.exec(code);
+        if (m && m.index === i && m[0].length){
+          out += cls ? '<span class="tok-' + cls + '">' + esc(m[0]) + "</span>" : esc(m[0]);
+          i += m[0].length; continue outer;
+        }
+      }
+      out += esc(code[i]); i++;
+    }
+    return out;
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    var blocks = document.querySelectorAll('pre code[class*="language-"]');
+    blocks.forEach(function (el) {
+      var cls = (el.className.match(/language-([\w-]+)/) || [])[1] || "";
+      var rules = RULES[ALIAS[cls.toLowerCase()] || ""];
+      if (!rules) return;
+      el.innerHTML = highlight(el.textContent, rules);
+    });
+  });
+})();
+</script>
+  <script>
+(function () {
+  document.addEventListener("DOMContentLoaded", function () {
+    var imgs = document.querySelectorAll(".content img");
+    if (!imgs.length) return;
+    var box = document.createElement("div");
+    box.className = "lightbox";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-label", "Enlarged image");
+    var close = document.createElement("span");
+    close.className = "lb-close";
+    close.setAttribute("aria-hidden", "true");
+    close.textContent = "×"; // ×
+    var big = document.createElement("img");
+    box.appendChild(close);
+    box.appendChild(big);
+    document.body.appendChild(box);
+
+    function open(src, alt) {
+      big.src = src;
+      big.alt = alt || "";
+      box.classList.add("open");
+    }
+    function hide() {
+      box.classList.remove("open");
+      big.removeAttribute("src");
+    }
+    imgs.forEach(function (img) {
+      img.addEventListener("click", function () { open(img.currentSrc || img.src, img.alt); });
+    });
+    box.addEventListener("click", hide);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && box.classList.contains("open")) hide();
+    });
+  });
+})();
+</script>
+  <script>
+(function () {
+  var GLOSSARY = {
+    "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
+    "SPARQL": "The W3C query language for RDF graphs (SELECT / ASK / CONSTRUCT / DESCRIBE).",
+    "SHACL": "Shapes Constraint Language - the W3C language for validating RDF graphs against shapes.",
+    "IRI": "Internationalized Resource Identifier — a global, URL-like id for a resource.",
+    "BGP": "Basic Graph Pattern — a set of triple patterns joined on their shared variables.",
+    "HDT": "Header-Dictionary-Triples — a compact binary RDF format rete's dictionary draws on.",
+    "triple": "One fact: subject – predicate – object.",
+    "dictionary": "The table that maps terms (IRIs / literals) to compact integer ids.",
+    "zstd": "Zstandard — a fast lossless compression algorithm.",
+    "blake3": "A fast cryptographic hash, used here for content addressing / integrity.",
+    "WebAssembly": "A portable binary format that runs in browsers at near-native speed.",
+    "WASM": "WebAssembly — a portable binary format that runs in the browser at near-native speed.",
+    "SPO": "One of the three index orderings (Subject-Predicate-Object; also POS and OSP).",
+    "Louvain": "A community-detection algorithm that groups densely-connected nodes.",
+    "PMTiles": "A single-file, range-readable format for map tiles — an inspiration for rete.",
+    "Parquet": "A columnar single-file format for tabular data — an inspiration for rete.",
+    "CORS": "Cross-Origin Resource Sharing — browser rules for fetching across domains.",
+    "COOP": "Cross-Origin-Opener-Policy — a header that helps enable cross-origin isolation.",
+    "COEP": "Cross-Origin-Embedder-Policy — paired with COOP to unlock SharedArrayBuffer.",
+    "LDA": "Latent Dirichlet Allocation — a statistical topic-modelling method.",
+    "OWL RL": "The rule-based profile of OWL, suited to forward-chaining over triples.",
+    "OWL": "Web Ontology Language — schema axioms (class hierarchies, disjointness, identity).",
+    "RDFS": "RDF Schema — a basic class/property vocabulary with simple entailments.",
+    "DOI": "Digital Object Identifier — a persistent id for a publication.",
+    "CVE": "Common Vulnerabilities and Exposures — a public id for a security flaw.",
+    "SBOM": "Software Bill of Materials — an inventory of a piece of software's components.",
+    "N-Triples": "A line-based plain-text RDF format: one triple per line.",
+    "N-Quads": "Like N-Triples, with a fourth column naming the graph.",
+    "Turtle": "A compact, human-friendly text syntax for RDF.",
+    "zone map": "Per-block min/max stats that let a query skip blocks that cannot match.",
+    "property path": "A SPARQL path over edges (e.g. knows+ = follow knows transitively).",
+    "named graph": "A sub-graph within a dataset, identified by its own IRI.",
+    "pyramid": "rete's progressively-coarsened community summary: overview first, drill into detail.",
+    "range request": "An HTTP request for a byte range, so a client fetches only part of a file.",
+    "Oxigraph": "A popular Rust RDF triplestore + SPARQL engine, used here as a benchmark baseline."
+  };
+  function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function rx(term){
+    var e = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    var tail = /[A-Za-z0-9_]$/.test(term) ? "(?![A-Za-z0-9_])" : "";
+    return new RegExp("(^|[^A-Za-z0-9_])(" + e + ")" + tail);
+  }
+  function present(text, term){ return rx(term).test(text); }
+
+  function wrapFirst(root, term, def){
+    var re = rx(term);
+    var skip = "pre,code,a,h1,h2,h3,.rail,.term";
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) {
+        if (!n.nodeValue || !n.parentElement) return NodeFilter.FILTER_REJECT;
+        if (n.parentElement.closest(skip)) return NodeFilter.FILTER_REJECT;
+        return re.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      }
+    });
+    var node = walker.nextNode();
+    if (!node) return;
+    var m = re.exec(node.nodeValue);
+    if (!m) return;
+    var start = m.index + m[1].length;
+    var mid = node.splitText(start);
+    mid.splitText(term.length);
+    var span = document.createElement("span");
+    span.className = "term"; span.tabIndex = 0; span.setAttribute("role", "note");
+    span.textContent = term;
+    var tip = document.createElement("span");
+    tip.className = "tip"; tip.textContent = def;
+    span.appendChild(tip);
+    mid.parentNode.replaceChild(span, mid);
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var content = document.querySelector(".content");
+    if (!content) return;
+    var terms = Object.keys(GLOSSARY).sort(function (a, b) { return b.length - a.length; });
+
+    // 1) Key terms box in the right rail (under the TOC): every glossary term
+    //    that appears on the page, in order of first appearance.
+    var pageText = content.textContent || "";
+    var present = terms
+      .filter(function (t) { return rx(t).test(pageText); })
+      .map(function (t) { return { t: t, at: pageText.search(rx(t)) }; })
+      .sort(function (a, b) { return a.at - b.at; });
+    var kt = document.getElementById("keyterms");
+    if (kt && present.length) {
+      kt.innerHTML = '<div class="kt-h">Key terms</div>' + present.map(function (e) {
+        return '<div class="kt-i"><b>' + esc(e.t) + "</b> — " + esc(GLOSSARY[e.t]) + "</div>";
+      }).join("");
+    }
+
+    // 2) Inline tooltips: wrap the first occurrence of each term in the prose.
+    terms.forEach(function (t) { wrapFirst(content, t, GLOSSARY[t]); });
+  });
+})();
+</script>
+  <script>
+(function () {
+  document.addEventListener("DOMContentLoaded", function () {
+    var toc = document.getElementById("toc");
+    var content = document.querySelector(".content");
+    if (!toc || !content) return;
+    var heads = [].slice.call(content.querySelectorAll("h2, h3"));
+    if (heads.length < 2) { toc.remove(); return; } // not worth a TOC
+
+    var used = {};
+    function slug(s) {
+      var base = s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "section";
+      var id = base, i = 2;
+      while (used[id]) { id = base + "-" + i++; }
+      used[id] = 1; return id;
+    }
+    var ul = document.createElement("ul");
+    heads.forEach(function (h) {
+      if (!h.id) h.id = slug(h.textContent);
+      var li = document.createElement("li");
+      if (h.tagName === "H3") li.className = "toc-sub";
+      var a = document.createElement("a");
+      a.href = "#" + h.id;
+      a.textContent = h.textContent;
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
+    var head = document.createElement("div");
+    head.className = "toc-h"; head.textContent = "On this page";
+    toc.appendChild(head);
+    toc.appendChild(ul);
+
+    // Scroll-spy: mark the heading currently at/above the top of the viewport.
+    var links = {};
+    toc.querySelectorAll("a").forEach(function (a) { links[a.getAttribute("href").slice(1)] = a; });
+    function spy() {
+      var current = heads[0].id;
+      for (var i = 0; i < heads.length; i++) {
+        if (heads[i].getBoundingClientRect().top - 100 <= 0) current = heads[i].id;
+      }
+      Object.keys(links).forEach(function (id) {
+        links[id].classList.toggle("active", id === current);
+      });
+    }
+    window.addEventListener("scroll", spy, { passive: true });
+    window.addEventListener("resize", spy, { passive: true });
+    spy();
+  });
+})();
+</script>
+</body>
+</html>

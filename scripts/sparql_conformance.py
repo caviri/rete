@@ -179,6 +179,8 @@ def main():
     ap.add_argument("--suite", required=True)
     ap.add_argument("--filter", default="")
     ap.add_argument("--relaxed", action="store_true")
+    ap.add_argument("--list", action="store_true",
+                    help="print per-test status (and the error for err/FAIL)")
     args = ap.parse_args()
     global RELAXED
     RELAXED = args.relaxed
@@ -219,10 +221,17 @@ def main():
                     out = run_query(rete, rf, query, form)
                     ok = compare(form, parse_expected(rpath), out)
                 status = "pass" if ok else "FAIL"
+                detail = ""
             except Exception as e:
                 status = "err"  # unsupported / parse-reject / build error
+                detail = str(e)
             total[status] += 1
             cats.setdefault(cat, Counter())[status] += 1
+            if args.list and status != "pass":
+                line = f"  {status:4} [{cat}] {name}"
+                if detail:
+                    line += f"  — {detail[:160]}"
+                print(line)
 
     print(f"{'category':32} pass  FAIL  err")
     for cat in sorted(cats):

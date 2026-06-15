@@ -17,7 +17,7 @@
 use crate::dictionary::Dictionary;
 use crate::header::{Header, FLAG_HAS_QUADS, HEADER_LEN, MAGIC};
 use crate::index::{GraphIndex, IndexPermutation, Pattern};
-use crate::meta::PyramidMeta;
+use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
 use crate::pyramid::{build_dendrogram, project_graph};
 use crate::reader::RangeReader;
 use crate::tiling::{choose_round_for_budget, summarize, SuperEdge};
@@ -44,7 +44,20 @@ pub fn build_pyramid_meta(
     let dend = build_dendrogram(&g);
     let round = choose_round_for_budget(dict, triples, &dend, budget);
     let summary = summarize(dict, triples, &dend, round);
-    let meta = PyramidMeta::new(round as u32, summary, &[]);
+    // Attach the v2 schema pyramid (the non-exclusive subClassOf DAG + per-level
+    // type rollups + per-level lateral class relations + per-community
+    // descriptors). Empty when the graph has no rdf:type, in which case the
+    // encoding stays byte-identical to a v1 pyramid-meta.
+    let sp = crate::schema_pyramid::build_schema_pyramid(dict, triples, &dend, round);
+    let meta = PyramidMeta::new(round as u32, summary, &[]).with_schema(
+        sp.class_hierarchy,
+        sp.level_rollups,
+        sp.level_links,
+        sp.descriptors,
+        sp.subclass_cycles,
+        sp.disjoint_pairs,
+        sp.equivalent_pairs,
+    );
     (meta.encode(), dend.rounds() as u16)
 }
 
@@ -920,6 +933,10 @@ pub fn write_dataset_with_metadata(
         parts.push(&named_section);
     }
 
+    // Length of the trailing schema-pyramid block (0 if none), so a reader can
+    // fetch just that block for an index/dictionary/summary-free Tier-0 read.
+    let schema_meta_len = crate::meta::schema_block_len(pyramid_meta);
+
     let header = Header {
         version: crate::header::VERSION,
         flags: if has_quads { FLAG_HAS_QUADS } else { 0 },
@@ -939,6 +956,7 @@ pub fn write_dataset_with_metadata(
         content_hash: content_hash(&parts),
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
         named_graphs_len: named_len,
+        schema_meta_len,
     };
 
     let mut out = Vec::with_capacity(
@@ -1022,6 +1040,25 @@ pub fn schema_classes(rete: &Rete) -> Vec<(String, u32)> {
     let mut out: Vec<(String, u32)> = counts.into_iter().collect();
     out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     out
+}
+
+/// Fetch **only** the metadata section (the opaque Dataset Card blob) via a
+/// [`RangeReader`]: read the 128-byte header, then the metadata byte range â€”
+/// nothing else. This is the index-free CARD tier of the exploration model: a
+/// remote/S3 client learns the dataset's self-description in **two small range
+/// requests**, never touching the dictionary, index, or pyramid. Returns `None`
+/// when the file carries no metadata.
+///
+/// Companion to [`Rete::open_ranged`] (which deliberately *skips* the card to
+/// keep the query path minimal); this is the explicit "I want the card" path.
+pub fn read_metadata_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>>, FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+    if header.metadata_len == 0 {
+        return Ok(None);
+    }
+    let bytes = reader.read_at(header.metadata_offset, header.metadata_len)?;
+    Ok(Some(bytes))
 }
 
 /// Recompute the content hash from a file image and check it against the header
@@ -1864,6 +1901,20 @@ fn resolve_query_pattern(
 pub struct SummaryView {
     pub round: u32,
     pub summary: Vec<SuperEdge>,
+    /// The shipped `subClassOf` hierarchy (v2 schema pyramid; empty on v1 files).
+    pub class_hierarchy: Vec<ClassNode>,
+    /// Per-level type rollups — the leveled legend, read index-free.
+    pub level_rollups: Vec<LevelRollup>,
+    /// Per-level lateral class-relation graph (the non-`is-a` connections).
+    pub level_links: Vec<LevelLinks>,
+    /// Per-community descriptors (Phase 4 progressive refinement; may be empty).
+    pub descriptors: Vec<CommunityDescriptor>,
+    /// `subClassOf` cycles (v2.1; empty on older files).
+    pub subclass_cycles: Vec<Vec<String>>,
+    /// `owl:disjointWith` class pairs (v2.1; empty on older files).
+    pub disjoint_pairs: Vec<(String, String)>,
+    /// `owl:equivalentClass` class pairs (v2.1; empty on older files).
+    pub equivalent_pairs: Vec<(String, String)>,
     dict: Dictionary,
 }
 
@@ -1886,8 +1937,26 @@ impl SummaryView {
         Ok(Some(SummaryView {
             round: meta.round,
             summary: meta.summary,
+            class_hierarchy: meta.class_hierarchy,
+            level_rollups: meta.level_rollups,
+            level_links: meta.level_links,
+            descriptors: meta.descriptors,
+            subclass_cycles: meta.subclass_cycles,
+            disjoint_pairs: meta.disjoint_pairs,
+            equivalent_pairs: meta.equivalent_pairs,
             dict,
         }))
+    }
+
+    /// Number of semantic-zoom levels in the schema pyramid (0 if none shipped).
+    pub fn level_count(&self) -> usize {
+        self.level_rollups.len()
+    }
+
+    /// The type rollup at semantic level `k` (0 = coarsest/most abstract), or
+    /// `None` if `k` is out of range. Index-free — answered from the pyramid-meta.
+    pub fn level_rollup(&self, k: usize) -> Option<&LevelRollup> {
+        self.level_rollups.get(k)
     }
 
     /// Resolve a predicate ID in the summary to its term.
@@ -1932,6 +2001,170 @@ impl SummaryView {
         }
         comms.len()
     }
+
+    /// **Index-free T-Box coherence (Tier-0).** Detect schema-level incoherent
+    /// points purely from the shipped schema pyramid — no triple index, no
+    /// instance data, O(ontology) regardless of graph size:
+    /// - `subclass-cycle`: a set of classes that are mutually `rdfs:subClassOf`.
+    /// - `unsatisfiable-class`: a class whose ancestor closure (over all parents,
+    ///   folded through `owl:equivalentClass`) contains both ends of an
+    ///   `owl:disjointWith` pair, so no individual can ever be one.
+    ///
+    /// Soundness is bounded by what the pyramid ships: the `subClassOf` hierarchy
+    /// is capped (`MAX_HIERARCHY` in `schema_pyramid`), so on a very large ontology
+    /// a pruned ancestor can hide an unsatisfiable class (a false *coherent*, never
+    /// a false *incoherent*). Instance-level clashes (a node typed into disjoint
+    /// classes, functional-property clashes) are NOT visible here — they need the
+    /// A-Box (Tier-1/Tier-2 `reason`).
+    pub fn tbox_coherence(&self) -> Vec<crate::reason::Inconsistency> {
+        schema_coherence(
+            &self.class_hierarchy,
+            &self.subclass_cycles,
+            &self.disjoint_pairs,
+            &self.equivalent_pairs,
+        )
+    }
+
+    /// True when [`tbox_coherence`](Self::tbox_coherence) finds no schema-level
+    /// incoherent point.
+    pub fn tbox_is_coherent(&self) -> bool {
+        self.tbox_coherence().is_empty()
+    }
+}
+
+/// Compute T-Box coherence points from the schema-pyramid fields alone — no
+/// dictionary, no index, no instance data. Shared by [`SummaryView::tbox_coherence`]
+/// and the dictionary-free [`read_schema_coherence_ranged`]. Emits `subclass-cycle`
+/// and `unsatisfiable-class` (a class whose ancestor closure — over all parents,
+/// folded through `owl:equivalentClass` — contains both ends of a disjoint pair).
+pub fn schema_coherence(
+    class_hierarchy: &[ClassNode],
+    subclass_cycles: &[Vec<String>],
+    disjoint_pairs: &[(String, String)],
+    equivalent_pairs: &[(String, String)],
+) -> Vec<crate::reason::Inconsistency> {
+    use crate::reason::Inconsistency;
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+    const MAX_REACH: usize = 100_000;
+
+    let mut out: Vec<Inconsistency> = Vec::new();
+
+    for cyc in subclass_cycles {
+        let detail = if cyc.len() == 1 {
+            format!("{} is rdfs:subClassOf itself (a cycle)", cyc[0])
+        } else {
+            format!(
+                "classes {{{}}} are mutually rdfs:subClassOf (a cycle)",
+                cyc.join(", ")
+            )
+        };
+        out.push(Inconsistency {
+            kind: "subclass-cycle",
+            detail,
+        });
+    }
+
+    if !disjoint_pairs.is_empty() {
+        // Upward adjacency: subClassOf parents + bidirectional equivalence.
+        let mut adj: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for n in class_hierarchy {
+            let e = adj.entry(n.class.as_str()).or_default();
+            for p in &n.parents {
+                e.push(p.as_str());
+            }
+        }
+        for (a, b) in equivalent_pairs {
+            adj.entry(a.as_str()).or_default().push(b.as_str());
+            adj.entry(b.as_str()).or_default().push(a.as_str());
+        }
+
+        // Candidate focus classes: every class named anywhere in the schema.
+        let mut focuses: BTreeSet<&str> =
+            class_hierarchy.iter().map(|n| n.class.as_str()).collect();
+        for (a, b) in disjoint_pairs.iter().chain(equivalent_pairs) {
+            focuses.insert(a.as_str());
+            focuses.insert(b.as_str());
+        }
+
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        for &c in &focuses {
+            // reach(c) = {c} ∪ ancestors (capped BFS over `adj`).
+            let mut reach: BTreeSet<&str> = BTreeSet::new();
+            let mut q: VecDeque<&str> = VecDeque::new();
+            reach.insert(c);
+            q.push_back(c);
+            while let Some(x) = q.pop_front() {
+                if reach.len() > MAX_REACH {
+                    break;
+                }
+                if let Some(ns) = adj.get(x) {
+                    for &p in ns {
+                        if reach.insert(p) {
+                            q.push_back(p);
+                        }
+                    }
+                }
+            }
+            for (x, y) in disjoint_pairs {
+                if reach.contains(x.as_str()) && reach.contains(y.as_str()) && seen.insert(c) {
+                    out.push(Inconsistency {
+                        kind: "unsatisfiable-class",
+                        detail: format!(
+                            "{c} is a subclass of both {x} and {y}, which are \
+                             owl:disjointWith — no individual can be a {c}"
+                        ),
+                    });
+                    break;
+                }
+            }
+        }
+    }
+
+    out.sort_by(|a, b| (a.kind, &a.detail).cmp(&(b.kind, &b.detail)));
+    out
+}
+
+/// **Dictionary-free Tier-0 coherence read.** Fetch only the header and the
+/// pyramid-meta range (2 small range reads) and run [`schema_coherence`] over the
+/// schema pyramid — never touching the **dictionary** (which a literal-heavy file
+/// makes large) or the triple index. `Ok(None)` if the file ships no pyramid.
+///
+/// This is what makes the Tier-0 check cheap on big graphs: the schema pyramid
+/// carries its own class-string table, so coherence needs none of the dictionary.
+pub fn read_schema_coherence_ranged<R: RangeReader>(
+    reader: &R,
+) -> Result<Option<Vec<crate::reason::Inconsistency>>, FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+    if header.pyramid_meta_len == 0 {
+        return Ok(None);
+    }
+    // Fast path: the header records the trailing schema block's length, so read ONLY
+    // that block (at the end of pyramid-meta) — never the community summary, the
+    // dictionary, or the index. This is what makes Tier-0 flat at any graph size.
+    if header.schema_meta_len > 0 && (header.schema_meta_len as u64) <= header.pyramid_meta_len {
+        let off =
+            header.pyramid_meta_offset + header.pyramid_meta_len - header.schema_meta_len as u64;
+        let block = reader.read_at(off, header.schema_meta_len as u64)?;
+        let (hierarchy, cycles, disjoint, equivalent) = crate::meta::decode_schema_block(&block)
+            .map_err(|_| FileError::Container("malformed schema block"))?;
+        return Ok(Some(schema_coherence(
+            &hierarchy,
+            &cycles,
+            &disjoint,
+            &equivalent,
+        )));
+    }
+    // Fallback (pre-v0.2.1 files with no header field): decode the whole pyramid-meta.
+    let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
+    let meta =
+        PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
+    Ok(Some(schema_coherence(
+        &meta.class_hierarchy,
+        &meta.subclass_cycles,
+        &meta.disjoint_pairs,
+        &meta.equivalent_pairs,
+    )))
 }
 
 #[cfg(test)]
@@ -2087,6 +2320,7 @@ mod tests {
             content_hash: content_hash(&[&dict_container, &index_container]),
             named_graphs_offset: 0,
             named_graphs_len: 0,
+            schema_meta_len: 0,
         };
         let mut v1 = Vec::new();
         v1.extend_from_slice(&header.to_bytes());
@@ -2429,6 +2663,32 @@ mod tests {
     }
 
     #[test]
+    fn metadata_ranged_fetches_only_header_and_card() {
+        use crate::reader::{CountingReader, SliceReader};
+        // The CARD tier: fetch the self-description over a RangeReader touching
+        // only the header + metadata range â€” never the dictionary/index/pyramid.
+        let card = vec![0xCDu8; 384];
+        let bytes = build_with_metadata(&card);
+
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let got = read_metadata_ranged(&r).unwrap().unwrap();
+        assert_eq!(got, card, "the card reads back verbatim");
+        assert_eq!(r.requests(), 2, "exactly header + metadata ranges");
+        assert_eq!(
+            r.bytes_read(),
+            HEADER_LEN as u64 + card.len() as u64,
+            "no dictionary/index/pyramid bytes are touched"
+        );
+
+        // A cardless file resolves to None after a single header read.
+        let plain = build_image();
+        let rp = CountingReader::new(SliceReader::new(&plain));
+        assert!(read_metadata_ranged(&rp).unwrap().is_none());
+        assert_eq!(rp.requests(), 1, "header only for a cardless file");
+        assert_eq!(rp.bytes_read(), HEADER_LEN as u64);
+    }
+
+    #[test]
     fn schema_summary_groups_by_type() {
         let rt = RDF_TYPE;
         let bytes = build_from(&[
@@ -2467,6 +2727,127 @@ mod tests {
             ib.push(dict.encode(s, p, o).unwrap());
         }
         write_file(&dict, &ib.build(), false, &[], 0)
+    }
+
+    /// Build a file WITH a pyramid (so the schema pyramid + coherence axioms ship).
+    fn build_with_pyramid(triples: &[(&str, &str, &str)]) -> Vec<u8> {
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let encoded: Vec<_> = triples
+            .iter()
+            .map(|(s, p, o)| dict.encode(s, p, o).unwrap())
+            .collect();
+        let mut ib = GraphIndexBuilder::new();
+        for t in &encoded {
+            ib.push(*t);
+        }
+        let (meta, levels) = build_pyramid_meta(&dict, &encoded, DEFAULT_TILE_BUDGET);
+        write_dataset(&dict, &ib.build(), &[], false, &meta, levels)
+    }
+
+    #[test]
+    fn tbox_coherence_flags_unsatisfiable_class_index_free() {
+        use crate::reader::{CountingReader, SliceReader};
+        let rt = RDF_TYPE;
+        let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let disj = "<http://www.w3.org/2002/07/owl#disjointWith>";
+        // C ⊑ D, C ⊑ E, D disjointWith E ⇒ C unsatisfiable — schema-only, with one
+        // instance present just so the schema pyramid gets built.
+        let bytes = build_with_pyramid(&[
+            ("<http://ex/C>", sub, "<http://ex/D>"),
+            ("<http://ex/C>", sub, "<http://ex/E>"),
+            ("<http://ex/D>", disj, "<http://ex/E>"),
+            ("<http://ex/x>", rt, "<http://ex/C>"),
+        ]);
+
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let view = SummaryView::open_ranged(&r).unwrap().unwrap();
+        let points = view.tbox_coherence();
+        assert!(
+            points
+                .iter()
+                .any(|i| i.kind == "unsatisfiable-class" && i.detail.contains("http://ex/C>")),
+            "expected C unsatisfiable from the schema alone, got {points:?}"
+        );
+
+        // Proven index-free: bytes read never reach the (root_dir) index section,
+        // mirroring `schema_pyramid_round_trips_through_file_index_free`.
+        let header = Header::from_bytes(&bytes[..HEADER_LEN]).unwrap();
+        assert!(
+            r.bytes_read() <= bytes.len() as u64 - header.root_dir_len,
+            "tbox_coherence must not read the triple index"
+        );
+    }
+
+    #[test]
+    fn schema_coherence_reads_only_the_schema_block() {
+        use crate::reader::{CountingReader, SliceReader};
+        let rt = RDF_TYPE;
+        let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let disj = "<http://www.w3.org/2002/07/owl#disjointWith>";
+        // 500 instances with unique literals → a sizable dictionary + community
+        // summary, so a whole-pyramid-meta read would be large; the schema block
+        // (bounded by the tiny ontology) stays small.
+        let mut triples: Vec<(String, String, String)> = vec![
+            ("<http://ex/C>".into(), sub.into(), "<http://ex/D>".into()),
+            ("<http://ex/C>".into(), sub.into(), "<http://ex/E>".into()),
+            ("<http://ex/D>".into(), disj.into(), "<http://ex/E>".into()),
+        ];
+        for i in 0..500 {
+            let s = format!("<http://ex/x{i}>");
+            triples.push((s.clone(), rt.into(), "<http://ex/C>".into()));
+            triples.push((
+                s,
+                "<http://ex/label>".into(),
+                format!("\"unique label {i}\""),
+            ));
+        }
+        let trefs: Vec<(&str, &str, &str)> = triples
+            .iter()
+            .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+            .collect();
+        let bytes = build_with_pyramid(&trefs);
+
+        let header = Header::from_bytes(&bytes[..HEADER_LEN]).unwrap();
+        assert!(
+            header.schema_meta_len > 0,
+            "the writer recorded a schema-block length"
+        );
+        assert!(
+            (header.schema_meta_len as u64) < header.pyramid_meta_len,
+            "schema block ({}) should be far smaller than the whole pyramid-meta ({})",
+            header.schema_meta_len,
+            header.pyramid_meta_len
+        );
+
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let points = read_schema_coherence_ranged(&r).unwrap().unwrap();
+        assert!(points.iter().any(|i| i.kind == "unsatisfiable-class"));
+        // It read only the header + the schema block — not the summary or dictionary.
+        assert!(
+            r.bytes_read() <= HEADER_LEN as u64 + header.schema_meta_len as u64,
+            "read {} bytes; expected <= header + schema block ({})",
+            r.bytes_read(),
+            HEADER_LEN as u64 + header.schema_meta_len as u64
+        );
+    }
+
+    #[test]
+    fn tbox_coherence_clean_schema_is_coherent() {
+        use crate::reader::SliceReader;
+        let rt = RDF_TYPE;
+        let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let bytes = build_with_pyramid(&[
+            ("<http://ex/Dog>", sub, "<http://ex/Animal>"),
+            ("<http://ex/x>", rt, "<http://ex/Dog>"),
+        ]);
+        let view = SummaryView::open_ranged(&SliceReader::new(&bytes))
+            .unwrap()
+            .unwrap();
+        assert!(view.tbox_is_coherent(), "a plain hierarchy is coherent");
     }
 
     #[test]
@@ -2521,6 +2902,53 @@ mod tests {
         assert_eq!(total, 3);
         assert!(!pyr.summary.is_empty());
         assert!(pyr.tiles.is_empty());
+    }
+
+    #[test]
+    fn schema_pyramid_round_trips_through_file_index_free() {
+        use crate::reader::{CountingReader, SliceReader};
+        let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let q = |s: &str, p: &str, o: &str| {
+            (s.to_string(), p.to_string(), o.to_string(), None::<String>)
+        };
+        // Astronomer ⊑ Scientist ⊑ Person ⊑ Agent, instances at the leaves.
+        let quads = vec![
+            q("<a>", RDF_TYPE, "<Astronomer>"),
+            q("<b>", RDF_TYPE, "<Astronomer>"),
+            q("<c>", RDF_TYPE, "<Person>"),
+            q("<Astronomer>", sub, "<Scientist>"),
+            q("<Scientist>", sub, "<Person>"),
+            q("<Person>", sub, "<Agent>"),
+            q("<a>", "<knows>", "<b>"),
+            q("<b>", "<knows>", "<c>"),
+        ];
+        let (bytes, _) = crate::ingest::assemble_dataset_with_opts(&quads, true, |_| Vec::new());
+
+        // The v2 schema pyramid round-trips through the built file.
+        let rete = Rete::open(&bytes).unwrap();
+        let pyr = rete.pyramid().expect("pyramid present");
+        assert!(!pyr.level_rollups.is_empty(), "schema pyramid shipped");
+        assert!(pyr
+            .class_hierarchy
+            .iter()
+            .any(|n| n.class == "<Agent>" && n.depth == 0));
+
+        // It reads index-free: a SummaryView open never touches the index section.
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let view = SummaryView::open_ranged(&r).unwrap().unwrap();
+        assert!(view.level_count() >= 2, "multi-level pyramid");
+        let coarse = view.level_rollup(0).unwrap();
+        assert!(
+            coarse.classes.iter().any(|(c, _)| c == "<Agent>"),
+            "coarsest level rolls up to the root Agent"
+        );
+        let h = Header::from_bytes(&bytes).unwrap();
+        assert!(
+            r.bytes_read() <= bytes.len() as u64 - h.root_dir_len,
+            "summary read {} bytes; the {}-byte index section must be skipped",
+            r.bytes_read(),
+            h.root_dir_len
+        );
     }
 
     #[test]

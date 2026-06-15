@@ -123,61 +123,11 @@ pub(crate) fn term_to_json(token: &str) -> serde_json::Value {
 /// datatype, or language tag). Returns `None` for IRIs and blank nodes. This is
 /// the text a topic model consumes — the same quote/`^^`/`@` stripping that
 /// `term_to_json` performs for the literal case.
-pub(crate) fn literal_lexical(token: &str) -> Option<String> {
-    if !token.starts_with('"') {
-        return None;
-    }
-    // Find the closing quote, honoring \" escapes.
-    let bytes = token.as_bytes();
-    let mut i = 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => i += 2,
-            b'"' => break,
-            _ => i += 1,
-        }
-    }
-    Some(unescape_nt(&token[1..i.min(token.len())]))
-}
+pub(crate) use rete_core::terms::literal_lexical;
 
 /// Resolve the N-Triples escape sequences in a literal's body to actual chars.
 fn unescape_nt(s: &str) -> String {
-    if !s.contains('\\') {
-        return s.to_string(); // the overwhelmingly common fast path
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        let unicode = |chars: &mut std::str::Chars, n: usize, out: &mut String| {
-            let hex: String = chars.take(n).collect();
-            match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
-                Some(ch) => out.push(ch),
-                None => out.push('\u{FFFD}'),
-            }
-        };
-        match chars.next() {
-            Some('t') => out.push('\t'),
-            Some('b') => out.push('\u{08}'),
-            Some('n') => out.push('\n'),
-            Some('r') => out.push('\r'),
-            Some('f') => out.push('\u{0C}'),
-            Some('"') => out.push('"'),
-            Some('\'') => out.push('\''),
-            Some('\\') => out.push('\\'),
-            Some('u') => unicode(&mut chars, 4, &mut out),
-            Some('U') => unicode(&mut chars, 8, &mut out),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
+    rete_core::terms::unescape_literal(s)
 }
 
 #[cfg(test)]

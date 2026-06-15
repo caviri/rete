@@ -26,7 +26,9 @@ use oxigraph::io::RdfFormat;
 use oxigraph::sparql::{QueryResults, SparqlEvaluator};
 use oxigraph::store::Store;
 use rete_core::parallel::batch_reach_parallel;
-use rete_core::{batch_reach_serial, build_adjacency, eval_query, QueryOutput, Rete};
+use rete_core::{
+    batch_reach_serial, build_adjacency, eval_query, CountingReader, QueryOutput, Rete, SliceReader,
+};
 use serde_json::{json, Value};
 
 mod lubm;
@@ -172,6 +174,17 @@ fn pm(m: &Measure) -> String {
     format!("{:.2} ±{:.2}", m.median_ms, m.sd_ms)
 }
 
+/// Human byte size for the lazy-fetch column.
+fn fmt_bytes(b: u64) -> String {
+    if b >= 1 << 20 {
+        format!("{:.1} MB", b as f64 / (1u64 << 20) as f64)
+    } else if b >= 1024 {
+        format!("{:.1} KB", b as f64 / 1024.0)
+    } else {
+        format!("{b} B")
+    }
+}
+
 /// rete result size, or an error string (e.g. an unsupported operator).
 fn rete_try(rete: &Rete, q: &str) -> Result<usize, String> {
     match eval_query(rete, q) {
@@ -237,6 +250,21 @@ fn main() -> Result<()> {
     // ---- Load both engines (one-time cost + memory, reported separately) ----
     let heap0 = mem::live();
     let bytes = std::fs::read(&rete_path).with_context(|| format!("read {rete_path}"))?;
+    // provenance so a run is reproducible: content hash of the queried .rete and
+    // the repo commit (best-effort `git`, else $GITHUB_SHA, else "unknown").
+    let rete_sha256 = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(&bytes))
+    };
+    let git_commit = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| option_env!("GITHUB_SHA").map(|s| s.chars().take(7).collect()))
+        .unwrap_or_else(|| "unknown".to_string());
     let t = Instant::now();
     let rete = Rete::open(&bytes).context("Rete::open")?;
     let rete_open_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -252,12 +280,21 @@ fn main() -> Result<()> {
     let oxi_len = store.len()?;
     let oxi_heap = mem::live().saturating_sub(heap1);
 
+    // A 'static copy of the file image for the LAZY (range-read) engine, which
+    // needs an owned reader. The lazy path faults only the index tiles + dictionary
+    // chunks a query touches — the same code a browser/remote client runs over HTTP
+    // range reads — so a `CountingReader` over it measures exactly the bytes that
+    // query would fetch. Leaked once; the OS reclaims it at process exit.
+    let lazy_bytes: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+
     if format == OutputFormat::Markdown {
         println!("# Benchmark: rete vs rete (parallel) vs Oxigraph\n");
         println!(
             "Data: `{rete_path}` ({} bytes) / `{nt_path}` · Oxigraph store: {oxi_len} triples · \
-             {threads} logical cores · median ±sd of {reps} warm runs.\n",
-            bytes.len()
+             {threads} logical cores · median ±sd of {reps} warm runs.\n\n\
+             _commit `{git_commit}` · .rete sha256 `{}`_\n",
+            bytes.len(),
+            &rete_sha256[..16]
         );
 
         println!("## Load / open (one-time)\n");
@@ -284,12 +321,14 @@ fn main() -> Result<()> {
     if format == OutputFormat::Markdown {
         println!("## SPARQL operators & complexity (single-threaded engines)\n");
         println!(
-            "Every query run on both engines; `rows` compares result sizes (a cross-engine \
-             check). Times are median ±sd; `peak heap` is the per-query allocation high-water \
-             mark (exact, via a counting allocator).\n"
+            "Each query on three engines: rete **eager** (`Rete::open`, whole file in memory), \
+             rete **lazy** (`Rete::open_ranged_lazy`, a fresh cold open + range reads per rep — \
+             the path a browser/remote client runs), and **Oxigraph** (in-memory). `lazy fetched` \
+             is the bytes that one query pulled from the file image; `rows` cross-checks result \
+             sizes. Times are median ±sd.\n"
         );
-        println!("| Operator / form | rete (ms) | Oxigraph (ms) | rete vs oxi | peak heap MiB (rete / oxi) | rows (rete / oxi) | ✓ |");
-        println!("|---|--:|--:|--:|--:|--:|:--:|");
+        println!("| Operator / form | rete eager ms | rete lazy ms (cold) | lazy fetched | Oxigraph ms | eager vs oxi | rows (r/o) | ✓ |");
+        println!("|---|--:|--:|--:|--:|--:|--:|:--:|");
     }
     let mut agree = 0;
     let mut total = 0;
@@ -306,6 +345,24 @@ fn main() -> Result<()> {
         match (&r0, &o0) {
             (Ok(rr), Ok(or)) => {
                 let (rete_m, _) = bench(reps, || rete_try(&rete, &q).unwrap_or(0));
+                // Lazy (range-read) path: a fresh COLD open + eval each rep, so the
+                // time is what a one-shot remote query pays (open the directories,
+                // fault only the touched tiles, eval); `lazy_fetch` is the bytes that
+                // one query actually pulled from the file image.
+                let lazy_fetch = {
+                    let reader =
+                        std::sync::Arc::new(CountingReader::new(SliceReader::new(lazy_bytes)));
+                    let r = Rete::open_ranged_lazy(reader.clone()).expect("open_ranged_lazy");
+                    let n = rete_try(&r, &q).unwrap_or(0);
+                    debug_assert_eq!(n, *rr, "lazy must agree with eager for {name}");
+                    reader.bytes_read()
+                };
+                let (lazy_m, _) = bench(reps, || {
+                    let reader =
+                        std::sync::Arc::new(CountingReader::new(SliceReader::new(lazy_bytes)));
+                    let r = Rete::open_ranged_lazy(reader.clone()).expect("open_ranged_lazy");
+                    rete_try(&r, &q).unwrap_or(0)
+                });
                 let (oxi_m, _) = bench(reps, || oxi_try(&store, &q).unwrap_or(0));
                 let speedup = oxi_m.median_ms / rete_m.median_ms;
                 let ok = rr == or;
@@ -320,6 +377,9 @@ fn main() -> Result<()> {
                     "rete_ms": rete_m.median_ms,
                     "rete_ms_sd": rete_m.sd_ms,
                     "rete_peak_heap_bytes": rete_m.peak_heap,
+                    "rete_lazy_ms": lazy_m.median_ms,
+                    "rete_lazy_ms_sd": lazy_m.sd_ms,
+                    "lazy_bytes_fetched": lazy_fetch,
                     "oxigraph_ms": oxi_m.median_ms,
                     "oxigraph_ms_sd": oxi_m.sd_ms,
                     "oxigraph_peak_heap_bytes": oxi_m.peak_heap,
@@ -331,11 +391,11 @@ fn main() -> Result<()> {
                 }));
                 if format == OutputFormat::Markdown {
                     println!(
-                        "| {name} | {} | {} | {speedup:.1}× | {} / {} | {rr} / {or} | {} |",
+                        "| {name} | {} | {} | {} | {} | {speedup:.1}× | {rr} / {or} | {} |",
                         pm(&rete_m),
+                        pm(&lazy_m),
+                        fmt_bytes(lazy_fetch),
                         pm(&oxi_m),
-                        mem::mib(rete_m.peak_heap),
-                        mem::mib(oxi_m.peak_heap),
                         if ok { "✓" } else { "✗" }
                     );
                 }
@@ -478,12 +538,14 @@ fn main() -> Result<()> {
                 "rete_path": rete_path,
                 "nt_path": nt_path,
                 "rete_bytes": bytes.len(),
+                "rete_sha256": rete_sha256,
                 "oxigraph_triples": oxi_len,
             },
             "environment": {
                 "logical_cores": threads,
                 "query_repetitions": reps,
                 "reach_repetitions": reach_reps,
+                "git_commit": git_commit,
             },
             "load_open": {
                 "rete_ms": rete_open_ms,

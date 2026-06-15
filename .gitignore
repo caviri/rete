@@ -7,6 +7,7 @@ __pycache__/
 # Built static pages rendered by scripts/build_playground.py (docs/ copies are
 # committed; the web/ copy is a local-serving convenience, regenerated).
 /web/explore-100mb.html
+/web/atlas-app.html
 
 # The Hugging Face Space (FastAPI Range+CORS file server) is deployed straight
 # to HF, not tracked here.
@@ -22,6 +23,10 @@ __pycache__/
 # …and the numbered shards behind the explorer's "GitHub (3 shards)" federated
 # source (manifest.json links them). Regenerate with dev/make_shards.sh.
 !/docs/wikidata-100MB/shards/*.rete
+# …and the tiny causal ontology the explorer's Coherence tasks check, same-origin
+# (it carries OWL axioms the wikidata graph lacks). Rebuild with:
+#   rete build examples/causal.nt -o docs/examples/causal.rete
+!/docs/examples/causal.rete
 
 # Cargo.lock IS committed: this workspace ships a binary (rete-cli), so a locked
 # dependency set gives reproducible builds and a stable CI cache key. (It would
@@ -32,8 +37,10 @@ __pycache__/
 .claude/settings.local.json
 
 
-# Generated datasets (regenerate with scripts/fetch_opencitations.py)
-/data/
+# Generated datasets (regenerate with scripts/fetch_opencitations.py).
+# Ignore the *contents* (not the dir itself) so the catalog README can be re-included.
+/data/*
+!/data/README.md
 
 # Local engineering notes / scratch plans — not part of the published repo.
 /dev/
@@ -51,3 +58,10 @@ __pycache__/
 # lance-rag experiment: track the code, not the generated Lance dataset / graph.
 /experiments/lance-rag/out/
 /experiments/lance-rag/models/
+
+# W3C SPARQL test suite, cloned locally for conformance runs (scripts/sparql_conformance.py)
+/rdf-tests/
+# Locally-built rete binary used by the conformance harness
+/rete-bin
+# Docker cargo cache (CARGO_HOME mounted into the rust image for docgen/builds)
+/.cargo-home/

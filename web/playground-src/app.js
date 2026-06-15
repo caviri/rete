@@ -403,11 +403,15 @@
     if (EDITORS[id]) EDITORS[id].refresh();
   }
 
+  // Show the loaded dataset's short name on the topbar chip (which opens the
+  // Datasets browser). Replaces the old <select> dropdown.
+  function setDatasetName(key) {
+    const d = datasetInfo(key);
+    $("dsName").textContent = d ? d.label.split(" - ")[0] : key;
+  }
+
   function renderDatasetOptions() {
-    $("ds").innerHTML = CATALOG.datasets.map((d) =>
-      `<option value="${esc(d.key)}">${esc(d.label)}</option>`
-    ).join("");
-    $("ds").value = state.dataset;
+    setDatasetName(state.dataset);
   }
 
   function loadBytes(bytes, source) {
@@ -438,6 +442,9 @@
     $("dsDesc").textContent = source === "bundled"
       ? infoRow.description
       : "Custom graph loaded into the same in-browser engine.";
+    if (source !== "bundled") {
+      $("dsName").textContent = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom";
+    }
   }
 
   function loadDataset(key) {
@@ -447,7 +454,7 @@
       return;
     }
     state.dataset = key;
-    $("ds").value = key;
+    setDatasetName(key);
     loadBytes(b64ToBytes(b64), "bundled");
     renderExamples();
     const list = examplesForDataset();
@@ -482,7 +489,7 @@
     state.schema = null;
     if (datasetKey) {
       state.dataset = datasetKey;
-      $("ds").value = datasetKey;
+      setDatasetName(datasetKey);
     }
     state.selectedExample = -1;
     updateSourcePill();
@@ -515,14 +522,81 @@
     }
   }
 
+  // The dataset metadata table: triples, .rete size, type (bundled/remote),
+  // license, and a link to where the data came from. Driven by CATALOG.datasetMeta.
+  function renderDatasetTable() {
+    const fmtTri = (t) => (t == null ? "—" : typeof t === "number" ? t.toLocaleString() : esc(t));
+    const host = (u) => { try { return new URL(u).host.replace(/^www\./, ""); } catch (e) { return u; } };
+    const rows = CATALOG.datasets.map((d) => {
+      const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[d.key]) || {};
+      const type = d.kind === "remote-lazy" ? "🛰 Remote · lazy" : "📦 Bundled";
+      const src = m.source
+        ? `<a href="${esc(m.source)}" target="_blank" rel="noopener">${esc(host(m.source))} ↗</a>`
+        : "—";
+      return `<tr><td><button type="button" class="ds-rowload" data-ds="${esc(d.key)}">${esc(d.label.split(" - ")[0])}</button></td>` +
+        `<td class="num">${fmtTri(m.triples)}</td>` +
+        `<td class="num">${esc(m.size || "—")}</td>` +
+        `<td>${type}</td><td>${esc(m.license || "—")}</td><td>${src}</td></tr>`;
+    }).join("");
+    return `<table class="ds-table"><thead><tr>` +
+      `<th>Dataset</th><th class="num">Triples</th><th class="num">.rete size</th>` +
+      `<th>Type</th><th>License</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  // The "Datasets" browser: one card per catalog dataset, with its description
+  // and a source badge (the source is part of the dataset). Loading a card calls
+  // selectDataset, which picks the right source — bundled→memory, remote→lazy.
+  // A Cards/Table toggle switches to the metadata table above.
   function openSource() {
-    $("sourceBundled").innerHTML = CATALOG.datasets.map((d) =>
-      `<button type="button" data-ds="${esc(d.key)}" class="${!state.remote && d.key === state.dataset ? "active" : ""}">${esc(d.label.split(" - ")[0])}</button>`
-    ).join("");
-    $$("#sourceBundled [data-ds]").forEach((btn) => {
-      btn.onclick = () => { loadDataset(btn.dataset.ds); closeSource(); };
+    $("datasetList").innerHTML = CATALOG.datasets.map((d) => {
+      const remote = d.kind === "remote-lazy";
+      const m = (d.description || "").match(/~?\s*([\d.]+\s*[MG]B)\b/);
+      const size = m ? " · " + m[1].replace(/\s+/g, "") : "";
+      const badge = remote
+        ? `<span class="ds-badge remote">🛰 Remote · lazy${esc(size)}</span>`
+        : `<span class="ds-badge bundled">📦 Bundled · in page</span>`;
+      const active = d.key === state.dataset;
+      return `<div class="ds-card${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
+        `<div class="ds-card-head"><b>${esc(d.label.split(" - ")[0])}</b>${badge}</div>` +
+        `<p class="ds-card-desc">${esc(d.description || "(no description)")}</p>` +
+        `<div class="ds-card-foot">` +
+          `<button type="button" class="ds-load" data-ds="${esc(d.key)}">${active ? "Reload" : "Load"}</button>` +
+          `<button type="button" class="ds-more" aria-label="Toggle full description">more</button>` +
+        `</div></div>`;
+    }).join("");
+    $$("#datasetList .ds-load").forEach((btn) => {
+      btn.onclick = () => { selectDataset(btn.dataset.ds); closeSource(); };
+    });
+    $$("#datasetList .ds-more").forEach((btn) => {
+      btn.onclick = () => {
+        const card = btn.closest(".ds-card");
+        const open = card.classList.toggle("expanded");
+        btn.textContent = open ? "less" : "more";
+      };
+    });
+    // The metadata table (same datasets, at-a-glance) + the Cards/Table toggle.
+    $("datasetTable").innerHTML = renderDatasetTable();
+    $$("#datasetTable .ds-rowload").forEach((b) => {
+      b.onclick = () => { selectDataset(b.dataset.ds); closeSource(); };
+    });
+    $$("#sourceModal [data-dsview]").forEach((b) => {
+      b.onclick = () => {
+        const table = b.dataset.dsview === "table";
+        $("datasetList").classList.toggle("hidden", table);
+        $("datasetTable").classList.toggle("hidden", !table);
+        $$("#sourceModal [data-dsview]").forEach((x) => x.classList.toggle("active", x === b));
+      };
     });
     $("sourceModal").classList.remove("hidden");
+    // Show "more/less" only where the description is actually clamped — measured
+    // now that the modal is visible (a hidden element reports zero heights).
+    requestAnimationFrame(() => {
+      $$("#datasetList .ds-card").forEach((card) => {
+        const desc = card.querySelector(".ds-card-desc");
+        const more = card.querySelector(".ds-more");
+        if (more && desc && desc.scrollHeight <= desc.clientHeight + 1) more.style.display = "none";
+      });
+    });
   }
 
   function closeSource() {
@@ -622,16 +696,41 @@
     renderLayout();
   }
 
+  // The predicate this dataset uses for typing — rdf:type by default, but some
+  // graphs use another (e.g. Wikidata's "instance of" = wdt:P31). Declared per
+  // dataset in the catalog as `typePredicate`.
+  function currentTypePredicate() {
+    const d = datasetInfo(state.dataset);
+    return (d && d.typePredicate) || RDF_TYPE;
+  }
+
+  // Top classes for the Explore tab. For rdf:type we reuse the (fast, single-pass)
+  // schema summary; for a custom type predicate we derive the top classes live via
+  // SPARQL — a scan, heavier on big files, but the only way without a baked schema
+  // that already knows the predicate.
+  function exploreClassList() {
+    const tp = currentTypePredicate();
+    if (tp === RDF_TYPE) return ((state.schema && state.schema.classes) || []).slice(0, 12);
+    try {
+      const res = JSON.parse(W().query(state.bytes,
+        `SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s ${tp} ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 12`, "table"));
+      return (res.rows || []).map((r) => [r.c, (String(r.n).match(/\d+/) || ["?"])[0]]);
+    } catch (e) { return []; }
+  }
+
   function renderExploreClasses() {
-    const classes = ((state.schema && state.schema.classes) || []).slice(0, 12);
+    const tp = currentTypePredicate();
+    const classes = exploreClassList();
     if (!classes.length) {
+      const via = tp === RDF_TYPE ? "rdf:type" : shorten(localName(tp), 24);
       $("exploreClasses").innerHTML =
-        `<p class="microcopy">No rdf:type classes in this graph — showing raw triples.</p>`;
+        `<p class="microcopy">No ${esc(via)} classes in this graph — showing raw triples.</p>`;
       const res = JSON.parse(W().query(state.bytes, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 300", "table"));
       $("exploreTable").innerHTML = renderTable(res.vars || [], res.rows || []);
       return;
     }
-    if (!state.exploreClass) state.exploreClass = classes[0][0];
+    if (!state.exploreClass || !classes.some(([c]) => c === state.exploreClass))
+      state.exploreClass = classes[0][0];
     $("exploreClasses").innerHTML = classes.map(([c, n]) =>
       `<button type="button" data-cls="${esc(c)}" class="${c === state.exploreClass ? "active" : ""}">` +
         `${esc(shorten(localName(c), 22))} (${esc(n)})` +
@@ -648,10 +747,11 @@
   // Pivot one class's instances into an entity table: rows = entities,
   // columns = their most frequent properties (multi-values joined).
   function renderEntityTable(cls) {
+    const tp = currentTypePredicate();
     let res;
     try {
       res = JSON.parse(W().query(state.bytes,
-        `SELECT ?s ?p ?o WHERE { ?s ${RDF_TYPE} ${cls} . ?s ?p ?o } LIMIT 6000`, "table"));
+        `SELECT ?s ?p ?o WHERE { ?s ${tp} ${cls} . ?s ?p ?o } LIMIT 6000`, "table"));
     } catch (e) {
       $("exploreTable").innerHTML = `<div class="error-box">${esc(String(e))}</div>`;
       return;
@@ -659,7 +759,7 @@
     const entities = new Map();
     const predCount = new Map();
     for (const row of res.rows || []) {
-      if (row.p === RDF_TYPE) continue;
+      if (row.p === tp) continue;
       if (!entities.has(row.s)) entities.set(row.s, new Map());
       const props = entities.get(row.s);
       if (!props.has(row.p)) props.set(row.p, []);
@@ -912,6 +1012,8 @@
       $("reachOut").classList.remove("hidden");
     } else if (state.mode === "schema") {
       $("schemaOut").classList.remove("hidden");
+    } else if (state.mode === "coherence") {
+      $("coherenceOut").classList.remove("hidden");
     } else if (state.mode === "provenance") {
       $("provOut").classList.remove("hidden");
     } else if (state.mode === "build") {
@@ -1338,6 +1440,34 @@
     }
   }
 
+  function runCoherence() {
+    if (!state.bytes) return showError("coherenceOut", "Load a graph first.");
+    const t0 = performance.now();
+    try {
+      const schema = JSON.parse(W().check_schema(state.bytes));
+      const full = JSON.parse(W().reason(state.bytes, null));
+      const dt = performance.now() - t0;
+      const block = (title, sub, coherent, points) => {
+        const items = (points || []).map((p) =>
+          `<li><code>${esc(p.kind)}</code> — ${esc(p.detail)}</li>`).join("");
+        const verdict = coherent ? "coherent ✓" : `${points.length} incoherent point(s)`;
+        return `<section class="coherence-block"><h3>${esc(title)}</h3>` +
+          `<p class="microcopy">${esc(sub)}</p>` +
+          `<p><strong>${verdict}</strong></p>` +
+          (items ? `<ul>${items}</ul>` : "") + `</section>`;
+      };
+      $("coherenceOut").innerHTML =
+        block("Schema (Tier-0, index-free)", "subClassOf cycles + unsatisfiable classes, from the schema pyramid", schema.coherent, schema.schemaPoints) +
+        block("Full reasoner (instance-level)", `${full.inferredCount} triple(s) entailed; disjoint-class / sameAs / functional clashes`, full.coherent, full.inconsistencies);
+      const ok = schema.coherent && full.coherent;
+      $("coherenceMeta").textContent = `${ok ? "coherent" : "incoherent"} | ${dt.toFixed(1)} ms`;
+      updateResultVisibility();
+    } catch (e) {
+      $("coherenceMeta").textContent = "";
+      showError("coherenceOut", String(e));
+    }
+  }
+
   function renderReachDefaults() {
     const cfg = CATALOG.reach[state.dataset] || {};
     $("reachPred").value = cfg.pred || "";
@@ -1761,7 +1891,6 @@
   }
 
   function wireEvents() {
-    $("ds").onchange = () => selectDataset($("ds").value);
     $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
     $("strategy").onchange = () => setStrategy($("strategy").value);
@@ -1776,6 +1905,7 @@
     $("fileInput").onchange = (e) => loadFromFile(e.target.files[0]);
     $("shareBtn").onclick = shareUrl;
     $("shaclRun").onclick = runShacl;
+    $("coherenceRun").onclick = runCoherence;
     $("reachRun").onclick = runReach;
     $("whyRun").onclick = runProvenance;
     $("buildRun").onclick = runBuild;
@@ -1786,7 +1916,7 @@
     $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("layoutCell").onchange = renderLayout;
-    $("openSource").onclick = openSource;
+    $("dsButton").onclick = openSource;
     $("sourceModalClose").onclick = closeSource;
     $("remoteConnect").onclick = connectRemote;
     $("sourceModal").addEventListener("click", (e) => {

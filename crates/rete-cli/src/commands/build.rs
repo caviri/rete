@@ -80,46 +80,54 @@ pub(crate) fn build(
     format: Option<&str>,
     materialize: bool,
     no_pyramid: bool,
+    reason: bool,
     card_args: CardArgs,
 ) -> anyhow::Result<()> {
     // 1. Parse every input into quads (triples → default graph, `None`).
     let mut quads = parse_inputs(inputs, format)?;
 
-    // 1b. Optionally materialize RDFS/OWL-RL entailments over the default graph
-    // and fold the inferred triples in (deduped later by the index builder), so
-    // they ship in the file and need no query-time reasoning. A logically
-    // incoherent graph aborts the build rather than baking in a contradiction.
-    if materialize {
+    // 1b. Reason over the default graph once if either flag needs it: `--materialize`
+    // folds the inferred triples in (deduped later by the index builder, so they ship
+    // in the file and need no query-time reasoning) and ABORTS on an incoherent graph
+    // rather than baking in a contradiction; `--reason` stamps the verdict into the
+    // card (recording `coherent: false` honestly, without aborting). `reason()`
+    // materializes internally, so the verdict is the same whether computed here or
+    // after the bake — coherence is invariant under adding entailments.
+    let reasoning = if materialize || reason {
         let base: Vec<(String, String, String)> = quads
             .iter()
             .filter(|(_, _, _, g)| g.is_none())
             .map(|(s, p, o, _)| (s.clone(), p.clone(), o.clone()))
             .collect();
-        let reasoning = rete_core::reason(&base);
-        if !reasoning.inconsistencies.is_empty() {
-            for inc in &reasoning.inconsistencies {
+        Some(rete_core::reason(&base))
+    } else {
+        None
+    };
+
+    if materialize {
+        let r = reasoning
+            .as_ref()
+            .expect("reasoning computed when materialize");
+        if !r.inconsistencies.is_empty() {
+            for inc in &r.inconsistencies {
                 eprintln!("  incoherent [{}] {}", inc.kind, inc.detail);
             }
             anyhow::bail!(
                 "{} inconsistency(ies) — refusing to materialize an incoherent graph",
-                reasoning.inconsistencies.len()
+                r.inconsistencies.len()
             );
         }
-        let inferred = reasoning.inferred.len();
-        quads.extend(
-            reasoning
-                .inferred
-                .into_iter()
-                .map(|(s, p, o)| (s, p, o, None)),
-        );
+        let inferred = r.inferred.len();
+        quads.extend(r.inferred.iter().cloned().map(|(s, p, o)| (s, p, o, None)));
         eprintln!("materialized {inferred} inferred triple(s) into the default graph");
     }
 
     // 2. Assemble dictionary + indexes + pyramid into the file image, optionally
     // deriving + embedding a Dataset Card (data-catalog metadata) from the final
     // counts. Without a card flag the metadata payload is empty, which is
-    // byte-identical to a metadata-free build.
-    let curated = if card_args.requested() {
+    // byte-identical to a metadata-free build. `--reason` always embeds a card (to
+    // carry the coherence stamp), and stamps the verdict computed above.
+    let curated = if card_args.requested() || reason {
         Some(card::load_curated(&card_args)?)
     } else {
         None
@@ -127,12 +135,15 @@ pub(crate) fn build(
     let (bytes, stats) =
         ingest::assemble_dataset_with_opts(&quads, !no_pyramid, |stats| match curated {
             Some(curated) => {
-                let dataset_card = card::derive_card(
+                let mut dataset_card = card::derive_card(
                     &quads,
                     stats.terms as u64,
                     stats.named_graphs as u64,
                     curated,
                 );
+                if let Some(r) = reasoning.as_ref() {
+                    dataset_card = dataset_card.with_coherence(r, materialize);
+                }
                 let blob = dataset_card.to_json_bytes();
                 eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
                 blob
@@ -185,6 +196,7 @@ mod tests {
             None,
             true,
             false,
+            false,
             CardArgs::default(),
         )
         .unwrap();
@@ -199,6 +211,7 @@ mod tests {
             &[inp.to_str().unwrap().to_string()],
             out.to_str().unwrap(),
             None,
+            false,
             false,
             false,
             CardArgs::default(),

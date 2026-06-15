@@ -230,9 +230,14 @@ rete shacl data.rete --shapes shapes.ttl --graph '<http://ex/snapshot>'
 
 ## Coarse graphs (no index read)
 
-### `rete summary <file>`
+### `rete summary <file> [--level k]`
 Print the **structural** coarse graph: the Louvain community quotient graph
-(community → community relations with counts).
+(community → community relations with counts), plus — for v2 files — the **schema
+pyramid**: a leveled `rdf:type` histogram where abstract classes describe coarse
+levels and leaf classes resolve as you zoom in (e.g. `Agent → Person → Scientist
+→ Astronomer`). `--level k` prints just level `k`'s type histogram (`0` =
+coarsest / most abstract). Everything here reads **index-free** from the
+pyramid-meta — `summary-url` shows the same over HTTP without fetching the index.
 
 ### `rete schema <file>`
 Print the **semantic** coarse graph: classes (by `rdf:type`) with instance
@@ -283,6 +288,17 @@ rete reach g.rete --predicate '<http://ex/knows>' --seeds-file seeds.txt --paral
 
 Both URL commands work against `http://` and `https://` hosts that honor `Range`
 requests (S3, GitHub, any CDN).
+
+### `rete card-url <url> [--json]`
+Fetch only the embedded [Dataset Card](dataset-cards.md) — the header and the
+metadata range, in **two small range requests**. The dictionary, index, and
+pyramid are never fetched: this is the index-free **CARD tier**, the cold-start
+self-description (counts, vocabulary, class graph, signals, starter queries) a
+client reads before it knows what to query. Reports bytes fetched + range count.
+
+```sh
+rete card-url https://host/data.rete --json
+```
 
 ### `rete summary-url <url>`
 Fetch only the header + dictionary + pyramid summary and print the coarse graph.

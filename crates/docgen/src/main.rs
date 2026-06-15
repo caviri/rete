@@ -32,6 +32,8 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Interactive explorations",
         &[
             ("playground.html", "Interactive playground"),
+            ("atlas.md", "Historical atlas — SPARQL + GIS"),
+            ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
             ("explore-100mb.html", "Wikidata lazy explorer (100MB / 1GB)"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
         ],
@@ -41,8 +43,10 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("cli.md", "CLI reference"),
             ("sparql.md", "SPARQL support"),
+            ("geosparql.md", "GeoSPARQL (geometry + time)"),
             ("shacl.md", "SHACL validation"),
             ("dataset-cards.md", "Dataset Cards"),
+            ("semantic-zoom.md", "Semantic zoom (schema pyramid)"),
             ("reasoning.md", "Reasoning & coherence"),
             ("federation.md", "Federated queries"),
             ("compatibility.md", "Compatibility & interop"),
@@ -139,41 +143,52 @@ fn rewrite_links(html: &str) -> String {
         .replace(".md#", ".html#")
 }
 
+/// Overview `.md` pages that head a collapsible nav group of full-screen
+/// interactive apps. The **first** sub is the rendered overview (stays in-page);
+/// the rest are pre-built apps that open in a new tab.
+fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    match md {
+        "graph-map.md" => Some(&[
+            ("graph-map.html", "overview"),
+            ("graph-map/viewer.html", "structural map"),
+            ("graph-map/viewer-topics.html", "topic map (LDA)"),
+            ("graph-map/viewer-3d.html", "3D — deck.gl"),
+            ("graph-map/viewer-3d-three.html", "3D — three.js + fog"),
+        ]),
+        "atlas.md" => Some(&[
+            ("atlas.html", "overview"),
+            ("atlas-app.html", "launch the atlas →"),
+        ]),
+        "ask-the-graph.md" => Some(&[
+            ("ask-the-graph.html", "overview"),
+            ("ask-browser.html", "launch ask the graph →"),
+        ]),
+        _ => None,
+    }
+}
+
 fn template(title: &str, body: &str, current_md: &str) -> String {
     let mut nav_items: Vec<String> = Vec::new();
     for (section, pages) in SECTIONS {
         nav_items.push(format!("<li class=\"nav-h\">{section}</li>"));
         for (md, t) in *pages {
-            // graph-map is a collapsible group (the experiment viewers as
-            // sub-items; the <details> is closed until the section is clicked).
-            if *md == "graph-map.md" {
-                let open = if current_md.starts_with("graph-map") {
-                    " open"
-                } else {
-                    ""
-                };
-                let active = if *md == current_md {
-                    " class=\"active\""
-                } else {
-                    ""
-                };
-                let subs = [
-                    ("graph-map.html", "overview"),
-                    ("graph-map/viewer.html", "structural map"),
-                    ("graph-map/viewer-topics.html", "topic map (LDA)"),
-                    ("graph-map/viewer-3d.html", "3D — deck.gl"),
-                    ("graph-map/viewer-3d-three.html", "3D — three.js + fog"),
-                    ("graph-map/ask-browser.html", "ask the graph (graphRAG)"),
-                ];
+            // An overview `.md` that owns a set of full-screen interactive pages
+            // renders as a collapsible group: the first sub is the rendered
+            // overview (in-page), the rest are the apps (each in a new tab).
+            if let Some(subs) = nav_group_subs(md) {
+                let open = if *md == current_md { " open" } else { "" };
+                let overview = subs[0].0;
                 let mut sub = String::new();
-                for (h, l) in subs {
-                    let a = if h == "graph-map.html" { active } else { "" };
-                    // the interactive viewer apps open in a new tab (full-screen,
-                    // not doc pages); the "overview" stays in-page.
-                    let tgt = if h.starts_with("graph-map/") {
-                        " target=\"_blank\" rel=\"noopener\""
+                for (i, (h, l)) in subs.iter().enumerate() {
+                    let a = if i == 0 && *h == overview && *md == current_md {
+                        " class=\"active\""
                     } else {
                         ""
+                    };
+                    let tgt = if i == 0 {
+                        "" // the overview stays in-page
+                    } else {
+                        " target=\"_blank\" rel=\"noopener\""
                     };
                     sub.push_str(&format!("<li><a href=\"{h}\"{a}{tgt}>{l}</a></li>"));
                 }

@@ -106,8 +106,9 @@ pub enum Agg {
     Max(String),
     /// SAMPLE(?v) — any one value from the group.
     Sample(String),
-    /// GROUP_CONCAT(?v; SEPARATOR=...) — values joined by the separator.
-    GroupConcat(String, String),
+    /// GROUP_CONCAT(\[DISTINCT\] ?v; SEPARATOR=...) — values joined by the
+    /// separator (deduplicated when `distinct`).
+    GroupConcat(String, String, bool),
 }
 
 /// A SPARQL graph-pattern evaluation plan (the supported algebra subset).
@@ -124,6 +125,11 @@ pub enum Plan {
     LeftJoin(Box<Plan>, Box<Plan>, Option<FExpr>),
     /// FILTER over an inner pattern.
     Filter(FExpr, Box<Plan>),
+    /// In-pattern `BIND(expr AS ?var)`: each inner solution extended with `?var`
+    /// (left unbound where `expr` errors). Distinct from the projection-time
+    /// alias list (`Select::extends`) — this one is *inside* the graph pattern,
+    /// so a following FILTER or join sees the bound variable.
+    Extend(String, FExpr, Box<Plan>),
     /// A property path `subject <path> object`.
     Path(PatternTerm, PathAst, PatternTerm),
     /// Inline `VALUES`: variable names and rows of optional ground-term tokens
@@ -134,6 +140,10 @@ pub enum Plan {
     Minus(Box<Plan>, Box<Plan>),
     /// `GRAPH <iri>|?g { … }` — evaluate the inner pattern against a named graph.
     Graph(GraphTarget, Box<Plan>),
+    /// A nested `SELECT` subquery: evaluated independently to its projected
+    /// solutions, which then join with the surrounding pattern on shared
+    /// variables (only the subquery's projected variables are visible outside).
+    Subquery(Box<Select>),
 }
 
 /// The target of a `GRAPH` block.
@@ -170,6 +180,10 @@ pub enum PathAst {
     Seq(Box<PathAst>, Box<PathAst>),
     /// Alternative `a|b` (union).
     Alt(Box<PathAst>, Box<PathAst>),
+    /// Negated property set `!(p1|…|pn)` — one step over any predicate **not**
+    /// in the set, in the given direction (`reversed` for the `^p` members,
+    /// which `spargebra` wraps in a `Reverse`).
+    NegatedSet(Vec<String>, bool),
 }
 
 /// Comparison operators supported in FILTER.
@@ -218,6 +232,44 @@ pub enum Builtin {
     Datatype,
     Lang,
     Regex,
+    LangMatches,
+    StrDt,
+    StrLang,
+    Iri,
+    EncodeForUri,
+    Replace,
+    Md5,
+    Sha1,
+    Sha256,
+    Sha384,
+    Sha512,
+    Year,
+    Month,
+    Day,
+    Hours,
+    Minutes,
+    Seconds,
+    Timezone,
+    Tz,
+    CastInteger,
+    CastDecimal,
+    CastFloat,
+    CastDouble,
+    CastBoolean,
+    CastString,
+    Rand,
+    Uuid,
+    StrUuid,
+    BNode,
+    // GeoSPARQL (geof:) — topological relations → xsd:boolean, distance →
+    // xsd:double, envelope → geo:wktLiteral. See crate::geo.
+    GeoSfContains,
+    GeoSfWithin,
+    GeoSfIntersects,
+    GeoSfDisjoint,
+    GeoSfEquals,
+    GeoDistance,
+    GeoEnvelope,
 }
 
 /// A small boolean/comparison expression for FILTER (a subset of SPARQL exprs).
@@ -232,6 +284,12 @@ pub enum FExpr {
     Func(Builtin, Vec<FExpr>),
     /// `COALESCE(...)` — first sub-expression that yields a value.
     Coalesce(Vec<FExpr>),
+    /// `IF(cond, then, else)` — evaluate `cond` as a boolean and pick a branch.
+    If(Box<FExpr>, Box<FExpr>, Box<FExpr>),
+    /// `expr IN (a, b, …)` — true if `expr` value-equals any list member.
+    In(Box<FExpr>, Vec<FExpr>),
+    /// `sameTerm(a, b)` — strict term identity (no value coercion).
+    SameTerm(Box<FExpr>, Box<FExpr>),
     Compare(Op, Box<FExpr>, Box<FExpr>),
     And(Box<FExpr>, Box<FExpr>),
     Or(Box<FExpr>, Box<FExpr>),
@@ -337,14 +395,7 @@ pub(crate) fn term_number(s: &str) -> Option<f64> {
     as_number(s)
 }
 
-fn as_number(s: &str) -> Option<f64> {
-    let lex = if let Some(rest) = s.strip_prefix('"') {
-        &rest[..rest.find('"')?]
-    } else {
-        s
-    };
-    lex.parse::<f64>().ok()
-}
+use crate::terms::as_number;
 
 /// Compare two term values numerically when both are numbers, else lexically.
 fn compare(op: Op, a: &str, b: &str) -> bool {
@@ -748,7 +799,11 @@ pub(crate) fn fmt_num_typed(x: f64) -> String {
             x as i64
         )
     } else {
-        format!("\"{x}\"^^<http://www.w3.org/2001/XMLSchema#decimal>")
+        // Round to 15 significant digits before emitting the shortest form, so a
+        // sum/avg of decimals that lands on a binary-float artifact (e.g.
+        // 11.100000000000001) serializes as the intended "11.1".
+        let cleaned: f64 = format!("{x:.14e}").parse().unwrap_or(x);
+        format!("\"{cleaned}\"^^<http://www.w3.org/2001/XMLSchema#decimal>")
     }
 }
 
@@ -759,6 +814,7 @@ fn reverse(ast: PathAst) -> PathAst {
         PathAst::Rep(inner, rep) => PathAst::Rep(Box::new(reverse(*inner)), rep),
         PathAst::Seq(a, b) => PathAst::Seq(Box::new(reverse(*b)), Box::new(reverse(*a))),
         PathAst::Alt(a, b) => PathAst::Alt(Box::new(reverse(*a)), Box::new(reverse(*b))),
+        PathAst::NegatedSet(s, r) => PathAst::NegatedSet(s, !r),
     }
 }
 
@@ -980,7 +1036,9 @@ mod tests {
                  SELECT (GROUP_CONCAT(?f; SEPARATOR=\"|\") AS ?fs) WHERE { ex:Alice ex:knows ?f }";
         let (_, sols) = eval_sparql(&rete, q).unwrap();
         assert_eq!(sols.len(), 1);
-        let mut parts: Vec<&str> = sols[0]["fs"].split('|').collect();
+        // GROUP_CONCAT yields a simple literal — strip the quotes before splitting.
+        let fs = sols[0]["fs"].trim_matches('"');
+        let mut parts: Vec<&str> = fs.split('|').collect();
         parts.sort();
         assert_eq!(parts, vec!["<http://ex/Bob>", "<http://ex/Carol>"]);
     }
@@ -1473,9 +1531,10 @@ mod tests {
             BIND(STRAFTER(?n, \" \") AS ?last) \
             BIND(SUBSTR(?n, 1, 1) AS ?ini) }";
         let (_, sols) = eval_sparql(&rete, q).unwrap();
-        assert_eq!(sols[0]["first"], "Alice");
-        assert_eq!(sols[0]["last"], "Smith");
-        assert_eq!(sols[0]["ini"], "A");
+        // String built-ins return proper literal terms (quoted), not bare text.
+        assert_eq!(sols[0]["first"], "\"Alice\"");
+        assert_eq!(sols[0]["last"], "\"Smith\"");
+        assert_eq!(sols[0]["ini"], "\"A\"");
     }
 
     #[test]
@@ -1494,7 +1553,7 @@ mod tests {
         let (_, sols) = eval_sparql(&rete, q).unwrap();
         let mut labels: Vec<&str> = sols.iter().map(|b| b["label"].as_str()).collect();
         labels.sort();
-        assert_eq!(labels, vec!["@Al", "@Bob"]);
+        assert_eq!(labels, vec!["\"@Al\"", "\"@Bob\""]);
     }
 
     #[test]
@@ -1517,6 +1576,131 @@ mod tests {
     }
 
     #[test]
+    fn geosparql_filter_and_functions() {
+        let wkt = "\"POLYGON((0 0,10 0,10 10,0 10,0 0))\"^^\
+            <http://www.opengis.net/ont/geosparql#wktLiteral>";
+        let bytes = rete_from(&[
+            (
+                "<http://ex/f>",
+                "<http://www.opengis.net/ont/geosparql#hasGeometry>",
+                "<http://ex/f/g>",
+            ),
+            (
+                "<http://ex/f/g>",
+                "<http://www.opengis.net/ont/geosparql#asWKT>",
+                wkt,
+            ),
+            (
+                "<http://ex/f>",
+                "<http://ex/year>",
+                "\"1815\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            ),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let pre = "PREFIX geo: <http://www.opengis.net/ont/geosparql#> \
+            PREFIX geof: <http://www.opengis.net/def/function/geosparql/> \
+            PREFIX uom: <http://www.opengis.net/def/uom/OGC/1.0/> PREFIX ex: <http://ex/> ";
+
+        // Headline: temporal FILTER + spatial point-in-polygon compose.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?f WHERE {{ ?f ex:year ?y ; \
+            geo:hasGeometry/geo:asWKT ?w . \
+            FILTER(?y = 1815 && geof:sfContains(?w, \"POINT(5 5)\"^^geo:wktLiteral)) }}"
+            ),
+        )
+        .unwrap();
+        assert_eq!(s.len(), 1, "point inside the polygon in year 1815");
+        assert_eq!(s[0]["f"], "<http://ex/f>");
+
+        // Point outside → no rows.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?f WHERE {{ \
+            ?f geo:hasGeometry/geo:asWKT ?w . \
+            FILTER(geof:sfContains(?w, \"POINT(50 50)\"^^geo:wktLiteral)) }}"
+            ),
+        )
+        .unwrap();
+        assert!(s.is_empty());
+
+        // sfWithin is the argument-swapped relation.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?f WHERE {{ \
+            ?f geo:hasGeometry/geo:asWKT ?w . \
+            FILTER(geof:sfWithin(\"POINT(5 5)\"^^geo:wktLiteral, ?w)) }}"
+            ),
+        )
+        .unwrap();
+        assert_eq!(s.len(), 1);
+
+        // Malformed WKT is a type error → 0 rows, but the query must NOT error.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?f WHERE {{ \
+            ?f geo:hasGeometry/geo:asWKT ?w . \
+            FILTER(geof:sfContains(?w, \"garbage\"^^geo:wktLiteral)) }}"
+            ),
+        )
+        .unwrap();
+        assert!(s.is_empty());
+
+        // Relation in BIND (value position) → typed xsd:boolean.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?hit WHERE {{ \
+            ?f geo:hasGeometry/geo:asWKT ?w . \
+            BIND(geof:sfContains(?w, \"POINT(5 5)\"^^geo:wktLiteral) AS ?hit) }}"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            s[0]["hit"],
+            "\"true\"^^<http://www.w3.org/2001/XMLSchema#boolean>"
+        );
+
+        // distance → xsd:double; envelope → geo:wktLiteral.
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?d WHERE {{ BIND(geof:distance(\
+            \"POINT(0 0)\"^^geo:wktLiteral, \"POINT(0 1)\"^^geo:wktLiteral, uom:metre) AS ?d) }}"
+            ),
+        )
+        .unwrap();
+        assert!(
+            s[0]["d"].ends_with("XMLSchema#double>"),
+            "distance is xsd:double: {}",
+            s[0]["d"]
+        );
+        let (_, s) = eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?e WHERE {{ \
+            ?f geo:hasGeometry/geo:asWKT ?w . BIND(geof:envelope(?w) AS ?e) }}"
+            ),
+        )
+        .unwrap();
+        assert!(s[0]["e"].contains("wktLiteral") && s[0]["e"].contains("POLYGON"));
+
+        // An unsupported geof: function is rejected cleanly at parse/lower time.
+        assert!(eval_sparql(
+            &rete,
+            &format!(
+                "{pre}SELECT ?x WHERE {{ \
+            BIND(geof:buffer(\"POINT(0 0)\"^^geo:wktLiteral, 1) AS ?x) }}"
+            )
+        )
+        .is_err());
+    }
+
+    #[test]
     fn bind_arithmetic() {
         let xsd = "<http://www.w3.org/2001/XMLSchema#integer>";
         let bytes = rete_from(&[(
@@ -1533,6 +1717,49 @@ mod tests {
         assert_eq!(
             sols[0]["next"],
             "\"31\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+        );
+    }
+
+    #[test]
+    fn bind_value_is_visible_to_a_following_filter_and_join() {
+        // A BIND inside the WHERE pattern must be evaluated before a *following*
+        // FILTER (and join) can reference it — the bound var is in-tree, not a
+        // projection-time alias.
+        let xsd = "<http://www.w3.org/2001/XMLSchema#integer>";
+        let n = |v: i32| format!("\"{v}\"^^{xsd}");
+        let bytes = rete_from(&[
+            ("<http://ex/a>", "<http://ex/v>", &n(1)),
+            ("<http://ex/b>", "<http://ex/v>", &n(2)),
+            ("<http://ex/c>", "<http://ex/v>", &n(3)),
+            // a node whose :v equals b's value+1, for the join case
+            ("<http://ex/x>", "<http://ex/v>", &n(3)),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+
+        // FILTER references the BIND'd ?z.
+        let q1 = "PREFIX ex: <http://ex/> SELECT ?s WHERE { \
+            ?s ex:v ?o . BIND(?o + 1 AS ?z) FILTER(?z = 3) }";
+        let (_, s1) = eval_sparql(&rete, q1).unwrap();
+        assert_eq!(s1.len(), 1, "only b (2+1=3) passes");
+        assert_eq!(s1[0]["s"], "<http://ex/b>");
+
+        // A following triple pattern joins on the BIND'd ?z.
+        let q2 = "PREFIX ex: <http://ex/> SELECT ?s ?s2 WHERE { \
+            ?s ex:v ?o . BIND(?o + 1 AS ?z) ?s2 ex:v ?z }";
+        let (_, s2) = eval_sparql(&rete, q2).unwrap();
+        // a (1→2) joins b (:v 2); b (2→3) joins c and x (:v 3); c (3→4) no match.
+        let mut pairs: Vec<(String, String)> = s2
+            .iter()
+            .map(|b| (b["s"].clone(), b["s2"].clone()))
+            .collect();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            vec![
+                ("<http://ex/a>".to_string(), "<http://ex/b>".to_string()),
+                ("<http://ex/b>".to_string(), "<http://ex/c>".to_string()),
+                ("<http://ex/b>".to_string(), "<http://ex/x>".to_string()),
+            ]
         );
     }
 

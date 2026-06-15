@@ -86,23 +86,29 @@ pub(crate) fn verify_cmd(file: &str) -> anyhow::Result<()> {
     }
 }
 
-/// Print the pyramid summary graph (community-to-community super-edges).
-pub(crate) fn summary(file: &str) -> anyhow::Result<()> {
+/// Print the pyramid summary — the community super-edge graph, and (for v2 files)
+/// the **schema pyramid**: a leveled type histogram (abstract classes at coarse
+/// levels, leaves as you zoom in). All read **index-free** from the pyramid-meta
+/// via [`SummaryView`]. With `--level k`, print just level `k`'s type histogram.
+pub(crate) fn summary(file: &str, level: Option<usize>) -> anyhow::Result<()> {
     let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
-    let Some(pyr) = rete.pyramid() else {
+    let Some(view) = SummaryView::open_ranged(&SliceReader::new(&bytes))? else {
         eprintln!("file has no pyramid");
         return Ok(());
     };
-    let dict = rete.dictionary();
+
+    if let Some(k) = level {
+        return render_schema_level(&view, k);
+    }
+
     println!(
         "pyramid round {} — {} communities summarized as {} superedge(s):",
-        pyr.round,
-        community_count(pyr),
-        pyr.summary.len()
+        view.round,
+        view.community_count(),
+        view.summary.len()
     );
-    for e in &pyr.summary {
-        let pred = dict
+    for e in &view.summary {
+        let pred = view
             .predicate_term(e.predicate)
             .unwrap_or_else(|| format!("#{}", e.predicate));
         let arrow = if e.s_comm == e.o_comm {
@@ -115,19 +121,90 @@ pub(crate) fn summary(file: &str) -> anyhow::Result<()> {
             e.s_comm, e.o_comm, e.count
         );
     }
+
+    render_schema_overview(&view);
     Ok(())
 }
 
-/// Count the distinct communities referenced by the summary super-edges. Tiles
-/// are no longer materialized (dropped to shrink the file), so there is no tile
-/// list to count — the super-edge endpoints are the source of truth.
-fn community_count(pyr: &rete_core::PyramidMeta) -> usize {
-    let mut comms = std::collections::HashSet::new();
-    for e in &pyr.summary {
-        comms.insert(e.s_comm);
-        comms.insert(e.o_comm);
+/// Render the whole schema pyramid: one line per semantic level (coarse →
+/// abstract, fine → leaves) with the top classes at that level.
+pub(crate) fn render_schema_overview(view: &SummaryView) {
+    if view.level_count() == 0 {
+        return;
     }
-    comms.len()
+    println!(
+        "schema pyramid — {} level(s), {} class(es) in the subClassOf hierarchy:",
+        view.level_count(),
+        view.class_hierarchy.len()
+    );
+    for (k, lvl) in view.level_rollups.iter().enumerate() {
+        let top: Vec<String> = lvl
+            .classes
+            .iter()
+            .take(6)
+            .map(|(c, n)| format!("{c}×{n}"))
+            .collect();
+        let more = if lvl.classes.len() > 6 {
+            format!(" … (+{})", lvl.classes.len() - 6)
+        } else {
+            String::new()
+        };
+        println!(
+            "  level {k} (depth {}, round {}): {}{more}",
+            lvl.depth,
+            lvl.round,
+            top.join(", ")
+        );
+    }
+    let link_total: usize = view.level_links.iter().map(|l| l.links.len()).sum();
+    if link_total > 0 {
+        println!(
+            "  + {link_total} lateral class-relation(s) across levels (use --level k to see them)"
+        );
+    }
+    if !view.descriptors.is_empty() {
+        println!(
+            "  + {} per-community descriptor(s) for progressive zoom (use the JSON via the API)",
+            view.descriptors.len()
+        );
+    }
+}
+
+/// Render one schema-pyramid level's full type histogram (index-free).
+fn render_schema_level(view: &SummaryView, k: usize) -> anyhow::Result<()> {
+    if view.level_count() == 0 {
+        eprintln!("file has no schema pyramid (build it from data with rdf:type)");
+        return Ok(());
+    }
+    let Some(lvl) = view.level_rollup(k) else {
+        anyhow::bail!(
+            "level {k} out of range — the schema pyramid has {} level(s) (0..{})",
+            view.level_count(),
+            view.level_count() - 1
+        );
+    };
+    println!(
+        "schema pyramid level {k} — depth {} (round {}), {} class(es):",
+        lvl.depth,
+        lvl.round,
+        lvl.classes.len()
+    );
+    for (class, count) in &lvl.classes {
+        println!("  {count:>10}  {class}");
+    }
+    // The lateral (non-is-a) relations rolled up to this same level, if any.
+    if let Some(links) = view.level_links.get(k) {
+        if !links.links.is_empty() {
+            println!("  relations at this level ({}):", links.links.len());
+            for r in &links.links {
+                println!(
+                    "  {:>10}  {} --{}-> {}",
+                    r.count, r.s_class, r.predicate, r.o_class
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Ontology-aware coarse graph: relations between `rdf:type` classes with

@@ -13,3 +13,4 @@ rete-core = { path = "../rete-core", features = ["parallel"] }
 oxigraph = { version = "0.5", default-features = false }
 anyhow = "1"
 serde_json = { workspace = true }
+sha2 = "0.10"

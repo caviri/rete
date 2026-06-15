@@ -25,14 +25,10 @@ itself: no server, no full download.
 > [structural map](graph-map/viewer.html) ·
 > [topic map (pyramidal LDA)](graph-map/viewer-topics.html) ·
 > [3D side-elevation — deck.gl](graph-map/viewer-3d.html) ·
-> [3D — three.js + fog](graph-map/viewer-3d-three.html) ·
-> [**ask the graph** — browser graphRAG](graph-map/ask-browser.html)
+> [3D — three.js + fog](graph-map/viewer-3d-three.html)
 >
-> The last one ([`lance-rag`](https://github.com/caviri/rete/tree/main/experiments/lance-rag))
-> is a different lens: ask a question, **transformers.js** (WebGPU/WASM) embeds it
-> in-browser, cosine-ranks the graph's entities, and walks **triple paths** between
-> the answers — entities + vectors range-read from the Space (Wikidata-100MB / 1GB),
-> all logic client-side.
+> A different browser lens on the same graphs — [**ask the graph**](ask-the-graph.html),
+> a transformers.js graphRAG search — has its own page now.
 
 ## Why a map at all
 

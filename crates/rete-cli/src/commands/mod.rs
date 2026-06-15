@@ -11,6 +11,7 @@ pub(crate) mod export;
 pub(crate) mod federate;
 pub(crate) mod inspect;
 pub(crate) mod progressive;
+pub(crate) mod queries;
 pub(crate) mod query;
 pub(crate) mod range_source;
 pub(crate) mod reach;

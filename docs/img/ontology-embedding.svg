@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
+  <title id="t">How the ontology is embedded in a .rete file: the subClassOf DAG, the per-level type and relation rollups, and the per-community descriptors live in the pyramid-meta section; the leaf class-relation graph lives in the card (metadata) section. Both are read over HTTP without the triple index.</title>
+  <rect width="720" height="420" fill="#ffffff"/>
+  <text x="360" y="30" text-anchor="middle" font-size="19" font-weight="700" fill="#1b1f24">Where the ontology lives in the file</text>
+  <text x="360" y="50" text-anchor="middle" font-size="12" fill="#5b6570">two index-free sections — fetched over HTTP without the triple index</text>
+
+  <!-- METADATA / CARD section -->
+  <rect x="40" y="72" width="300" height="150" rx="9" fill="#f5f7f9" stroke="#e4e8ec"/>
+  <text x="56" y="95" font-size="13.5" font-weight="700" fill="#1b1f24">METADATA — the Dataset Card</text>
+  <g font-size="11.5" fill="#0f2347">
+    <rect x="56" y="106" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
+    <text x="68" y="125">class_links — leaf class→pred→class graph</text>
+    <rect x="56" y="142" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
+    <text x="68" y="161">classes · predicates · datatypes histograms</text>
+    <rect x="56" y="178" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
+    <text x="68" y="197">signals · starter queries</text>
+  </g>
+  <text x="190" y="216" text-anchor="middle" font-size="10.5" fill="#5b6570">read by card-url</text>
+
+  <!-- PYRAMID-META section -->
+  <rect x="380" y="72" width="300" height="222" rx="9" fill="#f5f7f9" stroke="#e4e8ec"/>
+  <text x="396" y="95" font-size="13.5" font-weight="700" fill="#1b1f24">PYRAMID-META — the schema pyramid</text>
+  <g font-size="11.5" fill="#0f2347">
+    <rect x="396" y="106" width="268" height="30" rx="6" fill="#dfeaff" stroke="#2a6df4"/>
+    <text x="408" y="125" font-weight="700">subClassOf DAG (non-exclusive, with depth)</text>
+    <rect x="396" y="142" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
+    <text x="408" y="161">type histogram — per level (rolled up)</text>
+    <rect x="396" y="178" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
+    <text x="408" y="197">class-relation graph — per level (lateral)</text>
+    <rect x="396" y="214" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
+    <text x="408" y="233">community super-edges + descriptors</text>
+  </g>
+  <text x="530" y="266" text-anchor="middle" font-size="10.5" fill="#5b6570">read by summary-url / SummaryView</text>
+
+  <!-- string table note -->
+  <text x="530" y="284" text-anchor="middle" font-size="10" fill="#5b6570">(class + predicate IRIs in a self-contained string table — no dictionary needed)</text>
+
+  <!-- The triple index, untouched -->
+  <rect x="40" y="312" width="640" height="44" rx="8" fill="#ffffff" stroke="#cdd7e2" stroke-dasharray="5 4"/>
+  <text x="360" y="334" text-anchor="middle" font-size="12.5" fill="#9aa4af">TRIPLE INDEX — holds every triple</text>
+  <text x="360" y="349" text-anchor="middle" font-size="11" font-weight="700" fill="#c0392b">not needed to read the ontology · stays on the server</text>
+
+  <!-- caption -->
+  <text x="360" y="384" text-anchor="middle" font-size="12" font-weight="700" fill="#1b1f24">three orthogonal structures: is-a (DAG) · relates-to (relations) · co-occurrence (communities)</text>
+  <text x="360" y="403" text-anchor="middle" font-size="11" fill="#5b6570">all derived once at build time, all read in a handful of HTTP range requests</text>
+</svg>

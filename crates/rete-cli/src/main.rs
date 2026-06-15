@@ -37,6 +37,14 @@ enum Command {
         /// reasoning. Aborts if the graph is logically incoherent.
         #[arg(long)]
         materialize: bool,
+        /// Run the OWL RL / RDFS reasoner at build time and stamp the coherence
+        /// verdict into the Dataset Card (implies `--card`), so a remote reader
+        /// learns the graph's coherence from the index-free card with no compute.
+        /// Unlike `--materialize`, this does NOT abort an incoherent graph — it
+        /// records `coherent: false` honestly. Combine with `--materialize` to also
+        /// bake the inferred triples in. Verify later with `rete reason --verify-card`.
+        #[arg(long)]
+        reason: bool,
         /// Skip the community pyramid — no pyramid section is written. SPARQL /
         /// SHACL / triple / reachability queries don't use it, so the file stays
         /// fully queryable and is markedly smaller (the pyramid is the largest
@@ -106,6 +114,16 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Fetch just the embedded Dataset Card over HTTP — reads only the header and
+    /// metadata range (the index-free CARD tier), never the dictionary or index.
+    /// The cold-start self-description, fetched in two small range requests.
+    CardUrl {
+        /// http(s):// URL of a `.rete` file (host must honor Range requests).
+        url: String,
+        /// Emit the card as JSON instead of the human catalog view.
+        #[arg(long)]
+        json: bool,
+    },
     /// List the named graphs in a dataset.
     Graphs {
         /// Path to the `.rete` file.
@@ -151,10 +169,16 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Print the pyramid summary graph (community-to-community relations).
+    /// Print the pyramid summary: the community super-edge graph plus the schema
+    /// pyramid (a leveled `rdf:type` histogram — abstract classes at coarse
+    /// levels, leaves as you zoom in), read index-free from the pyramid-meta.
     Summary {
         /// Path to the `.rete` file.
         file: String,
+        /// Print only the schema-pyramid type histogram at this semantic level
+        /// (0 = coarsest/most abstract).
+        #[arg(long)]
+        level: Option<usize>,
     },
     /// Recompute the Louvain communities and expose, per community, its member
     /// subjects and the literal text of its triples — the per-community text
@@ -241,14 +265,25 @@ enum Command {
     /// differentFrom, functional-property and owl:Nothing clashes) — NOT full
     /// OWL DL. See `docs/reasoning.md`.
     Reason {
-        /// Path to the `.rete` file.
-        file: String,
+        /// Path to a local `.rete` file (omit when using `--url`).
+        file: Option<String>,
+        /// Read a remote `.rete` over HTTP range requests instead of a local file.
+        #[arg(long, conflicts_with = "file")]
+        url: Option<String>,
         /// Also print the base + inferred graph in the given format.
         #[arg(long)]
         materialize: bool,
         /// Output format for `--materialize`: nq | ttl.
         #[arg(long, value_parser = ["nq", "ttl"], default_value = "nq")]
         format: String,
+        /// Coherence-gate mode: print one verdict line, exit non-zero on any
+        /// incoherent point (suppresses `--materialize` output). For CI.
+        #[arg(long)]
+        check: bool,
+        /// Verify the file's baked coherence card (from `rete build --reason`)
+        /// against a fresh reasoning run — guards against drift and a stale ruleset.
+        #[arg(long = "verify-card")]
+        verify_card: bool,
     },
     /// Validate a `.rete` graph against SHACL Core shapes (2017 Recommendation).
     ///
@@ -398,6 +433,7 @@ fn main() -> anyhow::Result<()> {
             output,
             format,
             materialize,
+            reason,
             no_pyramid,
             card,
             card_file,
@@ -412,6 +448,7 @@ fn main() -> anyhow::Result<()> {
             format.as_deref(),
             materialize,
             no_pyramid,
+            reason,
             commands::card::CardArgs {
                 enabled: card,
                 file: card_file,
@@ -429,6 +466,7 @@ fn main() -> anyhow::Result<()> {
         Command::Stats { file } => commands::inspect::stats(&file),
         Command::Verify { file } => commands::inspect::verify_cmd(&file),
         Command::Card { file, json } => commands::card::card_cmd(&file, json),
+        Command::CardUrl { url, json } => commands::url::card_url(&url, json),
         Command::Graphs { file } => commands::inspect::graphs(&file),
         Command::Export { file, format } => commands::export::export(&file, &format),
         Command::Query {
@@ -444,7 +482,7 @@ fn main() -> anyhow::Result<()> {
             object,
             json,
         } => commands::query::why(&file, subject, predicate, object, json),
-        Command::Summary { file } => commands::inspect::summary(&file),
+        Command::Summary { file, level } => commands::inspect::summary(&file, level),
         Command::Communities {
             file,
             json,
@@ -476,9 +514,19 @@ fn main() -> anyhow::Result<()> {
         Command::Bgp { file, query } => commands::query::bgp(&file, &query),
         Command::Reason {
             file,
+            url,
             materialize,
             format,
-        } => commands::reason::reason_cmd(&file, materialize, &format),
+            check,
+            verify_card,
+        } => commands::reason::reason_cmd(
+            file.as_deref(),
+            url.as_deref(),
+            materialize,
+            &format,
+            check,
+            verify_card,
+        ),
         Command::Shacl {
             file,
             shapes,

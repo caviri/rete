@@ -81,6 +81,33 @@ check "info"       "magic|version|pyramid"        -- $B info "$T/g.rete"
 check "stats"      "triples|terms|predicate"      -- $B stats "$T/g.rete"
 check "verify ok"  "OK|matches"     -- $B verify "$T/g.rete"
 check "graphs"     "g1|g2"                          -- $B graphs "$T/d.rete"
+
+echo "== dataset card =="
+$B build "$T/g.nt" -o "$T/gc.rete" --card --title "Smoke" --license "CC0-1.0" >/dev/null 2>&1
+check "card build"  "dataset card"                  -- bash -c "$B build '$T/g.nt' -o '$T/gc2.rete' --card 2>&1"
+check "card view"   "Dataset Card|class links|signals|starter queries" -- $B card "$T/gc.rete"
+check "card json"   '"format_version"'              -- $B card "$T/gc.rete" --json
+check "card json queries" '"queries"'               -- $B card "$T/gc.rete" --json
+check "card json tier"    '"tier"|"sparql"'         -- $B card "$T/gc.rete" --json
+check "card queries" "ov-triples|starter"           -- $B card "$T/gc.rete"
+
+echo "== schema pyramid (semantic zoom) =="
+# A tiny subClassOf hierarchy: Astronomer ⊑ Scientist ⊑ Person, with instances.
+cat > "$T/onto.nt" <<'ONTO'
+<http://ex/Astronomer> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/Scientist> .
+<http://ex/Scientist> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/Person> .
+<http://ex/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Astronomer> .
+<http://ex/b> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Astronomer> .
+<http://ex/c> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> .
+<http://ex/a> <http://ex/knows> <http://ex/b> .
+<http://ex/b> <http://ex/knows> <http://ex/c> .
+ONTO
+$B build "$T/onto.nt" -o "$T/onto.rete" >/dev/null 2>&1
+check "schema pyramid"  "schema pyramid|level"      -- $B summary "$T/onto.rete"
+check "level 0 abstract" "Person"                   -- $B summary "$T/onto.rete" --level 0
+check "level leaf"      "Astronomer"                -- $B summary "$T/onto.rete" --level 2
+check "level out of range" "out of range|level"     -- bash -c "$B summary '$T/onto.rete' --level 99; true"
+
 check "export"     "Alice"                          -- $B export "$T/g.rete"
 check "export ttl" "<http://ex/Alice>"              -- $B export "$T/g.rete" --format ttl
 check "export jsonld" '"@id": "http://ex/Alice"'    -- $B export "$T/g.rete" --format jsonld
@@ -173,6 +200,15 @@ check "reason infers"   "inferred [0-9]+ new"          -- $B reason "$T/coherent
 # wrap in `; true` to keep the smoke script going.
 $B build "$ROOT/examples/causal.nt" -o "$T/causal.rete" >/dev/null
 check "reason disjoint" "disjoint" -- bash -c "$B reason '$T/causal.rete' ; true"
+# Materialization composes the transitive :causes chain (a → b → c ⇒ a causes c) —
+# the entailment side of the same causal-coherence demo the wasm client checks.
+check "reason causal transitive" "ex/a>.*ex/causes>.*ex/c" -- bash -c "$B reason '$T/causal.rete' --materialize ; true"
+# Build-time stamp: --reason embeds the verdict in the card (no abort on
+# incoherence); --verify-card re-checks it; --check is the terse CI gate.
+$B build "$ROOT/examples/causal.nt" -o "$T/causal-stamped.rete" --reason >/dev/null
+check "reason stamp card"  "coherence"        -- $B card "$T/causal-stamped.rete"
+check "reason verify-card" "verified"         -- $B reason "$T/causal-stamped.rete" --verify-card
+check "reason check gate"  "incoherent"       -- bash -c "$B reason '$T/causal-stamped.rete' --check ; true"
 
 echo "== coarse graphs =="
 check "summary"    "round|superedge|knows|community" -- $B summary "$T/g.rete"
@@ -198,6 +234,8 @@ echo "== HTTP range path =="
 $B build "$T/g.nt" -o "$T/web.rete" >/dev/null
 ( cd "$T" && python3 "$ROOT/scripts/range_server.py" 8099 . >/dev/null 2>&1 & echo $! > "$T/srv.pid" )
 sleep 1
+check "card-url"    "Dataset Card|index NOT fetched" -- $B card-url "http://127.0.0.1:8099/gc.rete"
+check "card-url json" '"format_version"|index NOT fetched' -- $B card-url "http://127.0.0.1:8099/gc.rete" --json
 check "summary-url" "knows|round" -- $B summary-url "http://127.0.0.1:8099/web.rete"
 check "query-url"   "Bob|Alice|result" -- $B query-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>"
 check "sparql-url"  "Bob|solution" -- $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"

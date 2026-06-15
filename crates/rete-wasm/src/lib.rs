@@ -961,6 +961,189 @@ pub fn shacl_construct_url(
     Ok(out)
 }
 
+// --- OWL RL / RDFS coherence checking ----------------------------------------
+//
+// The reasoner (`rete_core::reason`) is already slice-shaped, so these are near
+// twins of the SHACL functions above: `reason`/`reason_url` materialize the whole
+// graph (Tier-2, the complete check), while `reason_construct_url` validates only
+// the slice a CONSTRUCT selects (Tier-1, selective range reads).
+
+/// The fixed, **selective** coherence subgraph for [`reason_construct_url`]
+/// (Tier-1). A UNION of constant-predicate branches: each routes to exactly one
+/// predicate's index tiles, so the client faults only `rdf:type` + the class/
+/// equality T-Box predicates over one warm lazy cache — not the whole graph.
+///
+/// The T-Box branches are MANDATORY: the reasoner finds disjoint-class clashes
+/// only *after* `subClassOf` type-propagation, so omitting `subClassOf`/
+/// `disjointWith`/`sameAs` would silently miss propagation-dependent
+/// contradictions. Property-characteristic axioms (Functional/Symmetric/
+/// Transitive) ride inside the `rdf:type` slice. Instance-level
+/// FunctionalProperty / domain / range clashes need the property's own
+/// assertions — use [`reason_url`] (Tier-2) for those.
+pub const COHERENCE_CONSTRUCT: &str = r#"
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+CONSTRUCT {
+  ?x rdf:type ?c .
+  ?sub rdfs:subClassOf ?sup .
+  ?c1 owl:disjointWith ?c2 .
+  ?s1 owl:sameAs ?s2 .
+  ?f1 owl:differentFrom ?f2 .
+}
+WHERE {
+  { ?x rdf:type ?c }
+  UNION { ?sub rdfs:subClassOf ?sup }
+  UNION { ?c1 owl:disjointWith ?c2 }
+  UNION { ?s1 owl:sameAs ?s2 }
+  UNION { ?f1 owl:differentFrom ?f2 }
+}
+"#;
+
+/// Build the playground JSON envelope for a [`rete_core::Reasoning`] result,
+/// shared by the in-memory and remote entrypoints. `remote` is
+/// `(fileLength, bytes, requests)` for the `*_url` variants, `None` in-memory.
+/// JSON: `{ "kind":"reasoning", "coherent":bool, "inferredCount":N,
+/// "inconsistencies":[{"kind","detail"}], ["remote":{...}] }`.
+fn reasoning_json(r: &rete_core::Reasoning, remote: Option<(u64, u64, u64)>) -> String {
+    use serde_json::json;
+    let inconsistencies: Vec<serde_json::Value> = r
+        .inconsistencies
+        .iter()
+        .map(|i| json!({ "kind": i.kind, "detail": i.detail }))
+        .collect();
+    let mut v = json!({
+        "kind": "reasoning",
+        "coherent": r.inconsistencies.is_empty(),
+        "inferredCount": r.inferred.len(),
+        "inconsistencies": inconsistencies,
+    });
+    if let (Some(obj), Some((file_length, bytes, requests))) = (v.as_object_mut(), remote) {
+        obj.insert(
+            "remote".to_string(),
+            json!({ "fileLength": file_length, "bytes": bytes, "requests": requests }),
+        );
+    }
+    v.to_string()
+}
+
+/// Run the OWL RL / RDFS reasoner over an **in-memory** `.rete` and report the
+/// inferred-triple count plus any incoherent points (logical contradictions).
+/// `graph` selects a named graph; the default graph is used when omitted. This is
+/// the complete (Tier-2) check — it materializes the whole graph. Returns the
+/// [`reasoning_json`] envelope (no `remote` block).
+#[wasm_bindgen]
+pub fn reason(bytes: &[u8], graph: Option<String>) -> Result<String, JsValue> {
+    let rete = open(bytes)?;
+    let base = rete.dump(graph.as_deref());
+    let result = rete_core::reason(&base);
+    Ok(reasoning_json(&result, None))
+}
+
+/// Run the reasoner over a **remote** `.rete` URL — the complete (Tier-2) check.
+/// It materializes the whole graph, so this faults in the dataset's chunks/tiles
+/// as it reads (≈ the whole file); use [`reason_construct_url`] for the cheaper
+/// selective check. Worker-only (synchronous XHR). A failed range fetch mid-read
+/// is an error, never a silently-incomplete (and thus possibly false "coherent")
+/// result. JSON adds `"remote": { fileLength, bytes, requests }`.
+#[wasm_bindgen]
+pub fn reason_url(url: &str, graph: Option<String>) -> Result<String, JsValue> {
+    let (reader, rete) = open_url(url)?;
+    let base = rete.dump(graph.as_deref());
+    let result = rete_core::reason(&base);
+    incomplete_guard(&rete, "reasoning")?;
+    let out = reasoning_json(
+        &result,
+        Some((reader.len(), reader.bytes_read(), reader.requests())),
+    );
+    let _ = reader;
+    Ok(out)
+}
+
+/// **Selective (Tier-1) coherence check** over a remote `.rete`: evaluate a
+/// CONSTRUCT (touching only the tiles its constant-predicate patterns need), then
+/// reason over just that subgraph. Pass [`COHERENCE_CONSTRUCT`] for the standard
+/// class/equality coherence slice, or a custom CONSTRUCT to scope the check
+/// further. Unlike [`reason_url`] (which materializes the whole graph), this
+/// fetches only the slice the CONSTRUCT selects. Worker-only (synchronous XHR).
+#[wasm_bindgen]
+pub fn reason_construct_url(url: &str, construct: &str) -> Result<String, JsValue> {
+    let (reader, rete) = open_url(url)?;
+    let triples =
+        match eval_query(&rete, construct).map_err(err)? {
+            QueryOutput::Construct(t) => t,
+            _ => return Err(JsValue::from_str(
+                "the subset query must be a CONSTRUCT — it builds the subgraph the reasoner checks",
+            )),
+        };
+    incomplete_guard(&rete, "query")?;
+    let result = rete_core::reason(&triples);
+    let out = reasoning_json(
+        &result,
+        Some((reader.len(), reader.bytes_read(), reader.requests())),
+    );
+    let _ = reader;
+    Ok(out)
+}
+
+/// Build the Tier-0 schema-coherence JSON envelope from the incoherent points.
+/// `remote` is `(fileLength, bytes, requests)` for the `*_url` variant.
+fn schema_coherence_json(
+    points: &[rete_core::Inconsistency],
+    remote: Option<(u64, u64, u64)>,
+) -> String {
+    use serde_json::json;
+    let schema_points: Vec<serde_json::Value> = points
+        .iter()
+        .map(|i| json!({ "kind": i.kind, "detail": i.detail }))
+        .collect();
+    let mut v = json!({
+        "kind": "schemaCoherence",
+        "coherent": points.is_empty(),
+        "schemaPoints": schema_points,
+        // The defining property: this answer never touched the index OR dictionary.
+        "readsIndex": false,
+    });
+    if let (Some(obj), Some((file_length, bytes, requests))) = (v.as_object_mut(), remote) {
+        obj.insert(
+            "remote".to_string(),
+            json!({ "fileLength": file_length, "bytes": bytes, "requests": requests }),
+        );
+    }
+    v.to_string()
+}
+
+/// **Index-free schema coherence (Tier-0)** over an in-memory `.rete`: read only
+/// the header + pyramid-meta (never the dictionary or the triple index) and report
+/// schema-level incoherent points (subClassOf cycles, unsatisfiable classes).
+/// Errors if the file ships no schema pyramid.
+#[wasm_bindgen]
+pub fn check_schema(bytes: &[u8]) -> Result<String, JsValue> {
+    let points = rete_core::read_schema_coherence_ranged(&SliceReader::new(bytes))
+        .map_err(err)?
+        .ok_or_else(|| JsValue::from_str("file has no schema pyramid"))?;
+    Ok(schema_coherence_json(&points, None))
+}
+
+/// **Index-free schema coherence (Tier-0) over a remote `.rete` URL.** Reads only
+/// TWO ranges — the header and the trailing schema block (the header records its
+/// length) — never the dictionary, the community summary, or the triple index. So
+/// it's a flat **~1–8 KB at any graph size** (8.1 KB of a 48.8 MB file; see
+/// docs/BENCHMARK.md), making it the cheap "is the ontology coherent?" gate.
+/// Worker-only (synchronous XHR); a failed range fetch is an error, never a false
+/// "coherent".
+#[wasm_bindgen]
+pub fn check_schema_url(url: &str) -> Result<String, JsValue> {
+    let reader = CountingReader::new(XhrRangeReader::open(url)?);
+    let points = rete_core::read_schema_coherence_ranged(&reader)
+        .map_err(err)?
+        .ok_or_else(|| JsValue::from_str("file has no schema pyramid"))?;
+    Ok(schema_coherence_json(
+        &points,
+        Some((reader.len(), reader.bytes_read(), reader.requests())),
+    ))
+}
+
 fn format_shacl_text(report: &ValidationReport) -> String {
     if report.conforms {
         return "conforms: true\n".to_string();
@@ -1366,42 +1549,7 @@ fn object_to_jsonld(token: &str) -> serde_json::Value {
 
 /// Resolve the N-Triples escape sequences in a literal's body to actual chars.
 fn unescape_nt(s: &str) -> String {
-    if !s.contains('\\') {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        let unicode = |chars: &mut std::str::Chars, n: usize, out: &mut String| {
-            let hex: String = chars.take(n).collect();
-            match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
-                Some(ch) => out.push(ch),
-                None => out.push('\u{FFFD}'),
-            }
-        };
-        match chars.next() {
-            Some('t') => out.push('\t'),
-            Some('b') => out.push('\u{08}'),
-            Some('n') => out.push('\n'),
-            Some('r') => out.push('\r'),
-            Some('f') => out.push('\u{0C}'),
-            Some('"') => out.push('"'),
-            Some('\'') => out.push('\''),
-            Some('\\') => out.push('\\'),
-            Some('u') => unicode(&mut chars, 4, &mut out),
-            Some('U') => unicode(&mut chars, 8, &mut out),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
+    rete_core::terms::unescape_literal(s)
 }
 
 fn open(bytes: &[u8]) -> Result<Rete, JsValue> {

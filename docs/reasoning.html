@@ -201,13 +201,17 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li class="nav-h">Interactive explorations</li>
         <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li><a href="explore-100mb.html">Wikidata lazy explorer (100MB / 1GB)</a></li>
-        <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li><li><a href="graph-map/ask-browser.html" target="_blank" rel="noopener">ask the graph (graphRAG)</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="reasoning.html" class="active">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="compatibility.html">Compatibility & interop</a></li>
@@ -257,9 +261,15 @@ gate, not a certified entailment regime.</p>
 <pre><code class="language-sh">rete reason data.rete                       # report entailment count + incoherent points
 rete reason data.rete --materialize          # also print base + inferred graph (N-Quads)
 rete reason data.rete --materialize --format ttl
+rete reason --url https://host/data.rete     # check a REMOTE file over HTTP range reads
+rete reason data.rete --check                # terse one-line verdict (CI gate)
+rete reason data.rete --verify-card          # re-check a build-time coherence stamp
 </code></pre>
 <p><code>rete reason</code> <strong>exits non-zero when any inconsistency is found</strong>, and zero when
-the graph is coherent — so it drops straight into CI as a coherence check.</p>
+the graph is coherent — so it drops straight into CI as a coherence check. <code>--url</code>
+reads a remote <code>.rete</code> lazily over HTTP ranges (like <code>rete sparql-url</code>), refusing an
+incomplete result if a range fetch fails. <code>--check</code> prints a single verdict line for
+scripts.</p>
 <h2>Build-time materialization</h2>
 <p><code>rete reason --materialize</code> <em>prints</em> the closed graph but doesn't change the file.
 To <strong>persist</strong> the entailments — so they ship in the <code>.rete</code> and need no
@@ -275,6 +285,32 @@ logically incoherent, so it never bakes a contradiction into a published file.</
 <p>Trade-off: a materialized file is larger and fixes the entailments at build time
 (re-build to re-materialize after the ontology changes); an un-materialized file
 stays compact and you run <code>rete reason</code> on demand.</p>
+<h2>Build-time coherence stamp</h2>
+<p><code>rete build --reason</code> runs the reasoner once at build time and <strong>stamps the verdict
+into the Dataset Card</strong> — so a remote reader learns the graph's coherence from the
+index-free card (<code>rete card-url</code>, ~2 ranges) with <strong>zero compute</strong>, never fetching
+the graph:</p>
+<pre><code class="language-sh">rete build data.nt -o data.rete --reason
+rete card data.rete            # …includes a `coherence:` block
+#   coherence:
+#       verdict    : coherent
+#       scope      : default · rules owl-rl-subset/v1 · not materialized
+</code></pre>
+<p>Unlike <code>--materialize</code>, <code>--reason</code> does <strong>not</strong> abort an incoherent graph — it
+records <code>coherent: false</code> (with a <code>by_kind</code> histogram) honestly, so a known-bad
+dataset can still publish its status. Combine <code>--reason --materialize</code> to both bake
+the entailments and stamp the verdict.</p>
+<p>The stamp is deterministic (sorted histogram, no free-text detail) so it folds into
+the file's content hash without destabilizing it — two <code>--reason</code> builds of the same
+input are byte-identical, and a build <em>without</em> <code>--reason</code> is byte-identical to
+before the feature existed. To keep the stamp honest it carries a <code>rules</code> tag
+(<code>rete_core::REASON_RULESET</code>); <code>rete reason --verify-card</code> recomputes the verdict and
+<strong>fails</strong> if it drifted from the data or the rule set changed:</p>
+<pre><code class="language-sh">rete reason data.rete --verify-card
+#   coherence card verified: coherent (0 inconsistency(ies), rules owl-rl-subset/v1)
+</code></pre>
+<p>So a CI pipeline can stamp coherence at build time and assert it never silently goes
+stale — and a consumer can trust the card's verdict because it is cheap to re-verify.</p>
 <h2>Entailment rules (materialized to a fixpoint)</h2>
 <table><thead><tr><th>Rule</th><th>If the graph contains…</th><th>…then entail</th></tr></thead><tbody>
 <tr><td>subClassOf transitivity</td><td><code>c rdfs:subClassOf d</code> · <code>d rdfs:subClassOf e</code></td><td><code>c rdfs:subClassOf e</code></td></tr>
@@ -321,6 +357,56 @@ rete reason causal.rete
 <p>The entailment count (9) reflects the materialized <code>subClassOf</code> chain
 (<code>Disease ⊑ Condition ⊑ Factor</code>) and the transitive <code>:causes</code> closure
 (<code>a causes c</code>, etc.). Because the graph is incoherent, the command exits non-zero.</p>
+<h2>Remote / in-browser coherence</h2>
+<p>The same coherence checks run <strong>in the browser against a remote <code>.rete</code> over HTTP
+range reads</strong> — drop a file on any range-serving host (S3, GitHub Pages, a CORS
+proxy), hand the client a URL, and check coherence with no server and no full
+download. The WASM build exposes three entry points, tiered by how much of the
+file they touch. They mirror the SHACL family (<code>shacl_url</code> / <code>shacl_construct_url</code>)
+and are <strong>worker-only</strong> (the engine is synchronous and uses blocking XHR, which
+browsers permit only off the main thread). Each returns a JSON envelope with a
+<code>remote: { fileLength, bytes, requests }</code> block so the UI can show exactly how
+little of the file was pulled; a failed range fetch mid-check is an <strong>error</strong>,
+never a silently-incomplete (and so possibly false-"coherent") result.</p>
+<table><thead><tr><th>Tier</th><th>Function</th><th>Reads</th><th>Finds</th></tr></thead><tbody>
+<tr><td><strong>0 — schema</strong></td><td><code>check_schema_url(url)</code></td><td>header + the schema block only (2 ranges, <strong>~1–8 KB at any graph size</strong>, never the index, dictionary, or community summary)</td><td>subClassOf cycles; <strong>unsatisfiable classes</strong> (a class that is a subclass of two <code>owl:disjointWith</code> classes)</td></tr>
+<tr><td><strong>1 — selective</strong></td><td><code>reason_construct_url(url, construct)</code></td><td>only the tiles the CONSTRUCT's constant-predicate patterns touch (one warm cache)</td><td>every contradiction visible from <code>rdf:type</code> + the class/equality T-Box (disjoint-class clashes, <code>sameAs</code>/<code>differentFrom</code>)</td></tr>
+<tr><td><strong>2 — full</strong></td><td><code>reason_url(url[, graph])</code></td><td>materializes the whole graph (≈ the entire file)</td><td>every incoherent point the CLI <code>rete reason</code> finds</td></tr>
+</tbody></table>
+<p><strong>Tier 0</strong> answers <em>"is the <strong>ontology</strong> coherent?"</em> — the <code>subClassOf</code> DAG plus the
+<code>owl:disjointWith</code> / <code>owl:equivalentClass</code> axioms travel in the schema pyramid, which
+decodes <strong>without the dictionary or the index</strong>. The header records the schema block's
+byte length, so the check fetches just the header and that block (2 ranges) — a flat
+<strong>~1–8 KB at any graph size</strong> (8.1 KB of a 48.8 MB file; see
+<a href="BENCHMARK.html#coherence-checking-tier-costs">Coherence tier costs</a>). It cannot see
+instance-level clashes (a node typed into disjoint classes, functional-property
+clashes) — those need the A-Box (Tier 1/2). One soundness caveat: the shipped hierarchy
+is truncated, so on a very large ontology a pruned ancestor can hide an unsatisfiable
+class (a false <em>coherent</em>, never a false <em>incoherent</em>).</p>
+<p><strong>Tier 1</strong> is the selective sweet spot. The default slice is a <code>UNION</code> of
+constant-predicate <code>CONSTRUCT</code> branches so each routes to a single predicate's
+tiles:</p>
+<pre><code class="language-sparql">CONSTRUCT { ?x rdf:type ?c . ?sub rdfs:subClassOf ?sup .
+            ?c1 owl:disjointWith ?c2 . ?s1 owl:sameAs ?s2 . ?f1 owl:differentFrom ?f2 }
+WHERE { { ?x rdf:type ?c } UNION { ?sub rdfs:subClassOf ?sup }
+        UNION { ?c1 owl:disjointWith ?c2 } UNION { ?s1 owl:sameAs ?s2 }
+        UNION { ?f1 owl:differentFrom ?f2 } }
+</code></pre>
+<blockquote>
+<p><strong>Slice-correctness invariant.</strong> A Tier-1 CONSTRUCT <strong>must</strong> pull the T-Box
+predicates (<code>rdfs:subClassOf</code>, <code>owl:disjointWith</code>, <code>owl:sameAs</code>) into the slice,
+not just <code>rdf:type</code>. The reasoner detects a disjoint-class clash only <em>after</em>
+<code>subClassOf</code> type-propagation, so a slice missing <code>subClassOf</code> would silently
+miss a propagation-dependent contradiction.</p>
+</blockquote>
+<h3>Try it</h3>
+<p>The <a href="explore-100mb.html">100 MB explorer</a> has a <strong>Coherence</strong> task with all three
+tiers. Because the wikidata graph carries no OWL axioms, the tasks run against a
+tiny same-origin causal ontology (<code>examples/causal.rete</code>) with both kinds of
+defect planted: Tier 0 reports <code>:Relapsed</code> <strong>unsatisfiable</strong> (a subclass of the
+disjoint <code>HealthyState</code> and <code>DiseaseState</code>) from ~2–3 ranges; Tier 1/2 report the
+<strong>instance</strong> clash (<code>:p</code> is both). The live counter shows how few bytes each tier
+fetches.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

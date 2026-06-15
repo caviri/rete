@@ -61,7 +61,7 @@ pub(super) fn query_ctx<'a>(rete: &'a Rete, sel: &Select) -> Ctx<'a> {
                 | Agg::Min(v)
                 | Agg::Max(v)
                 | Agg::Sample(v)
-                | Agg::GroupConcat(v, _) => {
+                | Agg::GroupConcat(v, _, _) => {
                     slots.add(v);
                 }
             }
@@ -97,6 +97,33 @@ fn collect_plan_slots(plan: &Plan, slots: &mut Slots) {
             collect_expr_slots(e, slots);
             collect_plan_slots(inner, slots);
         }
+        Plan::Extend(var, e, inner) => {
+            slots.add(var);
+            collect_expr_slots(e, slots);
+            collect_plan_slots(inner, slots);
+        }
+        // Only the subquery's projected variables are visible to the outer
+        // scope (SELECT * exposes everything the sub binds).
+        Plan::Subquery(sub) => {
+            if sub.project.is_empty() {
+                collect_plan_slots(&sub.plan, slots);
+                for (v, _) in &sub.extends {
+                    slots.add(v);
+                }
+                if let Some(g) = &sub.group {
+                    for v in &g.by {
+                        slots.add(v);
+                    }
+                    for (rv, _) in &g.aggs {
+                        slots.add(rv);
+                    }
+                }
+            } else {
+                for v in &sub.project {
+                    slots.add(v);
+                }
+            }
+        }
         Plan::Path(s, _, o) => {
             for t in [s, o] {
                 if let PatternTerm::Var(v) = t {
@@ -124,11 +151,26 @@ fn collect_expr_slots(e: &FExpr, slots: &mut Slots) {
             slots.add(v);
         }
         FExpr::Const(_) => {}
-        FExpr::Arith(_, l, r) | FExpr::Compare(_, l, r) | FExpr::And(l, r) | FExpr::Or(l, r) => {
+        FExpr::Arith(_, l, r)
+        | FExpr::Compare(_, l, r)
+        | FExpr::And(l, r)
+        | FExpr::Or(l, r)
+        | FExpr::SameTerm(l, r) => {
             collect_expr_slots(l, slots);
             collect_expr_slots(r, slots);
         }
         FExpr::Not(inner) => collect_expr_slots(inner, slots),
+        FExpr::If(c, t, e) => {
+            collect_expr_slots(c, slots);
+            collect_expr_slots(t, slots);
+            collect_expr_slots(e, slots);
+        }
+        FExpr::In(e, list) => {
+            collect_expr_slots(e, slots);
+            for x in list {
+                collect_expr_slots(x, slots);
+            }
+        }
         FExpr::Func(_, args) | FExpr::Coalesce(args) => {
             for a in args {
                 collect_expr_slots(a, slots);
@@ -188,6 +230,31 @@ fn mark_certain(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
             }
         }
         Plan::Filter(_, inner) => mark_certain(ctx, inner, m),
+        // A BIND may error (leaving its var unbound), so it is never *certain* —
+        // only the inner's certain slots carry through.
+        Plan::Extend(_, _, inner) => mark_certain(ctx, inner, m),
+        // A subquery's projected (and aggregate/BIND result) variables are
+        // reliably bound in each solution it yields.
+        Plan::Subquery(sub) => {
+            if sub.project.is_empty() {
+                mark_certain(ctx, &sub.plan, m);
+            } else {
+                for v in &sub.project {
+                    mark_var(v, m);
+                }
+            }
+            for (v, _) in &sub.extends {
+                mark_var(v, m);
+            }
+            if let Some(g) = &sub.group {
+                for (rv, _) in &g.aggs {
+                    mark_var(rv, m);
+                }
+                for v in &g.by {
+                    mark_var(v, m);
+                }
+            }
+        }
         Plan::Union(l, r) => {
             // Certain only when certain in *both* branches.
             let a = certain_bound(ctx, l, m.len());
@@ -247,6 +314,30 @@ fn mark_possible(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
             }
         }
         Plan::Filter(_, inner) => mark_possible(ctx, inner, m),
+        Plan::Extend(var, _, inner) => {
+            mark_var(var, m);
+            mark_possible(ctx, inner, m);
+        }
+        Plan::Subquery(sub) => {
+            if sub.project.is_empty() {
+                mark_possible(ctx, &sub.plan, m);
+            } else {
+                for v in &sub.project {
+                    mark_var(v, m);
+                }
+            }
+            for (v, _) in &sub.extends {
+                mark_var(v, m);
+            }
+            if let Some(g) = &sub.group {
+                for (rv, _) in &g.aggs {
+                    mark_var(rv, m);
+                }
+                for v in &g.by {
+                    mark_var(v, m);
+                }
+            }
+        }
         Plan::Union(l, r) | Plan::Join(l, r) | Plan::LeftJoin(l, r, _) => {
             mark_possible(ctx, l, m);
             mark_possible(ctx, r, m);
@@ -977,6 +1068,36 @@ pub(crate) fn eval_plan_iter<'q>(
             Box::new(
                 eval_plan_iter(ctx, index, named_filter, inner)
                     .filter(move |b| expr.boolean(ctx, index, b, &mut cache)),
+            )
+        }
+        // A nested SELECT: evaluate it independently, then surface each of its
+        // projected solutions as an outer row (only the projected vars are set).
+        Plan::Subquery(sub) => {
+            let (_vars, bindings) = run_select(ctx.rete, sub);
+            let rows: Vec<Row> = bindings
+                .into_iter()
+                .map(|b| {
+                    let mut row = ctx.slots.empty_row();
+                    for (var, term) in &b {
+                        if let Some(slot) = ctx.slots.slot(var) {
+                            row[slot] = Some(ctx.resolver.canon_term(term));
+                        }
+                    }
+                    row
+                })
+                .collect();
+            Box::new(rows.into_iter())
+        }
+        // In-pattern BIND: set `var` from `expr` per row (unbound where it errors).
+        Plan::Extend(var, expr, inner) => {
+            let slot = ctx.slots.slot(var);
+            Box::new(
+                eval_plan_iter(ctx, index, named_filter, inner).map(move |mut row| {
+                    if let Some(slot) = slot {
+                        row[slot] = expr.value(ctx, &row).map(|v| ctx.resolver.canon_term(&v));
+                    }
+                    row
+                }),
             )
         }
         Plan::Union(l, r) => Box::new(

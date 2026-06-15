@@ -8,6 +8,7 @@ pub mod bgp;
 pub mod dict;
 pub mod dictionary;
 pub mod file;
+pub mod geo;
 pub mod header;
 pub mod index;
 pub mod ingest;
@@ -19,8 +20,10 @@ pub mod reach;
 pub mod reader;
 pub mod reason;
 mod row;
+pub mod schema_pyramid;
 pub mod shacl;
 pub mod sparql;
+pub mod terms;
 pub mod tiling;
 pub mod triples;
 pub mod varint;
@@ -29,19 +32,23 @@ pub use bgp::{eval_bgp, Binding, PatternTerm, TriplePattern};
 pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 pub use file::{
-    build_pyramid_meta, schema_classes, schema_summary, verify, write_dataset,
-    write_dataset_with_metadata, write_file, ByteRange, LayoutSegment, Rete, SummaryView,
-    TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
+    build_pyramid_meta, read_metadata_ranged, read_schema_coherence_ranged, schema_classes,
+    schema_coherence, schema_summary, verify, write_dataset, write_dataset_with_metadata,
+    write_file, ByteRange, LayoutSegment, Rete, SummaryView, TermTriple, TripleProvenance,
+    CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
-pub use header::{Header, HeaderError, MAGIC, VERSION};
+pub use header::{Header, HeaderError, HEADER_LEN, MAGIC, VERSION};
 pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern};
-pub use meta::PyramidMeta;
+pub use meta::{
+    ClassNode, ClassRelation, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta,
+};
 pub use pyramid::{
     build_dendrogram, louvain_one_level, project_graph, Dendrogram, Graph, Partition,
 };
 pub use reach::{batch_reach_serial, build_adjacency, reach_one};
 pub use reader::{CountingReader, RangeReader, SliceReader};
-pub use reason::{reason, Inconsistency, Reasoning};
+pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};
+pub use schema_pyramid::build_schema_pyramid;
 pub use shacl::{
     validate_shacl, DataGraph, Severity, ShaclError, ShaclShapes, ValidationReport,
     ValidationResult,
@@ -52,5 +59,6 @@ pub use sparql::{
     GraphTarget, GroupSpec, Op, PathAst, Plan, QueryOutput, Rep, RoutedTriplePattern, Select,
     SparqlError, SummaryQueryShape,
 };
+pub use terms::{NodeId, ObjectId, PredicateId, SubjectId, TermToken};
 pub use tiling::{choose_round_for_budget, summarize, tile_by_community, SuperEdge, Tile};
 pub use triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder, ZoneMap};

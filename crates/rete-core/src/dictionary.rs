@@ -10,6 +10,7 @@
 use std::collections::BTreeSet;
 
 use crate::dict::{ChunkedSection, DictSectionBuilder};
+use crate::terms::{NodeId, ObjectId, PredicateId, SubjectId};
 
 /// Builds a [`Dictionary`] from observed `(subject, predicate, object)` terms.
 #[derive(Default)]
@@ -185,7 +186,7 @@ impl Dictionary {
 
     /// Unified node ID for a subject-role ID. Shared and subject-only IDs are
     /// already contiguous (`1..=S+Su`), so this is just `sid - 1`.
-    pub fn subject_node(&self, sid: u32) -> u32 {
+    pub fn subject_node(&self, sid: SubjectId) -> NodeId {
         // saturating_sub: a corrupt block may carry id 0; valid ids are ≥1 so this
         // is identical for well-formed files but never underflow-panics.
         sid.saturating_sub(1)
@@ -193,7 +194,7 @@ impl Dictionary {
 
     /// Unified node ID for an object-role ID: shared stay at `oid-1`, object-only
     /// IDs are shifted past the subject-only block.
-    pub fn object_node(&self, oid: u32) -> u32 {
+    pub fn object_node(&self, oid: ObjectId) -> NodeId {
         if oid <= self.shared_len {
             oid.saturating_sub(1)
         } else {
@@ -202,7 +203,7 @@ impl Dictionary {
     }
 
     /// Resolve a unified node ID back to its term.
-    pub fn node_term(&self, node: u32) -> Option<String> {
+    pub fn node_term(&self, node: NodeId) -> Option<String> {
         let su = self.subject_only_count();
         if node < self.shared_len + su {
             self.subject_term(node + 1)
@@ -212,7 +213,7 @@ impl Dictionary {
     }
 
     /// Unified node ID for a term, resolving via subject role then object role.
-    pub fn node_of_term(&self, term: &str) -> Option<u32> {
+    pub fn node_of_term(&self, term: &str) -> Option<NodeId> {
         if let Some(sid) = self.subject_id(term) {
             return Some(self.subject_node(sid));
         }
@@ -221,7 +222,7 @@ impl Dictionary {
 
     /// Subject-role ID of a node, or `None` if the node never appears as a
     /// subject (an object-only term).
-    pub fn node_as_subject_id(&self, node: u32) -> Option<u32> {
+    pub fn node_as_subject_id(&self, node: NodeId) -> Option<SubjectId> {
         if node < self.shared_len + self.subject_only_count() {
             Some(node + 1)
         } else {
@@ -231,7 +232,7 @@ impl Dictionary {
 
     /// Object-role ID of a node, or `None` if the node never appears as an
     /// object (a subject-only term).
-    pub fn node_as_object_id(&self, node: u32) -> Option<u32> {
+    pub fn node_as_object_id(&self, node: NodeId) -> Option<ObjectId> {
         let (s, su) = (self.shared_len, self.subject_only_count());
         if node < s {
             Some(node + 1) // shared
@@ -245,7 +246,7 @@ impl Dictionary {
     // --- term -> id -------------------------------------------------------
 
     /// Subject-role ID for `term`: shared `1..=S`, else subject-only `S+1..`.
-    pub fn subject_id(&self, term: &str) -> Option<u32> {
+    pub fn subject_id(&self, term: &str) -> Option<SubjectId> {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
@@ -253,7 +254,7 @@ impl Dictionary {
     }
 
     /// Object-role ID for `term`: shared `1..=S`, else object-only `S+1..`.
-    pub fn object_id(&self, term: &str) -> Option<u32> {
+    pub fn object_id(&self, term: &str) -> Option<ObjectId> {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
@@ -261,13 +262,13 @@ impl Dictionary {
     }
 
     /// Predicate ID for `term` (independent space).
-    pub fn predicate_id(&self, term: &str) -> Option<u32> {
+    pub fn predicate_id(&self, term: &str) -> Option<PredicateId> {
         self.sections[3].id(term)
     }
 
     // --- id -> term -------------------------------------------------------
 
-    pub fn subject_term(&self, id: u32) -> Option<String> {
+    pub fn subject_term(&self, id: SubjectId) -> Option<String> {
         if id <= self.shared_len {
             self.sections[0].term(id)
         } else {
@@ -275,7 +276,7 @@ impl Dictionary {
         }
     }
 
-    pub fn object_term(&self, id: u32) -> Option<String> {
+    pub fn object_term(&self, id: ObjectId) -> Option<String> {
         if id <= self.shared_len {
             self.sections[0].term(id)
         } else {
@@ -283,13 +284,13 @@ impl Dictionary {
         }
     }
 
-    pub fn predicate_term(&self, id: u32) -> Option<String> {
+    pub fn predicate_term(&self, id: PredicateId) -> Option<String> {
         self.sections[3].term(id)
     }
 
     /// Encode a `(s, p, o)` term triple to its `(subject_id, predicate_id,
     /// object_id)`. `None` if any term is unknown.
-    pub fn encode(&self, s: &str, p: &str, o: &str) -> Option<(u32, u32, u32)> {
+    pub fn encode(&self, s: &str, p: &str, o: &str) -> Option<(SubjectId, PredicateId, ObjectId)> {
         Some((
             self.subject_id(s)?,
             self.predicate_id(p)?,
