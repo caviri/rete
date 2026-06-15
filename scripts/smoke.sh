@@ -200,9 +200,9 @@ check "reason infers"   "inferred [0-9]+ new"          -- $B reason "$T/coherent
 # wrap in `; true` to keep the smoke script going.
 $B build "$ROOT/examples/causal.nt" -o "$T/causal.rete" >/dev/null
 check "reason disjoint" "disjoint" -- bash -c "$B reason '$T/causal.rete' ; true"
-# Materialization composes the transitive :causes chain (a → b → c ⇒ a causes c) —
-# the entailment side of the same causal-coherence demo the wasm client checks.
-check "reason causal transitive" "ex/a>.*ex/causes>.*ex/c" -- bash -c "$B reason '$T/causal.rete' --materialize ; true"
+# Materialization composes the transitive :causes chain (Smoking → ... → Death ⇒
+# Smoking causes Death) — the entailment side of the same causal-coherence demo.
+check "reason causal transitive" "ex/Smoking>.*ex/causes>.*ex/Death" -- bash -c "$B reason '$T/causal.rete' --materialize ; true"
 # Build-time stamp: --reason embeds the verdict in the card (no abort on
 # incoherence); --verify-card re-checks it; --check is the terse CI gate.
 $B build "$ROOT/examples/causal.nt" -o "$T/causal-stamped.rete" --reason >/dev/null
