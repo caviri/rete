@@ -2957,6 +2957,9 @@ window.RETE_PLAYGROUND_CATALOG = {
       key: "wikidata",
       kind: "remote-lazy",
       url: "https://katospiegel-rete.hf.space/data/wikidata-1GB/wikidata.rete?token=sfdbgf1094by21hd128ru39802",
+      // Wikidata types entities with "instance of" (wdt:P31), NOT rdf:type — tell
+      // the Explore tab so it groups entities into tables by their real classes.
+      typePredicate: "<http://www.wikidata.org/prop/direct/P31>",
       label: "wikidata-1GB.rete - a real 1 GB Wikidata graph (remote, lazy)",
       description: "A real ~1.04 GB slice of Wikidata, queried entirely in the browser over HTTP range requests - the point is that a GIGABYTE-scale knowledge graph stays interactive because a selective SPARQL query only faults in the bytes it needs (a typical query reads ~40 MB of the 1.04 GB, never the whole file). Holds both PLACES (e.g. wd:Q100001 Bemelen, with multilingual schema:description) and PEOPLE (wd:Q5 humans with wdt:P106 occupation, wdt:P569 birth date, wdt:P737 influenced-by). Entity/property IRIs stay as wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. Use bound subjects/objects and occupation intersections for snappy reads; avoid full scans. CC0 (Wikidata). See also the dedicated 100 MB / 1 GB explorer."
     },
@@ -2998,7 +3001,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     {"key": "opencitations", "label": "opencitations.rete - a citation neighborhood", "description": "A citation neighbourhood from OpenCitations (CC0) around a seed paper: cito:cites edges plus dct:title / dct:date / dct:creator (foaf:name) / dct:publisher bibliographic metadata. Distinct from the small AlphaFold sample already in the catalog."},
     {"key": "orkg", "label": "orkg.rete - research contributions", "description": "A slice of the Open Research Knowledge Graph (CC-BY): papers (orkg:Paper) and their structured contributions (orkg:Contribution), research problems, methods and results, with rdfs:labels - scholarly knowledge as data, not prose."},
     {"key": "ohm-full", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/ohm-full.rete?token=sfdbgf1094by21hd128ru39802", "label": "ohm-full.rete - all of OpenHistoricalMap (remote, lazy)", "description": "The ENTIRE current OpenHistoricalMap planet (daily snapshot, 2026-06-14) as one range-queried .rete: 1,021,295 named + dated + geolocated historical features (~6.1M triples, 98 MB), queried lazily over HTTP - only the dictionary chunks and index tiles each query touches are fetched, never the whole file. Each feature is openhistoricalmap.org/{node,way,relation}/<id> with rdfs:label, ex:startYear/ex:endYear (signed integers, -10000..2100; 2100 = still present) and GeoSPARQL geometry (176k points, 690k lines, 155k polygons; admin boundaries assembled from multipolygon/boundary relations, simplified to ~50 m). Built from planet.openhistoricalmap.org with PyOsmium (scripts/fetch_ohm_planet.sh). CC0 1.0 - credit OpenHistoricalMap contributors. Pick selective shapes (a bound subject, a name, a point-in-polygon) for snappy lazy reads."},
-    {"key": "wikidata-100mb", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/wikidata-100MB/wikidata.rete?token=sfdbgf1094by21hd128ru39802", "label": "wikidata-100MB.rete - a real 100 MB Wikidata slice (remote, lazy)", "description": "A real ~104 MB slice of Wikidata, queried lazily over HTTP range requests straight from a Hugging Face bucket - the browser fetches only the dictionary chunks and index tiles each query touches (a typical selective query reads ~10 MB of the 104 MB), never the whole file. People (wd:Q5 humans) carry rdfs:label (multilingual), occupation (wdt:P106 -> e.g. physicist Q169470, philosopher Q4964182, writer Q36180, politician Q82955), date of birth (wdt:P569), place of birth (wdt:P19), citizenship (wdt:P27) and 'influenced by' (wdt:P737). Entity/property IRIs stay as wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. Pick SELECTIVE shapes (a bound subject/object, an occupation intersection) for snappy reads; aggregates over a whole predicate scan more. CC0 (Wikidata). The 1 GB version (key: wikidata) is the same idea at 10x the data."}
+    {"key": "wikidata-100mb", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/wikidata-100MB/wikidata.rete?token=sfdbgf1094by21hd128ru39802", "typePredicate": "<http://www.wikidata.org/prop/direct/P31>", "label": "wikidata-100MB.rete - a real 100 MB Wikidata slice (remote, lazy)", "description": "A real ~104 MB slice of Wikidata, queried lazily over HTTP range requests straight from a Hugging Face bucket - the browser fetches only the dictionary chunks and index tiles each query touches (a typical selective query reads ~10 MB of the 104 MB), never the whole file. People (wd:Q5 humans) carry rdfs:label (multilingual), occupation (wdt:P106 -> e.g. physicist Q169470, philosopher Q4964182, writer Q36180, politician Q82955), date of birth (wdt:P569), place of birth (wdt:P19), citizenship (wdt:P27) and 'influenced by' (wdt:P737). Entity/property IRIs stay as wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. Pick SELECTIVE shapes (a bound subject/object, an occupation intersection) for snappy reads; aggregates over a whole predicate scan more. CC0 (Wikidata). The 1 GB version (key: wikidata) is the same idea at 10x the data."}
   ],
   examples: {
     "wikidata-100mb": [
@@ -4429,16 +4432,41 @@ ex:ApplicationDependencyShape
     renderLayout();
   }
 
+  // The predicate this dataset uses for typing — rdf:type by default, but some
+  // graphs use another (e.g. Wikidata's "instance of" = wdt:P31). Declared per
+  // dataset in the catalog as `typePredicate`.
+  function currentTypePredicate() {
+    const d = datasetInfo(state.dataset);
+    return (d && d.typePredicate) || RDF_TYPE;
+  }
+
+  // Top classes for the Explore tab. For rdf:type we reuse the (fast, single-pass)
+  // schema summary; for a custom type predicate we derive the top classes live via
+  // SPARQL — a scan, heavier on big files, but the only way without a baked schema
+  // that already knows the predicate.
+  function exploreClassList() {
+    const tp = currentTypePredicate();
+    if (tp === RDF_TYPE) return ((state.schema && state.schema.classes) || []).slice(0, 12);
+    try {
+      const res = JSON.parse(W().query(state.bytes,
+        `SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s ${tp} ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 12`, "table"));
+      return (res.rows || []).map((r) => [r.c, (String(r.n).match(/\d+/) || ["?"])[0]]);
+    } catch (e) { return []; }
+  }
+
   function renderExploreClasses() {
-    const classes = ((state.schema && state.schema.classes) || []).slice(0, 12);
+    const tp = currentTypePredicate();
+    const classes = exploreClassList();
     if (!classes.length) {
+      const via = tp === RDF_TYPE ? "rdf:type" : shorten(localName(tp), 24);
       $("exploreClasses").innerHTML =
-        `<p class="microcopy">No rdf:type classes in this graph — showing raw triples.</p>`;
+        `<p class="microcopy">No ${esc(via)} classes in this graph — showing raw triples.</p>`;
       const res = JSON.parse(W().query(state.bytes, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 300", "table"));
       $("exploreTable").innerHTML = renderTable(res.vars || [], res.rows || []);
       return;
     }
-    if (!state.exploreClass) state.exploreClass = classes[0][0];
+    if (!state.exploreClass || !classes.some(([c]) => c === state.exploreClass))
+      state.exploreClass = classes[0][0];
     $("exploreClasses").innerHTML = classes.map(([c, n]) =>
       `<button type="button" data-cls="${esc(c)}" class="${c === state.exploreClass ? "active" : ""}">` +
         `${esc(shorten(localName(c), 22))} (${esc(n)})` +
@@ -4455,10 +4483,11 @@ ex:ApplicationDependencyShape
   // Pivot one class's instances into an entity table: rows = entities,
   // columns = their most frequent properties (multi-values joined).
   function renderEntityTable(cls) {
+    const tp = currentTypePredicate();
     let res;
     try {
       res = JSON.parse(W().query(state.bytes,
-        `SELECT ?s ?p ?o WHERE { ?s ${RDF_TYPE} ${cls} . ?s ?p ?o } LIMIT 6000`, "table"));
+        `SELECT ?s ?p ?o WHERE { ?s ${tp} ${cls} . ?s ?p ?o } LIMIT 6000`, "table"));
     } catch (e) {
       $("exploreTable").innerHTML = `<div class="error-box">${esc(String(e))}</div>`;
       return;
@@ -4466,7 +4495,7 @@ ex:ApplicationDependencyShape
     const entities = new Map();
     const predCount = new Map();
     for (const row of res.rows || []) {
-      if (row.p === RDF_TYPE) continue;
+      if (row.p === tp) continue;
       if (!entities.has(row.s)) entities.set(row.s, new Map());
       const props = entities.get(row.s);
       if (!props.has(row.p)) props.set(row.p, []);

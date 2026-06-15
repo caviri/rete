@@ -622,16 +622,41 @@
     renderLayout();
   }
 
+  // The predicate this dataset uses for typing — rdf:type by default, but some
+  // graphs use another (e.g. Wikidata's "instance of" = wdt:P31). Declared per
+  // dataset in the catalog as `typePredicate`.
+  function currentTypePredicate() {
+    const d = datasetInfo(state.dataset);
+    return (d && d.typePredicate) || RDF_TYPE;
+  }
+
+  // Top classes for the Explore tab. For rdf:type we reuse the (fast, single-pass)
+  // schema summary; for a custom type predicate we derive the top classes live via
+  // SPARQL — a scan, heavier on big files, but the only way without a baked schema
+  // that already knows the predicate.
+  function exploreClassList() {
+    const tp = currentTypePredicate();
+    if (tp === RDF_TYPE) return ((state.schema && state.schema.classes) || []).slice(0, 12);
+    try {
+      const res = JSON.parse(W().query(state.bytes,
+        `SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s ${tp} ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 12`, "table"));
+      return (res.rows || []).map((r) => [r.c, (String(r.n).match(/\d+/) || ["?"])[0]]);
+    } catch (e) { return []; }
+  }
+
   function renderExploreClasses() {
-    const classes = ((state.schema && state.schema.classes) || []).slice(0, 12);
+    const tp = currentTypePredicate();
+    const classes = exploreClassList();
     if (!classes.length) {
+      const via = tp === RDF_TYPE ? "rdf:type" : shorten(localName(tp), 24);
       $("exploreClasses").innerHTML =
-        `<p class="microcopy">No rdf:type classes in this graph — showing raw triples.</p>`;
+        `<p class="microcopy">No ${esc(via)} classes in this graph — showing raw triples.</p>`;
       const res = JSON.parse(W().query(state.bytes, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 300", "table"));
       $("exploreTable").innerHTML = renderTable(res.vars || [], res.rows || []);
       return;
     }
-    if (!state.exploreClass) state.exploreClass = classes[0][0];
+    if (!state.exploreClass || !classes.some(([c]) => c === state.exploreClass))
+      state.exploreClass = classes[0][0];
     $("exploreClasses").innerHTML = classes.map(([c, n]) =>
       `<button type="button" data-cls="${esc(c)}" class="${c === state.exploreClass ? "active" : ""}">` +
         `${esc(shorten(localName(c), 22))} (${esc(n)})` +
@@ -648,10 +673,11 @@
   // Pivot one class's instances into an entity table: rows = entities,
   // columns = their most frequent properties (multi-values joined).
   function renderEntityTable(cls) {
+    const tp = currentTypePredicate();
     let res;
     try {
       res = JSON.parse(W().query(state.bytes,
-        `SELECT ?s ?p ?o WHERE { ?s ${RDF_TYPE} ${cls} . ?s ?p ?o } LIMIT 6000`, "table"));
+        `SELECT ?s ?p ?o WHERE { ?s ${tp} ${cls} . ?s ?p ?o } LIMIT 6000`, "table"));
     } catch (e) {
       $("exploreTable").innerHTML = `<div class="error-box">${esc(String(e))}</div>`;
       return;
@@ -659,7 +685,7 @@
     const entities = new Map();
     const predCount = new Map();
     for (const row of res.rows || []) {
-      if (row.p === RDF_TYPE) continue;
+      if (row.p === tp) continue;
       if (!entities.has(row.s)) entities.set(row.s, new Map());
       const props = entities.get(row.s);
       if (!props.has(row.p)) props.set(row.p, []);
