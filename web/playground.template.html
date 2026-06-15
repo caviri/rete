@@ -25,7 +25,7 @@ __PLAYGROUND_CSS__
     </div>
 
     <div class="top-actions">
-      <button id="openSource" type="button" class="secondary">Change source…</button>
+      <button id="openSource" type="button" class="secondary" title="Browse all datasets — what each one is, and its source">Datasets…</button>
       <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
@@ -327,43 +327,43 @@ __PLAYGROUND_CSS__
   <div id="sourceModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sourceModalTitle">
     <div class="modal-card">
       <div class="modal-head">
-        <h3 id="sourceModalTitle">Choose a data source</h3>
+        <h3 id="sourceModalTitle">Datasets</h3>
         <button id="sourceModalClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
-      <div class="source-choice">
-        <h4>Bundled datasets</h4>
-        <p class="microcopy">Small example graphs embedded in this page — load instantly, query in memory.</p>
-        <div id="sourceBundled" class="filter-row"></div>
-      </div>
-      <div class="source-choice">
-        <h4>Local file</h4>
-        <p class="microcopy">Drop or pick a <code>.rete</code> file — it never leaves your browser.</p>
-        <label class="file-zone" id="dropZone">
-          <input id="fileInput" type="file" accept=".rete,application/octet-stream" />
-          <span>Drop a .rete file here, or click to choose</span>
-        </label>
-      </div>
-      <div class="source-choice">
-        <h4>Remote .rete (lazy, over HTTP range)</h4>
-        <p class="microcopy">Connect to a <code>.rete</code> URL and query it <strong>without downloading it</strong> —
-          a Web Worker range-fetches only the dictionary chunks and index tiles each query touches
-          (the same trick DuckDB uses on remote Parquet). The host must allow CORS and honor
-          <code>Range</code> (S3, GitHub, Hugging Face all do). The graphs and their
-          companion Parquet / DuckDB / SQLite live in a
-          <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs" target="_blank" rel="noopener">Hugging Face bucket</a>,
-          served with CORS + Range by an <a href="https://katospiegel-rete.hf.space/" target="_blank" rel="noopener">HF&nbsp;Space</a>;
-          explore the <a href="explore-100mb.html?dataset=wikidata-100MB">100&nbsp;MB</a> or
-          <a href="explore-100mb.html?dataset=wikidata-1GB">1&nbsp;GB</a> tier side by side in the lazy explorer.</p>
-        <div class="url-loader">
-          <input id="remoteUrl" type="text" spellcheck="false"
-            placeholder="https://…/graph.rete"
-            value="https://katospiegel-rete.hf.space/data/wikidata-1GB/wikidata.rete" />
-          <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
-            <button id="remoteConnect" type="button">Connect (lazy)</button>
-            <button id="urlLoad" type="button" class="secondary" title="Download the whole file into memory instead">Download fully</button>
+      <p class="microcopy">Each dataset carries its own <b>source</b>. <b>Bundled</b> graphs are
+        embedded in this page and load into memory; <b>Remote</b> ones are queried <b>lazily over
+        HTTP range</b> from a <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs" target="_blank" rel="noopener">Hugging Face bucket</a>
+        (served with CORS + Range by an <a href="https://katospiegel-rete.hf.space/" target="_blank" rel="noopener">HF&nbsp;Space</a>) —
+        only the bytes a query touches are fetched. Pick one to load it.</p>
+      <div id="datasetList" class="ds-list"></div>
+      <details class="source-advanced">
+        <summary>Advanced — load your own data</summary>
+        <div class="source-choice" style="border-top:0;padding-top:10px">
+          <h4>Local file</h4>
+          <p class="microcopy">Drop or pick a <code>.rete</code> file — it never leaves your browser.</p>
+          <label class="file-zone" id="dropZone">
+            <input id="fileInput" type="file" accept=".rete,application/octet-stream" />
+            <span>Drop a .rete file here, or click to choose</span>
+          </label>
+        </div>
+        <div class="source-choice">
+          <h4>Remote <code>.rete</code> by URL (lazy, over HTTP range)</h4>
+          <p class="microcopy">Connect to any <code>.rete</code> URL and query it <strong>without
+            downloading it</strong> — the host must allow CORS and honor <code>Range</code> (S3,
+            GitHub, Hugging Face all do). Compare the
+            <a href="explore-100mb.html?dataset=wikidata-100MB">100&nbsp;MB</a> /
+            <a href="explore-100mb.html?dataset=wikidata-1GB">1&nbsp;GB</a> tiers in the lazy explorer.</p>
+          <div class="url-loader">
+            <input id="remoteUrl" type="text" spellcheck="false"
+              placeholder="https://…/graph.rete"
+              value="https://katospiegel-rete.hf.space/data/wikidata-1GB/wikidata.rete" />
+            <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+              <button id="remoteConnect" type="button">Connect (lazy)</button>
+              <button id="urlLoad" type="button" class="secondary" title="Download the whole file into memory instead">Download fully</button>
+            </div>
           </div>
         </div>
-      </div>
+      </details>
     </div>
   </div>
 

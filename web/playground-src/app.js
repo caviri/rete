@@ -515,12 +515,35 @@
     }
   }
 
+  // The "Datasets" browser: one card per catalog dataset, with its description
+  // and a source badge (the source is part of the dataset). Loading a card calls
+  // selectDataset, which picks the right source — bundled→memory, remote→lazy.
   function openSource() {
-    $("sourceBundled").innerHTML = CATALOG.datasets.map((d) =>
-      `<button type="button" data-ds="${esc(d.key)}" class="${!state.remote && d.key === state.dataset ? "active" : ""}">${esc(d.label.split(" - ")[0])}</button>`
-    ).join("");
-    $$("#sourceBundled [data-ds]").forEach((btn) => {
-      btn.onclick = () => { loadDataset(btn.dataset.ds); closeSource(); };
+    $("datasetList").innerHTML = CATALOG.datasets.map((d) => {
+      const remote = d.kind === "remote-lazy";
+      const m = (d.description || "").match(/~?\s*([\d.]+\s*[MG]B)\b/);
+      const size = m ? " · " + m[1].replace(/\s+/g, "") : "";
+      const badge = remote
+        ? `<span class="ds-badge remote">🛰 Remote · lazy${esc(size)}</span>`
+        : `<span class="ds-badge bundled">📦 Bundled · in page</span>`;
+      const active = d.key === state.dataset;
+      return `<div class="ds-card${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
+        `<div class="ds-card-head"><b>${esc(d.label.split(" - ")[0])}</b>${badge}</div>` +
+        `<p class="ds-card-desc">${esc(d.description || "(no description)")}</p>` +
+        `<div class="ds-card-foot">` +
+          `<button type="button" class="ds-load" data-ds="${esc(d.key)}">${active ? "Reload" : "Load"}</button>` +
+          `<button type="button" class="ds-more" aria-label="Toggle full description">more</button>` +
+        `</div></div>`;
+    }).join("");
+    $$("#datasetList .ds-load").forEach((btn) => {
+      btn.onclick = () => { selectDataset(btn.dataset.ds); closeSource(); };
+    });
+    $$("#datasetList .ds-more").forEach((btn) => {
+      btn.onclick = () => {
+        const card = btn.closest(".ds-card");
+        const open = card.classList.toggle("expanded");
+        btn.textContent = open ? "less" : "more";
+      };
     });
     $("sourceModal").classList.remove("hidden");
   }

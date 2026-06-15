@@ -1080,6 +1080,85 @@ pre {
   color: var(--accent-dark);
 }
 
+/* Dataset browser (the "Datasets" modal): one card per dataset, with its
+   description and a source badge — the source is part of the dataset. */
+.ds-list {
+  display: grid;
+  gap: 9px;
+  margin-top: 8px;
+}
+.ds-card {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: var(--surface);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.ds-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ds-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ds-card-head b {
+  font-size: 13.5px;
+}
+.ds-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.ds-badge.bundled {
+  background: #eef3ff;
+  color: #1b3a73;
+}
+.ds-badge.remote {
+  background: #e7f7ee;
+  color: #0f6b3a;
+}
+.ds-card-desc {
+  margin: 6px 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  max-height: 4.6em;
+  overflow: hidden;
+}
+.ds-card.expanded .ds-card-desc {
+  max-height: none;
+}
+.ds-card-foot {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.ds-more {
+  background: none;
+  border: 0;
+  color: var(--accent-dark);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+.source-advanced {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.source-advanced > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent-dark);
+}
+
 .strategy-list dt {
   margin-top: 12px;
   font-weight: 800;

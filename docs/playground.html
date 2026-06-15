@@ -1087,6 +1087,85 @@ pre {
   color: var(--accent-dark);
 }
 
+/* Dataset browser (the "Datasets" modal): one card per dataset, with its
+   description and a source badge — the source is part of the dataset. */
+.ds-list {
+  display: grid;
+  gap: 9px;
+  margin-top: 8px;
+}
+.ds-card {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: var(--surface);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.ds-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ds-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ds-card-head b {
+  font-size: 13.5px;
+}
+.ds-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.ds-badge.bundled {
+  background: #eef3ff;
+  color: #1b3a73;
+}
+.ds-badge.remote {
+  background: #e7f7ee;
+  color: #0f6b3a;
+}
+.ds-card-desc {
+  margin: 6px 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  max-height: 4.6em;
+  overflow: hidden;
+}
+.ds-card.expanded .ds-card-desc {
+  max-height: none;
+}
+.ds-card-foot {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.ds-more {
+  background: none;
+  border: 0;
+  color: var(--accent-dark);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+.source-advanced {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.source-advanced > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent-dark);
+}
+
 .strategy-list dt {
   margin-top: 12px;
   font-weight: 800;
@@ -1159,7 +1238,7 @@ pre {
     </div>
 
     <div class="top-actions">
-      <button id="openSource" type="button" class="secondary">Change source…</button>
+      <button id="openSource" type="button" class="secondary" title="Browse all datasets — what each one is, and its source">Datasets…</button>
       <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
@@ -1461,43 +1540,43 @@ pre {
   <div id="sourceModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sourceModalTitle">
     <div class="modal-card">
       <div class="modal-head">
-        <h3 id="sourceModalTitle">Choose a data source</h3>
+        <h3 id="sourceModalTitle">Datasets</h3>
         <button id="sourceModalClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
-      <div class="source-choice">
-        <h4>Bundled datasets</h4>
-        <p class="microcopy">Small example graphs embedded in this page — load instantly, query in memory.</p>
-        <div id="sourceBundled" class="filter-row"></div>
-      </div>
-      <div class="source-choice">
-        <h4>Local file</h4>
-        <p class="microcopy">Drop or pick a <code>.rete</code> file — it never leaves your browser.</p>
-        <label class="file-zone" id="dropZone">
-          <input id="fileInput" type="file" accept=".rete,application/octet-stream" />
-          <span>Drop a .rete file here, or click to choose</span>
-        </label>
-      </div>
-      <div class="source-choice">
-        <h4>Remote .rete (lazy, over HTTP range)</h4>
-        <p class="microcopy">Connect to a <code>.rete</code> URL and query it <strong>without downloading it</strong> —
-          a Web Worker range-fetches only the dictionary chunks and index tiles each query touches
-          (the same trick DuckDB uses on remote Parquet). The host must allow CORS and honor
-          <code>Range</code> (S3, GitHub, Hugging Face all do). The graphs and their
-          companion Parquet / DuckDB / SQLite live in a
-          <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs" target="_blank" rel="noopener">Hugging Face bucket</a>,
-          served with CORS + Range by an <a href="https://katospiegel-rete.hf.space/" target="_blank" rel="noopener">HF&nbsp;Space</a>;
-          explore the <a href="explore-100mb.html?dataset=wikidata-100MB">100&nbsp;MB</a> or
-          <a href="explore-100mb.html?dataset=wikidata-1GB">1&nbsp;GB</a> tier side by side in the lazy explorer.</p>
-        <div class="url-loader">
-          <input id="remoteUrl" type="text" spellcheck="false"
-            placeholder="https://…/graph.rete"
-            value="https://katospiegel-rete.hf.space/data/wikidata-1GB/wikidata.rete" />
-          <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
-            <button id="remoteConnect" type="button">Connect (lazy)</button>
-            <button id="urlLoad" type="button" class="secondary" title="Download the whole file into memory instead">Download fully</button>
+      <p class="microcopy">Each dataset carries its own <b>source</b>. <b>Bundled</b> graphs are
+        embedded in this page and load into memory; <b>Remote</b> ones are queried <b>lazily over
+        HTTP range</b> from a <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs" target="_blank" rel="noopener">Hugging Face bucket</a>
+        (served with CORS + Range by an <a href="https://katospiegel-rete.hf.space/" target="_blank" rel="noopener">HF&nbsp;Space</a>) —
+        only the bytes a query touches are fetched. Pick one to load it.</p>
+      <div id="datasetList" class="ds-list"></div>
+      <details class="source-advanced">
+        <summary>Advanced — load your own data</summary>
+        <div class="source-choice" style="border-top:0;padding-top:10px">
+          <h4>Local file</h4>
+          <p class="microcopy">Drop or pick a <code>.rete</code> file — it never leaves your browser.</p>
+          <label class="file-zone" id="dropZone">
+            <input id="fileInput" type="file" accept=".rete,application/octet-stream" />
+            <span>Drop a .rete file here, or click to choose</span>
+          </label>
+        </div>
+        <div class="source-choice">
+          <h4>Remote <code>.rete</code> by URL (lazy, over HTTP range)</h4>
+          <p class="microcopy">Connect to any <code>.rete</code> URL and query it <strong>without
+            downloading it</strong> — the host must allow CORS and honor <code>Range</code> (S3,
+            GitHub, Hugging Face all do). Compare the
+            <a href="explore-100mb.html?dataset=wikidata-100MB">100&nbsp;MB</a> /
+            <a href="explore-100mb.html?dataset=wikidata-1GB">1&nbsp;GB</a> tiers in the lazy explorer.</p>
+          <div class="url-loader">
+            <input id="remoteUrl" type="text" spellcheck="false"
+              placeholder="https://…/graph.rete"
+              value="https://katospiegel-rete.hf.space/data/wikidata-1GB/wikidata.rete" />
+            <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+              <button id="remoteConnect" type="button">Connect (lazy)</button>
+              <button id="urlLoad" type="button" class="secondary" title="Download the whole file into memory instead">Download fully</button>
+            </div>
           </div>
         </div>
-      </div>
+      </details>
     </div>
   </div>
 
@@ -4346,12 +4425,35 @@ ex:ApplicationDependencyShape
     }
   }
 
+  // The "Datasets" browser: one card per catalog dataset, with its description
+  // and a source badge (the source is part of the dataset). Loading a card calls
+  // selectDataset, which picks the right source — bundled→memory, remote→lazy.
   function openSource() {
-    $("sourceBundled").innerHTML = CATALOG.datasets.map((d) =>
-      `<button type="button" data-ds="${esc(d.key)}" class="${!state.remote && d.key === state.dataset ? "active" : ""}">${esc(d.label.split(" - ")[0])}</button>`
-    ).join("");
-    $$("#sourceBundled [data-ds]").forEach((btn) => {
-      btn.onclick = () => { loadDataset(btn.dataset.ds); closeSource(); };
+    $("datasetList").innerHTML = CATALOG.datasets.map((d) => {
+      const remote = d.kind === "remote-lazy";
+      const m = (d.description || "").match(/~?\s*([\d.]+\s*[MG]B)\b/);
+      const size = m ? " · " + m[1].replace(/\s+/g, "") : "";
+      const badge = remote
+        ? `<span class="ds-badge remote">🛰 Remote · lazy${esc(size)}</span>`
+        : `<span class="ds-badge bundled">📦 Bundled · in page</span>`;
+      const active = d.key === state.dataset;
+      return `<div class="ds-card${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
+        `<div class="ds-card-head"><b>${esc(d.label.split(" - ")[0])}</b>${badge}</div>` +
+        `<p class="ds-card-desc">${esc(d.description || "(no description)")}</p>` +
+        `<div class="ds-card-foot">` +
+          `<button type="button" class="ds-load" data-ds="${esc(d.key)}">${active ? "Reload" : "Load"}</button>` +
+          `<button type="button" class="ds-more" aria-label="Toggle full description">more</button>` +
+        `</div></div>`;
+    }).join("");
+    $$("#datasetList .ds-load").forEach((btn) => {
+      btn.onclick = () => { selectDataset(btn.dataset.ds); closeSource(); };
+    });
+    $$("#datasetList .ds-more").forEach((btn) => {
+      btn.onclick = () => {
+        const card = btn.closest(".ds-card");
+        const open = card.classList.toggle("expanded");
+        btn.textContent = open ? "less" : "more";
+      };
     });
     $("sourceModal").classList.remove("hidden");
   }
