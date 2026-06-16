@@ -39,8 +39,8 @@ window.RETE_PLAYGROUND_CATALOG = {
     },
     {
       key: "causal",
-      label: "causal.rete - causal ontology with planted coherence defects",
-      description: "A tiny causal medical ontology for the Coherence tab. Schema-level (Tier-0): :Relapsed is a subclass of two owl:disjointWith classes (HealthyState, DiseaseState), so it is UNSATISFIABLE. Instance-level (full reasoner): patient :p is typed as both Healthy and Diseased - a disjoint-class clash. Plus a transitive :causes chain a->b->c->a (a cycle - find it with the SPARQL path ?x e:causes+ ?x). ~13 triples."
+      label: "causal.rete - cardiometabolic causal model (confounders, mediators, colliders, loops)",
+      description: "A cardiometabolic causal model: ~30 typed factors (risk factors, conditions, diseases, symptoms, outcomes, treatments) wired by a transitive :causes relation, plus a protective :reduces relation. Built so the Query examples discover causal structure - confounders (forks), mediators (chains), colliders (common effects), feedback loops (?x :causes+ ?x), and exogenous root causes. The SHACL examples check data quality (three planted defects). And the Coherence tab still proves the schema defect: :Relapsed is a subclass of two owl:disjointWith classes (HealthyState, DiseaseState) so it is UNSATISFIABLE, and patient :p is typed as both states. ~170 triples."
     },
     {
       key: "history",
@@ -71,7 +71,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "scholar-noisy":         { triples: 6671,      size: "50 KB",   license: "synthetic",            source: "" },
     "typed":                 { triples: 6,         size: "498 B",   license: "example",              source: "" },
     "deps":                  { triples: 13,        size: "610 B",   license: "example",              source: "" },
-    "causal":                { triples: 13,        size: "1.3 KB",  license: "example",              source: "" },
+    "causal":                { triples: 170,       size: "3.5 KB",  license: "example",              source: "" },
     "citations":             { triples: 539334,    size: "1.6 MB",  license: "CC0 + synthetic",      source: "https://opencitations.net" },
     "history":               { triples: 14430,     size: "1.5 MB",  license: "GPL-3.0",              source: "https://github.com/aourednik/historical-basemaps" },
     "linked-jazz":           { triples: 9466,      size: "97 KB",   license: "CC BY-SA 3.0",         source: "https://linkedjazz.org" },
@@ -91,6 +91,115 @@ window.RETE_PLAYGROUND_CATALOG = {
     "wikidata-100mb":        { triples: null,      size: "104 MB",  license: "CC0",                  source: "https://www.wikidata.org" },
   },
   examples: {
+    causal: [
+      {
+        family: "Summary",
+        label: "What's in the model",
+        view: "table",
+        tip: "Predicate totals: ~48 ex:causes edges, the protective ex:reduces relation, plus the rdf:type / label / attribute triples.",
+        q: `SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n)`
+      },
+      {
+        family: "Path",
+        label: "Everything that leads to a heart attack",
+        view: "graph",
+        tip: "ex:causes* gathers the whole upstream subgraph feeding a myocardial infarction - proximal disease and distal risk factors, drawn as a causal network.",
+        q: `PREFIX ex: <http://ex/>
+SELECT ?from ?to WHERE {
+  ?from ex:causes ?to .
+  ?to ex:causes* ex:MyocardialInfarction
+}`
+      },
+      {
+        family: "Path",
+        label: "Downstream effects of obesity",
+        view: "graph",
+        tip: "The forward closure from obesity. The metabolic feedback loop pulls obesity back into its own effects, so you'll see it reappear downstream.",
+        q: `PREFIX ex: <http://ex/>
+SELECT ?from ?to WHERE {
+  ?from ex:causes ?to .
+  ex:Obesity ex:causes* ?from
+}`
+      },
+      {
+        family: "Path",
+        label: "Feedback loops (vicious cycles)",
+        view: "table",
+        tip: "A factor that is among its own causes sits on a cycle: ex:causes+ ?x = ?x. Two loops light up - the metabolic loop (obesity / inflammation / insulin resistance) and the stress / sleep loop.",
+        q: `PREFIX ex: <http://ex/>
+SELECT DISTINCT ?factor WHERE {
+  ?factor ex:causes+ ?factor
+} ORDER BY ?factor`
+      },
+      {
+        family: "Select",
+        label: "Confounders (a common cause of two factors)",
+        view: "table",
+        tip: "A confounder is one factor that causes two others (Z -> X, Z -> Y). Poverty drives smoking, poor diet, inactivity and stress at once; aging drives several vascular conditions.",
+        q: `PREFIX ex: <http://ex/>
+SELECT ?confounder ?effectA ?effectB WHERE {
+  ?confounder ex:causes ?effectA .
+  ?confounder ex:causes ?effectB .
+  FILTER(STR(?effectA) < STR(?effectB))
+} ORDER BY ?confounder`
+      },
+      {
+        family: "Select",
+        label: "Colliders (two causes, one effect)",
+        view: "table",
+        tip: "A collider is a common effect of two causes (X -> C <- Y) - conditioning on it can create spurious associations. Chest pain is reached by both coronary disease and anxiety.",
+        q: `PREFIX ex: <http://ex/>
+SELECT ?causeA ?causeB ?collider WHERE {
+  ?causeA ex:causes ?collider .
+  ?causeB ex:causes ?collider .
+  FILTER(STR(?causeA) < STR(?causeB))
+} ORDER BY ?collider`
+      },
+      {
+        family: "Path",
+        label: "How obesity leads to diabetes (mediators)",
+        view: "graph",
+        tip: "The subgraph that sits on a path from obesity to diabetes - the metabolic steps mediating the effect (and the loop they form).",
+        q: `PREFIX ex: <http://ex/>
+SELECT ?from ?to WHERE {
+  ?from ex:causes ?to .
+  ex:Obesity ex:causes* ?from .
+  ?to ex:causes* ex:Diabetes
+}`
+      },
+      {
+        family: "Aggregate",
+        label: "Biggest causal footprint",
+        view: "table",
+        tip: "Rank factors by how many distinct things they can ultimately influence (ex:causes+). Distal root causes like poverty top the list - small levers, wide reach.",
+        q: `PREFIX ex: <http://ex/>
+SELECT ?factor (COUNT(DISTINCT ?reached) AS ?reach) WHERE {
+  ?factor ex:causes+ ?reached
+} GROUP BY ?factor ORDER BY DESC(?reach) LIMIT 15`
+      },
+      {
+        family: "Select",
+        label: "What lowers the risk of a heart attack",
+        view: "graph",
+        tip: "ex:reduces is the protective relation. This finds interventions that lower a factor on a causal path to a heart attack - where treatment meets the disease pathway.",
+        q: `PREFIX ex: <http://ex/>
+SELECT DISTINCT ?treatment ?target WHERE {
+  ?target ex:causes+ ex:MyocardialInfarction .
+  ?treatment ex:reduces ?target
+} ORDER BY ?treatment`
+      },
+      {
+        family: "Select",
+        label: "Exogenous root causes",
+        view: "table",
+        tip: "Factors that cause something but that nothing in the model causes - the entry points for prevention. FILTER NOT EXISTS asks for no incoming ex:causes edge.",
+        q: `PREFIX ex: <http://ex/>
+SELECT DISTINCT ?root WHERE {
+  ?root ex:causes ?x .
+  FILTER NOT EXISTS { ?y ex:causes ?root }
+} ORDER BY ?root`
+      }
+    ],
     "wikidata-100mb": [
       {"family": "Select", "label": "Physicists who are also philosophers", "view": "graph", "tip": "An occupation intersection (wdt:P106 twice). Selective - the lazy reader faults in ~10 MB of the 104 MB file and returns scientist-philosophers like Ilya Prigogine and Marin Mersenne.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who WHERE {\n  ?p wdt:P106 wd:Q169470 ;   # physicist\n     wdt:P106 wd:Q4964182 ;  # philosopher\n     rdfs:label ?who .\n  FILTER(LANG(?who) = \"en\")\n} LIMIT 50"},
       {"family": "Select", "label": "People influenced by Plato", "view": "graph", "tip": "Bound-object star: everyone whose 'influenced by' (wdt:P737) points at Plato (wd:Q859). A bound term = a selective lazy read.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who WHERE {\n  ?p wdt:P737 wd:Q859 ;   # influenced by Plato\n     rdfs:label ?who .\n  FILTER(LANG(?who) = \"en\")\n} LIMIT 100"},
@@ -632,6 +741,71 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
     "orkg": [{"family": "Summary", "label": "What's in the graph", "view": "table", "tip": "Predicate totals across the ORKG model: papers, contributions, hasAuthors and the Pxx contribution properties.", "q": "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n) LIMIT 20"}, {"family": "Select", "label": "Papers", "view": "table", "tip": "Everything typed as an ORKG Paper, with its title.", "q": "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?title WHERE { ?p a <https://orkg.org/class/Paper> ; rdfs:label ?title } ORDER BY ?title LIMIT 100"}, {"family": "Aggregate", "label": "Node types in the graph", "view": "table", "tip": "Count subjects per rdf:type - papers vs contributions vs lists vs problems.", "q": "SELECT ?type (COUNT(?s) AS ?n) WHERE { ?s a ?type } GROUP BY ?type ORDER BY DESC(?n) LIMIT 20"}]
   },
   shacl: {
+    causal: [
+      {
+        label: "Causal links join factors",
+        tip: "Structural integrity: every subject and object of ex:causes must be a typed Factor (the subclass closure counts RiskFactor, Disease, Outcome ... as Factors). The model conforms.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+
+ex:CauseIsFactor a sh:NodeShape ;
+  sh:targetSubjectsOf ex:causes ;
+  sh:class ex:Factor .
+
+ex:EffectIsFactor a sh:NodeShape ;
+  sh:targetObjectsOf ex:causes ;
+  sh:class ex:Factor .`
+      },
+      {
+        label: "Risk factors are well described",
+        tip: "Three planted data defects: a missing ex:modifiable flag (Poverty), a prevalence outside [0,1] (Stress = 1.4), and an off-list evidence value (Air pollution = ex:rumored).",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:RiskFactorShape a sh:NodeShape ;
+  sh:targetClass ex:RiskFactor ;
+  sh:property [
+    sh:path ex:modifiable ; sh:minCount 1 ; sh:datatype xsd:boolean ;
+    sh:message "Risk factor must state whether it is modifiable."
+  ] ;
+  sh:property [
+    sh:path ex:prevalence ; sh:datatype xsd:decimal ;
+    sh:minInclusive 0 ; sh:maxInclusive 1 ;
+    sh:message "Prevalence must be a probability in [0,1]."
+  ] ;
+  sh:property [
+    sh:path ex:evidence ; sh:minCount 1 ;
+    sh:in ( ex:established ex:probable ex:hypothesized ) ;
+    sh:message "Evidence must be established, probable or hypothesized."
+  ] .`
+      },
+      {
+        label: "A node is not both healthy and diseased",
+        tip: "The same disjoint-class clash the Coherence tab proves from the schema - here SHACL catches it on the individual: patient :p is typed as both states.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+
+ex:NotBothStatesShape a sh:NodeShape ;
+  sh:targetClass ex:DiseaseState ;
+  sh:not [ sh:class ex:HealthyState ] ;
+  sh:message "A node cannot be both a DiseaseState and a HealthyState." .`
+      },
+      {
+        label: "Every outcome has a cause",
+        tip: "An inverse-path check: every ex:Outcome must be reachable by at least one ex:causes edge. The model conforms - no orphan outcomes.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+
+ex:OutcomeHasCauseShape a sh:NodeShape ;
+  sh:targetClass ex:Outcome ;
+  sh:property [
+    sh:path [ sh:inversePath ex:causes ] ;
+    sh:minCount 1 ;
+    sh:message "Every outcome must be reachable by at least one ex:causes edge."
+  ] .`
+      }
+    ],
     scholar: [
       {
         label: "Paper integrity",
