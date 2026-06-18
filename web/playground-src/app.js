@@ -1453,13 +1453,31 @@
       `Check bound IRIs and prefixes, or relax a FILTER — the graph just has nothing for this pattern.</div>`;
   }
 
+  // Friendly table cell for an RDF term: strip the quotes + datatype IRI from a
+  // literal (keep the value), show a language tag compactly, drop the <> from an
+  // IRI. The full canonical term (with datatype) is kept on hover, so nothing is
+  // lost — `"113.149"^^<…#decimal>` renders as `113.149`, `"Bemelen"@en` as
+  // `Bemelen @en`, `<http://…/Q5>` as `http://…/Q5`.
+  const NUM_DT = /#(decimal|double|float|integer|int|long|short|byte|nonNegativeInteger|nonPositiveInteger|positiveInteger|negativeInteger|unsignedLong|unsignedInt|unsignedShort|unsignedByte)$/;
+  function prettyCell(raw) {
+    if (raw == null || raw === "") return `<td></td>`;
+    const t = parseTerm(raw);
+    if (t.iri) {
+      const disp = shorten(t.value, 96);
+      return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
+    }
+    const num = t.datatype && NUM_DT.test(t.datatype);
+    const lang = t.lang ? ` <span class="t-lang">@${esc(t.lang)}</span>` : "";
+    return `<td class="lit${num ? " num" : ""}" title="${esc(raw)}">${esc(shorten(t.value, 110))}${lang}</td>`;
+  }
+
   function renderTable(vars, rows) {
     if (!(rows || []).length) return emptyState("rows");
     const cap = 500;
     const shown = (rows || []).slice(0, cap);
     const head = `<tr>${(vars || []).map((v) => `<th>${esc(v)}</th>`).join("")}</tr>`;
     const rowHtmls = shown.map((row) =>
-      `<tr>${(vars || []).map((v) => `<td class="iri">${esc(shorten(row[v], 120))}</td>`).join("")}</tr>`);
+      `<tr>${(vars || []).map((v) => prettyCell(row[v])).join("")}</tr>`);
     const note = (rows || []).length > cap
       ? `<p class="microcopy">Showing first ${cap} of ${rows.length} rows.</p>`
       : "";
@@ -1471,7 +1489,7 @@
     const cap = 500;
     const shown = (triples || []).slice(0, cap);
     const rowHtmls = shown.map((t) =>
-      `<tr><td class="iri">${esc(shorten(t[0], 120))}</td><td class="iri">${esc(shorten(t[1], 120))}</td><td class="iri">${esc(shorten(t[2], 120))}</td></tr>`);
+      `<tr>${prettyCell(t[0])}${prettyCell(t[1])}${prettyCell(t[2])}</tr>`);
     const note = (triples || []).length > cap
       ? `<p class="microcopy">Showing first ${cap} of ${triples.length} triples.</p>`
       : "";

@@ -1768,3 +1768,8 @@ pre {
 .tlegend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 9px; font-size: 11px; color: var(--muted); }
 .tlegend .tcell { width: 13px; height: 13px; min-height: 0; aspect-ratio: auto; }
 .tleg-lab { margin: 0 3px; }
+
+/* Friendly RDF-term table cells (literals shown without the datatype IRI). */
+.t-lang { color: var(--muted); font-size: .82em; }
+td.num { font-variant-numeric: tabular-nums; }
+td.lit { color: var(--ink); }
