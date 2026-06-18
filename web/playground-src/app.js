@@ -575,7 +575,6 @@
       $("dsName").textContent = cn;
       setDatasetHeader(cn, "Custom graph loaded into the same in-browser engine.");
     }
-    updateOutputOptions();
   }
 
   function loadDataset(key) {
@@ -629,7 +628,6 @@
     $("dsDesc").textContent = info ? info.description : "Remote graph, queried lazily over HTTP range: " + url;
     setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
       info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.");
-    updateOutputOptions();
     renderExamples();
     closeSource();
     setMode("sparql");
@@ -762,30 +760,6 @@
       Provenance: !!CATALOG.provenance[key],
       Geo: exs.some((e) => e.family === "Geo") || exs.some((e) => /\bgeof:/.test(e.q || ""))
     };
-  }
-
-  // Does the dataset carry temporal data worth a Time plot? Inferred from its
-  // example queries referencing years / dates / known temporal predicates.
-  function datasetTemporal(key) {
-    const exs = CATALOG.examples[key] || [];
-    return exs.some((e) => /gYear|xsd:date|dateTime|startYear|endYear|\bP569\b|\bP571\b|\bP58[02]\b|\byear\b|FILTER\s*\([^)]*\b-?\d{3,4}\b/i.test(e.q || ""));
-  }
-
-  // Show the Map option only for geo datasets, Time only for temporal ones
-  // (geo datasets are usually temporal too). Reset to Table if the current pick
-  // is hidden by a dataset switch.
-  function updateOutputOptions() {
-    const key = state.dataset;
-    const geo = datasetSupports(key).Geo;
-    const time = datasetTemporal(key) || geo;
-    const setOpt = (val, on) => {
-      const o = document.querySelector(`#fmt option[value="${val}"]`);
-      if (o) { o.hidden = !on; o.disabled = !on; }
-    };
-    setOpt("map", geo);
-    setOpt("time", time);
-    const cur = $("fmt").value;
-    if ((cur === "map" && !geo) || (cur === "time" && !time)) setView("table");
   }
 
   // Tiny markdown for descriptions: **bold**, `code`, *italic* (input escaped).

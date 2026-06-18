@@ -108,8 +108,10 @@ Rules of thumb:
 - **Map, Time and Graph render the bindings of a `SELECT`**, so put the geometry /
   year / edge columns in your `SELECT` list. (`CONSTRUCT` also feeds Graph / TTL /
   JSON-LD directly.)
-- **Map** and **Time** only appear in the Output menu for datasets that actually
-  carry geospatial / temporal data.
+- **Map** and **Time** are available on **every** query (no per-dataset gating):
+  each detects its column in the actual result and renders, or shows a short note
+  if it's absent — so geometry or dates a query surfaces unexpectedly (e.g. from a
+  federated join, or data the dataset's examples never touch) still plot.
 - Run these views under the **Whole index** (or **Split by community**) strategy.
   **Progressive** answers only from the pyramid summary (counts and community
   structure), so it has no per-row geometry or dates to plot.

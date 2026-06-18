@@ -137,8 +137,8 @@ __PLAYGROUND_CSS__
             <select id="fmt" aria-label="Result output type">
               <option value="table">Table</option>
               <option value="graph">Graph</option>
-              <option value="map" data-cap="geo">Map</option>
-              <option value="time" data-cap="time">Time</option>
+              <option value="map">Map</option>
+              <option value="time">Time</option>
               <option value="ttl">TTL</option>
               <option value="jsonld">JSON-LD</option>
             </select>
@@ -470,10 +470,10 @@ __PLAYGROUND_CSS__
         <dd>Any <code>SELECT</code>, <code>ASK</code>, or <code>CONSTRUCT</code> — the default.</dd>
         <dt>Graph</dt>
         <dd>A <code>CONSTRUCT { ?a ?p ?b } …</code>, or a <code>SELECT</code> with <strong>≥&nbsp;2 variables</strong>: 2 vars draw <code>v1&nbsp;→&nbsp;v2</code> ("related") edges; <strong>3 vars</strong> are read as (subject, predicate, object). A one-variable select has nothing to connect.</dd>
-        <dt>Map <span class="ds-cap on">geo</span></dt>
-        <dd>A <code>SELECT</code> that binds a variable to a <code>geo:wktLiteral</code> — e.g. <code>?w</code> via <code>geo:hasGeometry/geo:asWKT ?w</code>. <code>POINT</code> / <code>LINESTRING</code> / <code>POLYGON</code> / <code>MULTI*</code> all plot in an offline equirectangular view (no tiles), auto-fit to the geometries; the first <em>non-geometry</em> column becomes each feature's hover label. Listed only for geospatial datasets.</dd>
-        <dt>Time <span class="ds-cap on">temporal</span></dt>
-        <dd>A <code>SELECT</code> that binds a variable to <code>xsd:gYear</code>, <code>xsd:date</code>/<code>xsd:dateTime</code>, or a plain <strong>year integer</strong> (e.g. <code>ex:year ?y</code>). Renders a GitHub-style multi-year heatmap — cell colour = <strong>number of items</strong> in that year/bucket, hover lists them; spans bucket automatically and negative years read as <strong>BCE</strong>. The other selected column(s) are the tooltip items. Listed only for temporal datasets.</dd>
+        <dt>Map <span class="ds-cap on">geometry</span></dt>
+        <dd>A <code>SELECT</code> that binds a variable to a <code>geo:wktLiteral</code> — e.g. <code>?w</code> via <code>geo:hasGeometry/geo:asWKT ?w</code>. <code>POINT</code> / <code>LINESTRING</code> / <code>POLYGON</code> / <code>MULTI*</code> all plot in an offline equirectangular view (no tiles), auto-fit to the geometries; the first <em>non-geometry</em> column becomes each feature's hover label. <strong>Available on any query</strong> — if the result has no geometry you'll get a short note (so a federated or unexpected geometry still maps).</dd>
+        <dt>Time <span class="ds-cap on">year / date</span></dt>
+        <dd>A <code>SELECT</code> that binds a variable to <code>xsd:gYear</code>, <code>xsd:date</code>/<code>xsd:dateTime</code>, or a plain <strong>year integer</strong> (e.g. <code>ex:year ?y</code>). Renders a GitHub-style multi-year heatmap — cell colour = <strong>number of items</strong> in that year/bucket, hover lists them; spans bucket automatically and negative years read as <strong>BCE</strong>. The other selected column(s) are the tooltip items. <strong>Available on any query</strong> — if the result has no dates you'll get a short note.</dd>
         <dt>TTL / JSON-LD</dt>
         <dd>A <code>CONSTRUCT</code> query — these serialise the constructed triples. A <code>SELECT</code> has no triples to serialise.</dd>
       </dl>
