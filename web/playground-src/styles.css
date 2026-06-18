@@ -314,6 +314,23 @@ section,
 
 .library-panel {
   align-content: start;
+  /* A grid item defaults to min-width:auto (= min-content). Without this, a long
+     unbreakable token in the sidebar (e.g. a full IRI in a history entry or
+     schema chip) makes this column wider than its track and overflow over the
+     workbench. Pin it to the track and let inner content wrap/break instead. */
+  min-width: 0;
+}
+
+.library-panel section {
+  min-width: 0;
+}
+
+.library-panel .inspector-block,
+.library-panel .history-item,
+.library-panel .history-item .mono,
+.library-panel .chip {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .library-panel section,
