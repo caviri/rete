@@ -5,7 +5,10 @@
 //! `CountingReader` and reports bytes fetched + range-request count. The on-disk
 //! variants live in `commands::query` / `commands::inspect`.
 
-use rete_core::{eval_query, CountingReader, Header, RangeReader, Rete, SummaryView, HEADER_LEN};
+use rete_core::{
+    eval_query, BlockCacheReader, CountingReader, Header, RangeReader, Rete, SummaryView,
+    DEFAULT_BLOCK, HEADER_LEN,
+};
 
 use crate::commands::card;
 use crate::commands::render::print_query_output;
@@ -115,9 +118,24 @@ pub(crate) fn query_url(
 /// reads O(touched tiles), not the whole index. (Pre-tiling v0.1 files fall
 /// back to fetching the index whole.)
 pub(crate) fn sparql_url(url: &str, query: &str, json: bool) -> anyhow::Result<()> {
+    // `reader` always counts the PHYSICAL HTTP fetches. A read-through block
+    // cache (client-side; works over any single-range backend incl. S3) sits
+    // above it, so a query's scattered range reads coalesce into a few aligned
+    // block fetches. `RETE_BLOCK_KB=0` disables it (one fetch per logical read).
     let reader = std::sync::Arc::new(CountingReader::new(HttpRangeReader::open(url)?));
     let total = reader.len();
-    let rete = Rete::open_ranged_lazy(reader.clone())?;
+    let block_kb: u64 = std::env::var("RETE_BLOCK_KB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_BLOCK / 1024);
+    let rete = if block_kb == 0 {
+        Rete::open_ranged_lazy(reader.clone())?
+    } else {
+        Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(
+            reader.clone(),
+            block_kb * 1024,
+        )))?
+    };
     let result = eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{e}"))?;
     // Lazy tile fetches surface failures out-of-band: a partial answer must
     // become an error, never quietly fewer rows.

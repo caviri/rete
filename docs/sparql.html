@@ -302,6 +302,55 @@ and <code>GROUP BY</code> / <code>ORDER BY</code> / <code>LIMIT</code> / <code>D
 rows. A query is refused only when nothing in it can split (no BGP with a
 variable subject — the strategy would add nothing) or under <code>FROM</code> / <code>FROM NAMED</code>. The playground's "Split by community" strategy uses this; natively
 the per-star, per-community partials are the seam for parallel evaluation.</p>
+<h2>Output views &amp; query shapes</h2>
+<p>The WASM playground's <strong>Output</strong> menu renders one result several ways. Each view
+expects a particular query shape — write your <code>SELECT</code>/<code>CONSTRUCT</code> so the columns
+it needs are present.</p>
+<table><thead><tr><th>Output</th><th>Needs</th><th>Query shape</th></tr></thead><tbody>
+<tr><td><strong>Table</strong></td><td>anything</td><td>any <code>SELECT</code>, <code>ASK</code>, or <code>CONSTRUCT</code></td></tr>
+<tr><td><strong>Graph</strong></td><td>edges to draw</td><td>a <code>CONSTRUCT { ?a ?p ?b } …</code>, or a <code>SELECT</code> with <strong>≥ 2 variables</strong> — 2 vars are read as <code>v1 → v2</code> ("related") edges; <strong>3 vars</strong> are read as (subject, predicate, object). A 1-variable <code>SELECT</code> has nothing to connect.</td></tr>
+<tr><td><strong>Map</strong></td><td>a WKT geometry column</td><td>a <code>SELECT</code> that binds a variable to a <code>geo:wktLiteral</code> (e.g. <code>?w</code> via <code>geo:hasGeometry/geo:asWKT ?w</code>). <code>POINT</code> / <code>LINESTRING</code> / <code>POLYGON</code> / <code>MULTI*</code> all plot; the first <strong>non-geometry</strong> column becomes each feature's hover label.</td></tr>
+<tr><td><strong>Time</strong></td><td>a year / date column</td><td>a <code>SELECT</code> that binds a variable to <code>xsd:gYear</code>, <code>xsd:date</code> / <code>xsd:dateTime</code>, or a plain <strong>year integer</strong> (e.g. <code>ex:year ?y</code>). The other selected column(s) become the items listed in each cell's tooltip.</td></tr>
+<tr><td><strong>TTL / JSON-LD</strong></td><td>triples</td><td>a <code>CONSTRUCT</code> query — these serialise the constructed graph. A <code>SELECT</code> has no triples to serialise.</td></tr>
+</tbody></table>
+<p>Rules of thumb:</p>
+<ul>
+<li><strong>Map, Time and Graph render the bindings of a <code>SELECT</code></strong>, so put the geometry /
+year / edge columns in your <code>SELECT</code> list. (<code>CONSTRUCT</code> also feeds Graph / TTL /
+JSON-LD directly.)</li>
+<li><strong>Map</strong> and <strong>Time</strong> only appear in the Output menu for datasets that actually
+carry geospatial / temporal data.</li>
+<li>Run these views under the <strong>Whole index</strong> (or <strong>Split by community</strong>) strategy.
+<strong>Progressive</strong> answers only from the pyramid summary (counts and community
+structure), so it has no per-row geometry or dates to plot.</li>
+<li><strong>Time</strong> buckets years automatically to fit the span (per-year for short ranges,
+up to per-1000-year for very long ones); negative years are read as <strong>BCE</strong>. A
+cell's colour encodes the <strong>number of items</strong> in that bucket — hover for the list.</li>
+<li>The map is an <strong>offline equirectangular plot</strong> of the WKT coordinates (no tiles /
+network), auto-fit to the bounding box of the returned geometries.</li>
+</ul>
+<pre><code class="language-sparql"># MAP — labelled territories as polygons (history dataset)
+PREFIX geo:  &lt;http://www.opengis.net/ont/geosparql#&gt;
+PREFIX ex:   &lt;http://ex/&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+SELECT ?territory ?w WHERE {
+  ?t ex:year 1914 ; rdfs:label ?territory ;
+     geo:hasGeometry/geo:asWKT ?w .
+}
+
+# TIME — how many territories exist per year, as a multi-year heatmap
+PREFIX ex:   &lt;http://ex/&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+SELECT ?year ?territory WHERE { ?t ex:year ?year ; rdfs:label ?territory }
+
+# GRAPH — a 3-variable SELECT read as (subject, predicate, object)
+PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
+SELECT ?a ?p ?b WHERE { ?a ?p ?b . FILTER(?p = cito:cites) } LIMIT 50
+
+# TTL / JSON-LD — a CONSTRUCT produces serialisable triples
+PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
+CONSTRUCT { ?a cito:cites ?b } WHERE { ?a cito:cites ?b } LIMIT 50
+</code></pre>
 <h2>Not supported</h2>
 <p>These are <strong>rejected with a clear error</strong> — never silently mis-evaluated:</p>
 <ul>

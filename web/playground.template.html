@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>rete playground — offline WASM console</title>
+  <title>.rete playground - browser-based graph exploration</title>
   <style>
 __PLAYGROUND_CSS__
   </style>
@@ -15,17 +15,12 @@ __PLAYGROUND_CSS__
       <span class="brand-sub">offline graph console</span>
     </a>
 
-    <div class="status-cluster" aria-label="Loaded graph status">
-      <button id="dsButton" class="dataset-button" type="button" title="Browse datasets — what each one is, and its source">
+    <div class="top-actions">
+      <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
         <span class="ds-pre">Dataset</span>
         <span id="dsName">…</span>
-        <span class="ds-caret" aria-hidden="true">▾</span>
+        <span class="ds-eject"><span class="ds-eject-ic" aria-hidden="true">⏏</span>Change dataset</span>
       </button>
-      <span id="sourcePill" class="status-pill">bundled</span>
-      <span id="meta" class="statline">loading wasm...</span>
-    </div>
-
-    <div class="top-actions">
       <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
@@ -34,18 +29,66 @@ __PLAYGROUND_CSS__
     </div>
   </header>
 
-  <nav id="modeTabs" class="mode-tabs" aria-label="Playground mode">
-    <button type="button" class="active" data-mode="sparql">SPARQL</button>
-    <button type="button" data-mode="explore">Explore</button>
-    <button type="button" data-mode="shacl">SHACL</button>
-    <button type="button" data-mode="reach">Reach</button>
-    <button type="button" data-mode="schema">Schema</button>
-    <button type="button" data-mode="coherence">Coherence</button>
-    <button type="button" data-mode="provenance">Provenance</button>
-  </nav>
+  <div class="ds-header" aria-label="Loaded dataset">
+    <div class="ds-header-main">
+      <h1 id="dsTitle" class="ds-title">…</h1>
+      <p id="dsTagline" class="ds-tagline"></p>
+    </div>
+    <div class="ds-header-meta" aria-label="Loaded graph status">
+      <span id="sourcePill" class="status-pill">bundled</span>
+      <span id="meta" class="statline">loading wasm...</span>
+    </div>
+  </div>
 
   <main class="console-shell">
-    <aside class="library-panel" aria-label="Query library">
+    <nav id="modeTabs" class="mode-rail" aria-label="Playground mode">
+      <button type="button" class="active" data-mode="sparql">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c4.4 0 8 1.1 8 2.5S16.4 8 12 8 4 6.9 4 5.5 7.6 3 12 3Z"/><path d="M4 5.5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"/><path d="M4 11.5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"/></svg>
+        <span class="rail-name">SPARQL</span>
+        <span class="rail-tip"><b>SPARQL Console</b>Exact queries, summary-safe progressive queries, and graph rendering.</span>
+      </button>
+      <button type="button" data-mode="explore">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5 5-2Z"/></svg>
+        <span class="rail-name">Explore</span>
+        <span class="rail-tip"><b>Explore</b>Entity tables, the community pyramid, and the file byte map.</span>
+      </button>
+      <button type="button" data-mode="shacl">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.4-3 8.2-7 10-4-1.8-7-5.6-7-10V6l7-3Z"/><path d="M8.8 12l2.2 2.2 4.2-4.4"/></svg>
+        <span class="rail-name">SHACL</span>
+        <span class="rail-tip"><b>SHACL</b>Validate the loaded graph against Turtle shapes.</span>
+      </button>
+      <button type="button" data-mode="reach">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M8.1 10.9l7.8-3.7M8.1 13.1l7.8 3.7"/></svg>
+        <span class="rail-name">Reach</span>
+        <span class="rail-tip"><b>Reach</b>Transitive closure over one predicate — impact and lineage.</span>
+      </button>
+      <button type="button" data-mode="schema">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="4.5" rx="1"/><rect x="3" y="16.5" width="6" height="4.5" rx="1"/><rect x="15" y="16.5" width="6" height="4.5" rx="1"/><path d="M12 7.5v3.5M6 16.5v-2.5h12v2.5"/></svg>
+        <span class="rail-name">Schema</span>
+        <span class="rail-tip"><b>Schema</b>Ontology-aware class and relation summary.</span>
+      </button>
+      <button type="button" data-mode="coherence">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v16M7 20h10M6 7h12"/><path d="M6 7l-3 6h6L6 7Z"/><path d="M18 7l-3 6h6l-3-6Z"/></svg>
+        <span class="rail-name">Coherence</span>
+        <span class="rail-tip"><b>Coherence</b>OWL/RDFS incoherence checks, entirely in your browser.</span>
+      </button>
+      <button type="button" data-mode="provenance">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="17" cy="9" r="2.2"/><path d="M6 8.2v7.6M6 12h6.5a4.5 4.5 0 0 0 3-2.8"/></svg>
+        <span class="rail-name">Provenance</span>
+        <span class="rail-tip"><b>Provenance</b>Explain matches: index permutation and byte ranges.</span>
+      </button>
+      <button type="button" id="histBtn" class="rail-hist">
+        <span id="histCount" class="rail-badge hidden">0</span>
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.1 13a9 9 0 1 0 2.5-7.4"/><path d="M3 4v4h4"/><path d="M12 8v4.5l3 2"/></svg>
+        <span class="rail-name">History</span>
+        <span class="rail-tip"><b>History</b>Your recent runs — click one to reload its query, output and strategy.</span>
+      </button>
+    </nav>
+
+    <button id="libExpand" class="lib-expand" type="button" title="Show the details panel" aria-label="Show the details panel">›</button>
+
+    <aside class="library-panel" aria-label="Source and inspector">
+      <button id="libCollapse" class="lib-collapse" type="button" title="Hide the details panel" aria-label="Hide the details panel">‹</button>
       <section class="source-panel">
         <h2>Source</h2>
         <p id="dsDesc" class="microcopy"></p>
@@ -55,15 +98,26 @@ __PLAYGROUND_CSS__
                style="display:block;width:100%;height:auto;margin-top:8px;border:1px solid var(--border,#e4e8ec);border-radius:8px" />
           <p class="microcopy" style="margin-top:6px">Remote datasets (e.g. <b>wikidata-1GB</b>, <b>ohm-full</b>) are never downloaded whole — each query fetches only the dictionary chunks and index tiles it touches.</p>
         </details>
+        <details class="lazy-explainer">
+          <summary>The self-describing card</summary>
+          <p class="microcopy" style="margin-top:6px">Each .rete embeds a small <b>card</b>: curated metadata (title, license, source) plus auto-derived stats — datatype/language histograms, the effective schema (<code>class→predicate→class</code>), top hubs, geo/temporal extents, and a schema pyramid with per-semantic-zoom-level type rollups. A remote reader fetches just the header + card in two HTTP ranges (~10&nbsp;KB) to learn a multi-GB graph's shape and legend without ever touching the triple index.</p>
+        </details>
       </section>
-
-      <section class="library">
-        <div class="section-title">
-          <h2>Query Library</h2>
-          <input id="exampleSearch" type="search" placeholder="Filter examples" />
-        </div>
-        <div id="familyFilters" class="filter-row" aria-label="Example family filters"></div>
-        <div id="examples" class="example-list"></div>
+      <section data-modes="sparql shacl reach provenance">
+        <h2>Selected Example</h2>
+        <div id="exampleInfo" class="inspector-block"></div>
+      </section>
+      <section data-modes="sparql">
+        <h2>Progressive Metadata</h2>
+        <div id="progressiveInfo" class="inspector-block"></div>
+      </section>
+      <section data-modes="provenance">
+        <h2>Provenance</h2>
+        <div id="provSummary" class="inspector-block"></div>
+      </section>
+      <section data-modes="schema coherence">
+        <h2>Schema Summary</h2>
+        <div id="schemaSummary" class="inspector-block"></div>
       </section>
     </aside>
 
@@ -74,16 +128,22 @@ __PLAYGROUND_CSS__
             <h1>SPARQL Console</h1>
             <p class="microcopy">Default path for exact queries, summary-safe progressive queries, and graph rendering.</p>
           </div>
-          <div id="viewSeg" class="segmented" aria-label="Result view">
-            <button type="button" data-view="table" class="active">Table</button>
-            <button type="button" data-view="graph">Graph</button>
-            <button type="button" data-view="ttl">TTL</button>
-            <button type="button" data-view="jsonld">JSON-LD</button>
-          </div>
         </div>
+        <div id="exampleQuick" class="ex-quick" aria-label="Example suggestions"></div>
         <textarea id="q" spellcheck="false"></textarea>
         <div class="action-row">
-          <button id="run" type="button">Run Query</button>
+          <label>
+            <span>Output</span>
+            <select id="fmt" aria-label="Result output type">
+              <option value="table">Table</option>
+              <option value="graph">Graph</option>
+              <option value="map" data-cap="geo">Map</option>
+              <option value="time" data-cap="time">Time</option>
+              <option value="ttl">TTL</option>
+              <option value="jsonld">JSON-LD</option>
+            </select>
+          </label>
+          <button id="outputHelp" type="button" class="help-button" title="How to write queries for each output view" aria-label="Explain the output views">?</button>
           <label>
             <span>Strategy</span>
             <select id="strategy">
@@ -98,13 +158,9 @@ __PLAYGROUND_CSS__
             <input id="round" type="number" min="0" placeholder="auto" />
           </label>
           <button id="roundHelp" type="button" class="help-button hidden" title="What is a round?" aria-label="Explain dendrogram rounds">?</button>
-          <select id="fmt" class="visually-hidden" aria-label="Result format">
-            <option value="table">table</option>
-            <option value="graph">graph</option>
-            <option value="ttl">ttl</option>
-            <option value="jsonld">jsonld</option>
-          </select>
-          <span id="qmeta" class="run-meta"></span>
+          <span id="qmeta" class="run-meta run-right"></span>
+          <button id="reqLogBtn" type="button" class="req-log-btn hidden" title="Inspect the byte-range requests this query made">⊞ requests</button>
+          <button id="run" type="button">Run Query</button>
         </div>
       </div>
 
@@ -112,37 +168,50 @@ __PLAYGROUND_CSS__
         <div class="editor-head">
           <div>
             <h1>Explore</h1>
-            <p class="microcopy">Browse the dataset as entity tables, and the community pyramid as nested clusters of clusters.</p>
+            <p class="microcopy">Browse the dataset as entity tables, the community pyramid as nested clusters, and the file's byte layout.</p>
+          </div>
+          <div id="exploreSeg" class="segmented" aria-label="Explore view">
+            <button type="button" data-exp="entities" class="active">Entity tables</button>
+            <button type="button" data-exp="community">Community</button>
+            <button type="button" data-exp="bytemap">File byte map</button>
           </div>
         </div>
-        <h3>Entity tables</h3>
-        <p class="microcopy">One table per <code>rdf:type</code> class: entities as rows, their properties as columns.</p>
-        <div id="exploreClasses" class="filter-row"></div>
-        <div id="exploreTable"></div>
-        <h3 style="margin-top:20px">Community pyramid</h3>
-        <p class="microcopy" id="pyramidNote"></p>
-        <div id="pyramidLegend" class="viz-legend"></div>
-        <div id="pyramidViz" class="ontology-diagram"></div>
-        <div id="pyramidLevels" style="margin-top:10px"></div>
-        <div class="section-title" style="margin-top:20px">
-          <h3 style="margin:0">File byte map</h3>
-          <label>
-            <span>Cell size</span>
-            <select id="layoutCell">
-              <option value="auto">auto</option>
-              <option value="64">64 B</option>
-              <option value="256">256 B</option>
-              <option value="1024">1 KB</option>
-              <option value="4096">4 KB</option>
-              <option value="16384">16 KB</option>
-              <option value="65536">64 KB</option>
-            </select>
-          </label>
+
+        <div class="explore-sub active" data-exp="entities">
+          <p class="microcopy">One table per <code>rdf:type</code> class: entities as rows, their properties as columns.</p>
+          <div id="exploreClasses" class="filter-row"></div>
+          <div id="exploreTable"></div>
         </div>
-        <p class="microcopy" id="layoutNote"></p>
-        <div id="layoutLegend" class="viz-legend"></div>
-        <div id="layoutViz" class="ontology-diagram"></div>
-        <div id="layoutTable" style="margin-top:10px"></div>
+
+        <div class="explore-sub" data-exp="community">
+          <p class="microcopy">The pyramid clusters the graph by Louvain modularity over several coarsening rounds (a dendrogram); the build ships one round whose tiles fit a ~64&nbsp;KiB budget. That gives a <b>semantic zoom</b> from coarse communities down to finer ones — and lets the <b>progressive</b> query strategy answer aggregate questions exactly from this summary in a few small range reads, never touching the triple index.</p>
+          <p class="microcopy" id="pyramidNote"></p>
+          <div id="pyramidLegend" class="viz-legend"></div>
+          <div id="pyramidViz" class="ontology-diagram"></div>
+          <div id="pyramidLevels" style="margin-top:10px"></div>
+        </div>
+
+        <div class="explore-sub" data-exp="bytemap">
+          <div class="section-title">
+            <h3 style="margin:0">File byte map</h3>
+            <label>
+              <span>Cell size</span>
+              <select id="layoutCell">
+                <option value="auto">auto</option>
+                <option value="64">64 B</option>
+                <option value="256">256 B</option>
+                <option value="1024">1 KB</option>
+                <option value="4096">4 KB</option>
+                <option value="16384">16 KB</option>
+                <option value="65536">64 KB</option>
+              </select>
+            </label>
+          </div>
+          <p class="microcopy" id="layoutNote"></p>
+          <div id="layoutLegend" class="viz-legend"></div>
+          <div id="layoutViz" class="ontology-diagram"></div>
+          <div id="layoutTable" style="margin-top:10px"></div>
+        </div>
       </div>
 
       <div class="panel" data-panel="shacl">
@@ -296,51 +365,19 @@ __PLAYGROUND_CSS__
         <div id="buildOut" class="result-pane hidden" data-result="build"></div>
       </div>
     </section>
-
-    <aside class="inspector" aria-label="Inspector">
-      <section>
-        <h2>Selected Example</h2>
-        <div id="exampleInfo" class="inspector-block"></div>
-      </section>
-      <section>
-        <h2>Progressive Metadata</h2>
-        <div id="progressiveInfo" class="inspector-block"></div>
-      </section>
-      <section>
-        <h2>Provenance</h2>
-        <div id="provSummary" class="inspector-block"></div>
-      </section>
-      <section>
-        <h2>Schema Summary</h2>
-        <div id="schemaSummary" class="inspector-block"></div>
-      </section>
-      <section>
-        <div class="section-title">
-          <h2>History</h2>
-          <button id="clearHist" class="ghost" type="button">Clear</button>
-        </div>
-        <div id="histList" class="history-list"></div>
-      </section>
-    </aside>
   </main>
 
   <div id="sourceModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sourceModalTitle">
-    <div class="modal-card">
+    <div class="modal-card ds-modal">
       <div class="modal-head">
         <h3 id="sourceModalTitle">Datasets</h3>
+        <input id="dsSearch" type="search" class="ds-search" placeholder="Filter datasets, tags…" aria-label="Filter datasets" />
         <button id="sourceModalClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
-      <p class="microcopy">Each dataset carries its own <b>source</b>. <b>Bundled</b> graphs are
-        embedded in this page and load into memory; <b>Remote</b> ones are queried <b>lazily over
-        HTTP range</b> from a <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs" target="_blank" rel="noopener">Hugging Face bucket</a>
-        (served with CORS + Range by an <a href="https://katospiegel-rete.hf.space/" target="_blank" rel="noopener">HF&nbsp;Space</a>) —
-        only the bytes a query touches are fetched. Pick one to load it.</p>
-      <div class="ds-viewseg segmented" aria-label="Dataset view">
-        <button type="button" data-dsview="cards" class="active">Cards</button>
-        <button type="button" data-dsview="table">Table</button>
+      <div class="ds-browser">
+        <aside class="ds-sidebar"><div id="dsSidebar" class="ds-sidebar-list"></div></aside>
+        <section id="dsDetail" class="ds-detail" aria-live="polite"></section>
       </div>
-      <div id="datasetList" class="ds-list"></div>
-      <div id="datasetTable" class="hidden"></div>
       <details class="source-advanced">
         <summary>Advanced — load your own data</summary>
         <div class="source-choice" style="border-top:0;padding-top:10px">
@@ -418,6 +455,74 @@ __PLAYGROUND_CSS__
           can split (e.g. a pure property path).
         </dd>
       </dl>
+    </div>
+  </div>
+
+  <div id="outputModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="outputModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="outputModalTitle">Output views — how to query for each</h3>
+        <button id="outputModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy">Each view renders one result a different way. Write your query so the columns the view needs are in the <code>SELECT</code> (or use a <code>CONSTRUCT</code>).</p>
+      <dl class="strategy-list">
+        <dt>Table</dt>
+        <dd>Any <code>SELECT</code>, <code>ASK</code>, or <code>CONSTRUCT</code> — the default.</dd>
+        <dt>Graph</dt>
+        <dd>A <code>CONSTRUCT { ?a ?p ?b } …</code>, or a <code>SELECT</code> with <strong>≥&nbsp;2 variables</strong>: 2 vars draw <code>v1&nbsp;→&nbsp;v2</code> ("related") edges; <strong>3 vars</strong> are read as (subject, predicate, object). A one-variable select has nothing to connect.</dd>
+        <dt>Map <span class="ds-cap on">geo</span></dt>
+        <dd>A <code>SELECT</code> that binds a variable to a <code>geo:wktLiteral</code> — e.g. <code>?w</code> via <code>geo:hasGeometry/geo:asWKT ?w</code>. <code>POINT</code> / <code>LINESTRING</code> / <code>POLYGON</code> / <code>MULTI*</code> all plot in an offline equirectangular view (no tiles), auto-fit to the geometries; the first <em>non-geometry</em> column becomes each feature's hover label. Listed only for geospatial datasets.</dd>
+        <dt>Time <span class="ds-cap on">temporal</span></dt>
+        <dd>A <code>SELECT</code> that binds a variable to <code>xsd:gYear</code>, <code>xsd:date</code>/<code>xsd:dateTime</code>, or a plain <strong>year integer</strong> (e.g. <code>ex:year ?y</code>). Renders a GitHub-style multi-year heatmap — cell colour = <strong>number of items</strong> in that year/bucket, hover lists them; spans bucket automatically and negative years read as <strong>BCE</strong>. The other selected column(s) are the tooltip items. Listed only for temporal datasets.</dd>
+        <dt>TTL / JSON-LD</dt>
+        <dd>A <code>CONSTRUCT</code> query — these serialise the constructed triples. A <code>SELECT</code> has no triples to serialise.</dd>
+      </dl>
+      <p class="microcopy">Map, Time and Graph render <code>SELECT</code> bindings, so include the geometry / year / edge columns. Run them under <strong>Whole index</strong> or <strong>Split by community</strong> — <strong>Progressive</strong> answers only from the pyramid summary, with no per-row geometry or dates to plot.</p>
+    </div>
+  </div>
+
+  <div id="reqModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="reqModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="reqModalTitle">Range requests</h3>
+        <button id="reqModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy">Every HTTP request the last remote query made — lazy range reads over the file. A <b>multipart</b> row fetched several byte ranges in one request (coalesced); each range is <code>start-end</code>.</p>
+      <div id="reqLogBody"></div>
+    </div>
+  </div>
+
+  <div id="cacheModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cacheModalTitle">
+    <div class="modal-card cache-modal">
+      <div class="cache-spindle" aria-hidden="true"><span></span><span></span><span></span></div>
+      <h3 id="cacheModalTitle">Caching <span id="cacheName">dataset</span></h3>
+      <p class="microcopy" id="cacheSub">Downloading the whole .rete into memory — it'll be queried in-page once it's here.</p>
+      <div id="cacheBar" class="cache-bar indeterminate"><div id="cacheBarFill" class="cache-bar-fill"></div></div>
+      <div class="cache-stat"><span id="cachePct"></span><span id="cacheBytes">0 B</span></div>
+    </div>
+  </div>
+
+  <div id="historyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="historyModalTitle">
+    <div class="modal-card hist-modal">
+      <div class="modal-head">
+        <h3 id="historyModalTitle">History</h3>
+        <button id="clearHist" class="ghost" type="button">Clear</button>
+        <button id="historyModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy">Your recent runs across datasets — click one to reload its query, output type and strategy.</p>
+      <div id="histList" class="history-list"></div>
+    </div>
+  </div>
+
+  <div id="libraryModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="libraryModalTitle">
+    <div class="modal-card lib-modal">
+      <div class="modal-head">
+        <h3 id="libraryModalTitle">Query library</h3>
+        <input id="exampleSearch" type="search" class="lib-search" placeholder="Filter examples, families…" aria-label="Filter examples" />
+        <button id="libraryModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="familyFilters" class="filter-row" aria-label="Example family filters"></div>
+      <div id="examples" class="example-list lib-list"></div>
     </div>
   </div>
 

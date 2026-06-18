@@ -29,7 +29,17 @@
   // DuckDB uses over httpfs: fetch only the bytes a query touches.
   const REMOTE_HARNESS = `
 ;(function () {
-  var ready = null;
+  var ready = null, pReq = 0, pBytes = 0, pId = 0, qStart = 0, fetchLog = [];
+  function _now() { return (typeof performance !== "undefined" ? performance.now() : Date.now()); }
+  self._reteLog = function (e) { e.t = (_now() - qStart) | 0; if (fetchLog.length < 6000) fetchLog.push(e); };
+  // The wasm calls reteProgress(bytes) after every physical range fetch (the
+  // multipart hook also passes metadata). We tally a running count + a per-fetch
+  // log and forward progress, so a long query shows live, not a frozen "querying…".
+  self.reteProgress = function (b, meta) {
+    pReq++; pBytes += (b || 0);
+    self._reteLog(meta || { k: "range", b: (b || 0) });
+    self.postMessage({ type: "progress", id: pId, requests: pReq, bytes: pBytes });
+  };
   self.onmessage = function (e) {
     var m = e.data;
     if (m.type === "init") {
@@ -38,33 +48,122 @@
       return;
     }
     if (m.type === "query") {
+      pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
       Promise.resolve(ready).then(function () {
         try {
-          self.postMessage({ type: "result", id: m.id, ok: true,
-            json: wasm_bindgen.sparql_url(m.url, m.query, m.format) });
+          var json = wasm_bindgen.sparql_url(m.url, m.query, m.format);
+          self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
         } catch (err) {
-          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err) });
+          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
         }
       });
     }
   };
 })();`;
+
+  // Multi-range coalescing. The wasm engine already batches the byte ranges a
+  // query needs (read_coalesced → read_many) and calls globalThis.reteReadMany
+  // when present; without it the worker falls back to one synchronous XHR per
+  // range (the sequential RTTs). This hook fetches ALL the ranges in ONE request
+  // — RFC 7233 multipart/byteranges — collapsing N round trips into one. It must
+  // be synchronous (the engine calls it from sync wasm) → worker-only sync XHR.
+  // Returns one Uint8Array with the ranges concatenated in order, or null to
+  // fall back (e.g. a host that ignores multi-range). Binary-safe, regex-free.
+  const COALESCE_JS = `
+;(function () {
+  function boundaryOf(ct) {
+    var i = ct.indexOf("boundary=");
+    if (i < 0) return null;
+    var b = ct.slice(i + 9).trim();
+    if (b.charAt(0) === '"') b = b.slice(1, b.indexOf('"', 1));
+    else { var sc = b.indexOf(";"); if (sc >= 0) b = b.slice(0, sc); }
+    return b.trim();
+  }
+  function idx(hay, needle, from) {
+    outer: for (var i = from; i <= hay.length - needle.length; i++) {
+      for (var j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+      return i;
+    }
+    return -1;
+  }
+  function parseByteranges(u8, ct) {
+    var bnd = boundaryOf(ct);
+    if (!bnd) return null;
+    var enc = new TextEncoder();
+    var dash = enc.encode("--" + bnd);
+    var sep = enc.encode("\\r\\n\\r\\n");
+    var crlfDash = enc.encode("\\r\\n--" + bnd);
+    var parts = [];
+    var pos = idx(u8, dash, 0);
+    if (pos < 0) return null;
+    pos += dash.length;
+    for (;;) {
+      if (u8[pos] === 45 && u8[pos + 1] === 45) break;
+      var hend = idx(u8, sep, pos);
+      if (hend < 0) break;
+      var bodyStart = hend + 4;
+      var next = idx(u8, crlfDash, bodyStart);
+      if (next < 0) next = u8.length;
+      parts.push(u8.subarray(bodyStart, next));
+      pos = next + crlfDash.length;
+      if (pos >= u8.length) break;
+    }
+    return parts;
+  }
+  self.__parseByteranges = parseByteranges;
+  self.reteReadMany = function (url, offsets, lens) {
+    try {
+      var n = offsets.length;
+      if (n < 2) return null;
+      var spec = [], total = 0;
+      for (var i = 0; i < n; i++) { var o = offsets[i], l = lens[i]; spec.push(o + "-" + (o + l - 1)); total += l; }
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", url, false);
+      xhr.responseType = "arraybuffer";
+      xhr.setRequestHeader("Range", "bytes=" + spec.join(","));
+      xhr.send();
+      if (xhr.status !== 206) return null;
+      var ct = xhr.getResponseHeader("Content-Type") || "";
+      if (ct.indexOf("multipart/byteranges") < 0) return null;
+      var parts = parseByteranges(new Uint8Array(xhr.response), ct);
+      if (!parts || parts.length !== n) return null;
+      var out = new Uint8Array(total), p = 0;
+      for (var k = 0; k < n; k++) { if (parts[k].length !== lens[k]) return null; out.set(parts[k], p); p += lens[k]; }
+      if (self.reteProgress) self.reteProgress(total, { k: "multi", n: n, b: total, r: spec }); // 1 request, N ranges
+      return out;
+    } catch (e) { return null; }
+  };
+})();`;
+
   let remoteWorker = null, remoteReady = null, remoteResolveReady = null, remoteSeq = 0;
+  let remoteOnProgress = null;
   const remotePending = new Map();
+
+  // Hard-cancel a running remote query: a synchronous wasm query can't be
+  // interrupted cooperatively, so we terminate the worker (it rebuilds on the
+  // next query) and reject anything in flight.
+  function cancelRemote() {
+    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; }
+    remotePending.forEach((p) => p.reject(new Error("cancelled")));
+    remotePending.clear();
+    remoteOnProgress = null;
+  }
 
   function ensureRemoteWorker() {
     if (remoteWorker) return remoteReady;
     const glue = document.getElementById("reteGlue").textContent;
-    const blob = new Blob([glue + REMOTE_HARNESS], { type: "text/javascript" });
+    const blob = new Blob([glue + REMOTE_HARNESS + COALESCE_JS], { type: "text/javascript" });
     remoteWorker = new Worker(URL.createObjectURL(blob));
     remoteWorker.onmessage = (e) => {
       const m = e.data;
       if (m.type === "ready") { if (remoteResolveReady) remoteResolveReady(); return; }
+      if (m.type === "progress") { if (remoteOnProgress) remoteOnProgress(m); return; }
       if (m.type === "result") {
         const p = remotePending.get(m.id);
         if (!p) return;
         remotePending.delete(m.id);
-        m.ok ? p.resolve(m.json) : p.reject(new Error(m.error));
+        if (m.ok) p.resolve({ json: m.json, log: m.log || [] });
+        else { const err = new Error(m.error); err.log = m.log || []; p.reject(err); }
       }
     };
     remoteReady = new Promise((res) => { remoteResolveReady = res; });
@@ -135,6 +234,7 @@
     if (state.activeSource === "url") return "url";
     if (state.activeSource === "built") return "built in browser";
     if (state.activeSource === "remote") return "remote (lazy)";
+    if (state.activeSource === "cached") return "remote (cached)";
     return "bundled";
   }
 
@@ -337,6 +437,9 @@
 
   function suggestKeydown(ed, e) {
     if (ed.sug.classList.contains("hidden")) return;
+    // Ctrl/Cmd+Enter is the "run" shortcut — never let it accept a completion;
+    // the global handler below runs the active panel instead.
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { hideSuggest(ed); return; }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const d = e.key === "ArrowDown" ? 1 : -1;
@@ -410,6 +513,28 @@
     $("dsName").textContent = d ? d.label.split(" - ")[0] : key;
   }
 
+  // The dataset header band: a full title and a one-line sentence, with the
+  // graph metadata pill sitting to its right.
+  function firstSentence(text, max) {
+    if (!text) return "";
+    const m = text.match(/^(.+?[.!?])(\s|$)/);
+    let s = (m ? m[1] : text).trim();
+    const cap = max || 170;
+    if (s.length > cap) s = s.slice(0, cap - 1).replace(/\s+\S*$/, "") + "…";
+    return s;
+  }
+
+  function setDatasetHeader(title, tagline) {
+    const t = $("dsTitle"); if (t) t.textContent = title || "—";
+    const g = $("dsTagline"); if (g) g.textContent = tagline || "";
+  }
+
+  // Switch the Explore sub-tab (Entity tables / Community / File byte map).
+  function setExploreView(view) {
+    $$("#exploreSeg button").forEach((b) => b.classList.toggle("active", b.dataset.exp === view));
+    $$(".explore-sub").forEach((p) => p.classList.toggle("active", p.dataset.exp === view));
+  }
+
   function renderDatasetOptions() {
     setDatasetName(state.dataset);
   }
@@ -439,12 +564,18 @@
     renderProvenanceDefaults();
 
     const infoRow = datasetInfo(state.dataset);
-    $("dsDesc").textContent = source === "bundled"
+    const catalogSource = source === "bundled" || source === "cached";
+    $("dsDesc").textContent = catalogSource
       ? infoRow.description
       : "Custom graph loaded into the same in-browser engine.";
-    if (source !== "bundled") {
-      $("dsName").textContent = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom";
+    if (catalogSource && infoRow) {
+      setDatasetHeader(infoRow.label, firstSentence(infoRow.description));
+    } else {
+      const cn = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom graph";
+      $("dsName").textContent = cn;
+      setDatasetHeader(cn, "Custom graph loaded into the same in-browser engine.");
     }
+    updateOutputOptions();
   }
 
   function loadDataset(key) {
@@ -496,9 +627,14 @@
     setStatus("remote (lazy) — queries range-fetch only what they touch");
     const info = datasetKey ? datasetInfo(datasetKey) : null;
     $("dsDesc").textContent = info ? info.description : "Remote graph, queried lazily over HTTP range: " + url;
+    setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
+      info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.");
+    updateOutputOptions();
     renderExamples();
     closeSource();
     setMode("sparql");
+    // Load the dataset's first example query automatically (parity with bundled).
+    if (examplesForDataset().length) selectExample(0);
     const lib = examplesForDataset().length
       ? "Pick an example from the library, or write your own."
       : "Write a SPARQL query (a bound subject keeps the fetch small). No example library for a custom URL.";
@@ -511,92 +647,293 @@
     enterRemote($("remoteUrl").value.trim(), null);
   }
 
-  // Dataset dropdown / catalog selection: bundled keys load into memory;
-  // remote-lazy keys connect over HTTP range.
-  function selectDataset(key) {
-    const info = datasetInfo(key);
-    if (info && info.kind === "remote-lazy") {
-      enterRemote(info.url, key);
+  // Every dataset is mirrored in the bucket at playground/<key>.rete, so any of
+  // them can be cached or range-queried. Remote-only datasets carry their own
+  // `url`; the rest derive it from remoteBase.
+  function remoteUrlFor(key) {
+    const d = datasetInfo(key);
+    if (d && d.url) return d.url;
+    const tok = CATALOG.remoteToken ? "?token=" + CATALOG.remoteToken : "";
+    return `${CATALOG.remoteBase}/playground/${key}.rete${tok}`;
+  }
+  function isEmbedded(key) { return !!RETE_DATASETS_B64[key]; }
+
+  // Downloaded-remote cache: fetch the whole .rete once, keep the bytes, then
+  // query it in memory on later loads (the "cache" mode of the source switch).
+  const remoteCache = new Map();
+  // Stream a fetch so we can report download progress (bytes received vs the
+  // Content-Length, when the server provides it).
+  async function fetchWithProgress(url, onProgress) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.status + " " + res.statusText);
+    const total = Number(res.headers.get("content-length")) || 0;
+    if (!res.body || !res.body.getReader) {
+      const buf = new Uint8Array(await res.arrayBuffer());
+      onProgress(buf.length, total || buf.length);
+      return buf;
+    }
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      onProgress(received, total);
+    }
+    const out = new Uint8Array(received);
+    let pos = 0;
+    for (const c of chunks) { out.set(c, pos); pos += c.length; }
+    return out;
+  }
+
+  function openCacheModal(key) {
+    const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
+    $("cacheName").textContent = dsShortLabel(key);
+    $("cacheSub").textContent = `Downloading the whole .rete${meta.size ? " (" + meta.size + ")" : ""} into memory — queried in-page once it's here.`;
+    $("cacheBar").classList.add("indeterminate");
+    $("cacheBarFill").style.width = "";
+    $("cachePct").textContent = "";
+    $("cacheBytes").textContent = "0 B";
+    $("cacheModal").classList.remove("hidden");
+  }
+  function updateCacheProgress(received, total) {
+    if (total > 0) {
+      $("cacheBar").classList.remove("indeterminate");
+      const pct = Math.min(100, Math.round((received / total) * 100));
+      $("cacheBarFill").style.width = pct + "%";
+      $("cachePct").textContent = pct + "%";
+      $("cacheBytes").textContent = `${formatBytes(received)} / ${formatBytes(total)}`;
     } else {
-      loadDataset(key);
+      $("cacheBytes").textContent = formatBytes(received);
+    }
+  }
+  function closeCacheModal() { $("cacheModal").classList.add("hidden"); }
+
+  async function loadCachedRemote(key) {
+    state.dataset = key;
+    setDatasetName(key);
+    const finish = (bytes) => {
+      loadBytes(bytes, "cached");
+      renderExamples();
+      const list = examplesForDataset();
+      if (list.length) selectExample(0);
+      updateHash();
+    };
+    if (remoteCache.has(key)) return finish(remoteCache.get(key));
+    setStatus("downloading " + key + " …");
+    openCacheModal(key);
+    try {
+      const bytes = await fetchWithProgress(remoteUrlFor(key), updateCacheProgress);
+      remoteCache.set(key, bytes);
+      closeCacheModal();
+      finish(bytes);
+    } catch (e) {
+      closeCacheModal();
+      showError("out", "Cache download failed: " + (e.message || e));
     }
   }
 
-  // The dataset metadata table: triples, .rete size, type (bundled/remote),
-  // license, and a link to where the data came from. Driven by CATALOG.datasetMeta.
-  function renderDatasetTable() {
-    const fmtTri = (t) => (t == null ? "—" : typeof t === "number" ? t.toLocaleString() : esc(t));
-    const host = (u) => { try { return new URL(u).host.replace(/^www\./, ""); } catch (e) { return u; } };
-    const rows = CATALOG.datasets.map((d) => {
-      const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[d.key]) || {};
-      const type = d.kind === "remote-lazy" ? "🛰 Remote · lazy" : "📦 Bundled";
-      const src = m.source
-        ? `<a href="${esc(m.source)}" target="_blank" rel="noopener">${esc(host(m.source))} ↗</a>`
-        : "—";
-      return `<tr><td><button type="button" class="ds-rowload" data-ds="${esc(d.key)}">${esc(d.label.split(" - ")[0])}</button></td>` +
-        `<td class="num">${fmtTri(m.triples)}</td>` +
-        `<td class="num">${esc(m.size || "—")}</td>` +
-        `<td>${type}</td><td>${esc(m.license || "—")}</td><td>${src}</td></tr>`;
-    }).join("");
-    return `<table class="ds-table"><thead><tr>` +
-      `<th>Dataset</th><th class="num">Triples</th><th class="num">.rete size</th>` +
-      `<th>Type</th><th>License</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>`;
+  // Load a dataset in one of three modes: bundled (embedded bytes), cache
+  // (download the remote once, keep it), lazy (range-query the remote).
+  function selectDatasetMode(key, mode) {
+    if (mode === "lazy") return enterRemote(remoteUrlFor(key), key);
+    if (mode === "cache") return loadCachedRemote(key);
+    return loadDataset(key);
+  }
+  // Default mode for non-modal callers (history, hash): bundled if embedded,
+  // else lazy over HTTP range.
+  function selectDataset(key) {
+    const d = datasetInfo(key);
+    if (isEmbedded(key) && !(d && d.kind === "remote-lazy")) loadDataset(key);
+    else enterRemote(remoteUrlFor(key), key);
   }
 
-  // The "Datasets" browser: one card per catalog dataset, with its description
-  // and a source badge (the source is part of the dataset). Loading a card calls
-  // selectDataset, which picks the right source — bundled→memory, remote→lazy.
-  // A Cards/Table toggle switches to the metadata table above.
-  function openSource() {
-    $("datasetList").innerHTML = CATALOG.datasets.map((d) => {
+  // Which playground tabs a dataset can showcase, derived from the catalog.
+  function datasetSupports(key) {
+    const exs = CATALOG.examples[key] || [];
+    const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[key]) || {};
+    return {
+      SPARQL: exs.length > 0,
+      SHACL: (CATALOG.shacl[key] || []).length > 0,
+      Reasoning: !!ex.reasoning,
+      Reach: !!CATALOG.reach[key],
+      Provenance: !!CATALOG.provenance[key],
+      Geo: exs.some((e) => e.family === "Geo") || exs.some((e) => /\bgeof:/.test(e.q || ""))
+    };
+  }
+
+  // Does the dataset carry temporal data worth a Time plot? Inferred from its
+  // example queries referencing years / dates / known temporal predicates.
+  function datasetTemporal(key) {
+    const exs = CATALOG.examples[key] || [];
+    return exs.some((e) => /gYear|xsd:date|dateTime|startYear|endYear|\bP569\b|\bP571\b|\bP58[02]\b|\byear\b|FILTER\s*\([^)]*\b-?\d{3,4}\b/i.test(e.q || ""));
+  }
+
+  // Show the Map option only for geo datasets, Time only for temporal ones
+  // (geo datasets are usually temporal too). Reset to Table if the current pick
+  // is hidden by a dataset switch.
+  function updateOutputOptions() {
+    const key = state.dataset;
+    const geo = datasetSupports(key).Geo;
+    const time = datasetTemporal(key) || geo;
+    const setOpt = (val, on) => {
+      const o = document.querySelector(`#fmt option[value="${val}"]`);
+      if (o) { o.hidden = !on; o.disabled = !on; }
+    };
+    setOpt("map", geo);
+    setOpt("time", time);
+    const cur = $("fmt").value;
+    if ((cur === "map" && !geo) || (cur === "time" && !time)) setView("table");
+  }
+
+  // Tiny markdown for descriptions: **bold**, `code`, *italic* (input escaped).
+  function mdLite(s) {
+    return esc(String(s || ""))
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
+  }
+
+  function dsShortLabel(key) {
+    const d = datasetInfo(key);
+    return d ? d.label.split(" - ")[0] : key;
+  }
+
+  // The "Datasets" browser: a sidebar list (left) + a detail/preview pane
+  // (right). The selected dataset shows tags, the example kinds it supports, a
+  // 3-mode source switch (bundled / cache / lazy), its metadata under "more",
+  // and an example preview.
+  let dsSelected = null;
+
+  function renderDsSidebar() {
+    const q = ($("dsSearch").value || "").trim().toLowerCase();
+    const items = CATALOG.datasets.filter((d) => {
+      if (!q) return true;
+      const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[d.key]) || {};
+      return [d.label, d.description, (ex.tags || []).join(" ")].join(" ").toLowerCase().includes(q);
+    });
+    if (!items.length) {
+      $("dsSidebar").innerHTML = `<p class="microcopy" style="padding:8px">No matching datasets.</p>`;
+      return;
+    }
+    $("dsSidebar").innerHTML = items.map((d) => {
+      const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[d.key]) || {};
+      const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[d.key]) || {};
       const remote = d.kind === "remote-lazy";
-      const m = (d.description || "").match(/~?\s*([\d.]+\s*[MG]B)\b/);
-      const size = m ? " · " + m[1].replace(/\s+/g, "") : "";
-      const badge = remote
-        ? `<span class="ds-badge remote">🛰 Remote · lazy${esc(size)}</span>`
-        : `<span class="ds-badge bundled">📦 Bundled · in page</span>`;
-      const active = d.key === state.dataset;
-      return `<div class="ds-card${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
-        `<div class="ds-card-head"><b>${esc(d.label.split(" - ")[0])}</b>${badge}</div>` +
-        `<p class="ds-card-desc">${esc(d.description || "(no description)")}</p>` +
-        `<div class="ds-card-foot">` +
-          `<button type="button" class="ds-load" data-ds="${esc(d.key)}">${active ? "Reload" : "Load"}</button>` +
-          `<button type="button" class="ds-more" aria-label="Toggle full description">more</button>` +
-        `</div></div>`;
+      const active = d.key === dsSelected;
+      const size = m.size || "—";
+      return `<button type="button" class="ds-side-item${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
+        `<span class="ds-side-ico">${esc(ex.icon || "📊")}</span>` +
+        `<span class="ds-side-name">${esc(dsShortLabel(d.key))}</span>` +
+        `<span class="ds-side-size${remote ? " remote" : ""}" title="${remote ? "remote-only · " : ""}.rete size">${remote ? "🛰 " : ""}${esc(size)}</span>` +
+        `</button>`;
     }).join("");
-    $$("#datasetList .ds-load").forEach((btn) => {
-      btn.onclick = () => { selectDataset(btn.dataset.ds); closeSource(); };
+    $$("#dsSidebar .ds-side-item").forEach((b) => {
+      b.onclick = () => { dsSelected = b.dataset.ds; renderDsSidebar(); renderDsDetail(dsSelected); };
     });
-    $$("#datasetList .ds-more").forEach((btn) => {
-      btn.onclick = () => {
-        const card = btn.closest(".ds-card");
-        const open = card.classList.toggle("expanded");
-        btn.textContent = open ? "less" : "more";
-      };
+  }
+
+  function renderDsDetail(key) {
+    const d = datasetInfo(key);
+    const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
+    const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[key]) || {};
+    const remoteOnly = d.kind === "remote-lazy";
+    const embedded = isEmbedded(key);
+    const sup = datasetSupports(key);
+    const fmtTri = (t) => (t == null ? "—" : typeof t === "number" ? t.toLocaleString() : esc(t));
+    const host = (u) => { try { return new URL(u).host.replace(/^www\./, ""); } catch (e) { return u; } };
+
+    const badge = remoteOnly
+      ? `<span class="ds-badge remote">🛰 Remote-only · lazy</span>`
+      : `<span class="ds-badge bundled">Bundled in page</span>`;
+    // Descriptive tags + capability chips (a distinct colour family) in one row.
+    const capChips = ["SPARQL", "SHACL", "Reasoning", "Reach", "Provenance", "Geo"]
+      .filter((c) => sup[c])
+      .map((c) => `<span class="ds-cap on">${esc(c)}</span>`).join("");
+    const tags = (ex.tags || []).map((t) => `<span class="ds-tag">${esc(t)}</span>`).join("") +
+      (m.license ? `<span class="ds-tag license">${esc(m.license)}</span>` : "") + capChips;
+
+    const defMode = embedded ? "bundled" : "lazy";
+    const hints = {
+      bundled: "Loads the copy embedded in this page — instant, fully offline.",
+      cache: "Downloads the whole .rete from the bucket once, then queries it in memory (cached this session).",
+      lazy: "Range-queries the remote .rete over HTTP — only the bytes each query touches are fetched."
+    };
+    const modeItem = (mode, label, dis) =>
+      `<button type="button" data-mode="${mode}"${dis ? " disabled" : ""} class="ds-load-item${mode === defMode ? " preferred" : ""}">` +
+      `<span class="ds-load-item-top">${esc(label)}${mode === defMode ? `<span class="ds-pref-tag">preferred</span>` : ""}</span>` +
+      `<span class="ds-load-item-hint">${esc(hints[mode])}</span></button>`;
+    const loadMenu = `<div class="ds-load">` +
+      `<button type="button" class="ds-load-btn" id="dsLoadBtn" aria-haspopup="true" aria-expanded="false"><span class="ds-eject-ic" aria-hidden="true">⏏</span>Load<span class="ds-load-caret" aria-hidden="true">⌄</span></button>` +
+      `<div class="ds-load-menu hidden" id="dsLoadMenu">` +
+      modeItem("bundled", "Bundled", !embedded) +
+      modeItem("cache", "Cache remote", false) +
+      modeItem("lazy", "Lazy range", false) +
+      `</div></div>`;
+
+    // Preview: the examples this dataset ships, each tagged by kind (SPARQL /
+    // SHACL) with a one-line "what it's about" and an expandable query/shape —
+    // multiline bodies open on demand instead of being clipped.
+    const previewItems = [];
+    (CATALOG.examples[key] || []).forEach((e) =>
+      previewItems.push({ type: "SPARQL", fam: e.family || "", label: e.label, tip: e.tip || "", code: e.q || "" }));
+    (CATALOG.shacl[key] || []).forEach((e) =>
+      previewItems.push({ type: "SHACL", fam: "Shape", label: e.label, tip: e.tip || "", code: e.shape || "" }));
+    const preview = previewItems.length
+      ? previewItems.map((e) => {
+          const tag = `<span class="ds-prev-tag ${e.type.toLowerCase()}">${esc(e.type)}</span>` +
+            (e.fam ? `<span class="ds-prev-fam">${esc(e.fam)}</span>` : "");
+          return `<div class="ds-prev-item">` +
+            `<div class="ds-prev-head">${tag}<span class="ds-prev-label">${esc(e.label)}</span></div>` +
+            (e.tip ? `<div class="ds-prev-tip">${esc(e.tip)}</div>` : "") +
+            `<details class="ds-prev-det"><summary>Show ${e.type === "SHACL" ? "shape" : "query"}</summary>` +
+            `<pre class="ds-prev-q">${esc((e.code || "").trim())}</pre></details>` +
+            `</div>`;
+        }).join("")
+      : `<p class="microcopy">No examples for this dataset.</p>`;
+
+    const metaTable = `<table class="ds-meta-table"><tbody>` +
+      `<tr><td>Triples</td><td class="num">${fmtTri(m.triples)}</td></tr>` +
+      `<tr><td>.rete size</td><td class="num">${esc(m.size || "—")}</td></tr>` +
+      `<tr><td>Type</td><td>${remoteOnly ? "🛰 Remote · lazy" : "Bundled"}${embedded ? " · also in bucket" : ""}</td></tr>` +
+      `<tr><td>License</td><td>${esc(m.license || "—")}</td></tr>` +
+      `<tr><td>Source</td><td>${m.source ? `<a href="${esc(m.source)}" target="_blank" rel="noopener">${esc(host(m.source))} ↗</a>` : "—"}</td></tr>` +
+      `<tr><td>Provenance</td><td>${m.provenance ? esc(m.provenance) : "—"}</td></tr>` +
+      `<tr><td>Bucket</td><td class="iri">playground/${esc(key)}.rete</td></tr>` +
+      `</tbody></table>`;
+
+    $("dsDetail").innerHTML =
+      `<div class="ds-detail-head">` +
+        `<div class="ds-ico-tile">${esc(ex.icon || "📊")}</div>` +
+        `<div class="ds-detail-head-main"><h2>${esc(dsShortLabel(key))}</h2><div class="ds-detail-sub">${badge}</div></div>` +
+        loadMenu +
+      `</div>` +
+      `<div class="ds-tags">${tags}</div>` +
+      `<p class="ds-desc">${mdLite(d.description)}</p>` +
+      `<details class="ds-more-block"><summary>More — metadata &amp; provenance</summary>${metaTable}</details>` +
+      `<div class="ds-section-label">Examples · ${previewItems.length}</div>` +
+      `<div class="ds-preview">${preview}</div>`;
+
+    $("dsLoadBtn").onclick = (e) => {
+      e.stopPropagation();
+      const menu = $("dsLoadMenu");
+      const nowHidden = menu.classList.toggle("hidden");
+      $("dsLoadBtn").setAttribute("aria-expanded", String(!nowHidden));
+    };
+    $$("#dsLoadMenu button").forEach((b) => {
+      b.onclick = () => { if (b.disabled) return; selectDatasetMode(key, b.dataset.mode); closeSource(); };
     });
-    // The metadata table (same datasets, at-a-glance) + the Cards/Table toggle.
-    $("datasetTable").innerHTML = renderDatasetTable();
-    $$("#datasetTable .ds-rowload").forEach((b) => {
-      b.onclick = () => { selectDataset(b.dataset.ds); closeSource(); };
-    });
-    $$("#sourceModal [data-dsview]").forEach((b) => {
-      b.onclick = () => {
-        const table = b.dataset.dsview === "table";
-        $("datasetList").classList.toggle("hidden", table);
-        $("datasetTable").classList.toggle("hidden", !table);
-        $$("#sourceModal [data-dsview]").forEach((x) => x.classList.toggle("active", x === b));
-      };
-    });
+  }
+
+  function openSource() {
+    if (!dsSelected || !datasetInfo(dsSelected)) dsSelected = state.dataset;
+    $("dsSearch").value = "";
+    $("dsSearch").oninput = renderDsSidebar;
+    renderDsSidebar();
+    renderDsDetail(dsSelected);
     $("sourceModal").classList.remove("hidden");
-    // Show "more/less" only where the description is actually clamped — measured
-    // now that the modal is visible (a hidden element reports zero heights).
-    requestAnimationFrame(() => {
-      $$("#datasetList .ds-card").forEach((card) => {
-        const desc = card.querySelector(".ds-card-desc");
-        const more = card.querySelector(".ds-more");
-        if (more && desc && desc.scrollHeight <= desc.clientHeight + 1) more.style.display = "none";
-      });
-    });
   }
 
   function closeSource() {
@@ -644,6 +981,7 @@
 
   function renderExamples() {
     renderFamilyFilters();
+    renderQuickExamples();
     const items = filteredExamples();
     if (!items.length) {
       $("examples").innerHTML = `<p class="microcopy">No matching examples for this dataset.</p>`;
@@ -674,14 +1012,50 @@
       `<div><strong>${esc(ex.label)}</strong></div>` +
       `<div>${esc(ex.family)}</div>` +
       `<div>${esc(ex.tip)}</div>`;
+    closeLibrary();
     renderExamples();
     updateHash();
+  }
+
+  // The quick-suggestion row above the editor: the dataset's first 1–2 examples
+  // as one-tap chips (the 2nd hides on a narrow editor), plus a button that opens
+  // the full Query Library modal.
+  function renderQuickExamples() {
+    const quick = $("exampleQuick");
+    if (!quick) return;
+    const all = examplesForDataset();
+    const chips = all.slice(0, 2).map((ex, i) =>
+      `<button type="button" class="ex-quick-chip${i === 1 ? " opt2" : ""}${state.selectedExample === i ? " active" : ""}" ` +
+        `data-example="${i}" title="${esc(ex.tip || ex.label)}">` +
+        `<span class="eqfam">${esc(ex.family || "")}</span><span class="eqlabel">${esc(ex.label)}</span></button>`).join("");
+    quick.innerHTML = chips +
+      `<button type="button" id="libraryBtn" class="ex-quick-lib" title="Browse the full query library">` +
+      `⊞ Library${all.length ? " · " + all.length : ""}</button>`;
+    $$("#exampleQuick [data-example]").forEach((b) => { b.onclick = () => selectExample(Number(b.dataset.example)); });
+    $("libraryBtn").onclick = openLibrary;
+  }
+
+  function openLibrary() { renderExamples(); $("libraryModal").classList.remove("hidden"); }
+  function closeLibrary() { $("libraryModal").classList.add("hidden"); }
+  function openHistory() { renderHistory(); $("historyModal").classList.remove("hidden"); }
+  function closeHistory() { $("historyModal").classList.add("hidden"); }
+
+  const LIB_KEY = "rete.pg.libCollapsed";
+  function setLibCollapsed(collapsed) {
+    const shell = document.querySelector(".console-shell");
+    if (shell) shell.classList.toggle("lib-collapsed", collapsed);
+    try { localStorage.setItem(LIB_KEY, collapsed ? "1" : "0"); } catch (_e) { /* ignore */ }
   }
 
   function setMode(mode) {
     state.mode = mode;
     $$("#modeTabs button").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
     $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === mode));
+    // Sidebar sections are contextual: a section tagged with data-modes only
+    // shows for the active tab, so the column stays short (no inner scrollbar).
+    // Untagged sections (Source, History) are always visible.
+    $$(".library-panel section[data-modes]").forEach((sec) =>
+      sec.classList.toggle("hidden", !sec.dataset.modes.split(" ").includes(mode)));
     if (mode === "explore") ensureExplore();
     updateResultVisibility();
     updateHash();
@@ -1054,7 +1428,15 @@
       `</div>`;
   }
 
+  // A clear empty state beats a bare header row — especially for custom queries
+  // on remote datasets, where "did it work?" and "matched nothing" look alike.
+  function emptyState(what) {
+    return `<div class="note">The query ran successfully but matched <strong>no ${esc(what)}</strong>. ` +
+      `Check bound IRIs and prefixes, or relax a FILTER — the graph just has nothing for this pattern.</div>`;
+  }
+
   function renderTable(vars, rows) {
+    if (!(rows || []).length) return emptyState("rows");
     const cap = 500;
     const shown = (rows || []).slice(0, cap);
     const head = `<tr>${(vars || []).map((v) => `<th>${esc(v)}</th>`).join("")}</tr>`;
@@ -1067,6 +1449,7 @@
   }
 
   function renderTriplesTable(triples) {
+    if (!(triples || []).length) return emptyState("triples");
     const cap = 500;
     const shown = (triples || []).slice(0, cap);
     const rowHtmls = shown.map((t) =>
@@ -1247,9 +1630,166 @@
       `</div>`;
   }
 
+  // --- Map & Time views: render SELECT bindings geographically / temporally ---
+
+  // Parse a SPARQL JSON term string into {iri, value, datatype, lang}.
+  function parseTerm(v) {
+    const s = String(v == null ? "" : v);
+    if (s.startsWith("<") && s.endsWith(">")) return { iri: true, value: s.slice(1, -1) };
+    const m = /^"((?:[^"\\]|\\.)*)"(?:\^\^<([^>]+)>|@([\w-]+))?$/s.exec(s);
+    if (m) return { iri: false, value: m[1].replace(/\\(.)/g, "$1"), datatype: m[2] || null, lang: m[3] || null };
+    return { iri: false, value: s, datatype: null };
+  }
+  const termLabel = (t) => t.iri ? shorten(localName(t.value) || t.value, 60) : shorten(t.value, 60);
+
+  const WKT_RE = /\b(POINT|LINESTRING|POLYGON|MULTIPOINT|MULTILINESTRING|MULTIPOLYGON|GEOMETRYCOLLECTION)\b\s*[ZM]*\s*\(/i;
+  function detectGeoCol(vars, rows) {
+    let best = null, hi = 0;
+    for (const v of vars) {
+      let h = 0;
+      for (const r of rows) { const t = parseTerm(r[v]); if (t.value && WKT_RE.test(t.value)) h++; }
+      if (h > hi) { hi = h; best = v; }
+    }
+    return hi > 0 ? best : null;
+  }
+  // Innermost coordinate rings of a WKT string, each as [[lon,lat],...].
+  function wktRings(s) {
+    return (s.match(/\(([^()]*)\)/g) || []).map((g) =>
+      g.replace(/[()]/g, "").trim().split(",")
+        .map((p) => p.trim().split(/\s+/).map(Number))
+        .filter((a) => a.length >= 2 && isFinite(a[0]) && isFinite(a[1]))
+        .map((a) => [a[0], a[1]])
+    ).filter((r) => r.length);
+  }
+
+  function termYear(t) {
+    if (!t || t.value == null) return null;
+    const typed = t.datatype && /gYear|gYearMonth|\bdate\b|dateTime/i.test(t.datatype);
+    if (typed) { const m = /^(-?\d{1,6})/.exec(t.value); return m ? parseInt(m[1], 10) : null; }
+    const iso = /^(-?\d{1,6})-\d{2}(-\d{2})?/.exec(t.value); if (iso) return parseInt(iso[1], 10);
+    return null;
+  }
+  // The best year column: a typed temporal column, else a plausible year integer.
+  function detectTimeCol(vars, rows) {
+    let best = null, hi = 0;
+    for (const v of vars) {
+      let h = 0; for (const r of rows) if (termYear(parseTerm(r[v])) != null) h++;
+      if (h > hi) { hi = h; best = v; }
+    }
+    if (hi > 0) return best;
+    // fall back to a bare-integer column that looks like years (spread, year-range)
+    for (const v of vars) {
+      const ys = rows.map((r) => { const t = parseTerm(r[v]); return /^-?\d{1,6}$/.test(t.value) ? parseInt(t.value, 10) : null; }).filter((y) => y != null);
+      if (ys.length >= Math.max(1, rows.length * 0.5)) {
+        const mn = Math.min(...ys), mx = Math.max(...ys), uniq = new Set(ys).size;
+        if (mn >= -12000 && mx <= 2200 && uniq > 1 && (mx >= 1000 || mn < 0)) return v;
+      }
+    }
+    return null;
+  }
+  // Permissive year extraction once a temporal column is chosen: typed gYear/date,
+  // ISO date, OR a bare integer in a plausible year range (e.g. ex:year 1914).
+  function extractYear(t) {
+    const y = termYear(t);
+    if (y != null) return y;
+    if (t && /^-?\d{1,6}$/.test(t.value)) { const n = parseInt(t.value, 10); if (n >= -12000 && n <= 2200) return n; }
+    return null;
+  }
+  const fmtYear = (y) => y < 0 ? `${-y} BCE` : `${y}`;
+  const note = (m) => `<div class="note">${esc(m)}</div>`;
+
+  function renderMap(res) {
+    if (res.kind !== "select") { $("out").innerHTML = note("Map needs SELECT rows with a geometry column."); return "no map"; }
+    const vars = res.vars || [], rows = res.rows || [];
+    const geo = detectGeoCol(vars, rows);
+    if (!geo) { $("out").innerHTML = note("No geometry in this result — Map needs a WKT column (geo:wktLiteral: POINT / LINESTRING / POLYGON …)."); return "no geometry"; }
+    const labelCol = vars.find((v) => v !== geo) || geo;
+    const feats = [];
+    let minX = 180, maxX = -180, minY = 90, maxY = -90, n = 0;
+    for (const r of rows) {
+      const wkt = parseTerm(r[geo]).value; if (!WKT_RE.test(wkt)) continue;
+      const rings = wktRings(wkt); if (!rings.length) continue;
+      const isPoly = /POLYGON/i.test(wkt);
+      feats.push({ rings, isPoly, label: termLabel(parseTerm(r[labelCol])) });
+      for (const ring of rings) for (const [x, y] of ring) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; n++;
+      }
+    }
+    if (!feats.length) { $("out").innerHTML = note("No parseable geometry in this result."); return "no geometry"; }
+    const W = 760, H = 420, pad = 14;
+    const dx = (maxX - minX) || 1, dy = (maxY - minY) || 1;
+    const sx = (W - 2 * pad) / dx, sy = (H - 2 * pad) / dy, s = Math.min(sx, sy);
+    const px = (x) => pad + (x - minX) * s + ((W - 2 * pad) - dx * s) / 2;
+    const py = (y) => H - pad - (y - minY) * s - ((H - 2 * pad) - dy * s) / 2; // invert lat
+    let svg = "";
+    for (const f of feats) {
+      const title = `<title>${esc(f.label)}</title>`;
+      for (const ring of f.rings) {
+        if (ring.length === 1) {
+          const [x, y] = ring[0];
+          svg += `<circle class="mpt" cx="${px(x).toFixed(1)}" cy="${py(y).toFixed(1)}" r="3">${title}</circle>`;
+        } else {
+          const pts = ring.map(([x, y]) => `${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(" ");
+          svg += f.isPoly
+            ? `<polygon class="mgeo" points="${pts}">${title}</polygon>`
+            : `<polyline class="mline" points="${pts}">${title}</polyline>`;
+        }
+      }
+    }
+    const cap = `${feats.length} feature(s) · lon ${minX.toFixed(1)}…${maxX.toFixed(1)}, lat ${minY.toFixed(1)}…${maxY.toFixed(1)} · equirectangular (offline)`;
+    $("out").innerHTML = `<div class="mapview"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="map of results">${svg}</svg>` +
+      `<div class="mapcap">${esc(cap)} — hover a feature for its label.</div></div>`;
+    return `${feats.length} mapped feature(s)`;
+  }
+
+  function renderTime(res) {
+    if (res.kind !== "select") { $("out").innerHTML = note("Time needs SELECT rows with a year/date column."); return "no time"; }
+    const vars = res.vars || [], rows = res.rows || [];
+    const col = detectTimeCol(vars, rows);
+    if (!col) { $("out").innerHTML = note("No temporal column in this result — Time needs a year/date value (xsd:gYear, xsd:date, or a year integer)."); return "no temporal data"; }
+    const labelCol = vars.find((v) => v !== col) || col;
+    const byYear = new Map();
+    for (const r of rows) {
+      const y = extractYear(parseTerm(r[col])); if (y == null) continue;
+      if (!byYear.has(y)) byYear.set(y, []);
+      byYear.get(y).push(termLabel(parseTerm(r[labelCol])));
+    }
+    const years = [...byYear.keys()];
+    if (!years.length) { $("out").innerHTML = note("No datable rows in this result."); return "no temporal data"; }
+    const min = Math.min(...years), max = Math.max(...years), span = max - min + 1;
+    let bucket = 1; for (const sz of [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000]) { if (Math.ceil(span / sz) <= 140) { bucket = sz; break; } }
+    const nb = Math.ceil(span / bucket);
+    const buckets = Array.from({ length: nb }, (_, i) => ({ from: min + i * bucket, to: min + i * bucket + bucket - 1, count: 0, items: [] }));
+    let totalItems = 0;
+    for (const [y, items] of byYear) {
+      const bi = Math.floor((y - min) / bucket); const b = buckets[bi];
+      b.count += items.length; totalItems += items.length;
+      for (const it of items) if (b.items.length < 40) b.items.push(it);
+    }
+    const sorted = buckets.map((b) => b.count).filter((c) => c > 0).sort((a, b) => a - b);
+    const q = (p) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : 0;
+    const t1 = q(0.25), t2 = q(0.5), t3 = q(0.75);
+    const shade = (c) => c === 0 ? 0 : c <= t1 ? 1 : c <= t2 ? 2 : c <= t3 ? 3 : 4;
+    const cols = Math.min(nb, 30);
+    const cells = buckets.map((b) => {
+      const yr = bucket === 1 ? fmtYear(b.from) : `${fmtYear(b.from)}–${fmtYear(b.to)}`;
+      const tip = `${yr}: ${b.count} item(s)` + (b.items.length ? "\n" + b.items.slice(0, 20).map((x) => "• " + x).join("\n") + (b.count > 20 ? `\n…(+${b.count - 20} more)` : "") : "");
+      return `<div class="tcell l${shade(b.count)}" title="${esc(tip)}"></div>`;
+    }).join("");
+    const legend = `<span class="tleg-lab">less</span>${[0, 1, 2, 3, 4].map((l) => `<span class="tcell l${l}"></span>`).join("")}<span class="tleg-lab">more</span>`;
+    $("out").innerHTML = `<div class="timeview"><div class="taxis"><span>${esc(fmtYear(min))}</span>` +
+      `<span class="tmid">${esc(col)} · ${bucket === 1 ? "per year" : "per " + bucket + " yr"}</span><span>${esc(fmtYear(max))}</span></div>` +
+      `<div class="tgrid" style="grid-template-columns:repeat(${cols}, 1fr)">${cells}</div>` +
+      `<div class="tlegend">${legend}</div></div>`;
+    return `${totalItems} dated item(s) · ${fmtYear(min)}–${fmtYear(max)}`;
+  }
+
   function renderResult(res, fmt) {
     const progressive = res.progressive || null;
     renderProgressiveInfo(progressive);
+
+    if (fmt === "map") return renderMap(res);
+    if (fmt === "time") return renderTime(res);
 
     if (fmt === "graph") {
       let triples = triplesForGraph(res);
@@ -1280,39 +1820,133 @@
     return `${(res.triples || []).length} triple(s)`;
   }
 
+  // A playful network spinner shown while a query runs: a hub firing packets out
+  // to nodes (byte ranges in flight), edges flowing, nodes pulsing.
+  function netSpinner(caption) {
+    const hub = [100, 70];
+    const sats = [[40, 36], [162, 38], [26, 106], [174, 100], [100, 14], [100, 126]];
+    let edges = "", pkts = "";
+    let nodes = `<circle class="ns-hub" cx="${hub[0]}" cy="${hub[1]}" r="7"/>`;
+    sats.forEach(([x, y], i) => {
+      edges += `<line class="ns-edge" x1="${hub[0]}" y1="${hub[1]}" x2="${x}" y2="${y}"/>`;
+      nodes += `<circle class="ns-node" cx="${x}" cy="${y}" r="4.5" style="animation-delay:${(i * 0.17).toFixed(2)}s"/>`;
+      // Packets travel inward — from the outer nodes to the hub (bytes arriving).
+      pkts += `<circle class="ns-pkt" r="2.6"><animateMotion dur="${(0.7 + i * 0.13).toFixed(2)}s" ` +
+        `repeatCount="indefinite" path="M${x},${y} L${hub[0]},${hub[1]}"/></circle>`;
+    });
+    return `<div class="netspin"><svg viewBox="0 0 200 140" role="img" aria-label="querying">` +
+      edges + pkts + nodes + `</svg><div class="ns-cap">${esc(caption || "querying…")}</div></div>`;
+  }
+
+  // The "requests" inspector: shows/hides the button by the run bar, and renders a
+  // modal listing the byte-range fetches a remote query made (worker fetch log).
+  function updateReqLogBtn() {
+    const btn = $("reqLogBtn");
+    if (!btn) return;
+    const n = (state.lastRemoteLog || []).length;
+    btn.classList.toggle("hidden", n === 0);
+    btn.textContent = `⊞ ${n} request${n === 1 ? "" : "s"}`;
+  }
+
+  function openReqLog() {
+    const log = state.lastRemoteLog || [];
+    const totalBytes = log.reduce((a, e) => a + (e.b || 0), 0);
+    const totalRanges = log.reduce((a, e) => a + (e.k === "multi" ? (e.n || 0) : 1), 0);
+    const last = log.length ? log[log.length - 1].t : 0;
+    const head = `<div class="reqlog-stat">` +
+      `<span><b>${log.length}</b> HTTP request(s)</span><span><b>${totalRanges}</b> byte-range(s)</span>` +
+      `<span><b>${formatBytes(totalBytes)}</b> fetched</span><span><b>${last} ms</b> total</span></div>`;
+    const rows = log.map((e, i) => {
+      const kind = e.k === "multi" ? `multipart ×${e.n}` : "range";
+      const rs = e.k === "multi" ? (e.r || []) : [];
+      const ranges = rs.length ? esc(rs.slice(0, 6).join(", ") + (rs.length > 6 ? ` … (+${rs.length - 6})` : "")) : "—";
+      return `<tr><td class="num">${i + 1}</td><td>${kind}</td><td class="num">${formatBytes(e.b || 0)}</td>` +
+        `<td class="num">${e.t} ms</td><td class="mono">${ranges}</td></tr>`;
+    }).join("");
+    $("reqLogBody").innerHTML = head +
+      `<div class="tbl"><table><thead><tr><th class="num">#</th><th>kind</th><th class="num">bytes</th>` +
+      `<th class="num">at</th><th>byte ranges (start-end)</th></tr></thead>` +
+      `<tbody>${rows || `<tr><td colspan="5">No requests logged.</td></tr>`}</tbody></table></div>`;
+    $("reqModal").classList.remove("hidden");
+  }
+
   function runQuery() {
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
     const fmt = $("fmt").value;
+    // Clear any previous result/message and show the network spinner.
+    $("commOut").innerHTML = "";
+    $("reqLogBtn").classList.add("hidden");
+    $("out").innerHTML = netSpinner(state.remote ? "querying remote…" : "querying…");
+    updateResultVisibility();
 
-    // Remote lazy mode: route through the worker (range reads), render async.
+    // Remote lazy mode: route through the worker (range reads), render async with
+    // LIVE progress — a 1 GB graph can take many range fetches, so show running
+    // request count, bytes fetched (of the file size) and elapsed, plus a Cancel.
     if (state.remote) {
-      $("commOut").innerHTML = "";
-      updateResultVisibility();
-      $("qmeta").textContent = "querying remote…";
       const t0 = performance.now();
-      remoteSparql(state.remote.url, q, "table").then((raw) => {
-        const res = JSON.parse(raw);
+      const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
+      const ofSize = meta.size ? " of " + meta.size : "";
+      const dsName = dsShortLabel(state.dataset);
+      let lastReq = 0, lastBytes = 0;
+      const showProg = () => {
+        const dt = (performance.now() - t0) / 1000;
+        $("qmeta").textContent = `⏳ querying ${dsName} — ${lastReq} request(s) · ` +
+          `${formatBytes(lastBytes)}${ofSize} fetched · ${dt.toFixed(1)}s`;
+      };
+      const runBtn = $("run");
+      const prevLabel = runBtn.textContent;
+      runBtn.textContent = "Cancel";
+      runBtn.onclick = cancelRemote;
+      showProg();
+      const timer = setInterval(showProg, 250);
+      const cleanup = () => {
+        clearInterval(timer);
+        remoteOnProgress = null;
+        runBtn.textContent = prevLabel;
+        runBtn.onclick = runQuery;
+      };
+      // Just record the latest tally; the 250 ms timer paints it — so a query
+      // firing thousands of fetches doesn't thrash the DOM.
+      remoteOnProgress = (m) => { lastReq = m.requests; lastBytes = m.bytes; };
+      remoteSparql(state.remote.url, q, "table").then((out) => {
+        cleanup();
+        state.lastRemoteLog = out.log || [];
+        const res = JSON.parse(out.json);
         const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
         const r = res.remote || {};
         const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
         const dt = performance.now() - t0;
+        updateReqLogBtn();
         $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
           `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} (${pct}%) · ${dt.toFixed(0)} ms`;
         saveHistory({ query: q, format: fmt, strategy: "remote", dataset: "(remote)", ts: Date.now(), resultSummary: summary });
       }).catch((e) => {
-        $("qmeta").textContent = "";
-        showError("out", "Remote query failed: " + String(e.message || e));
+        cleanup();
+        if (e && e.log) state.lastRemoteLog = e.log;
+        updateReqLogBtn();
+        const msg = String(e.message || e);
+        if (msg === "cancelled") {
+          $("qmeta").textContent = "cancelled";
+          $("out").innerHTML = `<div class="note">Query cancelled — the worker was stopped. Run again to retry.</div>`;
+        } else {
+          $("qmeta").textContent = "";
+          showError("out", "Remote query failed: " + msg);
+        }
       });
       return;
     }
 
     if (!state.bytes) return showError("out", "Load a graph first.");
-    const strategy = $("strategy").value;
-    const queryFmt = strategy === "progressive" || fmt === "graph" ? "table" : fmt;
-    $("commOut").innerHTML = "";
-    updateResultVisibility();
+    // Defer the (synchronous) engine call one frame so the spinner paints first.
+    setTimeout(() => runEmbeddedQuery(q, fmt), 0);
+  }
 
+  function runEmbeddedQuery(q, fmt) {
+    const strategy = $("strategy").value;
+    // graph / map / time are renderings of SELECT bindings — ask the engine for table rows.
+    const rowView = fmt === "graph" || fmt === "map" || fmt === "time";
+    const queryFmt = strategy === "progressive" || rowView ? "table" : fmt;
     const t0 = performance.now();
     try {
       let raw;
@@ -1795,6 +2429,7 @@
     loadBytes(state.built.bytes, "built");
     setStatus(`${buildFileName()} | ${formatBytes(state.built.bytes.byteLength)} | built in browser`);
     $("dsDesc").textContent = "Graph built from RDF text in this session — query it like any dataset.";
+    setDatasetHeader(buildFileName(), "Graph built from RDF text in this session — query it like any dataset.");
     setMode("sparql");
   }
 
@@ -1841,7 +2476,16 @@
     renderHistory();
   }
 
+  function updateHistCount() {
+    const n = loadHistory().length;
+    const b = $("histCount");
+    if (!b) return;
+    b.textContent = n > 99 ? "99+" : String(n);
+    b.classList.toggle("hidden", n === 0);
+  }
+
   function renderHistory() {
+    updateHistCount();
     const history = loadHistory();
     if (!history.length) {
       $("histList").innerHTML = `<div>No runs yet.</div>`;
@@ -1862,6 +2506,7 @@
         setStrategy(h.strategy || "whole");
         if (h.dataset && h.dataset !== state.dataset && RETE_DATASETS_B64[h.dataset]) loadDataset(h.dataset);
         setMode("sparql");
+        closeHistory();
       };
     });
   }
@@ -1890,6 +2535,14 @@
     }
   }
 
+  // Run the primary action of whichever panel is active (the Ctrl/Cmd+Enter target).
+  function runActiveMode() {
+    ({
+      sparql: runQuery, shacl: runShacl, reach: runReach,
+      provenance: runProvenance, coherence: runCoherence, build: runBuild
+    }[state.mode] || runQuery)();
+  }
+
   function wireEvents() {
     $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
@@ -1897,8 +2550,31 @@
     $$("#viewSeg button").forEach((btn) => {
       btn.onclick = () => setView(btn.dataset.view);
     });
-    $$("#modeTabs button").forEach((btn) => {
+    $$("#modeTabs button[data-mode]").forEach((btn) => {
       btn.onclick = () => setMode(btn.dataset.mode);
+    });
+    $("histBtn").onclick = openHistory;
+    $("libCollapse").onclick = () => setLibCollapsed(true);
+    $("libExpand").onclick = () => setLibCollapsed(false);
+    // Close the dataset Load dropdown on any click outside it.
+    document.addEventListener("click", (e) => {
+      const menu = $("dsLoadMenu");
+      if (menu && !e.target.closest(".ds-load")) menu.classList.add("hidden");
+    });
+    // Keep the top bar pinned; the dataset header sticks just below it and
+    // condenses to a single line (title + metadata, no tagline) once scrolled.
+    const dsHeader = document.querySelector(".ds-header");
+    const topbar = document.querySelector(".topbar");
+    if (dsHeader) {
+      const setTop = () => { dsHeader.style.top = (topbar ? topbar.offsetHeight : 0) + "px"; };
+      setTop();
+      window.addEventListener("resize", setTop, { passive: true });
+      const onScroll = () => dsHeader.classList.toggle("condensed", window.scrollY > 10);
+      window.addEventListener("scroll", onScroll, { passive: true });
+      onScroll();
+    }
+    $$("#exploreSeg button").forEach((btn) => {
+      btn.onclick = () => setExploreView(btn.dataset.exp);
     });
     $("exampleSearch").oninput = renderExamples;
     $("urlLoad").onclick = loadFromUrl;
@@ -1915,6 +2591,11 @@
 
     $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
+    $("outputHelp").onclick = () => $("outputModal").classList.remove("hidden");
+    $("outputModalClose").onclick = () => $("outputModal").classList.add("hidden");
+    $("outputModal").addEventListener("click", (e) => {
+      if (e.target === $("outputModal")) $("outputModal").classList.add("hidden");
+    });
     $("layoutCell").onchange = renderLayout;
     $("dsButton").onclick = openSource;
     $("sourceModalClose").onclick = closeSource;
@@ -1926,11 +2607,42 @@
     $("strategyModal").addEventListener("click", (e) => {
       if (e.target === $("strategyModal")) $("strategyModal").classList.add("hidden");
     });
+    $("reqLogBtn").onclick = openReqLog;
+    $("reqModalClose").onclick = () => $("reqModal").classList.add("hidden");
+    $("reqModal").addEventListener("click", (e) => {
+      if (e.target === $("reqModal")) $("reqModal").classList.add("hidden");
+    });
+    $("libraryModalClose").onclick = closeLibrary;
+    $("libraryModal").addEventListener("click", (e) => {
+      if (e.target === $("libraryModal")) closeLibrary();
+    });
+    $("historyModalClose").onclick = closeHistory;
+    $("historyModal").addEventListener("click", (e) => {
+      if (e.target === $("historyModal")) closeHistory();
+    });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
+        $("outputModal").classList.add("hidden");
+        $("reqModal").classList.add("hidden");
+        closeLibrary();
+        closeHistory();
         closeSource();
       }
+      // Ctrl/Cmd+Enter runs the active panel's primary action from anywhere.
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        runActiveMode();
+      }
+    });
+
+    // Surface the shortcut on each panel's primary button.
+    const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘↵" : "Ctrl+↵";
+    [["run", "Run query"], ["shaclRun", "Validate"], ["reachRun", "Run reach"],
+     ["whyRun", "Explain matches"], ["coherenceRun", "Check coherence"],
+     ["buildRun", "Build .rete"]].forEach(([id, label]) => {
+      const b = $(id);
+      if (b) b.title = `${label} (${shortcut})`;
     });
 
     // Collapsed tables: every "Show more" button reveals the next step of
@@ -1973,6 +2685,7 @@
     renderDatasetOptions();
     wireEvents();
     renderHistory();
+    try { setLibCollapsed(localStorage.getItem(LIB_KEY) === "1"); } catch (_e) { /* ignore */ }
     enhanceEditor("q", "sparql");
     enhanceEditor("shapeText", "ttl");
     enhanceEditor("buildText", "ttl");

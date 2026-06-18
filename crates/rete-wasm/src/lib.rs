@@ -5,9 +5,10 @@
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
     eval_select_communities, eval_sparql, project_graph, schema_classes, schema_summary,
-    summary_query_shape, tile_by_community, validate_shacl, ByteRange, CountingReader, DataGraph,
-    Header, QueryOutput, RangeReader, Rete, ShaclShapes, SliceReader, SummaryQueryShape,
-    SummaryView, TripleProvenance, ValidationReport, DEFAULT_TILE_BUDGET,
+    summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader, ByteRange,
+    CountingReader, DataGraph, Header, QueryOutput, RangeReader, Rete, ShaclShapes, SliceReader,
+    SummaryQueryShape, SummaryView, TripleProvenance, ValidationReport, DEFAULT_BLOCK,
+    DEFAULT_TILE_BUDGET,
 };
 use wasm_bindgen::prelude::*;
 
@@ -543,8 +544,14 @@ impl XhrRangeReader {
 /// reader (for byte/request stats) and the `Rete`. The seam every `*_url`
 /// task shares with [`sparql_url`].
 fn open_url(url: &str) -> Result<(std::sync::Arc<CountingReader<XhrRangeReader>>, Rete), JsValue> {
+    // `reader` counts the PHYSICAL fetches; a read-through block cache above it
+    // turns the query's scattered range reads into a few aligned block fetches
+    // (and reuses them) — working over any single-range backend (S3, a CDN),
+    // not just a multi-range gateway. The block fetches still go through
+    // `read_many`, so a multi-range host coalesces them further.
     let reader = std::sync::Arc::new(CountingReader::new(XhrRangeReader::open(url)?));
-    let rete = Rete::open_ranged_lazy(reader.clone()).map_err(err)?;
+    let cached = std::sync::Arc::new(BlockCacheReader::new(reader.clone(), DEFAULT_BLOCK));
+    let rete = Rete::open_ranged_lazy(cached).map_err(err)?;
     Ok((reader, rete))
 }
 

@@ -5,6 +5,7 @@
 //! query logic so it compiles cleanly to both native and `wasm32`.
 
 pub mod bgp;
+pub mod block_cache;
 pub mod dict;
 pub mod dictionary;
 pub mod file;
@@ -29,6 +30,7 @@ pub mod triples;
 pub mod varint;
 
 pub use bgp::{eval_bgp, Binding, PatternTerm, TriplePattern};
+pub use block_cache::{BlockCacheReader, DEFAULT_BLOCK};
 pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 pub use file::{
