@@ -951,7 +951,11 @@ pub fn write_dataset_with_metadata(
         dict_codec: codec,
         block_codec: codec,
         pyramid_levels,
-        quad_count: default_index.triple_count() as u64,
+        quad_count: default_index.triple_count() as u64
+            + named
+                .iter()
+                .map(|(_, idx)| idx.triple_count() as u64)
+                .sum::<u64>(),
         term_count: dict.term_count() as u64,
         content_hash: content_hash(&parts),
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
@@ -2878,6 +2882,10 @@ mod tests {
         let gi = rete.graph_index("http://ex/g1").unwrap();
         assert_eq!(gi.triple_count(), 1);
         assert!(rete.graph_index("http://ex/missing").is_none());
+
+        // quad_count counts ALL quads — default graph + named graphs (1 + 1),
+        // not just the default index (which would report 1).
+        assert_eq!(rete.header().quad_count, 2);
 
         // Default-graph query path is unchanged.
         assert_eq!(rete.query(Some("Alice"), None, None).len(), 1);
