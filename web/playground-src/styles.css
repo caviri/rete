@@ -60,10 +60,10 @@ a {
   position: sticky;
   top: 0;
   z-index: 20;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 16px;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   padding: 10px 18px;
   border-bottom: 1px solid var(--line);
   background: var(--side);
@@ -269,30 +269,140 @@ label.file-button:hover {
   color: var(--accent-dark);
 }
 
-.mode-tabs {
+/* Dataset header band — full title + one-line sentence on the left, graph
+   metadata pill on the right. Sits where the horizontal mode tabs used to. */
+.ds-header {
   display: flex;
-  gap: 6px;
-  align-items: center;
-  padding: 10px 18px 0;
-  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 20px 8px;
 }
 
-.mode-tabs button {
-  min-height: 34px;
-  border-color: var(--line);
-  background: rgba(255, 255, 255, .72);
+.ds-header-main {
+  min-width: 0;
+}
+
+.ds-title {
+  margin: 0 0 3px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 21px;
+  line-height: 1.14;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.ds-tagline {
+  margin: 0;
   color: var(--muted);
+  font-size: 13px;
+  max-width: 78ch;
 }
 
-.mode-tabs button.active {
+.ds-header-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Vertical mode rail — icon + small name, with a hover tip card. */
+.mode-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-self: start;
+  position: sticky;
+  top: 66px;
+}
+
+.mode-rail button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 78px;
+  min-height: 0;
+  padding: 9px 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mode-rail button:hover {
+  background: var(--side);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.mode-rail button.active {
   border-color: var(--accent);
   background: var(--accent);
   color: #f4faf8;
 }
 
+.mode-rail .rail-ic {
+  width: 22px;
+  height: 22px;
+}
+
+.mode-rail .rail-name {
+  font-size: 10.5px;
+  letter-spacing: .02em;
+}
+
+.mode-rail .rail-tip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  z-index: 50;
+  width: 232px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.42;
+  text-align: left;
+  opacity: 0;
+  transform: translateY(-50%) translateX(-4px);
+  pointer-events: none;
+  transition: opacity .12s ease, transform .12s ease;
+}
+
+.mode-rail .rail-tip b {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12.5px;
+  color: var(--accent-dark);
+}
+
+.mode-rail button:hover .rail-tip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* Explore sub-tabs (Entity tables / Community / File byte map). */
+.explore-sub {
+  display: none;
+}
+
+.explore-sub.active {
+  display: block;
+}
+
 .console-shell {
   display: grid;
-  grid-template-columns: minmax(248px, 318px) minmax(0, 1fr);
+  grid-template-columns: auto minmax(240px, 312px) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
   padding: 12px 18px 28px;
@@ -1350,7 +1460,7 @@ pre {
 
 @media (max-width: 1220px) {
   .console-shell {
-    grid-template-columns: minmax(220px, 290px) minmax(0, 1fr);
+    grid-template-columns: auto minmax(220px, 290px) minmax(0, 1fr);
   }
 
   .inspector {
@@ -1379,6 +1489,22 @@ pre {
     position: static;
     max-height: none;
     overflow: visible;
+  }
+
+  .mode-rail {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .mode-rail button {
+    width: auto;
+    flex-direction: row;
+    gap: 6px;
+  }
+
+  .mode-rail .rail-tip {
+    display: none;
   }
 
   .editor-head {

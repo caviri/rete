@@ -513,6 +513,28 @@
     $("dsName").textContent = d ? d.label.split(" - ")[0] : key;
   }
 
+  // The dataset header band: a full title and a one-line sentence, with the
+  // graph metadata pill sitting to its right.
+  function firstSentence(text, max) {
+    if (!text) return "";
+    const m = text.match(/^(.+?[.!?])(\s|$)/);
+    let s = (m ? m[1] : text).trim();
+    const cap = max || 170;
+    if (s.length > cap) s = s.slice(0, cap - 1).replace(/\s+\S*$/, "") + "…";
+    return s;
+  }
+
+  function setDatasetHeader(title, tagline) {
+    const t = $("dsTitle"); if (t) t.textContent = title || "—";
+    const g = $("dsTagline"); if (g) g.textContent = tagline || "";
+  }
+
+  // Switch the Explore sub-tab (Entity tables / Community / File byte map).
+  function setExploreView(view) {
+    $$("#exploreSeg button").forEach((b) => b.classList.toggle("active", b.dataset.exp === view));
+    $$(".explore-sub").forEach((p) => p.classList.toggle("active", p.dataset.exp === view));
+  }
+
   function renderDatasetOptions() {
     setDatasetName(state.dataset);
   }
@@ -546,8 +568,12 @@
     $("dsDesc").textContent = catalogSource
       ? infoRow.description
       : "Custom graph loaded into the same in-browser engine.";
-    if (!catalogSource) {
-      $("dsName").textContent = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom";
+    if (catalogSource && infoRow) {
+      setDatasetHeader(infoRow.label, firstSentence(infoRow.description));
+    } else {
+      const cn = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom graph";
+      $("dsName").textContent = cn;
+      setDatasetHeader(cn, "Custom graph loaded into the same in-browser engine.");
     }
   }
 
@@ -600,6 +626,8 @@
     setStatus("remote (lazy) — queries range-fetch only what they touch");
     const info = datasetKey ? datasetInfo(datasetKey) : null;
     $("dsDesc").textContent = info ? info.description : "Remote graph, queried lazily over HTTP range: " + url;
+    setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
+      info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.");
     renderExamples();
     closeSource();
     setMode("sparql");
@@ -2153,6 +2181,7 @@
     loadBytes(state.built.bytes, "built");
     setStatus(`${buildFileName()} | ${formatBytes(state.built.bytes.byteLength)} | built in browser`);
     $("dsDesc").textContent = "Graph built from RDF text in this session — query it like any dataset.";
+    setDatasetHeader(buildFileName(), "Graph built from RDF text in this session — query it like any dataset.");
     setMode("sparql");
   }
 
@@ -2265,6 +2294,9 @@
     });
     $$("#modeTabs button").forEach((btn) => {
       btn.onclick = () => setMode(btn.dataset.mode);
+    });
+    $$("#exploreSeg button").forEach((btn) => {
+      btn.onclick = () => setExploreView(btn.dataset.exp);
     });
     $("exampleSearch").oninput = renderExamples;
     $("urlLoad").onclick = loadFromUrl;
