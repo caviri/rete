@@ -1736,3 +1736,27 @@ pre {
 .cache-bar.indeterminate .cache-bar-fill { width: 38%; animation: cache-indet 1.15s ease-in-out infinite; }
 @keyframes cache-indet { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
 .cache-stat { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+
+/* Map view — an offline equirectangular plot of WKT geometries. */
+.mapview svg { width: 100%; height: auto; background: var(--side); border: 1px solid var(--line); border-radius: 8px; }
+.mapview .mgeo { fill: rgba(20, 125, 105, .18); stroke: var(--accent-dark); stroke-width: .7; }
+.mapview .mline { fill: none; stroke: var(--accent-dark); stroke-width: 1; }
+.mapview .mpt { fill: var(--accent-2, #c84f2f); stroke: #fff; stroke-width: .5; }
+.mapview .mgeo:hover, .mapview .mline:hover { stroke-width: 1.8; }
+.mapcap { font-size: 11.5px; color: var(--muted); margin-top: 7px; }
+
+/* Time view — a GitHub-style multi-year heatmap; cell colour = item count. */
+.timeview { padding: 4px 2px 2px; }
+.taxis { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; color: var(--muted); margin-bottom: 7px; }
+.taxis .tmid { font-weight: 700; letter-spacing: .03em; text-transform: uppercase; font-size: 10px; }
+.tgrid { display: grid; gap: 3px; }
+.tcell { aspect-ratio: 1 / 1; min-height: 11px; border-radius: 2.5px; background: var(--side); border: 1px solid rgba(0, 0, 0, .05); cursor: default; }
+.tcell.l0 { background: var(--side); }
+.tcell.l1 { background: #d7efe2; }
+.tcell.l2 { background: #9fdcbb; }
+.tcell.l3 { background: #4fb98a; }
+.tcell.l4 { background: #147d69; }
+.tcell:hover { outline: 1.5px solid var(--accent-dark); outline-offset: 1px; }
+.tlegend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 9px; font-size: 11px; color: var(--muted); }
+.tlegend .tcell { width: 13px; height: 13px; min-height: 0; aspect-ratio: auto; }
+.tleg-lab { margin: 0 3px; }

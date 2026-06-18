@@ -575,6 +575,7 @@
       $("dsName").textContent = cn;
       setDatasetHeader(cn, "Custom graph loaded into the same in-browser engine.");
     }
+    updateOutputOptions();
   }
 
   function loadDataset(key) {
@@ -628,6 +629,7 @@
     $("dsDesc").textContent = info ? info.description : "Remote graph, queried lazily over HTTP range: " + url;
     setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
       info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.");
+    updateOutputOptions();
     renderExamples();
     closeSource();
     setMode("sparql");
@@ -760,6 +762,30 @@
       Provenance: !!CATALOG.provenance[key],
       Geo: exs.some((e) => e.family === "Geo") || exs.some((e) => /\bgeof:/.test(e.q || ""))
     };
+  }
+
+  // Does the dataset carry temporal data worth a Time plot? Inferred from its
+  // example queries referencing years / dates / known temporal predicates.
+  function datasetTemporal(key) {
+    const exs = CATALOG.examples[key] || [];
+    return exs.some((e) => /gYear|xsd:date|dateTime|startYear|endYear|\bP569\b|\bP571\b|\bP58[02]\b|\byear\b|FILTER\s*\([^)]*\b-?\d{3,4}\b/i.test(e.q || ""));
+  }
+
+  // Show the Map option only for geo datasets, Time only for temporal ones
+  // (geo datasets are usually temporal too). Reset to Table if the current pick
+  // is hidden by a dataset switch.
+  function updateOutputOptions() {
+    const key = state.dataset;
+    const geo = datasetSupports(key).Geo;
+    const time = datasetTemporal(key) || geo;
+    const setOpt = (val, on) => {
+      const o = document.querySelector(`#fmt option[value="${val}"]`);
+      if (o) { o.hidden = !on; o.disabled = !on; }
+    };
+    setOpt("map", geo);
+    setOpt("time", time);
+    const cur = $("fmt").value;
+    if ((cur === "map" && !geo) || (cur === "time" && !time)) setView("table");
   }
 
   // Tiny markdown for descriptions: **bold**, `code`, *italic* (input escaped).
@@ -1604,9 +1630,166 @@
       `</div>`;
   }
 
+  // --- Map & Time views: render SELECT bindings geographically / temporally ---
+
+  // Parse a SPARQL JSON term string into {iri, value, datatype, lang}.
+  function parseTerm(v) {
+    const s = String(v == null ? "" : v);
+    if (s.startsWith("<") && s.endsWith(">")) return { iri: true, value: s.slice(1, -1) };
+    const m = /^"((?:[^"\\]|\\.)*)"(?:\^\^<([^>]+)>|@([\w-]+))?$/s.exec(s);
+    if (m) return { iri: false, value: m[1].replace(/\\(.)/g, "$1"), datatype: m[2] || null, lang: m[3] || null };
+    return { iri: false, value: s, datatype: null };
+  }
+  const termLabel = (t) => t.iri ? shorten(localName(t.value) || t.value, 60) : shorten(t.value, 60);
+
+  const WKT_RE = /\b(POINT|LINESTRING|POLYGON|MULTIPOINT|MULTILINESTRING|MULTIPOLYGON|GEOMETRYCOLLECTION)\b\s*[ZM]*\s*\(/i;
+  function detectGeoCol(vars, rows) {
+    let best = null, hi = 0;
+    for (const v of vars) {
+      let h = 0;
+      for (const r of rows) { const t = parseTerm(r[v]); if (t.value && WKT_RE.test(t.value)) h++; }
+      if (h > hi) { hi = h; best = v; }
+    }
+    return hi > 0 ? best : null;
+  }
+  // Innermost coordinate rings of a WKT string, each as [[lon,lat],...].
+  function wktRings(s) {
+    return (s.match(/\(([^()]*)\)/g) || []).map((g) =>
+      g.replace(/[()]/g, "").trim().split(",")
+        .map((p) => p.trim().split(/\s+/).map(Number))
+        .filter((a) => a.length >= 2 && isFinite(a[0]) && isFinite(a[1]))
+        .map((a) => [a[0], a[1]])
+    ).filter((r) => r.length);
+  }
+
+  function termYear(t) {
+    if (!t || t.value == null) return null;
+    const typed = t.datatype && /gYear|gYearMonth|\bdate\b|dateTime/i.test(t.datatype);
+    if (typed) { const m = /^(-?\d{1,6})/.exec(t.value); return m ? parseInt(m[1], 10) : null; }
+    const iso = /^(-?\d{1,6})-\d{2}(-\d{2})?/.exec(t.value); if (iso) return parseInt(iso[1], 10);
+    return null;
+  }
+  // The best year column: a typed temporal column, else a plausible year integer.
+  function detectTimeCol(vars, rows) {
+    let best = null, hi = 0;
+    for (const v of vars) {
+      let h = 0; for (const r of rows) if (termYear(parseTerm(r[v])) != null) h++;
+      if (h > hi) { hi = h; best = v; }
+    }
+    if (hi > 0) return best;
+    // fall back to a bare-integer column that looks like years (spread, year-range)
+    for (const v of vars) {
+      const ys = rows.map((r) => { const t = parseTerm(r[v]); return /^-?\d{1,6}$/.test(t.value) ? parseInt(t.value, 10) : null; }).filter((y) => y != null);
+      if (ys.length >= Math.max(1, rows.length * 0.5)) {
+        const mn = Math.min(...ys), mx = Math.max(...ys), uniq = new Set(ys).size;
+        if (mn >= -12000 && mx <= 2200 && uniq > 1 && (mx >= 1000 || mn < 0)) return v;
+      }
+    }
+    return null;
+  }
+  // Permissive year extraction once a temporal column is chosen: typed gYear/date,
+  // ISO date, OR a bare integer in a plausible year range (e.g. ex:year 1914).
+  function extractYear(t) {
+    const y = termYear(t);
+    if (y != null) return y;
+    if (t && /^-?\d{1,6}$/.test(t.value)) { const n = parseInt(t.value, 10); if (n >= -12000 && n <= 2200) return n; }
+    return null;
+  }
+  const fmtYear = (y) => y < 0 ? `${-y} BCE` : `${y}`;
+  const note = (m) => `<div class="note">${esc(m)}</div>`;
+
+  function renderMap(res) {
+    if (res.kind !== "select") { $("out").innerHTML = note("Map needs SELECT rows with a geometry column."); return "no map"; }
+    const vars = res.vars || [], rows = res.rows || [];
+    const geo = detectGeoCol(vars, rows);
+    if (!geo) { $("out").innerHTML = note("No geometry in this result — Map needs a WKT column (geo:wktLiteral: POINT / LINESTRING / POLYGON …)."); return "no geometry"; }
+    const labelCol = vars.find((v) => v !== geo) || geo;
+    const feats = [];
+    let minX = 180, maxX = -180, minY = 90, maxY = -90, n = 0;
+    for (const r of rows) {
+      const wkt = parseTerm(r[geo]).value; if (!WKT_RE.test(wkt)) continue;
+      const rings = wktRings(wkt); if (!rings.length) continue;
+      const isPoly = /POLYGON/i.test(wkt);
+      feats.push({ rings, isPoly, label: termLabel(parseTerm(r[labelCol])) });
+      for (const ring of rings) for (const [x, y] of ring) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; n++;
+      }
+    }
+    if (!feats.length) { $("out").innerHTML = note("No parseable geometry in this result."); return "no geometry"; }
+    const W = 760, H = 420, pad = 14;
+    const dx = (maxX - minX) || 1, dy = (maxY - minY) || 1;
+    const sx = (W - 2 * pad) / dx, sy = (H - 2 * pad) / dy, s = Math.min(sx, sy);
+    const px = (x) => pad + (x - minX) * s + ((W - 2 * pad) - dx * s) / 2;
+    const py = (y) => H - pad - (y - minY) * s - ((H - 2 * pad) - dy * s) / 2; // invert lat
+    let svg = "";
+    for (const f of feats) {
+      const title = `<title>${esc(f.label)}</title>`;
+      for (const ring of f.rings) {
+        if (ring.length === 1) {
+          const [x, y] = ring[0];
+          svg += `<circle class="mpt" cx="${px(x).toFixed(1)}" cy="${py(y).toFixed(1)}" r="3">${title}</circle>`;
+        } else {
+          const pts = ring.map(([x, y]) => `${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(" ");
+          svg += f.isPoly
+            ? `<polygon class="mgeo" points="${pts}">${title}</polygon>`
+            : `<polyline class="mline" points="${pts}">${title}</polyline>`;
+        }
+      }
+    }
+    const cap = `${feats.length} feature(s) · lon ${minX.toFixed(1)}…${maxX.toFixed(1)}, lat ${minY.toFixed(1)}…${maxY.toFixed(1)} · equirectangular (offline)`;
+    $("out").innerHTML = `<div class="mapview"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="map of results">${svg}</svg>` +
+      `<div class="mapcap">${esc(cap)} — hover a feature for its label.</div></div>`;
+    return `${feats.length} mapped feature(s)`;
+  }
+
+  function renderTime(res) {
+    if (res.kind !== "select") { $("out").innerHTML = note("Time needs SELECT rows with a year/date column."); return "no time"; }
+    const vars = res.vars || [], rows = res.rows || [];
+    const col = detectTimeCol(vars, rows);
+    if (!col) { $("out").innerHTML = note("No temporal column in this result — Time needs a year/date value (xsd:gYear, xsd:date, or a year integer)."); return "no temporal data"; }
+    const labelCol = vars.find((v) => v !== col) || col;
+    const byYear = new Map();
+    for (const r of rows) {
+      const y = extractYear(parseTerm(r[col])); if (y == null) continue;
+      if (!byYear.has(y)) byYear.set(y, []);
+      byYear.get(y).push(termLabel(parseTerm(r[labelCol])));
+    }
+    const years = [...byYear.keys()];
+    if (!years.length) { $("out").innerHTML = note("No datable rows in this result."); return "no temporal data"; }
+    const min = Math.min(...years), max = Math.max(...years), span = max - min + 1;
+    let bucket = 1; for (const sz of [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000]) { if (Math.ceil(span / sz) <= 140) { bucket = sz; break; } }
+    const nb = Math.ceil(span / bucket);
+    const buckets = Array.from({ length: nb }, (_, i) => ({ from: min + i * bucket, to: min + i * bucket + bucket - 1, count: 0, items: [] }));
+    let totalItems = 0;
+    for (const [y, items] of byYear) {
+      const bi = Math.floor((y - min) / bucket); const b = buckets[bi];
+      b.count += items.length; totalItems += items.length;
+      for (const it of items) if (b.items.length < 40) b.items.push(it);
+    }
+    const sorted = buckets.map((b) => b.count).filter((c) => c > 0).sort((a, b) => a - b);
+    const q = (p) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : 0;
+    const t1 = q(0.25), t2 = q(0.5), t3 = q(0.75);
+    const shade = (c) => c === 0 ? 0 : c <= t1 ? 1 : c <= t2 ? 2 : c <= t3 ? 3 : 4;
+    const cols = Math.min(nb, 30);
+    const cells = buckets.map((b) => {
+      const yr = bucket === 1 ? fmtYear(b.from) : `${fmtYear(b.from)}–${fmtYear(b.to)}`;
+      const tip = `${yr}: ${b.count} item(s)` + (b.items.length ? "\n" + b.items.slice(0, 20).map((x) => "• " + x).join("\n") + (b.count > 20 ? `\n…(+${b.count - 20} more)` : "") : "");
+      return `<div class="tcell l${shade(b.count)}" title="${esc(tip)}"></div>`;
+    }).join("");
+    const legend = `<span class="tleg-lab">less</span>${[0, 1, 2, 3, 4].map((l) => `<span class="tcell l${l}"></span>`).join("")}<span class="tleg-lab">more</span>`;
+    $("out").innerHTML = `<div class="timeview"><div class="taxis"><span>${esc(fmtYear(min))}</span>` +
+      `<span class="tmid">${esc(col)} · ${bucket === 1 ? "per year" : "per " + bucket + " yr"}</span><span>${esc(fmtYear(max))}</span></div>` +
+      `<div class="tgrid" style="grid-template-columns:repeat(${cols}, 1fr)">${cells}</div>` +
+      `<div class="tlegend">${legend}</div></div>`;
+    return `${totalItems} dated item(s) · ${fmtYear(min)}–${fmtYear(max)}`;
+  }
+
   function renderResult(res, fmt) {
     const progressive = res.progressive || null;
     renderProgressiveInfo(progressive);
+
+    if (fmt === "map") return renderMap(res);
+    if (fmt === "time") return renderTime(res);
 
     if (fmt === "graph") {
       let triples = triplesForGraph(res);
@@ -1761,7 +1944,9 @@
 
   function runEmbeddedQuery(q, fmt) {
     const strategy = $("strategy").value;
-    const queryFmt = strategy === "progressive" || fmt === "graph" ? "table" : fmt;
+    // graph / map / time are renderings of SELECT bindings — ask the engine for table rows.
+    const rowView = fmt === "graph" || fmt === "map" || fmt === "time";
+    const queryFmt = strategy === "progressive" || rowView ? "table" : fmt;
     const t0 = performance.now();
     try {
       let raw;
