@@ -11,6 +11,7 @@ pub mod file;
 pub mod geo;
 pub mod header;
 pub mod index;
+pub mod block_cache;
 pub mod ingest;
 pub mod meta;
 #[cfg(feature = "parallel")]
@@ -29,6 +30,7 @@ pub mod triples;
 pub mod varint;
 
 pub use bgp::{eval_bgp, Binding, PatternTerm, TriplePattern};
+pub use block_cache::{BlockCacheReader, DEFAULT_BLOCK};
 pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 pub use file::{
