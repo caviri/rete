@@ -770,6 +770,11 @@ textarea {
   gap: 4px;
 }
 
+/* Push the run-meta + requests + Run Query group to the right of the controls. */
+.action-row .run-right {
+  margin-left: auto;
+}
+
 .form-grid input[type="text"] {
   min-width: 270px;
 }

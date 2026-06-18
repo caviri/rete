@@ -122,17 +122,19 @@ __PLAYGROUND_CSS__
             <h1>SPARQL Console</h1>
             <p class="microcopy">Default path for exact queries, summary-safe progressive queries, and graph rendering.</p>
           </div>
-          <div id="viewSeg" class="segmented" aria-label="Result view">
-            <button type="button" data-view="table" class="active">Table</button>
-            <button type="button" data-view="graph">Graph</button>
-            <button type="button" data-view="ttl">TTL</button>
-            <button type="button" data-view="jsonld">JSON-LD</button>
-          </div>
         </div>
         <div id="exampleQuick" class="ex-quick" aria-label="Example suggestions"></div>
         <textarea id="q" spellcheck="false"></textarea>
         <div class="action-row">
-          <button id="run" type="button">Run Query</button>
+          <label>
+            <span>Output</span>
+            <select id="fmt" aria-label="Result output type">
+              <option value="table">Table</option>
+              <option value="graph">Graph</option>
+              <option value="ttl">TTL</option>
+              <option value="jsonld">JSON-LD</option>
+            </select>
+          </label>
           <label>
             <span>Strategy</span>
             <select id="strategy">
@@ -147,14 +149,9 @@ __PLAYGROUND_CSS__
             <input id="round" type="number" min="0" placeholder="auto" />
           </label>
           <button id="roundHelp" type="button" class="help-button hidden" title="What is a round?" aria-label="Explain dendrogram rounds">?</button>
-          <select id="fmt" class="visually-hidden" aria-label="Result format">
-            <option value="table">table</option>
-            <option value="graph">graph</option>
-            <option value="ttl">ttl</option>
-            <option value="jsonld">jsonld</option>
-          </select>
-          <span id="qmeta" class="run-meta"></span>
+          <span id="qmeta" class="run-meta run-right"></span>
           <button id="reqLogBtn" type="button" class="req-log-btn hidden" title="Inspect the byte-range requests this query made">⊞ requests</button>
+          <button id="run" type="button">Run Query</button>
         </div>
       </div>
 
