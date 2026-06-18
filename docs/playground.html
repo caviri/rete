@@ -6938,21 +6938,50 @@ ex:ApplicationDependencyShape
   }
 
   function runCoherence() {
-    if (!state.bytes) return showError("coherenceOut", "Load a graph first.");
+    const remote = state.remote && state.remote.url;
+    if (!state.bytes && !remote) return showError("coherenceOut", "Load a graph first.");
     const t0 = performance.now();
+    const block = (title, sub, coherent, points) => {
+      const items = (points || []).map((p) =>
+        `<li><code>${esc(p.kind)}</code> — ${esc(p.detail)}</li>`).join("");
+      const verdict = coherent ? "coherent ✓" : `${(points || []).length} incoherent point(s)`;
+      return `<section class="coherence-block"><h3>${esc(title)}</h3>` +
+        `<p class="microcopy">${esc(sub)}</p>` +
+        `<p><strong>${verdict}</strong></p>` +
+        (items ? `<ul>${items}</ul>` : "") + `</section>`;
+    };
     try {
+      if (remote) {
+        // Lazy: Tier-0 schema coherence read from the schema pyramid (the card)
+        // over HTTP range — never touches the index or dictionary, no download.
+        let schema;
+        try {
+          schema = JSON.parse(W().check_schema_url(remote));
+        } catch (e) {
+          if (/no schema pyramid/i.test(String(e))) {
+            $("coherenceOut").innerHTML = `<div class="note">This graph carries no schema pyramid (no typed classes), so there's nothing to check at the schema tier. Use <strong>Cache remote</strong> to run the full instance reasoner.</div>`;
+            $("coherenceMeta").textContent = "";
+            updateResultVisibility();
+            return;
+          }
+          throw e;
+        }
+        const dt = performance.now() - t0;
+        const r = schema.remote || {};
+        $("coherenceOut").innerHTML =
+          block("Schema (Tier-0, index-free)",
+            "subClassOf cycles + unsatisfiable classes, read from the schema pyramid over HTTP range — no download, and no index/dictionary bytes.",
+            schema.coherent, schema.schemaPoints) +
+          `<section class="coherence-block"><p class="microcopy">The full instance-level reasoner materializes the whole graph, so it needs the dataset cached in memory (use <strong>Cache remote</strong>). The Tier-0 verdict above came from the card alone.</p></section>`;
+        $("coherenceMeta").textContent =
+          `${schema.coherent ? "schema coherent" : "schema incoherent"} | ` +
+          `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} · ${r.requests || 0} req · ${dt.toFixed(0)} ms`;
+        updateResultVisibility();
+        return;
+      }
       const schema = JSON.parse(W().check_schema(state.bytes));
       const full = JSON.parse(W().reason(state.bytes, null));
       const dt = performance.now() - t0;
-      const block = (title, sub, coherent, points) => {
-        const items = (points || []).map((p) =>
-          `<li><code>${esc(p.kind)}</code> — ${esc(p.detail)}</li>`).join("");
-        const verdict = coherent ? "coherent ✓" : `${points.length} incoherent point(s)`;
-        return `<section class="coherence-block"><h3>${esc(title)}</h3>` +
-          `<p class="microcopy">${esc(sub)}</p>` +
-          `<p><strong>${verdict}</strong></p>` +
-          (items ? `<ul>${items}</ul>` : "") + `</section>`;
-      };
       $("coherenceOut").innerHTML =
         block("Schema (Tier-0, index-free)", "subClassOf cycles + unsatisfiable classes, from the schema pyramid", schema.coherent, schema.schemaPoints) +
         block("Full reasoner (instance-level)", `${full.inferredCount} triple(s) entailed; disjoint-class / sameAs / functional clashes`, full.coherent, full.inconsistencies);
