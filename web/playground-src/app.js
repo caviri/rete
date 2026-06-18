@@ -957,6 +957,8 @@
 
   function openLibrary() { renderExamples(); $("libraryModal").classList.remove("hidden"); }
   function closeLibrary() { $("libraryModal").classList.add("hidden"); }
+  function openHistory() { renderHistory(); $("historyModal").classList.remove("hidden"); }
+  function closeHistory() { $("historyModal").classList.add("hidden"); }
 
   function setMode(mode) {
     state.mode = mode;
@@ -2249,6 +2251,7 @@
         setStrategy(h.strategy || "whole");
         if (h.dataset && h.dataset !== state.dataset && RETE_DATASETS_B64[h.dataset]) loadDataset(h.dataset);
         setMode("sparql");
+        closeHistory();
       };
     });
   }
@@ -2292,9 +2295,10 @@
     $$("#viewSeg button").forEach((btn) => {
       btn.onclick = () => setView(btn.dataset.view);
     });
-    $$("#modeTabs button").forEach((btn) => {
+    $$("#modeTabs button[data-mode]").forEach((btn) => {
       btn.onclick = () => setMode(btn.dataset.mode);
     });
+    $("histBtn").onclick = openHistory;
     $$("#exploreSeg button").forEach((btn) => {
       btn.onclick = () => setExploreView(btn.dataset.exp);
     });
@@ -2333,11 +2337,16 @@
     $("libraryModal").addEventListener("click", (e) => {
       if (e.target === $("libraryModal")) closeLibrary();
     });
+    $("historyModalClose").onclick = closeHistory;
+    $("historyModal").addEventListener("click", (e) => {
+      if (e.target === $("historyModal")) closeHistory();
+    });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");
         closeLibrary();
+        closeHistory();
         closeSource();
       }
       // Ctrl/Cmd+Enter runs the active panel's primary action from anywhere.

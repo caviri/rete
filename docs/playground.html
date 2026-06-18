@@ -1595,6 +1595,18 @@ pre {
 .lib-modal .filter-row { flex: 0 0 auto; margin: 12px 0 6px; }
 .lib-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 4px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 9px; align-content: start; }
+
+/* History button pinned to the bottom of the mode rail, with a divider above. */
+.mode-rail .rail-hist { margin-top: 13px; }
+.mode-rail .rail-hist::before {
+  content: ""; position: absolute; top: -7px; left: 6px; right: 6px;
+  height: 1px; background: var(--line);
+}
+
+.hist-modal { width: min(660px, 100%); max-height: 80vh; display: flex; flex-direction: column; }
+.hist-modal .modal-head h3 { margin-right: auto; }
+.hist-modal .microcopy { flex: 0 0 auto; margin: 0 0 10px; }
+.hist-modal .history-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
   </style>
 </head>
 <body>
@@ -1666,6 +1678,11 @@ pre {
         <span class="rail-name">Provenance</span>
         <span class="rail-tip"><b>Provenance</b>Explain matches: index permutation and byte ranges.</span>
       </button>
+      <button type="button" id="histBtn" class="rail-hist">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.1 13a9 9 0 1 0 2.5-7.4"/><path d="M3 4v4h4"/><path d="M12 8v4.5l3 2"/></svg>
+        <span class="rail-name">History</span>
+        <span class="rail-tip"><b>History</b>Your recent runs — click one to reload its query, output and strategy.</span>
+      </button>
     </nav>
 
     <aside class="library-panel" aria-label="Source and inspector">
@@ -1694,13 +1711,6 @@ pre {
       <section data-modes="schema coherence">
         <h2>Schema Summary</h2>
         <div id="schemaSummary" class="inspector-block"></div>
-      </section>
-      <section>
-        <div class="section-title">
-          <h2>History</h2>
-          <button id="clearHist" class="ghost" type="button">Clear</button>
-        </div>
-        <div id="histList" class="history-list"></div>
       </section>
     </aside>
 
@@ -2045,6 +2055,18 @@ pre {
       </div>
       <p class="microcopy">Every HTTP request the last remote query made — lazy range reads over the file. A <b>multipart</b> row fetched several byte ranges in one request (coalesced); each range is <code>start-end</code>.</p>
       <div id="reqLogBody"></div>
+    </div>
+  </div>
+
+  <div id="historyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="historyModalTitle">
+    <div class="modal-card hist-modal">
+      <div class="modal-head">
+        <h3 id="historyModalTitle">History</h3>
+        <button id="clearHist" class="ghost" type="button">Clear</button>
+        <button id="historyModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy">Your recent runs across datasets — click one to reload its query, output type and strategy.</p>
+      <div id="histList" class="history-list"></div>
     </div>
   </div>
 
@@ -5541,6 +5563,8 @@ ex:ApplicationDependencyShape
 
   function openLibrary() { renderExamples(); $("libraryModal").classList.remove("hidden"); }
   function closeLibrary() { $("libraryModal").classList.add("hidden"); }
+  function openHistory() { renderHistory(); $("historyModal").classList.remove("hidden"); }
+  function closeHistory() { $("historyModal").classList.add("hidden"); }
 
   function setMode(mode) {
     state.mode = mode;
@@ -6833,6 +6857,7 @@ ex:ApplicationDependencyShape
         setStrategy(h.strategy || "whole");
         if (h.dataset && h.dataset !== state.dataset && RETE_DATASETS_B64[h.dataset]) loadDataset(h.dataset);
         setMode("sparql");
+        closeHistory();
       };
     });
   }
@@ -6876,9 +6901,10 @@ ex:ApplicationDependencyShape
     $$("#viewSeg button").forEach((btn) => {
       btn.onclick = () => setView(btn.dataset.view);
     });
-    $$("#modeTabs button").forEach((btn) => {
+    $$("#modeTabs button[data-mode]").forEach((btn) => {
       btn.onclick = () => setMode(btn.dataset.mode);
     });
+    $("histBtn").onclick = openHistory;
     $$("#exploreSeg button").forEach((btn) => {
       btn.onclick = () => setExploreView(btn.dataset.exp);
     });
@@ -6917,11 +6943,16 @@ ex:ApplicationDependencyShape
     $("libraryModal").addEventListener("click", (e) => {
       if (e.target === $("libraryModal")) closeLibrary();
     });
+    $("historyModalClose").onclick = closeHistory;
+    $("historyModal").addEventListener("click", (e) => {
+      if (e.target === $("historyModal")) closeHistory();
+    });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");
         closeLibrary();
+        closeHistory();
         closeSource();
       }
       // Ctrl/Cmd+Enter runs the active panel's primary action from anywhere.

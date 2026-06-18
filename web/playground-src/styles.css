@@ -1588,3 +1588,15 @@ pre {
 .lib-modal .filter-row { flex: 0 0 auto; margin: 12px 0 6px; }
 .lib-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 4px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 9px; align-content: start; }
+
+/* History button pinned to the bottom of the mode rail, with a divider above. */
+.mode-rail .rail-hist { margin-top: 13px; }
+.mode-rail .rail-hist::before {
+  content: ""; position: absolute; top: -7px; left: 6px; right: 6px;
+  height: 1px; background: var(--line);
+}
+
+.hist-modal { width: min(660px, 100%); max-height: 80vh; display: flex; flex-direction: column; }
+.hist-modal .modal-head h3 { margin-right: auto; }
+.hist-modal .microcopy { flex: 0 0 auto; margin: 0 0 10px; }
+.hist-modal .history-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

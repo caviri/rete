@@ -77,6 +77,11 @@ __PLAYGROUND_CSS__
         <span class="rail-name">Provenance</span>
         <span class="rail-tip"><b>Provenance</b>Explain matches: index permutation and byte ranges.</span>
       </button>
+      <button type="button" id="histBtn" class="rail-hist">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.1 13a9 9 0 1 0 2.5-7.4"/><path d="M3 4v4h4"/><path d="M12 8v4.5l3 2"/></svg>
+        <span class="rail-name">History</span>
+        <span class="rail-tip"><b>History</b>Your recent runs — click one to reload its query, output and strategy.</span>
+      </button>
     </nav>
 
     <aside class="library-panel" aria-label="Source and inspector">
@@ -105,13 +110,6 @@ __PLAYGROUND_CSS__
       <section data-modes="schema coherence">
         <h2>Schema Summary</h2>
         <div id="schemaSummary" class="inspector-block"></div>
-      </section>
-      <section>
-        <div class="section-title">
-          <h2>History</h2>
-          <button id="clearHist" class="ghost" type="button">Clear</button>
-        </div>
-        <div id="histList" class="history-list"></div>
       </section>
     </aside>
 
@@ -456,6 +454,18 @@ __PLAYGROUND_CSS__
       </div>
       <p class="microcopy">Every HTTP request the last remote query made — lazy range reads over the file. A <b>multipart</b> row fetched several byte ranges in one request (coalesced); each range is <code>start-end</code>.</p>
       <div id="reqLogBody"></div>
+    </div>
+  </div>
+
+  <div id="historyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="historyModalTitle">
+    <div class="modal-card hist-modal">
+      <div class="modal-head">
+        <h3 id="historyModalTitle">History</h3>
+        <button id="clearHist" class="ghost" type="button">Clear</button>
+        <button id="historyModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy">Your recent runs across datasets — click one to reload its query, output type and strategy.</p>
+      <div id="histList" class="history-list"></div>
     </div>
   </div>
 
