@@ -45,7 +45,7 @@ impl<R: RangeReader> BlockCacheReader<R> {
     }
 
     fn bounds(&self, offset: u64, len: u64) -> std::io::Result<()> {
-        if offset.checked_add(len).map_or(true, |e| e > self.len) {
+        if offset.checked_add(len).is_none_or(|e| e > self.len) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "range out of bounds",
