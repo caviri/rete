@@ -29,12 +29,15 @@
   // DuckDB uses over httpfs: fetch only the bytes a query touches.
   const REMOTE_HARNESS = `
 ;(function () {
-  var ready = null, pReq = 0, pBytes = 0, pId = 0;
-  // The wasm calls reteProgress(bytes) after every physical range fetch. We
-  // forward a running tally to the page so a long query shows live progress
-  // instead of a frozen "querying…". postMessage works mid-synchronous-call.
-  self.reteProgress = function (b) {
+  var ready = null, pReq = 0, pBytes = 0, pId = 0, qStart = 0, fetchLog = [];
+  function _now() { return (typeof performance !== "undefined" ? performance.now() : Date.now()); }
+  self._reteLog = function (e) { e.t = (_now() - qStart) | 0; if (fetchLog.length < 6000) fetchLog.push(e); };
+  // The wasm calls reteProgress(bytes) after every physical range fetch (the
+  // multipart hook also passes metadata). We tally a running count + a per-fetch
+  // log and forward progress, so a long query shows live, not a frozen "querying…".
+  self.reteProgress = function (b, meta) {
     pReq++; pBytes += (b || 0);
+    self._reteLog(meta || { k: "range", b: (b || 0) });
     self.postMessage({ type: "progress", id: pId, requests: pReq, bytes: pBytes });
   };
   self.onmessage = function (e) {
@@ -45,13 +48,13 @@
       return;
     }
     if (m.type === "query") {
-      pReq = 0; pBytes = 0; pId = m.id;
+      pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
       Promise.resolve(ready).then(function () {
         try {
-          self.postMessage({ type: "result", id: m.id, ok: true,
-            json: wasm_bindgen.sparql_url(m.url, m.query, m.format) });
+          var json = wasm_bindgen.sparql_url(m.url, m.query, m.format);
+          self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
         } catch (err) {
-          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err) });
+          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
         }
       });
     }
@@ -126,7 +129,7 @@
       if (!parts || parts.length !== n) return null;
       var out = new Uint8Array(total), p = 0;
       for (var k = 0; k < n; k++) { if (parts[k].length !== lens[k]) return null; out.set(parts[k], p); p += lens[k]; }
-      if (self.reteProgress) self.reteProgress(total); // one physical request, total bytes
+      if (self.reteProgress) self.reteProgress(total, { k: "multi", n: n, b: total, r: spec }); // 1 request, N ranges
       return out;
     } catch (e) { return null; }
   };
@@ -159,7 +162,8 @@
         const p = remotePending.get(m.id);
         if (!p) return;
         remotePending.delete(m.id);
-        m.ok ? p.resolve(m.json) : p.reject(new Error(m.error));
+        if (m.ok) p.resolve({ json: m.json, log: m.log || [] });
+        else { const err = new Error(m.error); err.log = m.log || []; p.reject(err); }
       }
     };
     remoteReady = new Promise((res) => { remoteResolveReady = res; });
@@ -599,6 +603,8 @@
     renderExamples();
     closeSource();
     setMode("sparql");
+    // Load the dataset's first example query automatically (parity with bundled).
+    if (examplesForDataset().length) selectExample(0);
     const lib = examplesForDataset().length
       ? "Pick an example from the library, or write your own."
       : "Write a SPARQL query (a bound subject keeps the fetch small). No example library for a custom URL.";
@@ -749,13 +755,26 @@
       modeBtn("cache", "Cache remote", false) +
       modeBtn("lazy", "Lazy range", false) + `</div>`;
 
-    const exs = CATALOG.examples[key] || [];
-    const preview = exs.length
-      ? exs.slice(0, 6).map((e) =>
-          `<div class="ds-prev-item"><div class="ds-prev-head"><span class="ds-prev-fam">${esc(e.family || "")}</span>` +
-          `<span class="ds-prev-label">${esc(e.label)}</span></div>` +
-          `<pre class="ds-prev-q">${esc((e.q || "").trim())}</pre></div>`).join("")
-      : `<p class="microcopy">No example queries for this dataset.</p>`;
+    // Preview: the examples this dataset ships, each tagged by kind (SPARQL /
+    // SHACL) with a one-line "what it's about" and an expandable query/shape —
+    // multiline bodies open on demand instead of being clipped.
+    const previewItems = [];
+    (CATALOG.examples[key] || []).forEach((e) =>
+      previewItems.push({ type: "SPARQL", fam: e.family || "", label: e.label, tip: e.tip || "", code: e.q || "" }));
+    (CATALOG.shacl[key] || []).forEach((e) =>
+      previewItems.push({ type: "SHACL", fam: "Shape", label: e.label, tip: e.tip || "", code: e.shape || "" }));
+    const preview = previewItems.length
+      ? previewItems.map((e) => {
+          const tag = `<span class="ds-prev-tag ${e.type.toLowerCase()}">${esc(e.type)}</span>` +
+            (e.fam ? `<span class="ds-prev-fam">${esc(e.fam)}</span>` : "");
+          return `<div class="ds-prev-item">` +
+            `<div class="ds-prev-head">${tag}<span class="ds-prev-label">${esc(e.label)}</span></div>` +
+            (e.tip ? `<div class="ds-prev-tip">${esc(e.tip)}</div>` : "") +
+            `<details class="ds-prev-det"><summary>Show ${e.type === "SHACL" ? "shape" : "query"}</summary>` +
+            `<pre class="ds-prev-q">${esc((e.code || "").trim())}</pre></details>` +
+            `</div>`;
+        }).join("")
+      : `<p class="microcopy">No examples for this dataset.</p>`;
 
     const metaTable = `<table class="ds-meta-table"><tbody>` +
       `<tr><td>Triples</td><td class="num">${fmtTri(m.triples)}</td></tr>` +
@@ -778,7 +797,7 @@
       `<div class="ds-load-row">${modeSeg}<button type="button" class="ds-load-btn" id="dsLoadBtn">Load dataset</button>` +
       `<span class="ds-mode-hint" id="dsModeHint"></span></div>` +
       `<details class="ds-more-block"><summary>More — metadata &amp; provenance</summary>${metaTable}</details>` +
-      `<div class="ds-section-label">Preview · ${exs.length} example${exs.length === 1 ? "" : "s"}</div>` +
+      `<div class="ds-section-label">Examples · ${previewItems.length}</div>` +
       `<div class="ds-preview">${preview}</div>`;
 
     let mode = defMode;
@@ -854,6 +873,7 @@
 
   function renderExamples() {
     renderFamilyFilters();
+    renderQuickExamples();
     const items = filteredExamples();
     if (!items.length) {
       $("examples").innerHTML = `<p class="microcopy">No matching examples for this dataset.</p>`;
@@ -884,9 +904,31 @@
       `<div><strong>${esc(ex.label)}</strong></div>` +
       `<div>${esc(ex.family)}</div>` +
       `<div>${esc(ex.tip)}</div>`;
+    closeLibrary();
     renderExamples();
     updateHash();
   }
+
+  // The quick-suggestion row above the editor: the dataset's first 1–2 examples
+  // as one-tap chips (the 2nd hides on a narrow editor), plus a button that opens
+  // the full Query Library modal.
+  function renderQuickExamples() {
+    const quick = $("exampleQuick");
+    if (!quick) return;
+    const all = examplesForDataset();
+    const chips = all.slice(0, 2).map((ex, i) =>
+      `<button type="button" class="ex-quick-chip${i === 1 ? " opt2" : ""}${state.selectedExample === i ? " active" : ""}" ` +
+        `data-example="${i}" title="${esc(ex.tip || ex.label)}">` +
+        `<span class="eqfam">${esc(ex.family || "")}</span><span class="eqlabel">${esc(ex.label)}</span></button>`).join("");
+    quick.innerHTML = chips +
+      `<button type="button" id="libraryBtn" class="ex-quick-lib" title="Browse the full query library">` +
+      `⊞ Library${all.length ? " · " + all.length : ""}</button>`;
+    $$("#exampleQuick [data-example]").forEach((b) => { b.onclick = () => selectExample(Number(b.dataset.example)); });
+    $("libraryBtn").onclick = openLibrary;
+  }
+
+  function openLibrary() { renderExamples(); $("libraryModal").classList.remove("hidden"); }
+  function closeLibrary() { $("libraryModal").classList.add("hidden"); }
 
   function setMode(mode) {
     state.mode = mode;
@@ -1499,17 +1541,70 @@
     return `${(res.triples || []).length} triple(s)`;
   }
 
+  // A playful network spinner shown while a query runs: a hub firing packets out
+  // to nodes (byte ranges in flight), edges flowing, nodes pulsing.
+  function netSpinner(caption) {
+    const hub = [100, 70];
+    const sats = [[40, 36], [162, 38], [26, 106], [174, 100], [100, 14], [100, 126]];
+    let edges = "", pkts = "";
+    let nodes = `<circle class="ns-hub" cx="${hub[0]}" cy="${hub[1]}" r="7"/>`;
+    sats.forEach(([x, y], i) => {
+      edges += `<line class="ns-edge" x1="${hub[0]}" y1="${hub[1]}" x2="${x}" y2="${y}"/>`;
+      nodes += `<circle class="ns-node" cx="${x}" cy="${y}" r="4.5" style="animation-delay:${(i * 0.17).toFixed(2)}s"/>`;
+      // Packets travel inward — from the outer nodes to the hub (bytes arriving).
+      pkts += `<circle class="ns-pkt" r="2.6"><animateMotion dur="${(0.7 + i * 0.13).toFixed(2)}s" ` +
+        `repeatCount="indefinite" path="M${x},${y} L${hub[0]},${hub[1]}"/></circle>`;
+    });
+    return `<div class="netspin"><svg viewBox="0 0 200 140" role="img" aria-label="querying">` +
+      edges + pkts + nodes + `</svg><div class="ns-cap">${esc(caption || "querying…")}</div></div>`;
+  }
+
+  // The "requests" inspector: shows/hides the button by the run bar, and renders a
+  // modal listing the byte-range fetches a remote query made (worker fetch log).
+  function updateReqLogBtn() {
+    const btn = $("reqLogBtn");
+    if (!btn) return;
+    const n = (state.lastRemoteLog || []).length;
+    btn.classList.toggle("hidden", n === 0);
+    btn.textContent = `⊞ ${n} request${n === 1 ? "" : "s"}`;
+  }
+
+  function openReqLog() {
+    const log = state.lastRemoteLog || [];
+    const totalBytes = log.reduce((a, e) => a + (e.b || 0), 0);
+    const totalRanges = log.reduce((a, e) => a + (e.k === "multi" ? (e.n || 0) : 1), 0);
+    const last = log.length ? log[log.length - 1].t : 0;
+    const head = `<div class="reqlog-stat">` +
+      `<span><b>${log.length}</b> HTTP request(s)</span><span><b>${totalRanges}</b> byte-range(s)</span>` +
+      `<span><b>${formatBytes(totalBytes)}</b> fetched</span><span><b>${last} ms</b> total</span></div>`;
+    const rows = log.map((e, i) => {
+      const kind = e.k === "multi" ? `multipart ×${e.n}` : "range";
+      const rs = e.k === "multi" ? (e.r || []) : [];
+      const ranges = rs.length ? esc(rs.slice(0, 6).join(", ") + (rs.length > 6 ? ` … (+${rs.length - 6})` : "")) : "—";
+      return `<tr><td class="num">${i + 1}</td><td>${kind}</td><td class="num">${formatBytes(e.b || 0)}</td>` +
+        `<td class="num">${e.t} ms</td><td class="mono">${ranges}</td></tr>`;
+    }).join("");
+    $("reqLogBody").innerHTML = head +
+      `<div class="tbl"><table><thead><tr><th class="num">#</th><th>kind</th><th class="num">bytes</th>` +
+      `<th class="num">at</th><th>byte ranges (start-end)</th></tr></thead>` +
+      `<tbody>${rows || `<tr><td colspan="5">No requests logged.</td></tr>`}</tbody></table></div>`;
+    $("reqModal").classList.remove("hidden");
+  }
+
   function runQuery() {
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
     const fmt = $("fmt").value;
+    // Clear any previous result/message and show the network spinner.
+    $("commOut").innerHTML = "";
+    $("reqLogBtn").classList.add("hidden");
+    $("out").innerHTML = netSpinner(state.remote ? "querying remote…" : "querying…");
+    updateResultVisibility();
 
     // Remote lazy mode: route through the worker (range reads), render async with
     // LIVE progress — a 1 GB graph can take many range fetches, so show running
     // request count, bytes fetched (of the file size) and elapsed, plus a Cancel.
     if (state.remote) {
-      $("commOut").innerHTML = "";
-      updateResultVisibility();
       const t0 = performance.now();
       const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
       const ofSize = meta.size ? " of " + meta.size : "";
@@ -1535,20 +1630,22 @@
       // Just record the latest tally; the 250 ms timer paints it — so a query
       // firing thousands of fetches doesn't thrash the DOM.
       remoteOnProgress = (m) => { lastReq = m.requests; lastBytes = m.bytes; };
-      $("out").innerHTML = `<div class="note">Querying a remote graph lazily — fetching only the byte ranges this query needs. ` +
-        `Progress shows in the run bar; selective queries (a bound subject/object) are fastest, full scans/aggregates fetch more.</div>`;
-      remoteSparql(state.remote.url, q, "table").then((raw) => {
+      remoteSparql(state.remote.url, q, "table").then((out) => {
         cleanup();
-        const res = JSON.parse(raw);
+        state.lastRemoteLog = out.log || [];
+        const res = JSON.parse(out.json);
         const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
         const r = res.remote || {};
         const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
         const dt = performance.now() - t0;
+        updateReqLogBtn();
         $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
           `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} (${pct}%) · ${dt.toFixed(0)} ms`;
         saveHistory({ query: q, format: fmt, strategy: "remote", dataset: "(remote)", ts: Date.now(), resultSummary: summary });
       }).catch((e) => {
         cleanup();
+        if (e && e.log) state.lastRemoteLog = e.log;
+        updateReqLogBtn();
         const msg = String(e.message || e);
         if (msg === "cancelled") {
           $("qmeta").textContent = "cancelled";
@@ -1562,11 +1659,13 @@
     }
 
     if (!state.bytes) return showError("out", "Load a graph first.");
+    // Defer the (synchronous) engine call one frame so the spinner paints first.
+    setTimeout(() => runEmbeddedQuery(q, fmt), 0);
+  }
+
+  function runEmbeddedQuery(q, fmt) {
     const strategy = $("strategy").value;
     const queryFmt = strategy === "progressive" || fmt === "graph" ? "table" : fmt;
-    $("commOut").innerHTML = "";
-    updateResultVisibility();
-
     const t0 = performance.now();
     try {
       let raw;
@@ -2188,9 +2287,20 @@
     $("strategyModal").addEventListener("click", (e) => {
       if (e.target === $("strategyModal")) $("strategyModal").classList.add("hidden");
     });
+    $("reqLogBtn").onclick = openReqLog;
+    $("reqModalClose").onclick = () => $("reqModal").classList.add("hidden");
+    $("reqModal").addEventListener("click", (e) => {
+      if (e.target === $("reqModal")) $("reqModal").classList.add("hidden");
+    });
+    $("libraryModalClose").onclick = closeLibrary;
+    $("libraryModal").addEventListener("click", (e) => {
+      if (e.target === $("libraryModal")) closeLibrary();
+    });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
+        $("reqModal").classList.add("hidden");
+        closeLibrary();
         closeSource();
       }
       // Ctrl/Cmd+Enter runs the active panel's primary action from anywhere.

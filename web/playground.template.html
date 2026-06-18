@@ -56,15 +56,6 @@ __PLAYGROUND_CSS__
           <p class="microcopy" style="margin-top:6px">Remote datasets (e.g. <b>wikidata-1GB</b>, <b>ohm-full</b>) are never downloaded whole — each query fetches only the dictionary chunks and index tiles it touches.</p>
         </details>
       </section>
-
-      <section class="library">
-        <div class="section-title">
-          <h2>Query Library</h2>
-          <input id="exampleSearch" type="search" placeholder="Filter examples" />
-        </div>
-        <div id="familyFilters" class="filter-row" aria-label="Example family filters"></div>
-        <div id="examples" class="example-list"></div>
-      </section>
     </aside>
 
     <section class="workbench" aria-live="polite">
@@ -81,6 +72,7 @@ __PLAYGROUND_CSS__
             <button type="button" data-view="jsonld">JSON-LD</button>
           </div>
         </div>
+        <div id="exampleQuick" class="ex-quick" aria-label="Example suggestions"></div>
         <textarea id="q" spellcheck="false"></textarea>
         <div class="action-row">
           <button id="run" type="button">Run Query</button>
@@ -105,6 +97,7 @@ __PLAYGROUND_CSS__
             <option value="jsonld">jsonld</option>
           </select>
           <span id="qmeta" class="run-meta"></span>
+          <button id="reqLogBtn" type="button" class="req-log-btn hidden" title="Inspect the byte-range requests this query made">⊞ requests</button>
         </div>
       </div>
 
@@ -412,6 +405,29 @@ __PLAYGROUND_CSS__
           can split (e.g. a pure property path).
         </dd>
       </dl>
+    </div>
+  </div>
+
+  <div id="reqModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="reqModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="reqModalTitle">Range requests</h3>
+        <button id="reqModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy">Every HTTP request the last remote query made — lazy range reads over the file. A <b>multipart</b> row fetched several byte ranges in one request (coalesced); each range is <code>start-end</code>.</p>
+      <div id="reqLogBody"></div>
+    </div>
+  </div>
+
+  <div id="libraryModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="libraryModalTitle">
+    <div class="modal-card lib-modal">
+      <div class="modal-head">
+        <h3 id="libraryModalTitle">Query library</h3>
+        <input id="exampleSearch" type="search" class="lib-search" placeholder="Filter examples, families…" aria-label="Filter examples" />
+        <button id="libraryModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="familyFilters" class="filter-row" aria-label="Example family filters"></div>
+      <div id="examples" class="example-list lib-list"></div>
     </div>
   </div>
 
