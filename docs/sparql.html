@@ -318,8 +318,10 @@ it needs are present.</p>
 <li><strong>Map, Time and Graph render the bindings of a <code>SELECT</code></strong>, so put the geometry /
 year / edge columns in your <code>SELECT</code> list. (<code>CONSTRUCT</code> also feeds Graph / TTL /
 JSON-LD directly.)</li>
-<li><strong>Map</strong> and <strong>Time</strong> only appear in the Output menu for datasets that actually
-carry geospatial / temporal data.</li>
+<li><strong>Map</strong> and <strong>Time</strong> are available on <strong>every</strong> query (no per-dataset gating):
+each detects its column in the actual result and renders, or shows a short note
+if it's absent — so geometry or dates a query surfaces unexpectedly (e.g. from a
+federated join, or data the dataset's examples never touch) still plot.</li>
 <li>Run these views under the <strong>Whole index</strong> (or <strong>Split by community</strong>) strategy.
 <strong>Progressive</strong> answers only from the pyramid summary (counts and community
 structure), so it has no per-row geometry or dates to plot.</li>

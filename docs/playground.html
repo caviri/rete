@@ -1898,8 +1898,8 @@ pre {
             <select id="fmt" aria-label="Result output type">
               <option value="table">Table</option>
               <option value="graph">Graph</option>
-              <option value="map" data-cap="geo">Map</option>
-              <option value="time" data-cap="time">Time</option>
+              <option value="map">Map</option>
+              <option value="time">Time</option>
               <option value="ttl">TTL</option>
               <option value="jsonld">JSON-LD</option>
             </select>
@@ -2231,10 +2231,10 @@ pre {
         <dd>Any <code>SELECT</code>, <code>ASK</code>, or <code>CONSTRUCT</code> — the default.</dd>
         <dt>Graph</dt>
         <dd>A <code>CONSTRUCT { ?a ?p ?b } …</code>, or a <code>SELECT</code> with <strong>≥&nbsp;2 variables</strong>: 2 vars draw <code>v1&nbsp;→&nbsp;v2</code> ("related") edges; <strong>3 vars</strong> are read as (subject, predicate, object). A one-variable select has nothing to connect.</dd>
-        <dt>Map <span class="ds-cap on">geo</span></dt>
-        <dd>A <code>SELECT</code> that binds a variable to a <code>geo:wktLiteral</code> — e.g. <code>?w</code> via <code>geo:hasGeometry/geo:asWKT ?w</code>. <code>POINT</code> / <code>LINESTRING</code> / <code>POLYGON</code> / <code>MULTI*</code> all plot in an offline equirectangular view (no tiles), auto-fit to the geometries; the first <em>non-geometry</em> column becomes each feature's hover label. Listed only for geospatial datasets.</dd>
-        <dt>Time <span class="ds-cap on">temporal</span></dt>
-        <dd>A <code>SELECT</code> that binds a variable to <code>xsd:gYear</code>, <code>xsd:date</code>/<code>xsd:dateTime</code>, or a plain <strong>year integer</strong> (e.g. <code>ex:year ?y</code>). Renders a GitHub-style multi-year heatmap — cell colour = <strong>number of items</strong> in that year/bucket, hover lists them; spans bucket automatically and negative years read as <strong>BCE</strong>. The other selected column(s) are the tooltip items. Listed only for temporal datasets.</dd>
+        <dt>Map <span class="ds-cap on">geometry</span></dt>
+        <dd>A <code>SELECT</code> that binds a variable to a <code>geo:wktLiteral</code> — e.g. <code>?w</code> via <code>geo:hasGeometry/geo:asWKT ?w</code>. <code>POINT</code> / <code>LINESTRING</code> / <code>POLYGON</code> / <code>MULTI*</code> all plot in an offline equirectangular view (no tiles), auto-fit to the geometries; the first <em>non-geometry</em> column becomes each feature's hover label. <strong>Available on any query</strong> — if the result has no geometry you'll get a short note (so a federated or unexpected geometry still maps).</dd>
+        <dt>Time <span class="ds-cap on">year / date</span></dt>
+        <dd>A <code>SELECT</code> that binds a variable to <code>xsd:gYear</code>, <code>xsd:date</code>/<code>xsd:dateTime</code>, or a plain <strong>year integer</strong> (e.g. <code>ex:year ?y</code>). Renders a GitHub-style multi-year heatmap — cell colour = <strong>number of items</strong> in that year/bucket, hover lists them; spans bucket automatically and negative years read as <strong>BCE</strong>. The other selected column(s) are the tooltip items. <strong>Available on any query</strong> — if the result has no dates you'll get a short note.</dd>
         <dt>TTL / JSON-LD</dt>
         <dd>A <code>CONSTRUCT</code> query — these serialise the constructed triples. A <code>SELECT</code> has no triples to serialise.</dd>
       </dl>
@@ -5408,7 +5408,6 @@ ex:ApplicationDependencyShape
       $("dsName").textContent = cn;
       setDatasetHeader(cn, "Custom graph loaded into the same in-browser engine.");
     }
-    updateOutputOptions();
   }
 
   function loadDataset(key) {
@@ -5462,7 +5461,6 @@ ex:ApplicationDependencyShape
     $("dsDesc").textContent = info ? info.description : "Remote graph, queried lazily over HTTP range: " + url;
     setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
       info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.");
-    updateOutputOptions();
     renderExamples();
     closeSource();
     setMode("sparql");
@@ -5595,30 +5593,6 @@ ex:ApplicationDependencyShape
       Provenance: !!CATALOG.provenance[key],
       Geo: exs.some((e) => e.family === "Geo") || exs.some((e) => /\bgeof:/.test(e.q || ""))
     };
-  }
-
-  // Does the dataset carry temporal data worth a Time plot? Inferred from its
-  // example queries referencing years / dates / known temporal predicates.
-  function datasetTemporal(key) {
-    const exs = CATALOG.examples[key] || [];
-    return exs.some((e) => /gYear|xsd:date|dateTime|startYear|endYear|\bP569\b|\bP571\b|\bP58[02]\b|\byear\b|FILTER\s*\([^)]*\b-?\d{3,4}\b/i.test(e.q || ""));
-  }
-
-  // Show the Map option only for geo datasets, Time only for temporal ones
-  // (geo datasets are usually temporal too). Reset to Table if the current pick
-  // is hidden by a dataset switch.
-  function updateOutputOptions() {
-    const key = state.dataset;
-    const geo = datasetSupports(key).Geo;
-    const time = datasetTemporal(key) || geo;
-    const setOpt = (val, on) => {
-      const o = document.querySelector(`#fmt option[value="${val}"]`);
-      if (o) { o.hidden = !on; o.disabled = !on; }
-    };
-    setOpt("map", geo);
-    setOpt("time", time);
-    const cur = $("fmt").value;
-    if ((cur === "map" && !geo) || (cur === "time" && !time)) setView("table");
   }
 
   // Tiny markdown for descriptions: **bold**, `code`, *italic* (input escaped).
