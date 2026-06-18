@@ -319,6 +319,15 @@ section,
   gap: 12px;
 }
 
+.library-panel {
+  position: sticky;
+  top: 118px;
+  max-height: calc(100vh - 130px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
 .library-panel section,
 .inspector section {
   padding: 13px;
@@ -1359,6 +1368,12 @@ pre {
   .inspector,
   .schema-columns {
     grid-template-columns: 1fr;
+  }
+
+  .library-panel {
+    position: static;
+    max-height: none;
+    overflow: visible;
   }
 
   .editor-head {
