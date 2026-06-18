@@ -5,13 +5,13 @@
 //! query logic so it compiles cleanly to both native and `wasm32`.
 
 pub mod bgp;
+pub mod block_cache;
 pub mod dict;
 pub mod dictionary;
 pub mod file;
 pub mod geo;
 pub mod header;
 pub mod index;
-pub mod block_cache;
 pub mod ingest;
 pub mod meta;
 #[cfg(feature = "parallel")]

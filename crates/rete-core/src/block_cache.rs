@@ -59,7 +59,10 @@ impl<R: RangeReader> BlockCacheReader<R> {
     fn ensure(&self, want: &BTreeSet<u64>) -> std::io::Result<()> {
         let missing: Vec<u64> = {
             let cache = self.cache.lock().unwrap();
-            want.iter().copied().filter(|b| !cache.contains_key(b)).collect()
+            want.iter()
+                .copied()
+                .filter(|b| !cache.contains_key(b))
+                .collect()
         };
         if missing.is_empty() {
             return Ok(());
@@ -150,7 +153,13 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
         self.ensure(&want)?;
         Ok(ranges
             .iter()
-            .map(|&(o, l)| if l == 0 { Vec::new() } else { self.assemble(o, l) })
+            .map(|&(o, l)| {
+                if l == 0 {
+                    Vec::new()
+                } else {
+                    self.assemble(o, l)
+                }
+            })
             .collect())
     }
 }
@@ -168,11 +177,18 @@ mod tests {
 
         // many small scattered reads inside the first few blocks
         for off in [10u64, 200, 5000, 16_500, 17_000, 33_000, 33_100] {
-            assert_eq!(r.read_at(off, 32).unwrap(), data[off as usize..off as usize + 32]);
+            assert_eq!(
+                r.read_at(off, 32).unwrap(),
+                data[off as usize..off as usize + 32]
+            );
         }
         // exact bytes returned, but the 7 logical reads touched only 3 blocks
         // (0,1,2) → at most 3 physical fetches, not 7.
-        assert!(counting.requests() <= 3, "physical fetches: {}", counting.requests());
+        assert!(
+            counting.requests() <= 3,
+            "physical fetches: {}",
+            counting.requests()
+        );
 
         // a repeat read is fully cached → no new fetch
         let before = counting.requests();
@@ -191,7 +207,11 @@ mod tests {
             assert_eq!(got, &data[o as usize..(o + l) as usize]);
         }
         // 4 ranges over blocks {0, 1, 4} → ≤ 3 physical fetches.
-        assert!(counting.requests() <= 3, "physical: {}", counting.requests());
+        assert!(
+            counting.requests() <= 3,
+            "physical: {}",
+            counting.requests()
+        );
     }
 
     #[test]
