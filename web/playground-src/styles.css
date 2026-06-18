@@ -145,6 +145,19 @@ a {
   color: var(--muted);
   font-size: 11px;
 }
+.dataset-button .ds-eject {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 5px;
+  padding-left: 9px;
+  border-left: 1px solid var(--line);
+  color: var(--accent-dark);
+  font-size: 11px;
+  font-weight: 700;
+}
+.dataset-button .ds-eject-ic { font-size: 12px; }
+.dataset-button:hover .ds-eject { color: var(--accent); }
 
 .dataset-picker span,
 label > span {
@@ -270,13 +283,40 @@ label.file-button:hover {
 }
 
 /* Dataset header band — full title + one-line sentence on the left, graph
-   metadata pill on the right. Sits where the horizontal mode tabs used to. */
+   metadata pill on the right. Sits where the horizontal mode tabs used to.
+   Sticky just below the (also sticky) top bar; the JS sets `top` to the bar's
+   height and toggles `.condensed` on scroll to collapse it to a single line. */
 .ds-header {
+  position: sticky;
+  top: 0;
+  z-index: 19;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
   padding: 14px 20px 8px;
+  background: var(--paper);
+  transition: padding .14s ease;
+}
+
+.ds-header.condensed {
+  align-items: center;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 6px 16px rgba(32, 47, 41, .05);
+}
+
+.ds-header.condensed .ds-tagline {
+  display: none;
+}
+
+.ds-header.condensed .ds-title {
+  font-size: 16px;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ds-header-main {
@@ -314,8 +354,25 @@ label.file-button:hover {
   flex-direction: column;
   gap: 6px;
   align-self: start;
-  position: sticky;
-  top: 66px;
+}
+
+.mode-rail .rail-badge {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  z-index: 2;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9.5px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+  background: var(--accent-2, #c84f2f);
+  border-radius: 999px;
 }
 
 .mode-rail button {
@@ -423,6 +480,7 @@ section,
 }
 
 .library-panel {
+  position: relative;
   align-content: start;
   /* A grid item defaults to min-width:auto (= min-content). Without this, a long
      unbreakable token in the sidebar (e.g. a full IRI in a history entry or
@@ -430,6 +488,48 @@ section,
      workbench. Pin it to the track and let inner content wrap/break instead. */
   min-width: 0;
 }
+
+/* Collapse / expand the details sidebar (the second column). */
+.lib-collapse {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.lib-collapse:hover { border-color: var(--accent); color: var(--accent-dark); background: var(--side); }
+
+.lib-expand {
+  display: none;
+  align-self: start;
+  width: 26px;
+  min-height: 64px;
+  padding: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+  writing-mode: vertical-rl;
+}
+.lib-expand:hover { border-color: var(--accent); color: var(--accent-dark); background: var(--side); }
+
+.console-shell.lib-collapsed { grid-template-columns: auto auto minmax(0, 1fr); }
+.console-shell.lib-collapsed .library-panel { display: none; }
+.console-shell.lib-collapsed .lib-expand { display: grid; place-items: center; }
 
 .library-panel section {
   min-width: 0;
@@ -1314,7 +1414,11 @@ pre {
 }
 .ds-side-ico { font-size: 17px; line-height: 1; text-align: center; }
 .ds-side-name { font-size: 12.5px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ds-side-kind { font-size: 12px; opacity: .8; }
+.ds-side-size {
+  font-size: 10px; font-weight: 700; color: var(--muted); white-space: nowrap;
+  background: var(--side); border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px;
+}
+.ds-side-size.remote { color: #0f6b3a; background: #e7f7ee; border-color: #bfe6cd; }
 .ds-side-item.active .ds-side-name { color: var(--accent-dark); }
 
 .ds-detail {
@@ -1328,6 +1432,7 @@ pre {
   padding: 22px 24px 26px;
 }
 .ds-detail-head { display: flex; gap: 14px; align-items: flex-start; }
+.ds-detail-head-main { flex: 1; min-width: 0; }
 .ds-ico-tile {
   flex: 0 0 auto;
   width: 60px; height: 60px;
@@ -1344,45 +1449,57 @@ pre {
 .ds-badge.bundled { background: #eef3ff; color: #1b3a73; }
 .ds-badge.remote  { background: #e7f7ee; color: #0f6b3a; }
 
-.ds-tags { display: flex; flex-wrap: wrap; gap: 7px; margin: 18px 0 6px; }
+/* One row: descriptive tags (green) + capability chips (blue, a different
+   property family) sitting next to them. */
+.ds-tags { display: flex; flex-wrap: wrap; gap: 7px; margin: 16px 0 6px; }
 .ds-tag {
   font-size: 11px; font-weight: 600; color: var(--accent-dark);
   background: var(--accent-weak, #eef6f2); border: 1px solid var(--line);
   border-radius: 999px; padding: 2px 9px;
 }
 .ds-tag.license { color: var(--muted); background: var(--surface); }
+.ds-cap {
+  font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid #cfe0f5; color: #1b3a73; background: #eef3ff;
+}
+.ds-cap.on::before { content: "✓ "; }
 
-.ds-caps-label, .ds-section-label {
+.ds-section-label {
   font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
   color: var(--muted); margin: 22px 0 9px;
 }
-.ds-caps { display: flex; flex-wrap: wrap; gap: 7px; }
-.ds-cap {
-  font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 7px;
-  border: 1px solid var(--line); color: var(--muted); background: var(--surface);
-}
-.ds-cap.on { color: #0a5; border-color: #bfe6cd; background: #effaf2; }
-.ds-cap.on::before { content: "✓ "; }
-.ds-cap.off { opacity: .45; }
 
-.ds-desc { margin: 18px 0 6px; font-size: 13px; line-height: 1.62; color: var(--ink); }
+.ds-desc { margin: 16px 0 6px; font-size: 13px; line-height: 1.62; color: var(--ink); }
 .ds-desc b, .ds-desc strong { color: var(--accent-dark); }
 
-.ds-load-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 22px 0 6px; }
-.ds-mode-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.ds-mode-seg button {
-  border: 0; background: var(--surface); padding: 7px 13px; cursor: pointer;
-  font-size: 12px; font-weight: 600; color: var(--ink); border-left: 1px solid var(--line);
-}
-.ds-mode-seg button:first-child { border-left: 0; }
-.ds-mode-seg button.active { background: var(--accent); color: #fff; }
-.ds-mode-seg button:disabled { opacity: .4; cursor: not-allowed; }
-.ds-mode-hint { font-size: 11.5px; color: var(--muted); flex-basis: 100%; }
+/* Load split-button + dropdown of source modes, pinned to the detail's top-right. */
+.ds-load { position: relative; flex: 0 0 auto; }
 .ds-load-btn {
+  display: inline-flex; align-items: center; gap: 6px;
   border: 0; border-radius: 8px; background: var(--accent); color: #fff;
-  font-weight: 700; font-size: 13px; padding: 8px 18px; cursor: pointer;
+  font-weight: 700; font-size: 13px; padding: 8px 15px; cursor: pointer;
 }
 .ds-load-btn:hover { background: var(--accent-dark); }
+.ds-load-btn .ds-eject-ic { font-size: 13px; }
+.ds-load-btn .ds-load-caret { font-size: 11px; opacity: .85; }
+.ds-load-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 5;
+  width: 290px; padding: 6px; border: 1px solid var(--line-strong);
+  border-radius: 10px; background: var(--surface); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.ds-load-item {
+  display: grid; gap: 2px; width: 100%; text-align: left;
+  border: 0; background: none; border-radius: 7px; padding: 8px 10px; cursor: pointer; color: var(--ink);
+}
+.ds-load-item:hover { background: var(--side); }
+.ds-load-item:disabled { opacity: .4; cursor: not-allowed; }
+.ds-load-item-top { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 12.5px; }
+.ds-load-item-hint { font-size: 11px; color: var(--muted); line-height: 1.35; }
+.ds-pref-tag {
+  font-size: 9px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--accent-dark); background: var(--accent-weak, #eef6f2); border-radius: 999px; padding: 1px 6px;
+}
 
 .ds-more-block { margin: 20px 0 6px; }
 .ds-more-block > summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--accent-dark); }

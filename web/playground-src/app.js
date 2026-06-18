@@ -743,12 +743,14 @@
     }
     $("dsSidebar").innerHTML = items.map((d) => {
       const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[d.key]) || {};
+      const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[d.key]) || {};
       const remote = d.kind === "remote-lazy";
       const active = d.key === dsSelected;
+      const size = m.size || "—";
       return `<button type="button" class="ds-side-item${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
         `<span class="ds-side-ico">${esc(ex.icon || "📊")}</span>` +
         `<span class="ds-side-name">${esc(dsShortLabel(d.key))}</span>` +
-        `<span class="ds-side-kind" title="${remote ? "remote-only" : "bundled in page"}">${remote ? "🛰" : "📦"}</span>` +
+        `<span class="ds-side-size${remote ? " remote" : ""}" title="${remote ? "remote-only · " : ""}.rete size">${remote ? "🛰 " : ""}${esc(size)}</span>` +
         `</button>`;
     }).join("");
     $$("#dsSidebar .ds-side-item").forEach((b) => {
@@ -768,20 +770,31 @@
 
     const badge = remoteOnly
       ? `<span class="ds-badge remote">🛰 Remote-only · lazy</span>`
-      : `<span class="ds-badge bundled">📦 Bundled in page</span>`;
+      : `<span class="ds-badge bundled">Bundled in page</span>`;
+    // Descriptive tags + capability chips (a distinct colour family) in one row.
+    const capChips = ["SPARQL", "SHACL", "Reasoning", "Reach", "Provenance", "Geo"]
+      .filter((c) => sup[c])
+      .map((c) => `<span class="ds-cap on">${esc(c)}</span>`).join("");
     const tags = (ex.tags || []).map((t) => `<span class="ds-tag">${esc(t)}</span>`).join("") +
-      (m.license ? `<span class="ds-tag license">${esc(m.license)}</span>` : "") +
-      (m.size ? `<span class="ds-tag license">${esc(m.size)}</span>` : "");
-    const caps = ["SPARQL", "SHACL", "Reasoning", "Reach", "Provenance", "Geo"]
-      .map((c) => `<span class="ds-cap ${sup[c] ? "on" : "off"}">${c}</span>`).join("");
+      (m.license ? `<span class="ds-tag license">${esc(m.license)}</span>` : "") + capChips;
 
     const defMode = embedded ? "bundled" : "lazy";
-    const modeBtn = (mode, label, dis) =>
-      `<button type="button" data-mode="${mode}"${dis ? " disabled" : ""}${mode === defMode ? ' class="active"' : ""}>${label}</button>`;
-    const modeSeg = `<div class="ds-mode-seg" id="dsModeSeg">` +
-      modeBtn("bundled", "Bundled", !embedded) +
-      modeBtn("cache", "Cache remote", false) +
-      modeBtn("lazy", "Lazy range", false) + `</div>`;
+    const hints = {
+      bundled: "Loads the copy embedded in this page — instant, fully offline.",
+      cache: "Downloads the whole .rete from the bucket once, then queries it in memory (cached this session).",
+      lazy: "Range-queries the remote .rete over HTTP — only the bytes each query touches are fetched."
+    };
+    const modeItem = (mode, label, dis) =>
+      `<button type="button" data-mode="${mode}"${dis ? " disabled" : ""} class="ds-load-item${mode === defMode ? " preferred" : ""}">` +
+      `<span class="ds-load-item-top">${esc(label)}${mode === defMode ? `<span class="ds-pref-tag">preferred</span>` : ""}</span>` +
+      `<span class="ds-load-item-hint">${esc(hints[mode])}</span></button>`;
+    const loadMenu = `<div class="ds-load">` +
+      `<button type="button" class="ds-load-btn" id="dsLoadBtn" aria-haspopup="true" aria-expanded="false"><span class="ds-eject-ic" aria-hidden="true">⏏</span>Load<span class="ds-load-caret" aria-hidden="true">⌄</span></button>` +
+      `<div class="ds-load-menu hidden" id="dsLoadMenu">` +
+      modeItem("bundled", "Bundled", !embedded) +
+      modeItem("cache", "Cache remote", false) +
+      modeItem("lazy", "Lazy range", false) +
+      `</div></div>`;
 
     // Preview: the examples this dataset ships, each tagged by kind (SPARQL /
     // SHACL) with a one-line "what it's about" and an expandable query/shape —
@@ -807,44 +820,34 @@
     const metaTable = `<table class="ds-meta-table"><tbody>` +
       `<tr><td>Triples</td><td class="num">${fmtTri(m.triples)}</td></tr>` +
       `<tr><td>.rete size</td><td class="num">${esc(m.size || "—")}</td></tr>` +
-      `<tr><td>Type</td><td>${remoteOnly ? "🛰 Remote · lazy" : "📦 Bundled"}${embedded ? " · also in bucket" : ""}</td></tr>` +
+      `<tr><td>Type</td><td>${remoteOnly ? "🛰 Remote · lazy" : "Bundled"}${embedded ? " · also in bucket" : ""}</td></tr>` +
       `<tr><td>License</td><td>${esc(m.license || "—")}</td></tr>` +
       `<tr><td>Source</td><td>${m.source ? `<a href="${esc(m.source)}" target="_blank" rel="noopener">${esc(host(m.source))} ↗</a>` : "—"}</td></tr>` +
+      `<tr><td>Provenance</td><td>${m.provenance ? esc(m.provenance) : "—"}</td></tr>` +
       `<tr><td>Bucket</td><td class="iri">playground/${esc(key)}.rete</td></tr>` +
       `</tbody></table>`;
 
     $("dsDetail").innerHTML =
       `<div class="ds-detail-head">` +
         `<div class="ds-ico-tile">${esc(ex.icon || "📊")}</div>` +
-        `<div><h2>${esc(dsShortLabel(key))}</h2><div class="ds-detail-sub">${badge}</div></div>` +
+        `<div class="ds-detail-head-main"><h2>${esc(dsShortLabel(key))}</h2><div class="ds-detail-sub">${badge}</div></div>` +
+        loadMenu +
       `</div>` +
       `<div class="ds-tags">${tags}</div>` +
-      `<div class="ds-caps-label">Compatible with</div><div class="ds-caps">${caps}</div>` +
       `<p class="ds-desc">${mdLite(d.description)}</p>` +
-      `<div class="ds-caps-label">Source mode</div>` +
-      `<div class="ds-load-row">${modeSeg}<button type="button" class="ds-load-btn" id="dsLoadBtn">Load dataset</button>` +
-      `<span class="ds-mode-hint" id="dsModeHint"></span></div>` +
       `<details class="ds-more-block"><summary>More — metadata &amp; provenance</summary>${metaTable}</details>` +
       `<div class="ds-section-label">Examples · ${previewItems.length}</div>` +
       `<div class="ds-preview">${preview}</div>`;
 
-    let mode = defMode;
-    const hints = {
-      bundled: "Loads the copy embedded in this page — instant, fully offline.",
-      cache: "Downloads the whole .rete from the bucket once, then queries it in memory (cached for this session).",
-      lazy: "Range-queries the remote .rete over HTTP — only the bytes each query touches are fetched."
+    $("dsLoadBtn").onclick = (e) => {
+      e.stopPropagation();
+      const menu = $("dsLoadMenu");
+      const nowHidden = menu.classList.toggle("hidden");
+      $("dsLoadBtn").setAttribute("aria-expanded", String(!nowHidden));
     };
-    const setHint = () => { $("dsModeHint").textContent = hints[mode]; };
-    setHint();
-    $$("#dsModeSeg button").forEach((b) => {
-      b.onclick = () => {
-        if (b.disabled) return;
-        mode = b.dataset.mode;
-        $$("#dsModeSeg button").forEach((x) => x.classList.toggle("active", x === b));
-        setHint();
-      };
+    $$("#dsLoadMenu button").forEach((b) => {
+      b.onclick = () => { if (b.disabled) return; selectDatasetMode(key, b.dataset.mode); closeSource(); };
     });
-    $("dsLoadBtn").onclick = () => { selectDatasetMode(key, mode); closeSource(); };
   }
 
   function openSource() {
@@ -959,6 +962,13 @@
   function closeLibrary() { $("libraryModal").classList.add("hidden"); }
   function openHistory() { renderHistory(); $("historyModal").classList.remove("hidden"); }
   function closeHistory() { $("historyModal").classList.add("hidden"); }
+
+  const LIB_KEY = "rete.pg.libCollapsed";
+  function setLibCollapsed(collapsed) {
+    const shell = document.querySelector(".console-shell");
+    if (shell) shell.classList.toggle("lib-collapsed", collapsed);
+    try { localStorage.setItem(LIB_KEY, collapsed ? "1" : "0"); } catch (_e) { /* ignore */ }
+  }
 
   function setMode(mode) {
     state.mode = mode;
@@ -2230,7 +2240,16 @@
     renderHistory();
   }
 
+  function updateHistCount() {
+    const n = loadHistory().length;
+    const b = $("histCount");
+    if (!b) return;
+    b.textContent = n > 99 ? "99+" : String(n);
+    b.classList.toggle("hidden", n === 0);
+  }
+
   function renderHistory() {
+    updateHistCount();
     const history = loadHistory();
     if (!history.length) {
       $("histList").innerHTML = `<div>No runs yet.</div>`;
@@ -2299,6 +2318,25 @@
       btn.onclick = () => setMode(btn.dataset.mode);
     });
     $("histBtn").onclick = openHistory;
+    $("libCollapse").onclick = () => setLibCollapsed(true);
+    $("libExpand").onclick = () => setLibCollapsed(false);
+    // Close the dataset Load dropdown on any click outside it.
+    document.addEventListener("click", (e) => {
+      const menu = $("dsLoadMenu");
+      if (menu && !e.target.closest(".ds-load")) menu.classList.add("hidden");
+    });
+    // Keep the top bar pinned; the dataset header sticks just below it and
+    // condenses to a single line (title + metadata, no tagline) once scrolled.
+    const dsHeader = document.querySelector(".ds-header");
+    const topbar = document.querySelector(".topbar");
+    if (dsHeader) {
+      const setTop = () => { dsHeader.style.top = (topbar ? topbar.offsetHeight : 0) + "px"; };
+      setTop();
+      window.addEventListener("resize", setTop, { passive: true });
+      const onScroll = () => dsHeader.classList.toggle("condensed", window.scrollY > 10);
+      window.addEventListener("scroll", onScroll, { passive: true });
+      onScroll();
+    }
     $$("#exploreSeg button").forEach((btn) => {
       btn.onclick = () => setExploreView(btn.dataset.exp);
     });
@@ -2405,6 +2443,7 @@
     renderDatasetOptions();
     wireEvents();
     renderHistory();
+    try { setLibCollapsed(localStorage.getItem(LIB_KEY) === "1"); } catch (_e) { /* ignore */ }
     enhanceEditor("q", "sparql");
     enhanceEditor("shapeText", "ttl");
     enhanceEditor("buildText", "ttl");

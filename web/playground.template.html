@@ -16,10 +16,10 @@ __PLAYGROUND_CSS__
     </a>
 
     <div class="top-actions">
-      <button id="dsButton" class="dataset-button" type="button" title="Browse datasets — what each one is, and its source">
+      <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
         <span class="ds-pre">Dataset</span>
         <span id="dsName">…</span>
-        <span class="ds-caret" aria-hidden="true">▾</span>
+        <span class="ds-eject"><span class="ds-eject-ic" aria-hidden="true">⏏</span>Change dataset</span>
       </button>
       <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
@@ -78,13 +78,17 @@ __PLAYGROUND_CSS__
         <span class="rail-tip"><b>Provenance</b>Explain matches: index permutation and byte ranges.</span>
       </button>
       <button type="button" id="histBtn" class="rail-hist">
+        <span id="histCount" class="rail-badge hidden">0</span>
         <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.1 13a9 9 0 1 0 2.5-7.4"/><path d="M3 4v4h4"/><path d="M12 8v4.5l3 2"/></svg>
         <span class="rail-name">History</span>
         <span class="rail-tip"><b>History</b>Your recent runs — click one to reload its query, output and strategy.</span>
       </button>
     </nav>
 
+    <button id="libExpand" class="lib-expand" type="button" title="Show the details panel" aria-label="Show the details panel">›</button>
+
     <aside class="library-panel" aria-label="Source and inspector">
+      <button id="libCollapse" class="lib-collapse" type="button" title="Hide the details panel" aria-label="Hide the details panel">‹</button>
       <section class="source-panel">
         <h2>Source</h2>
         <p id="dsDesc" class="microcopy"></p>
