@@ -1736,6 +1736,14 @@ pre {
 .cache-bar.indeterminate .cache-bar-fill { width: 38%; animation: cache-indet 1.15s ease-in-out infinite; }
 @keyframes cache-indet { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
 .cache-stat { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.cache-steps { margin-top: 12px; text-align: left; display: flex; flex-direction: column; gap: 4px; }
+.cache-steps:empty { display: none; }
+.cache-step { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
+.cache-step::before { content: "•"; color: var(--line-strong); }
+.cache-step.done { color: var(--ink); }
+.cache-step.done::before { content: "✓"; color: var(--accent); font-weight: 800; }
+.cache-step.active { color: var(--accent-dark); font-weight: 600; }
+.cache-step.active::before { content: "▸"; color: var(--accent-dark); }
 
 /* Map view — an offline equirectangular plot of WKT geometries. */
 .mapview svg { width: 100%; height: auto; background: var(--side); border: 1px solid var(--line); border-radius: 8px; }
@@ -1760,3 +1768,8 @@ pre {
 .tlegend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 9px; font-size: 11px; color: var(--muted); }
 .tlegend .tcell { width: 13px; height: 13px; min-height: 0; aspect-ratio: auto; }
 .tleg-lab { margin: 0 3px; }
+
+/* Friendly RDF-term table cells (literals shown without the datatype IRI). */
+.t-lang { color: var(--muted); font-size: .82em; }
+td.num { font-variant-numeric: tabular-nums; }
+td.lit { color: var(--ink); }

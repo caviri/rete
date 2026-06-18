@@ -539,18 +539,28 @@
     setDatasetName(state.dataset);
   }
 
-  function loadBytes(bytes, source) {
+  // Yield to the event loop so the UI can repaint between synchronous WASM calls.
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  // Opening a large cached graph runs several synchronous WASM passes (each
+  // re-parses the file) that block the UI for seconds. `onPhase` lets the caller
+  // (the cache modal) narrate the steps; a `tick()` before each heavy call lets
+  // that label paint before the engine blocks the thread.
+  async function loadBytes(bytes, source, onPhase) {
     state.bytes = bytes;
     state.activeSource = source;
     state.remote = null; // an in-memory load leaves remote-lazy mode
     state.exploreReady = false;
     updateSourcePill();
 
+    if (onPhase) { onPhase("Opening file & loading dictionaries…"); await tick(); }
     const info = JSON.parse(W().info(bytes));
-    const graphNames = JSON.parse(W().graph_names(bytes));
-    const graphText = graphNames.length ? " | graphs " + graphNames.length : "";
+    // info() already carries the named-graph count, so we avoid a second full
+    // open just to call graph_names() (a meaningful saving on a big cached file).
+    const graphText = info.namedGraphs ? " | graphs " + info.namedGraphs : "";
     setStatus(`${info.quads} quads | ${info.terms} terms | ${info.pyramidLevels} pyramid levels${graphText}`);
 
+    if (onPhase) { onPhase("Building schema (classes & relations)…"); await tick(); }
     const schema = JSON.parse(W().schema(bytes));
     state.schema = schema;
     state.exploreClass = null;
@@ -709,24 +719,58 @@
   }
   function closeCacheModal() { $("cacheModal").classList.add("hidden"); }
 
+  // Parse "98 MB" / "1.04 GB" / "375 KB" → megabytes, for a rough prep estimate.
+  function sizeToMB(s) {
+    const m = /([\d.]+)\s*(KB|MB|GB|TB|B)/i.exec(String(s || ""));
+    if (!m) return 0;
+    const v = parseFloat(m[1]);
+    return ({ B: v / 1e6, KB: v / 1e3, MB: v, GB: v * 1e3, TB: v * 1e6 })[m[2].toUpperCase()] || v;
+  }
+
+  // Switch the cache modal from "downloading" to "preparing the in-memory graph",
+  // with a rough time estimate and a running step log (the opens block the UI, so
+  // each step's label is painted just before the engine freezes the thread).
+  function enterCachePreparing(key) {
+    const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
+    const est = Math.max(1, Math.round(sizeToMB(meta.size) * 0.14));
+    $("cacheBar").classList.remove("indeterminate");
+    $("cacheBarFill").style.width = "100%";
+    $("cachePct").textContent = "downloaded";
+    $("cacheBytes").textContent = meta.size || "";
+    $("cacheSub").textContent = `Now building the in-memory graph — the page pauses while the engine opens the ` +
+      `file and computes its schema (~${est}s for ${meta.size || "this graph"}).`;
+    $("cacheSteps").innerHTML = `<div class="cache-step done">Downloaded ${esc(meta.size || "")}</div>`;
+  }
+  function setCacheStep(label) {
+    const el = $("cacheSteps");
+    if (!el) return;
+    el.querySelectorAll(".cache-step.active").forEach((s) => s.classList.replace("active", "done"));
+    el.insertAdjacentHTML("beforeend", `<div class="cache-step active">${esc(label)}</div>`);
+  }
+
   async function loadCachedRemote(key) {
     state.dataset = key;
     setDatasetName(key);
-    const finish = (bytes) => {
-      loadBytes(bytes, "cached");
+    try {
+      let bytes = remoteCache.get(key);
+      if (!bytes) {
+        setStatus("downloading " + key + " …");
+        openCacheModal(key);
+        bytes = await fetchWithProgress(remoteUrlFor(key), updateCacheProgress);
+        remoteCache.set(key, bytes);
+      } else {
+        openCacheModal(key);
+      }
+      enterCachePreparing(key);
+      await tick();
+      await loadBytes(bytes, "cached", setCacheStep);
       renderExamples();
       const list = examplesForDataset();
       if (list.length) selectExample(0);
       updateHash();
-    };
-    if (remoteCache.has(key)) return finish(remoteCache.get(key));
-    setStatus("downloading " + key + " …");
-    openCacheModal(key);
-    try {
-      const bytes = await fetchWithProgress(remoteUrlFor(key), updateCacheProgress);
-      remoteCache.set(key, bytes);
+      setCacheStep("Ready ✓");
+      await tick();
       closeCacheModal();
-      finish(bytes);
     } catch (e) {
       closeCacheModal();
       showError("out", "Cache download failed: " + (e.message || e));
@@ -1031,8 +1075,31 @@
     $$(".library-panel section[data-modes]").forEach((sec) =>
       sec.classList.toggle("hidden", !sec.dataset.modes.split(" ").includes(mode)));
     if (mode === "explore") ensureExplore();
+    if (mode === "schema" && state.remote && !state.schema) ensureRemoteSchema();
     updateResultVisibility();
     updateHash();
+  }
+
+  // Lazy Schema: read the class/relation summary from the schema pyramid (the
+  // card) over HTTP range — a Schema view of a remote graph, no download.
+  function ensureRemoteSchema() {
+    if (!state.remote || state.schema) return;
+    $("schemaOut").innerHTML = `<div class="note">Reading the schema pyramid over HTTP range…</div>`;
+    setTimeout(() => {
+      try {
+        const schema = JSON.parse(W().schema_url(state.remote.url));
+        state.schema = schema;
+        renderSchema(schema);
+        const r = schema.remote || {};
+        $("schemaOut").innerHTML = `<div class="banner">${(schema.classes || []).length} classes and ${(schema.relations || []).length} class-level relations — read from the schema pyramid over HTTP range (${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)}, ${r.requests || 0} request(s), no download).</div>`;
+      } catch (e) {
+        if (/no schema pyramid/i.test(String(e))) {
+          $("schemaOut").innerHTML = `<div class="note">This graph carries no schema pyramid (no typed classes), so there's no schema to summarize over range. Use <strong>Cache remote</strong> to compute one by scanning.</div>`;
+        } else {
+          showError("schemaOut", "Remote schema failed: " + String(e));
+        }
+      }
+    }, 0);
   }
 
   // --- Explore: entity tables + the community pyramid -------------------
@@ -1409,13 +1476,31 @@
       `Check bound IRIs and prefixes, or relax a FILTER — the graph just has nothing for this pattern.</div>`;
   }
 
+  // Friendly table cell for an RDF term: strip the quotes + datatype IRI from a
+  // literal (keep the value), show a language tag compactly, drop the <> from an
+  // IRI. The full canonical term (with datatype) is kept on hover, so nothing is
+  // lost — `"113.149"^^<…#decimal>` renders as `113.149`, `"Bemelen"@en` as
+  // `Bemelen @en`, `<http://…/Q5>` as `http://…/Q5`.
+  const NUM_DT = /#(decimal|double|float|integer|int|long|short|byte|nonNegativeInteger|nonPositiveInteger|positiveInteger|negativeInteger|unsignedLong|unsignedInt|unsignedShort|unsignedByte)$/;
+  function prettyCell(raw) {
+    if (raw == null || raw === "") return `<td></td>`;
+    const t = parseTerm(raw);
+    if (t.iri) {
+      const disp = shorten(t.value, 96);
+      return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
+    }
+    const num = t.datatype && NUM_DT.test(t.datatype);
+    const lang = t.lang ? ` <span class="t-lang">@${esc(t.lang)}</span>` : "";
+    return `<td class="lit${num ? " num" : ""}" title="${esc(raw)}">${esc(shorten(t.value, 110))}${lang}</td>`;
+  }
+
   function renderTable(vars, rows) {
     if (!(rows || []).length) return emptyState("rows");
     const cap = 500;
     const shown = (rows || []).slice(0, cap);
     const head = `<tr>${(vars || []).map((v) => `<th>${esc(v)}</th>`).join("")}</tr>`;
     const rowHtmls = shown.map((row) =>
-      `<tr>${(vars || []).map((v) => `<td class="iri">${esc(shorten(row[v], 120))}</td>`).join("")}</tr>`);
+      `<tr>${(vars || []).map((v) => prettyCell(row[v])).join("")}</tr>`);
     const note = (rows || []).length > cap
       ? `<p class="microcopy">Showing first ${cap} of ${rows.length} rows.</p>`
       : "";
@@ -1427,7 +1512,7 @@
     const cap = 500;
     const shown = (triples || []).slice(0, cap);
     const rowHtmls = shown.map((t) =>
-      `<tr><td class="iri">${esc(shorten(t[0], 120))}</td><td class="iri">${esc(shorten(t[1], 120))}</td><td class="iri">${esc(shorten(t[2], 120))}</td></tr>`);
+      `<tr>${prettyCell(t[0])}${prettyCell(t[1])}${prettyCell(t[2])}</tr>`);
     const note = (triples || []).length > cap
       ? `<p class="microcopy">Showing first ${cap} of ${triples.length} triples.</p>`
       : "";
@@ -2049,21 +2134,50 @@
   }
 
   function runCoherence() {
-    if (!state.bytes) return showError("coherenceOut", "Load a graph first.");
+    const remote = state.remote && state.remote.url;
+    if (!state.bytes && !remote) return showError("coherenceOut", "Load a graph first.");
     const t0 = performance.now();
+    const block = (title, sub, coherent, points) => {
+      const items = (points || []).map((p) =>
+        `<li><code>${esc(p.kind)}</code> — ${esc(p.detail)}</li>`).join("");
+      const verdict = coherent ? "coherent ✓" : `${(points || []).length} incoherent point(s)`;
+      return `<section class="coherence-block"><h3>${esc(title)}</h3>` +
+        `<p class="microcopy">${esc(sub)}</p>` +
+        `<p><strong>${verdict}</strong></p>` +
+        (items ? `<ul>${items}</ul>` : "") + `</section>`;
+    };
     try {
+      if (remote) {
+        // Lazy: Tier-0 schema coherence read from the schema pyramid (the card)
+        // over HTTP range — never touches the index or dictionary, no download.
+        let schema;
+        try {
+          schema = JSON.parse(W().check_schema_url(remote));
+        } catch (e) {
+          if (/no schema pyramid/i.test(String(e))) {
+            $("coherenceOut").innerHTML = `<div class="note">This graph carries no schema pyramid (no typed classes), so there's nothing to check at the schema tier. Use <strong>Cache remote</strong> to run the full instance reasoner.</div>`;
+            $("coherenceMeta").textContent = "";
+            updateResultVisibility();
+            return;
+          }
+          throw e;
+        }
+        const dt = performance.now() - t0;
+        const r = schema.remote || {};
+        $("coherenceOut").innerHTML =
+          block("Schema (Tier-0, index-free)",
+            "subClassOf cycles + unsatisfiable classes, read from the schema pyramid over HTTP range — no download, and no index/dictionary bytes.",
+            schema.coherent, schema.schemaPoints) +
+          `<section class="coherence-block"><p class="microcopy">The full instance-level reasoner materializes the whole graph, so it needs the dataset cached in memory (use <strong>Cache remote</strong>). The Tier-0 verdict above came from the card alone.</p></section>`;
+        $("coherenceMeta").textContent =
+          `${schema.coherent ? "schema coherent" : "schema incoherent"} | ` +
+          `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} · ${r.requests || 0} req · ${dt.toFixed(0)} ms`;
+        updateResultVisibility();
+        return;
+      }
       const schema = JSON.parse(W().check_schema(state.bytes));
       const full = JSON.parse(W().reason(state.bytes, null));
       const dt = performance.now() - t0;
-      const block = (title, sub, coherent, points) => {
-        const items = (points || []).map((p) =>
-          `<li><code>${esc(p.kind)}</code> — ${esc(p.detail)}</li>`).join("");
-        const verdict = coherent ? "coherent ✓" : `${points.length} incoherent point(s)`;
-        return `<section class="coherence-block"><h3>${esc(title)}</h3>` +
-          `<p class="microcopy">${esc(sub)}</p>` +
-          `<p><strong>${verdict}</strong></p>` +
-          (items ? `<ul>${items}</ul>` : "") + `</section>`;
-      };
       $("coherenceOut").innerHTML =
         block("Schema (Tier-0, index-free)", "subClassOf cycles + unsatisfiable classes, from the schema pyramid", schema.coherent, schema.schemaPoints) +
         block("Full reasoner (instance-level)", `${full.inferredCount} triple(s) entailed; disjoint-class / sameAs / functional clashes`, full.coherent, full.inconsistencies);

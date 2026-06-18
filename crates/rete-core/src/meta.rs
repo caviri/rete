@@ -667,6 +667,61 @@ pub fn decode_schema_block(
     ))
 }
 
+/// Decode the same standalone schema block as [`decode_schema_block`] but return
+/// the **schema summary** — the per-class instance histogram and the class-to-class
+/// relations at the finest (leaf) semantic-zoom level. This is the index-free,
+/// range-readable source for a Schema view of a remote graph: `(classes, relations)`
+/// where `classes = [(class_iri, count)]` and `relations = [(s_class, predicate,
+/// o_class, count)]`.
+#[allow(clippy::type_complexity)]
+pub fn decode_schema_block_summary(
+    block: &[u8],
+) -> Result<(Vec<(String, u64)>, Vec<(String, String, String, u64)>), MetaError> {
+    if block.first() != Some(&SCHEMA_V2) {
+        return Err(MetaError::Malformed("not a schema block"));
+    }
+    let mut meta = PyramidMeta {
+        round: 0,
+        summary: Vec::new(),
+        tiles: Vec::new(),
+        class_hierarchy: Vec::new(),
+        level_rollups: Vec::new(),
+        level_links: Vec::new(),
+        descriptors: Vec::new(),
+        subclass_cycles: Vec::new(),
+        disjoint_pairs: Vec::new(),
+        equivalent_pairs: Vec::new(),
+    };
+    let mut pos = 1;
+    decode_schema(block, &mut pos, &mut meta)?;
+    // Finest level = largest depth (leaves); resolves abstract rollups to real classes.
+    let classes = meta
+        .level_rollups
+        .iter()
+        .max_by_key(|r| r.depth)
+        .map(|r| r.classes.clone())
+        .unwrap_or_default();
+    let relations = meta
+        .level_links
+        .iter()
+        .max_by_key(|l| l.depth)
+        .map(|l| {
+            l.links
+                .iter()
+                .map(|c| {
+                    (
+                        c.s_class.clone(),
+                        c.predicate.clone(),
+                        c.o_class.clone(),
+                        c.count,
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((classes, relations))
+}
+
 fn write_str(out: &mut Vec<u8>, s: &str) {
     write_uvarint(out, s.len() as u64);
     out.extend_from_slice(s.as_bytes());
