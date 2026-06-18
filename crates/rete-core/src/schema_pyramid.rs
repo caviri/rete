@@ -52,16 +52,82 @@ pub struct SchemaPyramid {
     pub equivalent_pairs: Vec<(String, String)>,
 }
 
-/// Compute the schema pyramid for a graph at the materialized `round`. Empty when
-/// the graph has no `rdf:type` (nothing to profile → the pyramid-meta stays
-/// v1-shaped).
+/// The predicate that types subjects with classes:
+/// 1. an explicit `type_override` when given (e.g. Wikidata's `wdt:P31`, where
+///    `rdf:type` is only the structural `schema:Dataset`/`wikibase:Item`);
+/// 2. else `rdf:type` whenever it is actually used — the canonical typing;
+/// 3. else the predicate that behaves like "instance of" — IRI-class objects each
+///    reused by many subjects, covering most of the graph (not a label/located-in)
+///    — so a graph typed purely with a custom predicate still gets a pyramid.
+fn pick_type_predicate(
+    dict: &Dictionary,
+    triples: &[(u32, u32, u32)],
+    type_override: Option<&str>,
+) -> Option<u32> {
+    if let Some(tp) = type_override {
+        return dict.predicate_id(tp);
+    }
+    if let Some(pid) = dict.predicate_id(RDF_TYPE) {
+        if triples.iter().any(|&(_, p, _)| p == pid) {
+            return Some(pid);
+        }
+    }
+    use std::collections::{HashMap, HashSet};
+    let total_subjects: HashSet<u32> = triples.iter().map(|&(s, _, _)| s).collect();
+    if total_subjects.is_empty() {
+        return None;
+    }
+    let mut subs: HashMap<u32, HashSet<u32>> = HashMap::new();
+    let mut objs: HashMap<u32, HashSet<u32>> = HashMap::new();
+    for &(s, p, o) in triples {
+        // The object must be an IRI (a class), not a literal (`"…"`).
+        if dict
+            .object_term(o)
+            .map(|t| !t.starts_with('"'))
+            .unwrap_or(false)
+        {
+            subs.entry(p).or_default().insert(s);
+            objs.entry(p).or_default().insert(o);
+        }
+    }
+    let mut best: Option<(u32, usize)> = None;
+    for (&p, ss) in &subs {
+        let no = objs.get(&p).map(|o| o.len()).unwrap_or(0);
+        if no == 0 {
+            continue;
+        }
+        // Strong "instance of" signal: classes reused a lot AND most subjects typed.
+        if ss.len() / no >= 8
+            && ss.len() * 2 >= total_subjects.len()
+            && best.is_none_or(|(_, c)| ss.len() > c)
+        {
+            best = Some((p, ss.len()));
+        }
+    }
+    best.map(|(p, _)| p)
+}
+
+/// Compute the schema pyramid for a graph at the materialized `round`, auto-picking
+/// the type predicate. Empty when the graph has no usable typing.
 pub fn build_schema_pyramid(
     dict: &Dictionary,
     triples: &[(u32, u32, u32)],
     dend: &Dendrogram,
     round: usize,
 ) -> SchemaPyramid {
-    let type_pid = match dict.predicate_id(RDF_TYPE) {
+    build_schema_pyramid_with(dict, triples, dend, round, None)
+}
+
+/// Like [`build_schema_pyramid`], but `type_override` forces the type predicate
+/// (e.g. `wdt:P31`) instead of the auto-detection.
+pub fn build_schema_pyramid_with(
+    dict: &Dictionary,
+    triples: &[(u32, u32, u32)],
+    dend: &Dendrogram,
+    round: usize,
+    type_override: Option<&str>,
+) -> SchemaPyramid {
+    let type_pid = match pick_type_predicate(dict, triples, type_override) {
         Some(p) => p,
         None => return SchemaPyramid::default(),
     };
@@ -619,6 +685,39 @@ mod tests {
         let g = project_graph(&dict, &ids);
         let dend = build_dendrogram(&g);
         (dict, ids, dend)
+    }
+
+    #[test]
+    fn detects_custom_type_predicate_when_no_rdf_type() {
+        // No rdf:type: subjects are typed via a custom "instance of" predicate the
+        // way Wikidata uses wdt:P31 — each class reused by many subjects.
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        for i in 0..20 {
+            owned.push((format!("<e{i}>"), "<P31>".into(), "<Human>".into()));
+        }
+        for i in 20..32 {
+            owned.push((format!("<e{i}>"), "<P31>".into(), "<City>".into()));
+        }
+        // A label predicate (literal objects, 1:1) must NOT be mistaken for typing.
+        for i in 0..32 {
+            owned.push((format!("<e{i}>"), "<label>".into(), format!("\"name{i}\"")));
+        }
+        let refs: Vec<(&str, &str, &str)> = owned
+            .iter()
+            .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+            .collect();
+        let (dict, ids, dend) = build(&refs);
+        let sp = build_schema_pyramid(&dict, &ids, &dend, 0);
+        let fine = sp
+            .level_rollups
+            .last()
+            .expect("custom type predicate should yield a schema pyramid");
+        let cls: std::collections::HashMap<&str, u64> =
+            fine.classes.iter().map(|(c, n)| (c.as_str(), *n)).collect();
+        assert_eq!(cls.get("<Human>"), Some(&20));
+        assert_eq!(cls.get("<City>"), Some(&12));
+        // The label predicate is not a class set.
+        assert!(!cls.contains_key("<label>"));
     }
 
     #[test]

@@ -52,6 +52,12 @@ enum Command {
         /// queries need the pyramid.
         #[arg(long = "no-pyramid")]
         no_pyramid: bool,
+        /// Override the predicate that types subjects with classes for the schema
+        /// pyramid (default: `rdf:type`, else auto-detected). Use it where
+        /// `rdf:type` is structural noise — e.g. Wikidata's `wdt:P31`:
+        /// `--type-predicate http://www.wikidata.org/prop/direct/P31`.
+        #[arg(long = "type-predicate")]
+        type_predicate: Option<String>,
         /// Embed a **Dataset Card** (data-catalog metadata) in the file. Auto
         /// fields — triple/term counts, top predicates and classes, vocabularies
         /// — are derived from the data; the curated fields below are optional.
@@ -435,6 +441,7 @@ fn main() -> anyhow::Result<()> {
             materialize,
             reason,
             no_pyramid,
+            type_predicate,
             card,
             card_file,
             title,
@@ -449,6 +456,7 @@ fn main() -> anyhow::Result<()> {
             materialize,
             no_pyramid,
             reason,
+            type_predicate.as_deref(),
             commands::card::CardArgs {
                 enabled: card,
                 file: card_file,

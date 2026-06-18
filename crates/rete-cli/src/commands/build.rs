@@ -74,6 +74,7 @@ pub(crate) fn validate(inputs: &[String], format: Option<&str>) -> anyhow::Resul
 /// N-Triples/Turtle contribute to the default graph; N-Quads may carry named
 /// graphs. The output uses the dataset layout iff any named graph appears (which
 /// is byte-identical to the plain triple file when none do).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build(
     inputs: &[String],
     output: &str,
@@ -81,6 +82,7 @@ pub(crate) fn build(
     materialize: bool,
     no_pyramid: bool,
     reason: bool,
+    type_predicate: Option<&str>,
     card_args: CardArgs,
 ) -> anyhow::Result<()> {
     // 1. Parse every input into quads (triples → default graph, `None`).
@@ -133,22 +135,24 @@ pub(crate) fn build(
         None
     };
     let (bytes, stats) =
-        ingest::assemble_dataset_with_opts(&quads, !no_pyramid, |stats| match curated {
-            Some(curated) => {
-                let mut dataset_card = card::derive_card(
-                    &quads,
-                    stats.terms as u64,
-                    stats.named_graphs as u64,
-                    curated,
-                );
-                if let Some(r) = reasoning.as_ref() {
-                    dataset_card = dataset_card.with_coherence(r, materialize);
+        ingest::assemble_dataset_with_opts(&quads, !no_pyramid, type_predicate, |stats| {
+            match curated {
+                Some(curated) => {
+                    let mut dataset_card = card::derive_card(
+                        &quads,
+                        stats.terms as u64,
+                        stats.named_graphs as u64,
+                        curated,
+                    );
+                    if let Some(r) = reasoning.as_ref() {
+                        dataset_card = dataset_card.with_coherence(r, materialize);
+                    }
+                    let blob = dataset_card.to_json_bytes();
+                    eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                    blob
                 }
-                let blob = dataset_card.to_json_bytes();
-                eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
-                blob
+                None => Vec::new(),
             }
-            None => Vec::new(),
         });
     std::fs::write(output, &bytes)?;
 
@@ -197,6 +201,7 @@ mod tests {
             true,
             false,
             false,
+            None,
             CardArgs::default(),
         )
         .unwrap();
@@ -214,6 +219,7 @@ mod tests {
             false,
             false,
             false,
+            None,
             CardArgs::default(),
         )
         .unwrap();

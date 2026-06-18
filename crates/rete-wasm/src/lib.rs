@@ -1151,6 +1151,31 @@ pub fn check_schema_url(url: &str) -> Result<String, JsValue> {
     ))
 }
 
+/// The schema summary (classes + relations) read from the schema pyramid over
+/// HTTP range — a Schema view of a remote graph without downloading it.
+/// Worker-only (synchronous XHR). JSON:
+/// `{ "kind":"schema", "classes":[[iri,count]], "relations":[[s,p,o,count]], "remote":{…} }`.
+#[wasm_bindgen]
+pub fn schema_url(url: &str) -> Result<String, JsValue> {
+    use serde_json::json;
+    let reader = CountingReader::new(XhrRangeReader::open(url)?);
+    let (classes, relations) = rete_core::read_schema_summary_ranged(&reader)
+        .map_err(err)?
+        .ok_or_else(|| JsValue::from_str("file has no schema pyramid"))?;
+    let classes: Vec<serde_json::Value> = classes.iter().map(|(c, n)| json!([c, n])).collect();
+    let relations: Vec<serde_json::Value> = relations
+        .iter()
+        .map(|(s, p, o, n)| json!([s, p, o, n]))
+        .collect();
+    Ok(json!({
+        "kind": "schema",
+        "classes": classes,
+        "relations": relations,
+        "remote": { "fileLength": reader.len(), "bytes": reader.bytes_read(), "requests": reader.requests() },
+    })
+    .to_string())
+}
+
 fn format_shacl_text(report: &ValidationReport) -> String {
     if report.conforms {
         return "conforms: true\n".to_string();
