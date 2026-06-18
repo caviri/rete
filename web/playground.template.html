@@ -325,22 +325,16 @@ __PLAYGROUND_CSS__
   </main>
 
   <div id="sourceModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sourceModalTitle">
-    <div class="modal-card">
+    <div class="modal-card ds-modal">
       <div class="modal-head">
         <h3 id="sourceModalTitle">Datasets</h3>
+        <input id="dsSearch" type="search" class="ds-search" placeholder="Filter datasets, tags…" aria-label="Filter datasets" />
         <button id="sourceModalClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
-      <p class="microcopy">Each dataset carries its own <b>source</b>. <b>Bundled</b> graphs are
-        embedded in this page and load into memory; <b>Remote</b> ones are queried <b>lazily over
-        HTTP range</b> from a <a href="https://huggingface.co/buckets/katospiegel/knowledge-graphs" target="_blank" rel="noopener">Hugging Face bucket</a>
-        (served with CORS + Range by an <a href="https://katospiegel-rete.hf.space/" target="_blank" rel="noopener">HF&nbsp;Space</a>) —
-        only the bytes a query touches are fetched. Pick one to load it.</p>
-      <div class="ds-viewseg segmented" aria-label="Dataset view">
-        <button type="button" data-dsview="cards" class="active">Cards</button>
-        <button type="button" data-dsview="table">Table</button>
+      <div class="ds-browser">
+        <aside class="ds-sidebar"><div id="dsSidebar" class="ds-sidebar-list"></div></aside>
+        <section id="dsDetail" class="ds-detail" aria-live="polite"></section>
       </div>
-      <div id="datasetList" class="ds-list"></div>
-      <div id="datasetTable" class="hidden"></div>
       <details class="source-advanced">
         <summary>Advanced — load your own data</summary>
         <div class="source-choice" style="border-top:0;padding-top:10px">

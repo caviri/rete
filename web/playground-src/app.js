@@ -29,7 +29,14 @@
   // DuckDB uses over httpfs: fetch only the bytes a query touches.
   const REMOTE_HARNESS = `
 ;(function () {
-  var ready = null;
+  var ready = null, pReq = 0, pBytes = 0, pId = 0;
+  // The wasm calls reteProgress(bytes) after every physical range fetch. We
+  // forward a running tally to the page so a long query shows live progress
+  // instead of a frozen "querying…". postMessage works mid-synchronous-call.
+  self.reteProgress = function (b) {
+    pReq++; pBytes += (b || 0);
+    self.postMessage({ type: "progress", id: pId, requests: pReq, bytes: pBytes });
+  };
   self.onmessage = function (e) {
     var m = e.data;
     if (m.type === "init") {
@@ -38,6 +45,7 @@
       return;
     }
     if (m.type === "query") {
+      pReq = 0; pBytes = 0; pId = m.id;
       Promise.resolve(ready).then(function () {
         try {
           self.postMessage({ type: "result", id: m.id, ok: true,
@@ -49,17 +57,104 @@
     }
   };
 })();`;
+
+  // Multi-range coalescing. The wasm engine already batches the byte ranges a
+  // query needs (read_coalesced → read_many) and calls globalThis.reteReadMany
+  // when present; without it the worker falls back to one synchronous XHR per
+  // range (the sequential RTTs). This hook fetches ALL the ranges in ONE request
+  // — RFC 7233 multipart/byteranges — collapsing N round trips into one. It must
+  // be synchronous (the engine calls it from sync wasm) → worker-only sync XHR.
+  // Returns one Uint8Array with the ranges concatenated in order, or null to
+  // fall back (e.g. a host that ignores multi-range). Binary-safe, regex-free.
+  const COALESCE_JS = `
+;(function () {
+  function boundaryOf(ct) {
+    var i = ct.indexOf("boundary=");
+    if (i < 0) return null;
+    var b = ct.slice(i + 9).trim();
+    if (b.charAt(0) === '"') b = b.slice(1, b.indexOf('"', 1));
+    else { var sc = b.indexOf(";"); if (sc >= 0) b = b.slice(0, sc); }
+    return b.trim();
+  }
+  function idx(hay, needle, from) {
+    outer: for (var i = from; i <= hay.length - needle.length; i++) {
+      for (var j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+      return i;
+    }
+    return -1;
+  }
+  function parseByteranges(u8, ct) {
+    var bnd = boundaryOf(ct);
+    if (!bnd) return null;
+    var enc = new TextEncoder();
+    var dash = enc.encode("--" + bnd);
+    var sep = enc.encode("\\r\\n\\r\\n");
+    var crlfDash = enc.encode("\\r\\n--" + bnd);
+    var parts = [];
+    var pos = idx(u8, dash, 0);
+    if (pos < 0) return null;
+    pos += dash.length;
+    for (;;) {
+      if (u8[pos] === 45 && u8[pos + 1] === 45) break;
+      var hend = idx(u8, sep, pos);
+      if (hend < 0) break;
+      var bodyStart = hend + 4;
+      var next = idx(u8, crlfDash, bodyStart);
+      if (next < 0) next = u8.length;
+      parts.push(u8.subarray(bodyStart, next));
+      pos = next + crlfDash.length;
+      if (pos >= u8.length) break;
+    }
+    return parts;
+  }
+  self.__parseByteranges = parseByteranges;
+  self.reteReadMany = function (url, offsets, lens) {
+    try {
+      var n = offsets.length;
+      if (n < 2) return null;
+      var spec = [], total = 0;
+      for (var i = 0; i < n; i++) { var o = offsets[i], l = lens[i]; spec.push(o + "-" + (o + l - 1)); total += l; }
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", url, false);
+      xhr.responseType = "arraybuffer";
+      xhr.setRequestHeader("Range", "bytes=" + spec.join(","));
+      xhr.send();
+      if (xhr.status !== 206) return null;
+      var ct = xhr.getResponseHeader("Content-Type") || "";
+      if (ct.indexOf("multipart/byteranges") < 0) return null;
+      var parts = parseByteranges(new Uint8Array(xhr.response), ct);
+      if (!parts || parts.length !== n) return null;
+      var out = new Uint8Array(total), p = 0;
+      for (var k = 0; k < n; k++) { if (parts[k].length !== lens[k]) return null; out.set(parts[k], p); p += lens[k]; }
+      if (self.reteProgress) self.reteProgress(total); // one physical request, total bytes
+      return out;
+    } catch (e) { return null; }
+  };
+})();`;
+
   let remoteWorker = null, remoteReady = null, remoteResolveReady = null, remoteSeq = 0;
+  let remoteOnProgress = null;
   const remotePending = new Map();
+
+  // Hard-cancel a running remote query: a synchronous wasm query can't be
+  // interrupted cooperatively, so we terminate the worker (it rebuilds on the
+  // next query) and reject anything in flight.
+  function cancelRemote() {
+    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; }
+    remotePending.forEach((p) => p.reject(new Error("cancelled")));
+    remotePending.clear();
+    remoteOnProgress = null;
+  }
 
   function ensureRemoteWorker() {
     if (remoteWorker) return remoteReady;
     const glue = document.getElementById("reteGlue").textContent;
-    const blob = new Blob([glue + REMOTE_HARNESS], { type: "text/javascript" });
+    const blob = new Blob([glue + REMOTE_HARNESS + COALESCE_JS], { type: "text/javascript" });
     remoteWorker = new Worker(URL.createObjectURL(blob));
     remoteWorker.onmessage = (e) => {
       const m = e.data;
       if (m.type === "ready") { if (remoteResolveReady) remoteResolveReady(); return; }
+      if (m.type === "progress") { if (remoteOnProgress) remoteOnProgress(m); return; }
       if (m.type === "result") {
         const p = remotePending.get(m.id);
         if (!p) return;
@@ -135,6 +230,7 @@
     if (state.activeSource === "url") return "url";
     if (state.activeSource === "built") return "built in browser";
     if (state.activeSource === "remote") return "remote (lazy)";
+    if (state.activeSource === "cached") return "remote (cached)";
     return "bundled";
   }
 
@@ -337,6 +433,9 @@
 
   function suggestKeydown(ed, e) {
     if (ed.sug.classList.contains("hidden")) return;
+    // Ctrl/Cmd+Enter is the "run" shortcut — never let it accept a completion;
+    // the global handler below runs the active panel instead.
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { hideSuggest(ed); return; }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const d = e.key === "ArrowDown" ? 1 : -1;
@@ -439,10 +538,11 @@
     renderProvenanceDefaults();
 
     const infoRow = datasetInfo(state.dataset);
-    $("dsDesc").textContent = source === "bundled"
+    const catalogSource = source === "bundled" || source === "cached";
+    $("dsDesc").textContent = catalogSource
       ? infoRow.description
       : "Custom graph loaded into the same in-browser engine.";
-    if (source !== "bundled") {
+    if (!catalogSource) {
       $("dsName").textContent = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom";
     }
   }
@@ -511,92 +611,202 @@
     enterRemote($("remoteUrl").value.trim(), null);
   }
 
-  // Dataset dropdown / catalog selection: bundled keys load into memory;
-  // remote-lazy keys connect over HTTP range.
-  function selectDataset(key) {
-    const info = datasetInfo(key);
-    if (info && info.kind === "remote-lazy") {
-      enterRemote(info.url, key);
-    } else {
-      loadDataset(key);
+  // Every dataset is mirrored in the bucket at playground/<key>.rete, so any of
+  // them can be cached or range-queried. Remote-only datasets carry their own
+  // `url`; the rest derive it from remoteBase.
+  function remoteUrlFor(key) {
+    const d = datasetInfo(key);
+    if (d && d.url) return d.url;
+    const tok = CATALOG.remoteToken ? "?token=" + CATALOG.remoteToken : "";
+    return `${CATALOG.remoteBase}/playground/${key}.rete${tok}`;
+  }
+  function isEmbedded(key) { return !!RETE_DATASETS_B64[key]; }
+
+  // Downloaded-remote cache: fetch the whole .rete once, keep the bytes, then
+  // query it in memory on later loads (the "cache" mode of the source switch).
+  const remoteCache = new Map();
+  async function loadCachedRemote(key) {
+    state.dataset = key;
+    setDatasetName(key);
+    const finish = (bytes) => {
+      loadBytes(bytes, "cached");
+      renderExamples();
+      const list = examplesForDataset();
+      if (list.length) selectExample(0);
+      updateHash();
+    };
+    if (remoteCache.has(key)) return finish(remoteCache.get(key));
+    setStatus("downloading " + key + " …");
+    try {
+      const res = await fetch(remoteUrlFor(key));
+      if (!res.ok) throw new Error(res.status + " " + res.statusText);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      remoteCache.set(key, bytes);
+      finish(bytes);
+    } catch (e) {
+      showError("out", "Cache download failed: " + (e.message || e));
     }
   }
 
-  // The dataset metadata table: triples, .rete size, type (bundled/remote),
-  // license, and a link to where the data came from. Driven by CATALOG.datasetMeta.
-  function renderDatasetTable() {
-    const fmtTri = (t) => (t == null ? "—" : typeof t === "number" ? t.toLocaleString() : esc(t));
-    const host = (u) => { try { return new URL(u).host.replace(/^www\./, ""); } catch (e) { return u; } };
-    const rows = CATALOG.datasets.map((d) => {
-      const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[d.key]) || {};
-      const type = d.kind === "remote-lazy" ? "🛰 Remote · lazy" : "📦 Bundled";
-      const src = m.source
-        ? `<a href="${esc(m.source)}" target="_blank" rel="noopener">${esc(host(m.source))} ↗</a>`
-        : "—";
-      return `<tr><td><button type="button" class="ds-rowload" data-ds="${esc(d.key)}">${esc(d.label.split(" - ")[0])}</button></td>` +
-        `<td class="num">${fmtTri(m.triples)}</td>` +
-        `<td class="num">${esc(m.size || "—")}</td>` +
-        `<td>${type}</td><td>${esc(m.license || "—")}</td><td>${src}</td></tr>`;
-    }).join("");
-    return `<table class="ds-table"><thead><tr>` +
-      `<th>Dataset</th><th class="num">Triples</th><th class="num">.rete size</th>` +
-      `<th>Type</th><th>License</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>`;
+  // Load a dataset in one of three modes: bundled (embedded bytes), cache
+  // (download the remote once, keep it), lazy (range-query the remote).
+  function selectDatasetMode(key, mode) {
+    if (mode === "lazy") return enterRemote(remoteUrlFor(key), key);
+    if (mode === "cache") return loadCachedRemote(key);
+    return loadDataset(key);
+  }
+  // Default mode for non-modal callers (history, hash): bundled if embedded,
+  // else lazy over HTTP range.
+  function selectDataset(key) {
+    const d = datasetInfo(key);
+    if (isEmbedded(key) && !(d && d.kind === "remote-lazy")) loadDataset(key);
+    else enterRemote(remoteUrlFor(key), key);
   }
 
-  // The "Datasets" browser: one card per catalog dataset, with its description
-  // and a source badge (the source is part of the dataset). Loading a card calls
-  // selectDataset, which picks the right source — bundled→memory, remote→lazy.
-  // A Cards/Table toggle switches to the metadata table above.
-  function openSource() {
-    $("datasetList").innerHTML = CATALOG.datasets.map((d) => {
+  // Which playground tabs a dataset can showcase, derived from the catalog.
+  function datasetSupports(key) {
+    const exs = CATALOG.examples[key] || [];
+    const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[key]) || {};
+    return {
+      SPARQL: exs.length > 0,
+      SHACL: (CATALOG.shacl[key] || []).length > 0,
+      Reasoning: !!ex.reasoning,
+      Reach: !!CATALOG.reach[key],
+      Provenance: !!CATALOG.provenance[key],
+      Geo: exs.some((e) => e.family === "Geo") || exs.some((e) => /\bgeof:/.test(e.q || ""))
+    };
+  }
+
+  // Tiny markdown for descriptions: **bold**, `code`, *italic* (input escaped).
+  function mdLite(s) {
+    return esc(String(s || ""))
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
+  }
+
+  function dsShortLabel(key) {
+    const d = datasetInfo(key);
+    return d ? d.label.split(" - ")[0] : key;
+  }
+
+  // The "Datasets" browser: a sidebar list (left) + a detail/preview pane
+  // (right). The selected dataset shows tags, the example kinds it supports, a
+  // 3-mode source switch (bundled / cache / lazy), its metadata under "more",
+  // and an example preview.
+  let dsSelected = null;
+
+  function renderDsSidebar() {
+    const q = ($("dsSearch").value || "").trim().toLowerCase();
+    const items = CATALOG.datasets.filter((d) => {
+      if (!q) return true;
+      const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[d.key]) || {};
+      return [d.label, d.description, (ex.tags || []).join(" ")].join(" ").toLowerCase().includes(q);
+    });
+    if (!items.length) {
+      $("dsSidebar").innerHTML = `<p class="microcopy" style="padding:8px">No matching datasets.</p>`;
+      return;
+    }
+    $("dsSidebar").innerHTML = items.map((d) => {
+      const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[d.key]) || {};
       const remote = d.kind === "remote-lazy";
-      const m = (d.description || "").match(/~?\s*([\d.]+\s*[MG]B)\b/);
-      const size = m ? " · " + m[1].replace(/\s+/g, "") : "";
-      const badge = remote
-        ? `<span class="ds-badge remote">🛰 Remote · lazy${esc(size)}</span>`
-        : `<span class="ds-badge bundled">📦 Bundled · in page</span>`;
-      const active = d.key === state.dataset;
-      return `<div class="ds-card${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
-        `<div class="ds-card-head"><b>${esc(d.label.split(" - ")[0])}</b>${badge}</div>` +
-        `<p class="ds-card-desc">${esc(d.description || "(no description)")}</p>` +
-        `<div class="ds-card-foot">` +
-          `<button type="button" class="ds-load" data-ds="${esc(d.key)}">${active ? "Reload" : "Load"}</button>` +
-          `<button type="button" class="ds-more" aria-label="Toggle full description">more</button>` +
-        `</div></div>`;
+      const active = d.key === dsSelected;
+      return `<button type="button" class="ds-side-item${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
+        `<span class="ds-side-ico">${esc(ex.icon || "📊")}</span>` +
+        `<span class="ds-side-name">${esc(dsShortLabel(d.key))}</span>` +
+        `<span class="ds-side-kind" title="${remote ? "remote-only" : "bundled in page"}">${remote ? "🛰" : "📦"}</span>` +
+        `</button>`;
     }).join("");
-    $$("#datasetList .ds-load").forEach((btn) => {
-      btn.onclick = () => { selectDataset(btn.dataset.ds); closeSource(); };
+    $$("#dsSidebar .ds-side-item").forEach((b) => {
+      b.onclick = () => { dsSelected = b.dataset.ds; renderDsSidebar(); renderDsDetail(dsSelected); };
     });
-    $$("#datasetList .ds-more").forEach((btn) => {
-      btn.onclick = () => {
-        const card = btn.closest(".ds-card");
-        const open = card.classList.toggle("expanded");
-        btn.textContent = open ? "less" : "more";
-      };
-    });
-    // The metadata table (same datasets, at-a-glance) + the Cards/Table toggle.
-    $("datasetTable").innerHTML = renderDatasetTable();
-    $$("#datasetTable .ds-rowload").forEach((b) => {
-      b.onclick = () => { selectDataset(b.dataset.ds); closeSource(); };
-    });
-    $$("#sourceModal [data-dsview]").forEach((b) => {
+  }
+
+  function renderDsDetail(key) {
+    const d = datasetInfo(key);
+    const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
+    const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[key]) || {};
+    const remoteOnly = d.kind === "remote-lazy";
+    const embedded = isEmbedded(key);
+    const sup = datasetSupports(key);
+    const fmtTri = (t) => (t == null ? "—" : typeof t === "number" ? t.toLocaleString() : esc(t));
+    const host = (u) => { try { return new URL(u).host.replace(/^www\./, ""); } catch (e) { return u; } };
+
+    const badge = remoteOnly
+      ? `<span class="ds-badge remote">🛰 Remote-only · lazy</span>`
+      : `<span class="ds-badge bundled">📦 Bundled in page</span>`;
+    const tags = (ex.tags || []).map((t) => `<span class="ds-tag">${esc(t)}</span>`).join("") +
+      (m.license ? `<span class="ds-tag license">${esc(m.license)}</span>` : "") +
+      (m.size ? `<span class="ds-tag license">${esc(m.size)}</span>` : "");
+    const caps = ["SPARQL", "SHACL", "Reasoning", "Reach", "Provenance", "Geo"]
+      .map((c) => `<span class="ds-cap ${sup[c] ? "on" : "off"}">${c}</span>`).join("");
+
+    const defMode = embedded ? "bundled" : "lazy";
+    const modeBtn = (mode, label, dis) =>
+      `<button type="button" data-mode="${mode}"${dis ? " disabled" : ""}${mode === defMode ? ' class="active"' : ""}>${label}</button>`;
+    const modeSeg = `<div class="ds-mode-seg" id="dsModeSeg">` +
+      modeBtn("bundled", "Bundled", !embedded) +
+      modeBtn("cache", "Cache remote", false) +
+      modeBtn("lazy", "Lazy range", false) + `</div>`;
+
+    const exs = CATALOG.examples[key] || [];
+    const preview = exs.length
+      ? exs.slice(0, 6).map((e) =>
+          `<div class="ds-prev-item"><div class="ds-prev-head"><span class="ds-prev-fam">${esc(e.family || "")}</span>` +
+          `<span class="ds-prev-label">${esc(e.label)}</span></div>` +
+          `<pre class="ds-prev-q">${esc((e.q || "").trim())}</pre></div>`).join("")
+      : `<p class="microcopy">No example queries for this dataset.</p>`;
+
+    const metaTable = `<table class="ds-meta-table"><tbody>` +
+      `<tr><td>Triples</td><td class="num">${fmtTri(m.triples)}</td></tr>` +
+      `<tr><td>.rete size</td><td class="num">${esc(m.size || "—")}</td></tr>` +
+      `<tr><td>Type</td><td>${remoteOnly ? "🛰 Remote · lazy" : "📦 Bundled"}${embedded ? " · also in bucket" : ""}</td></tr>` +
+      `<tr><td>License</td><td>${esc(m.license || "—")}</td></tr>` +
+      `<tr><td>Source</td><td>${m.source ? `<a href="${esc(m.source)}" target="_blank" rel="noopener">${esc(host(m.source))} ↗</a>` : "—"}</td></tr>` +
+      `<tr><td>Bucket</td><td class="iri">playground/${esc(key)}.rete</td></tr>` +
+      `</tbody></table>`;
+
+    $("dsDetail").innerHTML =
+      `<div class="ds-detail-head">` +
+        `<div class="ds-ico-tile">${esc(ex.icon || "📊")}</div>` +
+        `<div><h2>${esc(dsShortLabel(key))}</h2><div class="ds-detail-sub">${badge}</div></div>` +
+      `</div>` +
+      `<div class="ds-tags">${tags}</div>` +
+      `<div class="ds-caps-label">Compatible with</div><div class="ds-caps">${caps}</div>` +
+      `<p class="ds-desc">${mdLite(d.description)}</p>` +
+      `<div class="ds-caps-label">Source mode</div>` +
+      `<div class="ds-load-row">${modeSeg}<button type="button" class="ds-load-btn" id="dsLoadBtn">Load dataset</button>` +
+      `<span class="ds-mode-hint" id="dsModeHint"></span></div>` +
+      `<details class="ds-more-block"><summary>More — metadata &amp; provenance</summary>${metaTable}</details>` +
+      `<div class="ds-section-label">Preview · ${exs.length} example${exs.length === 1 ? "" : "s"}</div>` +
+      `<div class="ds-preview">${preview}</div>`;
+
+    let mode = defMode;
+    const hints = {
+      bundled: "Loads the copy embedded in this page — instant, fully offline.",
+      cache: "Downloads the whole .rete from the bucket once, then queries it in memory (cached for this session).",
+      lazy: "Range-queries the remote .rete over HTTP — only the bytes each query touches are fetched."
+    };
+    const setHint = () => { $("dsModeHint").textContent = hints[mode]; };
+    setHint();
+    $$("#dsModeSeg button").forEach((b) => {
       b.onclick = () => {
-        const table = b.dataset.dsview === "table";
-        $("datasetList").classList.toggle("hidden", table);
-        $("datasetTable").classList.toggle("hidden", !table);
-        $$("#sourceModal [data-dsview]").forEach((x) => x.classList.toggle("active", x === b));
+        if (b.disabled) return;
+        mode = b.dataset.mode;
+        $$("#dsModeSeg button").forEach((x) => x.classList.toggle("active", x === b));
+        setHint();
       };
     });
+    $("dsLoadBtn").onclick = () => { selectDatasetMode(key, mode); closeSource(); };
+  }
+
+  function openSource() {
+    if (!dsSelected || !datasetInfo(dsSelected)) dsSelected = state.dataset;
+    $("dsSearch").value = "";
+    $("dsSearch").oninput = renderDsSidebar;
+    renderDsSidebar();
+    renderDsDetail(dsSelected);
     $("sourceModal").classList.remove("hidden");
-    // Show "more/less" only where the description is actually clamped — measured
-    // now that the modal is visible (a hidden element reports zero heights).
-    requestAnimationFrame(() => {
-      $$("#datasetList .ds-card").forEach((card) => {
-        const desc = card.querySelector(".ds-card-desc");
-        const more = card.querySelector(".ds-more");
-        if (more && desc && desc.scrollHeight <= desc.clientHeight + 1) more.style.display = "none";
-      });
-    });
   }
 
   function closeSource() {
@@ -1054,7 +1264,15 @@
       `</div>`;
   }
 
+  // A clear empty state beats a bare header row — especially for custom queries
+  // on remote datasets, where "did it work?" and "matched nothing" look alike.
+  function emptyState(what) {
+    return `<div class="note">The query ran successfully but matched <strong>no ${esc(what)}</strong>. ` +
+      `Check bound IRIs and prefixes, or relax a FILTER — the graph just has nothing for this pattern.</div>`;
+  }
+
   function renderTable(vars, rows) {
+    if (!(rows || []).length) return emptyState("rows");
     const cap = 500;
     const shown = (rows || []).slice(0, cap);
     const head = `<tr>${(vars || []).map((v) => `<th>${esc(v)}</th>`).join("")}</tr>`;
@@ -1067,6 +1285,7 @@
   }
 
   function renderTriplesTable(triples) {
+    if (!(triples || []).length) return emptyState("triples");
     const cap = 500;
     const shown = (triples || []).slice(0, cap);
     const rowHtmls = shown.map((t) =>
@@ -1285,13 +1504,41 @@
     if (!q) return showError("out", "Enter a SPARQL query.");
     const fmt = $("fmt").value;
 
-    // Remote lazy mode: route through the worker (range reads), render async.
+    // Remote lazy mode: route through the worker (range reads), render async with
+    // LIVE progress — a 1 GB graph can take many range fetches, so show running
+    // request count, bytes fetched (of the file size) and elapsed, plus a Cancel.
     if (state.remote) {
       $("commOut").innerHTML = "";
       updateResultVisibility();
-      $("qmeta").textContent = "querying remote…";
       const t0 = performance.now();
+      const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
+      const ofSize = meta.size ? " of " + meta.size : "";
+      const dsName = dsShortLabel(state.dataset);
+      let lastReq = 0, lastBytes = 0;
+      const showProg = () => {
+        const dt = (performance.now() - t0) / 1000;
+        $("qmeta").textContent = `⏳ querying ${dsName} — ${lastReq} request(s) · ` +
+          `${formatBytes(lastBytes)}${ofSize} fetched · ${dt.toFixed(1)}s`;
+      };
+      const runBtn = $("run");
+      const prevLabel = runBtn.textContent;
+      runBtn.textContent = "Cancel";
+      runBtn.onclick = cancelRemote;
+      showProg();
+      const timer = setInterval(showProg, 250);
+      const cleanup = () => {
+        clearInterval(timer);
+        remoteOnProgress = null;
+        runBtn.textContent = prevLabel;
+        runBtn.onclick = runQuery;
+      };
+      // Just record the latest tally; the 250 ms timer paints it — so a query
+      // firing thousands of fetches doesn't thrash the DOM.
+      remoteOnProgress = (m) => { lastReq = m.requests; lastBytes = m.bytes; };
+      $("out").innerHTML = `<div class="note">Querying a remote graph lazily — fetching only the byte ranges this query needs. ` +
+        `Progress shows in the run bar; selective queries (a bound subject/object) are fastest, full scans/aggregates fetch more.</div>`;
       remoteSparql(state.remote.url, q, "table").then((raw) => {
+        cleanup();
         const res = JSON.parse(raw);
         const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
         const r = res.remote || {};
@@ -1301,8 +1548,15 @@
           `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} (${pct}%) · ${dt.toFixed(0)} ms`;
         saveHistory({ query: q, format: fmt, strategy: "remote", dataset: "(remote)", ts: Date.now(), resultSummary: summary });
       }).catch((e) => {
-        $("qmeta").textContent = "";
-        showError("out", "Remote query failed: " + String(e.message || e));
+        cleanup();
+        const msg = String(e.message || e);
+        if (msg === "cancelled") {
+          $("qmeta").textContent = "cancelled";
+          $("out").innerHTML = `<div class="note">Query cancelled — the worker was stopped. Run again to retry.</div>`;
+        } else {
+          $("qmeta").textContent = "";
+          showError("out", "Remote query failed: " + msg);
+        }
       });
       return;
     }
@@ -1890,6 +2144,14 @@
     }
   }
 
+  // Run the primary action of whichever panel is active (the Ctrl/Cmd+Enter target).
+  function runActiveMode() {
+    ({
+      sparql: runQuery, shacl: runShacl, reach: runReach,
+      provenance: runProvenance, coherence: runCoherence, build: runBuild
+    }[state.mode] || runQuery)();
+  }
+
   function wireEvents() {
     $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
@@ -1931,6 +2193,20 @@
         $("strategyModal").classList.add("hidden");
         closeSource();
       }
+      // Ctrl/Cmd+Enter runs the active panel's primary action from anywhere.
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        runActiveMode();
+      }
+    });
+
+    // Surface the shortcut on each panel's primary button.
+    const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘↵" : "Ctrl+↵";
+    [["run", "Run query"], ["shaclRun", "Validate"], ["reachRun", "Run reach"],
+     ["whyRun", "Explain matches"], ["coherenceRun", "Check coherence"],
+     ["buildRun", "Build .rete"]].forEach(([id, label]) => {
+      const b = $(id);
+      if (b) b.title = `${label} (${shortcut})`;
     });
 
     // Collapsed tables: every "Show more" button reveals the next step of
