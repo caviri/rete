@@ -952,7 +952,10 @@ pub fn write_dataset_with_metadata(
         block_codec: codec,
         pyramid_levels,
         quad_count: default_index.triple_count() as u64
-            + named.iter().map(|(_, idx)| idx.triple_count() as u64).sum::<u64>(),
+            + named
+                .iter()
+                .map(|(_, idx)| idx.triple_count() as u64)
+                .sum::<u64>(),
         term_count: dict.term_count() as u64,
         content_hash: content_hash(&parts),
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
