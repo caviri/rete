@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>rete playground — offline WASM console</title>
+  <title>.rete playground - browser-based graph exploration</title>
   <style>
 __PLAYGROUND_CSS__
   </style>
@@ -98,6 +98,10 @@ __PLAYGROUND_CSS__
                style="display:block;width:100%;height:auto;margin-top:8px;border:1px solid var(--border,#e4e8ec);border-radius:8px" />
           <p class="microcopy" style="margin-top:6px">Remote datasets (e.g. <b>wikidata-1GB</b>, <b>ohm-full</b>) are never downloaded whole — each query fetches only the dictionary chunks and index tiles it touches.</p>
         </details>
+        <details class="lazy-explainer">
+          <summary>The self-describing card</summary>
+          <p class="microcopy" style="margin-top:6px">Each .rete embeds a small <b>card</b>: curated metadata (title, license, source) plus auto-derived stats — datatype/language histograms, the effective schema (<code>class→predicate→class</code>), top hubs, geo/temporal extents, and a schema pyramid with per-semantic-zoom-level type rollups. A remote reader fetches just the header + card in two HTTP ranges (~10&nbsp;KB) to learn a multi-GB graph's shape and legend without ever touching the triple index.</p>
+        </details>
       </section>
       <section data-modes="sparql shacl reach provenance">
         <h2>Selected Example</h2>
@@ -177,6 +181,7 @@ __PLAYGROUND_CSS__
         </div>
 
         <div class="explore-sub" data-exp="community">
+          <p class="microcopy">The pyramid clusters the graph by Louvain modularity over several coarsening rounds (a dendrogram); the build ships one round whose tiles fit a ~64&nbsp;KiB budget. That gives a <b>semantic zoom</b> from coarse communities down to finer ones — and lets the <b>progressive</b> query strategy answer aggregate questions exactly from this summary in a few small range reads, never touching the triple index.</p>
           <p class="microcopy" id="pyramidNote"></p>
           <div id="pyramidLegend" class="viz-legend"></div>
           <div id="pyramidViz" class="ontology-diagram"></div>
@@ -458,6 +463,16 @@ __PLAYGROUND_CSS__
       </div>
       <p class="microcopy">Every HTTP request the last remote query made — lazy range reads over the file. A <b>multipart</b> row fetched several byte ranges in one request (coalesced); each range is <code>start-end</code>.</p>
       <div id="reqLogBody"></div>
+    </div>
+  </div>
+
+  <div id="cacheModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cacheModalTitle">
+    <div class="modal-card cache-modal">
+      <div class="cache-spindle" aria-hidden="true"><span></span><span></span><span></span></div>
+      <h3 id="cacheModalTitle">Caching <span id="cacheName">dataset</span></h3>
+      <p class="microcopy" id="cacheSub">Downloading the whole .rete into memory — it'll be queried in-page once it's here.</p>
+      <div id="cacheBar" class="cache-bar indeterminate"><div id="cacheBarFill" class="cache-bar-fill"></div></div>
+      <div class="cache-stat"><span id="cachePct"></span><span id="cacheBytes">0 B</span></div>
     </div>
   </div>
 

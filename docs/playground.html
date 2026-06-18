@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>rete playground — offline WASM console</title>
+  <title>.rete playground - browser-based graph exploration</title>
   <style>
 :root {
   /* Shared palette with the documentation site (docgen CSS). */
@@ -1724,6 +1724,25 @@ pre {
 .hist-modal .modal-head h3 { margin-right: auto; }
 .hist-modal .microcopy { flex: 0 0 auto; margin: 0 0 10px; }
 .hist-modal .history-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+/* Cache-download progress modal: a spinning "spindle" of dots + a progress bar. */
+.cache-modal { width: min(440px, 100%); text-align: center; }
+.cache-modal h3 { margin: 0 0 4px; font-family: Georgia, "Times New Roman", serif; font-size: 18px; }
+.cache-modal h3 #cacheName { color: var(--accent-dark); }
+.cache-modal .microcopy { margin: 0 auto 16px; max-width: 360px; }
+.cache-spindle { width: 52px; height: 52px; margin: 4px auto 16px; position: relative; animation: cache-rot 1.1s linear infinite; }
+.cache-spindle span {
+  position: absolute; top: 0; left: 50%; width: 11px; height: 11px; margin-left: -5.5px;
+  border-radius: 50%; background: var(--accent);
+}
+.cache-spindle span:nth-child(2) { top: auto; bottom: 0; background: var(--accent-2, #c84f2f); }
+.cache-spindle span:nth-child(3) { top: 50%; left: 0; margin: -5.5px 0 0; background: var(--accent-dark); }
+@keyframes cache-rot { to { transform: rotate(360deg); } }
+.cache-bar { height: 10px; border-radius: 999px; background: var(--side); border: 1px solid var(--line); overflow: hidden; margin: 4px 0 8px; }
+.cache-bar-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-dark)); border-radius: 999px; transition: width .15s ease; }
+.cache-bar.indeterminate .cache-bar-fill { width: 38%; animation: cache-indet 1.15s ease-in-out infinite; }
+@keyframes cache-indet { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
+.cache-stat { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
   </style>
 </head>
 <body>
@@ -1816,6 +1835,10 @@ pre {
                style="display:block;width:100%;height:auto;margin-top:8px;border:1px solid var(--border,#e4e8ec);border-radius:8px" />
           <p class="microcopy" style="margin-top:6px">Remote datasets (e.g. <b>wikidata-1GB</b>, <b>ohm-full</b>) are never downloaded whole — each query fetches only the dictionary chunks and index tiles it touches.</p>
         </details>
+        <details class="lazy-explainer">
+          <summary>The self-describing card</summary>
+          <p class="microcopy" style="margin-top:6px">Each .rete embeds a small <b>card</b>: curated metadata (title, license, source) plus auto-derived stats — datatype/language histograms, the effective schema (<code>class→predicate→class</code>), top hubs, geo/temporal extents, and a schema pyramid with per-semantic-zoom-level type rollups. A remote reader fetches just the header + card in two HTTP ranges (~10&nbsp;KB) to learn a multi-GB graph's shape and legend without ever touching the triple index.</p>
+        </details>
       </section>
       <section data-modes="sparql shacl reach provenance">
         <h2>Selected Example</h2>
@@ -1895,6 +1918,7 @@ pre {
         </div>
 
         <div class="explore-sub" data-exp="community">
+          <p class="microcopy">The pyramid clusters the graph by Louvain modularity over several coarsening rounds (a dendrogram); the build ships one round whose tiles fit a ~64&nbsp;KiB budget. That gives a <b>semantic zoom</b> from coarse communities down to finer ones — and lets the <b>progressive</b> query strategy answer aggregate questions exactly from this summary in a few small range reads, never touching the triple index.</p>
           <p class="microcopy" id="pyramidNote"></p>
           <div id="pyramidLegend" class="viz-legend"></div>
           <div id="pyramidViz" class="ontology-diagram"></div>
@@ -2176,6 +2200,16 @@ pre {
       </div>
       <p class="microcopy">Every HTTP request the last remote query made — lazy range reads over the file. A <b>multipart</b> row fetched several byte ranges in one request (coalesced); each range is <code>start-end</code>.</p>
       <div id="reqLogBody"></div>
+    </div>
+  </div>
+
+  <div id="cacheModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cacheModalTitle">
+    <div class="modal-card cache-modal">
+      <div class="cache-spindle" aria-hidden="true"><span></span><span></span><span></span></div>
+      <h3 id="cacheModalTitle">Caching <span id="cacheName">dataset</span></h3>
+      <p class="microcopy" id="cacheSub">Downloading the whole .rete into memory — it'll be queried in-page once it's here.</p>
+      <div id="cacheBar" class="cache-bar indeterminate"><div id="cacheBarFill" class="cache-bar-fill"></div></div>
+      <div class="cache-stat"><span id="cachePct"></span><span id="cacheBytes">0 B</span></div>
     </div>
   </div>
 
@@ -5386,6 +5420,56 @@ ex:ApplicationDependencyShape
   // Downloaded-remote cache: fetch the whole .rete once, keep the bytes, then
   // query it in memory on later loads (the "cache" mode of the source switch).
   const remoteCache = new Map();
+  // Stream a fetch so we can report download progress (bytes received vs the
+  // Content-Length, when the server provides it).
+  async function fetchWithProgress(url, onProgress) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.status + " " + res.statusText);
+    const total = Number(res.headers.get("content-length")) || 0;
+    if (!res.body || !res.body.getReader) {
+      const buf = new Uint8Array(await res.arrayBuffer());
+      onProgress(buf.length, total || buf.length);
+      return buf;
+    }
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      onProgress(received, total);
+    }
+    const out = new Uint8Array(received);
+    let pos = 0;
+    for (const c of chunks) { out.set(c, pos); pos += c.length; }
+    return out;
+  }
+
+  function openCacheModal(key) {
+    const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
+    $("cacheName").textContent = dsShortLabel(key);
+    $("cacheSub").textContent = `Downloading the whole .rete${meta.size ? " (" + meta.size + ")" : ""} into memory — queried in-page once it's here.`;
+    $("cacheBar").classList.add("indeterminate");
+    $("cacheBarFill").style.width = "";
+    $("cachePct").textContent = "";
+    $("cacheBytes").textContent = "0 B";
+    $("cacheModal").classList.remove("hidden");
+  }
+  function updateCacheProgress(received, total) {
+    if (total > 0) {
+      $("cacheBar").classList.remove("indeterminate");
+      const pct = Math.min(100, Math.round((received / total) * 100));
+      $("cacheBarFill").style.width = pct + "%";
+      $("cachePct").textContent = pct + "%";
+      $("cacheBytes").textContent = `${formatBytes(received)} / ${formatBytes(total)}`;
+    } else {
+      $("cacheBytes").textContent = formatBytes(received);
+    }
+  }
+  function closeCacheModal() { $("cacheModal").classList.add("hidden"); }
+
   async function loadCachedRemote(key) {
     state.dataset = key;
     setDatasetName(key);
@@ -5398,13 +5482,14 @@ ex:ApplicationDependencyShape
     };
     if (remoteCache.has(key)) return finish(remoteCache.get(key));
     setStatus("downloading " + key + " …");
+    openCacheModal(key);
     try {
-      const res = await fetch(remoteUrlFor(key));
-      if (!res.ok) throw new Error(res.status + " " + res.statusText);
-      const bytes = new Uint8Array(await res.arrayBuffer());
+      const bytes = await fetchWithProgress(remoteUrlFor(key), updateCacheProgress);
       remoteCache.set(key, bytes);
+      closeCacheModal();
       finish(bytes);
     } catch (e) {
+      closeCacheModal();
       showError("out", "Cache download failed: " + (e.message || e));
     }
   }

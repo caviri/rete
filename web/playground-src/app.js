@@ -659,6 +659,56 @@
   // Downloaded-remote cache: fetch the whole .rete once, keep the bytes, then
   // query it in memory on later loads (the "cache" mode of the source switch).
   const remoteCache = new Map();
+  // Stream a fetch so we can report download progress (bytes received vs the
+  // Content-Length, when the server provides it).
+  async function fetchWithProgress(url, onProgress) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.status + " " + res.statusText);
+    const total = Number(res.headers.get("content-length")) || 0;
+    if (!res.body || !res.body.getReader) {
+      const buf = new Uint8Array(await res.arrayBuffer());
+      onProgress(buf.length, total || buf.length);
+      return buf;
+    }
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      onProgress(received, total);
+    }
+    const out = new Uint8Array(received);
+    let pos = 0;
+    for (const c of chunks) { out.set(c, pos); pos += c.length; }
+    return out;
+  }
+
+  function openCacheModal(key) {
+    const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
+    $("cacheName").textContent = dsShortLabel(key);
+    $("cacheSub").textContent = `Downloading the whole .rete${meta.size ? " (" + meta.size + ")" : ""} into memory — queried in-page once it's here.`;
+    $("cacheBar").classList.add("indeterminate");
+    $("cacheBarFill").style.width = "";
+    $("cachePct").textContent = "";
+    $("cacheBytes").textContent = "0 B";
+    $("cacheModal").classList.remove("hidden");
+  }
+  function updateCacheProgress(received, total) {
+    if (total > 0) {
+      $("cacheBar").classList.remove("indeterminate");
+      const pct = Math.min(100, Math.round((received / total) * 100));
+      $("cacheBarFill").style.width = pct + "%";
+      $("cachePct").textContent = pct + "%";
+      $("cacheBytes").textContent = `${formatBytes(received)} / ${formatBytes(total)}`;
+    } else {
+      $("cacheBytes").textContent = formatBytes(received);
+    }
+  }
+  function closeCacheModal() { $("cacheModal").classList.add("hidden"); }
+
   async function loadCachedRemote(key) {
     state.dataset = key;
     setDatasetName(key);
@@ -671,13 +721,14 @@
     };
     if (remoteCache.has(key)) return finish(remoteCache.get(key));
     setStatus("downloading " + key + " …");
+    openCacheModal(key);
     try {
-      const res = await fetch(remoteUrlFor(key));
-      if (!res.ok) throw new Error(res.status + " " + res.statusText);
-      const bytes = new Uint8Array(await res.arrayBuffer());
+      const bytes = await fetchWithProgress(remoteUrlFor(key), updateCacheProgress);
       remoteCache.set(key, bytes);
+      closeCacheModal();
       finish(bytes);
     } catch (e) {
+      closeCacheModal();
       showError("out", "Cache download failed: " + (e.message || e));
     }
   }
