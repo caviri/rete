@@ -299,7 +299,7 @@ label.file-button:hover {
 
 .console-shell {
   display: grid;
-  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
+  grid-template-columns: minmax(248px, 318px) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
   padding: 12px 18px 28px;
@@ -320,12 +320,7 @@ section,
 }
 
 .library-panel {
-  position: sticky;
-  top: 118px;
-  max-height: calc(100vh - 130px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 2px;
+  align-content: start;
 }
 
 .library-panel section,
@@ -1502,19 +1497,19 @@ pre {
           <p class="microcopy" style="margin-top:6px">Remote datasets (e.g. <b>wikidata-1GB</b>, <b>ohm-full</b>) are never downloaded whole — each query fetches only the dictionary chunks and index tiles it touches.</p>
         </details>
       </section>
-      <section>
+      <section data-modes="sparql shacl reach provenance">
         <h2>Selected Example</h2>
         <div id="exampleInfo" class="inspector-block"></div>
       </section>
-      <section>
+      <section data-modes="sparql">
         <h2>Progressive Metadata</h2>
         <div id="progressiveInfo" class="inspector-block"></div>
       </section>
-      <section>
+      <section data-modes="provenance">
         <h2>Provenance</h2>
         <div id="provSummary" class="inspector-block"></div>
       </section>
-      <section>
+      <section data-modes="schema coherence">
         <h2>Schema Summary</h2>
         <div id="schemaSummary" class="inspector-block"></div>
       </section>
@@ -5332,6 +5327,11 @@ ex:ApplicationDependencyShape
     state.mode = mode;
     $$("#modeTabs button").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
     $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === mode));
+    // Sidebar sections are contextual: a section tagged with data-modes only
+    // shows for the active tab, so the column stays short (no inner scrollbar).
+    // Untagged sections (Source, History) are always visible.
+    $$(".library-panel section[data-modes]").forEach((sec) =>
+      sec.classList.toggle("hidden", !sec.dataset.modes.split(" ").includes(mode)));
     if (mode === "explore") ensureExplore();
     updateResultVisibility();
     updateHash();

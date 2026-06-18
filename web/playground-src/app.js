@@ -934,6 +934,11 @@
     state.mode = mode;
     $$("#modeTabs button").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
     $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === mode));
+    // Sidebar sections are contextual: a section tagged with data-modes only
+    // shows for the active tab, so the column stays short (no inner scrollbar).
+    // Untagged sections (Source, History) are always visible.
+    $$(".library-panel section[data-modes]").forEach((sec) =>
+      sec.classList.toggle("hidden", !sec.dataset.modes.split(" ").includes(mode)));
     if (mode === "explore") ensureExplore();
     updateResultVisibility();
     updateHash();

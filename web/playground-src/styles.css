@@ -292,7 +292,7 @@ label.file-button:hover {
 
 .console-shell {
   display: grid;
-  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
+  grid-template-columns: minmax(248px, 318px) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
   padding: 12px 18px 28px;
@@ -313,12 +313,7 @@ section,
 }
 
 .library-panel {
-  position: sticky;
-  top: 118px;
-  max-height: calc(100vh - 130px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 2px;
+  align-content: start;
 }
 
 .library-panel section,
