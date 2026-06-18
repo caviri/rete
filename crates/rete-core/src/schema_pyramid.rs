@@ -52,13 +52,21 @@ pub struct SchemaPyramid {
     pub equivalent_pairs: Vec<(String, String)>,
 }
 
-/// The predicate that types subjects with classes. `rdf:type` whenever it is
-/// actually used; otherwise the predicate that behaves like "instance of" — its
-/// objects are IRIs (putative classes) each reused by many subjects, and it
-/// covers most of the graph's subjects (a primary typing, not an incidental
-/// object property like "located in"). This lets graphs typed with a custom
-/// predicate — e.g. Wikidata's `wdt:P31` — still get a schema pyramid.
-fn pick_type_predicate(dict: &Dictionary, triples: &[(u32, u32, u32)]) -> Option<u32> {
+/// The predicate that types subjects with classes:
+/// 1. an explicit `type_override` when given (e.g. Wikidata's `wdt:P31`, where
+///    `rdf:type` is only the structural `schema:Dataset`/`wikibase:Item`);
+/// 2. else `rdf:type` whenever it is actually used — the canonical typing;
+/// 3. else the predicate that behaves like "instance of" — IRI-class objects each
+///    reused by many subjects, covering most of the graph (not a label/located-in)
+///    — so a graph typed purely with a custom predicate still gets a pyramid.
+fn pick_type_predicate(
+    dict: &Dictionary,
+    triples: &[(u32, u32, u32)],
+    type_override: Option<&str>,
+) -> Option<u32> {
+    if let Some(tp) = type_override {
+        return dict.predicate_id(tp);
+    }
     if let Some(pid) = dict.predicate_id(RDF_TYPE) {
         if triples.iter().any(|&(_, p, _)| p == pid) {
             return Some(pid);
@@ -88,29 +96,38 @@ fn pick_type_predicate(dict: &Dictionary, triples: &[(u32, u32, u32)]) -> Option
         if no == 0 {
             continue;
         }
-        let reuse = ss.len() / no; // avg subjects per class
-        let coverage = ss.len(); // distinct subjects typed by p
-                                 // Strong "instance of" signal: classes reused a lot AND most subjects typed.
-        if reuse >= 8
-            && coverage * 2 >= total_subjects.len()
-            && best.map_or(true, |(_, c)| coverage > c)
+        // Strong "instance of" signal: classes reused a lot AND most subjects typed.
+        if ss.len() / no >= 8
+            && ss.len() * 2 >= total_subjects.len()
+            && best.is_none_or(|(_, c)| ss.len() > c)
         {
-            best = Some((p, coverage));
+            best = Some((p, ss.len()));
         }
     }
     best.map(|(p, _)| p)
 }
 
-/// Compute the schema pyramid for a graph at the materialized `round`. Empty when
-/// the graph has no usable type predicate (see [`pick_type_predicate`]) — the
-/// pyramid-meta then stays v1-shaped.
+/// Compute the schema pyramid for a graph at the materialized `round`, auto-picking
+/// the type predicate. Empty when the graph has no usable typing.
 pub fn build_schema_pyramid(
     dict: &Dictionary,
     triples: &[(u32, u32, u32)],
     dend: &Dendrogram,
     round: usize,
 ) -> SchemaPyramid {
-    let type_pid = match pick_type_predicate(dict, triples) {
+    build_schema_pyramid_with(dict, triples, dend, round, None)
+}
+
+/// Like [`build_schema_pyramid`], but `type_override` forces the type predicate
+/// (e.g. `wdt:P31`) instead of the auto-detection.
+pub fn build_schema_pyramid_with(
+    dict: &Dictionary,
+    triples: &[(u32, u32, u32)],
+    dend: &Dendrogram,
+    round: usize,
+    type_override: Option<&str>,
+) -> SchemaPyramid {
+    let type_pid = match pick_type_predicate(dict, triples, type_override) {
         Some(p) => p,
         None => return SchemaPyramid::default(),
     };

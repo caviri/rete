@@ -40,15 +40,32 @@ pub fn build_pyramid_meta(
     triples: &[(u32, u32, u32)],
     budget: usize,
 ) -> (Vec<u8>, u16) {
+    build_pyramid_meta_with(dict, triples, budget, None)
+}
+
+/// Like [`build_pyramid_meta`], but `type_override` forces the schema-pyramid's
+/// type predicate (e.g. `wdt:P31`) instead of auto-detection.
+pub fn build_pyramid_meta_with(
+    dict: &Dictionary,
+    triples: &[(u32, u32, u32)],
+    budget: usize,
+    type_override: Option<&str>,
+) -> (Vec<u8>, u16) {
     let g = project_graph(dict, triples);
     let dend = build_dendrogram(&g);
     let round = choose_round_for_budget(dict, triples, &dend, budget);
     let summary = summarize(dict, triples, &dend, round);
     // Attach the v2 schema pyramid (the non-exclusive subClassOf DAG + per-level
     // type rollups + per-level lateral class relations + per-community
-    // descriptors). Empty when the graph has no rdf:type, in which case the
+    // descriptors). Empty when the graph has no usable typing, in which case the
     // encoding stays byte-identical to a v1 pyramid-meta.
-    let sp = crate::schema_pyramid::build_schema_pyramid(dict, triples, &dend, round);
+    let sp = crate::schema_pyramid::build_schema_pyramid_with(
+        dict,
+        triples,
+        &dend,
+        round,
+        type_override,
+    );
     let meta = PyramidMeta::new(round as u32, summary, &[]).with_schema(
         sp.class_hierarchy,
         sp.level_rollups,
@@ -2988,7 +3005,8 @@ mod tests {
             q("<a>", "<knows>", "<b>"),
             q("<b>", "<knows>", "<c>"),
         ];
-        let (bytes, _) = crate::ingest::assemble_dataset_with_opts(&quads, true, |_| Vec::new());
+        let (bytes, _) =
+            crate::ingest::assemble_dataset_with_opts(&quads, true, None, |_| Vec::new());
 
         // The v2 schema pyramid round-trips through the built file.
         let rete = Rete::open(&bytes).unwrap();

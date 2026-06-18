@@ -14,7 +14,7 @@
 //! files, byte-compatible readers.
 
 use crate::{
-    build_pyramid_meta, write_dataset_with_metadata, DictionaryBuilder, GraphIndexBuilder,
+    build_pyramid_meta_with, write_dataset_with_metadata, DictionaryBuilder, GraphIndexBuilder,
     DEFAULT_TILE_BUDGET,
 };
 
@@ -195,7 +195,7 @@ pub fn assemble_dataset_with(
     quads: &[RawQuad],
     metadata: impl FnOnce(&BuildStats) -> Vec<u8>,
 ) -> (Vec<u8>, BuildStats) {
-    assemble_dataset_with_opts(quads, true, metadata)
+    assemble_dataset_with_opts(quads, true, None, metadata)
 }
 
 /// Like [`assemble_dataset_with`], but `with_pyramid = false` skips the Louvain
@@ -207,6 +207,7 @@ pub fn assemble_dataset_with(
 pub fn assemble_dataset_with_opts(
     quads: &[RawQuad],
     with_pyramid: bool,
+    type_override: Option<&str>,
     metadata: impl FnOnce(&BuildStats) -> Vec<u8>,
 ) -> (Vec<u8>, BuildStats) {
     use std::collections::BTreeMap;
@@ -244,7 +245,7 @@ pub fn assemble_dataset_with_opts(
         .collect();
 
     let (meta, levels) = if with_pyramid {
-        build_pyramid_meta(&dict, &default_triples, DEFAULT_TILE_BUDGET)
+        build_pyramid_meta_with(&dict, &default_triples, DEFAULT_TILE_BUDGET, type_override)
     } else {
         (Vec::new(), 0)
     };
