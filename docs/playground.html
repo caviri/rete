@@ -1904,6 +1904,7 @@ pre {
               <option value="jsonld">JSON-LD</option>
             </select>
           </label>
+          <button id="outputHelp" type="button" class="help-button" title="How to write queries for each output view" aria-label="Explain the output views">?</button>
           <label>
             <span>Strategy</span>
             <select id="strategy">
@@ -2215,6 +2216,29 @@ pre {
           can split (e.g. a pure property path).
         </dd>
       </dl>
+    </div>
+  </div>
+
+  <div id="outputModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="outputModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="outputModalTitle">Output views — how to query for each</h3>
+        <button id="outputModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy">Each view renders one result a different way. Write your query so the columns the view needs are in the <code>SELECT</code> (or use a <code>CONSTRUCT</code>).</p>
+      <dl class="strategy-list">
+        <dt>Table</dt>
+        <dd>Any <code>SELECT</code>, <code>ASK</code>, or <code>CONSTRUCT</code> — the default.</dd>
+        <dt>Graph</dt>
+        <dd>A <code>CONSTRUCT { ?a ?p ?b } …</code>, or a <code>SELECT</code> with <strong>≥&nbsp;2 variables</strong>: 2 vars draw <code>v1&nbsp;→&nbsp;v2</code> ("related") edges; <strong>3 vars</strong> are read as (subject, predicate, object). A one-variable select has nothing to connect.</dd>
+        <dt>Map <span class="ds-cap on">geo</span></dt>
+        <dd>A <code>SELECT</code> that binds a variable to a <code>geo:wktLiteral</code> — e.g. <code>?w</code> via <code>geo:hasGeometry/geo:asWKT ?w</code>. <code>POINT</code> / <code>LINESTRING</code> / <code>POLYGON</code> / <code>MULTI*</code> all plot in an offline equirectangular view (no tiles), auto-fit to the geometries; the first <em>non-geometry</em> column becomes each feature's hover label. Listed only for geospatial datasets.</dd>
+        <dt>Time <span class="ds-cap on">temporal</span></dt>
+        <dd>A <code>SELECT</code> that binds a variable to <code>xsd:gYear</code>, <code>xsd:date</code>/<code>xsd:dateTime</code>, or a plain <strong>year integer</strong> (e.g. <code>ex:year ?y</code>). Renders a GitHub-style multi-year heatmap — cell colour = <strong>number of items</strong> in that year/bucket, hover lists them; spans bucket automatically and negative years read as <strong>BCE</strong>. The other selected column(s) are the tooltip items. Listed only for temporal datasets.</dd>
+        <dt>TTL / JSON-LD</dt>
+        <dd>A <code>CONSTRUCT</code> query — these serialise the constructed triples. A <code>SELECT</code> has no triples to serialise.</dd>
+      </dl>
+      <p class="microcopy">Map, Time and Graph render <code>SELECT</code> bindings, so include the geometry / year / edge columns. Run them under <strong>Whole index</strong> or <strong>Split by community</strong> — <strong>Progressive</strong> answers only from the pyramid summary, with no per-row geometry or dates to plot.</p>
     </div>
   </div>
 
@@ -7378,6 +7402,11 @@ ex:ApplicationDependencyShape
 
     $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
+    $("outputHelp").onclick = () => $("outputModal").classList.remove("hidden");
+    $("outputModalClose").onclick = () => $("outputModal").classList.add("hidden");
+    $("outputModal").addEventListener("click", (e) => {
+      if (e.target === $("outputModal")) $("outputModal").classList.add("hidden");
+    });
     $("layoutCell").onchange = renderLayout;
     $("dsButton").onclick = openSource;
     $("sourceModalClose").onclick = closeSource;
@@ -7405,6 +7434,7 @@ ex:ApplicationDependencyShape
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
+        $("outputModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");
         closeLibrary();
         closeHistory();

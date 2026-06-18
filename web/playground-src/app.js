@@ -2591,6 +2591,11 @@
 
     $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
+    $("outputHelp").onclick = () => $("outputModal").classList.remove("hidden");
+    $("outputModalClose").onclick = () => $("outputModal").classList.add("hidden");
+    $("outputModal").addEventListener("click", (e) => {
+      if (e.target === $("outputModal")) $("outputModal").classList.add("hidden");
+    });
     $("layoutCell").onchange = renderLayout;
     $("dsButton").onclick = openSource;
     $("sourceModalClose").onclick = closeSource;
@@ -2618,6 +2623,7 @@
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
+        $("outputModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");
         closeLibrary();
         closeHistory();
