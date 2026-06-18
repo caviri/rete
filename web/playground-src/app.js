@@ -539,18 +539,28 @@
     setDatasetName(state.dataset);
   }
 
-  function loadBytes(bytes, source) {
+  // Yield to the event loop so the UI can repaint between synchronous WASM calls.
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  // Opening a large cached graph runs several synchronous WASM passes (each
+  // re-parses the file) that block the UI for seconds. `onPhase` lets the caller
+  // (the cache modal) narrate the steps; a `tick()` before each heavy call lets
+  // that label paint before the engine blocks the thread.
+  async function loadBytes(bytes, source, onPhase) {
     state.bytes = bytes;
     state.activeSource = source;
     state.remote = null; // an in-memory load leaves remote-lazy mode
     state.exploreReady = false;
     updateSourcePill();
 
+    if (onPhase) { onPhase("Opening file & loading dictionaries…"); await tick(); }
     const info = JSON.parse(W().info(bytes));
-    const graphNames = JSON.parse(W().graph_names(bytes));
-    const graphText = graphNames.length ? " | graphs " + graphNames.length : "";
+    // info() already carries the named-graph count, so we avoid a second full
+    // open just to call graph_names() (a meaningful saving on a big cached file).
+    const graphText = info.namedGraphs ? " | graphs " + info.namedGraphs : "";
     setStatus(`${info.quads} quads | ${info.terms} terms | ${info.pyramidLevels} pyramid levels${graphText}`);
 
+    if (onPhase) { onPhase("Building schema (classes & relations)…"); await tick(); }
     const schema = JSON.parse(W().schema(bytes));
     state.schema = schema;
     state.exploreClass = null;
@@ -709,24 +719,58 @@
   }
   function closeCacheModal() { $("cacheModal").classList.add("hidden"); }
 
+  // Parse "98 MB" / "1.04 GB" / "375 KB" → megabytes, for a rough prep estimate.
+  function sizeToMB(s) {
+    const m = /([\d.]+)\s*(KB|MB|GB|TB|B)/i.exec(String(s || ""));
+    if (!m) return 0;
+    const v = parseFloat(m[1]);
+    return ({ B: v / 1e6, KB: v / 1e3, MB: v, GB: v * 1e3, TB: v * 1e6 })[m[2].toUpperCase()] || v;
+  }
+
+  // Switch the cache modal from "downloading" to "preparing the in-memory graph",
+  // with a rough time estimate and a running step log (the opens block the UI, so
+  // each step's label is painted just before the engine freezes the thread).
+  function enterCachePreparing(key) {
+    const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
+    const est = Math.max(1, Math.round(sizeToMB(meta.size) * 0.14));
+    $("cacheBar").classList.remove("indeterminate");
+    $("cacheBarFill").style.width = "100%";
+    $("cachePct").textContent = "downloaded";
+    $("cacheBytes").textContent = meta.size || "";
+    $("cacheSub").textContent = `Now building the in-memory graph — the page pauses while the engine opens the ` +
+      `file and computes its schema (~${est}s for ${meta.size || "this graph"}).`;
+    $("cacheSteps").innerHTML = `<div class="cache-step done">Downloaded ${esc(meta.size || "")}</div>`;
+  }
+  function setCacheStep(label) {
+    const el = $("cacheSteps");
+    if (!el) return;
+    el.querySelectorAll(".cache-step.active").forEach((s) => s.classList.replace("active", "done"));
+    el.insertAdjacentHTML("beforeend", `<div class="cache-step active">${esc(label)}</div>`);
+  }
+
   async function loadCachedRemote(key) {
     state.dataset = key;
     setDatasetName(key);
-    const finish = (bytes) => {
-      loadBytes(bytes, "cached");
+    try {
+      let bytes = remoteCache.get(key);
+      if (!bytes) {
+        setStatus("downloading " + key + " …");
+        openCacheModal(key);
+        bytes = await fetchWithProgress(remoteUrlFor(key), updateCacheProgress);
+        remoteCache.set(key, bytes);
+      } else {
+        openCacheModal(key);
+      }
+      enterCachePreparing(key);
+      await tick();
+      await loadBytes(bytes, "cached", setCacheStep);
       renderExamples();
       const list = examplesForDataset();
       if (list.length) selectExample(0);
       updateHash();
-    };
-    if (remoteCache.has(key)) return finish(remoteCache.get(key));
-    setStatus("downloading " + key + " …");
-    openCacheModal(key);
-    try {
-      const bytes = await fetchWithProgress(remoteUrlFor(key), updateCacheProgress);
-      remoteCache.set(key, bytes);
+      setCacheStep("Ready ✓");
+      await tick();
       closeCacheModal();
-      finish(bytes);
     } catch (e) {
       closeCacheModal();
       showError("out", "Cache download failed: " + (e.message || e));

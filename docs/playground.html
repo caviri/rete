@@ -1743,6 +1743,14 @@ pre {
 .cache-bar.indeterminate .cache-bar-fill { width: 38%; animation: cache-indet 1.15s ease-in-out infinite; }
 @keyframes cache-indet { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
 .cache-stat { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.cache-steps { margin-top: 12px; text-align: left; display: flex; flex-direction: column; gap: 4px; }
+.cache-steps:empty { display: none; }
+.cache-step { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
+.cache-step::before { content: "•"; color: var(--line-strong); }
+.cache-step.done { color: var(--ink); }
+.cache-step.done::before { content: "✓"; color: var(--accent); font-weight: 800; }
+.cache-step.active { color: var(--accent-dark); font-weight: 600; }
+.cache-step.active::before { content: "▸"; color: var(--accent-dark); }
 
 /* Map view — an offline equirectangular plot of WKT geometries. */
 .mapview svg { width: 100%; height: auto; background: var(--side); border: 1px solid var(--line); border-radius: 8px; }
@@ -2260,6 +2268,7 @@ pre {
       <p class="microcopy" id="cacheSub">Downloading the whole .rete into memory — it'll be queried in-page once it's here.</p>
       <div id="cacheBar" class="cache-bar indeterminate"><div id="cacheBarFill" class="cache-bar-fill"></div></div>
       <div class="cache-stat"><span id="cachePct"></span><span id="cacheBytes">0 B</span></div>
+      <div id="cacheSteps" class="cache-steps" aria-live="polite"></div>
     </div>
   </div>
 
@@ -3941,7 +3950,10 @@ SELECT DISTINCT ?root WHERE {
       {"family": "Construct", "label": "People with occupation + birth date", "view": "graph", "tip": "CONSTRUCT a small subgraph of (person)->occupation and (person)->birth-date edges; touches only those two predicates' tiles.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nCONSTRUCT { ?p wdt:P106 ?occ ; wdt:P569 ?dob }\nWHERE {\n  ?p wdt:P106 ?occ .\n  OPTIONAL { ?p wdt:P569 ?dob }\n} LIMIT 200"}
     ],
     "ohm-full": [
-      {"family": "Geo", "label": "Who ruled here? (point-in-polygon + time)", "view": "table", "tip": "A point (Berlin, 13.405 52.52) tested against every feature's polygon and filtered to the year 1900 returns the nested jurisdictions of that place and time: the city, the German Empire (Deutsches Reich) and the Kingdom of Prussia. This is the query the whole dataset exists for.", "q": "PREFIX ex: <http://ex/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX geof: <http://www.opengis.net/def/function/geosparql/>\nSELECT ?label ?s ?e WHERE {\n  ?x rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ;\n     geo:hasGeometry/geo:asWKT ?w .\n  FILTER(?s <= 1900 && ?e >= 1900)\n  FILTER(geof:sfContains(?w, \"POINT(13.405 52.52)\"^^geo:wktLiteral))\n}"},
+      {"family": "Geo", "label": "Map: British Empire across the centuries", "view": "map", "tip": "Switch Output -> Map. 315 boundary snapshots of the British Empire, bound by rdfs:label so it is a fast object-index lookup (a few range reads, not a scan). The overlapping polygons trace its territorial extent over time; hover a shape for its start year.", "q": "PREFIX ex: <http://ex/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nSELECT ?from ?to ?w WHERE {\n  ?x rdfs:label \"British Empire\"@en ;\n     geo:hasGeometry/geo:asWKT ?w ;\n     ex:startYear ?from ; ex:endYear ?to .\n}"},
+      {"family": "Aggregate", "label": "Time: British Empire boundary snapshots", "view": "time", "tip": "Switch Output -> Time. When the empire's mapped extent was recorded - a multi-year heatmap of boundary snapshots per start year (from 1707). Bound by label, so it stays selective in lazy mode.", "q": "PREFIX ex: <http://ex/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?from ?x WHERE {\n  ?x rdfs:label \"British Empire\"@en ; ex:startYear ?from\n}"},
+      {"family": "Geo", "label": "Map: empires compared", "view": "map", "tip": "Switch Output -> Map. Four historical empires' boundaries on one world map - VALUES binds the labels so each is a selective lookup, never a scan. Hover a polygon for its empire.", "q": "PREFIX ex: <http://ex/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nSELECT ?empire ?w WHERE {\n  VALUES ?empire { \"British Empire\"@en \"Mongol Empire\"@en \"Mughal Empire\"@en \"Empire colonial français\"@en }\n  ?x rdfs:label ?empire ; geo:hasGeometry/geo:asWKT ?w .\n}"},
+      {"family": "Geo", "label": "Who ruled here? (point-in-polygon + time)", "view": "table", "tip": "A point (Berlin, 13.405 52.52) tested against every feature's polygon and filtered to the year 1900 returns the nested jurisdictions of that place and time: the city, the German Empire (Deutsches Reich) and the Kingdom of Prussia. Note: with no spatial index this scans geometry, so on the 98 MB planet it is slow in lazy mode - the bound-label examples above stay snappy.", "q": "PREFIX ex: <http://ex/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX geof: <http://www.opengis.net/def/function/geosparql/>\nSELECT ?label ?s ?e WHERE {\n  ?x rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e ;\n     geo:hasGeometry/geo:asWKT ?w .\n  FILTER(?s <= 1900 && ?e >= 1900)\n  FILTER(geof:sfContains(?w, \"POINT(13.405 52.52)\"^^geo:wktLiteral))\n}"},
       {"family": "Select", "label": "Find a place by name", "view": "table", "tip": "A bound object on rdfs:label routes to just the tiles holding that name - a few range reads of a 98 MB file. Abdera is an ancient Greek colony on the Thracian coast.", "q": "PREFIX ex: <http://ex/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?x ?s ?e WHERE {\n  ?x rdfs:label \"Abdera\"@en ; ex:startYear ?s ; ex:endYear ?e\n}"},
       {"family": "Select", "label": "All facts about one feature", "view": "table", "tip": "A bound subject is the most selective shape - minimal bytes fetched. This is the OHM node for Abdera; the IRI round-trips to openhistoricalmap.org.", "q": "SELECT ?p ?o WHERE { <https://www.openhistoricalmap.org/node/2095928201> ?p ?o }"},
       {"family": "Aggregate", "label": "How many features predate the Common Era?", "view": "table", "tip": "Counts features whose start year is negative (BCE) - 2,057. An aggregate scans the whole ex:startYear predicate, so it fetches more tiles than the selective examples above.", "q": "PREFIX ex: <http://ex/>\nSELECT (COUNT(*) AS ?n) WHERE { ?x ex:startYear ?s . FILTER(?s < 0) }"},
@@ -5372,18 +5384,28 @@ ex:ApplicationDependencyShape
     setDatasetName(state.dataset);
   }
 
-  function loadBytes(bytes, source) {
+  // Yield to the event loop so the UI can repaint between synchronous WASM calls.
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  // Opening a large cached graph runs several synchronous WASM passes (each
+  // re-parses the file) that block the UI for seconds. `onPhase` lets the caller
+  // (the cache modal) narrate the steps; a `tick()` before each heavy call lets
+  // that label paint before the engine blocks the thread.
+  async function loadBytes(bytes, source, onPhase) {
     state.bytes = bytes;
     state.activeSource = source;
     state.remote = null; // an in-memory load leaves remote-lazy mode
     state.exploreReady = false;
     updateSourcePill();
 
+    if (onPhase) { onPhase("Opening file & loading dictionaries…"); await tick(); }
     const info = JSON.parse(W().info(bytes));
-    const graphNames = JSON.parse(W().graph_names(bytes));
-    const graphText = graphNames.length ? " | graphs " + graphNames.length : "";
+    // info() already carries the named-graph count, so we avoid a second full
+    // open just to call graph_names() (a meaningful saving on a big cached file).
+    const graphText = info.namedGraphs ? " | graphs " + info.namedGraphs : "";
     setStatus(`${info.quads} quads | ${info.terms} terms | ${info.pyramidLevels} pyramid levels${graphText}`);
 
+    if (onPhase) { onPhase("Building schema (classes & relations)…"); await tick(); }
     const schema = JSON.parse(W().schema(bytes));
     state.schema = schema;
     state.exploreClass = null;
@@ -5542,24 +5564,58 @@ ex:ApplicationDependencyShape
   }
   function closeCacheModal() { $("cacheModal").classList.add("hidden"); }
 
+  // Parse "98 MB" / "1.04 GB" / "375 KB" → megabytes, for a rough prep estimate.
+  function sizeToMB(s) {
+    const m = /([\d.]+)\s*(KB|MB|GB|TB|B)/i.exec(String(s || ""));
+    if (!m) return 0;
+    const v = parseFloat(m[1]);
+    return ({ B: v / 1e6, KB: v / 1e3, MB: v, GB: v * 1e3, TB: v * 1e6 })[m[2].toUpperCase()] || v;
+  }
+
+  // Switch the cache modal from "downloading" to "preparing the in-memory graph",
+  // with a rough time estimate and a running step log (the opens block the UI, so
+  // each step's label is painted just before the engine freezes the thread).
+  function enterCachePreparing(key) {
+    const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
+    const est = Math.max(1, Math.round(sizeToMB(meta.size) * 0.14));
+    $("cacheBar").classList.remove("indeterminate");
+    $("cacheBarFill").style.width = "100%";
+    $("cachePct").textContent = "downloaded";
+    $("cacheBytes").textContent = meta.size || "";
+    $("cacheSub").textContent = `Now building the in-memory graph — the page pauses while the engine opens the ` +
+      `file and computes its schema (~${est}s for ${meta.size || "this graph"}).`;
+    $("cacheSteps").innerHTML = `<div class="cache-step done">Downloaded ${esc(meta.size || "")}</div>`;
+  }
+  function setCacheStep(label) {
+    const el = $("cacheSteps");
+    if (!el) return;
+    el.querySelectorAll(".cache-step.active").forEach((s) => s.classList.replace("active", "done"));
+    el.insertAdjacentHTML("beforeend", `<div class="cache-step active">${esc(label)}</div>`);
+  }
+
   async function loadCachedRemote(key) {
     state.dataset = key;
     setDatasetName(key);
-    const finish = (bytes) => {
-      loadBytes(bytes, "cached");
+    try {
+      let bytes = remoteCache.get(key);
+      if (!bytes) {
+        setStatus("downloading " + key + " …");
+        openCacheModal(key);
+        bytes = await fetchWithProgress(remoteUrlFor(key), updateCacheProgress);
+        remoteCache.set(key, bytes);
+      } else {
+        openCacheModal(key);
+      }
+      enterCachePreparing(key);
+      await tick();
+      await loadBytes(bytes, "cached", setCacheStep);
       renderExamples();
       const list = examplesForDataset();
       if (list.length) selectExample(0);
       updateHash();
-    };
-    if (remoteCache.has(key)) return finish(remoteCache.get(key));
-    setStatus("downloading " + key + " …");
-    openCacheModal(key);
-    try {
-      const bytes = await fetchWithProgress(remoteUrlFor(key), updateCacheProgress);
-      remoteCache.set(key, bytes);
+      setCacheStep("Ready ✓");
+      await tick();
       closeCacheModal();
-      finish(bytes);
     } catch (e) {
       closeCacheModal();
       showError("out", "Cache download failed: " + (e.message || e));
