@@ -1075,8 +1075,31 @@
     $$(".library-panel section[data-modes]").forEach((sec) =>
       sec.classList.toggle("hidden", !sec.dataset.modes.split(" ").includes(mode)));
     if (mode === "explore") ensureExplore();
+    if (mode === "schema" && state.remote && !state.schema) ensureRemoteSchema();
     updateResultVisibility();
     updateHash();
+  }
+
+  // Lazy Schema: read the class/relation summary from the schema pyramid (the
+  // card) over HTTP range — a Schema view of a remote graph, no download.
+  function ensureRemoteSchema() {
+    if (!state.remote || state.schema) return;
+    $("schemaOut").innerHTML = `<div class="note">Reading the schema pyramid over HTTP range…</div>`;
+    setTimeout(() => {
+      try {
+        const schema = JSON.parse(W().schema_url(state.remote.url));
+        state.schema = schema;
+        renderSchema(schema);
+        const r = schema.remote || {};
+        $("schemaOut").innerHTML = `<div class="banner">${(schema.classes || []).length} classes and ${(schema.relations || []).length} class-level relations — read from the schema pyramid over HTTP range (${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)}, ${r.requests || 0} request(s), no download).</div>`;
+      } catch (e) {
+        if (/no schema pyramid/i.test(String(e))) {
+          $("schemaOut").innerHTML = `<div class="note">This graph carries no schema pyramid (no typed classes), so there's no schema to summarize over range. Use <strong>Cache remote</strong> to compute one by scanning.</div>`;
+        } else {
+          showError("schemaOut", "Remote schema failed: " + String(e));
+        }
+      }
+    }, 0);
   }
 
   // --- Explore: entity tables + the community pyramid -------------------

@@ -2171,6 +2171,64 @@ pub fn read_schema_coherence_ranged<R: RangeReader>(
     )))
 }
 
+/// The **schema summary** (per-class histogram + class relations at the finest
+/// level) read over a [`RangeReader`] from the schema pyramid alone — the
+/// index-free, range-readable source for a Schema view of a remote graph. Returns
+/// `(classes, relations)` with `classes = [(class_iri, count)]` and `relations =
+/// [(s_class, predicate, o_class, count)]`; `None` when the file has no schema
+/// pyramid. Like [`read_schema_coherence_ranged`], it reads only the trailing
+/// schema block, so it stays flat at any graph size.
+#[allow(clippy::type_complexity)]
+pub fn read_schema_summary_ranged<R: RangeReader>(
+    reader: &R,
+) -> Result<Option<(Vec<(String, u64)>, Vec<(String, String, String, u64)>)>, FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+    if header.pyramid_meta_len == 0 {
+        return Ok(None);
+    }
+    if header.schema_meta_len > 0 && (header.schema_meta_len as u64) <= header.pyramid_meta_len {
+        let off =
+            header.pyramid_meta_offset + header.pyramid_meta_len - header.schema_meta_len as u64;
+        let block = reader.read_at(off, header.schema_meta_len as u64)?;
+        let summary = crate::meta::decode_schema_block_summary(&block)
+            .map_err(|_| FileError::Container("malformed schema block"))?;
+        return Ok(Some(summary));
+    }
+    // Fallback (pre-v0.2.1 files): decode the whole pyramid-meta, pull finest levels.
+    let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
+    let meta =
+        PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
+    if meta.level_rollups.is_empty() && meta.level_links.is_empty() {
+        return Ok(None);
+    }
+    let classes = meta
+        .level_rollups
+        .iter()
+        .max_by_key(|r| r.depth)
+        .map(|r| r.classes.clone())
+        .unwrap_or_default();
+    let relations = meta
+        .level_links
+        .iter()
+        .max_by_key(|l| l.depth)
+        .map(|l| {
+            l.links
+                .iter()
+                .map(|c| {
+                    (
+                        c.s_class.clone(),
+                        c.predicate.clone(),
+                        c.o_class.clone(),
+                        c.count,
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(Some((classes, relations)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
