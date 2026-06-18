@@ -45,7 +45,7 @@ __PLAYGROUND_CSS__
   </nav>
 
   <main class="console-shell">
-    <aside class="library-panel" aria-label="Query library">
+    <aside class="library-panel" aria-label="Source and inspector">
       <section class="source-panel">
         <h2>Source</h2>
         <p id="dsDesc" class="microcopy"></p>
@@ -55,6 +55,29 @@ __PLAYGROUND_CSS__
                style="display:block;width:100%;height:auto;margin-top:8px;border:1px solid var(--border,#e4e8ec);border-radius:8px" />
           <p class="microcopy" style="margin-top:6px">Remote datasets (e.g. <b>wikidata-1GB</b>, <b>ohm-full</b>) are never downloaded whole — each query fetches only the dictionary chunks and index tiles it touches.</p>
         </details>
+      </section>
+      <section>
+        <h2>Selected Example</h2>
+        <div id="exampleInfo" class="inspector-block"></div>
+      </section>
+      <section>
+        <h2>Progressive Metadata</h2>
+        <div id="progressiveInfo" class="inspector-block"></div>
+      </section>
+      <section>
+        <h2>Provenance</h2>
+        <div id="provSummary" class="inspector-block"></div>
+      </section>
+      <section>
+        <h2>Schema Summary</h2>
+        <div id="schemaSummary" class="inspector-block"></div>
+      </section>
+      <section>
+        <div class="section-title">
+          <h2>History</h2>
+          <button id="clearHist" class="ghost" type="button">Clear</button>
+        </div>
+        <div id="histList" class="history-list"></div>
       </section>
     </aside>
 
@@ -289,32 +312,6 @@ __PLAYGROUND_CSS__
         <div id="buildOut" class="result-pane hidden" data-result="build"></div>
       </div>
     </section>
-
-    <aside class="inspector" aria-label="Inspector">
-      <section>
-        <h2>Selected Example</h2>
-        <div id="exampleInfo" class="inspector-block"></div>
-      </section>
-      <section>
-        <h2>Progressive Metadata</h2>
-        <div id="progressiveInfo" class="inspector-block"></div>
-      </section>
-      <section>
-        <h2>Provenance</h2>
-        <div id="provSummary" class="inspector-block"></div>
-      </section>
-      <section>
-        <h2>Schema Summary</h2>
-        <div id="schemaSummary" class="inspector-block"></div>
-      </section>
-      <section>
-        <div class="section-title">
-          <h2>History</h2>
-          <button id="clearHist" class="ghost" type="button">Clear</button>
-        </div>
-        <div id="histList" class="history-list"></div>
-      </section>
-    </aside>
   </main>
 
   <div id="sourceModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sourceModalTitle">

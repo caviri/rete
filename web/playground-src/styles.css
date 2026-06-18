@@ -292,7 +292,7 @@ label.file-button:hover {
 
 .console-shell {
   display: grid;
-  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr) minmax(260px, 340px);
+  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
   padding: 12px 18px 28px;
