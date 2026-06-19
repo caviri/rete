@@ -56,6 +56,43 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
             println!("    {count:>8}  {pred}");
         }
     }
+
+    // Per-predicate planner stats (query_stats block) — distinct subjects/objects,
+    // multiplicities, and the functional / inverse-functional hints the cost-based
+    // planner uses. Absent on files built before the block existed.
+    let pstats = rete.predicate_stats();
+    if !pstats.is_empty() {
+        let dict = rete.dictionary();
+        let mut sorted: Vec<_> = pstats.iter().collect();
+        sorted.sort_by(|a, b| b.count.cmp(&a.count));
+        println!(
+            "  planner stats (query_stats, {} predicates):",
+            pstats.len()
+        );
+        for s in sorted.iter().take(10) {
+            let term = dict
+                .predicate_term(s.predicate)
+                .unwrap_or_else(|| format!("#{}", s.predicate));
+            let f = if s.max_objects_per_subject == 1 {
+                " · functional"
+            } else {
+                ""
+            };
+            let inv = if s.max_subjects_per_object == 1 {
+                " · inverse-functional"
+            } else {
+                ""
+            };
+            println!(
+                "    {:>8}  {term}  ({} subj, {} obj; ≤{}/subj, ≤{}/obj{f}{inv})",
+                s.count,
+                s.distinct_subjects,
+                s.distinct_objects,
+                s.max_objects_per_subject,
+                s.max_subjects_per_object,
+            );
+        }
+    }
     Ok(())
 }
 
