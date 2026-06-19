@@ -75,9 +75,18 @@ Joins are adaptive: under a small known demand (`LIMIT`/`ASK`), multi-pattern
 BGPs and BGP-shaped join sides switch from one-scan-per-pattern hash joins to
 index-nested-loop probing — each row jumps to its group through a lazily-built
 in-memory block directory, so producing k solutions costs O(k) point lookups
-instead of full pattern scans. This is still not a cost-based planner: join
-order is a selectivity heuristic and the hash path always builds its right
-side.
+instead of full pattern scans.
+
+Join **order** is cost-based: each pattern's cardinality is estimated from the
+pyramid summary's exact per-predicate totals (plus default selectivities for a
+bound subject/object), and the cheapest connected pattern joins first — so on
+skewed data, leading with a rare predicate avoids a large intermediate. The
+estimate is free for an in-memory file (the summary is resident) and is skipped
+on the lazy remote path so it never forces a pyramid fetch; with no summary it
+falls back to a most-constants-first heuristic. The remaining gaps: the
+selectivity factors for bound subject/object are still defaults (a `query_stats`
+block of measured distinct-S/O counts and multiplicities will replace them), and
+the hash path always builds its right side.
 
 Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
 nested `SELECT` subqueries and `SERVICE` federation.
