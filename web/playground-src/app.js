@@ -2699,10 +2699,17 @@
     const dsHeader = document.querySelector(".ds-header");
     const topbar = document.querySelector(".topbar");
     if (dsHeader) {
-      const setTop = () => { dsHeader.style.top = (topbar ? topbar.offsetHeight : 0) + "px"; };
+      const setTop = () => {
+        const tb = topbar ? topbar.offsetHeight : 0;
+        dsHeader.style.top = tb + "px";
+        // The mode rail sticks just below both (sticky) headers — expose their
+        // combined height so the rail's CSS top/max-height track the dataset
+        // header as it condenses on scroll.
+        document.documentElement.style.setProperty("--rail-top", tb + dsHeader.offsetHeight + 6 + "px");
+      };
       setTop();
       window.addEventListener("resize", setTop, { passive: true });
-      const onScroll = () => dsHeader.classList.toggle("condensed", window.scrollY > 10);
+      const onScroll = () => { dsHeader.classList.toggle("condensed", window.scrollY > 10); setTop(); };
       window.addEventListener("scroll", onScroll, { passive: true });
       onScroll();
     }
