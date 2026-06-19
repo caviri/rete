@@ -6335,7 +6335,8 @@ ex:ApplicationDependencyShape
   // re-run, whenever that's possible: the cached result must be row-shaped, the
   // new view a row view, and the query/strategy/dataset unchanged since it ran.
   // Anything else (a serialization target, an edited query, a stale or missing
-  // cache) falls through to a normal run.
+  // cache) falls through to a normal run — which keeps the row cache, so a
+  // round-trip through TTL/JSON-LD and back to a row view re-renders for free.
   function onOutputTypeChange() {
     const fmt = $("fmt").value;
     const c = state.lastResult;
@@ -6844,9 +6845,11 @@ ex:ApplicationDependencyShape
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
     const fmt = $("fmt").value;
-    // Clear any previous result/message and show the network spinner. The cache
-    // is set again only on success, so a failed or cancelled run leaves none.
-    state.lastResult = null;
+    // Clear the previous message and show the network spinner. We deliberately
+    // KEEP state.lastResult: the reuse guard already requires the query text,
+    // dataset, strategy and remote-ness to match before re-rendering, so a stale
+    // cache is never reused — and keeping it lets a switch to a serialization
+    // view (TTL/JSON-LD) and back to a row view re-render with no re-run.
     $("commOut").innerHTML = "";
     $("reqLogBtn").classList.add("hidden");
     $("out").innerHTML = netSpinner(state.remote ? "querying remote…" : "querying…");
