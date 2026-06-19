@@ -477,6 +477,26 @@ label.file-button:hover {
   display: block;
 }
 
+/* Paginated entity table footer (HF dataset-viewer style): Prev / page info /
+   Next, each page a lazy range fetch. */
+.entity-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 10px 0 4px;
+}
+.entity-pager .pager-info {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  min-width: 0;
+}
+.entity-pager button[disabled] {
+  opacity: .45;
+  cursor: default;
+}
+
 .console-shell {
   display: grid;
   grid-template-columns: auto minmax(240px, 312px) minmax(0, 1fr);
