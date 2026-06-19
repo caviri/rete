@@ -353,8 +353,28 @@ label.file-button:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  align-self: start;
+  /* Stretch to the row and stick just below the headers so the rail stays in
+     view; --rail-top (set in JS to the combined header height) keeps it clear
+     of the topbar + dataset header. History then pins to the bottom. */
+  align-self: stretch;
+  position: sticky;
+  top: var(--rail-top, 96px);
+  max-height: calc(100vh - var(--rail-top, 96px) - 14px);
 }
+
+/* Group captions in the rail (Ask / Inspect) — small uppercase labels. */
+.mode-rail .rail-group {
+  width: 78px;
+  padding: 2px 0 1px 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  user-select: none;
+}
+.mode-rail .rail-group:first-child { padding-top: 0; }
 
 .mode-rail .rail-badge {
   position: absolute;
@@ -1617,6 +1637,7 @@ pre {
     position: static;
     flex-direction: row;
     flex-wrap: wrap;
+    max-height: none;
   }
 
   .mode-rail button {
@@ -1624,6 +1645,11 @@ pre {
     flex-direction: row;
     gap: 6px;
   }
+
+  /* Labels become full-width row breaks; History flows inline (no auto push). */
+  .mode-rail .rail-group { width: auto; flex-basis: 100%; padding: 6px 0 0 2px; }
+  .mode-rail .rail-hist { margin-top: 0; }
+  .mode-rail .rail-hist::before { display: none; }
 
   .mode-rail .rail-tip {
     display: none;
@@ -1706,10 +1732,11 @@ pre {
 .lib-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 4px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 9px; align-content: start; }
 
-/* History button pinned to the bottom of the mode rail, with a divider above. */
-.mode-rail .rail-hist { margin-top: 13px; }
+/* History button pinned to the very bottom of the mode rail (the flexible
+   margin pushes it down), separated from the Inspect group by a divider. */
+.mode-rail .rail-hist { margin-top: auto; }
 .mode-rail .rail-hist::before {
-  content: ""; position: absolute; top: -7px; left: 6px; right: 6px;
+  content: ""; position: absolute; top: -8px; left: 6px; right: 6px;
   height: 1px; background: var(--line);
 }
 

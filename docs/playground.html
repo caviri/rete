@@ -360,8 +360,28 @@ label.file-button:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  align-self: start;
+  /* Stretch to the row and stick just below the headers so the rail stays in
+     view; --rail-top (set in JS to the combined header height) keeps it clear
+     of the topbar + dataset header. History then pins to the bottom. */
+  align-self: stretch;
+  position: sticky;
+  top: var(--rail-top, 96px);
+  max-height: calc(100vh - var(--rail-top, 96px) - 14px);
 }
+
+/* Group captions in the rail (Ask / Inspect) — small uppercase labels. */
+.mode-rail .rail-group {
+  width: 78px;
+  padding: 2px 0 1px 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  user-select: none;
+}
+.mode-rail .rail-group:first-child { padding-top: 0; }
 
 .mode-rail .rail-badge {
   position: absolute;
@@ -1624,6 +1644,7 @@ pre {
     position: static;
     flex-direction: row;
     flex-wrap: wrap;
+    max-height: none;
   }
 
   .mode-rail button {
@@ -1631,6 +1652,11 @@ pre {
     flex-direction: row;
     gap: 6px;
   }
+
+  /* Labels become full-width row breaks; History flows inline (no auto push). */
+  .mode-rail .rail-group { width: auto; flex-basis: 100%; padding: 6px 0 0 2px; }
+  .mode-rail .rail-hist { margin-top: 0; }
+  .mode-rail .rail-hist::before { display: none; }
 
   .mode-rail .rail-tip {
     display: none;
@@ -1713,10 +1739,11 @@ pre {
 .lib-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 4px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 9px; align-content: start; }
 
-/* History button pinned to the bottom of the mode rail, with a divider above. */
-.mode-rail .rail-hist { margin-top: 13px; }
+/* History button pinned to the very bottom of the mode rail (the flexible
+   margin pushes it down), separated from the Inspect group by a divider. */
+.mode-rail .rail-hist { margin-top: auto; }
 .mode-rail .rail-hist::before {
-  content: ""; position: absolute; top: -7px; left: 6px; right: 6px;
+  content: ""; position: absolute; top: -8px; left: 6px; right: 6px;
   height: 1px; background: var(--line);
 }
 
@@ -1816,15 +1843,11 @@ td.lit { color: var(--ink); }
 
   <main class="console-shell">
     <nav id="modeTabs" class="mode-rail" aria-label="Playground mode">
+      <span class="rail-group" aria-hidden="true">Ask</span>
       <button type="button" class="active" data-mode="sparql">
         <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c4.4 0 8 1.1 8 2.5S16.4 8 12 8 4 6.9 4 5.5 7.6 3 12 3Z"/><path d="M4 5.5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"/><path d="M4 11.5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"/></svg>
         <span class="rail-name">SPARQL</span>
         <span class="rail-tip"><b>SPARQL Console</b>Exact queries, summary-safe progressive queries, and graph rendering.</span>
-      </button>
-      <button type="button" data-mode="explore">
-        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5 5-2Z"/></svg>
-        <span class="rail-name">Explore</span>
-        <span class="rail-tip"><b>Explore</b>Entity tables, the community pyramid, and the file byte map.</span>
       </button>
       <button type="button" data-mode="shacl">
         <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.4-3 8.2-7 10-4-1.8-7-5.6-7-10V6l7-3Z"/><path d="M8.8 12l2.2 2.2 4.2-4.4"/></svg>
@@ -1836,11 +1859,6 @@ td.lit { color: var(--ink); }
         <span class="rail-name">Reach</span>
         <span class="rail-tip"><b>Reach</b>Transitive closure over one predicate — impact and lineage.</span>
       </button>
-      <button type="button" data-mode="schema">
-        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="4.5" rx="1"/><rect x="3" y="16.5" width="6" height="4.5" rx="1"/><rect x="15" y="16.5" width="6" height="4.5" rx="1"/><path d="M12 7.5v3.5M6 16.5v-2.5h12v2.5"/></svg>
-        <span class="rail-name">Schema</span>
-        <span class="rail-tip"><b>Schema</b>Ontology-aware class and relation summary.</span>
-      </button>
       <button type="button" data-mode="coherence">
         <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v16M7 20h10M6 7h12"/><path d="M6 7l-3 6h6L6 7Z"/><path d="M18 7l-3 6h6l-3-6Z"/></svg>
         <span class="rail-name">Coherence</span>
@@ -1850,6 +1868,17 @@ td.lit { color: var(--ink); }
         <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="17" cy="9" r="2.2"/><path d="M6 8.2v7.6M6 12h6.5a4.5 4.5 0 0 0 3-2.8"/></svg>
         <span class="rail-name">Provenance</span>
         <span class="rail-tip"><b>Provenance</b>Explain matches: index permutation and byte ranges.</span>
+      </button>
+      <span class="rail-group" aria-hidden="true">Inspect</span>
+      <button type="button" data-mode="schema">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="4.5" rx="1"/><rect x="3" y="16.5" width="6" height="4.5" rx="1"/><rect x="15" y="16.5" width="6" height="4.5" rx="1"/><path d="M12 7.5v3.5M6 16.5v-2.5h12v2.5"/></svg>
+        <span class="rail-name">Schema</span>
+        <span class="rail-tip"><b>Schema</b>Ontology-aware class and relation summary.</span>
+      </button>
+      <button type="button" data-mode="explore">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5 5-2Z"/></svg>
+        <span class="rail-name">Explore</span>
+        <span class="rail-tip"><b>Explore</b>Entity tables, the community pyramid, and the file byte map.</span>
       </button>
       <button type="button" id="histBtn" class="rail-hist">
         <span id="histCount" class="rail-badge hidden">0</span>
@@ -7579,10 +7608,17 @@ ex:ApplicationDependencyShape
     const dsHeader = document.querySelector(".ds-header");
     const topbar = document.querySelector(".topbar");
     if (dsHeader) {
-      const setTop = () => { dsHeader.style.top = (topbar ? topbar.offsetHeight : 0) + "px"; };
+      const setTop = () => {
+        const tb = topbar ? topbar.offsetHeight : 0;
+        dsHeader.style.top = tb + "px";
+        // The mode rail sticks just below both (sticky) headers — expose their
+        // combined height so the rail's CSS top/max-height track the dataset
+        // header as it condenses on scroll.
+        document.documentElement.style.setProperty("--rail-top", tb + dsHeader.offsetHeight + 6 + "px");
+      };
       setTop();
       window.addEventListener("resize", setTop, { passive: true });
-      const onScroll = () => dsHeader.classList.toggle("condensed", window.scrollY > 10);
+      const onScroll = () => { dsHeader.classList.toggle("condensed", window.scrollY > 10); setTop(); };
       window.addEventListener("scroll", onScroll, { passive: true });
       onScroll();
     }
