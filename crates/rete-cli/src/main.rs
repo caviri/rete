@@ -146,6 +146,20 @@ enum Command {
         #[arg(long, value_parser = ["nq", "ttl", "jsonld"], default_value = "nq")]
         format: String,
     },
+    /// Rebuild a `.rete`'s pyramid in place, reading triples straight from the
+    /// file (no `export | build` N-Quads round-trip). Use to add a schema
+    /// pyramid to a file built before it existed.
+    Repyramid {
+        /// Path to the input `.rete` file.
+        file: String,
+        /// Output path for the rebuilt `.rete`.
+        #[arg(short, long)]
+        output: String,
+        /// Override the type predicate for the schema pyramid (e.g. Wikidata's
+        /// `wdt:P31`); same semantics as `build --type-predicate`.
+        #[arg(long = "type-predicate")]
+        type_predicate: Option<String>,
+    },
     /// Query a triple pattern. Unspecified positions are variables.
     ///
     /// Terms are matched as canonical N-Triples tokens, e.g.
@@ -477,6 +491,11 @@ fn main() -> anyhow::Result<()> {
         Command::CardUrl { url, json } => commands::url::card_url(&url, json),
         Command::Graphs { file } => commands::inspect::graphs(&file),
         Command::Export { file, format } => commands::export::export(&file, &format),
+        Command::Repyramid {
+            file,
+            output,
+            type_predicate,
+        } => commands::build::repyramid(&file, &output, type_predicate.as_deref()),
         Command::Query {
             file,
             subject,
