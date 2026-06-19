@@ -145,7 +145,7 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
     // Join the patterns most-constrained-first (and keeping the join connected),
     // so intermediate relations stay small. Pure reordering: the hash join is
     // order-independent, so the result is unchanged.
-    let order = selectivity_order(&lowered);
+    let order = selectivity_order(ctx, &lowered);
     let mut rows: Vec<Row> = vec![ctx.slots.empty_row()];
     let mut bound: Vec<usize> = Vec::new();
     for &idx in &order {
@@ -250,22 +250,85 @@ fn pattern_rows(
     Some((rel, slots))
 }
 
-/// Order pattern indices for a left-deep join: most-constrained (most constant
-/// terms) first, and after the seed always preferring a pattern that shares a
-/// variable with the already-joined set so the join stays connected and
-/// intermediate relations stay small. Pure reordering — `hash_join` is
-/// order-independent, so the result multiset is unchanged.
-fn selectivity_order(lowered: &[(SlotTerm, SlotTerm, SlotTerm)]) -> Vec<usize> {
-    selectivity_order_seeded(lowered, &std::collections::HashSet::new())
+/// A per-pattern cardinality estimate, smaller = cheaper to scan. The base is
+/// the **exact** per-predicate triple count (sum of the summary quotient graph's
+/// super-edge counts) when the predicate is bound, else the whole-graph total; a
+/// bound subject/object (a constant, or a variable already bound by `seed`) then
+/// scales it down by a default selectivity. `None` when the file carries no
+/// pyramid summary — ordering then falls back to the constant-count heuristic.
+///
+/// The bound-S/O factors are the standard *no-statistics* defaults (a bound
+/// subject is far more selective than a bound object); a later `query_stats`
+/// block replaces them with real distinct-subject/object counts and
+/// multiplicities for sharper estimates.
+fn pattern_estimates(
+    ctx: &Ctx,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    seed: &std::collections::HashSet<usize>,
+) -> Option<Vec<f64>> {
+    // Only use the summary when it's already in memory — never fault it just to
+    // plan (the lazy remote path defers the pyramid by design).
+    let pyr = ctx.rete.pyramid_if_loaded()?;
+    let mut pred: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+    for e in &pyr.summary {
+        *pred.entry(e.predicate).or_insert(0) += e.count as u64;
+    }
+    let total = ctx.rete.header().quad_count.max(1) as f64;
+    let num_preds = pred.len().max(1) as f64;
+    // A bound subject is highly selective (few triples per subject); a bound
+    // object moderately so. Defaults until query_stats lands.
+    const SEL_SUBJECT: f64 = 0.001;
+    const SEL_OBJECT: f64 = 0.02;
+    let node_bound = |t: &SlotTerm| match t {
+        SlotTerm::Node(_) => true,
+        SlotTerm::Var(v) => seed.contains(v),
+        SlotTerm::Pred(_) => false,
+    };
+    Some(
+        lowered
+            .iter()
+            .map(|t| {
+                // Base from the predicate: exact total if a constant predicate,
+                // the average predicate total if a seed-bound predicate variable
+                // (the value is known to the probe but not at plan time), else
+                // the whole graph.
+                let mut est = match t.1 {
+                    SlotTerm::Pred(p) => *pred.get(&p).unwrap_or(&0) as f64,
+                    SlotTerm::Var(v) if seed.contains(&v) => total / num_preds,
+                    _ => total,
+                }
+                .max(1.0);
+                if node_bound(&t.0) {
+                    est *= SEL_SUBJECT;
+                }
+                if node_bound(&t.2) {
+                    est *= SEL_OBJECT;
+                }
+                est.max(1.0)
+            })
+            .collect(),
+    )
+}
+
+/// Order pattern indices for a left-deep join: cheapest (smallest estimated
+/// cardinality) first, always preferring a pattern that shares a variable with
+/// the already-joined set so the join stays connected and intermediate relations
+/// stay small. Cardinality comes from [`pattern_estimates`]; with no summary it
+/// falls back to a most-constants-first heuristic. Pure reordering — `hash_join`
+/// is order-independent, so the result multiset is unchanged.
+fn selectivity_order(ctx: &Ctx, lowered: &[(SlotTerm, SlotTerm, SlotTerm)]) -> Vec<usize> {
+    selectivity_order_seeded(ctx, lowered, &std::collections::HashSet::new())
 }
 
 /// [`selectivity_order`] with a set of slots already bound by an outer seed
-/// row: those variables count as constants for selectivity and as already
-/// connected.
+/// row: those variables count as already connected (and, in the no-summary
+/// fallback, as constants for selectivity).
 fn selectivity_order_seeded(
+    ctx: &Ctx,
     lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
     seed: &std::collections::HashSet<usize>,
 ) -> Vec<usize> {
+    let estimates = pattern_estimates(ctx, lowered, seed);
     let consts = |t: &(SlotTerm, SlotTerm, SlotTerm)| {
         [&t.0, &t.1, &t.2]
             .into_iter()
@@ -284,24 +347,34 @@ fn selectivity_order_seeded(
             })
             .collect()
     };
+    // Higher score = picked sooner. With summary stats that's the negated
+    // estimate (smaller cardinality wins); without, the constant count (old
+    // behaviour, byte-identical ordering for pyramid-less files).
+    let score = |i: usize| -> f64 {
+        match &estimates {
+            Some(e) => -e[i],
+            None => consts(&lowered[i]) as f64,
+        }
+    };
     let n = lowered.len();
     let mut remaining: Vec<usize> = (0..n).collect();
     let mut order: Vec<usize> = Vec::with_capacity(n);
     let mut bound: std::collections::HashSet<usize> = seed.clone();
     while !remaining.is_empty() {
-        // Pick the remaining pattern with the best (connected, consts) key; ties
+        // Pick the remaining pattern with the best (connected, score) key; ties
         // go to the lowest original index for a stable, predictable order.
         let best = *remaining
             .iter()
             .max_by(|&&a, &&b| {
-                let key = |i: usize| {
-                    let t = &lowered[i];
-                    // `bound` starts as the seed, so a seed-connected pattern
-                    // wins the first pick too (empty seed ⇒ unchanged order).
-                    let connected = vars(t).iter().any(|v| bound.contains(v));
-                    (connected, consts(t))
-                };
-                key(a).cmp(&key(b)).then(b.cmp(&a))
+                let connected = |i: usize| vars(&lowered[i]).iter().any(|v| bound.contains(v));
+                connected(a)
+                    .cmp(&connected(b))
+                    .then_with(|| {
+                        score(a)
+                            .partial_cmp(&score(b))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .then_with(|| b.cmp(&a))
             })
             .unwrap();
         for v in vars(&lowered[best]) {
@@ -415,7 +488,7 @@ impl<'q> BgpSolutions<'q> {
         };
         // Join all but the *last* (least selective) pattern eagerly into the
         // prefix; a single pattern leaves the seed row as the prefix.
-        let order = selectivity_order(&lowered);
+        let order = selectivity_order(ctx, &lowered);
         let (&last_i, prefix_is) = order.split_last().unwrap();
         let prefix_pats: Vec<TriplePattern> =
             prefix_is.iter().map(|&i| patterns[i].clone()).collect();
@@ -617,7 +690,7 @@ impl ProbePlan {
             .enumerate()
             .filter_map(|(i, b)| b.then_some(i))
             .collect();
-        let order = selectivity_order_seeded(&lowered, &seed);
+        let order = selectivity_order_seeded(ctx, &lowered, &seed);
         Some(ProbePlan {
             pats: order.into_iter().map(|i| lowered[i]).collect(),
         })
