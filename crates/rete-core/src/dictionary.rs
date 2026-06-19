@@ -7,17 +7,36 @@
 //! then `S+1..` (subject-only); object IDs reuse `1..=S` for the same shared
 //! terms then `S+1..` for object-only. Predicates have their own space.
 
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 use crate::dict::{ChunkedSection, DictSectionBuilder};
 use crate::terms::{NodeId, ObjectId, PredicateId, SubjectId};
 
+/// Sort a term slice ascending — in parallel when the `parallel` feature is on.
+/// The front-coded dictionary sections need ascending order; doing it once here
+/// (rather than per-insert in a `BTreeSet`) is the fast path for large graphs.
+#[cfg(feature = "parallel")]
+fn sort_terms(v: &mut [String]) {
+    use rayon::slice::ParallelSliceMut;
+    v.par_sort_unstable();
+}
+#[cfg(not(feature = "parallel"))]
+fn sort_terms(v: &mut [String]) {
+    v.sort_unstable();
+}
+
 /// Builds a [`Dictionary`] from observed `(subject, predicate, object)` terms.
+///
+/// Terms are deduped with `HashSet` during ingest (O(1) average insert, no tree
+/// rebalancing) and sorted **once** in [`Self::build`]. This replaces a trio of
+/// `BTreeSet<String>` whose per-insert `O(log n)` cost + a `String` allocation
+/// for *every* observed term (most of them duplicates) dominated the build on
+/// large graphs.
 #[derive(Default)]
 pub struct DictionaryBuilder {
-    subjects: BTreeSet<String>,
-    objects: BTreeSet<String>,
-    predicates: BTreeSet<String>,
+    subjects: HashSet<String>,
+    objects: HashSet<String>,
+    predicates: HashSet<String>,
 }
 
 impl DictionaryBuilder {
@@ -26,33 +45,55 @@ impl DictionaryBuilder {
     }
 
     /// Record one triple's terms (IDs are assigned later, in [`Self::build`]).
+    /// We probe with the borrowed `&str` first and only allocate a `String` for
+    /// a genuinely new term — so a graph of N triples does far fewer than 3N
+    /// allocations (each subject/predicate recurs across many triples).
     pub fn observe(&mut self, subject: &str, predicate: &str, object: &str) {
-        self.subjects.insert(subject.to_string());
-        self.objects.insert(object.to_string());
-        self.predicates.insert(predicate.to_string());
+        if !self.subjects.contains(subject) {
+            self.subjects.insert(subject.to_string());
+        }
+        if !self.objects.contains(object) {
+            self.objects.insert(object.to_string());
+        }
+        if !self.predicates.contains(predicate) {
+            self.predicates.insert(predicate.to_string());
+        }
     }
 
     pub fn build(self) -> Dictionary {
-        let shared: BTreeSet<&String> = self.subjects.intersection(&self.objects).collect();
+        // Sort each role's terms once (ascending) — identical output order to
+        // the old BTreeSet iteration, but without the per-insert tree cost.
+        let mut subjects: Vec<String> = self.subjects.into_iter().collect();
+        let mut predicates: Vec<String> = self.predicates.into_iter().collect();
+        let object_set = self.objects; // kept for the shared (subject ∩ object) test
+        sort_terms(&mut subjects);
+        sort_terms(&mut predicates);
+
+        // A term is "shared" when it appears as both a subject and an object.
+        let subject_set: HashSet<&str> = subjects.iter().map(String::as_str).collect();
 
         let mut shared_b = DictSectionBuilder::new();
         let mut subj_b = DictSectionBuilder::new();
         let mut obj_b = DictSectionBuilder::new();
         let mut pred_b = DictSectionBuilder::new();
 
-        for s in &self.subjects {
-            if shared.contains(s) {
+        // Subjects ascending: shared (also an object) vs subject-only.
+        for s in &subjects {
+            if object_set.contains(s) {
                 shared_b.push(s.clone());
             } else {
                 subj_b.push(s.clone());
             }
         }
-        for o in &self.objects {
-            if !shared.contains(o) {
+        // Objects ascending: object-only (shared terms were emitted above).
+        let mut objects: Vec<String> = object_set.into_iter().collect();
+        sort_terms(&mut objects);
+        for o in &objects {
+            if !subject_set.contains(o.as_str()) {
                 obj_b.push(o.clone());
             }
         }
-        for p in &self.predicates {
+        for p in &predicates {
             pred_b.push(p.clone());
         }
 

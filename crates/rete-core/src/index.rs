@@ -190,15 +190,30 @@ impl GraphIndexBuilder {
     }
 
     pub fn build(self) -> GraphIndex {
-        let sections = [
+        let perms = [
             IndexPermutation::Spo,
             IndexPermutation::Pos,
             IndexPermutation::Osp,
-        ]
-        .map(|perm| {
-            let permuted: Vec<Triple> = self.triples.iter().map(|&t| perm.forward(t)).collect();
-            build_tiles(permuted, self.tile_budget)
-        });
+        ];
+        let triples = &self.triples;
+        let budget = self.tile_budget;
+        // The three permutations are independent — permute + sort + tile each.
+        let build_one = move |perm: IndexPermutation| -> Vec<Tile> {
+            let permuted: Vec<Triple> = triples.iter().map(|&t| perm.forward(t)).collect();
+            build_tiles(permuted, budget)
+        };
+        // Build the permutations concurrently when the `parallel` feature is on
+        // (they share no state); the per-permutation sort inside is also
+        // parallel. Output is byte-identical to the serial path.
+        #[cfg(feature = "parallel")]
+        let sections: [Vec<Tile>; 3] = {
+            use rayon::iter::{IntoParallelIterator, ParallelIterator};
+            let built: Vec<Vec<Tile>> = perms.into_par_iter().map(build_one).collect();
+            // `.ok()` drops the (non-Debug) Vec error so `expect` compiles.
+            built.try_into().ok().expect("three permutations")
+        };
+        #[cfg(not(feature = "parallel"))]
+        let sections: [Vec<Tile>; 3] = perms.map(build_one);
         GraphIndex::from_sections(sections)
     }
 }
@@ -219,6 +234,12 @@ fn varint_len(mut v: u64) -> usize {
 /// budget becomes one oversized tile — groups are never split, so a bound
 /// leading id always routes to exactly one tile.
 fn build_tiles(mut triples: Vec<Triple>, budget: usize) -> Vec<Tile> {
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::slice::ParallelSliceMut;
+        triples.par_sort_unstable();
+    }
+    #[cfg(not(feature = "parallel"))]
     triples.sort_unstable();
     triples.dedup();
     if triples.is_empty() {
