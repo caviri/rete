@@ -15,7 +15,10 @@
     built: null,
     exploreClass: null,
     exploreReady: false,
-    remote: null
+    remote: null,
+    // The last successful query result, kept so switching the Output type
+    // re-renders it in the new view instead of re-running the query.
+    lastResult: null
   };
 
   const RDF_TYPE = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
@@ -551,6 +554,7 @@
     state.activeSource = source;
     state.remote = null; // an in-memory load leaves remote-lazy mode
     state.exploreReady = false;
+    state.lastResult = null; // a new graph invalidates any cached result
     updateSourcePill();
 
     if (onPhase) { onPhase("Opening file & loading dictionaries…"); await tick(); }
@@ -1438,7 +1442,34 @@
 
   function setView(view) {
     $("fmt").value = view;
-    $$("#viewSeg button").forEach((btn) => btn.classList.toggle("active", btn.dataset.view === view));
+  }
+
+  // Output types that are all renderings of the SAME SELECT bindings (the engine
+  // returns table rows; Graph/Map/Time just draw them differently). Switching
+  // among these never needs the query to run again — only a re-render. The
+  // serialization views (TTL/JSON-LD) are a different engine output, so they
+  // still run.
+  const ROW_VIEWS = new Set(["table", "graph", "map", "time"]);
+
+  // Changing the Output type re-renders the last result in the new view with no
+  // re-run, whenever that's possible: the cached result must be row-shaped, the
+  // new view a row view, and the query/strategy/dataset unchanged since it ran.
+  // Anything else (a serialization target, an edited query, a stale or missing
+  // cache) falls through to a normal run.
+  function onOutputTypeChange() {
+    const fmt = $("fmt").value;
+    const c = state.lastResult;
+    const sameStrategy = !c ? false : c.remote ? true : c.strategy === $("strategy").value;
+    const reusable = !!c && c.rowShaped && ROW_VIEWS.has(fmt) &&
+      c.q === $("q").value.trim() && c.remote === !!state.remote &&
+      c.dataset === state.dataset && sameStrategy;
+    if (!reusable) return runQuery();
+    // Remote Graph has no local bytes to expand a CONSTRUCT, so the run path
+    // renders it as a table — match that when re-rendering from cache.
+    const viewFmt = c.remote && fmt === "graph" ? "table" : fmt;
+    const summary = renderResult(c.res, viewFmt);
+    $("qmeta").textContent = `${summary} · re-rendered from the last result (no re-run)`;
+    updateResultVisibility();
   }
 
   function setStrategy(strategy) {
@@ -1933,7 +1964,9 @@
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
     const fmt = $("fmt").value;
-    // Clear any previous result/message and show the network spinner.
+    // Clear any previous result/message and show the network spinner. The cache
+    // is set again only on success, so a failed or cancelled run leaves none.
+    state.lastResult = null;
     $("commOut").innerHTML = "";
     $("reqLogBtn").classList.add("hidden");
     $("out").innerHTML = netSpinner(state.remote ? "querying remote…" : "querying…");
@@ -1972,6 +2005,9 @@
         cleanup();
         state.lastRemoteLog = out.log || [];
         const res = JSON.parse(out.json);
+        // Remote always asks the worker for table rows, so the result is always
+        // row-shaped — cache it so an Output-type switch re-renders, not re-runs.
+        state.lastResult = { res, rowShaped: true, q, strategy: "remote", remote: true, dataset: state.dataset };
         const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
         const r = res.remote || {};
         const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
@@ -2034,6 +2070,12 @@
       }
       const res = JSON.parse(raw);
       const summary = renderResult(res, strategy !== "whole" && fmt === "graph" ? "table" : fmt);
+      // Cache row-shaped results (the engine returned table rows) so switching
+      // the Output type re-renders this result instead of re-running the query.
+      // Progressive is excluded — its summary answers re-run cheaply.
+      if (queryFmt === "table" && strategy !== "progressive") {
+        state.lastResult = { res, rowShaped: true, q, strategy, remote: false, dataset: state.dataset };
+      }
       const dt = performance.now() - t0;
       $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms${fellBack ? " | fell back to whole index" : ""}`;
       if (fellBack) {
@@ -2635,9 +2677,9 @@
     $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
     $("strategy").onchange = () => setStrategy($("strategy").value);
-    $$("#viewSeg button").forEach((btn) => {
-      btn.onclick = () => setView(btn.dataset.view);
-    });
+    // Switching the Output type re-renders the last result in the new view
+    // (no re-run) when it can; otherwise it runs the query.
+    $("fmt").onchange = onOutputTypeChange;
     $$("#modeTabs button[data-mode]").forEach((btn) => {
       btn.onclick = () => setMode(btn.dataset.mode);
     });
