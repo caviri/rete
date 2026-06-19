@@ -58,10 +58,17 @@ def col_ident(pid: str) -> str:
 
 
 def main() -> None:
+    # The type predicate is configurable (Wikidata uses P31; OBO/RDF use rdf:type).
+    # We rebind the module-level P31 after parsing so every '{P31}' query below
+    # picks up the chosen predicate — `global` keeps the argparse default (which
+    # reads P31) valid instead of turning P31 into an unbound local.
+    global P31
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--parts", type=int, default=1)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--local-dir", default=None)
+    ap.add_argument("--nt", default=None, help="read N-Triples directly (any RDF graph), instead of the Wikidata Parquet source")
+    ap.add_argument("--type-predicate", default=P31, help="predicate that types entities (default Wikidata P31; use rdf:type for OBO/most RDF)")
     ap.add_argument("--props", type=int, default=24, help="named columns per class (the rest go to `extra`)")
     ap.add_argument("--min-entities", type=int, default=1, help="give a class its own table only above this size")
     ap.add_argument("-o", "--output", default="data/entity-tables")
@@ -69,6 +76,7 @@ def main() -> None:
     ap.add_argument("--sqlite", default=None, help="also assemble a SQLite file (list/map columns as JSON text)")
     ap.add_argument("--verify", action="store_true", help="reconstruct triples and check the count is lossless")
     args = ap.parse_args()
+    P31 = args.type_predicate
 
     try:
         import duckdb
@@ -78,30 +86,50 @@ def main() -> None:
     os.makedirs(args.output, exist_ok=True)
     con = duckdb.connect()
     con.execute("PRAGMA threads=8")
-    if args.local_dir:
-        srcs = [os.path.join(args.local_dir, f"part_{i:04d}.parquet") for i in range(args.parts)]
-        srcs = [s for s in srcs if os.path.exists(s)]
+    src_list, limit_sql = "", ""
+    if args.nt:
+        # N-Triples mode (any RDF graph): read one line per row with the CSV
+        # reader (a rare delimiter so literals never split), then pull
+        # subject/predicate/object with RE2. The object token is kept verbatim —
+        # IRIs, language tags and datatypes all round-trip losslessly. Subjects
+        # may be IRIs or blank nodes; predicates are always IRIs.
+        print(f"parsing N-Triples from {args.nt}…", file=sys.stderr)
+        con.execute(f"""
+            CREATE TABLE base AS
+            SELECT DISTINCT
+              coalesce(nullif(regexp_extract(line, '^<([^>]*)>', 1), ''),
+                       regexp_extract(line, '^(_:[^ ]+)', 1)) AS s,
+              regexp_extract(line, '^\\S+\\s+<([^>]*)>', 1) AS p,
+              regexp_extract(line, '^\\S+\\s+\\S+\\s+(.*?)\\s*\\.\\s*$', 1) AS tok
+            FROM read_csv('{args.nt}', delim='\\x01', header=false,
+                          columns={{'line': 'VARCHAR'}}, quote='', escape='', ignore_errors=true)
+            WHERE line LIKE '<%' OR line LIKE '_:%'
+        """)
     else:
-        con.execute("INSTALL httpfs; LOAD httpfs;")
-        srcs = [f"{HF_BASE}/part_{i:04d}.parquet" for i in range(args.parts)]
-    src_list = ", ".join(f"'{s}'" for s in srcs)
-    limit_sql = f" LIMIT {args.limit}" if args.limit else ""
+        if args.local_dir:
+            srcs = [os.path.join(args.local_dir, f"part_{i:04d}.parquet") for i in range(args.parts)]
+            srcs = [s for s in srcs if os.path.exists(s)]
+        else:
+            con.execute("INSTALL httpfs; LOAD httpfs;")
+            srcs = [f"{HF_BASE}/part_{i:04d}.parquet" for i in range(args.parts)]
+        src_list = ", ".join(f"'{s}'" for s in srcs)
+        limit_sql = f" LIMIT {args.limit}" if args.limit else ""
 
-    # 1. Canonical, deduplicated triples with each object as an N-Triples token.
-    print("materializing triples (objects -> N-Triples tokens)…", file=sys.stderr)
-    con.execute(f"""
-        CREATE TABLE base AS
-        SELECT DISTINCT subject AS s, predicate AS p,
-          CASE
-            WHEN language IS NOT NULL
-              THEN '"' || replace(replace(object, '\\', '\\\\'), '"', '\\"') || '"@' || language
-            WHEN starts_with(object, 'http://') OR starts_with(object, 'https://')
-              THEN '<' || object || '>'
-            WHEN starts_with(object, '_:') THEN object
-            ELSE '"' || replace(replace(object, '\\', '\\\\'), '"', '\\"') || '"'
-          END AS tok
-        FROM (SELECT * FROM read_parquet([{src_list}]){limit_sql})
-    """)
+        # 1. Canonical, deduplicated triples with each object as an N-Triples token.
+        print("materializing triples (objects -> N-Triples tokens)…", file=sys.stderr)
+        con.execute(f"""
+            CREATE TABLE base AS
+            SELECT DISTINCT subject AS s, predicate AS p,
+              CASE
+                WHEN language IS NOT NULL
+                  THEN '"' || replace(replace(object, '\\', '\\\\'), '"', '\\"') || '"@' || language
+                WHEN starts_with(object, 'http://') OR starts_with(object, 'https://')
+                  THEN '<' || object || '>'
+                WHEN starts_with(object, '_:') THEN object
+                ELSE '"' || replace(replace(object, '\\', '\\\\'), '"', '\\"') || '"'
+              END AS tok
+            FROM (SELECT * FROM read_parquet([{src_list}]){limit_sql})
+        """)
     ntriples = con.execute("SELECT COUNT(*) FROM base").fetchone()[0]
     print(f"  {ntriples:,} distinct triples", file=sys.stderr)
 
@@ -117,11 +145,21 @@ def main() -> None:
         SELECT s, arg_max(ec.class, csize.n) AS class
         FROM ec JOIN csize ON ec.class = csize.class GROUP BY s
     """)
-    con.execute(f"""
-        CREATE TABLE lbl AS SELECT s, any_value(object) AS label FROM
-        (SELECT subject AS s, object, language, predicate FROM read_parquet([{src_list}]){limit_sql})
-        WHERE predicate = '{LABEL_PREDS[0]}' AND language = 'en' GROUP BY s
-    """)
+    if args.nt:
+        # Labels come from the token table: English (…"@en) or untagged literals.
+        con.execute(f"""
+            CREATE TABLE lbl AS
+            SELECT s, any_value(regexp_extract(tok, '^"(.*)"(?:@en)?$', 1)) AS label
+            FROM base
+            WHERE p = '{LABEL_PREDS[0]}' AND (tok LIKE '%"@en' OR tok NOT LIKE '%"@%')
+            GROUP BY s
+        """)
+    else:
+        con.execute(f"""
+            CREATE TABLE lbl AS SELECT s, any_value(object) AS label FROM
+            (SELECT subject AS s, object, language, predicate FROM read_parquet([{src_list}]){limit_sql})
+            WHERE predicate = '{LABEL_PREDS[0]}' AND language = 'en' GROUP BY s
+        """)
 
     classes = con.execute(
         f"SELECT class, COUNT(*) n FROM prim GROUP BY class HAVING n >= {args.min_entities} ORDER BY n DESC"

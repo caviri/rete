@@ -22,6 +22,12 @@
     exploreCount: 0,
     exploreCols: null,
     remote: null,
+    // Federation: extra sources the SPARQL query also runs against. Each is
+    // {id, kind:"remote"|"memory"|"endpoint", label, url?, key?, endpoint?}.
+    // Empty = single-source (today's behavior). A resident Graph per in-memory
+    // partner is cached in fedGraphs so repeated federated runs don't re-decode.
+    fedSources: [],
+    fedGraphs: new Map(),
     // The last successful query result, kept so switching the Output type
     // re-renders it in the new view instead of re-running the query.
     lastResult: null
@@ -627,6 +633,9 @@
     state.remote = null; // an in-memory load leaves remote-lazy mode
     state.exploreReady = false;
     state.lastResult = null; // a new graph invalidates any cached result
+    // Switching datasets drops federation partners; caching the *current* one
+    // (source === "cached") keeps them — its self-source just becomes in-memory.
+    if (source !== "cached") resetFed();
     updateSourcePill();
 
     // Open the file ONCE into a resident handle; every later in-memory query
@@ -714,6 +723,7 @@
     if (!url) return;
     state.bytes = null;
     if (state.graph) { state.graph.free(); state.graph = null; }
+    resetFed(); // switching to a remote dataset drops federation partners
     state.remote = { url };
     state.activeSource = "remote";
     state.schema = null;
@@ -1119,6 +1129,19 @@
     setView(ex.view || "table");
     setStrategy(ex.strategy || "whole");
     setMode("sparql");
+    // An example may declare federation partners (catalog keys) — a one-click
+    // multi-source demo. Reset to just this dataset, then add each partner
+    // (embedded → in-memory, remote-lazy → range-read).
+    resetFed();
+    if (Array.isArray(ex.fed) && ex.fed.length) {
+      ex.fed.forEach((k) => {
+        if (k === state.dataset || !datasetInfo(k)) return;
+        state.fedSources.push(isEmbedded(k)
+          ? { id: "f" + (++fedSeq), kind: "memory", label: dsShortLabel(k), key: k }
+          : { id: "f" + (++fedSeq), kind: "remote", label: dsShortLabel(k), url: remoteUrlFor(k), key: k });
+      });
+      renderFedBar();
+    }
     $("exampleInfo").innerHTML =
       `<div><strong>${esc(ex.label)}</strong></div>` +
       `<div>${esc(ex.family)}</div>` +
@@ -1667,6 +1690,16 @@
   function onOutputTypeChange() {
     const fmt = $("fmt").value;
     const c = state.lastResult;
+    // A federated result is row-shaped and self-contained — re-render it (with its
+    // per-source banner) in the new view rather than re-running every source.
+    if (c && c.federated && c.q === $("q").value.trim() && ROW_VIEWS.has(fmt)) {
+      const renderFmt = (fmt === "graph" && c.res.kind !== "construct") ? "table" : fmt;
+      const summary = renderResult(c.res, renderFmt);
+      $("out").innerHTML = (c.fedBannerHtml || "") + $("out").innerHTML;
+      $("qmeta").textContent = `${summary} · re-rendered from the last federated result (no re-run)`;
+      updateResultVisibility();
+      return;
+    }
     const sameStrategy = !c ? false : c.remote ? true : c.strategy === $("strategy").value;
     const reusable = !!c && c.rowShaped && ROW_VIEWS.has(fmt) &&
       c.q === $("q").value.trim() && c.remote === !!state.remote &&
@@ -2168,10 +2201,233 @@
     $("reqModal").classList.remove("hidden");
   }
 
+  // --- Federation: one SPARQL query across several sources ----------------
+  // "Federation is a kind of SPARQL." When the user adds sources, the same query
+  // runs against each one independently and the results are merged — UNION+dedup
+  // for SELECT, logical OR for ASK, triple-union for CONSTRUCT — mirroring the
+  // `rete federate` CLI. Each source keeps its own lazy reader: a remote .rete via
+  // the range-read worker, an in-memory dataset via a resident Graph, a live
+  // SPARQL endpoint via fetch. No source is downloaded wholesale.
+  let fedSeq = 0;
+  function fedActive() { return state.fedSources.length > 0; }
+
+  // The current dataset is always source #0, resolved at query time to whatever
+  // it actually is — a lazy remote URL or the in-memory Graph handle.
+  function selfSource() {
+    const name = dsShortLabel(state.dataset) + " · this dataset";
+    return state.remote
+      ? { id: "self", kind: "remote", label: name, url: state.remote.url, self: true }
+      : { id: "self", kind: "memory", label: name, self: true };
+  }
+  function allFedSources() { return [selfSource()].concat(state.fedSources); }
+
+  function detectQueryKind(q) {
+    const body = q.replace(/^\s*(?:#.*\n|PREFIX\s+[^\n]*\n|BASE\s+[^\n]*\n)*/i, "");
+    const m = /\b(SELECT|ASK|CONSTRUCT|DESCRIBE)\b/i.exec(body);
+    return m ? m[1].toLowerCase() : "select";
+  }
+
+  function shortUrlLabel(url) {
+    try {
+      const u = new URL(url);
+      const seg = u.pathname.split("/").filter(Boolean).pop();
+      return seg ? seg.replace(/\.rete$/, "") : u.hostname;
+    } catch (e) { return url.length > 30 ? url.slice(0, 28) + "…" : url; }
+  }
+
+  // A resident wasm Graph for an in-memory federation partner (a bundled or
+  // already-cached dataset), opened once and kept in state.fedGraphs.
+  function fedGraphFor(src) {
+    if (src.self) {
+      if (!state.graph) throw new Error("load this dataset into memory first");
+      return state.graph;
+    }
+    if (state.fedGraphs.has(src.key)) return state.fedGraphs.get(src.key);
+    const bytes = remoteCache.get(src.key) ||
+      (RETE_DATASETS_B64[src.key] && b64ToBytes(RETE_DATASETS_B64[src.key]));
+    if (!bytes) throw new Error("source is not in memory");
+    const g = new (W().Graph)(bytes);
+    state.fedGraphs.set(src.key, g);
+    return g;
+  }
+
+  // SPARQL-protocol JSON binding → the engine's term-string form.
+  function endpointTerm(b) {
+    if (!b) return undefined;
+    if (b.type === "uri") return "<" + b.value + ">";
+    if (b.type === "bnode") return "_:" + b.value;
+    let s = '"' + String(b.value).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+    if (b["xml:lang"]) return s + "@" + b["xml:lang"];
+    if (b.datatype) return s + "^^<" + b.datatype + ">";
+    return s;
+  }
+  async function queryEndpoint(src, q, kind) {
+    const sep = src.endpoint.includes("?") ? "&" : "?";
+    const res = await fetch(src.endpoint + sep + "query=" + encodeURIComponent(q),
+      { headers: { Accept: "application/sparql-results+json" } });
+    if (!res.ok) throw new Error(res.status + " " + res.statusText);
+    const j = await res.json();
+    if (kind === "ask") return { kind: "ask", boolean: !!j.boolean, vars: [], rows: [], triples: [] };
+    const vars = (j.head && j.head.vars) || [];
+    const rows = ((j.results && j.results.bindings) || [])
+      .map((bnd) => { const o = {}; vars.forEach((v) => { const t = endpointTerm(bnd[v]); if (t !== undefined) o[v] = t; }); return o; });
+    return { kind: "select", vars, rows, triples: [] };
+  }
+
+  // Run the query against one source, normalized to a common result shape.
+  function querySource(src, q, kind) {
+    if (src.kind === "endpoint") {
+      return queryEndpoint(src, q, kind).then((r) => Object.assign(r, { bytes: 0, requests: 0 }));
+    }
+    if (src.kind === "remote") {
+      return remoteSparql(src.url, q, "table").then((out) => {
+        const r = JSON.parse(out.json), rem = r.remote || {};
+        return { kind: r.kind || kind, vars: r.vars || [], rows: r.rows || [],
+          boolean: r.boolean, triples: r.triples || [], bytes: rem.bytes || 0, requests: rem.requests || 0 };
+      });
+    }
+    return new Promise((resolve) => {
+      const r = JSON.parse(fedGraphFor(src).query(q, "table"));
+      resolve({ kind: r.kind || kind, vars: r.vars || [], rows: r.rows || [],
+        boolean: r.boolean, triples: r.triples || [], bytes: 0, requests: 0 });
+    });
+  }
+
+  function fedBanner(settled, merged, kind) {
+    const one = (r) => kind === "ask" ? (r.boolean ? "true" : "false")
+      : (kind === "construct" || kind === "describe") ? `${(r.triples || []).length} triple(s)`
+      : `${(r.rows || []).length} row(s)`;
+    const lines = settled.map((s) => {
+      const name = esc(s.src.label);
+      if (!s.ok) return `<tr><td>${name}</td><td class="fed-err" colspan="2">error — ${esc(s.error)}</td></tr>`;
+      const cost = s.src.kind === "remote" ? `${formatBytes(s.r.bytes || 0)} · ${s.r.requests || 0} req`
+        : s.src.kind === "endpoint" ? "live endpoint" : "in-memory";
+      return `<tr><td>${name}</td><td class="num">${one(s.r)}</td><td class="num">${cost}</td></tr>`;
+    }).join("");
+    const total = kind === "ask" ? `ASK = ${merged.boolean}`
+      : (kind === "construct" || kind === "describe") ? `${merged.triples.length} merged triple(s)`
+      : `${merged.rows.length} merged row(s)`;
+    return `<div class="fed-banner"><div class="fed-banner-head">Federated across ${settled.length} source(s) — ${esc(total)}</div>` +
+      `<table><tbody>${lines}</tbody></table></div>`;
+  }
+
+  function runFederated(q, fmt) {
+    const kind = detectQueryKind(q);
+    const sources = allFedSources();
+    $("commOut").innerHTML = "";
+    $("reqLogBtn").classList.add("hidden");
+    $("out").innerHTML = netSpinner(`federating across ${sources.length} sources…`);
+    updateResultVisibility();
+    const t0 = performance.now();
+    const jobs = sources.map((src) =>
+      Promise.resolve().then(() => querySource(src, q, kind))
+        .then((r) => ({ src, r, ok: true }))
+        .catch((e) => ({ src, ok: false, error: String((e && e.message) || e) })));
+    Promise.all(jobs).then((settled) => {
+      const dt = performance.now() - t0;
+      const oks = settled.filter((s) => s.ok);
+      let merged;
+      if (kind === "ask") {
+        merged = { kind: "ask", boolean: oks.some((s) => s.r.boolean === true || s.r.boolean === "true") };
+      } else if (kind === "construct" || kind === "describe") {
+        const seen = new Set(), triples = [];
+        oks.forEach((s) => (s.r.triples || []).forEach((t) => {
+          const k = JSON.stringify(t); if (!seen.has(k)) { seen.add(k); triples.push(t); }
+        }));
+        merged = { kind: "construct", triples };
+      } else {
+        const vars = [];
+        oks.forEach((s) => (s.r.vars || []).forEach((v) => { if (!vars.includes(v)) vars.push(v); }));
+        const seen = new Set(), rows = [];
+        oks.forEach((s) => (s.r.rows || []).forEach((row) => {
+          const k = vars.map((v) => row[v] == null ? "" : row[v]).join("");
+          if (!seen.has(k)) { seen.add(k); rows.push(row); }
+        }));
+        merged = { kind: "select", vars, rows };
+      }
+      const renderFmt = (fmt === "graph" && kind !== "construct" && kind !== "describe") ? "table" : fmt;
+      const summary = renderResult(merged, renderFmt);
+      const banner = fedBanner(settled, merged, kind);
+      $("out").innerHTML = banner + $("out").innerHTML;
+      const totalBytes = oks.reduce((a, s) => a + (s.r.bytes || 0), 0);
+      state.lastResult = { res: merged, rowShaped: true, q, strategy: "federated",
+        remote: false, dataset: state.dataset, federated: true, fedBannerHtml: banner };
+      $("qmeta").textContent = `${summary} · federated ${sources.length} source(s) · ${formatBytes(totalBytes)} ranged · ${dt.toFixed(0)} ms`;
+      saveHistory({ query: q, format: fmt, strategy: "federated",
+        dataset: "(federated ×" + sources.length + ")", ts: Date.now(), resultSummary: summary });
+    });
+  }
+
+  // --- Federation source picker (the "+ Add source" popover) --------------
+  function renderFedBar() {
+    const chips = $("fedChips");
+    if (!chips) return;
+    const self = `<span class="fed-chip fed-self" title="The dataset selected above"><span class="fed-chip-name">${esc(dsShortLabel(state.dataset))}</span>` +
+      `<span class="fed-chip-kind">${state.remote ? "lazy" : "in-memory"}</span></span>`;
+    const extra = state.fedSources.map((s) =>
+      `<span class="fed-chip"><span class="fed-chip-name" title="${esc(s.label)}">${esc(s.label)}</span>` +
+      `<span class="fed-chip-kind">${s.kind === "remote" ? "lazy" : s.kind === "endpoint" ? "endpoint" : "in-memory"}</span>` +
+      `<button type="button" class="fed-x" data-fedremove="${s.id}" title="Remove this source" aria-label="Remove ${esc(s.label)}">×</button></span>`).join("");
+    chips.innerHTML = self + extra;
+    const run = $("run");
+    if (run && run.textContent !== "Cancel") run.textContent = fedActive() ? "Run federated" : "Run Query";
+  }
+  function resetFed() {
+    state.fedSources = [];
+    state.fedGraphs.forEach((g) => { try { g.free(); } catch (e) { /* already freed */ } });
+    state.fedGraphs.clear();
+    renderFedBar();
+  }
+  function populateFedCatalog() {
+    const sel = $("fedCatalog");
+    if (!sel) return;
+    sel.innerHTML = CATALOG.datasets
+      .filter((d) => d.key !== state.dataset)
+      .map((d) => `<option value="${esc(d.key)}">${esc(dsShortLabel(d.key))}${d.kind === "remote-lazy" ? " — remote" : ""}</option>`)
+      .join("");
+  }
+  function openFedPop() { populateFedCatalog(); $("fedPop").classList.remove("hidden"); }
+  function closeFedPop() { const p = $("fedPop"); if (p) p.classList.add("hidden"); }
+  function setFedMode(mode) {
+    $$("#fedModes button").forEach((b) => b.classList.toggle("active", b.dataset.fedmode === mode));
+    $$(".fed-pop-body [data-fedbody]").forEach((b) => b.classList.toggle("hidden", b.dataset.fedbody !== mode));
+  }
+  function confirmAddFed() {
+    const active = document.querySelector("#fedModes button.active");
+    const mode = active ? active.dataset.fedmode : "catalog";
+    let src = null;
+    if (mode === "catalog") {
+      const key = $("fedCatalog").value;
+      if (!key) return;
+      const canMemory = isEmbedded(key) || remoteCache.has(key);
+      src = ($("fedCatalogLazy").checked || !canMemory)
+        ? { id: "f" + (++fedSeq), kind: "remote", label: dsShortLabel(key), url: remoteUrlFor(key), key }
+        : { id: "f" + (++fedSeq), kind: "memory", label: dsShortLabel(key), key };
+    } else if (mode === "link") {
+      const url = $("fedLinkUrl").value.trim();
+      if (!url) return;
+      src = { id: "f" + (++fedSeq), kind: "remote", label: shortUrlLabel(url), url };
+    } else {
+      const ep = $("fedEndpoint").value.trim();
+      if (!ep) return;
+      src = { id: "f" + (++fedSeq), kind: "endpoint", label: shortUrlLabel(ep), endpoint: ep };
+    }
+    const dup = state.fedSources.some((s) =>
+      (src.url && s.url === src.url) || (src.endpoint && s.endpoint === src.endpoint) ||
+      (src.key && s.key === src.key && s.kind === src.kind));
+    if (!dup) { state.fedSources.push(src); renderFedBar(); }
+    closeFedPop();
+  }
+  function removeFedSource(id) {
+    state.fedSources = state.fedSources.filter((s) => s.id !== id);
+    renderFedBar();
+  }
+
   function runQuery() {
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
     const fmt = $("fmt").value;
+    if (fedActive()) return runFederated(q, fmt);
     // Clear the previous message and show the network spinner. We deliberately
     // KEEP state.lastResult: the reuse guard already requires the query text,
     // dataset, strategy and remote-ness to match before re-rendering, so a stale
@@ -2894,6 +3150,22 @@
     // Switching the Output type re-renders the last result in the new view
     // (no re-run) when it can; otherwise it runs the query.
     $("fmt").onchange = onOutputTypeChange;
+    // Federation: the "+ Add source" popover + its source chips.
+    $("fedAdd").onclick = (e) => {
+      e.stopPropagation();
+      $("fedPop").classList.contains("hidden") ? openFedPop() : closeFedPop();
+    };
+    $("fedAddConfirm").onclick = confirmAddFed;
+    $("fedAddCancel").onclick = closeFedPop;
+    $$("#fedModes button").forEach((b) => { b.onclick = () => setFedMode(b.dataset.fedmode); });
+    $("fedPop").addEventListener("click", (e) => e.stopPropagation());
+    $("fedChips").addEventListener("click", (e) => {
+      const x = e.target.closest("[data-fedremove]");
+      if (x) removeFedSource(x.getAttribute("data-fedremove"));
+    });
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".fed-add-wrap")) closeFedPop();
+    });
     $$("#modeTabs button[data-mode]").forEach((btn) => {
       btn.onclick = () => setMode(btn.dataset.mode);
     });
