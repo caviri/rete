@@ -65,7 +65,10 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
         let dict = rete.dictionary();
         let mut sorted: Vec<_> = pstats.iter().collect();
         sorted.sort_by(|a, b| b.count.cmp(&a.count));
-        println!("  planner stats (query_stats, {} predicates):", pstats.len());
+        println!(
+            "  planner stats (query_stats, {} predicates):",
+            pstats.len()
+        );
         for s in sorted.iter().take(10) {
             let term = dict
                 .predicate_term(s.predicate)
