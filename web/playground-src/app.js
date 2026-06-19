@@ -567,8 +567,17 @@
     const graphText = info.namedGraphs ? " | graphs " + info.namedGraphs : "";
     setStatus(`${info.quads} quads | ${info.terms} terms | ${info.pyramidLevels} pyramid levels${graphText}`);
 
-    if (onPhase) { onPhase("Building schema (classes & relations)…"); await tick(); }
-    const schema = JSON.parse(W().schema(bytes));
+    // Prefer the schema already baked into the file (read from its ~KB schema
+    // block, instant) over recomputing it by scanning every triple — only files
+    // built before the schema pyramid existed need the scan fallback.
+    let schema;
+    try {
+      if (onPhase) { onPhase("Reading the packed schema…"); await tick(); }
+      schema = JSON.parse(W().schema_packed(bytes));
+    } catch (_e) {
+      if (onPhase) { onPhase("Building schema (classes & relations)…"); await tick(); }
+      schema = JSON.parse(W().schema(bytes));
+    }
     state.schema = schema;
     state.exploreClass = null;
     state.exploreReady = false;
@@ -741,13 +750,14 @@
   // each step's label is painted just before the engine freezes the thread).
   function enterCachePreparing(key) {
     const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
-    const est = Math.max(1, Math.round(sizeToMB(meta.size) * 0.14));
+    const est = Math.max(1, Math.round(sizeToMB(meta.size) * 0.05));
     $("cacheBar").classList.remove("indeterminate");
     $("cacheBarFill").style.width = "100%";
     $("cachePct").textContent = "downloaded";
     $("cacheBytes").textContent = meta.size || "";
-    $("cacheSub").textContent = `Now building the in-memory graph — the page pauses while the engine opens the ` +
-      `file and computes its schema (~${est}s for ${meta.size || "this graph"}).`;
+    $("cacheSub").textContent = `Now opening the file for in-memory queries — the schema is read straight ` +
+      `from the file's packed index (no scan); the page pauses briefly while the dictionary loads ` +
+      `(~${est}s for ${meta.size || "this graph"}).`;
     $("cacheSteps").innerHTML = `<div class="cache-step done">Downloaded ${esc(meta.size || "")}</div>`;
   }
   function setCacheStep(label) {

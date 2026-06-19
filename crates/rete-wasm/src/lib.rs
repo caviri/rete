@@ -137,6 +137,26 @@ pub fn schema(bytes: &[u8]) -> Result<String, JsValue> {
     .map_err(err)
 }
 
+/// Read the **baked** schema pyramid (classes + class-level relations) straight
+/// from the file's schema block via a slice reader — no triple scan. The
+/// in-memory twin of [`schema_url`]: a cached big graph gets its schema from a
+/// few KB of the buffer instead of dumping every triple (seconds on a 150 MB
+/// file). Errors when the file carries no schema pyramid, so callers fall back
+/// to the scanning [`schema`].
+#[wasm_bindgen]
+pub fn schema_packed(bytes: &[u8]) -> Result<String, JsValue> {
+    use serde_json::json;
+    let (classes, relations) = rete_core::read_schema_summary_ranged(&SliceReader::new(bytes))
+        .map_err(err)?
+        .ok_or_else(|| JsValue::from_str("file has no schema pyramid"))?;
+    let classes: Vec<serde_json::Value> = classes.iter().map(|(c, n)| json!([c, n])).collect();
+    let relations: Vec<serde_json::Value> = relations
+        .iter()
+        .map(|(s, p, o, n)| json!([s, p, o, n]))
+        .collect();
+    Ok(json!({ "classes": classes, "relations": relations }).to_string())
+}
+
 /// Parse just the 128-byte header and report the byte ranges a *progressive*
 /// client needs for the overview — the dictionary and the pyramid summary — plus
 /// the (large) index range it can skip. JSON:
