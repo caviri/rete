@@ -15,6 +15,9 @@
     built: null,
     exploreClass: null,
     exploreReady: false,
+    explorePage: 0,
+    exploreCount: 0,
+    exploreCols: null,
     remote: null,
     // The last successful query result, kept so switching the Output type
     // re-renders it in the new view instead of re-running the query.
@@ -1167,32 +1170,7 @@
       $("exploreTable").innerHTML = "";
       return;
     }
-    if (!state.exploreClass || !classes.some(([c]) => c === state.exploreClass))
-      state.exploreClass = classes[0][0];
-    $("exploreClasses").innerHTML = classes.map(([c, n]) =>
-      `<button type="button" data-cls="${esc(c)}" class="${c === state.exploreClass ? "active" : ""}">` +
-        `${esc(shorten(localName(c), 22))} (${esc(n)})` +
-      `</button>`).join("");
-    $$("#exploreClasses [data-cls]").forEach((btn) => {
-      btn.onclick = () => { state.exploreClass = btn.dataset.cls; renderRemoteExploreClasses(); };
-    });
-    renderRemoteEntityTable(state.exploreClass);
-  }
-
-  // Drill into one class's entities over HTTP range: a bounded SELECT, routed
-  // through the worker, pivoted the same way as the in-memory entity table.
-  function renderRemoteEntityTable(cls) {
-    const tp = currentTypePredicate();
-    $("exploreTable").innerHTML = netSpinner("fetching entities over range…");
-    remoteSparql(state.remote.url,
-      `SELECT ?s ?p ?o WHERE { ?s ${tp} ${cls} . ?s ?p ?o } LIMIT 3000`, "table")
-      .then((out) => {
-        state.lastRemoteLog = out.log || [];
-        updateReqLogBtn();
-        const res = JSON.parse(out.json);
-        pivotEntityTable(cls, res.rows || [], 3000);
-      })
-      .catch((e) => showError("exploreTable", "Remote entities failed: " + String(e)));
+    renderClassButtons(classes);
   }
 
   // The predicate this dataset uses for typing — rdf:type by default, but some
@@ -1228,45 +1206,81 @@
       $("exploreTable").innerHTML = renderTable(res.vars || [], res.rows || []);
       return;
     }
-    if (!state.exploreClass || !classes.some(([c]) => c === state.exploreClass))
-      state.exploreClass = classes[0][0];
+    renderClassButtons(classes);
+  }
+
+  // How many entities one Explore page shows. Each page is a bounded, lazy fetch
+  // (a DISTINCT ?s … LIMIT/OFFSET page, then a VALUES props fetch), so paging a
+  // remote class range-reads only that page — never the whole class.
+  const ENTITY_PAGE = 25;
+
+  // One query helper for both Explore paths: a Promise of the parsed result, run
+  // in memory (sync) or over HTTP range (the worker) when the graph is remote.
+  function exploreQuery(q) {
+    if (state.remote) {
+      return remoteSparql(state.remote.url, q, "table").then((out) => {
+        state.lastRemoteLog = out.log || [];
+        updateReqLogBtn();
+        return JSON.parse(out.json);
+      });
+    }
+    return Promise.resolve(JSON.parse(W().query(state.bytes, q, "table")));
+  }
+
+  // Render the class chips and wire each to open that class at page 0. Shared by
+  // the in-memory and remote class lists. `classes` is [[iri, count], …].
+  function renderClassButtons(classes) {
+    const hit = classes.find(([c]) => c === state.exploreClass);
+    if (!hit) { state.exploreClass = classes[0][0]; state.exploreCount = Number(classes[0][1]) || 0; }
+    else state.exploreCount = Number(hit[1]) || 0;
     $("exploreClasses").innerHTML = classes.map(([c, n]) =>
-      `<button type="button" data-cls="${esc(c)}" class="${c === state.exploreClass ? "active" : ""}">` +
+      `<button type="button" data-cls="${esc(c)}" data-count="${esc(n)}" class="${c === state.exploreClass ? "active" : ""}">` +
         `${esc(shorten(localName(c), 22))} (${esc(n)})` +
       `</button>`).join("");
     $$("#exploreClasses [data-cls]").forEach((btn) => {
       btn.onclick = () => {
-        state.exploreClass = btn.dataset.cls;
-        renderExploreClasses();
+        $$("#exploreClasses [data-cls]").forEach((b) => b.classList.toggle("active", b === btn));
+        openExploreClass(btn.dataset.cls, btn.dataset.count);
       };
     });
-    renderEntityTable(state.exploreClass);
+    openExploreClass(state.exploreClass, state.exploreCount);
   }
 
-  // Pivot one class's instances into an entity table (in-memory): rows =
-  // entities, columns = their most frequent properties (multi-values joined).
-  function renderEntityTable(cls) {
+  // Open a class fresh: reset to page 0 and recompute its (stable) column set.
+  function openExploreClass(cls, count) {
+    state.exploreClass = cls;
+    state.exploreCount = Number(count) || 0;
+    state.exploreCols = null;
+    loadEntityPage(0);
+  }
+
+  // Fetch one page of a class's entities, then their properties, and render it:
+  // the lazy, paginated entity table (the HF dataset-viewer pattern). In remote
+  // mode each page range-reads only the tiles those 25 entities touch.
+  function loadEntityPage(page) {
+    const cls = state.exploreClass;
     const tp = currentTypePredicate();
-    let res;
-    try {
-      res = JSON.parse(W().query(state.bytes,
-        `SELECT ?s ?p ?o WHERE { ?s ${tp} ${cls} . ?s ?p ?o } LIMIT 6000`, "table"));
-    } catch (e) {
-      $("exploreTable").innerHTML = `<div class="error-box">${esc(String(e))}</div>`;
-      return;
-    }
-    pivotEntityTable(cls, res.rows || [], 6000);
+    state.explorePage = page;
+    if (state.remote) $("exploreTable").innerHTML = netSpinner("fetching page over range…");
+    exploreQuery(`SELECT DISTINCT ?s WHERE { ?s ${tp} ${cls} } ORDER BY ?s LIMIT ${ENTITY_PAGE} OFFSET ${page * ENTITY_PAGE}`)
+      .then((ent) => {
+        const ids = (ent.rows || []).map((r) => r.s).filter(Boolean);
+        if (!ids.length) { renderEntityPage(cls, [], []); return null; }
+        return exploreQuery(`SELECT ?s ?p ?o WHERE { VALUES ?s { ${ids.join(" ")} } ?s ?p ?o }`)
+          .then((res) => renderEntityPage(cls, ids, res.rows || []));
+      })
+      .catch((e) => showError("exploreTable", "Explore failed: " + String(e)));
   }
 
-  // Render an entity table from raw SELECT ?s ?p ?o rows for one class —
-  // entities down the rows, their most frequent properties across the columns.
-  // Shared by the in-memory and remote (range-read) Explore paths; `limit` is
-  // the row cap that was requested, so we can flag a sampled result.
-  function pivotEntityTable(cls, rawRows, limit) {
+  // Pivot one page's rows into the entity table + pager — entities down the
+  // rows, their most frequent properties across the columns (the column set is
+  // cached per class in `state.exploreCols` so it stays stable as you page).
+  function renderEntityPage(cls, ids, rows) {
     const tp = currentTypePredicate();
     const entities = new Map();
+    ids.forEach((s) => entities.set(s, new Map()));
     const predCount = new Map();
-    for (const row of rawRows) {
+    for (const row of rows) {
       if (row.p === tp) continue;
       if (!entities.has(row.s)) entities.set(row.s, new Map());
       const props = entities.get(row.s);
@@ -1274,26 +1288,44 @@
       props.get(row.p).push(row.o);
       predCount.set(row.p, (predCount.get(row.p) || 0) + 1);
     }
-    const cols = Array.from(predCount.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
-      .map(([p]) => p);
-    const rows = Array.from(entities.entries()).slice(0, 100);
+    if (!state.exploreCols) {
+      state.exploreCols = Array.from(predCount.entries())
+        .sort((a, b) => b[1] - a[1]).slice(0, 8).map(([p]) => p);
+    }
+    const cols = state.exploreCols;
     const cell = (vals) => {
       if (!vals) return "";
-      const shown = vals.slice(0, 3).map((v) => shorten(v, 44)).join("; ");
+      // Clean, HF-style cells: local names for IRIs, the value for literals.
+      const shown = vals.slice(0, 3).map((v) => termLabel(parseTerm(v))).join("; ");
       return vals.length > 3 ? `${shown} (+${vals.length - 3})` : shown;
     };
-    const sampled = rawRows.length >= limit ? " (sampled)" : "";
     const head = `<tr><th>${esc(localName(cls))}</th>` +
       cols.map((c) => `<th>${esc(shorten(localName(c), 20))}</th>`).join("") + `</tr>`;
-    const rowHtmls = rows.map(([s, props]) =>
-      `<tr><td class="iri">${esc(shorten(s, 42))}</td>` +
-      cols.map((c) => `<td>${esc(cell(props.get(c)))}</td>`).join("") +
-      `</tr>`);
-    $("exploreTable").innerHTML = collapsedTable(head, rowHtmls,
-      `<p class="microcopy">${entities.size} ${esc(localName(cls))} entit${entities.size === 1 ? "y" : "ies"}${sampled} — ` +
-      `showing up to ${rows.length}, top ${cols.length} properties. Use the SPARQL tab for full values.</p>`);
+    const rowHtmls = ids.map((s) => {
+      const props = entities.get(s) || new Map();
+      return `<tr><td class="iri">${esc(shorten(s, 42))}</td>` +
+        cols.map((c) => `<td>${esc(cell(props.get(c)))}</td>`).join("") + `</tr>`;
+    });
+    const total = state.exploreCount || 0;
+    const pages = Math.max(1, Math.ceil(total / ENTITY_PAGE));
+    const page = state.explorePage;
+    const from = ids.length ? page * ENTITY_PAGE + 1 : 0;
+    const to = page * ENTITY_PAGE + ids.length;
+    const body = ids.length
+      ? `<div class="tbl"><table><thead>${head}</thead><tbody>${rowHtmls.join("")}</tbody></table></div>`
+      : `<p class="microcopy">No entities on this page.</p>`;
+    $("exploreTable").innerHTML = body +
+      `<div class="entity-pager">` +
+        `<button type="button" id="entPrev" class="secondary"${page <= 0 ? " disabled" : ""}>‹ Prev</button>` +
+        `<span class="pager-info">${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} ` +
+        `${esc(localName(cls))} · page ${(page + 1).toLocaleString()} / ${pages.toLocaleString()}</span>` +
+        `<button type="button" id="entNext" class="secondary"${page + 1 >= pages ? " disabled" : ""}>Next ›</button>` +
+      `</div>` +
+      `<p class="microcopy">Top ${cols.length} properties shown — open the SPARQL tab for full values` +
+        `${state.remote ? " · each page is fetched lazily over HTTP range" : ""}.</p>`;
+    const prev = $("entPrev"), next = $("entNext");
+    if (prev) prev.onclick = () => loadEntityPage(page - 1);
+    if (next) next.onclick = () => loadEntityPage(page + 1);
   }
 
   // The "cluster of clusters": outer circles are the coarsest dendrogram
