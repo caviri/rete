@@ -186,6 +186,7 @@ pub(crate) fn repyramid(
     input: &str,
     output: &str,
     type_predicate: Option<&str>,
+    card_args: CardArgs,
 ) -> anyhow::Result<()> {
     let bytes = std::fs::read(input)?;
     let rete = rete_core::Rete::open(&bytes)?;
@@ -206,8 +207,28 @@ pub(crate) fn repyramid(
     }
     drop(rete); // only the quads are needed to re-assemble.
 
+    // Optionally derive + embed a Dataset Card from the rebuilt counts (same as
+    // `build --card`); without a card flag the metadata payload stays empty.
+    let curated = if card_args.requested() {
+        Some(card::load_curated(&card_args)?)
+    } else {
+        None
+    };
     let (out_bytes, stats) =
-        ingest::assemble_dataset_with_opts(&quads, true, type_predicate, |_| Vec::new());
+        ingest::assemble_dataset_with_opts(&quads, true, type_predicate, |stats| match curated {
+            Some(curated) => {
+                let blob = card::derive_card(
+                    &quads,
+                    stats.terms as u64,
+                    stats.named_graphs as u64,
+                    curated,
+                )
+                .to_json_bytes();
+                eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                blob
+            }
+            None => Vec::new(),
+        });
     std::fs::write(output, &out_bytes)?;
     if stats.named_graphs > 0 {
         println!(

@@ -159,6 +159,27 @@ enum Command {
         /// `wdt:P31`); same semantics as `build --type-predicate`.
         #[arg(long = "type-predicate")]
         type_predicate: Option<String>,
+        /// Embed a **Dataset Card** in the rebuilt file (same flags as `build`).
+        #[arg(long)]
+        card: bool,
+        /// JSON file of curated card fields; implies `--card`.
+        #[arg(long = "card-file")]
+        card_file: Option<String>,
+        /// Card title (implies `--card`).
+        #[arg(long)]
+        title: Option<String>,
+        /// Card license (implies `--card`).
+        #[arg(long)]
+        license: Option<String>,
+        /// Card source URL (implies `--card`).
+        #[arg(long)]
+        source: Option<String>,
+        /// Card description (implies `--card`).
+        #[arg(long)]
+        description: Option<String>,
+        /// Card creation date (implies `--card`).
+        #[arg(long)]
+        created: Option<String>,
     },
     /// Query a triple pattern. Unspecified positions are variables.
     ///
@@ -495,7 +516,27 @@ fn main() -> anyhow::Result<()> {
             file,
             output,
             type_predicate,
-        } => commands::build::repyramid(&file, &output, type_predicate.as_deref()),
+            card,
+            card_file,
+            title,
+            license,
+            source,
+            description,
+            created,
+        } => commands::build::repyramid(
+            &file,
+            &output,
+            type_predicate.as_deref(),
+            commands::card::CardArgs {
+                enabled: card,
+                file: card_file,
+                title,
+                license,
+                source,
+                description,
+                created,
+            },
+        ),
         Command::Query {
             file,
             subject,
