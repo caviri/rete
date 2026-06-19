@@ -1335,6 +1335,17 @@ impl Rete {
         }
     }
 
+    /// The pyramid metadata **only if already resident or previously faulted** —
+    /// never triggers a lazy range read. The query planner uses this for
+    /// cardinality estimation so it is free for an in-memory file and never adds
+    /// a fetch on the lazy remote path (which defers the pyramid by design).
+    pub fn pyramid_if_loaded(&self) -> Option<&PyramidMeta> {
+        match &self.pyramid {
+            PyramidSlot::Resident(p) => p.as_ref(),
+            PyramidSlot::Lazy { cell, .. } => cell.get().and_then(|o| o.as_ref()),
+        }
+    }
+
     /// The default-graph permutation index.
     pub fn default_index(&self) -> &GraphIndex {
         &self.index
