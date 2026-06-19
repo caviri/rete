@@ -133,6 +133,39 @@ __PLAYGROUND_CSS__
         </div>
         <div id="exampleQuick" class="ex-quick" aria-label="Example suggestions"></div>
         <textarea id="q" spellcheck="false"></textarea>
+        <div id="fedBar" class="fed-bar">
+          <span class="fed-label" title="Run this query across more than one source and merge the results (UNION + dedup), each fetched lazily.">Sources</span>
+          <div id="fedChips" class="fed-chips"></div>
+          <div class="fed-add-wrap">
+            <button id="fedAdd" type="button" class="fed-add" title="Federate: add another .rete or a SPARQL endpoint and run the query across all of them">+ Add source</button>
+            <div id="fedPop" class="fed-pop hidden" role="dialog" aria-label="Add a federation source">
+              <div class="fed-pop-head">Federate with another source</div>
+              <div class="fed-pop-modes" id="fedModes">
+                <button type="button" data-fedmode="catalog" class="active">From catalog</button>
+                <button type="button" data-fedmode="link">.rete link</button>
+                <button type="button" data-fedmode="endpoint">SPARQL endpoint</button>
+              </div>
+              <div class="fed-pop-body">
+                <div data-fedbody="catalog">
+                  <select id="fedCatalog" aria-label="Pick a dataset to federate with"></select>
+                  <label class="fed-lazy"><input type="checkbox" id="fedCatalogLazy" checked> query it lazily over HTTP range</label>
+                </div>
+                <div data-fedbody="link" class="hidden">
+                  <input id="fedLinkUrl" type="text" spellcheck="false" placeholder="https://…/graph.rete?token=…" />
+                  <p class="fed-hint">A remote <code>.rete</code> URL — range-queried lazily, like the bucket datasets.</p>
+                </div>
+                <div data-fedbody="endpoint" class="hidden">
+                  <input id="fedEndpoint" type="text" spellcheck="false" placeholder="https://query.wikidata.org/sparql" />
+                  <p class="fed-hint">A live SPARQL endpoint (SELECT / ASK). Answered over the SPARQL protocol — subject to the endpoint's CORS policy.</p>
+                </div>
+              </div>
+              <div class="fed-pop-foot">
+                <button type="button" id="fedAddCancel" class="secondary">Cancel</button>
+                <button type="button" id="fedAddConfirm">Add source</button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="action-row">
           <label>
             <span>Output</span>
