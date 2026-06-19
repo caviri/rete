@@ -266,6 +266,7 @@ browser reads compressed files fine. <code>rete-wasm</code> depends on <code>ret
 <tr><td><code>reach(bytes, predicate, seeds, reverse)</code></td><td><code>[{ seed, count, reached:["&lt;iri&gt;",…] }, …]</code> (serial transitive reach)</td></tr>
 <tr><td><code>build(text, format)</code></td><td>a complete <code>.rete</code> file image (<code>Uint8Array</code>) built from RDF text</td></tr>
 <tr><td><code>sparql_url(url, query, format)</code></td><td><strong>worker-only</strong>: the <code>query</code> envelope evaluated against a remote URL via lazy HTTP range reads, plus <code>remote: { fileLength, bytes, requests }</code></td></tr>
+<tr><td><code>new RemoteGraph(url)</code> → <code>.query(query, format)</code>, <code>.stats()</code></td><td><strong>worker-only</strong>: a remote URL opened <strong>once</strong> and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see <a href="#caching-remote-reads">Caching remote reads</a>)</td></tr>
 <tr><td><code>reason(bytes, graph?)</code></td><td>OWL RL / RDFS coherence over an in-memory graph: <code>{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }</code></td></tr>
 <tr><td><code>check_schema(bytes)</code></td><td>index-free Tier-0 schema coherence: <code>{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], classCount, readsIndex:false }</code></td></tr>
 <tr><td><code>check_schema_url(url)</code></td><td><strong>worker-only</strong>: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus <code>remote:{…}</code></td></tr>
@@ -319,6 +320,29 @@ is an error — never a silently incomplete result.</p>
 <p>The length probe uses a one-byte ranged <code>GET</code> (reading the total from
 <code>Content-Range</code>) rather than <code>HEAD</code>, since some hosts reject <code>HEAD</code> —
 notably Hugging Face's signed-redirect storage, which answers <code>405</code>.</p>
+<h2>Caching remote reads</h2>
+<p>Range reads are <strong>cached</strong>, so re-running or refining a query on a remote dataset
+re-fetches almost nothing. Two layers:</p>
+<ul>
+<li><strong>Within a query — a block cache.</strong> The lazy reader wraps the raw HTTP-range
+backend in a <code>BlockCacheReader</code>: every read is served from a 64 KiB aligned
+block, fetched once and kept. A query's scattered tile reads that fall in the
+same block cost a single fetch (and a multi-range host coalesces the block
+fetches further). This works over any single-range backend — S3, a CDN — not
+just a multi-range gateway.</li>
+<li><strong>Across queries — a resident session.</strong> <code>RemoteGraph</code> opens a URL once and
+keeps the <code>Rete</code> resident, so the block cache <strong>and</strong> the faulted index tiles
+<strong>and</strong> the decoded dictionary chunks all survive between queries. The
+playground's worker holds one <code>RemoteGraph</code> per URL, so exploring a remote
+dataset — refining a filter, paging entity tables, re-running — reuses
+everything already fetched: a fully cached re-run fetches <strong>0 bytes</strong>, and the
+result line shows <em>"served from cache, 0 new bytes."</em> (The free <code>sparql_url</code>
+opens a fresh file each call, so it gets only the within-query block cache —
+use <code>RemoteGraph</code> for cross-query reuse.)</li>
+</ul>
+<p><code>RemoteGraph.stats()</code> returns the session's cumulative <code>{ fileLength, bytes, requests }</code>; the worker diffs successive calls to report one query's physical
+traffic versus the running session total. Reuse across <strong>page reloads</strong> — an
+IndexedDB block store keyed by the file's content hash — is future work.</p>
 <p><strong>Host CORS, in practice.</strong> Range-querying from the browser needs a host that
 serves the bytes <em>directly</em> to a cross-origin browser request. A plain static
 server with CORS works; an S3/R2/GCS bucket with CORS works; same-origin always
@@ -424,6 +448,11 @@ and keeps SHACL, reachability, schema, and provenance modes available without a
 runtime server or bundler. The WASM initializer receives embedded bytes; the
 generator removes wasm-bindgen's URL/fetch fallback so app boot cannot silently
 go to the network.</p>
+<p>Beyond the bundled datasets it also opens <strong>remote</strong> <code>.rete</code> files lazily over
+HTTP range (a 120 MB / 1 GB graph stays interactive because only the touched
+tiles cross the wire), caches those reads across queries (above), and federates a
+query across <strong>several</strong> sources via the SPARQL console's <strong>+ Add source</strong> button
+— see <a href="federation.html#in-the-playground">Federated queries</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

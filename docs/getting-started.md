@@ -41,6 +41,37 @@ rete build dump.unknown --format nt -o out.rete  # force a format
 N-Quads inputs build a **dataset**: one shared dictionary, a default-graph index,
 and one index per named graph.
 
+### A full ontology: RDF/XML → an optimized `.rete`
+
+Most OBO/W3C ontologies ship as **RDF/XML** (`*.owl`), which `rete build` does
+**not** read — convert it to N-Triples first with `rapper` (from `raptor2-utils`;
+it streams, so it handles gigabyte files):
+
+```sh
+# 1. RDF/XML (OWL) -> N-Triples
+rapper -i rdfxml -o ntriples chebi.owl > chebi.nt        # 812 MB owl -> 8.83 M triples
+
+# 2. assemble, with a self-describing Dataset Card (title/license/source/examples)
+rete build chebi.nt -o chebi.rete --card \
+  --title "ChEBI (full)" --license "CC BY 4.0" --source "https://www.ebi.ac.uk/chebi/"
+#   -> 8.83 M triples, 3.15 M terms, 6 pyramid levels, 120 MB
+```
+
+The build is **parallel and allocation-frugal** by design (the CLI enables the
+`parallel` feature): the dictionary dedups terms with a `HashSet` and sorts once,
+and the three permutation indexes (SPO/POS/OSP) are built concurrently with
+parallel sorts. This is what lets it scale to millions of *unique* terms
+(definitions, synonyms, SMILES/InChI strings) without the build collapsing into
+allocation churn — and the output is **byte-identical** to a serial build, so the
+speedup is free. Turtle-native sources (e.g. a 239 MB `.ttl`) skip `rapper` and
+feed `rete build --format ttl` directly.
+
+The result is a single range-queryable file: drop it on any HTTP host and query
+it lazily (below), or register it in the [playground](playground.html) as a
+remote dataset. To go alongside it with a columnar/SQL view, generate
+[lossless entity tables](#lossless-entity-tables-the-best-of-both-worlds)
+straight from the same N-Triples.
+
 ## Querying locally
 
 ```sh
@@ -188,6 +219,19 @@ uv run python scripts/rdf_to_entity_tables.py --parts 1 --limit 12000000 --props
 `extra` — it never affects losslessness. The `_manifest.parquet` records each
 class's column → predicate map so reconstruction is mechanical, and N-Triples
 is the interchange hub (`rete export` ↔ `rete build` ↔ these tables).
+
+It works on **any** RDF, not just the Wikidata Parquet source: pass `--nt
+<file>` to read N-Triples directly (objects, language tags and datatypes
+round-trip verbatim) and `--type-predicate <iri>` to group by something other
+than Wikidata's `P31` — e.g. `rdf:type` for OBO ontologies. This is how the
+`chebi-full` companions are built from the same `chebi.nt` as the `.rete`:
+
+```sh
+uv run python scripts/rdf_to_entity_tables.py --nt chebi.nt \
+  --type-predicate "http://www.w3.org/1999/02/22-rdf-syntax-ns#type" \
+  --props 24 --min-entities 50 -o data/chebi-tables \
+  --duckdb data/chebi.duckdb --sqlite data/chebi.sqlite --verify
+```
 
 ## Companion: columnar property tables (Parquet, split by type)
 

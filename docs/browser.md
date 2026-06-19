@@ -41,6 +41,7 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `reach(bytes, predicate, seeds, reverse)` | `[{ seed, count, reached:["<iri>",…] }, …]` (serial transitive reach) |
 | `build(text, format)` | a complete `.rete` file image (`Uint8Array`) built from RDF text |
 | `sparql_url(url, query, format)` | **worker-only**: the `query` envelope evaluated against a remote URL via lazy HTTP range reads, plus `remote: { fileLength, bytes, requests }` |
+| `new RemoteGraph(url)` → `.query(query, format)`, `.stats()` | **worker-only**: a remote URL opened **once** and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see [Caching remote reads](#caching-remote-reads)) |
 | `reason(bytes, graph?)` | OWL RL / RDFS coherence over an in-memory graph: `{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }` |
 | `check_schema(bytes)` | index-free Tier-0 schema coherence: `{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], classCount, readsIndex:false }` |
 | `check_schema_url(url)` | **worker-only**: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus `remote:{…}` |
@@ -99,6 +100,32 @@ is an error — never a silently incomplete result.
 The length probe uses a one-byte ranged `GET` (reading the total from
 `Content-Range`) rather than `HEAD`, since some hosts reject `HEAD` —
 notably Hugging Face's signed-redirect storage, which answers `405`.
+
+## Caching remote reads
+
+Range reads are **cached**, so re-running or refining a query on a remote dataset
+re-fetches almost nothing. Two layers:
+
+- **Within a query — a block cache.** The lazy reader wraps the raw HTTP-range
+  backend in a `BlockCacheReader`: every read is served from a 64 KiB aligned
+  block, fetched once and kept. A query's scattered tile reads that fall in the
+  same block cost a single fetch (and a multi-range host coalesces the block
+  fetches further). This works over any single-range backend — S3, a CDN — not
+  just a multi-range gateway.
+- **Across queries — a resident session.** `RemoteGraph` opens a URL once and
+  keeps the `Rete` resident, so the block cache **and** the faulted index tiles
+  **and** the decoded dictionary chunks all survive between queries. The
+  playground's worker holds one `RemoteGraph` per URL, so exploring a remote
+  dataset — refining a filter, paging entity tables, re-running — reuses
+  everything already fetched: a fully cached re-run fetches **0 bytes**, and the
+  result line shows *"served from cache, 0 new bytes."* (The free `sparql_url`
+  opens a fresh file each call, so it gets only the within-query block cache —
+  use `RemoteGraph` for cross-query reuse.)
+
+`RemoteGraph.stats()` returns the session's cumulative `{ fileLength, bytes,
+requests }`; the worker diffs successive calls to report one query's physical
+traffic versus the running session total. Reuse across **page reloads** — an
+IndexedDB block store keyed by the file's content hash — is future work.
 
 **Host CORS, in practice.** Range-querying from the browser needs a host that
 serves the bytes *directly* to a cross-origin browser request. A plain static
@@ -222,3 +249,9 @@ and keeps SHACL, reachability, schema, and provenance modes available without a
 runtime server or bundler. The WASM initializer receives embedded bytes; the
 generator removes wasm-bindgen's URL/fetch fallback so app boot cannot silently
 go to the network.
+
+Beyond the bundled datasets it also opens **remote** `.rete` files lazily over
+HTTP range (a 120 MB / 1 GB graph stays interactive because only the touched
+tiles cross the wire), caches those reads across queries (above), and federates a
+query across **several** sources via the SPARQL console's **+ Add source** button
+— see [Federated queries](federation.md#in-the-playground).

@@ -11,6 +11,10 @@ rete federate <source…> --query "<SPARQL>" [--json] [--no-route]
 This is an honest **prototype**: it does *union* federation, not distributed
 joins. Read [Limitations](#limitations) before relying on it.
 
+The same union+routing federation is also available **in the browser** — the
+[playground](#in-the-playground) turns the SPARQL console into a multi-source
+one with a "**+ Add source**" button, each source range-queried lazily.
+
 ## Why federation works at the term level
 
 <figure class="fig-right">
@@ -174,3 +178,44 @@ rete federate \
 
 Each URL is opened with range reads (header → dictionary → index → pyramid),
 never a full download both routing and evaluation fetch only the bytes they need.
+
+## In the playground
+
+The [playground](playground.html) brings the same federation to the browser:
+**federation is a kind of SPARQL**, so it lives in the SPARQL console rather than
+a separate mode. Under the query editor a **Sources** strip shows the current
+dataset; a **+ Add source** button federates with another source three ways:
+
+- **From catalog** — any registered dataset (a remote one is range-queried
+  lazily; a bundled one is queried in memory);
+- **.rete link** — a pasted remote URL, range-queried lazily;
+- **SPARQL endpoint** — a live endpoint (`SELECT` / `ASK`) over the SPARQL
+  protocol, subject to the endpoint's CORS policy.
+
+Running with **two or more sources** fans the same query out to each and merges
+with the exact CLI semantics above — `SELECT` union+dedup, `ASK` OR, `CONSTRUCT`
+triple-union — and a per-source banner reports the rows and bytes each source
+contributed. Each source keeps its own lazy reader, so two remote `.rete` files
+are read independently and lazily into one merge; it is orchestrated in the
+playground's JS over the existing single-source query paths, so no extra engine
+code runs. An example can pre-load its partner with one click.
+
+**Worked example — resolve five terms across two ontologies.** The bundled
+`chebi-full` (the complete ChEBI ontology, 8.83 M triples) and `chemotion` (a
+chemistry ELN graph merged with CHMO + RXNO) share `CHEBI_*` IRIs plus
+`rdfs:label`/`rdfs:subClassOf`, but neither resolves every label. Pick either
+dataset, open its **Federation** example (it adds the other as a second source),
+and run:
+
+```sparql
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX obo:  <http://purl.obolibrary.org/obo/>
+SELECT ?term ?label WHERE {
+  VALUES ?term { obo:CHEBI_15377 obo:CHEBI_27732 obo:CHMO_0000228 obo:BFO_0000015 obo:CHEBI_23367 }
+  ?term rdfs:label ?label
+}
+```
+
+`chebi-full` answers `water` / `caffeine` / `molecular entity`; `chemotion`
+answers `spectroscopy` / `process`; the union resolves all five. The result line
+shows the per-source split — no single file has all the answers.
