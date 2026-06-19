@@ -331,6 +331,19 @@ impl RemoteGraph {
         )
     }
 
+    /// The file's content hash (blake3-16, hex). The worker keys its session
+    /// cache by this rather than the URL, so two URLs of the same file share the
+    /// cache — and it's the stable key a future IndexedDB block store (L3) needs
+    /// to survive page reloads.
+    pub fn content_hash(&self) -> String {
+        self.rete
+            .header()
+            .content_hash
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
     /// See [`sparql_url`] — same query, but over the resident, cached handle.
     pub fn query(&self, query: &str, format: &str) -> Result<String, JsValue> {
         let v = query_value(&self.rete, query, format)?;

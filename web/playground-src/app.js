@@ -45,14 +45,22 @@
   const REMOTE_HARNESS = `
 ;(function () {
   var ready = null, pReq = 0, pBytes = 0, pId = 0, qStart = 0, fetchLog = [];
-  // Resident remote sessions, one per URL: a RemoteGraph that keeps the file's
-  // block cache + faulted index tiles + decoded dictionary alive across queries,
-  // so re-running or refining a query on the same dataset refetches almost
-  // nothing. Without this each query re-opened the file and refetched its blocks.
-  var sessions = {};
+  // Resident remote sessions: a RemoteGraph that keeps the file's block cache +
+  // faulted index tiles + decoded dictionary alive across queries, so re-running
+  // or refining a query on the same dataset refetches almost nothing. Keyed by
+  // the file's CONTENT HASH (not the URL), so two URLs of the same file share one
+  // cache — the same key a future IndexedDB store would use across reloads.
+  var sessions = {};   // content_hash -> RemoteGraph
+  var urlHash = {};    // url -> content_hash (avoid re-opening a known URL)
   function _session(url) {
-    if (!sessions[url]) sessions[url] = new wasm_bindgen.RemoteGraph(url);
-    return sessions[url];
+    var h = urlHash[url];
+    if (h && sessions[h]) return sessions[h];
+    var g = new wasm_bindgen.RemoteGraph(url); // opens once, reads the header
+    h = g.content_hash();
+    urlHash[url] = h;
+    if (sessions[h]) { g.free(); return sessions[h]; } // same file via another URL
+    sessions[h] = g;
+    return sessions[h];
   }
   function _now() { return (typeof performance !== "undefined" ? performance.now() : Date.now()); }
   self._reteLog = function (e) { e.t = (_now() - qStart) | 0; if (fetchLog.length < 6000) fetchLog.push(e); };
