@@ -362,14 +362,16 @@ label.file-button:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* A fixed-height column spanning from just below the (resizing) headers to the
-     bottom of the viewport, sticky so it stays in view; --rail-top (set in JS to
-     the combined header height) tracks the header as it condenses, and History
-     pins to the bottom. z-index lifts the rail — and its hover tooltips, which
-     spill to the right — above the workbench so they aren't clipped by it. */
+  /* A column at least as tall as the space from just below the (resizing)
+     headers to the bottom of the viewport, sticky so it stays in view; --rail-top
+     (set in JS to the rail's actual top) tracks the header as it condenses, and
+     History pins to the bottom. min-height (not height) means that when the
+     viewport is too short for all the buttons it GROWS to fit them rather than
+     clipping History off the bottom. z-index lifts the rail — and its hover
+     tooltips, which spill to the right — above the workbench. */
   position: sticky;
   top: var(--rail-top, 96px);
-  height: calc(100vh - var(--rail-top, 96px) - 14px);
+  min-height: calc(100vh - var(--rail-top, 96px) - 16px);
   z-index: 12;
 }
 
@@ -1669,7 +1671,7 @@ pre {
     position: static;
     flex-direction: row;
     flex-wrap: wrap;
-    height: auto;
+    min-height: 0;
   }
 
   .mode-rail button {
@@ -1803,6 +1805,13 @@ pre {
 .cache-step.done::before { content: "✓"; color: var(--accent); font-weight: 800; }
 .cache-step.active { color: var(--accent-dark); font-weight: 600; }
 .cache-step.active::before { content: "▸"; color: var(--accent-dark); }
+
+/* Inline progress for a remote range read (schema/coherence over HTTP), in a
+   tab body rather than the cache modal — reuses .cache-bar / .cache-step. */
+.range-read { padding: 4px 2px 2px; }
+.range-read-cap { font-weight: 600; color: var(--ink); margin-bottom: 8px; }
+.range-read-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.range-read-hint { font-size: 12px; color: var(--muted); margin-top: 3px; opacity: .85; }
 
 /* Map view — an offline equirectangular plot of WKT geometries. */
 .mapview svg { width: 100%; height: auto; background: var(--side); border: 1px solid var(--line); border-radius: 8px; }
