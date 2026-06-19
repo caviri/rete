@@ -14,6 +14,9 @@
     lastProvenance: null,
     built: null,
     exploreClass: null,
+    // A resident wasm Graph handle for in-memory queries: opened once per load so
+    // repeated queries skip re-copying the buffer + re-decoding the dictionary.
+    graph: null,
     exploreReady: false,
     explorePage: 0,
     exploreCount: 0,
@@ -560,8 +563,12 @@
     state.lastResult = null; // a new graph invalidates any cached result
     updateSourcePill();
 
+    // Open the file ONCE into a resident handle; every later in-memory query
+    // reuses it instead of re-copying the buffer and re-decoding the dictionary.
     if (onPhase) { onPhase("Opening file & loading dictionaries…"); await tick(); }
-    const info = JSON.parse(W().info(bytes));
+    if (state.graph) { state.graph.free(); state.graph = null; }
+    state.graph = new (W().Graph)(bytes);
+    const info = JSON.parse(state.graph.info());
     // info() already carries the named-graph count, so we avoid a second full
     // open just to call graph_names() (a meaningful saving on a big cached file).
     const graphText = info.namedGraphs ? " | graphs " + info.namedGraphs : "";
@@ -576,7 +583,7 @@
       schema = JSON.parse(W().schema_packed(bytes));
     } catch (_e) {
       if (onPhase) { onPhase("Building schema (classes & relations)…"); await tick(); }
-      schema = JSON.parse(W().schema(bytes));
+      schema = JSON.parse(state.graph.schema());
     }
     state.schema = schema;
     state.exploreClass = null;
@@ -640,6 +647,7 @@
   function enterRemote(url, datasetKey) {
     if (!url) return;
     state.bytes = null;
+    if (state.graph) { state.graph.free(); state.graph = null; }
     state.remote = { url };
     state.activeSource = "remote";
     state.schema = null;
@@ -1199,7 +1207,7 @@
     const tp = currentTypePredicate();
     if (tp === RDF_TYPE) return ((state.schema && state.schema.classes) || []).slice(0, 12);
     try {
-      const res = JSON.parse(W().query(state.bytes,
+      const res = JSON.parse(state.graph.query(
         `SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s ${tp} ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 12`, "table"));
       return (res.rows || []).map((r) => [r.c, (String(r.n).match(/\d+/) || ["?"])[0]]);
     } catch (e) { return []; }
@@ -1212,7 +1220,7 @@
       const via = tp === RDF_TYPE ? "rdf:type" : shorten(localName(tp), 24);
       $("exploreClasses").innerHTML =
         `<p class="microcopy">No ${esc(via)} classes in this graph — showing raw triples.</p>`;
-      const res = JSON.parse(W().query(state.bytes, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 300", "table"));
+      const res = JSON.parse(state.graph.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 300", "table"));
       $("exploreTable").innerHTML = renderTable(res.vars || [], res.rows || []);
       return;
     }
@@ -1234,7 +1242,7 @@
         return JSON.parse(out.json);
       });
     }
-    return Promise.resolve(JSON.parse(W().query(state.bytes, q, "table")));
+    return Promise.resolve(JSON.parse(state.graph.query(q, "table")));
   }
 
   // Render the class chips and wire each to open that class at page 0. Shared by
@@ -1343,7 +1351,7 @@
   function renderPyramid() {
     let tree;
     try {
-      tree = JSON.parse(W().pyramid_tree(state.bytes));
+      tree = JSON.parse(state.graph.pyramid_tree());
     } catch (e) {
       $("pyramidNote").textContent = "pyramid error: " + String(e);
       return;
@@ -1450,7 +1458,7 @@
     if (!state.bytes) return;
     let lay;
     try {
-      lay = JSON.parse(W().file_layout(state.bytes));
+      lay = JSON.parse(state.graph.file_layout());
     } catch (e) {
       $("layoutNote").textContent = "layout error: " + String(e);
       return;
@@ -2016,7 +2024,7 @@
     if (fmt === "graph") {
       let triples = triplesForGraph(res);
       if (!triples.length && res.kind === "construct" && res.format) {
-        const rerun = JSON.parse(W().query(state.bytes, $("q").value, "table"));
+        const rerun = JSON.parse(state.graph.query($("q").value, "table"));
         triples = triplesForGraph(rerun);
       }
       return renderGraph(triples);
@@ -2186,11 +2194,13 @@
         // (any query returning values) fall back to the whole index — run,
         // and *say so* rather than refusing.
         try {
+          // The progressive (summary-only) reader stays a free function — it
+          // reads small ranges from the buffer, not the resident index.
           raw = W().progressive_query(state.bytes, q);
         } catch (pe) {
           const m = String(pe);
           if (m.includes("not exactly answerable") || m.includes("no pyramid summary")) {
-            raw = W().query(state.bytes, q, queryFmt);
+            raw = state.graph.query(q, queryFmt);
             fellBack = true;
           } else {
             throw pe;
@@ -2198,9 +2208,9 @@
         }
       } else if (strategy === "community") {
         const roundText = $("round").value.trim();
-        raw = W().query_communities(state.bytes, q, roundText === "" ? undefined : Number(roundText));
+        raw = state.graph.query_communities(q, roundText === "" ? undefined : Number(roundText));
       } else {
-        raw = W().query(state.bytes, q, queryFmt);
+        raw = state.graph.query(q, queryFmt);
       }
       const res = JSON.parse(raw);
       const summary = renderResult(res, strategy !== "whole" && fmt === "graph" ? "table" : fmt);
@@ -2292,7 +2302,7 @@
     const fmt = $("shaclFormat").value;
     const t0 = performance.now();
     try {
-      const text = W().shacl(state.bytes, shapes, null, fmt);
+      const text = state.graph.shacl(shapes, null, fmt);
       const dt = performance.now() - t0;
       if (fmt === "json") {
         const report = JSON.parse(text);
@@ -2352,7 +2362,7 @@
         return;
       }
       const schema = JSON.parse(W().check_schema(state.bytes));
-      const full = JSON.parse(W().reason(state.bytes, null));
+      const full = JSON.parse(state.graph.reason(null));
       const dt = performance.now() - t0;
       $("coherenceOut").innerHTML =
         block("Schema (Tier-0, index-free)", "subClassOf cycles + unsatisfiable classes, from the schema pyramid", schema.coherent, schema.schemaPoints) +
@@ -2395,7 +2405,7 @@
     const reverse = $("reachReverse").checked;
     const t0 = performance.now();
     try {
-      const results = JSON.parse(W().reach(state.bytes, pred, JSON.stringify(seeds), reverse));
+      const results = JSON.parse(state.graph.reach(pred, JSON.stringify(seeds), reverse));
       const dt = performance.now() - t0;
       const rows = results.map((r) => {
         if (r.error) return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td colspan="2">${esc(r.error)}</td></tr>`;
@@ -2572,7 +2582,7 @@
     const object = optText("whyObject");
     const t0 = performance.now();
     try {
-      const out = JSON.parse(W().why_triples(state.bytes, subject, predicate, object));
+      const out = JSON.parse(state.graph.why_triples(subject, predicate, object));
       const dt = performance.now() - t0;
       renderProvenance(out);
       $("whyMeta").textContent = `${out.resultCount} match(es) | ${dt.toFixed(1)} ms`;

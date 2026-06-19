@@ -157,6 +157,142 @@ pub fn schema_packed(bytes: &[u8]) -> Result<String, JsValue> {
     Ok(json!({ "classes": classes, "relations": relations }).to_string())
 }
 
+/// A `.rete` opened **once** and kept resident, so a client (the playground's
+/// cached/in-memory mode) can run many queries on a big file without re-copying
+/// the whole buffer into wasm and re-decoding its dictionary on every call. The
+/// methods mirror the free functions above but operate on the already-open
+/// [`Rete`]. The few index-free readers (`schema_packed`, `progressive_query`,
+/// `check_schema`) stay free functions — they read small ranges from the buffer
+/// and are called rarely (once at load / on demand), so a handle buys little.
+#[wasm_bindgen]
+pub struct Graph {
+    rete: Rete,
+    file_len: usize,
+}
+
+#[wasm_bindgen]
+impl Graph {
+    /// Open a `.rete` image and keep it resident for repeated querying.
+    #[wasm_bindgen(constructor)]
+    pub fn new(bytes: &[u8]) -> Result<Graph, JsValue> {
+        Ok(Graph {
+            rete: open(bytes)?,
+            file_len: bytes.len(),
+        })
+    }
+
+    /// See [`info`].
+    pub fn info(&self) -> String {
+        let h = self.rete.header();
+        format!(
+            r#"{{"quads":{},"terms":{},"pyramidLevels":{},"namedGraphs":{}}}"#,
+            h.quad_count,
+            h.term_count,
+            h.pyramid_levels,
+            self.rete.graph_names().len()
+        )
+    }
+
+    /// See [`graph_names`].
+    pub fn graph_names(&self) -> Result<String, JsValue> {
+        serde_json::to_string(&self.rete.graph_names()).map_err(err)
+    }
+
+    /// See [`query`].
+    pub fn query(&self, query: &str, format: &str) -> Result<String, JsValue> {
+        let v = query_value(&self.rete, query, format)?;
+        serde_json::to_string(&v).map_err(err)
+    }
+
+    /// See [`query_triples`].
+    pub fn query_triples(
+        &self,
+        subject: Option<String>,
+        predicate: Option<String>,
+        object: Option<String>,
+    ) -> Result<String, JsValue> {
+        let rows = self
+            .rete
+            .query(subject.as_deref(), predicate.as_deref(), object.as_deref());
+        serde_json::to_string(&rows).map_err(err)
+    }
+
+    /// See [`why_triples`].
+    pub fn why_triples(
+        &self,
+        subject: Option<String>,
+        predicate: Option<String>,
+        object: Option<String>,
+    ) -> Result<String, JsValue> {
+        use serde_json::json;
+        let results = self.rete.query_with_provenance(
+            subject.as_deref(),
+            predicate.as_deref(),
+            object.as_deref(),
+        );
+        let out = json!({
+            "pattern": { "subject": subject, "predicate": predicate, "object": object },
+            "resultCount": results.len(),
+            "results": results.iter().map(provenance_json).collect::<Vec<_>>(),
+        });
+        serde_json::to_string(&out).map_err(err)
+    }
+
+    /// See [`schema`] — the live (scanning) profile; prefer `schema_packed` when
+    /// the file carries a pyramid.
+    pub fn schema(&self) -> Result<String, JsValue> {
+        serde_json::to_string(&serde_json::json!({
+            "classes": schema_classes(&self.rete),
+            "relations": schema_summary(&self.rete),
+        }))
+        .map_err(err)
+    }
+
+    /// See [`query_communities`].
+    pub fn query_communities(&self, query: &str, round: Option<usize>) -> Result<String, JsValue> {
+        query_communities_value(&self.rete, query, round)
+    }
+
+    /// See [`reach`].
+    pub fn reach(&self, predicate: &str, seeds: &str, reverse: bool) -> Result<String, JsValue> {
+        reach_rete(&self.rete, predicate, seeds, reverse)
+    }
+
+    /// See [`shacl`].
+    pub fn shacl(
+        &self,
+        shapes_turtle: &str,
+        graph: Option<String>,
+        format: &str,
+    ) -> Result<String, JsValue> {
+        shacl_rete(&self.rete, shapes_turtle, graph.as_deref(), format)
+    }
+
+    /// See [`reason`].
+    pub fn reason(&self, graph: Option<String>) -> String {
+        let base = self.rete.dump(graph.as_deref());
+        reasoning_json(&rete_core::reason(&base), None)
+    }
+
+    /// See [`pyramid_tree`].
+    pub fn pyramid_tree(&self) -> Result<String, JsValue> {
+        pyramid_tree_value(&self.rete)
+    }
+
+    /// See [`file_layout`].
+    pub fn file_layout(&self) -> Result<String, JsValue> {
+        use serde_json::json;
+        let segments: Vec<serde_json::Value> = self
+            .rete
+            .file_layout()
+            .iter()
+            .map(|s| json!({ "kind": s.kind, "label": s.label, "offset": s.offset, "len": s.len }))
+            .collect();
+        serde_json::to_string(&json!({ "fileLength": self.file_len, "segments": segments }))
+            .map_err(err)
+    }
+}
+
 /// Parse just the 128-byte header and report the byte ranges a *progressive*
 /// client needs for the overview — the dictionary and the pyramid summary — plus
 /// the (large) index range it can skip. JSON:
@@ -667,10 +803,18 @@ pub fn query_communities(
     query: &str,
     round: Option<usize>,
 ) -> Result<String, JsValue> {
+    query_communities_value(&open(bytes)?, query, round)
+}
+
+/// [`query_communities`] against an already-open [`Rete`] (shared with [`Graph`]).
+fn query_communities_value(
+    rete: &Rete,
+    query: &str,
+    round: Option<usize>,
+) -> Result<String, JsValue> {
     use serde_json::{json, Map, Value};
-    let rete = open(bytes)?;
     let (mut vars, solutions, partials) =
-        eval_select_communities(&rete, query, round).map_err(err)?;
+        eval_select_communities(rete, query, round).map_err(err)?;
     if vars.is_empty() {
         let mut seen = std::collections::BTreeSet::new();
         for s in &solutions {
@@ -726,9 +870,13 @@ pub fn file_layout(bytes: &[u8]) -> Result<String, JsValue> {
 /// `{ "rounds": N, "levels": [ [ { "id", "nodes", "triples", "parent" } ] ] }`.
 #[wasm_bindgen]
 pub fn pyramid_tree(bytes: &[u8]) -> Result<String, JsValue> {
+    pyramid_tree_value(&open(bytes)?)
+}
+
+/// [`pyramid_tree`] against an already-open [`Rete`] (shared with [`Graph`]).
+fn pyramid_tree_value(rete: &Rete) -> Result<String, JsValue> {
     use serde_json::json;
     use std::collections::BTreeMap;
-    let rete = open(bytes)?;
     let dict = rete.dictionary();
     let ids = rete.match_ids((None, None, None));
     let g = project_graph(dict, &ids);
