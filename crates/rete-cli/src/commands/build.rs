@@ -177,6 +177,59 @@ pub(crate) fn build(
     Ok(())
 }
 
+/// Rebuild a `.rete`'s pyramid **in place**: read every triple straight from the
+/// file and re-assemble it — with a schema pyramid, optionally keyed on a custom
+/// type predicate — without the N-Quads text round-trip that `export | build`
+/// needs. For giving a large, pre-pyramid `.rete` (e.g. a 1 GB Wikidata slice
+/// built before the schema pyramid existed) its pyramid in one pass.
+pub(crate) fn repyramid(
+    input: &str,
+    output: &str,
+    type_predicate: Option<&str>,
+) -> anyhow::Result<()> {
+    let bytes = std::fs::read(input)?;
+    let rete = rete_core::Rete::open(&bytes)?;
+    // The decoded graph owns its sections, so the raw file image is done — free
+    // it before building so the (large) assembly has the headroom.
+    drop(bytes);
+
+    let mut quads: Vec<ingest::RawQuad> = rete
+        .dump(None)
+        .into_iter()
+        .map(|(s, p, o)| (s, p, o, None))
+        .collect();
+    let named: Vec<String> = rete.graph_names().iter().map(|g| g.to_string()).collect();
+    for g in &named {
+        for (s, p, o) in rete.dump(Some(g)) {
+            quads.push((s, p, o, Some(g.clone())));
+        }
+    }
+    drop(rete); // only the quads are needed to re-assemble.
+
+    let (out_bytes, stats) =
+        ingest::assemble_dataset_with_opts(&quads, true, type_predicate, |_| Vec::new());
+    std::fs::write(output, &out_bytes)?;
+    if stats.named_graphs > 0 {
+        println!(
+            "repyramid: wrote {output} — {} quads ({} default + {} named), {} terms, {} bytes",
+            stats.statements,
+            stats.default_triples,
+            stats.named_graphs,
+            stats.terms,
+            out_bytes.len()
+        );
+    } else {
+        println!(
+            "repyramid: wrote {output} — {} triples, {} terms, {} pyramid level(s), {} bytes",
+            stats.default_triples,
+            stats.terms,
+            stats.pyramid_levels,
+            out_bytes.len()
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
