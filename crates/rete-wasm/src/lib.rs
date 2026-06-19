@@ -293,6 +293,52 @@ impl Graph {
     }
 }
 
+/// A remote `.rete` opened **once over HTTP range** and kept resident in the
+/// worker, so repeated queries on the same URL reuse (a) the block cache — any
+/// 64 KiB block fetched once is served from memory by [`BlockCacheReader`] — and
+/// (b) the lazily faulted index tiles + decoded dictionary chunks that live
+/// inside the resident [`Rete`]. The free [`sparql_url`] re-opens the file on
+/// every call, so its block cache dies after one query; this handle keeps it.
+/// The counting reader stays reachable so the worker can read cumulative
+/// bytes/requests and show how little a cache-hit query actually fetched.
+/// **Worker-only** (synchronous range-read XHR).
+#[wasm_bindgen]
+pub struct RemoteGraph {
+    reader: std::sync::Arc<CountingReader<XhrRangeReader>>,
+    rete: Rete,
+}
+
+#[wasm_bindgen]
+impl RemoteGraph {
+    /// Open a remote `.rete` over HTTP range and keep it resident for repeated
+    /// querying. The first query faults in the dictionary chunks + index tiles it
+    /// needs; later queries on this handle reuse them and the block cache.
+    #[wasm_bindgen(constructor)]
+    pub fn new(url: &str) -> Result<RemoteGraph, JsValue> {
+        let (reader, rete) = open_url(url)?;
+        Ok(RemoteGraph { reader, rete })
+    }
+
+    /// `{ fileLength, bytes, requests }` — CUMULATIVE physical fetches since this
+    /// session opened. The worker diffs successive calls to report a single
+    /// query's traffic (a fully cached re-run adds ~0).
+    pub fn stats(&self) -> String {
+        format!(
+            r#"{{"fileLength":{},"bytes":{},"requests":{}}}"#,
+            self.reader.len(),
+            self.reader.bytes_read(),
+            self.reader.requests()
+        )
+    }
+
+    /// See [`sparql_url`] — same query, but over the resident, cached handle.
+    pub fn query(&self, query: &str, format: &str) -> Result<String, JsValue> {
+        let v = query_value(&self.rete, query, format)?;
+        incomplete_guard(&self.rete, "query")?;
+        serde_json::to_string(&v).map_err(err)
+    }
+}
+
 /// Parse just the 128-byte header and report the byte ranges a *progressive*
 /// client needs for the overview — the dictionary and the pyramid summary — plus
 /// the (large) index range it can skip. JSON:
@@ -764,9 +810,11 @@ fn why_triples_rete(
 
 #[wasm_bindgen]
 pub fn sparql_url(url: &str, query: &str, format: &str) -> Result<String, JsValue> {
-    let reader = std::sync::Arc::new(CountingReader::new(XhrRangeReader::open(url)?));
+    // Use the block-caching `open_url` seam so scattered range reads within this
+    // one query that land in the same 64 KiB block fetch it once. (The resident
+    // `RemoteGraph` extends this reuse across queries.)
+    let (reader, rete) = open_url(url)?;
     let file_length = reader.len();
-    let rete = Rete::open_ranged_lazy(reader.clone()).map_err(err)?;
     let mut v = query_value(&rete, query, format)?;
     if rete.index_incomplete() {
         return Err(JsValue::from_str(
