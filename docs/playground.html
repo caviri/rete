@@ -303,7 +303,7 @@ label.file-button:hover {
   gap: 18px;
   padding: 14px 20px 8px;
   background: var(--paper);
-  transition: padding .14s ease;
+  transition: padding .24s ease, box-shadow .24s ease;
 }
 
 .ds-header.condensed {
@@ -314,8 +314,12 @@ label.file-button:hover {
   box-shadow: 0 6px 16px rgba(32, 47, 41, .05);
 }
 
+/* Collapse the tagline by animating its height/opacity (not display:none) so the
+   header shrinks smoothly on scroll instead of snapping. */
 .ds-header.condensed .ds-tagline {
-  display: none;
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
 }
 
 .ds-header.condensed .ds-title {
@@ -337,6 +341,7 @@ label.file-button:hover {
   line-height: 1.14;
   font-weight: 700;
   color: var(--ink);
+  transition: font-size .24s ease;
 }
 
 .ds-tagline {
@@ -344,6 +349,10 @@ label.file-button:hover {
   color: var(--muted);
   font-size: 13px;
   max-width: 78ch;
+  max-height: 60px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height .24s ease, opacity .2s ease, margin-top .24s ease;
 }
 
 .ds-header-meta {
@@ -360,13 +369,15 @@ label.file-button:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* Stretch to the row and stick just below the headers so the rail stays in
-     view; --rail-top (set in JS to the combined header height) keeps it clear
-     of the topbar + dataset header. History then pins to the bottom. */
-  align-self: stretch;
+  /* A fixed-height column spanning from just below the (resizing) headers to the
+     bottom of the viewport, sticky so it stays in view; --rail-top (set in JS to
+     the combined header height) tracks the header as it condenses, and History
+     pins to the bottom. z-index lifts the rail — and its hover tooltips, which
+     spill to the right — above the workbench so they aren't clipped by it. */
   position: sticky;
   top: var(--rail-top, 96px);
-  max-height: calc(100vh - var(--rail-top, 96px) - 14px);
+  height: calc(100vh - var(--rail-top, 96px) - 14px);
+  z-index: 12;
 }
 
 /* Group captions in the rail (Ask / Inspect) — small uppercase labels. */
@@ -561,16 +572,17 @@ section,
 .lib-expand {
   display: none;
   align-self: start;
-  width: 26px;
-  min-height: 64px;
-  padding: 8px 0;
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--surface);
   color: var(--muted);
-  font-size: 15px;
+  font-size: 14px;
+  line-height: 1;
   cursor: pointer;
-  writing-mode: vertical-rl;
 }
 .lib-expand:hover { border-color: var(--accent); color: var(--accent-dark); background: var(--side); }
 
@@ -1664,7 +1676,7 @@ pre {
     position: static;
     flex-direction: row;
     flex-wrap: wrap;
-    max-height: none;
+    height: auto;
   }
 
   .mode-rail button {
@@ -5370,6 +5382,20 @@ ex:ApplicationDependencyShape
         }
       });
     }
+    // Generic call to any *_url wasm export (schema_url, check_schema_url, …).
+    // These do synchronous range-read XHR, which is worker-only — so the main
+    // thread MUST route them here, never call wasm_bindgen.*_url directly.
+    if (m.type === "call") {
+      pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
+      Promise.resolve(ready).then(function () {
+        try {
+          var json = wasm_bindgen[m.fn].apply(null, m.args);
+          self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
+        } catch (err) {
+          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
+        }
+      });
+    }
   };
 })();`;
 
@@ -5488,6 +5514,17 @@ ex:ApplicationDependencyShape
       const id = ++remoteSeq;
       remotePending.set(id, { resolve, reject });
       remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table" });
+    }));
+  }
+
+  // Run any *_url wasm export (schema_url, check_schema_url, …) in the worker —
+  // they use synchronous range-read XHR, which a document can't do. Resolves to
+  // { json, log } like remoteSparql.
+  function remoteCall(fn, ...args) {
+    return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
+      const id = ++remoteSeq;
+      remotePending.set(id, { resolve, reject });
+      remoteWorker.postMessage({ type: "call", id, fn, args });
     }));
   }
 
@@ -6415,21 +6452,21 @@ ex:ApplicationDependencyShape
   function ensureRemoteSchema() {
     if (!state.remote || state.schema) return;
     $("schemaOut").innerHTML = `<div class="note">Reading the schema pyramid over HTTP range…</div>`;
-    setTimeout(() => {
-      try {
-        const schema = JSON.parse(W().schema_url(state.remote.url));
-        state.schema = schema;
-        renderSchema(schema);
-        const r = schema.remote || {};
-        $("schemaOut").innerHTML = `<div class="banner">${(schema.classes || []).length} classes and ${(schema.relations || []).length} class-level relations — read from the schema pyramid over HTTP range (${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)}, ${r.requests || 0} request(s), no download).</div>`;
-      } catch (e) {
-        if (/no schema pyramid/i.test(String(e))) {
-          $("schemaOut").innerHTML = `<div class="note">This graph carries no schema pyramid (no typed classes), so there's no schema to summarize over range. Use <strong>Cache remote</strong> to compute one by scanning.</div>`;
-        } else {
-          showError("schemaOut", "Remote schema failed: " + String(e));
-        }
+    // schema_url does synchronous range XHR → must run in the worker.
+    remoteCall("schema_url", state.remote.url).then((out) => {
+      const schema = JSON.parse(out.json);
+      state.schema = schema;
+      renderSchema(schema);
+      const r = schema.remote || {};
+      $("schemaOut").innerHTML = `<div class="banner">${(schema.classes || []).length} classes and ${(schema.relations || []).length} class-level relations — read from the schema pyramid over HTTP range (${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)}, ${r.requests || 0} request(s), no download).</div>`;
+    }).catch((e) => {
+      const msg = String(e && e.message || e);
+      if (/no schema pyramid/i.test(msg)) {
+        $("schemaOut").innerHTML = `<div class="note">This graph carries no schema pyramid (no typed classes), so there's no schema to summarize over range. Use <strong>Cache remote</strong> to compute one by scanning.</div>`;
+      } else {
+        showError("schemaOut", "Remote schema failed: " + msg);
       }
-    }, 0);
+    });
   }
 
   // --- Explore: entity tables + the community pyramid -------------------
@@ -6465,21 +6502,21 @@ ex:ApplicationDependencyShape
     if (state.schema) return renderRemoteExploreClasses();
     $("exploreClasses").innerHTML = `<p class="microcopy">Reading the schema over HTTP range…</p>`;
     $("exploreTable").innerHTML = "";
-    setTimeout(() => {
-      try {
-        state.schema = JSON.parse(W().schema_url(state.remote.url));
-        renderRemoteExploreClasses();
-      } catch (e) {
-        if (/no schema pyramid/i.test(String(e))) {
-          $("exploreClasses").innerHTML =
-            `<p class="microcopy">This remote graph carries no schema pyramid, so its classes can't be ` +
-            `listed without scanning the whole file. Use <strong>Cache remote</strong> to explore it fully.</p>`;
-          $("exploreTable").innerHTML = "";
-        } else {
-          showError("exploreTable", "Remote schema read failed: " + String(e));
-        }
+    // schema_url does synchronous range XHR → must run in the worker.
+    remoteCall("schema_url", state.remote.url).then((out) => {
+      state.schema = JSON.parse(out.json);
+      renderRemoteExploreClasses();
+    }).catch((e) => {
+      const msg = String(e && e.message || e);
+      if (/no schema pyramid/i.test(msg)) {
+        $("exploreClasses").innerHTML =
+          `<p class="microcopy">This remote graph carries no schema pyramid, so its classes can't be ` +
+          `listed without scanning the whole file. Use <strong>Cache remote</strong> to explore it fully.</p>`;
+        $("exploreTable").innerHTML = "";
+      } else {
+        showError("exploreTable", "Remote schema read failed: " + msg);
       }
-    }, 0);
+    });
   }
 
   // Class buttons for a remote graph, sourced from the baked schema (no scan).
@@ -7635,22 +7672,12 @@ ex:ApplicationDependencyShape
         `<p><strong>${verdict}</strong></p>` +
         (items ? `<ul>${items}</ul>` : "") + `</section>`;
     };
-    try {
-      if (remote) {
-        // Lazy: Tier-0 schema coherence read from the schema pyramid (the card)
-        // over HTTP range — never touches the index or dictionary, no download.
-        let schema;
-        try {
-          schema = JSON.parse(W().check_schema_url(remote));
-        } catch (e) {
-          if (/no schema pyramid/i.test(String(e))) {
-            $("coherenceOut").innerHTML = `<div class="note">This graph carries no schema pyramid (no typed classes), so there's nothing to check at the schema tier. Use <strong>Cache remote</strong> to run the full instance reasoner.</div>`;
-            $("coherenceMeta").textContent = "";
-            updateResultVisibility();
-            return;
-          }
-          throw e;
-        }
+    if (remote) {
+      // Lazy: Tier-0 schema coherence read from the schema pyramid (the card)
+      // over HTTP range. check_schema_url does synchronous range XHR → worker.
+      $("coherenceOut").innerHTML = `<div class="note">Checking schema coherence over HTTP range…</div>`;
+      remoteCall("check_schema_url", remote).then((out) => {
+        const schema = JSON.parse(out.json);
         const dt = performance.now() - t0;
         const r = schema.remote || {};
         $("coherenceOut").innerHTML =
@@ -7662,8 +7689,19 @@ ex:ApplicationDependencyShape
           `${schema.coherent ? "schema coherent" : "schema incoherent"} | ` +
           `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} · ${r.requests || 0} req · ${dt.toFixed(0)} ms`;
         updateResultVisibility();
-        return;
-      }
+      }).catch((e) => {
+        const msg = String(e && e.message || e);
+        if (/no schema pyramid/i.test(msg)) {
+          $("coherenceOut").innerHTML = `<div class="note">This graph carries no schema pyramid (no typed classes), so there's nothing to check at the schema tier. Use <strong>Cache remote</strong> to run the full instance reasoner.</div>`;
+          $("coherenceMeta").textContent = "";
+        } else {
+          showError("coherenceOut", "Remote coherence failed: " + msg);
+        }
+        updateResultVisibility();
+      });
+      return;
+    }
+    try {
       const schema = JSON.parse(W().check_schema(state.bytes));
       const full = JSON.parse(state.graph.reason(null));
       const dt = performance.now() - t0;
