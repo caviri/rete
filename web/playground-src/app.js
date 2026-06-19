@@ -45,6 +45,15 @@
   const REMOTE_HARNESS = `
 ;(function () {
   var ready = null, pReq = 0, pBytes = 0, pId = 0, qStart = 0, fetchLog = [];
+  // Resident remote sessions, one per URL: a RemoteGraph that keeps the file's
+  // block cache + faulted index tiles + decoded dictionary alive across queries,
+  // so re-running or refining a query on the same dataset refetches almost
+  // nothing. Without this each query re-opened the file and refetched its blocks.
+  var sessions = {};
+  function _session(url) {
+    if (!sessions[url]) sessions[url] = new wasm_bindgen.RemoteGraph(url);
+    return sessions[url];
+  }
   function _now() { return (typeof performance !== "undefined" ? performance.now() : Date.now()); }
   self._reteLog = function (e) { e.t = (_now() - qStart) | 0; if (fetchLog.length < 6000) fetchLog.push(e); };
   // The wasm calls reteProgress(bytes) after every physical range fetch (the
@@ -66,8 +75,21 @@
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
       Promise.resolve(ready).then(function () {
         try {
-          var json = wasm_bindgen.sparql_url(m.url, m.query, m.format);
-          self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
+          var g = _session(m.url);
+          var before = JSON.parse(g.stats());
+          var res = JSON.parse(g.query(m.query, m.format));
+          var after = JSON.parse(g.stats());
+          // Per-query physical traffic is the delta (a cache hit adds ~0); carry
+          // the session-cumulative too so the UI can show what the cache saved.
+          res.remote = {
+            fileLength: after.fileLength,
+            bytes: after.bytes - before.bytes,
+            requests: after.requests - before.requests,
+            sessionBytes: after.bytes,
+            sessionRequests: after.requests,
+            cached: (after.requests - before.requests) === 0
+          };
+          self.postMessage({ type: "result", id: m.id, ok: true, json: JSON.stringify(res), log: fetchLog });
         } catch (err) {
           self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
         }
@@ -2476,11 +2498,15 @@
         state.lastResult = { res, rowShaped: true, q, strategy: "remote", remote: true, dataset: state.dataset };
         const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
         const r = res.remote || {};
-        const pct = r.fileLength ? (100 * r.bytes / r.fileLength).toFixed(1) : "?";
         const dt = performance.now() - t0;
         updateReqLogBtn();
+        // Show this query's PHYSICAL fetch (cache misses only) plus what the
+        // resident session has cached so far — so a re-run visibly drops to ~0.
+        const cacheNote = r.cached
+          ? " — served from cache, 0 new bytes"
+          : (r.sessionBytes != null ? ` · ${formatBytes(r.sessionBytes)} cached this session` : "");
         $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
-          `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} (${pct}%) · ${dt.toFixed(0)} ms`;
+          `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} fetched${cacheNote} · ${dt.toFixed(0)} ms`;
         saveHistory({ query: q, format: fmt, strategy: "remote", dataset: "(remote)", ts: Date.now(), resultSummary: summary });
       }).catch((e) => {
         cleanup();
