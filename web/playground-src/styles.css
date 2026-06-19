@@ -1647,18 +1647,34 @@ pre {
 }
 
 @media (max-width: 860px) {
+  /* The topbar is flex, so it needs flex-wrap (not grid columns) to stop its
+     brand + actions overflowing the viewport on narrow screens. */
   .topbar {
-    grid-template-columns: 1fr;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+  .top-actions {
+    flex-wrap: wrap;
+    gap: 6px;
   }
 
   .dataset-picker {
     min-width: 100%;
   }
 
-  .console-shell,
+  /* Stack the 3-column shell as a plain flex column on narrow screens — far more
+     robust than a 1-col grid, whose track still grows to a wide item's min-width
+     (a long editor line / table) and drags the whole layout off-screen. Each
+     section becomes a full-width block that fits the viewport. */
+  .console-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .console-shell > * { min-width: 0; max-width: 100%; }
   .inspector,
   .schema-columns {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .library-panel {
@@ -1698,6 +1714,57 @@ pre {
     width: 100%;
     min-width: 0;
   }
+}
+
+/* Phones (portrait). Tighten chrome, let the topbar/header wrap, give controls
+   full-width touch targets, and keep everything inside the viewport. */
+@media (max-width: 560px) {
+  .topbar { padding: 8px 12px; }
+  .brand-sub { display: none; }
+  .brand-mark { font-size: 20px; }
+  .top-actions { width: 100%; }
+  /* The dataset chip grows to fill the row; its name truncates instead of pushing
+     the layout wide. */
+  .dataset-button { flex: 1 1 auto; min-width: 0; }
+  .dataset-button #dsName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The eject icon stays (tap to change dataset); its "Change dataset" label and
+     the Browser-API docs link are dropped to make room for Build. */
+  .dataset-button .ds-eject { font-size: 0; }
+  .dataset-button .ds-eject-ic { font-size: 13px; }
+  .docs-link { display: none; }
+
+  .ds-header { flex-direction: column; align-items: stretch; gap: 6px; padding: 10px 12px 4px; }
+  .ds-header.condensed { gap: 2px; }
+  .ds-header-meta { justify-content: flex-start; flex-wrap: wrap; }
+  .ds-title { font-size: 18px; }
+  .ds-header.condensed .ds-title { font-size: 15px; }
+  .ds-tagline { font-size: 12px; }
+
+  .console-shell { padding: 10px 10px 26px; gap: 10px; }
+
+  /* Compact mode-rail buttons so they wrap to ~4 per row. */
+  .mode-rail { gap: 5px; }
+  .mode-rail button { padding: 7px 9px; gap: 5px; }
+  .mode-rail .rail-ic { width: 18px; height: 18px; }
+  .mode-rail .rail-name { font-size: 11px; }
+
+  /* Run becomes a full-width button on its own line. */
+  .action-row { gap: 8px; }
+  .action-row .run-right { margin-left: 0; }
+  #run { flex: 1 1 100%; padding-top: 11px; padding-bottom: 11px; }
+
+  h1 { font-size: 20px; }
+  .panel > .editor-head h1 { font-size: 19px; }
+
+  /* Modals go full-bleed on a phone. */
+  .modal, .hist-modal, .cache-modal, .lib-modal, .ds-modal, .reqmodal, .help-modal {
+    width: 100% !important;
+    max-width: 100%;
+  }
+
+  /* Belt-and-braces against a stray horizontal scrollbar. `clip` (not `hidden`)
+     so it doesn't create a scroll container that would break sticky headers. */
+  body { overflow-x: clip; }
 }
 
 /* Network query spinner — a hub firing packets to nodes while a query runs. */
