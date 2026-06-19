@@ -213,6 +213,47 @@
     }));
   }
 
+  // Run a single-arg remote read (schema_url / check_schema_url) with LIVE
+  // progress painted into `el`: an animated bar, a running range-request + bytes
+  // + elapsed line, and a step log fed by the worker's per-fetch events. The
+  // first read also spins up the query worker, so the feedback matters. Resolves
+  // the remoteCall promise ({ json, log }).
+  function remoteRead(fn, url, el, caption, hint) {
+    const t0 = performance.now();
+    const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
+    const ofSize = meta.size ? " of " + meta.size : "";
+    let lastReq = 0, lastBytes = 0, logged = 0;
+    el.innerHTML =
+      `<div class="range-read">` +
+        `<div class="range-read-cap">${esc(caption)}</div>` +
+        `<div class="cache-bar indeterminate"><div class="cache-bar-fill"></div></div>` +
+        `<div class="range-read-meta" id="rrMeta"></div>` +
+        (hint ? `<div class="range-read-hint">${esc(hint)}</div>` : "") +
+        `<div class="cache-steps" id="rrSteps"><div class="cache-step active">Starting the query worker…</div></div>` +
+      `</div>`;
+    const metaEl = el.querySelector("#rrMeta");
+    const stepsEl = el.querySelector("#rrSteps");
+    const paint = () => {
+      const dt = (performance.now() - t0) / 1000;
+      if (metaEl) metaEl.textContent = `${lastReq} range request(s) · ${formatBytes(lastBytes)}${ofSize} fetched · ${dt.toFixed(1)}s`;
+    };
+    paint();
+    const timer = setInterval(paint, 150);
+    const prev = remoteOnProgress;
+    remoteOnProgress = (m) => {
+      lastReq = m.requests; lastBytes = m.bytes;
+      if (stepsEl && m.requests > logged) {
+        stepsEl.querySelectorAll(".cache-step.active").forEach((s) => s.classList.replace("active", "done"));
+        stepsEl.insertAdjacentHTML("beforeend",
+          `<div class="cache-step active">Range request #${m.requests} — ${formatBytes(m.bytes)} fetched</div>`);
+        logged = m.requests;
+      }
+      paint();
+    };
+    const cleanup = () => { clearInterval(timer); remoteOnProgress = prev; };
+    return remoteCall(fn, url).then((out) => { cleanup(); return out; }, (e) => { cleanup(); throw e; });
+  }
+
   const BUILD_SAMPLE = `# Paste N-Triples here (or open a file), pick the format, then Build.
 <http://ex/Alice> <http://ex/knows> <http://ex/Bob> .
 <http://ex/Bob> <http://ex/knows> <http://ex/Carol> .
@@ -1136,9 +1177,10 @@
   // card) over HTTP range — a Schema view of a remote graph, no download.
   function ensureRemoteSchema() {
     if (!state.remote || state.schema) return;
-    $("schemaOut").innerHTML = `<div class="note">Reading the schema pyramid over HTTP range…</div>`;
-    // schema_url does synchronous range XHR → must run in the worker.
-    remoteCall("schema_url", state.remote.url).then((out) => {
+    // schema_url does synchronous range XHR → run in the worker, with live progress.
+    remoteRead("schema_url", state.remote.url, $("schemaOut"),
+      "Reading the schema pyramid over HTTP range…",
+      "The schema block (classes & relations) reads in ~2–3 small range requests — no download.").then((out) => {
       const schema = JSON.parse(out.json);
       state.schema = schema;
       renderSchema(schema);
@@ -1185,10 +1227,11 @@
     $("layoutViz").innerHTML = "";
     $("layoutTable").innerHTML = "";
     if (state.schema) return renderRemoteExploreClasses();
-    $("exploreClasses").innerHTML = `<p class="microcopy">Reading the schema over HTTP range…</p>`;
     $("exploreTable").innerHTML = "";
-    // schema_url does synchronous range XHR → must run in the worker.
-    remoteCall("schema_url", state.remote.url).then((out) => {
+    // schema_url does synchronous range XHR → run in the worker, with live progress.
+    remoteRead("schema_url", state.remote.url, $("exploreClasses"),
+      "Reading the schema over HTTP range…",
+      "The schema block (classes & relations) reads in ~2–3 small range requests — no download.").then((out) => {
       state.schema = JSON.parse(out.json);
       renderRemoteExploreClasses();
     }).catch((e) => {
@@ -2360,8 +2403,9 @@
     if (remote) {
       // Lazy: Tier-0 schema coherence read from the schema pyramid (the card)
       // over HTTP range. check_schema_url does synchronous range XHR → worker.
-      $("coherenceOut").innerHTML = `<div class="note">Checking schema coherence over HTTP range…</div>`;
-      remoteCall("check_schema_url", remote).then((out) => {
+      remoteRead("check_schema_url", remote, $("coherenceOut"),
+        "Checking schema coherence over HTTP range…",
+        "Tier-0: subClassOf cycles + unsatisfiable classes, read in ~2–3 range requests — no index or dictionary bytes.").then((out) => {
         const schema = JSON.parse(out.json);
         const dt = performance.now() - t0;
         const r = schema.remote || {};
@@ -2869,10 +2913,11 @@
       const setTop = () => {
         const tb = topbar ? topbar.offsetHeight : 0;
         dsHeader.style.top = tb + "px";
-        // The mode rail sticks just below both (sticky) headers — expose their
-        // combined height so the rail's CSS top/max-height track the dataset
-        // header as it condenses on scroll.
-        document.documentElement.style.setProperty("--rail-top", tb + dsHeader.offsetHeight + 6 + "px");
+        // The mode rail sits just below both (sticky) headers — expose their
+        // combined height PLUS the console-shell's 12px top padding (so this
+        // equals the rail's actual top) for the rail's CSS top/min-height. It
+        // tracks the dataset header as it condenses on scroll.
+        document.documentElement.style.setProperty("--rail-top", tb + dsHeader.offsetHeight + 12 + "px");
       };
       setTop();
       window.addEventListener("resize", setTop, { passive: true });
