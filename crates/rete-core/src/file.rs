@@ -66,16 +66,48 @@ pub fn build_pyramid_meta_with(
         round,
         type_override,
     );
-    let meta = PyramidMeta::new(round as u32, summary, &[]).with_schema(
-        sp.class_hierarchy,
-        sp.level_rollups,
-        sp.level_links,
-        sp.descriptors,
-        sp.subclass_cycles,
-        sp.disjoint_pairs,
-        sp.equivalent_pairs,
-    );
+    let meta = PyramidMeta::new(round as u32, summary, &[])
+        .with_schema(
+            sp.class_hierarchy,
+            sp.level_rollups,
+            sp.level_links,
+            sp.descriptors,
+            sp.subclass_cycles,
+            sp.disjoint_pairs,
+            sp.equivalent_pairs,
+        )
+        .with_predicate_stats(compute_predicate_stats(triples));
     (meta.encode(), dend.rounds() as u16)
+}
+
+/// Per-predicate cardinality for the cost-based planner, in one pass over the
+/// triples (deduped, so a per-(subject,predicate) count is its distinct-object
+/// count). Returned sorted by predicate id for a reproducible encoding. Holds a
+/// transient `(subject -> count, object -> count)` map per predicate — O(triples)
+/// memory, freed before the file is written.
+fn compute_predicate_stats(triples: &[(u32, u32, u32)]) -> Vec<crate::meta::PredStat> {
+    use std::collections::HashMap;
+    #[allow(clippy::type_complexity)]
+    let mut acc: HashMap<u32, (HashMap<u32, u32>, HashMap<u32, u32>, u64)> = HashMap::new();
+    for &(s, p, o) in triples {
+        let e = acc.entry(p).or_default();
+        *e.0.entry(s).or_insert(0) += 1;
+        *e.1.entry(o).or_insert(0) += 1;
+        e.2 += 1;
+    }
+    let mut stats: Vec<crate::meta::PredStat> = acc
+        .into_iter()
+        .map(|(predicate, (subj, obj, count))| crate::meta::PredStat {
+            predicate,
+            count,
+            distinct_subjects: subj.len() as u64,
+            distinct_objects: obj.len() as u64,
+            max_objects_per_subject: subj.values().copied().max().unwrap_or(0),
+            max_subjects_per_object: obj.values().copied().max().unwrap_or(0),
+        })
+        .collect();
+    stats.sort_by_key(|p| p.predicate);
+    stats
 }
 
 /// No compression.
@@ -1344,6 +1376,15 @@ impl Rete {
             PyramidSlot::Resident(p) => p.as_ref(),
             PyramidSlot::Lazy { cell, .. } => cell.get().and_then(|o| o.as_ref()),
         }
+    }
+
+    /// Per-predicate planner statistics from the query-stats block — empty when
+    /// the file has none or the pyramid isn't resident (the lazy path doesn't
+    /// fault it just for stats). See [`crate::meta::PredStat`].
+    pub fn predicate_stats(&self) -> &[crate::meta::PredStat] {
+        self.pyramid_if_loaded()
+            .map(|p| p.predicate_stats.as_slice())
+            .unwrap_or(&[])
     }
 
     /// The default-graph permutation index.

@@ -33,6 +33,27 @@ use crate::varint::{read_uvarint, write_uvarint};
 
 /// The schema-pyramid section version tag (first byte of the v2 block).
 const SCHEMA_V2: u8 = 2;
+/// The query-stats block tag. Distinct from [`SCHEMA_V2`]; the block is
+/// length-prefixed and written *before* the schema block (which stays trailing,
+/// so `schema_meta_len` is unaffected). Index-free per-predicate cardinality the
+/// cost-based planner uses; old readers skip it via the length prefix.
+const QSTATS_V1: u8 = 3;
+
+/// Per-predicate cardinality statistics for the cost-based query planner —
+/// computed at build, range-fetched with the pyramid (index-free). `count` is the
+/// triple total; the distinct-subject/object counts and max multiplicities let
+/// the planner estimate a bound subject's/object's selectivity (`functional`
+/// iff `max_objects_per_subject == 1`, inverse-functional iff
+/// `max_subjects_per_object == 1`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PredStat {
+    pub predicate: u32,
+    pub count: u64,
+    pub distinct_subjects: u64,
+    pub distinct_objects: u64,
+    pub max_objects_per_subject: u32,
+    pub max_subjects_per_object: u32,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum MetaError {
@@ -129,6 +150,9 @@ pub struct PyramidMeta {
     pub disjoint_pairs: Vec<(String, String)>,
     /// `owl:equivalentClass` class pairs (canonical `(min, max)`).
     pub equivalent_pairs: Vec<(String, String)>,
+    // --- query-stats block (empty when not computed; independent of the schema) ---
+    /// Per-predicate cardinality for the planner; see [`PredStat`].
+    pub predicate_stats: Vec<PredStat>,
 }
 
 impl PyramidMeta {
@@ -151,6 +175,7 @@ impl PyramidMeta {
             subclass_cycles: Vec::new(),
             disjoint_pairs: Vec::new(),
             equivalent_pairs: Vec::new(),
+            predicate_stats: Vec::new(),
         }
     }
 
@@ -173,6 +198,13 @@ impl PyramidMeta {
         self.subclass_cycles = subclass_cycles;
         self.disjoint_pairs = disjoint_pairs;
         self.equivalent_pairs = equivalent_pairs;
+        self
+    }
+
+    /// Attach per-predicate query stats (consuming builder). Independent of the
+    /// schema pyramid — a typeless graph can still carry stats.
+    pub fn with_predicate_stats(mut self, predicate_stats: Vec<PredStat>) -> Self {
+        self.predicate_stats = predicate_stats;
         self
     }
 
@@ -202,6 +234,25 @@ impl PyramidMeta {
             write_uvarint(&mut out, *community as u64);
             write_uvarint(&mut out, block.len() as u64);
             out.extend_from_slice(block);
+        }
+        // query-stats block (length-prefixed, tag QSTATS_V1) — written before the
+        // schema block so the schema stays the trailing section (schema_meta_len).
+        // Present only when computed; a v1/v2 reader sees the tag, reads the length,
+        // and skips it.
+        if !self.predicate_stats.is_empty() {
+            let mut payload = Vec::new();
+            write_uvarint(&mut payload, self.predicate_stats.len() as u64);
+            for p in &self.predicate_stats {
+                write_uvarint(&mut payload, p.predicate as u64);
+                write_uvarint(&mut payload, p.count);
+                write_uvarint(&mut payload, p.distinct_subjects);
+                write_uvarint(&mut payload, p.distinct_objects);
+                write_uvarint(&mut payload, p.max_objects_per_subject as u64);
+                write_uvarint(&mut payload, p.max_subjects_per_object as u64);
+            }
+            out.push(QSTATS_V1);
+            write_uvarint(&mut out, payload.len() as u64);
+            out.extend_from_slice(&payload);
         }
         // v2 schema pyramid — appended only when present (a typeless graph stays
         // byte-identical to v1, and v1 readers stop after the tiles above).
@@ -402,7 +453,34 @@ impl PyramidMeta {
             subclass_cycles: Vec::new(),
             disjoint_pairs: Vec::new(),
             equivalent_pairs: Vec::new(),
+            predicate_stats: Vec::new(),
         };
+        // query-stats block (before the schema block) — tag, uvarint length, then
+        // the payload. The length lets a reader that doesn't know it skip past;
+        // we read it and jump to the block end regardless.
+        if pos < bytes.len() && bytes[pos] == QSTATS_V1 {
+            pos += 1;
+            let len = g(&mut pos)? as usize;
+            let end = pos
+                .checked_add(len)
+                .filter(|&e| e <= bytes.len())
+                .ok_or(MetaError::Malformed("query-stats block overruns buffer"))?;
+            let mut p = pos;
+            let np = g(&mut p)? as usize;
+            let mut stats = Vec::with_capacity(np.min(bytes.len()));
+            for _ in 0..np {
+                stats.push(PredStat {
+                    predicate: g(&mut p)? as u32,
+                    count: g(&mut p)?,
+                    distinct_subjects: g(&mut p)?,
+                    distinct_objects: g(&mut p)?,
+                    max_objects_per_subject: g(&mut p)? as u32,
+                    max_subjects_per_object: g(&mut p)? as u32,
+                });
+            }
+            meta.predicate_stats = stats;
+            pos = end;
+        }
         // v2 schema pyramid — present iff there are trailing bytes tagged
         // SCHEMA_V2. Best-effort: the v1 fields (round/summary/tiles) are already
         // populated, and `decode_schema` only assigns the schema fields on full
@@ -616,6 +694,16 @@ pub fn schema_block_len(bytes: &[u8]) -> u32 {
                 return None;
             }
         }
+        // Skip an optional query-stats block (tag + uvarint length + payload) so
+        // the schema block, which follows it, stays the trailing section.
+        if pos < bytes.len() && bytes[pos] == QSTATS_V1 {
+            pos += 1;
+            let len = uv!() as usize;
+            pos = pos.checked_add(len)?;
+            if pos > bytes.len() {
+                return None;
+            }
+        }
         Some(pos)
     }
     match walk(bytes) {
@@ -656,6 +744,7 @@ pub fn decode_schema_block(
         subclass_cycles: Vec::new(),
         disjoint_pairs: Vec::new(),
         equivalent_pairs: Vec::new(),
+        predicate_stats: Vec::new(),
     };
     let mut pos = 1; // skip the SCHEMA_V2 tag
     decode_schema(block, &mut pos, &mut meta)?;
@@ -691,6 +780,7 @@ pub fn decode_schema_block_summary(
         subclass_cycles: Vec::new(),
         disjoint_pairs: Vec::new(),
         equivalent_pairs: Vec::new(),
+        predicate_stats: Vec::new(),
     };
     let mut pos = 1;
     decode_schema(block, &mut pos, &mut meta)?;
@@ -983,5 +1073,80 @@ mod tests {
             "v2 extends v1 byte-for-byte"
         );
         assert_eq!(v2_bytes[v1_bytes.len()], SCHEMA_V2, "v2 tag follows");
+    }
+
+    #[test]
+    fn query_stats_round_trip_and_stay_additive() {
+        let v1 = sample_v1().encode();
+        let stats = vec![
+            PredStat {
+                predicate: 5,
+                count: 100,
+                distinct_subjects: 40,
+                distinct_objects: 25,
+                max_objects_per_subject: 6,
+                max_subjects_per_object: 9,
+            },
+            PredStat {
+                predicate: 9,
+                count: 3,
+                distinct_subjects: 3,
+                distinct_objects: 1,
+                max_objects_per_subject: 1,
+                max_subjects_per_object: 3,
+            },
+        ];
+        let bytes = sample_v1().with_predicate_stats(stats.clone()).encode();
+        // The qstats block is appended after the v1 section → v1 prefix unchanged.
+        assert!(bytes.starts_with(&v1), "query-stats is appended after v1");
+        assert_eq!(bytes[v1.len()], QSTATS_V1, "the qstats tag follows v1");
+        let back = PyramidMeta::decode(&bytes).unwrap();
+        assert_eq!(back.predicate_stats, stats);
+        assert_eq!(back.round, 2, "v1 fields intact");
+        assert_eq!(back.tiles[0], (0, vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn query_stats_before_schema_keeps_schema_trailing() {
+        // With BOTH stats and a schema block, schema_block_len must skip the
+        // qstats block and still find the trailing schema block.
+        let stats = vec![PredStat {
+            predicate: 1,
+            count: 9,
+            distinct_subjects: 3,
+            distinct_objects: 3,
+            max_objects_per_subject: 3,
+            max_subjects_per_object: 3,
+        }];
+        let bytes = sample_v1()
+            .with_schema(
+                vec![ClassNode {
+                    class: "<http://ex/C>".into(),
+                    parents: vec![],
+                    depth: 0,
+                }],
+                vec![LevelRollup {
+                    round: 0,
+                    depth: 0,
+                    classes: vec![("<http://ex/C>".into(), 1)],
+                }],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            )
+            .with_predicate_stats(stats.clone())
+            .encode();
+        let back = PyramidMeta::decode(&bytes).unwrap();
+        assert_eq!(back.predicate_stats, stats);
+        assert_eq!(back.class_hierarchy.len(), 1, "schema decoded past qstats");
+        let len = schema_block_len(&bytes) as usize;
+        assert!(len > 0);
+        assert_eq!(
+            bytes[bytes.len() - len],
+            SCHEMA_V2,
+            "schema is still the trailing block"
+        );
     }
 }
