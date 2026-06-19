@@ -5540,6 +5540,8 @@ ex:ApplicationDependencyShape
     state.remote = { url };
     state.activeSource = "remote";
     state.schema = null;
+    state.exploreReady = false;
+    state.exploreClass = null;
     if (datasetKey) {
       state.dataset = datasetKey;
       setDatasetName(datasetKey);
@@ -6017,11 +6019,89 @@ ex:ApplicationDependencyShape
 
   // --- Explore: entity tables + the community pyramid -------------------
   function ensureExplore() {
-    if (!state.bytes || state.exploreReady) return;
+    if (state.exploreReady) return;
+    // Remote-lazy: Explore the .rete over HTTP range (entity tables fetched
+    // tile-by-tile). In-memory: the whole graph is loaded, query it directly.
+    if (state.remote) return ensureExploreRemote();
+    if (!state.bytes) return;
     state.exploreReady = true;
     renderExploreClasses();
     renderPyramid();
     renderLayout();
+  }
+
+  // Explore a remote .rete without downloading it. The class list comes from the
+  // baked schema pyramid (the same ~2-range summary the Schema tab reads — no
+  // scan), and each class drills into a bounded entity query fetched over HTTP
+  // range. The community pyramid and byte map are computed over the whole file,
+  // so they point at "Cache remote" instead of showing a stale in-memory graph.
+  function ensureExploreRemote() {
+    state.exploreReady = true;
+    $("pyramidNote").textContent =
+      "The community pyramid is computed over the whole graph — use “Cache remote” (the source switch) to download this .rete once, then view it here.";
+    $("pyramidLegend").innerHTML = "";
+    $("pyramidViz").innerHTML = "";
+    $("pyramidLevels").innerHTML = "";
+    $("layoutNote").textContent =
+      "The byte map needs the whole file — use “Cache remote” to download it once, then view the layout here.";
+    $("layoutLegend").innerHTML = "";
+    $("layoutViz").innerHTML = "";
+    $("layoutTable").innerHTML = "";
+    if (state.schema) return renderRemoteExploreClasses();
+    $("exploreClasses").innerHTML = `<p class="microcopy">Reading the schema over HTTP range…</p>`;
+    $("exploreTable").innerHTML = "";
+    setTimeout(() => {
+      try {
+        state.schema = JSON.parse(W().schema_url(state.remote.url));
+        renderRemoteExploreClasses();
+      } catch (e) {
+        if (/no schema pyramid/i.test(String(e))) {
+          $("exploreClasses").innerHTML =
+            `<p class="microcopy">This remote graph carries no schema pyramid, so its classes can't be ` +
+            `listed without scanning the whole file. Use <strong>Cache remote</strong> to explore it fully.</p>`;
+          $("exploreTable").innerHTML = "";
+        } else {
+          showError("exploreTable", "Remote schema read failed: " + String(e));
+        }
+      }
+    }, 0);
+  }
+
+  // Class buttons for a remote graph, sourced from the baked schema (no scan).
+  function renderRemoteExploreClasses() {
+    const classes = ((state.schema && state.schema.classes) || [])
+      .slice().sort((a, b) => b[1] - a[1]).slice(0, 12);
+    if (!classes.length) {
+      $("exploreClasses").innerHTML = `<p class="microcopy">This remote graph's schema lists no typed classes.</p>`;
+      $("exploreTable").innerHTML = "";
+      return;
+    }
+    if (!state.exploreClass || !classes.some(([c]) => c === state.exploreClass))
+      state.exploreClass = classes[0][0];
+    $("exploreClasses").innerHTML = classes.map(([c, n]) =>
+      `<button type="button" data-cls="${esc(c)}" class="${c === state.exploreClass ? "active" : ""}">` +
+        `${esc(shorten(localName(c), 22))} (${esc(n)})` +
+      `</button>`).join("");
+    $$("#exploreClasses [data-cls]").forEach((btn) => {
+      btn.onclick = () => { state.exploreClass = btn.dataset.cls; renderRemoteExploreClasses(); };
+    });
+    renderRemoteEntityTable(state.exploreClass);
+  }
+
+  // Drill into one class's entities over HTTP range: a bounded SELECT, routed
+  // through the worker, pivoted the same way as the in-memory entity table.
+  function renderRemoteEntityTable(cls) {
+    const tp = currentTypePredicate();
+    $("exploreTable").innerHTML = netSpinner("fetching entities over range…");
+    remoteSparql(state.remote.url,
+      `SELECT ?s ?p ?o WHERE { ?s ${tp} ${cls} . ?s ?p ?o } LIMIT 3000`, "table")
+      .then((out) => {
+        state.lastRemoteLog = out.log || [];
+        updateReqLogBtn();
+        const res = JSON.parse(out.json);
+        pivotEntityTable(cls, res.rows || [], 3000);
+      })
+      .catch((e) => showError("exploreTable", "Remote entities failed: " + String(e)));
   }
 
   // The predicate this dataset uses for typing — rdf:type by default, but some
@@ -6072,8 +6152,8 @@ ex:ApplicationDependencyShape
     renderEntityTable(state.exploreClass);
   }
 
-  // Pivot one class's instances into an entity table: rows = entities,
-  // columns = their most frequent properties (multi-values joined).
+  // Pivot one class's instances into an entity table (in-memory): rows =
+  // entities, columns = their most frequent properties (multi-values joined).
   function renderEntityTable(cls) {
     const tp = currentTypePredicate();
     let res;
@@ -6084,9 +6164,18 @@ ex:ApplicationDependencyShape
       $("exploreTable").innerHTML = `<div class="error-box">${esc(String(e))}</div>`;
       return;
     }
+    pivotEntityTable(cls, res.rows || [], 6000);
+  }
+
+  // Render an entity table from raw SELECT ?s ?p ?o rows for one class —
+  // entities down the rows, their most frequent properties across the columns.
+  // Shared by the in-memory and remote (range-read) Explore paths; `limit` is
+  // the row cap that was requested, so we can flag a sampled result.
+  function pivotEntityTable(cls, rawRows, limit) {
+    const tp = currentTypePredicate();
     const entities = new Map();
     const predCount = new Map();
-    for (const row of res.rows || []) {
+    for (const row of rawRows) {
       if (row.p === tp) continue;
       if (!entities.has(row.s)) entities.set(row.s, new Map());
       const props = entities.get(row.s);
@@ -6104,7 +6193,7 @@ ex:ApplicationDependencyShape
       const shown = vals.slice(0, 3).map((v) => shorten(v, 44)).join("; ");
       return vals.length > 3 ? `${shown} (+${vals.length - 3})` : shown;
     };
-    const sampled = (res.rows || []).length >= 6000 ? " (sampled)" : "";
+    const sampled = rawRows.length >= limit ? " (sampled)" : "";
     const head = `<tr><th>${esc(localName(cls))}</th>` +
       cols.map((c) => `<th>${esc(shorten(localName(c), 20))}</th>`).join("") + `</tr>`;
     const rowHtmls = rows.map(([s, props]) =>
