@@ -240,6 +240,9 @@ the answer to "my data is sharded into several files; query them as one."</p>
 </code></pre>
 <p>This is an honest <strong>prototype</strong>: it does <em>union</em> federation, not distributed
 joins. Read <a href="#limitations">Limitations</a> before relying on it.</p>
+<p>The same union+routing federation is also available <strong>in the browser</strong> — the
+<a href="#in-the-playground">playground</a> turns the SPARQL console into a multi-source
+one with a "<strong>+ Add source</strong>" button, each source range-queried lazily.</p>
 <h2>Why federation works at the term level</h2>
 <figure class="fig-right">
   <img src="img/federation.svg" alt="A SPARQL query goes to a router that does predicate routing, fans out to three .rete files each with its own dictionary, then results are merged at the term level into a row set.">
@@ -370,6 +373,41 @@ CDN that honors HTTP <strong>Range</strong> requests — mix them with local pat
 </code></pre>
 <p>Each URL is opened with range reads (header → dictionary → index → pyramid),
 never a full download both routing and evaluation fetch only the bytes they need.</p>
+<h2>In the playground</h2>
+<p>The <a href="playground.html">playground</a> brings the same federation to the browser:
+<strong>federation is a kind of SPARQL</strong>, so it lives in the SPARQL console rather than
+a separate mode. Under the query editor a <strong>Sources</strong> strip shows the current
+dataset; a <strong>+ Add source</strong> button federates with another source three ways:</p>
+<ul>
+<li><strong>From catalog</strong> — any registered dataset (a remote one is range-queried
+lazily; a bundled one is queried in memory);</li>
+<li><strong>.rete link</strong> — a pasted remote URL, range-queried lazily;</li>
+<li><strong>SPARQL endpoint</strong> — a live endpoint (<code>SELECT</code> / <code>ASK</code>) over the SPARQL
+protocol, subject to the endpoint's CORS policy.</li>
+</ul>
+<p>Running with <strong>two or more sources</strong> fans the same query out to each and merges
+with the exact CLI semantics above — <code>SELECT</code> union+dedup, <code>ASK</code> OR, <code>CONSTRUCT</code>
+triple-union — and a per-source banner reports the rows and bytes each source
+contributed. Each source keeps its own lazy reader, so two remote <code>.rete</code> files
+are read independently and lazily into one merge; it is orchestrated in the
+playground's JS over the existing single-source query paths, so no extra engine
+code runs. An example can pre-load its partner with one click.</p>
+<p><strong>Worked example — resolve five terms across two ontologies.</strong> The bundled
+<code>chebi-full</code> (the complete ChEBI ontology, 8.83 M triples) and <code>chemotion</code> (a
+chemistry ELN graph merged with CHMO + RXNO) share <code>CHEBI_*</code> IRIs plus
+<code>rdfs:label</code>/<code>rdfs:subClassOf</code>, but neither resolves every label. Pick either
+dataset, open its <strong>Federation</strong> example (it adds the other as a second source),
+and run:</p>
+<pre><code class="language-sparql">PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+PREFIX obo:  &lt;http://purl.obolibrary.org/obo/&gt;
+SELECT ?term ?label WHERE {
+  VALUES ?term { obo:CHEBI_15377 obo:CHEBI_27732 obo:CHMO_0000228 obo:BFO_0000015 obo:CHEBI_23367 }
+  ?term rdfs:label ?label
+}
+</code></pre>
+<p><code>chebi-full</code> answers <code>water</code> / <code>caffeine</code> / <code>molecular entity</code>; <code>chemotion</code>
+answers <code>spectroscopy</code> / <code>process</code>; the union resolves all five. The result line
+shows the per-source split — no single file has all the answers.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
