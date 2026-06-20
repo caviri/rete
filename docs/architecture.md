@@ -87,8 +87,9 @@ the average objects-per-subject — exactly one for a functional predicate); fil
 built before that block, or with no summary at all, fall back to fixed default
 selectivities / a most-constants-first heuristic. The estimate is free for an
 in-memory file (the summary is resident) and is skipped on the lazy remote path
-so it never forces a pyramid fetch. The remaining gap: the hash path always
-builds its right side.
+so it never forces a pyramid fetch. The hash join builds whichever side is
+smaller (the join is symmetric on the key), bounding the hash table — and after
+this ordering the accumulating left side is usually the small one.
 
 Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
 nested `SELECT` subqueries and `SERVICE` federation.
