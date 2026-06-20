@@ -85,6 +85,11 @@ __PLAYGROUND_CSS__
         <span class="rail-name">History</span>
         <span class="rail-tip"><b>History</b>Your recent runs — click one to reload its query, output and strategy.</span>
       </button>
+      <button type="button" id="settingsBtn" class="rail-set">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9c.1.6.5 1.1 1.1 1.4H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+        <span class="rail-name">Settings</span>
+        <span class="rail-tip"><b>Settings</b>Manage locally cached companion files — see what's stored and delete it.</span>
+      </button>
     </nav>
 
     <button id="libExpand" class="lib-expand" type="button" title="Show the details panel" aria-label="Show the details panel">›</button>
@@ -217,6 +222,7 @@ __PLAYGROUND_CSS__
           <div id="exploreBackendRow" class="explore-backends" hidden>
             <span class="be-label">Backend</span>
             <span class="segmented" id="exploreBackendSeg" aria-label="Explore query backend"></span>
+            <span id="exploreCacheCtl" class="cache-ctl"></span>
             <span class="microcopy be-meta" id="exploreBackendMeta"></span>
           </div>
           <div id="exploreClasses" class="filter-row"></div>
@@ -552,6 +558,18 @@ __PLAYGROUND_CSS__
       </div>
       <p class="microcopy">Your recent runs across datasets — click one to reload its query, output type and strategy.</p>
       <div id="histList" class="history-list"></div>
+    </div>
+  </div>
+
+  <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+    <div class="modal-card hist-modal">
+      <div class="modal-head">
+        <h3 id="settingsModalTitle">Settings</h3>
+        <button id="clearCacheAll" class="ghost" type="button">Clear all</button>
+        <button id="settingsModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy">Companion files cached locally in your browser (IndexedDB). The lazy backends fetch only what a query touches; <b>Cache locally</b> stores the whole file so it survives reloads. <span id="cacheTotal"></span></p>
+      <div id="cacheList" class="history-list cache-list"></div>
     </div>
   </div>
 

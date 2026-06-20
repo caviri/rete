@@ -1211,6 +1211,39 @@
   function openHistory() { renderHistory(); $("historyModal").classList.remove("hidden"); }
   function closeHistory() { $("historyModal").classList.add("hidden"); }
 
+  // Settings → cached companion files: list each with its size, delete one or all.
+  function humanCacheLabel(m) {
+    if (m.label) return m.label;
+    const p = String(m.key).split("::");
+    return p[0] + " · " + p.slice(1).join("/");
+  }
+  async function renderCacheList() {
+    const list = $("cacheList"), totalEl = $("cacheTotal");
+    if (!list) return;
+    const items = await idbListMeta();
+    if (!items.length) {
+      list.innerHTML = `<p class="cache-empty">Nothing cached yet. In <b>Explore</b>, pick a DuckDB or SQLite backend and click “Cache locally”.</p>`;
+      if (totalEl) totalEl.textContent = "";
+      return;
+    }
+    let total = 0;
+    list.innerHTML = items.map((m) => {
+      total += m.size || 0;
+      return `<div class="cache-row"><span class="ci-name">${esc(humanCacheLabel(m))}</span>` +
+        `<span class="ci-size">${formatBytes(m.size || 0)}</span>` +
+        `<button type="button" class="secondary" data-del="${esc(m.key)}">Delete</button></div>`;
+    }).join("");
+    if (totalEl) totalEl.textContent = `${items.length} file(s) · ${formatBytes(total)} total.`;
+    list.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
+      await idbDelKey(b.dataset.del);
+      freeExploreEngines();
+      renderCacheList();
+      renderCacheCtl();
+    });
+  }
+  function openSettings() { renderCacheList(); $("settingsModal").classList.remove("hidden"); }
+  function closeSettings() { $("settingsModal").classList.add("hidden"); }
+
   const LIB_KEY = "rete.pg.libCollapsed";
   function setLibCollapsed(collapsed) {
     const shell = document.querySelector(".console-shell");
@@ -1457,10 +1490,107 @@
     })();
     return _sqlitePromise;
   }
-  // Drop the lazy engines on dataset switch so the next dataset re-initializes.
+
+  // --- Local cache (IndexedDB) ------------------------------------------
+  // "Cache locally" stores a whole companion file so a backend can query it
+  // without range reads and across page reloads; the Settings panel lists +
+  // deletes them. Two stores: `files` (the bytes) + `meta` (small {size,…}) so
+  // listing and existence checks never read the big buffers. Keys:
+  //   "<dataset>::duckdb" | "<dataset>::sqlite" | "<dataset>::parquet::<file>".
+  const CACHE_DB = "playgroundCache", FILES = "files", META = "meta";
+  function idbOpen() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open(CACHE_DB, 1);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains(FILES)) db.createObjectStore(FILES);
+        if (!db.objectStoreNames.contains(META)) db.createObjectStore(META);
+      };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+  }
+  function idbReq(store, mode, fn) {
+    return idbOpen().then((db) => new Promise((res, rej) => {
+      const q = fn(db.transaction(store, mode).objectStore(store));
+      q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+    }));
+  }
+  const idbGetFile = (k) => idbReq(FILES, "readonly", (s) => s.get(k)).then((v) => v || null).catch(() => null);
+  const idbGetMeta = (k) => idbReq(META, "readonly", (s) => s.get(k)).then((v) => v || null).catch(() => null);
+  async function idbPutFile(k, bytes, meta) {
+    const db = await idbOpen();
+    return new Promise((res, rej) => {
+      const t = db.transaction([FILES, META], "readwrite");
+      t.objectStore(FILES).put(bytes, k); t.objectStore(META).put(meta, k);
+      t.oncomplete = () => res(); t.onerror = () => rej(t.error);
+    });
+  }
+  async function idbDelKey(k) {
+    const db = await idbOpen();
+    return new Promise((res) => {
+      const t = db.transaction([FILES, META], "readwrite");
+      t.objectStore(FILES).delete(k); t.objectStore(META).delete(k);
+      t.oncomplete = () => res(); t.onerror = () => res();
+    });
+  }
+  function idbListMeta() {
+    return idbOpen().then((db) => new Promise((res) => {
+      const out = []; const t = db.transaction(META).objectStore(META).openCursor();
+      t.onsuccess = (e) => { const c = e.target.result; if (c) { out.push(Object.assign({ key: c.key }, c.value)); c.continue(); } else res(out); };
+      t.onerror = () => res(out);
+    })).catch(() => []);
+  }
+  async function idbClearAll() {
+    const db = await idbOpen();
+    return new Promise((res) => {
+      const t = db.transaction([FILES, META], "readwrite");
+      t.objectStore(FILES).clear(); t.objectStore(META).clear();
+      t.oncomplete = () => res(); t.onerror = () => res();
+    });
+  }
+
+  // The single cached file the active backend + selected class needs to run local.
+  function cacheTarget() {
+    const comp = currentCompanion(); if (!comp) return null;
+    const ds = state.dataset, b = state.exploreBackend;
+    if (b === "duck-db") return { key: `${ds}::duckdb`, url: companionUrl(comp.duckdb), label: dsShortLabel(ds) + " · .duckdb", sizeHint: comp.duckdbSize || "" };
+    if (b === "sqlite") return { key: `${ds}::sqlite`, url: companionUrl(comp.sqlite), label: dsShortLabel(ds) + " · .sqlite", sizeHint: comp.sqliteSize || "" };
+    if (b === "duck-parquet") {
+      const t = tableForClass(comp, state.exploreClass); if (!t) return null;
+      return { key: `${ds}::parquet::${t.file}`, url: companionUrl(comp.parquetDir + "/" + t.file), label: dsShortLabel(ds) + " · " + t.file, sizeHint: "" };
+    }
+    return null;
+  }
+
+  // Cached-engine handles, reset on dataset switch.
+  let _sqliteFull = null;   // { key, db } — sql.js full in-memory DB from a cached buffer
+  let _sqlMod = null;       // memoized sql.js module
+  async function ensureSqliteFull(bytes) {
+    if (!_sqlMod) {
+      const initSqlJs = (await import("https://esm.sh/sql.js@1.12.0")).default;
+      _sqlMod = await initSqlJs({ locateFile: (f) => "https://esm.sh/sql.js@1.12.0/dist/" + f });
+    }
+    return new _sqlMod.Database(new Uint8Array(bytes));
+  }
+  function sqlFullPage(db, tableName, offset) {
+    const r = db.exec(`SELECT * FROM "${tableName}" LIMIT ${ENTITY_PAGE} OFFSET ${offset}`);
+    const cols = r.length ? r[0].columns : [];
+    const rows = r.length ? r[0].values.map((v) => Object.fromEntries(cols.map((c, i) => [c, v[i]]))) : [];
+    return { cols, rows };
+  }
+  // Register a cached buffer into DuckDB's virtual FS once (idempotent per name).
+  async function duckRegisterCached(d, vfsName, bytes) {
+    d.registered = d.registered || new Set();
+    if (!d.registered.has(vfsName)) { await d.db.registerFileBuffer(vfsName, new Uint8Array(bytes)); d.registered.add(vfsName); }
+    return vfsName;
+  }
+
+  // Drop the lazy engines on dataset switch (or cache delete) so they re-initialize.
   function freeExploreEngines() {
     if (_duck) { try { _duck.conn.close(); _duck.db.terminate(); } catch (e) { /* already gone */ } _duck = null; }
     _sqlitePromise = null;
+    if (_sqliteFull) { try { _sqliteFull.db.close(); } catch (e) { /* already closed */ } _sqliteFull = null; }
   }
 
   function setBackendMeta(text) {
@@ -1490,6 +1620,7 @@
         btn.onclick = () => {
           seg.querySelectorAll("[data-be]").forEach((b) => b.classList.toggle("active", b === btn));
           state.exploreBackend = btn.dataset.be;
+          renderCacheCtl();
           if (state.exploreClass) loadEntityPage(0); // re-run the current class
           else if (state.exploreBackend === "native") setBackendMeta(state.exploreNativeMeta || "");
         };
@@ -1499,6 +1630,7 @@
     state.exploreBackend = "native";
     seg.querySelectorAll("[data-be]").forEach((b) => b.classList.toggle("active", b.dataset.be === "native"));
     setBackendMeta(state.exploreNativeMeta || "");
+    renderCacheCtl();
   }
 
   // One page of a class via a companion encoding: a bounded SELECT over its table,
@@ -1513,27 +1645,55 @@
       setBackendMeta("");
       return;
     }
+    renderCacheCtl(); // reflect cache state for this backend + class
     const offset = page * ENTITY_PAGE;
-    $("exploreTable").innerHTML = netSpinner("querying " + backend + " over HTTP range…");
+    const backendName = { "duck-parquet": "DuckDB·Parquet", "duck-db": "DuckDB·.duckdb", "sqlite": "SQLite" }[backend] || backend;
+    const target = cacheTarget();
+    $("exploreTable").innerHTML = netSpinner("querying " + backendName + "…");
     const t0 = performance.now();
     try {
-      let cols, rows;
+      let cols, rows, usingCache = false;
       if (backend === "sqlite") {
-        const w = await ensureSqlite(comp);
-        rows = await w.db.query(`SELECT * FROM "${table.name}" LIMIT ${ENTITY_PAGE} OFFSET ${offset}`);
-        cols = rows.length ? Object.keys(rows[0]) : [];
+        if (_sqliteFull && target && _sqliteFull.key === target.key) {
+          ({ cols, rows } = sqlFullPage(_sqliteFull.db, table.name, offset)); usingCache = true;
+        } else if (target && await idbGetMeta(target.key)) {
+          // Cached: load the whole DB into sql.js once, then page it in memory.
+          if (_sqliteFull) { try { _sqliteFull.db.close(); } catch (e) { /* ignore */ } }
+          _sqliteFull = { key: target.key, db: await ensureSqliteFull(await idbGetFile(target.key)) };
+          ({ cols, rows } = sqlFullPage(_sqliteFull.db, table.name, offset)); usingCache = true;
+        } else {
+          const w = await ensureSqlite(comp);
+          rows = await w.db.query(`SELECT * FROM "${table.name}" LIMIT ${ENTITY_PAGE} OFFSET ${offset}`);
+          cols = rows.length ? Object.keys(rows[0]) : [];
+        }
       } else {
-        const ref = backend === "duck-db"
-          ? `wd."${table.name}"`
-          : `read_parquet('${companionUrl(comp.parquetDir + "/" + table.file)}')`;
-        const d = backend === "duck-db" ? await ensureDuckAttach(comp) : await ensureDuck();
+        const d = await ensureDuck();
+        let ref;
+        if (backend === "duck-db") {
+          const vfs = "cache_" + state.dataset + ".duckdb";
+          if (d.attached === "cache:" + vfs) { usingCache = true; }
+          else if (target && await idbGetMeta(target.key)) {
+            await duckRegisterCached(d, vfs, await idbGetFile(target.key));
+            if (d.attached) { try { await d.conn.query("DETACH wd"); } catch (e) { /* not attached */ } }
+            await d.conn.query(`ATTACH '${vfs}' AS wd (READ_ONLY)`);
+            d.attached = "cache:" + vfs; usingCache = true;
+          } else { await ensureDuckAttach(comp); }
+          ref = `wd."${table.name}"`;
+        } else { // duck-parquet
+          const vfs = "cache_" + state.dataset + "_" + table.file;
+          if (d.registered && d.registered.has(vfs)) { ref = `read_parquet('${vfs}')`; usingCache = true; }
+          else if (target && await idbGetMeta(target.key)) {
+            await duckRegisterCached(d, vfs, await idbGetFile(target.key));
+            ref = `read_parquet('${vfs}')`; usingCache = true;
+          } else { ref = `read_parquet('${companionUrl(comp.parquetDir + "/" + table.file)}')`; }
+        }
         const res = await d.conn.query(`SELECT * FROM ${ref} LIMIT ${ENTITY_PAGE} OFFSET ${offset}`);
         [cols, rows] = duckRows(res);
       }
-      renderColumnarPage(table, cols, rows, page, backend, performance.now() - t0);
+      renderColumnarPage(table, cols, rows, page, backendName, performance.now() - t0, usingCache);
     } catch (e) {
-      showError("exploreTable", backend + " query failed: " + String(e && e.message || e) +
-        (backend === "sqlite" ? " (sql.js-httpvfs is finicky from a CDN; this is the experimental backend)." : ""));
+      showError("exploreTable", backendName + " query failed: " + String(e && e.message || e) +
+        (backend === "sqlite" ? " — sql.js-httpvfs is finicky from a CDN; try “Cache locally”." : ""));
       setBackendMeta("");
     }
   }
@@ -1541,7 +1701,7 @@
   // Render a companion-backend page: entity + label + the leading named columns
   // (the table is frequency-ordered, so the first few are the common ones), the
   // shared pager, and the rows · ms line with the native baseline for comparison.
-  function renderColumnarPage(table, cols, rows, page, backend, ms) {
+  function renderColumnarPage(table, cols, rows, page, label, ms, usingCache) {
     const drop = new Set(["types", "extra"]);
     const ordered = ["entity", "label"].filter((c) => cols.includes(c))
       .concat(cols.filter((c) => !drop.has(c) && c !== "entity" && c !== "label"));
@@ -1571,12 +1731,51 @@
         `${esc(table.name)} · page ${(page + 1).toLocaleString()} / ${pages.toLocaleString()}</span>` +
         `<button type="button" id="entNext" class="secondary"${page + 1 >= pages ? " disabled" : ""}>Next ›</button>` +
       `</div>` +
-      `<p class="microcopy">Companion table, read lazily over HTTP range — the object values are N-Triples term tokens (lists shown truncated).</p>`;
+      `<p class="microcopy">${usingCache ? "Served from your local cached copy" : "Companion table, read lazily over HTTP range"} — object values are N-Triples term tokens (lists shown truncated).</p>`;
     const prev = $("entPrev"), next = $("entNext");
     if (prev) prev.onclick = () => loadEntityPage(page - 1);
     if (next) next.onclick = () => loadEntityPage(page + 1);
-    setBackendMeta(`${backend}: ${rows.length} rows · ${ms.toFixed(0)} ms` +
+    setBackendMeta(`${label}: ${rows.length} rows · ${ms.toFixed(0)} ms${usingCache ? " · cached" : ""}` +
       (state.exploreNativeMeta ? "   ·   " + state.exploreNativeMeta : ""));
+  }
+
+  // The "Cache locally / Remove" control for the active backend's target file.
+  async function renderCacheCtl() {
+    const el = $("exploreCacheCtl"); if (!el) return;
+    const target = cacheTarget();
+    if (!target) { el.innerHTML = ""; return; }
+    const meta = await idbGetMeta(target.key);
+    el.innerHTML = meta
+      ? `<span>cached ✓ ${formatBytes(meta.size || 0)}</span><button type="button" class="secondary" data-cache="remove">Remove</button>`
+      : `<button type="button" class="secondary" data-cache="add">Cache locally${target.sizeHint ? " (" + esc(target.sizeHint) + ")" : ""}</button>`;
+    const btn = el.querySelector("[data-cache]");
+    if (btn) btn.onclick = () => (btn.dataset.cache === "add" ? cacheCurrentTarget() : removeCurrentTarget());
+  }
+  // Download the active backend's whole file into IndexedDB (with progress), then
+  // re-run the page so it's served from the local copy.
+  async function cacheCurrentTarget() {
+    const target = cacheTarget(); if (!target) return;
+    const el = $("exploreCacheCtl");
+    try {
+      const bytes = await fetchWithProgress(target.url, (got, total) => {
+        if (el) el.innerHTML = `<span>caching… ${total ? Math.round(100 * got / total) + "%" : formatBytes(got)}</span>`;
+      });
+      await idbPutFile(target.key, bytes, { size: bytes.byteLength, label: target.label, dataset: state.dataset, backend: state.exploreBackend });
+      await renderCacheCtl();
+      if (state.exploreClass) loadEntityPage(state.explorePage || 0); // now served from cache
+      if (!$("settingsModal").classList.contains("hidden")) renderCacheList();
+    } catch (e) {
+      if (el) el.innerHTML = `<span class="microcopy">cache failed: ${esc(String(e && e.message || e))}</span>`;
+    }
+  }
+  // Delete the active backend's cached file and fall back to lazy range reads.
+  async function removeCurrentTarget() {
+    const target = cacheTarget(); if (!target) return;
+    await idbDelKey(target.key);
+    freeExploreEngines(); // drop any in-memory copy registered from the cache
+    await renderCacheCtl();
+    if (state.exploreClass) loadEntityPage(state.explorePage || 0);
+    if (!$("settingsModal").classList.contains("hidden")) renderCacheList();
   }
 
   // Render the class chips and wire each to open that class at page 0. Shared by
@@ -3494,6 +3693,17 @@
     $("historyModal").addEventListener("click", (e) => {
       if (e.target === $("historyModal")) closeHistory();
     });
+    $("settingsBtn").onclick = openSettings;
+    $("settingsModalClose").onclick = closeSettings;
+    $("settingsModal").addEventListener("click", (e) => {
+      if (e.target === $("settingsModal")) closeSettings();
+    });
+    $("clearCacheAll").onclick = async () => {
+      await idbClearAll();
+      freeExploreEngines();
+      renderCacheList();
+      renderCacheCtl();
+    };
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
@@ -3501,6 +3711,7 @@
         $("reqModal").classList.add("hidden");
         closeLibrary();
         closeHistory();
+        closeSettings();
         closeSource();
       }
       // Ctrl/Cmd+Enter runs the active panel's primary action from anywhere.

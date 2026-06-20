@@ -1987,6 +1987,17 @@ pre {
 .hist-modal .microcopy { flex: 0 0 auto; margin: 0 0 10px; }
 .hist-modal .history-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 
+/* Explore "Cache locally" control + the Settings cache manager list. */
+.cache-ctl { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.cache-ctl button { font-size: 12px; padding: 4px 9px; min-height: 28px; }
+.cache-list .cache-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 7px;
+}
+.cache-list .cache-row .ci-name { font-weight: 600; word-break: break-all; }
+.cache-list .cache-row .ci-size { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; white-space: nowrap; }
+.cache-list .cache-empty { color: var(--muted); padding: 6px 2px; }
+
 /* Cache-download progress modal: a spinning "spindle" of dots + a progress bar. */
 .cache-modal { width: min(440px, 100%); text-align: center; }
 .cache-modal h3 { margin: 0 0 4px; font-family: Georgia, "Times New Roman", serif; font-size: 18px; }
