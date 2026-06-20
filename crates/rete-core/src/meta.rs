@@ -38,6 +38,22 @@ const SCHEMA_V2: u8 = 2;
 /// so `schema_meta_len` is unaffected). Index-free per-predicate cardinality the
 /// cost-based planner uses; old readers skip it via the length prefix.
 const QSTATS_V1: u8 = 3;
+/// The characteristic-sets block tag. Length-prefixed, written after the
+/// query-stats block and before the (trailing) schema block; old readers skip it.
+const CHARSET_V1: u8 = 4;
+
+/// A **characteristic set** — one entity "shape": the sorted set of predicates a
+/// subject carries, plus how many subjects share exactly that shape. Computed at
+/// build (top-N shapes by subject count), range-fetched with the pyramid. Useful
+/// for data profiling (the distinct entity shapes) and for estimating the
+/// selectivity of a subject star (subjects matching ALL of several predicates).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharSet {
+    /// Predicate ids, ascending.
+    pub predicates: Vec<u32>,
+    /// Subjects whose predicate set is exactly this.
+    pub subjects: u64,
+}
 
 /// Per-predicate cardinality statistics for the cost-based query planner —
 /// computed at build, range-fetched with the pyramid (index-free). `count` is the
@@ -153,6 +169,9 @@ pub struct PyramidMeta {
     // --- query-stats block (empty when not computed; independent of the schema) ---
     /// Per-predicate cardinality for the planner; see [`PredStat`].
     pub predicate_stats: Vec<PredStat>,
+    // --- characteristic-sets block (entity shapes; empty when not computed) ---
+    /// The distinct entity shapes (top-N by subject count); see [`CharSet`].
+    pub char_sets: Vec<CharSet>,
 }
 
 impl PyramidMeta {
@@ -176,6 +195,7 @@ impl PyramidMeta {
             disjoint_pairs: Vec::new(),
             equivalent_pairs: Vec::new(),
             predicate_stats: Vec::new(),
+            char_sets: Vec::new(),
         }
     }
 
@@ -205,6 +225,12 @@ impl PyramidMeta {
     /// schema pyramid — a typeless graph can still carry stats.
     pub fn with_predicate_stats(mut self, predicate_stats: Vec<PredStat>) -> Self {
         self.predicate_stats = predicate_stats;
+        self
+    }
+
+    /// Attach the characteristic sets / entity shapes (consuming builder).
+    pub fn with_char_sets(mut self, char_sets: Vec<CharSet>) -> Self {
+        self.char_sets = char_sets;
         self
     }
 
@@ -251,6 +277,22 @@ impl PyramidMeta {
                 write_uvarint(&mut payload, p.max_subjects_per_object as u64);
             }
             out.push(QSTATS_V1);
+            write_uvarint(&mut out, payload.len() as u64);
+            out.extend_from_slice(&payload);
+        }
+        // characteristic-sets block (length-prefixed, tag CHARSET_V1) — after the
+        // query-stats block, still before the trailing schema block.
+        if !self.char_sets.is_empty() {
+            let mut payload = Vec::new();
+            write_uvarint(&mut payload, self.char_sets.len() as u64);
+            for c in &self.char_sets {
+                write_uvarint(&mut payload, c.predicates.len() as u64);
+                for &p in &c.predicates {
+                    write_uvarint(&mut payload, p as u64);
+                }
+                write_uvarint(&mut payload, c.subjects);
+            }
+            out.push(CHARSET_V1);
             write_uvarint(&mut out, payload.len() as u64);
             out.extend_from_slice(&payload);
         }
@@ -454,6 +496,7 @@ impl PyramidMeta {
             disjoint_pairs: Vec::new(),
             equivalent_pairs: Vec::new(),
             predicate_stats: Vec::new(),
+            char_sets: Vec::new(),
         };
         // query-stats block (before the schema block) — tag, uvarint length, then
         // the payload. The length lets a reader that doesn't know it skip past;
@@ -479,6 +522,32 @@ impl PyramidMeta {
                 });
             }
             meta.predicate_stats = stats;
+            pos = end;
+        }
+        // characteristic-sets block (after query-stats, before schema).
+        if pos < bytes.len() && bytes[pos] == CHARSET_V1 {
+            pos += 1;
+            let len = g(&mut pos)? as usize;
+            let end = pos
+                .checked_add(len)
+                .filter(|&e| e <= bytes.len())
+                .ok_or(MetaError::Malformed("char-sets block overruns buffer"))?;
+            let mut p = pos;
+            let nc = g(&mut p)? as usize;
+            let mut sets = Vec::with_capacity(nc.min(bytes.len()));
+            for _ in 0..nc {
+                let np = g(&mut p)? as usize;
+                let mut predicates = Vec::with_capacity(np.min(bytes.len()));
+                for _ in 0..np {
+                    predicates.push(g(&mut p)? as u32);
+                }
+                let subjects = g(&mut p)?;
+                sets.push(CharSet {
+                    predicates,
+                    subjects,
+                });
+            }
+            meta.char_sets = sets;
             pos = end;
         }
         // v2 schema pyramid — present iff there are trailing bytes tagged
@@ -694,14 +763,16 @@ pub fn schema_block_len(bytes: &[u8]) -> u32 {
                 return None;
             }
         }
-        // Skip an optional query-stats block (tag + uvarint length + payload) so
-        // the schema block, which follows it, stays the trailing section.
-        if pos < bytes.len() && bytes[pos] == QSTATS_V1 {
-            pos += 1;
-            let len = uv!() as usize;
-            pos = pos.checked_add(len)?;
-            if pos > bytes.len() {
-                return None;
+        // Skip the optional query-stats and characteristic-sets blocks (each
+        // tag + uvarint length + payload) so the schema block stays trailing.
+        for tag in [QSTATS_V1, CHARSET_V1] {
+            if pos < bytes.len() && bytes[pos] == tag {
+                pos += 1;
+                let len = uv!() as usize;
+                pos = pos.checked_add(len)?;
+                if pos > bytes.len() {
+                    return None;
+                }
             }
         }
         Some(pos)
@@ -745,6 +816,7 @@ pub fn decode_schema_block(
         disjoint_pairs: Vec::new(),
         equivalent_pairs: Vec::new(),
         predicate_stats: Vec::new(),
+        char_sets: Vec::new(),
     };
     let mut pos = 1; // skip the SCHEMA_V2 tag
     decode_schema(block, &mut pos, &mut meta)?;
@@ -781,6 +853,7 @@ pub fn decode_schema_block_summary(
         disjoint_pairs: Vec::new(),
         equivalent_pairs: Vec::new(),
         predicate_stats: Vec::new(),
+        char_sets: Vec::new(),
     };
     let mut pos = 1;
     decode_schema(block, &mut pos, &mut meta)?;
@@ -1148,5 +1221,58 @@ mod tests {
             SCHEMA_V2,
             "schema is still the trailing block"
         );
+    }
+
+    #[test]
+    fn char_sets_coexist_with_query_stats_and_schema() {
+        let sets = vec![
+            CharSet {
+                predicates: vec![1, 5, 9],
+                subjects: 100,
+            },
+            CharSet {
+                predicates: vec![1, 5],
+                subjects: 40,
+            },
+        ];
+        let stats = vec![PredStat {
+            predicate: 1,
+            count: 9,
+            distinct_subjects: 3,
+            distinct_objects: 3,
+            max_objects_per_subject: 3,
+            max_subjects_per_object: 3,
+        }];
+        let bytes = sample_v1()
+            .with_predicate_stats(stats.clone())
+            .with_char_sets(sets.clone())
+            .with_schema(
+                vec![ClassNode {
+                    class: "<http://ex/C>".into(),
+                    parents: vec![],
+                    depth: 0,
+                }],
+                vec![LevelRollup {
+                    round: 0,
+                    depth: 0,
+                    classes: vec![("<http://ex/C>".into(), 1)],
+                }],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            )
+            .encode();
+        let back = PyramidMeta::decode(&bytes).unwrap();
+        assert_eq!(back.predicate_stats, stats);
+        assert_eq!(back.char_sets, sets);
+        assert_eq!(
+            back.class_hierarchy.len(),
+            1,
+            "schema decoded past both blocks"
+        );
+        let len = schema_block_len(&bytes) as usize;
+        assert_eq!(bytes[bytes.len() - len], SCHEMA_V2, "schema still trailing");
     }
 }
