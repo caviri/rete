@@ -32,61 +32,118 @@ pub enum IngestError {
     Turtle(String),
     #[error("unknown input format: {0} (expected nt, nq, or ttl)")]
     UnknownFormat(String),
+    #[error("io: {0}")]
+    Io(String),
+}
+
+/// Estimate the statement count of an N-Triples/N-Quads text from its newline
+/// count, so the output `Vec` can be pre-sized — a big build otherwise pays
+/// repeated `Vec` doublings, each briefly holding ~2× the (large) spine. An
+/// over-estimate by a few blank/comment lines is harmless (it's a capacity hint).
+fn estimate_statements(input: &str) -> usize {
+    bytecount_newlines(input).max(1)
+}
+
+/// Count `\n` bytes — one linear pass, far cheaper than the parse it sizes.
+fn bytecount_newlines(input: &str) -> usize {
+    input.as_bytes().iter().filter(|&&b| b == b'\n').count()
+}
+
+/// Parse one N-Quads line into a quad, or `None` for a blank/comment line.
+/// Shared by the whole-text [`parse_quads`] and the streaming [`parse_reader`].
+fn parse_nq_line(raw: &str, lineno: usize) -> Result<Option<RawQuad>, IngestError> {
+    let line = raw.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return Ok(None);
+    }
+    let stripped = line
+        .strip_suffix('.')
+        .ok_or(IngestError::Line(lineno, "missing trailing '.'"))?
+        .trim_end();
+    let (s, rest) = take_term(stripped).ok_or(IngestError::Line(lineno, "bad subject"))?;
+    let (p, rest) =
+        take_term(rest.trim_start()).ok_or(IngestError::Line(lineno, "bad predicate"))?;
+    let (o, rest) = take_term(rest.trim_start()).ok_or(IngestError::Line(lineno, "bad object"))?;
+    let rest = rest.trim();
+    let graph = if rest.is_empty() {
+        None
+    } else {
+        let (g, tail) = take_term(rest).ok_or(IngestError::Line(lineno, "bad graph"))?;
+        if !tail.trim().is_empty() {
+            return Err(IngestError::Line(lineno, "trailing content after graph"));
+        }
+        Some(g)
+    };
+    Ok(Some((s, p, o, graph)))
+}
+
+/// Parse one N-Triples line into a triple, or `None` for a blank/comment line.
+fn parse_nt_line(raw: &str, lineno: usize) -> Result<Option<RawTriple>, IngestError> {
+    let line = raw.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return Ok(None);
+    }
+    let stripped = line
+        .strip_suffix('.')
+        .ok_or(IngestError::Line(lineno, "missing trailing '.'"))?
+        .trim_end();
+    let (s, rest) = take_term(stripped).ok_or(IngestError::Line(lineno, "bad subject"))?;
+    let (p, rest) =
+        take_term(rest.trim_start()).ok_or(IngestError::Line(lineno, "bad predicate"))?;
+    let (o, rest) = take_term(rest.trim_start()).ok_or(IngestError::Line(lineno, "bad object"))?;
+    if !rest.trim().is_empty() {
+        return Err(IngestError::Line(lineno, "trailing content after object"));
+    }
+    Ok(Some((s, p, o)))
 }
 
 /// Parse N-Quads text: `subject predicate object [graph] .` per line.
 pub fn parse_quads(input: &str) -> Result<Vec<RawQuad>, IngestError> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(estimate_statements(input));
     for (i, raw) in input.lines().enumerate() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
+        if let Some(q) = parse_nq_line(raw, i + 1)? {
+            out.push(q);
         }
-        let stripped = line
-            .strip_suffix('.')
-            .ok_or(IngestError::Line(i + 1, "missing trailing '.'"))?
-            .trim_end();
-        let (s, rest) = take_term(stripped).ok_or(IngestError::Line(i + 1, "bad subject"))?;
-        let (p, rest) =
-            take_term(rest.trim_start()).ok_or(IngestError::Line(i + 1, "bad predicate"))?;
-        let (o, rest) =
-            take_term(rest.trim_start()).ok_or(IngestError::Line(i + 1, "bad object"))?;
-        let rest = rest.trim();
-        let graph = if rest.is_empty() {
-            None
-        } else {
-            let (g, tail) = take_term(rest).ok_or(IngestError::Line(i + 1, "bad graph"))?;
-            if !tail.trim().is_empty() {
-                return Err(IngestError::Line(i + 1, "trailing content after graph"));
-            }
-            Some(g)
-        };
-        out.push((s, p, o, graph));
     }
     Ok(out)
 }
 
 /// Parse N-Triples text into raw term-token triples, skipping blank/comment lines.
 pub fn parse(input: &str) -> Result<Vec<RawTriple>, IngestError> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(estimate_statements(input));
     for (i, raw) in input.lines().enumerate() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
+        if let Some(t) = parse_nt_line(raw, i + 1)? {
+            out.push(t);
         }
-        let stripped = line
-            .strip_suffix('.')
-            .ok_or(IngestError::Line(i + 1, "missing trailing '.'"))?
-            .trim_end();
-        let (s, rest) = take_term(stripped).ok_or(IngestError::Line(i + 1, "bad subject"))?;
-        let (p, rest) =
-            take_term(rest.trim_start()).ok_or(IngestError::Line(i + 1, "bad predicate"))?;
-        let (o, rest) =
-            take_term(rest.trim_start()).ok_or(IngestError::Line(i + 1, "bad object"))?;
-        if !rest.trim().is_empty() {
-            return Err(IngestError::Line(i + 1, "trailing content after object"));
+    }
+    Ok(out)
+}
+
+/// **Stream-parse** N-Triples (`"nt"`) or N-Quads (`"nq"`) from a reader, one
+/// line at a time, so the whole input text is **never resident** — the big-build
+/// memory win over reading the file into a `String` first (each line String is
+/// transient, freed every iteration). `cap` pre-sizes the output `Vec` (e.g.
+/// `file_len / 64`) to avoid reallocation doublings of the large spine. Turtle is
+/// not streamable here (oxttl needs the whole input); callers use the text path
+/// for `"ttl"`.
+pub fn parse_reader<R: std::io::BufRead>(
+    reader: R,
+    format: &str,
+    cap: usize,
+) -> Result<Vec<RawQuad>, IngestError> {
+    if format != "nt" && format != "nq" {
+        return Err(IngestError::UnknownFormat(format.to_string()));
+    }
+    let mut out = Vec::with_capacity(cap);
+    for (i, line) in reader.lines().enumerate() {
+        let line = line.map_err(|e| IngestError::Io(e.to_string()))?;
+        if format == "nq" {
+            if let Some(q) = parse_nq_line(&line, i + 1)? {
+                out.push(q);
+            }
+        } else if let Some((s, p, o)) = parse_nt_line(&line, i + 1)? {
+            out.push((s, p, o, None));
         }
-        out.push((s, p, o));
     }
     Ok(out)
 }
@@ -183,8 +240,9 @@ pub struct BuildStats {
 /// community pyramid. `metadata` is the opaque metadata-section payload (the
 /// CLI puts a JSON Dataset Card there); pass `&[]` for none — that is
 /// byte-identical to a metadata-free build.
-pub fn assemble_dataset(quads: &[RawQuad], metadata: &[u8]) -> (Vec<u8>, BuildStats) {
-    assemble_dataset_with(quads, |_| metadata.to_vec())
+pub fn assemble_dataset(quads: Vec<RawQuad>, metadata: &[u8]) -> (Vec<u8>, BuildStats) {
+    let blob = metadata.to_vec();
+    assemble_dataset_with(quads, move |_, _| blob)
 }
 
 /// Like [`assemble_dataset`], but the metadata payload is derived from the
@@ -192,8 +250,8 @@ pub fn assemble_dataset(quads: &[RawQuad], metadata: &[u8]) -> (Vec<u8>, BuildSt
 /// only known after the dictionary and indexes are built (the Dataset Card).
 /// Returning an empty `Vec` is byte-identical to a metadata-free build.
 pub fn assemble_dataset_with(
-    quads: &[RawQuad],
-    metadata: impl FnOnce(&BuildStats) -> Vec<u8>,
+    quads: Vec<RawQuad>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
 ) -> (Vec<u8>, BuildStats) {
     assemble_dataset_with_opts(quads, true, None, metadata)
 }
@@ -205,22 +263,22 @@ pub fn assemble_dataset_with(
 /// largest section on highly-connected graphs). Only the community / summary /
 /// progressive paths need it.
 pub fn assemble_dataset_with_opts(
-    quads: &[RawQuad],
+    quads: Vec<RawQuad>,
     with_pyramid: bool,
     type_override: Option<&str>,
-    metadata: impl FnOnce(&BuildStats) -> Vec<u8>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
 ) -> (Vec<u8>, BuildStats) {
     use std::collections::BTreeMap;
 
     let mut db = DictionaryBuilder::new();
-    for (s, p, o, _) in quads {
+    for (s, p, o, _) in &quads {
         db.observe(s, p, o);
     }
     let dict = db.build();
 
     let mut default_triples = Vec::new();
     let mut named: BTreeMap<String, Vec<(u32, u32, u32)>> = BTreeMap::new();
-    for (s, p, o, g) in quads {
+    for (s, p, o, g) in &quads {
         let t = dict.encode(s, p, o).expect("observed term");
         match g {
             None => default_triples.push(t),
@@ -229,43 +287,42 @@ pub fn assemble_dataset_with_opts(
     }
     let has_named = !named.is_empty();
 
-    let mut def = GraphIndexBuilder::new();
-    for &t in &default_triples {
-        def.push(t);
-    }
-    let named_indexes: Vec<(String, crate::GraphIndex)> = named
-        .into_iter()
-        .map(|(g, ts)| {
-            let mut b = GraphIndexBuilder::new();
-            for t in ts {
-                b.push(t);
-            }
-            (g, b.build())
-        })
-        .collect();
+    // Derive the metadata blob (the Dataset Card) from the raw quads NOW, while
+    // they are resident — then DROP them before the memory-heavy pyramid + index
+    // phases. On a big build the string quads are the largest working set (every
+    // term an owned String, heavily duplicated) and are fully redundant with the
+    // dictionary + id-triples once encoded, so freeing them here cuts peak RAM by
+    // their whole size. `pyramid_levels` is not known yet (0 in the callback);
+    // it is filled into the returned `stats` below, and no metadata callback
+    // depends on it (the card derives from the quads + term/graph counts only).
+    let mut stats = BuildStats {
+        statements: quads.len(),
+        default_triples: default_triples.len(),
+        named_graphs: named.len(),
+        terms: dict.term_count() as usize,
+        pyramid_levels: 0,
+    };
+    let blob = metadata(&stats, &quads);
+    drop(quads);
 
     let (meta, levels) = if with_pyramid {
         build_pyramid_meta_with(&dict, &default_triples, DEFAULT_TILE_BUDGET, type_override)
     } else {
         (Vec::new(), 0)
     };
-    let stats = BuildStats {
-        statements: quads.len(),
-        default_triples: default_triples.len(),
-        named_graphs: named_indexes.len(),
-        terms: dict.term_count() as usize,
-        pyramid_levels: levels,
-    };
-    let blob = metadata(&stats);
-    let bytes = write_dataset_with_metadata(
-        &dict,
-        &def.build(),
-        &named_indexes,
-        has_named,
-        &meta,
-        levels,
-        &blob,
-    );
+    stats.pyramid_levels = levels;
+
+    // Build the indexes from the OWNED id-triples (move, no per-triple copy); the
+    // default-graph triples were borrowed by the pyramid above and are consumed
+    // here, freeing them as the permutations are built.
+    let def = GraphIndexBuilder::from_triples(default_triples).build();
+    let named_indexes: Vec<(String, crate::GraphIndex)> = named
+        .into_iter()
+        .map(|(g, ts)| (g, GraphIndexBuilder::from_triples(ts).build()))
+        .collect();
+
+    let bytes =
+        write_dataset_with_metadata(&dict, &def, &named_indexes, has_named, &meta, levels, &blob);
     (bytes, stats)
 }
 
@@ -317,6 +374,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_reader_matches_text_parse() {
+        // The streaming reader must produce exactly the same quads as parsing the
+        // whole text — including blank/comment skipping, a named graph, and CRLF.
+        let nt = "<http://ex/a> <http://ex/p> <http://ex/b> .\r\n\
+                  # comment\n\
+                  \n\
+                  _:b0 <http://ex/q> \"lit\"@en .\n";
+        let via_text = parse_statements(nt, "nt").unwrap();
+        let via_reader = parse_reader(std::io::Cursor::new(nt), "nt", 0).unwrap();
+        assert_eq!(via_text, via_reader);
+
+        let nq = "<http://ex/a> <http://ex/p> <http://ex/b> .\n\
+                  <http://ex/a> <http://ex/p> <http://ex/c> <http://ex/g> .\n";
+        assert_eq!(
+            parse_quads(nq).unwrap(),
+            parse_reader(std::io::Cursor::new(nq), "nq", 0).unwrap()
+        );
+        // Turtle is not streamable here.
+        assert!(parse_reader(std::io::Cursor::new(nt), "ttl", 0).is_err());
+    }
+
+    #[test]
     fn parse_statements_dispatches_by_format() {
         let nt = "<http://ex/a> <http://ex/p> <http://ex/b> .";
         assert_eq!(parse_statements(nt, "nt").unwrap().len(), 1);
@@ -334,7 +413,7 @@ mod tests {
                     <http://ex/a> <http://ex/age> \"30\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n\
                     <http://ex/a> <http://ex/p> <http://ex/d> <http://ex/g1> .";
         let quads = parse_statements(text, "nq").unwrap();
-        let (bytes, stats) = assemble_dataset(&quads, &[]);
+        let (bytes, stats) = assemble_dataset(quads, &[]);
         assert_eq!(stats.statements, 4);
         assert_eq!(stats.default_triples, 3);
         assert_eq!(stats.named_graphs, 1);

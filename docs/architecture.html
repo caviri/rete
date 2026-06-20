@@ -265,6 +265,17 @@ totals, class/type summaries, and named-graph metadata.</li>
 <p>The file is immutable. Updates mean rebuilding the artifact. That keeps readers
 simple and lets a <code>.rete</code> file sit on GitHub Pages, S3, GCS, or any HTTP server
 that honors <code>Range</code>.</p>
+<p><strong>Build memory.</strong> On a big graph the build's peak RAM is dominated by the raw
+string statements — every term is an owned <code>String</code>, heavily duplicated across
+triples — which are fully redundant with the dictionary once interned. Two
+choices keep the peak low: an N-Triples/N-Quads <strong>file is stream-parsed</strong> line by
+line (the whole text is never resident), and the parsed statements are <strong>dropped
+right after they are encoded to integer id-triples</strong>, before the memory-heavy
+pyramid and index phases. So the dictionary + id-triples (compact) coexist with
+the pyramid working set, but the bulky string statements do not. Measured on a
+3 M-triple / 189 MB N-Triples build, peak RSS fell <strong>~1371 MiB → ~836 MiB (39%)</strong>,
+output byte-identical. The phase-by-phase heap profile is reproducible with
+<code>cargo run --release -p rete-bench -- --build-mem &lt;file.nt&gt;</code>.</p>
 <h2>File Layout</h2>
 <p>The header gives fixed offsets and lengths for the remaining sections. Readers
 first validate the header, then decide how much of the file to load:</p>

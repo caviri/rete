@@ -50,7 +50,7 @@ pub fn build(text: &str, format: &str) -> Result<Vec<u8>, JsValue> {
             "no statements parsed (empty input or only comments)",
         ));
     }
-    let (bytes, _stats) = rete_core::ingest::assemble_dataset(&quads, &[]);
+    let (bytes, _stats) = rete_core::ingest::assemble_dataset(quads, &[]);
     Ok(bytes)
 }
 
