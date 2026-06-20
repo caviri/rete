@@ -816,15 +816,42 @@ fn hash_join(
         return out;
     }
     let key_of = |b: &Row| -> Vec<Val> { shared.iter().map(|&s| b[s].clone().unwrap()).collect() };
-    let mut buckets: HashMap<Vec<Val>, Vec<Row>> = HashMap::new();
-    for r in right {
-        buckets.entry(key_of(&r)).or_default().push(r);
-    }
+    // A hash join is symmetric on the shared key, so build the **smaller** side's
+    // hash table and probe with the larger — same result set, fewer inserts and a
+    // smaller table. (The old code always built `right`; after cardinality-based
+    // ordering the accumulating `left` is usually the small selective side, so
+    // building it instead is the common win.) Whichever side is built, the output
+    // row carries every bound slot of both.
     let mut out = Vec::new();
-    for l in &left {
-        if let Some(rs) = buckets.get(&key_of(l)) {
-            for r in rs {
-                out.push(fill(l, r));
+    if right.len() <= left.len() {
+        let mut buckets: HashMap<Vec<Val>, Vec<Row>> = HashMap::new();
+        for r in right {
+            buckets.entry(key_of(&r)).or_default().push(r);
+        }
+        for l in &left {
+            if let Some(rs) = buckets.get(&key_of(l)) {
+                for r in rs {
+                    out.push(fill(l, r));
+                }
+            }
+        }
+    } else {
+        // Build the left side; fill the left's own slots into each probed right.
+        let mut buckets: HashMap<Vec<Val>, Vec<Row>> = HashMap::new();
+        for l in left {
+            buckets.entry(key_of(&l)).or_default().push(l);
+        }
+        for r in &right {
+            if let Some(ls) = buckets.get(&key_of(r)) {
+                for l in ls {
+                    let mut row = r.clone();
+                    for &s in left_bound {
+                        if let Some(v) = &l[s] {
+                            row[s] = Some(v.clone());
+                        }
+                    }
+                    out.push(row);
+                }
             }
         }
     }
