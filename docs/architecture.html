@@ -272,12 +272,20 @@ first validate the header, then decide how much of the file to load:</p>
 <tr><td>Header</td><td>Magic/version, section offsets, content hash</td></tr>
 <tr><td>Dictionary</td><td>Front-coded term strings and role-aware ID spaces</td></tr>
 <tr><td>Indexes</td><td>Compressed triple blocks in SPO/POS/OSP order</td></tr>
-<tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts</td></tr>
+<tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (planner stats, entity shapes, label index)</td></tr>
 <tr><td>Metadata</td><td>Optional dataset-card JSON/catalog data</td></tr>
 </tbody></table>
 <p><code>Rete::open</code> reads the full file. <code>Rete::open_ranged</code> fetches the sections needed
 for exact index queries. <code>SummaryView::open_ranged</code> reads only header,
 dictionary, and summary, deliberately skipping the index.</p>
+<p>The pyramid-meta grows by <strong>length-prefixed, version-tagged blocks</strong> appended
+before the (trailing) schema block: <code>query_stats</code> (per-predicate cardinality),
+characteristic sets (entity shapes), and the <strong>label index</strong> (a bounded,
+label-sorted <code>(label, subject)</code> table powering <code>rete search</code> / <code>prefix_search</code> —
+case-insensitive prefix lookup by binary search, no literal scan). Each block is
+optional and skipped by a reader that predates it, so the format stays
+backward-compatible and a typeless, label-free graph encodes byte-identically to
+v1.</p>
 <h2>Query Pipeline</h2>
 <p>SPARQL goes through four stages:</p>
 <ol>

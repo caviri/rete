@@ -49,6 +49,18 @@ named-graph count, pyramid levels, and top predicates.
 Recompute the blake3 content hash and compare to the header. Exits non-zero with
 `FAILED — content hash mismatch` on corruption/truncation.
 
+### `rete search <file> [<prefix>] [--limit N] [--json]`
+Prefix-search the **label index**: the subjects whose label starts with `prefix`
+(case-insensitive), printed as `label<TAB><iri>` (or `[{"label":…,"subject":…}]`
+with `--json`). An empty prefix returns the first `--limit` labels (default 20).
+Answered from a bounded, label-sorted block in the pyramid-meta by binary search
+— **no literal scan** — so it is the fast path for autocomplete (~22× a
+`FILTER(STRSTARTS(LCASE(?l), …))` scan at 6k labels; the gap widens with size).
+Labels come from `rdfs:label`, `skos:prefLabel`/`altLabel`, `foaf:name`,
+`dc(terms):title`, and `schema:name`; the block keeps the top 8,192 most-connected
+labeled subjects. Files built before this feature carry no label index (the block
+is additive — rebuild to add it).
+
 ### `rete card <file> [--json]`
 Print the embedded [Dataset Card](dataset-cards.md) — curated metadata
 (title/license/source/…) plus the derived profile (counts, top predicates and

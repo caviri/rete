@@ -122,7 +122,72 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
             println!("    {:>8} subj  {{{}}}", c.subjects, preds.join(", "));
         }
     }
+
+    // Label index: how many entries are searchable by prefix (`rete search`).
+    let labels = rete.label_index();
+    if !labels.is_empty() {
+        println!(
+            "  label index: {} labels (prefix-searchable — `rete search {} <prefix>`)",
+            labels.len(),
+            file
+        );
+    }
     Ok(())
+}
+
+/// Prefix-search the label index: print the subjects whose label starts with
+/// `prefix` (case-insensitive), as `label  <iri>`. Reads the bounded label-index
+/// block in the pyramid-meta — no literal scan. `--json` emits an array of
+/// `{label, subject}`.
+pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyhow::Result<()> {
+    let bytes = std::fs::read(file)?;
+    let rete = Rete::open(&bytes)?;
+    let hits = rete.prefix_search(prefix, limit);
+    if json {
+        let items: Vec<String> = hits
+            .iter()
+            .map(|(label, iri)| {
+                format!(
+                    "{{\"label\":{},\"subject\":{}}}",
+                    json_str(label),
+                    json_str(iri)
+                )
+            })
+            .collect();
+        println!("[{}]", items.join(","));
+        return Ok(());
+    }
+    if hits.is_empty() {
+        if rete.label_index().is_empty() {
+            eprintln!("(this file has no label index — rebuild with a recent `rete build`)");
+        } else {
+            println!("(no labels match \"{prefix}\")");
+        }
+        return Ok(());
+    }
+    for (label, iri) in &hits {
+        println!("{label}\t{iri}");
+    }
+    Ok(())
+}
+
+/// Minimal JSON string escaping for the `--json` output.
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// List the named graphs in a dataset (or note that there are none).

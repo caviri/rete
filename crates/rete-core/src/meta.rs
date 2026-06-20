@@ -41,6 +41,11 @@ const QSTATS_V1: u8 = 3;
 /// The characteristic-sets block tag. Length-prefixed, written after the
 /// query-stats block and before the (trailing) schema block; old readers skip it.
 const CHARSET_V1: u8 = 4;
+/// The label-index block tag. Length-prefixed, written after the characteristic-
+/// sets block and before the (trailing) schema block; old readers skip it. A
+/// bounded, label-sorted `(label, subject)` table for prefix search without a
+/// literal scan; see [`LabelEntry`].
+const LABELIDX_V1: u8 = 5;
 
 /// A **characteristic set** — one entity "shape": the sorted set of predicates a
 /// subject carries, plus how many subjects share exactly that shape. Computed at
@@ -53,6 +58,21 @@ pub struct CharSet {
     pub predicates: Vec<u32>,
     /// Subjects whose predicate set is exactly this.
     pub subjects: u64,
+}
+
+/// One entry of the **label index**: the display label of a subject (its
+/// `rdfs:label` / `skos:prefLabel` / … literal) paired with that subject's id.
+/// Computed at build (the most-connected labeled subjects, bounded), the table
+/// is sorted by the label's lowercased form so a prefix query is a binary search
+/// — autocomplete and CONTAINS/prefix lookup **without scanning the literals**.
+/// Range-fetched with the pyramid; the label string is stored inline so the
+/// search is self-contained on the remote-lazy path (no dictionary fault).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabelEntry {
+    /// The label literal's lexical value, original case (sorted case-insensitively).
+    pub label: String,
+    /// The subject id (subject id space) this label belongs to.
+    pub subject: u32,
 }
 
 /// Per-predicate cardinality statistics for the cost-based query planner —
@@ -172,6 +192,9 @@ pub struct PyramidMeta {
     // --- characteristic-sets block (entity shapes; empty when not computed) ---
     /// The distinct entity shapes (top-N by subject count); see [`CharSet`].
     pub char_sets: Vec<CharSet>,
+    // --- label-index block (prefix search; empty when not computed) ---
+    /// Label-sorted `(label, subject)` table for prefix search; see [`LabelEntry`].
+    pub label_index: Vec<LabelEntry>,
 }
 
 impl PyramidMeta {
@@ -196,6 +219,7 @@ impl PyramidMeta {
             equivalent_pairs: Vec::new(),
             predicate_stats: Vec::new(),
             char_sets: Vec::new(),
+            label_index: Vec::new(),
         }
     }
 
@@ -232,6 +256,41 @@ impl PyramidMeta {
     pub fn with_char_sets(mut self, char_sets: Vec<CharSet>) -> Self {
         self.char_sets = char_sets;
         self
+    }
+
+    /// Attach the label index (consuming builder). Independent of the schema —
+    /// any graph with label literals can carry it. The entries should already be
+    /// sorted by the label's lowercased form (see [`Self::prefix_search`]).
+    pub fn with_label_index(mut self, label_index: Vec<LabelEntry>) -> Self {
+        self.label_index = label_index;
+        self
+    }
+
+    /// All entries whose label, compared case-insensitively, starts with
+    /// `prefix`, capped at `limit`. The index is stored sorted by the lowercased
+    /// label, so this is a binary search for the lower bound followed by a linear
+    /// walk while the prefix still matches — no literal scan. An empty `prefix`
+    /// returns the first `limit` entries.
+    pub fn prefix_search(&self, prefix: &str, limit: usize) -> Vec<&LabelEntry> {
+        let needle = prefix.to_lowercase();
+        // Lower bound: first entry whose lowercased label is >= the needle.
+        let start = self
+            .label_index
+            .partition_point(|e| e.label.to_lowercase().as_str() < needle.as_str());
+        let mut out = Vec::new();
+        for e in &self.label_index[start..] {
+            if out.len() >= limit {
+                break;
+            }
+            let lower = e.label.to_lowercase();
+            if needle.is_empty() || lower.starts_with(&needle) {
+                out.push(e);
+            } else if lower.as_str() > needle.as_str() {
+                // Past the prefix run (entries are sorted) — nothing more matches.
+                break;
+            }
+        }
+        out
     }
 
     /// True when no schema pyramid is present (v1 shape).
@@ -293,6 +352,19 @@ impl PyramidMeta {
                 write_uvarint(&mut payload, c.subjects);
             }
             out.push(CHARSET_V1);
+            write_uvarint(&mut out, payload.len() as u64);
+            out.extend_from_slice(&payload);
+        }
+        // label-index block (length-prefixed, tag LABELIDX_V1) — after the
+        // characteristic-sets block, still before the trailing schema block.
+        if !self.label_index.is_empty() {
+            let mut payload = Vec::new();
+            write_uvarint(&mut payload, self.label_index.len() as u64);
+            for e in &self.label_index {
+                write_str(&mut payload, &e.label);
+                write_uvarint(&mut payload, e.subject as u64);
+            }
+            out.push(LABELIDX_V1);
             write_uvarint(&mut out, payload.len() as u64);
             out.extend_from_slice(&payload);
         }
@@ -497,6 +569,7 @@ impl PyramidMeta {
             equivalent_pairs: Vec::new(),
             predicate_stats: Vec::new(),
             char_sets: Vec::new(),
+            label_index: Vec::new(),
         };
         // query-stats block (before the schema block) — tag, uvarint length, then
         // the payload. The length lets a reader that doesn't know it skip past;
@@ -548,6 +621,25 @@ impl PyramidMeta {
                 });
             }
             meta.char_sets = sets;
+            pos = end;
+        }
+        // label-index block (after characteristic-sets, before schema).
+        if pos < bytes.len() && bytes[pos] == LABELIDX_V1 {
+            pos += 1;
+            let len = g(&mut pos)? as usize;
+            let end = pos
+                .checked_add(len)
+                .filter(|&e| e <= bytes.len())
+                .ok_or(MetaError::Malformed("label-index block overruns buffer"))?;
+            let mut p = pos;
+            let nl = g(&mut p)? as usize;
+            let mut entries = Vec::with_capacity(nl.min(bytes.len()));
+            for _ in 0..nl {
+                let label = read_str(bytes, &mut p)?;
+                let subject = g(&mut p)? as u32;
+                entries.push(LabelEntry { label, subject });
+            }
+            meta.label_index = entries;
             pos = end;
         }
         // v2 schema pyramid — present iff there are trailing bytes tagged
@@ -763,9 +855,9 @@ pub fn schema_block_len(bytes: &[u8]) -> u32 {
                 return None;
             }
         }
-        // Skip the optional query-stats and characteristic-sets blocks (each
-        // tag + uvarint length + payload) so the schema block stays trailing.
-        for tag in [QSTATS_V1, CHARSET_V1] {
+        // Skip the optional query-stats, characteristic-sets and label-index
+        // blocks (each tag + uvarint length + payload) so the schema stays trailing.
+        for tag in [QSTATS_V1, CHARSET_V1, LABELIDX_V1] {
             if pos < bytes.len() && bytes[pos] == tag {
                 pos += 1;
                 let len = uv!() as usize;
@@ -817,6 +909,7 @@ pub fn decode_schema_block(
         equivalent_pairs: Vec::new(),
         predicate_stats: Vec::new(),
         char_sets: Vec::new(),
+        label_index: Vec::new(),
     };
     let mut pos = 1; // skip the SCHEMA_V2 tag
     decode_schema(block, &mut pos, &mut meta)?;
@@ -854,6 +947,7 @@ pub fn decode_schema_block_summary(
         equivalent_pairs: Vec::new(),
         predicate_stats: Vec::new(),
         char_sets: Vec::new(),
+        label_index: Vec::new(),
     };
     let mut pos = 1;
     decode_schema(block, &mut pos, &mut meta)?;
@@ -1274,5 +1368,96 @@ mod tests {
         );
         let len = schema_block_len(&bytes) as usize;
         assert_eq!(bytes[bytes.len() - len], SCHEMA_V2, "schema still trailing");
+    }
+
+    #[test]
+    fn label_index_round_trips_and_prefix_searches() {
+        // Sorted by lowercased label (case-insensitive), as the builder emits.
+        let labels = vec![
+            LabelEntry {
+                label: "Alanine".into(),
+                subject: 10,
+            },
+            LabelEntry {
+                label: "alpha-D-glucose".into(),
+                subject: 11,
+            },
+            LabelEntry {
+                label: "Benzene".into(),
+                subject: 12,
+            },
+        ];
+        let meta = sample_v1().with_label_index(labels.clone());
+        let bytes = meta.encode();
+        let back = PyramidMeta::decode(&bytes).unwrap();
+        assert_eq!(back.label_index, labels, "label index survives round trip");
+
+        // Case-insensitive prefix: "al" matches Alanine + alpha-D-glucose, in order.
+        let hits = back.prefix_search("al", 10);
+        assert_eq!(
+            hits.iter().map(|e| e.subject).collect::<Vec<_>>(),
+            vec![10, 11]
+        );
+        // A more specific prefix narrows to one; the walk stops at the run's end.
+        let hits = back.prefix_search("BEN", 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].subject, 12);
+        // No match → empty.
+        assert!(back.prefix_search("zzz", 10).is_empty());
+        // The limit caps the result.
+        assert_eq!(back.prefix_search("", 2).len(), 2);
+    }
+
+    #[test]
+    fn label_index_stays_additive_before_schema() {
+        let labels = vec![LabelEntry {
+            label: "x".into(),
+            subject: 1,
+        }];
+        let stats = vec![PredStat {
+            predicate: 1,
+            count: 1,
+            distinct_subjects: 1,
+            distinct_objects: 1,
+            max_objects_per_subject: 1,
+            max_subjects_per_object: 1,
+        }];
+        let sets = vec![CharSet {
+            predicates: vec![1],
+            subjects: 1,
+        }];
+        let bytes = sample_v1()
+            .with_predicate_stats(stats.clone())
+            .with_char_sets(sets.clone())
+            .with_label_index(labels.clone())
+            .with_schema(
+                vec![ClassNode {
+                    class: "<http://ex/C>".into(),
+                    parents: vec![],
+                    depth: 0,
+                }],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            )
+            .encode();
+        let back = PyramidMeta::decode(&bytes).unwrap();
+        assert_eq!(back.predicate_stats, stats);
+        assert_eq!(back.char_sets, sets);
+        assert_eq!(back.label_index, labels);
+        assert_eq!(
+            back.class_hierarchy.len(),
+            1,
+            "schema decoded past 3 blocks"
+        );
+        let len = schema_block_len(&bytes) as usize;
+        assert_eq!(
+            bytes[bytes.len() - len],
+            SCHEMA_V2,
+            "schema still trailing past the label index"
+        );
     }
 }

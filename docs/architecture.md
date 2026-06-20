@@ -48,12 +48,21 @@ first validate the header, then decide how much of the file to load:
 | Header | Magic/version, section offsets, content hash |
 | Dictionary | Front-coded term strings and role-aware ID spaces |
 | Indexes | Compressed triple blocks in SPO/POS/OSP order |
-| Summary | Pyramid/community graph, predicate totals, classes, named-graph counts |
+| Summary | Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (planner stats, entity shapes, label index) |
 | Metadata | Optional dataset-card JSON/catalog data |
 
 `Rete::open` reads the full file. `Rete::open_ranged` fetches the sections needed
 for exact index queries. `SummaryView::open_ranged` reads only header,
 dictionary, and summary, deliberately skipping the index.
+
+The pyramid-meta grows by **length-prefixed, version-tagged blocks** appended
+before the (trailing) schema block: `query_stats` (per-predicate cardinality),
+characteristic sets (entity shapes), and the **label index** (a bounded,
+label-sorted `(label, subject)` table powering `rete search` / `prefix_search` —
+case-insensitive prefix lookup by binary search, no literal scan). Each block is
+optional and skipped by a reader that predates it, so the format stays
+backward-compatible and a typeless, label-free graph encodes byte-identically to
+v1.
 
 ## Query Pipeline
 
