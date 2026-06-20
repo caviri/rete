@@ -761,7 +761,7 @@ fn parse_tile_synopsis(
     num_tiles: usize,
 ) -> Option<Vec<TileSynopsis>> {
     let mut pos = trailer_start;
-    let mut take = |pos: &mut usize| -> Option<u32> {
+    let take = |pos: &mut usize| -> Option<u32> {
         let (v, n) = read_uvarint(payload.get(*pos..)?)?;
         *pos += n;
         u32::try_from(v).ok()
