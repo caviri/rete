@@ -3212,7 +3212,7 @@ mod tests {
             q("<b>", "<knows>", "<c>"),
         ];
         let (bytes, _) =
-            crate::ingest::assemble_dataset_with_opts(&quads, true, None, |_| Vec::new());
+            crate::ingest::assemble_dataset_with_opts(quads, true, None, |_, _| Vec::new());
 
         // The v2 schema pyramid round-trips through the built file.
         let rete = Rete::open(&bytes).unwrap();

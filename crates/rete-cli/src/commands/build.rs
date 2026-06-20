@@ -45,10 +45,29 @@ fn input_format(path: &str, override_fmt: Option<&str>) -> &'static str {
 fn parse_inputs(inputs: &[String], format: Option<&str>) -> anyhow::Result<Vec<ingest::RawQuad>> {
     let mut quads: Vec<ingest::RawQuad> = Vec::new();
     for input in inputs {
-        let text = read_input(input)?;
-        let parsed = ingest::parse_statements(&text, input_format(input, format))
-            .map_err(|e| anyhow::anyhow!("{input}: {e}"))?;
-        quads.extend(parsed);
+        let fmt = input_format(input, format);
+        // Stream N-Triples / N-Quads files line by line so the whole file text is
+        // never resident — the big-build memory win. Pre-size from the file length
+        // (~64 B/line) to avoid Vec doublings. stdin and Turtle take the text path
+        // (oxttl needs the whole input).
+        let parsed = if input != "-" && (fmt == "nt" || fmt == "nq") {
+            let file = std::fs::File::open(input).map_err(|e| anyhow::anyhow!("{input}: {e}"))?;
+            let cap = file
+                .metadata()
+                .map(|m| (m.len() / 64) as usize)
+                .unwrap_or(0);
+            ingest::parse_reader(std::io::BufReader::new(file), fmt, cap)
+                .map_err(|e| anyhow::anyhow!("{input}: {e}"))?
+        } else {
+            let text = read_input(input)?;
+            ingest::parse_statements(&text, fmt).map_err(|e| anyhow::anyhow!("{input}: {e}"))?
+        };
+        // Move the first input's vec in; only pay an extend-copy when merging more.
+        if quads.is_empty() {
+            quads = parsed;
+        } else {
+            quads.extend(parsed);
+        }
     }
     Ok(quads)
 }
@@ -135,11 +154,11 @@ pub(crate) fn build(
         None
     };
     let (bytes, stats) =
-        ingest::assemble_dataset_with_opts(&quads, !no_pyramid, type_predicate, |stats| {
+        ingest::assemble_dataset_with_opts(quads, !no_pyramid, type_predicate, |stats, quads| {
             match curated {
                 Some(curated) => {
                     let mut dataset_card = card::derive_card(
-                        &quads,
+                        quads,
                         stats.terms as u64,
                         stats.named_graphs as u64,
                         curated,
@@ -214,11 +233,14 @@ pub(crate) fn repyramid(
     } else {
         None
     };
-    let (out_bytes, stats) =
-        ingest::assemble_dataset_with_opts(&quads, true, type_predicate, |stats| match curated {
+    let (out_bytes, stats) = ingest::assemble_dataset_with_opts(
+        quads,
+        true,
+        type_predicate,
+        |stats, quads| match curated {
             Some(curated) => {
                 let blob = card::derive_card(
-                    &quads,
+                    quads,
                     stats.terms as u64,
                     stats.named_graphs as u64,
                     curated,
@@ -228,7 +250,8 @@ pub(crate) fn repyramid(
                 blob
             }
             None => Vec::new(),
-        });
+        },
+    );
     std::fs::write(output, &out_bytes)?;
     if stats.named_graphs > 0 {
         println!(

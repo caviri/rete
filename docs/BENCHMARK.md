@@ -31,6 +31,24 @@ container, while physical community-tile directories are the next storage step.
 Result: 3 pyramid levels, 137,512 quads, 40,063 terms.
 (Caching the dictionary section metadata cut build time ~3.4× — see finding 1.)
 
+### Build memory (big graphs)
+
+The build's peak RAM is dominated by the raw string statements (every term an
+owned `String`, heavily duplicated), which are redundant with the dictionary once
+interned. Stream-parsing the file (the whole text is never resident) and dropping
+the string statements right after encoding them to id-triples — before the
+pyramid + index phases — cuts the peak. On a **3 M-triple / 189 MB N-Triples**
+build (synthetic, `scripts`-style entities with type/label/edges):
+
+| | OLD | optimized |
+|---|--:|--:|
+| process peak RSS (`VmHWM`) | 1371 MiB | **836 MiB** (−39%) |
+
+Output is byte-identical. Reproduce the phase-by-phase heap profile with
+`cargo run --release -p rete-bench -- --build-mem <file.nt>` — it snapshots the
+live heap (exact, via a counting allocator) after parse, dictionary, encode,
+the drop, pyramid, index, and write.
+
 ## Query latency (end-to-end: open + decompress + evaluate)
 
 5-run averages of the compiled binary (includes process startup each run).

@@ -178,6 +178,16 @@ impl GraphIndexBuilder {
         Self::default()
     }
 
+    /// Build directly from an owned triple vector — moves it in, avoiding the
+    /// per-triple `push` copy when the caller already has the id-triples in a
+    /// `Vec` (the assembly path, where they double as the pyramid input).
+    pub fn from_triples(triples: Vec<Triple>) -> Self {
+        Self {
+            triples,
+            tile_budget: INDEX_TILE_BUDGET,
+        }
+    }
+
     /// Override the per-tile byte budget (tests use tiny budgets to force
     /// multi-tile sections on small data).
     pub fn with_tile_budget(mut self, bytes: usize) -> Self {

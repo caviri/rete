@@ -31,6 +31,7 @@ use rete_core::{
 };
 use serde_json::{json, Value};
 
+mod buildmem;
 mod lubm;
 mod mem;
 
@@ -236,6 +237,16 @@ fn parse_args() -> Result<(OutputFormat, Option<usize>, String, String, usize)> 
 }
 
 fn main() -> Result<()> {
+    // Build-memory profiler: `--build-mem <file.nt>` (separate from the query
+    // benchmark; walks the assembly phases snapshotting the live heap).
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(i) = raw.iter().position(|a| a == "--build-mem") {
+        let path = raw
+            .get(i + 1)
+            .context("--build-mem needs a <file.nt> path")?;
+        return buildmem::run(path);
+    }
+
     let (format, lubm_universities, rete_path, nt_path, seed_count) = parse_args()?;
     if let Some(universities) = lubm_universities {
         return lubm::run(format == OutputFormat::Json, universities);

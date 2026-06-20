@@ -48,7 +48,7 @@ fn image() -> Vec<u8> {
     add("<http://ex/paper/0> <http://ex/cites> <http://ex/paper/12> .\n".into());
     add("<http://ex/paper/12> <http://ex/cites> <http://ex/paper/24> .\n".into());
     let quads = ingest::parse_statements(&nt, "nt").unwrap();
-    ingest::assemble_dataset(&quads, &[]).0
+    ingest::assemble_dataset(quads, &[]).0
 }
 
 fn select_rows(rete: &Rete, q: &str) -> (Vec<String>, Vec<rete_core::Binding>) {
