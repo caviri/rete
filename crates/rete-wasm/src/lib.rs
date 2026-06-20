@@ -217,6 +217,11 @@ impl Graph {
         serde_json::to_string(&rows).map_err(err)
     }
 
+    /// See [`prefix_search`].
+    pub fn prefix_search(&self, prefix: &str, limit: usize) -> Result<String, JsValue> {
+        prefix_search_json(&self.rete, prefix, limit)
+    }
+
     /// See [`why_triples`].
     pub fn why_triples(
         &self,
@@ -350,6 +355,24 @@ impl RemoteGraph {
         incomplete_guard(&self.rete, "query")?;
         serde_json::to_string(&v).map_err(err)
     }
+
+    /// See [`prefix_search`] — over the resident, cached remote handle. Faults the
+    /// pyramid (where the label index lives) on the first call, then serves the
+    /// search from memory.
+    pub fn prefix_search(&self, prefix: &str, limit: usize) -> Result<String, JsValue> {
+        prefix_search_json(&self.rete, prefix, limit)
+    }
+}
+
+/// Serialize a label prefix search as `[{"label":…,"subject":…}]`.
+fn prefix_search_json(rete: &Rete, prefix: &str, limit: usize) -> Result<String, JsValue> {
+    use serde_json::json;
+    let hits: Vec<serde_json::Value> = rete
+        .prefix_search(prefix, limit)
+        .into_iter()
+        .map(|(label, subject)| json!({ "label": label, "subject": subject }))
+        .collect();
+    serde_json::to_string(&hits).map_err(err)
 }
 
 /// Parse just the 128-byte header and report the byte ranges a *progressive*
@@ -535,6 +558,16 @@ pub fn query(bytes: &[u8], query: &str, format: &str) -> Result<String, JsValue>
     let rete = open(bytes)?;
     let v = query_value(&rete, query, format)?;
     serde_json::to_string(&v).map_err(err)
+}
+
+/// Prefix-search the label index of an embedded `.rete` image: the subjects whose
+/// label starts with `prefix` (case-insensitive), as `[{"label":…,"subject":…}]`,
+/// capped at `limit`. Answers from the bounded label-index block in the
+/// pyramid-meta — no literal scan. Empty array when the file has no label index.
+#[wasm_bindgen]
+pub fn prefix_search(bytes: &[u8], prefix: &str, limit: usize) -> Result<String, JsValue> {
+    let rete = open(bytes)?;
+    prefix_search_json(&rete, prefix, limit)
 }
 
 /// Evaluate any SPARQL form against an open [`Rete`] and build the playground

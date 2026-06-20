@@ -77,8 +77,95 @@ pub fn build_pyramid_meta_with(
             sp.equivalent_pairs,
         )
         .with_predicate_stats(compute_predicate_stats(triples))
-        .with_char_sets(compute_char_sets(triples));
+        .with_char_sets(compute_char_sets(triples))
+        .with_label_index(compute_label_index(dict, triples));
     (meta.encode(), dend.rounds() as u16)
+}
+
+/// The label predicates a [`compute_label_index`] entry can come from — the
+/// common "human-readable name of this subject" terms, angle-bracketed as the
+/// dictionary stores them. Order is irrelevant (we union their ids).
+const LABEL_PREDICATES: &[&str] = &[
+    "<http://www.w3.org/2000/01/rdf-schema#label>",
+    "<http://www.w3.org/2004/02/skos/core#prefLabel>",
+    "<http://www.w3.org/2004/02/skos/core#altLabel>",
+    "<http://xmlns.com/foaf/0.1/name>",
+    "<http://purl.org/dc/terms/title>",
+    "<http://purl.org/dc/elements/1.1/title>",
+    "<http://schema.org/name>",
+];
+
+/// Build the bounded **label index** for prefix search: the display labels of
+/// the most-connected labeled subjects, sorted by the label's lowercased form.
+/// Ranking keeps autocomplete useful on a huge graph (the prominent entities
+/// survive the bound); a graph with fewer than `MAX_LABELS` labels keeps them
+/// all. Deterministic (degree, then subject id, then label) so builds are
+/// reproducible. O(triples) transient memory, freed before the file is written.
+fn compute_label_index(
+    dict: &Dictionary,
+    triples: &[(u32, u32, u32)],
+) -> Vec<crate::meta::LabelEntry> {
+    use crate::terms::{is_literal, literal_lexical};
+    use std::collections::{HashMap, HashSet};
+    const MAX_LABELS: usize = 8192;
+
+    // Resolve the label predicates that actually occur in this graph.
+    let label_pids: HashSet<u32> = LABEL_PREDICATES
+        .iter()
+        .filter_map(|p| dict.predicate_id(p))
+        .collect();
+    if label_pids.is_empty() {
+        return Vec::new();
+    }
+    // Subject degree (triple count) — the ranking used to bound the index.
+    let mut degree: HashMap<u32, u32> = HashMap::new();
+    for &(s, _p, _o) in triples {
+        *degree.entry(s).or_insert(0) += 1;
+    }
+    // Candidate (subject, label) pairs, deduped on (subject, lowercased label).
+    let mut seen: HashSet<(u32, String)> = HashSet::new();
+    let mut candidates: Vec<(u32, String, u32)> = Vec::new(); // (degree, label, subject)
+    for &(s, p, o) in triples {
+        if !label_pids.contains(&p) {
+            continue;
+        }
+        let Some(term) = dict.object_term(o) else {
+            continue;
+        };
+        if !is_literal(&term) {
+            continue;
+        }
+        let Some(label) = literal_lexical(&term) else {
+            continue;
+        };
+        if label.is_empty() {
+            continue;
+        }
+        if seen.insert((s, label.to_lowercase())) {
+            candidates.push((*degree.get(&s).unwrap_or(&0), label, s));
+        }
+    }
+    // Keep the most-connected entities when over budget: rank by degree desc,
+    // then subject asc, then label asc (deterministic).
+    if candidates.len() > MAX_LABELS {
+        candidates.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.2.cmp(&b.2))
+                .then_with(|| a.1.cmp(&b.1))
+        });
+        candidates.truncate(MAX_LABELS);
+    }
+    // Final order: by lowercased label (search key), then label, then subject.
+    candidates.sort_by(|a, b| {
+        a.1.to_lowercase()
+            .cmp(&b.1.to_lowercase())
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+    candidates
+        .into_iter()
+        .map(|(_deg, label, subject)| crate::meta::LabelEntry { label, subject })
+        .collect()
 }
 
 /// The top entity **shapes** (characteristic sets): group subjects by the exact
@@ -1425,6 +1512,33 @@ impl Rete {
         self.pyramid_if_loaded()
             .map(|p| p.char_sets.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// The label index from the pyramid — empty when the file has none or the
+    /// pyramid isn't resident. See [`crate::meta::LabelEntry`].
+    pub fn label_index(&self) -> &[crate::meta::LabelEntry] {
+        self.pyramid_if_loaded()
+            .map(|p| p.label_index.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Prefix-search the label index: the subjects whose label starts with
+    /// `prefix` (case-insensitive), as `(label, subject_iri)`, capped at `limit`.
+    /// Unlike the planner accessors, this **faults the pyramid** (where the index
+    /// lives) on the lazy path — a prefix search is an explicit read, not a free
+    /// estimate. Returns an empty vec when the file carries no label index.
+    pub fn prefix_search(&self, prefix: &str, limit: usize) -> Vec<(String, String)> {
+        let Some(pyr) = self.pyramid() else {
+            return Vec::new();
+        };
+        pyr.prefix_search(prefix, limit)
+            .into_iter()
+            .filter_map(|e| {
+                self.dict
+                    .subject_term(e.subject)
+                    .map(|iri| (e.label.clone(), iri))
+            })
+            .collect()
     }
 
     /// The default-graph permutation index.
@@ -3224,5 +3338,109 @@ mod tests {
             .starts_with(matches[0].index_permutation.name()));
         assert!(matches[0].index_section_range.offset <= tile_range.offset);
         assert!(tile_range.end() <= matches[0].index_section_range.end());
+    }
+
+    /// Build an in-memory `.rete` with `n` labeled subjects: each carries an
+    /// `rdfs:label` literal drawn from `WORDS` (a word prefix selects ~1/|WORDS|
+    /// of them) plus one extra edge so the subject has a degree to rank by.
+    fn build_labeled(n: usize) -> Vec<u8> {
+        const LABEL: &str = "<http://www.w3.org/2000/01/rdf-schema#label>";
+        const WORDS: &[&str] = &[
+            "alanine",
+            "benzene",
+            "glucose",
+            "dextrose",
+            "ethanol",
+            "formate",
+            "heptane",
+            "isoleucine",
+        ];
+        let triples: Vec<(String, String, String)> = (0..n)
+            .flat_map(|i| {
+                let s = format!("<http://ex/e{i}>");
+                let w = WORDS[i % WORDS.len()];
+                [
+                    (s.clone(), LABEL.to_string(), format!("\"{w}-{i:06}\"")),
+                    (
+                        s,
+                        "<http://ex/p>".to_string(),
+                        format!("<http://ex/c{}>", i % 64),
+                    ),
+                ]
+            })
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let ids: Vec<(u32, u32, u32)> = triples
+            .iter()
+            .map(|(s, p, o)| dict.encode(s, p, o).unwrap())
+            .collect();
+        let mut ib = GraphIndexBuilder::new();
+        for &t in &ids {
+            ib.push(t);
+        }
+        let (meta, levels) = build_pyramid_meta(&dict, &ids, DEFAULT_TILE_BUDGET);
+        write_file(&dict, &ib.build(), false, &meta, levels)
+    }
+
+    #[test]
+    fn prefix_search_matches_a_filter_scan() {
+        // 800 < the 8192 label-index cap, so the index is COMPLETE — every label
+        // is present and the two paths must return the exact same subject set.
+        let bytes = build_labeled(800);
+        let rete = Rete::open(&bytes).unwrap();
+        let idx_subjects: std::collections::BTreeSet<String> = rete
+            .prefix_search("glucose", 10_000)
+            .into_iter()
+            .map(|(_label, subject)| subject)
+            .collect();
+        // The same selection via a SPARQL FILTER scan over every label literal.
+        let q = "SELECT ?s WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?l \
+                 FILTER(STRSTARTS(LCASE(?l), \"glucose\")) }";
+        let crate::QueryOutput::Select(_, rows) = crate::eval_query(&rete, q).unwrap() else {
+            panic!("expected SELECT");
+        };
+        let scan_subjects: std::collections::BTreeSet<String> =
+            rows.iter().map(|r| r.get("s").cloned().unwrap()).collect();
+        assert_eq!(idx_subjects, scan_subjects, "index agrees with the scan");
+        assert_eq!(
+            idx_subjects.len(),
+            100,
+            "800/8 words = 100 glucose-* labels"
+        );
+    }
+
+    /// Latency: the binary-search label index vs the FILTER scan it replaces.
+    /// Ignored by default (timing-sensitive); run with
+    /// `cargo test -p rete-core -- --ignored --nocapture bench_prefix_search`.
+    #[test]
+    #[ignore]
+    fn bench_prefix_search_vs_filter_scan() {
+        use std::time::Instant;
+        let n = 6000; // < the 8192 cap, so both paths return identical sets
+        let bytes = build_labeled(n);
+        let rete = Rete::open(&bytes).unwrap();
+        let q = "SELECT ?s WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?l \
+                 FILTER(STRSTARTS(LCASE(?l), \"glucose\")) }";
+        let reps = 200;
+        let idx_n = rete.prefix_search("glucose", 100_000).len();
+        let t = Instant::now();
+        for _ in 0..reps {
+            std::hint::black_box(rete.prefix_search("glucose", 100_000));
+        }
+        let idx_ms = t.elapsed().as_secs_f64() * 1000.0 / reps as f64;
+        let t = Instant::now();
+        for _ in 0..reps {
+            std::hint::black_box(crate::eval_query(&rete, q).unwrap());
+        }
+        let scan_ms = t.elapsed().as_secs_f64() * 1000.0 / reps as f64;
+        println!(
+            "label prefix search over {n} labeled subjects ({idx_n} matches): \
+             index {idx_ms:.4} ms vs FILTER scan {scan_ms:.3} ms ({:.0}× faster)",
+            scan_ms / idx_ms
+        );
     }
 }

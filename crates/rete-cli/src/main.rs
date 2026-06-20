@@ -110,6 +110,24 @@ enum Command {
         /// Path to the `.rete` file.
         file: String,
     },
+    /// Prefix-search the label index: the subjects whose label starts with
+    /// `prefix` (case-insensitive), as `label<TAB><iri>`. Answers from the
+    /// bounded label-index block in the pyramid-meta — no literal scan — so it is
+    /// the fast path for autocomplete. Files built before the label index existed
+    /// have none (rebuild to add it).
+    Search {
+        /// Path to the `.rete` file.
+        file: String,
+        /// Case-insensitive label prefix (empty matches the first `--limit`).
+        #[arg(default_value = "")]
+        prefix: String,
+        /// Maximum number of matches to print.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Emit JSON: `[{"label":…,"subject":…}]`.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the embedded Dataset Card (data-catalog metadata), if the file has
     /// one — title/license/source, counts, top predicates and classes,
     /// vocabularies, and the content-hash checksum. `--json` emits the raw card.
@@ -508,6 +526,12 @@ fn main() -> anyhow::Result<()> {
         Command::Info { file } => commands::inspect::info(&file),
         Command::Stats { file } => commands::inspect::stats(&file),
         Command::Verify { file } => commands::inspect::verify_cmd(&file),
+        Command::Search {
+            file,
+            prefix,
+            limit,
+            json,
+        } => commands::inspect::search(&file, &prefix, limit, json),
         Command::Card { file, json } => commands::card::card_cmd(&file, json),
         Command::CardUrl { url, json } => commands::url::card_url(&url, json),
         Command::Graphs { file } => commands::inspect::graphs(&file),

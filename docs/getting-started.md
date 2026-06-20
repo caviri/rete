@@ -107,11 +107,12 @@ See [SHACL validation](shacl.md) for the supported SHACL Core surface.
 ## Inspecting a file
 
 ```sh
-rete info   data.rete   # raw header
-rete stats  data.rete   # size, counts, top predicates, planner stats, entity shapes
-rete verify data.rete   # check the blake3 content hash (detect corruption)
-rete graphs data.rete   # list named-graph IRIs
-rete export data.rete   # dump back to N-Quads (lossless)
+rete info   data.rete          # raw header
+rete stats  data.rete          # size, counts, top predicates, planner stats, entity shapes
+rete verify data.rete          # check the blake3 content hash (detect corruption)
+rete graphs data.rete          # list named-graph IRIs
+rete search data.rete gluc     # prefix-search labels (autocomplete; no literal scan)
+rete export data.rete          # dump back to N-Quads (lossless)
 ```
 
 Two **coarse-graph** views answer questions without reading the triple index:
@@ -127,6 +128,29 @@ rete predicates data.rete  # exact per-predicate totals, from the summary alone
 functional / inverse-functional hints — the cardinality the cost-based join
 planner uses) and the **entity shapes** (the most common *characteristic sets* —
 which predicate-combinations subjects carry, e.g. `{type, name, age} ×N`).
+
+### Label search (autocomplete)
+
+`rete search data.rete <prefix>` resolves a case-insensitive label prefix
+**without scanning the literals**. At build time rete extracts the display labels
+(`rdfs:label`, `skos:prefLabel`/`altLabel`, `foaf:name`, `dc(terms):title`,
+`schema:name`) of the most-connected subjects into a bounded, label-sorted block
+in the pyramid-meta; a prefix query is then a binary search over that block:
+
+```sh
+rete search data.rete "alan"          # label<TAB><iri> rows, case-insensitive
+rete search data.rete "alan" --limit 5 --json   # [{"label":…,"subject":…}]
+rete search data.rete                 # empty prefix → the first --limit labels
+```
+
+This is the fast path for autocomplete: a binary search plus a short walk,
+versus a `FILTER(STRSTARTS(LCASE(?l), …))` scan over every label triple
+(measured **~22× faster** at 6k labeled subjects; the gap widens with size — the
+scan is linear in the label count, the index is `O(log n + matches)`). The block
+is **bounded** (top 8,192 labeled subjects by degree), so on a very large graph
+it covers the prominent entities; an exhaustive match still needs the FILTER
+scan. Files built before this feature have no label index — rebuild to add it
+(the block is additive and backward-compatible, so old readers ignore it).
 
 ## Deploying & querying over a URL
 

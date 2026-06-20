@@ -311,11 +311,12 @@ rete shacl data.rete --shapes shapes.ttl --format json
 </code></pre>
 <p>See <a href="shacl.html">SHACL validation</a> for the supported SHACL Core surface.</p>
 <h2>Inspecting a file</h2>
-<pre><code class="language-sh">rete info   data.rete   # raw header
-rete stats  data.rete   # size, counts, top predicates, planner stats, entity shapes
-rete verify data.rete   # check the blake3 content hash (detect corruption)
-rete graphs data.rete   # list named-graph IRIs
-rete export data.rete   # dump back to N-Quads (lossless)
+<pre><code class="language-sh">rete info   data.rete          # raw header
+rete stats  data.rete          # size, counts, top predicates, planner stats, entity shapes
+rete verify data.rete          # check the blake3 content hash (detect corruption)
+rete graphs data.rete          # list named-graph IRIs
+rete search data.rete gluc     # prefix-search labels (autocomplete; no literal scan)
+rete export data.rete          # dump back to N-Quads (lossless)
 </code></pre>
 <p>Two <strong>coarse-graph</strong> views answer questions without reading the triple index:</p>
 <pre><code class="language-sh">rete summary data.rete   # structural: Louvain community quotient graph
@@ -327,6 +328,24 @@ rete predicates data.rete  # exact per-predicate totals, from the summary alone
 functional / inverse-functional hints — the cardinality the cost-based join
 planner uses) and the <strong>entity shapes</strong> (the most common <em>characteristic sets</em> —
 which predicate-combinations subjects carry, e.g. <code>{type, name, age} ×N</code>).</p>
+<h3>Label search (autocomplete)</h3>
+<p><code>rete search data.rete &lt;prefix&gt;</code> resolves a case-insensitive label prefix
+<strong>without scanning the literals</strong>. At build time rete extracts the display labels
+(<code>rdfs:label</code>, <code>skos:prefLabel</code>/<code>altLabel</code>, <code>foaf:name</code>, <code>dc(terms):title</code>,
+<code>schema:name</code>) of the most-connected subjects into a bounded, label-sorted block
+in the pyramid-meta; a prefix query is then a binary search over that block:</p>
+<pre><code class="language-sh">rete search data.rete "alan"          # label&lt;TAB&gt;&lt;iri&gt; rows, case-insensitive
+rete search data.rete "alan" --limit 5 --json   # [{"label":…,"subject":…}]
+rete search data.rete                 # empty prefix → the first --limit labels
+</code></pre>
+<p>This is the fast path for autocomplete: a binary search plus a short walk,
+versus a <code>FILTER(STRSTARTS(LCASE(?l), …))</code> scan over every label triple
+(measured <strong>~22× faster</strong> at 6k labeled subjects; the gap widens with size — the
+scan is linear in the label count, the index is <code>O(log n + matches)</code>). The block
+is <strong>bounded</strong> (top 8,192 labeled subjects by degree), so on a very large graph
+it covers the prominent entities; an exhaustive match still needs the FILTER
+scan. Files built before this feature have no label index — rebuild to add it
+(the block is additive and backward-compatible, so old readers ignore it).</p>
 <h2>Deploying &amp; querying over a URL</h2>
 <p>A <code>.rete</code> file is immutable and self-describing, so any static host that honors
 HTTP <code>Range</code> requests works — S3, GCS, GitHub, a CDN, or the bundled dev server:</p>

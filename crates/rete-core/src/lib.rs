@@ -43,8 +43,8 @@ pub use file::{
 pub use header::{Header, HeaderError, HEADER_LEN, MAGIC, VERSION};
 pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern};
 pub use meta::{
-    CharSet, ClassNode, ClassRelation, CommunityDescriptor, LevelLinks, LevelRollup, PredStat,
-    PyramidMeta,
+    CharSet, ClassNode, ClassRelation, CommunityDescriptor, LabelEntry, LevelLinks, LevelRollup,
+    PredStat, PyramidMeta,
 };
 pub use pyramid::{
     build_dendrogram, louvain_one_level, project_graph, Dendrogram, Graph, Partition,
