@@ -192,7 +192,7 @@ const range = async (off, len) => new Uint8Array(await (await fetch(url, {
 })).arrayBuffer());
 
 const total  = +(await fetch(url, { method: "HEAD" })).headers.get("content-length");
-const header = await range(0, 128);
+const header = await range(0, 1024);
 const r      = JSON.parse(header_ranges(header));
 
 const buf = new Uint8Array(total);                 // index region left zero

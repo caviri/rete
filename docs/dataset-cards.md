@@ -8,7 +8,7 @@ vocabularies they belong to). One `rete card` (or `rete info`) reads it back, so
 `.rete` file doubles as its own mini data catalog.
 
 The card lives in the file's **metadata section** — a slot the format reserves
-right after the 128-byte header. Adding a card is **not a format change**: a file
+right after the 1 KB header. Adding a card is **not a format change**: a file
 without one is byte-for-byte identical to a pre-card build, and an older reader
 simply ignores the section. The card is folded into the file's `blake3` content
 hash, so `rete verify` covers it and it is **tamper-evident**.
@@ -164,9 +164,9 @@ The card is stored as compact **JSON** in the metadata section, which sits
 between the header and the dictionary:
 
 ```text
-[0..128)      header              (metadata_offset = 128, metadata_len = card bytes)
-[128 .. 128+L)  Dataset Card JSON   (L = metadata_len; absent when no card)
-[dictionary]    front-coded terms   (shifts to offset 128 + L)
+[0..1024)     header              (metadata_offset = 1024, metadata_len = card bytes)
+[1024 .. 1024+L) Dataset Card JSON  (L = metadata_len; absent when no card)
+[dictionary]    front-coded terms   (shifts to offset 1024 + L)
 [index]         permutation blocks
 [pyramid-meta]  community summary
 [named graphs]  (if any)

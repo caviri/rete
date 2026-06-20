@@ -103,16 +103,16 @@ curl -s https://my-bucket.s3.amazonaws.com/deps.rete -o deps.rete
 rete sparql deps.rete "PREFIX e: <http://ex/> SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 ```
 
-**See the range mechanics directly** — the first 128 bytes are the header, and a
+**See the range mechanics directly** — the first 1024 bytes are the header, and a
 `Range` request returns `206 Partial Content`:
 
 ```sh
-# Fetch just the header (bytes 0–127); confirm the magic and partial response:
-curl -s -r 0-127 https://my-bucket.s3.amazonaws.com/deps.rete | head -c 4 ; echo
+# Fetch just the header (bytes 0–1023); confirm the magic and partial response:
+curl -s -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | head -c 4 ; echo
 #  RETE
-curl -sD - -o /dev/null -r 0-127 https://my-bucket.s3.amazonaws.com/deps.rete | grep -i '206\|content-range'
+curl -sD - -o /dev/null -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | grep -i '206\|content-range'
 #  HTTP/2 206
-#  content-range: bytes 0-127/610
+#  content-range: bytes 0-1023/1610
 ```
 
 That `206` is the contract: a host that ignores `Range` and returns `200` is

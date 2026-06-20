@@ -65,18 +65,18 @@ Three transformations make it range-queryable:
 
 v0 on-disk layout (what `write_file`/`write_dataset` actually emit). The header
 is the directory: it carries the absolute offset+length of every section, so a
-client finds everything from the first 128-byte read — no separate directory or
+client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.
 
-<img src="img/file-layout.svg" alt="On-disk layout: a 128-byte HEADER pointing to DICTIONARY, INDEX, PYRAMID META, optional NAMED GRAPHS, and a FOOTER with the RETE magic.">
+<img src="img/file-layout.svg" alt="On-disk layout: a 1 KB HEADER pointing to DICTIONARY, INDEX, PYRAMID META, optional NAMED GRAPHS, and a FOOTER with the RETE magic.">
 
-*The header is the directory: a single 128-byte read carries the offset and length of every section. The ASCII below is the precise reference.*
+*The header is the directory: a single 1 KB read carries the offset and length of every section. The ASCII below is the precise reference.*
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ HEADER            fixed-size, 128 bytes, read first.           │
-│   Holds the offset+length of every section below, the codec   │
-│   ids, counts, and the blake3 content hash (§4.1).             │
+│ HEADER            fixed-size, 1024 bytes, read first.          │
+│   A typed section directory: the offset+length of every       │
+│   section below, plus codec ids, counts, content hash (§4.1). │
 ├──────────────────────────────────────────────────────────────┤
 │ DICTIONARY        front-coded container of four sections:      │
 │   ├ shared (terms used as both subject & object)               │
@@ -106,34 +106,51 @@ decompresses only the matching tile(s). Per-*community* leaf directories
 (mapping `(level, tile, perm)` to byte ranges across the pyramid) are part of
 the fuller design and remain future work (see `docs/BENCHMARK.md`).
 
-### 4.1 Header (128 bytes, little-endian)
+### 4.1 Header (1024 bytes, little-endian)
+
+The header is a fixed **64-byte core** followed by a **typed section directory** —
+up to 40 entries of 24 bytes each `(kind, flags, offset, length)` — zero-padded to
+1024. A new top-level section is added as a new directory entry, so the header has
+room to grow without a layout reshape. Format version `0x03`; this crate reads
+**only** `0x03` (the 128-byte v0.1/v0.2 headers are a clean break — rebuild old
+files).
+
+**Core (bytes 0..64):**
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | magic `RETE` |
-| 4 | 1 | format version (`0x02`; readers also accept `0x01`, see §6.2) |
-| 5 | 1 | flags (bit0: has named graphs / quads) |
-| 6 | 2 | header length |
-| 8 | 8 | metadata offset |
-| 16 | 8 | metadata length |
-| 24 | 8 | dictionary offset |
-| 32 | 8 | dictionary length |
-| 40 | 8 | root directory offset |
-| 48 | 8 | root directory length |
-| 56 | 8 | pyramid-meta offset |
-| 64 | 8 | pyramid-meta length |
-| 72 | 1 | dictionary codec id |
-| 73 | 1 | block codec id (e.g. zstd) |
-| 74 | 2 | number of pyramid levels |
-| 76 | 8 | total quad count |
-| 84 | 8 | total term count |
-| 92 | 16 | content hash (blake3, first 16 bytes) — also an ETag-like id |
-| 108 | 8 | named-graphs section offset (0 if default-graph only) |
-| 116 | 8 | named-graphs section length (0 if default-graph only) |
-| 124 | 4 | schema-pyramid block length (u32, 0 if none) — the trailing schema block within pyramid-meta, so a reader fetches just it at `pyramid_meta_offset + pyramid_meta_len − this` for an index/dictionary/summary-free schema-coherence read |
+| 4 | 1 | format version (`0x03`) |
+| 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer) |
+| 6 | 2 | header length (= 1024) |
+| 8 | 16 | content hash (blake3, first 16 bytes) — also an ETag-like id |
+| 24 | 8 | total quad count |
+| 32 | 8 | total term count |
+| 40 | 2 | number of pyramid levels |
+| 42 | 1 | dictionary codec id |
+| 43 | 1 | block codec id (e.g. zstd) |
+| 44 | 2 | section count (entries in the directory) |
+| 46 | 4 | schema-pyramid block length (u32, 0 if none) — the trailing schema block within pyramid-meta, fetched at `pyramid_meta_offset + pyramid_meta_len − this` for an index/dictionary/summary-free schema-coherence read |
+| 50 | 14 | reserved (zero) |
 
-> Rationale: a fixed 128-byte header means **one tiny range read** (`bytes=0-127`)
-> tells the client where every section lives.
+**Section directory (bytes 64…, `section_count` entries of 24 bytes):**
+
+| Offset | Size | Field |
+|---|---|---|
+| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs; higher ids reserved for future sections) |
+| +2 | 2 | section flags (reserved) |
+| +4 | 4 | reserved (zero) |
+| +8 | 8 | section offset |
+| +16 | 8 | section length |
+
+A reader maps known kinds to its named accessors and **preserves unknown kinds
+verbatim** (so a newer writer's sections survive an older reader). A kind absent
+from the directory means that section is not present.
+
+> Rationale: a fixed 1024-byte header means **one small range read**
+> (`bytes=0-1023`) tells the client where every section lives, with headroom for
+> new sections (a future text index, group directories, …) as new directory
+> entries rather than a format break.
 
 The **metadata section** (offset 8 / length 16) sits between the header and the
 dictionary and is `0`-length by default. When present it carries an opaque,
@@ -295,11 +312,11 @@ its chunk arithmetically and faults one. A lazily-opened remote file therefore
 pays the section headers + directories (KBs) up front and O(touched chunks)
 afterwards, instead of the whole dictionary container.
 
-**Compatibility:** version `0x01` files store one whole-section-compressed
-block per permutation and whole-compressed dictionary sections. Readers still
-accept them (each section is one logical tile/chunk); writers always emit
-`0x02`. The format remains experimental — no stability promise beyond this one
-documented transition.
+**Compatibility:** the format is experimental and makes **no** cross-version
+stability promise. The current version is `0x03` (the 1024-byte section-directory
+header, §4.1); this crate reads only `0x03`. The earlier `0x01` (single-block) and
+`0x02` (128-byte header, tiled) layouts are a clean break — old files must be
+rebuilt.
 
 ---
 
@@ -464,7 +481,7 @@ v0 (the header *is* the directory — every section offset/length is in it, so n
 separate directory/footer round-trip is needed):
 
 ```
-1. GET bytes=0-127          → header: all section offsets/lengths + content hash
+1. GET bytes=0-1023         → header: all section offsets/lengths + content hash
 2a. Overview path  → GET dictionary + pyramid-meta ranges; answer from the
     summary (community quotient graph, per-predicate totals). The index is
     never fetched. (`SummaryView::open_ranged`; `summary_overview` in wasm.)

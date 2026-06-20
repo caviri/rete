@@ -38,7 +38,7 @@ curl -s https://host/data.nt | rete validate - --format nt
 ## Inspecting
 
 ### `rete info <file>`
-Print the decoded 128-byte header (offsets, codecs, counts, content hash) — plus
+Print the decoded 1 KB header (the section directory, codecs, counts, content hash) — plus
 the [Dataset Card](dataset-cards.md) catalog when the file carries one.
 
 ### `rete stats <file>`
