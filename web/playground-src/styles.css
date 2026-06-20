@@ -490,6 +490,28 @@ label.file-button:hover {
   display: block;
 }
 
+/* Explore backend switch: query the same class via the rete engine or the
+   Parquet/DuckDB/SQLite companions, to compare them. Shown only for datasets
+   that ship companions. */
+.explore-backends {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+}
+.explore-backends .be-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.explore-backends .be-meta {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Paginated entity table footer (HF dataset-viewer style): Prev / page info /
    Next, each page a lazy range fetch. */
 .entity-pager {

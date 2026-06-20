@@ -214,6 +214,11 @@ __PLAYGROUND_CSS__
 
         <div class="explore-sub active" data-exp="entities">
           <p class="microcopy">One table per <code>rdf:type</code> class: entities as rows, their properties as columns.</p>
+          <div id="exploreBackendRow" class="explore-backends" hidden>
+            <span class="be-label">Backend</span>
+            <span class="segmented" id="exploreBackendSeg" aria-label="Explore query backend"></span>
+            <span class="microcopy be-meta" id="exploreBackendMeta"></span>
+          </div>
           <div id="exploreClasses" class="filter-row"></div>
           <div id="exploreTable"></div>
         </div>

@@ -100,6 +100,77 @@ window.RETE_PLAYGROUND_CATALOG = {
     "chemotion":             { triples: "1.53 M",  size: "4.8 MB",   license: "CC BY 4.0",            source: "https://chemotion.net",                                    provenance: "The FIZ-Karlsruhe Chemotion-KG (github.com/ISE-FIZKarlsruhe/chemotion-kg, a 239 MB Git-LFS TTL; BFO/NFDICore/ChEBI-aligned, 87.7k instances) merged with CHMO + RXNO (purl.obolibrary.org/obo/*.owl, RDF/XML converted to N-Triples via rdflib), assembled with rete build --card (remote-lazy)." },
     "chebi-full":            { triples: "8.83 M",  size: "120 MB",   license: "CC BY 4.0",            source: "https://www.ebi.ac.uk/chebi/",                              provenance: "The complete ChEBI ontology (chebi.owl, EMBL-EBI) converted from RDF/XML to N-Triples with rapper (raptor2), assembled with rete build --card (remote-lazy). Lossless Parquet/DuckDB/SQLite per-class table companions generated with scripts/rdf_to_entity_tables.py --nt --type-predicate rdf:type and uploaded alongside it." },
   },
+
+  // Companion encodings: the lossless Parquet / DuckDB / SQLite per-class entity
+  // tables that `scripts/rdf_to_entity_tables.py` produces alongside a `.rete`.
+  // These power the multi-backend lazy explorer (explore-100mb.html?dataset=<key>):
+  // the same graph, queried four ways (rete / DuckDB-WASM·Parquet / DuckDB·.duckdb /
+  // sql.js-httpvfs·SQLite), so you can compare which backend wins per query shape.
+  // Paths are relative to remoteBase; the explorer appends ?token=remoteToken.
+  // A dataset with no entry here shows only the rete Graph backend (no companions).
+  companions: {
+    "chebi-full": {
+      rete: "playground/chebi-full.rete",
+      parquetDir: "playground/chebi-full-tables",   // *.parquet + _manifest.parquet
+      duckdb: "playground/chebi-full.duckdb",  duckdbSize: "123 MB",
+      sqlite: "playground/chebi-full.sqlite",  sqliteSize: "586 MB",
+      typePredicate: "rdf:type",
+      seed: "http://purl.obolibrary.org/obo/CHEBI_27732", // caffeine (owl:Class)
+      about: "The complete ChEBI ontology (8.83 M triples) in four lossless encodings on " +
+        "Hugging Face: the rete <code>.rete</code> graph, per-class <code>.parquet</code> tables, " +
+        "one <code>.duckdb</code>, and one <code>.sqlite</code>. Every query fetches only the bytes " +
+        "it touches. The molecules live in the <code>Class_</code> table (owl:Class), with structural " +
+        "columns — SMILES, InChI, formula, mass.",
+      // Tables that have their own columnar table (entity rows, named-property columns).
+      // `name` is the DuckDB table identifier; `file` the Parquet basename.
+      // `classIri` ties a table to the rdf:type class shown in the Explore tab,
+      // so selecting a class can route to its companion table.
+      tables: [
+        { name: "Class_",       file: "Class_.parquet",       classIri: "http://www.w3.org/2002/07/owl#Class",       label: "owl:Class — CHEBI molecules", entities: 224691 },
+        { name: "Axiom_",       file: "Axiom_.parquet",       classIri: "http://www.w3.org/2002/07/owl#Axiom",       label: "owl:Axiom — xref reification", entities: 897439 },
+        { name: "Restriction_", file: "Restriction_.parquet", classIri: "http://www.w3.org/2002/07/owl#Restriction", label: "owl:Restriction",              entities: 94902 },
+      ],
+      // Autocomplete hints for the SQL editor (table + common column names).
+      sqlCols: ["entity", "label", "types", "subClassOf", "smiles_string", "inchi_string", "mass",
+        "monoisotopic_mass", "generalized_empirical_formula", "hasOBONamespace", "IAO_0000115",
+        "hasExactSynonym", "extra"],
+      // The same question posed on each backend. `duck` uses {T}: read_parquet('…') for the
+      // Tables backend, wd."<name>" for the .duckdb backend. Object values are N-Triples term
+      // tokens (IRIs `<…>`, literals `"…"`); SQLite stores list/map columns as JSON text.
+      examples: [
+        { label: "Everything about caffeine (CHEBI:27732)", table: { file: "Class_.parquet", name: "Class_" },
+          sparql: `SELECT ?p ?o WHERE {\n  <http://purl.obolibrary.org/obo/CHEBI_27732> ?p ?o\n}`,
+          duck: `SELECT *\nFROM {T}\nWHERE entity = 'http://purl.obolibrary.org/obo/CHEBI_27732';`,
+          sqlite: `SELECT *\nFROM "Class_"\nWHERE entity = 'http://purl.obolibrary.org/obo/CHEBI_27732';`,
+          note: "One entity, every fact. The graph is tall (a row per predicate/object); the table is one wide row — the shape difference itself." },
+
+        { label: "Formula, mass & SMILES of caffeine", table: { file: "Class_.parquet", name: "Class_" },
+          sparql: `PREFIX chemrof: <https://w3id.org/chemrof/>\nSELECT ?formula ?mass ?smiles WHERE {\n  <http://purl.obolibrary.org/obo/CHEBI_27732> chemrof:generalized_empirical_formula ?formula ;\n    chemrof:mass ?mass ;\n    chemrof:smiles_string ?smiles\n}`,
+          duck: `SELECT label,\n  generalized_empirical_formula AS formula,\n  mass, smiles_string\nFROM {T}\nWHERE entity = 'http://purl.obolibrary.org/obo/CHEBI_27732';`,
+          sqlite: `SELECT label, generalized_empirical_formula, mass, smiles_string\nFROM "Class_"\nWHERE entity = 'http://purl.obolibrary.org/obo/CHEBI_27732';`,
+          note: "ChemROF structural columns — DuckDB reads only those Parquet column chunks; the graph walks each predicate's tiles." },
+
+        { label: "Direct subclasses of amino acid (CHEBI:33709)", table: { file: "Class_.parquet", name: "Class_" },
+          sparql: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?s ?label WHERE {\n  ?s rdfs:subClassOf <http://purl.obolibrary.org/obo/CHEBI_33709> ;\n     rdfs:label ?label\n}\nLIMIT 100`,
+          duck: `SELECT entity, label\nFROM {T}\nWHERE list_contains(subClassOf, '<http://purl.obolibrary.org/obo/CHEBI_33709>')\nLIMIT 100;`,
+          sqlite: `SELECT entity, label\nFROM "Class_"\nWHERE EXISTS (SELECT 1 FROM json_each(subClassOf)\n              WHERE value = '<http://purl.obolibrary.org/obo/CHEBI_33709>')\nLIMIT 100;`,
+          note: "Children point up via rdfs:subClassOf — a list-membership test on the column vs a BGP on the graph (~57 direct subclasses)." },
+
+        { label: "Count entities per OBO namespace", table: { file: "Class_.parquet", name: "Class_" },
+          sparql: `PREFIX oio: <http://www.geneontology.org/formats/oboInOwl#>\nSELECT ?ns (COUNT(?s) AS ?n) WHERE {\n  ?s oio:hasOBONamespace ?ns\n}\nGROUP BY ?ns\nORDER BY DESC(?n)`,
+          duck: `SELECT ns, count(*) AS n\nFROM (SELECT unnest(hasOBONamespace) AS ns FROM {T})\nGROUP BY ns\nORDER BY n DESC;`,
+          sqlite: `SELECT je.value AS ns, count(*) AS n\nFROM "Class_", json_each(hasOBONamespace) je\nGROUP BY ns\nORDER BY n DESC;`,
+          note: "An aggregate over one column — Parquet reads just that column's chunks; the graph aggregates a whole predicate." },
+
+        { label: "Name search: “amino acid”", table: { file: "Class_.parquet", name: "Class_" },
+          sparql: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?s ?label WHERE {\n  ?s rdfs:label ?label\n  FILTER(CONTAINS(LCASE(STR(?label)), "amino acid"))\n}\nLIMIT 50`,
+          duck: `SELECT entity, label\nFROM {T}\nWHERE label ILIKE '%amino acid%'\nLIMIT 50;`,
+          sqlite: `SELECT entity, label\nFROM "Class_"\nWHERE label LIKE '%amino acid%'\nLIMIT 50;`,
+          note: "Substring search — a full column scan in every backend; the closest apples-to-apples comparison." },
+      ],
+    },
+  },
+
   // Per-dataset visual identity + descriptive tags for the dataset browser.
   // `icon` is the tile glyph; `tags` are quick descriptive labels; `reasoning`
   // marks graphs where the Coherence/OWL reasoner is illustrative.

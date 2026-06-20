@@ -21,6 +21,11 @@
     explorePage: 0,
     exploreCount: 0,
     exploreCols: null,
+    // Explore backend: "native" (rete engine) or a companion encoding queried via
+    // a CDN-loaded engine ("duck-parquet" | "duck-db" | "sqlite"). Only datasets
+    // with CATALOG.companions show the switch; native stays fully offline.
+    exploreBackend: "native",
+    exploreNativeMeta: "",
     remote: null,
     // Federation: extra sources the SPARQL query also runs against. Each is
     // {id, kind:"remote"|"memory"|"endpoint", label, url?, key?, endpoint?}.
@@ -662,6 +667,7 @@
     state.activeSource = source;
     state.remote = null; // an in-memory load leaves remote-lazy mode
     state.exploreReady = false;
+    state.exploreBackend = "native"; state.exploreNativeMeta = ""; freeExploreEngines();
     state.lastResult = null; // a new graph invalidates any cached result
     // Switching datasets drops federation partners; caching the *current* one
     // (source === "cached") keeps them — its self-source just becomes in-memory.
@@ -759,6 +765,7 @@
     state.schema = null;
     state.exploreReady = false;
     state.exploreClass = null;
+    state.exploreBackend = "native"; state.exploreNativeMeta = ""; freeExploreEngines();
     if (datasetKey) {
       state.dataset = datasetKey;
       setDatasetName(datasetKey);
@@ -1251,6 +1258,7 @@
 
   // --- Explore: entity tables + the community pyramid -------------------
   function ensureExplore() {
+    updateExploreBackends();
     if (state.exploreReady) return;
     // Remote-lazy: Explore the .rete over HTTP range (entity tables fetched
     // tile-by-tile). In-memory: the whole graph is loaded, query it directly.
@@ -1366,6 +1374,211 @@
     return Promise.resolve(JSON.parse(state.graph.query(q, "table")));
   }
 
+  // --- Explore backend switch -------------------------------------------
+  // The same class, queried via the rete engine or the Parquet/DuckDB/SQLite
+  // companions, so you can compare them. The SQL engines load lazily from a CDN
+  // on first use (the one online, opt-in feature — native exploration is offline).
+  // Datasets without a CATALOG.companions[key] entry never show the switch.
+  const EXPLORE_BACKENDS = [
+    { id: "native", label: "rete (native)" },
+    { id: "duck-parquet", label: "DuckDB · Parquet" },
+    { id: "duck-db", label: "DuckDB · .duckdb" },
+    { id: "sqlite", label: "SQLite" },
+  ];
+  function currentCompanion() {
+    return (CATALOG.companions && CATALOG.companions[state.dataset]) || null;
+  }
+  // Build a bucket URL the same way remoteUrlFor does (remoteBase + ?token).
+  function companionUrl(path) {
+    const tok = CATALOG.remoteToken ? "?token=" + CATALOG.remoteToken : "";
+    return `${CATALOG.remoteBase}/${path}${tok}`;
+  }
+  // Map the Explore-selected class (a term like `<…#Class>`) to its companion
+  // table. Bare-IRI compare so the `<>` wrapping doesn't matter.
+  function tableForClass(comp, clsTerm) {
+    if (!comp || !comp.tables) return null;
+    const iri = String(clsTerm || "").replace(/^<|>$/g, "");
+    return comp.tables.find((t) => t.classIri === iri) || null;
+  }
+
+  // Lazy DuckDB-WASM (Parquet + .duckdb share one engine), loaded from jsDelivr.
+  let _duck = null;
+  async function ensureDuck() {
+    if (_duck) return _duck;
+    const duckdb = await import("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm");
+    const b = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+    const worker = await duckdb.createWorker(b.mainWorker);
+    const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
+    await db.instantiate(b.mainModule, b.pthreadWorker);
+    const conn = await db.connect();
+    // Keep HTTP-fetched Parquet/DB metadata + objects cached across queries in this
+    // session, so re-running a query over the same file refetches little or nothing.
+    for (const s of ["SET enable_http_metadata_cache=true", "SET enable_object_cache=true"]) {
+      try { await conn.query(s); } catch (e) { /* older duckdb-wasm: setting absent */ }
+    }
+    _duck = { duckdb, db, conn, attached: null };
+    return _duck;
+  }
+  // Attach the .duckdb over httpfs (range reads); re-attach when the URL changes.
+  async function ensureDuckAttach(comp) {
+    const d = await ensureDuck();
+    const url = companionUrl(comp.duckdb);
+    if (d.attached === url) return d;
+    if (d.attached) { try { await d.conn.query("DETACH wd"); } catch (e) { /* not attached */ } }
+    await d.conn.query(`ATTACH '${url}' AS wd (READ_ONLY)`);
+    d.attached = url;
+    return d;
+  }
+  // DuckDB Arrow result -> [columns, rows-as-objects] (nested LIST/MAP -> JSON).
+  function duckRows(res) {
+    const cols = res.schema.fields.map((f) => f.name);
+    const rows = res.toArray().map((r) => {
+      const o = r.toJSON();
+      for (const k of cols) if (o[k] && typeof o[k] === "object") o[k] = JSON.stringify(o[k]);
+      return o;
+    });
+    return [cols, rows];
+  }
+  // Lazy sql.js-httpvfs over the remote SQLite (range page reads). The CDN worker
+  // is wrapped in a same-origin blob (a bare `new Worker(cdnUrl)` is blocked).
+  let _sqlitePromise = null;
+  function ensureSqlite(comp) {
+    if (_sqlitePromise) return _sqlitePromise;
+    _sqlitePromise = (async () => {
+      const mod = await import("https://esm.sh/sql.js-httpvfs@0.8.12");
+      const createDbWorker = mod.createDbWorker || (mod.default && mod.default.createDbWorker);
+      if (!createDbWorker) throw new Error("createDbWorker export not found");
+      const WBASE = "https://cdn.jsdelivr.net/npm/sql.js-httpvfs@0.8.12/dist";
+      const workerSrc = await (await fetch(`${WBASE}/sqlite.worker.js`)).text();
+      const workerUrl = URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" }));
+      return createDbWorker(
+        [{ from: "inline", config: { serverMode: "full", url: companionUrl(comp.sqlite), requestChunkSize: 4096 } }],
+        workerUrl, `${WBASE}/sql-wasm.wasm`);
+    })();
+    return _sqlitePromise;
+  }
+  // Drop the lazy engines on dataset switch so the next dataset re-initializes.
+  function freeExploreEngines() {
+    if (_duck) { try { _duck.conn.close(); _duck.db.terminate(); } catch (e) { /* already gone */ } _duck = null; }
+    _sqlitePromise = null;
+  }
+
+  function setBackendMeta(text) {
+    const el = $("exploreBackendMeta"); if (el) el.textContent = text || "";
+  }
+  // Stash the native baseline (rows · ms · bytes) so a companion result can show
+  // it alongside for comparison.
+  function setExploreNativeMeta(rows, ms, ent, res) {
+    let bytes = 0, reqs = 0, remote = false;
+    [ent, res].forEach((r) => { if (r && r.remote) { remote = true; bytes += r.remote.bytes || 0; reqs += r.remote.requests || 0; } });
+    state.exploreNativeMeta = `rete: ${rows} rows · ${ms.toFixed(0)} ms` + (remote ? ` · ${formatBytes(bytes)} · ${reqs} req` : "");
+    if (state.exploreBackend === "native") setBackendMeta(state.exploreNativeMeta);
+  }
+
+  // Show + wire the backend switch when this dataset ships companions; reset to
+  // native on (re)entry. Idempotent — safe to call whenever Explore is shown.
+  function updateExploreBackends() {
+    const row = $("exploreBackendRow"), seg = $("exploreBackendSeg");
+    if (!row || !seg) return;
+    const comp = currentCompanion();
+    row.hidden = !comp;
+    if (!comp) { state.exploreBackend = "native"; return; }
+    if (!seg.dataset.wired) {
+      seg.innerHTML = EXPLORE_BACKENDS.map((b) =>
+        `<button type="button" data-be="${esc(b.id)}">${esc(b.label)}</button>`).join("");
+      seg.querySelectorAll("[data-be]").forEach((btn) => {
+        btn.onclick = () => {
+          seg.querySelectorAll("[data-be]").forEach((b) => b.classList.toggle("active", b === btn));
+          state.exploreBackend = btn.dataset.be;
+          if (state.exploreClass) loadEntityPage(0); // re-run the current class
+          else if (state.exploreBackend === "native") setBackendMeta(state.exploreNativeMeta || "");
+        };
+      });
+      seg.dataset.wired = "1";
+    }
+    state.exploreBackend = "native";
+    seg.querySelectorAll("[data-be]").forEach((b) => b.classList.toggle("active", b.dataset.be === "native"));
+    setBackendMeta(state.exploreNativeMeta || "");
+  }
+
+  // One page of a class via a companion encoding: a bounded SELECT over its table,
+  // rendered like the native entity table, with rows · ms (and the native baseline).
+  async function loadEntityPageColumnar(page) {
+    const comp = currentCompanion();
+    const table = tableForClass(comp, state.exploreClass);
+    const backend = state.exploreBackend;
+    if (!table) {
+      showError("exploreTable", "This class has no companion table — switch back to rete (native), " +
+        "or pick a class that has one (" + (comp.tables || []).map((t) => localName(t.classIri)).join(", ") + ").");
+      setBackendMeta("");
+      return;
+    }
+    const offset = page * ENTITY_PAGE;
+    $("exploreTable").innerHTML = netSpinner("querying " + backend + " over HTTP range…");
+    const t0 = performance.now();
+    try {
+      let cols, rows;
+      if (backend === "sqlite") {
+        const w = await ensureSqlite(comp);
+        rows = await w.db.query(`SELECT * FROM "${table.name}" LIMIT ${ENTITY_PAGE} OFFSET ${offset}`);
+        cols = rows.length ? Object.keys(rows[0]) : [];
+      } else {
+        const ref = backend === "duck-db"
+          ? `wd."${table.name}"`
+          : `read_parquet('${companionUrl(comp.parquetDir + "/" + table.file)}')`;
+        const d = backend === "duck-db" ? await ensureDuckAttach(comp) : await ensureDuck();
+        const res = await d.conn.query(`SELECT * FROM ${ref} LIMIT ${ENTITY_PAGE} OFFSET ${offset}`);
+        [cols, rows] = duckRows(res);
+      }
+      renderColumnarPage(table, cols, rows, page, backend, performance.now() - t0);
+    } catch (e) {
+      showError("exploreTable", backend + " query failed: " + String(e && e.message || e) +
+        (backend === "sqlite" ? " (sql.js-httpvfs is finicky from a CDN; this is the experimental backend)." : ""));
+      setBackendMeta("");
+    }
+  }
+
+  // Render a companion-backend page: entity + label + the leading named columns
+  // (the table is frequency-ordered, so the first few are the common ones), the
+  // shared pager, and the rows · ms line with the native baseline for comparison.
+  function renderColumnarPage(table, cols, rows, page, backend, ms) {
+    const drop = new Set(["types", "extra"]);
+    const ordered = ["entity", "label"].filter((c) => cols.includes(c))
+      .concat(cols.filter((c) => !drop.has(c) && c !== "entity" && c !== "label"));
+    const shown = ordered.slice(0, 9);
+    const cell = (v) => {
+      if (v == null) return "";
+      let s = String(v);
+      if (s.startsWith("[")) {
+        try { const a = JSON.parse(s); s = a.slice(0, 3).map((x) => termLabel(parseTerm(String(x)))).join("; ") + (a.length > 3 ? ` (+${a.length - 3})` : ""); }
+        catch (e) { /* not JSON, show raw */ }
+      }
+      return shorten(s, 60);
+    };
+    const head = `<tr>${shown.map((c) => `<th>${esc(shorten(c, 22))}</th>`).join("")}</tr>`;
+    const body = rows.map((r) => `<tr>${shown.map((c) => `<td>${esc(cell(r[c]))}</td>`).join("")}</tr>`).join("");
+    const total = table.entities || 0;
+    const pages = Math.max(1, Math.ceil(total / ENTITY_PAGE));
+    const from = rows.length ? page * ENTITY_PAGE + 1 : 0;
+    const to = page * ENTITY_PAGE + rows.length;
+    $("exploreTable").innerHTML =
+      (rows.length
+        ? `<div class="tbl"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`
+        : `<p class="microcopy">No rows on this page.</p>`) +
+      `<div class="entity-pager">` +
+        `<button type="button" id="entPrev" class="secondary"${page <= 0 ? " disabled" : ""}>‹ Prev</button>` +
+        `<span class="pager-info">${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} ` +
+        `${esc(table.name)} · page ${(page + 1).toLocaleString()} / ${pages.toLocaleString()}</span>` +
+        `<button type="button" id="entNext" class="secondary"${page + 1 >= pages ? " disabled" : ""}>Next ›</button>` +
+      `</div>` +
+      `<p class="microcopy">Companion table, read lazily over HTTP range — the object values are N-Triples term tokens (lists shown truncated).</p>`;
+    const prev = $("entPrev"), next = $("entNext");
+    if (prev) prev.onclick = () => loadEntityPage(page - 1);
+    if (next) next.onclick = () => loadEntityPage(page + 1);
+    setBackendMeta(`${backend}: ${rows.length} rows · ${ms.toFixed(0)} ms` +
+      (state.exploreNativeMeta ? "   ·   " + state.exploreNativeMeta : ""));
+  }
+
   // Render the class chips and wire each to open that class at page 0. Shared by
   // the in-memory and remote class lists. `classes` is [[iri, count], …].
   function renderClassButtons(classes) {
@@ -1397,16 +1610,19 @@
   // the lazy, paginated entity table (the HF dataset-viewer pattern). In remote
   // mode each page range-reads only the tiles those 25 entities touch.
   function loadEntityPage(page) {
+    state.explorePage = page;
+    // A companion backend (Parquet/DuckDB/SQLite) takes a different path entirely.
+    if (state.exploreBackend && state.exploreBackend !== "native") return loadEntityPageColumnar(page);
     const cls = state.exploreClass;
     const tp = currentTypePredicate();
-    state.explorePage = page;
     if (state.remote) $("exploreTable").innerHTML = netSpinner("fetching page over range…");
+    const t0 = performance.now();
     exploreQuery(`SELECT DISTINCT ?s WHERE { ?s ${tp} ${cls} } ORDER BY ?s LIMIT ${ENTITY_PAGE} OFFSET ${page * ENTITY_PAGE}`)
       .then((ent) => {
         const ids = (ent.rows || []).map((r) => r.s).filter(Boolean);
-        if (!ids.length) { renderEntityPage(cls, [], []); return null; }
+        if (!ids.length) { renderEntityPage(cls, [], []); setExploreNativeMeta(0, performance.now() - t0, ent); return null; }
         return exploreQuery(`SELECT ?s ?p ?o WHERE { VALUES ?s { ${ids.join(" ")} } ?s ?p ?o }`)
-          .then((res) => renderEntityPage(cls, ids, res.rows || []));
+          .then((res) => { renderEntityPage(cls, ids, res.rows || []); setExploreNativeMeta(ids.length, performance.now() - t0, ent, res); });
       })
       .catch((e) => showError("exploreTable", "Explore failed: " + String(e)));
   }
