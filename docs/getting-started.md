@@ -108,7 +108,7 @@ See [SHACL validation](shacl.md) for the supported SHACL Core surface.
 
 ```sh
 rete info   data.rete   # raw header
-rete stats  data.rete   # size, counts, named graphs, top predicates
+rete stats  data.rete   # size, counts, top predicates, planner stats, entity shapes
 rete verify data.rete   # check the blake3 content hash (detect corruption)
 rete graphs data.rete   # list named-graph IRIs
 rete export data.rete   # dump back to N-Quads (lossless)
@@ -121,6 +121,12 @@ rete summary data.rete   # structural: Louvain community quotient graph
 rete schema  data.rete   # semantic: relations between rdf:type classes
 rete predicates data.rete  # exact per-predicate totals, from the summary alone
 ```
+
+`rete stats` also prints two index-free profiles read from the pyramid: the
+**planner stats** (per predicate: distinct subjects/objects, multiplicities, and
+functional / inverse-functional hints — the cardinality the cost-based join
+planner uses) and the **entity shapes** (the most common *characteristic sets* —
+which predicate-combinations subjects carry, e.g. `{type, name, age} ×N`).
 
 ## Deploying & querying over a URL
 
