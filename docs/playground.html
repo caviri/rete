@@ -519,6 +519,22 @@ label.file-button:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* The Explore "SQL" sub-tab: a small SQL console over the companion tables. */
+#sqlEditor {
+  width: 100%;
+  min-height: 130px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+#sqlExamples { margin: 0 0 8px; flex-wrap: wrap; }
+#sqlExamples button {
+  border: 1px solid var(--line-strong); border-radius: 8px; background: var(--code);
+  padding: 6px 10px; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+#sqlExamples button:hover { background: var(--surface); border-color: var(--accent); }
+#sqlOut { margin-top: 10px; }
+
 /* Paginated entity table footer (HF dataset-viewer style): Prev / page info /
    Next, each page a lazy range fetch. */
 .entity-pager {
@@ -2004,6 +2020,13 @@ pre {
 .cache-list .cache-row .ci-name { font-weight: 600; word-break: break-all; }
 .cache-list .cache-row .ci-size { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; white-space: nowrap; }
 .cache-list .cache-empty { color: var(--muted); padding: 6px 2px; }
+.rc-section { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; background: var(--code); }
+.rc-toggle { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+.rc-toggle input { width: 15px; height: 15px; }
+.rc-exp { font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--accent-2, #c84f2f); }
+.rc-line { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.rc-line #rangeCacheSize { margin: 0; margin-right: auto; font-variant-numeric: tabular-nums; }
+.rc-subhead { margin: 4px 0 6px; font-size: 13px; }
 
 /* Cache-download progress modal: a spinning "spindle" of dots + a progress bar. */
 .cache-modal { width: min(440px, 100%); text-align: center; }
@@ -2275,6 +2298,7 @@ td.lit { color: var(--ink); }
             <button type="button" data-exp="entities" class="active">Entity tables</button>
             <button type="button" data-exp="community">Community</button>
             <button type="button" data-exp="bytemap">File byte map</button>
+            <button type="button" data-exp="sql" id="exploreSqlTab" hidden>SQL</button>
           </div>
         </div>
 
@@ -2288,6 +2312,19 @@ td.lit { color: var(--ink); }
           </div>
           <div id="exploreClasses" class="filter-row"></div>
           <div id="exploreTable"></div>
+        </div>
+
+        <div class="explore-sub" data-exp="sql">
+          <p class="microcopy">Write your own SQL over this dataset's companion tables — quote the names, e.g. <code>SELECT * FROM "Class_"</code> (same table names across all three engines). Pick an engine; cached files (see <b>Settings</b>) are used automatically, otherwise it reads lazily over HTTP range.</p>
+          <div class="explore-backends">
+            <span class="be-label">Engine</span>
+            <span class="segmented" id="sqlBackendSeg" aria-label="SQL engine"></span>
+            <span class="microcopy be-meta" id="sqlMeta"></span>
+          </div>
+          <div id="sqlExamples" class="ex-quick" aria-label="Example SQL"></div>
+          <textarea id="sqlEditor" spellcheck="false" placeholder="SELECT * FROM &quot;Class_&quot; LIMIT 25"></textarea>
+          <div class="action-row"><button id="sqlRun" type="button">Run SQL</button></div>
+          <div id="sqlOut" class="out"></div>
         </div>
 
         <div class="explore-sub" data-exp="community">
@@ -2629,6 +2666,12 @@ td.lit { color: var(--ink); }
         <button id="clearCacheAll" class="ghost" type="button">Clear all</button>
         <button id="settingsModalClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
+      <section class="rc-section">
+        <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>
+        <p class="microcopy" id="rangeCacheInfo"></p>
+        <div class="rc-line"><span id="rangeCacheSize" class="microcopy"></span><button id="clearRangeCacheBtn" class="ghost" type="button">Clear range cache</button></div>
+      </section>
+      <h4 class="rc-subhead">Whole-file caches</h4>
       <p class="microcopy">Companion files cached locally in your browser (IndexedDB). The lazy backends fetch only what a query touches; <b>Cache locally</b> stores the whole file so it survives reloads. <span id="cacheTotal"></span></p>
       <div id="cacheList" class="history-list cache-list"></div>
     </div>
@@ -5910,6 +5953,12 @@ ex:ApplicationDependencyShape
     // with CATALOG.companions show the switch; native stays fully offline.
     exploreBackend: "native",
     exploreNativeMeta: "",
+    // Explore "SQL" sub-tab: which companion engine the editor runs against, and
+    // the dataset its editor content belongs to (to reset on dataset switch).
+    sqlBackend: "duck-parquet",
+    sqlDataset: null,
+    // Persistent incremental range cache (opt-in via Settings, localStorage-backed).
+    rangeCacheOn: (() => { try { return localStorage.getItem("rangeCacheOn") === "1"; } catch (e) { return false; } })(),
     remote: null,
     // Federation: extra sources the SPARQL query also runs against. Each is
     // {id, kind:"remote"|"memory"|"endpoint", label, url?, key?, endpoint?}.
@@ -6083,6 +6132,63 @@ ex:ApplicationDependencyShape
   };
 })();`;
 
+  // --- Persistent incremental range cache (opt-in) ----------------------
+  // Injected at the top of each engine worker (rete, DuckDB-WASM, sql.js-httpvfs)
+  // — all three read via SYNCHRONOUS XMLHttpRequest. We subclass XMLHttpRequest and
+  // serve single-range GETs from an in-memory 1 MiB-block mirror that is warmed from
+  // IndexedDB at startup; newly fetched blocks are persisted asynchronously. ANY
+  // error in the cached path falls back to a real request (so a bug can't break a
+  // query), and the shim only installs when the flag (baked in at worker creation,
+  // from the Settings toggle) is on. Regex-free so the backtick string needs no
+  // escaping beyond the literal CRLF (\\r\\n) in getAllResponseHeaders.
+  const RANGE_CACHE_SHIM = `
+;(function(){
+  if(!self.__RC_ON) return;
+  if(typeof XMLHttpRequest==="undefined" || typeof indexedDB==="undefined") return;
+  var RealXHR=XMLHttpRequest, BLOCK=self.__RC_BLOCK||1048576, DBN=self.__RC_DB||"playgroundCache",
+      RANGES="ranges", RMETA="rangeMeta", WARMCAP=self.__RC_WARMCAP||100663296;
+  var mirror=Object.create(null), totals=Object.create(null), dirty=[], flushTimer=null;
+  function keyOf(url){ try{ var u=new URL(url, self.location&&self.location.href); return u.origin+u.pathname; }catch(e){ var su=String(url), q=su.indexOf("?"); return q<0?su:su.slice(0,q); } }
+  function openDB(){ return new Promise(function(res,rej){ var r=indexedDB.open(DBN,2); r.onupgradeneeded=function(){ var db=r.result; ["files","meta",RANGES,RMETA].forEach(function(s){ if(!db.objectStoreNames.contains(s)) db.createObjectStore(s); }); }; r.onsuccess=function(){res(r.result);}; r.onerror=function(){rej(r.error);}; }); }
+  openDB().then(function(db){ var metas=[]; var c=db.transaction(RMETA).objectStore(RMETA).openCursor(); c.onsuccess=function(e){ var cur=e.target.result; if(cur){ var v=cur.value||{}; v.key=cur.key; metas.push(v); cur.continue(); } else warm(db,metas); }; c.onerror=function(){}; }).catch(function(){});
+  function warm(db,metas){ metas.sort(function(a,b){ return (b.lastUsed||0)-(a.lastUsed||0); }); var budget=WARMCAP, want=[]; for(var i=0;i<metas.length;i++){ var m=metas[i]; totals[m.key]=m.total; var bl=m.blocks||[]; for(var j=0;j<bl.length;j++){ if(budget<=0) break; want.push(m.key+"#"+bl[j]); budget-=BLOCK; } } if(!want.length) return; var st=db.transaction(RANGES).objectStore(RANGES); want.forEach(function(k){ var g=st.get(k); g.onsuccess=function(){ if(g.result) mirror[k]=new Uint8Array(g.result); }; }); }
+  function scheduleFlush(){ if(flushTimer) return; flushTimer=setTimeout(flush,800); }
+  function flush(){ flushTimer=null; if(!dirty.length) return; var items=dirty; dirty=[]; openDB().then(function(db){ var tx=db.transaction([RANGES,RMETA],"readwrite"), rs=tx.objectStore(RANGES), ms=tx.objectStore(RMETA), byKey=Object.create(null); items.forEach(function(it){ try{ rs.put(it.b, it.k+"#"+it.i); }catch(e){} (byKey[it.k]=byKey[it.k]||[]).push(it.i); }); Object.keys(byKey).forEach(function(k){ var g=ms.get(k); g.onsuccess=function(){ var m=g.result||{total:totals[k]||0,blocks:[],bytes:0}; var seen=Object.create(null); (m.blocks||[]).forEach(function(b){seen[b]=1;}); byKey[k].forEach(function(b){ if(!seen[b]){seen[b]=1;m.blocks.push(b);m.bytes=(m.bytes||0)+BLOCK;} }); m.total=totals[k]||m.total; m.lastUsed=Date.now(); try{ms.put(m,k);}catch(e){} }; }); }).catch(function(){}); }
+  function parseBR(r){ if(!r||r.indexOf("bytes=")!==0||r.indexOf(",")>=0) return null; var rest=r.slice(6), dash=rest.indexOf("-"); if(dash<1) return null; var s=parseInt(rest.slice(0,dash),10), es=rest.slice(dash+1); if(es==="") return null; var e=parseInt(es,10); if(isNaN(s)||isNaN(e)||e<s) return null; return [s,e]; }
+  function totalOf(cr){ if(!cr) return null; var sl=cr.lastIndexOf("/"); if(sl<0) return null; var t=parseInt(cr.slice(sl+1),10); return isNaN(t)?null:t; }
+  function fetchSpan(url,key,b0,b1){ var b=b0; while(b<=b1){ if(mirror[key+"#"+b]){ b++; continue; } var s=b; while(b<=b1 && !mirror[key+"#"+b]) b++; var e=b-1, as=s*BLOCK, ae=(e+1)*BLOCK-1; var x=new RealXHR(); x.open("GET",url,false); x.setRequestHeader("Range","bytes="+as+"-"+ae); x.responseType="arraybuffer"; x.send(); if(x.status!==206) throw new Error("rc status "+x.status); var buf=new Uint8Array(x.response), t=totalOf(x.getResponseHeader("Content-Range")); if(t!=null) totals[key]=t; for(var bb=s;bb<=e;bb++){ var off=(bb-s)*BLOCK; if(off>=buf.length) break; var u=buf.slice(off, Math.min(off+BLOCK, buf.length)); mirror[key+"#"+bb]=u; dirty.push({k:key,i:bb,b:u}); } scheduleFlush(); } }
+  function serve(url,s,e){ var key=keyOf(url), b0=Math.floor(s/BLOCK), b1=Math.floor(e/BLOCK); fetchSpan(url,key,b0,b1); var out=new Uint8Array(e-s+1), p=0; for(var b=b0;b<=b1;b++){ var blk=mirror[key+"#"+b]; if(!blk) throw new Error("rc miss"); var bs=b*BLOCK, from=Math.max(s,bs)-bs, to=Math.min(e,bs+blk.length-1)-bs; for(var i=from;i<=to;i++) out[p++]=blk[i]; } return { bytes:out.subarray(0,p), total:totals[key], start:s }; }
+  class CachedXHR extends RealXHR {
+    open(method,url,async){ this.__m=(method||"GET").toUpperCase(); this.__u=url; this.__sync=(async===false); this.__range=null; this.__cached=false; this.__resp=null; this.__cr=null; return super.open(method,url,async); }
+    setRequestHeader(name,value){ if(String(name).toLowerCase()==="range") this.__range=value; return super.setRequestHeader(name,value); }
+    send(body){
+      if(this.__m==="GET" && this.__sync && this.__range){
+        var br=parseBR(this.__range);
+        if(br){ try{ var r=serve(this.__u,br[0],br[1]); this.__cached=true; this.__resp=r.bytes.slice().buffer; this.__cr="bytes "+r.start+"-"+(r.start+r.bytes.length-1)+"/"+(r.total!=null?r.total:"*"); return; }catch(e){} }
+      }
+      return super.send(body);
+    }
+    get status(){ return this.__cached?206:super.status; }
+    get statusText(){ return this.__cached?"Partial Content":super.statusText; }
+    get readyState(){ return this.__cached?4:super.readyState; }
+    get response(){ return this.__cached?this.__resp:super.response; }
+    get responseText(){ return this.__cached?"":super.responseText; }
+    getResponseHeader(name){ if(this.__cached){ var n=String(name).toLowerCase(); if(n==="content-range") return this.__cr; if(n==="content-length") return String(this.__resp.byteLength); return null; } return super.getResponseHeader(name); }
+    getAllResponseHeaders(){ return this.__cached ? ("content-range: "+this.__cr+"\\r\\n") : super.getAllResponseHeaders(); }
+  }
+  self.XMLHttpRequest = CachedXHR;
+})();`;
+
+  // Worker prelude that bakes the toggle state + block/cap constants in front of
+  // the shim. Read at worker-creation time; flipping the toggle recreates workers.
+  function rcPrelude() {
+    // Empty when off, so a worker built with rcPrelude() is byte-identical to before
+    // — the cache feature is fully inert (and the default path untouched) unless on.
+    if (!state.rangeCacheOn) return "";
+    return "self.__RC_ON=true;self.__RC_BLOCK=1048576;self.__RC_DB=\"playgroundCache\";self.__RC_WARMCAP=100663296;\n" +
+      RANGE_CACHE_SHIM + "\n";
+  }
+
   let remoteWorker = null, remoteReady = null, remoteResolveReady = null, remoteSeq = 0;
   let remoteOnProgress = null;
   const remotePending = new Map();
@@ -6100,7 +6206,7 @@ ex:ApplicationDependencyShape
   function ensureRemoteWorker() {
     if (remoteWorker) return remoteReady;
     const glue = document.getElementById("reteGlue").textContent;
-    const blob = new Blob([glue + REMOTE_HARNESS + COALESCE_JS], { type: "text/javascript" });
+    const blob = new Blob([rcPrelude() + glue + REMOTE_HARNESS + COALESCE_JS], { type: "text/javascript" });
     remoteWorker = new Worker(URL.createObjectURL(blob));
     remoteWorker.onmessage = (e) => {
       const m = e.data;
@@ -6529,10 +6635,11 @@ ex:ApplicationDependencyShape
     const g = $("dsTagline"); if (g) g.textContent = tagline || "";
   }
 
-  // Switch the Explore sub-tab (Entity tables / Community / File byte map).
+  // Switch the Explore sub-tab (Entity tables / Community / File byte map / SQL).
   function setExploreView(view) {
     $$("#exploreSeg button").forEach((b) => b.classList.toggle("active", b.dataset.exp === view));
     $$(".explore-sub").forEach((p) => p.classList.toggle("active", p.dataset.exp === view));
+    if (view === "sql") ensureExploreSql();
   }
 
   function renderDatasetOptions() {
@@ -7125,7 +7232,24 @@ ex:ApplicationDependencyShape
       renderCacheCtl();
     });
   }
-  function openSettings() { renderCacheList(); $("settingsModal").classList.remove("hidden"); }
+  // Flip the persistent range cache; recreate the engines so their worker prelude
+  // picks up the new flag (next query rebuilds them).
+  function setRangeCache(on) {
+    state.rangeCacheOn = !!on;
+    try { localStorage.setItem("rangeCacheOn", on ? "1" : "0"); } catch (e) { /* private mode */ }
+    freeExploreEngines();
+    cancelRemote();
+  }
+  async function renderRangeCache() {
+    const t = $("rangeCacheToggle"); if (t) t.checked = !!state.rangeCacheOn;
+    const info = $("rangeCacheInfo");
+    if (info) info.textContent = state.rangeCacheOn
+      ? "On — fetched byte ranges (rete, DuckDB and SQLite) are saved to IndexedDB and reused after a reload. Toggling recreates the query engines."
+      : "Off — the lazy backends keep fetched bytes only for this session; a reload re-fetches. Turn on to persist ranges across reloads (experimental).";
+    const sz = $("rangeCacheSize");
+    if (sz) sz.textContent = "Range cache: " + formatBytes(await rangeCacheSize());
+  }
+  function openSettings() { renderRangeCache(); renderCacheList(); $("settingsModal").classList.remove("hidden"); }
   function closeSettings() { $("settingsModal").classList.add("hidden"); }
 
   const LIB_KEY = "rete.pg.libCollapsed";
@@ -7324,7 +7448,13 @@ ex:ApplicationDependencyShape
     if (_duck) return _duck;
     const duckdb = await import("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm");
     const b = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
-    const worker = await duckdb.createWorker(b.mainWorker);
+    // With the range cache on, build our own worker (mirrors duckdb.createWorker for
+    // a cross-origin URL) so the shim installs before DuckDB takes over XMLHttpRequest;
+    // with it off, use duckdb's own createWorker so the default path is unchanged.
+    const worker = state.rangeCacheOn
+      ? new Worker(URL.createObjectURL(new Blob(
+          [rcPrelude() + "importScripts(" + JSON.stringify(b.mainWorker) + ");"], { type: "text/javascript" })))
+      : await duckdb.createWorker(b.mainWorker);
     const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
     await db.instantiate(b.mainModule, b.pthreadWorker);
     const conn = await db.connect();
@@ -7367,7 +7497,7 @@ ex:ApplicationDependencyShape
       if (!createDbWorker) throw new Error("createDbWorker export not found");
       const WBASE = "https://cdn.jsdelivr.net/npm/sql.js-httpvfs@0.8.12/dist";
       const workerSrc = await (await fetch(`${WBASE}/sqlite.worker.js`)).text();
-      const workerUrl = URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" }));
+      const workerUrl = URL.createObjectURL(new Blob([rcPrelude() + workerSrc], { type: "text/javascript" }));
       return createDbWorker(
         [{ from: "inline", config: { serverMode: "full", url: companionUrl(comp.sqlite), requestChunkSize: 4096 } }],
         workerUrl, `${WBASE}/sql-wasm.wasm`);
@@ -7381,18 +7511,35 @@ ex:ApplicationDependencyShape
   // deletes them. Two stores: `files` (the bytes) + `meta` (small {size,…}) so
   // listing and existence checks never read the big buffers. Keys:
   //   "<dataset>::duckdb" | "<dataset>::sqlite" | "<dataset>::parquet::<file>".
-  const CACHE_DB = "playgroundCache", FILES = "files", META = "meta";
+  // Stores: `files`/`meta` (whole-file "Cache locally"), and `ranges`/`rangeMeta`
+  // (the persistent incremental range cache the worker shim writes — see below).
+  const CACHE_DB = "playgroundCache", FILES = "files", META = "meta", RANGES = "ranges", RMETA = "rangeMeta";
+  const CACHE_DB_VERSION = 2;
+  function idbCreateStores(db) {
+    [FILES, META, RANGES, RMETA].forEach((s) => { if (!db.objectStoreNames.contains(s)) db.createObjectStore(s); });
+  }
   function idbOpen() {
     return new Promise((res, rej) => {
-      const r = indexedDB.open(CACHE_DB, 1);
-      r.onupgradeneeded = () => {
-        const db = r.result;
-        if (!db.objectStoreNames.contains(FILES)) db.createObjectStore(FILES);
-        if (!db.objectStoreNames.contains(META)) db.createObjectStore(META);
-      };
+      const r = indexedDB.open(CACHE_DB, CACHE_DB_VERSION);
+      r.onupgradeneeded = () => idbCreateStores(r.result);
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
     });
+  }
+  // Total bytes held by the incremental range cache (summed from rangeMeta).
+  function rangeCacheSize() {
+    return idbOpen().then((db) => new Promise((res) => {
+      let total = 0; const t = db.transaction(RMETA).objectStore(RMETA).openCursor();
+      t.onsuccess = (e) => { const c = e.target.result; if (c) { total += (c.value && c.value.bytes) || 0; c.continue(); } else res(total); };
+      t.onerror = () => res(0);
+    })).catch(() => 0);
+  }
+  function clearRangeCache() {
+    return idbOpen().then((db) => new Promise((res) => {
+      const t = db.transaction([RANGES, RMETA], "readwrite");
+      t.objectStore(RANGES).clear(); t.objectStore(RMETA).clear();
+      t.oncomplete = () => res(); t.onerror = () => res();
+    })).catch(() => {});
   }
   function idbReq(store, mode, fn) {
     return idbOpen().then((db) => new Promise((res, rej) => {
@@ -7496,6 +7643,7 @@ ex:ApplicationDependencyShape
     if (!row || !seg) return;
     const comp = currentCompanion();
     row.hidden = !comp;
+    const sqlTab = $("exploreSqlTab"); if (sqlTab) sqlTab.hidden = !comp;
     if (!comp) { state.exploreBackend = "native"; return; }
     if (!seg.dataset.wired) {
       seg.innerHTML = EXPLORE_BACKENDS.map((b) =>
@@ -7660,6 +7808,123 @@ ex:ApplicationDependencyShape
     await renderCacheCtl();
     if (state.exploreClass) loadEntityPage(state.explorePage || 0);
     if (!$("settingsModal").classList.contains("hidden")) renderCacheList();
+  }
+
+  // --- Explore "SQL" sub-tab: a small SQL console over the companion tables ----
+  // The companion tables are exposed under the same names across engines (DuckDB
+  // views / native SQLite tables), so "SELECT * FROM Class_" runs on all three.
+  // Cached files (Settings) are used when present, otherwise lazy HTTP range reads.
+  const SQL_BACKENDS = [["duck-parquet", "DuckDB·Parquet"], ["duck-db", "DuckDB·.duckdb"], ["sqlite", "SQLite"]];
+  function sqlExampleText(ex, backend) {
+    if (!ex) return "";
+    if (backend === "sqlite") return ex.sqlite || "";
+    return (ex.duck || "").replace("{T}", `"${(ex.table && ex.table.name) || ""}"`);
+  }
+  function renderSqlExamples() {
+    const box = $("sqlExamples"), comp = currentCompanion();
+    if (!box || !comp) return;
+    const exs = comp.examples || [];
+    box.innerHTML = exs.map((e, i) => `<button type="button" data-ex="${i}">${esc(e.label)}</button>`).join("");
+    box.querySelectorAll("[data-ex]").forEach((b) => b.onclick = () => {
+      $("sqlEditor").value = sqlExampleText(exs[+b.dataset.ex], state.sqlBackend);
+      runSql();
+    });
+  }
+  function ensureExploreSql() {
+    const comp = currentCompanion(); if (!comp) return;
+    const seg = $("sqlBackendSeg"); if (!seg) return;
+    if (!seg.dataset.wired) {
+      seg.innerHTML = SQL_BACKENDS.map(([id, l]) => `<button type="button" data-sb="${esc(id)}">${esc(l)}</button>`).join("");
+      seg.querySelectorAll("[data-sb]").forEach((b) => b.onclick = () => {
+        seg.querySelectorAll("[data-sb]").forEach((x) => x.classList.toggle("active", x === b));
+        state.sqlBackend = b.dataset.sb; renderSqlExamples();
+      });
+      $("sqlRun").onclick = runSql;
+      seg.dataset.wired = "1";
+    }
+    // A fresh dataset clears the editor/output so the default query + examples re-seed.
+    if (state.sqlDataset !== state.dataset) {
+      state.sqlDataset = state.dataset;
+      $("sqlEditor").value = ""; $("sqlOut").innerHTML = ""; $("sqlMeta").textContent = "";
+    }
+    seg.querySelectorAll("[data-sb]").forEach((b) => b.classList.toggle("active", b.dataset.sb === state.sqlBackend));
+    renderSqlExamples();
+    if (!$("sqlEditor").value.trim()) {
+      const first = (comp.tables && comp.tables[0] && comp.tables[0].name) || "Class_";
+      $("sqlEditor").value = `SELECT * FROM "${first}" LIMIT 25`;
+    }
+  }
+
+  // Prepare an engine for arbitrary SQL: register friendly views over the cached
+  // or lazy companion tables, then return { cached, run(sql) -> {cols, rows} }.
+  async function sqlRunner(backend) {
+    const comp = currentCompanion(), ds = state.dataset;
+    if (backend === "sqlite") {
+      const key = `${ds}::sqlite`;
+      if (await idbGetMeta(key)) {
+        if (!(_sqliteFull && _sqliteFull.key === key)) {
+          if (_sqliteFull) { try { _sqliteFull.db.close(); } catch (e) { /* ignore */ } }
+          _sqliteFull = { key, db: await ensureSqliteFull(await idbGetFile(key)) };
+        }
+        const db = _sqliteFull.db;
+        return { cached: true, run: async (sql) => { const r = db.exec(sql); const cols = r.length ? r[0].columns : []; return { cols, rows: r.length ? r[0].values.map((v) => Object.fromEntries(cols.map((c, i) => [c, v[i]]))) : [] }; } };
+      }
+      const w = await ensureSqlite(comp);
+      return { cached: false, run: async (sql) => { const rows = await w.db.query(sql); return { cols: rows.length ? Object.keys(rows[0]) : [], rows }; } };
+    }
+    const d = await ensureDuck();
+    let cached = false;
+    if (backend === "duck-db") {
+      const key = `${ds}::duckdb`, vfs = "cache_" + ds + ".duckdb";
+      if (d.attached === "cache:" + vfs) cached = true;
+      else if (await idbGetMeta(key)) {
+        await duckRegisterCached(d, vfs, await idbGetFile(key));
+        if (d.attached) { try { await d.conn.query("DETACH wd"); } catch (e) { /* not attached */ } }
+        await d.conn.query(`ATTACH '${vfs}' AS wd (READ_ONLY)`); d.attached = "cache:" + vfs; cached = true;
+      } else { await ensureDuckAttach(comp); }
+      for (const t of (comp.tables || [])) await d.conn.query(`CREATE OR REPLACE VIEW "${t.name}" AS SELECT * FROM wd."${t.name}"`);
+    } else { // duck-parquet
+      for (const t of (comp.tables || [])) {
+        const vfs = "cache_" + ds + "_" + t.file;
+        let src;
+        if (d.registered && d.registered.has(vfs)) { src = `read_parquet('${vfs}')`; cached = true; }
+        else if (await idbGetMeta(`${ds}::parquet::${t.file}`)) { await duckRegisterCached(d, vfs, await idbGetFile(`${ds}::parquet::${t.file}`)); src = `read_parquet('${vfs}')`; cached = true; }
+        else src = `read_parquet('${companionUrl(comp.parquetDir + "/" + t.file)}')`;
+        await d.conn.query(`CREATE OR REPLACE VIEW "${t.name}" AS SELECT * FROM ${src}`);
+      }
+    }
+    return { cached, run: (sql) => d.conn.query(sql).then(duckRows) };
+  }
+
+  function renderSqlResult(cols, rows, ms, cached) {
+    const cell = (v) => {
+      if (v == null) return "";
+      const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+      return esc(shorten(s, 80));
+    };
+    if (!cols.length) {
+      $("sqlOut").innerHTML = `<p class="microcopy">Query ran — no columns returned.</p>`;
+    } else {
+      const head = `<tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`;
+      const body = rows.map((r) => `<tr>${cols.map((c) => `<td>${cell(r[c])}</td>`).join("")}</tr>`).join("");
+      $("sqlOut").innerHTML = `<div class="tbl"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+    }
+    $("sqlMeta").textContent = `${rows.length} rows · ${ms.toFixed(0)} ms${cached ? " · cached" : ""}`;
+  }
+
+  async function runSql() {
+    const sql = $("sqlEditor").value.trim(); if (!sql) return;
+    $("sqlOut").innerHTML = netSpinner("running SQL on " + state.sqlBackend + "…");
+    $("sqlMeta").textContent = "";
+    const t0 = performance.now();
+    try {
+      const runner = await sqlRunner(state.sqlBackend);
+      const { cols, rows } = await runner.run(sql);
+      renderSqlResult(cols, rows, performance.now() - t0, runner.cached);
+    } catch (e) {
+      showError("sqlOut", "SQL failed: " + String(e && e.message || e));
+      $("sqlMeta").textContent = "";
+    }
   }
 
   // Render the class chips and wire each to open that class at page 0. Shared by
@@ -9588,6 +9853,8 @@ ex:ApplicationDependencyShape
       renderCacheList();
       renderCacheCtl();
     };
+    $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };
+    $("clearRangeCacheBtn").onclick = async () => { await clearRangeCache(); renderRangeCache(); };
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");

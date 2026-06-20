@@ -512,6 +512,22 @@ label.file-button:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* The Explore "SQL" sub-tab: a small SQL console over the companion tables. */
+#sqlEditor {
+  width: 100%;
+  min-height: 130px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+#sqlExamples { margin: 0 0 8px; flex-wrap: wrap; }
+#sqlExamples button {
+  border: 1px solid var(--line-strong); border-radius: 8px; background: var(--code);
+  padding: 6px 10px; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+#sqlExamples button:hover { background: var(--surface); border-color: var(--accent); }
+#sqlOut { margin-top: 10px; }
+
 /* Paginated entity table footer (HF dataset-viewer style): Prev / page info /
    Next, each page a lazy range fetch. */
 .entity-pager {
@@ -1997,6 +2013,13 @@ pre {
 .cache-list .cache-row .ci-name { font-weight: 600; word-break: break-all; }
 .cache-list .cache-row .ci-size { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; white-space: nowrap; }
 .cache-list .cache-empty { color: var(--muted); padding: 6px 2px; }
+.rc-section { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; background: var(--code); }
+.rc-toggle { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+.rc-toggle input { width: 15px; height: 15px; }
+.rc-exp { font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--accent-2, #c84f2f); }
+.rc-line { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.rc-line #rangeCacheSize { margin: 0; margin-right: auto; font-variant-numeric: tabular-nums; }
+.rc-subhead { margin: 4px 0 6px; font-size: 13px; }
 
 /* Cache-download progress modal: a spinning "spindle" of dots + a progress bar. */
 .cache-modal { width: min(440px, 100%); text-align: center; }

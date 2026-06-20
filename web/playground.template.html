@@ -214,6 +214,7 @@ __PLAYGROUND_CSS__
             <button type="button" data-exp="entities" class="active">Entity tables</button>
             <button type="button" data-exp="community">Community</button>
             <button type="button" data-exp="bytemap">File byte map</button>
+            <button type="button" data-exp="sql" id="exploreSqlTab" hidden>SQL</button>
           </div>
         </div>
 
@@ -227,6 +228,19 @@ __PLAYGROUND_CSS__
           </div>
           <div id="exploreClasses" class="filter-row"></div>
           <div id="exploreTable"></div>
+        </div>
+
+        <div class="explore-sub" data-exp="sql">
+          <p class="microcopy">Write your own SQL over this dataset's companion tables — quote the names, e.g. <code>SELECT * FROM "Class_"</code> (same table names across all three engines). Pick an engine; cached files (see <b>Settings</b>) are used automatically, otherwise it reads lazily over HTTP range.</p>
+          <div class="explore-backends">
+            <span class="be-label">Engine</span>
+            <span class="segmented" id="sqlBackendSeg" aria-label="SQL engine"></span>
+            <span class="microcopy be-meta" id="sqlMeta"></span>
+          </div>
+          <div id="sqlExamples" class="ex-quick" aria-label="Example SQL"></div>
+          <textarea id="sqlEditor" spellcheck="false" placeholder="SELECT * FROM &quot;Class_&quot; LIMIT 25"></textarea>
+          <div class="action-row"><button id="sqlRun" type="button">Run SQL</button></div>
+          <div id="sqlOut" class="out"></div>
         </div>
 
         <div class="explore-sub" data-exp="community">
@@ -568,6 +582,12 @@ __PLAYGROUND_CSS__
         <button id="clearCacheAll" class="ghost" type="button">Clear all</button>
         <button id="settingsModalClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
+      <section class="rc-section">
+        <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>
+        <p class="microcopy" id="rangeCacheInfo"></p>
+        <div class="rc-line"><span id="rangeCacheSize" class="microcopy"></span><button id="clearRangeCacheBtn" class="ghost" type="button">Clear range cache</button></div>
+      </section>
+      <h4 class="rc-subhead">Whole-file caches</h4>
       <p class="microcopy">Companion files cached locally in your browser (IndexedDB). The lazy backends fetch only what a query touches; <b>Cache locally</b> stores the whole file so it survives reloads. <span id="cacheTotal"></span></p>
       <div id="cacheList" class="history-list cache-list"></div>
     </div>
