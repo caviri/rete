@@ -34,6 +34,7 @@ use serde_json::{json, Value};
 mod buildmem;
 mod lubm;
 mod mem;
+mod querymem;
 
 /// Every allocation in this binary (both engines) goes through the counting
 /// allocator, so per-query peak-heap numbers are exact, not sampled.
@@ -245,6 +246,14 @@ fn main() -> Result<()> {
             .get(i + 1)
             .context("--build-mem needs a <file.nt> path")?;
         return buildmem::run(path);
+    }
+    // Query-path memory profiler: `--query-mem <file.rete> "<sparql>"`.
+    if let Some(i) = raw.iter().position(|a| a == "--query-mem") {
+        let path = raw
+            .get(i + 1)
+            .context("--query-mem needs <file.rete> \"<sparql>\"")?;
+        let query = raw.get(i + 2).context("--query-mem needs a SPARQL query")?;
+        return querymem::run(path, query);
     }
 
     let (format, lubm_universities, rete_path, nt_path, seed_count) = parse_args()?;

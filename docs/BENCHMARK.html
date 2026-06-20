@@ -285,6 +285,19 @@ and the file content hash are byte-identical. Set <code>RETE_BUILD_TIMING=1</cod
 <p>A <em>parallel</em> Louvain would not be byte-identical (the partition depends on the
 sequential move order), so the pyramid stays single-threaded; the three index
 permutations and the dictionary/permutation sorts already use all cores (<code>rayon</code>).</p>
+<h3>Query result serialization (the WASM hot path)</h3>
+<p>A query's result is returned to the browser as a JSON string. Writing that
+envelope <strong>directly into a <code>String</code></strong> (<code>rete_core::results_envelope_json</code>) instead
+of building a <code>serde_json::Value</code> tree and stringifying it dominates the cost on a
+large result. On a <strong>500k-row <code>SELECT</code></strong> (27 MB JSON), profiled with <code>cargo run --release -p rete-bench -- --query-mem</code>:</p>
+<table><thead><tr><th>serializer</th><th style="text-align: right">peak heap</th><th style="text-align: right">time</th></tr></thead><tbody>
+<tr><td><code>Value</code> tree + <code>to_string</code></td><td style="text-align: right">670 MiB (25× the payload)</td><td style="text-align: right">408 ms</td></tr>
+<tr><td><strong>direct to <code>String</code></strong></td><td style="text-align: right"><strong>50 MiB</strong> (1.9×)</td><td style="text-align: right"><strong>41 ms</strong></td></tr>
+</tbody></table>
+<p>~<strong>13× less peak heap, ~10× faster</strong>, byte-identical JSON (a unit test pins the
+escaping to <code>serde_json</code>). For reference the query itself (<code>eval_query</code>) was
+290 MiB / 344 ms — i.e. the old serializer cost <em>more than the query</em>. On the
+bounded WASM heap the 670 MiB peak was an OOM risk for big results.</p>
 <h2>Query latency (end-to-end: open + decompress + evaluate)</h2>
 <p>5-run averages of the compiled binary (includes process startup each run).</p>
 <table><thead><tr><th>Query</th><th style="text-align: right">Time</th></tr></thead><tbody>
