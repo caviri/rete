@@ -243,11 +243,11 @@ check "cost-url"    "full query open|range request" -- $B cost "http://127.0.0.1
 kill "$(cat "$T/srv.pid")" 2>/dev/null
 
 echo "== error handling (must fail cleanly, not panic) =="
-# Flip one byte of the stored content hash (header bytes 92..108): the file still
+# Flip one byte of the stored content hash (header bytes 8..24): the file still
 # parses, but the recomputed hash no longer matches → clean mismatch, no panic.
 python3 -c "
 import sys
-b=bytearray(open('$T/g.rete','rb').read()); b[92]^=0xff; open('$T/bad.rete','wb').write(b)"
+b=bytearray(open('$T/g.rete','rb').read()); b[8]^=0xff; open('$T/bad.rete','wb').write(b)"
 check "verify tamper"  "FAILED|mismatch"       -- bash -c "$B verify '$T/bad.rete'; true"
 # A truncated file must also be rejected without panicking.
 check "verify trunc"   "FAILED|mismatch|Error|malformed" -- bash -c "head -c 80 '$T/g.rete' > '$T/trunc.rete'; $B verify '$T/trunc.rete'; true"
