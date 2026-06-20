@@ -93,6 +93,35 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
             );
         }
     }
+
+    // Entity shapes (characteristic sets): the most common predicate-combinations.
+    let shapes = rete.char_sets();
+    if !shapes.is_empty() {
+        let dict = rete.dictionary();
+        let local = |iri: &str| -> String {
+            iri.trim_end_matches('>')
+                .rsplit(['/', '#'])
+                .next()
+                .unwrap_or(iri)
+                .to_string()
+        };
+        println!(
+            "  entity shapes (characteristic sets, top {}):",
+            shapes.len().min(8)
+        );
+        for c in shapes.iter().take(8) {
+            let preds: Vec<String> = c
+                .predicates
+                .iter()
+                .map(|&p| {
+                    dict.predicate_term(p)
+                        .map(|t| local(&t))
+                        .unwrap_or_else(|| format!("#{p}"))
+                })
+                .collect();
+            println!("    {:>8} subj  {{{}}}", c.subjects, preds.join(", "));
+        }
+    }
     Ok(())
 }
 

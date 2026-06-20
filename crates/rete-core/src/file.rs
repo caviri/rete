@@ -76,8 +76,40 @@ pub fn build_pyramid_meta_with(
             sp.disjoint_pairs,
             sp.equivalent_pairs,
         )
-        .with_predicate_stats(compute_predicate_stats(triples));
+        .with_predicate_stats(compute_predicate_stats(triples))
+        .with_char_sets(compute_char_sets(triples));
     (meta.encode(), dend.rounds() as u16)
+}
+
+/// The top entity **shapes** (characteristic sets): group subjects by the exact
+/// set of predicates they carry, keep the most common. Bounded to `MAX_CHAR_SETS`
+/// and sorted deterministically (by subject count, then predicate list) so the
+/// encoding is reproducible. O(triples) transient memory.
+fn compute_char_sets(triples: &[(u32, u32, u32)]) -> Vec<crate::meta::CharSet> {
+    use std::collections::{BTreeSet, HashMap};
+    const MAX_CHAR_SETS: usize = 128;
+    let mut by_subject: HashMap<u32, BTreeSet<u32>> = HashMap::new();
+    for &(s, p, _o) in triples {
+        by_subject.entry(s).or_default().insert(p);
+    }
+    let mut shapes: HashMap<Vec<u32>, u64> = HashMap::new();
+    for set in by_subject.into_values() {
+        *shapes.entry(set.into_iter().collect()).or_insert(0) += 1;
+    }
+    let mut v: Vec<crate::meta::CharSet> = shapes
+        .into_iter()
+        .map(|(predicates, subjects)| crate::meta::CharSet {
+            predicates,
+            subjects,
+        })
+        .collect();
+    v.sort_by(|a, b| {
+        b.subjects
+            .cmp(&a.subjects)
+            .then_with(|| a.predicates.cmp(&b.predicates))
+    });
+    v.truncate(MAX_CHAR_SETS);
+    v
 }
 
 /// Per-predicate cardinality for the cost-based planner, in one pass over the
@@ -1384,6 +1416,14 @@ impl Rete {
     pub fn predicate_stats(&self) -> &[crate::meta::PredStat] {
         self.pyramid_if_loaded()
             .map(|p| p.predicate_stats.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The entity shapes (characteristic sets) from the pyramid — empty when the
+    /// file has none or the pyramid isn't resident. See [`crate::meta::CharSet`].
+    pub fn char_sets(&self) -> &[crate::meta::CharSet] {
+        self.pyramid_if_loaded()
+            .map(|p| p.char_sets.as_slice())
             .unwrap_or(&[])
     }
 
