@@ -221,13 +221,14 @@ regenerated with `cargo run -p docgen`).
 
 ## Status
 
-**Experimental (v0).** Working end-to-end — the single-file format, dictionary +
-permutation indexes, the community summary and a self-describing **schema
-pyramid**, SPARQL + GeoSPARQL, lazy HTTP-range queries, and the browser/WASM
-engine. The **on-disk format (header version 2) is still a draft and is not
-guaranteed stable across releases** — rebuild to upgrade. SPARQL evaluation is
-exact for supported shapes (no OWL/RDFS query-time entailment), and federation is
-UNION-only.
+**Experimental — v0.1.0** (first tagged release; see [CHANGELOG](CHANGELOG.md)).
+Working end-to-end — the single-file format, dictionary + permutation indexes, the
+community summary and a self-describing **schema pyramid**, SPARQL + GeoSPARQL,
+lazy HTTP-range queries (with per-tile synopses that prune a routed tile before
+fetching it), and the browser/WASM engine. The **on-disk format (header version 2)
+is still a draft and is not guaranteed stable across releases** — rebuild to
+upgrade. SPARQL evaluation is exact for supported shapes (no OWL/RDFS query-time
+entailment), and federation is UNION-only.
 
 ## Develop (Docker only)
 

@@ -289,7 +289,7 @@ dependencies = [
 
 [[package]]
 name = "docgen"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "pulldown-cmark",
 ]
@@ -982,7 +982,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "rete-bench"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "oxigraph",
@@ -993,7 +993,7 @@ dependencies = [
 
 [[package]]
 name = "rete-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1007,7 +1007,7 @@ dependencies = [
 
 [[package]]
 name = "rete-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "getrandom 0.2.17",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "rete-wasm"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "js-sys",
  "rete-core",
