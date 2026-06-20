@@ -49,6 +49,24 @@ Output is byte-identical. Reproduce the phase-by-phase heap profile with
 live heap (exact, via a counting allocator) after parse, dictionary, encode,
 the drop, pyramid, index, and write.
 
+### Build time (big graphs)
+
+The build is dominated by the **Louvain community pyramid** — ~91% of wall-clock
+on the 3 M-triple build. Its local-moving inner loop now uses a reusable dense
+scratch (community → edge-weight + touched-list reset) instead of a per-node
+`HashMap`, with unchanged accumulation order and candidate scan, so the partition
+and the file content hash are byte-identical. Set `RETE_BUILD_TIMING=1` on
+`rete build` for the per-phase breakdown.
+
+| phase (3 M triples) | OLD | optimized |
+|---|--:|--:|
+| `build_dendrogram` (Louvain) | 118.2 s | **44.1 s** (2.7×) |
+| whole `rete build` (wall-clock) | ~141 s | **67 s** (~2.1×) |
+
+A *parallel* Louvain would not be byte-identical (the partition depends on the
+sequential move order), so the pyramid stays single-threaded; the three index
+permutations and the dictionary/permutation sorts already use all cores (`rayon`).
+
 ## Query latency (end-to-end: open + decompress + evaluate)
 
 5-run averages of the compiled binary (includes process startup each run).
