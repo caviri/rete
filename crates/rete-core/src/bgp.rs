@@ -275,8 +275,11 @@ fn pattern_estimates(
     }
     // Measured per-predicate distinct subjects/objects (query_stats block; empty
     // on files built before it existed → fall back to the default selectivities).
-    let stats: std::collections::HashMap<u32, &crate::meta::PredStat> =
-        pyr.predicate_stats.iter().map(|s| (s.predicate, s)).collect();
+    let stats: std::collections::HashMap<u32, &crate::meta::PredStat> = pyr
+        .predicate_stats
+        .iter()
+        .map(|s| (s.predicate, s))
+        .collect();
     let total = ctx.rete.header().quad_count.max(1) as f64;
     let num_preds = pred.len().max(1) as f64;
     // Defaults used only when query_stats has no entry for the predicate.
