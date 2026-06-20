@@ -20,6 +20,7 @@ pub mod pyramid;
 pub mod reach;
 pub mod reader;
 pub mod reason;
+pub mod results;
 mod row;
 pub mod schema_pyramid;
 pub mod shacl;
@@ -52,6 +53,7 @@ pub use pyramid::{
 pub use reach::{batch_reach_serial, build_adjacency, reach_one};
 pub use reader::{CountingReader, RangeReader, SliceReader};
 pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};
+pub use results::{push_json_string, results_envelope_json};
 pub use schema_pyramid::build_schema_pyramid;
 pub use shacl::{
     validate_shacl, DataGraph, Severity, ShaclError, ShaclShapes, ValidationReport,

@@ -67,6 +67,24 @@ A *parallel* Louvain would not be byte-identical (the partition depends on the
 sequential move order), so the pyramid stays single-threaded; the three index
 permutations and the dictionary/permutation sorts already use all cores (`rayon`).
 
+### Query result serialization (the WASM hot path)
+
+A query's result is returned to the browser as a JSON string. Writing that
+envelope **directly into a `String`** (`rete_core::results_envelope_json`) instead
+of building a `serde_json::Value` tree and stringifying it dominates the cost on a
+large result. On a **500k-row `SELECT`** (27 MB JSON), profiled with `cargo run
+--release -p rete-bench -- --query-mem`:
+
+| serializer | peak heap | time |
+|---|--:|--:|
+| `Value` tree + `to_string` | 670 MiB (25× the payload) | 408 ms |
+| **direct to `String`** | **50 MiB** (1.9×) | **41 ms** |
+
+~**13× less peak heap, ~10× faster**, byte-identical JSON (a unit test pins the
+escaping to `serde_json`). For reference the query itself (`eval_query`) was
+290 MiB / 344 ms — i.e. the old serializer cost *more than the query*. On the
+bounded WASM heap the 670 MiB peak was an OOM risk for big results.
+
 ## Query latency (end-to-end: open + decompress + evaluate)
 
 5-run averages of the compiled binary (includes process startup each run).

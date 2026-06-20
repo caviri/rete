@@ -200,8 +200,7 @@ impl Graph {
 
     /// See [`query`].
     pub fn query(&self, query: &str, format: &str) -> Result<String, JsValue> {
-        let v = query_value(&self.rete, query, format)?;
-        serde_json::to_string(&v).map_err(err)
+        query_json(&self.rete, query, format, "")
     }
 
     /// See [`query_triples`].
@@ -351,9 +350,9 @@ impl RemoteGraph {
 
     /// See [`sparql_url`] — same query, but over the resident, cached handle.
     pub fn query(&self, query: &str, format: &str) -> Result<String, JsValue> {
-        let v = query_value(&self.rete, query, format)?;
+        let s = query_json(&self.rete, query, format, "")?;
         incomplete_guard(&self.rete, "query")?;
-        serde_json::to_string(&v).map_err(err)
+        Ok(s)
     }
 
     /// See [`prefix_search`] — over the resident, cached remote handle. Faults the
@@ -556,8 +555,7 @@ pub fn progressive_query_json(bytes: &[u8], query: &str) -> Result<String, Strin
 #[wasm_bindgen]
 pub fn query(bytes: &[u8], query: &str, format: &str) -> Result<String, JsValue> {
     let rete = open(bytes)?;
-    let v = query_value(&rete, query, format)?;
-    serde_json::to_string(&v).map_err(err)
+    query_json(&rete, query, format, "")
 }
 
 /// Prefix-search the label index of an embedded `.rete` image: the subjects whose
@@ -570,52 +568,44 @@ pub fn prefix_search(bytes: &[u8], prefix: &str, limit: usize) -> Result<String,
     prefix_search_json(&rete, prefix, limit)
 }
 
-/// Evaluate any SPARQL form against an open [`Rete`] and build the playground
-/// JSON envelope (shared by [`query`] and [`sparql_url`]).
-fn query_value(rete: &Rete, query: &str, format: &str) -> Result<serde_json::Value, JsValue> {
-    use serde_json::{json, Map, Value};
+/// Evaluate any SPARQL form against an open [`Rete`] and serialize the playground
+/// JSON envelope (shared by [`query`] and [`sparql_url`]). `extra` is a raw JSON
+/// fragment of additional object members appended before the closing brace (e.g.
+/// `,"remote":{…}` for [`sparql_url`]); pass `""` for none.
+///
+/// This writes the JSON **directly into a `String`** rather than building an
+/// intermediate `serde_json::Value` tree and stringifying it: on a large SELECT
+/// the tree path allocates ~25× the payload (a `BTreeMap` per row + two String
+/// clones per cell) and costs more than the query itself; writing direct cuts the
+/// serialization peak heap ~13× and the time ~10× (see `rete-bench --query-mem`).
+fn query_json(rete: &Rete, query: &str, format: &str, extra: &str) -> Result<String, JsValue> {
     let out = eval_query(rete, query).map_err(err)?;
-    let v = match out {
-        QueryOutput::Ask(b) => json!({ "kind": "ask", "boolean": b }),
-        QueryOutput::Select(project, solutions) => {
-            // Variable order: the projection, else the union of solution keys.
-            let mut vars: Vec<String> = project;
-            if vars.is_empty() {
-                let mut seen = std::collections::BTreeSet::new();
-                for s in &solutions {
-                    for k in s.keys() {
-                        if seen.insert(k.clone()) {
-                            vars.push(k.clone());
-                        }
-                    }
-                }
-            }
-            let rows: Vec<Value> = solutions
-                .iter()
-                .map(|s| {
-                    let mut obj = Map::new();
-                    for var in &vars {
-                        if let Some(term) = s.get(var) {
-                            obj.insert(var.clone(), Value::String(term.clone()));
-                        }
-                    }
-                    Value::Object(obj)
-                })
-                .collect();
-            json!({ "kind": "select", "vars": vars, "rows": rows })
+    Ok(write_query_json(&out, format, extra))
+}
+
+/// Serialize an already-evaluated [`QueryOutput`] into the playground JSON
+/// envelope. SELECT / ASK / `CONSTRUCT`-as-triples go through the shared,
+/// host-tested `rete_core::results_envelope_json` (the allocation-lean direct
+/// writer); a `CONSTRUCT` requested as Turtle / JSON-LD wraps the rendered text
+/// (those serializers live here).
+fn write_query_json(out: &QueryOutput, format: &str, extra: &str) -> String {
+    if let QueryOutput::Construct(triples) = out {
+        let text = match format {
+            "ttl" => Some(("ttl", to_turtle(triples))),
+            "jsonld" => Some(("jsonld", to_jsonld(triples))),
+            _ => None,
+        };
+        if let Some((fmt, text)) = text {
+            let mut s = String::from(r#"{"kind":"construct","format":""#);
+            s.push_str(fmt);
+            s.push_str(r#"","text":"#);
+            rete_core::push_json_string(&mut s, &text);
+            s.push_str(extra);
+            s.push('}');
+            return s;
         }
-        QueryOutput::Construct(triples) => match format {
-            "ttl" => json!({ "kind": "construct", "format": "ttl", "text": to_turtle(&triples) }),
-            "jsonld" => {
-                json!({ "kind": "construct", "format": "jsonld", "text": to_jsonld(&triples) })
-            }
-            _ => {
-                let arr: Vec<Value> = triples.iter().map(|(s, p, o)| json!([s, p, o])).collect();
-                json!({ "kind": "construct", "triples": arr })
-            }
-        },
-    };
-    Ok(v)
+    }
+    rete_core::results_envelope_json(out, extra)
 }
 
 /// HTTP `Range` reader over **synchronous** XMLHttpRequest — the bridge that
@@ -861,23 +851,21 @@ pub fn sparql_url(url: &str, query: &str, format: &str) -> Result<String, JsValu
     // `RemoteGraph` extends this reuse across queries.)
     let (reader, rete) = open_url(url)?;
     let file_length = reader.len();
-    let mut v = query_value(&rete, query, format)?;
+    // Evaluate first (this is what faults tiles), then refuse incomplete results.
+    let out = eval_query(&rete, query).map_err(err)?;
     if rete.index_incomplete() {
         return Err(JsValue::from_str(
             "a range fetch failed mid-query; refusing to return incomplete results",
         ));
     }
-    if let Some(obj) = v.as_object_mut() {
-        obj.insert(
-            "remote".to_string(),
-            serde_json::json!({
-                "fileLength": file_length,
-                "bytes": reader.bytes_read(),
-                "requests": reader.requests(),
-            }),
-        );
-    }
-    serde_json::to_string(&v).map_err(err)
+    // The `remote` member's values are plain numbers — no escaping needed.
+    let extra = format!(
+        r#","remote":{{"fileLength":{},"bytes":{},"requests":{}}}"#,
+        file_length,
+        reader.bytes_read(),
+        reader.requests(),
+    );
+    Ok(write_query_json(&out, format, &extra))
 }
 
 /// Evaluate a SELECT with the **community-split strategy**: every basic graph
