@@ -312,7 +312,7 @@ rete shacl data.rete --shapes shapes.ttl --format json
 <p>See <a href="shacl.html">SHACL validation</a> for the supported SHACL Core surface.</p>
 <h2>Inspecting a file</h2>
 <pre><code class="language-sh">rete info   data.rete   # raw header
-rete stats  data.rete   # size, counts, named graphs, top predicates
+rete stats  data.rete   # size, counts, top predicates, planner stats, entity shapes
 rete verify data.rete   # check the blake3 content hash (detect corruption)
 rete graphs data.rete   # list named-graph IRIs
 rete export data.rete   # dump back to N-Quads (lossless)
@@ -322,6 +322,11 @@ rete export data.rete   # dump back to N-Quads (lossless)
 rete schema  data.rete   # semantic: relations between rdf:type classes
 rete predicates data.rete  # exact per-predicate totals, from the summary alone
 </code></pre>
+<p><code>rete stats</code> also prints two index-free profiles read from the pyramid: the
+<strong>planner stats</strong> (per predicate: distinct subjects/objects, multiplicities, and
+functional / inverse-functional hints — the cardinality the cost-based join
+planner uses) and the <strong>entity shapes</strong> (the most common <em>characteristic sets</em> —
+which predicate-combinations subjects carry, e.g. <code>{type, name, age} ×N</code>).</p>
 <h2>Deploying &amp; querying over a URL</h2>
 <p>A <code>.rete</code> file is immutable and self-describing, so any static host that honors
 HTTP <code>Range</code> requests works — S3, GCS, GitHub, a CDN, or the bundled dev server:</p>
