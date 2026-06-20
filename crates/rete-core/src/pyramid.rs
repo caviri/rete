@@ -141,6 +141,16 @@ pub fn louvain_one_level(g: &Graph) -> Partition {
     let mut comm: Vec<usize> = (0..n).collect();
     let mut sigma_tot: Vec<f64> = g.degree.clone(); // each node alone
 
+    // Reusable scratch (allocated once, not per node): `k_to[c]` is the edge weight
+    // from the current node `i` into community `c`, valid only for the communities
+    // recorded in `touched`. A dense array + touched-list replaces the per-node
+    // `HashMap` the textbook formulation allocates — same accumulation order (the
+    // adjacency is index-sorted, so the float sums are bit-identical) and the same
+    // sorted candidate scan, so the partition is byte-for-byte unchanged. Edge
+    // weights are strictly positive, so `k_to[c] == 0.0` reliably means "untouched".
+    let mut k_to = vec![0.0f64; n];
+    let mut touched: Vec<usize> = Vec::new();
+
     let mut improved = true;
     while improved {
         improved = false;
@@ -151,27 +161,28 @@ pub fn louvain_one_level(g: &Graph) -> Partition {
             // Tentatively remove i from its community.
             sigma_tot[ci] -= ki;
 
-            // Edge weight from i into each neighboring community.
-            let mut k_to: HashMap<usize, f64> = HashMap::new();
+            // Edge weight from i into each neighboring community (into the dense
+            // scratch, recording first-touch communities for O(touched) reset).
             for &(j, w) in neighbors {
                 if j != i {
-                    *k_to.entry(comm[j]).or_insert(0.0) += w;
+                    let cj = comm[j];
+                    if k_to[cj] == 0.0 {
+                        touched.push(cj);
+                    }
+                    k_to[cj] += w;
                 }
             }
 
             // Gain of placing i into community c: k_{i,c} - sigma_tot[c]*ki/2m.
-            let gain = |c: usize| -> f64 {
-                k_to.get(&c).copied().unwrap_or(0.0) - sigma_tot[c] * ki / two_m
-            };
+            let gain = |c: usize| -> f64 { k_to[c] - sigma_tot[c] * ki / two_m };
             // Scan candidate communities in a deterministic (sorted) order so an
             // equal-gain tie always resolves to the same community across runs —
             // the second half of making the pyramid reproducible. Strict `>`
             // keeps the first (smallest-id) community on ties.
             let mut best_c = ci;
             let mut best_gain = gain(ci);
-            let mut cands: Vec<usize> = k_to.keys().copied().collect();
-            cands.sort_unstable();
-            for &c in &cands {
+            touched.sort_unstable();
+            for &c in &touched {
                 let gc = gain(c);
                 if gc > best_gain {
                     best_gain = gc;
@@ -184,6 +195,12 @@ pub fn louvain_one_level(g: &Graph) -> Partition {
             if best_c != ci {
                 improved = true;
             }
+
+            // Reset only the touched entries for the next node.
+            for &c in &touched {
+                k_to[c] = 0.0;
+            }
+            touched.clear();
         }
     }
 

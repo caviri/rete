@@ -50,6 +50,19 @@ the pyramid working set, but the bulky string statements do not. Measured on a
 output byte-identical. The phase-by-phase heap profile is reproducible with
 `cargo run --release -p rete-bench -- --build-mem <file.nt>`.
 
+**Build time.** On a big graph the build is dominated by the **Louvain community
+pyramid** (`build_dendrogram`) — on the 3 M-triple build it was ~91% of the
+wall-clock. The local-moving inner loop runs a reusable dense scratch array
+(community → edge-weight, with a touched-list reset) instead of allocating a
+`HashMap` per node per sweep; accumulation order and the sorted candidate scan are
+unchanged, so the partition — and the file's content hash — are byte-for-byte
+identical. That cut `build_dendrogram` **~118 s → ~44 s (2.7×)** and the whole
+build ~141 s → 67 s. Set `RETE_BUILD_TIMING=1` on `rete build` for the per-phase
+breakdown. (A *parallel* Louvain is not byte-identical — the partition depends on
+the sequential move order — so the pyramid stays single-threaded; the index
+permutations and the dictionary/permutation sorts already use all cores via
+`rayon`.)
+
 ## File Layout
 
 The header gives fixed offsets and lengths for the remaining sections. Readers

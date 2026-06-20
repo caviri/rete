@@ -51,10 +51,28 @@ pub fn build_pyramid_meta_with(
     budget: usize,
     type_override: Option<&str>,
 ) -> (Vec<u8>, u16) {
+    // Optional sub-phase timing (set RETE_BUILD_TIMING=1) — the pyramid build is
+    // the dominant cost of a big `rete build`; this shows where inside it.
+    let timing = std::env::var_os("RETE_BUILD_TIMING").is_some();
+    let mut t = std::time::Instant::now();
+    let mut lap = |label: &str| {
+        if timing {
+            eprintln!(
+                "  [pyramid] {label}: {:.0} ms",
+                t.elapsed().as_secs_f64() * 1000.0
+            );
+            t = std::time::Instant::now();
+        }
+    };
+
     let g = project_graph(dict, triples);
+    lap("project_graph");
     let dend = build_dendrogram(&g);
+    lap("build_dendrogram (Louvain)");
     let round = choose_round_for_budget(dict, triples, &dend, budget);
+    lap("choose_round_for_budget");
     let summary = summarize(dict, triples, &dend, round);
+    lap("summarize");
     // Attach the v2 schema pyramid (the non-exclusive subClassOf DAG + per-level
     // type rollups + per-level lateral class relations + per-community
     // descriptors). Empty when the graph has no usable typing, in which case the
@@ -66,6 +84,13 @@ pub fn build_pyramid_meta_with(
         round,
         type_override,
     );
+    lap("build_schema_pyramid");
+    let predicate_stats = compute_predicate_stats(triples);
+    lap("compute_predicate_stats");
+    let char_sets = compute_char_sets(triples);
+    lap("compute_char_sets");
+    let label_index = compute_label_index(dict, triples);
+    lap("compute_label_index");
     let meta = PyramidMeta::new(round as u32, summary, &[])
         .with_schema(
             sp.class_hierarchy,
@@ -76,10 +101,12 @@ pub fn build_pyramid_meta_with(
             sp.disjoint_pairs,
             sp.equivalent_pairs,
         )
-        .with_predicate_stats(compute_predicate_stats(triples))
-        .with_char_sets(compute_char_sets(triples))
-        .with_label_index(compute_label_index(dict, triples));
-    (meta.encode(), dend.rounds() as u16)
+        .with_predicate_stats(predicate_stats)
+        .with_char_sets(char_sets)
+        .with_label_index(label_index);
+    let out = (meta.encode(), dend.rounds() as u16);
+    lap("encode");
+    out
 }
 
 /// The label predicates a [`compute_label_index`] entry can come from — the
