@@ -301,13 +301,15 @@ instead of full pattern scans.</p>
 <p>Join <strong>order</strong> is cost-based: each pattern's cardinality is estimated from the
 pyramid summary's exact per-predicate totals (plus default selectivities for a
 bound subject/object), and the cheapest connected pattern joins first — so on
-skewed data, leading with a rare predicate avoids a large intermediate. The
-estimate is free for an in-memory file (the summary is resident) and is skipped
-on the lazy remote path so it never forces a pyramid fetch; with no summary it
-falls back to a most-constants-first heuristic. The remaining gaps: the
-selectivity factors for bound subject/object are still defaults (a <code>query_stats</code>
-block of measured distinct-S/O counts and multiplicities will replace them), and
-the hash path always builds its right side.</p>
+skewed data, leading with a rare predicate avoids a large intermediate. A bound
+subject/object's selectivity comes from the <code>query_stats</code> block's <strong>measured</strong>
+per-predicate <code>distinct_subjects</code> / <code>distinct_objects</code> (so <code>&lt;s&gt; &lt;p&gt; ?o</code> estimates
+the average objects-per-subject — exactly one for a functional predicate); files
+built before that block, or with no summary at all, fall back to fixed default
+selectivities / a most-constants-first heuristic. The estimate is free for an
+in-memory file (the summary is resident) and is skipped on the lazy remote path
+so it never forces a pyramid fetch. The remaining gap: the hash path always
+builds its right side.</p>
 <p>Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
 nested <code>SELECT</code> subqueries and <code>SERVICE</code> federation.</p>
 <h2>Result Provenance</h2>

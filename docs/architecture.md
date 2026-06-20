@@ -80,13 +80,15 @@ instead of full pattern scans.
 Join **order** is cost-based: each pattern's cardinality is estimated from the
 pyramid summary's exact per-predicate totals (plus default selectivities for a
 bound subject/object), and the cheapest connected pattern joins first — so on
-skewed data, leading with a rare predicate avoids a large intermediate. The
-estimate is free for an in-memory file (the summary is resident) and is skipped
-on the lazy remote path so it never forces a pyramid fetch; with no summary it
-falls back to a most-constants-first heuristic. The remaining gaps: the
-selectivity factors for bound subject/object are still defaults (a `query_stats`
-block of measured distinct-S/O counts and multiplicities will replace them), and
-the hash path always builds its right side.
+skewed data, leading with a rare predicate avoids a large intermediate. A bound
+subject/object's selectivity comes from the `query_stats` block's **measured**
+per-predicate `distinct_subjects` / `distinct_objects` (so `<s> <p> ?o` estimates
+the average objects-per-subject — exactly one for a functional predicate); files
+built before that block, or with no summary at all, fall back to fixed default
+selectivities / a most-constants-first heuristic. The estimate is free for an
+in-memory file (the summary is resident) and is skipped on the lazy remote path
+so it never forces a pyramid fetch. The remaining gap: the hash path always
+builds its right side.
 
 Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
 nested `SELECT` subqueries and `SERVICE` federation.
