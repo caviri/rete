@@ -252,15 +252,15 @@ fn pattern_rows(
 
 /// A per-pattern cardinality estimate, smaller = cheaper to scan. The base is
 /// the **exact** per-predicate triple count (sum of the summary quotient graph's
-/// super-edge counts) when the predicate is bound, else the whole-graph total; a
-/// bound subject/object (a constant, or a variable already bound by `seed`) then
-/// scales it down by a default selectivity. `None` when the file carries no
-/// pyramid summary — ordering then falls back to the constant-count heuristic.
-///
-/// The bound-S/O factors are the standard *no-statistics* defaults (a bound
-/// subject is far more selective than a bound object); a later `query_stats`
-/// block replaces them with real distinct-subject/object counts and
-/// multiplicities for sharper estimates.
+/// super-edge counts) when the predicate is bound, else the whole-graph total.
+/// A bound subject/object (a constant, or a variable already bound by `seed`)
+/// then scales it down by that predicate's **measured selectivity** from the
+/// `query_stats` block — `1 / distinct_subjects` for a bound subject (so
+/// `<s> <p> ?o` ≈ the average objects per subject; exactly 1 for a functional
+/// predicate), `1 / distinct_objects` for a bound object. Files built before the
+/// `query_stats` block fall back to fixed default selectivities. `None` when the
+/// file carries no pyramid summary at all — ordering then uses the constant-count
+/// heuristic.
 fn pattern_estimates(
     ctx: &Ctx,
     lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
@@ -273,10 +273,13 @@ fn pattern_estimates(
     for e in &pyr.summary {
         *pred.entry(e.predicate).or_insert(0) += e.count as u64;
     }
+    // Measured per-predicate distinct subjects/objects (query_stats block; empty
+    // on files built before it existed → fall back to the default selectivities).
+    let stats: std::collections::HashMap<u32, &crate::meta::PredStat> =
+        pyr.predicate_stats.iter().map(|s| (s.predicate, s)).collect();
     let total = ctx.rete.header().quad_count.max(1) as f64;
     let num_preds = pred.len().max(1) as f64;
-    // A bound subject is highly selective (few triples per subject); a bound
-    // object moderately so. Defaults until query_stats lands.
+    // Defaults used only when query_stats has no entry for the predicate.
     const SEL_SUBJECT: f64 = 0.001;
     const SEL_OBJECT: f64 = 0.02;
     let node_bound = |t: &SlotTerm| match t {
@@ -288,21 +291,29 @@ fn pattern_estimates(
         lowered
             .iter()
             .map(|t| {
-                // Base from the predicate: exact total if a constant predicate,
-                // the average predicate total if a seed-bound predicate variable
-                // (the value is known to the probe but not at plan time), else
-                // the whole graph.
-                let mut est = match t.1 {
-                    SlotTerm::Pred(p) => *pred.get(&p).unwrap_or(&0) as f64,
-                    SlotTerm::Var(v) if seed.contains(&v) => total / num_preds,
-                    _ => total,
-                }
-                .max(1.0);
+                // Base from the predicate: exact total for a constant predicate,
+                // the average predicate total for a seed-bound predicate variable
+                // (the value is known to the probe but not at plan time), else the
+                // whole graph. `st` is the measured stats for a constant predicate.
+                let (base, st) = match t.1 {
+                    SlotTerm::Pred(p) => {
+                        (*pred.get(&p).unwrap_or(&0) as f64, stats.get(&p).copied())
+                    }
+                    SlotTerm::Var(v) if seed.contains(&v) => (total / num_preds, None),
+                    _ => (total, None),
+                };
+                let mut est = base.max(1.0);
                 if node_bound(&t.0) {
-                    est *= SEL_SUBJECT;
+                    est *= match st {
+                        Some(s) if s.distinct_subjects > 0 => 1.0 / s.distinct_subjects as f64,
+                        _ => SEL_SUBJECT,
+                    };
                 }
                 if node_bound(&t.2) {
-                    est *= SEL_OBJECT;
+                    est *= match st {
+                        Some(s) if s.distinct_objects > 0 => 1.0 / s.distinct_objects as f64,
+                        _ => SEL_OBJECT,
+                    };
                 }
                 est.max(1.0)
             })
