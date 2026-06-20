@@ -57,6 +57,13 @@ pub type TileBulkLoader = Box<dyn Fn(usize, &[usize]) -> Option<Vec<Vec<u8>>> + 
 pub struct Tile {
     min_a: u32,
     max_a: u32,
+    /// Optional **tile synopsis**: the inclusive min/max of the two non-leading
+    /// columns `(min_b, max_b, min_c, max_c)`, read from the directory trailer of
+    /// a synopsis-carrying file. Lets a scan prune this tile by a bound secondary
+    /// component *before* faulting it (remote reads). `None` = no synopsis (an
+    /// older file, or a locally-built/opened tile) — then nothing is pruned early
+    /// and the in-tile zone map prunes after the tile is in hand, as before.
+    syn: Option<(u32, u32, u32, u32)>,
     data: OnceLock<Vec<u8>>,
     dir: OnceLock<GroupDirectory>,
 }
@@ -68,15 +75,17 @@ impl Tile {
         Tile {
             min_a,
             max_a,
+            syn: None,
             data,
             dir: OnceLock::new(),
         }
     }
 
-    fn remote(min_a: u32, max_a: u32) -> Self {
+    fn remote(min_a: u32, max_a: u32, syn: Option<(u32, u32, u32, u32)>) -> Self {
         Tile {
             min_a,
             max_a,
+            syn,
             data: OnceLock::new(),
             dir: OnceLock::new(),
         }
@@ -85,6 +94,21 @@ impl Tile {
     /// Leading-component (permuted `a`) range this tile covers, inclusive.
     pub fn leading_range(&self) -> (u32, u32) {
         (self.min_a, self.max_a)
+    }
+
+    /// Could this tile hold a triple with the given bound non-leading components,
+    /// per its synopsis? `true` when there is no synopsis (can't rule it out) or
+    /// the bound `b`/`c` fall inside the recorded ranges. Conservative: a `false`
+    /// is a *proven* miss (the in-tile zone map would reject the same tile), so
+    /// skipping the fetch never drops a result.
+    fn syn_admits(&self, pb: Option<u32>, pc: Option<u32>) -> bool {
+        match self.syn {
+            None => true,
+            Some((min_b, max_b, min_c, max_c)) => {
+                let ok = |v: Option<u32>, lo: u32, hi: u32| v.is_none_or(|x| lo <= x && x <= hi);
+                ok(pb, min_b, max_b) && ok(pc, min_c, max_c)
+            }
+        }
     }
 
     /// The tile's serialized (uncompressed) [`TripleBlock`] image, if present
@@ -364,10 +388,14 @@ impl GraphIndex {
     /// `loader` on first scan. Check [`load_incomplete`](Self::load_incomplete)
     /// after evaluating — a failed fetch must become an error, never a
     /// silently smaller result.
-    pub fn from_remote_directories(directories: [Vec<(u32, u32)>; 3], loader: TileLoader) -> Self {
+    #[allow(clippy::type_complexity)]
+    pub fn from_remote_directories(
+        directories: [Vec<(u32, u32, Option<(u32, u32, u32, u32)>)>; 3],
+        loader: TileLoader,
+    ) -> Self {
         let sections = directories.map(|dir| {
             dir.into_iter()
-                .map(|(min_a, max_a)| Tile::remote(min_a, max_a))
+                .map(|(min_a, max_a, syn)| Tile::remote(min_a, max_a, syn))
                 .collect()
         });
         GraphIndex {
@@ -520,6 +548,13 @@ impl GraphIndex {
         // one tile, unchanged.
         let window = std::cell::Cell::new(PREFETCH_WINDOW_START);
         (start..end)
+            // Synopsis pre-fault prune: drop a routed tile the directory proves
+            // can't match a bound secondary component, **without fetching it**
+            // (the remote win — a negative/sparse lookup costs zero tile reads).
+            // A bound leading id routes to a single tile, so this is where it
+            // bites; a fully-unbound leading scan leaves `pb`/`pc` unbound, so
+            // `syn_admits` keeps every tile, unchanged.
+            .filter(move |&ti| self.sections[si][ti].syn_admits(pb, pc))
             .flat_map(move |ti| {
                 // Fault in (if remote), parse (untrusted bytes ⇒ `None` on
                 // malformed), and zone-prune per tile, then stream the
@@ -710,5 +745,83 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A tile synopsis must let a routed scan **skip the fetch** of a tile its
+    /// secondary-column range rules out — and never skip one that could match.
+    #[test]
+    fn synopsis_prunes_the_routed_tile_before_fetch() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        use std::sync::Arc;
+
+        // One real SPO tile: subject a=5, predicates b∈{10,11}, object c=100.
+        let block = {
+            let mut b = TripleBlockBuilder::new();
+            b.push((5, 10, 100));
+            b.push((5, 11, 100));
+            b.build()
+        };
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let (blk, fc) = (block.clone(), fetches.clone());
+        // The loader returns the (already-decompressed) tile image and counts calls.
+        let loader: TileLoader = Box::new(move |_si, _ti| {
+            fc.fetch_add(1, SeqCst);
+            Some(blk.clone())
+        });
+        // Remote SPO directory: one tile, leading a∈[5,5], synopsis b∈[10,11], c∈[100,100].
+        let dirs = [
+            vec![(5u32, 5u32, Some((10u32, 11u32, 100u32, 100u32)))],
+            Vec::new(),
+            Vec::new(),
+        ];
+        let idx = GraphIndex::from_remote_directories(dirs, loader);
+
+        // Predicate 99 is outside the tile's b-range → prune, zero fetches, empty.
+        assert!(idx.match_pattern((Some(5), Some(99), None)).is_empty());
+        assert_eq!(fetches.load(SeqCst), 0, "synopsis must skip the fetch");
+
+        // Object 999 outside the tile's c-range → prune, still zero fetches.
+        assert!(idx.match_pattern((Some(5), None, Some(999))).is_empty());
+        assert_eq!(
+            fetches.load(SeqCst),
+            0,
+            "secondary-c prune also skips the fetch"
+        );
+
+        // Predicate 10 is in range → the tile is fetched and the match returned.
+        assert_eq!(
+            idx.match_pattern((Some(5), Some(10), None)),
+            vec![(5, 10, 100)]
+        );
+        assert_eq!(
+            fetches.load(SeqCst),
+            1,
+            "an admissible secondary still fetches"
+        );
+    }
+
+    /// Without a synopsis (`None`), nothing is pruned early — the tile is always
+    /// fetched and the in-tile zone map does the (correct) pruning, as before.
+    #[test]
+    fn absent_synopsis_never_prunes() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        use std::sync::Arc;
+        let block = {
+            let mut b = TripleBlockBuilder::new();
+            b.push((5, 10, 100));
+            b.build()
+        };
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let (blk, fc) = (block.clone(), fetches.clone());
+        let loader: TileLoader = Box::new(move |_si, _ti| {
+            fc.fetch_add(1, SeqCst);
+            Some(blk.clone())
+        });
+        let dirs = [vec![(5u32, 5u32, None)], Vec::new(), Vec::new()];
+        let idx = GraphIndex::from_remote_directories(dirs, loader);
+        // Predicate 99 absent, but with no synopsis the tile is fetched (then the
+        // zone map yields no match) — correctness preserved, just no fetch saved.
+        assert!(idx.match_pattern((Some(5), Some(99), None)).is_empty());
+        assert_eq!(fetches.load(SeqCst), 1, "no synopsis ⇒ no early prune");
     }
 }

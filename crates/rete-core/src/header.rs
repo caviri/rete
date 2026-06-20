@@ -21,6 +21,14 @@ pub const HEADER_LEN: usize = 128;
 /// Flag bit: the file contains named graphs (quads) rather than triples only.
 pub const FLAG_HAS_QUADS: u8 = 0b0000_0001;
 
+/// Flag bit: each tiled permutation section carries a **tile-synopsis trailer**
+/// — per-tile min/max of the two non-leading columns, appended after the tile
+/// payloads. It lets a range reader prune a routed tile by a bound secondary
+/// component *before* fetching it. Backward-compatible: the trailer sits past the
+/// last tile, so a reader that predates this flag locates tiles by length and
+/// never reads it. See `file.rs::encode_tiled_section`.
+pub const FLAG_TILE_SYNOPSIS: u8 = 0b0000_0010;
+
 #[derive(Debug, thiserror::Error)]
 pub enum HeaderError {
     #[error("buffer too small: need {HEADER_LEN} bytes, got {0}")]
@@ -130,6 +138,11 @@ impl Header {
 
     pub fn has_quads(&self) -> bool {
         self.flags & FLAG_HAS_QUADS != 0
+    }
+
+    /// Do the tiled index sections carry a [`FLAG_TILE_SYNOPSIS`] trailer?
+    pub fn has_tile_synopsis(&self) -> bool {
+        self.flags & FLAG_TILE_SYNOPSIS != 0
     }
 }
 

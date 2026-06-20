@@ -37,6 +37,9 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
     println!("  distinct terms        : {}", h.term_count);
     println!("  named graphs          : {}", rete.graph_names().len());
     println!("  pyramid levels        : {}", h.pyramid_levels);
+    if h.has_tile_synopsis() {
+        println!("  tile synopsis         : yes (range readers prune tiles by a bound secondary)");
+    }
     println!(
         "  compression           : {}",
         if h.block_codec == CODEC_ZSTD {
