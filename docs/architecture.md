@@ -147,6 +147,18 @@ directory plus only the matching tile(s), and provenance names the physical
 tile (`PERM/index`) with its compressed byte range. For pre-tiling (v0.1)
 files `rete why --json` still reports tile provenance as `not_materialized`.
 
+**Tile synopses.** A routed lookup with a bound leading id lands on exactly one
+tile, but the *other* bound components are only checked after the tile is fetched
+(its in-tile zone map). The optional tile-synopsis trailer (header flag
+`FLAG_TILE_SYNOPSIS`) lifts each tile's two non-leading-column min/max into the
+section directory, so a range reader prunes that tile by a bound secondary
+component **before** fetching it — a negative or sparse remote lookup (e.g. "does
+this subject have that predicate?", or a join probe that misses) is answered with
+**zero tile fetches**. The prune is conservative — it only skips a tile the
+in-tile zone map would also reject — so it can never drop a result; the trailer is
+appended past the tiles, so older readers ignore it (backward-compatible). It
+costs one extra small tail read per section at open, amortized across a session.
+
 ## Progressive And Cost Paths
 
 The summary path is the first layer of progressive querying. These query shapes

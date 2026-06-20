@@ -253,12 +253,26 @@ section payload:  varint num_tiles
                             varint max_a−min_a  # leading-id span (routing)
                             varint clen          # compressed tile length
                   tiles:    num_tiles × compressed §6.1 blocks, concatenated
+                  synopsis trailer (only if header FLAG_TILE_SYNOPSIS, 0b10):
+                  per tile: varint min_b, varint max_b−min_b   # non-leading col B
+                            varint min_c, varint max_c−min_c   # non-leading col C
 ```
 
 A bound leading component binary-searches the directory to exactly **one**
 tile (a-groups are never split across tiles); an unbound one visits every
 tile, zone-map-pruned. The directory is uncompressed so it is readable before
 any tile is fetched.
+
+The optional **tile-synopsis trailer** lifts each tile's two non-leading-column
+ranges out of its (compressed, must-be-fetched) zone map and into the section, so
+a range reader can prune a routed tile by a bound *secondary* component **without
+fetching it** — a negative/sparse lookup then costs zero tile reads. It is
+appended **after** the tile payloads precisely so a reader predating the flag
+locates tiles by `clen` and never reads it (backward-compatible; no version bump).
+The values mirror each tile's own zone map exactly, and a reader only ever uses
+them to *skip* a proven miss (the in-tile zone map is the backstop), so the prune
+can never drop a result. Cost: one extra small tail read per section at open,
+amortized across a session's queries.
 
 **Dictionary sections are chunked the same way** (their container-level codec
 is also `none`): each of the four §5 sections is stored as

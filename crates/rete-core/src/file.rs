@@ -15,7 +15,7 @@
 //! single permutation payload from that container.
 
 use crate::dictionary::Dictionary;
-use crate::header::{Header, FLAG_HAS_QUADS, HEADER_LEN, MAGIC};
+use crate::header::{Header, FLAG_HAS_QUADS, FLAG_TILE_SYNOPSIS, HEADER_LEN, MAGIC};
 use crate::index::{GraphIndex, IndexPermutation, Pattern};
 use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
 use crate::pyramid::{build_dendrogram, project_graph};
@@ -713,6 +713,26 @@ fn encode_tiled_section(tiles: &[crate::index::Tile], codec: u8) -> Vec<u8> {
     for comp in &compressed {
         out.extend_from_slice(comp);
     }
+    // Tile-synopsis trailer (FLAG_TILE_SYNOPSIS): per tile, the inclusive min/max
+    // of the two non-leading columns `(min_b, span_b, min_c, span_c)`, derived
+    // from each tile's zone map. Appended **after** the tile payloads so a reader
+    // that predates the flag — which locates tiles by length and stops — never
+    // reads it (backward-compatible). A reader honoring the flag reads it from the
+    // section tail. On the (impossible for a built tile) parse failure, emit a
+    // full range so nothing is ever wrongly pruned.
+    for tile in tiles {
+        let (min_b, max_b, min_c, max_c) = match crate::triples::TripleBlock::parse(tile.bytes()) {
+            Ok(b) => {
+                let z = b.zone();
+                (z.min_b, z.max_b, z.min_c, z.max_c)
+            }
+            Err(_) => (0, u32::MAX, 0, u32::MAX),
+        };
+        write_uvarint(&mut out, min_b as u64);
+        write_uvarint(&mut out, (max_b - min_b) as u64);
+        write_uvarint(&mut out, min_c as u64);
+        write_uvarint(&mut out, (max_c - min_c) as u64);
+    }
     out
 }
 
@@ -723,6 +743,38 @@ struct TileDirEntry {
     max_a: u32,
     start: usize,
     end: usize,
+}
+
+/// One tile's synopsis: inclusive min/max of the two non-leading columns.
+type TileSynopsis = (u32, u32, u32, u32);
+
+/// Parse the **tile-synopsis trailer** (when [`FLAG_TILE_SYNOPSIS`] is set): the
+/// `num_tiles × (min_b, span_b, min_c, span_c)` records that follow the last tile
+/// payload, starting at `trailer_start` within `payload`. Returns one synopsis per
+/// tile, in directory order. `payload` may be just the trailer slice (remote) or
+/// the whole section (local); `trailer_start` is the offset of the trailer within
+/// it. A short/garbled trailer yields `None` (the caller keeps `None` synopses —
+/// pruning simply doesn't fire, never a wrong result).
+fn parse_tile_synopsis(
+    payload: &[u8],
+    trailer_start: usize,
+    num_tiles: usize,
+) -> Option<Vec<TileSynopsis>> {
+    let mut pos = trailer_start;
+    let mut take = |pos: &mut usize| -> Option<u32> {
+        let (v, n) = read_uvarint(payload.get(*pos..)?)?;
+        *pos += n;
+        u32::try_from(v).ok()
+    };
+    let mut out = Vec::with_capacity(num_tiles.min(payload.len()));
+    for _ in 0..num_tiles {
+        let min_b = take(&mut pos)?;
+        let max_b = min_b.checked_add(take(&mut pos)?)?;
+        let min_c = take(&mut pos)?;
+        let max_c = min_c.checked_add(take(&mut pos)?)?;
+        out.push((min_b, max_b, min_c, max_c));
+    }
+    Some(out)
 }
 
 /// Parse a tiled section payload's directory (not the tiles). `bytes` may be a
@@ -784,6 +836,34 @@ fn read_tile_directory_ranged<R: RangeReader>(
             Err(_) if prefetch < total => prefetch = prefetch.saturating_mul(2).min(total),
             Err(e) => return Err(e),
         }
+    }
+}
+
+/// Fetch and parse a remote section's **tile-synopsis trailer** (only when the
+/// header's [`FLAG_TILE_SYNOPSIS`] is set): one targeted range read of the bytes
+/// past the last tile, parsed into one synopsis per tile (directory order). A
+/// missing/short/garbled trailer degrades to all-`None` — pruning simply doesn't
+/// fire, never a wrong result. The directory gives the trailer's start (the last
+/// tile's end).
+fn read_tile_synopsis_ranged<R: RangeReader>(
+    reader: &R,
+    section: ByteRange,
+    dir: &[TileDirEntry],
+) -> Vec<Option<TileSynopsis>> {
+    let n = dir.len();
+    let none = vec![None; n];
+    let trailer_start = dir.iter().map(|e| e.end).max().unwrap_or(0);
+    let total = section.len as usize;
+    if n == 0 || trailer_start >= total {
+        return none; // no trailer bytes present
+    }
+    let trailer_len = (total - trailer_start) as u64;
+    let Ok(bytes) = reader.read_at(section.offset + trailer_start as u64, trailer_len) else {
+        return none;
+    };
+    match parse_tile_synopsis(&bytes, 0, n) {
+        Some(v) => v.into_iter().map(Some).collect(),
+        None => none,
     }
 }
 
@@ -1134,7 +1214,7 @@ pub fn write_dataset_with_metadata(
 
     let header = Header {
         version: crate::header::VERSION,
-        flags: if has_quads { FLAG_HAS_QUADS } else { 0 },
+        flags: FLAG_TILE_SYNOPSIS | if has_quads { FLAG_HAS_QUADS } else { 0 },
         metadata_offset: HEADER_LEN as u64,
         metadata_len: meta_section_len,
         dictionary_offset: dict_offset,
@@ -1774,7 +1854,8 @@ impl Rete {
         // and fetch just their tile directories.
         let mut index_section_ranges = [ByteRange { offset: 0, len: 0 }; 3];
         let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; 3] = Default::default();
-        let mut directories: [Vec<(u32, u32)>; 3] = Default::default();
+        #[allow(clippy::type_complexity)]
+        let mut directories: [Vec<(u32, u32, Option<TileSynopsis>)>; 3] = Default::default();
         for si in 0..3 {
             let section = locate_container_section_ranged(
                 reader.as_ref(),
@@ -1785,7 +1866,18 @@ impl Rete {
             )?;
             index_section_ranges[si] = section;
             let dir = read_tile_directory_ranged(reader.as_ref(), section)?;
-            directories[si] = dir.iter().map(|e| (e.min_a, e.max_a)).collect();
+            // Tile synopses (one extra small tail read per section) let a routed
+            // scan prune a tile by a bound secondary component before faulting it.
+            let syn = if header.has_tile_synopsis() {
+                read_tile_synopsis_ranged(reader.as_ref(), section, &dir)
+            } else {
+                vec![None; dir.len()]
+            };
+            directories[si] = dir
+                .iter()
+                .zip(syn)
+                .map(|(e, s)| (e.min_a, e.max_a, s))
+                .collect();
             tile_ranges[si] = dir
                 .into_iter()
                 .map(|e| {
@@ -2711,6 +2803,192 @@ mod tests {
         assert_eq!(routed.len(), 40);
         let routed = Rete::query_ranged(&reader, None, None, Some("<http://ex/o/22>")).unwrap();
         assert_eq!(routed.len(), 8);
+    }
+
+    /// The tile-synopsis trailer round-trips through encode/parse, and each parsed
+    /// synopsis is **exactly** the tile block's own b/c zone — so the directory
+    /// can never prune a tile the tile itself would have matched.
+    #[test]
+    fn tile_synopsis_trailer_round_trips() {
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(64);
+        for i in 0..200u32 {
+            ib.push((i, i % 7, i % 13));
+        }
+        let index = ib.build();
+        let tiles = index.tile_sections()[0];
+        assert!(tiles.len() > 3, "tiny budget forces many tiles");
+
+        let payload = encode_tiled_section(tiles, CODEC_NONE);
+        let dir = parse_tile_directory(&payload, payload.len()).unwrap();
+        assert_eq!(dir.len(), tiles.len());
+        // The trailer sits past the last tile; the old directory parse stops there.
+        let trailer_start = dir.iter().map(|e| e.end).max().unwrap();
+        assert!(trailer_start < payload.len(), "a trailer follows the tiles");
+        for e in &dir {
+            assert!(
+                e.end <= payload.len(),
+                "tiles still located within the payload"
+            );
+        }
+        let syn = parse_tile_synopsis(&payload, trailer_start, dir.len()).unwrap();
+        for (e, (min_b, max_b, min_c, max_c)) in dir.iter().zip(syn) {
+            let block = decompress(CODEC_NONE, &payload[e.start..e.end]).unwrap();
+            let z = *crate::triples::TripleBlock::parse(&block).unwrap().zone();
+            assert_eq!(
+                (min_b, max_b, min_c, max_c),
+                (z.min_b, z.max_b, z.min_c, z.max_c),
+                "synopsis equals the tile's own zone"
+            );
+        }
+    }
+
+    /// End-to-end safety: a synopsis-carrying file, opened **lazily** (range
+    /// reads), must return exactly the brute-force answer for every pattern shape
+    /// — the synopsis prune may never drop a real match.
+    #[test]
+    fn tile_synopsis_lazy_matches_reference_every_shape() {
+        use crate::reader::{CountingReader, SliceReader};
+        let triples: Vec<(String, String, String)> = (0..200u32)
+            .map(|i| {
+                (
+                    format!("<http://ex/s/{i:04}>"),
+                    format!("<http://ex/p/{}>", i % 7),
+                    format!("<http://ex/o/{:04}>", i % 13),
+                )
+            })
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(64);
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+
+        let eager = Rete::open(&bytes).unwrap();
+        assert!(
+            eager.header().has_tile_synopsis(),
+            "new files set the synopsis flag"
+        );
+
+        // `open_ranged_lazy` needs a `'static` reader; leak the image (the test
+        // process exits straight after).
+        let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+        let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+        let lazy = Rete::open_ranged_lazy(reader).unwrap();
+
+        let brute = |s: Option<&str>, p: Option<&str>, o: Option<&str>| {
+            let mut v: Vec<(String, String, String)> = triples
+                .iter()
+                .filter(|(a, b, c)| {
+                    s.is_none_or(|x| x == a) && p.is_none_or(|x| x == b) && o.is_none_or(|x| x == c)
+                })
+                .cloned()
+                .collect();
+            v.sort();
+            v
+        };
+        // Existing + absent terms in every position (and unbound) — 4×4×4 shapes.
+        let sv = [
+            None,
+            Some("<http://ex/s/0007>"),
+            Some("<http://ex/s/0130>"),
+            Some("<http://ex/s/9999>"),
+        ];
+        let pv = [
+            None,
+            Some("<http://ex/p/3>"),
+            Some("<http://ex/p/6>"),
+            Some("<http://ex/p/999>"),
+        ];
+        let ov = [
+            None,
+            Some("<http://ex/o/0000>"),
+            Some("<http://ex/o/0012>"),
+            Some("<http://ex/o/9999>"),
+        ];
+        for &s in &sv {
+            for &p in &pv {
+                for &o in &ov {
+                    let mut e = eager.query(s, p, o);
+                    e.sort();
+                    let mut l = lazy.query(s, p, o);
+                    l.sort();
+                    let r = brute(s, p, o);
+                    assert_eq!(e, r, "eager {s:?} {p:?} {o:?}");
+                    assert_eq!(l, r, "lazy {s:?} {p:?} {o:?} — synopsis over-pruned");
+                }
+            }
+        }
+        assert!(!lazy.index_incomplete(), "no lazy fetch failed");
+    }
+
+    /// End-to-end win: on a remote (range-read) file, a lookup whose routed tile
+    /// is ruled out by a bound secondary fetches **fewer bytes** with the synopsis
+    /// than without it — and the answer is identical (empty) either way.
+    #[test]
+    fn synopsis_cuts_remote_fetch_bytes() {
+        use crate::header::FLAG_TILE_SYNOPSIS;
+        use crate::reader::{CountingReader, SliceReader};
+
+        // Zero-padded terms ⇒ dictionary ids are monotonic in i; subject s_i pairs
+        // only with object o_i, so an OSP tile (routed by object) holds a
+        // contiguous subject range — a subject from a far tile is provably absent.
+        let triples: Vec<(String, String, String)> = (0..400u32)
+            .map(|i| {
+                (
+                    format!("<http://ex/s/{i:04}>"),
+                    "<http://ex/p>".to_string(),
+                    format!("<http://ex/o/{i:04}>"),
+                )
+            })
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(64);
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+
+        // (s_0395, ?, o_0005): routes OSP by the (early) object, secondary = the
+        // (late) subject — outside that tile's subject range, so the synopsis
+        // prunes the one routed tile.
+        let q = (Some("<http://ex/s/0395>"), None, Some("<http://ex/o/0005>"));
+        // Measure the bytes the QUERY pulls (after open) — isolating the per-query
+        // saving from the one-time synopsis trailer reads done at open, which a
+        // persistent remote session amortizes over many queries.
+        let query_bytes = |image: &[u8]| -> (u64, usize) {
+            let leaked: &'static [u8] = Box::leak(image.to_vec().into_boxed_slice());
+            let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+            let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let before = reader.bytes_read(); // after open (incl. trailer reads)
+            let n = rete.query(q.0, q.1, q.2).len();
+            assert!(!rete.index_incomplete());
+            (reader.bytes_read() - before, n)
+        };
+
+        let (on_bytes, on_n) = query_bytes(&bytes);
+        // Same file with the synopsis flag cleared = an older reader's behavior.
+        let mut off = bytes.clone();
+        off[5] &= !FLAG_TILE_SYNOPSIS;
+        let (off_bytes, off_n) = query_bytes(&off);
+
+        assert_eq!(on_n, 0, "the pair never co-occurs");
+        assert_eq!(off_n, 0, "same answer without the synopsis");
+        // Both pay the same dictionary-resolution bytes; the difference is the one
+        // routed index tile that the synopsis skips (and the no-synopsis path
+        // fetches only to have its zone map reject it).
+        assert!(
+            on_bytes < off_bytes,
+            "synopsis skips the routed tile fetch: {on_bytes} < {off_bytes}"
+        );
     }
 
     /// A dictionary big enough to split into multiple chunks per section must
