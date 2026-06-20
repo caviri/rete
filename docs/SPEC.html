@@ -289,14 +289,14 @@ aggregated edges). Each deeper level expands supernodes into their members.</li>
 <h2>4. File layout</h2>
 <p>v0 on-disk layout (what <code>write_file</code>/<code>write_dataset</code> actually emit). The header
 is the directory: it carries the absolute offset+length of every section, so a
-client finds everything from the first 128-byte read — no separate directory or
+client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.</p>
-<img src="img/file-layout.svg" alt="On-disk layout: a 128-byte HEADER pointing to DICTIONARY, INDEX, PYRAMID META, optional NAMED GRAPHS, and a FOOTER with the RETE magic.">
-<p><em>The header is the directory: a single 128-byte read carries the offset and length of every section. The ASCII below is the precise reference.</em></p>
+<img src="img/file-layout.svg" alt="On-disk layout: a 1 KB HEADER pointing to DICTIONARY, INDEX, PYRAMID META, optional NAMED GRAPHS, and a FOOTER with the RETE magic.">
+<p><em>The header is the directory: a single 1 KB read carries the offset and length of every section. The ASCII below is the precise reference.</em></p>
 <pre><code>┌──────────────────────────────────────────────────────────────┐
-│ HEADER            fixed-size, 128 bytes, read first.           │
-│   Holds the offset+length of every section below, the codec   │
-│   ids, counts, and the blake3 content hash (§4.1).             │
+│ HEADER            fixed-size, 1024 bytes, read first.          │
+│   A typed section directory: the offset+length of every       │
+│   section below, plus codec ids, counts, content hash (§4.1). │
 ├──────────────────────────────────────────────────────────────┤
 │ DICTIONARY        front-coded container of four sections:      │
 │   ├ shared (terms used as both subject &amp; object)               │
@@ -324,33 +324,45 @@ range — so single-pattern routing fetches the selected SPO/POS/OSP section and
 decompresses only the matching tile(s). Per-<em>community</em> leaf directories
 (mapping <code>(level, tile, perm)</code> to byte ranges across the pyramid) are part of
 the fuller design and remain future work (see <code>docs/BENCHMARK.md</code>).</p>
-<h3>4.1 Header (128 bytes, little-endian)</h3>
+<h3>4.1 Header (1024 bytes, little-endian)</h3>
+<p>The header is a fixed <strong>64-byte core</strong> followed by a <strong>typed section directory</strong> —
+up to 40 entries of 24 bytes each <code>(kind, flags, offset, length)</code> — zero-padded to
+1024. A new top-level section is added as a new directory entry, so the header has
+room to grow without a layout reshape. Format version <code>0x03</code>; this crate reads
+<strong>only</strong> <code>0x03</code> (the 128-byte v0.1/v0.2 headers are a clean break — rebuild old
+files).</p>
+<p><strong>Core (bytes 0..64):</strong></p>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
-<tr><td>4</td><td>1</td><td>format version (<code>0x02</code>; readers also accept <code>0x01</code>, see §6.2)</td></tr>
-<tr><td>5</td><td>1</td><td>flags (bit0: has named graphs / quads)</td></tr>
-<tr><td>6</td><td>2</td><td>header length</td></tr>
-<tr><td>8</td><td>8</td><td>metadata offset</td></tr>
-<tr><td>16</td><td>8</td><td>metadata length</td></tr>
-<tr><td>24</td><td>8</td><td>dictionary offset</td></tr>
-<tr><td>32</td><td>8</td><td>dictionary length</td></tr>
-<tr><td>40</td><td>8</td><td>root directory offset</td></tr>
-<tr><td>48</td><td>8</td><td>root directory length</td></tr>
-<tr><td>56</td><td>8</td><td>pyramid-meta offset</td></tr>
-<tr><td>64</td><td>8</td><td>pyramid-meta length</td></tr>
-<tr><td>72</td><td>1</td><td>dictionary codec id</td></tr>
-<tr><td>73</td><td>1</td><td>block codec id (e.g. zstd)</td></tr>
-<tr><td>74</td><td>2</td><td>number of pyramid levels</td></tr>
-<tr><td>76</td><td>8</td><td>total quad count</td></tr>
-<tr><td>84</td><td>8</td><td>total term count</td></tr>
-<tr><td>92</td><td>16</td><td>content hash (blake3, first 16 bytes) — also an ETag-like id</td></tr>
-<tr><td>108</td><td>8</td><td>named-graphs section offset (0 if default-graph only)</td></tr>
-<tr><td>116</td><td>8</td><td>named-graphs section length (0 if default-graph only)</td></tr>
-<tr><td>124</td><td>4</td><td>schema-pyramid block length (u32, 0 if none) — the trailing schema block within pyramid-meta, so a reader fetches just it at <code>pyramid_meta_offset + pyramid_meta_len − this</code> for an index/dictionary/summary-free schema-coherence read</td></tr>
+<tr><td>4</td><td>1</td><td>format version (<code>0x03</code>)</td></tr>
+<tr><td>5</td><td>1</td><td>flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer)</td></tr>
+<tr><td>6</td><td>2</td><td>header length (= 1024)</td></tr>
+<tr><td>8</td><td>16</td><td>content hash (blake3, first 16 bytes) — also an ETag-like id</td></tr>
+<tr><td>24</td><td>8</td><td>total quad count</td></tr>
+<tr><td>32</td><td>8</td><td>total term count</td></tr>
+<tr><td>40</td><td>2</td><td>number of pyramid levels</td></tr>
+<tr><td>42</td><td>1</td><td>dictionary codec id</td></tr>
+<tr><td>43</td><td>1</td><td>block codec id (e.g. zstd)</td></tr>
+<tr><td>44</td><td>2</td><td>section count (entries in the directory)</td></tr>
+<tr><td>46</td><td>4</td><td>schema-pyramid block length (u32, 0 if none) — the trailing schema block within pyramid-meta, fetched at <code>pyramid_meta_offset + pyramid_meta_len − this</code> for an index/dictionary/summary-free schema-coherence read</td></tr>
+<tr><td>50</td><td>14</td><td>reserved (zero)</td></tr>
 </tbody></table>
+<p><strong>Section directory (bytes 64…, <code>section_count</code> entries of 24 bytes):</strong></p>
+<table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
+<tr><td>+0</td><td>2</td><td>section kind (<code>1</code> metadata, <code>2</code> dictionary, <code>3</code> index, <code>4</code> pyramid-meta, <code>5</code> named-graphs; higher ids reserved for future sections)</td></tr>
+<tr><td>+2</td><td>2</td><td>section flags (reserved)</td></tr>
+<tr><td>+4</td><td>4</td><td>reserved (zero)</td></tr>
+<tr><td>+8</td><td>8</td><td>section offset</td></tr>
+<tr><td>+16</td><td>8</td><td>section length</td></tr>
+</tbody></table>
+<p>A reader maps known kinds to its named accessors and <strong>preserves unknown kinds
+verbatim</strong> (so a newer writer's sections survive an older reader). A kind absent
+from the directory means that section is not present.</p>
 <blockquote>
-<p>Rationale: a fixed 128-byte header means <strong>one tiny range read</strong> (<code>bytes=0-127</code>)
-tells the client where every section lives.</p>
+<p>Rationale: a fixed 1024-byte header means <strong>one small range read</strong>
+(<code>bytes=0-1023</code>) tells the client where every section lives, with headroom for
+new sections (a future text index, group directories, …) as new directory
+entries rather than a format break.</p>
 </blockquote>
 <p>The <strong>metadata section</strong> (offset 8 / length 16) sits between the header and the
 dictionary and is <code>0</code>-length by default. When present it carries an opaque,
@@ -493,11 +505,11 @@ directory locally and faults exactly <strong>one</strong> chunk, and <code>id �
 its chunk arithmetically and faults one. A lazily-opened remote file therefore
 pays the section headers + directories (KBs) up front and O(touched chunks)
 afterwards, instead of the whole dictionary container.</p>
-<p><strong>Compatibility:</strong> version <code>0x01</code> files store one whole-section-compressed
-block per permutation and whole-compressed dictionary sections. Readers still
-accept them (each section is one logical tile/chunk); writers always emit
-<code>0x02</code>. The format remains experimental — no stability promise beyond this one
-documented transition.</p>
+<p><strong>Compatibility:</strong> the format is experimental and makes <strong>no</strong> cross-version
+stability promise. The current version is <code>0x03</code> (the 1024-byte section-directory
+header, §4.1); this crate reads only <code>0x03</code>. The earlier <code>0x01</code> (single-block) and
+<code>0x02</code> (128-byte header, tiled) layouts are a clean break — old files must be
+rebuilt.</p>
 <hr />
 <h2>7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>
@@ -649,7 +661,7 @@ dominated by range-request count and block sizes.</p>
 <h2>9. Access protocol (the client)</h2>
 <p>v0 (the header <em>is</em> the directory — every section offset/length is in it, so no
 separate directory/footer round-trip is needed):</p>
-<pre><code>1. GET bytes=0-127          → header: all section offsets/lengths + content hash
+<pre><code>1. GET bytes=0-1023         → header: all section offsets/lengths + content hash
 2a. Overview path  → GET dictionary + pyramid-meta ranges; answer from the
     summary (community quotient graph, per-predicate totals). The index is
     never fetched. (`SummaryView::open_ranged`; `summary_overview` in wasm.)

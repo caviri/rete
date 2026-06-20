@@ -199,10 +199,12 @@ N-Triples, ~1.27× of `gzip` — but *queryable*.
 
 ## How it's laid out
 
-A 128-byte header points at every section, so a client reads only what it needs.
+A 1 KB header — a small fixed core plus a typed **section directory** — points at
+every section, so a client reads only what it needs (and new sections are just new
+directory entries).
 
 <p align="center">
-  <img src="docs/img/file-layout.svg" alt="On-disk layout: a fixed 128-byte header holding the byte offset and length of every section — metadata (Dataset Card), dictionary, index (SPO/POS/OSP), pyramid-meta (community summary + schema pyramid), optional named graphs, and a footer magic." width="600">
+  <img src="docs/img/file-layout.svg" alt="On-disk layout: a fixed 1 KB header — a typed section directory holding the byte offset and length of every section — metadata (Dataset Card), dictionary, index (SPO/POS/OSP), pyramid-meta (community summary + schema pyramid), optional named graphs, and a footer magic." width="600">
 </p>
 
 See the **[format spec](https://caviri.github.io/rete/SPEC.html)** and
@@ -225,9 +227,10 @@ regenerated with `cargo run -p docgen`).
 Working end-to-end — the single-file format, dictionary + permutation indexes, the
 community summary and a self-describing **schema pyramid**, SPARQL + GeoSPARQL,
 lazy HTTP-range queries (with per-tile synopses that prune a routed tile before
-fetching it), and the browser/WASM engine. The **on-disk format (header version 2)
-is still a draft and is not guaranteed stable across releases** — rebuild to
-upgrade. SPARQL evaluation is exact for supported shapes (no OWL/RDFS query-time
+fetching it), and the browser/WASM engine. The **on-disk format (header version 3,
+a 1 KB section directory) is still a draft and is not guaranteed stable across
+releases** — rebuild to upgrade (v0.3 is a clean break from the earlier
+128-byte-header layouts). SPARQL evaluation is exact for supported shapes (no OWL/RDFS query-time
 entailment), and federation is UNION-only.
 
 ## Develop (Docker only)

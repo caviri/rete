@@ -65,12 +65,16 @@ permutations and the dictionary/permutation sorts already use all cores via
 
 ## File Layout
 
-The header gives fixed offsets and lengths for the remaining sections. Readers
-first validate the header, then decide how much of the file to load:
+The header is a fixed 1 KB block: a small core (magic, version, content hash,
+counts, codecs) plus a **typed section directory** of `(kind, offset, length)`
+entries that point at every other section. New top-level sections are added as new
+directory entries, so the format has headroom without a layout break (format
+`v0.3`; readers accept only `v0.3`). Readers validate the header, then decide how
+much of the file to load:
 
 | Section | Purpose |
 |---|---|
-| Header | Magic/version, section offsets, content hash |
+| Header | Magic/version, content hash, counts, and the section directory |
 | Dictionary | Front-coded term strings and role-aware ID spaces |
 | Indexes | Compressed triple blocks in SPO/POS/OSP order |
 | Summary | Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (planner stats, entity shapes, label index) |

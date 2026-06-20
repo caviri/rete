@@ -662,35 +662,19 @@ fn decode_chunked_dict_section(
     Ok(crate::dict::ChunkedSection::from_parts(meta, chunks, None))
 }
 
-fn decode_dictionary_container(
-    bytes: &[u8],
-    codec: u8,
-    version: u8,
-) -> Result<Dictionary, FileError> {
-    if version >= 2 {
-        let dsecs = decode_container(bytes, CODEC_NONE)?;
-        if dsecs.len() != 4 {
-            return Err(FileError::Container("expected 4 dictionary sections"));
-        }
-        let mut sections = Vec::with_capacity(4);
-        for sec in &dsecs {
-            sections.push(decode_chunked_dict_section(sec, codec)?);
-        }
-        let arr: [crate::dict::ChunkedSection; 4] = sections
-            .try_into()
-            .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
-        return Ok(Dictionary::from_chunked_sections(arr));
-    }
-    let mut dsecs = decode_container(bytes, codec)?;
+fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, FileError> {
+    let dsecs = decode_container(bytes, CODEC_NONE)?;
     if dsecs.len() != 4 {
         return Err(FileError::Container("expected 4 dictionary sections"));
     }
-    Ok(Dictionary::from_sections([
-        std::mem::take(&mut dsecs[0]),
-        std::mem::take(&mut dsecs[1]),
-        std::mem::take(&mut dsecs[2]),
-        std::mem::take(&mut dsecs[3]),
-    ]))
+    let mut sections = Vec::with_capacity(4);
+    for sec in &dsecs {
+        sections.push(decode_chunked_dict_section(sec, codec)?);
+    }
+    let arr: [crate::dict::ChunkedSection; 4] = sections
+        .try_into()
+        .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
+    Ok(Dictionary::from_chunked_sections(arr))
 }
 
 /// Encode one permutation's tiled section payload (format v0.2):
@@ -868,18 +852,14 @@ fn read_tile_synopsis_ranged<R: RangeReader>(
 }
 
 /// Per-tile absolute file ranges of each permutation section, for provenance.
-/// Empty for pre-tiling (v0.1) files; a malformed directory yields an empty
-/// section (provenance degrades, queries are unaffected).
+/// A malformed directory yields an empty section (provenance degrades, queries
+/// are unaffected).
 fn tile_file_ranges(
     index_bytes: &[u8],
     container_offset: u64,
     section_ranges: &[ByteRange; 3],
-    version: u8,
 ) -> [Vec<(u32, u32, ByteRange)>; 3] {
     let mut out: [Vec<(u32, u32, ByteRange)>; 3] = Default::default();
-    if version < 2 {
-        return out;
-    }
     for (section, range) in out.iter_mut().zip(section_ranges) {
         let start = (range.offset - container_offset) as usize;
         let Some(payload) = index_bytes.get(start..start + range.len as usize) else {
@@ -919,30 +899,18 @@ fn decode_tiled_section(payload: &[u8], codec: u8) -> Result<Vec<(u32, u32, Vec<
         .collect()
 }
 
-/// Decode the index container, gated on the file format version: v0.1 stores
-/// one whole-section-compressed block per permutation; v0.2 stores raw tiled
-/// payloads whose tiles are compressed individually.
-fn decode_index_container(bytes: &[u8], codec: u8, version: u8) -> Result<GraphIndex, FileError> {
-    if version >= 2 {
-        let mut isecs = decode_container(bytes, CODEC_NONE)?;
-        if isecs.len() != 3 {
-            return Err(FileError::Container("expected 3 permutation sections"));
-        }
-        let mut sections: [Vec<(u32, u32, Vec<u8>)>; 3] = Default::default();
-        for (i, sec) in isecs.iter_mut().enumerate() {
-            sections[i] = decode_tiled_section(sec, codec)?;
-        }
-        return Ok(GraphIndex::from_tiles(sections));
-    }
-    let mut isecs = decode_container(bytes, codec)?;
+/// Decode the index container: three raw tiled section payloads (one per
+/// permutation), each tile compressed individually.
+fn decode_index_container(bytes: &[u8], codec: u8) -> Result<GraphIndex, FileError> {
+    let mut isecs = decode_container(bytes, CODEC_NONE)?;
     if isecs.len() != 3 {
-        return Err(FileError::Container("expected 3 permutation blocks"));
+        return Err(FileError::Container("expected 3 permutation sections"));
     }
-    Ok(GraphIndex::from_blocks([
-        std::mem::take(&mut isecs[0]),
-        std::mem::take(&mut isecs[1]),
-        std::mem::take(&mut isecs[2]),
-    ]))
+    let mut sections: [Vec<(u32, u32, Vec<u8>)>; 3] = Default::default();
+    for (i, sec) in isecs.iter_mut().enumerate() {
+        sections[i] = decode_tiled_section(sec, codec)?;
+    }
+    Ok(GraphIndex::from_tiles(sections))
 }
 
 fn container_section_payload_ranges(
@@ -1087,11 +1055,7 @@ fn encode_named_graphs(named: &[(String, GraphIndex)], codec: u8) -> Vec<u8> {
     out
 }
 
-fn decode_named_graphs(
-    bytes: &[u8],
-    codec: u8,
-    version: u8,
-) -> Result<Vec<(String, GraphIndex)>, FileError> {
+fn decode_named_graphs(bytes: &[u8], codec: u8) -> Result<Vec<(String, GraphIndex)>, FileError> {
     let (n, mut pos) = read_uvarint(bytes).ok_or(FileError::Container("truncated graph count"))?;
     // Bounds-checked slice within this (already bounded) section. Lengths read
     // below are untrusted, so every range is validated before indexing.
@@ -1113,7 +1077,7 @@ fn decode_named_graphs(
             .ok_or(FileError::Container("truncated container len"))?;
         pos += u2;
         let cend = bound(pos, clen)?;
-        let index = decode_index_container(&bytes[pos..cend], codec, version)?;
+        let index = decode_index_container(&bytes[pos..cend], codec)?;
         out.push((iri, index));
         pos = cend;
     }
@@ -1236,6 +1200,7 @@ pub fn write_dataset_with_metadata(
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
         named_graphs_len: named_len,
         schema_meta_len,
+        extra_sections: Vec::new(),
     };
 
     let mut out = Vec::with_capacity(
@@ -1427,11 +1392,10 @@ impl Rete {
         let dict = decode_dictionary_container(
             region(header.dictionary_offset, header.dictionary_len)?,
             header.dict_codec,
-            header.version,
         )?;
 
         let index_bytes = region(header.root_dir_offset, header.root_dir_len)?;
-        let index = decode_index_container(index_bytes, header.block_codec, header.version)?;
+        let index = decode_index_container(index_bytes, header.block_codec)?;
         let index_section_ranges =
             decode_index_section_ranges(index_bytes, header.root_dir_offset)?;
 
@@ -1448,7 +1412,6 @@ impl Rete {
             decode_named_graphs(
                 region(header.named_graphs_offset, header.named_graphs_len)?,
                 header.block_codec,
-                header.version,
             )?
         } else {
             Vec::new()
@@ -1460,12 +1423,8 @@ impl Rete {
             Vec::new()
         };
 
-        let tile_ranges = tile_file_ranges(
-            index_bytes,
-            header.root_dir_offset,
-            &index_section_ranges,
-            header.version,
-        );
+        let tile_ranges =
+            tile_file_ranges(index_bytes, header.root_dir_offset, &index_section_ranges);
         Ok(Self {
             header,
             dict,
@@ -1730,10 +1689,10 @@ impl Rete {
         let header = Header::from_bytes(&head)?;
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec, header.version)?;
+        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
 
         let index_bytes = reader.read_at(header.root_dir_offset, header.root_dir_len)?;
-        let index = decode_index_container(&index_bytes, header.block_codec, header.version)?;
+        let index = decode_index_container(&index_bytes, header.block_codec)?;
         let index_section_ranges =
             decode_index_section_ranges(&index_bytes, header.root_dir_offset)?;
 
@@ -1749,7 +1708,7 @@ impl Rete {
 
         let named_graphs = if header.named_graphs_len > 0 {
             let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
-            decode_named_graphs(&nb, header.block_codec, header.version)?
+            decode_named_graphs(&nb, header.block_codec)?
         } else {
             Vec::new()
         };
@@ -1757,12 +1716,8 @@ impl Rete {
         // The metadata section (Dataset Card) is deliberately NOT fetched here:
         // a ranged query open keeps to its small range budget. Use `Rete::open`
         // (or a dedicated card fetch) when the card is actually needed.
-        let tile_ranges = tile_file_ranges(
-            &index_bytes,
-            header.root_dir_offset,
-            &index_section_ranges,
-            header.version,
-        );
+        let tile_ranges =
+            tile_file_ranges(&index_bytes, header.root_dir_offset, &index_section_ranges);
         Ok(Self {
             header,
             dict,
@@ -1786,17 +1741,11 @@ impl Rete {
     /// fetch yields an empty tile and sets a sticky flag â€” after evaluating,
     /// callers MUST check [`index_incomplete`](Self::index_incomplete) and
     /// surface an error instead of the (possibly partial) results.
-    ///
-    /// Pre-tiling (v0.1) files fall back to [`Rete::open_ranged`] â€” there is
-    /// nothing lazy to do.
     pub fn open_ranged_lazy<R: RangeReader + Send + Sync + 'static>(
         reader: R,
     ) -> Result<Self, FileError> {
         let head = reader.read_at(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
-        if header.version < 2 {
-            return Self::open_ranged(&reader);
-        }
         let reader = std::sync::Arc::new(reader);
 
         // Lazily-chunked dictionary: locate the four sections, fetch each
@@ -1913,7 +1862,7 @@ impl Rete {
 
         let named_graphs = if header.named_graphs_len > 0 {
             let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
-            decode_named_graphs(&nb, header.block_codec, header.version)?
+            decode_named_graphs(&nb, header.block_codec)?
         } else {
             Vec::new()
         };
@@ -2136,7 +2085,7 @@ fn route_pattern<R: RangeReader>(
     let header = Header::from_bytes(&head)?;
 
     let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-    let dict = decode_dictionary_container(&dict_bytes, header.dict_codec, header.version)?;
+    let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
 
     let Some(pattern) = resolve_query_pattern(&dict, s, p, o) else {
         return Ok(None);
@@ -2158,23 +2107,13 @@ fn route_pattern<R: RangeReader>(
     }))
 }
 
-/// Fetch and scan a routed pattern's matches. v0.2: read the tile directory,
-/// then only the matching tile byte ranges (one tile for a bound leading id â€”
-/// the O(matching bytes) promise); v0.1: the whole section, decompressed.
+/// Fetch and scan a routed pattern's matches: read the tile directory, then only
+/// the matching tile byte ranges (one tile for a bound leading id — the
+/// O(matching bytes) promise).
 fn fetch_routed_matches<R: RangeReader>(
     reader: &R,
     routed: &RoutedPattern,
 ) -> Result<Vec<Triple>, FileError> {
-    if routed.header.version < 2 {
-        let payload = reader.read_at(routed.section.offset, routed.section.len)?;
-        let block = decompress(routed.header.block_codec, &payload)?;
-        return Ok(GraphIndex::match_serialized_block(
-            &block,
-            routed.permutation,
-            routed.pattern,
-        ));
-    }
-
     let dir = read_tile_directory_ranged(reader, routed.section)?;
     let [pa, _, _] = routed.permutation.order_pattern(routed.pattern);
     let codec = routed.header.block_codec;
@@ -2274,7 +2213,7 @@ impl SummaryView {
         }
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec, header.version)?;
+        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
 
         let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
         let meta =
@@ -2651,102 +2590,6 @@ mod tests {
         assert_eq!(rete.header().dict_codec, expected_codec);
         assert_eq!(rete.header().block_codec, expected_codec);
         assert_eq!(&bytes[bytes.len() - 4..], &MAGIC); // footer marker
-    }
-
-    /// A pre-tiling (format v0.1) file must still open and query identically:
-    /// the test reconstructs the old writer byte-for-byte (whole-section
-    /// compression, one block per permutation, version byte 1) and runs the
-    /// modern reader over it â€” both the in-memory and the routed paths.
-    #[test]
-    fn reads_v1_single_block_files() {
-        let triples = [
-            ("Alice", "knows", "Bob"),
-            ("Bob", "knows", "Carol"),
-            ("Alice", "age", "30"),
-        ];
-        let mut db = DictionaryBuilder::new();
-        for (s, p, o) in triples {
-            db.observe(s, p, o);
-        }
-        let dict = db.build();
-        let ids: Vec<Triple> = triples
-            .iter()
-            .map(|(s, p, o)| dict.encode(s, p, o).unwrap())
-            .collect();
-
-        // The v0.1 writer: one TripleBlock per permutation, container-level
-        // compression, version byte 1.
-        let codec = writer_codec();
-        let blocks: [Vec<u8>; 3] = [
-            IndexPermutation::Spo,
-            IndexPermutation::Pos,
-            IndexPermutation::Osp,
-        ]
-        .map(|perm| {
-            let mut b = crate::triples::TripleBlockBuilder::new();
-            for &(s, p, o) in &ids {
-                let t = match perm {
-                    IndexPermutation::Spo => (s, p, o),
-                    IndexPermutation::Pos => (p, o, s),
-                    IndexPermutation::Osp => (o, s, p),
-                };
-                b.push(t);
-            }
-            b.build()
-        });
-        let raw_sections = dict.sections();
-        let dict_container = encode_container(
-            &[
-                raw_sections[0].as_slice(),
-                raw_sections[1].as_slice(),
-                raw_sections[2].as_slice(),
-                raw_sections[3].as_slice(),
-            ],
-            codec,
-        );
-        let index_container = encode_container(&[&blocks[0], &blocks[1], &blocks[2]], codec);
-        let header = Header {
-            version: crate::header::MIN_READ_VERSION,
-            flags: 0,
-            metadata_offset: HEADER_LEN as u64,
-            metadata_len: 0,
-            dictionary_offset: HEADER_LEN as u64,
-            dictionary_len: dict_container.len() as u64,
-            root_dir_offset: HEADER_LEN as u64 + dict_container.len() as u64,
-            root_dir_len: index_container.len() as u64,
-            pyramid_meta_offset: 0,
-            pyramid_meta_len: 0,
-            dict_codec: codec,
-            block_codec: codec,
-            pyramid_levels: 0,
-            quad_count: ids.len() as u64,
-            term_count: dict.term_count() as u64,
-            content_hash: content_hash(&[&dict_container, &index_container]),
-            named_graphs_offset: 0,
-            named_graphs_len: 0,
-            schema_meta_len: 0,
-        };
-        let mut v1 = Vec::new();
-        v1.extend_from_slice(&header.to_bytes());
-        v1.extend_from_slice(&dict_container);
-        v1.extend_from_slice(&index_container);
-        v1.extend_from_slice(&MAGIC);
-
-        // In-memory open.
-        let rete = Rete::open(&v1).unwrap();
-        assert_eq!(rete.header().version, crate::header::MIN_READ_VERSION);
-        assert_eq!(rete.query(Some("Alice"), Some("knows"), None).len(), 1);
-        assert_eq!(rete.query(None, Some("knows"), None).len(), 2);
-        assert_eq!(rete.query(None, None, None).len(), 3);
-
-        // Ranged open + routed pattern read.
-        use crate::reader::SliceReader;
-        let reader = SliceReader::new(&v1);
-        let ranged = Rete::open_ranged(&reader).unwrap();
-        assert_eq!(ranged.query(None, Some("knows"), None).len(), 2);
-        let routed = Rete::query_ranged(&reader, Some("Alice"), Some("knows"), None).unwrap();
-        assert_eq!(routed.len(), 1);
-        assert_eq!(routed[0].2, "Bob");
     }
 
     /// A file whose index was built with a tiny tile budget (forcing many

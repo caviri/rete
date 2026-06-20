@@ -301,14 +301,14 @@ drive those reads with <code>curl</code>.</p>
 <pre><code class="language-sh">curl -s https://my-bucket.s3.amazonaws.com/deps.rete -o deps.rete
 rete sparql deps.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 </code></pre>
-<p><strong>See the range mechanics directly</strong> — the first 128 bytes are the header, and a
+<p><strong>See the range mechanics directly</strong> — the first 1024 bytes are the header, and a
 <code>Range</code> request returns <code>206 Partial Content</code>:</p>
-<pre><code class="language-sh"># Fetch just the header (bytes 0–127); confirm the magic and partial response:
-curl -s -r 0-127 https://my-bucket.s3.amazonaws.com/deps.rete | head -c 4 ; echo
+<pre><code class="language-sh"># Fetch just the header (bytes 0–1023); confirm the magic and partial response:
+curl -s -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | head -c 4 ; echo
 #  RETE
-curl -sD - -o /dev/null -r 0-127 https://my-bucket.s3.amazonaws.com/deps.rete | grep -i '206\|content-range'
+curl -sD - -o /dev/null -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | grep -i '206\|content-range'
 #  HTTP/2 206
-#  content-range: bytes 0-127/610
+#  content-range: bytes 0-1023/1610
 </code></pre>
 <p>That <code>206</code> is the contract: a host that ignores <code>Range</code> and returns <code>200</code> is
 rejected by the client (it would otherwise read the wrong bytes). For large

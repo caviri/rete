@@ -289,10 +289,14 @@ the sequential move order — so the pyramid stays single-threaded; the index
 permutations and the dictionary/permutation sorts already use all cores via
 <code>rayon</code>.)</p>
 <h2>File Layout</h2>
-<p>The header gives fixed offsets and lengths for the remaining sections. Readers
-first validate the header, then decide how much of the file to load:</p>
+<p>The header is a fixed 1 KB block: a small core (magic, version, content hash,
+counts, codecs) plus a <strong>typed section directory</strong> of <code>(kind, offset, length)</code>
+entries that point at every other section. New top-level sections are added as new
+directory entries, so the format has headroom without a layout break (format
+<code>v0.3</code>; readers accept only <code>v0.3</code>). Readers validate the header, then decide how
+much of the file to load:</p>
 <table><thead><tr><th>Section</th><th>Purpose</th></tr></thead><tbody>
-<tr><td>Header</td><td>Magic/version, section offsets, content hash</td></tr>
+<tr><td>Header</td><td>Magic/version, content hash, counts, and the section directory</td></tr>
 <tr><td>Dictionary</td><td>Front-coded term strings and role-aware ID spaces</td></tr>
 <tr><td>Indexes</td><td>Compressed triple blocks in SPO/POS/OSP order</td></tr>
 <tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (planner stats, entity shapes, label index)</td></tr>

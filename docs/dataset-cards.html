@@ -240,7 +240,7 @@ profile of what's in it (counts, the predicates and classes actually used, the
 vocabularies they belong to). One <code>rete card</code> (or <code>rete info</code>) reads it back, so a
 <code>.rete</code> file doubles as its own mini data catalog.</p>
 <p>The card lives in the file's <strong>metadata section</strong> — a slot the format reserves
-right after the 128-byte header. Adding a card is <strong>not a format change</strong>: a file
+right after the 1 KB header. Adding a card is <strong>not a format change</strong>: a file
 without one is byte-for-byte identical to a pre-card build, and an older reader
 simply ignores the section. The card is folded into the file's <code>blake3</code> content
 hash, so <code>rete verify</code> covers it and it is <strong>tamper-evident</strong>.</p>
@@ -365,9 +365,9 @@ it's laid out</em>. A file with no card just shows the header.</p>
 <h2>How it sits in the file</h2>
 <p>The card is stored as compact <strong>JSON</strong> in the metadata section, which sits
 between the header and the dictionary:</p>
-<pre><code class="language-text">[0..128)      header              (metadata_offset = 128, metadata_len = card bytes)
-[128 .. 128+L)  Dataset Card JSON   (L = metadata_len; absent when no card)
-[dictionary]    front-coded terms   (shifts to offset 128 + L)
+<pre><code class="language-text">[0..1024)     header              (metadata_offset = 1024, metadata_len = card bytes)
+[1024 .. 1024+L) Dataset Card JSON  (L = metadata_len; absent when no card)
+[dictionary]    front-coded terms   (shifts to offset 1024 + L)
 [index]         permutation blocks
 [pyramid-meta]  community summary
 [named graphs]  (if any)

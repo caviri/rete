@@ -4,12 +4,12 @@
 
 use rete_core::{
     query_predicates, routed_triple_pattern, summary_query_shape, CountingReader, Header,
-    RangeReader, Rete, RoutedTriplePattern, SummaryQueryShape, SummaryView,
+    RangeReader, Rete, RoutedTriplePattern, SummaryQueryShape, SummaryView, HEADER_LEN,
 };
 
 use crate::commands::range_source::{is_url, RangedSourceReader};
 
-const HEADER_LEN_U64: u64 = 128;
+const HEADER_LEN_U64: u64 = HEADER_LEN as u64;
 
 #[derive(Clone, Copy)]
 struct AccessCost {

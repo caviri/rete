@@ -354,23 +354,6 @@ impl GraphIndex {
         }
     }
 
-    /// Rebuild from three single serialized permutation blocks (SPO, POS,
-    /// OSP) — the v0.1 layout, and the natural form for tests. Each block
-    /// becomes a one-tile section (its leading range read off the zone map).
-    pub fn from_blocks(blocks: [Vec<u8>; 3]) -> Self {
-        let sections = blocks.map(|bytes| {
-            match TripleBlock::parse(&bytes) {
-                Ok(b) if b.zone().count > 0 => {
-                    vec![Tile::local(b.zone().min_a, b.zone().max_a, bytes)]
-                }
-                // Empty or unparsable: an empty section (scans yield nothing
-                // either way; this just skips the dead tile).
-                _ => Vec::new(),
-            }
-        });
-        Self::from_sections(sections)
-    }
-
     /// Rebuild from tiled sections: per permutation, `(min_a, max_a, block
     /// bytes)` per tile in ascending leading-id order — the v0.2 layout.
     pub fn from_tiles(sections: [Vec<(u32, u32, Vec<u8>)>; 3]) -> Self {
