@@ -105,6 +105,67 @@ pub(crate) fn build(
     type_predicate: Option<&str>,
     card_args: CardArgs,
 ) -> anyhow::Result<()> {
+    // Fast low-RAM path: when every input is an N-Triples / N-Quads FILE and no
+    // reasoning is requested, assemble by STREAMING the inputs twice instead of
+    // materializing every parsed quad. Peak RAM drops from the (huge, heavily
+    // duplicated) string-quad multiset to just the dictionary + id-triples +
+    // index — the difference between a ~44 GB and a ~6 GB build on an 88 M-triple
+    // graph. Output is byte-identical to the in-memory path. `--materialize` /
+    // `--reason` need the whole quad set resident (to run the reasoner) and stdin
+    // can't be re-read, so those fall through to the in-memory path below.
+    let streamable = !materialize
+        && !reason
+        && inputs
+            .iter()
+            .all(|i| i != "-" && matches!(input_format(i, format), "nt" | "nq"));
+    if streamable {
+        let curated = if card_args.requested() {
+            Some(card::load_curated(&card_args)?)
+        } else {
+            None
+        };
+        let inputs_fmt: Vec<(&str, &'static str)> = inputs
+            .iter()
+            .map(|i| (i.as_str(), input_format(i, format)))
+            .collect();
+        // Re-readable source: each call re-opens and streams every input file. The
+        // two-pass assembler invokes it once to observe terms, once to encode.
+        let stream = |visit: &mut dyn FnMut(ingest::RawQuad)| -> Result<(), ingest::IngestError> {
+            for (path, fmt) in &inputs_fmt {
+                let file = std::fs::File::open(path)
+                    .map_err(|e| ingest::IngestError::Io(format!("{path}: {e}")))?;
+                ingest::stream_reader(std::io::BufReader::new(file), fmt, visit)?;
+            }
+            Ok(())
+        };
+        let (bytes, stats) = ingest::assemble_dataset_streaming(
+            stream,
+            !no_pyramid,
+            text_index,
+            type_predicate,
+            |stats, dict, triples| match curated {
+                Some(curated) => {
+                    let blob = card::derive_card_encoded(
+                        dict,
+                        triples,
+                        stats.statements as u64,
+                        stats.terms as u64,
+                        stats.named_graphs as u64,
+                        curated,
+                    )
+                    .to_json_bytes();
+                    eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                    blob
+                }
+                None => Vec::new(),
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        std::fs::write(output, &bytes)?;
+        print_build_summary(output, &stats, bytes.len());
+        return Ok(());
+    }
+
     // 1. Parse every input into quads (triples → default graph, `None`).
     let mut quads = parse_inputs(inputs, format)?;
 
@@ -178,26 +239,25 @@ pub(crate) fn build(
         },
     );
     std::fs::write(output, &bytes)?;
+    print_build_summary(output, &stats, bytes.len());
+    Ok(())
+}
 
+/// Print the `wrote …` summary for a finished build — quad form when the file has
+/// named graphs, triple form otherwise. Shared by the streaming and in-memory
+/// build paths.
+fn print_build_summary(output: &str, stats: &ingest::BuildStats, byte_len: usize) {
     if stats.named_graphs > 0 {
         println!(
             "wrote {output}: {} quads ({} default + {} named graph(s)), {} terms, {} bytes",
-            stats.statements,
-            stats.default_triples,
-            stats.named_graphs,
-            stats.terms,
-            bytes.len()
+            stats.statements, stats.default_triples, stats.named_graphs, stats.terms, byte_len
         );
     } else {
         println!(
             "wrote {output}: {} triples, {} terms, {} pyramid level(s), {} bytes",
-            stats.default_triples,
-            stats.terms,
-            stats.pyramid_levels,
-            bytes.len()
+            stats.default_triples, stats.terms, stats.pyramid_levels, byte_len
         );
     }
-    Ok(())
 }
 
 /// Rebuild a `.rete`'s pyramid **in place**: read every triple straight from the
