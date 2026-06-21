@@ -4735,16 +4735,16 @@ window.RETE_PLAYGROUND_CATALOG = {
       about: "The complete ChEBI ontology (8.83 M triples) in four lossless encodings on " +
         "Hugging Face: the rete <code>.rete</code> graph, per-class <code>.parquet</code> tables, " +
         "one <code>.duckdb</code>, and one <code>.sqlite</code>. Every query fetches only the bytes " +
-        "it touches. The molecules live in the <code>Class_</code> table (owl:Class), with structural " +
+        "it touches. The molecules live in the <code>Class</code> table (owl:Class), with structural " +
         "columns — SMILES, InChI, formula, mass.",
       // Tables that have their own columnar table (entity rows, named-property columns).
       // `name` is the DuckDB table identifier; `file` the Parquet basename.
       // `classIri` ties a table to the rdf:type class shown in the Explore tab,
       // so selecting a class can route to its companion table.
       tables: [
-        { name: "Class_",       file: "Class_.parquet",       classIri: "http://www.w3.org/2002/07/owl#Class",       label: "owl:Class — CHEBI molecules", entities: 224691 },
-        { name: "Axiom_",       file: "Axiom_.parquet",       classIri: "http://www.w3.org/2002/07/owl#Axiom",       label: "owl:Axiom — xref reification", entities: 897439 },
-        { name: "Restriction_", file: "Restriction_.parquet", classIri: "http://www.w3.org/2002/07/owl#Restriction", label: "owl:Restriction",              entities: 94902 },
+        { name: "Class",       file: "Class_.parquet",       classIri: "http://www.w3.org/2002/07/owl#Class",       label: "owl:Class — CHEBI molecules", entities: 224691 },
+        { name: "Axiom",       file: "Axiom_.parquet",       classIri: "http://www.w3.org/2002/07/owl#Axiom",       label: "owl:Axiom — xref reification", entities: 897439 },
+        { name: "Restriction", file: "Restriction_.parquet", classIri: "http://www.w3.org/2002/07/owl#Restriction", label: "owl:Restriction",              entities: 94902 },
       ],
       // Autocomplete hints for the SQL editor (table + common column names).
       sqlCols: ["entity", "label", "types", "subClassOf", "smiles_string", "inchi_string", "mass",
@@ -4754,35 +4754,88 @@ window.RETE_PLAYGROUND_CATALOG = {
       // Tables backend, wd."<name>" for the .duckdb backend. Object values are N-Triples term
       // tokens (IRIs `<…>`, literals `"…"`); SQLite stores list/map columns as JSON text.
       examples: [
-        { label: "Everything about caffeine (CHEBI:27732)", table: { file: "Class_.parquet", name: "Class_" },
+        { label: "Everything about caffeine (CHEBI:27732)", table: { file: "Class_.parquet", name: "Class" },
           sparql: `SELECT ?p ?o WHERE {\n  <http://purl.obolibrary.org/obo/CHEBI_27732> ?p ?o\n}`,
           duck: `SELECT *\nFROM {T}\nWHERE entity = 'http://purl.obolibrary.org/obo/CHEBI_27732';`,
-          sqlite: `SELECT *\nFROM "Class_"\nWHERE entity = 'http://purl.obolibrary.org/obo/CHEBI_27732';`,
+          sqlite: `SELECT *\nFROM "Class"\nWHERE entity = 'http://purl.obolibrary.org/obo/CHEBI_27732';`,
           note: "One entity, every fact. The graph is tall (a row per predicate/object); the table is one wide row — the shape difference itself." },
 
-        { label: "Formula, mass & SMILES of caffeine", table: { file: "Class_.parquet", name: "Class_" },
+        { label: "Formula, mass & SMILES of caffeine", table: { file: "Class_.parquet", name: "Class" },
           sparql: `PREFIX chemrof: <https://w3id.org/chemrof/>\nSELECT ?formula ?mass ?smiles WHERE {\n  <http://purl.obolibrary.org/obo/CHEBI_27732> chemrof:generalized_empirical_formula ?formula ;\n    chemrof:mass ?mass ;\n    chemrof:smiles_string ?smiles\n}`,
           duck: `SELECT label,\n  generalized_empirical_formula AS formula,\n  mass, smiles_string\nFROM {T}\nWHERE entity = 'http://purl.obolibrary.org/obo/CHEBI_27732';`,
-          sqlite: `SELECT label, generalized_empirical_formula, mass, smiles_string\nFROM "Class_"\nWHERE entity = 'http://purl.obolibrary.org/obo/CHEBI_27732';`,
+          sqlite: `SELECT label, generalized_empirical_formula, mass, smiles_string\nFROM "Class"\nWHERE entity = 'http://purl.obolibrary.org/obo/CHEBI_27732';`,
           note: "ChemROF structural columns — DuckDB reads only those Parquet column chunks; the graph walks each predicate's tiles." },
 
-        { label: "Direct subclasses of amino acid (CHEBI:33709)", table: { file: "Class_.parquet", name: "Class_" },
+        { label: "Direct subclasses of amino acid (CHEBI:33709)", table: { file: "Class_.parquet", name: "Class" },
           sparql: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?s ?label WHERE {\n  ?s rdfs:subClassOf <http://purl.obolibrary.org/obo/CHEBI_33709> ;\n     rdfs:label ?label\n}\nLIMIT 100`,
           duck: `SELECT entity, label\nFROM {T}\nWHERE list_contains(subClassOf, '<http://purl.obolibrary.org/obo/CHEBI_33709>')\nLIMIT 100;`,
-          sqlite: `SELECT entity, label\nFROM "Class_"\nWHERE EXISTS (SELECT 1 FROM json_each(subClassOf)\n              WHERE value = '<http://purl.obolibrary.org/obo/CHEBI_33709>')\nLIMIT 100;`,
+          sqlite: `SELECT entity, label\nFROM "Class"\nWHERE EXISTS (SELECT 1 FROM json_each(subClassOf)\n              WHERE value = '<http://purl.obolibrary.org/obo/CHEBI_33709>')\nLIMIT 100;`,
           note: "Children point up via rdfs:subClassOf — a list-membership test on the column vs a BGP on the graph (~57 direct subclasses)." },
 
-        { label: "Count entities per OBO namespace", table: { file: "Class_.parquet", name: "Class_" },
+        { label: "Count entities per OBO namespace", table: { file: "Class_.parquet", name: "Class" },
           sparql: `PREFIX oio: <http://www.geneontology.org/formats/oboInOwl#>\nSELECT ?ns (COUNT(?s) AS ?n) WHERE {\n  ?s oio:hasOBONamespace ?ns\n}\nGROUP BY ?ns\nORDER BY DESC(?n)`,
           duck: `SELECT ns, count(*) AS n\nFROM (SELECT unnest(hasOBONamespace) AS ns FROM {T})\nGROUP BY ns\nORDER BY n DESC;`,
-          sqlite: `SELECT je.value AS ns, count(*) AS n\nFROM "Class_", json_each(hasOBONamespace) je\nGROUP BY ns\nORDER BY n DESC;`,
+          sqlite: `SELECT je.value AS ns, count(*) AS n\nFROM "Class", json_each(hasOBONamespace) je\nGROUP BY ns\nORDER BY n DESC;`,
           note: "An aggregate over one column — Parquet reads just that column's chunks; the graph aggregates a whole predicate." },
 
-        { label: "Name search: “amino acid”", table: { file: "Class_.parquet", name: "Class_" },
+        { label: "Name search: “amino acid”", table: { file: "Class_.parquet", name: "Class" },
           sparql: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?s ?label WHERE {\n  ?s rdfs:label ?label\n  FILTER(CONTAINS(LCASE(STR(?label)), "amino acid"))\n}\nLIMIT 50`,
           duck: `SELECT entity, label\nFROM {T}\nWHERE label ILIKE '%amino acid%'\nLIMIT 50;`,
-          sqlite: `SELECT entity, label\nFROM "Class_"\nWHERE label LIKE '%amino acid%'\nLIMIT 50;`,
+          sqlite: `SELECT entity, label\nFROM "Class"\nWHERE label LIKE '%amino acid%'\nLIMIT 50;`,
           note: "Substring search — a full column scan in every backend; the closest apples-to-apples comparison." },
+      ],
+    },
+
+    // wikidata-1GB (dataset key "wikidata"): companions live under wikidata-1GB/ in
+    // the bucket (not playground/), shared with explore-100mb.html. Tables are named
+    // by Q-id (no trailing underscore in the DuckDB/SQLite tables; Parquet files keep
+    // the underscore). Typed by wdt:P31.
+    "wikidata": {
+      rete: "wikidata-1GB/wikidata.rete",
+      parquetDir: "wikidata-1GB/parquet",
+      duckdb: "wikidata-1GB/wikidata.duckdb",  duckdbSize: "214 MB",
+      sqlite: "wikidata-1GB/wikidata.sqlite",  sqliteSize: "475 MB",
+      typePredicate: "<http://www.wikidata.org/prop/direct/P31>",
+      seed: "http://www.wikidata.org/entity/Q859", // Plato (a human, table Q5)
+      about: "A ~1 GB cross-section of Wikidata (truthy) in four lossless encodings on Hugging Face: " +
+        "the rete <code>.rete</code> graph, per-class <code>.parquet</code> tables, one <code>.duckdb</code>, " +
+        "and one <code>.sqlite</code>. Entities are typed by <code>wdt:P31</code>; the people live in the " +
+        "<code>Q5</code> table (occupation P106, citizenship P27, …). Tables are named by Q-id.",
+      tables: [
+        { name: "Q5",        file: "Q5_.parquet",        classIri: "http://www.wikidata.org/entity/Q5",        label: "human",                  entities: 219322 },
+        { name: "Q4167836",  file: "Q4167836_.parquet",  classIri: "http://www.wikidata.org/entity/Q4167836",  label: "Wikimedia category",     entities: 172724 },
+        { name: "Q16521",    file: "Q16521_.parquet",    classIri: "http://www.wikidata.org/entity/Q16521",    label: "taxon",                  entities: 83998 },
+        { name: "Q4167410",  file: "Q4167410_.parquet",  classIri: "http://www.wikidata.org/entity/Q4167410",  label: "disambiguation page",    entities: 54598 },
+        { name: "Q13406463", file: "Q13406463_.parquet", classIri: "http://www.wikidata.org/entity/Q13406463", label: "Wikimedia list article", entities: 17697 },
+        { name: "Q482994",   file: "Q482994_.parquet",   classIri: "http://www.wikidata.org/entity/Q482994",   label: "album",                  entities: 16314 },
+        { name: "Q532",      file: "Q532_.parquet",      classIri: "http://www.wikidata.org/entity/Q532",      label: "village",                entities: 13258 },
+        { name: "Q11424",    file: "Q11424_.parquet",    classIri: "http://www.wikidata.org/entity/Q11424",    label: "film",                   entities: 13093 },
+      ],
+      sqlCols: ["entity", "label", "types", "P106", "P27", "P569", "P19", "P21", "P735", "extra"],
+      examples: [
+        { label: "Everything about Plato (Q859)", table: { file: "Q5_.parquet", name: "Q5" },
+          sparql: `SELECT ?p ?o WHERE {\n  <http://www.wikidata.org/entity/Q859> ?p ?o\n}`,
+          duck: `SELECT *\nFROM {T}\nWHERE entity = 'http://www.wikidata.org/entity/Q859';`,
+          sqlite: `SELECT *\nFROM "Q5"\nWHERE entity = 'http://www.wikidata.org/entity/Q859';`,
+          note: "One entity, every fact — a tall graph vs one wide row." },
+
+        { label: "Most common occupations", table: { file: "Q5_.parquet", name: "Q5" },
+          sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occ (COUNT(?p) AS ?n) WHERE {\n  ?p wdt:P106 ?occ\n}\nGROUP BY ?occ\nORDER BY DESC(?n)\nLIMIT 15`,
+          duck: `SELECT occ, count(*) AS people\nFROM (SELECT unnest(P106) AS occ FROM {T})\nGROUP BY occ\nORDER BY people DESC\nLIMIT 15;`,
+          sqlite: `SELECT je.value AS occupation, count(*) AS people\nFROM "Q5", json_each(P106) je\nGROUP BY occupation\nORDER BY people DESC\nLIMIT 15;`,
+          note: "Aggregate over one column (P106) — Parquet reads just that column; the graph aggregates a whole predicate." },
+
+        { label: "Biggest polymaths", table: { file: "Q5_.parquet", name: "Q5" },
+          sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who (COUNT(?occ) AS ?jobs) WHERE {\n  ?p wdt:P106 ?occ ; rdfs:label ?who .\n  FILTER(LANG(?who) = "en")\n}\nGROUP BY ?who\nORDER BY DESC(?jobs)\nLIMIT 15`,
+          duck: `SELECT label, len(P106) AS jobs\nFROM {T}\nWHERE label IS NOT NULL\nORDER BY jobs DESC\nLIMIT 15;`,
+          sqlite: `SELECT label, json_array_length(P106) AS jobs\nFROM "Q5"\nWHERE label IS NOT NULL\nORDER BY jobs DESC\nLIMIT 15;`,
+          note: "Who wears the most hats? len(P106) off the row vs counting P106 edges in the graph." },
+
+        { label: "Physicists who were also philosophers", table: { file: "Q5_.parquet", name: "Q5" },
+          sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?p ?who WHERE {\n  ?p wdt:P106 <http://www.wikidata.org/entity/Q169470> ;\n     wdt:P106 <http://www.wikidata.org/entity/Q4964182> ;\n     rdfs:label ?who . FILTER(LANG(?who) = "en")\n}`,
+          duck: `SELECT entity, label\nFROM {T}\nWHERE list_contains(P106, '<http://www.wikidata.org/entity/Q169470>')\n  AND list_contains(P106, '<http://www.wikidata.org/entity/Q4964182>');`,
+          sqlite: `SELECT entity, label\nFROM "Q5"\nWHERE EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '<http://www.wikidata.org/entity/Q169470>')\n  AND EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '<http://www.wikidata.org/entity/Q4964182>');`,
+          note: "Occupation intersection (physicist Q169470 AND philosopher Q4964182) — same answer, three engines." },
       ],
     },
   },
@@ -7893,7 +7946,7 @@ ex:ApplicationDependencyShape
         await d.conn.query(`CREATE OR REPLACE VIEW "${t.name}" AS SELECT * FROM ${src}`);
       }
     }
-    return { cached, run: (sql) => d.conn.query(sql).then(duckRows) };
+    return { cached, run: (sql) => d.conn.query(sql).then((res) => { const [cols, rows] = duckRows(res); return { cols, rows }; }) };
   }
 
   function renderSqlResult(cols, rows, ms, cached) {

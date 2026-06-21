@@ -1966,7 +1966,7 @@
         await d.conn.query(`CREATE OR REPLACE VIEW "${t.name}" AS SELECT * FROM ${src}`);
       }
     }
-    return { cached, run: (sql) => d.conn.query(sql).then(duckRows) };
+    return { cached, run: (sql) => d.conn.query(sql).then((res) => { const [cols, rows] = duckRows(res); return { cols, rows }; }) };
   }
 
   function renderSqlResult(cols, rows, ms, cached) {
