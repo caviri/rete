@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::file::Rete;
-use crate::index::GraphIndex;
+use crate::index::{GraphIndex, Pattern};
 use crate::row::{Ctx, Row, Slots, Val};
 
 /// A term in a pattern: a named variable or a constant term token.
@@ -148,7 +148,26 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
     let order = selectivity_order(ctx, &lowered);
     let mut rows: Vec<Row> = vec![ctx.slots.empty_row()];
     let mut bound: Vec<usize> = Vec::new();
+    let mut merged: [bool; 2] = [false, false];
+
+    // Merge-join seed: if the two cheapest patterns share a same-role variable the
+    // 6-permutation index can co-sort them on, join them with a linear two-pointer
+    // **merge** (no hash table) and skip both below. Falls back silently to the
+    // hash/probe path when the shape doesn't qualify.
+    if order.len() >= 2 {
+        if let Some((rel, slots)) =
+            try_merge_join(ctx, index, &lowered[order[0]], &lowered[order[1]])
+        {
+            rows = rel;
+            bound = slots;
+            merged = [true, true];
+        }
+    }
+
     for (k, &idx) in order.iter().enumerate() {
+        if k < 2 && merged[k] {
+            continue; // already consumed by the merge seed
+        }
         let t = lowered[idx];
         // Hybrid join: once the running result is small and the next pattern shares
         // an already-bound variable, **probe** it per row through the index instead
@@ -160,7 +179,11 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
         // is large (one scan beats many probes) or the pattern is a cartesian join
         // (no shared bound variable to constrain the probe).
         let shares_bound = pattern_slots(&t).iter().any(|s| bound.contains(s));
-        if k > 0 && shares_bound && !rows.is_empty() && rows.len() <= BGP_PROBE_THRESHOLD {
+        if !bound.is_empty()
+            && shares_bound
+            && !rows.is_empty()
+            && rows.len() <= BGP_PROBE_THRESHOLD
+        {
             let mut next: Vec<Row> = Vec::with_capacity(rows.len());
             for base in std::mem::take(&mut rows) {
                 next.extend(probe_rows(ctx, index, t, base));
@@ -182,6 +205,112 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
         }
     }
     rows
+}
+
+/// Merge-join two base patterns that share **exactly one** variable sitting in the
+/// **same canonical position** (both subject, or both object) in each. That is the
+/// only shape rete's role-aware id spaces let a sort-merge align: the index sorts
+/// subject-ids and object-ids in independent spaces, so a cross-role (subject↔
+/// object) join's two streams are not co-sorted on the join value. Each side is
+/// streamed from the 6-permutation index already sorted on that column
+/// ([`GraphIndex::scan_iter_sorted_on`]), so the join is a linear two-pointer
+/// merge with no hash table — equal-key runs cross-product. Returns
+/// `(rows, bound_slots)`, or `None` when the shape/index can't support a merge and
+/// the caller should hash-join instead. The result multiset equals the hash
+/// join's (a join is order-independent).
+fn try_merge_join(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    ta: &(SlotTerm, SlotTerm, SlotTerm),
+    tb: &(SlotTerm, SlotTerm, SlotTerm),
+) -> Option<(Vec<Row>, Vec<usize>)> {
+    let dict = ctx.rete.dictionary();
+    let sa = pattern_slots(ta);
+    let sb = pattern_slots(tb);
+    let shared: Vec<usize> = sa.iter().copied().filter(|s| sb.contains(s)).collect();
+    if shared.len() != 1 {
+        return None;
+    }
+    let v = shared[0];
+    let col_of = |t: &(SlotTerm, SlotTerm, SlotTerm)| -> Option<usize> {
+        [&t.0, &t.1, &t.2]
+            .iter()
+            .position(|x| matches!(x, SlotTerm::Var(i) if *i == v))
+    };
+    let ca = col_of(ta)?;
+    let cb = col_of(tb)?;
+    if ca != cb {
+        return None; // cross-role: the two role id-spaces aren't co-sorted
+    }
+    let lower = |t: &(SlotTerm, SlotTerm, SlotTerm)| -> Option<Pattern> {
+        Some((
+            const_subject(&t.0, dict)?,
+            const_predicate(&t.1)?,
+            const_object(&t.2, dict)?,
+        ))
+    };
+    // Materialize each side as `(join-key, row)`, already ascending in the join
+    // column (the index streams it sorted there).
+    let collect = |t: &(SlotTerm, SlotTerm, SlotTerm), col: usize| -> Option<Vec<(u32, Row)>> {
+        let pat = lower(t)?;
+        let mut out = Vec::new();
+        for tri in index.scan_iter_sorted_on(pat, col)? {
+            if let Some(r) = triple_row(ctx, t, tri) {
+                out.push(([tri.0, tri.1, tri.2][col], r));
+            }
+        }
+        Some(out)
+    };
+    let rows_a = collect(ta, ca)?;
+    let rows_b = collect(tb, cb)?;
+
+    let mut out: Vec<Row> = Vec::new();
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < rows_a.len() && j < rows_b.len() {
+        match rows_a[i].0.cmp(&rows_b[j].0) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                let key = rows_a[i].0;
+                let (i0, j0) = (i, j);
+                while i < rows_a.len() && rows_a[i].0 == key {
+                    i += 1;
+                }
+                while j < rows_b.len() && rows_b[j].0 == key {
+                    j += 1;
+                }
+                for (_, ra) in &rows_a[i0..i] {
+                    for (_, rb) in &rows_b[j0..j] {
+                        // Combine the two rows; they agree on the shared slot `v`
+                        // (same key ⇒ same node value at the same column).
+                        let mut row = ra.clone();
+                        let mut ok = true;
+                        for (slot, val) in rb.iter().enumerate() {
+                            if let Some(val) = val {
+                                match &row[slot] {
+                                    Some(existing) if existing != val => {
+                                        ok = false;
+                                        break;
+                                    }
+                                    _ => row[slot] = Some(val.clone()),
+                                }
+                            }
+                        }
+                        if ok {
+                            out.push(row);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut slots = pattern_slots(ta);
+    for s in pattern_slots(tb) {
+        if !slots.contains(&s) {
+            slots.push(s);
+        }
+    }
+    Some((out, slots))
 }
 
 /// Probe the join tail (instead of full-scanning) once the running BGP result is
@@ -1066,5 +1195,41 @@ mod tests {
         }
         assert_eq!(got, want, "snowflake join must match the brute-force set");
         assert!(!want.is_empty(), "sanity: the reference set is non-empty");
+    }
+
+    /// A subject-subject join (`?x a ?av . ?x b ?bv`) is the same-role shape the
+    /// merge join handles: both patterns sort on the subject column. With multiple
+    /// `a` and `b` values per subject it must emit the full cross product per
+    /// subject (equal-key run handling) and drop subjects missing either side.
+    #[test]
+    fn merge_join_subject_star_cross_product() {
+        let bytes = rete_from(&[
+            ("x", "a", "a1"),
+            ("x", "a", "a2"),
+            ("x", "b", "b1"),
+            ("x", "b", "b2"),
+            ("y", "a", "a3"),
+            ("y", "b", "b3"),
+            ("z", "a", "a4"), // z has no `b` → contributes no join row
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let mut got: Vec<(String, String, String)> =
+            eval_bgp(&rete, &[pat("?x", "a", "?av"), pat("?x", "b", "?bv")])
+                .iter()
+                .map(|m| (m["x"].clone(), m["av"].clone(), m["bv"].clone()))
+                .collect();
+        got.sort();
+        let mut want: Vec<(String, String, String)> = [
+            ("x", "a1", "b1"),
+            ("x", "a1", "b2"),
+            ("x", "a2", "b1"),
+            ("x", "a2", "b2"),
+            ("y", "a3", "b3"),
+        ]
+        .into_iter()
+        .map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string()))
+        .collect();
+        want.sort();
+        assert_eq!(got, want, "same-role merge must equal the brute-force join");
     }
 }

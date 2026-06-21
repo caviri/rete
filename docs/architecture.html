@@ -256,7 +256,9 @@ inputs and outputs rather than reimplement engine logic.</p>
 <li>Parse RDF input into default-graph triples and optional named-graph quads.</li>
 <li>Intern terms in the dictionary so query-time matching works on compact integer
 IDs instead of repeated strings.</li>
-<li>Build three permutation indexes over the default graph: SPO, POS, and OSP.</li>
+<li>Build six permutation indexes over the default graph: SPO, POS, OSP, SOP,
+PSO, and OPS. Three suffice to match any pattern shape; the full six let any
+join key be streamed pre-sorted, enabling sort-merge joins (format v0.4).</li>
 <li>Compute the pyramid summary: community hierarchy, super-edges, predicate
 totals, class/type summaries, and named-graph metadata.</li>
 <li>Optionally attach dataset-card metadata into the reserved metadata section.</li>
@@ -298,7 +300,7 @@ much of the file to load:</p>
 <table><thead><tr><th>Section</th><th>Purpose</th></tr></thead><tbody>
 <tr><td>Header</td><td>Magic/version, content hash, counts, and the section directory</td></tr>
 <tr><td>Dictionary</td><td>Front-coded term strings and role-aware ID spaces</td></tr>
-<tr><td>Indexes</td><td>Compressed triple blocks in SPO/POS/OSP order</td></tr>
+<tr><td>Indexes</td><td>Compressed triple blocks in all six (SPO/POS/OSP/SOP/PSO/OPS) orders</td></tr>
 <tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (planner stats, entity shapes, label index)</td></tr>
 <tr><td>Text index</td><td>Optional <code>--text-index</code> section: word → subjects, for full-text (<code>--contains</code>) search</td></tr>
 <tr><td>Metadata</td><td>Optional dataset-card JSON/catalog data</td></tr>

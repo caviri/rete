@@ -328,13 +328,13 @@ the fuller design and remain future work (see <code>docs/BENCHMARK.md</code>).</
 <p>The header is a fixed <strong>64-byte core</strong> followed by a <strong>typed section directory</strong> —
 up to 40 entries of 24 bytes each <code>(kind, flags, offset, length)</code> — zero-padded to
 1024. A new top-level section is added as a new directory entry, so the header has
-room to grow without a layout reshape. Format version <code>0x03</code>; this crate reads
-<strong>only</strong> <code>0x03</code> (the 128-byte v0.1/v0.2 headers are a clean break — rebuild old
-files).</p>
+room to grow without a layout reshape. Format version <code>0x04</code> (six index
+permutations); this crate reads <strong>only</strong> <code>0x04</code> (each step — the 128-byte v0.1/v0.2
+headers, the three-permutation <code>0x03</code> — is a clean break, so rebuild old files).</p>
 <p><strong>Core (bytes 0..64):</strong></p>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
-<tr><td>4</td><td>1</td><td>format version (<code>0x03</code>)</td></tr>
+<tr><td>4</td><td>1</td><td>format version (<code>0x04</code>)</td></tr>
 <tr><td>5</td><td>1</td><td>flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer)</td></tr>
 <tr><td>6</td><td>2</td><td>header length (= 1024)</td></tr>
 <tr><td>8</td><td>16</td><td>content hash (blake3, first 16 bytes) — also an ETag-like id</td></tr>
@@ -429,9 +429,13 @@ fetches just the run(s) covering the IDs/terms a query touches.</p>
 <hr />
 <h2>6. Triples / quads</h2>
 <ul>
-<li>Stored as integer triples in <strong>three permutations</strong>: <strong>SPO, POS, OSP</strong>.
-These three cover all eight triple-pattern shapes (any combination of
-bound/unbound S, P, O resolves to a contiguous range in at least one index).</li>
+<li>Stored as integer triples in all <strong>six permutations</strong>: <strong>SPO, POS, OSP, SOP,
+PSO, OPS</strong> (format <code>0x04</code>; <code>0x03</code> stored only the first three). Three suffice to
+<em>match</em> any of the eight triple-pattern shapes; the full six additionally sort
+the triples on <strong>every</strong> prefix of columns, so for any bound prefix and any free
+column there is a permutation that routes on the prefix <strong>and</strong> streams sorted on
+that column — the precondition a <strong>sort-merge join</strong> needs (both inputs co-sorted
+on the join key). The cost is ~2× the index payload.</li>
 <li>Each permutation is encoded as an <strong>adjacency / bitmap-triples</strong> structure
 (HDT-style): for SPO, a sorted list of subjects, each with its predicate
 list, each with its object list, delta-encoded.</li>
@@ -537,10 +541,10 @@ posting, <code>prefix(word)</code> the contiguous run of postings whose tokens s
 prefix. Multiple query words <strong>AND</strong> by intersecting their sorted posting lists.
 SPARQL never touches this section, so a query open neither fetches nor pays for it.</p>
 <p><strong>Compatibility:</strong> the format is experimental and makes <strong>no</strong> cross-version
-stability promise. The current version is <code>0x03</code> (the 1024-byte section-directory
-header, §4.1); this crate reads only <code>0x03</code>. The earlier <code>0x01</code> (single-block) and
-<code>0x02</code> (128-byte header, tiled) layouts are a clean break — old files must be
-rebuilt.</p>
+stability promise. The current version is <code>0x04</code> (six index permutations, §6); this
+crate reads only <code>0x04</code>. The earlier <code>0x01</code> (single-block), <code>0x02</code> (128-byte header,
+tiled), and <code>0x03</code> (1024-byte section-directory header, three permutations) layouts
+are a clean break — old files must be rebuilt.</p>
 <hr />
 <h2>7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>

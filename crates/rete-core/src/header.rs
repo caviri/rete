@@ -17,12 +17,14 @@ use std::convert::TryInto;
 /// Magic bytes at offset 0: ASCII `RETE`.
 pub const MAGIC: [u8; 4] = *b"RETE";
 
-/// Current format version (written by this crate): 1 KB section-directory header.
-pub const VERSION: u8 = 0x03;
+/// Current format version (written by this crate): six index permutations
+/// (SPO/POS/OSP/SOP/PSO/OPS — `0x04`, up from three in `0x03`), enabling sort-merge
+/// joins. The 1 KB section-directory header (added in `0x03`) is unchanged.
+pub const VERSION: u8 = 0x04;
 
-/// Oldest format version this crate reads. The header expansion is a clean break
-/// (experimental format) — v0.1/v0.2 files are **not** readable; rebuild them.
-pub const MIN_READ_VERSION: u8 = 0x03;
+/// Oldest format version this crate reads. Each format step is a clean break
+/// (experimental format) — v0.1/v0.2/v0.3 files are **not** readable; rebuild them.
+pub const MIN_READ_VERSION: u8 = 0x04;
 
 /// Fixed header size in bytes.
 pub const HEADER_LEN: usize = 1024;
@@ -483,10 +485,10 @@ mod tests {
     }
 
     #[test]
-    fn accepts_only_v3() {
+    fn accepts_only_current_version() {
         let back = Header::from_bytes(&sample().to_bytes()).unwrap();
         assert_eq!(back.version, VERSION);
-        for bad_ver in [0x00, 0x01, 0x02, 0x04, 0xFF] {
+        for bad_ver in [0x00, 0x01, 0x02, 0x03, 0x05, 0xFF] {
             let mut bad = sample().to_bytes();
             bad[4] = bad_ver;
             assert!(

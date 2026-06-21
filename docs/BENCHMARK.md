@@ -292,13 +292,14 @@ Reading the times honestly:
   pipeline over integer slot rows, switches to index-nested-loop
   probes under small LIMIT/ASK demand, and resolves terms only at
   projection. A **hybrid BGP join** also switches to per-row index
-  probes mid-join once the running intermediate is small — so a
-  star/snowflake's trailing `?x rdf:type C` checks over thousands of
-  instances cost a handful of lookups, not a full-extent scan — and
-  it never *seeds* a join from a class enumeration (`?s a C` matches
-  every instance of a popular class). Together these cut the LUBM
-  snowflakes sharply: Q4 14x and Q7 12x faster than before, both now
-  index-free at a few hundred microseconds.
+  probes mid-join once the running intermediate is small (so a
+  star/snowflake's trailing `?x rdf:type C` checks cost a few lookups,
+  not a full-extent scan), and never seeds a join from a class
+  enumeration — together cutting the LUBM snowflakes Q4 ~14x and Q7
+  ~12x. The index stores all six permutations (format v0.4), so any
+  join key can be streamed pre-sorted for a sort-merge join; at these
+  sizes the hash/probe joins already win, so the merge path is neutral
+  here — it pays off at much larger scale, for ~2x the index payload.
 - Oxigraph keeps an edge on REGEX scans whose pattern needs the real
   regex engine (rete's regex-lite has no literal prefilter; literal
   patterns use a substring fast path) and, by fractions of a
@@ -361,7 +362,7 @@ The [LUBM](http://swat.cse.lehigh.edu/projects/lubm/) data model and its 14
 standard queries, on identical pre-materialized data in both engines.
 LUBM(1): 93,139 generated +
 26,007 RDFS/OWL-RL-materialized =
-118,680 triples (`.rete`: 281,939 bytes).
+118,680 triples (`.rete`: 555,581 bytes).
 
 **Read the caveats:** the generator is a faithful *reimplementation* of
 UBA's documented cardinalities, not the official Java tool, so counts are
@@ -373,25 +374,25 @@ construction. The correctness anchor is **cross-engine row parity**:
 
 | Engine | Load | Resident heap |
 |---|--:|--:|
-| **rete** `Rete::open` | **3.6 ms** | 2.17 MiB |
-| Oxigraph bulk-load | 188 ms | 37.50 MiB |
+| **rete** `Rete::open` | **6.2 ms** | 3.66 MiB |
+| Oxigraph bulk-load | 180 ms | 37.50 MiB |
 
 | Query | rete | Oxigraph | rete vs oxi | peak heap MiB (rete / oxi) | rows | ok |
 |---|--:|--:|--:|--:|--:|:--:|
-| Q1 grad students of a course | **0.26 ±0.03 ms** | 0.84 ±0.03 ms | 3.3x | 0.00 / 0.00 | 3 | yes |
-| Q2 grad student / univ / dept triangle | 5.54 ±0.54 ms | **5.53 ±0.53 ms** | 1.0x | 1.80 / 0.01 | 2036 | yes |
-| Q3 publications of a professor | **0.69 ±0.11 ms** | 2.61 ±0.38 ms | 3.8x | 0.01 / 0.00 | 9 | yes |
-| Q4 professors of a department (+3 props) | **0.12 ±0.02 ms** | 0.49 ±0.04 ms | 3.9x | 0.02 / 0.01 | 26 | yes |
-| Q5 persons member of a department | **1.59 ±0.11 ms** | 7.70 ±0.78 ms | 4.8x | 0.34 / 0.00 | 544 | yes |
-| Q6 all students | 2.22 ±0.33 ms | **2.07 ±0.60 ms** | 0.9x | 4.39 / 0.00 | 7232 | yes |
-| Q7 students of a professor's courses | 0.89 ±0.02 ms | **0.06 ±0.02 ms** | 0.1x | 0.04 / 0.01 | 49 | yes |
-| Q8 students of a university's departments | **12.5 ±1.7 ms** | 19.6 ±0.3 ms | 1.6x | 5.05 / 0.01 | 7232 | yes |
-| Q9 student / advisor / course triangle | **6.83 ±0.68 ms** | 12.6 ±1.1 ms | 1.8x | 1.65 / 0.01 | 115 | yes |
-| Q10 students of a graduate course | **0.71 ±0.03 ms** | 2.99 ±0.19 ms | 4.2x | 0.00 / 0.00 | 0 | yes |
-| Q11 research groups of a university | 0.20 ±0.03 ms | **0.17 ±0.01 ms** | 0.9x | 0.14 / 0.00 | 230 | yes |
+| Q1 grad students of a course | **0.30 ±0.03 ms** | 0.83 ±0.25 ms | 2.8x | 0.00 / 0.00 | 3 | yes |
+| Q2 grad student / univ / dept triangle | **3.96 ±0.18 ms** | 5.36 ±0.55 ms | 1.4x | 1.57 / 0.01 | 2036 | yes |
+| Q3 publications of a professor | **0.77 ±0.09 ms** | 2.42 ±0.30 ms | 3.1x | 0.01 / 0.00 | 9 | yes |
+| Q4 professors of a department (+3 props) | **0.24 ±0.02 ms** | 0.49 ±0.03 ms | 2.1x | 0.09 / 0.01 | 26 | yes |
+| Q5 persons member of a department | **1.39 ±0.10 ms** | 6.49 ±0.52 ms | 4.7x | 0.34 / 0.00 | 544 | yes |
+| Q6 all students | 2.47 ±0.39 ms | **1.71 ±0.42 ms** | 0.7x | 4.39 / 0.00 | 7232 | yes |
+| Q7 students of a professor's courses | 0.94 ±0.07 ms | **0.08 ±0.02 ms** | 0.1x | 0.04 / 0.01 | 49 | yes |
+| Q8 students of a university's departments | **11.7 ±1.5 ms** | 18.8 ±0.7 ms | 1.6x | 5.05 / 0.01 | 7232 | yes |
+| Q9 student / advisor / course triangle | **6.31 ±0.33 ms** | 12.1 ±1.1 ms | 1.9x | 1.53 / 0.01 | 115 | yes |
+| Q10 students of a graduate course | **0.75 ±0.08 ms** | 2.91 ±0.46 ms | 3.9x | 0.00 / 0.00 | 0 | yes |
+| Q11 research groups of a university | 0.21 ±0.02 ms | **0.15 ±0.02 ms** | 0.7x | 0.14 / 0.00 | 230 | yes |
 | Q12 chairs of a university's departments | **0.01 ±0.00 ms** | 0.02 ±0.00 ms | 2.4x | 0.00 / 0.01 | 0 | yes |
-| Q13 alumni of a university | **2.18 ±0.18 ms** | 2.95 ±0.66 ms | 1.4x | 1.62 / 0.00 | 2655 | yes |
-| Q14 all undergraduate students | 2.18 ±0.16 ms | **1.89 ±0.56 ms** | 0.9x | 4.39 / 0.00 | 7232 | yes |
+| Q13 alumni of a university | **2.31 ±0.16 ms** | 2.47 ±0.42 ms | 1.1x | 1.62 / 0.00 | 2655 | yes |
+| Q14 all undergraduate students | 2.37 ±0.13 ms | **1.75 ±0.54 ms** | 0.7x | 4.39 / 0.00 | 7232 | yes |
 
 Reproduce: `cargo run --release -p rete-bench -- --json --lubm 1 >
 docs/benchmark-lubm.json` then re-render this doc.
