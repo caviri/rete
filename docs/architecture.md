@@ -71,7 +71,7 @@ The header is a fixed 1 KB block: a small core (magic, version, content hash,
 counts, codecs) plus a **typed section directory** of `(kind, offset, length)`
 entries that point at every other section. New top-level sections are added as new
 directory entries, so the format has headroom without a layout break (format
-`v0.3`; readers accept only `v0.3`). Readers validate the header, then decide how
+`v0.4`; readers accept only `v0.4`). Readers validate the header, then decide how
 much of the file to load:
 
 | Section | Purpose |
@@ -79,7 +79,7 @@ much of the file to load:
 | Header | Magic/version, content hash, counts, and the section directory |
 | Dictionary | Front-coded term strings and role-aware ID spaces |
 | Indexes | Compressed triple blocks in all six (SPO/POS/OSP/SOP/PSO/OPS) orders |
-| Summary | Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (planner stats, entity shapes, label index) |
+| Summary | Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (query_stats, entity shapes, label index) |
 | Text index | Optional `--text-index` section: word → subjects, for full-text (`--contains`) search |
 | Metadata | Optional dataset-card JSON/catalog data |
 
@@ -142,8 +142,9 @@ so it never forces a pyramid fetch. The hash join builds whichever side is
 smaller (the join is symmetric on the key), bounding the hash table — and after
 this ordering the accumulating left side is usually the small one.
 
-Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
-nested `SELECT` subqueries and `SERVICE` federation.
+Unsupported SPARQL constructs are rejected with clear errors. Nested `SELECT`
+subqueries are supported (lowered to an independent inner plan, then joined on
+shared variables); the main remaining gap is `SERVICE` federation.
 
 ## Result Provenance
 
@@ -153,11 +154,12 @@ triple-pattern path as `Rete::query`, then attaches:
 - the matched terms and dictionary IDs,
 - the graph scope (`default` today for the local triple-pattern command),
 - the resolved ID-space pattern,
-- the selected permutation (`SPO`, `POS`, or `OSP`) and section index,
+- the selected permutation (one of the six: `SPO`, `POS`, `OSP`, `SOP`, `PSO`,
+  `OPS`) and section index,
 - the header byte ranges for dictionary, index container, selected permutation
   payload, and pyramid metadata.
 
-This is intentionally physical-file provenance, not a narrative explanation. In
+This is intentionally physical-file provenance, not a narrative explanation. Since
 format v0.2 each permutation section is tiled (independently compressed
 ~64 KiB tiles with a byte-range directory, SPEC §6.2): routed reads fetch the
 directory plus only the matching tile(s), and provenance names the physical
@@ -195,9 +197,9 @@ progressive` exposes the summary-safe path directly and returns metadata such as
 byte counts, request counts, and whether the index was read.
 
 The first exact routed refinement is implemented for single default-graph triple
-patterns: the reader resolves constants from the dictionary, chooses the best
-SPO/POS/OSP permutation, follows the container length prefixes, and fetches only
-that permutation payload. The next architectural step is physical community-tile
+patterns: the reader resolves constants from the dictionary, chooses the best of
+the six (SPO/POS/OSP/SOP/PSO/OPS) permutations, follows the container length
+prefixes, and fetches only that permutation payload. The next architectural step is physical community-tile
 directories: use the pyramid to fetch only relevant community ranges instead of
 even a whole permutation section.
 

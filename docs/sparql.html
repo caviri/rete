@@ -252,7 +252,7 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 <table><thead><tr><th>Area</th><th>Details</th></tr></thead><tbody>
 <tr><td><strong>Query forms</strong></td><td><code>SELECT</code>, <code>ASK</code>, <code>CONSTRUCT</code>, <code>DESCRIBE</code></td></tr>
 <tr><td><strong>Patterns</strong></td><td>Triple patterns and BGPs evaluated as integer-space hash joins on shared variables; blank nodes as non-distinguished variables</td></tr>
-<tr><td><strong>Algebra</strong></td><td><code>OPTIONAL</code> (left join), <code>UNION</code>, <code>MINUS</code>, <code>FILTER EXISTS</code> / <code>NOT EXISTS</code></td></tr>
+<tr><td><strong>Algebra</strong></td><td><code>OPTIONAL</code> (left join), <code>UNION</code>, <code>MINUS</code>, <code>FILTER EXISTS</code> / <code>NOT EXISTS</code>, nested <code>SELECT</code> <strong>subqueries</strong> (evaluated independently, then joined on shared projected variables)</td></tr>
 <tr><td><strong>Filters</strong></td><td>Comparisons, <code>&amp;&amp;</code>/<code>||</code>/<code>!</code>, arithmetic, <code>BOUND</code>, <code>COALESCE</code>; built-ins incl. <code>CONTAINS</code>, <code>STRLEN</code>, <code>SUBSTR</code>, <code>CONCAT</code>, <code>STR</code>, <code>isIRI</code>/<code>isLiteral</code>/<code>isBlank</code>, <code>DATATYPE</code>, <code>LANG</code>, <code>REGEX</code></td></tr>
 <tr><td><strong>Property paths</strong></td><td><code>p+</code>, <code>p*</code>, <code>p?</code> (zero-length included for <code>*</code>/<code>?</code>), reverse <code>^p</code>, sequence <code>a/b</code>, alternative <code>a|b</code> — evaluated goal-directed from a bound endpoint</td></tr>
 <tr><td><strong>Solution modifiers</strong></td><td><code>DISTINCT</code>, <code>ORDER BY</code> (ASC/DESC), <code>LIMIT</code>, <code>OFFSET</code>, <code>VALUES</code>, <code>BIND</code></td></tr>
@@ -356,7 +356,6 @@ CONSTRUCT { ?a cito:cites ?b } WHERE { ?a cito:cites ?b } LIMIT 50
 <h2>Not supported</h2>
 <p>These are <strong>rejected with a clear error</strong> — never silently mis-evaluated:</p>
 <ul>
-<li><strong>Subqueries</strong> (nested <code>SELECT</code>).</li>
 <li><strong><code>SERVICE</code></strong> (federation) — out of scope for a single self-contained file.</li>
 <li>Complex <code>ORDER BY</code> <strong>key expressions</strong> beyond a bare variable/constant are not
 yet evaluated for ordering.</li>

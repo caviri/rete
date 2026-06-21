@@ -246,12 +246,32 @@ produce a dataset with named graphs.</p>
 curl -s https://host/data.nt | rete build - -o data.rete
 </code></pre>
 <p><code>--materialize</code> bakes RDFS/OWL-RL entailments into the file at build time (see
-<a href="reasoning.html">Reasoning</a>). <code>--card</code> (and <code>--card-file</code> / <code>--title</code> / <code>--license</code>
-/ <code>--source</code> / <code>--description</code> / <code>--created</code>) embeds a <a href="dataset-cards.html">Dataset
-Card</a> — data-catalog metadata plus an auto-derived profile.
-<code>--text-index</code> adds a full-text (word/CONTAINS) index over the literals for
-<code>rete search --contains</code> (see below). All three are opt-in; without them the
-output is byte-identical to a plain build.</p>
+<a href="reasoning.html">Reasoning</a>). <code>--reason</code> runs the same reasoner but instead of
+adding triples it stamps the <strong>coherence verdict</strong> into the Dataset Card (implies
+<code>--card</code>) — so a remote reader learns whether the graph is logically coherent from
+the index-free card with no compute; unlike <code>--materialize</code> it records
+<code>coherent: false</code> honestly rather than aborting (verify later with <code>rete reason --verify-card</code>, combine with <code>--materialize</code> to also bake the inferred triples).
+<code>--card</code> (and <code>--card-file</code> / <code>--title</code> / <code>--license</code> / <code>--source</code> /
+<code>--description</code> / <code>--created</code>) embeds a <a href="dataset-cards.html">Dataset Card</a> —
+data-catalog metadata plus an auto-derived profile. <code>--text-index</code> adds a
+full-text (word/CONTAINS) index over the literals for <code>rete search --contains</code>
+(see below). <code>--type-predicate &lt;IRI&gt;</code> overrides the predicate that types subjects
+with classes for the schema pyramid (default <code>rdf:type</code>, else auto-detected) —
+e.g. Wikidata's <code>--type-predicate http://www.wikidata.org/prop/direct/P31</code>.
+<code>--no-pyramid</code> skips the community pyramid entirely (no pyramid section): SPARQL /
+SHACL / triple-pattern / reachability queries don't use it, so the file stays
+fully queryable and is markedly smaller — only community / summary / progressive
+queries need the pyramid. All of these are opt-in; without them the output is
+byte-identical to a plain build.</p>
+<h3><code>rete repyramid &lt;file&gt; -o &lt;out.rete&gt; [--type-predicate &lt;IRI&gt;] [--text-index] [--card …]</code></h3>
+<p>Rebuild a file's pyramid <strong>in place</strong>, reading the triples straight from the
+existing <code>.rete</code> — no <code>export | build</code> N-Quads round-trip. Use it to add a schema
+pyramid (or a <code>--text-index</code> / a Dataset Card) to a file built before those
+existed, or to re-derive the schema pyramid under a different <code>--type-predicate</code>.
+The card flags match <code>rete build</code> (<code>--card-file</code> / <code>--title</code> / <code>--license</code> / …).</p>
+<pre><code class="language-sh">rete repyramid old.rete -o new.rete --type-predicate http://www.wikidata.org/prop/direct/P31
+rete repyramid old.rete -o new.rete --text-index    # add full-text search to an existing file
+</code></pre>
 <h2>Validating</h2>
 <h3><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl]</code></h3>
 <p>Parse RDF input(s) without building, to check they are well-formed
@@ -320,8 +340,8 @@ rete export data.rete --format jsonld # expanded JSON-LD
 </code></pre>
 <h3><code>rete why &lt;file&gt; [--subject S] [--predicate P] [--object O] [--json]</code></h3>
 <p>Explain the provenance of each triple-pattern result. The command reports the
-matched terms, dictionary IDs, graph scope, chosen SPO/POS/OSP permutation, and
-the file byte ranges for the dictionary, full index container, selected
+matched terms, dictionary IDs, graph scope, the chosen permutation (one of the
+six), and the file byte ranges for the dictionary, full index container, selected
 permutation payload, and pyramid metadata. With <code>--json</code>, the same data is
 emitted as stable machine-readable JSON.</p>
 <pre><code class="language-sh">rete why data.rete --predicate '&lt;http://ex/knows&gt;'
@@ -337,7 +357,7 @@ fetched and range-request count. The CLI version of the browser's <code>why_url<
 # (fetched 4096 bytes in 1 range request(s); file is 1048576 bytes)
 </code></pre>
 <p>Provenance is honest about the physical layout: it identifies the index
-container, the selected permutation payload, and — for tiled (v0.2) files —
+container, the selected permutation payload, and — for tiled files —
 the physical tile holding each match (<code>PERM/index</code>) with its compressed byte
 range. Pre-tiling (v0.1) files report tile provenance as <code>not_materialized</code>.</p>
 <h3><code>rete bgp &lt;file&gt; "&lt;pattern&gt; . &lt;pattern&gt; …"</code></h3>
@@ -358,7 +378,7 @@ summary-based routing, and compares three access paths:</p>
 <li><strong>summary overview</strong> — header + dictionary + pyramid summary, skipping the
 triple index.</li>
 <li><strong>routed pattern open</strong> — for a single default-graph triple pattern, header +
-dictionary + the one selected SPO/POS/OSP permutation payload.</li>
+dictionary + the one selected permutation payload (the best of the six).</li>
 <li><strong>full query open</strong> — the current SPARQL engine path, which opens dictionary +
 index (+ pyramid/named-graph metadata when present) before evaluation.</li>
 </ul>
@@ -422,7 +442,7 @@ defaults to <code>http://ex/</code> and is overridable with <code>--base</code>.
 rete cypher deps.rete "MATCH (a)-[:dependsOn*]-&gt;(b) WHERE b = &lt;http://ex/log4x&gt; RETURN a"
 </code></pre>
 <h2>Reasoning</h2>
-<h3><code>rete reason &lt;file&gt; [--materialize] [--format nq|ttl]</code></h3>
+<h3><code>rete reason [&lt;file&gt;] [--url &lt;url&gt;] [--materialize] [--check] [--verify-card] [--format nq|ttl]</code></h3>
 <p>Run the prototype <strong>OWL RL / RDFS reasoner</strong>: materialize RDFS/OWL entailments to
 a fixpoint and report any logical <strong>inconsistencies</strong> ("incoherent points", e.g. a
 disjoint-class violation). Prints the count of newly entailed triples and each
@@ -430,8 +450,19 @@ inconsistency (<code>kind</code> + detail). <strong>Exits non-zero if any incons
 (zero if coherent), so it works as a coherence gate in CI. With <code>--materialize</code>,
 also serialize the base + inferred graph (<code>nq</code> default, or <code>ttl</code>). This is a
 documented subset, not full OWL DL — see <a href="reasoning.html">Reasoning &amp; coherence</a>.</p>
+<ul>
+<li><code>--url &lt;url&gt;</code> reads a <strong>remote</strong> <code>.rete</code> over HTTP range requests instead of a
+local file (omit the positional <code>&lt;file&gt;</code>).</li>
+<li><code>--check</code> is <strong>coherence-gate mode</strong>: print one verdict line and exit non-zero
+on any incoherent point (suppresses <code>--materialize</code> output) — the minimal CI gate.</li>
+<li><code>--verify-card</code> checks the file's <strong>baked coherence card</strong> (from <code>rete build --reason</code>) against a fresh reasoning run, guarding against drift or a stale
+ruleset; it exits non-zero if the stored verdict disagrees with recomputation.</li>
+</ul>
 <pre><code class="language-sh">rete reason data.rete
 rete reason data.rete --materialize --format ttl
+rete reason data.rete --check                  # one-line CI verdict
+rete reason --url https://host/data.rete       # reason over a remote file
+rete reason data.rete --verify-card            # baked card vs fresh run
 </code></pre>
 <h2>Shape validation</h2>
 <h3><code>rete shacl &lt;file&gt; --shapes &lt;shapes.ttl&gt; [--graph &lt;iri&gt;] [--format text|json|ttl]</code></h3>
@@ -516,12 +547,12 @@ The (large) index is never fetched — the "overview first" path.</p>
 <p>Match a triple pattern over HTTP, fetching only the byte ranges the query needs
 and reporting how many ranges/bytes were pulled. Bound terms are resolved from
 the dictionary first; if they exist, the reader fetches only the selected
-SPO/POS/OSP permutation payload rather than the whole index container. If a
+permutation payload rather than the whole index container. If a
 bound term is unknown, the index is skipped entirely and the result is empty.</p>
 <pre><code class="language-sh">rete query-url https://host/data.rete --object '&lt;http://ex/Dave&gt;'
 </code></pre>
 <h3><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
-<p>Run a full SPARQL query over HTTP with <strong>lazy tile faulting</strong> (tiled v0.2
+<p>Run a full SPARQL query over HTTP with <strong>lazy tile faulting</strong> (tiled
 files): the open fetches the header, dictionary, pyramid, and the index's
 small tile directories; index tiles are then range-fetched only when the
 query's scans and probes touch them, so a selective query reads O(touched

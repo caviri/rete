@@ -2,7 +2,7 @@
 
 **A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server.**
 
-[`github.com/caviri/rete`](https://github.com/caviri/rete) · crate **v0.1.0** · on-disk format **v0.2** (readers accept v0.1)
+[`github.com/caviri/rete`](https://github.com/caviri/rete) · crate **v0.1.0** · on-disk format **v0.4** (clean break — rebuild older files)
 
 `rete` packs an RDF graph (or a full dataset of named graphs) into one immutable
 `.rete` file with its own dictionary, permutation indexes, and a pyramidal
@@ -89,7 +89,8 @@ rete schema  social.rete    # semantic (by rdf:type)
 ## Version & status
 
 Developed in the open at [github.com/caviri/rete](https://github.com/caviri/rete).
-The crates are **v0.1.0** (experimental); the on-disk format is **v0.2**, and
-readers still accept v0.1 files. The format is not yet stable across versions.
+The crates are **v0.1.0** (experimental); the on-disk format is **v0.4**, and each
+version step is a clean break (readers accept only the current version), so rebuild
+older files. The format is not yet stable across versions.
 Everything is built and tested in Docker — see
 [Getting started](getting-started.md).

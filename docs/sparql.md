@@ -25,7 +25,7 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 |---|---|
 | **Query forms** | `SELECT`, `ASK`, `CONSTRUCT`, `DESCRIBE` |
 | **Patterns** | Triple patterns and BGPs evaluated as integer-space hash joins on shared variables; blank nodes as non-distinguished variables |
-| **Algebra** | `OPTIONAL` (left join), `UNION`, `MINUS`, `FILTER EXISTS` / `NOT EXISTS` |
+| **Algebra** | `OPTIONAL` (left join), `UNION`, `MINUS`, `FILTER EXISTS` / `NOT EXISTS`, nested `SELECT` **subqueries** (evaluated independently, then joined on shared projected variables) |
 | **Filters** | Comparisons, `&&`/`\|\|`/`!`, arithmetic, `BOUND`, `COALESCE`; built-ins incl. `CONTAINS`, `STRLEN`, `SUBSTR`, `CONCAT`, `STR`, `isIRI`/`isLiteral`/`isBlank`, `DATATYPE`, `LANG`, `REGEX` |
 | **Property paths** | `p+`, `p*`, `p?` (zero-length included for `*`/`?`), reverse `^p`, sequence `a/b`, alternative `a\|b` — evaluated goal-directed from a bound endpoint |
 | **Solution modifiers** | `DISTINCT`, `ORDER BY` (ASC/DESC), `LIMIT`, `OFFSET`, `VALUES`, `BIND` |
@@ -149,7 +149,6 @@ CONSTRUCT { ?a cito:cites ?b } WHERE { ?a cito:cites ?b } LIMIT 50
 
 These are **rejected with a clear error** — never silently mis-evaluated:
 
-- **Subqueries** (nested `SELECT`).
 - **`SERVICE`** (federation) — out of scope for a single self-contained file.
 - Complex `ORDER BY` **key expressions** beyond a bare variable/constant are not
   yet evaluated for ordering.

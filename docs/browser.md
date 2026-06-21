@@ -30,7 +30,11 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `query_triples(bytes, s?, p?, o?)` | `[[s,p,o], …]` (omit a position for a wildcard) |
 | `why_triples(bytes, s?, p?, o?)` | `{ pattern, resultCount, results:[{ terms, ids, provenance }] }` for triple-pattern provenance |
 | `query_sparql(bytes, query)` | SELECT-only compatibility wrapper; array of solution objects `{ var: value, ... }` |
+| `prefix_search(bytes, prefix, limit)` | label-prefix autocomplete from the label index: `[{ label, subject }]` (no literal scan) |
+| `text_search(bytes, words, prefix, limit)` | full-text (`--text-index`) word/AND search: `[{ subject }]`; `words` is a JSON array string, `prefix` an optional token-prefix |
 | `schema(bytes)` | `{ classes: [["<iri>",count]], relations: [["s","p","o",count]] }` |
+| `shacl(bytes, shapes, graph?, format?)` | SHACL Core validation against Turtle `shapes`; report as text/json/ttl per `format` |
+| `file_layout(bytes)` | the physical section map (offsets/lengths of header, dictionary, index, pyramid, …) behind the playground's layout view |
 | `header_ranges(headerBytes)` | `{ dictOffset, dictLen, pyramidOffset, pyramidLen, indexOffset, indexLen }` |
 | `summary_overview(bytes)` | `{ round, communities, predicateTotals: [["<iri>",count]] }` |
 | `progressive_query(bytes, query)` | SELECT/ASK envelope for summary-safe COUNT/ASK shapes, plus `progressive` metadata |
@@ -41,9 +45,15 @@ All functions take the file bytes (`Uint8Array`) and return JSON strings.
 | `reach(bytes, predicate, seeds, reverse)` | `[{ seed, count, reached:["<iri>",…] }, …]` (serial transitive reach) |
 | `build(text, format)` | a complete `.rete` file image (`Uint8Array`) built from RDF text |
 | `sparql_url(url, query, format)` | **worker-only**: the `query` envelope evaluated against a remote URL via lazy HTTP range reads, plus `remote: { fileLength, bytes, requests }` |
-| `new RemoteGraph(url)` → `.query(query, format)`, `.stats()` | **worker-only**: a remote URL opened **once** and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see [Caching remote reads](#caching-remote-reads)) |
+| `why_url(url, s?, p?, o?)` | **worker-only**: triple-pattern provenance over a remote URL (`why_triples` lazily), plus `remote:{…}` |
+| `reach_url(url, predicate, seeds, reverse)` | **worker-only**: transitive reachability over a remote URL, faulting only the traversed tiles, plus `remote:{…}` |
+| `schema_url(url)` | **worker-only**: the Schema view (`classes`/`relations`) from a remote file's schema pyramid, plus `remote:{…}` |
+| `shacl_url(url, shapes, format?)` | **worker-only**: lazy SHACL — validates the remote default graph, range-reading only each shape's targets, plus `remote:{…}` |
+| `shacl_construct_url(url, shapes, construct)` | **worker-only**: SHACL over just the subgraph a CONSTRUCT selects (only its tiles fetched), plus `remote:{…}` |
+| `new Graph(bytes)` → `.query`, `.query_triples`, `.prefix_search`, `.text_search`, `.why_triples`, `.schema`, `.reach`, `.shacl`, `.reason`, `.query_communities`, `.pyramid_tree`, `.file_layout`, `.info`, `.graph_names` | a file opened **once** and kept resident in memory, so repeated calls reuse the decoded dictionary/index — the stateful local mirror of the free functions |
+| `new RemoteGraph(url)` → `.query(query, format)`, `.prefix_search`, `.text_search`, `.stats()`, `.content_hash()` | **worker-only**: a remote URL opened **once** and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see [Caching remote reads](#caching-remote-reads)) |
 | `reason(bytes, graph?)` | OWL RL / RDFS coherence over an in-memory graph: `{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }` |
-| `check_schema(bytes)` | index-free Tier-0 schema coherence: `{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], classCount, readsIndex:false }` |
+| `check_schema(bytes)` | index-free Tier-0 schema coherence: `{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], readsIndex:false }` |
 | `check_schema_url(url)` | **worker-only**: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus `remote:{…}` |
 | `reason_construct_url(url, construct)` | **worker-only**: Tier-1 *selective* coherence — reason over just the subgraph a CONSTRUCT selects (only its tiles are fetched), plus `remote:{…}` |
 | `reason_url(url, graph?)` | **worker-only**: Tier-2 *full* coherence over a remote URL (materializes the whole graph), plus `remote:{…}` |
@@ -155,8 +165,8 @@ the optional triple pattern through `Rete::query_with_provenance` and returns
 browser-style camelCase fields: `resultCount`, `matchedPattern`,
 `indexPermutation`, `indexSection`, `dictionaryRange`, `indexRange`,
 `indexSectionRange`, and `pyramidRange`. `indexRange` is the full permutation
-container; `indexSectionRange` is the selected SPO/POS/OSP payload inside it.
-Tile provenance reports the physical tile for tiled (v0.2) files —
+container; `indexSectionRange` is the selected permutation payload inside it.
+Tile provenance reports the physical tile for tiled files —
 `{ "available": true, "id": "SPO/3", "range": { … } }` — and is explicit when
 a pre-tiling file cannot provide one:
 `{ "available": false, "reason": "not_materialized" }`.
@@ -179,9 +189,9 @@ const rows = JSON.parse(query_sparql(bytes,
 *Three small range requests (header + dictionary + summary, ~25% of the file) build the coarse graph; the large triple index is never downloaded.*
 
 `header_ranges` + `summary_overview` implement the "overview first" path in the
-browser: read bytes `0..128`, learn where the dictionary and pyramid summary
-live, range-fetch **only those**, and compute the coarse graph — the large triple
-index is never downloaded.
+browser: read the 1 KB header (bytes `0..1024`), learn where the dictionary and
+pyramid summary live, range-fetch **only those**, and compute the coarse graph —
+the large triple index is never downloaded.
 
 ```js
 import init, { header_ranges, summary_overview } from "./pkg/rete_wasm.js";

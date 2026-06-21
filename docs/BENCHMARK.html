@@ -242,18 +242,22 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 <table><thead><tr><th>Artifact</th><th style="text-align: right">Bytes</th><th style="text-align: right">vs raw</th></tr></thead><tbody>
 <tr><td>raw N-Triples</td><td style="text-align: right">8,384,101</td><td style="text-align: right">1.0×</td></tr>
 <tr><td><code>gzip -9</code> of the N-Triples</td><td style="text-align: right">564,590</td><td style="text-align: right">14.8×</td></tr>
-<tr><td><strong><code>.rete</code></strong> (zstd + pyramid summary)</td><td style="text-align: right">715,959</td><td style="text-align: right"><strong>11.7×</strong></td></tr>
+<tr><td><strong><code>.rete</code></strong> (zstd + pyramid summary)</td><td style="text-align: right">1,302,792</td><td style="text-align: right"><strong>6.4×</strong></td></tr>
 </tbody></table>
-<p><code>.rete</code> is only ~1.27× larger than <code>gzip</code> while being <em>queryable in place and
-over HTTP ranges</em> (gzip answers no query without a full download + scan). It
-stores three permutation indexes (SPO/POS/OSP) — each triple ~3× — plus the
-dictionary and the small pyramid summary. Per-community tiles remain out of the
-default file because they duplicate every triple; exact single-pattern range
-routing now fetches one selected SPO/POS/OSP payload instead of the whole index
-container, while physical community-tile directories are the next storage step.</p>
+<p><code>.rete</code> is ~2.3× the size of <code>gzip</code> while being <em>queryable in place and over HTTP
+ranges</em> (gzip answers no query without a full download + scan). As of format v0.4
+it stores all <strong>six</strong> permutation indexes (SPO/POS/OSP/SOP/PSO/OPS) — each triple
+stored 6× — plus the dictionary and the small pyramid summary; that is what roughly
+doubled the file versus the earlier three-permutation v0.3 (715,959 bytes), and the
+payoff is that <em>any</em> triple pattern — not just the three canonical leads — resolves
+to a contiguous scan with its bound components leading, which also unlocks
+sort-merge joins. Per-community tiles remain out of the default file because they
+duplicate every triple; exact single-pattern range routing fetches one selected
+permutation payload instead of the whole index container, while physical
+community-tile directories are the next storage step.</p>
 <h2>Build</h2>
 <table><thead><tr><th>Step</th><th style="text-align: right">Time</th></tr></thead><tbody>
-<tr><td><code>rete build</code> (parse → dict → 3 indexes → Louvain pyramid → zstd)</td><td style="text-align: right">365 ms</td></tr>
+<tr><td><code>rete build</code> (parse → dict → 6 indexes → Louvain pyramid → zstd)</td><td style="text-align: right">320 ms</td></tr>
 </tbody></table>
 <p>Result: 3 pyramid levels, 137,512 quads, 40,063 terms.
 (Caching the dictionary section metadata cut build time ~3.4× — see finding 1.)</p>
@@ -283,7 +287,7 @@ and the file content hash are byte-identical. Set <code>RETE_BUILD_TIMING=1</cod
 <tr><td>whole <code>rete build</code> (wall-clock)</td><td style="text-align: right">~141 s</td><td style="text-align: right"><strong>67 s</strong> (~2.1×)</td></tr>
 </tbody></table>
 <p>A <em>parallel</em> Louvain would not be byte-identical (the partition depends on the
-sequential move order), so the pyramid stays single-threaded; the three index
+sequential move order), so the pyramid stays single-threaded; the six index
 permutations and the dictionary/permutation sorts already use all cores (<code>rayon</code>).</p>
 <h3>Query result serialization (the WASM hot path)</h3>
 <p>A query's result is returned to the browser as a JSON string. Writing that
@@ -299,13 +303,14 @@ escaping to <code>serde_json</code>). For reference the query itself (<code>eval
 290 MiB / 344 ms — i.e. the old serializer cost <em>more than the query</em>. On the
 bounded WASM heap the 670 MiB peak was an OOM risk for big results.</p>
 <h2>Query latency (end-to-end: open + decompress + evaluate)</h2>
-<p>5-run averages of the compiled binary (includes process startup each run).</p>
+<p>5-run averages of the compiled binary in the dev container (includes process
+startup each run; format v0.4, six permutations).</p>
 <table><thead><tr><th>Query</th><th style="text-align: right">Time</th></tr></thead><tbody>
-<tr><td>triple pattern (<code>?s knows p100</code>)</td><td style="text-align: right">12 ms</td></tr>
-<tr><td>2-hop BGP join (<code>p0 knows ?y . ?y knows ?z</code>)</td><td style="text-align: right">12 ms</td></tr>
-<tr><td>property path (<code>p0 knows+ ?y</code>, reaches whole graph)</td><td style="text-align: right"><strong>37 ms</strong></td></tr>
-<tr><td>GROUP BY COUNT (degree of every node)</td><td style="text-align: right"><strong>71 ms</strong></td></tr>
-<tr><td>per-predicate totals (<strong>summary only, index not read</strong>)</td><td style="text-align: right">7 ms</td></tr>
+<tr><td>triple pattern (<code>?s knows p100</code>)</td><td style="text-align: right">33 ms</td></tr>
+<tr><td>2-hop BGP join (<code>p0 knows ?y . ?y knows ?z</code>)</td><td style="text-align: right">39 ms</td></tr>
+<tr><td>property path (<code>p0 knows+ ?y</code>, reaches whole graph)</td><td style="text-align: right"><strong>59 ms</strong></td></tr>
+<tr><td>GROUP BY COUNT (degree of every node)</td><td style="text-align: right"><strong>107 ms</strong></td></tr>
+<tr><td>per-predicate totals (<strong>summary only, index not read</strong>)</td><td style="text-align: right">24 ms</td></tr>
 </tbody></table>
 <p>Every dictionary lookup and triple-block decode is bounds-checked
 (<code>slice.get(..)?</code> instead of raw indexing) so the reader cannot panic on
@@ -315,16 +320,16 @@ unaffected.</p>
 <h2>HTTP range</h2>
 <p>A point query over HTTP is bounded, PMTiles-style. The full SPARQL URL path still
 opens the broad index section, but <code>query-url</code> and <code>rete cost</code> now have an exact
-single-pattern route: header + dictionary + one selected SPO/POS/OSP permutation
+single-pattern route: header + dictionary + one selected permutation
 payload. The <strong>progressive path is cheaper still</strong> for summary-safe queries:
 fetching just the coarse community graph (<code>summary-url</code>) reads only the header +
 dictionary + summary — e.g. <strong>2.2 KB of a 15.6 KB file (14%) in 3 requests, the
 index never fetched</strong> — the "overview first, drill down later" promise.</p>
 <h2>Scaling</h2>
 <p>At <strong>347,884 triples</strong> (2.5× the table above) everything scales ~linearly, with
-no pathological blowup: build 925 ms, triple query 27 ms, property path 91 ms,
-GROUP BY 219 ms, predicate totals 13 ms (summary stays cheap regardless of size),
-file 1.80 MB (same ~11.7× vs raw / ~1.27× vs gzip ratios).</p>
+no pathological blowup: build 890 ms, triple query 54 ms, property path 103 ms,
+GROUP BY 261 ms, predicate totals 26 ms (summary stays cheap regardless of size),
+file 3.31 MB (same ~6.4× vs raw / ~2.3× vs gzip ratios as the table above).</p>
 <h2>The pyramid: cost vs benefit</h2>
 <p>A <code>.rete</code> carries <strong>two</strong> pyramidal structures with very different economics. This
 measures both, against <code>--no-pyramid</code>, on a typed <code>subClassOf</code> ontology fixture

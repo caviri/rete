@@ -276,8 +276,8 @@ rete build chebi.nt -o chebi.rete --card \
 </code></pre>
 <p>The build is <strong>parallel and allocation-frugal</strong> by design (the CLI enables the
 <code>parallel</code> feature): the dictionary dedups terms with a <code>HashSet</code> and sorts once,
-and the three permutation indexes (SPO/POS/OSP) are built concurrently with
-parallel sorts. This is what lets it scale to millions of <em>unique</em> terms
+and the six permutation indexes (SPO/POS/OSP/SOP/PSO/OPS) are built concurrently
+with parallel sorts. This is what lets it scale to millions of <em>unique</em> terms
 (definitions, synonyms, SMILES/InChI strings) without the build collapsing into
 allocation churn — and the output is <strong>byte-identical</strong> to a serial build, so the
 speedup is free. Turtle-native sources (e.g. a 239 MB <code>.ttl</code>) skip <code>rapper</code> and
@@ -378,7 +378,7 @@ rete query-url   https://my-bucket.s3.amazonaws.com/data.rete --predicate '&lt;h
 rete summary-url https://raw.githubusercontent.com/me/repo/main/data.rete
 </code></pre>
 <p><code>query-url</code> resolves bound terms from the dictionary, then fetches only the
-selected SPO/POS/OSP permutation payload for the triple pattern. <code>summary-url</code>
+selected permutation payload (the best of the six) for the triple pattern. <code>summary-url</code>
 reads just the header, dictionary, and summary — <strong>the index is never
 downloaded</strong>. The host <strong>must</strong> return <code>206 Partial Content</code> to a <code>Range</code>
 request; a host that ignores <code>Range</code> (returns <code>200</code>) is rejected with a clear
