@@ -300,6 +300,7 @@ much of the file to load:</p>
 <tr><td>Dictionary</td><td>Front-coded term strings and role-aware ID spaces</td></tr>
 <tr><td>Indexes</td><td>Compressed triple blocks in SPO/POS/OSP order</td></tr>
 <tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (planner stats, entity shapes, label index)</td></tr>
+<tr><td>Text index</td><td>Optional <code>--text-index</code> section: word → subjects, for full-text (<code>--contains</code>) search</td></tr>
 <tr><td>Metadata</td><td>Optional dataset-card JSON/catalog data</td></tr>
 </tbody></table>
 <p><code>Rete::open</code> reads the full file. <code>Rete::open_ranged</code> fetches the sections needed
@@ -313,6 +314,14 @@ case-insensitive prefix lookup by binary search, no literal scan). Each block is
 optional and skipped by a reader that predates it, so the format stays
 backward-compatible and a typeless, label-free graph encodes byte-identically to
 v1.</p>
+<p>For <strong>full-text</strong> search — finding entities by a word <em>anywhere</em> in their
+literals, not just a label prefix — an opt-in <strong>TEXT_INDEX</strong> section (<code>rete build --text-index</code>, kind <code>6</code>) maps each literal word to its sorted subject ids. Like
+the dictionary, it is range-readable: a small front-coded token table is read
+once, then <code>rete search --contains &lt;word&gt;</code> (or <code>prefix_search</code>'s sibling
+<code>text_search</code>) faults only the posting list of each queried word — a remote
+<code>--contains</code> over a multi-GB file fetches kilobytes. It is off by default (a build
+without the flag is byte-identical to one without the feature) and lives outside
+the pyramid-meta so SPARQL never pays for it. See §6.3 of the SPEC.</p>
 <h2>Query Pipeline</h2>
 <p>SPARQL goes through four stages:</p>
 <ol>

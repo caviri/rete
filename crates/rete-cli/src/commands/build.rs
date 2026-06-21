@@ -101,6 +101,7 @@ pub(crate) fn build(
     materialize: bool,
     no_pyramid: bool,
     reason: bool,
+    text_index: bool,
     type_predicate: Option<&str>,
     card_args: CardArgs,
 ) -> anyhow::Result<()> {
@@ -153,26 +154,29 @@ pub(crate) fn build(
     } else {
         None
     };
-    let (bytes, stats) =
-        ingest::assemble_dataset_with_opts(quads, !no_pyramid, type_predicate, |stats, quads| {
-            match curated {
-                Some(curated) => {
-                    let mut dataset_card = card::derive_card(
-                        quads,
-                        stats.terms as u64,
-                        stats.named_graphs as u64,
-                        curated,
-                    );
-                    if let Some(r) = reasoning.as_ref() {
-                        dataset_card = dataset_card.with_coherence(r, materialize);
-                    }
-                    let blob = dataset_card.to_json_bytes();
-                    eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
-                    blob
+    let (bytes, stats) = ingest::assemble_dataset_with_opts(
+        quads,
+        !no_pyramid,
+        text_index,
+        type_predicate,
+        |stats, quads| match curated {
+            Some(curated) => {
+                let mut dataset_card = card::derive_card(
+                    quads,
+                    stats.terms as u64,
+                    stats.named_graphs as u64,
+                    curated,
+                );
+                if let Some(r) = reasoning.as_ref() {
+                    dataset_card = dataset_card.with_coherence(r, materialize);
                 }
-                None => Vec::new(),
+                let blob = dataset_card.to_json_bytes();
+                eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                blob
             }
-        });
+            None => Vec::new(),
+        },
+    );
     std::fs::write(output, &bytes)?;
 
     if stats.named_graphs > 0 {
@@ -204,6 +208,7 @@ pub(crate) fn build(
 pub(crate) fn repyramid(
     input: &str,
     output: &str,
+    text_index: bool,
     type_predicate: Option<&str>,
     card_args: CardArgs,
 ) -> anyhow::Result<()> {
@@ -236,6 +241,7 @@ pub(crate) fn repyramid(
     let (out_bytes, stats) = ingest::assemble_dataset_with_opts(
         quads,
         true,
+        text_index,
         type_predicate,
         |stats, quads| match curated {
             Some(curated) => {
@@ -298,6 +304,7 @@ mod tests {
             true,
             false,
             false,
+            false,
             None,
             CardArgs::default(),
         )
@@ -313,6 +320,7 @@ mod tests {
             &[inp.to_str().unwrap().to_string()],
             out.to_str().unwrap(),
             None,
+            false,
             false,
             false,
             false,

@@ -137,7 +137,7 @@ files).
 
 | Offset | Size | Field |
 |---|---|---|
-| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs; higher ids reserved for future sections) |
+| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index; higher ids reserved for future sections) |
 | +2 | 2 | section flags (reserved) |
 | +4 | 4 | reserved (zero) |
 | +8 | 8 | section offset |
@@ -149,8 +149,9 @@ from the directory means that section is not present.
 
 > Rationale: a fixed 1024-byte header means **one small range read**
 > (`bytes=0-1023`) tells the client where every section lives, with headroom for
-> new sections (a future text index, group directories, …) as new directory
-> entries rather than a format break.
+> new sections (group directories, geo indexes, …) as new directory entries
+> rather than a format break — the optional **text-index** section (kind `6`,
+> §6.3) was added exactly this way.
 
 The **metadata section** (offset 8 / length 16) sits between the header and the
 dictionary and is `0`-length by default. When present it carries an opaque,
@@ -311,6 +312,43 @@ directory locally and faults exactly **one** chunk, and `id → term` computes
 its chunk arithmetically and faults one. A lazily-opened remote file therefore
 pays the section headers + directories (KBs) up front and O(touched chunks)
 afterwards, instead of the whole dictionary container.
+
+### 6.3 Full-text index (TEXT_INDEX section, optional)
+
+An **opt-in** section (kind `6`, built with `rete build --text-index`) that maps
+each **word** appearing in a string literal to the **subjects** that carry it, so
+a reader can answer "which entities mention `glucose`?" without scanning the
+literals — and a *remote* reader fetches only the posting lists it queries, never
+the whole index. Absent by default: a build without `--text-index` writes no kind
+`6` entry and is byte-identical to one that never had the feature.
+
+**What is indexed.** Every triple whose object is a **string literal** is
+tokenized: the literal's lexical value is split on non-alphanumeric (Unicode)
+boundaries, each run lowercased and kept if ≥ 2 characters. The build and query
+sides share one tokenizer, so a query word matches how it was stored. The result
+is `token → sorted distinct subject ids`.
+
+**On-disk layout** (the section payload):
+
+```
+varint token_table_len
+token table (compressed with the header's block codec):
+  varint num_tokens
+  per token (ascending): varint shared_prefix_len   # front-coded vs previous token
+                         varint suffix_len, suffix bytes
+                         varint posting_off, varint posting_len   # into the postings blob
+postings blob (uncompressed, so one posting range-reads directly):
+  per token (same order): varint count, then `count` delta-varint ascending subject ids
+```
+
+The **token table** is small (distinct words, front-coded) and read whole; the
+**postings blob** is the bulk and is fetched one posting at a time. A remote
+search reads the leading `token_table_len` varint + the compressed token table as
+one prefix range, binary-searches the (sorted) tokens locally, then range-reads
+the single `(posting_off, posting_len)` it needs — `lookup(word)` faults one
+posting, `prefix(word)` the contiguous run of postings whose tokens share the
+prefix. Multiple query words **AND** by intersecting their sorted posting lists.
+SPARQL never touches this section, so a query open neither fetches nor pays for it.
 
 **Compatibility:** the format is experimental and makes **no** cross-version
 stability promise. The current version is `0x03` (the 1024-byte section-directory

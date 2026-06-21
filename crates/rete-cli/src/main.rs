@@ -52,6 +52,12 @@ enum Command {
         /// queries need the pyramid.
         #[arg(long = "no-pyramid")]
         no_pyramid: bool,
+        /// Build a **full-text index** over the literals: every string-literal
+        /// word maps to the subjects that carry it, so `rete search --contains
+        /// <word>` finds entities by content with no scan. Adds a `TextIndex`
+        /// section (off by default; the index can be large on text-heavy graphs).
+        #[arg(long = "text-index")]
+        text_index: bool,
         /// Override the predicate that types subjects with classes for the schema
         /// pyramid (default: `rdf:type`, else auto-detected). Use it where
         /// `rdf:type` is structural noise — e.g. Wikidata's `wdt:P31`:
@@ -110,21 +116,34 @@ enum Command {
         /// Path to the `.rete` file.
         file: String,
     },
-    /// Prefix-search the label index: the subjects whose label starts with
-    /// `prefix` (case-insensitive), as `label<TAB><iri>`. Answers from the
-    /// bounded label-index block in the pyramid-meta — no literal scan — so it is
-    /// the fast path for autocomplete. Files built before the label index existed
-    /// have none (rebuild to add it).
+    /// Search a `.rete` for entities. Two modes:
+    ///
+    /// • **Label prefix** (default): the subjects whose label starts with
+    ///   `prefix` (case-insensitive), from the bounded label-index block in the
+    ///   pyramid-meta — no literal scan, the fast path for autocomplete.
+    ///
+    /// • **Full-text** (`--contains <word>…`): subjects whose literals contain
+    ///   **every** given word (whole-word, case-insensitive — AND), from the
+    ///   TEXT_INDEX section (`build --text-index`). `--contains-prefix einst`
+    ///   additionally requires a word starting with `einst`. On a remote file
+    ///   only the queried posting lists are fetched, not the whole index.
     Search {
         /// Path to the `.rete` file.
         file: String,
         /// Case-insensitive label prefix (empty matches the first `--limit`).
         #[arg(default_value = "")]
         prefix: String,
+        /// Full-text: require each WORD to appear in the subject's literals (AND).
+        #[arg(long = "contains", num_args = 1.., value_name = "WORD")]
+        contains: Vec<String>,
+        /// Full-text: also require a literal word starting with this prefix.
+        #[arg(long = "contains-prefix", value_name = "PREFIX")]
+        contains_prefix: Option<String>,
         /// Maximum number of matches to print.
         #[arg(long, default_value_t = 20)]
         limit: usize,
-        /// Emit JSON: `[{"label":…,"subject":…}]`.
+        /// Emit JSON: prefix mode `[{"label":…,"subject":…}]`; full-text
+        /// `[{"subject":…}]`.
         #[arg(long)]
         json: bool,
     },
@@ -177,6 +196,10 @@ enum Command {
         /// `wdt:P31`); same semantics as `build --type-predicate`.
         #[arg(long = "type-predicate")]
         type_predicate: Option<String>,
+        /// Build a full-text (word/CONTAINS) index over the literals as a
+        /// TEXT_INDEX section; same semantics as `build --text-index`.
+        #[arg(long = "text-index")]
+        text_index: bool,
         /// Embed a **Dataset Card** in the rebuilt file (same flags as `build`).
         #[arg(long)]
         card: bool,
@@ -494,6 +517,7 @@ fn main() -> anyhow::Result<()> {
             materialize,
             reason,
             no_pyramid,
+            text_index,
             type_predicate,
             card,
             card_file,
@@ -509,6 +533,7 @@ fn main() -> anyhow::Result<()> {
             materialize,
             no_pyramid,
             reason,
+            text_index,
             type_predicate.as_deref(),
             commands::card::CardArgs {
                 enabled: card,
@@ -529,9 +554,23 @@ fn main() -> anyhow::Result<()> {
         Command::Search {
             file,
             prefix,
+            contains,
+            contains_prefix,
             limit,
             json,
-        } => commands::inspect::search(&file, &prefix, limit, json),
+        } => {
+            if contains.is_empty() && contains_prefix.is_none() {
+                commands::inspect::search(&file, &prefix, limit, json)
+            } else {
+                commands::inspect::search_contains(
+                    &file,
+                    &contains,
+                    contains_prefix.as_deref(),
+                    limit,
+                    json,
+                )
+            }
+        }
         Command::Card { file, json } => commands::card::card_cmd(&file, json),
         Command::CardUrl { url, json } => commands::url::card_url(&url, json),
         Command::Graphs { file } => commands::inspect::graphs(&file),
@@ -540,6 +579,7 @@ fn main() -> anyhow::Result<()> {
             file,
             output,
             type_predicate,
+            text_index,
             card,
             card_file,
             title,
@@ -550,6 +590,7 @@ fn main() -> anyhow::Result<()> {
         } => commands::build::repyramid(
             &file,
             &output,
+            text_index,
             type_predicate.as_deref(),
             commands::card::CardArgs {
                 enabled: card,

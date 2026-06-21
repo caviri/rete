@@ -78,6 +78,7 @@ much of the file to load:
 | Dictionary | Front-coded term strings and role-aware ID spaces |
 | Indexes | Compressed triple blocks in SPO/POS/OSP order |
 | Summary | Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (planner stats, entity shapes, label index) |
+| Text index | Optional `--text-index` section: word → subjects, for full-text (`--contains`) search |
 | Metadata | Optional dataset-card JSON/catalog data |
 
 `Rete::open` reads the full file. `Rete::open_ranged` fetches the sections needed
@@ -92,6 +93,16 @@ case-insensitive prefix lookup by binary search, no literal scan). Each block is
 optional and skipped by a reader that predates it, so the format stays
 backward-compatible and a typeless, label-free graph encodes byte-identically to
 v1.
+
+For **full-text** search — finding entities by a word *anywhere* in their
+literals, not just a label prefix — an opt-in **TEXT_INDEX** section (`rete build
+--text-index`, kind `6`) maps each literal word to its sorted subject ids. Like
+the dictionary, it is range-readable: a small front-coded token table is read
+once, then `rete search --contains <word>` (or `prefix_search`'s sibling
+`text_search`) faults only the posting list of each queried word — a remote
+`--contains` over a multi-GB file fetches kilobytes. It is off by default (a build
+without the flag is byte-identical to one without the feature) and lives outside
+the pyramid-meta so SPARQL never pays for it. See §6.3 of the SPEC.
 
 ## Query Pipeline
 

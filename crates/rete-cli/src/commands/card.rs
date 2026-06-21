@@ -1246,7 +1246,8 @@ mod tests {
         let card = derive_card(&quads, 12, 0, CardInput::default());
 
         // Build the same data and compute the reference quotient from the index.
-        let (bytes, _) = ingest::assemble_dataset_with_opts(quads, true, None, |_, _| Vec::new());
+        let (bytes, _) =
+            ingest::assemble_dataset_with_opts(quads, true, false, None, |_, _| Vec::new());
         let rete = Rete::open(&bytes).unwrap();
         let reference: BTreeSet<(String, String, String, u64)> = schema_summary(&rete)
             .into_iter()

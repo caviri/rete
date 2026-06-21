@@ -135,6 +135,14 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
             file
         );
     }
+
+    // Full-text index (TEXT_INDEX section): word/CONTAINS search over literals.
+    if rete.has_text_index() {
+        println!(
+            "  text index: {} bytes (full-text — `rete search {} --contains <word>`)",
+            h.text_index_len, file
+        );
+    }
     Ok(())
 }
 
@@ -170,6 +178,50 @@ pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyh
     }
     for (label, iri) in &hits {
         println!("{label}\t{iri}");
+    }
+    Ok(())
+}
+
+/// Full-text search (`rete search --contains <word>…`): subjects whose literals
+/// contain every word (AND, whole-word, case-insensitive), optionally also a word
+/// starting with `--contains-prefix`. Answers from the TEXT_INDEX section.
+pub(crate) fn search_contains(
+    file: &str,
+    words: &[String],
+    prefix: Option<&str>,
+    limit: usize,
+    json: bool,
+) -> anyhow::Result<()> {
+    let bytes = std::fs::read(file)?;
+    let rete = Rete::open(&bytes)?;
+    if !rete.has_text_index() {
+        if json {
+            println!("[]");
+        } else {
+            eprintln!("(this file has no text index — rebuild with `rete build --text-index`)");
+        }
+        return Ok(());
+    }
+    let word_refs: Vec<&str> = words.iter().map(String::as_str).collect();
+    let hits = rete.text_search(&word_refs, prefix, limit);
+    if json {
+        let items: Vec<String> = hits
+            .iter()
+            .map(|iri| format!("{{\"subject\":{}}}", json_str(iri)))
+            .collect();
+        println!("[{}]", items.join(","));
+        return Ok(());
+    }
+    if hits.is_empty() {
+        let mut terms: Vec<String> = words.to_vec();
+        if let Some(p) = prefix {
+            terms.push(format!("{p}*"));
+        }
+        println!("(no entities contain {})", terms.join(" + "));
+        return Ok(());
+    }
+    for iri in &hits {
+        println!("{iri}");
     }
     Ok(())
 }

@@ -195,6 +195,32 @@ fn compute_label_index(
         .collect()
 }
 
+/// Build the full-text index section (`token → subjects`) over every
+/// string-literal object: tokenize each literal into words and record the
+/// subject that carries it. Empty when the graph has no literals. Opt-in
+/// (`rete build --text-index`); O(literal bytes) transient. The token table is
+/// compressed with [`writer_codec`] (the reader decompresses with `block_codec`).
+pub(crate) fn compute_text_index(dict: &Dictionary, triples: &[(u32, u32, u32)]) -> Vec<u8> {
+    use crate::terms::{is_literal, literal_lexical};
+    let mut b = crate::text_index::TextIndexBuilder::new();
+    for &(s, _p, o) in triples {
+        let Some(term) = dict.object_term(o) else {
+            continue;
+        };
+        if !is_literal(&term) {
+            continue;
+        }
+        if let Some(lit) = literal_lexical(&term) {
+            b.add_text(&lit, s);
+        }
+    }
+    if b.is_empty() {
+        Vec::new()
+    } else {
+        b.build(writer_codec())
+    }
+}
+
 /// The top entity **shapes** (characteristic sets): group subjects by the exact
 /// set of predicates they carry, keep the most common. Bounded to `MAX_CHAR_SETS`
 /// and sorted deterministically (by subject count, then predicate list) so the
@@ -288,7 +314,26 @@ fn writer_codec() -> u8 {
     }
 }
 
-fn compress(codec: u8, bytes: &[u8]) -> Vec<u8> {
+/// Intersection of two ascending-sorted, deduped id lists — the AND of two
+/// posting lists in a multi-word text search. Linear merge, output sorted.
+fn intersect_sorted(a: &[u32], b: &[u32]) -> Vec<u32> {
+    let mut out = Vec::with_capacity(a.len().min(b.len()));
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                out.push(a[i]);
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn compress(codec: u8, bytes: &[u8]) -> Vec<u8> {
     match codec {
         #[cfg(feature = "compression")]
         CODEC_ZSTD => {
@@ -298,7 +343,7 @@ fn compress(codec: u8, bytes: &[u8]) -> Vec<u8> {
     }
 }
 
-fn decompress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
+pub(crate) fn decompress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
     match codec {
         CODEC_NONE => Ok(bytes.to_vec()),
         // Pure-Rust decode so any target (including wasm) can read compressed
@@ -1102,6 +1147,7 @@ pub fn write_dataset(
         pyramid_meta,
         pyramid_levels,
         &[],
+        &[],
     )
 }
 
@@ -1115,6 +1161,7 @@ pub fn write_dataset(
 /// Passing an empty `metadata` is byte-identical to [`write_dataset`]: the section
 /// is omitted (`metadata_len = 0`, `dictionary_offset = HEADER_LEN`) and the hash
 /// is computed over exactly the same parts (a zero-length hash update is a no-op).
+#[allow(clippy::too_many_arguments)]
 pub fn write_dataset_with_metadata(
     dict: &Dictionary,
     default_index: &GraphIndex,
@@ -1123,6 +1170,7 @@ pub fn write_dataset_with_metadata(
     pyramid_meta: &[u8],
     pyramid_levels: u16,
     metadata: &[u8],
+    text_index: &[u8],
 ) -> Vec<u8> {
     let codec = writer_codec();
     let raw_sections = dict.sections();
@@ -1151,7 +1199,10 @@ pub fn write_dataset_with_metadata(
     let index_len = index_container.len() as u64;
     let pyr_offset = index_offset + index_len;
     let pyr_len = pyramid_meta.len() as u64;
-    let named_offset = pyr_offset + pyr_len;
+    // Optional full-text index between the pyramid and the named graphs.
+    let text_offset = pyr_offset + pyr_len;
+    let text_len = text_index.len() as u64;
+    let named_offset = text_offset + text_len;
     let named_len = if named.is_empty() {
         0
     } else {
@@ -1168,6 +1219,9 @@ pub fn write_dataset_with_metadata(
     parts.push(&dict_container);
     parts.push(&index_container);
     parts.push(pyramid_meta);
+    if text_len > 0 {
+        parts.push(text_index);
+    }
     if named_len > 0 {
         parts.push(&named_section);
     }
@@ -1200,6 +1254,8 @@ pub fn write_dataset_with_metadata(
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
         named_graphs_len: named_len,
         schema_meta_len,
+        text_index_offset: if text_len > 0 { text_offset } else { 0 },
+        text_index_len: text_len,
         extra_sections: Vec::new(),
     };
 
@@ -1209,6 +1265,7 @@ pub fn write_dataset_with_metadata(
             + dict_container.len()
             + index_container.len()
             + pyramid_meta.len()
+            + text_index.len()
             + named_section.len()
             + MAGIC.len(),
     );
@@ -1219,6 +1276,9 @@ pub fn write_dataset_with_metadata(
     out.extend_from_slice(&dict_container);
     out.extend_from_slice(&index_container);
     out.extend_from_slice(pyramid_meta);
+    if text_len > 0 {
+        out.extend_from_slice(text_index);
+    }
     if named_len > 0 {
         out.extend_from_slice(&named_section);
     }
@@ -1352,6 +1412,22 @@ enum PyramidSlot {
     },
 }
 
+/// Faults the text index in on first search. `None` = the file has none, or the
+/// fetch/parse failed.
+type TextIndexLoader = Box<dyn Fn() -> Option<crate::text_index::TextIndex> + Send + Sync>;
+
+/// The TEXT_INDEX section, held either resident (eager opens decode the whole
+/// thing) or deferred (the lazy remote open keeps only a loader that fetches the
+/// token table on first search, then faults posting lists one at a time). SPARQL
+/// never touches it, so the lazy remote path keeps its small range budget.
+enum TextIndexSlot {
+    Resident(Option<crate::text_index::TextIndex>),
+    Lazy {
+        loader: TextIndexLoader,
+        cell: std::sync::OnceLock<Option<crate::text_index::TextIndex>>,
+    },
+}
+
 /// A read-only, in-memory view over a `.rete` file image.
 pub struct Rete {
     header: Header,
@@ -1363,6 +1439,7 @@ pub struct Rete {
     /// pre-tiling (v0.1) files.
     tile_ranges: [Vec<(u32, u32, ByteRange)>; 3],
     pyramid: PyramidSlot,
+    text_index: TextIndexSlot,
     named_graphs: Vec<(String, GraphIndex)>,
     /// Raw bytes of the metadata section (empty if the file has none). The
     /// application layer decodes this (the CLI stores a JSON Dataset Card here).
@@ -1408,6 +1485,20 @@ impl Rete {
             None
         });
 
+        // The TEXT_INDEX section (opt-in `--text-index`); decode the whole thing
+        // resident on a full-image open.
+        let text_index = TextIndexSlot::Resident(if header.text_index_len > 0 {
+            Some(
+                crate::text_index::TextIndex::from_section(
+                    region(header.text_index_offset, header.text_index_len)?,
+                    header.block_codec,
+                )
+                .map_err(|_| FileError::Container("malformed text index"))?,
+            )
+        } else {
+            None
+        });
+
         let named_graphs = if header.named_graphs_len > 0 {
             decode_named_graphs(
                 region(header.named_graphs_offset, header.named_graphs_len)?,
@@ -1432,6 +1523,7 @@ impl Rete {
             index_section_ranges,
             tile_ranges,
             pyramid,
+            text_index,
             named_graphs,
             metadata,
         })
@@ -1607,6 +1699,70 @@ impl Rete {
             .collect()
     }
 
+    /// The full-text index (TEXT_INDEX section), faulting it in on first access
+    /// on the lazy remote path. `None` when the file carries no text index.
+    fn text_index(&self) -> Option<&crate::text_index::TextIndex> {
+        match &self.text_index {
+            TextIndexSlot::Resident(t) => t.as_ref(),
+            TextIndexSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),
+        }
+    }
+
+    /// Whether this file carries a full-text (TEXT_INDEX) section, i.e. it was
+    /// built with `--text-index`. Cheap — reads the header, never faults.
+    pub fn has_text_index(&self) -> bool {
+        self.header.text_index_len > 0
+    }
+
+    /// Full-text search over the literals: subject IRIs that carry **every** word
+    /// in `words` (whole-word, case-insensitive — AND semantics), optionally also
+    /// requiring a word that **starts with** `prefix` (token-prefix). Results are
+    /// ordered by subject id and capped at `limit` (0 = uncapped). Empty when the
+    /// file has no text index or nothing matches.
+    ///
+    /// Like [`prefix_search`](Self::prefix_search), this **faults** the index on
+    /// the lazy remote path — a search is an explicit read, and only the queried
+    /// posting lists are fetched, not the whole index.
+    pub fn text_search(&self, words: &[&str], prefix: Option<&str>, limit: usize) -> Vec<String> {
+        let Some(ti) = self.text_index() else {
+            return Vec::new();
+        };
+        // Each query word is tokenized exactly as at build time (so "Glucose"
+        // matches the stored "glucose"); a word that splits into several tokens
+        // requires all of them. AND across every required token + the prefix.
+        let mut acc: Option<Vec<u32>> = None;
+        if let Some(p) = prefix {
+            acc = Some(ti.prefix(&p.to_lowercase()));
+        }
+        for w in words {
+            for tok in crate::text_index::tokenize(w) {
+                let posting = ti.lookup(&tok);
+                acc = Some(match acc {
+                    Some(a) => intersect_sorted(&a, &posting),
+                    None => posting,
+                });
+                if acc.as_ref().is_some_and(|a| a.is_empty()) {
+                    return Vec::new();
+                }
+            }
+        }
+        let ids = acc.unwrap_or_default();
+        let mut out = Vec::with_capacity(if limit > 0 {
+            limit.min(ids.len())
+        } else {
+            ids.len()
+        });
+        for id in ids {
+            if let Some(iri) = self.dict.subject_term(id) {
+                out.push(iri);
+                if limit > 0 && out.len() >= limit {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
     /// The default-graph permutation index.
     pub fn default_index(&self) -> &GraphIndex {
         &self.index
@@ -1706,6 +1862,18 @@ impl Rete {
             None
         });
 
+        // Fetch the whole TEXT_INDEX section resident (this opener does one range
+        // read per section; the lazy opener below is the one that defers it).
+        let text_index = TextIndexSlot::Resident(if header.text_index_len > 0 {
+            let tb = reader.read_at(header.text_index_offset, header.text_index_len)?;
+            Some(
+                crate::text_index::TextIndex::from_section(&tb, header.block_codec)
+                    .map_err(|_| FileError::Container("malformed text index"))?,
+            )
+        } else {
+            None
+        });
+
         let named_graphs = if header.named_graphs_len > 0 {
             let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
             decode_named_graphs(&nb, header.block_codec)?
@@ -1725,6 +1893,7 @@ impl Rete {
             index_section_ranges,
             tile_ranges,
             pyramid,
+            text_index,
             named_graphs,
             metadata: Vec::new(),
         })
@@ -1860,6 +2029,41 @@ impl Rete {
             PyramidSlot::Resident(None)
         };
 
+        // The TEXT_INDEX section is also deferred: a text search faults the token
+        // table on first call (the leading varint then its compressed bytes), then
+        // fetches individual posting lists by `(offset, len)` — never the whole
+        // postings blob. A SPARQL query, which never searches, pays nothing.
+        let text_index = if header.text_index_len > 0 {
+            let ti_reader = reader.clone();
+            let ti_off = header.text_index_offset;
+            let ti_len = header.text_index_len;
+            let codec = header.block_codec;
+            TextIndexSlot::Lazy {
+                loader: Box::new(move || {
+                    // The section opens with `varint token_table_len`; read enough
+                    // to decode it (a uvarint is ≤ 10 bytes), then fetch the varint
+                    // + the compressed token table as one prefix range.
+                    let head_len = 10u64.min(ti_len);
+                    let head = ti_reader.read_at(ti_off, head_len).ok()?;
+                    let (ttlen, n) = crate::varint::read_uvarint(&head)?;
+                    let prefix_len = (n as u64 + ttlen).min(ti_len);
+                    let prefix = ti_reader.read_at(ti_off, prefix_len).ok()?;
+                    let postings_base =
+                        crate::text_index::TextIndex::postings_base(&prefix)? as u64;
+                    let postings_abs = ti_off + postings_base;
+                    let pr = ti_reader.clone();
+                    let posting_loader = Box::new(move |off: u64, len: u64| {
+                        pr.read_at(postings_abs + off, len).ok()
+                    });
+                    crate::text_index::TextIndex::from_token_table(&prefix, codec, posting_loader)
+                        .ok()
+                }),
+                cell: std::sync::OnceLock::new(),
+            }
+        } else {
+            TextIndexSlot::Resident(None)
+        };
+
         let named_graphs = if header.named_graphs_len > 0 {
             let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
             decode_named_graphs(&nb, header.block_codec)?
@@ -1898,6 +2102,7 @@ impl Rete {
             index_section_ranges,
             tile_ranges,
             pyramid,
+            text_index,
             named_graphs,
             metadata: Vec::new(),
         })
@@ -2769,6 +2974,165 @@ mod tests {
         assert!(!lazy.index_incomplete(), "no lazy fetch failed");
     }
 
+    /// Build a small file whose objects are string literals, **with** a text
+    /// index, and return `(image, triples)`. Shared by the text-index tests.
+    #[cfg(test)]
+    fn build_text_indexed(triples: &[(String, String, String)]) -> Vec<u8> {
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(64);
+        let mut id_triples: Vec<(u32, u32, u32)> = Vec::with_capacity(triples.len());
+        for (s, p, o) in triples {
+            let t = dict.encode(s, p, o).unwrap();
+            ib.push(t);
+            id_triples.push(t);
+        }
+        let index = ib.build();
+        let text_index = compute_text_index(&dict, &id_triples);
+        assert!(
+            !text_index.is_empty(),
+            "literals should produce a text index"
+        );
+        write_dataset_with_metadata(&dict, &index, &[], false, &[], 0, &[], &text_index)
+    }
+
+    /// A `--text-index` build round-trips: `text_search` returns exactly the
+    /// subjects whose literals contain the queried word(s), with AND across words
+    /// and token-prefix — matching a brute-force scan of the literals.
+    #[test]
+    fn text_index_eager_matches_brute_force() {
+        let triples: Vec<(String, String, String)> = vec![
+            (
+                "<http://ex/s0>",
+                "<http://ex/label>",
+                "\"alpha glucose phosphate\"",
+            ),
+            ("<http://ex/s1>", "<http://ex/label>", "\"beta Glucose\""),
+            ("<http://ex/s2>", "<http://ex/label>", "\"gamma fructose\""),
+            (
+                "<http://ex/s3>",
+                "<http://ex/note>",
+                "\"einstein relativity\"",
+            ),
+            (
+                "<http://ex/s4>",
+                "<http://ex/ref>",
+                "<http://ex/not-a-literal>",
+            ),
+        ]
+        .into_iter()
+        .map(|(s, p, o)| (s.to_string(), p.to_string(), o.to_string()))
+        .collect();
+        let bytes = build_text_indexed(&triples);
+        let rete = Rete::open(&bytes).unwrap();
+        assert!(rete.has_text_index());
+
+        // Brute-force reference: subjects whose literal objects contain all words.
+        let brute = |words: &[&str]| -> Vec<String> {
+            let mut v: Vec<String> = triples
+                .iter()
+                .filter(|(_, _, o)| {
+                    crate::terms::is_literal(o)
+                        && words.iter().all(|w| {
+                            let wl = w.to_lowercase();
+                            crate::terms::literal_lexical(o)
+                                .unwrap()
+                                .split(|c: char| !c.is_alphanumeric())
+                                .any(|t| t.to_lowercase() == wl)
+                        })
+                })
+                .map(|(s, _, _)| s.clone())
+                .collect();
+            v.sort();
+            v.dedup();
+            v
+        };
+
+        let mut got = rete.text_search(&["glucose"], None, 0);
+        got.sort();
+        assert_eq!(got, brute(&["glucose"]), "case-insensitive single word");
+
+        // AND across two words: only s0 has both.
+        let mut got = rete.text_search(&["glucose", "phosphate"], None, 0);
+        got.sort();
+        assert_eq!(got, brute(&["glucose", "phosphate"]));
+
+        // A word nobody has → empty.
+        assert!(rete.text_search(&["zzznope"], None, 0).is_empty());
+
+        // Token-prefix: "ein…" matches "einstein".
+        let got = rete.text_search(&[], Some("ein"), 0);
+        assert_eq!(got, vec!["<http://ex/s3>".to_string()]);
+
+        // No text index → empty, has_text_index() false.
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new();
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let plain = write_dataset(&dict, &ib.build(), &[], false, &[], 0);
+        let plain_rete = Rete::open(&plain).unwrap();
+        assert!(!plain_rete.has_text_index());
+        assert!(plain_rete.text_search(&["glucose"], None, 0).is_empty());
+    }
+
+    /// The lazy/remote path returns the same subjects as the eager path **and**
+    /// faults only the token table + the queried posting list — never the whole
+    /// postings blob. A `CountingReader` proves the byte budget stays small.
+    #[test]
+    fn text_index_lazy_faults_only_queried_postings() {
+        use crate::reader::{CountingReader, SliceReader};
+        // Many subjects so the postings blob is large relative to one posting:
+        // every subject carries "common", but only a few carry "rare".
+        let mut triples: Vec<(String, String, String)> = (0..300u32)
+            .map(|i| {
+                (
+                    format!("<http://ex/s/{i:04}>"),
+                    "<http://ex/label>".to_string(),
+                    format!("\"common word number {i}\""),
+                )
+            })
+            .collect();
+        for i in [3u32, 77, 250] {
+            triples.push((
+                format!("<http://ex/s/{i:04}>"),
+                "<http://ex/tag>".to_string(),
+                "\"raretoken\"".to_string(),
+            ));
+        }
+        let bytes = build_text_indexed(&triples);
+        let eager = Rete::open(&bytes).unwrap();
+        let mut want = eager.text_search(&["raretoken"], None, 0);
+        want.sort();
+        assert_eq!(want.len(), 3);
+
+        let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+        let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+        let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        // Bytes pulled by the open itself (dict dirs, index dirs, named graphs) —
+        // the text index is deferred and not touched yet.
+        let before = reader.bytes_read();
+        let mut got = lazy.text_search(&["raretoken"], None, 0);
+        got.sort();
+        assert_eq!(got, want, "lazy search matches eager");
+        let pulled = reader.bytes_read() - before;
+        // The search faulted the token table + the one "raretoken" posting; it must
+        // be far less than the whole text-index section (300 "common" postings).
+        let ti_len = eager.header().text_index_len;
+        assert!(
+            pulled < ti_len,
+            "search pulled {pulled} B but the section is {ti_len} B — faulted too much"
+        );
+        assert!(!lazy.index_incomplete());
+    }
+
     /// End-to-end win: on a remote (range-read) file, a lookup whose routed tile
     /// is ruled out by a bound secondary fetches **fewer bytes** with the synopsis
     /// than without it — and the answer is identical (empty) either way.
@@ -3015,7 +3379,7 @@ mod tests {
             ib.push(t);
         }
         let (pmeta, levels) = build_pyramid_meta(&dict, &ids, DEFAULT_TILE_BUDGET);
-        write_dataset_with_metadata(&dict, &ib.build(), &[], false, &pmeta, levels, meta)
+        write_dataset_with_metadata(&dict, &ib.build(), &[], false, &pmeta, levels, meta, &[])
     }
 
     #[test]
@@ -3360,7 +3724,7 @@ mod tests {
             q("<b>", "<knows>", "<c>"),
         ];
         let (bytes, _) =
-            crate::ingest::assemble_dataset_with_opts(quads, true, None, |_, _| Vec::new());
+            crate::ingest::assemble_dataset_with_opts(quads, true, false, None, |_, _| Vec::new());
 
         // The v2 schema pyramid round-trips through the built file.
         let rete = Rete::open(&bytes).unwrap();
@@ -3588,6 +3952,72 @@ mod tests {
         println!(
             "label prefix search over {n} labeled subjects ({idx_n} matches): \
              index {idx_ms:.4} ms vs FILTER scan {scan_ms:.3} ms ({:.0}× faster)",
+            scan_ms / idx_ms
+        );
+    }
+
+    /// Latency: the TEXT_INDEX word search vs the `FILTER(CONTAINS(?l, …))` scan
+    /// it replaces. Ignored by default (timing-sensitive); run with
+    /// `cargo test -p rete-core -- --ignored --nocapture bench_text_search`.
+    #[test]
+    #[ignore]
+    fn bench_text_search_vs_contains_scan() {
+        use std::time::Instant;
+        const LABEL: &str = "<http://www.w3.org/2000/01/rdf-schema#label>";
+        const WORDS: &[&str] = &[
+            "alanine",
+            "benzene",
+            "glucose",
+            "dextrose",
+            "ethanol",
+            "formate",
+            "heptane",
+            "isoleucine",
+        ];
+        let n = 6000;
+        let triples: Vec<(String, String, String)> = (0..n)
+            .map(|i| {
+                (
+                    format!("<http://ex/e{i}>"),
+                    LABEL.to_string(),
+                    format!("\"{} sample number {i:06}\"", WORDS[i % WORDS.len()]),
+                )
+            })
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let ids: Vec<(u32, u32, u32)> = triples
+            .iter()
+            .map(|(s, p, o)| dict.encode(s, p, o).unwrap())
+            .collect();
+        let mut ib = GraphIndexBuilder::new();
+        for &t in &ids {
+            ib.push(t);
+        }
+        let ti = compute_text_index(&dict, &ids);
+        let bytes = write_dataset_with_metadata(&dict, &ib.build(), &[], false, &[], 0, &[], &ti);
+        let rete = Rete::open(&bytes).unwrap();
+
+        let q = "SELECT ?s WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?l \
+                 FILTER(CONTAINS(LCASE(?l), \"glucose\")) }";
+        let reps = 200;
+        let idx_n = rete.text_search(&["glucose"], None, 100_000).len();
+        let t = Instant::now();
+        for _ in 0..reps {
+            std::hint::black_box(rete.text_search(&["glucose"], None, 100_000));
+        }
+        let idx_ms = t.elapsed().as_secs_f64() * 1000.0 / reps as f64;
+        let t = Instant::now();
+        for _ in 0..reps {
+            std::hint::black_box(crate::eval_query(&rete, q).unwrap());
+        }
+        let scan_ms = t.elapsed().as_secs_f64() * 1000.0 / reps as f64;
+        println!(
+            "text search over {n} literals ({idx_n} matches): \
+             index {idx_ms:.4} ms vs FILTER(CONTAINS) scan {scan_ms:.3} ms ({:.0}× faster)",
             scan_ms / idx_ms
         );
     }

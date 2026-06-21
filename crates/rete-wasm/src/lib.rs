@@ -221,6 +221,16 @@ impl Graph {
         prefix_search_json(&self.rete, prefix, limit)
     }
 
+    /// See [`text_search`].
+    pub fn text_search(
+        &self,
+        words: Vec<String>,
+        contains_prefix: Option<String>,
+        limit: usize,
+    ) -> Result<String, JsValue> {
+        text_search_json(&self.rete, &words, contains_prefix.as_deref(), limit)
+    }
+
     /// See [`why_triples`].
     pub fn why_triples(
         &self,
@@ -361,6 +371,18 @@ impl RemoteGraph {
     pub fn prefix_search(&self, prefix: &str, limit: usize) -> Result<String, JsValue> {
         prefix_search_json(&self.rete, prefix, limit)
     }
+
+    /// See [`text_search`] — over the resident remote handle. Faults the TEXT_INDEX
+    /// token table on the first call, then fetches only the queried posting lists
+    /// (never the whole postings blob), serving repeat searches from memory.
+    pub fn text_search(
+        &self,
+        words: Vec<String>,
+        contains_prefix: Option<String>,
+        limit: usize,
+    ) -> Result<String, JsValue> {
+        text_search_json(&self.rete, &words, contains_prefix.as_deref(), limit)
+    }
 }
 
 /// Serialize a label prefix search as `[{"label":…,"subject":…}]`.
@@ -370,6 +392,23 @@ fn prefix_search_json(rete: &Rete, prefix: &str, limit: usize) -> Result<String,
         .prefix_search(prefix, limit)
         .into_iter()
         .map(|(label, subject)| json!({ "label": label, "subject": subject }))
+        .collect();
+    serde_json::to_string(&hits).map_err(err)
+}
+
+/// Serialize a full-text (word/CONTAINS) search as `[{"subject":…}]`.
+fn text_search_json(
+    rete: &Rete,
+    words: &[String],
+    contains_prefix: Option<&str>,
+    limit: usize,
+) -> Result<String, JsValue> {
+    use serde_json::json;
+    let word_refs: Vec<&str> = words.iter().map(String::as_str).collect();
+    let hits: Vec<serde_json::Value> = rete
+        .text_search(&word_refs, contains_prefix, limit)
+        .into_iter()
+        .map(|subject| json!({ "subject": subject }))
         .collect();
     serde_json::to_string(&hits).map_err(err)
 }
@@ -566,6 +605,22 @@ pub fn query(bytes: &[u8], query: &str, format: &str) -> Result<String, JsValue>
 pub fn prefix_search(bytes: &[u8], prefix: &str, limit: usize) -> Result<String, JsValue> {
     let rete = open(bytes)?;
     prefix_search_json(&rete, prefix, limit)
+}
+
+/// Full-text (word/CONTAINS) search over an embedded `.rete` image: the subjects
+/// whose literals contain **every** word in `words` (whole-word, case-insensitive
+/// — AND), optionally also a word starting with `contains_prefix`, as
+/// `[{"subject":…}]`, capped at `limit`. Answers from the TEXT_INDEX section.
+/// Empty array when the file has none (`build --text-index`).
+#[wasm_bindgen]
+pub fn text_search(
+    bytes: &[u8],
+    words: Vec<String>,
+    contains_prefix: Option<String>,
+    limit: usize,
+) -> Result<String, JsValue> {
+    let rete = open(bytes)?;
+    text_search_json(&rete, &words, contains_prefix.as_deref(), limit)
 }
 
 /// Evaluate any SPARQL form against an open [`Rete`] and serialize the playground

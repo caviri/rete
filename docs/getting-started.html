@@ -346,6 +346,26 @@ is <strong>bounded</strong> (top 8,192 labeled subjects by degree), so on a very
 it covers the prominent entities; an exhaustive match still needs the FILTER
 scan. Files built before this feature have no label index — rebuild to add it
 (the block is additive and backward-compatible, so old readers ignore it).</p>
+<h3>Full-text search (word / CONTAINS)</h3>
+<p>Label prefix search finds an entity by the <em>start</em> of its label. To find entities
+by a <strong>word anywhere in any of their literals</strong>, build with <code>--text-index</code> and
+query with <code>rete search --contains</code>:</p>
+<pre><code class="language-sh">rete build data.nt -o data.rete --text-index   # opt-in TEXT_INDEX section
+
+rete search data.rete --contains glucose            # subjects whose literals say "glucose"
+rete search data.rete --contains glucose phosphate  # AND — both words (any literal)
+rete search data.rete --contains-prefix einst       # word starting with "einst…"
+rete search data.rete --contains glucose --json     # [{"subject":…}]
+</code></pre>
+<p>Matching is whole-word and case-insensitive (the same tokenizer builds and
+queries: Unicode-alphanumeric runs, lowercased, length ≥ 2). The index maps each
+word to its sorted subject ids as its own range-readable section (§6.3 of the
+<a href="SPEC.html">SPEC</a>): the token table is read once, then each queried word faults only
+<strong>its</strong> posting list — so a <code>--contains</code> over a remote multi-GB file fetches
+kilobytes, not the whole index. It is <strong>opt-in</strong> because it is sizable; a build
+without <code>--text-index</code> is byte-identical to one built before the feature, and
+<code>rete search --contains</code> on such a file reports that there is no text index.
+<code>rete stats</code> shows the section's size when present.</p>
 <h2>Deploying &amp; querying over a URL</h2>
 <p>A <code>.rete</code> file is immutable and self-describing, so any static host that honors
 HTTP <code>Range</code> requests works — S3, GCS, GitHub, a CDN, or the bundled dev server:</p>
