@@ -6,8 +6,8 @@ use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
     eval_select_communities, eval_sparql, project_graph, schema_classes, schema_summary,
     summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader, ByteRange,
-    CountingReader, DataGraph, Header, QueryOutput, RangeReader, Rete, ShaclShapes, SliceReader,
-    SummaryQueryShape, SummaryView, TripleProvenance, ValidationReport, DEFAULT_BLOCK,
+    CountingReader, DataGraph, Header, QueryOutput, RangeReader, Rete, ReteGraph, ShaclShapes,
+    SliceReader, SummaryQueryShape, SummaryView, TripleProvenance, ValidationReport, DEFAULT_BLOCK,
     DEFAULT_TILE_BUDGET,
 };
 use wasm_bindgen::prelude::*;
@@ -1209,9 +1209,10 @@ pub fn shacl(
 }
 
 /// Validate a **remote** `.rete` graph (lazy HTTP range reads) against SHACL
-/// Core shapes written in Turtle. The validator materializes the data graph,
-/// so this faults in the dataset's chunks/tiles as it reads — heavier than a
-/// point query, but still range-served. Worker-only (synchronous XHR).
+/// Core shapes written in Turtle. Validating the **default** graph routes every
+/// lookup as a range read ([`ReteGraph`]), so a targeted shape faults only the
+/// tiles holding its targets — not the whole graph. A named graph (`graph`) still
+/// materializes (the routed view is default-graph only). Worker-only (sync XHR).
 #[wasm_bindgen]
 pub fn shacl_url(
     url: &str,
@@ -1232,25 +1233,35 @@ fn shacl_rete(
     graph: Option<&str>,
     format: &str,
 ) -> Result<String, JsValue> {
-    shacl_over(DataGraph::from_rete(rete, graph), shapes_turtle, format)
+    let shapes = ShaclShapes::parse_turtle(shapes_turtle).map_err(err)?;
+    // Default graph: validate over the index directly (lazy — fetch only targets).
+    // A named graph still materializes (ReteGraph views the default graph only).
+    let report = match graph {
+        None => validate_shacl(&ReteGraph::new(rete), &shapes),
+        Some(g) => validate_shacl(&DataGraph::from_rete(rete, Some(g)), &shapes),
+    };
+    Ok(format_report(&report, format))
 }
 
 fn shacl_over(data: DataGraph, shapes_turtle: &str, format: &str) -> Result<String, JsValue> {
     let shapes = ShaclShapes::parse_turtle(shapes_turtle).map_err(err)?;
-    let report = validate_shacl(&data, &shapes);
-    Ok(match format {
-        "json" => report.to_json(),
-        "ttl" => report.to_turtle(),
-        _ => format_shacl_text(&report),
-    })
+    Ok(format_report(&validate_shacl(&data, &shapes), format))
 }
 
-/// **Chain a SPARQL subset, then SHACL over it — selectively lazy.** Evaluates
-/// a `CONSTRUCT` over the remote `.rete` (touching only the tiles its patterns
-/// need), then validates the resulting subgraph against the Turtle `shapes`.
-/// Unlike [`shacl_url`] (which dumps the whole graph), this fetches only the
-/// slice the `CONSTRUCT` selects — the "validate just this subset, in place"
-/// path. Worker-only (synchronous XHR).
+fn format_report(report: &ValidationReport, format: &str) -> String {
+    match format {
+        "json" => report.to_json(),
+        "ttl" => report.to_turtle(),
+        _ => format_shacl_text(report),
+    }
+}
+
+/// **Chain a SPARQL subset, then SHACL over it.** Evaluates a `CONSTRUCT` over
+/// the remote `.rete` (touching only the tiles its patterns need), then validates
+/// the resulting subgraph against the Turtle `shapes`. Where [`shacl_url`] selects
+/// by *shape target* (validate every Person…), this selects by an explicit
+/// `CONSTRUCT` — "validate just the slice this query carves out, in place".
+/// Worker-only (synchronous XHR).
 #[wasm_bindgen]
 pub fn shacl_construct_url(
     url: &str,
