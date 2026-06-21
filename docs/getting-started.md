@@ -314,6 +314,50 @@ companion for benchmarking storage/query tech against the graph format — not a
 lossless graph encoding (sparse properties become NULLs, heterogeneous classes
 get wide; that's the point of the comparison).
 
+## Alternative approach: a *virtual* knowledge graph over the companions
+
+The companions above are materialized the rete way: triples → a `.rete` (the
+graph) **plus** tabular exports you query with SQL. The playground's Explore tab
+already queries those exports **lazily over `httpfs`** — DuckDB-WASM / SQLite-WASM
+fetch only the Parquet row-groups a query touches, the *same* range-read transport
+the `.rete` uses — so you can compare the same class across the rete engine and
+the columnar engines side by side.
+
+A different school of thought skips materialization entirely. A **Virtual
+Knowledge Graph** (VKG / OBDA) — e.g. [Ontop](https://ontop-vkg.org/) over DuckDB —
+keeps the Parquet as the source of truth and answers **SPARQL by rewriting it to
+SQL** at query time through declarative **R2RML mappings**; no RDF file is ever
+built ([tech note](https://ontopic.ai/en/tech-notes/create-virtual-knowledge-graphs-from-parquet-files/)).
+The two are complementary; the trade is materialized-vs-virtual:
+
+| | rete (this project) | Virtual KG (Ontop + DuckDB) |
+|---|---|---|
+| RDF | **materialized** into a graph-native `.rete` | **virtual** — never materialized |
+| Source of truth | the `.rete` file | the Parquet |
+| SPARQL | answered directly over `.rete` (range reads) | rewritten to SQL over Parquet via mappings |
+| Parquet's role | a tabular **companion/export** | **the** data |
+| Trade-off | a build step; self-contained & graph-native (pyramid, communities, reachability, SHACL, coherence, provenance) | a mapping + a SPARQL→SQL engine at query time; always fresh, no ingestion |
+
+Both lean on the **same lazy transport** — Parquet's footer + row groups are
+range-friendly the way the `.rete` header + tiles are — so the honest comparison
+isn't "lazy vs eager" but a **graph-native materialized file** vs a **virtual
+SPARQL view over a columnar source**.
+
+And rete's companions are already **VKG-ready**: the `_manifest.parquet` beside
+each one records the column → predicate map (and class IRI → table) — *exactly the
+R2RML mapping a VKG needs, generated for free*. So because the companions are
+range-readable HF objects, a VKG can `ATTACH` them in place: a single Ontop/DuckDB
+endpoint over *every* Parquet in the HF bucket — driven by the manifests — is a
+"knowledge graph over all of HF" with no download and no `.rete`: the federated,
+virtual mirror of rete's materialized file. (Materializing the same thing is also
+mechanical: the entity tables are lossless, so reconstruct each → merge, or build
+per-dataset `.rete` and `rete federate` across them.)
+
+**Benchmark candidate (TODO):** rete's range-read SPARQL on a `.rete` vs an
+Ontop-over-DuckDB VKG on the equivalent Parquet — same queries, same HTTP-range
+hosting — measuring bytes fetched, latency, and which graph operations (pyramid /
+reachability / SHACL / coherence) the VKG can't answer cheaply.
+
 ## A real-world graph: a Wikidata biology slice
 
 For a genuinely large, real dataset, `scripts/fetch_wikidata_bio.py` pulls a
