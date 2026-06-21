@@ -1316,6 +1316,251 @@ ex:ApplicationDependencyShape
     sh:minCount 1
   ] .`
       }
+    ],
+    "antarctic-expeditions": [
+      {
+        label: "Expeditions are fully described",
+        tip: "Structural completeness: every expedition should name a leader (a Person), a vessel (a Ship) and start/end years. SHACL flags 2 expeditions with no recorded leader.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+
+ex:ExpeditionShape a sh:NodeShape ;
+  sh:targetClass ex:Expedition ;
+  sh:property [ sh:path ex:leader ; sh:class ex:Person ; sh:minCount 1 ;
+    sh:message "Every expedition should record a leader." ] ;
+  sh:property [ sh:path ex:vessel ; sh:class ex:Ship ] ;
+  sh:property [ sh:path ex:startYear ; sh:minCount 1 ] ;
+  sh:property [ sh:path ex:endYear ; sh:minCount 1 ] .`
+      }
+    ],
+    "factgrid-illuminati": [
+      {
+        label: "Every member is named",
+        tip: "Data quality on an untyped Wikibase graph: every classified member (a subject of P2 'instance of') should carry a readable rdfs:label. The graph conforms - the labels were resolved at build time.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix fgp: <https://database.factgrid.de/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf fgp:P2 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "Every classified member should carry a human-readable label." ] .`
+      }
+    ],
+    history: [
+      {
+        label: "Territories are named, dated and geolocated",
+        tip: "Every historical territory should carry a label, a year and a GeoSPARQL geometry. The 7-era basemap conforms - all 2,059 territories are complete.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+
+ex:TerritoryShape a sh:NodeShape ;
+  sh:targetClass ex:Territory ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
+  sh:property [ sh:path ex:year ; sh:minCount 1 ] ;
+  sh:property [ sh:path geo:hasGeometry ; sh:minCount 1 ;
+    sh:message "Every historical territory must carry a geometry." ] .`
+      }
+    ],
+    "linked-jazz": [
+      {
+        label: "Every musician has a name",
+        tip: "On this untyped social graph, every musician who 'knows of' another (a subject of rel:knowsOf) should carry a foaf:name. Conforms - the network is fully named.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix rel: <http://purl.org/vocab/relationship/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf rel:knowsOf ;
+  sh:property [ sh:path foaf:name ; sh:minCount 1 ;
+    sh:message "Every musician in the social graph should carry a name." ] .`
+      }
+    ],
+    mimotext: [
+      {
+        label: "Novels in the style network are complete",
+        tip: "MiMoText's distinctive layer is 520 stylometric-similarity edges (P49). Every novel in that style network should carry a label and name its author (P5). SHACL flags 48 nodes that don't.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix mt: <http://data.mimotext.uni-trier.de/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf mt:P49 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "A novel in the stylometric-similarity network should carry a label." ] ;
+  sh:property [ sh:path mt:P5 ; sh:minCount 1 ;
+    sh:message "A novel in the stylometric-similarity network should name its author (P5)." ] .`
+      }
+    ],
+    mmm: [
+      {
+        label: "Manuscripts record their provenance",
+        tip: "Provenance completeness over CIDOC-CRM: every manuscript (F4_Manifestation_Singleton) should carry a label, a former-or-current owner (P51, a Person) and a production date. 559 manuscripts have no recorded owner.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix crm: <http://erlangen-crm.org/current/> .
+@prefix frbr: <http://erlangen-crm.org/efrbroo/> .
+@prefix mmm: <http://ldf.fi/schema/mmm/> .
+
+mmm:ManuscriptShape a sh:NodeShape ;
+  sh:targetClass frbr:F4_Manifestation_Singleton ;
+  sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ] ;
+  sh:property [ sh:path crm:P51_has_former_or_current_owner ; sh:class crm:E21_Person ; sh:minCount 1 ;
+    sh:message "Every manuscript should record a former or current owner." ] ;
+  sh:property [ sh:path mmm:produced_when ; sh:minCount 1 ;
+    sh:message "Every manuscript should record when it was produced." ] .`
+      }
+    ],
+    monarch: [
+      {
+        label: "Diseases carry phenotypes",
+        tip: "Biomedical completeness over the Biolink model: every Disease should be labelled and linked to at least one phenotypic feature (biolink:has_phenotype). Six diseases carry no phenotype.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix bl: <https://w3id.org/biolink/vocab/> .
+
+bl:DiseaseShape a sh:NodeShape ;
+  sh:targetClass bl:Disease ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
+  sh:property [ sh:path bl:has_phenotype ; sh:class bl:PhenotypicFeature ; sh:minCount 1 ;
+    sh:message "Every disease should link to at least one phenotypic feature." ] .`
+      }
+    ],
+    nomisma: [
+      {
+        label: "Coin types record material + dates",
+        tip: "Numismatic data quality: every coin type (nm:TypeSeriesItem) should record a denomination, a material and start/end dates. SHACL finds exactly one coin type missing its material.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix nm: <http://nomisma.org/ontology#> .
+
+nm:CoinTypeShape a sh:NodeShape ;
+  sh:targetClass nm:TypeSeriesItem ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
+  sh:property [ sh:path nm:hasDenomination ; sh:class nm:Denomination ; sh:minCount 1 ] ;
+  sh:property [ sh:path nm:hasMaterial ; sh:class nm:Material ; sh:minCount 1 ;
+    sh:message "Every coin type should record its material." ] ;
+  sh:property [ sh:path nm:hasStartDate ; sh:minCount 1 ] ;
+  sh:property [ sh:path nm:hasEndDate ; sh:minCount 1 ] .`
+      }
+    ],
+    "openalex-astrocytes": [
+      {
+        label: "Papers are well-formed",
+        tip: "Bibliographic integrity: every Work needs exactly one title, a year, at least one author (a Person) and at least one topic (a Concept). One paper in the set has no author - SHACL catches it.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+
+ex:WorkShape a sh:NodeShape ;
+  sh:targetClass ex:Work ;
+  sh:property [ sh:path dct:title ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path ex:year ; sh:minCount 1 ] ;
+  sh:property [ sh:path ex:author ; sh:class ex:Person ; sh:minCount 1 ;
+    sh:message "Every paper should list at least one author." ] ;
+  sh:property [ sh:path ex:topic ; sh:class ex:Concept ; sh:minCount 1 ] .`
+      }
+    ],
+    opencitations: [
+      {
+        label: "Articles carry bibliographic metadata",
+        tip: "FRBR/Dublin-Core completeness: every fabio:JournalArticle should carry a title, a date, a creator and a container (dct:isPartOf). The citation neighbourhood conforms.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix fabio: <http://purl.org/spar/fabio/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+
+fabio:ArticleShape a sh:NodeShape ;
+  sh:targetClass fabio:JournalArticle ;
+  sh:property [ sh:path dct:title ; sh:minCount 1 ] ;
+  sh:property [ sh:path dct:date ; sh:minCount 1 ] ;
+  sh:property [ sh:path dct:creator ; sh:minCount 1 ;
+    sh:message "Every journal article should record at least one creator." ] ;
+  sh:property [ sh:path dct:isPartOf ; sh:minCount 1 ] .`
+      }
+    ],
+    orkg: [
+      {
+        label: "Papers list their authors",
+        tip: "Scholarly metadata: every orkg:Paper should be labelled and list its authors (orkgp:hasAuthors). Four papers have no authors recorded - SHACL flags them.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix orkgc: <https://orkg.org/class/> .
+@prefix orkgp: <https://orkg.org/property/> .
+
+orkgc:PaperShape a sh:NodeShape ;
+  sh:targetClass orkgc:Paper ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
+  sh:property [ sh:path orkgp:hasAuthors ; sh:minCount 1 ;
+    sh:message "Every paper should list its authors." ] .`
+      }
+    ],
+    "theographic-graph": [
+      {
+        label: "Places are geolocated",
+        tip: "Geospatial completeness: every Biblical Place should carry a label and lat/long coordinates. SHACL flags 49 places that aren't geolocated.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix theo: <http://theographic/ontology#> .
+@prefix geo: <http://www.w3.org/2003/01/geo/wgs84_pos#> .
+
+theo:PlaceShape a sh:NodeShape ;
+  sh:targetClass theo:Place ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
+  sh:property [ sh:path geo:lat ; sh:minCount 1 ;
+    sh:message "Every Biblical place should carry a latitude." ] ;
+  sh:property [ sh:path geo:long ; sh:minCount 1 ;
+    sh:message "Every Biblical place should carry a longitude." ] .`
+      }
+    ],
+    "getty-ulan": [
+      {
+        label: "Masters carry a name + biography",
+        tip: "Run after Cache remote (SHACL materializes the graph in memory). Lineage completeness: every master who taught a pupil (gvp:teacherOf) should carry a name (skos:prefLabel) and a one-line biography (schema:description). The lineage conforms - every teacher is documented.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix gvp: <http://vocab.getty.edu/ontology#> .
+@prefix schema: <http://schema.org/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf gvp:teacherOf ;
+  sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ] ;
+  sh:property [ sh:path schema:description ; sh:minCount 1 ;
+    sh:message "Every master (teacherOf) should carry a one-line biography." ] .`
+      }
+    ],
+    "wikidata-100mb": [
+      {
+        label: "People with a job have a birth date",
+        tip: "Run after Cache remote (SHACL materializes ~104 MB in memory). Every person with an occupation (wdt:P106) should carry a label and a date of birth (wdt:P569). Real Wikidata is incomplete, so expect violations - the people missing a P569.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf wdt:P106 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
+  sh:property [ sh:path wdt:P569 ; sh:minCount 1 ;
+    sh:message "A person with an occupation (P106) should record a date of birth (P569)." ] .`
+      }
+    ],
+    "ohm-full": [
+      {
+        label: "Map features are named + dated",
+        tip: "Run after Cache remote (SHACL materializes ~150 MB in memory). Every geolocated feature (a subject of geo:hasGeometry) should carry a name (rdfs:label) and a start year (ex:startYear). Flags map features that are undated or unnamed.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex: <http://ex/> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf geo:hasGeometry ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "Every geolocated historical feature should carry a name." ] ;
+  sh:property [ sh:path ex:startYear ; sh:minCount 1 ;
+    sh:message "Every geolocated historical feature should carry a start year." ] .`
+      }
     ]
   },
   reach: {
