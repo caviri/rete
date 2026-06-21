@@ -295,13 +295,13 @@ permutations and the dictionary/permutation sorts already use all cores via
 counts, codecs) plus a <strong>typed section directory</strong> of <code>(kind, offset, length)</code>
 entries that point at every other section. New top-level sections are added as new
 directory entries, so the format has headroom without a layout break (format
-<code>v0.3</code>; readers accept only <code>v0.3</code>). Readers validate the header, then decide how
+<code>v0.4</code>; readers accept only <code>v0.4</code>). Readers validate the header, then decide how
 much of the file to load:</p>
 <table><thead><tr><th>Section</th><th>Purpose</th></tr></thead><tbody>
 <tr><td>Header</td><td>Magic/version, content hash, counts, and the section directory</td></tr>
 <tr><td>Dictionary</td><td>Front-coded term strings and role-aware ID spaces</td></tr>
 <tr><td>Indexes</td><td>Compressed triple blocks in all six (SPO/POS/OSP/SOP/PSO/OPS) orders</td></tr>
-<tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (planner stats, entity shapes, label index)</td></tr>
+<tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (query_stats, entity shapes, label index)</td></tr>
 <tr><td>Text index</td><td>Optional <code>--text-index</code> section: word → subjects, for full-text (<code>--contains</code>) search</td></tr>
 <tr><td>Metadata</td><td>Optional dataset-card JSON/catalog data</td></tr>
 </tbody></table>
@@ -357,8 +357,9 @@ in-memory file (the summary is resident) and is skipped on the lazy remote path
 so it never forces a pyramid fetch. The hash join builds whichever side is
 smaller (the join is symmetric on the key), bounding the hash table — and after
 this ordering the accumulating left side is usually the small one.</p>
-<p>Unsupported SPARQL constructs are rejected with clear errors. Known gaps include
-nested <code>SELECT</code> subqueries and <code>SERVICE</code> federation.</p>
+<p>Unsupported SPARQL constructs are rejected with clear errors. Nested <code>SELECT</code>
+subqueries are supported (lowered to an independent inner plan, then joined on
+shared variables); the main remaining gap is <code>SERVICE</code> federation.</p>
 <h2>Result Provenance</h2>
 <p><code>Rete::query_with_provenance</code> is the core API behind <code>rete why</code>. It runs the same
 triple-pattern path as <code>Rete::query</code>, then attaches:</p>
@@ -366,11 +367,12 @@ triple-pattern path as <code>Rete::query</code>, then attaches:</p>
 <li>the matched terms and dictionary IDs,</li>
 <li>the graph scope (<code>default</code> today for the local triple-pattern command),</li>
 <li>the resolved ID-space pattern,</li>
-<li>the selected permutation (<code>SPO</code>, <code>POS</code>, or <code>OSP</code>) and section index,</li>
+<li>the selected permutation (one of the six: <code>SPO</code>, <code>POS</code>, <code>OSP</code>, <code>SOP</code>, <code>PSO</code>,
+<code>OPS</code>) and section index,</li>
 <li>the header byte ranges for dictionary, index container, selected permutation
 payload, and pyramid metadata.</li>
 </ul>
-<p>This is intentionally physical-file provenance, not a narrative explanation. In
+<p>This is intentionally physical-file provenance, not a narrative explanation. Since
 format v0.2 each permutation section is tiled (independently compressed
 ~64 KiB tiles with a byte-range directory, SPEC §6.2): routed reads fetch the
 directory plus only the matching tile(s), and provenance names the physical
@@ -403,9 +405,9 @@ are exact from the summary and skip the full index:</p>
 routable as one triple pattern, or still needs the full index. <code>rete progressive</code> exposes the summary-safe path directly and returns metadata such as
 byte counts, request counts, and whether the index was read.</p>
 <p>The first exact routed refinement is implemented for single default-graph triple
-patterns: the reader resolves constants from the dictionary, chooses the best
-SPO/POS/OSP permutation, follows the container length prefixes, and fetches only
-that permutation payload. The next architectural step is physical community-tile
+patterns: the reader resolves constants from the dictionary, chooses the best of
+the six (SPO/POS/OSP/SOP/PSO/OPS) permutations, follows the container length
+prefixes, and fetches only that permutation payload. The next architectural step is physical community-tile
 directories: use the pyramid to fetch only relevant community ranges instead of
 even a whole permutation section.</p>
 <h2>Range Reads</h2>

@@ -59,8 +59,8 @@ rete build chebi.nt -o chebi.rete --card \
 
 The build is **parallel and allocation-frugal** by design (the CLI enables the
 `parallel` feature): the dictionary dedups terms with a `HashSet` and sorts once,
-and the three permutation indexes (SPO/POS/OSP) are built concurrently with
-parallel sorts. This is what lets it scale to millions of *unique* terms
+and the six permutation indexes (SPO/POS/OSP/SOP/PSO/OPS) are built concurrently
+with parallel sorts. This is what lets it scale to millions of *unique* terms
 (definitions, synonyms, SMILES/InChI strings) without the build collapsing into
 allocation churn — and the output is **byte-identical** to a serial build, so the
 speedup is free. Turtle-native sources (e.g. a 239 MB `.ttl`) skip `rapper` and
@@ -193,7 +193,7 @@ rete summary-url https://raw.githubusercontent.com/me/repo/main/data.rete
 ```
 
 `query-url` resolves bound terms from the dictionary, then fetches only the
-selected SPO/POS/OSP permutation payload for the triple pattern. `summary-url`
+selected permutation payload (the best of the six) for the triple pattern. `summary-url`
 reads just the header, dictionary, and summary — **the index is never
 downloaded**. The host **must** return `206 Partial Content` to a `Range`
 request; a host that ignores `Range` (returns `200`) is rejected with a clear

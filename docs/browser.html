@@ -255,7 +255,11 @@ browser reads compressed files fine. <code>rete-wasm</code> depends on <code>ret
 <tr><td><code>query_triples(bytes, s?, p?, o?)</code></td><td><code>[[s,p,o], …]</code> (omit a position for a wildcard)</td></tr>
 <tr><td><code>why_triples(bytes, s?, p?, o?)</code></td><td><code>{ pattern, resultCount, results:[{ terms, ids, provenance }] }</code> for triple-pattern provenance</td></tr>
 <tr><td><code>query_sparql(bytes, query)</code></td><td>SELECT-only compatibility wrapper; array of solution objects <code>{ var: value, ... }</code></td></tr>
+<tr><td><code>prefix_search(bytes, prefix, limit)</code></td><td>label-prefix autocomplete from the label index: <code>[{ label, subject }]</code> (no literal scan)</td></tr>
+<tr><td><code>text_search(bytes, words, prefix, limit)</code></td><td>full-text (<code>--text-index</code>) word/AND search: <code>[{ subject }]</code>; <code>words</code> is a JSON array string, <code>prefix</code> an optional token-prefix</td></tr>
 <tr><td><code>schema(bytes)</code></td><td><code>{ classes: [["&lt;iri&gt;",count]], relations: [["s","p","o",count]] }</code></td></tr>
+<tr><td><code>shacl(bytes, shapes, graph?, format?)</code></td><td>SHACL Core validation against Turtle <code>shapes</code>; report as text/json/ttl per <code>format</code></td></tr>
+<tr><td><code>file_layout(bytes)</code></td><td>the physical section map (offsets/lengths of header, dictionary, index, pyramid, …) behind the playground's layout view</td></tr>
 <tr><td><code>header_ranges(headerBytes)</code></td><td><code>{ dictOffset, dictLen, pyramidOffset, pyramidLen, indexOffset, indexLen }</code></td></tr>
 <tr><td><code>summary_overview(bytes)</code></td><td><code>{ round, communities, predicateTotals: [["&lt;iri&gt;",count]] }</code></td></tr>
 <tr><td><code>progressive_query(bytes, query)</code></td><td>SELECT/ASK envelope for summary-safe COUNT/ASK shapes, plus <code>progressive</code> metadata</td></tr>
@@ -266,9 +270,15 @@ browser reads compressed files fine. <code>rete-wasm</code> depends on <code>ret
 <tr><td><code>reach(bytes, predicate, seeds, reverse)</code></td><td><code>[{ seed, count, reached:["&lt;iri&gt;",…] }, …]</code> (serial transitive reach)</td></tr>
 <tr><td><code>build(text, format)</code></td><td>a complete <code>.rete</code> file image (<code>Uint8Array</code>) built from RDF text</td></tr>
 <tr><td><code>sparql_url(url, query, format)</code></td><td><strong>worker-only</strong>: the <code>query</code> envelope evaluated against a remote URL via lazy HTTP range reads, plus <code>remote: { fileLength, bytes, requests }</code></td></tr>
-<tr><td><code>new RemoteGraph(url)</code> → <code>.query(query, format)</code>, <code>.stats()</code></td><td><strong>worker-only</strong>: a remote URL opened <strong>once</strong> and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see <a href="#caching-remote-reads">Caching remote reads</a>)</td></tr>
+<tr><td><code>why_url(url, s?, p?, o?)</code></td><td><strong>worker-only</strong>: triple-pattern provenance over a remote URL (<code>why_triples</code> lazily), plus <code>remote:{…}</code></td></tr>
+<tr><td><code>reach_url(url, predicate, seeds, reverse)</code></td><td><strong>worker-only</strong>: transitive reachability over a remote URL, faulting only the traversed tiles, plus <code>remote:{…}</code></td></tr>
+<tr><td><code>schema_url(url)</code></td><td><strong>worker-only</strong>: the Schema view (<code>classes</code>/<code>relations</code>) from a remote file's schema pyramid, plus <code>remote:{…}</code></td></tr>
+<tr><td><code>shacl_url(url, shapes, format?)</code></td><td><strong>worker-only</strong>: lazy SHACL — validates the remote default graph, range-reading only each shape's targets, plus <code>remote:{…}</code></td></tr>
+<tr><td><code>shacl_construct_url(url, shapes, construct)</code></td><td><strong>worker-only</strong>: SHACL over just the subgraph a CONSTRUCT selects (only its tiles fetched), plus <code>remote:{…}</code></td></tr>
+<tr><td><code>new Graph(bytes)</code> → <code>.query</code>, <code>.query_triples</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.why_triples</code>, <code>.schema</code>, <code>.reach</code>, <code>.shacl</code>, <code>.reason</code>, <code>.query_communities</code>, <code>.pyramid_tree</code>, <code>.file_layout</code>, <code>.info</code>, <code>.graph_names</code></td><td>a file opened <strong>once</strong> and kept resident in memory, so repeated calls reuse the decoded dictionary/index — the stateful local mirror of the free functions</td></tr>
+<tr><td><code>new RemoteGraph(url)</code> → <code>.query(query, format)</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.stats()</code>, <code>.content_hash()</code></td><td><strong>worker-only</strong>: a remote URL opened <strong>once</strong> and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see <a href="#caching-remote-reads">Caching remote reads</a>)</td></tr>
 <tr><td><code>reason(bytes, graph?)</code></td><td>OWL RL / RDFS coherence over an in-memory graph: <code>{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }</code></td></tr>
-<tr><td><code>check_schema(bytes)</code></td><td>index-free Tier-0 schema coherence: <code>{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], classCount, readsIndex:false }</code></td></tr>
+<tr><td><code>check_schema(bytes)</code></td><td>index-free Tier-0 schema coherence: <code>{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], readsIndex:false }</code></td></tr>
 <tr><td><code>check_schema_url(url)</code></td><td><strong>worker-only</strong>: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus <code>remote:{…}</code></td></tr>
 <tr><td><code>reason_construct_url(url, construct)</code></td><td><strong>worker-only</strong>: Tier-1 <em>selective</em> coherence — reason over just the subgraph a CONSTRUCT selects (only its tiles are fetched), plus <code>remote:{…}</code></td></tr>
 <tr><td><code>reason_url(url, graph?)</code></td><td><strong>worker-only</strong>: Tier-2 <em>full</em> coherence over a remote URL (materializes the whole graph), plus <code>remote:{…}</code></td></tr>
@@ -369,8 +379,8 @@ the optional triple pattern through <code>Rete::query_with_provenance</code> and
 browser-style camelCase fields: <code>resultCount</code>, <code>matchedPattern</code>,
 <code>indexPermutation</code>, <code>indexSection</code>, <code>dictionaryRange</code>, <code>indexRange</code>,
 <code>indexSectionRange</code>, and <code>pyramidRange</code>. <code>indexRange</code> is the full permutation
-container; <code>indexSectionRange</code> is the selected SPO/POS/OSP payload inside it.
-Tile provenance reports the physical tile for tiled (v0.2) files —
+container; <code>indexSectionRange</code> is the selected permutation payload inside it.
+Tile provenance reports the physical tile for tiled files —
 <code>{ "available": true, "id": "SPO/3", "range": { … } }</code> — and is explicit when
 a pre-tiling file cannot provide one:
 <code>{ "available": false, "reason": "not_materialized" }</code>.</p>
@@ -386,9 +396,9 @@ const rows = JSON.parse(query_sparql(bytes,
 <img src="img/progressive-fetch.svg" alt="A client issues three small range requests for the header, dictionary, and pyramid summary; the large index block is greyed out and never fetched.">
 <p><em>Three small range requests (header + dictionary + summary, ~25% of the file) build the coarse graph; the large triple index is never downloaded.</em></p>
 <p><code>header_ranges</code> + <code>summary_overview</code> implement the "overview first" path in the
-browser: read bytes <code>0..128</code>, learn where the dictionary and pyramid summary
-live, range-fetch <strong>only those</strong>, and compute the coarse graph — the large triple
-index is never downloaded.</p>
+browser: read the 1 KB header (bytes <code>0..1024</code>), learn where the dictionary and
+pyramid summary live, range-fetch <strong>only those</strong>, and compute the coarse graph —
+the large triple index is never downloaded.</p>
 <pre><code class="language-js">import init, { header_ranges, summary_overview } from "./pkg/rete_wasm.js";
 await init();
 

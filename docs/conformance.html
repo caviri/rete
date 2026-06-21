@@ -352,7 +352,9 @@ not an endpoint. (Cross-<em>file</em> federation is a different feature — see
 <li><strong>entailment</strong> (≈49) — RDFS/OWL entailment regimes; rete answers these only
 when entailments are baked in at build time (<code>rete build --materialize</code>),
 which this run does not do.</li>
-<li><strong>subquery</strong> (≈12) — nested <code>SELECT</code> is rejected rather than evaluated.</li>
+<li><strong>subquery</strong> (12 n/s) — plain nested <code>SELECT</code> <em>is</em> evaluated (see the
+scorecard and finding above); the remaining n/s are GRAPH-scoped subqueries
+and tests whose data ships as RDF/XML, not the subquery feature itself.</li>
 <li><strong>csv-tsv-res</strong> (3) — the CSV/TSV result serialization isn't implemented.</li>
 </ul>
 </li>

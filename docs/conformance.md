@@ -113,7 +113,9 @@ python scripts/sparql_conformance.py \
    - **entailment** (≈49) — RDFS/OWL entailment regimes; rete answers these only
      when entailments are baked in at build time (`rete build --materialize`),
      which this run does not do.
-   - **subquery** (≈12) — nested `SELECT` is rejected rather than evaluated.
+   - **subquery** (12 n/s) — plain nested `SELECT` *is* evaluated (see the
+     scorecard and finding above); the remaining n/s are GRAPH-scoped subqueries
+     and tests whose data ships as RDF/XML, not the subquery feature itself.
    - **csv-tsv-res** (3) — the CSV/TSV result serialization isn't implemented.
 
 4. **What's left in `functions` (2):** `NOW()` (no wall clock on the

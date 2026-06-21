@@ -12,21 +12,25 @@ Synthetic social graph, **139,093 triples** (20k people in ~200 communities,
 |---|--:|--:|
 | raw N-Triples | 8,384,101 | 1.0× |
 | `gzip -9` of the N-Triples | 564,590 | 14.8× |
-| **`.rete`** (zstd + pyramid summary) | 715,959 | **11.7×** |
+| **`.rete`** (zstd + pyramid summary) | 1,302,792 | **6.4×** |
 
-`.rete` is only ~1.27× larger than `gzip` while being *queryable in place and
-over HTTP ranges* (gzip answers no query without a full download + scan). It
-stores three permutation indexes (SPO/POS/OSP) — each triple ~3× — plus the
-dictionary and the small pyramid summary. Per-community tiles remain out of the
-default file because they duplicate every triple; exact single-pattern range
-routing now fetches one selected SPO/POS/OSP payload instead of the whole index
-container, while physical community-tile directories are the next storage step.
+`.rete` is ~2.3× the size of `gzip` while being *queryable in place and over HTTP
+ranges* (gzip answers no query without a full download + scan). As of format v0.4
+it stores all **six** permutation indexes (SPO/POS/OSP/SOP/PSO/OPS) — each triple
+stored 6× — plus the dictionary and the small pyramid summary; that is what roughly
+doubled the file versus the earlier three-permutation v0.3 (715,959 bytes), and the
+payoff is that *any* triple pattern — not just the three canonical leads — resolves
+to a contiguous scan with its bound components leading, which also unlocks
+sort-merge joins. Per-community tiles remain out of the default file because they
+duplicate every triple; exact single-pattern range routing fetches one selected
+permutation payload instead of the whole index container, while physical
+community-tile directories are the next storage step.
 
 ## Build
 
 | Step | Time |
 |---|--:|
-| `rete build` (parse → dict → 3 indexes → Louvain pyramid → zstd) | 365 ms |
+| `rete build` (parse → dict → 6 indexes → Louvain pyramid → zstd) | 320 ms |
 
 Result: 3 pyramid levels, 137,512 quads, 40,063 terms.
 (Caching the dictionary section metadata cut build time ~3.4× — see finding 1.)
@@ -64,7 +68,7 @@ and the file content hash are byte-identical. Set `RETE_BUILD_TIMING=1` on
 | whole `rete build` (wall-clock) | ~141 s | **67 s** (~2.1×) |
 
 A *parallel* Louvain would not be byte-identical (the partition depends on the
-sequential move order), so the pyramid stays single-threaded; the three index
+sequential move order), so the pyramid stays single-threaded; the six index
 permutations and the dictionary/permutation sorts already use all cores (`rayon`).
 
 ### Query result serialization (the WASM hot path)
@@ -87,15 +91,16 @@ bounded WASM heap the 670 MiB peak was an OOM risk for big results.
 
 ## Query latency (end-to-end: open + decompress + evaluate)
 
-5-run averages of the compiled binary (includes process startup each run).
+5-run averages of the compiled binary in the dev container (includes process
+startup each run; format v0.4, six permutations).
 
 | Query | Time |
 |---|--:|
-| triple pattern (`?s knows p100`) | 12 ms |
-| 2-hop BGP join (`p0 knows ?y . ?y knows ?z`) | 12 ms |
-| property path (`p0 knows+ ?y`, reaches whole graph) | **37 ms** |
-| GROUP BY COUNT (degree of every node) | **71 ms** |
-| per-predicate totals (**summary only, index not read**) | 7 ms |
+| triple pattern (`?s knows p100`) | 33 ms |
+| 2-hop BGP join (`p0 knows ?y . ?y knows ?z`) | 39 ms |
+| property path (`p0 knows+ ?y`, reaches whole graph) | **59 ms** |
+| GROUP BY COUNT (degree of every node) | **107 ms** |
+| per-predicate totals (**summary only, index not read**) | 24 ms |
 
 Every dictionary lookup and triple-block decode is bounds-checked
 (`slice.get(..)?` instead of raw indexing) so the reader cannot panic on
@@ -107,7 +112,7 @@ unaffected.
 
 A point query over HTTP is bounded, PMTiles-style. The full SPARQL URL path still
 opens the broad index section, but `query-url` and `rete cost` now have an exact
-single-pattern route: header + dictionary + one selected SPO/POS/OSP permutation
+single-pattern route: header + dictionary + one selected permutation
 payload. The **progressive path is cheaper still** for summary-safe queries:
 fetching just the coarse community graph (`summary-url`) reads only the header +
 dictionary + summary — e.g. **2.2 KB of a 15.6 KB file (14%) in 3 requests, the
@@ -116,9 +121,9 @@ index never fetched** — the "overview first, drill down later" promise.
 ## Scaling
 
 At **347,884 triples** (2.5× the table above) everything scales ~linearly, with
-no pathological blowup: build 925 ms, triple query 27 ms, property path 91 ms,
-GROUP BY 219 ms, predicate totals 13 ms (summary stays cheap regardless of size),
-file 1.80 MB (same ~11.7× vs raw / ~1.27× vs gzip ratios).
+no pathological blowup: build 890 ms, triple query 54 ms, property path 103 ms,
+GROUP BY 261 ms, predicate totals 26 ms (summary stays cheap regardless of size),
+file 3.31 MB (same ~6.4× vs raw / ~2.3× vs gzip ratios as the table above).
 
 ## The pyramid: cost vs benefit
 

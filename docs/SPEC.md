@@ -53,8 +53,9 @@ Three transformations make it range-queryable:
 
 1. **Dictionary encoding** — every IRI / literal / blank node ⇒ a dense integer
    ID. Triples become integer triples; the dictionary is stored once, compressed.
-2. **Permutation indexes** — store the integer triples sorted in multiple orders
-   (SPO, POS, OSP) so *any* triple pattern resolves to a contiguous scan.
+2. **Permutation indexes** — store the integer triples sorted in all six orders
+   (SPO, POS, OSP, SOP, PSO, OPS) so *any* triple pattern resolves to a contiguous
+   scan with its bound components leading.
 3. **Pyramid (community summarization)** — partition nodes into a hierarchy of
    communities. Level 0 is a *quotient graph* (communities as supernodes, with
    aggregated edges). Each deeper level expands supernodes into their members.
@@ -85,8 +86,8 @@ metadata block to chase.
 │   └ predicates          (graph IRIs live in NAMED GRAPHS)      │
 ├──────────────────────────────────────────────────────────────┤
 │ INDEX             default-graph permutation container:         │
-│   SPO / POS / OSP streams, each a zone-mapped, delta-coded,    │
-│   (optionally zstd) block. Pointed to by `root_dir_offset`.    │
+│   SPO/POS/OSP/SOP/PSO/OPS streams, each a zone-mapped,         │
+│   delta-coded, (optionally zstd) block. Via `root_dir_offset`. │
 ├──────────────────────────────────────────────────────────────┤
 │ PYRAMID META      summary superedges (community quotient graph)│
 │   + optional per-community tiles. Pointed to by pyramid fields.│
@@ -101,8 +102,8 @@ metadata block to chase.
 
 Each permutation section carries its own **tile directory** (format `0x02`,
 §6.2): byte ranges for independently-compressed tiles, keyed by leading-id
-range — so single-pattern routing fetches the selected SPO/POS/OSP section and
-decompresses only the matching tile(s). Per-*community* leaf directories
+range — so single-pattern routing fetches the selected permutation section (one
+of the six) and decompresses only the matching tile(s). Per-*community* leaf directories
 (mapping `(level, tile, perm)` to byte ranges across the pyramid) are part of
 the fuller design and remain future work (see `docs/BENCHMARK.md`).
 
@@ -507,10 +508,13 @@ plan algebra — `Bgp`/`Join`/`Union`/`Minus`/`LeftJoin`/`Filter`/`Path`/`Values
   description = each resource's outgoing triples).
 - **Input/output.** ✅ N-Triples, N-Quads, and Turtle input; N-Quads/Turtle/JSON-LD
   export; SPARQL Results JSON output.
+- **Supported:** nested `SELECT` **subqueries** — evaluated independently to their
+  projected solutions, which then join with the surrounding pattern on shared
+  variables.
 - **Not supported (rejected with a clear error, never silently mis-evaluated):**
-  subqueries (nested `SELECT`) and `SERVICE` (federation — out of scope for a
-  single self-contained file). Complex ORDER BY key *expressions* (beyond a bare
-  variable/constant) are also not yet evaluated for ordering.
+  `SERVICE` (federation — out of scope for a single self-contained file). Complex
+  ORDER BY key *expressions* (beyond a bare variable/constant) are also not yet
+  evaluated for ordering.
 
 The planner's job is to minimize **bytes fetched**, not CPU — the cost model is
 dominated by range-request count and block sizes.
@@ -529,12 +533,13 @@ separate directory/footer round-trip is needed):
     never fetched. (`SummaryView::open_ranged`; `summary_overview` in wasm.)
 2b. Full query path → GET dictionary + index (+ named-graphs) ranges, then:
      - resolve constant terms in the dictionary
-     - match the pattern in the SPO/POS/OSP permutation blocks (zone-map pruned)
+     - match the pattern in the SPO/POS/OSP/SOP/PSO/OPS permutation blocks
+       (zone-map pruned)
      - resolve result IDs back to terms via the dictionary
      - optionally emit result provenance: matched IDs/terms, graph scope, chosen
        permutation, and the dictionary/index/payload/pyramid byte ranges
 2c. Routed single-pattern path → GET dictionary, resolve constants, choose the
-    best SPO/POS/OSP permutation, then follow the index container's length
+    best of the six permutations, then follow the index container's length
     prefixes and fetch only that one permutation payload. Unknown bound terms
     skip the index entirely and return an empty result.
 ```
