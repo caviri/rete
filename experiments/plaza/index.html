@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>rete plaza — semantic dataset gallery</title>
+  <script>try{var t=localStorage.getItem('plaza-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;}catch(e){}</script>
+  <script src="vendor/p5.min.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="site">
+      <div class="site-top">
+        <h1>rete <span class="dot">plaza</span></h1>
+        <nav class="site-nav">
+          <a href="https://caviri.github.io/rete/" target="_blank" rel="noopener">rete ↗</a>
+          <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">GitHub ↗</a>
+          <button class="theme-toggle" id="themeBtn" aria-label="Toggle light/dark theme">Light</button>
+        </nav>
+      </div>
+      <p class="tag" id="tagline">a gathering place for self-describing semantic datasets</p>
+      <div class="meta" id="hdrmeta">reading dataset cards…</div>
+    </header>
+
+    <div class="controls">
+      <div class="searchbar">
+        <input id="q" type="search" placeholder="Search datasets by name, tag, or vocabulary…" autocomplete="off" />
+        <span class="count" id="count"></span>
+      </div>
+      <div class="chips" id="chips"></div>
+    </div>
+
+    <div id="cats"></div>
+    <div class="empty" id="empty" hidden>Nothing matches your search.</div>
+  </div>
+
+  <script type="module" src="js/theme.js"></script>
+  <script type="module" src="js/catalog.js"></script>
+</body>
+</html>

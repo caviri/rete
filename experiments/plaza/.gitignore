@@ -1,0 +1,2 @@
+# local browser-test screenshots (regenerate with _shots/run_test.py)
+_shots/*.png
