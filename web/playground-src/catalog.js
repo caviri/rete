@@ -222,6 +222,58 @@ window.RETE_PLAYGROUND_CATALOG = {
           note: "Occupation intersection (physicist Q169470 AND philosopher Q4964182) — same answer, three engines." },
       ],
     },
+
+    // wikidata-100MB (dataset key "wikidata-100mb"): the 100 MB tier's companions,
+    // also under wikidata-100MB/ in the bucket. Same shape as the 1 GB entry; the
+    // top P31 classes + counts come from this tier's own manifest.
+    "wikidata-100mb": {
+      rete: "wikidata-100MB/wikidata.rete",
+      parquetDir: "wikidata-100MB/parquet",
+      duckdb: "wikidata-100MB/wikidata.duckdb",  duckdbSize: "204 MB",
+      sqlite: "wikidata-100MB/wikidata.sqlite",  sqliteSize: "475 MB",
+      typePredicate: "<http://www.wikidata.org/prop/direct/P31>",
+      seed: "http://www.wikidata.org/entity/Q859", // Plato (a human, table Q5)
+      about: "A real ~100 MB slice of Wikidata (truthy) in four lossless encodings: the rete " +
+        "<code>.rete</code>, per-class <code>.parquet</code> tables, one <code>.duckdb</code>, one " +
+        "<code>.sqlite</code>. Entities typed by <code>wdt:P31</code>; people live in <code>Q5</code> " +
+        "(occupation P106, citizenship P27, …). Tables are named by Q-id. The 1 GB tier is key “wikidata”.",
+      tables: [
+        { name: "Q5",          file: "Q5_.parquet",          classIri: "http://www.wikidata.org/entity/Q5",          label: "human",               entities: 19058 },
+        { name: "Q4167410",    file: "Q4167410_.parquet",    classIri: "http://www.wikidata.org/entity/Q4167410",    label: "disambiguation page", entities: 5999 },
+        { name: "Q16521",      file: "Q16521_.parquet",      classIri: "http://www.wikidata.org/entity/Q16521",      label: "taxon",               entities: 2837 },
+        { name: "Q484170",     file: "Q484170_.parquet",     classIri: "http://www.wikidata.org/entity/Q484170",     label: "commune of France",   entities: 1253 },
+        { name: "Q747074",     file: "Q747074_.parquet",     classIri: "http://www.wikidata.org/entity/Q747074",     label: "Italian comune",      entities: 960 },
+        { name: "Q11424",      file: "Q11424_.parquet",      classIri: "http://www.wikidata.org/entity/Q11424",      label: "film",                entities: 664 },
+        { name: "Q3863",       file: "Q3863_.parquet",       classIri: "http://www.wikidata.org/entity/Q3863",       label: "business",            entities: 600 },
+        { name: "Q113145171",  file: "Q113145171_.parquet",  classIri: "http://www.wikidata.org/entity/Q113145171",  label: "scholarly article",   entities: 565 },
+      ],
+      sqlCols: ["entity", "label", "types", "P106", "P27", "P569", "P19", "P21", "P735", "extra"],
+      examples: [
+        { label: "Everything about Plato (Q859)", table: { file: "Q5_.parquet", name: "Q5" },
+          sparql: `SELECT ?p ?o WHERE {\n  <http://www.wikidata.org/entity/Q859> ?p ?o\n}`,
+          duck: `SELECT *\nFROM {T}\nWHERE entity = 'http://www.wikidata.org/entity/Q859';`,
+          sqlite: `SELECT *\nFROM "Q5"\nWHERE entity = 'http://www.wikidata.org/entity/Q859';`,
+          note: "One entity, every fact — a tall graph vs one wide row." },
+
+        { label: "Most common occupations", table: { file: "Q5_.parquet", name: "Q5" },
+          sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occ (COUNT(?p) AS ?n) WHERE {\n  ?p wdt:P106 ?occ\n}\nGROUP BY ?occ\nORDER BY DESC(?n)\nLIMIT 15`,
+          duck: `SELECT occ, count(*) AS people\nFROM (SELECT unnest(P106) AS occ FROM {T})\nGROUP BY occ\nORDER BY people DESC\nLIMIT 15;`,
+          sqlite: `SELECT je.value AS occupation, count(*) AS people\nFROM "Q5", json_each(P106) je\nGROUP BY occupation\nORDER BY people DESC\nLIMIT 15;`,
+          note: "Aggregate over one column (P106) — Parquet reads just that column; the graph aggregates a whole predicate." },
+
+        { label: "Biggest polymaths", table: { file: "Q5_.parquet", name: "Q5" },
+          sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who (COUNT(?occ) AS ?jobs) WHERE {\n  ?p wdt:P106 ?occ ; rdfs:label ?who .\n  FILTER(LANG(?who) = "en")\n}\nGROUP BY ?who\nORDER BY DESC(?jobs)\nLIMIT 15`,
+          duck: `SELECT label, len(P106) AS jobs\nFROM {T}\nWHERE label IS NOT NULL\nORDER BY jobs DESC\nLIMIT 15;`,
+          sqlite: `SELECT label, json_array_length(P106) AS jobs\nFROM "Q5"\nWHERE label IS NOT NULL\nORDER BY jobs DESC\nLIMIT 15;`,
+          note: "len(P106) off the row vs counting P106 edges in the graph." },
+
+        { label: "Physicists who were also philosophers", table: { file: "Q5_.parquet", name: "Q5" },
+          sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?p ?who WHERE {\n  ?p wdt:P106 <http://www.wikidata.org/entity/Q169470> ;\n     wdt:P106 <http://www.wikidata.org/entity/Q4964182> ;\n     rdfs:label ?who . FILTER(LANG(?who) = "en")\n}`,
+          duck: `SELECT entity, label\nFROM {T}\nWHERE list_contains(P106, '<http://www.wikidata.org/entity/Q169470>')\n  AND list_contains(P106, '<http://www.wikidata.org/entity/Q4964182>');`,
+          sqlite: `SELECT entity, label\nFROM "Q5"\nWHERE EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '<http://www.wikidata.org/entity/Q169470>')\n  AND EXISTS (SELECT 1 FROM json_each(P106) WHERE value = '<http://www.wikidata.org/entity/Q4964182>');`,
+          note: "Occupation intersection — same answer, three engines." },
+      ],
+    },
   },
 
   // Per-dataset visual identity + descriptive tags for the dataset browser.
