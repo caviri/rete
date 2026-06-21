@@ -274,6 +274,53 @@ window.RETE_PLAYGROUND_CATALOG = {
           note: "Occupation intersection — same answer, three engines." },
       ],
     },
+
+    // chemotion (dataset key "chemotion"): companions generated 2026-06-21 from the
+    // bucket .rete (dumped via the shipped wasm → N-Triples → rdf_to_entity_tables.py)
+    // and uploaded to playground/chemotion-*. The 78k instances (datasets, studies,
+    // molecules, substances) are all owl:NamedIndividual — that table carries the
+    // structural columns (smiles/inchikey/formula); the CHMO/RXNO ontology classes
+    // are owl:Class. Shares CHEBI IRIs with chebi-full (they federate).
+    "chemotion": {
+      rete: "playground/chemotion.rete",
+      parquetDir: "playground/chemotion-tables",
+      duckdb: "playground/chemotion.duckdb",  duckdbSize: "48 MB",
+      sqlite: "playground/chemotion.sqlite",  sqliteSize: "167 MB",
+      typePredicate: "rdf:type",
+      about: "The Chemotion electronic-lab-notebook knowledge graph (FIZ Karlsruhe) merged with " +
+        "CHMO + RXNO — 1.53 M triples — in four lossless encodings. The 78k instances (datasets, " +
+        "studies, molecules, substances) are all <code>owl:NamedIndividual</code>; that table carries " +
+        "the structural columns <code>smiles</code> / <code>inchikey</code> / <code>formula</code>. The " +
+        "CHMO/RXNO method &amp; reaction classes are <code>owl:Class</code>. Shares CHEBI IRIs with chebi-full.",
+      tables: [
+        { name: "NamedIndividual", file: "NamedIndividual_.parquet", classIri: "http://www.w3.org/2002/07/owl#NamedIndividual",     label: "instances (molecules, datasets…)", entities: 78764 },
+        { name: "NFDI_0000015",    file: "NFDI_0000015_.parquet",    classIri: "https://nfdi.fiz-karlsruhe.de/ontology/NFDI_0000015", label: "NFDI_0000015",                    entities: 4864 },
+        { name: "Axiom",           file: "Axiom_.parquet",           classIri: "http://www.w3.org/2002/07/owl#Axiom",                label: "owl:Axiom — xref reification",     entities: 4587 },
+        { name: "Class",           file: "Class_.parquet",           classIri: "http://www.w3.org/2002/07/owl#Class",                label: "owl:Class — CHMO/RXNO classes",    entities: 4474 },
+        { name: "IAO_0000028",     file: "IAO_0000028_.parquet",     classIri: "http://purl.obolibrary.org/obo/IAO_0000028",         label: "IAO symbol",                       entities: 4247 },
+        { name: "Restriction",     file: "Restriction_.parquet",     classIri: "http://www.w3.org/2002/07/owl#Restriction",          label: "owl:Restriction",                  entities: 1171 },
+      ],
+      sqlCols: ["entity", "label", "types", "smiles", "inchikey", "formula", "subClassOf", "IAO_0000115", "hasExactSynonym", "extra"],
+      examples: [
+        { label: "Instances with a SMILES structure", table: { file: "NamedIndividual_.parquet", name: "NamedIndividual" },
+          sparql: `PREFIX chebi: <http://purl.obolibrary.org/obo/chebi/>\nSELECT ?s ?smiles WHERE {\n  ?s chebi:smiles ?smiles\n}\nLIMIT 50`,
+          duck: `SELECT entity, label, smiles, inchikey, formula\nFROM {T}\nWHERE smiles IS NOT NULL\nLIMIT 50;`,
+          sqlite: `SELECT entity, label, smiles, inchikey, formula\nFROM "NamedIndividual"\nWHERE smiles IS NOT NULL\nLIMIT 50;`,
+          note: "Chemotion's molecules carry SMILES / InChIKey / formula — the same structural columns chebi-full has (the two federate on CHEBI IRIs)." },
+
+        { label: "What types are the instances?", table: { file: "NamedIndividual_.parquet", name: "NamedIndividual" },
+          sparql: `SELECT ?t (COUNT(?s) AS ?n) WHERE {\n  ?s a ?t\n}\nGROUP BY ?t\nORDER BY DESC(?n)\nLIMIT 15`,
+          duck: `SELECT t, count(*) AS n\nFROM (SELECT unnest(types) AS t FROM {T})\nGROUP BY t\nORDER BY n DESC\nLIMIT 15;`,
+          sqlite: `SELECT je.value AS type, count(*) AS n\nFROM "NamedIndividual", json_each(types) je\nGROUP BY type\nORDER BY n DESC\nLIMIT 15;`,
+          note: "Every instance is an owl:NamedIndividual; its domain types (molecule CHEBI_23367, substance CHEBI_59999, process BFO_0000015…) live in the `types` column." },
+
+        { label: "Ontology classes & their definitions", table: { file: "Class_.parquet", name: "Class" },
+          sparql: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX obo: <http://purl.obolibrary.org/obo/>\nSELECT ?c ?label ?def WHERE {\n  ?c a <http://www.w3.org/2002/07/owl#Class> ;\n     rdfs:label ?label ; obo:IAO_0000115 ?def\n}\nLIMIT 25`,
+          duck: `SELECT entity, label, IAO_0000115 AS definition\nFROM {T}\nWHERE IAO_0000115 IS NOT NULL\nLIMIT 25;`,
+          sqlite: `SELECT entity, label, IAO_0000115\nFROM "Class"\nWHERE IAO_0000115 IS NOT NULL\nLIMIT 25;`,
+          note: "CHMO methods + RXNO reactions as owl:Class with textual definitions (obo:IAO_0000115)." },
+      ],
+    },
   },
 
   // Per-dataset visual identity + descriptive tags for the dataset browser.
