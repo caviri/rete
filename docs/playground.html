@@ -4937,6 +4937,58 @@ window.RETE_PLAYGROUND_CATALOG = {
           note: "CHMO methods + RXNO reactions as owl:Class with textual definitions (obo:IAO_0000115)." },
       ],
     },
+
+    // Smaller datasets (companions generated 2026-06-21, same wasm-dump pipeline).
+    // Tables only — the entity-table selector + SQL tab work without curated examples.
+    "getty-ulan": {
+      rete: "playground/getty-ulan.rete", parquetDir: "playground/getty-ulan-tables",
+      duckdb: "playground/getty-ulan.duckdb", sqlite: "playground/getty-ulan.sqlite", typePredicate: "rdf:type",
+      tables: [
+        { name: "Person", file: "Person_.parquet", classIri: "http://xmlns.com/foaf/0.1/Person", label: "artist / agent (teacherOf, influenced)", entities: 28279 },
+      ],
+    },
+    "mmm": {
+      rete: "playground/mmm.rete", parquetDir: "playground/mmm-tables",
+      duckdb: "playground/mmm.duckdb", sqlite: "playground/mmm.sqlite", typePredicate: "rdf:type",
+      tables: [
+        { name: "E21_Person", file: "E21_Person_.parquet", classIri: "http://erlangen-crm.org/current/E21_Person", label: "person (owner/author)", entities: 3372 },
+        { name: "F4_Manifestation_Singleton", file: "F4_Manifestation_Singleton_.parquet", classIri: "http://erlangen-crm.org/efrbroo/F4_Manifestation_Singleton", label: "manuscript", entities: 3155 },
+        { name: "E53_Place", file: "E53_Place_.parquet", classIri: "http://erlangen-crm.org/current/E53_Place", label: "place (production city)", entities: 4 },
+      ],
+    },
+    "monarch": {
+      rete: "playground/monarch.rete", parquetDir: "playground/monarch-tables",
+      duckdb: "playground/monarch.duckdb", sqlite: "playground/monarch.sqlite", typePredicate: "rdf:type",
+      tables: [
+        { name: "Gene", file: "Gene_.parquet", classIri: "https://w3id.org/biolink/vocab/Gene", label: "gene", entities: 534 },
+        { name: "PhenotypicFeature", file: "PhenotypicFeature_.parquet", classIri: "https://w3id.org/biolink/vocab/PhenotypicFeature", label: "phenotype", entities: 312 },
+        { name: "Genotype", file: "Genotype_.parquet", classIri: "https://w3id.org/biolink/vocab/Genotype", label: "genotype", entities: 66 },
+        { name: "BiologicalProcess", file: "BiologicalProcess_.parquet", classIri: "https://w3id.org/biolink/vocab/BiologicalProcess", label: "biological process", entities: 31 },
+        { name: "CellularComponent", file: "CellularComponent_.parquet", classIri: "https://w3id.org/biolink/vocab/CellularComponent", label: "cellular component", entities: 28 },
+        { name: "ChemicalEntity", file: "ChemicalEntity_.parquet", classIri: "https://w3id.org/biolink/vocab/ChemicalEntity", label: "chemical entity", entities: 24 },
+      ],
+    },
+    "opencitations": {
+      rete: "playground/opencitations.rete", parquetDir: "playground/opencitations-tables",
+      duckdb: "playground/opencitations.duckdb", sqlite: "playground/opencitations.sqlite", typePredicate: "rdf:type",
+      tables: [
+        { name: "JournalArticle", file: "JournalArticle_.parquet", classIri: "http://purl.org/spar/fabio/JournalArticle", label: "journal article", entities: 297 },
+        { name: "BookChapter", file: "BookChapter_.parquet", classIri: "http://purl.org/spar/fabio/BookChapter", label: "book chapter", entities: 23 },
+        { name: "ReferenceEntry", file: "ReferenceEntry_.parquet", classIri: "http://purl.org/spar/fabio/ReferenceEntry", label: "reference entry", entities: 7 },
+      ],
+    },
+    "orkg": {
+      rete: "playground/orkg.rete", parquetDir: "playground/orkg-tables",
+      duckdb: "playground/orkg.duckdb", sqlite: "playground/orkg.sqlite", typePredicate: "rdf:type",
+      tables: [
+        { name: "Contribution", file: "Contribution_.parquet", classIri: "https://orkg.org/class/Contribution", label: "contribution", entities: 932 },
+        { name: "C23008", file: "C23008_.parquet", classIri: "https://orkg.org/class/C23008", label: "C23008", entities: 561 },
+        { name: "Paper", file: "Paper_.parquet", classIri: "https://orkg.org/class/Paper", label: "paper", entities: 552 },
+        { name: "List", file: "List_.parquet", classIri: "https://orkg.org/class/List", label: "list", entities: 551 },
+        { name: "Author", file: "Author_.parquet", classIri: "https://orkg.org/class/Author", label: "author", entities: 493 },
+        { name: "Venue", file: "Venue_.parquet", classIri: "https://orkg.org/class/Venue", label: "venue", entities: 412 },
+      ],
+    },
   },
 
   // Per-dataset visual identity + descriptive tags for the dataset browser.
