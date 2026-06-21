@@ -437,10 +437,14 @@ fn full_scan_coalesces_tile_fetches() {
     // so a full sweep costs O(log tiles) coalesced batch reads plus the tile
     // directories — a small constant, NOT one read per tile (which over 700+
     // tiles would be in the hundreds).
+    // The six permutation tile directories (+ their synopsis trailers) are read
+    // at open — a small constant — on top of the SPO scan's O(log n) coalesced
+    // batches; still nowhere near one read per tile (which over 700+ tiles would
+    // be in the hundreds).
     assert!(
-        index_reads < 32,
+        index_reads < 64,
         "full scan issued {index_reads} index-region reads over {spo_tiles} tiles — \
-         expected the tile directories plus O(log n) coalesced batch reads"
+         expected the six tile directories plus O(log n) coalesced batch reads"
     );
 }
 
@@ -541,9 +545,9 @@ fn dump_over_lazy_open_coalesces_fetches() {
 
     let total_reads = reader.reads().len();
     assert!(
-        total_reads < 56,
-        "lazy dump issued {total_reads} range reads — expected directories \
-         plus coalesced chunk batches and O(log n) tile-prefetch batches"
+        total_reads < 80,
+        "lazy dump issued {total_reads} range reads — expected the six permutation \
+         directories plus coalesced chunk batches and O(log n) tile-prefetch batches"
     );
 }
 

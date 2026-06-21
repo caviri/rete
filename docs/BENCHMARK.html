@@ -473,13 +473,14 @@ large UNION/VALUES/MINUS results. The engine evaluates as a lazy
 pipeline over integer slot rows, switches to index-nested-loop
 probes under small LIMIT/ASK demand, and resolves terms only at
 projection. A <strong>hybrid BGP join</strong> also switches to per-row index
-probes mid-join once the running intermediate is small — so a
-star/snowflake's trailing <code>?x rdf:type C</code> checks over thousands of
-instances cost a handful of lookups, not a full-extent scan — and
-it never <em>seeds</em> a join from a class enumeration (<code>?s a C</code> matches
-every instance of a popular class). Together these cut the LUBM
-snowflakes sharply: Q4 14x and Q7 12x faster than before, both now
-index-free at a few hundred microseconds.</li>
+probes mid-join once the running intermediate is small (so a
+star/snowflake's trailing <code>?x rdf:type C</code> checks cost a few lookups,
+not a full-extent scan), and never seeds a join from a class
+enumeration — together cutting the LUBM snowflakes Q4 ~14x and Q7
+~12x. The index stores all six permutations (format v0.4), so any
+join key can be streamed pre-sorted for a sort-merge join; at these
+sizes the hash/probe joins already win, so the merge path is neutral
+here — it pays off at much larger scale, for ~2x the index payload.</li>
 <li>Oxigraph keeps an edge on REGEX scans whose pattern needs the real
 regex engine (rete's regex-lite has no literal prefilter; literal
 patterns use a substring fast path) and, by fractions of a
@@ -533,7 +534,7 @@ the build light.</p>
 standard queries, on identical pre-materialized data in both engines.
 LUBM(1): 93,139 generated +
 26,007 RDFS/OWL-RL-materialized =
-118,680 triples (<code>.rete</code>: 281,939 bytes).</p>
+118,680 triples (<code>.rete</code>: 555,581 bytes).</p>
 <p><strong>Read the caveats:</strong> the generator is a faithful <em>reimplementation</em> of
 UBA's documented cardinalities, not the official Java tool, so counts are
 not comparable to published LUBM figures; inference is rete's RDFS/OWL-RL
@@ -542,24 +543,24 @@ restriction-defined classes (Q12's <code>Chair</code>) are empty on both sides b
 construction. The correctness anchor is <strong>cross-engine row parity</strong>:
 <strong>14 / 14</strong> queries agree.</p>
 <table><thead><tr><th>Engine</th><th style="text-align: right">Load</th><th style="text-align: right">Resident heap</th></tr></thead><tbody>
-<tr><td><strong>rete</strong> <code>Rete::open</code></td><td style="text-align: right"><strong>3.6 ms</strong></td><td style="text-align: right">2.17 MiB</td></tr>
-<tr><td>Oxigraph bulk-load</td><td style="text-align: right">188 ms</td><td style="text-align: right">37.50 MiB</td></tr>
+<tr><td><strong>rete</strong> <code>Rete::open</code></td><td style="text-align: right"><strong>6.2 ms</strong></td><td style="text-align: right">3.66 MiB</td></tr>
+<tr><td>Oxigraph bulk-load</td><td style="text-align: right">180 ms</td><td style="text-align: right">37.50 MiB</td></tr>
 </tbody></table>
 <table><thead><tr><th>Query</th><th style="text-align: right">rete</th><th style="text-align: right">Oxigraph</th><th style="text-align: right">rete vs oxi</th><th style="text-align: right">peak heap MiB (rete / oxi)</th><th style="text-align: right">rows</th><th style="text-align: center">ok</th></tr></thead><tbody>
-<tr><td>Q1 grad students of a course</td><td style="text-align: right"><strong>0.26 ±0.03 ms</strong></td><td style="text-align: right">0.84 ±0.03 ms</td><td style="text-align: right">3.3x</td><td style="text-align: right">0.00 / 0.00</td><td style="text-align: right">3</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q2 grad student / univ / dept triangle</td><td style="text-align: right">5.54 ±0.54 ms</td><td style="text-align: right"><strong>5.53 ±0.53 ms</strong></td><td style="text-align: right">1.0x</td><td style="text-align: right">1.80 / 0.01</td><td style="text-align: right">2036</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q3 publications of a professor</td><td style="text-align: right"><strong>0.69 ±0.11 ms</strong></td><td style="text-align: right">2.61 ±0.38 ms</td><td style="text-align: right">3.8x</td><td style="text-align: right">0.01 / 0.00</td><td style="text-align: right">9</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q4 professors of a department (+3 props)</td><td style="text-align: right"><strong>0.12 ±0.02 ms</strong></td><td style="text-align: right">0.49 ±0.04 ms</td><td style="text-align: right">3.9x</td><td style="text-align: right">0.02 / 0.01</td><td style="text-align: right">26</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q5 persons member of a department</td><td style="text-align: right"><strong>1.59 ±0.11 ms</strong></td><td style="text-align: right">7.70 ±0.78 ms</td><td style="text-align: right">4.8x</td><td style="text-align: right">0.34 / 0.00</td><td style="text-align: right">544</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q6 all students</td><td style="text-align: right">2.22 ±0.33 ms</td><td style="text-align: right"><strong>2.07 ±0.60 ms</strong></td><td style="text-align: right">0.9x</td><td style="text-align: right">4.39 / 0.00</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q7 students of a professor's courses</td><td style="text-align: right">0.89 ±0.02 ms</td><td style="text-align: right"><strong>0.06 ±0.02 ms</strong></td><td style="text-align: right">0.1x</td><td style="text-align: right">0.04 / 0.01</td><td style="text-align: right">49</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q8 students of a university's departments</td><td style="text-align: right"><strong>12.5 ±1.7 ms</strong></td><td style="text-align: right">19.6 ±0.3 ms</td><td style="text-align: right">1.6x</td><td style="text-align: right">5.05 / 0.01</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q9 student / advisor / course triangle</td><td style="text-align: right"><strong>6.83 ±0.68 ms</strong></td><td style="text-align: right">12.6 ±1.1 ms</td><td style="text-align: right">1.8x</td><td style="text-align: right">1.65 / 0.01</td><td style="text-align: right">115</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q10 students of a graduate course</td><td style="text-align: right"><strong>0.71 ±0.03 ms</strong></td><td style="text-align: right">2.99 ±0.19 ms</td><td style="text-align: right">4.2x</td><td style="text-align: right">0.00 / 0.00</td><td style="text-align: right">0</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q11 research groups of a university</td><td style="text-align: right">0.20 ±0.03 ms</td><td style="text-align: right"><strong>0.17 ±0.01 ms</strong></td><td style="text-align: right">0.9x</td><td style="text-align: right">0.14 / 0.00</td><td style="text-align: right">230</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q1 grad students of a course</td><td style="text-align: right"><strong>0.30 ±0.03 ms</strong></td><td style="text-align: right">0.83 ±0.25 ms</td><td style="text-align: right">2.8x</td><td style="text-align: right">0.00 / 0.00</td><td style="text-align: right">3</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q2 grad student / univ / dept triangle</td><td style="text-align: right"><strong>3.96 ±0.18 ms</strong></td><td style="text-align: right">5.36 ±0.55 ms</td><td style="text-align: right">1.4x</td><td style="text-align: right">1.57 / 0.01</td><td style="text-align: right">2036</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q3 publications of a professor</td><td style="text-align: right"><strong>0.77 ±0.09 ms</strong></td><td style="text-align: right">2.42 ±0.30 ms</td><td style="text-align: right">3.1x</td><td style="text-align: right">0.01 / 0.00</td><td style="text-align: right">9</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q4 professors of a department (+3 props)</td><td style="text-align: right"><strong>0.24 ±0.02 ms</strong></td><td style="text-align: right">0.49 ±0.03 ms</td><td style="text-align: right">2.1x</td><td style="text-align: right">0.09 / 0.01</td><td style="text-align: right">26</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q5 persons member of a department</td><td style="text-align: right"><strong>1.39 ±0.10 ms</strong></td><td style="text-align: right">6.49 ±0.52 ms</td><td style="text-align: right">4.7x</td><td style="text-align: right">0.34 / 0.00</td><td style="text-align: right">544</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q6 all students</td><td style="text-align: right">2.47 ±0.39 ms</td><td style="text-align: right"><strong>1.71 ±0.42 ms</strong></td><td style="text-align: right">0.7x</td><td style="text-align: right">4.39 / 0.00</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q7 students of a professor's courses</td><td style="text-align: right">0.94 ±0.07 ms</td><td style="text-align: right"><strong>0.08 ±0.02 ms</strong></td><td style="text-align: right">0.1x</td><td style="text-align: right">0.04 / 0.01</td><td style="text-align: right">49</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q8 students of a university's departments</td><td style="text-align: right"><strong>11.7 ±1.5 ms</strong></td><td style="text-align: right">18.8 ±0.7 ms</td><td style="text-align: right">1.6x</td><td style="text-align: right">5.05 / 0.01</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q9 student / advisor / course triangle</td><td style="text-align: right"><strong>6.31 ±0.33 ms</strong></td><td style="text-align: right">12.1 ±1.1 ms</td><td style="text-align: right">1.9x</td><td style="text-align: right">1.53 / 0.01</td><td style="text-align: right">115</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q10 students of a graduate course</td><td style="text-align: right"><strong>0.75 ±0.08 ms</strong></td><td style="text-align: right">2.91 ±0.46 ms</td><td style="text-align: right">3.9x</td><td style="text-align: right">0.00 / 0.00</td><td style="text-align: right">0</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q11 research groups of a university</td><td style="text-align: right">0.21 ±0.02 ms</td><td style="text-align: right"><strong>0.15 ±0.02 ms</strong></td><td style="text-align: right">0.7x</td><td style="text-align: right">0.14 / 0.00</td><td style="text-align: right">230</td><td style="text-align: center">yes</td></tr>
 <tr><td>Q12 chairs of a university's departments</td><td style="text-align: right"><strong>0.01 ±0.00 ms</strong></td><td style="text-align: right">0.02 ±0.00 ms</td><td style="text-align: right">2.4x</td><td style="text-align: right">0.00 / 0.01</td><td style="text-align: right">0</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q13 alumni of a university</td><td style="text-align: right"><strong>2.18 ±0.18 ms</strong></td><td style="text-align: right">2.95 ±0.66 ms</td><td style="text-align: right">1.4x</td><td style="text-align: right">1.62 / 0.00</td><td style="text-align: right">2655</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q14 all undergraduate students</td><td style="text-align: right">2.18 ±0.16 ms</td><td style="text-align: right"><strong>1.89 ±0.56 ms</strong></td><td style="text-align: right">0.9x</td><td style="text-align: right">4.39 / 0.00</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q13 alumni of a university</td><td style="text-align: right"><strong>2.31 ±0.16 ms</strong></td><td style="text-align: right">2.47 ±0.42 ms</td><td style="text-align: right">1.1x</td><td style="text-align: right">1.62 / 0.00</td><td style="text-align: right">2655</td><td style="text-align: center">yes</td></tr>
+<tr><td>Q14 all undergraduate students</td><td style="text-align: right">2.37 ±0.13 ms</td><td style="text-align: right"><strong>1.75 ±0.54 ms</strong></td><td style="text-align: right">0.7x</td><td style="text-align: right">4.39 / 0.00</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
 </tbody></table>
 <p>Reproduce: <code>cargo run --release -p rete-bench -- --json --lubm 1 &gt; docs/benchmark-lubm.json</code> then re-render this doc.</p>
 <!-- benchmark:lubm:end -->

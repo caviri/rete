@@ -28,7 +28,9 @@ inputs and outputs rather than reimplement engine logic.
 1. Parse RDF input into default-graph triples and optional named-graph quads.
 2. Intern terms in the dictionary so query-time matching works on compact integer
    IDs instead of repeated strings.
-3. Build three permutation indexes over the default graph: SPO, POS, and OSP.
+3. Build six permutation indexes over the default graph: SPO, POS, OSP, SOP,
+   PSO, and OPS. Three suffice to match any pattern shape; the full six let any
+   join key be streamed pre-sorted, enabling sort-merge joins (format v0.4).
 4. Compute the pyramid summary: community hierarchy, super-edges, predicate
    totals, class/type summaries, and named-graph metadata.
 5. Optionally attach dataset-card metadata into the reserved metadata section.
@@ -76,7 +78,7 @@ much of the file to load:
 |---|---|
 | Header | Magic/version, content hash, counts, and the section directory |
 | Dictionary | Front-coded term strings and role-aware ID spaces |
-| Indexes | Compressed triple blocks in SPO/POS/OSP order |
+| Indexes | Compressed triple blocks in all six (SPO/POS/OSP/SOP/PSO/OPS) orders |
 | Summary | Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (planner stats, entity shapes, label index) |
 | Text index | Optional `--text-index` section: word → subjects, for full-text (`--contains`) search |
 | Metadata | Optional dataset-card JSON/catalog data |

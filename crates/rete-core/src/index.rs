@@ -119,21 +119,48 @@ impl Tile {
     }
 }
 
-/// Which stored permutation to scan.
+/// Which stored permutation to scan. The full **six** orders (a SPARQL engine's
+/// classic set, as in QLever): together they sort the triples on *every* prefix
+/// of `(s, p, o)` columns, so for any bound-component prefix and any free
+/// component there is a permutation that routes on the prefix **and** yields the
+/// stream sorted on that free component — the precondition for a merge join.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexPermutation {
     Spo,
+    Sop,
+    Pso,
     Pos,
     Osp,
+    Ops,
 }
+
+/// The number of stored permutations.
+pub(crate) const NUM_PERMS: usize = 6;
+
+/// The six permutations in section order — the canonical iteration list. The
+/// original three (SPO, POS, OSP) lead, so a default scan's tie-break (and its
+/// provenance) is unchanged from the 3-permutation format; the three added orders
+/// (SOP, PSO, OPS) follow and exist to give a merge join a stream sorted on the
+/// join key.
+pub(crate) const ALL_PERMS: [IndexPermutation; NUM_PERMS] = [
+    IndexPermutation::Spo,
+    IndexPermutation::Pos,
+    IndexPermutation::Osp,
+    IndexPermutation::Sop,
+    IndexPermutation::Pso,
+    IndexPermutation::Ops,
+];
 
 impl IndexPermutation {
     /// Stable display name used in CLI diagnostics and provenance records.
     pub fn name(self) -> &'static str {
         match self {
             IndexPermutation::Spo => "SPO",
+            IndexPermutation::Sop => "SOP",
+            IndexPermutation::Pso => "PSO",
             IndexPermutation::Pos => "POS",
             IndexPermutation::Osp => "OSP",
+            IndexPermutation::Ops => "OPS",
         }
     }
 
@@ -143,34 +170,49 @@ impl IndexPermutation {
             IndexPermutation::Spo => 0,
             IndexPermutation::Pos => 1,
             IndexPermutation::Osp => 2,
+            IndexPermutation::Sop => 3,
+            IndexPermutation::Pso => 4,
+            IndexPermutation::Ops => 5,
+        }
+    }
+
+    /// The canonical `(s, p, o)` roles in this permutation's `(a, b, c)` slots,
+    /// as indices (0=s, 1=p, 2=o). The single source of truth for `forward` /
+    /// `back` / `order_pattern`.
+    const fn roles(self) -> [usize; 3] {
+        match self {
+            IndexPermutation::Spo => [0, 1, 2],
+            IndexPermutation::Sop => [0, 2, 1],
+            IndexPermutation::Pso => [1, 0, 2],
+            IndexPermutation::Pos => [1, 2, 0],
+            IndexPermutation::Osp => [2, 0, 1],
+            IndexPermutation::Ops => [2, 1, 0],
         }
     }
 
     /// Map a canonical `(s, p, o)` triple into this permutation's `(a, b, c)`.
-    pub(crate) fn forward(self, (s, p, o): Triple) -> Triple {
-        match self {
-            IndexPermutation::Spo => (s, p, o),
-            IndexPermutation::Pos => (p, o, s),
-            IndexPermutation::Osp => (o, s, p),
-        }
+    pub(crate) fn forward(self, t: Triple) -> Triple {
+        let c = [t.0, t.1, t.2];
+        let r = self.roles();
+        (c[r[0]], c[r[1]], c[r[2]])
     }
 
     /// Map a stored `(a, b, c)` back to canonical `(s, p, o)`.
-    fn back(self, (a, b, c): Triple) -> Triple {
-        match self {
-            IndexPermutation::Spo => (a, b, c),
-            IndexPermutation::Pos => (c, a, b), // a=p, b=o, c=s
-            IndexPermutation::Osp => (b, c, a), // a=o, b=s, c=p
-        }
+    fn back(self, abc: Triple) -> Triple {
+        let a = [abc.0, abc.1, abc.2];
+        let r = self.roles();
+        let mut out = [0u32; 3];
+        out[r[0]] = a[0];
+        out[r[1]] = a[1];
+        out[r[2]] = a[2];
+        (out[0], out[1], out[2])
     }
 
     /// The pattern's bound components in this permutation's component order.
-    pub(crate) fn order_pattern(self, (s, p, o): Pattern) -> [Option<u32>; 3] {
-        match self {
-            IndexPermutation::Spo => [s, p, o],
-            IndexPermutation::Pos => [p, o, s],
-            IndexPermutation::Osp => [o, s, p],
-        }
+    pub(crate) fn order_pattern(self, p: Pattern) -> [Option<u32>; 3] {
+        let c = [p.0, p.1, p.2];
+        let r = self.roles();
+        [c[r[0]], c[r[1]], c[r[2]]]
     }
 
     /// Length of the leading run of bound components — higher is more selective.
@@ -224,14 +266,10 @@ impl GraphIndexBuilder {
     }
 
     pub fn build(self) -> GraphIndex {
-        let perms = [
-            IndexPermutation::Spo,
-            IndexPermutation::Pos,
-            IndexPermutation::Osp,
-        ];
+        let perms = ALL_PERMS;
         let triples = &self.triples;
         let budget = self.tile_budget;
-        // The three permutations are independent — permute + sort + tile each.
+        // The six permutations are independent — permute + sort + tile each.
         let build_one = move |perm: IndexPermutation| -> Vec<Tile> {
             let permuted: Vec<Triple> = triples.iter().map(|&t| perm.forward(t)).collect();
             build_tiles(permuted, budget)
@@ -240,14 +278,14 @@ impl GraphIndexBuilder {
         // (they share no state); the per-permutation sort inside is also
         // parallel. Output is byte-identical to the serial path.
         #[cfg(feature = "parallel")]
-        let sections: [Vec<Tile>; 3] = {
+        let sections: [Vec<Tile>; NUM_PERMS] = {
             use rayon::iter::{IntoParallelIterator, ParallelIterator};
             let built: Vec<Vec<Tile>> = perms.into_par_iter().map(build_one).collect();
             // `.ok()` drops the (non-Debug) Vec error so `expect` compiles.
-            built.try_into().ok().expect("three permutations")
+            built.try_into().ok().expect("six permutations")
         };
         #[cfg(not(feature = "parallel"))]
-        let sections: [Vec<Tile>; 3] = perms.map(build_one);
+        let sections: [Vec<Tile>; NUM_PERMS] = perms.map(build_one);
         GraphIndex::from_sections(sections)
     }
 }
@@ -329,11 +367,11 @@ fn build_tiles(mut triples: Vec<Triple>, budget: usize) -> Vec<Tile> {
     tiles
 }
 
-/// The three tiled permutation sections, queryable by triple pattern.
+/// The six tiled permutation sections, queryable by triple pattern.
 pub struct GraphIndex {
-    /// Tiles per permutation (SPO, POS, OSP), ascending and disjoint in their
-    /// leading-id ranges.
-    sections: [Vec<Tile>; 3],
+    /// Tiles per permutation (SPO, SOP, PSO, POS, OSP, OPS — see [`ALL_PERMS`]),
+    /// ascending and disjoint in their leading-id ranges.
+    sections: [Vec<Tile>; NUM_PERMS],
     /// Faults in remote tiles on first scan (`None` for local indexes).
     loader: Option<TileLoader>,
     /// Optional batched fetch for multi-tile scans (`None` falls back to
@@ -345,7 +383,7 @@ pub struct GraphIndex {
 }
 
 impl GraphIndex {
-    fn from_sections(sections: [Vec<Tile>; 3]) -> Self {
+    fn from_sections(sections: [Vec<Tile>; NUM_PERMS]) -> Self {
         GraphIndex {
             sections,
             loader: None,
@@ -356,7 +394,7 @@ impl GraphIndex {
 
     /// Rebuild from tiled sections: per permutation, `(min_a, max_a, block
     /// bytes)` per tile in ascending leading-id order — the v0.2 layout.
-    pub fn from_tiles(sections: [Vec<(u32, u32, Vec<u8>)>; 3]) -> Self {
+    pub fn from_tiles(sections: [Vec<(u32, u32, Vec<u8>)>; NUM_PERMS]) -> Self {
         let sections = sections.map(|tiles| {
             tiles
                 .into_iter()
@@ -373,7 +411,7 @@ impl GraphIndex {
     /// silently smaller result.
     #[allow(clippy::type_complexity)]
     pub fn from_remote_directories(
-        directories: [Vec<(u32, u32, Option<(u32, u32, u32, u32)>)>; 3],
+        directories: [Vec<(u32, u32, Option<(u32, u32, u32, u32)>)>; NUM_PERMS],
         loader: TileLoader,
     ) -> Self {
         let sections = directories.map(|dir| {
@@ -448,10 +486,17 @@ impl GraphIndex {
             .sum()
     }
 
-    /// The tiles of each permutation section (SPO, POS, OSP), for the file
-    /// writer.
-    pub fn tile_sections(&self) -> [&[Tile]; 3] {
-        [&self.sections[0], &self.sections[1], &self.sections[2]]
+    /// The tiles of each permutation section (in [`ALL_PERMS`] order), for the
+    /// file writer.
+    pub fn tile_sections(&self) -> [&[Tile]; NUM_PERMS] {
+        [
+            &self.sections[0],
+            &self.sections[1],
+            &self.sections[2],
+            &self.sections[3],
+            &self.sections[4],
+            &self.sections[5],
+        ]
     }
 
     /// The permutation selected for a pattern: the one with the longest bound
@@ -461,7 +506,7 @@ impl GraphIndex {
     pub fn best_permutation(pattern: Pattern) -> IndexPermutation {
         let mut best = IndexPermutation::Spo;
         let mut best_score = best.leading_bound(pattern);
-        for perm in [IndexPermutation::Pos, IndexPermutation::Osp] {
+        for perm in ALL_PERMS {
             let score = perm.leading_bound(pattern);
             if score > best_score {
                 best = perm;
@@ -469,6 +514,35 @@ impl GraphIndex {
             }
         }
         best
+    }
+
+    /// Choose a permutation that **routes** on `pattern`'s bound prefix *and*
+    /// streams sorted on the canonical column `sort_col` (0=subject, 1=predicate,
+    /// 2=object) — i.e. `sort_col` is the leading *free* component after the bound
+    /// prefix. Returns `None` if `sort_col` is itself bound (then every row shares
+    /// that value — any permutation is "sorted" on it) or no permutation qualifies.
+    /// This is the precondition a merge join needs: both inputs sorted on the join
+    /// key. Among qualifiers, the longest bound prefix (best routing) wins.
+    pub fn permutation_sorted_on(pattern: Pattern, sort_col: usize) -> Option<IndexPermutation> {
+        let bound = [
+            pattern.0.is_some(),
+            pattern.1.is_some(),
+            pattern.2.is_some(),
+        ];
+        if bound[sort_col] {
+            return None;
+        }
+        let mut best: Option<(IndexPermutation, usize)> = None;
+        for perm in ALL_PERMS {
+            let roles = perm.roles();
+            let lead = perm.leading_bound(pattern);
+            // The component at slot `lead` is the first free one; it must be the
+            // sort column (so the stream is sorted on it after the bound prefix).
+            if lead < 3 && roles[lead] == sort_col && best.map(|(_, s)| lead > s).unwrap_or(true) {
+                best = Some((perm, lead));
+            }
+        }
+        best.map(|(p, _)| p)
     }
 
     /// Match one already-decoded serialized permutation block (a single v0.1
@@ -510,15 +584,39 @@ impl GraphIndex {
     /// callers that can stop early (ASK, `LIMIT`, BGP probes) or that don't need
     /// the canonical re-sort. Decodes only the matching groups (see
     /// [`TripleBlock::scan`]); a malformed/absent block yields nothing rather
-    /// than panicking.
+    /// than panicking. The permutation is chosen for the longest bound prefix.
     pub fn scan_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
-        // Pick the permutation with the longest leading-bound prefix, then
-        // route: a bound leading id binary-searches the tile directory to
-        // exactly one tile (groups are never split across tiles); an unbound
-        // one chains every tile's cursor. Within a tile, a bound leading scan
-        // jumps to its a-group via the tile's lazily-built group directory —
-        // built on first use, costing one walk of that (budget-sized) tile.
-        let perm = Self::best_permutation(pattern);
+        self.scan_iter_with(pattern, Self::best_permutation(pattern))
+    }
+
+    /// Stream `pattern`'s matches **sorted on the canonical column `sort_col`**
+    /// (0=subject, 1=predicate, 2=object): the stream's `sort_col` values are
+    /// ascending. Chooses a permutation that routes on the bound prefix *and*
+    /// orders by `sort_col` ([`permutation_sorted_on`](Self::permutation_sorted_on));
+    /// `None` when none qualifies (e.g. `sort_col` is itself bound). The
+    /// precondition for feeding a [merge join](crate::bgp): both inputs sorted on
+    /// the shared join key.
+    pub(crate) fn scan_iter_sorted_on(
+        &self,
+        pattern: Pattern,
+        sort_col: usize,
+    ) -> Option<impl Iterator<Item = Triple> + '_> {
+        Some(self.scan_iter_with(pattern, Self::permutation_sorted_on(pattern, sort_col)?))
+    }
+
+    /// Stream `pattern`'s matches using a **specific** permutation `perm`; the
+    /// stream is sorted in `perm`'s `(a, b, c)` order. Shared core of `scan_iter`
+    /// and `scan_iter_sorted_on`.
+    fn scan_iter_with(
+        &self,
+        pattern: Pattern,
+        perm: IndexPermutation,
+    ) -> impl Iterator<Item = Triple> + '_ {
+        // Route: a bound leading id binary-searches the tile directory to exactly
+        // one tile (groups are never split across tiles); an unbound one chains
+        // every tile's cursor. Within a tile, a bound leading scan jumps to its
+        // a-group via the tile's lazily-built group directory — built on first
+        // use, costing one walk of that (budget-sized) tile.
         let [pa, pb, pc] = perm.order_pattern(pattern);
         let si = perm.section_index();
         let (start, end) = self.tile_span(si, pa);
@@ -756,6 +854,9 @@ mod tests {
             vec![(5u32, 5u32, Some((10u32, 11u32, 100u32, 100u32)))],
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
         ];
         let idx = GraphIndex::from_remote_directories(dirs, loader);
 
@@ -800,7 +901,14 @@ mod tests {
             fc.fetch_add(1, SeqCst);
             Some(blk.clone())
         });
-        let dirs = [vec![(5u32, 5u32, None)], Vec::new(), Vec::new()];
+        let dirs = [
+            vec![(5u32, 5u32, None)],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ];
         let idx = GraphIndex::from_remote_directories(dirs, loader);
         // Predicate 99 absent, but with no synopsis the tile is fetched (then the
         // zone map yields no match) — correctness preserved, just no fetch saved.

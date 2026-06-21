@@ -5,7 +5,7 @@
 //! ```text
 //! [0..128)   header
 //! [dict]     dictionary container: 4 front-coded sections
-//! [index]    permutation container: 3 triple blocks (SPO, POS, OSP)
+//! [index]    permutation container: 6 triple blocks (SPO/POS/OSP/SOP/PSO/OPS)
 //! [pyramid]  summary meta (and, in future, tile directories)
 //! [footer]   trailing magic
 //! ```
@@ -16,7 +16,7 @@
 
 use crate::dictionary::Dictionary;
 use crate::header::{Header, FLAG_HAS_QUADS, FLAG_TILE_SYNOPSIS, HEADER_LEN, MAGIC};
-use crate::index::{GraphIndex, IndexPermutation, Pattern};
+use crate::index::{GraphIndex, IndexPermutation, Pattern, NUM_PERMS};
 use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
 use crate::pyramid::{build_dendrogram, project_graph};
 use crate::reader::RangeReader;
@@ -902,9 +902,9 @@ fn read_tile_synopsis_ranged<R: RangeReader>(
 fn tile_file_ranges(
     index_bytes: &[u8],
     container_offset: u64,
-    section_ranges: &[ByteRange; 3],
-) -> [Vec<(u32, u32, ByteRange)>; 3] {
-    let mut out: [Vec<(u32, u32, ByteRange)>; 3] = Default::default();
+    section_ranges: &[ByteRange; NUM_PERMS],
+) -> [Vec<(u32, u32, ByteRange)>; NUM_PERMS] {
+    let mut out: [Vec<(u32, u32, ByteRange)>; NUM_PERMS] = Default::default();
     for (section, range) in out.iter_mut().zip(section_ranges) {
         let start = (range.offset - container_offset) as usize;
         let Some(payload) = index_bytes.get(start..start + range.len as usize) else {
@@ -944,14 +944,14 @@ fn decode_tiled_section(payload: &[u8], codec: u8) -> Result<Vec<(u32, u32, Vec<
         .collect()
 }
 
-/// Decode the index container: three raw tiled section payloads (one per
+/// Decode the index container: six raw tiled section payloads (one per
 /// permutation), each tile compressed individually.
 fn decode_index_container(bytes: &[u8], codec: u8) -> Result<GraphIndex, FileError> {
     let mut isecs = decode_container(bytes, CODEC_NONE)?;
-    if isecs.len() != 3 {
-        return Err(FileError::Container("expected 3 permutation sections"));
+    if isecs.len() != NUM_PERMS {
+        return Err(FileError::Container("expected 6 permutation sections"));
     }
-    let mut sections: [Vec<(u32, u32, Vec<u8>)>; 3] = Default::default();
+    let mut sections: [Vec<(u32, u32, Vec<u8>)>; NUM_PERMS] = Default::default();
     for (i, sec) in isecs.iter_mut().enumerate() {
         sections[i] = decode_tiled_section(sec, codec)?;
     }
@@ -1002,11 +1002,11 @@ fn container_section_payload_ranges(
 fn decode_index_section_ranges(
     bytes: &[u8],
     container_offset: u64,
-) -> Result<[ByteRange; 3], FileError> {
-    let ranges = container_section_payload_ranges(bytes, container_offset, 3)?;
+) -> Result<[ByteRange; NUM_PERMS], FileError> {
+    let ranges = container_section_payload_ranges(bytes, container_offset, NUM_PERMS)?;
     ranges
         .try_into()
-        .map_err(|_| FileError::Container("expected 3 permutation blocks"))
+        .map_err(|_| FileError::Container("expected 6 permutation blocks"))
 }
 
 fn read_uvarint_at<R: RangeReader>(
@@ -1083,7 +1083,8 @@ fn encode_index_container(index: &GraphIndex, codec: u8) -> Vec<u8> {
     let payloads = index
         .tile_sections()
         .map(|tiles| encode_tiled_section(tiles, codec));
-    encode_container(&[&payloads[0], &payloads[1], &payloads[2]], CODEC_NONE)
+    let refs: Vec<&[u8]> = payloads.iter().map(|p| p.as_slice()).collect();
+    encode_container(&refs, CODEC_NONE)
 }
 
 /// Encode the named-graphs section: each graph as `(iri, permutation container)`.
@@ -1433,11 +1434,11 @@ pub struct Rete {
     header: Header,
     dict: Dictionary,
     index: GraphIndex,
-    index_section_ranges: [ByteRange; 3],
+    index_section_ranges: [ByteRange; NUM_PERMS],
     /// Per-permutation tile directories as absolute file ranges
     /// (`(min_a, max_a, compressed-tile range)`), for provenance. Empty for
     /// pre-tiling (v0.1) files.
-    tile_ranges: [Vec<(u32, u32, ByteRange)>; 3],
+    tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS],
     pyramid: PyramidSlot,
     text_index: TextIndexSlot,
     named_graphs: Vec<(String, GraphIndex)>,
@@ -1566,14 +1567,7 @@ impl Rete {
             h.dictionary_offset,
             h.dictionary_len,
         ));
-        for (si, perm) in [
-            IndexPermutation::Spo,
-            IndexPermutation::Pos,
-            IndexPermutation::Osp,
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        for (si, perm) in crate::index::ALL_PERMS.into_iter().enumerate() {
             let sec = self.index_section_ranges[si];
             if sec.len == 0 {
                 continue;
@@ -1968,19 +1962,20 @@ impl Rete {
             .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
         let dict = Dictionary::from_chunked_sections(dict_arr);
 
-        // Locate the three index section payloads (container framing only)
+        // Locate the six index section payloads (container framing only)
         // and fetch just their tile directories.
-        let mut index_section_ranges = [ByteRange { offset: 0, len: 0 }; 3];
-        let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; 3] = Default::default();
+        let mut index_section_ranges = [ByteRange { offset: 0, len: 0 }; NUM_PERMS];
+        let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS] = Default::default();
         #[allow(clippy::type_complexity)]
-        let mut directories: [Vec<(u32, u32, Option<TileSynopsis>)>; 3] = Default::default();
-        for si in 0..3 {
+        let mut directories: [Vec<(u32, u32, Option<TileSynopsis>)>; NUM_PERMS] =
+            Default::default();
+        for si in 0..NUM_PERMS {
             let section = locate_container_section_ranged(
                 reader.as_ref(),
                 header.root_dir_offset,
                 header.root_dir_len,
                 si,
-                3,
+                NUM_PERMS as u64,
             )?;
             index_section_ranges[si] = section;
             let dir = read_tile_directory_ranged(reader.as_ref(), section)?;
@@ -2301,7 +2296,7 @@ fn route_pattern<R: RangeReader>(
         header.root_dir_offset,
         header.root_dir_len,
         permutation.section_index(),
-        3,
+        NUM_PERMS as u64,
     )?;
     Ok(Some(RoutedPattern {
         dict,

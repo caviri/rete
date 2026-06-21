@@ -111,16 +111,16 @@ the fuller design and remain future work (see `docs/BENCHMARK.md`).
 The header is a fixed **64-byte core** followed by a **typed section directory** —
 up to 40 entries of 24 bytes each `(kind, flags, offset, length)` — zero-padded to
 1024. A new top-level section is added as a new directory entry, so the header has
-room to grow without a layout reshape. Format version `0x03`; this crate reads
-**only** `0x03` (the 128-byte v0.1/v0.2 headers are a clean break — rebuild old
-files).
+room to grow without a layout reshape. Format version `0x04` (six index
+permutations); this crate reads **only** `0x04` (each step — the 128-byte v0.1/v0.2
+headers, the three-permutation `0x03` — is a clean break, so rebuild old files).
 
 **Core (bytes 0..64):**
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | magic `RETE` |
-| 4 | 1 | format version (`0x03`) |
+| 4 | 1 | format version (`0x04`) |
 | 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer) |
 | 6 | 2 | header length (= 1024) |
 | 8 | 16 | content hash (blake3, first 16 bytes) — also an ETag-like id |
@@ -221,9 +221,13 @@ fetches just the run(s) covering the IDs/terms a query touches.
 
 ## 6. Triples / quads
 
-- Stored as integer triples in **three permutations**: **SPO, POS, OSP**.
-  These three cover all eight triple-pattern shapes (any combination of
-  bound/unbound S, P, O resolves to a contiguous range in at least one index).
+- Stored as integer triples in all **six permutations**: **SPO, POS, OSP, SOP,
+  PSO, OPS** (format `0x04`; `0x03` stored only the first three). Three suffice to
+  *match* any of the eight triple-pattern shapes; the full six additionally sort
+  the triples on **every** prefix of columns, so for any bound prefix and any free
+  column there is a permutation that routes on the prefix **and** streams sorted on
+  that column — the precondition a **sort-merge join** needs (both inputs co-sorted
+  on the join key). The cost is ~2× the index payload.
 - Each permutation is encoded as an **adjacency / bitmap-triples** structure
   (HDT-style): for SPO, a sorted list of subjects, each with its predicate
   list, each with its object list, delta-encoded.
@@ -351,10 +355,10 @@ prefix. Multiple query words **AND** by intersecting their sorted posting lists.
 SPARQL never touches this section, so a query open neither fetches nor pays for it.
 
 **Compatibility:** the format is experimental and makes **no** cross-version
-stability promise. The current version is `0x03` (the 1024-byte section-directory
-header, §4.1); this crate reads only `0x03`. The earlier `0x01` (single-block) and
-`0x02` (128-byte header, tiled) layouts are a clean break — old files must be
-rebuilt.
+stability promise. The current version is `0x04` (six index permutations, §6); this
+crate reads only `0x04`. The earlier `0x01` (single-block), `0x02` (128-byte header,
+tiled), and `0x03` (1024-byte section-directory header, three permutations) layouts
+are a clean break — old files must be rebuilt.
 
 ---
 
