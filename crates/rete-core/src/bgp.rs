@@ -148,12 +148,31 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
     let order = selectivity_order(ctx, &lowered);
     let mut rows: Vec<Row> = vec![ctx.slots.empty_row()];
     let mut bound: Vec<usize> = Vec::new();
-    for &idx in &order {
-        let Some((rel, rel_slots)) = pattern_rows(ctx, index, &lowered[idx]) else {
-            return Vec::new();
-        };
-        rows = hash_join(rows, &bound, rel, &rel_slots);
-        for s in rel_slots {
+    for (k, &idx) in order.iter().enumerate() {
+        let t = lowered[idx];
+        // Hybrid join: once the running result is small and the next pattern shares
+        // an already-bound variable, **probe** it per row through the index instead
+        // of scanning its whole extent and hash-joining. A left-deep hash join
+        // otherwise materializes every pattern's full scan even when only a handful
+        // of rows survive — e.g. a `?x rdf:type C` over thousands of instances when
+        // the prefix already pinned ?x to 26 rows. Probing turns that O(scan) into
+        // O(rows × lookup). The full scan + hash join stays the path when the prefix
+        // is large (one scan beats many probes) or the pattern is a cartesian join
+        // (no shared bound variable to constrain the probe).
+        let shares_bound = pattern_slots(&t).iter().any(|s| bound.contains(s));
+        if k > 0 && shares_bound && !rows.is_empty() && rows.len() <= BGP_PROBE_THRESHOLD {
+            let mut next: Vec<Row> = Vec::with_capacity(rows.len());
+            for base in std::mem::take(&mut rows) {
+                next.extend(probe_rows(ctx, index, t, base));
+            }
+            rows = next;
+        } else {
+            let Some((rel, rel_slots)) = pattern_rows(ctx, index, &t) else {
+                return Vec::new();
+            };
+            rows = hash_join(rows, &bound, rel, &rel_slots);
+        }
+        for s in pattern_slots(&t) {
             if !bound.contains(&s) {
                 bound.push(s);
             }
@@ -164,6 +183,15 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
     }
     rows
 }
+
+/// Probe the join tail (instead of full-scanning) once the running BGP result is
+/// at most this many rows: each remaining pattern that shares a bound variable is
+/// then resolved by `rows × index-lookup` rather than a whole-extent scan. Kept
+/// small so the probe count is always cheap in absolute terms — the dominant win
+/// is the large-scan-after-tiny-prefix case (a `?x a C` over thousands when the
+/// prefix already pinned ?x to a few dozen rows); a *moderately* large prefix
+/// keeps the one-pass scan + hash join, which beats thousands of probes.
+const BGP_PROBE_THRESHOLD: usize = 512;
 
 /// The (deduped) slots a lowered pattern binds.
 fn pattern_slots(t: &(SlotTerm, SlotTerm, SlotTerm)) -> Vec<usize> {
@@ -370,19 +398,34 @@ fn selectivity_order_seeded(
             None => consts(&lowered[i]) as f64,
         }
     };
+    // A `?s rdf:type <Class>` with an as-yet-unbound subject is a **class
+    // enumeration**: it matches every instance of the class, so it is almost never
+    // the most selective place to *start* a join (a popular class has thousands of
+    // instances), even though it has two bound positions and so looks selective to
+    // the constant-count heuristic. Deprioritize it as a seed; once its subject is
+    // bound by another pattern it becomes a cheap per-row type *check* (the hybrid
+    // join probes it), so pushing it later costs nothing. Robust and stats-free.
+    let type_pid = ctx.rete.dictionary().predicate_id(crate::file::RDF_TYPE);
+    let is_class_enum = |i: usize, bound: &std::collections::HashSet<usize>| -> bool {
+        let t = &lowered[i];
+        type_pid.is_some_and(|tp| matches!(t.1, SlotTerm::Pred(p) if p == tp))
+            && matches!(t.2, SlotTerm::Node(_))
+            && matches!(t.0, SlotTerm::Var(v) if !bound.contains(&v))
+    };
     let n = lowered.len();
     let mut remaining: Vec<usize> = (0..n).collect();
     let mut order: Vec<usize> = Vec::with_capacity(n);
     let mut bound: std::collections::HashSet<usize> = seed.clone();
     while !remaining.is_empty() {
-        // Pick the remaining pattern with the best (connected, score) key; ties
-        // go to the lowest original index for a stable, predictable order.
+        // Pick the remaining pattern with the best (connected, not-a-class-enum,
+        // score) key; ties go to the lowest original index for a stable order.
         let best = *remaining
             .iter()
             .max_by(|&&a, &&b| {
                 let connected = |i: usize| vars(&lowered[i]).iter().any(|v| bound.contains(v));
                 connected(a)
                     .cmp(&connected(b))
+                    .then_with(|| is_class_enum(b, &bound).cmp(&is_class_enum(a, &bound)))
                     .then_with(|| {
                         score(a)
                             .partial_cmp(&score(b))
@@ -964,5 +1007,64 @@ mod tests {
         let bytes = rete_from(&[("Alice", "knows", "Bob")]);
         let rete = Rete::open(&bytes).unwrap();
         assert!(eval_bgp(&rete, &[pat("Alice", "likes", "?y")]).is_empty());
+    }
+
+    /// A LUBM-Q7-shaped snowflake: a popular class enumeration (`?x a Student`)
+    /// plus a selective adjacency seed (`<Prof> teacherOf ?y`). Exercises both the
+    /// **class-enum seed deprioritization** (the join must not start from the huge
+    /// `a Student` extent) and the **probe-the-tail hybrid** (the type checks are
+    /// applied late, per row). The answer must equal a brute-force computation
+    /// regardless of how the join is ordered/probed.
+    #[test]
+    fn snowflake_type_and_adjacency_matches_reference() {
+        const TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let mut triples: Vec<(String, String, String)> = Vec::new();
+        // 60 students, each a Student and taking 2 courses (c{i%5}, c{(i+1)%5}).
+        for i in 0..60 {
+            let s = format!("S{i}");
+            triples.push((s.clone(), TYPE.into(), "Student".into()));
+            triples.push((s.clone(), "takesCourse".into(), format!("c{}", i % 5)));
+            triples.push((s, "takesCourse".into(), format!("c{}", (i + 1) % 5)));
+        }
+        // 5 courses; the professor teaches only c0 and c2.
+        for j in 0..5 {
+            triples.push((format!("c{j}"), TYPE.into(), "Course".into()));
+        }
+        triples.push(("Prof".into(), "teacherOf".into(), "c0".into()));
+        triples.push(("Prof".into(), "teacherOf".into(), "c2".into()));
+
+        let refs: Vec<(&str, &str, &str)> = triples
+            .iter()
+            .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+            .collect();
+        let bytes = rete_from(&refs);
+        let rete = Rete::open(&bytes).unwrap();
+
+        let got: std::collections::BTreeSet<(String, String)> = eval_bgp(
+            &rete,
+            &[
+                pat("?x", TYPE, "Student"),
+                pat("?y", TYPE, "Course"),
+                pat("?x", "takesCourse", "?y"),
+                pat("Prof", "teacherOf", "?y"),
+            ],
+        )
+        .into_iter()
+        .map(|b| (b["x"].clone(), b["y"].clone()))
+        .collect();
+
+        // Brute force: students taking a course the professor teaches (c0 or c2).
+        let taught = ["c0", "c2"];
+        let mut want = std::collections::BTreeSet::new();
+        for i in 0..60 {
+            for c in [i % 5, (i + 1) % 5] {
+                let course = format!("c{c}");
+                if taught.contains(&course.as_str()) {
+                    want.insert((format!("S{i}"), course));
+                }
+            }
+        }
+        assert_eq!(got, want, "snowflake join must match the brute-force set");
+        assert!(!want.is_empty(), "sanity: the reference set is non-empty");
     }
 }
