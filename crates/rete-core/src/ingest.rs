@@ -563,4 +563,20 @@ mod tests {
             other => panic!("expected select result, got {other:?}"),
         }
     }
+
+    /// The exact minimal input the playground Build tab uses: two triples, no
+    /// literals, no rdf:type, no named graph — the smallest graph that still
+    /// builds a community pyramid. (The wasm `build()` panic this guards was a
+    /// `std::time::Instant::now()` in the pyramid timing path; native has a clock
+    /// so this passes here, while the playground harness exercises the wasm path.)
+    #[test]
+    fn assemble_minimal_typeless_graph() {
+        let text = "<http://ex/A> <http://ex/knows> <http://ex/B> .\n\
+                    <http://ex/B> <http://ex/knows> <http://ex/C> .\n";
+        let quads = parse_statements(text, "nt").unwrap();
+        let (bytes, stats) = assemble_dataset(quads, &[]);
+        assert_eq!(stats.default_triples, 2);
+        let rete = Rete::open(&bytes).unwrap();
+        assert_eq!(rete.query(None, Some("<http://ex/knows>"), None).len(), 2);
+    }
 }

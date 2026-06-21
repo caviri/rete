@@ -53,15 +53,18 @@ pub fn build_pyramid_meta_with(
 ) -> (Vec<u8>, u16) {
     // Optional sub-phase timing (set RETE_BUILD_TIMING=1) — the pyramid build is
     // the dominant cost of a big `rete build`; this shows where inside it.
+    // `Instant::now()` must stay behind the flag: `std::time` is unsupported on
+    // `wasm32-unknown-unknown` and panics ("time not implemented"), so an
+    // unconditional clock read would break every in-browser `build()`.
     let timing = std::env::var_os("RETE_BUILD_TIMING").is_some();
-    let mut t = std::time::Instant::now();
+    let mut t = timing.then(std::time::Instant::now);
     let mut lap = |label: &str| {
-        if timing {
+        if let Some(t0) = &mut t {
             eprintln!(
                 "  [pyramid] {label}: {:.0} ms",
-                t.elapsed().as_secs_f64() * 1000.0
+                t0.elapsed().as_secs_f64() * 1000.0
             );
-            t = std::time::Instant::now();
+            *t0 = std::time::Instant::now();
         }
     };
 
