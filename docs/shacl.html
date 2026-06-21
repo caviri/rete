@@ -245,6 +245,21 @@ rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/releases/2026-06
 <p>The command exits with status <code>0</code> when the report conforms and non-zero when it
 finds at least one result. Shapes are read as Turtle. Data comes from the <code>.rete</code>
 file, so validation runs over exactly the graph you publish and query.</p>
+<h2>Validating a remote graph (lazy)</h2>
+<p>SHACL validation is <strong>node-by-node</strong>: a shape names its targets (a class, a node,
+the subjects/objects of a predicate), then checks each focus node's own property
+values. That maps onto <strong>routed range reads</strong>, so a remote <code>.rete</code> can be
+validated over HTTP <em>without downloading it</em> — each lookup faults only the tiles
+holding the target nodes and their values:</p>
+<pre><code class="language-sh">rete shacl-url https://host/data.rete --shapes shapes.ttl
+# (fetched 38912 bytes in 7 range request(s); file is 1048576 bytes)
+</code></pre>
+<p>A <strong>targeted</strong> shape (<code>sh:targetClass</code> / <code>targetNode</code> / <code>targetSubjectsOf</code> /
+<code>targetObjectsOf</code>) fetches only its targets — the win grows with the file. The one
+exception is a <strong>target-less shape</strong> (one that implicitly targets every node) or a
+general inverse path, which must read the whole graph; <code>^predicate</code> inverse paths
+are routed (they become a single <code>(?, p, focus)</code> lookup). <code>shacl-url</code> validates the
+default graph.</p>
 <h2>A minimal shape</h2>
 <pre><code class="language-turtle">@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
 @prefix ex: &lt;http://ex/&gt; .
@@ -324,20 +339,24 @@ validates the already-materialized graph; otherwise it validates asserted data
 only.</li>
 </ul>
 <h2>Core API</h2>
-<p>The CLI uses the reusable core API:</p>
-<pre><code class="language-rust">use rete_core::{validate_shacl, DataGraph, Rete, ShaclShapes};
+<p>The CLI uses the reusable core API. <code>validate_shacl</code> is generic over a
+[<code>GraphView</code>] — the data graph can be an in-memory <code>DataGraph</code> (eager) or a
+<code>ReteGraph</code> that routes every lookup as a range read (lazy / remote):</p>
+<pre><code class="language-rust">use rete_core::{validate_shacl, DataGraph, ReteGraph, Rete, ShaclShapes};
 
-let rete = Rete::open("data.rete")?;
-let data = DataGraph::from_rete(&amp;rete, None)?;
-let shape_text = std::fs::read_to_string("shapes.ttl")?;
-let shapes = ShaclShapes::parse_turtle(&amp;shape_text)?;
-let report = validate_shacl(&amp;data, &amp;shapes);
+let shapes = ShaclShapes::parse_turtle(&amp;std::fs::read_to_string("shapes.ttl")?)?;
 
-if !report.conforms {
-    eprintln!("{}", report.to_json());
-}
+// Eager: whole graph in memory.
+let rete = Rete::open(&amp;std::fs::read("data.rete")?)?;
+let report = validate_shacl(&amp;DataGraph::from_rete(&amp;rete, None), &amp;shapes);
+
+// Lazy: validate over a range reader (e.g. an HTTP backend) — fetches only the
+// shapes' targets.
+let rete = Rete::open_ranged_lazy(reader)?;
+let report = validate_shacl(&amp;ReteGraph::new(&amp;rete), &amp;shapes);
 </code></pre>
-<p>Pass <code>Some("&lt;graph-iri&gt;")</code> to <code>DataGraph::from_rete</code> to validate one named graph.</p>
+<p>Pass <code>Some("&lt;graph-iri&gt;")</code> to <code>DataGraph::from_rete</code> to validate one named graph
+(the lazy <code>ReteGraph</code> validates the default graph).</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

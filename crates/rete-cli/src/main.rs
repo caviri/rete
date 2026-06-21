@@ -385,6 +385,20 @@ enum Command {
         #[arg(long, value_parser = ["text", "json", "ttl"], default_value = "text")]
         format: String,
     },
+    /// Validate a **remote** `.rete` over HTTP against SHACL shapes, range-reading
+    /// only what the shapes target. The file is opened lazily and each focus
+    /// node's values are fetched as routed range reads, so a targeted shape never
+    /// downloads the whole graph. Validates the default graph.
+    ShaclUrl {
+        /// http(s):// URL of a `.rete` file (host must honor Range requests).
+        url: String,
+        /// Turtle file containing SHACL shapes.
+        #[arg(long)]
+        shapes: String,
+        /// Output format: text | json | ttl.
+        #[arg(long, value_parser = ["text", "json", "ttl"], default_value = "text")]
+        format: String,
+    },
     /// Preview the range-read byte cost of running a SPARQL query.
     ///
     /// Reports the cheap summary/overview path, the routed single-pattern path
@@ -666,6 +680,11 @@ fn main() -> anyhow::Result<()> {
             graph,
             format,
         } => commands::shacl::shacl_cmd(&file, &shapes, graph.as_deref(), &format),
+        Command::ShaclUrl {
+            url,
+            shapes,
+            format,
+        } => commands::shacl::shacl_url(&url, &shapes, &format),
         Command::Cost {
             source,
             query,

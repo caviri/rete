@@ -57,8 +57,8 @@ pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};
 pub use results::{push_json_string, results_envelope_json};
 pub use schema_pyramid::build_schema_pyramid;
 pub use shacl::{
-    validate_shacl, DataGraph, Severity, ShaclError, ShaclShapes, ValidationReport,
-    ValidationResult,
+    validate_shacl, DataGraph, GraphView, ReteGraph, Severity, ShaclError, ShaclShapes,
+    ValidationReport, ValidationResult,
 };
 pub use sparql::{
     eval_query, eval_select_communities, eval_sparql, parse_select, query_predicates,

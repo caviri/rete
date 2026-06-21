@@ -435,6 +435,16 @@ the supported components and current limits.</p>
 rete shacl data.rete --shapes shapes.ttl --format json
 rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/snapshot&gt;'
 </code></pre>
+<h3><code>rete shacl-url &lt;url&gt; --shapes &lt;shapes.ttl&gt; [--format text|json|ttl]</code></h3>
+<p>Validate a <strong>remote</strong> <code>.rete</code> over HTTP, <strong>range-reading only what the shapes
+target</strong>. The file is opened lazily and each focus node's values are fetched as
+routed range reads, so a targeted shape (<code>sh:targetClass</code> / <code>targetNode</code> /
+<code>targetSubjectsOf</code> / <code>targetObjectsOf</code>) never downloads the whole graph — it
+faults only the tiles holding the target nodes and their property values. Reports
+the bytes fetched and the range-request count. Validates the default graph.</p>
+<pre><code class="language-sh">rete shacl-url https://host/data.rete --shapes shapes.ttl
+# (fetched 38912 bytes in 7 range request(s); file is 1048576 bytes)
+</code></pre>
 <h2>Coarse graphs (no index read)</h2>
 <h3><code>rete summary &lt;file&gt; [--level k]</code></h3>
 <p>Print the <strong>structural</strong> coarse graph: the Louvain community quotient graph
