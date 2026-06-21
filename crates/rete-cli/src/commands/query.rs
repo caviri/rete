@@ -94,20 +94,27 @@ pub(crate) fn why(
     let bytes = std::fs::read(file)?;
     let rete = Rete::open(&bytes)?;
     let results = rete.query_with_provenance(s.as_deref(), p.as_deref(), o.as_deref());
+    print_provenance(s.as_deref(), p.as_deref(), o.as_deref(), &results, as_json)
+}
 
+/// Render triple-pattern provenance (text or JSON). Shared by the on-disk `why`
+/// and the remote [`crate::commands::url::why_url`].
+pub(crate) fn print_provenance(
+    s: Option<&str>,
+    p: Option<&str>,
+    o: Option<&str>,
+    results: &[TripleProvenance],
+    as_json: bool,
+) -> anyhow::Result<()> {
     if as_json {
         let out = json!({
-            "pattern": {
-                "subject": s.as_deref(),
-                "predicate": p.as_deref(),
-                "object": o.as_deref(),
-            },
+            "pattern": { "subject": s, "predicate": p, "object": o },
             "result_count": results.len(),
             "results": results.iter().map(provenance_json).collect::<Vec<_>>(),
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
-        for m in &results {
+        for m in results {
             println!("{} {} {} .", m.terms.0, m.terms.1, m.terms.2);
             println!("  ids: s={} p={} o={}", m.ids.0, m.ids.1, m.ids.2);
             println!("  graph: {}", m.graph.as_deref().unwrap_or("default"));

@@ -327,6 +327,15 @@ emitted as stable machine-readable JSON.</p>
 <pre><code class="language-sh">rete why data.rete --predicate '&lt;http://ex/knows&gt;'
 rete why data.rete --subject '&lt;http://ex/Alice&gt;' --json
 </code></pre>
+<h3><code>rete why-url &lt;url&gt; [--subject S] [--predicate P] [--object O] [--json]</code></h3>
+<p>The remote counterpart of <code>rete why</code>: explain a triple-pattern result over a
+<code>.rete</code> served on HTTP, <strong>range-fetching only the routed tiles</strong> — the same
+provenance (permutation, section, byte ranges, the physical tile) plus the bytes
+fetched and range-request count. The CLI version of the browser's <code>why_url</code>.</p>
+<pre><code class="language-sh">rete why-url https://host/data.rete --predicate '&lt;http://ex/knows&gt;'
+# … provenance …
+# (fetched 4096 bytes in 1 range request(s); file is 1048576 bytes)
+</code></pre>
 <p>Provenance is honest about the physical layout: it identifies the index
 container, the selected permutation payload, and — for tiled (v0.2) files —
 the physical tile holding each match (<code>PERM/index</code>) with its compressed byte

@@ -125,6 +125,18 @@ rete why data.rete --predicate '<http://ex/knows>'
 rete why data.rete --subject '<http://ex/Alice>' --json
 ```
 
+### `rete why-url <url> [--subject S] [--predicate P] [--object O] [--json]`
+The remote counterpart of `rete why`: explain a triple-pattern result over a
+`.rete` served on HTTP, **range-fetching only the routed tiles** — the same
+provenance (permutation, section, byte ranges, the physical tile) plus the bytes
+fetched and range-request count. The CLI version of the browser's `why_url`.
+
+```sh
+rete why-url https://host/data.rete --predicate '<http://ex/knows>'
+# … provenance …
+# (fetched 4096 bytes in 1 range request(s); file is 1048576 bytes)
+```
+
 Provenance is honest about the physical layout: it identifies the index
 container, the selected permutation payload, and — for tiled (v0.2) files —
 the physical tile holding each match (`PERM/index`) with its compressed byte
