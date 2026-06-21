@@ -56,6 +56,8 @@ pub enum SectionKind {
     PyramidMeta,
     /// Named-graphs section.
     NamedGraphs,
+    /// Full-text (word) index over literals — `token → subjects`.
+    TextIndex,
     /// A section kind this build doesn't know — preserved verbatim on round-trip
     /// so a newer writer's sections survive an older reader.
     Unknown(u16),
@@ -69,6 +71,7 @@ impl SectionKind {
             SectionKind::Index => 3,
             SectionKind::PyramidMeta => 4,
             SectionKind::NamedGraphs => 5,
+            SectionKind::TextIndex => 6,
             SectionKind::Unknown(k) => k,
         }
     }
@@ -80,6 +83,7 @@ impl SectionKind {
             3 => SectionKind::Index,
             4 => SectionKind::PyramidMeta,
             5 => SectionKind::NamedGraphs,
+            6 => SectionKind::TextIndex,
             other => SectionKind::Unknown(other),
         }
     }
@@ -138,6 +142,10 @@ pub struct Header {
     /// `pyramid_meta_offset + pyramid_meta_len - schema_meta_len` — for an
     /// index/dictionary/summary-free Tier-0 coherence check.
     pub schema_meta_len: u32,
+    /// Full-text index section (0 if the file has none; built with
+    /// `rete build --text-index`). See [`SectionKind::TextIndex`].
+    pub text_index_offset: u64,
+    pub text_index_len: u64,
     /// Directory entries whose [`SectionKind`] this build doesn't recognize,
     /// preserved verbatim. Empty for a file this crate wrote.
     pub extra_sections: Vec<Section>,
@@ -163,40 +171,45 @@ impl Header {
         // [50..64) reserved.
 
         // --- section directory ---
-        // The five known sections (verbatim, so the named offsets round-trip
-        // exactly), then any preserved unknown sections.
-        let known = [
-            (
+        // The five always-present sections (verbatim, so the named offsets
+        // round-trip exactly), then the optional text index (only when present, so
+        // a file without one stays byte-identical), then preserved unknown kinds.
+        let entry = |kind, offset, length| Section {
+            kind,
+            flags: 0,
+            offset,
+            length,
+        };
+        let mut entries: Vec<Section> = vec![
+            entry(
                 SectionKind::Metadata,
                 self.metadata_offset,
                 self.metadata_len,
             ),
-            (
+            entry(
                 SectionKind::Dictionary,
                 self.dictionary_offset,
                 self.dictionary_len,
             ),
-            (SectionKind::Index, self.root_dir_offset, self.root_dir_len),
-            (
+            entry(SectionKind::Index, self.root_dir_offset, self.root_dir_len),
+            entry(
                 SectionKind::PyramidMeta,
                 self.pyramid_meta_offset,
                 self.pyramid_meta_len,
             ),
-            (
+            entry(
                 SectionKind::NamedGraphs,
                 self.named_graphs_offset,
                 self.named_graphs_len,
             ),
         ];
-        let mut entries: Vec<Section> = known
-            .iter()
-            .map(|&(kind, offset, length)| Section {
-                kind,
-                flags: 0,
-                offset,
-                length,
-            })
-            .collect();
+        if self.text_index_len > 0 {
+            entries.push(entry(
+                SectionKind::TextIndex,
+                self.text_index_offset,
+                self.text_index_len,
+            ));
+        }
         entries.extend(self.extra_sections.iter().copied());
         debug_assert!(
             entries.len() <= MAX_SECTIONS,
@@ -255,6 +268,8 @@ impl Header {
             named_graphs_offset: 0,
             named_graphs_len: 0,
             schema_meta_len: u32_at(46),
+            text_index_offset: 0,
+            text_index_len: 0,
             extra_sections: Vec::new(),
         };
         for i in 0..section_count {
@@ -282,6 +297,10 @@ impl Header {
                 SectionKind::NamedGraphs => {
                     h.named_graphs_offset = offset;
                     h.named_graphs_len = length;
+                }
+                SectionKind::TextIndex => {
+                    h.text_index_offset = offset;
+                    h.text_index_len = length;
                 }
                 SectionKind::Unknown(_) => h.extra_sections.push(Section {
                     kind,
@@ -313,6 +332,7 @@ impl Header {
             SectionKind::Index => (self.root_dir_offset, self.root_dir_len),
             SectionKind::PyramidMeta => (self.pyramid_meta_offset, self.pyramid_meta_len),
             SectionKind::NamedGraphs => (self.named_graphs_offset, self.named_graphs_len),
+            SectionKind::TextIndex => (self.text_index_offset, self.text_index_len),
             SectionKind::Unknown(_) => {
                 return self.extra_sections.iter().find(|s| s.kind == kind).copied()
             }
@@ -350,6 +370,10 @@ impl Header {
                 self.named_graphs_offset = offset;
                 self.named_graphs_len = length;
             }
+            SectionKind::TextIndex => {
+                self.text_index_offset = offset;
+                self.text_index_len = length;
+            }
             SectionKind::Unknown(_) => self.extra_sections.push(Section {
                 kind,
                 flags: 0,
@@ -386,6 +410,8 @@ mod tests {
             named_graphs_offset: 3434,
             named_graphs_len: 48,
             schema_meta_len: 99,
+            text_index_offset: 0,
+            text_index_len: 0,
             extra_sections: Vec::new(),
         }
     }
@@ -482,16 +508,37 @@ mod tests {
 
     #[test]
     fn unknown_section_survives_round_trip() {
-        // A section a future build added (kind 7) must be preserved verbatim by a
+        // A section a future build added (kind 99) must be preserved verbatim by a
         // reader that doesn't know it, and readable via `section()`.
-        let h = sample().with_section(SectionKind::Unknown(7), 4096, 512);
+        let h = sample().with_section(SectionKind::Unknown(99), 4096, 512);
         let back = Header::from_bytes(&h.to_bytes()).unwrap();
         assert_eq!(back.extra_sections.len(), 1);
-        let s = back.section(SectionKind::Unknown(7)).unwrap();
+        let s = back.section(SectionKind::Unknown(99)).unwrap();
         assert_eq!((s.offset, s.length), (4096, 512));
         // Known sections still resolve.
         let dict = back.section(SectionKind::Dictionary).unwrap();
         assert_eq!(dict.offset, h.dictionary_offset);
         assert_eq!(h, back);
+    }
+
+    #[test]
+    fn text_index_section_round_trips_and_is_optional() {
+        // Absent (len 0): only the 5 always-present sections, so a file without a
+        // text index is byte-identical to one built before this section existed.
+        assert_eq!(
+            u16::from_le_bytes(sample().to_bytes()[44..46].try_into().unwrap()),
+            5
+        );
+        assert!(sample().section(SectionKind::TextIndex).unwrap().length == 0);
+
+        // Present: a 6th directory entry that round-trips and resolves.
+        let h = sample().with_section(SectionKind::TextIndex, 5000, 4096);
+        let bytes = h.to_bytes();
+        assert_eq!(u16::from_le_bytes(bytes[44..46].try_into().unwrap()), 6);
+        let back = Header::from_bytes(&bytes).unwrap();
+        assert_eq!(h, back);
+        let s = back.section(SectionKind::TextIndex).unwrap();
+        assert_eq!((s.offset, s.length), (5000, 4096));
+        assert!(back.extra_sections.is_empty(), "TextIndex is a known kind");
     }
 }

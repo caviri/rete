@@ -26,6 +26,7 @@ pub mod schema_pyramid;
 pub mod shacl;
 pub mod sparql;
 pub mod terms;
+pub mod text_index;
 pub mod tiling;
 pub mod triples;
 pub mod varint;
@@ -66,5 +67,6 @@ pub use sparql::{
     SparqlError, SummaryQueryShape,
 };
 pub use terms::{NodeId, ObjectId, PredicateId, SubjectId, TermToken};
+pub use text_index::{tokenize, TextIndex, TextIndexBuilder};
 pub use tiling::{choose_round_for_budget, summarize, tile_by_community, SuperEdge, Tile};
 pub use triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder, ZoneMap};

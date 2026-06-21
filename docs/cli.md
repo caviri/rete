@@ -21,7 +21,9 @@ curl -s https://host/data.nt | rete build - -o data.rete
 [Reasoning](reasoning.md)). `--card` (and `--card-file` / `--title` / `--license`
 / `--source` / `--description` / `--created`) embeds a [Dataset
 Card](dataset-cards.md) — data-catalog metadata plus an auto-derived profile.
-Both are opt-in; without them the output is byte-identical to a plain build.
+`--text-index` adds a full-text (word/CONTAINS) index over the literals for
+`rete search --contains` (see below). All three are opt-in; without them the
+output is byte-identical to a plain build.
 
 ## Validating
 
@@ -43,14 +45,17 @@ the [Dataset Card](dataset-cards.md) catalog when the file carries one.
 
 ### `rete stats <file>`
 Human-friendly overview: file size, default-graph triple count, distinct terms,
-named-graph count, pyramid levels, and top predicates.
+named-graph count, pyramid levels, and top predicates. Notes the label-index and
+**text-index** sizes when the file carries them.
 
 ### `rete verify <file>`
 Recompute the blake3 content hash and compare to the header. Exits non-zero with
 `FAILED — content hash mismatch` on corruption/truncation.
 
-### `rete search <file> [<prefix>] [--limit N] [--json]`
-Prefix-search the **label index**: the subjects whose label starts with `prefix`
+### `rete search <file> [<prefix>] [--contains <word>…] [--contains-prefix P] [--limit N] [--json]`
+Two modes.
+
+**Label prefix** (default) — the subjects whose label starts with `prefix`
 (case-insensitive), printed as `label<TAB><iri>` (or `[{"label":…,"subject":…}]`
 with `--json`). An empty prefix returns the first `--limit` labels (default 20).
 Answered from a bounded, label-sorted block in the pyramid-meta by binary search
@@ -60,6 +65,21 @@ Labels come from `rdfs:label`, `skos:prefLabel`/`altLabel`, `foaf:name`,
 `dc(terms):title`, and `schema:name`; the block keeps the top 8,192 most-connected
 labeled subjects. Files built before this feature carry no label index (the block
 is additive — rebuild to add it).
+
+**Full-text** (`--contains <word>…`) — the subjects whose literals contain
+**every** given word (whole-word, case-insensitive — AND), printed one IRI per
+line (or `[{"subject":…}]` with `--json`). `--contains-prefix einst` additionally
+requires a literal word starting with `einst`. Answered from the opt-in
+**TEXT_INDEX** section (`rete build --text-index`); on a remote file only the
+queried words' posting lists are fetched, not the whole index. A file built
+without `--text-index` reports that it has no text index.
+
+```sh
+rete search data.rete gluc                       # label prefix (autocomplete)
+rete search data.rete --contains glucose         # literals containing "glucose"
+rete search data.rete --contains glucose phosphate  # both words (AND)
+rete search data.rete --contains-prefix einst    # a word starting with "einst…"
+```
 
 ### `rete card <file> [--json]`
 Print the embedded [Dataset Card](dataset-cards.md) — curated metadata

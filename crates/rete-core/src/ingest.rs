@@ -253,7 +253,7 @@ pub fn assemble_dataset_with(
     quads: Vec<RawQuad>,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
 ) -> (Vec<u8>, BuildStats) {
-    assemble_dataset_with_opts(quads, true, None, metadata)
+    assemble_dataset_with_opts(quads, true, false, None, metadata)
 }
 
 /// Like [`assemble_dataset_with`], but `with_pyramid = false` skips the Louvain
@@ -262,9 +262,11 @@ pub fn assemble_dataset_with(
 /// pyramid-less file is fully queryable and markedly smaller (the pyramid is the
 /// largest section on highly-connected graphs). Only the community / summary /
 /// progressive paths need it.
+#[allow(clippy::too_many_arguments)]
 pub fn assemble_dataset_with_opts(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
+    with_text_index: bool,
     type_override: Option<&str>,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
 ) -> (Vec<u8>, BuildStats) {
@@ -312,6 +314,14 @@ pub fn assemble_dataset_with_opts(
     };
     stats.pyramid_levels = levels;
 
+    // Full-text index (opt-in) — computed while the default id-triples are still
+    // borrowable, before they are moved into the index builder below.
+    let text_index = if with_text_index {
+        crate::file::compute_text_index(&dict, &default_triples)
+    } else {
+        Vec::new()
+    };
+
     // Build the indexes from the OWNED id-triples (move, no per-triple copy); the
     // default-graph triples were borrowed by the pyramid above and are consumed
     // here, freeing them as the permutations are built.
@@ -321,8 +331,16 @@ pub fn assemble_dataset_with_opts(
         .map(|(g, ts)| (g, GraphIndexBuilder::from_triples(ts).build()))
         .collect();
 
-    let bytes =
-        write_dataset_with_metadata(&dict, &def, &named_indexes, has_named, &meta, levels, &blob);
+    let bytes = write_dataset_with_metadata(
+        &dict,
+        &def,
+        &named_indexes,
+        has_named,
+        &meta,
+        levels,
+        &blob,
+        &text_index,
+    );
     (bytes, stats)
 }
 

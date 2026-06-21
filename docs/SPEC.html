@@ -349,7 +349,7 @@ files).</p>
 </tbody></table>
 <p><strong>Section directory (bytes 64…, <code>section_count</code> entries of 24 bytes):</strong></p>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
-<tr><td>+0</td><td>2</td><td>section kind (<code>1</code> metadata, <code>2</code> dictionary, <code>3</code> index, <code>4</code> pyramid-meta, <code>5</code> named-graphs; higher ids reserved for future sections)</td></tr>
+<tr><td>+0</td><td>2</td><td>section kind (<code>1</code> metadata, <code>2</code> dictionary, <code>3</code> index, <code>4</code> pyramid-meta, <code>5</code> named-graphs, <code>6</code> text-index; higher ids reserved for future sections)</td></tr>
 <tr><td>+2</td><td>2</td><td>section flags (reserved)</td></tr>
 <tr><td>+4</td><td>4</td><td>reserved (zero)</td></tr>
 <tr><td>+8</td><td>8</td><td>section offset</td></tr>
@@ -361,8 +361,9 @@ from the directory means that section is not present.</p>
 <blockquote>
 <p>Rationale: a fixed 1024-byte header means <strong>one small range read</strong>
 (<code>bytes=0-1023</code>) tells the client where every section lives, with headroom for
-new sections (a future text index, group directories, …) as new directory
-entries rather than a format break.</p>
+new sections (group directories, geo indexes, …) as new directory entries
+rather than a format break — the optional <strong>text-index</strong> section (kind <code>6</code>,
+§6.3) was added exactly this way.</p>
 </blockquote>
 <p>The <strong>metadata section</strong> (offset 8 / length 16) sits between the header and the
 dictionary and is <code>0</code>-length by default. When present it carries an opaque,
@@ -505,6 +506,36 @@ directory locally and faults exactly <strong>one</strong> chunk, and <code>id �
 its chunk arithmetically and faults one. A lazily-opened remote file therefore
 pays the section headers + directories (KBs) up front and O(touched chunks)
 afterwards, instead of the whole dictionary container.</p>
+<h3>6.3 Full-text index (TEXT_INDEX section, optional)</h3>
+<p>An <strong>opt-in</strong> section (kind <code>6</code>, built with <code>rete build --text-index</code>) that maps
+each <strong>word</strong> appearing in a string literal to the <strong>subjects</strong> that carry it, so
+a reader can answer "which entities mention <code>glucose</code>?" without scanning the
+literals — and a <em>remote</em> reader fetches only the posting lists it queries, never
+the whole index. Absent by default: a build without <code>--text-index</code> writes no kind
+<code>6</code> entry and is byte-identical to one that never had the feature.</p>
+<p><strong>What is indexed.</strong> Every triple whose object is a <strong>string literal</strong> is
+tokenized: the literal's lexical value is split on non-alphanumeric (Unicode)
+boundaries, each run lowercased and kept if ≥ 2 characters. The build and query
+sides share one tokenizer, so a query word matches how it was stored. The result
+is <code>token → sorted distinct subject ids</code>.</p>
+<p><strong>On-disk layout</strong> (the section payload):</p>
+<pre><code>varint token_table_len
+token table (compressed with the header's block codec):
+  varint num_tokens
+  per token (ascending): varint shared_prefix_len   # front-coded vs previous token
+                         varint suffix_len, suffix bytes
+                         varint posting_off, varint posting_len   # into the postings blob
+postings blob (uncompressed, so one posting range-reads directly):
+  per token (same order): varint count, then `count` delta-varint ascending subject ids
+</code></pre>
+<p>The <strong>token table</strong> is small (distinct words, front-coded) and read whole; the
+<strong>postings blob</strong> is the bulk and is fetched one posting at a time. A remote
+search reads the leading <code>token_table_len</code> varint + the compressed token table as
+one prefix range, binary-searches the (sorted) tokens locally, then range-reads
+the single <code>(posting_off, posting_len)</code> it needs — <code>lookup(word)</code> faults one
+posting, <code>prefix(word)</code> the contiguous run of postings whose tokens share the
+prefix. Multiple query words <strong>AND</strong> by intersecting their sorted posting lists.
+SPARQL never touches this section, so a query open neither fetches nor pays for it.</p>
 <p><strong>Compatibility:</strong> the format is experimental and makes <strong>no</strong> cross-version
 stability promise. The current version is <code>0x03</code> (the 1024-byte section-directory
 header, §4.1); this crate reads only <code>0x03</code>. The earlier <code>0x01</code> (single-block) and

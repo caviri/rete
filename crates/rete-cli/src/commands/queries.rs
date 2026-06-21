@@ -542,7 +542,8 @@ mod tests {
             card.queries.len()
         );
 
-        let (bytes, _) = ingest::assemble_dataset_with_opts(quads, true, None, |_, _| Vec::new());
+        let (bytes, _) =
+            ingest::assemble_dataset_with_opts(quads, true, false, None, |_, _| Vec::new());
         let rete = Rete::open(&bytes).unwrap();
 
         for eq in &card.queries {

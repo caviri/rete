@@ -249,7 +249,9 @@ curl -s https://host/data.nt | rete build - -o data.rete
 <a href="reasoning.html">Reasoning</a>). <code>--card</code> (and <code>--card-file</code> / <code>--title</code> / <code>--license</code>
 / <code>--source</code> / <code>--description</code> / <code>--created</code>) embeds a <a href="dataset-cards.html">Dataset
 Card</a> — data-catalog metadata plus an auto-derived profile.
-Both are opt-in; without them the output is byte-identical to a plain build.</p>
+<code>--text-index</code> adds a full-text (word/CONTAINS) index over the literals for
+<code>rete search --contains</code> (see below). All three are opt-in; without them the
+output is byte-identical to a plain build.</p>
 <h2>Validating</h2>
 <h3><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl]</code></h3>
 <p>Parse RDF input(s) without building, to check they are well-formed
@@ -264,12 +266,14 @@ curl -s https://host/data.nt | rete validate - --format nt
 the <a href="dataset-cards.html">Dataset Card</a> catalog when the file carries one.</p>
 <h3><code>rete stats &lt;file&gt;</code></h3>
 <p>Human-friendly overview: file size, default-graph triple count, distinct terms,
-named-graph count, pyramid levels, and top predicates.</p>
+named-graph count, pyramid levels, and top predicates. Notes the label-index and
+<strong>text-index</strong> sizes when the file carries them.</p>
 <h3><code>rete verify &lt;file&gt;</code></h3>
 <p>Recompute the blake3 content hash and compare to the header. Exits non-zero with
 <code>FAILED — content hash mismatch</code> on corruption/truncation.</p>
-<h3><code>rete search &lt;file&gt; [&lt;prefix&gt;] [--limit N] [--json]</code></h3>
-<p>Prefix-search the <strong>label index</strong>: the subjects whose label starts with <code>prefix</code>
+<h3><code>rete search &lt;file&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
+<p>Two modes.</p>
+<p><strong>Label prefix</strong> (default) — the subjects whose label starts with <code>prefix</code>
 (case-insensitive), printed as <code>label&lt;TAB&gt;&lt;iri&gt;</code> (or <code>[{"label":…,"subject":…}]</code>
 with <code>--json</code>). An empty prefix returns the first <code>--limit</code> labels (default 20).
 Answered from a bounded, label-sorted block in the pyramid-meta by binary search
@@ -279,6 +283,18 @@ Labels come from <code>rdfs:label</code>, <code>skos:prefLabel</code>/<code>altL
 <code>dc(terms):title</code>, and <code>schema:name</code>; the block keeps the top 8,192 most-connected
 labeled subjects. Files built before this feature carry no label index (the block
 is additive — rebuild to add it).</p>
+<p><strong>Full-text</strong> (<code>--contains &lt;word&gt;…</code>) — the subjects whose literals contain
+<strong>every</strong> given word (whole-word, case-insensitive — AND), printed one IRI per
+line (or <code>[{"subject":…}]</code> with <code>--json</code>). <code>--contains-prefix einst</code> additionally
+requires a literal word starting with <code>einst</code>. Answered from the opt-in
+<strong>TEXT_INDEX</strong> section (<code>rete build --text-index</code>); on a remote file only the
+queried words' posting lists are fetched, not the whole index. A file built
+without <code>--text-index</code> reports that it has no text index.</p>
+<pre><code class="language-sh">rete search data.rete gluc                       # label prefix (autocomplete)
+rete search data.rete --contains glucose         # literals containing "glucose"
+rete search data.rete --contains glucose phosphate  # both words (AND)
+rete search data.rete --contains-prefix einst    # a word starting with "einst…"
+</code></pre>
 <h3><code>rete card &lt;file&gt; [--json]</code></h3>
 <p>Print the embedded <a href="dataset-cards.html">Dataset Card</a> — curated metadata
 (title/license/source/…) plus the derived profile (counts, top predicates and

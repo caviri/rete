@@ -152,6 +152,31 @@ it covers the prominent entities; an exhaustive match still needs the FILTER
 scan. Files built before this feature have no label index — rebuild to add it
 (the block is additive and backward-compatible, so old readers ignore it).
 
+### Full-text search (word / CONTAINS)
+
+Label prefix search finds an entity by the *start* of its label. To find entities
+by a **word anywhere in any of their literals**, build with `--text-index` and
+query with `rete search --contains`:
+
+```sh
+rete build data.nt -o data.rete --text-index   # opt-in TEXT_INDEX section
+
+rete search data.rete --contains glucose            # subjects whose literals say "glucose"
+rete search data.rete --contains glucose phosphate  # AND — both words (any literal)
+rete search data.rete --contains-prefix einst       # word starting with "einst…"
+rete search data.rete --contains glucose --json     # [{"subject":…}]
+```
+
+Matching is whole-word and case-insensitive (the same tokenizer builds and
+queries: Unicode-alphanumeric runs, lowercased, length ≥ 2). The index maps each
+word to its sorted subject ids as its own range-readable section (§6.3 of the
+[SPEC](SPEC.md)): the token table is read once, then each queried word faults only
+**its** posting list — so a `--contains` over a remote multi-GB file fetches
+kilobytes, not the whole index. It is **opt-in** because it is sizable; a build
+without `--text-index` is byte-identical to one built before the feature, and
+`rete search --contains` on such a file reports that there is no text index.
+`rete stats` shows the section's size when present.
+
 ## Deploying & querying over a URL
 
 A `.rete` file is immutable and self-describing, so any static host that honors
