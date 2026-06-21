@@ -260,6 +260,19 @@ rete shacl data.rete --shapes shapes.ttl --format json
 rete shacl data.rete --shapes shapes.ttl --graph '<http://ex/snapshot>'
 ```
 
+### `rete shacl-url <url> --shapes <shapes.ttl> [--format text|json|ttl]`
+Validate a **remote** `.rete` over HTTP, **range-reading only what the shapes
+target**. The file is opened lazily and each focus node's values are fetched as
+routed range reads, so a targeted shape (`sh:targetClass` / `targetNode` /
+`targetSubjectsOf` / `targetObjectsOf`) never downloads the whole graph — it
+faults only the tiles holding the target nodes and their property values. Reports
+the bytes fetched and the range-request count. Validates the default graph.
+
+```sh
+rete shacl-url https://host/data.rete --shapes shapes.ttl
+# (fetched 38912 bytes in 7 range request(s); file is 1048576 bytes)
+```
+
 ## Coarse graphs (no index read)
 
 ### `rete summary <file> [--level k]`

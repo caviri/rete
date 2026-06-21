@@ -349,33 +349,105 @@ const LABEL_PREDICATES: &[&str] = &[
 /// Cross-dataset linking predicates (emitted in `signals.link_predicates`).
 const LINK_PREDICATES: &[&str] = &[OWL_SAMEAS, SKOS_EXACTMATCH, SKOS_CLOSEMATCH, RDFS_SEEALSO];
 
-/// Derive a full card from the parsed quads plus a few build-time counts. The
-/// per-predicate and per-class statistics are computed over the **default graph**
-/// only (named-graph statistics are summarized by `quad_count`/`named_graph_count`),
+/// A replayable source of a graph's **default-graph** triples for card
+/// derivation. `replay` may be called more than once (the derivation makes two
+/// passes); every call MUST yield the same triples in the same order. Terms are
+/// passed as borrowed `&str` valid only for that call — so the derivation owns
+/// (clones) any key it retains, letting one code path serve both an in-memory
+/// quad slice and a streaming build's dictionary + id-triples.
+pub(crate) trait CardTripleSource {
+    fn replay(&self, f: &mut dyn FnMut(&str, &str, &str));
+}
+
+/// Derive a full card from the parsed quads plus a few build-time counts — the
+/// in-memory build path. Statistics are over the **default graph** only
+/// (named-graph statistics are summarized by `quad_count`/`named_graph_count`),
 /// matching `rete stats`/`rete predicates`.
-///
-/// Two passes over the quads: the first builds the subject→class map needed to
-/// classify both endpoints of every relation (the `class_links` quotient — the
-/// same logic as [`rete_core::schema_summary`], folded in here to avoid a second
-/// full materialization); the second tallies everything else. All counts are over
-/// the raw (pre-dedup) default-graph multiset, matching the existing card stats
-/// and `rete progressive`.
 pub(crate) fn derive_card(
     quads: &[(String, String, String, Option<String>)],
     term_count: u64,
     named_graph_count: u64,
     curated: CardInput,
 ) -> DatasetCard {
-    // --- Pass 1: subject → class (last type wins, matching `schema_summary`). ---
-    let mut class_of: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-    for (s, p, o, g) in quads {
-        if g.is_none() && p == RDF_TYPE {
-            class_of.insert(s.as_str(), o.as_str());
+    struct Quads<'a>(&'a [(String, String, String, Option<String>)]);
+    impl CardTripleSource for Quads<'_> {
+        fn replay(&self, f: &mut dyn FnMut(&str, &str, &str)) {
+            for (s, p, o, g) in self.0 {
+                if g.is_none() {
+                    f(s, p, o);
+                }
+            }
         }
     }
+    derive_card_from(
+        &Quads(quads),
+        quads.len() as u64,
+        term_count,
+        named_graph_count,
+        curated,
+    )
+}
+
+/// Derive a card from a built dictionary + default-graph **id-triples** — the
+/// streaming (low-RAM) build path, where the raw quads were never retained.
+/// Resolves each id-triple back to its terms through the dictionary, yielding the
+/// same `(s, p, o)` strings in file order, so the card is **byte-identical** to
+/// the in-memory derivation on the same graph.
+pub(crate) fn derive_card_encoded(
+    dict: &rete_core::Dictionary,
+    triples: &[(u32, u32, u32)],
+    quad_count: u64,
+    term_count: u64,
+    named_graph_count: u64,
+    curated: CardInput,
+) -> DatasetCard {
+    struct Encoded<'a> {
+        dict: &'a rete_core::Dictionary,
+        triples: &'a [(u32, u32, u32)],
+    }
+    impl CardTripleSource for Encoded<'_> {
+        fn replay(&self, f: &mut dyn FnMut(&str, &str, &str)) {
+            for &(s, p, o) in self.triples {
+                let st = self.dict.subject_term(s).unwrap_or_default();
+                let pt = self.dict.predicate_term(p).unwrap_or_default();
+                let ot = self.dict.object_term(o).unwrap_or_default();
+                f(&st, &pt, &ot);
+            }
+        }
+    }
+    derive_card_from(
+        &Encoded { dict, triples },
+        quad_count,
+        term_count,
+        named_graph_count,
+        curated,
+    )
+}
+
+/// The shared card derivation, over any [`CardTripleSource`]. Two passes: the
+/// first builds the subject→class map needed to classify both endpoints of every
+/// relation (the `class_links` quotient — the same logic as
+/// [`rete_core::schema_summary`], folded in here to avoid a second full
+/// materialization); the second tallies everything else. All counts are over the
+/// raw (pre-dedup) default-graph multiset, matching the existing card stats and
+/// `rete progressive`.
+fn derive_card_from(
+    src: &dyn CardTripleSource,
+    quad_count: u64,
+    term_count: u64,
+    named_graph_count: u64,
+    curated: CardInput,
+) -> DatasetCard {
+    // --- Pass 1: subject → class (last type wins, matching `schema_summary`). ---
+    let mut class_of: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    src.replay(&mut |s, p, o| {
+        if p == RDF_TYPE {
+            class_of.insert(s.to_string(), o.to_string());
+        }
+    });
     let classify = |t: &str| -> String {
         if let Some(c) = class_of.get(t) {
-            (*c).to_string()
+            c.to_string()
         } else if t.starts_with('"') {
             "(literal)".to_string()
         } else {
@@ -384,21 +456,25 @@ pub(crate) fn derive_card(
     };
 
     // --- Pass 2: every other statistic, in one sweep. ---
-    let mut pred_counts: BTreeMap<&str, u64> = BTreeMap::new();
-    let mut class_counts: BTreeMap<&str, u64> = BTreeMap::new();
+    // Keys are owned `String`s (not `&str` borrowed from a quad slice) so the
+    // same derivation serves a streaming source whose term strings are transient;
+    // a `BTreeMap<String, _>` sorts identically to the old `BTreeMap<&str, _>`, so
+    // the output is byte-identical.
+    let mut pred_counts: BTreeMap<String, u64> = BTreeMap::new();
+    let mut class_counts: BTreeMap<String, u64> = BTreeMap::new();
     let mut datatype_counts: BTreeMap<String, u64> = BTreeMap::new();
     let mut lang_counts: BTreeMap<String, u64> = BTreeMap::new();
-    let mut out_degree: BTreeMap<&str, u64> = BTreeMap::new();
-    let mut in_degree: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut out_degree: BTreeMap<String, u64> = BTreeMap::new();
+    let mut in_degree: BTreeMap<String, u64> = BTreeMap::new();
     let mut link_rows: BTreeMap<(String, String, String), u64> = BTreeMap::new();
     let mut subject_ns: BTreeMap<String, u64> = BTreeMap::new();
     // Per-predicate temporal evidence: object-shape hits and a name hint.
-    let mut time_obj_hits: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut time_obj_hits: BTreeMap<String, u64> = BTreeMap::new();
     // Per-predicate numeric-object hits (for value-range queries).
-    let mut num_obj_hits: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut num_obj_hits: BTreeMap<String, u64> = BTreeMap::new();
     // Objects of each candidate time predicate, grouped by datatype, for extent.
-    let mut time_values: BTreeMap<&str, (Option<String>, Option<String>)> = BTreeMap::new();
-    let mut time_value_dt: BTreeMap<&str, String> = BTreeMap::new();
+    let mut time_values: BTreeMap<String, (Option<String>, Option<String>)> = BTreeMap::new();
+    let mut time_value_dt: BTreeMap<String, String> = BTreeMap::new();
     let mut lat_lo = f64::INFINITY;
     let mut lat_hi = f64::NEG_INFINITY;
     let mut lon_lo = f64::INFINITY;
@@ -408,13 +484,10 @@ pub(crate) fn derive_card(
     let mut geo_wkt = false;
     let mut triple_count = 0u64;
 
-    for (s, p, o, g) in quads {
-        if g.is_some() {
-            continue; // default-graph statistics only
-        }
+    src.replay(&mut |s, p, o| {
         triple_count += 1;
-        *pred_counts.entry(p.as_str()).or_default() += 1;
-        *out_degree.entry(s.as_str()).or_default() += 1;
+        *pred_counts.entry(p.to_string()).or_default() += 1;
+        *out_degree.entry(s.to_string()).or_default() += 1;
         if let Some(ns) = split_namespace(s) {
             *subject_ns.entry(ns).or_default() += 1;
         }
@@ -423,17 +496,17 @@ pub(crate) fn derive_card(
         // `top-in-hubs` query (`FILTER(!isLiteral(?o))`), which does not
         // special-case rdf:type, so the card precompute equals the query result.
         if !o.starts_with('"') {
-            *in_degree.entry(o.as_str()).or_default() += 1;
+            *in_degree.entry(o.to_string()).or_default() += 1;
         }
 
         if p == RDF_TYPE {
-            *class_counts.entry(o.as_str()).or_default() += 1;
-            continue; // type assertions define classes, not data relations
+            *class_counts.entry(o.to_string()).or_default() += 1;
+            return; // type assertions define classes, not data relations
         }
 
         // Class-to-class quotient (the effective schema).
         *link_rows
-            .entry((classify(s), p.clone(), classify(o)))
+            .entry((classify(s), p.to_string(), classify(o)))
             .or_default() += 1;
 
         if p == GEO_ASWKT || p == GEO_HASGEOMETRY {
@@ -451,12 +524,12 @@ pub(crate) fn derive_card(
             }
             // Temporal object-shape: a date/year datatype or a year-like value.
             if is_temporal_datatype(&lit.datatype) || looks_like_year(&lit.value) {
-                *time_obj_hits.entry(p.as_str()).or_default() += 1;
-                update_time_extent(p.as_str(), &lit, &mut time_values, &mut time_value_dt);
+                *time_obj_hits.entry(p.to_string()).or_default() += 1;
+                update_time_extent(p, &lit, &mut time_values, &mut time_value_dt);
             } else if is_numeric_datatype(&lit.datatype) {
                 // A year-shaped value is temporal, not "numeric range" material,
                 // so this is an `else if` — `birthYear` is a time predicate.
-                *num_obj_hits.entry(p.as_str()).or_default() += 1;
+                *num_obj_hits.entry(p.to_string()).or_default() += 1;
             }
             // wgs84 lat/long numeric extent.
             if p == WGS_LAT {
@@ -473,7 +546,7 @@ pub(crate) fn derive_card(
                 }
             }
         }
-    }
+    });
 
     // Signal lookups that need the raw per-predicate counts — computed before
     // `pred_counts` is consumed by the sort below.
@@ -490,12 +563,12 @@ pub(crate) fn derive_card(
         .collect();
 
     let mut truncated = false;
-    let predicates = cap(sort_desc(pred_counts), &mut truncated);
-    let classes = cap(sort_desc(class_counts), &mut truncated);
+    let predicates = cap(sort_desc_owned(pred_counts), &mut truncated);
+    let classes = cap(sort_desc_owned(class_counts), &mut truncated);
     let datatypes = cap(sort_desc_owned(datatype_counts), &mut truncated);
     let languages = cap(sort_desc_owned(lang_counts), &mut truncated);
-    let top_hubs = cap(sort_desc(out_degree), &mut truncated);
-    let in_hubs = cap(sort_desc(in_degree), &mut truncated);
+    let top_hubs = cap(sort_desc_owned(out_degree), &mut truncated);
+    let in_hubs = cap(sort_desc_owned(in_degree), &mut truncated);
     let class_links = cap(sort_links(link_rows), &mut truncated);
 
     // Vocabularies: distinct namespaces of the predicate and class IRIs.
@@ -513,15 +586,15 @@ pub(crate) fn derive_card(
         .find(|(l, _)| !l.is_empty())
         .map(|(l, _)| l.clone());
     let base_iri = derive_base_iri(&subject_ns);
-    let mut time_ranked: Vec<(&str, u64)> = time_obj_hits.into_iter().collect();
-    time_ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    let mut time_ranked: Vec<(String, u64)> = time_obj_hits.into_iter().collect();
+    time_ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     // Cap through the shared helper so an over-long list also flips `truncated`.
     let time_predicates = cap(
         time_ranked.iter().map(|(p, _)| p.to_string()).collect(),
         &mut truncated,
     );
-    let mut num_ranked: Vec<(&str, u64)> = num_obj_hits.into_iter().collect();
-    num_ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    let mut num_ranked: Vec<(String, u64)> = num_obj_hits.into_iter().collect();
+    num_ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let numeric_predicates = cap(
         num_ranked.iter().map(|(p, _)| p.to_string()).collect(),
         &mut truncated,
@@ -560,7 +633,7 @@ pub(crate) fn derive_card(
         source: curated.source,
         created: curated.created,
         triple_count,
-        quad_count: quads.len() as u64,
+        quad_count,
         named_graph_count,
         term_count,
         predicates,
@@ -591,16 +664,6 @@ fn cap<T>(mut v: Vec<T>, truncated: &mut bool) -> Vec<T> {
         v.truncate(CARD_TOP_N);
         *truncated = true;
     }
-    v
-}
-
-/// Sort a `&str`-keyed count map descending by count, then ascending by term.
-fn sort_desc(counts: BTreeMap<&str, u64>) -> Vec<(String, u64)> {
-    let mut v: Vec<(String, u64)> = counts
-        .into_iter()
-        .map(|(k, c)| (k.to_string(), c))
-        .collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     v
 }
 
@@ -770,17 +833,19 @@ fn looks_like_year(value: &str) -> bool {
 /// Fold one temporal literal into the per-predicate MIN/MAX extent, keeping the
 /// extent within a single datatype (the predicate's first-seen one) so a lexical
 /// compare never mixes incompatible value spaces (Risk R4).
-fn update_time_extent<'a>(
-    pred: &'a str,
+fn update_time_extent(
+    pred: &str,
     lit: &Literal,
-    values: &mut BTreeMap<&'a str, (Option<String>, Option<String>)>,
-    value_dt: &mut BTreeMap<&'a str, String>,
+    values: &mut BTreeMap<String, (Option<String>, Option<String>)>,
+    value_dt: &mut BTreeMap<String, String>,
 ) {
-    let dt = value_dt.entry(pred).or_insert_with(|| lit.datatype.clone());
+    let dt = value_dt
+        .entry(pred.to_string())
+        .or_insert_with(|| lit.datatype.clone());
     if *dt != lit.datatype {
         return; // a different value space for this predicate — skip for extent
     }
-    let entry = values.entry(pred).or_insert((None, None));
+    let entry = values.entry(pred.to_string()).or_insert((None, None));
     match &mut entry.0 {
         Some(lo) if lit.value < *lo => *lo = lit.value.clone(),
         None => entry.0 = Some(lit.value.clone()),

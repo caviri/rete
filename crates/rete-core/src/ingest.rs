@@ -14,8 +14,8 @@
 //! files, byte-compatible readers.
 
 use crate::{
-    build_pyramid_meta_with, write_dataset_with_metadata, DictionaryBuilder, GraphIndexBuilder,
-    DEFAULT_TILE_BUDGET,
+    build_pyramid_meta_with, write_dataset_with_metadata, Dictionary, DictionaryBuilder,
+    GraphIndexBuilder, DEFAULT_TILE_BUDGET,
 };
 
 /// A parsed triple as three canonical term tokens.
@@ -131,21 +131,38 @@ pub fn parse_reader<R: std::io::BufRead>(
     format: &str,
     cap: usize,
 ) -> Result<Vec<RawQuad>, IngestError> {
+    let mut out = Vec::with_capacity(cap);
+    stream_reader(reader, format, &mut |q| out.push(q))?;
+    Ok(out)
+}
+
+/// **Stream** N-Triples (`"nt"`) / N-Quads (`"nq"`) from a reader, invoking `f`
+/// once per parsed quad — like [`parse_reader`] but **without collecting** into a
+/// `Vec`. Each quad's term Strings are owned by `f` (and dropped when it returns
+/// if it doesn't retain them), so a caller that only needs to *observe* every
+/// term — e.g. the two-pass [`assemble_dataset_streaming`] building its
+/// dictionary — never materializes the whole quad multiset. The big-graph,
+/// low-RAM ingest primitive. Blank/comment lines are skipped; a parse error stops
+/// the stream and is returned.
+pub fn stream_reader<R: std::io::BufRead>(
+    reader: R,
+    format: &str,
+    f: &mut dyn FnMut(RawQuad),
+) -> Result<(), IngestError> {
     if format != "nt" && format != "nq" {
         return Err(IngestError::UnknownFormat(format.to_string()));
     }
-    let mut out = Vec::with_capacity(cap);
     for (i, line) in reader.lines().enumerate() {
         let line = line.map_err(|e| IngestError::Io(e.to_string()))?;
         if format == "nq" {
             if let Some(q) = parse_nq_line(&line, i + 1)? {
-                out.push(q);
+                f(q);
             }
         } else if let Some((s, p, o)) = parse_nt_line(&line, i + 1)? {
-            out.push((s, p, o, None));
+            f((s, p, o, None));
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Parse Turtle into canonical N-Triples-token triples via oxttl.
@@ -287,7 +304,6 @@ pub fn assemble_dataset_with_opts(
             Some(graph) => named.entry(graph.clone()).or_default().push(t),
         }
     }
-    let has_named = !named.is_empty();
 
     // Derive the metadata blob (the Dataset Card) from the raw quads NOW, while
     // they are resident — then DROP them before the memory-heavy pyramid + index
@@ -295,9 +311,9 @@ pub fn assemble_dataset_with_opts(
     // term an owned String, heavily duplicated) and are fully redundant with the
     // dictionary + id-triples once encoded, so freeing them here cuts peak RAM by
     // their whole size. `pyramid_levels` is not known yet (0 in the callback);
-    // it is filled into the returned `stats` below, and no metadata callback
-    // depends on it (the card derives from the quads + term/graph counts only).
-    let mut stats = BuildStats {
+    // it is filled into the returned `stats` by `finish_assembly`, and no metadata
+    // callback depends on it (the card derives from the quads + term/graph counts).
+    let stats = BuildStats {
         statements: quads.len(),
         default_triples: default_triples.len(),
         named_graphs: named.len(),
@@ -306,6 +322,99 @@ pub fn assemble_dataset_with_opts(
     };
     let blob = metadata(&stats, &quads);
     drop(quads);
+
+    finish_assembly(
+        dict,
+        default_triples,
+        named,
+        with_pyramid,
+        with_text_index,
+        type_override,
+        blob,
+        stats,
+    )
+}
+
+/// **Two-pass, low-RAM** assembly: build a `.rete` by **streaming** the input(s)
+/// twice instead of holding every parsed quad in memory. `stream` is invoked
+/// **twice** and MUST replay the exact same quads in the same order each time —
+/// pass 1 observes every term into the dictionary; pass 2 encodes them to
+/// id-triples. The raw string quads (every term an owned String, heavily
+/// duplicated — by far the largest working set on a big graph) are **never
+/// collected**, so peak RAM is bounded by the dictionary + id-triples + index
+/// rather than the string-quad multiset. Output is **byte-identical** to
+/// [`assemble_dataset_with_opts`] on the same quads (same dictionary, same
+/// id-triples in file order, same downstream pipeline).
+///
+/// The metadata callback derives the Dataset Card from the built dictionary +
+/// default-graph id-triples (resolving terms through the dictionary), since the
+/// raw quads were never retained. `stream` propagates parse/IO errors.
+pub fn assemble_dataset_streaming<S>(
+    mut stream: S,
+    with_pyramid: bool,
+    with_text_index: bool,
+    type_override: Option<&str>,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> Vec<u8>,
+) -> Result<(Vec<u8>, BuildStats), IngestError>
+where
+    S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
+{
+    use std::collections::BTreeMap;
+
+    // Pass 1: observe every term (the dictionary dedups; the string quads are
+    // freed line by line and never collected).
+    let mut db = DictionaryBuilder::new();
+    stream(&mut |(s, p, o, _g)| db.observe(&s, &p, &o))?;
+    let dict = db.build();
+
+    // Pass 2: encode each quad to an id-triple, bucketing named graphs.
+    let mut default_triples: Vec<(u32, u32, u32)> = Vec::new();
+    let mut named: BTreeMap<String, Vec<(u32, u32, u32)>> = BTreeMap::new();
+    stream(&mut |(s, p, o, g)| {
+        let t = dict.encode(&s, &p, &o).expect("observed term");
+        match g {
+            None => default_triples.push(t),
+            Some(graph) => named.entry(graph).or_default().push(t),
+        }
+    })?;
+
+    let statements = default_triples.len() + named.values().map(Vec::len).sum::<usize>();
+    let stats = BuildStats {
+        statements,
+        default_triples: default_triples.len(),
+        named_graphs: named.len(),
+        terms: dict.term_count() as usize,
+        pyramid_levels: 0,
+    };
+    let blob = metadata(&stats, &dict, &default_triples);
+    Ok(finish_assembly(
+        dict,
+        default_triples,
+        named,
+        with_pyramid,
+        with_text_index,
+        type_override,
+        blob,
+        stats,
+    ))
+}
+
+/// The shared tail of every build path: from a finished dictionary + encoded
+/// id-triples (default graph + named), build the community pyramid, the optional
+/// full-text index, the permutation indexes, and serialize the file image. Takes
+/// the id-triples **by value** so they are freed as the permutations consume them.
+#[allow(clippy::too_many_arguments)]
+fn finish_assembly(
+    dict: Dictionary,
+    default_triples: Vec<(u32, u32, u32)>,
+    named: std::collections::BTreeMap<String, Vec<(u32, u32, u32)>>,
+    with_pyramid: bool,
+    with_text_index: bool,
+    type_override: Option<&str>,
+    blob: Vec<u8>,
+    mut stats: BuildStats,
+) -> (Vec<u8>, BuildStats) {
+    let has_named = !named.is_empty();
 
     let (meta, levels) = if with_pyramid {
         build_pyramid_meta_with(&dict, &default_triples, DEFAULT_TILE_BUDGET, type_override)

@@ -11,8 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use rete_core::{
-    build_pyramid_meta, eval_query, write_file, DictionaryBuilder, GraphIndexBuilder, QueryOutput,
-    RangeReader, Rete, SliceReader, SummaryView, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, eval_query, validate_shacl, write_file, CountingReader, DataGraph,
+    DictionaryBuilder, GraphIndexBuilder, QueryOutput, RangeReader, Rete, ReteGraph, ShaclShapes,
+    SliceReader, SummaryView, DEFAULT_TILE_BUDGET,
 };
 
 /// A `RangeReader` over an in-memory image that records each `(offset, len)`,
@@ -592,4 +593,87 @@ fn routed_pattern_query_with_unknown_term_skips_the_index() {
             "unknown-term query read index range {r:?}"
         );
     }
+}
+
+/// SHACL validation over a **lazy** open ([`ReteGraph`]) must (1) produce the
+/// same report as the eager in-memory [`DataGraph`] path and (2) fetch only the
+/// shapes' targets — a few type/email tiles — not the whole graph. A few `Person`
+/// targets (one with a bad email) are buried in thousands of unrelated triples.
+#[test]
+fn shacl_over_lazy_open_matches_eager_and_fetches_only_targets() {
+    const TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+    const PERSON: &str = "<http://ex/Person>";
+    const EMAIL: &str = "<http://ex/email>";
+
+    let mut triples: Vec<(String, String, String)> = Vec::new();
+    for i in 0..6 {
+        let p = format!("<http://ex/p{i}>");
+        triples.push((p.clone(), TYPE.to_string(), PERSON.to_string()));
+        let email = if i == 3 {
+            "\"bad\"".to_string() // fails the pattern → a violation on both paths
+        } else {
+            format!("\"p{i}@ex.org\"")
+        };
+        triples.push((p, EMAIL.to_string(), email));
+    }
+    // Filler so the index is many-tiled and a full read would be expensive.
+    for i in 0..3000u32 {
+        triples.push((
+            format!("<http://ex/n{i:05}>"),
+            "<http://ex/knows>".to_string(),
+            format!("<http://ex/n{:05}>", (i + 1) % 3000),
+        ));
+    }
+
+    let mut db = DictionaryBuilder::new();
+    for (s, p, o) in &triples {
+        db.observe(s, p, o);
+    }
+    let dict = db.build();
+    let ids: Vec<(u32, u32, u32)> = triples
+        .iter()
+        .map(|(s, p, o)| dict.encode(s, p, o).unwrap())
+        .collect();
+    let mut ib = GraphIndexBuilder::new().with_tile_budget(2048);
+    for &t in &ids {
+        ib.push(t);
+    }
+    let (meta, levels) = build_pyramid_meta(&dict, &ids, DEFAULT_TILE_BUDGET);
+    let image = write_file(&dict, &ib.build(), false, &meta, levels);
+
+    let shapes = ShaclShapes::parse_turtle(
+        r#"
+        @prefix ex: <http://ex/> .
+        @prefix sh: <http://www.w3.org/ns/shacl#> .
+        ex:PersonShape a sh:NodeShape ;
+          sh:targetClass ex:Person ;
+          sh:property [ sh:path ex:email ; sh:minCount 1 ; sh:pattern "^[^@]+@[^@]+$" ] .
+        "#,
+    )
+    .unwrap();
+
+    // Eager: whole graph in memory.
+    let eager_rete = Rete::open(&image).unwrap();
+    let eager = validate_shacl(&DataGraph::from_rete(&eager_rete, None), &shapes);
+
+    // Lazy: validate over a range reader, measuring the bytes the validation pulls.
+    let leaked: &'static [u8] = Box::leak(image.clone().into_boxed_slice());
+    let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+    let lazy_rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let before = reader.bytes_read();
+    let lazy = validate_shacl(&ReteGraph::new(&lazy_rete), &shapes);
+    let pulled = reader.bytes_read() - before;
+    assert!(!lazy_rete.index_incomplete(), "no lazy fetch failed");
+
+    // Same verdict, same violations.
+    assert!(!eager.conforms, "the bad email must fail the pattern");
+    assert_eq!(eager.conforms, lazy.conforms);
+    assert_eq!(eager.results.len(), lazy.results.len());
+
+    // The targeted validation pulled far less than the whole file.
+    assert!(
+        (pulled as usize) < image.len() / 3,
+        "lazy SHACL pulled {pulled} B of a {} B file — expected only the type/email tiles",
+        image.len()
+    );
 }

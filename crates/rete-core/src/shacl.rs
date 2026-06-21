@@ -39,7 +39,81 @@ pub enum ShaclError {
     MalformedList(String),
 }
 
-/// A validation data graph, indexed for SHACL target and value lookup.
+/// A read-only view of the data graph for SHACL validation. The validator only
+/// ever asks **targeted** questions — a focus node's values, the subjects of a
+/// predicate, the instances of a class — so this surface is small enough to back
+/// two ways: an in-memory triple set ([`DataGraph`], eager) or a `.rete` file's
+/// index directly ([`ReteGraph`]), which routes each lookup as a range read so a
+/// *remote* validation faults only the tiles holding the shapes' targets, not the
+/// whole graph. The class/instance helpers are derived from the primitives, so a
+/// backend only implements the six lookups.
+pub trait GraphView {
+    /// Objects of `(subject, predicate, ?)`.
+    fn objects(&self, subject: &str, predicate: &str) -> Vec<String>;
+    /// Subjects of `(?, predicate, object)`.
+    fn subjects_with(&self, predicate: &str, object: &str) -> Vec<String>;
+    /// Distinct subjects of `(?, predicate, ?)`.
+    fn subjects_of(&self, predicate: &str) -> Vec<String>;
+    /// Distinct objects of `(?, predicate, ?)`.
+    fn objects_of(&self, predicate: &str) -> Vec<String>;
+    /// Distinct predicates of `(subject, ?, ?)`.
+    fn predicates_for_subject(&self, subject: &str) -> Vec<String>;
+    /// Every node (subject or object). The one inherently **non-targeted** lookup
+    /// — a remote validation that reaches it reads the whole graph (only a general
+    /// inverse path or a target-less shape does).
+    fn all_nodes(&self) -> Vec<String>;
+
+    /// Is `child` a reflexive/transitive `rdfs:subClassOf` of `parent`?
+    fn is_subclass_of(&self, child: &str, parent: &str) -> bool {
+        if child == parent {
+            return true;
+        }
+        let mut seen = HashSet::new();
+        let mut stack = vec![child.to_string()];
+        while let Some(c) = stack.pop() {
+            if !seen.insert(c.clone()) {
+                continue;
+            }
+            for sup in self.objects(&c, RDFS_SUBCLASS_OF) {
+                if sup == parent {
+                    return true;
+                }
+                stack.push(sup);
+            }
+        }
+        false
+    }
+
+    /// The (transitive) subclasses of `parent`.
+    fn subclasses_of(&self, parent: &str) -> BTreeSet<String> {
+        self.subjects_of(RDFS_SUBCLASS_OF)
+            .into_iter()
+            .filter(|s| self.is_subclass_of(s, parent))
+            .collect()
+    }
+
+    /// Instances of `class` (direct, or via a subclass).
+    fn instances_of(&self, class: &str) -> Vec<String> {
+        let mut classes = self.subclasses_of(class);
+        classes.insert(class.to_string());
+        let mut out = Vec::new();
+        for c in &classes {
+            out.extend(self.subjects_with(RDF_TYPE, c));
+        }
+        unique(out)
+    }
+
+    /// Is `node` an instance of `class` (direct, or via a subclass)?
+    fn is_instance_of(&self, node: &str, class: &str) -> bool {
+        self.objects(node, RDF_TYPE)
+            .iter()
+            .any(|c| self.is_subclass_of(c, class))
+    }
+}
+
+/// A validation data graph held fully in memory as a sorted triple vector. Backs
+/// the shapes graph and the **eager** data path; the lazy data path uses
+/// [`ReteGraph`].
 #[derive(Debug, Clone, Default)]
 pub struct DataGraph {
     triples: Vec<Triple>,
@@ -57,12 +131,30 @@ impl DataGraph {
         Self::from_triples(rete.dump(graph))
     }
 
+    fn has(&self, s: &str, p: &str, o: &str) -> bool {
+        self.triples
+            .iter()
+            .any(|(ts, tp, to)| ts == s && tp == p && to == o)
+    }
+}
+
+impl GraphView for DataGraph {
     fn objects(&self, subject: &str, predicate: &str) -> Vec<String> {
         self.triples
             .iter()
             .filter(|(s, p, _)| s == subject && p == predicate)
             .map(|(_, _, o)| o.clone())
             .collect()
+    }
+
+    fn subjects_with(&self, predicate: &str, object: &str) -> Vec<String> {
+        unique(
+            self.triples
+                .iter()
+                .filter(|(_, p, o)| p == predicate && o == object)
+                .map(|(s, _, _)| s.clone())
+                .collect(),
+        )
     }
 
     fn subjects_of(&self, predicate: &str) -> Vec<String> {
@@ -95,12 +187,6 @@ impl DataGraph {
         )
     }
 
-    fn has(&self, s: &str, p: &str, o: &str) -> bool {
-        self.triples
-            .iter()
-            .any(|(ts, tp, to)| ts == s && tp == p && to == o)
-    }
-
     fn all_nodes(&self) -> Vec<String> {
         let mut out = Vec::new();
         for (s, _, o) in &self.triples {
@@ -109,52 +195,78 @@ impl DataGraph {
         }
         unique(out)
     }
+}
 
-    fn instances_of(&self, class: &str) -> Vec<String> {
-        let subclasses = self.subclasses_of(class);
+/// A SHACL data-graph view backed directly by a `.rete` file's index: every
+/// lookup is a routed pattern query, so over a lazy
+/// ([`Rete::open_ranged_lazy`](crate::Rete::open_ranged_lazy)) open a validation
+/// faults only the tiles holding the shapes' target nodes — not the whole graph.
+/// Views the **default** graph (named-graph validation uses the eager
+/// [`DataGraph`]).
+pub struct ReteGraph<'a> {
+    rete: &'a Rete,
+}
+
+impl<'a> ReteGraph<'a> {
+    pub fn new(rete: &'a Rete) -> Self {
+        Self { rete }
+    }
+}
+
+impl GraphView for ReteGraph<'_> {
+    fn objects(&self, subject: &str, predicate: &str) -> Vec<String> {
+        self.rete
+            .query(Some(subject), Some(predicate), None)
+            .into_iter()
+            .map(|(_, _, o)| o)
+            .collect()
+    }
+
+    fn subjects_with(&self, predicate: &str, object: &str) -> Vec<String> {
+        self.rete
+            .query(None, Some(predicate), Some(object))
+            .into_iter()
+            .map(|(s, _, _)| s)
+            .collect()
+    }
+
+    fn subjects_of(&self, predicate: &str) -> Vec<String> {
         unique(
-            self.triples
-                .iter()
-                .filter(|(_, p, o)| p == RDF_TYPE && (o == class || subclasses.contains(o)))
-                .map(|(s, _, _)| s.clone())
+            self.rete
+                .query(None, Some(predicate), None)
+                .into_iter()
+                .map(|(s, _, _)| s)
                 .collect(),
         )
     }
 
-    fn is_instance_of(&self, node: &str, class: &str) -> bool {
-        self.objects(node, RDF_TYPE)
-            .iter()
-            .any(|c| c == class || self.is_subclass_of(c, class))
+    fn objects_of(&self, predicate: &str) -> Vec<String> {
+        unique(
+            self.rete
+                .query(None, Some(predicate), None)
+                .into_iter()
+                .map(|(_, _, o)| o)
+                .collect(),
+        )
     }
 
-    fn is_subclass_of(&self, child: &str, parent: &str) -> bool {
-        if child == parent {
-            return true;
-        }
-        let mut seen = HashSet::new();
-        let mut stack = vec![child.to_string()];
-        while let Some(c) = stack.pop() {
-            if !seen.insert(c.clone()) {
-                continue;
-            }
-            for sup in self.objects(&c, RDFS_SUBCLASS_OF) {
-                if sup == parent {
-                    return true;
-                }
-                stack.push(sup);
-            }
-        }
-        false
+    fn predicates_for_subject(&self, subject: &str) -> Vec<String> {
+        unique(
+            self.rete
+                .query(Some(subject), None, None)
+                .into_iter()
+                .map(|(_, p, _)| p)
+                .collect(),
+        )
     }
 
-    fn subclasses_of(&self, parent: &str) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        for (s, p, _) in &self.triples {
-            if p == RDFS_SUBCLASS_OF && self.is_subclass_of(s, parent) {
-                out.insert(s.clone());
-            }
+    fn all_nodes(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for (s, _, o) in self.rete.query(None, None, None) {
+            out.push(s);
+            out.push(o);
         }
-        out
+        unique(out)
     }
 }
 
@@ -413,12 +525,15 @@ struct ShapeView<'a> {
     messages: Vec<String>,
 }
 
-struct Validator<'a> {
-    data: &'a DataGraph,
+struct Validator<'a, G: GraphView> {
+    data: &'a G,
     shapes: &'a ShaclShapes,
 }
 
-pub fn validate_shacl(data: &DataGraph, shapes: &ShaclShapes) -> ValidationReport {
+/// Validate `data` against `shapes`. `data` is any [`GraphView`] — an in-memory
+/// [`DataGraph`] (eager) or a [`ReteGraph`] that routes lookups as range reads
+/// (lazy / remote, fetching only the shapes' targets).
+pub fn validate_shacl<G: GraphView>(data: &G, shapes: &ShaclShapes) -> ValidationReport {
     let validator = Validator { data, shapes };
     let mut results = Vec::new();
     for shape in shapes.target_shapes() {
@@ -448,7 +563,7 @@ pub fn validate_shacl(data: &DataGraph, shapes: &ShaclShapes) -> ValidationRepor
     }
 }
 
-impl<'a> Validator<'a> {
+impl<'a, G: GraphView> Validator<'a, G> {
     fn view(&self, shape: &'a str) -> ShapeView<'a> {
         let path = self
             .shapes
@@ -1140,13 +1255,19 @@ impl<'a> Validator<'a> {
     fn eval_path(&self, path: &Path, start: &str) -> Vec<String> {
         match path {
             Path::Predicate(p) => unique(self.data.objects(start, p)),
-            Path::Inverse(p) => unique(
-                self.data
-                    .all_nodes()
-                    .into_iter()
-                    .filter(|n| self.eval_path(p, n).contains(&start.to_string()))
-                    .collect(),
-            ),
+            // The common inverse `^p` routes to `(?, p, start)` — one targeted
+            // query — instead of scanning every node. A general inverse path
+            // (`^(p1/p2)`) still enumerates all nodes (inherently non-targeted).
+            Path::Inverse(inner) => match inner.as_ref() {
+                Path::Predicate(p) => unique(self.data.subjects_with(p, start)),
+                _ => unique(
+                    self.data
+                        .all_nodes()
+                        .into_iter()
+                        .filter(|n| self.eval_path(inner, n).contains(&start.to_string()))
+                        .collect(),
+                ),
+            },
             Path::Sequence(paths) => {
                 let mut frontier = vec![start.to_string()];
                 for p in paths {

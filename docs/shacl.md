@@ -16,6 +16,26 @@ The command exits with status `0` when the report conforms and non-zero when it
 finds at least one result. Shapes are read as Turtle. Data comes from the `.rete`
 file, so validation runs over exactly the graph you publish and query.
 
+## Validating a remote graph (lazy)
+
+SHACL validation is **node-by-node**: a shape names its targets (a class, a node,
+the subjects/objects of a predicate), then checks each focus node's own property
+values. That maps onto **routed range reads**, so a remote `.rete` can be
+validated over HTTP *without downloading it* — each lookup faults only the tiles
+holding the target nodes and their values:
+
+```sh
+rete shacl-url https://host/data.rete --shapes shapes.ttl
+# (fetched 38912 bytes in 7 range request(s); file is 1048576 bytes)
+```
+
+A **targeted** shape (`sh:targetClass` / `targetNode` / `targetSubjectsOf` /
+`targetObjectsOf`) fetches only its targets — the win grows with the file. The one
+exception is a **target-less shape** (one that implicitly targets every node) or a
+general inverse path, which must read the whole graph; `^predicate` inverse paths
+are routed (they become a single `(?, p, focus)` lookup). `shacl-url` validates the
+default graph.
+
 ## A minimal shape
 
 ```turtle
@@ -113,20 +133,24 @@ Supported constraint components:
 
 ## Core API
 
-The CLI uses the reusable core API:
+The CLI uses the reusable core API. `validate_shacl` is generic over a
+[`GraphView`] — the data graph can be an in-memory `DataGraph` (eager) or a
+`ReteGraph` that routes every lookup as a range read (lazy / remote):
 
 ```rust
-use rete_core::{validate_shacl, DataGraph, Rete, ShaclShapes};
+use rete_core::{validate_shacl, DataGraph, ReteGraph, Rete, ShaclShapes};
 
-let rete = Rete::open("data.rete")?;
-let data = DataGraph::from_rete(&rete, None)?;
-let shape_text = std::fs::read_to_string("shapes.ttl")?;
-let shapes = ShaclShapes::parse_turtle(&shape_text)?;
-let report = validate_shacl(&data, &shapes);
+let shapes = ShaclShapes::parse_turtle(&std::fs::read_to_string("shapes.ttl")?)?;
 
-if !report.conforms {
-    eprintln!("{}", report.to_json());
-}
+// Eager: whole graph in memory.
+let rete = Rete::open(&std::fs::read("data.rete")?)?;
+let report = validate_shacl(&DataGraph::from_rete(&rete, None), &shapes);
+
+// Lazy: validate over a range reader (e.g. an HTTP backend) — fetches only the
+// shapes' targets.
+let rete = Rete::open_ranged_lazy(reader)?;
+let report = validate_shacl(&ReteGraph::new(&rete), &shapes);
 ```
 
-Pass `Some("<graph-iri>")` to `DataGraph::from_rete` to validate one named graph.
+Pass `Some("<graph-iri>")` to `DataGraph::from_rete` to validate one named graph
+(the lazy `ReteGraph` validates the default graph).
