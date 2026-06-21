@@ -520,6 +520,22 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Explain a triple-pattern result over a **remote** `.rete` (HTTP range):
+    /// which permutation, section, and byte ranges answer it — fetching only the
+    /// routed tiles. The remote counterpart of `rete why`.
+    WhyUrl {
+        /// http(s):// URL of a `.rete` file (host must honor Range requests).
+        url: String,
+        #[arg(short, long)]
+        subject: Option<String>,
+        #[arg(short, long)]
+        predicate: Option<String>,
+        #[arg(short, long)]
+        object: Option<String>,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -711,6 +727,13 @@ fn main() -> anyhow::Result<()> {
             object,
         } => commands::url::query_url(&url, subject, predicate, object),
         Command::SparqlUrl { url, query, json } => commands::url::sparql_url(&url, &query, json),
+        Command::WhyUrl {
+            url,
+            subject,
+            predicate,
+            object,
+            json,
+        } => commands::url::why_url(&url, subject, predicate, object, json),
         Command::Federate {
             sources,
             query,

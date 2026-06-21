@@ -154,3 +154,52 @@ pub(crate) fn sparql_url(url: &str, query: &str, json: bool) -> anyhow::Result<(
     );
     Ok(())
 }
+
+/// Explain a triple-pattern result over a **remote** `.rete` — which permutation,
+/// section, and byte ranges answered it — fetching only the routed tiles. The CLI
+/// counterpart of the browser's `why_url`, mirroring [`sparql_url`]'s lazy
+/// block-cached open.
+pub(crate) fn why_url(
+    url: &str,
+    subject: Option<String>,
+    predicate: Option<String>,
+    object: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let reader = std::sync::Arc::new(CountingReader::new(HttpRangeReader::open(url)?));
+    let total = reader.len();
+    let block_kb: u64 = std::env::var("RETE_BLOCK_KB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_BLOCK / 1024);
+    let rete = if block_kb == 0 {
+        Rete::open_ranged_lazy(reader.clone())?
+    } else {
+        Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(
+            reader.clone(),
+            block_kb * 1024,
+        )))?
+    };
+    let results =
+        rete.query_with_provenance(subject.as_deref(), predicate.as_deref(), object.as_deref());
+    if rete.index_incomplete() {
+        anyhow::bail!(
+            "a range request failed while explaining the pattern over {url}; the \
+             provenance would be incomplete — retry"
+        );
+    }
+    crate::commands::query::print_provenance(
+        subject.as_deref(),
+        predicate.as_deref(),
+        object.as_deref(),
+        &results,
+        json,
+    )?;
+    eprintln!(
+        "(fetched {} bytes in {} range request(s); file is {} bytes)",
+        reader.bytes_read(),
+        reader.requests(),
+        total
+    );
+    Ok(())
+}

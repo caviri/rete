@@ -241,6 +241,7 @@ check "query-url"   "Bob|Alice|result" -- $B query-url "http://127.0.0.1:8099/we
 check "sparql-url"  "Bob|solution" -- $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "cost-url"    "full query open|range request" -- $B cost "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "shacl-url"   "MinCountConstraintComponent" -- bash -c "$B shacl-url 'http://127.0.0.1:8099/g.rete' --shapes '$T/person-bad.ttl' --format json; true"
+check "why-url"     "index_permutation|POS|tile" -- $B why-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>" --json
 kill "$(cat "$T/srv.pid")" 2>/dev/null
 
 echo "== error handling (must fail cleanly, not panic) =="
