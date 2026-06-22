@@ -5639,17 +5639,21 @@ SELECT ?sub ?name WHERE {
       {
         family: "Select",
         label: "Physicists who are also philosophers (in 1 GB)",
-        view: "graph",
-        tip: "A whole-gigabyte graph queried live in the browser: this occupation intersection - people who are both wdt:P106 physicist (Q169470) and philosopher (Q4964182) - faults in only ~40 MB of the 1.04 GB file, while the rest never leaves the server. Two columns pair each entity's Q-id with its English name (Ilya Prigogine and other scientist-philosophers).",
+        view: "table",
+        tip: "The occupation intersection (people who are both wdt:P106 physicist Q169470 and philosopher Q4964182) on the lazy 1 GB file. Optimised shape: the intersection runs in a subquery with LIMIT, so the name, birth year (wdt:P569) and English description (schema:description) are resolved for only the ~25 people that pass - not the thousands in each occupation. Reading both whole occupation sets to intersect them is still the heavy part; enable Settings -> Range cache so a re-run is near-instant.",
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?p ?who WHERE {
-  ?p wdt:P106 wd:Q169470 ;   # physicist
-     wdt:P106 wd:Q4964182 ;  # philosopher
-     rdfs:label ?who .
-  FILTER(LANG(?who) = "en")
-} LIMIT 50`
+PREFIX schema: <http://schema.org/>
+SELECT ?who ?year ?description WHERE {
+  { SELECT ?p WHERE {
+      ?p wdt:P106 wd:Q169470 ;   # physicist
+         wdt:P106 wd:Q4964182    # philosopher
+    } LIMIT 25 }
+  ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
+  OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
+  OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
+}`
       }
     ],
     scholar: [
