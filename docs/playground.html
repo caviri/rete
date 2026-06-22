@@ -7896,6 +7896,13 @@ theo:EventShape a sh:NodeShape ;
     setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
       info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.");
     renderExamples();
+    // Catalog-driven example panels are independent of the (lazy, unloaded)
+    // bytes — refresh them here too, or the SHACL / Reach / Provenance tabs keep
+    // the PREVIOUS dataset's content (e.g. scholar's "Paper integrity" shape
+    // lingering on wikidata-1GB). The bundled/cached paths get this via loadBytes.
+    renderShaclExamples();
+    renderReachDefaults();
+    renderProvenanceDefaults();
     closeSource();
     setMode("sparql");
     // Load the dataset's first example query automatically (parity with bundled).
