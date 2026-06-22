@@ -109,6 +109,15 @@ __PLAYGROUND_CSS__
           <summary>The self-describing card</summary>
           <p class="microcopy" style="margin-top:6px">Each .rete embeds a small <b>card</b>: curated metadata (title, license, source) plus auto-derived stats — datatype/language histograms, the effective schema (<code>class→predicate→class</code>), top hubs, geo/temporal extents, and a schema pyramid with per-semantic-zoom-level type rollups. A remote reader fetches just the header + card in two HTTP ranges (~10&nbsp;KB) to learn a multi-GB graph's shape and legend without ever touching the triple index.</p>
         </details>
+        <details class="lazy-explainer">
+          <summary>Query helpers: label decode &amp; entity finder</summary>
+          <p class="microcopy" style="margin-top:6px">Two aids sit by the editor and <b>never change what a query does</b> — they only read and write the query text:</p>
+          <ul class="microcopy" style="margin:6px 0 0;padding-left:18px;line-height:1.6">
+            <li><b>🏷 Labels</b> floats a human-readable name over each IRI: <code>wd:Q100001</code> reads as <b>Bemelen</b>, <code>wdt:P625</code> as <b>coordinate location</b>. Names come from a built-in vocabulary, predefined per-dataset hints, and a live <code>rdfs:label</code> / <code>skos:prefLabel</code> lookup.</li>
+            <li><b>🔎 Find an entity</b> turns a name you type into its IRI through rete's bounded <b>label index</b> (<code>prefix_search</code> — a binary search, never a full scan); click a hit to drop its <code>&lt;IRI&gt;</code> in at the caret.</li>
+          </ul>
+          <p class="microcopy" style="margin-top:6px">Both are <b>lazy-mode native</b>: on a remote <code>.rete</code> they fetch only the few label tiles they need over HTTP range — a small <span class="spindle" style="width:11px;height:11px"></span> spins while those bytes arrive.</p>
+        </details>
       </section>
       <section data-modes="sparql shacl reach provenance">
         <h2>Selected Example</h2>

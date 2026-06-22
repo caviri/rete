@@ -128,6 +128,20 @@
         }
       });
     }
+    // Label-prefix entity search over the resident remote session: faults only
+    // the label-index tiles (sync range XHR, worker-only), like a query.
+    if (m.type === "psearch") {
+      pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
+      Promise.resolve(ready).then(function () {
+        try {
+          var g = _session(m.url);
+          var json = g.prefix_search(m.prefix, m.limit || 12);
+          self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
+        } catch (err) {
+          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
+        }
+      });
+    }
   };
 })();`;
 
@@ -447,31 +461,60 @@
     return (CATALOG.labelHints && CATALOG.labelHints[state.dataset]) || null;
   }
 
-  // Best-effort live IRI -> label resolution for the decode toggle, over the
-  // loaded EMBEDDED graph (the engine call is synchronous there). Remote-lazy
-  // graphs are skipped — their queries are async/worker-routed, and predefined
-  // labelHints already cover the showcase IRIs. Returns a { iri: label } map.
-  function resolveLabels(iris) {
-    if (!iris || !iris.length || state.remote || !state.graph || !state.bytes) return {};
+  // A small spinner ("spindle") on the decode toggle while a remote label lookup
+  // is in flight (it can take a few range reads on a multi-GB file).
+  let decodeBusy = 0;
+  function setDecodeLoading(on) {
+    const b = $("decodeToggle");
+    if (b) b.classList.toggle("loading", !!on);
+  }
+  function parseLabelRows(res) {
+    const out = {};
+    (res.rows || []).forEach((r) => {
+      const s = String(r.s || "").replace(/^<|>$/g, "");
+      if (!s || out[s] != null) return;
+      const lm = String(r.l || "").match(/^"((?:\\.|[^"\\])*)"/);
+      out[s] = lm ? lm[1] : String(r.l || "");
+    });
+    return out;
+  }
+  function labelQueryFor(iris) {
     const values = iris.slice(0, 60).map((i) => "<" + i + ">").join(" ");
-    const q =
-      "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n" +
+    return "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n" +
       "PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n" +
       "PREFIX foaf: <http://xmlns.com/foaf/0.1/>\n" +
       "SELECT ?s ?l WHERE { VALUES ?s { " + values + " }\n" +
       "  ?s ?p ?l . VALUES ?p { rdfs:label skos:prefLabel foaf:name }\n" +
       "  FILTER(isLiteral(?l)) }";
-    try {
-      const res = JSON.parse(state.graph.query(q, "table"));
-      const out = {};
-      (res.rows || []).forEach((r) => {
-        const s = String(r.s || "").replace(/^<|>$/g, "");
-        if (!s || out[s] != null) return;
-        const lm = String(r.l || "").match(/^"((?:\\.|[^"\\])*)"/);
-        out[s] = lm ? lm[1] : String(r.l || "");
-      });
-      return out;
-    } catch (_e) { return {}; }
+  }
+  // Best-effort live IRI -> label resolution for the decode toggle. Embedded
+  // graphs resolve synchronously; a remote-lazy graph routes the SAME label
+  // query through the worker (HTTP range reads) and returns a Promise — so the
+  // toggle is fully lazy-mode compatible. Predefined labelHints already cover the
+  // showcase IRIs, so the live lookup only fires for un-hinted ones.
+  function resolveLabels(iris) {
+    if (!iris || !iris.length) return {};
+    if (state.remote) {
+      decodeBusy++; setDecodeLoading(true);
+      return remoteSparql(state.remote.url, labelQueryFor(iris), "table")
+        .then((out) => parseLabelRows(JSON.parse(out.json)))
+        .catch(() => ({}))
+        .finally(() => { if (--decodeBusy <= 0) { decodeBusy = 0; setDecodeLoading(false); } });
+    }
+    if (!state.graph || !state.bytes) return {};
+    try { return parseLabelRows(JSON.parse(state.graph.query(labelQueryFor(iris), "table"))); }
+    catch (_e) { return {}; }
+  }
+
+  // Entity (label-prefix) search over a remote-lazy graph: RemoteGraph.prefix_search
+  // does synchronous range-read XHR (faults only the label-index tiles it needs),
+  // which is worker-only — so route it through the query worker like remoteSparql.
+  function remotePrefixSearch(url, prefix, limit) {
+    return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
+      const id = ++remoteSeq;
+      remotePending.set(id, { resolve, reject });
+      remoteWorker.postMessage({ type: "psearch", id, url, prefix, limit: limit || 12 });
+    }));
   }
 
   function enhanceEditor(id, lang) {
@@ -506,9 +549,7 @@
       return;
     }
     if (!hits.length) {
-      box.innerHTML = state.remote
-        ? `<p class="ef-empty">Live entity search runs on in-page graphs. For a remote-lazy dataset, try the “Find a thing by its name” example.</p>`
-        : `<p class="ef-empty">No entities match “${esc(q)}”.</p>`;
+      box.innerHTML = `<p class="ef-empty">No entities match “${esc(q)}”.</p>`;
       return;
     }
     box.innerHTML = hits.map((h) => {
@@ -521,12 +562,28 @@
       b.onclick = () => insertAtCaret("q", "<" + b.dataset.iri + ">");
     });
   }
+  // Search by label. Embedded graphs answer synchronously; a remote-lazy graph
+  // faults its label-index tiles over HTTP range (worker), so a spinner shows and
+  // a sequence guard drops out-of-order results from earlier keystrokes.
+  let efSeq = 0;
   function efSearch() {
     const inp = $("efInput");
     if (!inp) return;
     const q = (inp.value || "").trim();
+    if (!q) { renderFinder([], ""); return; }
+    const seq = ++efSeq;
+    if (state.remote) {
+      const box = $("efResults");
+      if (box) box.innerHTML = `<div class="ef-loading"><span class="spindle"></span> searching “${esc(q)}” over range reads…</div>`;
+      remotePrefixSearch(state.remote.url, q, 15).then((out) => {
+        if (seq !== efSeq) return;
+        let hits = []; try { hits = JSON.parse(out.json); } catch (_e) { hits = []; }
+        renderFinder(hits, q);
+      }).catch(() => { if (seq === efSeq) renderFinder([], q); });
+      return;
+    }
     let hits = [];
-    if (q && state.graph) { try { hits = JSON.parse(state.graph.prefix_search(q, 15)); } catch (_e) { hits = []; } }
+    if (state.graph) { try { hits = JSON.parse(state.graph.prefix_search(q, 15)); } catch (_e) { hits = []; } }
     renderFinder(hits, q);
   }
 
@@ -3883,9 +3940,14 @@
         decodeBtn.setAttribute("aria-pressed", on ? "true" : "false");
       };
     }
-    // Entity finder panel beside the editor.
+    // Entity finder panel beside the editor (debounced — a remote search is a
+    // range-read round trip, so don't fire one on every keystroke).
     const efInput = $("efInput");
-    if (efInput) { efInput.oninput = efSearch; renderFinder([], ""); }
+    if (efInput) {
+      let efDebounce = null;
+      efInput.oninput = () => { clearTimeout(efDebounce); efDebounce = setTimeout(efSearch, 180); };
+      renderFinder([], "");
+    }
 
     await wasm_bindgen(b64ToBytes(RETE_WASM_B64));
 
