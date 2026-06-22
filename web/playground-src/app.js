@@ -2974,6 +2974,13 @@ self.onmessage = function (e) {
     }
 
     if (res.kind === "select") {
+      // TTL / JSON-LD serialize an RDF graph, but a SELECT is a solution table —
+      // there's no graph to write. Guide to CONSTRUCT/DESCRIBE instead of a table.
+      if (fmt === "ttl" || fmt === "jsonld") {
+        const name = fmt === "ttl" ? "Turtle" : "JSON-LD";
+        $("out").innerHTML = `<div class="note">${name} serializes an <b>RDF graph</b>, but this query is a <b>SELECT</b> — it returns a solution table, not triples. Switch <b>Output</b> back to <b>Table</b>, or use a <b>CONSTRUCT</b> (or <b>DESCRIBE</b>) query to build a graph you can export as ${name}.</div>`;
+        return `${(res.rows || []).length} row(s) · ${name} needs CONSTRUCT`;
+      }
       $("out").innerHTML = progressiveBanner(progressive) + renderTable(res.vars || [], res.rows || []);
       return `${(res.rows || []).length} row(s)`;
     }
@@ -3303,13 +3310,16 @@ self.onmessage = function (e) {
       // Just record the latest tally; the 250 ms timer paints it — so a query
       // firing thousands of fetches doesn't thrash the DOM.
       remoteOnProgress = (m) => { lastReq = m.requests; lastBytes = m.bytes; };
-      remoteSparql(state.remote.url, q, "table").then((out) => {
+      // TTL / JSON-LD ask the worker to serialize (a CONSTRUCT carries res.text);
+      // every other view wants table rows (graph/map/time derive from them).
+      const remoteFmt = (fmt === "ttl" || fmt === "jsonld") ? fmt : "table";
+      remoteSparql(state.remote.url, q, remoteFmt).then((out) => {
         cleanup();
         state.lastRemoteLog = out.log || [];
         const res = JSON.parse(out.json);
-        // Remote always asks the worker for table rows, so the result is always
-        // row-shaped — cache it so an Output-type switch re-renders, not re-runs.
-        state.lastResult = { res, rowShaped: true, q, strategy: "remote", remote: true, dataset: state.dataset };
+        // Row-shaped unless we fetched a serialization — cache it so an Output
+        // switch re-renders rather than re-runs.
+        state.lastResult = { res, rowShaped: remoteFmt === "table", q, strategy: "remote", remote: true, dataset: state.dataset };
         const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
         const r = res.remote || {};
         const dt = performance.now() - t0;

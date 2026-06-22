@@ -5813,6 +5813,26 @@ SELECT ?p ?who ?country ?year ?description ?image WHERE {
   OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
   OPTIONAL { ?p wdt:P18 ?image }
 }`
+      },
+      {
+        family: "Construct",
+        label: "Build a small graph (export as TTL / JSON-LD)",
+        view: "graph",
+        tip: "A CONSTRUCT builds a NEW RDF graph - here a card for each scientist-philosopher (label, description, image). Because it produces triples, you can switch Output to TTL or JSON-LD to read and copy the serialization. (TTL / JSON-LD write triples, so they only apply to CONSTRUCT or DESCRIBE - a SELECT returns a table, not a graph.)",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
+CONSTRUCT {
+  ?p rdfs:label ?who ; schema:description ?description ; wdt:P18 ?image .
+} WHERE {
+  { SELECT ?p WHERE {
+      ?p wdt:P106 wd:Q169470 ; wdt:P106 wd:Q4964182
+    } LIMIT 15 }
+  ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
+  OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?p wdt:P18 ?image }
+}`
       }
     ],
     scholar: [
@@ -11418,6 +11438,13 @@ self.onmessage = function (e) {
     }
 
     if (res.kind === "select") {
+      // TTL / JSON-LD serialize an RDF graph, but a SELECT is a solution table —
+      // there's no graph to write. Guide to CONSTRUCT/DESCRIBE instead of a table.
+      if (fmt === "ttl" || fmt === "jsonld") {
+        const name = fmt === "ttl" ? "Turtle" : "JSON-LD";
+        $("out").innerHTML = `<div class="note">${name} serializes an <b>RDF graph</b>, but this query is a <b>SELECT</b> — it returns a solution table, not triples. Switch <b>Output</b> back to <b>Table</b>, or use a <b>CONSTRUCT</b> (or <b>DESCRIBE</b>) query to build a graph you can export as ${name}.</div>`;
+        return `${(res.rows || []).length} row(s) · ${name} needs CONSTRUCT`;
+      }
       $("out").innerHTML = progressiveBanner(progressive) + renderTable(res.vars || [], res.rows || []);
       return `${(res.rows || []).length} row(s)`;
     }
@@ -11747,13 +11774,16 @@ self.onmessage = function (e) {
       // Just record the latest tally; the 250 ms timer paints it — so a query
       // firing thousands of fetches doesn't thrash the DOM.
       remoteOnProgress = (m) => { lastReq = m.requests; lastBytes = m.bytes; };
-      remoteSparql(state.remote.url, q, "table").then((out) => {
+      // TTL / JSON-LD ask the worker to serialize (a CONSTRUCT carries res.text);
+      // every other view wants table rows (graph/map/time derive from them).
+      const remoteFmt = (fmt === "ttl" || fmt === "jsonld") ? fmt : "table";
+      remoteSparql(state.remote.url, q, remoteFmt).then((out) => {
         cleanup();
         state.lastRemoteLog = out.log || [];
         const res = JSON.parse(out.json);
-        // Remote always asks the worker for table rows, so the result is always
-        // row-shaped — cache it so an Output-type switch re-renders, not re-runs.
-        state.lastResult = { res, rowShaped: true, q, strategy: "remote", remote: true, dataset: state.dataset };
+        // Row-shaped unless we fetched a serialization — cache it so an Output
+        // switch re-renders rather than re-runs.
+        state.lastResult = { res, rowShaped: remoteFmt === "table", q, strategy: "remote", remote: true, dataset: state.dataset };
         const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
         const r = res.remote || {};
         const dt = performance.now() - t0;

@@ -761,6 +761,26 @@ SELECT ?p ?who ?country ?year ?description ?image WHERE {
   OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
   OPTIONAL { ?p wdt:P18 ?image }
 }`
+      },
+      {
+        family: "Construct",
+        label: "Build a small graph (export as TTL / JSON-LD)",
+        view: "graph",
+        tip: "A CONSTRUCT builds a NEW RDF graph - here a card for each scientist-philosopher (label, description, image). Because it produces triples, you can switch Output to TTL or JSON-LD to read and copy the serialization. (TTL / JSON-LD write triples, so they only apply to CONSTRUCT or DESCRIBE - a SELECT returns a table, not a graph.)",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
+CONSTRUCT {
+  ?p rdfs:label ?who ; schema:description ?description ; wdt:P18 ?image .
+} WHERE {
+  { SELECT ?p WHERE {
+      ?p wdt:P106 wd:Q169470 ; wdt:P106 wd:Q4964182
+    } LIMIT 15 }
+  ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
+  OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?p wdt:P18 ?image }
+}`
       }
     ],
     scholar: [
