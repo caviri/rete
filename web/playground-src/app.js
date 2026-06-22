@@ -1044,6 +1044,23 @@
       `⊞ Library${all.length ? " · " + all.length : ""}</button>`;
     $$("#exampleQuick [data-example]").forEach((b) => { b.onclick = () => selectExample(Number(b.dataset.example)); });
     $("libraryBtn").onclick = openLibrary;
+    renderExampleDesc(all);
+  }
+
+  // The always-visible description of the active example, shown inline under the
+  // quick-chip row (so the full explanation reads without hovering a chip). Falls
+  // back to the first example as a preview when nothing is selected yet.
+  function renderExampleDesc(all) {
+    const box = $("exampleDesc");
+    if (!box) return;
+    const list = all || examplesForDataset();
+    const sel = (state.selectedExample != null && list[state.selectedExample]) || list[0];
+    if (!sel) { box.innerHTML = ""; box.classList.add("hidden"); return; }
+    box.classList.remove("hidden");
+    box.innerHTML =
+      `<span class="exd-fam">${esc(sel.family || "Query")}</span>` +
+      `<span class="exd-label">${esc(sel.label)}</span>` +
+      (sel.tip ? `<span class="exd-tip">${esc(sel.tip)}</span>` : "");
   }
 
   function openLibrary() { renderExamples(); $("libraryModal").classList.remove("hidden"); }

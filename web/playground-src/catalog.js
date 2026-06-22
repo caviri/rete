@@ -537,14 +537,14 @@ SELECT DISTINCT ?root WHERE {
         family: "Select",
         label: "All facts about an entity",
         view: "table",
-        tip: "A bound subject (the village of Bemelen) routes to just the tiles holding it - a few range reads of the whole file. The coordinate comes back as a geo:wktLiteral (recovered datatype).",
+        tip: "A bound subject is the most selective query shape: SPO routing jumps straight to the tiles holding Bemelen (entity Q100001, a small Dutch village), so the reader fetches only a few HTTP ranges of the whole file - never a scan. Its coordinate comes back as a geo:wktLiteral, the datatype reconstructed during the parquet -> rete build.",
         q: `SELECT ?p ?o WHERE { <http://www.wikidata.org/entity/Q100001> ?p ?o }`
       },
       {
         family: "Select",
         label: "English labels of an entity",
         view: "table",
-        tip: "Bound subject + bound predicate: the most selective shape - minimal bytes fetched.",
+        tip: "Bound subject + bound predicate (rdfs:label) is the tightest shape of all - it touches only the label tiles for Bemelen (Q100001), a handful of bytes. Wikidata stores labels in dozens of languages, so a real run adds FILTER(LANG(?label) = \"en\") to keep just the English one.",
         q: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 SELECT ?label WHERE {
   <http://www.wikidata.org/entity/Q100001> rdfs:label ?label
@@ -554,7 +554,7 @@ SELECT ?label WHERE {
         family: "Select",
         label: "Coordinates of a place",
         view: "table",
-        tip: "Returns a geo:wktLiteral - the datatype recovered during the parquet->rete conversion.",
+        tip: "wdt:P625 is Wikidata's 'coordinate location' property. For Bemelen (Q100001) it returns a single geo:wktLiteral point - the WKT datatype recovered during the parquet -> rete conversion, so it round-trips as proper GeoSPARQL rather than an opaque string.",
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 SELECT ?coord WHERE {
   <http://www.wikidata.org/entity/Q100001> wdt:P625 ?coord
@@ -564,7 +564,7 @@ SELECT ?coord WHERE {
         family: "Path",
         label: "Subclasses of a class",
         view: "table",
-        tip: "Reverse bound-object lookup (subclass-of): who declares this as their superclass.",
+        tip: "A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -> Q515, the entity for 'city'. The bound object routes to just the POS tiles for that one edge, so you get the direct subclasses of city (town, capital, seaport, ...) without walking the whole class tree.",
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 SELECT ?sub WHERE {
   ?sub wdt:P279 <http://www.wikidata.org/entity/Q515>
@@ -574,7 +574,7 @@ SELECT ?sub WHERE {
         family: "Select",
         label: "Physicists who are also philosophers (in 1 GB)",
         view: "graph",
-        tip: "A whole gigabyte graph, queried in the browser: this occupation intersection (people with two given occupations) faults in only ~40 MB of the 1.04 GB file - the rest never leaves the server. Returns scientist-philosophers like Ilya Prigogine.",
+        tip: "A whole-gigabyte graph queried live in the browser: this occupation intersection - people who are both wdt:P106 physicist (Q169470) and philosopher (Q4964182) - faults in only ~40 MB of the 1.04 GB file, while the rest never leaves the server. Returns scientist-philosophers like Ilya Prigogine.",
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -656,7 +656,7 @@ SELECT DISTINCT ?reached WHERE { <http://ex/paper/245> cito:cites+ ?reached }`
         family: "Aggregate",
         label: "Most-cited papers",
         view: "table",
-        tip: "The preferential-attachment power law: a few papers soak up most citations.",
+        tip: "Counts incoming cito:cites per paper and ranks them, exposing the preferential-attachment power law: a handful of papers soak up most of the citations while the long tail gets almost none.",
         q: `PREFIX cito: <http://purl.org/spar/cito/>
 PREFIX dct: <http://purl.org/dc/terms/>
 SELECT ?title (COUNT(?citing) AS ?citations) WHERE {
@@ -668,7 +668,7 @@ SELECT ?title (COUNT(?citing) AS ?citations) WHERE {
         family: "Aggregate",
         label: "Papers per field",
         view: "table",
-        tip: "Zipfian field sizes: genomics dominates, the tail is thin.",
+        tip: "Groups papers by ex:hasField and counts each, giving a Zipfian size distribution: genomics dominates the corpus while the remaining fields thin out quickly down the tail.",
         q: `PREFIX ex: <http://ex/>
 SELECT ?field (COUNT(?paper) AS ?papers) WHERE {
   ?paper a ex:Paper ;
@@ -722,7 +722,7 @@ SELECT ?o WHERE { <http://ex/paper/15> !(cito:cites) ?o }`
         family: "Construct",
         label: "Coauthor ego network",
         view: "graph",
-        tip: "Two hops of coauthorship around the busiest hub author.",
+        tip: "CONSTRUCTs a two-hop coauthorship ego network around author/105, the busiest hub: its direct coauthors (the first UNION branch) plus their coauthors (the second), drawn as a graph.",
         q: `PREFIX ex: <http://ex/>
 CONSTRUCT { ?a ex:coauthor ?b } WHERE {
   { <http://ex/author/105> ex:coauthor ?b BIND(<http://ex/author/105> AS ?a) }
@@ -737,14 +737,14 @@ CONSTRUCT { ?a ex:coauthor ?b } WHERE {
         label: "Predicate totals",
         strategy: "progressive",
         view: "table",
-        tip: "Exact predicate counts from the pyramid summary; the triple index is skipped.",
+        tip: "Progressive strategy: exact per-predicate counts read straight from the pyramid summary in a few small range reads, so the triple index is never touched. The numbers are identical under the Whole-index strategy.",
         q: `SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p`
       },
       {
         family: "Select",
         label: "Mangled titles",
         view: "table",
-        tip: "REGEX catches the whitespace mess the noise knob injected into 20 titles.",
+        tip: "REGEX(?title, \"^  \") matches titles that start with stray leading whitespace - the formatting mess the noise knob injected into 20 of them - so it surfaces exactly those dirty records.",
         q: `PREFIX dct: <http://purl.org/dc/terms/>
 SELECT ?paper ?title WHERE {
   ?paper dct:title ?title .
@@ -755,7 +755,7 @@ SELECT ?paper ?title WHERE {
         family: "Select",
         label: "Authors missing ORCID",
         view: "table",
-        tip: "NOT EXISTS finds the 16 author records the noise stripped an ORCID from.",
+        tip: "FILTER NOT EXISTS keeps only ex:Person records that have no ex:orcid triple at all - the 16 authors whose ORCID the noise knob stripped out. A classic data-completeness check.",
         q: `PREFIX ex: <http://ex/>
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 SELECT ?author ?name WHERE {
@@ -804,7 +804,7 @@ SELECT ?from ?to (COUNT(*) AS ?n) WHERE {
         family: "Construct",
         label: "Cross-field cites from genomics",
         view: "graph",
-        tip: "Draws the noise: genomics papers citing into other fields.",
+        tip: "CONSTRUCTs the noise as a graph: genomics papers (ex:hasField genomics) whose citations land in some other field. Real corpora rarely cross fields, so these edges are mostly the noise knob's rewires.",
         q: `PREFIX ex: <http://ex/>
 PREFIX cito: <http://purl.org/spar/cito/>
 CONSTRUCT { ?a ex:crossFieldCite ?b } WHERE {
@@ -821,7 +821,7 @@ CONSTRUCT { ?a ex:crossFieldCite ?b } WHERE {
         label: "Count citation edges",
         strategy: "progressive",
         view: "table",
-        tip: "Exact cito:cites count from summary metadata only.",
+        tip: "Progressive strategy: the total number of cito:cites edges read straight from the pyramid summary metadata - no triple-index access, just a few small range reads.",
         q: `PREFIX cito: <http://purl.org/spar/cito/>
 SELECT (COUNT(*) AS ?citationEdges) WHERE { ?s cito:cites ?o }`
       },
@@ -829,7 +829,7 @@ SELECT (COUNT(*) AS ?citationEdges) WHERE { ?s cito:cites ?o }`
         family: "Select",
         label: "Paper titles",
         view: "table",
-        tip: "Single-pattern title scan over enriched citation metadata.",
+        tip: "A single-pattern scan of dct:title over the enriched citation metadata, capped at 50 - the simplest possible 'list the things' query, and a gentle warm-up for the joins below.",
         q: `PREFIX dct: <http://purl.org/dc/terms/>
 SELECT ?paper ?title WHERE { ?paper dct:title ?title } LIMIT 50`
       },
@@ -837,7 +837,7 @@ SELECT ?paper ?title WHERE { ?paper dct:title ?title } LIMIT 50`
         family: "Aggregate",
         label: "Citations per year",
         view: "table",
-        tip: "Join real citation edges with year metadata and group by date.",
+        tip: "Joins the citation edges pointing at one fixed DOI (a 2021 Nature paper) with each citing paper's dct:date, then groups by year to chart how citations to it accrued over time.",
         q: `PREFIX cito: <http://purl.org/spar/cito/>
 PREFIX dct: <http://purl.org/dc/terms/>
 SELECT ?year (COUNT(?paper) AS ?n) WHERE {
@@ -849,7 +849,7 @@ SELECT ?year (COUNT(?paper) AS ?n) WHERE {
         family: "Path",
         label: "Collaborator closure",
         view: "table",
-        tip: "A large coauthor transitive path from a high-degree author.",
+        tip: "ex:coauthor+ walks the transitive coauthorship closure outward from one high-degree author (author/1235), reaching everyone connected through any chain of collaborators; LIMIT 100 keeps the walk bounded.",
         q: `PREFIX ex: <http://ex/>
 SELECT DISTINCT ?collaborator WHERE {
   <http://ex/author/1235> ex:coauthor+ ?collaborator
@@ -872,7 +872,7 @@ SELECT ?title ?c WHERE {
         family: "Construct",
         label: "Hub ego network",
         view: "graph",
-        tip: "Constructs one author's direct coauthor network for the graph renderer.",
+        tip: "CONSTRUCTs the direct coauthor star of one hub author (author/1235) as a small subgraph for the graph renderer - one bound subject and one predicate, so it touches very little of the file.",
         q: `PREFIX ex: <http://ex/>
 CONSTRUCT { <http://ex/author/1235> ex:coauthor ?b } WHERE {
   <http://ex/author/1235> ex:coauthor ?b
@@ -885,7 +885,7 @@ CONSTRUCT { <http://ex/author/1235> ex:coauthor ?b } WHERE {
         label: "Count knows edges",
         strategy: "progressive",
         view: "table",
-        tip: "Exact social-edge count from summary predicate totals.",
+        tip: "Progressive strategy: the exact number of ex:knows edges taken from the pyramid's per-predicate totals, without scanning the triple index.",
         q: `PREFIX ex: <http://ex/>
 SELECT (COUNT(*) AS ?knowsEdges) WHERE { ?s ex:knows ?o }`
       },
@@ -893,7 +893,7 @@ SELECT (COUNT(*) AS ?knowsEdges) WHERE { ?s ex:knows ?o }`
         family: "Select",
         label: "Who works where",
         view: "table",
-        tip: "Lists employment edges between people and organizations.",
+        tip: "Lists every ex:worksAt edge - the employment links from each person to the organization they work at - read as a single POS run over one predicate.",
         q: `PREFIX ex: <http://ex/>
 SELECT ?person ?org WHERE { ?person ex:worksAt ?org }`
       },
@@ -901,7 +901,7 @@ SELECT ?person ?org WHERE { ?person ex:worksAt ?org }`
         family: "Select",
         label: "Who knows whom",
         view: "table",
-        tip: "Lists direct social links.",
+        tip: "Lists every ex:knows edge: the direct 'who knows whom' social links in the graph, one bound predicate scanned as a single POS run.",
         q: `PREFIX ex: <http://ex/>
 SELECT ?a ?b WHERE { ?a ex:knows ?b }`
       },
@@ -909,7 +909,7 @@ SELECT ?a ?b WHERE { ?a ex:knows ?b }`
         family: "Construct",
         label: "Social graph",
         view: "graph",
-        tip: "Draws the knows and worksAt graph.",
+        tip: "CONSTRUCTs a combined social graph - both ex:knows and ex:worksAt edges, labelled by predicate via BIND - so the renderer draws people, their acquaintances and their employers together.",
         q: `PREFIX ex: <http://ex/>
 CONSTRUCT { ?a ?p ?b } WHERE {
   { ?a ex:knows ?b BIND(ex:knows AS ?p) }
@@ -924,7 +924,7 @@ CONSTRUCT { ?a ?p ?b } WHERE {
         label: "Count dependency edges",
         strategy: "progressive",
         view: "table",
-        tip: "Exact dependsOn count from the summary.",
+        tip: "Progressive strategy: the exact number of ex:dependsOn edges read from the pyramid summary, with no triple-index scan needed.",
         q: `PREFIX ex: <http://ex/>
 SELECT (COUNT(*) AS ?dependencyEdges) WHERE { ?s ex:dependsOn ?o }`
       },
@@ -932,7 +932,7 @@ SELECT (COUNT(*) AS ?dependencyEdges) WHERE { ?s ex:dependsOn ?o }`
         family: "Select",
         label: "Direct dependencies",
         view: "table",
-        tip: "Lists direct package dependency edges.",
+        tip: "Lists the direct ex:dependsOn edges - each package paired with a package it immediately requires - capped at 100 rows.",
         q: `PREFIX ex: <http://ex/>
 SELECT ?package ?dependency WHERE { ?package ex:dependsOn ?dependency } LIMIT 100`
       },
@@ -940,7 +940,7 @@ SELECT ?package ?dependency WHERE { ?package ex:dependsOn ?dependency } LIMIT 10
         family: "Path",
         label: "Blast radius of log4x",
         view: "table",
-        tip: "Packages transitively depending on the vulnerable component.",
+        tip: "ex:dependsOn+ walks the transitive dependency closure inward to ex:log4x, the vulnerable component, returning every package that depends on it directly or through any chain - its full blast radius.",
         q: `PREFIX ex: <http://ex/>
 SELECT DISTINCT ?dependent WHERE { ?dependent ex:dependsOn+ ex:log4x }`
       },
@@ -948,7 +948,7 @@ SELECT DISTINCT ?dependent WHERE { ?dependent ex:dependsOn+ ex:log4x }`
         family: "Aggregate",
         label: "Dependencies per package",
         view: "table",
-        tip: "Direct dependency fan-out by package.",
+        tip: "Counts each package's direct ex:dependsOn edges and ranks them, showing the dependency fan-out - which packages pull in the most others.",
         q: `PREFIX ex: <http://ex/>
 SELECT ?package (COUNT(?dependency) AS ?deps) WHERE {
   ?package ex:dependsOn ?dependency
@@ -958,7 +958,7 @@ SELECT ?package (COUNT(?dependency) AS ?deps) WHERE {
         family: "Construct",
         label: "Dependency graph",
         view: "graph",
-        tip: "Draws the dependency graph.",
+        tip: "CONSTRUCTs the whole ex:dependsOn network as-is so the renderer draws the dependency graph, each edge running from a package to one of its dependencies.",
         q: `PREFIX ex: <http://ex/>
 CONSTRUCT { ?a ex:dependsOn ?b } WHERE { ?a ex:dependsOn ?b }`
       }
