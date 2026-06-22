@@ -5018,7 +5018,7 @@ window.RETE_PLAYGROUND_CATALOG = {
       ],
       sqlCols: ["entity", "label", "types", "P106", "P27", "P569", "P19", "P21", "P735", "extra"],
       examples: [
-        { label: "Everything about Plato (Q859)", table: { file: "Q5_.parquet", name: "Q5" },
+        { label: "Everything about Plato", table: { file: "Q5_.parquet", name: "Q5" },
           sparql: `SELECT ?p ?o WHERE {\n  <http://www.wikidata.org/entity/Q859> ?p ?o\n}`,
           duck: `SELECT *\nFROM {T}\nWHERE entity = 'http://www.wikidata.org/entity/Q859';`,
           sqlite: `SELECT *\nFROM "Q5"\nWHERE entity = 'http://www.wikidata.org/entity/Q859';`,
@@ -5070,7 +5070,7 @@ window.RETE_PLAYGROUND_CATALOG = {
       ],
       sqlCols: ["entity", "label", "types", "P106", "P27", "P569", "P19", "P21", "P735", "extra"],
       examples: [
-        { label: "Everything about Plato (Q859)", table: { file: "Q5_.parquet", name: "Q5" },
+        { label: "Everything about Plato", table: { file: "Q5_.parquet", name: "Q5" },
           sparql: `SELECT ?p ?o WHERE {\n  <http://www.wikidata.org/entity/Q859> ?p ?o\n}`,
           duck: `SELECT *\nFROM {T}\nWHERE entity = 'http://www.wikidata.org/entity/Q859';`,
           sqlite: `SELECT *\nFROM "Q5"\nWHERE entity = 'http://www.wikidata.org/entity/Q859';`,
@@ -5358,7 +5358,7 @@ SELECT DISTINCT ?root WHERE {
         family: "Select",
         label: "All facts about an entity",
         view: "table",
-        tip: "A bound subject (Bemelen, Q100001) routes to just the tiles holding it - a few range reads of the whole file. The coordinate comes back as a geo:wktLiteral (recovered datatype).",
+        tip: "A bound subject (the village of Bemelen) routes to just the tiles holding it - a few range reads of the whole file. The coordinate comes back as a geo:wktLiteral (recovered datatype).",
         q: `SELECT ?p ?o WHERE { <http://www.wikidata.org/entity/Q100001> ?p ?o }`
       },
       {
@@ -5385,7 +5385,7 @@ SELECT ?coord WHERE {
         family: "Path",
         label: "Subclasses of a class",
         view: "table",
-        tip: "Reverse bound-object lookup (P279 = subclass of): who declares this as their superclass.",
+        tip: "Reverse bound-object lookup (subclass-of): who declares this as their superclass.",
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 SELECT ?sub WHERE {
   ?sub wdt:P279 <http://www.wikidata.org/entity/Q515>
@@ -5395,7 +5395,7 @@ SELECT ?sub WHERE {
         family: "Select",
         label: "Physicists who are also philosophers (in 1 GB)",
         view: "graph",
-        tip: "A whole gigabyte graph, queried in the browser: this occupation intersection (wdt:P106 twice) faults in only ~40 MB of the 1.04 GB file - the rest never leaves the server. Returns scientist-philosophers like Ilya Prigogine.",
+        tip: "A whole gigabyte graph, queried in the browser: this occupation intersection (people with two given occupations) faults in only ~40 MB of the 1.04 GB file - the rest never leaves the server. Returns scientist-philosophers like Ilya Prigogine.",
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -5923,7 +5923,7 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
     chemotion: [
       {
         label: "Molecules carry a structure",
-        tip: "Data quality over the merged graph: every molecular entity (obo:CHEBI_23367) should declare a SMILES and an InChIKey. SHACL materializes the data graph, so run it after Cache remote (it needs the dataset in memory).",
+        tip: "Data quality over the merged graph: every molecule should declare a SMILES and an InChIKey structure. SHACL materializes the data graph, so run it after Cache remote (it needs the dataset in memory).",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix obo: <http://purl.obolibrary.org/obo/> .
 @prefix chebi: <http://purl.obolibrary.org/obo/chebi/> .
@@ -5935,7 +5935,7 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
       },
       {
         label: "Substances are named",
-        tip: "Run after Cache remote. A second class: every substance (obo:CHEBI_59999) should carry an rdfs:label.",
+        tip: "Run after Cache remote. A second class: every substance (a chemical mixture) should carry a name.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix obo: <http://purl.obolibrary.org/obo/> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -5947,7 +5947,7 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
       },
       {
         label: "Molecules carry a formula",
-        tip: "Run after Cache remote. Every molecular entity (obo:CHEBI_23367) should declare a molecular formula.",
+        tip: "Run after Cache remote. Every molecule should declare a molecular formula.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix obo: <http://purl.obolibrary.org/obo/> .
 @prefix chebi: <http://purl.obolibrary.org/obo/chebi/> .
@@ -5959,7 +5959,7 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
       },
       {
         label: "Molecules carry an InChI",
-        tip: "Run after Cache remote. Every molecular entity (obo:CHEBI_23367) should declare an InChI string.",
+        tip: "Run after Cache remote. Every molecule should declare an InChI structure string.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix obo: <http://purl.obolibrary.org/obo/> .
 @prefix chebi: <http://purl.obolibrary.org/obo/chebi/> .
@@ -6006,7 +6006,7 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
       },
       {
         label: "Classes carry a definition",
-        tip: "Run after Cache remote. Every class in the subClassOf DAG should carry a textual definition (obo:IAO_0000115). ChEBI is incomplete, so expect violations.",
+        tip: "Run after Cache remote. Every class in the subclass hierarchy should carry a textual definition. ChEBI is incomplete, so expect violations.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix obo: <http://purl.obolibrary.org/obo/> .
@@ -6390,7 +6390,7 @@ ex:ParticipantShape a sh:NodeShape ;
     "factgrid-illuminati": [
       {
         label: "Every member is named",
-        tip: "Data quality on an untyped Wikibase graph: every classified member (a subject of P2 'instance of') should carry a readable rdfs:label. The graph conforms - the labels were resolved at build time.",
+        tip: "Data quality on an untyped Wikibase graph: every classified member — anything typed as an instance of a class — should carry a readable label. The graph conforms; the labels were resolved at build time.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix fgp: <https://database.factgrid.de/prop/direct/> .
@@ -6401,8 +6401,8 @@ ex:ParticipantShape a sh:NodeShape ;
     sh:message "Every classified member should carry a human-readable label." ] .`
       },
       {
-        label: "Entities in a P91 relation are named",
-        tip: "A second target: every subject of P91 (the affiliation relation) should carry a label, so the network reads in plain language.",
+        label: "Members are named",
+        tip: "A second target: every entity with a \"Member of\" link should carry a label, so the network reads in plain language.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix fgp: <https://database.factgrid.de/prop/direct/> .
@@ -6413,8 +6413,8 @@ ex:ParticipantShape a sh:NodeShape ;
     sh:message "An entity in a P91 relation should carry a label." ] .`
       },
       {
-        label: "P154 relations link named entities",
-        tip: "Every subject of P154 should carry a label.",
+        label: "Entities with a recorded gender are named",
+        tip: "Every entity that records a gender should carry a label.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix fgp: <https://database.factgrid.de/prop/direct/> .
@@ -6425,8 +6425,8 @@ ex:ParticipantShape a sh:NodeShape ;
     sh:message "A P154 subject should carry a label." ] .`
       },
       {
-        label: "P165 relations link named entities",
-        tip: "Every subject of P165 (the densest relation) should carry a label.",
+        label: "People with a career statement are named",
+        tip: "Every entity that records a career statement (the densest relation) should carry a label.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix fgp: <https://database.factgrid.de/prop/direct/> .
@@ -6540,7 +6540,7 @@ ex:TerritoryGeomShape a sh:NodeShape ;
     mimotext: [
       {
         label: "Novels in the style network are complete",
-        tip: "MiMoText's distinctive layer is 520 stylometric-similarity edges (P49). Every novel in that style network should carry a label and name its author (P5). SHACL flags 48 nodes that don't.",
+        tip: "MiMoText's distinctive layer is 520 stylometric-similarity edges. Every novel in that style network should carry a label and name its author. SHACL flags 48 nodes that don't.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix mt: <http://data.mimotext.uni-trier.de/prop/direct/> .
@@ -6554,7 +6554,7 @@ ex:TerritoryGeomShape a sh:NodeShape ;
       },
       {
         label: "Novels with an author carry a date",
-        tip: "Every work that names an author (P5) should also carry a publication date (P9) — a few are undated.",
+        tip: "Every work that names an author should also carry a publication date — a few are undated.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix mt: <http://data.mimotext.uni-trier.de/prop/direct/> .
 
@@ -6565,7 +6565,7 @@ ex:TerritoryGeomShape a sh:NodeShape ;
       },
       {
         label: "Themed works are labelled",
-        tip: "Every subject of P36 (a work with a theme) should carry a label.",
+        tip: "Every work that has a theme should carry a label.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix mt: <http://data.mimotext.uni-trier.de/prop/direct/> .
@@ -6576,22 +6576,22 @@ ex:TerritoryGeomShape a sh:NodeShape ;
     sh:message "A themed work should carry a label." ] .`
       },
       {
-        label: "Works in a P10 relation are labelled",
-        tip: "Every subject of P10 should carry a label.",
+        label: "Works with a genre are labelled",
+        tip: "Every work that records a genre should carry a label.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix mt: <http://data.mimotext.uni-trier.de/prop/direct/> .
 
 [] a sh:NodeShape ;
-  sh:targetSubjectsOf mt:P10 ;
+  sh:targetSubjectsOf mt:P12 ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
-    sh:message "A P10 subject should carry a label." ] .`
+    sh:message "A work with a genre should carry a label." ] .`
       }
     ],
     mmm: [
       {
         label: "Manuscripts record their provenance",
-        tip: "Provenance completeness over CIDOC-CRM: every manuscript (F4_Manifestation_Singleton) should carry a label, a former-or-current owner (P51, a Person) and a production date. 559 manuscripts have no recorded owner.",
+        tip: "Provenance completeness over CIDOC-CRM: every manuscript should carry a label, a former-or-current owner (a person) and a production date. 559 manuscripts have no recorded owner.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
 @prefix crm: <http://erlangen-crm.org/current/> .
@@ -7007,7 +7007,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
     "wikidata-100mb": [
       {
         label: "People with a job have a birth date",
-        tip: "Run after Cache remote (SHACL materializes ~104 MB in memory). Every person with an occupation (wdt:P106) should carry a label and a date of birth (wdt:P569). Real Wikidata is incomplete, so expect violations - the people missing a P569.",
+        tip: "Run after Cache remote (SHACL materializes ~104 MB in memory). Every person with an occupation should carry a label and a date of birth. Real Wikidata is incomplete, so expect violations — people missing a birth date.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix wdt: <http://www.wikidata.org/prop/direct/> .
@@ -7020,7 +7020,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
       },
       {
         label: "People with a job have a citizenship",
-        tip: "Run after Cache remote. Every person with an occupation (wdt:P106) should record a country of citizenship (wdt:P27). Real Wikidata is incomplete, so expect violations.",
+        tip: "Run after Cache remote. Every person with an occupation should record a country of citizenship. Real Wikidata is incomplete, so expect violations.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix wdt: <http://www.wikidata.org/prop/direct/> .
 
@@ -7031,7 +7031,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
       },
       {
         label: "People with a job have a place of birth",
-        tip: "Run after Cache remote. Every person with an occupation (wdt:P106) should record a place of birth (wdt:P19). Real Wikidata is incomplete, so expect violations.",
+        tip: "Run after Cache remote. Every person with an occupation should record a place of birth. Real Wikidata is incomplete, so expect violations.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix wdt: <http://www.wikidata.org/prop/direct/> .
 
@@ -7042,7 +7042,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
       },
       {
         label: "People with a birthplace are labelled",
-        tip: "Run after Cache remote. Every person who records a place of birth (wdt:P19) should also carry a label.",
+        tip: "Run after Cache remote. Every person who records a place of birth should also carry a label.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix wdt: <http://www.wikidata.org/prop/direct/> .
@@ -7106,7 +7106,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
     wikidata: [
       {
         label: "People with a job have a birth date",
-        tip: "Note: SHACL validates the whole graph in memory, which isn't viable at 1 GB in the browser — run these on the wikidata-100MB twin (same shapes, same vocab) or Cache remote. Every person with an occupation (wdt:P106) should record a date of birth (wdt:P569).",
+        tip: "Note: SHACL validates the whole graph in memory, which isn't viable at 1 GB in the browser — run these on the wikidata-100MB twin (same shapes, same vocab) or Cache remote. Every person with an occupation should record a date of birth.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix wdt: <http://www.wikidata.org/prop/direct/> .
@@ -7119,7 +7119,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
       },
       {
         label: "People with a job have a citizenship",
-        tip: "Best run on the wikidata-100MB twin (1 GB can't be materialized for SHACL). Every person with an occupation should record a country of citizenship (wdt:P27).",
+        tip: "Best run on the wikidata-100MB twin (1 GB can't be materialized for SHACL). Every person with an occupation should record a country of citizenship.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix wdt: <http://www.wikidata.org/prop/direct/> .
 
@@ -7130,7 +7130,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
       },
       {
         label: "People with a job have a place of birth",
-        tip: "Best run on the wikidata-100MB twin. Every person with an occupation should record a place of birth (wdt:P19).",
+        tip: "Best run on the wikidata-100MB twin. Every person with an occupation should record a place of birth.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix wdt: <http://www.wikidata.org/prop/direct/> .
 
@@ -7141,7 +7141,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
       },
       {
         label: "People with a birthplace are labelled",
-        tip: "Best run on the wikidata-100MB twin. Every person who records a place of birth (wdt:P19) should also carry a label.",
+        tip: "Best run on the wikidata-100MB twin. Every person who records a place of birth should also carry a label.",
         shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix wdt: <http://www.wikidata.org/prop/direct/> .
@@ -7234,8 +7234,8 @@ theo:PeopleGroupShape a sh:NodeShape ;
       pred: "<https://database.factgrid.de/prop/direct/P91>",
       seeds: "<https://database.factgrid.de/entity/Q10677>",
       examples: [
-        { label: "People linked to the Order of the Illuminati (P91)", pred: "<https://database.factgrid.de/prop/direct/P91>", seeds: "<https://database.factgrid.de/entity/Q10677>", reverse: true },
-        { label: "P91 affiliations of a member", pred: "<https://database.factgrid.de/prop/direct/P91>", seeds: "<https://database.factgrid.de/entity/Q409>", reverse: false }
+        { label: "Members of the Order of the Illuminati", pred: "<https://database.factgrid.de/prop/direct/P91>", seeds: "<https://database.factgrid.de/entity/Q10677>", reverse: true },
+        { label: "Which organizations a member belongs to", pred: "<https://database.factgrid.de/prop/direct/P91>", seeds: "<https://database.factgrid.de/entity/Q409>", reverse: false }
       ]
     },
     "linked-jazz": {
@@ -7250,8 +7250,8 @@ theo:PeopleGroupShape a sh:NodeShape ;
       pred: "<http://data.mimotext.uni-trier.de/prop/direct/P49>",
       seeds: "<http://data.mimotext.uni-trier.de/entity/Q1011>",
       examples: [
-        { label: "Stylometric neighbourhood of a novel (P49)", pred: "<http://data.mimotext.uni-trier.de/prop/direct/P49>", seeds: "<http://data.mimotext.uni-trier.de/entity/Q1011>", reverse: false },
-        { label: "Novels stylistically close to Q1022", pred: "<http://data.mimotext.uni-trier.de/prop/direct/P49>", seeds: "<http://data.mimotext.uni-trier.de/entity/Q1022>", reverse: true }
+        { label: "Stylometrically similar novels (a reading neighbourhood)", pred: "<http://data.mimotext.uni-trier.de/prop/direct/P49>", seeds: "<http://data.mimotext.uni-trier.de/entity/Q1011>", reverse: false },
+        { label: "Novels written in a similar style to a given one", pred: "<http://data.mimotext.uni-trier.de/prop/direct/P49>", seeds: "<http://data.mimotext.uni-trier.de/entity/Q1022>", reverse: true }
       ]
     },
     mmm: {
@@ -7266,8 +7266,8 @@ theo:PeopleGroupShape a sh:NodeShape ;
       pred: "<https://w3id.org/biolink/vocab/interacts_with>",
       seeds: "<https://identifiers.org/hgnc/4851>",
       examples: [
-        { label: "Gene interaction network of HGNC:4851", pred: "<https://w3id.org/biolink/vocab/interacts_with>", seeds: "<https://identifiers.org/hgnc/4851>", reverse: false },
-        { label: "Genes that interact with HGNC:4851", pred: "<https://w3id.org/biolink/vocab/interacts_with>", seeds: "<https://identifiers.org/hgnc/4851>", reverse: true }
+        { label: "Genes that interact with HTT (huntingtin)", pred: "<https://w3id.org/biolink/vocab/interacts_with>", seeds: "<https://identifiers.org/hgnc/4851>", reverse: false },
+        { label: "The huntingtin (HTT) interaction neighbourhood", pred: "<https://w3id.org/biolink/vocab/interacts_with>", seeds: "<https://identifiers.org/hgnc/4851>", reverse: true }
       ]
     },
     nomisma: {
@@ -7322,7 +7322,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
       pred: "<http://www.wikidata.org/prop/direct/P737>",
       seeds: "<http://www.wikidata.org/entity/Q9312>",
       examples: [
-        { label: "Everyone influenced by this thinker (P737)", pred: "<http://www.wikidata.org/prop/direct/P737>", seeds: "<http://www.wikidata.org/entity/Q9312>", reverse: true },
+        { label: "Everyone influenced by this thinker", pred: "<http://www.wikidata.org/prop/direct/P737>", seeds: "<http://www.wikidata.org/entity/Q9312>", reverse: true },
         { label: "The influence chain behind a person", pred: "<http://www.wikidata.org/prop/direct/P737>", seeds: "<http://www.wikidata.org/entity/Q213736>", reverse: false }
       ]
     },
@@ -7346,7 +7346,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
         },
         {
           label: "All molecular entities",
-          tip: "Object-bound rdf:type pattern: routed to OSP - all 3,746 CHEBI_23367 instances, each with the tile/byte range it was read from.",
+          tip: "Object-bound rdf:type pattern: routed to OSP - all 3,746 molecules, each with the tile/byte range it was read from.",
           predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
           object: "<http://purl.obolibrary.org/obo/CHEBI_23367>"
         },
@@ -7484,7 +7484,7 @@ theo:PeopleGroupShape a sh:NodeShape ;
       predicate: "<http://www.w3.org/2000/01/rdf-schema#label>",
       examples: [
         { label: "Every resolved label", tip: "Predicate-bound: the dominant rdfs:label relation as one POS run.", predicate: "<http://www.w3.org/2000/01/rdf-schema#label>" },
-        { label: "Everything about the Order (Q10677)", tip: "Subject-bound: SPO routing to one entity's facts.", subject: "<https://database.factgrid.de/entity/Q10677>" }
+        { label: "Everything about the Order of the Illuminati", tip: "Subject-bound: SPO routing to one entity's facts.", subject: "<https://database.factgrid.de/entity/Q10677>" }
       ]
     },
     history: {
@@ -7504,14 +7504,14 @@ theo:PeopleGroupShape a sh:NodeShape ;
     mimotext: {
       predicate: "<http://data.mimotext.uni-trier.de/prop/direct/P49>",
       examples: [
-        { label: "Every stylometric-similarity edge", tip: "Predicate-bound: the P49 style network as one POS run.", predicate: "<http://data.mimotext.uni-trier.de/prop/direct/P49>" },
-        { label: "Everything about a novel (Q1011)", tip: "Subject-bound: SPO routing.", subject: "<http://data.mimotext.uni-trier.de/entity/Q1011>" }
+        { label: "Every stylometric-similarity edge", tip: "Predicate-bound: the whole stylometric-similarity network as one POS run.", predicate: "<http://data.mimotext.uni-trier.de/prop/direct/P49>" },
+        { label: "Everything about one novel", tip: "Subject-bound: SPO routing to a single work's facts.", subject: "<http://data.mimotext.uni-trier.de/entity/Q1011>" }
       ]
     },
     mmm: {
       predicate: "<http://erlangen-crm.org/current/P51_has_former_or_current_owner>",
       examples: [
-        { label: "Every ownership edge", tip: "Predicate-bound: the CIDOC-CRM P51 relation as one POS run.", predicate: "<http://erlangen-crm.org/current/P51_has_former_or_current_owner>" },
+        { label: "Every ownership edge", tip: "Predicate-bound: the whole former/current-owner relation as one POS run.", predicate: "<http://erlangen-crm.org/current/P51_has_former_or_current_owner>" },
         { label: "Everything about a manuscript", tip: "Subject-bound: SPO routing.", subject: "<http://ldf.fi/mmm/manifestation_singleton/sdbm_2062>" },
         { label: "All people (E21_Person)", tip: "Object-bound rdf:type: OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<http://erlangen-crm.org/current/E21_Person>" }
       ]
@@ -7573,8 +7573,8 @@ theo:PeopleGroupShape a sh:NodeShape ;
     "wikidata-100mb": {
       predicate: "<http://www.wikidata.org/prop/direct/P106>",
       examples: [
-        { label: "Every occupation edge", tip: "Predicate-bound: wdt:P106 as one POS run over the lazy file — each row shows the tile/byte range fetched.", predicate: "<http://www.wikidata.org/prop/direct/P106>" },
-        { label: "All humans (P31 = Q5)", tip: "Object-bound: routed to OSP — every wdt:P31 -> wd:Q5 assertion.", predicate: "<http://www.wikidata.org/prop/direct/P31>", object: "<http://www.wikidata.org/entity/Q5>" }
+        { label: "Every occupation edge", tip: "Predicate-bound: the whole occupation relation as one POS run over the lazy file — each row shows the tile/byte range fetched.", predicate: "<http://www.wikidata.org/prop/direct/P106>" },
+        { label: "All humans", tip: "Object-bound: routed to OSP — every \"instance of: human\" assertion.", predicate: "<http://www.wikidata.org/prop/direct/P31>", object: "<http://www.wikidata.org/entity/Q5>" }
       ]
     },
     "ohm-full": {
@@ -7587,8 +7587,8 @@ theo:PeopleGroupShape a sh:NodeShape ;
     wikidata: {
       predicate: "<http://www.wikidata.org/prop/direct/P106>",
       examples: [
-        { label: "Every occupation edge (lazy, 1 GB)", tip: "Predicate-bound over the 1 GB file: wdt:P106 as one POS run — each row shows the tile/byte range fetched. Selective, so it stays cheap even at 1 GB.", predicate: "<http://www.wikidata.org/prop/direct/P106>" },
-        { label: "All humans (P31 = Q5)", tip: "Object-bound: routed to OSP — every wdt:P31 -> wd:Q5 assertion over the lazy 1 GB graph.", predicate: "<http://www.wikidata.org/prop/direct/P31>", object: "<http://www.wikidata.org/entity/Q5>" }
+        { label: "Every occupation edge (lazy, 1 GB)", tip: "Predicate-bound over the 1 GB file: the whole occupation relation as one POS run — each row shows the tile/byte range fetched. Selective, so it stays cheap even at 1 GB.", predicate: "<http://www.wikidata.org/prop/direct/P106>" },
+        { label: "All humans", tip: "Object-bound: routed to OSP — every \"instance of: human\" assertion over the lazy 1 GB graph.", predicate: "<http://www.wikidata.org/prop/direct/P31>", object: "<http://www.wikidata.org/entity/Q5>" }
       ]
     }
   }
