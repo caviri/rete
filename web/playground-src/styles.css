@@ -1051,7 +1051,7 @@ textarea {
 /* Image cells (e.g. wdt:P18) rendered as clickable thumbnails. */
 .thumb-cell { padding: 4px 8px; }
 .cell-thumb {
-  display: block; max-width: 80px; max-height: 80px; border-radius: 5px;
+  display: block; max-width: 128px; max-height: 104px; border-radius: 5px;
   border: 1px solid var(--line); background: var(--side); object-fit: cover;
 }
 .cell-thumb:hover { border-color: var(--accent); }

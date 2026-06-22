@@ -1091,7 +1091,7 @@ textarea {
 /* Image cells (e.g. wdt:P18) rendered as clickable thumbnails. */
 .thumb-cell { padding: 4px 8px; }
 .cell-thumb {
-  display: block; max-width: 80px; max-height: 80px; border-radius: 5px;
+  display: block; max-width: 128px; max-height: 104px; border-radius: 5px;
   border: 1px solid var(--line); background: var(--side); object-fit: cover;
 }
 .cell-thumb:hover { border-color: var(--accent); }
@@ -5071,7 +5071,16 @@ const RETE_WD_LABELS = {
   "http://www.wikidata.org/prop/direct/P27": "country of citizenship",
   "http://www.wikidata.org/prop/direct/P19": "place of birth",
   "http://www.wikidata.org/prop/direct/P21": "sex or gender",
-  "http://www.wikidata.org/prop/direct/P735": "given name"
+  "http://www.wikidata.org/prop/direct/P735": "given name",
+  "http://www.wikidata.org/prop/direct/P18": "image",
+  "http://www.wikidata.org/entity/Q1028181": "painter",
+  "http://www.wikidata.org/entity/Q36834": "composer",
+  "http://www.wikidata.org/entity/Q901": "scientist",
+  "http://www.wikidata.org/entity/Q90": "Paris",
+  "http://www.wikidata.org/entity/Q142": "France",
+  "http://www.wikidata.org/entity/Q183": "Germany",
+  "http://www.wikidata.org/entity/Q6581072": "female",
+  "http://www.wikidata.org/entity/Q6581097": "male"
 };
 
 window.RETE_PLAYGROUND_CATALOG = {
@@ -8202,6 +8211,9 @@ theo:PeopleGroupShape a sh:NodeShape ;
     "http://purl.org/dc/terms/title": "title",
     "http://purl.org/dc/terms/date": "date",
     "http://purl.org/dc/terms/creator": "creator",
+    "http://schema.org/description": "description",
+    "http://schema.org/name": "name",
+    "http://schema.org/image": "image",
     "http://www.w3.org/2002/07/owl#Class": "class",
     "http://www.opengis.net/ont/geosparql#asWKT": "geometry (WKT)",
     "http://www.opengis.net/ont/geosparql#hasGeometry": "has geometry",
@@ -11055,7 +11067,7 @@ self.onmessage = function (e) {
   function thumbUrl(v) {
     const https = httpsUpgrade(v);
     // Commons FilePath takes ?width=N for a server-scaled thumbnail.
-    return /Special:FilePath\//i.test(https) ? https + (https.includes("?") ? "&" : "?") + "width=80" : https;
+    return /Special:FilePath\//i.test(https) ? https + (https.includes("?") ? "&" : "?") + "width=200" : https;
   }
   function prettyCell(raw) {
     if (raw == null || raw === "") return `<td></td>`;

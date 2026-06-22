@@ -2591,7 +2591,7 @@ self.onmessage = function (e) {
   function thumbUrl(v) {
     const https = httpsUpgrade(v);
     // Commons FilePath takes ?width=N for a server-scaled thumbnail.
-    return /Special:FilePath\//i.test(https) ? https + (https.includes("?") ? "&" : "?") + "width=80" : https;
+    return /Special:FilePath\//i.test(https) ? https + (https.includes("?") ? "&" : "?") + "width=200" : https;
   }
   function prettyCell(raw) {
     if (raw == null || raw === "") return `<td></td>`;

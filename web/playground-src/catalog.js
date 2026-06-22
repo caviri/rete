@@ -19,7 +19,16 @@ const RETE_WD_LABELS = {
   "http://www.wikidata.org/prop/direct/P27": "country of citizenship",
   "http://www.wikidata.org/prop/direct/P19": "place of birth",
   "http://www.wikidata.org/prop/direct/P21": "sex or gender",
-  "http://www.wikidata.org/prop/direct/P735": "given name"
+  "http://www.wikidata.org/prop/direct/P735": "given name",
+  "http://www.wikidata.org/prop/direct/P18": "image",
+  "http://www.wikidata.org/entity/Q1028181": "painter",
+  "http://www.wikidata.org/entity/Q36834": "composer",
+  "http://www.wikidata.org/entity/Q901": "scientist",
+  "http://www.wikidata.org/entity/Q90": "Paris",
+  "http://www.wikidata.org/entity/Q142": "France",
+  "http://www.wikidata.org/entity/Q183": "Germany",
+  "http://www.wikidata.org/entity/Q6581072": "female",
+  "http://www.wikidata.org/entity/Q6581097": "male"
 };
 
 window.RETE_PLAYGROUND_CATALOG = {
