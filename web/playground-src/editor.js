@@ -1,39 +1,42 @@
 // ---------------------------------------------------------------------------
-// PlaygroundEditor — a self-contained code-editor component for the playground.
+// PlaygroundEditor — a CodeMirror 6 wrapper for the playground's query/shape
+// editors. Built on the bundled `window.CM` (web/playground-src/cm6.bundle.js).
 //
-// Wraps a <textarea> with: a line-number gutter, a syntax-highlight overlay,
-// keyword/variable/schema autocomplete, **entity search** (by label, over the
-// loaded graph's label index), and hover tooltips for keywords.
+// It mounts a CM6 editor over the original <textarea>, hides the textarea, and
+// mirrors the document back into `textarea.value` on every change — so the rest
+// of the app keeps reading `$("q").value` unchanged.
 //
-// IMPORTANT — it CANNOT change what a query does. The component only ever reads
-// and writes the textarea's *text*; the query/shape is still evaluated from the
-// textarea's literal value at run time, exactly as if it were typed by hand.
-// Autocomplete just inserts text; highlighting is a visual overlay; hover is a
-// passive tooltip. Nothing here touches the engine or the run path.
+// Features: SPARQL/Turtle highlighting, keyword/schema/entity autocomplete, and
+// an **IRI label decode** mode — true inline atomic chips: each recognised IRI
+// gets a low-opacity pill, with a full-opacity human-label chip rendered inline
+// to its right (a CM6 widget, not part of the document). Editing the IRI makes
+// it stop matching, so the chip reverts to raw text ("autoformatting").
 //
-// API (attached to window so the baked app.js can call it):
+// IMPORTANT — it NEVER changes what a query does. Decoration widgets/marks are
+// view-only; the query is always `view.state.doc` (mirrored to textarea.value).
+//
+// API (on window for the baked app.js):
 //   PlaygroundEditor.enhance(id, lang, ctx)   // lang: "sparql" | "ttl"
 //   PlaygroundEditor.setText(id, text)
+//   PlaygroundEditor.insert(id, text)         // insert at the cursor
+//   PlaygroundEditor.setDecode(id, on) / toggleDecode(id)
 //   PlaygroundEditor.editors                  // { id -> editor }
 //
 // ctx (all optional): {
 //   schema:        () => ({ classes:[[iri,n]], relations:[[s,p,o,n]] }) | null,
-//   searchEntities:(prefix) => [{ label, subject }]   // e.g. wasm prefix_search
+//   searchEntities:(prefix) => [{ label, subject }],
+//   labelHints:    () => ({ iri: label }) | null,
+//   resolveLabels: (iris) => ({ iri: label }) | Promise<{ iri: label }>
 // }
 // ---------------------------------------------------------------------------
 ;(function () {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const $$ = (sel, el) => Array.from((el || document).querySelectorAll(sel));
-  const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const shorten = (s, n) => { s = String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
 
   const EDITORS = {};
 
-  // What each keyword/function means — shown as a hover tooltip (native title)
-  // and as the suggestion's right-hand hint, so you can "remember what's what".
   const KEYWORD_INFO = {
     SELECT: "Project variables — the columns to return.",
     CONSTRUCT: "Build a new RDF graph from a template.",
@@ -76,243 +79,34 @@
     CONTAINS: "True if a string contains a substring.",
     STRSTARTS: "True if a string starts with a prefix.",
     STRENDS: "True if a string ends with a suffix.",
-    STRBEFORE: "The part of a string before a separator.",
-    STRAFTER: "The part of a string after a separator.",
     CONCAT: "Concatenate strings.",
     SUBSTR: "Extract a substring.",
-    ABS: "Absolute value.",
-    CEIL: "Round up.",
-    FLOOR: "Round down.",
-    ROUND: "Round to the nearest integer.",
     COALESCE: "First argument that is bound / not an error.",
     LANG: "Language tag of a literal.",
     DATATYPE: "Datatype IRI of a literal.",
     BOUND: "True if a variable is bound.",
     IRI: "Make an IRI from a string.",
-    URI: "Make an IRI from a string.",
     REGEX: "Match a string against a regular expression.",
     EXISTS: "True if a pattern has any solution.",
     NOT: "Negation (NOT EXISTS / NOT IN).",
-    IN: "True if a term is in a list.",
     AS: "Name a computed value (expr AS ?var).",
-    UNDEF: "An unbound cell in a VALUES table.",
-    "a": "Shorthand for rdf:type."
+    a: "Shorthand for rdf:type."
   };
-
-  const ED_TOKENS = (() => {
-    const COM = /#.*/y;
-    const STR = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/y;
-    const IRI = /<[^>\s]*>?/y;
-    const VAR = /[?$][A-Za-z_]\w*/y;
-    const NUM = /\b\d[\d_]*(?:\.\d+)?\b/y;
-    const IDENT = /[A-Za-z_]\w*/y;
-    const PNAME = /[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*|:[A-Za-z_][\w.-]*/y;
-    const A_KW = /\ba\b/y;
-    const AT_KW = /@[A-Za-z]+/y;
-    const kw = (words, flags) => new RegExp("\\b(?:" + words.join("|") + ")\\b", (flags || "") + "y");
-    const SPARQL = kw(["SELECT", "CONSTRUCT", "ASK", "DESCRIBE", "WHERE", "PREFIX", "BASE",
-      "FILTER", "OPTIONAL", "UNION", "MINUS", "GRAPH", "SERVICE", "BIND", "VALUES", "DISTINCT",
-      "REDUCED", "ORDER", "BY", "ASC", "DESC", "GROUP", "HAVING", "LIMIT", "OFFSET", "FROM",
-      "NAMED", "COUNT", "SUM", "AVG", "MIN", "MAX", "SAMPLE", "GROUP_CONCAT", "STR", "STRLEN",
-      "UCASE", "LCASE", "CONTAINS", "STRSTARTS", "STRENDS", "STRBEFORE", "STRAFTER", "CONCAT",
-      "SUBSTR", "ABS", "CEIL", "FLOOR", "ROUND", "COALESCE", "LANG", "DATATYPE", "BOUND",
-      "IRI", "URI", "REGEX", "EXISTS", "NOT", "IN", "AS", "UNDEF"], "i");
-    return {
-      sparql: [[COM, "com"], [IRI, "iri"], [STR, "str"], [VAR, "var"], [A_KW, "kw"],
-        [SPARQL, "kw"], [PNAME, "fn"], [NUM, "num"], [IDENT, null]],
-      ttl: [[COM, "com"], [IRI, "iri"], [STR, "str"], [AT_KW, "kw"], [A_KW, "kw"],
-        [PNAME, "fn"], [NUM, "num"], [IDENT, null]]
-    };
-  })();
-
-  // Syntax-highlight `text`. Keyword spans get a `title` so hovering them shows
-  // what they do.
-  function highlightCode(text, lang) {
-    const rules = ED_TOKENS[lang] || ED_TOKENS.ttl;
-    let out = "";
-    let i = 0;
-    const n = text.length;
-    const WS = /\s+/y;
-    outer: while (i < n) {
-      WS.lastIndex = i;
-      const w = WS.exec(text);
-      if (w && w.index === i) { out += w[0]; i += w[0].length; continue; }
-      for (const [re, cls] of rules) {
-        re.lastIndex = i;
-        const m = re.exec(text);
-        if (m && m.index === i && m[0].length) {
-          if (cls) {
-            const info = cls === "kw" ? KEYWORD_INFO[m[0].toUpperCase()] || KEYWORD_INFO[m[0]] : null;
-            const title = info ? ` title="${esc(info)}"` : "";
-            out += `<span class="tok-${cls}"${title}>${esc(m[0])}</span>`;
-          } else {
-            out += esc(m[0]);
-          }
-          i += m[0].length;
-          continue outer;
-        }
-      }
-      out += esc(text[i]);
-      i++;
-    }
-    return out;
-  }
 
   const SPARQL_COMPLETIONS = ["SELECT", "CONSTRUCT", "ASK", "DESCRIBE", "WHERE", "PREFIX",
     "FILTER", "OPTIONAL", "UNION", "MINUS", "GRAPH", "BIND", "VALUES", "DISTINCT",
     "ORDER BY", "ORDER BY DESC(", "GROUP BY", "HAVING", "LIMIT", "OFFSET", "FROM NAMED",
     "COUNT", "SUM", "AVG", "MIN", "MAX", "SAMPLE", "GROUP_CONCAT", "STR", "STRLEN", "UCASE",
     "LCASE", "CONTAINS", "STRSTARTS", "STRENDS", "CONCAT", "SUBSTR", "COALESCE", "LANG",
-    "DATATYPE", "BOUND", "REGEX", "EXISTS", "NOT EXISTS", "AS", "UNDEF"];
+    "DATATYPE", "BOUND", "REGEX", "EXISTS", "NOT EXISTS", "AS"];
   const TTL_COMPLETIONS = ["@prefix", "sh:NodeShape", "sh:PropertyShape", "sh:targetClass",
     "sh:targetSubjectsOf", "sh:targetObjectsOf", "sh:property", "sh:path", "sh:minCount",
     "sh:maxCount", "sh:datatype", "sh:class", "sh:nodeKind", "sh:pattern", "sh:message",
     "sh:severity", "sh:in", "sh:or", "sh:and", "sh:not", "xsd:integer", "xsd:double",
     "xsd:date", "xsd:boolean", "xsd:string"];
 
-  // Keyword + variable + schema (class/predicate) suggestions, like before.
-  function keywordItems(ed) {
-    const items = [];
-    const base = ed.lang === "sparql" ? SPARQL_COMPLETIONS : TTL_COMPLETIONS;
-    base.forEach((text) => items.push({ text, kind: "kw", hint: KEYWORD_INFO[text.toUpperCase()] || "" }));
-    if (ed.lang === "sparql") {
-      const vars = new Set(ed.ta.value.match(/[?$][A-Za-z_]\w*/g) || []);
-      vars.forEach((v) => items.push({ text: v, kind: "var" }));
-    }
-    const schema = ed.ctx.schema && ed.ctx.schema();
-    if (schema) {
-      (schema.classes || []).slice(0, 40).forEach((c) =>
-        items.push({ text: "<" + String(c[0]).replace(/^<|>$/g, "") + ">", display: shorten(String(c[0]).replace(/^<|>$/g, ""), 46), kind: "class" }));
-      const preds = new Set();
-      (schema.relations || []).forEach((r) => preds.add(String(r[1])));
-      Array.from(preds).slice(0, 60).forEach((p) =>
-        items.push({ text: "<" + p.replace(/^<|>$/g, "") + ">", display: shorten(p.replace(/^<|>$/g, ""), 46), kind: "pred" }));
-    }
-    return items;
-  }
-
-  function currentToken(ta) {
-    const pos = ta.selectionStart;
-    const head = ta.value.slice(0, pos);
-    const m = head.match(/[<A-Za-z0-9_?$:@/#.-]+$/);
-    return m ? { token: m[0], start: pos - m[0].length, end: pos } : null;
-  }
-
-  function matchKeywords(ed, token) {
-    const t = token.toLowerCase();
-    const bare = t.replace(/^</, "");
-    const seen = new Set();
-    const out = [];
-    for (const item of keywordItems(ed)) {
-      const lower = item.text.toLowerCase();
-      if (seen.has(lower)) continue;
-      const isIri = lower.startsWith("<");
-      const hit = isIri
-        ? bare.length >= 2 && lower.includes(bare)
-        : lower.startsWith(t) && lower !== t;
-      if (hit) { seen.add(lower); out.push(item); if (out.length >= 8) break; }
-    }
-    return out;
-  }
-
-  // Entity (instance) search: a plain word looks up matching labels in the
-  // loaded graph's label index and offers their IRIs. Inserting one drops in
-  // <iri>; the label + (optional) type are shown so you pick the right thing.
-  function matchEntities(ed, token) {
-    if (!ed.ctx.searchEntities) return [];
-    if (!/^[A-Za-z]/.test(token) || token.length < 2) return [];   // not for ?vars, <iris>, prefixes
-    let hits;
-    try { hits = ed.ctx.searchEntities(token) || []; } catch (_e) { return []; }
-    return hits.slice(0, 6).map((h) => ({
-      text: "<" + String(h.subject).replace(/^<|>$/g, "") + ">",
-      display: shorten(h.label || h.subject, 44),
-      hint: shorten(String(h.subject).replace(/^<|>$/g, ""), 40),
-      kind: "entity"
-    }));
-  }
-
-  function caretOffset(ed) {
-    const ta = ed.ta;
-    const probe = document.createElement("div");
-    probe.style.cssText =
-      "position:absolute;visibility:hidden;white-space:pre;padding:12px;" +
-      "font:13px/1.46 'Cascadia Mono','SF Mono',Consolas,ui-monospace,monospace;";
-    probe.textContent = ta.value.slice(0, ta.selectionStart);
-    const mark = document.createElement("span");
-    mark.textContent = "​";
-    probe.appendChild(mark);
-    ed.body.appendChild(probe);
-    const x = mark.offsetLeft - ta.scrollLeft;
-    const y = mark.offsetTop - ta.scrollTop;
-    probe.remove();
-    return { x, y };
-  }
-
-  function updateSuggest(ed) {
-    const tok = currentToken(ed.ta);
-    const min = tok && (tok.token.startsWith("?") || tok.token.startsWith("<")) ? 1 : 2;
-    if (!tok || tok.token.length < min) return hideSuggest(ed);
-    // Keywords / schema first, then matching entities from the graph.
-    const items = matchKeywords(ed, tok.token).concat(matchEntities(ed, tok.token)).slice(0, 10);
-    if (!items.length) return hideSuggest(ed);
-    ed.items = items;
-    ed.tok = tok;
-    ed.sel = 0;
-    const at = caretOffset(ed);
-    ed.sug.style.left = Math.max(0, Math.min(at.x, ed.body.clientWidth - 240)) + "px";
-    ed.sug.style.top = (at.y + 21) + "px";
-    renderSuggest(ed);
-    ed.sug.classList.remove("hidden");
-  }
-
-  function renderSuggest(ed) {
-    ed.sug.innerHTML = ed.items.map((item, i) =>
-      `<div class="sg ${i === ed.sel ? "active" : ""}" data-sg="${i}"` +
-        (item.hint ? ` title="${esc(item.hint)}"` : "") + ">" +
-        `<span>${esc(item.display || item.text)}</span>` +
-        `<span class="sg-kind sg-${item.kind}">${esc(item.kind)}</span>` +
-      "</div>"
-    ).join("");
-    $$("[data-sg]", ed.sug).forEach((el) => {
-      el.onmousedown = (e) => { e.preventDefault(); acceptSuggest(ed, Number(el.dataset.sg)); };
-    });
-  }
-
-  function acceptSuggest(ed, index) {
-    const item = ed.items[index];
-    if (!item || !ed.tok) return;
-    const ta = ed.ta;
-    ta.value = ta.value.slice(0, ed.tok.start) + item.text + ta.value.slice(ed.tok.end);
-    const caret = ed.tok.start + item.text.length;
-    ta.setSelectionRange(caret, caret);
-    hideSuggest(ed);
-    ed.refresh();
-    ta.focus();
-  }
-
-  function hideSuggest(ed) { ed.sug.classList.add("hidden"); ed.items = []; }
-
-  function suggestKeydown(ed, e) {
-    if (ed.sug.classList.contains("hidden")) return;
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { hideSuggest(ed); return; }
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      const d = e.key === "ArrowDown" ? 1 : -1;
-      ed.sel = (ed.sel + d + ed.items.length) % ed.items.length;
-      renderSuggest(ed);
-    } else if (e.key === "Tab" || e.key === "Enter") {
-      e.preventDefault();
-      acceptSuggest(ed, ed.sel);
-    } else if (e.key === "Escape") {
-      hideSuggest(ed);
-    }
-  }
-
-  // ── IRI → human-label decode (optional, purely visual) ──────────────────
-  // A toggle floats a human-readable label over each IRI/prefixed-name token.
-  // Labels come from: a built-in vocabulary, the dataset's predefined hints
-  // (ctx.labelHints), and a best-effort live lookup (ctx.resolveLabels). This
-  // NEVER edits the query — it only draws an overlay and sets hover titles.
+  // Built-in labels for ubiquitous vocabulary; per-dataset hints + live lookups
+  // come from ctx.labelHints()/ctx.resolveLabels().
   const VOCAB = {
     "http://www.w3.org/1999/02/22-rdf-syntax-ns#type": "type",
     "http://www.w3.org/2000/01/rdf-schema#label": "label",
@@ -336,7 +130,7 @@
     "http://purl.org/spar/cito/cites": "cites"
   };
 
-  // prefix -> namespace, parsed from PREFIX/@prefix declarations in the text.
+  // prefix -> namespace, from PREFIX/@prefix declarations.
   function prefixMap(text) {
     const map = {};
     const re = /(?:PREFIX|@prefix)\s+([A-Za-z_][\w.-]*)?:\s*<([^>\s]*)>/gi;
@@ -344,7 +138,6 @@
     while ((m = re.exec(text))) map[m[1] || ""] = m[2];
     return map;
   }
-  // A token's full IRI: "<…>" verbatim, or a "pfx:local" expanded via prefixes.
   function tokenIri(tokenText, prefixes) {
     const t = String(tokenText).trim();
     if (!t) return null;
@@ -354,8 +147,6 @@
     const ns = prefixes[t.slice(0, i)];
     return ns != null ? ns + t.slice(i + 1) : null;
   }
-  // VOCAB / hints lookup (sync). Returns a label string, or null if unknown
-  // (the live resolver may fill it in and cache it later).
   function decodeLabel(ed, iri) {
     if (ed.labels.has(iri)) return ed.labels.get(iri);
     let lab = VOCAB[iri] || null;
@@ -366,116 +157,228 @@
     if (lab != null) { ed.labels.set(iri, lab); return lab; }
     return null;
   }
-  function placeAnno(ed, sp, lab) {
-    const a = document.createElement("span");
-    a.className = "ed-anno";
-    a.textContent = lab;
-    a.style.left = (sp.offsetLeft - ed.ta.scrollLeft) + "px";
-    a.style.top = (sp.offsetTop - ed.ta.scrollTop - 14) + "px";
-    ed.anno.appendChild(a);
-  }
-  function renderDecorations(ed) {
-    if (!ed.anno) return;
-    ed.anno.innerHTML = "";
-    if (!ed.decode) return;
-    const prefixes = prefixMap(ed.ta.value);
-    // The <…> in a PREFIX/BASE declaration is a namespace, not an entity — skip
-    // those so we don't annotate (or try to resolve) prefix targets.
-    const namespaces = new Set(Object.keys(prefixes).map((k) => prefixes[k]));
-    const spans = ed.code.querySelectorAll(".tok-iri, .tok-fn");
-    const unknown = [];
-    spans.forEach((sp) => {
-      const iri = tokenIri(sp.textContent, prefixes);
-      if (!iri || namespaces.has(iri)) return;
-      const lab = decodeLabel(ed, iri);
-      if (lab) { sp.title = lab; placeAnno(ed, sp, lab); }
-      else if (!ed.labels.has(iri) && !ed.pending.has(iri)) unknown.push(iri);
+
+  // ---- CodeMirror glue (lazy: window.CM exists once the bundle has loaded) ----
+  let CM = null;            // window.CM
+  let bumpEffect = null;    // a StateEffect to force a decoration rebuild
+  let LabelWidget = null;   // the inline label-chip widget class
+  let highlightStyle = null;
+  let baseTheme = null;
+
+  function ensureCM() {
+    if (CM) return true;
+    if (!window.CM) return false;
+    CM = window.CM;
+    bumpEffect = CM.StateEffect.define();
+    LabelWidget = class extends CM.WidgetType {
+      constructor(label) { super(); this.label = label; }
+      eq(o) { return o.label === this.label; }
+      toDOM() { const s = document.createElement("span"); s.className = "cm-iri-chip"; s.textContent = this.label; return s; }
+      ignoreEvent() { return true; }
+    };
+    const T = CM.tags;
+    highlightStyle = CM.HighlightStyle.define([
+      { tag: T.keyword, color: "#8a3d5a", fontWeight: "700" },
+      { tag: T.operatorKeyword, color: "#8a3d5a", fontWeight: "700" },
+      { tag: T.string, color: "#0b745f" },
+      { tag: T.comment, color: "#78877f", fontStyle: "italic" },
+      { tag: T.number, color: "#a85424" },
+      { tag: T.bool, color: "#a85424" },
+      { tag: T.variableName, color: "#a85424" },
+      { tag: T.atom, color: "#0b6f5e" },
+      { tag: T.operator, color: "#66746e" },
+      { tag: T.punctuation, color: "#66746e" },
+      { tag: T.propertyName, color: "#0b6f5e" },
+      { tag: T.typeName, color: "#0b6f5e" },
+      { tag: T.namespace, color: "#0b6f5e" },
+      { tag: T.labelName, color: "#0b6f5e" },
+      { tag: [T.url, T.literal], color: "#0b6f5e" }
+    ]);
+    baseTheme = CM.EditorView.theme({
+      "&": { fontSize: "13px", border: "1px solid var(--code-border)", borderRadius: "8px",
+        background: "var(--code)", color: "var(--ink)", height: "100%" },
+      "&.cm-focused": { outline: "none" },
+      ".cm-scroller": { fontFamily: "'Cascadia Mono','SF Mono',Consolas,ui-monospace,monospace",
+        lineHeight: "1.55", minHeight: "240px" },
+      ".cm-content": { padding: "10px 4px", caretColor: "var(--ink)" },
+      ".cm-gutters": { background: "rgba(20,125,105,.05)", color: "#8ba197",
+        border: "none", borderRight: "1px solid var(--code-border)" },
+      ".cm-activeLine": { background: "rgba(20,125,105,.045)" },
+      ".cm-activeLineGutter": { background: "rgba(20,125,105,.09)" },
+      ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { background: "rgba(20,125,105,.18)" },
+      ".cm-cursor": { borderLeftColor: "var(--ink)" },
+      ".cm-tooltip": { border: "1px solid var(--line-strong)", borderRadius: "7px", background: "var(--surface)", boxShadow: "var(--shadow)" },
+      ".cm-tooltip-autocomplete > ul": { fontFamily: "'Cascadia Mono','SF Mono',Consolas,ui-monospace,monospace", fontSize: "12.5px", maxHeight: "16em" },
+      ".cm-tooltip-autocomplete > ul > li[aria-selected]": { background: "#e3f0ec", color: "var(--accent-dark)" },
+      ".cm-completionDetail": { color: "var(--muted)", fontStyle: "normal", marginLeft: "1em" }
     });
-    // Resolve still-unknown IRIs live (best-effort), tracking each as pending so
-    // a render mid-flight doesn't re-request or drop it. Negatives are cached so
-    // unresolved IRIs aren't asked again.
-    const want = Array.from(new Set(unknown));
-    if (want.length && ed.ctx.resolveLabels) {
-      want.forEach((iri) => ed.pending.add(iri));
+    return true;
+  }
+
+  function langExtension(lang) {
+    return CM.StreamLanguage.define(lang === "ttl" ? CM.turtle : CM.sparql);
+  }
+
+  // Build the decode decoration set: a low-opacity mark over each recognised IRI
+  // + an inline label-chip widget to its right. Unknown IRIs kick a best-effort
+  // (possibly async/remote) lookup, then a rebuild.
+  const IRI_RE = /<[^>\s]+>|[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*/g;
+  // Pure (no-CodeMirror) scan: find every IRI/prefixed-name in `text`, skip
+  // PREFIX-declaration namespaces, and split into recognised (with a label) vs
+  // unknown. Shared by the CM decoration builder and the unit test.
+  function scanIris(text, ed) {
+    const prefixes = prefixMap(text);
+    const namespaces = new Set(Object.keys(prefixes).map((k) => prefixes[k]));
+    const known = [], unknown = [];
+    let m;
+    IRI_RE.lastIndex = 0;
+    while ((m = IRI_RE.exec(text))) {
+      const from = m.index, to = from + m[0].length;
+      const iri = tokenIri(m[0], prefixes);
+      if (!iri || namespaces.has(iri)) continue;
+      const lab = decodeLabel(ed, iri);
+      if (lab) known.push({ from, to, iri, label: lab });
+      else if (!ed.labels.has(iri) && !ed.pending.has(iri)) unknown.push(iri);
+    }
+    return { known, unknown };
+  }
+  function chipsFor(text, ctx) {
+    return scanIris(String(text || ""), { labels: new Map(), pending: new Set(), ctx: ctx || {} });
+  }
+  function decodeDecorations(view, ed) {
+    if (!ed.decode) return CM.Decoration.none;
+    const { known, unknown } = scanIris(view.state.doc.toString(), ed);
+    const decos = [];
+    for (const k of known) {
+      decos.push(CM.Decoration.mark({ class: "cm-iri-decoded" }).range(k.from, k.to));
+      decos.push(CM.Decoration.widget({ widget: new LabelWidget(k.label), side: 1 }).range(k.to));
+    }
+    if (unknown.length && ed.ctx.resolveLabels) {
+      const want = Array.from(new Set(unknown));
+      want.forEach((i) => ed.pending.add(i));
       Promise.resolve(ed.ctx.resolveLabels(want)).then((got) => {
         let added = false;
-        want.forEach((iri) => {
-          ed.pending.delete(iri);
-          const v = (got && got[iri]) || null;
-          ed.labels.set(iri, v);
-          if (v) added = true;
-        });
-        if (added && ed.decode) renderDecorations(ed);
-      }).catch(() => { want.forEach((iri) => ed.pending.delete(iri)); });
+        want.forEach((i) => { ed.pending.delete(i); const v = (got && got[i]) || null; ed.labels.set(i, v); if (v) added = true; });
+        if (added && ed.decode && ed.view) ed.view.dispatch({ effects: bumpEffect.of(null) });
+      }).catch(() => { want.forEach((i) => ed.pending.delete(i)); });
     }
+    return CM.Decoration.set(decos, true);
   }
-  function setDecode(id, on) {
-    const ed = EDITORS[id];
-    if (!ed) return false;
-    ed.decode = !!on;
-    if (ed.wrap) ed.wrap.classList.toggle("decode-on", ed.decode);
-    renderDecorations(ed);
-    return ed.decode;
+
+  function decodePlugin(ed) {
+    return CM.ViewPlugin.fromClass(class {
+      constructor(view) { this.decorations = decodeDecorations(view, ed); }
+      update(u) {
+        if (u.docChanged || u.viewportChanged ||
+            u.transactions.some((tr) => tr.effects.some((e) => e.is(bumpEffect))))
+          this.decorations = decodeDecorations(u.view, ed);
+      }
+    }, { decorations: (v) => v.decorations });
   }
-  function toggleDecode(id) { const ed = EDITORS[id]; return ed ? setDecode(id, !ed.decode) : false; }
+
+  // Keyword + variable + schema + entity completions.
+  function completionSource(ed) {
+    return (context) => {
+      const word = context.matchBefore(/[<A-Za-z0-9_?$:@/#.\-]+/);
+      if (!word || (word.from === word.to && !context.explicit)) return null;
+      const token = word.text;
+      const tl = token.toLowerCase();
+      const bare = tl.replace(/^</, "");
+      const options = [];
+      const seen = new Set();
+      const add = (o) => { if (!seen.has(o.label)) { seen.add(o.label); options.push(o); } };
+      const base = ed.lang === "sparql" ? SPARQL_COMPLETIONS : TTL_COMPLETIONS;
+      base.forEach((text) => {
+        if (text.toLowerCase().startsWith(tl) && text.toLowerCase() !== tl)
+          add({ label: text, type: "keyword", detail: KEYWORD_INFO[text.toUpperCase()] || "" });
+      });
+      if (ed.lang === "sparql") {
+        const vars = new Set(ed.view.state.doc.toString().match(/[?$][A-Za-z_]\w*/g) || []);
+        vars.forEach((v) => { if (v.toLowerCase().startsWith(tl) && v.toLowerCase() !== tl) add({ label: v, type: "variable" }); });
+      }
+      const schema = ed.ctx.schema && ed.ctx.schema();
+      if (schema && bare.length >= 2) {
+        (schema.classes || []).slice(0, 60).forEach((c) => {
+          const iri = String(c[0]).replace(/^<|>$/g, "");
+          if (iri.toLowerCase().includes(bare)) add({ label: "<" + iri + ">", displayLabel: shorten(iri, 46), type: "class", detail: "class" });
+        });
+        const preds = new Set();
+        (schema.relations || []).forEach((r) => preds.add(String(r[1]).replace(/^<|>$/g, "")));
+        Array.from(preds).slice(0, 80).forEach((p) => {
+          if (p.toLowerCase().includes(bare)) add({ label: "<" + p + ">", displayLabel: shorten(p, 46), type: "property", detail: "predicate" });
+        });
+      }
+      if (ed.ctx.searchEntities && /^[A-Za-z]/.test(token) && token.length >= 2) {
+        let hits = [];
+        try { hits = ed.ctx.searchEntities(token) || []; } catch (_e) { hits = []; }
+        hits.slice(0, 6).forEach((h) => {
+          const iri = String(h.subject).replace(/^<|>$/g, "");
+          add({ label: "<" + iri + ">", displayLabel: shorten(h.label || iri, 44), type: "namespace", detail: shorten(iri, 38) });
+        });
+      }
+      if (!options.length) return null;
+      return { from: word.from, options: options.slice(0, 24), validFor: /^[<A-Za-z0-9_?$:@/#.\-]*$/ };
+    };
+  }
 
   function enhance(id, lang, ctx) {
     const ta = $(id);
-    if (!ta || EDITORS[id]) return;
-    const wrap = document.createElement("div");
-    wrap.className = "editor";
-    const gutter = document.createElement("div");
-    gutter.className = "ed-gutter";
-    const body = document.createElement("div");
-    body.className = "ed-body";
-    const hl = document.createElement("pre");
-    hl.className = "ed-hl";
-    const code = document.createElement("code");
-    hl.appendChild(code);
-    const sug = document.createElement("div");
-    sug.className = "ed-suggest hidden";
-    const anno = document.createElement("div");
-    anno.className = "ed-anno-layer";
-
-    ta.parentNode.insertBefore(wrap, ta);
-    wrap.appendChild(gutter);
-    wrap.appendChild(body);
-    body.appendChild(hl);
-    body.appendChild(ta);
-    body.appendChild(anno);
-    body.appendChild(sug);
-    ta.setAttribute("wrap", "off");
-    ta.spellcheck = false;
-
-    const ed = { ta, gutter, code, hl, sug, body, wrap, anno, lang, ctx: ctx || {},
-      labels: new Map(), pending: new Set(), decode: false, items: [], sel: 0, tok: null };
-    ed.refresh = () => {
-      const text = ta.value;
-      code.innerHTML = highlightCode(text, lang);
-      const lines = text.split("\n").length;
-      gutter.textContent = Array.from({ length: lines }, (_, i) => i + 1).join("\n");
-      ed.sync();
-      renderDecorations(ed);
-    };
-    ed.sync = () => {
-      hl.scrollTop = ta.scrollTop;
-      hl.scrollLeft = ta.scrollLeft;
-      gutter.scrollTop = ta.scrollTop;
-    };
-    ta.addEventListener("input", () => { ed.refresh(); updateSuggest(ed); });
-    ta.addEventListener("scroll", () => { ed.sync(); if (ed.decode) renderDecorations(ed); });
-    ta.addEventListener("keydown", (e) => suggestKeydown(ed, e));
-    ta.addEventListener("blur", () => setTimeout(() => hideSuggest(ed), 120));
+    if (!ta || EDITORS[id] || !ensureCM()) return;
+    const ed = { ta, lang, ctx: ctx || {}, labels: new Map(), pending: new Set(), decode: false, view: null };
+    const host = document.createElement("div");
+    host.className = "cm-host";
+    ta.parentNode.insertBefore(host, ta);
+    ta.style.display = "none";
+    ta.setAttribute("aria-hidden", "true");
+    const extensions = [
+      CM.lineNumbers(),
+      CM.history(),
+      CM.drawSelection(),
+      CM.highlightActiveLine(),
+      CM.highlightActiveLineGutter(),
+      CM.bracketMatching(),
+      CM.closeBrackets(),
+      CM.indentOnInput(),
+      CM.indentUnit.of("  "),
+      langExtension(lang),
+      CM.syntaxHighlighting(highlightStyle),
+      CM.autocompletion({ override: [completionSource(ed)], icons: true, activateOnTyping: true }),
+      decodePlugin(ed),
+      baseTheme,
+      CM.keymap.of([].concat(CM.closeBracketsKeymap, CM.defaultKeymap, CM.historyKeymap, CM.completionKeymap, [CM.indentWithTab])),
+      CM.EditorView.updateListener.of((u) => { if (u.docChanged) ed.ta.value = u.state.doc.toString(); })
+    ];
+    ed.view = new CM.EditorView({ doc: ta.value || "", extensions, parent: host });
+    ed.refresh = () => { ed.ta.value = ed.view.state.doc.toString(); };
     EDITORS[id] = ed;
-    ed.refresh();
     return ed;
   }
 
   function setText(id, text) {
-    const ta = $(id);
-    if (ta) ta.value = text;
-    if (EDITORS[id]) EDITORS[id].refresh();
+    const ed = EDITORS[id];
+    if (!ed) { const ta = $(id); if (ta) ta.value = text || ""; return; }
+    ed.view.dispatch({ changes: { from: 0, to: ed.view.state.doc.length, insert: text || "" } });
+    ed.ta.value = text || "";
   }
 
-  window.PlaygroundEditor = { enhance, setText, editors: EDITORS, highlightCode, KEYWORD_INFO, setDecode, toggleDecode };
+  function insert(id, text) {
+    const ed = EDITORS[id];
+    if (!ed) return false;
+    const sel = ed.view.state.selection.main;
+    ed.view.dispatch({ changes: { from: sel.from, to: sel.to, insert: text }, selection: { anchor: sel.from + text.length } });
+    ed.ta.value = ed.view.state.doc.toString();
+    ed.view.focus();
+    return true;
+  }
+
+  function setDecode(id, on) {
+    const ed = EDITORS[id];
+    if (!ed) return false;
+    ed.decode = !!on;
+    ed.view.dispatch({ effects: bumpEffect.of(null) });
+    return ed.decode;
+  }
+  function toggleDecode(id) { const ed = EDITORS[id]; return ed ? setDecode(id, !ed.decode) : false; }
+
+  window.PlaygroundEditor = { enhance, setText, insert, setDecode, toggleDecode, editors: EDITORS, KEYWORD_INFO, __chips: chipsFor };
 })();

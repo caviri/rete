@@ -1,0 +1,14 @@
+{
+  "name": "rete-playground-cm6",
+  "private": true,
+  "description": "Bundled CodeMirror 6 for the rete playground editor (built into one IIFE, inlined by scripts/build_playground.py). Rebuild: npm install && npx esbuild entry.js --bundle --format=iife --minify --outfile=../cm6.bundle.js",
+  "dependencies": {
+    "@codemirror/state": "^6.4.0",
+    "@codemirror/view": "^6.34.0",
+    "@codemirror/commands": "^6.7.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/autocomplete": "^6.18.0",
+    "@codemirror/legacy-modes": "^6.4.0",
+    "@lezer/highlight": "^1.2.0"
+  }
+}

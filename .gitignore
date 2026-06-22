@@ -1,6 +1,9 @@
 # Build output
 /target
 /web/pkg*
+# CodeMirror 6 bundle deps — the built cm6.bundle.js IS committed (inlined by
+# build_playground.py); rebuild with cm6/package.json. node_modules is not.
+/web/playground-src/cm6/node_modules/
 **/*.rs.bk
 .venv/
 __pycache__/

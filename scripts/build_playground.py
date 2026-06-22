@@ -41,6 +41,7 @@ GLUE_JS = NOMOD / "rete_wasm.js"
 WASM = NOMOD / "rete_wasm_bg.wasm"
 CSS = SRC / "styles.css"
 CATALOG_JS = SRC / "catalog.js"
+CM6_JS = SRC / "cm6.bundle.js"  # bundled CodeMirror 6 (see cm6/README / package.json)
 EDITOR_JS = SRC / "editor.js"
 APP_JS = SRC / "app.js"
 
@@ -98,7 +99,7 @@ def b64(path: pathlib.Path) -> str:
 
 
 def main() -> None:
-    for p in (TEMPLATE, CSS, CATALOG_JS, APP_JS, GLUE_JS, WASM):
+    for p in (TEMPLATE, CSS, CATALOG_JS, CM6_JS, EDITOR_JS, APP_JS, GLUE_JS, WASM):
         if not p.exists():
             die(f"missing required input: {p} (build the no-modules wasm first)")
 
@@ -142,6 +143,10 @@ def main() -> None:
             CATALOG_JS.read_text(encoding="utf-8").rstrip(),
         )
         .replace(
+            "__PLAYGROUND_CM6_JS__",
+            CM6_JS.read_text(encoding="utf-8").rstrip(),
+        )
+        .replace(
             "__PLAYGROUND_EDITOR_JS__",
             EDITOR_JS.read_text(encoding="utf-8").rstrip(),
         )
@@ -153,6 +158,7 @@ def main() -> None:
         "__DATASETS_B64__",
         "__PLAYGROUND_CSS__",
         "__PLAYGROUND_CATALOG_JS__",
+        "__PLAYGROUND_CM6_JS__",
         "__PLAYGROUND_EDITOR_JS__",
         "__PLAYGROUND_APP_JS__",
     )

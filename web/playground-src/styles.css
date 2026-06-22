@@ -1015,6 +1015,20 @@ textarea {
   animation: spindle-spin .7s linear infinite;
 }
 
+/* --- CodeMirror 6 host + inline IRI label-decode chips ----------------- */
+.cm-host { flex: 1 1 auto; min-width: 0; display: block; }
+.cm-host .cm-editor { height: 100%; }
+.cm-host .cm-editor.cm-focused { outline: none; }
+/* "chip around the word": a low-opacity pill over each recognised IRI. */
+.cm-iri-decoded { background: rgba(20, 125, 105, .10); border-radius: 3px; opacity: .58; }
+/* the full-opacity human-label chip, rendered inline to the IRI's right (a CM6
+   widget — not part of the query text; it vanishes the moment you edit the IRI). */
+.cm-iri-chip {
+  background: #fff7ea; border: 1px solid #e8d4ba; color: #8a4b12;
+  border-radius: 4px; padding: 0 5px; margin: 0 2px;
+  font-size: 11px; white-space: nowrap; cursor: default;
+}
+
 #shapeText {
   min-height: 330px;
 }

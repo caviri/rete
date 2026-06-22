@@ -532,13 +532,18 @@
   // returns matching entities; click one to insert its <IRI> at the caret.
   function localName(iri) { return String(iri).replace(/[<>]/g, "").replace(/^.*[\/#:]/, "") || iri; }
   function insertAtCaret(id, text) {
+    // Prefer the CodeMirror editor (inserts at its cursor); fall back to the raw
+    // textarea if the editor isn't mounted.
+    if (window.PlaygroundEditor && PlaygroundEditor.insert && PlaygroundEditor.editors[id]) {
+      PlaygroundEditor.insert(id, text);
+      return;
+    }
     const ta = $(id);
     if (!ta) return;
     const s = ta.selectionStart || 0, e = ta.selectionEnd || 0;
     ta.value = ta.value.slice(0, s) + text + ta.value.slice(e);
     const caret = s + text.length;
     ta.setSelectionRange(caret, caret);
-    if (window.PlaygroundEditor && PlaygroundEditor.editors[id]) PlaygroundEditor.editors[id].refresh();
     ta.focus();
   }
   function renderFinder(hits, q) {
