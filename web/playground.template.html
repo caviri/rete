@@ -177,16 +177,12 @@ __PLAYGROUND_CSS__
             <h1>SPARQL Console</h1>
             <p class="microcopy">Default path for exact queries, summary-safe progressive queries, and graph rendering.</p>
           </div>
+          <button id="finderBtn" type="button" class="ed-tool" title="Browse and search this graph's classes, predicates and entities — click a result to drop its IRI into the query.">🔎 Find a term</button>
         </div>
         <div id="exampleQuick" class="ex-quick" aria-label="Example suggestions"></div>
         <div id="exampleDesc" class="ex-desc" aria-live="polite"></div>
         <div class="ed-row">
           <textarea id="q" spellcheck="false"></textarea>
-          <aside id="entityFinder" class="entity-finder" aria-label="Entity finder">
-            <div class="ef-head">🔎 Find an entity</div>
-            <input id="efInput" type="search" class="ef-input" placeholder="Type a name…" aria-label="Search entities by name" autocomplete="off" />
-            <div id="efResults" class="ef-results"></div>
-          </aside>
         </div>
         <div class="console-controls">
         <div id="fedBar" class="fed-bar">
@@ -666,6 +662,27 @@ __PLAYGROUND_CSS__
       </div>
       <div id="familyFilters" class="filter-row" aria-label="Example family filters"></div>
       <div id="examples" class="example-list lib-list"></div>
+    </div>
+  </div>
+
+  <div id="finderModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="finderModalTitle">
+    <div class="modal-card finder-modal">
+      <div class="modal-head">
+        <h3 id="finderModalTitle">Find a term or entity</h3>
+        <label class="finder-lp" title="Which predicate to read as the human label — used by the decode 'Labels' chips and the entity search.">Label
+          <select id="labelProp">
+            <option value="auto">auto · label / prefLabel / name</option>
+            <option value="http://www.w3.org/2000/01/rdf-schema#label">rdfs:label</option>
+            <option value="http://www.w3.org/2004/02/skos/core#prefLabel">skos:prefLabel</option>
+            <option value="http://schema.org/name">schema:name</option>
+            <option value="http://xmlns.com/foaf/0.1/name">foaf:name</option>
+            <option value="http://purl.org/dc/terms/title">dct:title</option>
+          </select>
+        </label>
+        <button id="finderModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <input id="efInput" type="search" class="ef-input" placeholder="Filter classes, predicates, entities…" aria-label="Search terms and entities" autocomplete="off" />
+      <div id="efResults" class="ef-results"></div>
     </div>
   </div>
 

@@ -551,13 +551,18 @@ self.onmessage = function (e) {
     });
     return out;
   }
+  // The predicate(s) to read as a human label. "auto" tries the common ones;
+  // otherwise the single property chosen in the Find-a-term modal (state.labelProp).
+  function labelPredicates() {
+    const lp = state.labelProp;
+    if (lp && lp !== "auto") return "<" + lp + ">";
+    return "<http://www.w3.org/2000/01/rdf-schema#label> <http://www.w3.org/2004/02/skos/core#prefLabel> " +
+      "<http://xmlns.com/foaf/0.1/name> <http://schema.org/name>";
+  }
   function labelQueryFor(iris) {
     const values = iris.slice(0, 60).map((i) => "<" + i + ">").join(" ");
-    return "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n" +
-      "PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n" +
-      "PREFIX foaf: <http://xmlns.com/foaf/0.1/>\n" +
-      "SELECT ?s ?l WHERE { VALUES ?s { " + values + " }\n" +
-      "  ?s ?p ?l . VALUES ?p { rdfs:label skos:prefLabel foaf:name }\n" +
+    return "SELECT ?s ?l WHERE { VALUES ?s { " + values + " }\n" +
+      "  ?s ?p ?l . VALUES ?p { " + labelPredicates() + " }\n" +
       "  FILTER(isLiteral(?l)) }";
   }
   // Best-effort live IRI -> label resolution for the decode toggle. Embedded
@@ -626,7 +631,7 @@ self.onmessage = function (e) {
   }
   // Tier 1: classes + predicates from the cached schema (the card), matched by
   // their hint label, local name, or IRI substring — instant, no graph reads.
-  function searchSchemaTerms(q) {
+  function searchSchemaTerms(q, limit) {
     const sch = state.schema;
     if (!sch) return [];
     const ql = q.toLowerCase();
@@ -637,7 +642,7 @@ self.onmessage = function (e) {
       if (!iri || seen.has(iri)) return;
       const label = hints[iri] || "";
       const ln = localName(iri);
-      if ((label && label.toLowerCase().includes(ql)) || ln.toLowerCase().includes(ql) || iri.toLowerCase().includes(ql)) {
+      if (!ql || (label && label.toLowerCase().includes(ql)) || ln.toLowerCase().includes(ql) || iri.toLowerCase().includes(ql)) {
         seen.add(iri);
         out.push({ iri, kind, label: label || ln });
       }
@@ -646,7 +651,7 @@ self.onmessage = function (e) {
     const preds = new Set();
     (sch.relations || []).forEach((r) => preds.add(String(r[1])));
     preds.forEach((p) => consider(p, "predicate"));
-    return out.slice(0, 12);
+    return out.slice(0, limit || 14);
   }
   // Remote datasets read the schema lazily (on Explore); fetch it once in the
   // background for the finder so tier 1 works in the console too.
@@ -657,21 +662,21 @@ self.onmessage = function (e) {
     remoteCall("schema_url", state.remote.url)
       .then((out) => { try { state.schema = JSON.parse(out.json); } catch (_e) { /* none */ } })
       .catch(() => {})
-      .finally(() => { efSchemaFetching = false; if (($("efInput").value || "").trim()) efSearch(); });
+      .finally(() => { efSchemaFetching = false; if (!$("finderModal").classList.contains("hidden")) efSearch(); });
   }
-  function renderFinder(schemaTerms, entityHits, q, entitiesLoading) {
+  function renderFinder(schemaTerms, entityHits, q, entitiesLoading, browse) {
     const box = $("efResults");
     if (!box) return;
-    if (!q) {
-      box.innerHTML = `<p class="ef-empty">Filter this graph's <b>classes &amp; predicates</b> (instant, from the card), then its <b>entities</b> by label.</p>`;
-      return;
-    }
     let html = "";
     if (schemaTerms.length) {
-      html += `<div class="ef-group">Schema — classes &amp; predicates</div>` +
+      html += `<div class="ef-group">Schema — classes &amp; predicates${browse ? " · type to filter" : ""}</div>` +
         schemaTerms.map((t) => efItemHtml(t.iri, t.label, t.kind)).join("");
     }
-    if (entitiesLoading) {
+    if (browse) {
+      html += schemaTerms.length
+        ? `<p class="ef-empty">Type to also search entities by label.</p>`
+        : `<p class="ef-empty">${(state.remote && efSchemaFetching) ? "Reading the schema over HTTP range…" : "No schema to browse — type to search entities by label."}</p>`;
+    } else if (entitiesLoading) {
       html += `<div class="ef-group">Entities</div><div class="ef-loading"><span class="spindle"></span> labels over range reads…</div>`;
     } else if (entityHits.length) {
       html += `<div class="ef-group">Entities</div>` +
@@ -681,34 +686,42 @@ self.onmessage = function (e) {
     }
     box.innerHTML = html;
     $$("#efResults .ef-item").forEach((b) => {
-      b.onclick = () => insertAtCaret("q", "<" + b.dataset.iri + ">");
+      b.onclick = () => { insertAtCaret("q", "<" + b.dataset.iri + ">"); closeFinder(); };
     });
   }
   // Two-tier search: schema terms (instant, cached) + entities by label
   // (synchronous for embedded; a lazy worker range-read for remote, with a
   // spinner and a sequence guard that drops out-of-order keystroke results).
+  // An empty box browses the schema (classes & predicates) up front.
   let efSeq = 0;
   function efSearch() {
     const inp = $("efInput");
     if (!inp) return;
     const q = (inp.value || "").trim();
-    if (!q) { renderFinder([], [], "", false); return; }
-    const seq = ++efSeq;
     ensureSchemaForFinder();
-    const schemaTerms = searchSchemaTerms(q);
+    const schemaTerms = searchSchemaTerms(q, q ? 14 : 80);
+    if (!q) { renderFinder(schemaTerms, [], "", false, true); return; }
+    const seq = ++efSeq;
     if (state.remote) {
-      renderFinder(schemaTerms, [], q, true);
+      renderFinder(schemaTerms, [], q, true, false);
       remotePrefixSearch(state.remote.url, q, 12).then((out) => {
         if (seq !== efSeq) return;
         let hits = []; try { hits = JSON.parse(out.json); } catch (_e) { hits = []; }
-        renderFinder(schemaTerms, hits, q, false);
-      }).catch(() => { if (seq === efSeq) renderFinder(schemaTerms, [], q, false); });
+        renderFinder(schemaTerms, hits, q, false, false);
+      }).catch(() => { if (seq === efSeq) renderFinder(schemaTerms, [], q, false, false); });
       return;
     }
     let hits = [];
     if (state.graph) { try { hits = JSON.parse(state.graph.prefix_search(q, 12)); } catch (_e) { hits = []; } }
-    renderFinder(schemaTerms, hits, q, false);
+    renderFinder(schemaTerms, hits, q, false, false);
   }
+  function openFinder() {
+    $("finderModal").classList.remove("hidden");
+    const inp = $("efInput");
+    if (inp) { try { inp.focus(); inp.select(); } catch (_e) { /* ignore */ } }
+    efSearch();
+  }
+  function closeFinder() { $("finderModal").classList.add("hidden"); }
 
   function setEd(id, text) {
     if (window.PlaygroundEditor) window.PlaygroundEditor.setText(id, text);
@@ -4189,6 +4202,9 @@ self.onmessage = function (e) {
     $("libraryModal").addEventListener("click", (e) => {
       if (e.target === $("libraryModal")) closeLibrary();
     });
+    $("finderModal").addEventListener("click", (e) => {
+      if (e.target === $("finderModal")) closeFinder();
+    });
     $("historyModalClose").onclick = closeHistory;
     $("historyModal").addEventListener("click", (e) => {
       if (e.target === $("historyModal")) closeHistory();
@@ -4222,6 +4238,7 @@ self.onmessage = function (e) {
         closeHistory();
         closeSettings();
         closeSource();
+        closeFinder();
       }
       // Ctrl/Cmd+Enter runs the active panel's primary action from anywhere.
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -4293,13 +4310,26 @@ self.onmessage = function (e) {
       decodeBtn.onchange = () => window.PlaygroundEditor.setDecode("q", decodeBtn.checked);
       if (decodeBtn.checked) window.PlaygroundEditor.setDecode("q", true);
     }
-    // Entity finder panel beside the editor (debounced — a remote search is a
-    // range-read round trip, so don't fire one on every keystroke).
+    // Find-a-term modal: a button opens it; the input is debounced (a remote
+    // search is a range-read round trip, so don't fire one on every keystroke).
+    const finderBtn = $("finderBtn");
+    if (finderBtn) finderBtn.onclick = openFinder;
+    const finderClose = $("finderModalClose");
+    if (finderClose) finderClose.onclick = closeFinder;
     const efInput = $("efInput");
     if (efInput) {
       let efDebounce = null;
       efInput.oninput = () => { clearTimeout(efDebounce); efDebounce = setTimeout(efSearch, 180); };
-      renderFinder([], [], "", false);
+    }
+    // Label predicate: which property the decode chips + entity search read as a
+    // human label. Changing it clears the decode cache so labels re-resolve.
+    const labelProp = $("labelProp");
+    if (labelProp) {
+      labelProp.onchange = () => {
+        state.labelProp = labelProp.value;
+        if (window.PlaygroundEditor && PlaygroundEditor.clearLabels) PlaygroundEditor.clearLabels("q");
+        efSearch();
+      };
     }
     // Hover preview + click-through for http(s) URLs in result tables.
     bindLinkPreviews();

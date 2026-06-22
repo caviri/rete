@@ -383,5 +383,15 @@
   }
   function toggleDecode(id) { const ed = EDITORS[id]; return ed ? setDecode(id, !ed.decode) : false; }
 
-  window.PlaygroundEditor = { enhance, setText, insert, setDecode, toggleDecode, editors: EDITORS, KEYWORD_INFO, __chips: chipsFor };
+  // Drop every cached label (incl. negatives) and re-resolve — used when the
+  // label predicate changes so live lookups run again against the new property.
+  function clearLabels(id) {
+    const ed = EDITORS[id];
+    if (!ed) return;
+    ed.labels.clear();
+    ed.pending.clear();
+    if (ed.decode) renderDecorations(ed);
+  }
+
+  window.PlaygroundEditor = { enhance, setText, insert, setDecode, toggleDecode, clearLabels, editors: EDITORS, KEYWORD_INFO, __chips: chipsFor };
 })();
