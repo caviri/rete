@@ -942,6 +942,11 @@ textarea {
   text-transform: uppercase;
   letter-spacing: .05em;
 }
+/* Distinguish the autocomplete kinds: keyword / variable / schema / entity. */
+.ed-suggest .sg .sg-kind.sg-entity { color: #8a4b12; }
+.ed-suggest .sg .sg-kind.sg-class  { color: #0b4f42; }
+.ed-suggest .sg .sg-kind.sg-pred   { color: #5a3e86; }
+.ed-suggest .sg .sg-kind.sg-var    { color: #8a1f5a; }
 
 #shapeText {
   min-height: 330px;

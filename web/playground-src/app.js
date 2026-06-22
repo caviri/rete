@@ -425,264 +425,33 @@
     return CATALOG.datasets.find((d) => d.key === key) || CATALOG.datasets[0];
   }
 
-  // --- Code editors: gutter + syntax highlight overlay + autocomplete -----
-  // A textarea is wrapped with a line-number gutter and a <pre> overlay that
-  // renders the same text highlighted (the textarea's own text is transparent,
-  // only its caret/selection show). Same token theme as the documentation.
-  const EDITORS = {};
+  // --- Code editors: delegated to the PlaygroundEditor component (editor.js).
+  // It only reads/writes the textarea TEXT, so it cannot change what a query
+  // does — the run path still evaluates the textarea's literal value. The
+  // component adds syntax highlight, keyword/schema/entity autocomplete, and
+  // hover tooltips. See web/playground-src/editor.js.
+  const EDITORS = (window.PlaygroundEditor && window.PlaygroundEditor.editors) || {};
 
-  const ED_TOKENS = (() => {
-    const COM = /#.*/y;
-    const STR = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/y;
-    const IRI = /<[^>\s]*>?/y;
-    const VAR = /[?$][A-Za-z_]\w*/y;
-    const NUM = /\b\d[\d_]*(?:\.\d+)?\b/y;
-    const WS = /\s+/y;
-    const IDENT = /[A-Za-z_]\w*/y;
-    const PNAME = /[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*|:[A-Za-z_][\w.-]*/y;
-    const A_KW = /\ba\b/y;
-    const AT_KW = /@[A-Za-z]+/y;
-    const kw = (words, flags) => new RegExp("\\b(?:" + words.join("|") + ")\\b", (flags || "") + "y");
-    const SPARQL = kw(["SELECT", "CONSTRUCT", "ASK", "DESCRIBE", "WHERE", "PREFIX", "BASE",
-      "FILTER", "OPTIONAL", "UNION", "MINUS", "GRAPH", "SERVICE", "BIND", "VALUES", "DISTINCT",
-      "REDUCED", "ORDER", "BY", "ASC", "DESC", "GROUP", "HAVING", "LIMIT", "OFFSET", "FROM",
-      "NAMED", "COUNT", "SUM", "AVG", "MIN", "MAX", "SAMPLE", "GROUP_CONCAT", "STR", "STRLEN",
-      "UCASE", "LCASE", "CONTAINS", "STRSTARTS", "STRENDS", "STRBEFORE", "STRAFTER", "CONCAT",
-      "SUBSTR", "ABS", "CEIL", "FLOOR", "ROUND", "COALESCE", "LANG", "DATATYPE", "BOUND",
-      "IRI", "URI", "REGEX", "EXISTS", "NOT", "IN", "AS", "UNDEF"], "i");
-    return {
-      sparql: [[COM, "com"], [IRI, "iri"], [STR, "str"], [VAR, "var"], [A_KW, "kw"],
-        [SPARQL, "kw"], [PNAME, "fn"], [NUM, "num"], [IDENT, null]],
-      ttl: [[COM, "com"], [IRI, "iri"], [STR, "str"], [AT_KW, "kw"], [A_KW, "kw"],
-        [PNAME, "fn"], [NUM, "num"], [IDENT, null]]
-    };
-  })();
-
-  function highlightCode(text, lang) {
-    const rules = ED_TOKENS[lang] || ED_TOKENS.ttl;
-    let out = "";
-    let i = 0;
-    const n = text.length;
-    const WS = /\s+/y;
-    outer: while (i < n) {
-      WS.lastIndex = i;
-      const w = WS.exec(text);
-      if (w && w.index === i) {
-        out += w[0];
-        i += w[0].length;
-        continue;
-      }
-      for (const [re, cls] of rules) {
-        re.lastIndex = i;
-        const m = re.exec(text);
-        if (m && m.index === i && m[0].length) {
-          out += cls ? `<span class="tok-${cls}">${esc(m[0])}</span>` : esc(m[0]);
-          i += m[0].length;
-          continue outer;
-        }
-      }
-      out += esc(text[i]);
-      i++;
-    }
-    return out;
-  }
-
-  const SPARQL_COMPLETIONS = ["SELECT", "CONSTRUCT", "ASK", "DESCRIBE", "WHERE", "PREFIX",
-    "FILTER", "OPTIONAL", "UNION", "MINUS", "GRAPH", "BIND", "VALUES", "DISTINCT",
-    "ORDER BY", "ORDER BY DESC(", "GROUP BY", "HAVING", "LIMIT", "OFFSET", "FROM NAMED",
-    "COUNT", "SUM", "AVG", "MIN", "MAX", "SAMPLE", "GROUP_CONCAT", "STR", "STRLEN", "UCASE",
-    "LCASE", "CONTAINS", "STRSTARTS", "STRENDS", "CONCAT", "SUBSTR", "COALESCE", "LANG",
-    "DATATYPE", "BOUND", "REGEX", "EXISTS", "NOT EXISTS", "AS", "UNDEF"];
-  const TTL_COMPLETIONS = ["@prefix", "sh:NodeShape", "sh:PropertyShape", "sh:targetClass",
-    "sh:targetSubjectsOf", "sh:targetObjectsOf", "sh:property", "sh:path", "sh:minCount",
-    "sh:maxCount", "sh:datatype", "sh:class", "sh:nodeKind", "sh:pattern", "sh:message",
-    "sh:severity", "sh:in", "sh:or", "sh:and", "sh:not", "xsd:integer", "xsd:double",
-    "xsd:date", "xsd:boolean", "xsd:string"];
-
-  function completionItems(ed) {
-    const items = [];
-    const base = ed.lang === "sparql" ? SPARQL_COMPLETIONS : TTL_COMPLETIONS;
-    base.forEach((text) => items.push({ text, kind: "kw" }));
-    if (ed.lang === "sparql") {
-      // Variables already used in this query.
-      const vars = new Set(ed.ta.value.match(/[?$][A-Za-z_]\w*/g) || []);
-      vars.forEach((v) => items.push({ text: v, kind: "var" }));
-    }
-    // Terms from the loaded graph: classes and predicates from the schema view.
-    if (state.schema) {
-      (state.schema.classes || []).slice(0, 40).forEach((c) =>
-        items.push({ text: String(c[0]), kind: "class" }));
-      const preds = new Set();
-      (state.schema.relations || []).forEach((r) => preds.add(String(r[1])));
-      Array.from(preds).slice(0, 60).forEach((p) => items.push({ text: p, kind: "pred" }));
-    }
-    return items;
-  }
-
-  function currentToken(ta) {
-    const pos = ta.selectionStart;
-    const head = ta.value.slice(0, pos);
-    const m = head.match(/[<A-Za-z0-9_?$:@\/#.-]+$/);
-    return m ? { token: m[0], start: pos - m[0].length, end: pos } : null;
-  }
-
-  function matchCompletions(ed, token) {
-    const t = token.toLowerCase();
-    const bare = t.replace(/^</, "");
-    const seen = new Set();
-    const out = [];
-    for (const item of completionItems(ed)) {
-      const lower = item.text.toLowerCase();
-      if (seen.has(lower)) continue;
-      const isIri = lower.startsWith("<");
-      const hit = isIri
-        ? bare.length >= 2 && lower.includes(bare)
-        : lower.startsWith(t) && lower !== t;
-      if (hit) {
-        seen.add(lower);
-        out.push(item);
-        if (out.length >= 8) break;
-      }
-    }
-    return out;
-  }
-
-  function caretOffset(ed) {
-    // Mirror the text up to the caret in a hidden element with the same text
-    // metrics, then read the marker's position.
-    const ta = ed.ta;
-    const probe = document.createElement("div");
-    probe.style.cssText =
-      "position:absolute;visibility:hidden;white-space:pre;padding:12px;" +
-      "font:13px/1.46 'Cascadia Mono','SF Mono',Consolas,ui-monospace,monospace;";
-    probe.textContent = ta.value.slice(0, ta.selectionStart);
-    const mark = document.createElement("span");
-    mark.textContent = "\u200b";
-    probe.appendChild(mark);
-    ed.body.appendChild(probe);
-    const x = mark.offsetLeft - ta.scrollLeft;
-    const y = mark.offsetTop - ta.scrollTop;
-    probe.remove();
-    return { x, y };
-  }
-
-  function updateSuggest(ed) {
-    const tok = currentToken(ed.ta);
-    const min = tok && (tok.token.startsWith("?") || tok.token.startsWith("<")) ? 1 : 2;
-    if (!tok || tok.token.length < min) return hideSuggest(ed);
-    const items = matchCompletions(ed, tok.token);
-    if (!items.length) return hideSuggest(ed);
-    ed.items = items;
-    ed.tok = tok;
-    ed.sel = 0;
-    const at = caretOffset(ed);
-    ed.sug.style.left = Math.max(0, Math.min(at.x, ed.body.clientWidth - 240)) + "px";
-    ed.sug.style.top = (at.y + 21) + "px";
-    renderSuggest(ed);
-    ed.sug.classList.remove("hidden");
-  }
-
-  function renderSuggest(ed) {
-    ed.sug.innerHTML = ed.items.map((item, i) =>
-      `<div class="sg ${i === ed.sel ? "active" : ""}" data-sg="${i}">` +
-        `<span>${esc(shorten(item.text, 46))}</span>` +
-        `<span class="sg-kind">${esc(item.kind)}</span>` +
-      `</div>`
-    ).join("");
-    $$("[data-sg]", ed.sug).forEach((el) => {
-      el.onmousedown = (e) => {
-        e.preventDefault();
-        acceptSuggest(ed, Number(el.dataset.sg));
-      };
-    });
-  }
-
-  function acceptSuggest(ed, index) {
-    const item = ed.items[index];
-    if (!item || !ed.tok) return;
-    const ta = ed.ta;
-    ta.value = ta.value.slice(0, ed.tok.start) + item.text + ta.value.slice(ed.tok.end);
-    const caret = ed.tok.start + item.text.length;
-    ta.setSelectionRange(caret, caret);
-    hideSuggest(ed);
-    ed.refresh();
-    ta.focus();
-  }
-
-  function hideSuggest(ed) {
-    ed.sug.classList.add("hidden");
-    ed.items = [];
-  }
-
-  function suggestKeydown(ed, e) {
-    if (ed.sug.classList.contains("hidden")) return;
-    // Ctrl/Cmd+Enter is the "run" shortcut — never let it accept a completion;
-    // the global handler below runs the active panel instead.
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { hideSuggest(ed); return; }
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      const d = e.key === "ArrowDown" ? 1 : -1;
-      ed.sel = (ed.sel + d + ed.items.length) % ed.items.length;
-      renderSuggest(ed);
-    } else if (e.key === "Tab" || e.key === "Enter") {
-      e.preventDefault();
-      acceptSuggest(ed, ed.sel);
-    } else if (e.key === "Escape") {
-      hideSuggest(ed);
-    }
+  // Entity search powering the editor's autocomplete: matching labels from the
+  // loaded graph's label index (a bounded binary search, no triple scan).
+  // Returns [] when nothing is in memory (e.g. a remote-lazy dataset), so
+  // autocomplete falls back to keywords + schema. Pure read — never evaluates.
+  function entitySearch(prefix) {
+    if (!state.graph) return [];
+    try { return JSON.parse(state.graph.prefix_search(prefix, 8)); } catch (_e) { return []; }
   }
 
   function enhanceEditor(id, lang) {
-    const ta = $(id);
-    const wrap = document.createElement("div");
-    wrap.className = "editor";
-    const gutter = document.createElement("div");
-    gutter.className = "ed-gutter";
-    const body = document.createElement("div");
-    body.className = "ed-body";
-    const hl = document.createElement("pre");
-    hl.className = "ed-hl";
-    const code = document.createElement("code");
-    hl.appendChild(code);
-    const sug = document.createElement("div");
-    sug.className = "ed-suggest hidden";
-
-    ta.parentNode.insertBefore(wrap, ta);
-    wrap.appendChild(gutter);
-    wrap.appendChild(body);
-    body.appendChild(hl);
-    body.appendChild(ta);
-    body.appendChild(sug);
-    ta.setAttribute("wrap", "off");
-    ta.spellcheck = false;
-
-    const ed = { ta, gutter, code, hl, sug, body, lang, items: [], sel: 0, tok: null };
-    ed.refresh = () => {
-      const text = ta.value;
-      code.innerHTML = highlightCode(text, lang);
-      const lines = text.split("\n").length;
-      gutter.textContent = Array.from({ length: lines }, (_, i) => i + 1).join("\n");
-      ed.sync();
-    };
-    ed.sync = () => {
-      hl.scrollTop = ta.scrollTop;
-      hl.scrollLeft = ta.scrollLeft;
-      gutter.scrollTop = ta.scrollTop;
-    };
-    ta.addEventListener("input", () => {
-      ed.refresh();
-      updateSuggest(ed);
+    if (!window.PlaygroundEditor) return;
+    window.PlaygroundEditor.enhance(id, lang, {
+      schema: () => state.schema,
+      searchEntities: entitySearch
     });
-    ta.addEventListener("scroll", ed.sync);
-    ta.addEventListener("keydown", (e) => suggestKeydown(ed, e));
-    ta.addEventListener("blur", () => setTimeout(() => hideSuggest(ed), 120));
-    EDITORS[id] = ed;
-    ed.refresh();
   }
 
   function setEd(id, text) {
-    $(id).value = text;
-    if (EDITORS[id]) EDITORS[id].refresh();
+    if (window.PlaygroundEditor) window.PlaygroundEditor.setText(id, text);
+    else { const t = $(id); if (t) t.value = text; }
   }
 
   // Show the loaded dataset's short name on the topbar chip (which opens the

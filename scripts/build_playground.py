@@ -41,6 +41,7 @@ GLUE_JS = NOMOD / "rete_wasm.js"
 WASM = NOMOD / "rete_wasm_bg.wasm"
 CSS = SRC / "styles.css"
 CATALOG_JS = SRC / "catalog.js"
+EDITOR_JS = SRC / "editor.js"
 APP_JS = SRC / "app.js"
 
 # Datasets to embed: (playground key, built .rete file under web/).
@@ -140,6 +141,10 @@ def main() -> None:
             "__PLAYGROUND_CATALOG_JS__",
             CATALOG_JS.read_text(encoding="utf-8").rstrip(),
         )
+        .replace(
+            "__PLAYGROUND_EDITOR_JS__",
+            EDITOR_JS.read_text(encoding="utf-8").rstrip(),
+        )
         .replace("__PLAYGROUND_APP_JS__", APP_JS.read_text(encoding="utf-8").rstrip())
     )
     placeholders = (
@@ -148,6 +153,7 @@ def main() -> None:
         "__DATASETS_B64__",
         "__PLAYGROUND_CSS__",
         "__PLAYGROUND_CATALOG_JS__",
+        "__PLAYGROUND_EDITOR_JS__",
         "__PLAYGROUND_APP_JS__",
     )
     missing = [p for p in placeholders if p in html]
