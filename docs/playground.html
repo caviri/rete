@@ -10954,8 +10954,22 @@ self.onmessage = function (e) {
   // Anything else (a serialization target, an edited query, a stale or missing
   // cache) falls through to a normal run — which keeps the row cache, so a
   // round-trip through TTL/JSON-LD and back to a row view re-renders for free.
+  // A CONSTRUCT or DESCRIBE produces an RDF graph (triples); SELECT/ASK don't.
+  function isGraphQuery(q) {
+    return /\b(CONSTRUCT|DESCRIBE)\b/i.test(String(q || "").split(/\bWHERE\b/i)[0]);
+  }
   function onOutputTypeChange() {
     const fmt = $("fmt").value;
+    // TTL / JSON-LD serialize an RDF graph — only CONSTRUCT/DESCRIBE makes one.
+    // Say so up front (and don't run a query that can't serialize) when the
+    // editor holds a SELECT/ASK.
+    if ((fmt === "ttl" || fmt === "jsonld") && !isGraphQuery($("q").value)) {
+      const name = fmt === "ttl" ? "Turtle (TTL)" : "JSON-LD";
+      $("out").innerHTML = `<div class="note">${name} serializes an <b>RDF graph</b>, which only a <b>CONSTRUCT</b> or <b>DESCRIBE</b> query produces. This query is a <b>SELECT</b> — switch <b>Output</b> back to <b>Table</b>, or rewrite it as <code>CONSTRUCT { … } WHERE { … }</code> to export ${name}.</div>`;
+      $("qmeta").textContent = `${name} needs a CONSTRUCT or DESCRIBE query`;
+      updateResultVisibility();
+      return;
+    }
     const c = state.lastResult;
     // A federated result is row-shaped and self-contained — re-render it (with its
     // per-source banner) in the new view rather than re-running every source.
