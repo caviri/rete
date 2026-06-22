@@ -3196,6 +3196,63 @@ mod tests {
         );
     }
 
+    /// A double-bound-object intersection (`?p P o1 ; P o2 ; label ?l`) — the
+    /// shape whose REMOTE join strategy changed (scan + hash-join instead of
+    /// probing each prefix row) — must return the SAME rows opened eagerly (in
+    /// memory) and lazily (remote-style, `is_remote()` true). Strategy is a
+    /// performance choice; the result multiset is invariant.
+    #[test]
+    fn double_bound_object_join_eager_matches_lazy() {
+        use crate::reader::SliceReader;
+        let occ = "<http://ex/occ>";
+        let phys = "<http://ex/physicist>";
+        let phil = "<http://ex/philosopher>";
+        let label = "<http://www.w3.org/2000/01/rdf-schema#label>";
+        // p00..p19 are physicists; p00..p09 are also philosophers (the answer).
+        let mut triples: Vec<(String, String, String)> = Vec::new();
+        for i in 0..20u32 {
+            triples.push((format!("<http://ex/p/{i:02}>"), occ.into(), phys.into()));
+            if i < 10 {
+                triples.push((format!("<http://ex/p/{i:02}>"), occ.into(), phil.into()));
+            }
+            triples.push((
+                format!("<http://ex/p/{i:02}>"),
+                label.into(),
+                format!("\"Name {i:02}\""),
+            ));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(16);
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+
+        let q = "SELECT ?l WHERE { \
+            ?p <http://ex/occ> <http://ex/physicist> ; \
+               <http://ex/occ> <http://ex/philosopher> ; \
+               <http://www.w3.org/2000/01/rdf-schema#label> ?l }";
+        let run = |rete: &Rete| -> Vec<String> {
+            let (_, sols) = crate::eval_sparql(rete, q).unwrap();
+            let mut v: Vec<String> = sols.iter().filter_map(|b| b.get("l").cloned()).collect();
+            v.sort();
+            v
+        };
+
+        let eager_rows = run(&Rete::open(&bytes).unwrap());
+        let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+        let lazy = Rete::open_ranged_lazy(std::sync::Arc::new(SliceReader::new(leaked))).unwrap();
+        let lazy_rows = run(&lazy);
+        assert!(!lazy.index_incomplete());
+
+        assert_eq!(eager_rows.len(), 10, "the 10 physicist∩philosopher labels");
+        assert_eq!(eager_rows, lazy_rows, "eager and lazy must agree exactly");
+    }
+
     /// A dictionary big enough to split into multiple chunks per section must
     /// round-trip every idâ†”term mapping through the chunked (v0.2) encoding â€”
     /// including terms at chunk boundaries and absent near-misses.

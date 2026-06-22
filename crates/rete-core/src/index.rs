@@ -439,6 +439,14 @@ impl GraphIndex {
         self.load_failed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// True for a remote/lazy index (tiles fault in over a `RangeReader`). The
+    /// join planner uses this to pick read-aware strategies: here a per-row index
+    /// probe is a network round-trip, not a memory lookup, so a left-deep scan +
+    /// hash join often beats probing a moderately-sized prefix.
+    pub fn is_remote(&self) -> bool {
+        self.loader.is_some()
+    }
+
     /// Batch-fault the unloaded tiles in `[start, end)` of `section` through
     /// the bulk loader, if one is attached and at least two tiles are missing
     /// (a single missing tile costs the same either way). A failed batch is

@@ -179,11 +179,22 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
         // is large (one scan beats many probes) or the pattern is a cartesian join
         // (no shared bound variable to constrain the probe).
         let shares_bound = pattern_slots(&t).iter().any(|s| bound.contains(s));
-        if !bound.is_empty()
+        // Decide probe (per-row index lookup) vs scan + hash join. In memory a
+        // probe is a cheap lookup, so we probe up to a moderate prefix. Remotely
+        // each probe is a byte-range round-trip: probing a 500-row prefix is 500
+        // sequential fetches, while scanning a selectively-bound pattern is a few
+        // coalesced reads — so remotely we only probe a broad (whole-predicate)
+        // pattern, or a tiny prefix, and never a large one.
+        let do_probe = !bound.is_empty()
             && shares_bound
             && !rows.is_empty()
-            && rows.len() <= BGP_PROBE_THRESHOLD
-        {
+            && if index.is_remote() {
+                rows.len() <= REMOTE_PROBE_MAX
+                    && (rows.len() <= REMOTE_PROBE_MIN || !pattern_is_selective(&t))
+            } else {
+                rows.len() <= BGP_PROBE_THRESHOLD
+            };
+        if do_probe {
             let mut next: Vec<Row> = Vec::with_capacity(rows.len());
             for base in std::mem::take(&mut rows) {
                 next.extend(probe_rows(ctx, index, t, base));
@@ -321,6 +332,23 @@ fn try_merge_join(
 /// prefix already pinned ?x to a few dozen rows); a *moderately* large prefix
 /// keeps the one-pass scan + hash join, which beats thousands of probes.
 const BGP_PROBE_THRESHOLD: usize = 512;
+
+/// Remote (lazy) probe bounds. Over HTTP byte-range reads, a per-row probe is a
+/// network round-trip, so we probe far more reluctantly than in memory: only when
+/// scanning the next pattern would be a *broad* read (a whole-predicate scan,
+/// [`pattern_is_selective`] is false), or the prefix is tiny enough that a handful
+/// of probes is trivial either way. A pattern that carries its own bound
+/// subject/object routes to a narrow index range — cheaper to scan once and
+/// hash-join than to probe per prefix row. Probing a large prefix is always a
+/// loss remotely, so it is capped.
+const REMOTE_PROBE_MIN: usize = 8;
+const REMOTE_PROBE_MAX: usize = 1024;
+
+/// A pattern whose own constant terms (a bound subject or object) already route
+/// it to a narrow index range — a few coalesced range reads to scan in full.
+fn pattern_is_selective(t: &(SlotTerm, SlotTerm, SlotTerm)) -> bool {
+    matches!(t.0, SlotTerm::Node(_)) || matches!(t.2, SlotTerm::Node(_))
+}
 
 /// The (deduped) slots a lowered pattern binds.
 fn pattern_slots(t: &(SlotTerm, SlotTerm, SlotTerm)) -> Vec<usize> {
