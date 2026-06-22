@@ -1123,6 +1123,30 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
   sh:targetClass obo:CHEBI_59999 ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
     sh:message "Every substance should carry a label." ] .`
+      },
+      {
+        label: "Molecules carry a formula",
+        tip: "Run after Cache remote. Every molecular entity (obo:CHEBI_23367) should declare a molecular formula.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix obo: <http://purl.obolibrary.org/obo/> .
+@prefix chebi: <http://purl.obolibrary.org/obo/chebi/> .
+
+[] a sh:NodeShape ;
+  sh:targetClass obo:CHEBI_23367 ;
+  sh:property [ sh:path chebi:formula ; sh:minCount 1 ;
+    sh:message "Molecule has no formula." ] .`
+      },
+      {
+        label: "Molecules carry an InChI",
+        tip: "Run after Cache remote. Every molecular entity (obo:CHEBI_23367) should declare an InChI string.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix obo: <http://purl.obolibrary.org/obo/> .
+@prefix chebi: <http://purl.obolibrary.org/obo/chebi/> .
+
+[] a sh:NodeShape ;
+  sh:targetClass obo:CHEBI_23367 ;
+  sh:property [ sh:path chebi:inchi ; sh:minCount 1 ;
+    sh:message "Molecule has no InChI." ] .`
       }
     ],
     "chebi-full": [
@@ -1147,6 +1171,29 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
   sh:targetSubjectsOf rdfs:subClassOf ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
     sh:message "Every classified entity should carry a label." ] .`
+      },
+      {
+        label: "SMILES-bearing molecules carry an InChI",
+        tip: "Run after Cache remote. Every entity with a SMILES should also declare an InChI string.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix chemrof: <https://w3id.org/chemrof/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf chemrof:smiles_string ;
+  sh:property [ sh:path chemrof:inchi_string ; sh:minCount 1 ;
+    sh:message "Molecule with a SMILES has no InChI." ] .`
+      },
+      {
+        label: "Classes carry a definition",
+        tip: "Run after Cache remote. Every class in the subClassOf DAG should carry a textual definition (obo:IAO_0000115). ChEBI is incomplete, so expect violations.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix obo: <http://purl.obolibrary.org/obo/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf rdfs:subClassOf ;
+  sh:property [ sh:path obo:IAO_0000115 ; sh:minCount 1 ;
+    sh:message "Class has no definition." ] .`
       }
     ],
     causal: [
@@ -1244,6 +1291,27 @@ ex:SingleKeywordShape
     sh:maxCount 1 ;
     sh:message "Papers are multi-keyword by design - intentional violation."
   ] .`
+      },
+      {
+        label: "Authors carry an ORCID + h-index",
+        tip: "Every ex:Person should declare an ORCID and an h-index. The clean graph conforms.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:AuthorIdShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:orcid ; sh:minCount 1 ; sh:message "Author has no ORCID." ] ;
+  sh:property [ sh:path ex:hIndex ; sh:minCount 1 ; sh:message "Author has no h-index." ] .`
+      },
+      {
+        label: "Journals carry an ISSN",
+        tip: "Every ex:Journal should declare an ISSN. The clean graph conforms.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:JournalIssnShape a sh:NodeShape ;
+  sh:targetClass ex:Journal ;
+  sh:property [ sh:path ex:issn ; sh:minCount 1 ; sh:message "Journal has no ISSN." ] .`
       }
     ],
     "scholar-noisy": [
@@ -1273,6 +1341,28 @@ ex:JournalShape
     sh:minCount 1 ;
     sh:message "Journal lost its ISSN."
   ] .`
+      },
+      {
+        label: "Papers are titled and placed",
+        tip: "Every ex:Paper should carry exactly one title and a venue.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:NoisyPaperShape a sh:NodeShape ;
+  sh:targetClass ex:Paper ;
+  sh:property [ sh:path dct:title ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path ex:publishedIn ; sh:minCount 1 ; sh:message "Paper has no venue." ] .`
+      },
+      {
+        label: "Conferences are named",
+        tip: "Every ex:Conference should carry an ex:name.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:ConferenceShape a sh:NodeShape ;
+  sh:targetClass ex:Conference ;
+  sh:property [ sh:path ex:name ; sh:minCount 1 ; sh:message "Conference has no name." ] .`
       }
     ],
     citations: [
@@ -1301,6 +1391,32 @@ foaf:AuthorNamedShape a sh:NodeShape ;
   sh:targetClass foaf:Person ;
   sh:property [ sh:path foaf:name ; sh:minCount 1 ;
     sh:message "Every author should carry a name." ] .`
+      },
+      {
+        label: "Articles report a citation count",
+        tip: "Every fabio:JournalArticle should carry an ex:citationCount.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix fabio: <http://purl.org/spar/fabio/> .
+@prefix ex: <http://ex/> .
+
+fabio:CitationCountShape a sh:NodeShape ;
+  sh:targetClass fabio:JournalArticle ;
+  sh:property [ sh:path ex:citationCount ; sh:minCount 1 ;
+    sh:message "Article has no citation count." ] .`
+      },
+      {
+        label: "Articles name a publication venue",
+        tip: "Every fabio:JournalArticle should carry a PRISM publicationName and a date.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix fabio: <http://purl.org/spar/fabio/> .
+@prefix prism: <http://prismstandard.org/namespaces/basic/2.0/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+
+fabio:VenueShape a sh:NodeShape ;
+  sh:targetClass fabio:JournalArticle ;
+  sh:property [ sh:path prism:publicationName ; sh:minCount 1 ;
+    sh:message "Article names no venue." ] ;
+  sh:property [ sh:path dct:date ; sh:minCount 1 ] .`
       }
     ],
     typed: [
@@ -1333,6 +1449,26 @@ ex:PersonNameShape
     sh:minCount 1 ;
     sh:message "Every Person must have a name."
   ] .`
+      },
+      {
+        label: "Acquaintances are people",
+        tip: "Every value of ex:knows must be a typed ex:Person.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:KnowsPersonShape a sh:NodeShape ;
+  sh:targetObjectsOf ex:knows ;
+  sh:class ex:Person .`
+      },
+      {
+        label: "Employers are organizations",
+        tip: "Every value of ex:worksAt must be a typed ex:Org.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:WorksAtOrgShape a sh:NodeShape ;
+  sh:targetObjectsOf ex:worksAt ;
+  sh:class ex:Org .`
       }
     ],
     deps: [
@@ -1359,6 +1495,26 @@ ex:ApplicationDependencyShape
 ex:DependencyIsLibraryShape a sh:NodeShape ;
   sh:targetObjectsOf ex:dependsOn ;
   sh:class ex:Library .`
+      },
+      {
+        label: "Vulnerable items are libraries",
+        tip: "Anything flagged with ex:hasVulnerability must be a typed ex:Library.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:VulnLibraryShape a sh:NodeShape ;
+  sh:targetSubjectsOf ex:hasVulnerability ;
+  sh:class ex:Library .`
+      },
+      {
+        label: "Dependencies are IRIs",
+        tip: "Every value of ex:dependsOn must be an IRI node (never a literal).",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:DependencyIriShape a sh:NodeShape ;
+  sh:targetObjectsOf ex:dependsOn ;
+  sh:nodeKind sh:IRI .`
       }
     ],
     "antarctic-expeditions": [
@@ -1387,6 +1543,27 @@ ex:PersonNamedShape a sh:NodeShape ;
   sh:targetClass ex:Person ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
     sh:message "Every expedition member should be named." ] .`
+      },
+      {
+        label: "Ships are named",
+        tip: "Every ex:Ship should carry an rdfs:label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+ex:ShipShape a sh:NodeShape ;
+  sh:targetClass ex:Ship ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:message "Ship has no name." ] .`
+      },
+      {
+        label: "Participants are people",
+        tip: "Every value of ex:participant must be a typed ex:Person.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+
+ex:ParticipantShape a sh:NodeShape ;
+  sh:targetObjectsOf ex:participant ;
+  sh:class ex:Person .`
       }
     ],
     "factgrid-illuminati": [
@@ -1413,6 +1590,30 @@ ex:PersonNamedShape a sh:NodeShape ;
   sh:targetSubjectsOf fgp:P91 ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
     sh:message "An entity in a P91 relation should carry a label." ] .`
+      },
+      {
+        label: "P154 relations link named entities",
+        tip: "Every subject of P154 should carry a label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix fgp: <https://database.factgrid.de/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf fgp:P154 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "A P154 subject should carry a label." ] .`
+      },
+      {
+        label: "P165 relations link named entities",
+        tip: "Every subject of P165 (the densest relation) should carry a label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix fgp: <https://database.factgrid.de/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf fgp:P165 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "A P165 subject should carry a label." ] .`
       }
     ],
     history: [
@@ -1443,6 +1644,28 @@ ex:TerritoryContextShape a sh:NodeShape ;
     sh:message "Territory should record what it is part of." ] ;
   sh:property [ sh:path ex:subjectTo ; sh:minCount 1 ;
     sh:message "Territory should record whom it is subject to." ] .`
+      },
+      {
+        label: "Territories carry one geometry",
+        tip: "Every ex:Territory should carry exactly one GeoSPARQL geometry.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+
+ex:TerritoryGeomShape a sh:NodeShape ;
+  sh:targetClass ex:Territory ;
+  sh:property [ sh:path geo:hasGeometry ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "Territory should carry exactly one geometry." ] .`
+      },
+      {
+        label: "Geometries are WKT literals",
+        tip: "Every geometry node (a subject of geo:hasGeometry's value) should carry a geo:asWKT serialization.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf geo:asWKT ;
+  sh:property [ sh:path geo:asWKT ; sh:minCount 1 ] .`
       }
     ],
     "linked-jazz": [
@@ -1469,6 +1692,28 @@ ex:TerritoryContextShape a sh:NodeShape ;
   sh:targetSubjectsOf rel:influencedBy ;
   sh:property [ sh:path foaf:name ; sh:minCount 1 ;
     sh:message "An influenced musician should carry a name." ] .`
+      },
+      {
+        label: "Mentored musicians are named",
+        tip: "Every subject of relationship:mentorOf should carry a foaf:name.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix rel: <http://purl.org/vocab/relationship/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf rel:mentorOf ;
+  sh:property [ sh:path foaf:name ; sh:minCount 1 ; sh:message "A mentor should be named." ] .`
+      },
+      {
+        label: "Band collaborators are named",
+        tip: "Every subject of linkedjazz:playedTogether should carry a foaf:name.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix lj: <http://linkedjazz.org/ontology/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf lj:playedTogether ;
+  sh:property [ sh:path foaf:name ; sh:minCount 1 ; sh:message "A collaborator should be named." ] .`
       }
     ],
     mimotext: [
@@ -1496,6 +1741,30 @@ ex:TerritoryContextShape a sh:NodeShape ;
   sh:targetSubjectsOf mt:P5 ;
   sh:property [ sh:path mt:P9 ; sh:minCount 1 ;
     sh:message "A novel that names an author should carry a publication date." ] .`
+      },
+      {
+        label: "Themed works are labelled",
+        tip: "Every subject of P36 (a work with a theme) should carry a label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix mt: <http://data.mimotext.uni-trier.de/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf mt:P36 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "A themed work should carry a label." ] .`
+      },
+      {
+        label: "Works in a P10 relation are labelled",
+        tip: "Every subject of P10 should carry a label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix mt: <http://data.mimotext.uni-trier.de/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf mt:P10 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "A P10 subject should carry a label." ] .`
       }
     ],
     mmm: [
@@ -1527,6 +1796,31 @@ crm:PersonNamedShape a sh:NodeShape ;
   sh:targetClass crm:E21_Person ;
   sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ;
     sh:message "Every person should carry a preferred label." ] .`
+      },
+      {
+        label: "Manuscripts name a work",
+        tip: "Every manuscript (F4_Manifestation_Singleton) should record the work it manifests.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix frbr: <http://erlangen-crm.org/efrbroo/> .
+@prefix mmm: <http://ldf.fi/schema/mmm/> .
+
+mmm:ManuscriptWorkShape a sh:NodeShape ;
+  sh:targetClass frbr:F4_Manifestation_Singleton ;
+  sh:property [ sh:path mmm:manuscript_work ; sh:minCount 1 ;
+    sh:message "Manuscript records no work." ] .`
+      },
+      {
+        label: "Places are geolocated",
+        tip: "Every CIDOC-CRM E53_Place should carry WGS84 lat/long coordinates.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix crm: <http://erlangen-crm.org/current/> .
+@prefix wgs: <http://www.w3.org/2003/01/geo/wgs84_pos#> .
+
+crm:PlaceGeoShape a sh:NodeShape ;
+  sh:targetClass crm:E53_Place ;
+  sh:property [ sh:path wgs:lat ; sh:minCount 1 ] ;
+  sh:property [ sh:path wgs:long ; sh:minCount 1 ;
+    sh:message "Place has no coordinates." ] .`
       }
     ],
     monarch: [
@@ -1555,6 +1849,29 @@ bl:GeneShape a sh:NodeShape ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
   sh:property [ sh:path bl:in_taxon ; sh:minCount 1 ;
     sh:message "Every gene should be placed in a taxon." ] .`
+      },
+      {
+        label: "Phenotypes are named",
+        tip: "Every biolink:PhenotypicFeature should carry an rdfs:label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix bl: <https://w3id.org/biolink/vocab/> .
+
+bl:PhenotypeShape a sh:NodeShape ;
+  sh:targetClass bl:PhenotypicFeature ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:message "Phenotype has no label." ] .`
+      },
+      {
+        label: "Genes carry cross-reference synonyms",
+        tip: "Every biolink:Gene should carry at least one skos:altLabel (symbol/synonym).",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix bl: <https://w3id.org/biolink/vocab/> .
+
+bl:GeneAltShape a sh:NodeShape ;
+  sh:targetClass bl:Gene ;
+  sh:property [ sh:path skos:altLabel ; sh:minCount 1 ;
+    sh:message "Gene has no synonym." ] .`
       }
     ],
     nomisma: [
@@ -1585,6 +1902,28 @@ nm:MintShape a sh:NodeShape ;
   sh:targetClass nm:Mint ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
     sh:message "Every mint should be named." ] .`
+      },
+      {
+        label: "Denominations are named",
+        tip: "Every nm:Denomination should carry an rdfs:label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix nm: <http://nomisma.org/ontology#> .
+
+nm:DenominationShape a sh:NodeShape ;
+  sh:targetClass nm:Denomination ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:message "Denomination has no name." ] .`
+      },
+      {
+        label: "Coins record a minting authority",
+        tip: "Every nm:TypeSeriesItem should record an issuing authority — coins of uncertain authority are flagged.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix nm: <http://nomisma.org/ontology#> .
+
+nm:CoinAuthorityShape a sh:NodeShape ;
+  sh:targetClass nm:TypeSeriesItem ;
+  sh:property [ sh:path nm:hasAuthority ; sh:class nm:Authority ; sh:minCount 1 ;
+    sh:message "Coin type records no authority." ] .`
       }
     ],
     "openalex-astrocytes": [
@@ -1614,6 +1953,28 @@ ex:AuthorNamedShape a sh:NodeShape ;
   sh:targetClass ex:Person ;
   sh:property [ sh:path foaf:name ; sh:minCount 1 ;
     sh:message "Every author should carry a name." ] .`
+      },
+      {
+        label: "Concepts are named",
+        tip: "Every ex:Concept (research topic) should carry an rdfs:label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+ex:ConceptShape a sh:NodeShape ;
+  sh:targetClass ex:Concept ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:message "Concept has no label." ] .`
+      },
+      {
+        label: "Institutions are named",
+        tip: "Every ex:Institution should carry an rdfs:label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+ex:InstitutionShape a sh:NodeShape ;
+  sh:targetClass ex:Institution ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:message "Institution has no label." ] .`
       }
     ],
     opencitations: [
@@ -1644,6 +2005,29 @@ fabio:ChapterShape a sh:NodeShape ;
   sh:property [ sh:path dct:title ; sh:minCount 1 ] ;
   sh:property [ sh:path dct:date ; sh:minCount 1 ;
     sh:message "Every book chapter should carry a date." ] .`
+      },
+      {
+        label: "Reference entries have a creator",
+        tip: "Every fabio:ReferenceEntry should record at least one dct:creator.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix fabio: <http://purl.org/spar/fabio/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+
+fabio:RefEntryShape a sh:NodeShape ;
+  sh:targetClass fabio:ReferenceEntry ;
+  sh:property [ sh:path dct:creator ; sh:minCount 1 ;
+    sh:message "Reference entry has no creator." ] .`
+      },
+      {
+        label: "Creators are named people",
+        tip: "Every value of dct:creator should carry a foaf:name.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+[] a sh:NodeShape ;
+  sh:targetObjectsOf dct:creator ;
+  sh:property [ sh:path foaf:name ; sh:minCount 1 ; sh:message "Creator has no name." ] .`
       }
     ],
     orkg: [
@@ -1672,6 +2056,28 @@ orkgc:AuthorShape a sh:NodeShape ;
   sh:targetClass orkgc:Author ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
     sh:message "Every author should be named." ] .`
+      },
+      {
+        label: "Contributions are labelled",
+        tip: "Every orkg:Contribution should carry an rdfs:label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix orkgc: <https://orkg.org/class/> .
+
+orkgc:ContributionShape a sh:NodeShape ;
+  sh:targetClass orkgc:Contribution ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:message "Contribution has no label." ] .`
+      },
+      {
+        label: "Venues are labelled",
+        tip: "Every orkg:Venue should carry an rdfs:label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix orkgc: <https://orkg.org/class/> .
+
+orkgc:VenueShape a sh:NodeShape ;
+  sh:targetClass orkgc:Venue ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:message "Venue has no label." ] .`
       }
     ],
     "theographic-graph": [
@@ -1703,6 +2109,27 @@ theo:EventShape a sh:NodeShape ;
     sh:message "Every event should carry a year." ] ;
   sh:property [ sh:path theo:occurredIn ; sh:minCount 1 ;
     sh:message "Every event should record where it occurred." ] .`
+      },
+      {
+        label: "People carry a gender",
+        tip: "Every foaf:Person should carry a foaf:gender. The graph conforms.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+foaf:PersonGenderShape a sh:NodeShape ;
+  sh:targetClass foaf:Person ;
+  sh:property [ sh:path foaf:gender ; sh:minCount 1 ; sh:message "Person has no gender." ] .`
+      },
+      {
+        label: "People-groups are named",
+        tip: "Every theo:PeopleGroup should carry an rdfs:label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix theo: <http://theographic/ontology#> .
+
+theo:PeopleGroupShape a sh:NodeShape ;
+  sh:targetClass theo:PeopleGroup ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:message "People-group has no label." ] .`
       }
     ],
     "getty-ulan": [
@@ -1731,6 +2158,29 @@ theo:EventShape a sh:NodeShape ;
   sh:targetObjectsOf gvp:teacherOf ;
   sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ;
     sh:message "Every pupil should carry a name." ] .`
+      },
+      {
+        label: "Influencers are named",
+        tip: "Run after Cache remote. Every artist who influenced another (gvp:influenced) should carry a skos:prefLabel.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix gvp: <http://vocab.getty.edu/ontology#> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf gvp:influenced ;
+  sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ;
+    sh:message "An influencer should be named." ] .`
+      },
+      {
+        label: "Masters carry a nationality",
+        tip: "Run after Cache remote. Every master who taught a pupil (gvp:teacherOf) should record a nationality.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix gvp: <http://vocab.getty.edu/ontology#> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf gvp:teacherOf ;
+  sh:property [ sh:path gvp:nationality ; sh:minCount 1 ;
+    sh:message "A master records no nationality." ] .`
       }
     ],
     "wikidata-100mb": [
@@ -1757,6 +2207,29 @@ theo:EventShape a sh:NodeShape ;
   sh:targetSubjectsOf wdt:P106 ;
   sh:property [ sh:path wdt:P27 ; sh:minCount 1 ;
     sh:message "A person with an occupation should record a citizenship (P27)." ] .`
+      },
+      {
+        label: "People with a job have a place of birth",
+        tip: "Run after Cache remote. Every person with an occupation (wdt:P106) should record a place of birth (wdt:P19). Real Wikidata is incomplete, so expect violations.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf wdt:P106 ;
+  sh:property [ sh:path wdt:P19 ; sh:minCount 1 ;
+    sh:message "Person records no place of birth (P19)." ] .`
+      },
+      {
+        label: "People with a birthplace are labelled",
+        tip: "Run after Cache remote. Every person who records a place of birth (wdt:P19) should also carry a label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf wdt:P19 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "Person with a birthplace has no label." ] .`
       }
     ],
     "ohm-full": [
@@ -1786,6 +2259,76 @@ theo:EventShape a sh:NodeShape ;
   sh:targetSubjectsOf geo:hasGeometry ;
   sh:property [ sh:path ex:endYear ; sh:minCount 1 ;
     sh:message "Every geolocated historical feature should carry an end year." ] .`
+      },
+      {
+        label: "Geometries are WKT literals",
+        tip: "Run after Cache remote. Every feature geometry should carry a geo:asWKT serialization.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf geo:asWKT ;
+  sh:property [ sh:path geo:asWKT ; sh:minCount 1 ] .`
+      },
+      {
+        label: "Dated features carry both years",
+        tip: "Run after Cache remote. Every feature with a start year should also carry an end year (2100 = still present).",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf ex:startYear ;
+  sh:property [ sh:path ex:endYear ; sh:minCount 1 ;
+    sh:message "A dated feature has no end year." ] .`
+      }
+    ],
+    wikidata: [
+      {
+        label: "People with a job have a birth date",
+        tip: "Note: SHACL validates the whole graph in memory, which isn't viable at 1 GB in the browser — run these on the wikidata-100MB twin (same shapes, same vocab) or Cache remote. Every person with an occupation (wdt:P106) should record a date of birth (wdt:P569).",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf wdt:P106 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
+  sh:property [ sh:path wdt:P569 ; sh:minCount 1 ;
+    sh:message "Person with an occupation has no date of birth (P569)." ] .`
+      },
+      {
+        label: "People with a job have a citizenship",
+        tip: "Best run on the wikidata-100MB twin (1 GB can't be materialized for SHACL). Every person with an occupation should record a country of citizenship (wdt:P27).",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf wdt:P106 ;
+  sh:property [ sh:path wdt:P27 ; sh:minCount 1 ;
+    sh:message "Person with an occupation has no citizenship (P27)." ] .`
+      },
+      {
+        label: "People with a job have a place of birth",
+        tip: "Best run on the wikidata-100MB twin. Every person with an occupation should record a place of birth (wdt:P19).",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf wdt:P106 ;
+  sh:property [ sh:path wdt:P19 ; sh:minCount 1 ;
+    sh:message "Person with an occupation has no place of birth (P19)." ] .`
+      },
+      {
+        label: "People with a birthplace are labelled",
+        tip: "Best run on the wikidata-100MB twin. Every person who records a place of birth (wdt:P19) should also carry a label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf wdt:P19 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "Person with a birthplace has no label." ] .`
       }
     ]
   },
