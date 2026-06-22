@@ -1401,6 +1401,7 @@ self.onmessage = function (e) {
     catch (e) { return null; }
   }
   function setParallelParam(on) {
+    try { sessionStorage.removeItem("coiReloaded"); } catch (e) { /* private mode */ }  // fresh attempt
     const u = new URL(location.href);
     if (on) u.searchParams.set("parallel", "1"); else u.searchParams.delete("parallel");
     location.href = u.toString();  // reload — the head script (un)registers the COI SW
@@ -1412,12 +1413,19 @@ self.onmessage = function (e) {
   }
   function renderParallel() {
     const iso = !!window.crossOriginIsolated;
+    const wanted = /[?&]parallel(=1)?\b/.test(location.search);
     const t = $("parallelToggle"); if (t) t.checked = iso;
     const w = $("parallelWorkers"); if (w) { w.value = parallelWorkerCount() || ""; w.disabled = !iso; }
     const info = $("parallelInfo");
-    if (info) info.textContent = iso
-      ? `On — each query fetches its byte ranges in parallel across ${parallelWorkerCount() || "auto"} fetch workers (cross-origin isolated). A big speedup for remote SPARQL on the 1 GB / lazy datasets; the DuckDB/SQLite Explore backends are disabled in this mode.`
-      : "Off — reads are sequential (one coalesced multi-range request at a time). Turn on to fetch ranges in parallel: the page reloads into cross-origin isolation, which disables the CDN-loaded DuckDB/SQLite Explore backends (Graph/SPARQL only).";
+    if (!info) return;
+    if (iso) {
+      info.innerHTML = `<b>On</b> — each query fetches its byte ranges in parallel across ${parallelWorkerCount() || "auto"} fetch workers (cross-origin isolated). A big speedup for remote SPARQL on the 1 GB / lazy datasets; the CDN-loaded DuckDB/SQLite Explore backends may be limited in this mode.`;
+    } else if (wanted) {
+      // ?parallel=1 is set but isolation didn't engage — explain instead of a silent dead toggle.
+      info.innerHTML = `<b>Couldn't enable.</b> The page isn't cross-origin isolated, so the checkbox won't stay on. Most likely your browser doesn't support COEP <code>credentialless</code> (<b>Safari</b> doesn't) — try <b>Chrome, Edge, or Firefox</b>. Reads stay sequential meanwhile. (If you're on a supported browser, a hard-reload usually completes the handshake.)`;
+    } else {
+      info.textContent = "Off — reads are sequential (one coalesced multi-range request at a time). Turn on to fetch each query's byte ranges in parallel: the page reloads into cross-origin isolation. Graph/SPARQL only — it may limit the CDN-loaded DuckDB/SQLite Explore backends.";
+    }
   }
   function openSettings() { renderRangeCache(); renderParallel(); renderCacheList(); $("settingsModal").classList.remove("hidden"); }
   function closeSettings() { $("settingsModal").classList.add("hidden"); }

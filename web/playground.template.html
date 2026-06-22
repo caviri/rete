@@ -5,32 +5,36 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>.rete playground - browser-based graph exploration</title>
   <script>
-  /* Cross-origin isolation unlocks SharedArrayBuffer, which lets the rete worker
-     fetch a query's byte ranges in PARALLEL (an Atomics-coordinated fetch-worker
-     pool) instead of one synchronous XHR at a time — a big speedup for remote
-     SPARQL on the lazy 1 GB datasets. But isolation (COEP) breaks the cross-origin
-     CDN modules the Explore DuckDB/SQLite backends load, so it is OPT-IN: the
-     Settings "Parallel range reads" toggle adds ?parallel=1 and reloads. By
-     default we stay un-isolated AND unregister any leftover COI worker, so every
-     backend works out of the box. */
+  /* Cross-origin isolation (COOP+COEP) unlocks SharedArrayBuffer → parallel range
+     reads. On a static host the COI service worker adds the headers, but a worker
+     CANNOT isolate the page that first registered it: the page must reload ONCE
+     the worker is in control. So we register, then reload when the worker takes
+     control (guarded against a loop). Opt-in via ?parallel=1; off by default, and
+     we unregister any leftover worker so every backend works out of the box.
+     NOTE: needs COEP "credentialless" (Chrome/Edge/Firefox; NOT Safari). */
   (function () {
     if (!("serviceWorker" in navigator)) return;
     var want = /[?&]parallel(=1)?\b/.test(location.search);
-    if (want) {
-      if (window.crossOriginIsolated) return;
-      navigator.serviceWorker.register("coi-serviceworker.js").then(function (reg) {
-        if (reg.active && !navigator.serviceWorker.controller) location.reload();
-      }).catch(function () {});
-    } else {
+    var guard = function (k, v) { try { return v === undefined ? sessionStorage.getItem(k) : (v === null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v)); } catch (e) { return null; } };
+    if (!want) {
+      guard("coiReloaded", null);
       navigator.serviceWorker.getRegistrations().then(function (regs) {
-        var had = false;
+        var ps = [];
         regs.forEach(function (r) {
           var s = (r.active && r.active.scriptURL) || "";
-          if (/coi-serviceworker/.test(s)) { r.unregister(); had = true; }
+          if (/coi-serviceworker/.test(s)) ps.push(r.unregister());
         });
-        if (had) location.reload();
+        if (ps.length) Promise.all(ps).then(function () { location.reload(); });
       }).catch(function () {});
+      return;
     }
+    if (window.crossOriginIsolated) { guard("coiReloaded", null); return; }
+    var reloadOnce = function () { if (guard("coiReloaded")) return; guard("coiReloaded", "1"); location.reload(); };
+    navigator.serviceWorker.addEventListener("controllerchange", reloadOnce);
+    navigator.serviceWorker.register("coi-serviceworker.js").then(function () {
+      // Already controlling but still not isolated → one forced reload.
+      if (navigator.serviceWorker.controller) reloadOnce();
+    }).catch(function () {});
   })();
   </script>
   <style>
