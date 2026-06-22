@@ -308,6 +308,117 @@
     }
   }
 
+  // ── IRI → human-label decode (optional, purely visual) ──────────────────
+  // A toggle floats a human-readable label over each IRI/prefixed-name token.
+  // Labels come from: a built-in vocabulary, the dataset's predefined hints
+  // (ctx.labelHints), and a best-effort live lookup (ctx.resolveLabels). This
+  // NEVER edits the query — it only draws an overlay and sets hover titles.
+  const VOCAB = {
+    "http://www.w3.org/1999/02/22-rdf-syntax-ns#type": "type",
+    "http://www.w3.org/2000/01/rdf-schema#label": "label",
+    "http://www.w3.org/2000/01/rdf-schema#subClassOf": "subclass of",
+    "http://www.w3.org/2000/01/rdf-schema#subPropertyOf": "subproperty of",
+    "http://www.w3.org/2000/01/rdf-schema#comment": "comment",
+    "http://www.w3.org/2000/01/rdf-schema#domain": "domain",
+    "http://www.w3.org/2000/01/rdf-schema#range": "range",
+    "http://www.w3.org/2004/02/skos/core#prefLabel": "preferred label",
+    "http://www.w3.org/2004/02/skos/core#altLabel": "alternative label",
+    "http://www.w3.org/2004/02/skos/core#broader": "broader",
+    "http://www.w3.org/2004/02/skos/core#narrower": "narrower",
+    "http://xmlns.com/foaf/0.1/name": "name",
+    "http://xmlns.com/foaf/0.1/gender": "gender",
+    "http://purl.org/dc/terms/title": "title",
+    "http://purl.org/dc/terms/date": "date",
+    "http://purl.org/dc/terms/creator": "creator",
+    "http://www.w3.org/2002/07/owl#Class": "class",
+    "http://www.opengis.net/ont/geosparql#asWKT": "geometry (WKT)",
+    "http://www.opengis.net/ont/geosparql#hasGeometry": "has geometry",
+    "http://purl.org/spar/cito/cites": "cites"
+  };
+
+  // prefix -> namespace, parsed from PREFIX/@prefix declarations in the text.
+  function prefixMap(text) {
+    const map = {};
+    const re = /(?:PREFIX|@prefix)\s+([A-Za-z_][\w.-]*)?:\s*<([^>\s]*)>/gi;
+    let m;
+    while ((m = re.exec(text))) map[m[1] || ""] = m[2];
+    return map;
+  }
+  // A token's full IRI: "<…>" verbatim, or a "pfx:local" expanded via prefixes.
+  function tokenIri(tokenText, prefixes) {
+    const t = String(tokenText).trim();
+    if (!t) return null;
+    if (t[0] === "<") return t.replace(/^<|>$/g, "") || null;
+    const i = t.indexOf(":");
+    if (i < 0) return null;
+    const ns = prefixes[t.slice(0, i)];
+    return ns != null ? ns + t.slice(i + 1) : null;
+  }
+  // VOCAB / hints lookup (sync). Returns a label string, or null if unknown
+  // (the live resolver may fill it in and cache it later).
+  function decodeLabel(ed, iri) {
+    if (ed.labels.has(iri)) return ed.labels.get(iri);
+    let lab = VOCAB[iri] || null;
+    if (lab == null && ed.ctx.labelHints) {
+      const h = ed.ctx.labelHints();
+      if (h && h[iri] != null) lab = h[iri];
+    }
+    if (lab != null) { ed.labels.set(iri, lab); return lab; }
+    return null;
+  }
+  function placeAnno(ed, sp, lab) {
+    const a = document.createElement("span");
+    a.className = "ed-anno";
+    a.textContent = lab;
+    a.style.left = (sp.offsetLeft - ed.ta.scrollLeft) + "px";
+    a.style.top = (sp.offsetTop - ed.ta.scrollTop - 14) + "px";
+    ed.anno.appendChild(a);
+  }
+  function renderDecorations(ed) {
+    if (!ed.anno) return;
+    ed.anno.innerHTML = "";
+    if (!ed.decode) return;
+    const prefixes = prefixMap(ed.ta.value);
+    // The <…> in a PREFIX/BASE declaration is a namespace, not an entity — skip
+    // those so we don't annotate (or try to resolve) prefix targets.
+    const namespaces = new Set(Object.keys(prefixes).map((k) => prefixes[k]));
+    const spans = ed.code.querySelectorAll(".tok-iri, .tok-fn");
+    const unknown = [];
+    spans.forEach((sp) => {
+      const iri = tokenIri(sp.textContent, prefixes);
+      if (!iri || namespaces.has(iri)) return;
+      const lab = decodeLabel(ed, iri);
+      if (lab) { sp.title = lab; placeAnno(ed, sp, lab); }
+      else if (!ed.labels.has(iri) && !ed.pending.has(iri)) unknown.push(iri);
+    });
+    // Resolve still-unknown IRIs live (best-effort), tracking each as pending so
+    // a render mid-flight doesn't re-request or drop it. Negatives are cached so
+    // unresolved IRIs aren't asked again.
+    const want = Array.from(new Set(unknown));
+    if (want.length && ed.ctx.resolveLabels) {
+      want.forEach((iri) => ed.pending.add(iri));
+      Promise.resolve(ed.ctx.resolveLabels(want)).then((got) => {
+        let added = false;
+        want.forEach((iri) => {
+          ed.pending.delete(iri);
+          const v = (got && got[iri]) || null;
+          ed.labels.set(iri, v);
+          if (v) added = true;
+        });
+        if (added && ed.decode) renderDecorations(ed);
+      }).catch(() => { want.forEach((iri) => ed.pending.delete(iri)); });
+    }
+  }
+  function setDecode(id, on) {
+    const ed = EDITORS[id];
+    if (!ed) return false;
+    ed.decode = !!on;
+    if (ed.wrap) ed.wrap.classList.toggle("decode-on", ed.decode);
+    renderDecorations(ed);
+    return ed.decode;
+  }
+  function toggleDecode(id) { const ed = EDITORS[id]; return ed ? setDecode(id, !ed.decode) : false; }
+
   function enhance(id, lang, ctx) {
     const ta = $(id);
     if (!ta || EDITORS[id]) return;
@@ -323,23 +434,28 @@
     hl.appendChild(code);
     const sug = document.createElement("div");
     sug.className = "ed-suggest hidden";
+    const anno = document.createElement("div");
+    anno.className = "ed-anno-layer";
 
     ta.parentNode.insertBefore(wrap, ta);
     wrap.appendChild(gutter);
     wrap.appendChild(body);
     body.appendChild(hl);
     body.appendChild(ta);
+    body.appendChild(anno);
     body.appendChild(sug);
     ta.setAttribute("wrap", "off");
     ta.spellcheck = false;
 
-    const ed = { ta, gutter, code, hl, sug, body, lang, ctx: ctx || {}, items: [], sel: 0, tok: null };
+    const ed = { ta, gutter, code, hl, sug, body, wrap, anno, lang, ctx: ctx || {},
+      labels: new Map(), pending: new Set(), decode: false, items: [], sel: 0, tok: null };
     ed.refresh = () => {
       const text = ta.value;
       code.innerHTML = highlightCode(text, lang);
       const lines = text.split("\n").length;
       gutter.textContent = Array.from({ length: lines }, (_, i) => i + 1).join("\n");
       ed.sync();
+      renderDecorations(ed);
     };
     ed.sync = () => {
       hl.scrollTop = ta.scrollTop;
@@ -347,7 +463,7 @@
       gutter.scrollTop = ta.scrollTop;
     };
     ta.addEventListener("input", () => { ed.refresh(); updateSuggest(ed); });
-    ta.addEventListener("scroll", ed.sync);
+    ta.addEventListener("scroll", () => { ed.sync(); if (ed.decode) renderDecorations(ed); });
     ta.addEventListener("keydown", (e) => suggestKeydown(ed, e));
     ta.addEventListener("blur", () => setTimeout(() => hideSuggest(ed), 120));
     EDITORS[id] = ed;
@@ -361,5 +477,5 @@
     if (EDITORS[id]) EDITORS[id].refresh();
   }
 
-  window.PlaygroundEditor = { enhance, setText, editors: EDITORS, highlightCode, KEYWORD_INFO };
+  window.PlaygroundEditor = { enhance, setText, editors: EDITORS, highlightCode, KEYWORD_INFO, setDecode, toggleDecode };
 })();

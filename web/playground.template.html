@@ -135,10 +135,18 @@ __PLAYGROUND_CSS__
             <h1>SPARQL Console</h1>
             <p class="microcopy">Default path for exact queries, summary-safe progressive queries, and graph rendering.</p>
           </div>
+          <button id="decodeToggle" type="button" class="ed-tool" aria-pressed="false" title="Float a human-readable label over each IRI in the query. Purely visual — it never changes what the query does.">🏷 Labels</button>
         </div>
         <div id="exampleQuick" class="ex-quick" aria-label="Example suggestions"></div>
         <div id="exampleDesc" class="ex-desc" aria-live="polite"></div>
-        <textarea id="q" spellcheck="false"></textarea>
+        <div class="ed-row">
+          <textarea id="q" spellcheck="false"></textarea>
+          <aside id="entityFinder" class="entity-finder" aria-label="Entity finder">
+            <div class="ef-head">🔎 Find an entity</div>
+            <input id="efInput" type="search" class="ef-input" placeholder="Type a name…" aria-label="Search entities by name" autocomplete="off" />
+            <div id="efResults" class="ef-results"></div>
+          </aside>
+        </div>
         <div id="fedBar" class="fed-bar">
           <span class="fed-label" title="Run this query across more than one source and merge the results (UNION + dedup), each fetched lazily.">Sources</span>
           <div id="fedChips" class="fed-chips"></div>

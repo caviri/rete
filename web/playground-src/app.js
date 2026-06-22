@@ -441,12 +441,93 @@
     try { return JSON.parse(state.graph.prefix_search(prefix, 8)); } catch (_e) { return []; }
   }
 
+  // Predefined per-dataset IRI -> label hints (instant, used by the editor's
+  // "Labels" decode toggle for previews — see CATALOG.labelHints).
+  function labelHintsFor() {
+    return (CATALOG.labelHints && CATALOG.labelHints[state.dataset]) || null;
+  }
+
+  // Best-effort live IRI -> label resolution for the decode toggle, over the
+  // loaded EMBEDDED graph (the engine call is synchronous there). Remote-lazy
+  // graphs are skipped — their queries are async/worker-routed, and predefined
+  // labelHints already cover the showcase IRIs. Returns a { iri: label } map.
+  function resolveLabels(iris) {
+    if (!iris || !iris.length || state.remote || !state.graph || !state.bytes) return {};
+    const values = iris.slice(0, 60).map((i) => "<" + i + ">").join(" ");
+    const q =
+      "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n" +
+      "PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n" +
+      "PREFIX foaf: <http://xmlns.com/foaf/0.1/>\n" +
+      "SELECT ?s ?l WHERE { VALUES ?s { " + values + " }\n" +
+      "  ?s ?p ?l . VALUES ?p { rdfs:label skos:prefLabel foaf:name }\n" +
+      "  FILTER(isLiteral(?l)) }";
+    try {
+      const res = JSON.parse(state.graph.query(q, "table"));
+      const out = {};
+      (res.rows || []).forEach((r) => {
+        const s = String(r.s || "").replace(/^<|>$/g, "");
+        if (!s || out[s] != null) return;
+        const lm = String(r.l || "").match(/^"((?:\\.|[^"\\])*)"/);
+        out[s] = lm ? lm[1] : String(r.l || "");
+      });
+      return out;
+    } catch (_e) { return {}; }
+  }
+
   function enhanceEditor(id, lang) {
     if (!window.PlaygroundEditor) return;
     window.PlaygroundEditor.enhance(id, lang, {
       schema: () => state.schema,
-      searchEntities: entitySearch
+      searchEntities: entitySearch,
+      labelHints: labelHintsFor,
+      resolveLabels: resolveLabels
     });
+  }
+
+  // ── Entity finder (the panel beside the SPARQL editor) ───────────────────
+  // Type a human string; rete's bounded label index (prefix_search, no scan)
+  // returns matching entities; click one to insert its <IRI> at the caret.
+  function localName(iri) { return String(iri).replace(/[<>]/g, "").replace(/^.*[\/#:]/, "") || iri; }
+  function insertAtCaret(id, text) {
+    const ta = $(id);
+    if (!ta) return;
+    const s = ta.selectionStart || 0, e = ta.selectionEnd || 0;
+    ta.value = ta.value.slice(0, s) + text + ta.value.slice(e);
+    const caret = s + text.length;
+    ta.setSelectionRange(caret, caret);
+    if (window.PlaygroundEditor && PlaygroundEditor.editors[id]) PlaygroundEditor.editors[id].refresh();
+    ta.focus();
+  }
+  function renderFinder(hits, q) {
+    const box = $("efResults");
+    if (!box) return;
+    if (!q) {
+      box.innerHTML = `<p class="ef-empty">Type a name to search this graph's entities by their label.</p>`;
+      return;
+    }
+    if (!hits.length) {
+      box.innerHTML = state.remote
+        ? `<p class="ef-empty">Live entity search runs on in-page graphs. For a remote-lazy dataset, try the “Find a thing by its name” example.</p>`
+        : `<p class="ef-empty">No entities match “${esc(q)}”.</p>`;
+      return;
+    }
+    box.innerHTML = hits.map((h) => {
+      const iri = String(h.subject).replace(/^<|>$/g, "");
+      return `<button type="button" class="ef-item" data-iri="${esc(iri)}" title="${esc(iri)}">` +
+        `<span class="ef-label">${esc(h.label || localName(iri))}</span>` +
+        `<span class="ef-iri">${esc(localName(iri))}</span></button>`;
+    }).join("");
+    $$("#efResults .ef-item").forEach((b) => {
+      b.onclick = () => insertAtCaret("q", "<" + b.dataset.iri + ">");
+    });
+  }
+  function efSearch() {
+    const inp = $("efInput");
+    if (!inp) return;
+    const q = (inp.value || "").trim();
+    let hits = [];
+    if (q && state.graph) { try { hits = JSON.parse(state.graph.prefix_search(q, 15)); } catch (_e) { hits = []; } }
+    renderFinder(hits, q);
   }
 
   function setEd(id, text) {
@@ -3792,6 +3873,19 @@
     enhanceEditor("shapeText", "ttl");
     enhanceEditor("buildText", "ttl");
     setEd("buildText", BUILD_SAMPLE);
+
+    // "Labels" decode toggle: float a human label over each IRI in the query.
+    const decodeBtn = $("decodeToggle");
+    if (decodeBtn && window.PlaygroundEditor) {
+      decodeBtn.onclick = () => {
+        const on = window.PlaygroundEditor.toggleDecode("q");
+        decodeBtn.classList.toggle("active", on);
+        decodeBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      };
+    }
+    // Entity finder panel beside the editor.
+    const efInput = $("efInput");
+    if (efInput) { efInput.oninput = efSearch; renderFinder([], ""); }
 
     await wasm_bindgen(b64ToBytes(RETE_WASM_B64));
 

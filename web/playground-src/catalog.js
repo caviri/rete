@@ -1,3 +1,27 @@
+// Shared IRI -> human-label hints for the Wikidata datasets. The editor's
+// "Labels" decode toggle reads CATALOG.labelHints[dataset]; wikidata and
+// wikidata-100mb use the same Wikidata vocabulary, so they share this map.
+const RETE_WD_LABELS = {
+  "http://www.wikidata.org/entity/Q100001": "Bemelen (village)",
+  "http://www.wikidata.org/entity/Q515": "city",
+  "http://www.wikidata.org/entity/Q5": "human",
+  "http://www.wikidata.org/entity/Q859": "Plato",
+  "http://www.wikidata.org/entity/Q169470": "physicist",
+  "http://www.wikidata.org/entity/Q4964182": "philosopher",
+  "http://www.wikidata.org/entity/Q36180": "writer",
+  "http://www.wikidata.org/entity/Q82955": "politician",
+  "http://www.wikidata.org/prop/direct/P279": "subclass of",
+  "http://www.wikidata.org/prop/direct/P106": "occupation",
+  "http://www.wikidata.org/prop/direct/P625": "coordinate location",
+  "http://www.wikidata.org/prop/direct/P737": "influenced by",
+  "http://www.wikidata.org/prop/direct/P569": "date of birth",
+  "http://www.wikidata.org/prop/direct/P31": "instance of",
+  "http://www.wikidata.org/prop/direct/P27": "country of citizenship",
+  "http://www.wikidata.org/prop/direct/P19": "place of birth",
+  "http://www.wikidata.org/prop/direct/P21": "sex or gender",
+  "http://www.wikidata.org/prop/direct/P735": "given name"
+};
+
 window.RETE_PLAYGROUND_CATALOG = {
   defaultDataset: "scholar",
   // Every dataset is also mirrored in the HF bucket at playground/<key>.rete, so
@@ -2782,6 +2806,45 @@ theo:PeopleGroupShape a sh:NodeShape ;
         { label: "Every occupation edge (lazy, 1 GB)", tip: "Predicate-bound over the 1 GB file: the whole occupation relation as one POS run — each row shows the tile/byte range fetched. Selective, so it stays cheap even at 1 GB.", predicate: "<http://www.wikidata.org/prop/direct/P106>" },
         { label: "All humans", tip: "Object-bound: routed to OSP — every \"instance of: human\" assertion over the lazy 1 GB graph.", predicate: "<http://www.wikidata.org/prop/direct/P31>", object: "<http://www.wikidata.org/entity/Q5>" }
       ]
+    }
+  },
+  // Predefined IRI -> human-label hints, per dataset, for the editor's "Labels"
+  // decode toggle: instant previews for the opaque-identifier datasets with no
+  // graph access. Readable-IRI datasets (ex:Obesity, foaf:name, …) lean on the
+  // built-in vocab + a live lookup instead, so they need no entries here.
+  labelHints: {
+    "wikidata": RETE_WD_LABELS,
+    "wikidata-100mb": RETE_WD_LABELS,
+    "getty-ulan": {
+      "http://vocab.getty.edu/ulan/500011051": "Rembrandt",
+      "http://vocab.getty.edu/ontology#teacherOf": "teacher of",
+      "http://vocab.getty.edu/ontology#nationality": "nationality"
+    },
+    "factgrid-illuminati": {
+      "https://database.factgrid.de/entity/Q10677": "Order of the Illuminati",
+      "https://database.factgrid.de/prop/direct/P91": "member of",
+      "https://database.factgrid.de/prop/direct/P2": "instance of"
+    },
+    "antarctic-expeditions": {
+      "http://www.wikidata.org/entity/Q1162294": "Endurance (ship)",
+      "http://www.wikidata.org/entity/Q973919": "Terra Nova Expedition",
+      "http://ex/participant": "participant",
+      "http://ex/vessel": "vessel",
+      "http://ex/leader": "leader",
+      "http://ex/startYear": "start year",
+      "http://ex/endYear": "end year"
+    },
+    "mimotext": {
+      "http://data.mimotext.uni-trier.de/prop/direct/P49": "stylometric similarity",
+      "http://data.mimotext.uni-trier.de/prop/direct/P36": "about (theme)",
+      "http://data.mimotext.uni-trier.de/prop/direct/P5": "author",
+      "http://data.mimotext.uni-trier.de/prop/direct/P12": "genre",
+      "http://data.mimotext.uni-trier.de/prop/direct/P9": "publication date",
+      "http://data.mimotext.uni-trier.de/prop/direct/P2": "instance of",
+      "http://data.mimotext.uni-trier.de/entity/Q2": "literary work",
+      "http://data.mimotext.uni-trier.de/entity/Q10": "person",
+      "http://data.mimotext.uni-trier.de/entity/Q20": "thematic concept",
+      "http://data.mimotext.uni-trier.de/entity/Q26": "spatial concept"
     }
   }
 };
