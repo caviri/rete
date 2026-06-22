@@ -5693,6 +5693,100 @@ SELECT ?who ?year ?description WHERE {
   OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
   OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
 }`
+      },
+      {
+        family: "Select",
+        label: "Painters who are also writers",
+        view: "table",
+        tip: "Another occupation intersection - people who are both wdt:P106 painter (Q1028181) and writer (Q36180), polymaths like William Blake. The remote-aware join scans both occupation sets in bulk and intersects them, then resolves the name and birth year for the handful that pass.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?who ?year WHERE {
+  { SELECT ?p WHERE {
+      ?p wdt:P106 wd:Q1028181 ;   # painter
+         wdt:P106 wd:Q36180       # writer
+    } LIMIT 25 }
+  ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
+  OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
+}`
+      },
+      {
+        family: "Select",
+        label: "Physicists born before 1900",
+        view: "table",
+        tip: "People by year: seed on a selective occupation (physicists, wdt:P106 Q169470), then keep those whose birth year - YEAR(wdt:P569) - is before 1900. Seeding on the occupation first means only physicists' birth dates are read, never the whole date-of-birth predicate. Oldest first.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?who ?year WHERE {
+  { SELECT ?p WHERE { ?p wdt:P106 wd:Q169470 } LIMIT 200 }
+  ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
+  ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year)
+  FILTER(?year < 1900)
+} ORDER BY ?year LIMIT 25`
+      },
+      {
+        family: "Select",
+        label: "People born in Paris",
+        view: "table",
+        tip: "City of birth: a bound object on wdt:P19 (place of birth) -> Q90 (Paris) routes straight to the people born there - a selective lazy read - then resolves each one's name, birth year and occupation.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?who ?year ?occupation WHERE {
+  { SELECT ?p WHERE { ?p wdt:P19 wd:Q90 } LIMIT 25 }
+  ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
+  OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
+  OPTIONAL { ?p wdt:P106 ?occ . ?occ rdfs:label ?occupation . FILTER(LANG(?occupation) = "en") }
+}`
+      },
+      {
+        family: "Select",
+        label: "Painters born in Paris",
+        view: "table",
+        tip: "Occupation + city of birth: painters (wdt:P106 Q1028181) who were also born in Paris (wdt:P19 Q90). A double-bound intersection the remote-aware join handles by scanning both sets and intersecting, with each painter's birth year.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?who ?year WHERE {
+  { SELECT ?p WHERE {
+      ?p wdt:P106 wd:Q1028181 ;   # painter
+         wdt:P19 wd:Q90           # born in Paris
+    } LIMIT 25 }
+  ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
+  OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
+}`
+      },
+      {
+        family: "Select",
+        label: "Composers born in the 1700s",
+        view: "table",
+        tip: "People by era: seed on composers (wdt:P106 Q36834), then keep those born in the 18th century - 1700 <= YEAR(wdt:P569) < 1800 - Bach, Mozart, Haydn and contemporaries. Only composers' birth dates are read, oldest first.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?who ?year WHERE {
+  { SELECT ?p WHERE { ?p wdt:P106 wd:Q36834 } LIMIT 250 }
+  ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
+  ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year)
+  FILTER(?year >= 1700 && ?year < 1800)
+} ORDER BY ?year LIMIT 25`
+      },
+      {
+        family: "Select",
+        label: "Writers and their country of citizenship",
+        view: "table",
+        tip: "Seed on a selective occupation (writers, wdt:P106 Q36180), then resolve each one's country of citizenship (wdt:P27) and birth year. Three readable columns from one occupation seed - a few range reads of the 1 GB file.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?who ?country ?year WHERE {
+  { SELECT ?p WHERE { ?p wdt:P106 wd:Q36180 } LIMIT 25 }
+  ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
+  OPTIONAL { ?p wdt:P27 ?c . ?c rdfs:label ?country . FILTER(LANG(?country) = "en") }
+  OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
+}`
       }
     ],
     scholar: [
