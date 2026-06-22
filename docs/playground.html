@@ -5359,11 +5359,11 @@ SELECT DISTINCT ?root WHERE {
       }
     ],
     "wikidata-100mb": [
-      {"family": "Select", "label": "Physicists who are also philosophers", "view": "graph", "tip": "An occupation intersection (wdt:P106 twice). Selective - the lazy reader faults in ~10 MB of the 104 MB file and returns scientist-philosophers like Ilya Prigogine and Marin Mersenne.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who WHERE {\n  ?p wdt:P106 wd:Q169470 ;   # physicist\n     wdt:P106 wd:Q4964182 ;  # philosopher\n     rdfs:label ?who .\n  FILTER(LANG(?who) = \"en\")\n} LIMIT 50"},
-      {"family": "Select", "label": "People influenced by Plato", "view": "graph", "tip": "Bound-object star: everyone whose 'influenced by' (wdt:P737) points at Plato (wd:Q859). A bound term = a selective lazy read.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who WHERE {\n  ?p wdt:P737 wd:Q859 ;   # influenced by Plato\n     rdfs:label ?who .\n  FILTER(LANG(?who) = \"en\")\n} LIMIT 100"},
-      {"family": "Path", "label": "Lines of influence from Plato (transitive)", "view": "graph", "tip": "wdt:P737+ walks the 'influenced by' chain transitively from Plato (wd:Q859) - intellectual lineage across generations. LIMIT keeps the lazy walk bounded.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT DISTINCT ?who WHERE {\n  ?p wdt:P737+ wd:Q859 .\n  ?p rdfs:label ?who . FILTER(LANG(?who) = \"en\")\n} LIMIT 150"},
-      {"family": "Select", "label": "Writers who are also politicians", "view": "table", "tip": "Another occupation intersection (wdt:P106 writer + politician) - novelists and poets who also held office.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?who WHERE {\n  ?p wdt:P106 wd:Q36180 ;   # writer\n     wdt:P106 wd:Q82955 ;   # politician\n     rdfs:label ?who .\n  FILTER(LANG(?who) = \"en\")\n} LIMIT 50"},
-      {"family": "Aggregate", "label": "Most common occupations", "view": "table", "tip": "Counts people per occupation (wdt:P106). This aggregates over a WHOLE predicate, so it faults in more tiles than a selective query - heavier, but still streamed lazily, not a full download.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occupation (COUNT(?p) AS ?people) WHERE {\n  ?p wdt:P106 ?occupation\n}\nGROUP BY ?occupation\nORDER BY DESC(?people)\nLIMIT 20"},
+      {"family": "Select", "label": "Physicists who are also philosophers", "view": "graph", "tip": "An occupation intersection (wdt:P106 twice). Selective - the lazy reader faults in ~10 MB of the 104 MB file and returns scientist-philosophers like Ilya Prigogine and Marin Mersenne.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?p ?who WHERE {\n  ?p wdt:P106 wd:Q169470 ;   # physicist\n     wdt:P106 wd:Q4964182 ;  # philosopher\n     rdfs:label ?who .\n  FILTER(LANG(?who) = \"en\")\n} LIMIT 50"},
+      {"family": "Select", "label": "People influenced by Plato", "view": "graph", "tip": "Bound-object star: everyone whose 'influenced by' (wdt:P737) points at Plato (wd:Q859). A bound term = a selective lazy read.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?p ?who WHERE {\n  ?p wdt:P737 wd:Q859 ;   # influenced by Plato\n     rdfs:label ?who .\n  FILTER(LANG(?who) = \"en\")\n} LIMIT 100"},
+      {"family": "Path", "label": "Lines of influence from Plato (transitive)", "view": "graph", "tip": "wdt:P737+ walks the 'influenced by' chain transitively from Plato (wd:Q859) - intellectual lineage across generations. LIMIT keeps the lazy walk bounded.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT DISTINCT ?p ?who WHERE {\n  ?p wdt:P737+ wd:Q859 .\n  ?p rdfs:label ?who . FILTER(LANG(?who) = \"en\")\n} LIMIT 150"},
+      {"family": "Select", "label": "Writers who are also politicians", "view": "table", "tip": "Another occupation intersection (wdt:P106 writer + politician) - novelists and poets who also held office.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?p ?who WHERE {\n  ?p wdt:P106 wd:Q36180 ;   # writer\n     wdt:P106 wd:Q82955 ;   # politician\n     rdfs:label ?who .\n  FILTER(LANG(?who) = \"en\")\n} LIMIT 50"},
+      {"family": "Aggregate", "label": "Most common occupations", "view": "table", "tip": "Counts people per occupation (wdt:P106), with an OPTIONAL rdfs:label join so each row reads as a Q-id plus its English name rather than a bare code. Aggregating over a WHOLE predicate faults in more tiles than a selective query - heavier, but still streamed lazily, not a full download.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?occupation ?occLabel (COUNT(?p) AS ?people) WHERE {\n  ?p wdt:P106 ?occupation .\n  OPTIONAL { ?occupation rdfs:label ?occLabel . FILTER(LANG(?occLabel) = \"en\") }\n}\nGROUP BY ?occupation ?occLabel\nORDER BY DESC(?people)\nLIMIT 20"},
       {"family": "Construct", "label": "People with occupation + birth date", "view": "graph", "tip": "CONSTRUCT a small subgraph of (person)->occupation and (person)->birth-date edges; touches only those two predicates' tiles.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nCONSTRUCT { ?p wdt:P106 ?occ ; wdt:P569 ?dob }\nWHERE {\n  ?p wdt:P106 ?occ .\n  OPTIONAL { ?p wdt:P569 ?dob }\n} LIMIT 200"}
     ],
     "ohm-full": [
@@ -5386,13 +5386,24 @@ SELECT DISTINCT ?root WHERE {
       },
       {
         family: "Select",
-        label: "English labels of an entity",
+        label: "Labels of an entity, across languages",
         view: "table",
-        tip: "Bound subject + bound predicate (rdfs:label) is the tightest shape of all - it touches only the label tiles for Bemelen (Q100001), a handful of bytes. Wikidata stores labels in dozens of languages, so a real run adds FILTER(LANG(?label) = \"en\") to keep just the English one.",
+        tip: "Bound subject + bound predicate (rdfs:label) is the tightest shape of all - it touches only the label tiles for Bemelen (Q100001), a handful of bytes. The second column is each label's language tag (LANG), so you can read the same entity named across dozens of languages instead of a single opaque row.",
         q: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?label WHERE {
+SELECT ?label (LANG(?label) AS ?language) WHERE {
   <http://www.wikidata.org/entity/Q100001> rdfs:label ?label
 } LIMIT 50`
+      },
+      {
+        family: "Select",
+        label: "Find a thing by its name",
+        view: "table",
+        tip: "The inverse of looking up by Q-id - start from a human string. CONTAINS scans rdfs:label for the text you type (here 'bemelen', matching the village Q100001) and returns each entity paired with its name. A plain substring search faults more label tiles than a bound lookup; for big graphs rete can build an optional TEXT_INDEX so this becomes a few range reads instead of a scan.",
+        q: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?entity ?name WHERE {
+  ?entity rdfs:label ?name .
+  FILTER(CONTAINS(LCASE(STR(?name)), "bemelen"))
+} LIMIT 25`
       },
       {
         family: "Select",
@@ -5406,23 +5417,25 @@ SELECT ?coord WHERE {
       },
       {
         family: "Path",
-        label: "Subclasses of a class",
+        label: "Subclasses of a class (with names)",
         view: "table",
-        tip: "A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -> Q515, the entity for 'city'. The bound object routes to just the POS tiles for that one edge, so you get the direct subclasses of city (town, capital, seaport, ...) without walking the whole class tree.",
+        tip: "A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -> Q515, the entity for 'city'. The bound object routes to just the POS tiles for that one edge, and the OPTIONAL rdfs:label join adds an English-name column so you read 'town, capital, seaport, ...' instead of bare Q-ids.",
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-SELECT ?sub WHERE {
-  ?sub wdt:P279 <http://www.wikidata.org/entity/Q515>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?sub ?name WHERE {
+  ?sub wdt:P279 <http://www.wikidata.org/entity/Q515> .
+  OPTIONAL { ?sub rdfs:label ?name . FILTER(LANG(?name) = "en") }
 } LIMIT 50`
       },
       {
         family: "Select",
         label: "Physicists who are also philosophers (in 1 GB)",
         view: "graph",
-        tip: "A whole-gigabyte graph queried live in the browser: this occupation intersection - people who are both wdt:P106 physicist (Q169470) and philosopher (Q4964182) - faults in only ~40 MB of the 1.04 GB file, while the rest never leaves the server. Returns scientist-philosophers like Ilya Prigogine.",
+        tip: "A whole-gigabyte graph queried live in the browser: this occupation intersection - people who are both wdt:P106 physicist (Q169470) and philosopher (Q4964182) - faults in only ~40 MB of the 1.04 GB file, while the rest never leaves the server. Two columns pair each entity's Q-id with its English name (Ilya Prigogine and other scientist-philosophers).",
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?who WHERE {
+SELECT ?p ?who WHERE {
   ?p wdt:P106 wd:Q169470 ;   # physicist
      wdt:P106 wd:Q4964182 ;  # philosopher
      rdfs:label ?who .
