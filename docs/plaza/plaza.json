@@ -1,0 +1,329 @@
+{
+  "title": "rete plaza",
+  "tagline": "a gathering place for self-describing semantic datasets",
+  "_about": "Each dataset's facts (counts, predicates, classes, vocabularies, signals, starter queries, license) are read at runtime straight from the .rete file's embedded Dataset Card — this manifest only adds what the card can't carry: visual identity (icon/tags), companion table downloads (Parquet/DuckDB/SQLite), and outbound links. Companion URLs marked \"verified\": false follow the bucket naming convention and should be confirmed before publishing.",
+  "remoteBase": "https://katospiegel-rete.hf.space/data",
+  "remoteToken": "sfdbgf1094by21hd128ru39802",
+  "datasets": [
+    {
+      "key": "scholar",
+      "title": "scholar — synthetic scholarly world",
+      "rete": "data/scholar.rete",
+      "kind": "bundled",
+      "icon": "🎓",
+      "tags": [
+        "synthetic",
+        "scholarly",
+        "citations"
+      ],
+      "blurb": "250 papers, 137 authors, 36 venues with power-law citations, field communities and typed literals — a clean playground for SPARQL.",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "../playground.html"
+        }
+      ]
+    },
+    {
+      "key": "causal",
+      "title": "causal — cardiometabolic causal model",
+      "rete": "data/causal.rete",
+      "kind": "bundled",
+      "icon": "🫀",
+      "tags": [
+        "causal",
+        "ontology",
+        "OWL"
+      ],
+      "blurb": "~30 typed factors wired by a transitive :causes relation, with planted defects so the coherence reasoner has something to find (it does — watch the fingerprint).",
+      "ontologies": [
+        {
+          "name": "OWL"
+        },
+        {
+          "name": "RDFS"
+        }
+      ],
+      "links": [
+        {
+          "label": "Reasoning docs",
+          "url": "../reasoning.html"
+        }
+      ]
+    },
+    {
+      "key": "history",
+      "title": "history — world borders, 323 BCE → 1994 CE",
+      "rete": "data/history.rete",
+      "kind": "bundled",
+      "icon": "🗺️",
+      "tags": [
+        "geospatial",
+        "borders",
+        "temporal"
+      ],
+      "blurb": "Territorial borders at 7 snapshots as GeoSPARQL wktLiterals with integer years — point-in-polygon + temporal filters in the browser.",
+      "geoWkt": true,
+      "bbox": [
+        -170,
+        -58,
+        180,
+        82
+      ],
+      "temporalExtent": [
+        "-323",
+        "1994"
+      ],
+      "ontologies": [
+        {
+          "name": "GeoSPARQL"
+        },
+        {
+          "name": "RDFS"
+        }
+      ],
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/aourednik/historical-basemaps"
+        }
+      ]
+    },
+    {
+      "key": "nomisma",
+      "title": "nomisma — coinage of Alexander the Great (PELLA)",
+      "rete": "data/nomisma.rete",
+      "kind": "bundled",
+      "icon": "🪙",
+      "tags": [
+        "numismatics",
+        "ancient",
+        "temporal"
+      ],
+      "blurb": "7,228 ancient Greek coin types struck 359–65 BC, each linked to mint, authority, material, denomination and region — fully self-describing with English labels.",
+      "temporalExtent": [
+        "-359",
+        "-65"
+      ],
+      "connections": [
+        {
+          "name": "Nomisma",
+          "url": "http://nomisma.org"
+        }
+      ],
+      "ontologies": [
+        {
+          "name": "SKOS"
+        },
+        {
+          "name": "Nomisma Ontology",
+          "url": "http://nomisma.org/ontology",
+          "desc": "Nomisma.org ontology for numismatic concepts (mints, denominations, materials, regions)."
+        }
+      ],
+      "links": [
+        {
+          "label": "Source",
+          "url": "http://numismatics.org/pella/"
+        }
+      ]
+    },
+    {
+      "key": "linked-jazz",
+      "title": "linked-jazz — jazz musician social network",
+      "rete": "data/linked-jazz.rete",
+      "kind": "bundled",
+      "icon": "🎷",
+      "tags": [
+        "social-network",
+        "music",
+        "DBpedia"
+      ],
+      "blurb": "54 interviewed musicians fan out to ~1,940 people they mention, with who-knows-whom ties — genuine multi-hop paths (transitive knowsOf / mentorOf).",
+      "connections": [
+        {
+          "name": "DBpedia",
+          "url": "https://www.dbpedia.org"
+        }
+      ],
+      "ontologies": [
+        {
+          "name": "FOAF"
+        },
+        {
+          "name": "Music Ontology"
+        },
+        {
+          "name": "REL (Relationship)"
+        }
+      ],
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://linkedjazz.org"
+        }
+      ]
+    },
+    {
+      "key": "getty-ulan",
+      "title": "getty-ulan — artist mentorship lineage (remote, lazy)",
+      "rete": "https://katospiegel-rete.hf.space/data/playground/getty-ulan.rete?token=sfdbgf1094by21hd128ru39802",
+      "kind": "remote-lazy",
+      "icon": "🎨",
+      "tags": [
+        "art",
+        "lineage",
+        "Getty"
+      ],
+      "blurb": "~28,300 artists connected by 'who taught whom' (gvp:teacherOf). Rembrandt has ~369 artistic descendants via teacherOf+. Queried lazily over HTTP range.",
+      "links": [
+        {
+          "label": "Getty LOD",
+          "url": "https://www.getty.edu/research/tools/vocabularies/ulan/"
+        }
+      ]
+    },
+    {
+      "key": "wikidata-100mb",
+      "title": "wikidata-100MB — a real 100 MB Wikidata slice (remote, lazy)",
+      "rete": "https://katospiegel-rete.hf.space/data/wikidata-100MB/wikidata.rete?token=sfdbgf1094by21hd128ru39802",
+      "kind": "remote-lazy",
+      "typePredicate": "<http://www.wikidata.org/prop/direct/P31>",
+      "icon": "🌐",
+      "tags": [
+        "Wikidata",
+        "people",
+        "occupations"
+      ],
+      "blurb": "~104 MB of Wikidata people & places, queried lazily — a typical selective query faults in ~10 MB, never the whole file. Companion entity tables sit beside it in the bucket.",
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-class entity tables",
+          "url": "https://github.com/caviri/rete/tree/main/data/wd-tables/",
+          "verified": true,
+          "note": "directory of <Class>.parquet + _manifest.parquet (served locally)"
+        }
+      ],
+      "links": [
+        {
+          "label": "Wikidata",
+          "url": "https://www.wikidata.org"
+        }
+      ]
+    },
+    {
+      "key": "ohm-full",
+      "title": "ohm-full — all of OpenHistoricalMap (remote, lazy)",
+      "rete": "https://katospiegel-rete.hf.space/data/playground/ohm-full.rete?token=sfdbgf1094by21hd128ru39802",
+      "kind": "remote-lazy",
+      "icon": "🗺️",
+      "tags": [
+        "geospatial",
+        "OpenHistoricalMap",
+        "temporal"
+      ],
+      "blurb": "The entire OpenHistoricalMap planet — 1,021,295 named, dated, geolocated features (~6.1M triples, 150 MB) — as one range-queried .rete.",
+      "links": [
+        {
+          "label": "OpenHistoricalMap",
+          "url": "https://www.openhistoricalmap.org"
+        }
+      ]
+    },
+    {
+      "key": "chemotion",
+      "title": "chemotion — chemistry ELN knowledge graph (remote, lazy)",
+      "rete": "https://katospiegel-rete.hf.space/data/playground/chemotion.rete?token=sfdbgf1094by21hd128ru39802",
+      "kind": "remote-lazy",
+      "icon": "🧪",
+      "tags": [
+        "chemistry",
+        "ELN",
+        "ontology",
+        "ChEBI"
+      ],
+      "category": "graph",
+      "ontologies": [
+        {
+          "name": "CHMO (Chemical Methods)",
+          "url": "http://purl.obolibrary.org/obo/chmo.owl"
+        },
+        {
+          "name": "RXNO (Name Reactions)",
+          "url": "http://purl.obolibrary.org/obo/rxno.owl"
+        }
+      ],
+      "blurb": "The Chemotion ELN graph (FIZ Karlsruhe) merged with CHMO + RXNO — 1.53M triples, built with `rete build --card`, so its card is rich and read live here. Federates with chebi-full.",
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/ISE-FIZKarlsruhe/chemotion-kg"
+        }
+      ]
+    },
+    {
+      "key": "chebi-full",
+      "provides": [
+        "ChEBI"
+      ],
+      "title": "chebi-full — the complete ChEBI ontology (remote, lazy)",
+      "rete": "https://katospiegel-rete.hf.space/data/playground/chebi-full.rete?token=sfdbgf1094by21hd128ru39802",
+      "kind": "remote-lazy",
+      "icon": "⚗️",
+      "tags": [
+        "chemistry",
+        "ontology",
+        "ChEBI",
+        "OBO",
+        "federation"
+      ],
+      "blurb": "The entire ChEBI ontology — 8.83M triples, 120 MB — range-queried in the browser. Built with `rete build --card`; lossless Parquet/DuckDB/SQLite table companions sit beside it.",
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-class chemical tables",
+          "url": "https://katospiegel-rete.hf.space/data/playground/chebi-full-tables/",
+          "note": "directory of <Class>.parquet + _manifest.parquet (scripts/rdf_to_entity_tables.py)"
+        },
+        {
+          "kind": "duckdb",
+          "label": "chebi-full.duckdb",
+          "url": "https://katospiegel-rete.hf.space/data/playground/chebi-full.duckdb"
+        },
+        {
+          "kind": "sqlite",
+          "label": "chebi-full.sqlite",
+          "url": "https://katospiegel-rete.hf.space/data/playground/chebi-full.sqlite"
+        }
+      ],
+      "connections": [
+        {
+          "name": "KEGG",
+          "url": "https://www.kegg.jp",
+          "note": "via oboInOwl:hasDbXref"
+        },
+        {
+          "name": "CAS",
+          "url": "https://www.cas.org",
+          "note": "via oboInOwl:hasDbXref"
+        },
+        {
+          "name": "PubChem",
+          "url": "https://pubchem.ncbi.nlm.nih.gov",
+          "note": "via oboInOwl:hasDbXref"
+        },
+        {
+          "name": "+ more (~900k xrefs)",
+          "url": "https://www.ebi.ac.uk/chebi/"
+        }
+      ],
+      "links": [
+        {
+          "label": "ChEBI (EMBL-EBI)",
+          "url": "https://www.ebi.ac.uk/chebi/"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>rete plaza — dataset</title>
+  <script>try{var t=localStorage.getItem('plaza-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;}catch(e){}</script>
+  <script src="vendor/p5.min.js"></script>
+  <script src="vendor/d3.min.js"></script>
+  <script src="vendor/elk.bundled.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="site-top" style="padding-top:18px">
+      <a class="back" href="index.html" style="margin:0">← all datasets</a>
+      <nav class="site-nav">
+        <a href="https://caviri.github.io/rete/" target="_blank" rel="noopener">rete ↗</a>
+        <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">GitHub ↗</a>
+        <button class="theme-toggle" id="themeBtn" aria-label="Toggle light/dark theme">Light</button>
+      </nav>
+    </div>
+    <div id="root">
+      <div class="empty">Loading dataset card…</div>
+    </div>
+  </div>
+
+  <div class="modal" id="modal" hidden><div class="modal-card modal-wide" id="modalCard"></div></div>
+
+  <script type="module" src="js/theme.js"></script>
+  <script type="module" src="js/dataset.js"></script>
+</body>
+</html>

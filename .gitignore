@@ -27,6 +27,9 @@ __pycache__/
 # (it carries OWL axioms the wikidata graph lacks). Rebuild with:
 #   rete build examples/causal.nt -o docs/examples/causal.rete
 !/docs/examples/causal.rete
+# …and the bundled dataset cards the Plaza gallery reads live over HTTP range on
+# GitHub Pages (assembled from web/*.rete by scripts/build_plaza.py).
+!/docs/plaza/data/*.rete
 
 # Cargo.lock IS committed: this workspace ships a binary (rete-cli), so a locked
 # dependency set gives reproducible builds and a stable CI cache key. (It would
