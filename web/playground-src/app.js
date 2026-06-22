@@ -86,6 +86,8 @@
   self.onmessage = function (e) {
     var m = e.data;
     if (m.type === "init") {
+      self.__fetchSrc = m.fetchSrc;   // parallel fetch-worker source (pool)
+      self.__poolSize = m.poolSize;   // ?workers=N, or null = auto
       ready = wasm_bindgen(m.bytes);
       ready.then(function () { self.postMessage({ type: "ready" }); });
       return;
@@ -195,7 +197,7 @@
     return parts;
   }
   self.__parseByteranges = parseByteranges;
-  self.reteReadMany = function (url, offsets, lens) {
+  function __readManyMultipart(url, offsets, lens) {
     try {
       var n = offsets.length;
       if (n < 2) return null;
@@ -216,8 +218,74 @@
       if (self.reteProgress) self.reteProgress(total, { k: "multi", n: n, b: total, r: spec }); // 1 request, N ranges
       return out;
     } catch (e) { return null; }
+  }
+  // Parallel fetch-worker pool (cross-origin isolated only): fetch the batch's
+  // ranges across self.__poolSize workers into a SharedArrayBuffer and block on
+  // Atomics until all land — the only way a synchronous engine parallelises
+  // network in the browser. Returns the buffer, or null (→ multipart fallback)
+  // on no-isolation / a failed range / a timeout.
+  var __pool = null;
+  function __ensurePool() {
+    if (__pool) return __pool;
+    var P = self.__poolSize || ((self.navigator && navigator.hardwareConcurrency) || 4);
+    P = Math.max(1, Math.min(32, P));
+    __pool = [];
+    var u = URL.createObjectURL(new Blob([self.__fetchSrc], { type: "text/javascript" }));
+    for (var i = 0; i < P; i++) __pool.push(new Worker(u));
+    return __pool;
+  }
+  function __readManyPool(url, offs, lens) {
+    try {
+      var n = offs.length; if (!n) return null;
+      var pos = new Array(n), total = 0;
+      for (var i = 0; i < n; i++) { pos[i] = total; total += lens[i]; }
+      var data = new Uint8Array(new SharedArrayBuffer(total));
+      var ctrl = new Int32Array(new SharedArrayBuffer(8));
+      var pool = __ensurePool(), P = pool.length, jobs = [];
+      for (var w = 0; w < P; w++) jobs.push([]);
+      for (var j = 0; j < n; j++) jobs[j % P].push({ off: offs[j], len: lens[j], pos: pos[j] });
+      for (var w2 = 0; w2 < P; w2++) pool[w2].postMessage({ url: url, data: data.buffer, ctrl: ctrl.buffer, spans: jobs[w2] });
+      var deadline = Date.now() + 120000;
+      while (true) { var c = Atomics.load(ctrl, 0); if (c >= n) break; Atomics.wait(ctrl, 0, c, 3000); if (Date.now() > deadline) return null; }
+      if (Atomics.load(ctrl, 1) !== 0) return null;
+      if (self.reteProgress) self.reteProgress(total, { k: "par", n: n, b: total });
+      return data;
+    } catch (e) { return null; }
+  }
+  self.reteReadMany = function (url, offsets, lens) {
+    if (self.crossOriginIsolated && typeof SharedArrayBuffer !== "undefined" && self.__fetchSrc) {
+      var r = __readManyPool(url, offsets, lens);
+      if (r) return r;
+    }
+    return __readManyMultipart(url, offsets, lens);
   };
 })();`;
+
+  // The parallel fetch worker (one per pool slot): pulls its assigned ranges
+  // with synchronous XHR (sequential within the worker, parallel across the
+  // pool), writes each into the shared buffer at its offset, then signals the
+  // coordinator via Atomics. A 206-miss / short read flips the error flag.
+  const FETCH_WORKER_SRC = `
+self.onmessage = function (e) {
+  var m = e.data, data = new Uint8Array(m.data), ctrl = new Int32Array(m.ctrl);
+  for (var k = 0; k < m.spans.length; k++) {
+    var s = m.spans[k];
+    try {
+      var x = new XMLHttpRequest();
+      x.open("GET", m.url, false);
+      x.responseType = "arraybuffer";
+      x.setRequestHeader("Range", "bytes=" + s.off + "-" + (s.off + s.len - 1));
+      x.send();
+      if (x.status !== 206) { Atomics.store(ctrl, 1, 1); }
+      else {
+        var b = new Uint8Array(x.response);
+        if (b.length < s.len) { Atomics.store(ctrl, 1, 1); }
+        else { data.set(b.subarray(0, s.len), s.pos); }
+      }
+    } catch (err) { Atomics.store(ctrl, 1, 1); }
+    Atomics.add(ctrl, 0, 1); Atomics.notify(ctrl, 0);
+  }
+};`;
 
   // --- Persistent incremental range cache (opt-in) ----------------------
   // Injected at the top of each engine worker (rete, DuckDB-WASM, sql.js-httpvfs)
@@ -308,7 +376,10 @@
       }
     };
     remoteReady = new Promise((res) => { remoteResolveReady = res; });
-    remoteWorker.postMessage({ type: "init", bytes: b64ToBytes(RETE_WASM_B64) });
+    remoteWorker.postMessage({
+      type: "init", bytes: b64ToBytes(RETE_WASM_B64),
+      fetchSrc: FETCH_WORKER_SRC, poolSize: parallelWorkerCount()
+    });
     return remoteReady;
   }
 
@@ -1324,7 +1395,31 @@
     const sz = $("rangeCacheSize");
     if (sz) sz.textContent = "Range cache: " + formatBytes(await rangeCacheSize());
   }
-  function openSettings() { renderRangeCache(); renderCacheList(); $("settingsModal").classList.remove("hidden"); }
+  // ?workers=N override for the fetch-worker pool (1..32; null = auto from cores).
+  function parallelWorkerCount() {
+    try { const v = new URL(location.href).searchParams.get("workers"); const n = parseInt(v, 10); return isNaN(n) ? null : Math.max(1, Math.min(32, n)); }
+    catch (e) { return null; }
+  }
+  function setParallelParam(on) {
+    const u = new URL(location.href);
+    if (on) u.searchParams.set("parallel", "1"); else u.searchParams.delete("parallel");
+    location.href = u.toString();  // reload — the head script (un)registers the COI SW
+  }
+  function setParallelWorkers(n) {
+    const u = new URL(location.href);
+    if (n) u.searchParams.set("workers", String(n)); else u.searchParams.delete("workers");
+    location.href = u.toString();
+  }
+  function renderParallel() {
+    const iso = !!window.crossOriginIsolated;
+    const t = $("parallelToggle"); if (t) t.checked = iso;
+    const w = $("parallelWorkers"); if (w) { w.value = parallelWorkerCount() || ""; w.disabled = !iso; }
+    const info = $("parallelInfo");
+    if (info) info.textContent = iso
+      ? `On — each query fetches its byte ranges in parallel across ${parallelWorkerCount() || "auto"} fetch workers (cross-origin isolated). A big speedup for remote SPARQL on the 1 GB / lazy datasets; the DuckDB/SQLite Explore backends are disabled in this mode.`
+      : "Off — reads are sequential (one coalesced multi-range request at a time). Turn on to fetch ranges in parallel: the page reloads into cross-origin isolation, which disables the CDN-loaded DuckDB/SQLite Explore backends (Graph/SPARQL only).";
+  }
+  function openSettings() { renderRangeCache(); renderParallel(); renderCacheList(); $("settingsModal").classList.remove("hidden"); }
   function closeSettings() { $("settingsModal").classList.add("hidden"); }
 
   const LIB_KEY = "rete.pg.libCollapsed";
@@ -3946,6 +4041,13 @@
     };
     $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };
     $("clearRangeCacheBtn").onclick = async () => { await clearRangeCache(); renderRangeCache(); };
+    const parToggle = $("parallelToggle");
+    if (parToggle) parToggle.onchange = (e) => setParallelParam(e.target.checked);
+    const parWorkers = $("parallelWorkers");
+    if (parWorkers) parWorkers.onchange = (e) => {
+      const n = parseInt(e.target.value, 10);
+      setParallelWorkers(isNaN(n) ? null : Math.max(1, Math.min(32, n)));
+    };
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
