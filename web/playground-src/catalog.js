@@ -639,7 +639,7 @@ SELECT ?sub ?name WHERE {
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX schema: <http://schema.org/>
-SELECT ?who ?year ?description WHERE {
+SELECT ?p ?who ?year ?description ?image WHERE {
   { SELECT ?p WHERE {
       ?p wdt:P106 wd:Q169470 ;   # physicist
          wdt:P106 wd:Q4964182    # philosopher
@@ -647,6 +647,7 @@ SELECT ?who ?year ?description WHERE {
   ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
   OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
   OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?p wdt:P18 ?image }
 }`
       },
       {
@@ -657,13 +658,16 @@ SELECT ?who ?year ?description WHERE {
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?who ?year WHERE {
+PREFIX schema: <http://schema.org/>
+SELECT ?p ?who ?year ?description ?image WHERE {
   { SELECT ?p WHERE {
       ?p wdt:P106 wd:Q1028181 ;   # painter
          wdt:P106 wd:Q36180       # writer
     } LIMIT 25 }
   ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
   OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
+  OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?p wdt:P18 ?image }
 }`
       },
       {
@@ -674,11 +678,14 @@ SELECT ?who ?year WHERE {
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?who ?year WHERE {
+PREFIX schema: <http://schema.org/>
+SELECT ?p ?who ?year ?description ?image WHERE {
   { SELECT ?p WHERE { ?p wdt:P106 wd:Q169470 } LIMIT 200 }
   ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
   ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year)
   FILTER(?year < 1900)
+  OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?p wdt:P18 ?image }
 } ORDER BY ?year LIMIT 25`
       },
       {
@@ -689,11 +696,14 @@ SELECT ?who ?year WHERE {
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?who ?year ?occupation WHERE {
+PREFIX schema: <http://schema.org/>
+SELECT ?p ?who ?year ?occupation ?description ?image WHERE {
   { SELECT ?p WHERE { ?p wdt:P19 wd:Q90 } LIMIT 25 }
   ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
   OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
   OPTIONAL { ?p wdt:P106 ?occ . ?occ rdfs:label ?occupation . FILTER(LANG(?occupation) = "en") }
+  OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?p wdt:P18 ?image }
 }`
       },
       {
@@ -704,13 +714,16 @@ SELECT ?who ?year ?occupation WHERE {
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?who ?year WHERE {
+PREFIX schema: <http://schema.org/>
+SELECT ?p ?who ?year ?description ?image WHERE {
   { SELECT ?p WHERE {
       ?p wdt:P106 wd:Q1028181 ;   # painter
          wdt:P19 wd:Q90           # born in Paris
     } LIMIT 25 }
   ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
   OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
+  OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?p wdt:P18 ?image }
 }`
       },
       {
@@ -721,11 +734,14 @@ SELECT ?who ?year WHERE {
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?who ?year WHERE {
+PREFIX schema: <http://schema.org/>
+SELECT ?p ?who ?year ?description ?image WHERE {
   { SELECT ?p WHERE { ?p wdt:P106 wd:Q36834 } LIMIT 250 }
   ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
   ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year)
   FILTER(?year >= 1700 && ?year < 1800)
+  OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?p wdt:P18 ?image }
 } ORDER BY ?year LIMIT 25`
       },
       {
@@ -736,11 +752,14 @@ SELECT ?who ?year WHERE {
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?who ?country ?year WHERE {
+PREFIX schema: <http://schema.org/>
+SELECT ?p ?who ?country ?year ?description ?image WHERE {
   { SELECT ?p WHERE { ?p wdt:P106 wd:Q36180 } LIMIT 25 }
   ?p rdfs:label ?who . FILTER(LANG(?who) = "en")
   OPTIONAL { ?p wdt:P27 ?c . ?c rdfs:label ?country . FILTER(LANG(?country) = "en") }
   OPTIONAL { ?p wdt:P569 ?dob . BIND(YEAR(?dob) AS ?year) }
+  OPTIONAL { ?p schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?p wdt:P18 ?image }
 }`
       }
     ],

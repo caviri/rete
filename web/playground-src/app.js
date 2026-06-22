@@ -407,7 +407,8 @@ self.onmessage = function (e) {
   // + elapsed line, and a step log fed by the worker's per-fetch events. The
   // first read also spins up the query worker, so the feedback matters. Resolves
   // the remoteCall promise ({ json, log }).
-  function remoteRead(fn, url, el, caption, hint) {
+  function remoteRead(fn, urlOrArgs, el, caption, hint) {
+    const args = Array.isArray(urlOrArgs) ? urlOrArgs : [urlOrArgs];
     const t0 = performance.now();
     const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
     const ofSize = meta.size ? " of " + meta.size : "";
@@ -440,7 +441,7 @@ self.onmessage = function (e) {
       paint();
     };
     const cleanup = () => { clearInterval(timer); remoteOnProgress = prev; };
-    return remoteCall(fn, url).then((out) => { cleanup(); return out; }, (e) => { cleanup(); throw e; });
+    return remoteCall(fn, ...args).then((out) => { cleanup(); return out; }, (e) => { cleanup(); throw e; });
   }
 
   const BUILD_SAMPLE = `# Paste N-Triples here (or open a file), pick the format, then Build.
@@ -2566,11 +2567,28 @@ self.onmessage = function (e) {
   // content — upgrade to https for the actual fetch/navigation (display keeps the
   // original IRI). Most RDF hosts (schema.org, wikidata.org, …) serve https.
   function httpsUpgrade(v) { return String(v).replace(/^http:\/\//i, "https://"); }
+  // An image cell: a Wikimedia Commons file (wdt:P18 → Special:FilePath/…) or any
+  // URL ending in an image extension. Rendered as a clickable thumbnail.
+  function looksImageUrl(v) {
+    if (!/^https?:\/\//i.test(v)) return false;
+    return /commons\.wikimedia\.org\/wiki\/Special:FilePath\//i.test(v) ||
+      /\.(jpe?g|png|gif|svg|webp)$/i.test(String(v).split("?")[0]);
+  }
+  function thumbUrl(v) {
+    const https = httpsUpgrade(v);
+    // Commons FilePath takes ?width=N for a server-scaled thumbnail.
+    return /Special:FilePath\//i.test(https) ? https + (https.includes("?") ? "&" : "?") + "width=80" : https;
+  }
   function prettyCell(raw) {
     if (raw == null || raw === "") return `<td></td>`;
     const t = parseTerm(raw);
     if (t.iri) {
       const disp = shorten(t.value, 96);
+      if (looksImageUrl(t.value)) {
+        // Render the picture as a thumbnail linking to the full image.
+        return `<td class="iri thumb-cell"><a href="${esc(httpsUpgrade(t.value))}" target="_blank" ` +
+          `rel="noopener noreferrer" title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="lazy" alt="" /></a></td>`;
+      }
       if (looksWebUrl(t.value)) {
         // Clickable (opens in a new tab) + a hover preview of the page. The link
         // navigates to the https-upgraded URL; the text keeps the original IRI.
@@ -3441,24 +3459,36 @@ self.onmessage = function (e) {
       `<table><thead><tr><th>focus</th><th>path</th><th>component</th><th>message</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
+  function renderShaclText(text, fmt, metaSuffix) {
+    if (fmt === "json") {
+      const report = JSON.parse(text);
+      $("shaclOut").innerHTML = renderShaclJson(report, text);
+      $("shaclMeta").textContent = `${report.conforms ? "conforms" : "violations"} | ${metaSuffix}`;
+    } else {
+      $("shaclOut").innerHTML = `<pre>${esc(text)}</pre>`;
+      $("shaclMeta").textContent = `${text.startsWith("conforms: true") ? "conforms" : "report"} | ${metaSuffix}`;
+    }
+    updateResultVisibility();
+  }
   function runShacl() {
-    if (!state.bytes) return showError("shaclOut", "Load a graph first.");
     const shapes = $("shapeText").value.trim();
     if (!shapes) return showError("shaclOut", "Enter a SHACL shape.");
     const fmt = $("shaclFormat").value;
+    // Remote-lazy: validate over HTTP range — shacl_url fetches only the shapes'
+    // target nodes and their triples (worker-routed, like the query path).
+    if (state.remote) {
+      $("shaclMeta").textContent = "";
+      remoteRead("shacl_url", [state.remote.url, shapes, null, fmt], $("shaclOut"),
+        "Validating shapes over HTTP range…",
+        "SHACL fetches only the shapes' target nodes and their triples — a selective lazy read.")
+        .then((out) => renderShaclText(out.json, fmt, "lazy · over HTTP range"))
+        .catch((e) => { $("shaclMeta").textContent = ""; showError("shaclOut", "Remote validation failed: " + String((e && e.message) || e)); });
+      return;
+    }
+    if (!state.bytes) return showError("shaclOut", "Load a graph first.");
     const t0 = performance.now();
     try {
-      const text = state.graph.shacl(shapes, null, fmt);
-      const dt = performance.now() - t0;
-      if (fmt === "json") {
-        const report = JSON.parse(text);
-        $("shaclOut").innerHTML = renderShaclJson(report, text);
-        $("shaclMeta").textContent = `${report.conforms ? "conforms" : "violations"} | ${dt.toFixed(1)} ms`;
-      } else {
-        $("shaclOut").innerHTML = `<pre>${esc(text)}</pre>`;
-        $("shaclMeta").textContent = `${text.startsWith("conforms: true") ? "conforms" : "report"} | ${dt.toFixed(1)} ms`;
-      }
-      updateResultVisibility();
+      renderShaclText(state.graph.shacl(shapes, null, fmt), fmt, `${(performance.now() - t0).toFixed(1)} ms`);
     } catch (e) {
       $("shaclMeta").textContent = "";
       showError("shaclOut", String(e));
@@ -3545,25 +3575,36 @@ self.onmessage = function (e) {
     });
   }
 
+  function renderReach(results, reverse, metaSuffix) {
+    const rows = results.map((r) => {
+      if (r.error) return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td colspan="2">${esc(r.error)}</td></tr>`;
+      const shown = (r.reached || []).slice(0, 250).map((x) => `<div class="iri">${esc(shorten(x, 90))}</div>`).join("");
+      const more = r.count > 250 ? `<div class="microcopy">Showing first 250 of ${r.count}.</div>` : "";
+      return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td>${r.count}</td><td>${shown}${more}</td></tr>`;
+    }).join("");
+    $("reachMeta").textContent = `${results.length} seed(s) | ${reverse ? "reverse" : "forward"} | ${metaSuffix}`;
+    $("reachOut").innerHTML = `<table><thead><tr><th>seed</th><th>count</th><th>reached</th></tr></thead><tbody>${rows}</tbody></table>`;
+    updateResultVisibility();
+  }
   function runReach() {
-    if (!state.bytes) return showError("reachOut", "Load a graph first.");
     const pred = $("reachPred").value.trim();
     const seeds = $("reachSeeds").value.split(",").map((s) => s.trim()).filter(Boolean);
     if (!pred || !seeds.length) return showError("reachOut", "Enter a predicate and at least one seed.");
     const reverse = $("reachReverse").checked;
+    // Remote-lazy: walk the relation over HTTP range (reach_url, worker-routed).
+    if (state.remote) {
+      $("reachMeta").textContent = "";
+      remoteRead("reach_url", [state.remote.url, pred, JSON.stringify(seeds), reverse], $("reachOut"),
+        "Walking the relation over HTTP range…",
+        "Reachability faults only the index tiles along the walk — a selective lazy read.")
+        .then((out) => renderReach(JSON.parse(out.json), reverse, "lazy · over HTTP range"))
+        .catch((e) => { $("reachMeta").textContent = ""; showError("reachOut", "Remote reach failed: " + String((e && e.message) || e)); });
+      return;
+    }
+    if (!state.bytes) return showError("reachOut", "Load a graph first.");
     const t0 = performance.now();
     try {
-      const results = JSON.parse(state.graph.reach(pred, JSON.stringify(seeds), reverse));
-      const dt = performance.now() - t0;
-      const rows = results.map((r) => {
-        if (r.error) return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td colspan="2">${esc(r.error)}</td></tr>`;
-        const shown = (r.reached || []).slice(0, 250).map((x) => `<div class="iri">${esc(shorten(x, 90))}</div>`).join("");
-        const more = r.count > 250 ? `<div class="microcopy">Showing first 250 of ${r.count}.</div>` : "";
-        return `<tr><td class="iri">${esc(shorten(r.seed))}</td><td>${r.count}</td><td>${shown}${more}</td></tr>`;
-      }).join("");
-      $("reachMeta").textContent = `${results.length} seed(s) | ${reverse ? "reverse" : "forward"} | ${dt.toFixed(1)} ms`;
-      $("reachOut").innerHTML = `<table><thead><tr><th>seed</th><th>count</th><th>reached</th></tr></thead><tbody>${rows}</tbody></table>`;
-      updateResultVisibility();
+      renderReach(JSON.parse(state.graph.reach(pred, JSON.stringify(seeds), reverse)), reverse, `${(performance.now() - t0).toFixed(1)} ms`);
     } catch (e) {
       $("reachMeta").textContent = "";
       showError("reachOut", String(e));
@@ -3724,10 +3765,27 @@ self.onmessage = function (e) {
   }
 
   function runProvenance() {
-    if (!state.bytes) return showError("provOut", "Load a graph first.");
     const subject = optText("whySubject");
     const predicate = optText("whyPredicate");
     const object = optText("whyObject");
+    // Remote-lazy: why_url reports each matched triple's byte ranges, faulting
+    // only the tiles it touches (worker-routed).
+    if (state.remote) {
+      $("whyMeta").textContent = "";
+      remoteRead("why_url", [state.remote.url, subject || null, predicate || null, object || null], $("provOut"),
+        "Tracing provenance over HTTP range…",
+        "why_triples reports the byte ranges each matched triple was read from — a selective lazy read.")
+        .then((out) => {
+          const o = JSON.parse(out.json);
+          renderProvenance(o);
+          $("whyMeta").textContent = `${o.resultCount} match(es) | lazy · over HTTP range`;
+          if (state.exploreReady) renderLayout();
+          updateResultVisibility();
+        })
+        .catch((e) => { $("whyMeta").textContent = ""; showError("provOut", "Remote provenance failed: " + String((e && e.message) || e)); });
+      return;
+    }
+    if (!state.bytes) return showError("provOut", "Load a graph first.");
     const t0 = performance.now();
     try {
       const out = JSON.parse(state.graph.why_triples(subject, predicate, object));

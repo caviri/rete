@@ -1048,6 +1048,13 @@ textarea {
 /* --- Clickable web-URL cells + the medium hover page-preview card ------ */
 .iri-link { color: var(--accent-dark); text-decoration: none; border-bottom: 1px dotted currentColor; cursor: pointer; }
 .iri-link:hover { color: var(--accent); border-bottom-style: solid; }
+/* Image cells (e.g. wdt:P18) rendered as clickable thumbnails. */
+.thumb-cell { padding: 4px 8px; }
+.cell-thumb {
+  display: block; max-width: 80px; max-height: 80px; border-radius: 5px;
+  border: 1px solid var(--line); background: var(--side); object-fit: cover;
+}
+.cell-thumb:hover { border-color: var(--accent); }
 .link-preview {
   position: fixed; z-index: 80; width: 380px;
   border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface);
