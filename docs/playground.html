@@ -5932,6 +5932,18 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
   sh:targetClass obo:CHEBI_23367 ;
   sh:property [ sh:path chebi:smiles ;   sh:minCount 1 ] ;
   sh:property [ sh:path chebi:inchikey ; sh:minCount 1 ] .`
+      },
+      {
+        label: "Substances are named",
+        tip: "Run after Cache remote. A second class: every substance (obo:CHEBI_59999) should carry an rdfs:label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix obo: <http://purl.obolibrary.org/obo/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+[] a sh:NodeShape ;
+  sh:targetClass obo:CHEBI_59999 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "Every substance should carry a label." ] .`
       }
     ],
     "chebi-full": [
@@ -5945,6 +5957,17 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
   sh:targetSubjectsOf chemrof:smiles_string ;
   sh:property [ sh:path chemrof:generalized_empirical_formula ; sh:minCount 1 ] ;
   sh:property [ sh:path chemrof:inchi_key_string ;             sh:minCount 1 ] .`
+      },
+      {
+        label: "Every classified entity is named",
+        tip: "Run after Cache remote. Every subject of rdfs:subClassOf (a class in the DAG) should carry an rdfs:label.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf rdfs:subClassOf ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "Every classified entity should carry a label." ] .`
       }
     ],
     causal: [
@@ -6088,6 +6111,17 @@ ex:CitingPaperMetadataShape
   sh:property [ sh:path dct:title ; sh:minCount 1 ] ;
   sh:property [ sh:path dct:date ; sh:minCount 1 ] ;
   sh:property [ sh:path ex:discipline ; sh:minCount 1 ] .`
+      },
+      {
+        label: "Authors are named",
+        tip: "Every foaf:Person (author) should carry a foaf:name. The ~5.5k authors conform.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+foaf:AuthorNamedShape a sh:NodeShape ;
+  sh:targetClass foaf:Person ;
+  sh:property [ sh:path foaf:name ; sh:minCount 1 ;
+    sh:message "Every author should carry a name." ] .`
       }
     ],
     typed: [
@@ -6136,6 +6170,16 @@ ex:ApplicationDependencyShape
     sh:path ex:dependsOn ;
     sh:minCount 1
   ] .`
+      },
+      {
+        label: "Dependencies are libraries",
+        tip: "Every value of ex:dependsOn must be a typed ex:Library — the dependency graph is well-formed.",
+        shape: `@prefix ex: <http://ex/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+ex:DependencyIsLibraryShape a sh:NodeShape ;
+  sh:targetObjectsOf ex:dependsOn ;
+  sh:class ex:Library .`
       }
     ],
     "antarctic-expeditions": [
@@ -6152,6 +6196,18 @@ ex:ExpeditionShape a sh:NodeShape ;
   sh:property [ sh:path ex:vessel ; sh:class ex:Ship ] ;
   sh:property [ sh:path ex:startYear ; sh:minCount 1 ] ;
   sh:property [ sh:path ex:endYear ; sh:minCount 1 ] .`
+      },
+      {
+        label: "Every person is named",
+        tip: "A simpler structural check: every ex:Person carries an rdfs:label. The roster conforms.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+ex:PersonNamedShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "Every expedition member should be named." ] .`
       }
     ],
     "factgrid-illuminati": [
@@ -6166,6 +6222,18 @@ ex:ExpeditionShape a sh:NodeShape ;
   sh:targetSubjectsOf fgp:P2 ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
     sh:message "Every classified member should carry a human-readable label." ] .`
+      },
+      {
+        label: "Entities in a P91 relation are named",
+        tip: "A second target: every subject of P91 (the affiliation relation) should carry a label, so the network reads in plain language.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix fgp: <https://database.factgrid.de/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf fgp:P91 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "An entity in a P91 relation should carry a label." ] .`
       }
     ],
     history: [
@@ -6183,6 +6251,19 @@ ex:TerritoryShape a sh:NodeShape ;
   sh:property [ sh:path ex:year ; sh:minCount 1 ] ;
   sh:property [ sh:path geo:hasGeometry ; sh:minCount 1 ;
     sh:message "Every historical territory must carry a geometry." ] .`
+      },
+      {
+        label: "Territories record their political context",
+        tip: "Every territory should record what it is part of (ex:partOf) and whom it is subject to (ex:subjectTo) — a few snapshots leave one or the other blank.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+
+ex:TerritoryContextShape a sh:NodeShape ;
+  sh:targetClass ex:Territory ;
+  sh:property [ sh:path ex:partOf ; sh:minCount 1 ;
+    sh:message "Territory should record what it is part of." ] ;
+  sh:property [ sh:path ex:subjectTo ; sh:minCount 1 ;
+    sh:message "Territory should record whom it is subject to." ] .`
       }
     ],
     "linked-jazz": [
@@ -6197,6 +6278,18 @@ ex:TerritoryShape a sh:NodeShape ;
   sh:targetSubjectsOf rel:knowsOf ;
   sh:property [ sh:path foaf:name ; sh:minCount 1 ;
     sh:message "Every musician in the social graph should carry a name." ] .`
+      },
+      {
+        label: "Influenced musicians are named",
+        tip: "A second relation: every subject of relationship:influencedBy should carry a foaf:name.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix rel: <http://purl.org/vocab/relationship/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf rel:influencedBy ;
+  sh:property [ sh:path foaf:name ; sh:minCount 1 ;
+    sh:message "An influenced musician should carry a name." ] .`
       }
     ],
     mimotext: [
@@ -6213,6 +6306,17 @@ ex:TerritoryShape a sh:NodeShape ;
     sh:message "A novel in the stylometric-similarity network should carry a label." ] ;
   sh:property [ sh:path mt:P5 ; sh:minCount 1 ;
     sh:message "A novel in the stylometric-similarity network should name its author (P5)." ] .`
+      },
+      {
+        label: "Novels with an author carry a date",
+        tip: "Every work that names an author (P5) should also carry a publication date (P9) — a few are undated.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix mt: <http://data.mimotext.uni-trier.de/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf mt:P5 ;
+  sh:property [ sh:path mt:P9 ; sh:minCount 1 ;
+    sh:message "A novel that names an author should carry a publication date." ] .`
       }
     ],
     mmm: [
@@ -6232,6 +6336,18 @@ mmm:ManuscriptShape a sh:NodeShape ;
     sh:message "Every manuscript should record a former or current owner." ] ;
   sh:property [ sh:path mmm:produced_when ; sh:minCount 1 ;
     sh:message "Every manuscript should record when it was produced." ] .`
+      },
+      {
+        label: "Every person is named",
+        tip: "Every CIDOC-CRM E21_Person should carry a skos:prefLabel. The actor list conforms.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix crm: <http://erlangen-crm.org/current/> .
+
+crm:PersonNamedShape a sh:NodeShape ;
+  sh:targetClass crm:E21_Person ;
+  sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ;
+    sh:message "Every person should carry a preferred label." ] .`
       }
     ],
     monarch: [
@@ -6247,6 +6363,19 @@ bl:DiseaseShape a sh:NodeShape ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
   sh:property [ sh:path bl:has_phenotype ; sh:class bl:PhenotypicFeature ; sh:minCount 1 ;
     sh:message "Every disease should link to at least one phenotypic feature." ] .`
+      },
+      {
+        label: "Genes are named and placed in a taxon",
+        tip: "Every biolink:Gene should carry a label and an in_taxon link (which species it belongs to).",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix bl: <https://w3id.org/biolink/vocab/> .
+
+bl:GeneShape a sh:NodeShape ;
+  sh:targetClass bl:Gene ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
+  sh:property [ sh:path bl:in_taxon ; sh:minCount 1 ;
+    sh:message "Every gene should be placed in a taxon." ] .`
       }
     ],
     nomisma: [
@@ -6265,6 +6394,18 @@ nm:CoinTypeShape a sh:NodeShape ;
     sh:message "Every coin type should record its material." ] ;
   sh:property [ sh:path nm:hasStartDate ; sh:minCount 1 ] ;
   sh:property [ sh:path nm:hasEndDate ; sh:minCount 1 ] .`
+      },
+      {
+        label: "Mints are named",
+        tip: "Every nm:Mint should carry an rdfs:label — the place names behind the coins.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix nm: <http://nomisma.org/ontology#> .
+
+nm:MintShape a sh:NodeShape ;
+  sh:targetClass nm:Mint ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "Every mint should be named." ] .`
       }
     ],
     "openalex-astrocytes": [
@@ -6282,6 +6423,18 @@ ex:WorkShape a sh:NodeShape ;
   sh:property [ sh:path ex:author ; sh:class ex:Person ; sh:minCount 1 ;
     sh:message "Every paper should list at least one author." ] ;
   sh:property [ sh:path ex:topic ; sh:class ex:Concept ; sh:minCount 1 ] .`
+      },
+      {
+        label: "Authors are named",
+        tip: "Every ex:Person (author) should carry a foaf:name. The author list conforms.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+ex:AuthorNamedShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path foaf:name ; sh:minCount 1 ;
+    sh:message "Every author should carry a name." ] .`
       }
     ],
     opencitations: [
@@ -6299,6 +6452,19 @@ fabio:ArticleShape a sh:NodeShape ;
   sh:property [ sh:path dct:creator ; sh:minCount 1 ;
     sh:message "Every journal article should record at least one creator." ] ;
   sh:property [ sh:path dct:isPartOf ; sh:minCount 1 ] .`
+      },
+      {
+        label: "Book chapters carry metadata",
+        tip: "A second FRBR class: every fabio:BookChapter should carry a title and a date.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix fabio: <http://purl.org/spar/fabio/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+
+fabio:ChapterShape a sh:NodeShape ;
+  sh:targetClass fabio:BookChapter ;
+  sh:property [ sh:path dct:title ; sh:minCount 1 ] ;
+  sh:property [ sh:path dct:date ; sh:minCount 1 ;
+    sh:message "Every book chapter should carry a date." ] .`
       }
     ],
     orkg: [
@@ -6315,6 +6481,18 @@ orkgc:PaperShape a sh:NodeShape ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
   sh:property [ sh:path orkgp:hasAuthors ; sh:minCount 1 ;
     sh:message "Every paper should list its authors." ] .`
+      },
+      {
+        label: "Authors are named",
+        tip: "Every orkg:Author should carry an rdfs:label — the names behind the contributions.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix orkgc: <https://orkg.org/class/> .
+
+orkgc:AuthorShape a sh:NodeShape ;
+  sh:targetClass orkgc:Author ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "Every author should be named." ] .`
       }
     ],
     "theographic-graph": [
@@ -6333,6 +6511,19 @@ theo:PlaceShape a sh:NodeShape ;
     sh:message "Every Biblical place should carry a latitude." ] ;
   sh:property [ sh:path geo:long ; sh:minCount 1 ;
     sh:message "Every Biblical place should carry a longitude." ] .`
+      },
+      {
+        label: "Events are dated and located",
+        tip: "Every theo:Event should carry a year and an occurredIn place — a few events are undated.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix theo: <http://theographic/ontology#> .
+
+theo:EventShape a sh:NodeShape ;
+  sh:targetClass theo:Event ;
+  sh:property [ sh:path theo:year ; sh:minCount 1 ;
+    sh:message "Every event should carry a year." ] ;
+  sh:property [ sh:path theo:occurredIn ; sh:minCount 1 ;
+    sh:message "Every event should record where it occurred." ] .`
       }
     ],
     "getty-ulan": [
@@ -6349,6 +6540,18 @@ theo:PlaceShape a sh:NodeShape ;
   sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ] ;
   sh:property [ sh:path schema:description ; sh:minCount 1 ;
     sh:message "Every master (teacherOf) should carry a one-line biography." ] .`
+      },
+      {
+        label: "Pupils are named",
+        tip: "Run after Cache remote. The other end of the lineage: every pupil (object of gvp:teacherOf) should carry a skos:prefLabel.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix gvp: <http://vocab.getty.edu/ontology#> .
+
+[] a sh:NodeShape ;
+  sh:targetObjectsOf gvp:teacherOf ;
+  sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ;
+    sh:message "Every pupil should carry a name." ] .`
       }
     ],
     "wikidata-100mb": [
@@ -6364,6 +6567,17 @@ theo:PlaceShape a sh:NodeShape ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
   sh:property [ sh:path wdt:P569 ; sh:minCount 1 ;
     sh:message "A person with an occupation (P106) should record a date of birth (P569)." ] .`
+      },
+      {
+        label: "People with a job have a citizenship",
+        tip: "Run after Cache remote. Every person with an occupation (wdt:P106) should record a country of citizenship (wdt:P27). Real Wikidata is incomplete, so expect violations.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf wdt:P106 ;
+  sh:property [ sh:path wdt:P27 ; sh:minCount 1 ;
+    sh:message "A person with an occupation should record a citizenship (P27)." ] .`
       }
     ],
     "ohm-full": [
@@ -6381,6 +6595,18 @@ theo:PlaceShape a sh:NodeShape ;
     sh:message "Every geolocated historical feature should carry a name." ] ;
   sh:property [ sh:path ex:startYear ; sh:minCount 1 ;
     sh:message "Every geolocated historical feature should carry a start year." ] .`
+      },
+      {
+        label: "Features carry an end year",
+        tip: "Run after Cache remote. Every geolocated feature should also carry an ex:endYear (2100 = still present); some are missing it.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex/> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+
+[] a sh:NodeShape ;
+  sh:targetSubjectsOf geo:hasGeometry ;
+  sh:property [ sh:path ex:endYear ; sh:minCount 1 ;
+    sh:message "Every geolocated historical feature should carry an end year." ] .`
       }
     ]
   },
@@ -6443,6 +6669,126 @@ theo:PlaceShape a sh:NodeShape ;
       examples: [
         { label: "App dependency closure", pred: "<http://ex/dependsOn>", seeds: "<http://ex/app>", reverse: false },
         { label: "Log4x blast radius", pred: "<http://ex/dependsOn>", seeds: "<http://ex/log4x>", reverse: true }
+      ]
+    },
+    causal: {
+      pred: "<http://ex/causes>",
+      seeds: "<http://ex/Poverty>",
+      examples: [
+        { label: "What Poverty leads to (causal cascade)", pred: "<http://ex/causes>", seeds: "<http://ex/Poverty>", reverse: false },
+        { label: "Everything that causes Atherosclerosis", pred: "<http://ex/causes>", seeds: "<http://ex/Atherosclerosis>", reverse: true }
+      ]
+    },
+    "antarctic-expeditions": {
+      pred: "<http://ex/participant>",
+      seeds: "<http://www.wikidata.org/entity/Q815478>",
+      examples: [
+        { label: "Members of an expedition", pred: "<http://ex/participant>", seeds: "<http://www.wikidata.org/entity/Q815478>", reverse: false },
+        { label: "Which expeditions a person joined", pred: "<http://ex/participant>", seeds: "<http://www.wikidata.org/entity/Q102527>", reverse: true }
+      ]
+    },
+    "factgrid-illuminati": {
+      pred: "<https://database.factgrid.de/prop/direct/P91>",
+      seeds: "<https://database.factgrid.de/entity/Q10677>",
+      examples: [
+        { label: "People linked to the Order of the Illuminati (P91)", pred: "<https://database.factgrid.de/prop/direct/P91>", seeds: "<https://database.factgrid.de/entity/Q10677>", reverse: true },
+        { label: "P91 affiliations of a member", pred: "<https://database.factgrid.de/prop/direct/P91>", seeds: "<https://database.factgrid.de/entity/Q409>", reverse: false }
+      ]
+    },
+    "linked-jazz": {
+      pred: "<http://purl.org/vocab/relationship/knowsOf>",
+      seeds: "<http://dbpedia.org/resource/Louie_Bellson>",
+      examples: [
+        { label: "Who Louie Bellson knows (transitively)", pred: "<http://purl.org/vocab/relationship/knowsOf>", seeds: "<http://dbpedia.org/resource/Louie_Bellson>", reverse: false },
+        { label: "Who knows of Count Basie", pred: "<http://purl.org/vocab/relationship/knowsOf>", seeds: "<http://dbpedia.org/resource/Count_Basie>", reverse: true }
+      ]
+    },
+    mimotext: {
+      pred: "<http://data.mimotext.uni-trier.de/prop/direct/P49>",
+      seeds: "<http://data.mimotext.uni-trier.de/entity/Q1011>",
+      examples: [
+        { label: "Stylometric neighbourhood of a novel (P49)", pred: "<http://data.mimotext.uni-trier.de/prop/direct/P49>", seeds: "<http://data.mimotext.uni-trier.de/entity/Q1011>", reverse: false },
+        { label: "Novels stylistically close to Q1022", pred: "<http://data.mimotext.uni-trier.de/prop/direct/P49>", seeds: "<http://data.mimotext.uni-trier.de/entity/Q1022>", reverse: true }
+      ]
+    },
+    mmm: {
+      pred: "<http://erlangen-crm.org/current/P51_has_former_or_current_owner>",
+      seeds: "<http://ldf.fi/mmm/manifestation_singleton/sdbm_2062>",
+      examples: [
+        { label: "Owners of a manuscript", pred: "<http://erlangen-crm.org/current/P51_has_former_or_current_owner>", seeds: "<http://ldf.fi/mmm/manifestation_singleton/sdbm_2062>", reverse: false },
+        { label: "Manuscripts once owned by a person", pred: "<http://erlangen-crm.org/current/P51_has_former_or_current_owner>", seeds: "<http://ldf.fi/mmm/actor/bibale_301>", reverse: true }
+      ]
+    },
+    monarch: {
+      pred: "<https://w3id.org/biolink/vocab/interacts_with>",
+      seeds: "<https://identifiers.org/hgnc/4851>",
+      examples: [
+        { label: "Gene interaction network of HGNC:4851", pred: "<https://w3id.org/biolink/vocab/interacts_with>", seeds: "<https://identifiers.org/hgnc/4851>", reverse: false },
+        { label: "Genes that interact with HGNC:4851", pred: "<https://w3id.org/biolink/vocab/interacts_with>", seeds: "<https://identifiers.org/hgnc/4851>", reverse: true }
+      ]
+    },
+    nomisma: {
+      pred: "<http://nomisma.org/ontology#hasMint>",
+      seeds: "<http://nomisma.org/id/pella_macedon>",
+      examples: [
+        { label: "All coin types struck at Pella", pred: "<http://nomisma.org/ontology#hasMint>", seeds: "<http://nomisma.org/id/pella_macedon>", reverse: true },
+        { label: "Mint of a coin type", pred: "<http://nomisma.org/ontology#hasMint>", seeds: "<http://numismatics.org/pella/id/lerider.philip_ii.1.100>", reverse: false }
+      ]
+    },
+    "openalex-astrocytes": {
+      pred: "<http://purl.org/spar/cito/cites>",
+      seeds: "<https://openalex.org/W2777525962>",
+      examples: [
+        { label: "Citation closure of a paper", pred: "<http://purl.org/spar/cito/cites>", seeds: "<https://openalex.org/W2777525962>", reverse: false },
+        { label: "Who cites a landmark paper", pred: "<http://purl.org/spar/cito/cites>", seeds: "<https://openalex.org/W2124940469>", reverse: true }
+      ]
+    },
+    opencitations: {
+      pred: "<http://purl.org/spar/cito/cites>",
+      seeds: "<https://doi.org/10.1126/science.1225829>",
+      examples: [
+        { label: "Citation chain from a paper", pred: "<http://purl.org/spar/cito/cites>", seeds: "<https://doi.org/10.1126/science.1225829>", reverse: false },
+        { label: "Who cites this paper", pred: "<http://purl.org/spar/cito/cites>", seeds: "<https://doi.org/10.1126/science.1225829>", reverse: true }
+      ]
+    },
+    orkg: {
+      pred: "<https://orkg.org/property/hasAuthors>",
+      seeds: "<https://orkg.org/resource/R1348693>",
+      examples: [
+        { label: "Papers by an author", pred: "<https://orkg.org/property/hasAuthors>", seeds: "<https://orkg.org/resource/R1348693>", reverse: true },
+        { label: "Authors of a contribution", pred: "<https://orkg.org/property/hasAuthors>", seeds: "<https://orkg.org/resource/R108344>", reverse: false }
+      ]
+    },
+    "theographic-graph": {
+      pred: "<http://theographic/ontology#sibling>",
+      seeds: "<http://ex/person/absalom_59>",
+      examples: [
+        { label: "Sibling network of a Biblical figure", pred: "<http://theographic/ontology#sibling>", seeds: "<http://ex/person/absalom_59>", reverse: false },
+        { label: "Ancestors via the father line", pred: "<http://theographic/ontology#father>", seeds: "<http://ex/person/absalom_59>", reverse: false }
+      ]
+    },
+    "getty-ulan": {
+      pred: "<http://vocab.getty.edu/ontology#teacherOf>",
+      seeds: "<http://vocab.getty.edu/ulan/500004460>",
+      examples: [
+        { label: "Artistic lineage of a master (all descendants)", pred: "<http://vocab.getty.edu/ontology#teacherOf>", seeds: "<http://vocab.getty.edu/ulan/500004460>", reverse: false },
+        { label: "Who taught this artist (all teachers up the line)", pred: "<http://vocab.getty.edu/ontology#teacherOf>", seeds: "<http://vocab.getty.edu/ulan/500004460>", reverse: true }
+      ]
+    },
+    "wikidata-100mb": {
+      pred: "<http://www.wikidata.org/prop/direct/P737>",
+      seeds: "<http://www.wikidata.org/entity/Q9312>",
+      examples: [
+        { label: "Everyone influenced by this thinker (P737)", pred: "<http://www.wikidata.org/prop/direct/P737>", seeds: "<http://www.wikidata.org/entity/Q9312>", reverse: true },
+        { label: "The influence chain behind a person", pred: "<http://www.wikidata.org/prop/direct/P737>", seeds: "<http://www.wikidata.org/entity/Q213736>", reverse: false }
+      ]
+    },
+    wikidata: {
+      pred: "<http://www.wikidata.org/prop/direct/P737>",
+      seeds: "<http://www.wikidata.org/entity/Q9061>",
+      examples: [
+        { label: "Everyone influenced by this thinker (lazy, 1 GB)", pred: "<http://www.wikidata.org/prop/direct/P737>", seeds: "<http://www.wikidata.org/entity/Q9061>", reverse: true },
+        { label: "The influence chain behind a person", pred: "<http://www.wikidata.org/prop/direct/P737>", seeds: "<http://www.wikidata.org/entity/Q213736>", reverse: false }
       ]
     }
   },
@@ -6573,6 +6919,133 @@ theo:PlaceShape a sh:NodeShape ;
           predicate: "<http://ex/dependsOn>",
           object: "<http://ex/log4x>"
         }
+      ]
+    },
+    causal: {
+      predicate: "<http://ex/causes>",
+      examples: [
+        { label: "Every causal edge", tip: "Predicate-bound: the whole ex:causes relation as one POS run.", predicate: "<http://ex/causes>" },
+        { label: "Everything about Poverty", tip: "Subject-bound: SPO routing to one node's facts.", subject: "<http://ex/Poverty>" },
+        { label: "All risk factors", tip: "Object-bound rdf:type: routed to OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<http://ex/RiskFactor>" }
+      ]
+    },
+    "antarctic-expeditions": {
+      predicate: "<http://ex/participant>",
+      examples: [
+        { label: "All participation edges", tip: "Predicate-bound: POS permutation.", predicate: "<http://ex/participant>" },
+        { label: "Everything about an expedition", tip: "Subject-bound: SPO routing.", subject: "<http://www.wikidata.org/entity/Q815478>" },
+        { label: "All expeditions", tip: "Object-bound rdf:type: OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<http://ex/Expedition>" }
+      ]
+    },
+    "factgrid-illuminati": {
+      predicate: "<http://www.w3.org/2000/01/rdf-schema#label>",
+      examples: [
+        { label: "Every resolved label", tip: "Predicate-bound: the dominant rdfs:label relation as one POS run.", predicate: "<http://www.w3.org/2000/01/rdf-schema#label>" },
+        { label: "Everything about the Order (Q10677)", tip: "Subject-bound: SPO routing to one entity's facts.", subject: "<https://database.factgrid.de/entity/Q10677>" }
+      ]
+    },
+    history: {
+      predicate: "<http://www.opengis.net/ont/geosparql#asWKT>",
+      examples: [
+        { label: "Every territory geometry", tip: "Predicate-bound: all geo:asWKT literals as one POS run.", predicate: "<http://www.opengis.net/ont/geosparql#asWKT>" },
+        { label: "All territories", tip: "Object-bound rdf:type: OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<http://ex/Territory>" }
+      ]
+    },
+    "linked-jazz": {
+      predicate: "<http://xmlns.com/foaf/0.1/name>",
+      examples: [
+        { label: "Every musician name", tip: "Predicate-bound: all foaf:name literals as one POS run.", predicate: "<http://xmlns.com/foaf/0.1/name>" },
+        { label: "Everything about Louie Bellson", tip: "Subject-bound: SPO routing to one musician's edges.", subject: "<http://dbpedia.org/resource/Louie_Bellson>" }
+      ]
+    },
+    mimotext: {
+      predicate: "<http://data.mimotext.uni-trier.de/prop/direct/P49>",
+      examples: [
+        { label: "Every stylometric-similarity edge", tip: "Predicate-bound: the P49 style network as one POS run.", predicate: "<http://data.mimotext.uni-trier.de/prop/direct/P49>" },
+        { label: "Everything about a novel (Q1011)", tip: "Subject-bound: SPO routing.", subject: "<http://data.mimotext.uni-trier.de/entity/Q1011>" }
+      ]
+    },
+    mmm: {
+      predicate: "<http://erlangen-crm.org/current/P51_has_former_or_current_owner>",
+      examples: [
+        { label: "Every ownership edge", tip: "Predicate-bound: the CIDOC-CRM P51 relation as one POS run.", predicate: "<http://erlangen-crm.org/current/P51_has_former_or_current_owner>" },
+        { label: "Everything about a manuscript", tip: "Subject-bound: SPO routing.", subject: "<http://ldf.fi/mmm/manifestation_singleton/sdbm_2062>" },
+        { label: "All people (E21_Person)", tip: "Object-bound rdf:type: OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<http://erlangen-crm.org/current/E21_Person>" }
+      ]
+    },
+    monarch: {
+      predicate: "<https://w3id.org/biolink/vocab/has_phenotype>",
+      examples: [
+        { label: "Every disease-phenotype edge", tip: "Predicate-bound: biolink:has_phenotype as one POS run.", predicate: "<https://w3id.org/biolink/vocab/has_phenotype>" },
+        { label: "Everything about a gene", tip: "Subject-bound: SPO routing.", subject: "<https://identifiers.org/hgnc/4851>" },
+        { label: "All genes", tip: "Object-bound rdf:type: OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<https://w3id.org/biolink/vocab/Gene>" }
+      ]
+    },
+    nomisma: {
+      predicate: "<http://nomisma.org/ontology#hasMint>",
+      examples: [
+        { label: "Every coin-to-mint edge", tip: "Predicate-bound: nm:hasMint as one POS run.", predicate: "<http://nomisma.org/ontology#hasMint>" },
+        { label: "Everything about a coin type", tip: "Subject-bound: SPO routing.", subject: "<http://numismatics.org/pella/id/lerider.philip_ii.1.100>" },
+        { label: "All coin types", tip: "Object-bound rdf:type: OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<http://nomisma.org/ontology#TypeSeriesItem>" }
+      ]
+    },
+    "openalex-astrocytes": {
+      predicate: "<http://purl.org/spar/cito/cites>",
+      examples: [
+        { label: "Every citation edge", tip: "Predicate-bound: cito:cites as one POS run.", predicate: "<http://purl.org/spar/cito/cites>" },
+        { label: "Everything about a paper", tip: "Subject-bound: SPO routing.", subject: "<https://openalex.org/W2777525962>" },
+        { label: "All works", tip: "Object-bound rdf:type: OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<http://ex/Work>" }
+      ]
+    },
+    opencitations: {
+      predicate: "<http://purl.org/spar/cito/cites>",
+      examples: [
+        { label: "Every citation edge", tip: "Predicate-bound: cito:cites as one POS run.", predicate: "<http://purl.org/spar/cito/cites>" },
+        { label: "Everything about an article", tip: "Subject-bound: SPO routing.", subject: "<https://doi.org/10.1126/science.1225829>" },
+        { label: "All journal articles", tip: "Object-bound rdf:type: OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<http://purl.org/spar/fabio/JournalArticle>" }
+      ]
+    },
+    orkg: {
+      predicate: "<https://orkg.org/property/hasAuthors>",
+      examples: [
+        { label: "Every paper-to-authors edge", tip: "Predicate-bound: orkgp:hasAuthors as one POS run.", predicate: "<https://orkg.org/property/hasAuthors>" },
+        { label: "All papers", tip: "Object-bound rdf:type: OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<https://orkg.org/class/Paper>" }
+      ]
+    },
+    "theographic-graph": {
+      predicate: "<http://theographic/ontology#sibling>",
+      examples: [
+        { label: "Every sibling edge", tip: "Predicate-bound: theo:sibling as one POS run.", predicate: "<http://theographic/ontology#sibling>" },
+        { label: "Everything about a person", tip: "Subject-bound: SPO routing.", subject: "<http://ex/person/absalom_59>" },
+        { label: "All people (foaf:Person)", tip: "Object-bound rdf:type: OSP.", predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", object: "<http://xmlns.com/foaf/0.1/Person>" }
+      ]
+    },
+    "getty-ulan": {
+      predicate: "<http://vocab.getty.edu/ontology#teacherOf>",
+      examples: [
+        { label: "Every teacher-pupil edge", tip: "Predicate-bound: the whole gvp:teacherOf lineage as one POS run, each row with its tile/byte range.", predicate: "<http://vocab.getty.edu/ontology#teacherOf>" },
+        { label: "Everything about a master", tip: "Subject-bound: SPO routes to one artist's facts (name, dates, pupils).", subject: "<http://vocab.getty.edu/ulan/500004460>" }
+      ]
+    },
+    "wikidata-100mb": {
+      predicate: "<http://www.wikidata.org/prop/direct/P106>",
+      examples: [
+        { label: "Every occupation edge", tip: "Predicate-bound: wdt:P106 as one POS run over the lazy file — each row shows the tile/byte range fetched.", predicate: "<http://www.wikidata.org/prop/direct/P106>" },
+        { label: "All humans (P31 = Q5)", tip: "Object-bound: routed to OSP — every wdt:P31 -> wd:Q5 assertion.", predicate: "<http://www.wikidata.org/prop/direct/P31>", object: "<http://www.wikidata.org/entity/Q5>" }
+      ]
+    },
+    "ohm-full": {
+      predicate: "<http://ex/startYear>",
+      examples: [
+        { label: "Every feature start year", tip: "Predicate-bound: all ex:startYear values as one POS run over the lazy 150 MB file — each row with its tile/byte range.", predicate: "<http://ex/startYear>" },
+        { label: "Every feature name", tip: "Predicate-bound: all rdfs:label literals; compare the byte ranges with the start-year run.", predicate: "<http://www.w3.org/2000/01/rdf-schema#label>" }
+      ]
+    },
+    wikidata: {
+      predicate: "<http://www.wikidata.org/prop/direct/P106>",
+      examples: [
+        { label: "Every occupation edge (lazy, 1 GB)", tip: "Predicate-bound over the 1 GB file: wdt:P106 as one POS run — each row shows the tile/byte range fetched. Selective, so it stays cheap even at 1 GB.", predicate: "<http://www.wikidata.org/prop/direct/P106>" },
+        { label: "All humans (P31 = Q5)", tip: "Object-bound: routed to OSP — every wdt:P31 -> wd:Q5 assertion over the lazy 1 GB graph.", predicate: "<http://www.wikidata.org/prop/direct/P31>", object: "<http://www.wikidata.org/entity/Q5>" }
       ]
     }
   }
