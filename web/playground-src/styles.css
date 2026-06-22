@@ -1011,6 +1011,13 @@ textarea {
 .ef-iri { font-size: 10.5px; color: var(--muted); font-family: "Cascadia Mono", "SF Mono", Consolas, ui-monospace, monospace; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ef-empty { font-size: 11px; color: var(--muted); margin: 4px 2px; line-height: 1.5; }
 .ef-loading { display: flex; align-items: center; gap: 8px; padding: 8px 2px; color: var(--muted); font-size: 11.5px; }
+/* Two-tier finder: a group header per tier + a kind badge on each result. */
+.ef-group { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 7px 2px 3px; }
+.ef-group:first-child { margin-top: 0; }
+.ef-kind { display: inline-block; font-size: 8.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; padding: 0 3px; border-radius: 3px; margin-right: 4px; vertical-align: 1px; }
+.ef-kind.ef-class { background: #e3f3ec; color: #0b6f4e; }
+.ef-kind.ef-predicate { background: #ece3f6; color: #5a3e86; }
+.ef-kind.ef-entity { background: #fbf0d8; color: #8a5a12; }
 @media (max-width: 920px) {
   .ed-row { flex-direction: column; }
   .entity-finder { flex-basis: auto; }

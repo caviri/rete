@@ -619,50 +619,95 @@ self.onmessage = function (e) {
     ta.setSelectionRange(caret, caret);
     ta.focus();
   }
-  function renderFinder(hits, q) {
+  function efItemHtml(iri, label, kind) {
+    return `<button type="button" class="ef-item" data-iri="${esc(iri)}" title="${esc(iri)}">` +
+      `<span class="ef-label">${esc(label || localName(iri))}</span>` +
+      `<span class="ef-iri"><span class="ef-kind ef-${kind}">${esc(kind)}</span> ${esc(localName(iri))}</span></button>`;
+  }
+  // Tier 1: classes + predicates from the cached schema (the card), matched by
+  // their hint label, local name, or IRI substring — instant, no graph reads.
+  function searchSchemaTerms(q) {
+    const sch = state.schema;
+    if (!sch) return [];
+    const ql = q.toLowerCase();
+    const hints = (CATALOG.labelHints && CATALOG.labelHints[state.dataset]) || {};
+    const out = [], seen = new Set();
+    const consider = (rawIri, kind) => {
+      const iri = String(rawIri).replace(/^<|>$/g, "");
+      if (!iri || seen.has(iri)) return;
+      const label = hints[iri] || "";
+      const ln = localName(iri);
+      if ((label && label.toLowerCase().includes(ql)) || ln.toLowerCase().includes(ql) || iri.toLowerCase().includes(ql)) {
+        seen.add(iri);
+        out.push({ iri, kind, label: label || ln });
+      }
+    };
+    (sch.classes || []).forEach((c) => consider(c[0], "class"));
+    const preds = new Set();
+    (sch.relations || []).forEach((r) => preds.add(String(r[1])));
+    preds.forEach((p) => consider(p, "predicate"));
+    return out.slice(0, 12);
+  }
+  // Remote datasets read the schema lazily (on Explore); fetch it once in the
+  // background for the finder so tier 1 works in the console too.
+  let efSchemaFetching = false;
+  function ensureSchemaForFinder() {
+    if (state.schema || !state.remote || efSchemaFetching) return;
+    efSchemaFetching = true;
+    remoteCall("schema_url", state.remote.url)
+      .then((out) => { try { state.schema = JSON.parse(out.json); } catch (_e) { /* none */ } })
+      .catch(() => {})
+      .finally(() => { efSchemaFetching = false; if (($("efInput").value || "").trim()) efSearch(); });
+  }
+  function renderFinder(schemaTerms, entityHits, q, entitiesLoading) {
     const box = $("efResults");
     if (!box) return;
     if (!q) {
-      box.innerHTML = `<p class="ef-empty">Type a name to search this graph's entities by their label.</p>`;
+      box.innerHTML = `<p class="ef-empty">Filter this graph's <b>classes &amp; predicates</b> (instant, from the card), then its <b>entities</b> by label.</p>`;
       return;
     }
-    if (!hits.length) {
-      box.innerHTML = `<p class="ef-empty">No entities match “${esc(q)}”.</p>`;
-      return;
+    let html = "";
+    if (schemaTerms.length) {
+      html += `<div class="ef-group">Schema — classes &amp; predicates</div>` +
+        schemaTerms.map((t) => efItemHtml(t.iri, t.label, t.kind)).join("");
     }
-    box.innerHTML = hits.map((h) => {
-      const iri = String(h.subject).replace(/^<|>$/g, "");
-      return `<button type="button" class="ef-item" data-iri="${esc(iri)}" title="${esc(iri)}">` +
-        `<span class="ef-label">${esc(h.label || localName(iri))}</span>` +
-        `<span class="ef-iri">${esc(localName(iri))}</span></button>`;
-    }).join("");
+    if (entitiesLoading) {
+      html += `<div class="ef-group">Entities</div><div class="ef-loading"><span class="spindle"></span> labels over range reads…</div>`;
+    } else if (entityHits.length) {
+      html += `<div class="ef-group">Entities</div>` +
+        entityHits.map((h) => efItemHtml(String(h.subject).replace(/^<|>$/g, ""), h.label, "entity")).join("");
+    } else if (!schemaTerms.length) {
+      html += `<p class="ef-empty">No schema term or entity matches “${esc(q)}”.</p>`;
+    }
+    box.innerHTML = html;
     $$("#efResults .ef-item").forEach((b) => {
       b.onclick = () => insertAtCaret("q", "<" + b.dataset.iri + ">");
     });
   }
-  // Search by label. Embedded graphs answer synchronously; a remote-lazy graph
-  // faults its label-index tiles over HTTP range (worker), so a spinner shows and
-  // a sequence guard drops out-of-order results from earlier keystrokes.
+  // Two-tier search: schema terms (instant, cached) + entities by label
+  // (synchronous for embedded; a lazy worker range-read for remote, with a
+  // spinner and a sequence guard that drops out-of-order keystroke results).
   let efSeq = 0;
   function efSearch() {
     const inp = $("efInput");
     if (!inp) return;
     const q = (inp.value || "").trim();
-    if (!q) { renderFinder([], ""); return; }
+    if (!q) { renderFinder([], [], "", false); return; }
     const seq = ++efSeq;
+    ensureSchemaForFinder();
+    const schemaTerms = searchSchemaTerms(q);
     if (state.remote) {
-      const box = $("efResults");
-      if (box) box.innerHTML = `<div class="ef-loading"><span class="spindle"></span> searching “${esc(q)}” over range reads…</div>`;
-      remotePrefixSearch(state.remote.url, q, 15).then((out) => {
+      renderFinder(schemaTerms, [], q, true);
+      remotePrefixSearch(state.remote.url, q, 12).then((out) => {
         if (seq !== efSeq) return;
         let hits = []; try { hits = JSON.parse(out.json); } catch (_e) { hits = []; }
-        renderFinder(hits, q);
-      }).catch(() => { if (seq === efSeq) renderFinder([], q); });
+        renderFinder(schemaTerms, hits, q, false);
+      }).catch(() => { if (seq === efSeq) renderFinder(schemaTerms, [], q, false); });
       return;
     }
     let hits = [];
-    if (state.graph) { try { hits = JSON.parse(state.graph.prefix_search(q, 15)); } catch (_e) { hits = []; } }
-    renderFinder(hits, q);
+    if (state.graph) { try { hits = JSON.parse(state.graph.prefix_search(q, 12)); } catch (_e) { hits = []; } }
+    renderFinder(schemaTerms, hits, q, false);
   }
 
   function setEd(id, text) {
@@ -4254,7 +4299,7 @@ self.onmessage = function (e) {
     if (efInput) {
       let efDebounce = null;
       efInput.oninput = () => { clearTimeout(efDebounce); efDebounce = setTimeout(efSearch, 180); };
-      renderFinder([], "");
+      renderFinder([], [], "", false);
     }
     // Hover preview + click-through for http(s) URLs in result tables.
     bindLinkPreviews();
