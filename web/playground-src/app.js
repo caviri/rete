@@ -1258,6 +1258,22 @@ self.onmessage = function (e) {
     });
   }
 
+  // A speed badge for an example, from the offline benchmark (CATALOG.perf =
+  // median local query time in ms). Remote-lazy examples have no precomputed
+  // time — it depends on the network and shows live when you run them.
+  function perfBadge(dataset, label) {
+    const ms = CATALOG.perf && CATALOG.perf[dataset] && CATALOG.perf[dataset][label];
+    if (ms == null) {
+      const d = datasetInfo(dataset);
+      return (d && d.kind === "remote-lazy")
+        ? `<span class="perf-badge lazy" title="Remote-lazy: query time depends on the network and is shown live when you run it.">🛰 lazy</span>`
+        : "";
+    }
+    let tier = "instant";
+    if (ms >= 60) tier = "heavy"; else if (ms >= 16) tier = "moderate"; else if (ms >= 4) tier = "fast";
+    return `<span class="perf-badge ${tier}" title="Median local query time, benchmarked over 5 runs: ${ms} ms">${ms} ms</span>`;
+  }
+
   function renderExamples() {
     renderFamilyFilters();
     renderQuickExamples();
@@ -1269,7 +1285,7 @@ self.onmessage = function (e) {
     $("examples").innerHTML = items.map(({ ex, index }) =>
       `<article class="example-card" data-family="${esc(ex.family)}">` +
         `<button type="button" class="example-button ${index === state.selectedExample ? "active" : ""}" data-example="${index}">` +
-          `<span>${esc(ex.label)}</span>` +
+          `<span>${esc(ex.label)}</span>${perfBadge(state.dataset, ex.label)}` +
         `</button>` +
         `<div class="tagline">${esc(ex.family)} | ${esc(ex.tip)}</div>` +
       `</article>`
@@ -1277,6 +1293,17 @@ self.onmessage = function (e) {
     $$("#examples [data-example]").forEach((btn) => {
       btn.onclick = () => selectExample(Number(btn.dataset.example));
     });
+  }
+
+  // Clear the previous query's results so a freshly-picked example doesn't show
+  // stale output. Called when an example is selected.
+  function clearResults() {
+    const out = $("out");
+    if (out) out.innerHTML = `<p class="microcopy" style="padding:6px 2px">Press <b>Run Query</b> to evaluate this example.</p>`;
+    const qm = $("qmeta"); if (qm) qm.textContent = "";
+    const co = $("commOut"); if (co) co.innerHTML = "";
+    const rb = $("reqLogBtn"); if (rb) rb.classList.add("hidden");
+    state.lastResult = null;
   }
 
   function selectExample(index) {
@@ -1287,6 +1314,7 @@ self.onmessage = function (e) {
     setView(ex.view || "table");
     setStrategy(ex.strategy || "whole");
     setMode("sparql");
+    clearResults();
     // An example may declare federation partners (catalog keys) — a one-click
     // multi-source demo. Reset to just this dataset, then add each partner
     // (embedded → in-memory, remote-lazy → range-read).
@@ -1341,6 +1369,7 @@ self.onmessage = function (e) {
     box.innerHTML =
       `<span class="exd-fam">${esc(sel.family || "Query")}</span>` +
       `<span class="exd-label">${esc(sel.label)}</span>` +
+      perfBadge(state.dataset, sel.label) +
       (sel.tip ? `<span class="exd-tip">${esc(sel.tip)}</span>` : "");
   }
 

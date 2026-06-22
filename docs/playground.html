@@ -818,7 +818,10 @@ h3 {
 }
 
 .example-card .example-button {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   width: 100%;
   text-align: left;
   border: 0;
@@ -826,6 +829,19 @@ h3 {
   padding: 0;
   color: var(--ink);
 }
+
+/* Speed badge (median local query time, benchmarked) on each example. */
+.perf-badge {
+  flex: 0 0 auto; display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 999px; border: 1px solid transparent;
+  white-space: nowrap; vertical-align: 1px;
+}
+.perf-badge.instant  { background: #e3f3ec; color: #0b6f4e; border-color: #bfe3d2; }
+.perf-badge.fast     { background: #e6f0f6; color: #1f5e85; border-color: #cfe0ea; }
+.perf-badge.moderate { background: #fbf0d8; color: #8a5a12; border-color: #ecd9af; }
+.perf-badge.heavy    { background: #f7e2dd; color: #9a3b28; border-color: #e8c7bd; }
+.perf-badge.lazy     { background: var(--side); color: var(--muted); border-color: var(--line); }
+.ex-desc .perf-badge { margin-left: 7px; }
 
 .example-card .tagline {
   margin-top: 5px;
@@ -5060,6 +5076,29 @@ window.RETE_PLAYGROUND_CATALOG = {
   remoteBase: "https://katospiegel-rete.hf.space/data",
   remoteToken: "sfdbgf1094by21hd128ru39802",
   families: ["Summary", "Select", "Path", "Aggregate", "Geo", "Construct"],
+  // Median local (in-memory) query time per example, in ms — benchmarked offline
+  // by dev/bench_examples.cjs (5 runs each). Drives the speed badge on each
+  // example. Remote-lazy datasets are network-dependent and not listed here.
+  perf: {
+    "scholar": { "One query, all three engines (Whole · Progressive · Community)": 1, "Predicate totals": 1, "Author profiles": 2, "High-novelty papers": 2, "High-novelty, split by community": 9, "Citation closure (Whole index only)": 1, "Most-cited papers": 2, "Papers per field": 1, "Authors above the mean h-index": 1, "Novelty tiers (IF)": 1, "Title fingerprints (SHA-256)": 1, "Everything but citations": 2, "Coauthor ego network": 1 },
+    "scholar-noisy": { "Predicate totals": 1, "Mangled titles": 1, "Authors missing ORCID": 1, "Noise-inflated closure": 1, "Temporal violations": 2, "Cross-field citation pairs": 2, "Cross-field cites from genomics": 2 },
+    "typed": { "Count knows edges": 1, "Who works where": 1, "Who knows whom": 1, "Social graph": 1 },
+    "deps": { "Count dependency edges": 1, "Direct dependencies": 1, "Blast radius of log4x": 1, "Dependencies per package": 1, "Dependency graph": 1 },
+    "causal": { "What's in the model": 1, "Everything that leads to a heart attack": 1, "Downstream effects of obesity": 1, "Feedback loops (vicious cycles)": 1, "Confounders (a common cause of two factors)": 1, "Colliders (two causes, one effect)": 1, "How obesity leads to diabetes (mediators)": 1, "Biggest causal footprint": 1, "What lowers the risk of a heart attack": 1, "Exogenous root causes": 1 },
+    "citations": { "Count citation edges": 3, "Paper titles": 36, "Citations per year": 48, "Collaborator closure": 41, "Papers above average citations": 59, "Hub ego network": 35 },
+    "history": { "Map: territories of 1914": 21, "Time: territories per year": 22, "Who ruled Paris in 1914?": 22, "Empires over Beijing through time": 56, "Territories around the British Isles (1815)": 23, "Nearest neighbours of London, 1914": 24, "Bounding box of each 1492 territory": 19, "Territories per era": 19 },
+    "linked-jazz": { "Relationship-type totals": 3, "Everything Mary Lou Williams said about people": 2, "Most talked-about musicians": 8, "Who Count Basie reaches by word of mouth": 2, "Most-cited influences": 2, "Mary Lou Williams collaboration ego-network": 2 },
+    "nomisma": { "Shape of the corpus": 9, "Silver tetradrachms of Alexander the Great": 8, "Most prolific mints": 6, "Coin types per issuing authority": 5, "Mints used by 3+ successive rulers": 8, "Who else struck at Cassander's mints": 46 },
+    "mimotext": { "What is in this graph?": 3, "Most common themes across the novels": 4, "Baculard d'Arnaud's novels, by year, with genre": 8, "Novels that share the most themes": 171, "Stylometrically closest novels": 3, "Author ego-network: Baculard d'Arnaud -> novels -> genre": 5 },
+    "mmm": { "Predicate totals": 13, "Manuscripts made in Florence, with date and text": 8, "Most-traded manuscripts (owner counts)": 15, "Books per production city + coordinates": 10, "Owners of Florentine manuscripts (named persons)": 10, "Provenance ego-network of one manuscript": 18 },
+    "openalex-astrocytes": { "What's in the graph": 6, "Most-cited astrocyte papers": 4, "Most prolific astrocyte authors": 8, "Leading institutions": 7, "Adjacent sub-topics": 6, "Who cites the field's landmark paper": 4, "Citation network of the top papers": 5 },
+    "antarctic-expeditions": { "Shape of the expedition graph": 1, "The crew of the Endurance": 1, "Crew who served on more than one expedition": 1, "Largest crews": 1, "Expedition -> leader + ship + crew ego-network": 1, "Time: expeditions by start year": 1 },
+    "factgrid-illuminati": { "What's in the graph": 9, "Members of the Illuminati": 7, "Which properties describe members": 16 },
+    "theographic-graph": { "What's in the graph": 7, "Descendants of Abraham": 5, "Who had the most children": 6, "Abraham's children": 5 },
+    "monarch": { "What's in the graph": 3, "Phenotypes in the graph": 2, "Most-connected genes": 2 },
+    "opencitations": { "What's in the graph": 3, "Most-cited works": 2, "Publications per year": 2, "Citation closure of a seed paper": 2 },
+    "orkg": { "What's in the graph": 15, "Papers": 10, "Node types in the graph": 9 }
+  },
   datasets: [
     {
       key: "scholar",
@@ -9543,6 +9582,22 @@ self.onmessage = function (e) {
     });
   }
 
+  // A speed badge for an example, from the offline benchmark (CATALOG.perf =
+  // median local query time in ms). Remote-lazy examples have no precomputed
+  // time — it depends on the network and shows live when you run them.
+  function perfBadge(dataset, label) {
+    const ms = CATALOG.perf && CATALOG.perf[dataset] && CATALOG.perf[dataset][label];
+    if (ms == null) {
+      const d = datasetInfo(dataset);
+      return (d && d.kind === "remote-lazy")
+        ? `<span class="perf-badge lazy" title="Remote-lazy: query time depends on the network and is shown live when you run it.">🛰 lazy</span>`
+        : "";
+    }
+    let tier = "instant";
+    if (ms >= 60) tier = "heavy"; else if (ms >= 16) tier = "moderate"; else if (ms >= 4) tier = "fast";
+    return `<span class="perf-badge ${tier}" title="Median local query time, benchmarked over 5 runs: ${ms} ms">${ms} ms</span>`;
+  }
+
   function renderExamples() {
     renderFamilyFilters();
     renderQuickExamples();
@@ -9554,7 +9609,7 @@ self.onmessage = function (e) {
     $("examples").innerHTML = items.map(({ ex, index }) =>
       `<article class="example-card" data-family="${esc(ex.family)}">` +
         `<button type="button" class="example-button ${index === state.selectedExample ? "active" : ""}" data-example="${index}">` +
-          `<span>${esc(ex.label)}</span>` +
+          `<span>${esc(ex.label)}</span>${perfBadge(state.dataset, ex.label)}` +
         `</button>` +
         `<div class="tagline">${esc(ex.family)} | ${esc(ex.tip)}</div>` +
       `</article>`
@@ -9562,6 +9617,17 @@ self.onmessage = function (e) {
     $$("#examples [data-example]").forEach((btn) => {
       btn.onclick = () => selectExample(Number(btn.dataset.example));
     });
+  }
+
+  // Clear the previous query's results so a freshly-picked example doesn't show
+  // stale output. Called when an example is selected.
+  function clearResults() {
+    const out = $("out");
+    if (out) out.innerHTML = `<p class="microcopy" style="padding:6px 2px">Press <b>Run Query</b> to evaluate this example.</p>`;
+    const qm = $("qmeta"); if (qm) qm.textContent = "";
+    const co = $("commOut"); if (co) co.innerHTML = "";
+    const rb = $("reqLogBtn"); if (rb) rb.classList.add("hidden");
+    state.lastResult = null;
   }
 
   function selectExample(index) {
@@ -9572,6 +9638,7 @@ self.onmessage = function (e) {
     setView(ex.view || "table");
     setStrategy(ex.strategy || "whole");
     setMode("sparql");
+    clearResults();
     // An example may declare federation partners (catalog keys) — a one-click
     // multi-source demo. Reset to just this dataset, then add each partner
     // (embedded → in-memory, remote-lazy → range-read).
@@ -9626,6 +9693,7 @@ self.onmessage = function (e) {
     box.innerHTML =
       `<span class="exd-fam">${esc(sel.family || "Query")}</span>` +
       `<span class="exd-label">${esc(sel.label)}</span>` +
+      perfBadge(state.dataset, sel.label) +
       (sel.tip ? `<span class="exd-tip">${esc(sel.tip)}</span>` : "");
   }
 

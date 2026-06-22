@@ -31,6 +31,29 @@ window.RETE_PLAYGROUND_CATALOG = {
   remoteBase: "https://katospiegel-rete.hf.space/data",
   remoteToken: "sfdbgf1094by21hd128ru39802",
   families: ["Summary", "Select", "Path", "Aggregate", "Geo", "Construct"],
+  // Median local (in-memory) query time per example, in ms — benchmarked offline
+  // by dev/bench_examples.cjs (5 runs each). Drives the speed badge on each
+  // example. Remote-lazy datasets are network-dependent and not listed here.
+  perf: {
+    "scholar": { "One query, all three engines (Whole · Progressive · Community)": 1, "Predicate totals": 1, "Author profiles": 2, "High-novelty papers": 2, "High-novelty, split by community": 9, "Citation closure (Whole index only)": 1, "Most-cited papers": 2, "Papers per field": 1, "Authors above the mean h-index": 1, "Novelty tiers (IF)": 1, "Title fingerprints (SHA-256)": 1, "Everything but citations": 2, "Coauthor ego network": 1 },
+    "scholar-noisy": { "Predicate totals": 1, "Mangled titles": 1, "Authors missing ORCID": 1, "Noise-inflated closure": 1, "Temporal violations": 2, "Cross-field citation pairs": 2, "Cross-field cites from genomics": 2 },
+    "typed": { "Count knows edges": 1, "Who works where": 1, "Who knows whom": 1, "Social graph": 1 },
+    "deps": { "Count dependency edges": 1, "Direct dependencies": 1, "Blast radius of log4x": 1, "Dependencies per package": 1, "Dependency graph": 1 },
+    "causal": { "What's in the model": 1, "Everything that leads to a heart attack": 1, "Downstream effects of obesity": 1, "Feedback loops (vicious cycles)": 1, "Confounders (a common cause of two factors)": 1, "Colliders (two causes, one effect)": 1, "How obesity leads to diabetes (mediators)": 1, "Biggest causal footprint": 1, "What lowers the risk of a heart attack": 1, "Exogenous root causes": 1 },
+    "citations": { "Count citation edges": 3, "Paper titles": 36, "Citations per year": 48, "Collaborator closure": 41, "Papers above average citations": 59, "Hub ego network": 35 },
+    "history": { "Map: territories of 1914": 21, "Time: territories per year": 22, "Who ruled Paris in 1914?": 22, "Empires over Beijing through time": 56, "Territories around the British Isles (1815)": 23, "Nearest neighbours of London, 1914": 24, "Bounding box of each 1492 territory": 19, "Territories per era": 19 },
+    "linked-jazz": { "Relationship-type totals": 3, "Everything Mary Lou Williams said about people": 2, "Most talked-about musicians": 8, "Who Count Basie reaches by word of mouth": 2, "Most-cited influences": 2, "Mary Lou Williams collaboration ego-network": 2 },
+    "nomisma": { "Shape of the corpus": 9, "Silver tetradrachms of Alexander the Great": 8, "Most prolific mints": 6, "Coin types per issuing authority": 5, "Mints used by 3+ successive rulers": 8, "Who else struck at Cassander's mints": 46 },
+    "mimotext": { "What is in this graph?": 3, "Most common themes across the novels": 4, "Baculard d'Arnaud's novels, by year, with genre": 8, "Novels that share the most themes": 171, "Stylometrically closest novels": 3, "Author ego-network: Baculard d'Arnaud -> novels -> genre": 5 },
+    "mmm": { "Predicate totals": 13, "Manuscripts made in Florence, with date and text": 8, "Most-traded manuscripts (owner counts)": 15, "Books per production city + coordinates": 10, "Owners of Florentine manuscripts (named persons)": 10, "Provenance ego-network of one manuscript": 18 },
+    "openalex-astrocytes": { "What's in the graph": 6, "Most-cited astrocyte papers": 4, "Most prolific astrocyte authors": 8, "Leading institutions": 7, "Adjacent sub-topics": 6, "Who cites the field's landmark paper": 4, "Citation network of the top papers": 5 },
+    "antarctic-expeditions": { "Shape of the expedition graph": 1, "The crew of the Endurance": 1, "Crew who served on more than one expedition": 1, "Largest crews": 1, "Expedition -> leader + ship + crew ego-network": 1, "Time: expeditions by start year": 1 },
+    "factgrid-illuminati": { "What's in the graph": 9, "Members of the Illuminati": 7, "Which properties describe members": 16 },
+    "theographic-graph": { "What's in the graph": 7, "Descendants of Abraham": 5, "Who had the most children": 6, "Abraham's children": 5 },
+    "monarch": { "What's in the graph": 3, "Phenotypes in the graph": 2, "Most-connected genes": 2 },
+    "opencitations": { "What's in the graph": 3, "Most-cited works": 2, "Publications per year": 2, "Citation closure of a seed paper": 2 },
+    "orkg": { "What's in the graph": 15, "Papers": 10, "Node types in the graph": 9 }
+  },
   datasets: [
     {
       key: "scholar",
