@@ -597,6 +597,72 @@
     else { const t = $(id); if (t) t.value = text; }
   }
 
+  // ── Link preview: a medium hover card that renders an http(s) result cell's
+  // page in a sandboxed iframe (+ an always-working "Open ↗"). Some sites block
+  // embedding (X-Frame-Options / CSP); the header + link still work there.
+  let lpEl = null, lpShowTimer = null, lpHideTimer = null, lpUrl = null;
+  function ensureLinkPreview() {
+    if (lpEl) return lpEl;
+    lpEl = document.createElement("div");
+    lpEl.className = "link-preview hidden";
+    lpEl.innerHTML =
+      `<div class="lp-head"><span class="lp-host"></span>` +
+      `<a class="lp-open" target="_blank" rel="noopener noreferrer">Open ↗</a></div>` +
+      `<div class="lp-frame"><div class="lp-loading"><span class="spindle"></span></div>` +
+      `<iframe class="lp-iframe" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe></div>` +
+      `<div class="lp-note">Live preview — some sites block embedding; use Open ↗.</div>`;
+    document.body.appendChild(lpEl);
+    lpEl.addEventListener("mouseenter", () => clearTimeout(lpHideTimer));
+    lpEl.addEventListener("mouseleave", hideLinkPreview);
+    return lpEl;
+  }
+  function positionLinkPreview(anchor) {
+    const r = anchor.getBoundingClientRect();
+    const w = lpEl.offsetWidth || 380, h = lpEl.offsetHeight || 320;
+    let left = Math.min(r.left, window.innerWidth - w - 8);
+    let top = r.bottom + 8;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    lpEl.style.left = Math.max(8, left) + "px";
+    lpEl.style.top = top + "px";
+  }
+  function showLinkPreview(anchor, url) {
+    ensureLinkPreview();
+    if (lpUrl !== url) {
+      lpUrl = url;
+      let host = url;
+      try { host = new URL(url).host.replace(/^www\./, ""); } catch (_e) { /* keep url */ }
+      const target = httpsUpgrade(url);
+      lpEl.querySelector(".lp-host").textContent = host;
+      lpEl.querySelector(".lp-open").href = target;
+      const frame = lpEl.querySelector(".lp-iframe");
+      const loading = lpEl.querySelector(".lp-loading");
+      loading.style.display = "flex";
+      frame.style.visibility = "hidden";
+      frame.onload = () => { loading.style.display = "none"; frame.style.visibility = "visible"; };
+      frame.src = target;
+    }
+    lpEl.classList.remove("hidden");
+    positionLinkPreview(anchor);
+  }
+  function hideLinkPreview() {
+    clearTimeout(lpHideTimer);
+    lpHideTimer = setTimeout(() => { if (lpEl) lpEl.classList.add("hidden"); }, 180);
+  }
+  function bindLinkPreviews() {
+    document.body.addEventListener("mouseover", (e) => {
+      const a = e.target.closest && e.target.closest(".iri-link");
+      if (!a) return;
+      clearTimeout(lpShowTimer); clearTimeout(lpHideTimer);
+      lpShowTimer = setTimeout(() => showLinkPreview(a, a.dataset.url), 380);
+    });
+    document.body.addEventListener("mouseout", (e) => {
+      const a = e.target.closest && e.target.closest(".iri-link");
+      if (!a) return;
+      clearTimeout(lpShowTimer);
+      hideLinkPreview();
+    });
+  }
+
   // Show the loaded dataset's short name on the topbar chip (which opens the
   // Datasets browser). Replaces the old <select> dropdown.
   function setDatasetName(key) {
@@ -2357,11 +2423,27 @@
   // lost — `"113.149"^^<…#decimal>` renders as `113.149`, `"Bemelen"@en` as
   // `Bemelen @en`, `<http://…/Q5>` as `http://…/Q5`.
   const NUM_DT = /#(decimal|double|float|integer|int|long|short|byte|nonNegativeInteger|nonPositiveInteger|positiveInteger|negativeInteger|unsignedLong|unsignedInt|unsignedShort|unsignedByte)$/;
+  // A dereferenceable web URL: http(s) with a real (dotted) host — excludes the
+  // synthetic http://ex/… namespace (host "ex", no dot) so toy IRIs aren't linked.
+  function looksWebUrl(v) {
+    if (!/^https?:\/\//i.test(v)) return false;
+    try { return new URL(v).host.indexOf(".") > 0; } catch (_e) { return false; }
+  }
+  // The page is served over HTTPS, so an http:// iframe/link is blocked as mixed
+  // content — upgrade to https for the actual fetch/navigation (display keeps the
+  // original IRI). Most RDF hosts (schema.org, wikidata.org, …) serve https.
+  function httpsUpgrade(v) { return String(v).replace(/^http:\/\//i, "https://"); }
   function prettyCell(raw) {
     if (raw == null || raw === "") return `<td></td>`;
     const t = parseTerm(raw);
     if (t.iri) {
       const disp = shorten(t.value, 96);
+      if (looksWebUrl(t.value)) {
+        // Clickable (opens in a new tab) + a hover preview of the page. The link
+        // navigates to the https-upgraded URL; the text keeps the original IRI.
+        return `<td class="iri"><a class="iri-link" href="${esc(httpsUpgrade(t.value))}" target="_blank" ` +
+          `rel="noopener noreferrer" data-url="${esc(t.value)}">${esc(disp)}</a></td>`;
+      }
       return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
     }
     const num = t.datatype && NUM_DT.test(t.datatype);
@@ -3953,6 +4035,8 @@
       efInput.oninput = () => { clearTimeout(efDebounce); efDebounce = setTimeout(efSearch, 180); };
       renderFinder([], "");
     }
+    // Hover preview + click-through for http(s) URLs in result tables.
+    bindLinkPreviews();
 
     await wasm_bindgen(b64ToBytes(RETE_WASM_B64));
 

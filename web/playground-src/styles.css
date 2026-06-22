@@ -1029,6 +1029,25 @@ textarea {
   font-size: 11px; white-space: nowrap; cursor: default;
 }
 
+/* --- Clickable web-URL cells + the medium hover page-preview card ------ */
+.iri-link { color: var(--accent-dark); text-decoration: none; border-bottom: 1px dotted currentColor; cursor: pointer; }
+.iri-link:hover { color: var(--accent); border-bottom-style: solid; }
+.link-preview {
+  position: fixed; z-index: 80; width: 380px;
+  border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface);
+  box-shadow: var(--shadow); overflow: hidden; font-size: 12px;
+}
+.link-preview.hidden { display: none; }
+.lp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 11px; border-bottom: 1px solid var(--line); background: var(--side); }
+.lp-host { font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-open { flex: 0 0 auto; color: var(--accent-dark); font-weight: 700; text-decoration: none; font-size: 11.5px; }
+.lp-open:hover { color: var(--accent); }
+.lp-frame { position: relative; height: 280px; background: #fff; }
+.lp-iframe { width: 100%; height: 100%; border: 0; display: block; }
+.lp-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.lp-note { padding: 5px 11px; color: var(--muted); font-size: 10.5px; border-top: 1px solid var(--line); background: var(--side); }
+
 #shapeText {
   min-height: 330px;
 }
