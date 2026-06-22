@@ -2218,6 +2218,19 @@ pre {
 .rc-line { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .rc-line #rangeCacheSize { margin: 0; margin-right: auto; font-variant-numeric: tabular-nums; }
 .rc-subhead { margin: 4px 0 6px; font-size: 13px; }
+/* Per-file range-cache breakdown: one row per cached .rete with a fill bar
+   showing the share of the file held, and a per-file Clear. */
+.rc-breakdown { display: flex; flex-direction: column; gap: 7px; margin-top: 8px; }
+.rc-breakdown:empty { display: none; }
+.rc-breakdown .cache-empty { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin: 2px 0 0; }
+.rc-brow { display: flex; align-items: center; gap: 10px; }
+.rc-bcol { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.rc-bhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.rc-bhead .ci-name { font-weight: 700; font-size: 12px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-bhead .ci-size { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rc-bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.rc-bar > span { display: block; height: 100%; min-width: 2px; background: var(--accent); border-radius: 3px; }
+.rc-brow > .secondary { flex: 0 0 auto; }
 
 /* Cache-download progress modal: a spinning "spindle" of dots + a progress bar. */
 .cache-modal { width: min(440px, 100%); text-align: center; }

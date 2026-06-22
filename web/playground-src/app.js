@@ -1585,10 +1585,35 @@ self.onmessage = function (e) {
     const t = $("rangeCacheToggle"); if (t) t.checked = !!state.rangeCacheOn;
     const info = $("rangeCacheInfo");
     if (info) info.textContent = state.rangeCacheOn
-      ? "On — fetched byte ranges (rete, DuckDB and SQLite) are saved to IndexedDB and reused after a reload. Toggling recreates the query engines."
-      : "Off — the lazy backends keep fetched bytes only for this session; a reload re-fetches. Turn on to persist ranges across reloads (experimental).";
+      ? "On — fetched byte ranges (rete, DuckDB and SQLite) are saved to IndexedDB and reused after a reload. They persist across browser sessions until you clear them. Toggling recreates the query engines."
+      : "Off — the lazy backends keep fetched bytes only for this session; a reload re-fetches. Turn on to persist ranges across reloads and sessions (experimental).";
+    const items = await rangeCacheBreakdown();
+    const totalBytes = items.reduce((a, m) => a + (m.bytes || 0), 0);
     const sz = $("rangeCacheSize");
-    if (sz) sz.textContent = "Range cache: " + formatBytes(await rangeCacheSize());
+    if (sz) sz.textContent = "Range cache: " + formatBytes(totalBytes) + (items.length ? ` · ${items.length} file(s)` : "");
+    const list = $("rangeCacheList");
+    if (!list) return;
+    if (!items.length) {
+      list.innerHTML = `<p class="cache-empty">${state.rangeCacheOn
+        ? "No ranges cached yet — query a remote-lazy dataset and the byte ranges it touches are saved here, one row per file with how much of it you hold."
+        : "Turn this on, then query a remote-lazy dataset: the ranges it fetches will be listed here per file, with the share of each file cached."}</p>`;
+      return;
+    }
+    items.sort((a, b) => b.bytes - a.bytes);
+    list.innerHTML = items.map((m) => {
+      const pct = m.total ? Math.min(100, (m.bytes / m.total) * 100) : 0;
+      const pctTxt = m.total ? (pct >= 9.95 ? pct.toFixed(0) : pct.toFixed(1)) + "%" : "size unknown";
+      const size = formatBytes(m.bytes) + (m.total ? " / " + formatBytes(m.total) : "") + " · " + pctTxt;
+      return `<div class="rc-brow"><div class="rc-bcol">` +
+        `<div class="rc-bhead"><span class="ci-name" title="${esc(m.key)}">${esc(rcLabelForKey(m.key))}</span>` +
+        `<span class="ci-size">${esc(size)}</span></div>` +
+        `<div class="rc-bar"><span style="width:${pct.toFixed(1)}%"></span></div></div>` +
+        `<button type="button" class="secondary" data-rcdel="${esc(m.key)}">Clear</button></div>`;
+    }).join("");
+    list.querySelectorAll("[data-rcdel]").forEach((b) => b.onclick = async () => {
+      await clearRangeCacheKey(b.dataset.rcdel);
+      renderRangeCache();
+    });
   }
   // ?workers=N override for the fetch-worker pool (1..32; null = auto from cores).
   function parallelWorkerCount() {
@@ -1899,20 +1924,61 @@ self.onmessage = function (e) {
       r.onerror = () => rej(r.error);
     });
   }
-  // Total bytes held by the incremental range cache (summed from rangeMeta).
-  function rangeCacheSize() {
-    return idbOpen().then((db) => new Promise((res) => {
-      let total = 0; const t = db.transaction(RMETA).objectStore(RMETA).openCursor();
-      t.onsuccess = (e) => { const c = e.target.result; if (c) { total += (c.value && c.value.bytes) || 0; c.continue(); } else res(total); };
-      t.onerror = () => res(0);
-    })).catch(() => 0);
-  }
   function clearRangeCache() {
     return idbOpen().then((db) => new Promise((res) => {
       const t = db.transaction([RANGES, RMETA], "readwrite");
       t.objectStore(RANGES).clear(); t.objectStore(RMETA).clear();
       t.oncomplete = () => res(); t.onerror = () => res();
     })).catch(() => {});
+  }
+  // Per-file breakdown of the range cache: one row per cached .rete (its key is
+  // the file's origin+path), with how many bytes of it are held vs its total
+  // size. Read from rangeMeta, which the worker shim maintains. This is the
+  // IndexedDB-backed (persistent) cache — it survives reloads and sessions.
+  function rangeCacheBreakdown() {
+    return idbOpen().then((db) => new Promise((res) => {
+      const out = []; const t = db.transaction(RMETA).objectStore(RMETA).openCursor();
+      t.onsuccess = (e) => {
+        const c = e.target.result;
+        if (c) { const v = c.value || {}; out.push({ key: c.key, bytes: v.bytes || 0, total: v.total || 0, blocks: (v.blocks || []).length }); c.continue(); }
+        else res(out);
+      };
+      t.onerror = () => res(out);
+    })).catch(() => []);
+  }
+  // Drop one file's ranges: delete its blocks (listed in its rangeMeta entry) and
+  // the meta row, leaving other datasets' cached ranges intact.
+  function clearRangeCacheKey(key) {
+    return idbOpen().then((db) => new Promise((res) => {
+      const g = db.transaction(RMETA).objectStore(RMETA).get(key);
+      g.onsuccess = () => {
+        const blocks = (g.result && g.result.blocks) || [];
+        const tx = db.transaction([RANGES, RMETA], "readwrite");
+        const rs = tx.objectStore(RANGES);
+        blocks.forEach((b) => { try { rs.delete(key + "#" + b); } catch (e) { /* ignore */ } });
+        tx.objectStore(RMETA).delete(key);
+        tx.oncomplete = () => res(); tx.onerror = () => res();
+      };
+      g.onerror = () => res();
+    })).catch(() => {});
+  }
+  // Map a range-cache key (a file's origin+path) back to a friendly dataset
+  // label. The shim keys by origin+pathname; mirror that here over every catalog
+  // dataset's resolved URL, then fall back to the bare filename.
+  function rcUrlKey(url) {
+    try { const u = new URL(url, location.href); return u.origin + u.pathname; }
+    catch (e) { const s = String(url), q = s.indexOf("?"); return q < 0 ? s : s.slice(0, q); }
+  }
+  let _rcDsByKey = null;
+  function rcLabelForKey(key) {
+    if (!_rcDsByKey) {
+      _rcDsByKey = new Map();
+      (CATALOG.datasets || []).forEach((d) => { try { _rcDsByKey.set(rcUrlKey(remoteUrlFor(d.key)), d.key); } catch (e) { /* skip */ } });
+    }
+    const ds = _rcDsByKey.get(key);
+    if (ds) return dsShortLabel(ds);
+    const slash = String(key).lastIndexOf("/");
+    return slash >= 0 ? String(key).slice(slash + 1) : String(key);
   }
   function idbReq(store, mode, fn) {
     return idbOpen().then((db) => new Promise((res, rej) => {
@@ -4322,8 +4388,10 @@ self.onmessage = function (e) {
     });
     $("clearCacheAll").onclick = async () => {
       await idbClearAll();
+      await clearRangeCache(); // "Clear all" wipes the persistent ranges too
       freeExploreEngines();
       renderCacheList();
+      renderRangeCache();
       renderCacheCtl();
     };
     $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };

@@ -134,8 +134,17 @@ re-fetches almost nothing. Two layers:
 
 `RemoteGraph.stats()` returns the session's cumulative `{ fileLength, bytes,
 requests }`; the worker diffs successive calls to report one query's physical
-traffic versus the running session total. Reuse across **page reloads** — an
-IndexedDB block store keyed by the file's content hash — is future work.
+traffic versus the running session total.
+
+- **Across reloads and sessions — an opt-in persistent range cache.** The
+  playground's **Settings → Persist fetched ranges across reloads** toggle installs
+  a tiny `XMLHttpRequest` shim in each engine worker that mirrors fetched bytes
+  into IndexedDB in 1 MiB blocks (keyed by the file's origin + path) and warms them
+  back on the next load — so a reload re-fetches nothing already held, and the
+  cache survives browser sessions until cleared. Settings shows a **per-file
+  breakdown** — each cached `.rete` with how much of it is held (e.g. *16 MB /
+  1.04 GB · 1.6%*) and a fill bar — plus per-file and global **Clear**. It is off
+  by default, so the default read path is byte-identical with the shim absent.
 
 **Host CORS, in practice.** Range-querying from the browser needs a host that
 serves the bytes *directly* to a cross-origin browser request. A plain static

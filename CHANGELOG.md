@@ -55,5 +55,8 @@ work; PR numbers reference [github.com/caviri/rete](https://github.com/caviri/re
   the resident schema card) and search entities by label (lazy over HTTP range on
   remote graphs), with a **values ›** faceted drill that lists a predicate's
   distinct objects — IRIs resolved to labels, cached after the first read.
+- Playground **Settings** now shows a **per-file breakdown** of the opt-in
+  persistent (IndexedDB) range cache — each cached `.rete` with the share of the
+  file held and a fill bar, plus per-file Clear; "Clear all" now also wipes ranges.
 - Profilers: `rete-bench --build-mem` (build memory) and `--query-mem`
   (query/serialization memory).

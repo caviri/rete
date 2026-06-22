@@ -646,6 +646,7 @@ __PLAYGROUND_CSS__
         <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>
         <p class="microcopy" id="rangeCacheInfo"></p>
         <div class="rc-line"><span id="rangeCacheSize" class="microcopy"></span><button id="clearRangeCacheBtn" class="ghost" type="button">Clear range cache</button></div>
+        <div id="rangeCacheList" class="rc-breakdown"></div>
       </section>
       <h4 class="rc-subhead">Whole-file caches</h4>
       <p class="microcopy">Companion files cached locally in your browser (IndexedDB). The lazy backends fetch only what a query touches; <b>Cache locally</b> stores the whole file so it survives reloads. <span id="cacheTotal"></span></p>
