@@ -177,7 +177,6 @@ __PLAYGROUND_CSS__
             <h1>SPARQL Console</h1>
             <p class="microcopy">Default path for exact queries, summary-safe progressive queries, and graph rendering.</p>
           </div>
-          <button id="decodeToggle" type="button" class="ed-tool" aria-pressed="false" title="Float a human-readable label over each IRI in the query. Purely visual — it never changes what the query does.">🏷 Labels</button>
         </div>
         <div id="exampleQuick" class="ex-quick" aria-label="Example suggestions"></div>
         <div id="exampleDesc" class="ex-desc" aria-live="polite"></div>
@@ -189,6 +188,7 @@ __PLAYGROUND_CSS__
             <div id="efResults" class="ef-results"></div>
           </aside>
         </div>
+        <div class="console-controls">
         <div id="fedBar" class="fed-bar">
           <span class="fed-label" title="Run this query across more than one source and merge the results (UNION + dedup), each fetched lazily.">Sources</span>
           <div id="fedChips" class="fed-chips"></div>
@@ -244,6 +244,11 @@ __PLAYGROUND_CSS__
             </select>
           </label>
           <button id="strategyHelp" type="button" class="help-button" title="What do these strategies do?" aria-label="Explain the evaluation strategies">?</button>
+          <label class="switch-ctl" id="decodeSwitch" title="Show a human-readable label beside each IRI in the query. Purely visual — it never changes what the query does.">
+            <input type="checkbox" id="decodeToggle" checked />
+            <span class="switch" aria-hidden="true"></span>
+            <span class="switch-txt">🏷 Labels</span>
+          </label>
           <label id="roundWrap" class="hidden">
             <span>Round</span>
             <input id="round" type="number" min="0" placeholder="auto" />
@@ -252,6 +257,7 @@ __PLAYGROUND_CSS__
           <span id="qmeta" class="run-meta run-right"></span>
           <button id="reqLogBtn" type="button" class="req-log-btn hidden" title="Inspect the byte-range requests this query made">⊞ requests</button>
           <button id="run" type="button">Run Query</button>
+        </div>
         </div>
       </div>
 

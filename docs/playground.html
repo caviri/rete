@@ -1112,6 +1112,28 @@ textarea {
   margin-left: auto;
 }
 
+/* One-row console controls: Sources + Output/Strategy/Labels/Run on a single
+   line when the screen allows it, wrapping to stacked rows when it doesn't. */
+.console-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 22px; margin-top: 10px; }
+.console-controls .fed-bar,
+.console-controls .action-row { margin-top: 0; }
+.console-controls .fed-bar { flex: 0 1 auto; }
+.console-controls .action-row { flex: 1 1 380px; }
+
+/* A real toggle switch (the Labels control). */
+.switch-ctl { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+  font-size: 12px; font-weight: 650; color: var(--ink); white-space: nowrap; padding-bottom: 3px; }
+.switch-ctl > input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch-ctl .switch { position: relative; flex: 0 0 auto; width: 34px; height: 19px; border-radius: 999px;
+  background: var(--line-strong, #c5d2cc); transition: background .15s ease; }
+.switch-ctl .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .28); transition: transform .15s ease; }
+.switch-ctl > input:checked + .switch { background: var(--accent); }
+.switch-ctl > input:checked + .switch::after { transform: translateX(15px); }
+.switch-ctl > input:focus-visible + .switch { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px rgba(20, 125, 105, .45); }
+.switch-ctl.loading::after { content: ""; display: inline-block; width: 11px; height: 11px;
+  border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spindle-spin .7s linear infinite; }
+
 /* --- Federation: run a query across several sources (multi-source SPARQL) --- */
 .fed-bar {
   display: flex;
@@ -2383,7 +2405,6 @@ td.lit { color: var(--ink); }
             <h1>SPARQL Console</h1>
             <p class="microcopy">Default path for exact queries, summary-safe progressive queries, and graph rendering.</p>
           </div>
-          <button id="decodeToggle" type="button" class="ed-tool" aria-pressed="false" title="Float a human-readable label over each IRI in the query. Purely visual — it never changes what the query does.">🏷 Labels</button>
         </div>
         <div id="exampleQuick" class="ex-quick" aria-label="Example suggestions"></div>
         <div id="exampleDesc" class="ex-desc" aria-live="polite"></div>
@@ -2395,6 +2416,7 @@ td.lit { color: var(--ink); }
             <div id="efResults" class="ef-results"></div>
           </aside>
         </div>
+        <div class="console-controls">
         <div id="fedBar" class="fed-bar">
           <span class="fed-label" title="Run this query across more than one source and merge the results (UNION + dedup), each fetched lazily.">Sources</span>
           <div id="fedChips" class="fed-chips"></div>
@@ -2450,6 +2472,11 @@ td.lit { color: var(--ink); }
             </select>
           </label>
           <button id="strategyHelp" type="button" class="help-button" title="What do these strategies do?" aria-label="Explain the evaluation strategies">?</button>
+          <label class="switch-ctl" id="decodeSwitch" title="Show a human-readable label beside each IRI in the query. Purely visual — it never changes what the query does.">
+            <input type="checkbox" id="decodeToggle" checked />
+            <span class="switch" aria-hidden="true"></span>
+            <span class="switch-txt">🏷 Labels</span>
+          </label>
           <label id="roundWrap" class="hidden">
             <span>Round</span>
             <input id="round" type="number" min="0" placeholder="auto" />
@@ -2458,6 +2485,7 @@ td.lit { color: var(--ink); }
           <span id="qmeta" class="run-meta run-right"></span>
           <button id="reqLogBtn" type="button" class="req-log-btn hidden" title="Inspect the byte-range requests this query made">⊞ requests</button>
           <button id="run" type="button">Run Query</button>
+        </div>
         </div>
       </div>
 
@@ -8790,7 +8818,8 @@ self.onmessage = function (e) {
   let decodeBusy = 0;
   function setDecodeLoading(on) {
     const b = $("decodeToggle");
-    if (b) b.classList.toggle("loading", !!on);
+    const wrap = b && b.closest && b.closest(".switch-ctl");
+    if (wrap) wrap.classList.toggle("loading", !!on);
   }
   function parseLabelRows(res) {
     const out = {};
@@ -12381,14 +12410,13 @@ self.onmessage = function (e) {
     enhanceEditor("buildText", "ttl");
     setEd("buildText", BUILD_SAMPLE);
 
-    // "Labels" decode toggle: float a human label over each IRI in the query.
+    // "Labels" decode switch — on by default; shows a human-label chip beside
+    // each IRI in the query. The checkbox is `checked` in the HTML, so enable
+    // decode to match on first mount.
     const decodeBtn = $("decodeToggle");
     if (decodeBtn && window.PlaygroundEditor) {
-      decodeBtn.onclick = () => {
-        const on = window.PlaygroundEditor.toggleDecode("q");
-        decodeBtn.classList.toggle("active", on);
-        decodeBtn.setAttribute("aria-pressed", on ? "true" : "false");
-      };
+      decodeBtn.onchange = () => window.PlaygroundEditor.setDecode("q", decodeBtn.checked);
+      if (decodeBtn.checked) window.PlaygroundEditor.setDecode("q", true);
     }
     // Entity finder panel beside the editor (debounced — a remote search is a
     // range-read round trip, so don't fire one on every keystroke).

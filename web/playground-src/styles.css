@@ -1072,6 +1072,28 @@ textarea {
   margin-left: auto;
 }
 
+/* One-row console controls: Sources + Output/Strategy/Labels/Run on a single
+   line when the screen allows it, wrapping to stacked rows when it doesn't. */
+.console-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 22px; margin-top: 10px; }
+.console-controls .fed-bar,
+.console-controls .action-row { margin-top: 0; }
+.console-controls .fed-bar { flex: 0 1 auto; }
+.console-controls .action-row { flex: 1 1 380px; }
+
+/* A real toggle switch (the Labels control). */
+.switch-ctl { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+  font-size: 12px; font-weight: 650; color: var(--ink); white-space: nowrap; padding-bottom: 3px; }
+.switch-ctl > input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch-ctl .switch { position: relative; flex: 0 0 auto; width: 34px; height: 19px; border-radius: 999px;
+  background: var(--line-strong, #c5d2cc); transition: background .15s ease; }
+.switch-ctl .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .28); transition: transform .15s ease; }
+.switch-ctl > input:checked + .switch { background: var(--accent); }
+.switch-ctl > input:checked + .switch::after { transform: translateX(15px); }
+.switch-ctl > input:focus-visible + .switch { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px rgba(20, 125, 105, .45); }
+.switch-ctl.loading::after { content: ""; display: inline-block; width: 11px; height: 11px;
+  border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spindle-spin .7s linear infinite; }
+
 /* --- Federation: run a query across several sources (multi-source SPARQL) --- */
 .fed-bar {
   display: flex;

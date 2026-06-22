@@ -537,7 +537,8 @@ self.onmessage = function (e) {
   let decodeBusy = 0;
   function setDecodeLoading(on) {
     const b = $("decodeToggle");
-    if (b) b.classList.toggle("loading", !!on);
+    const wrap = b && b.closest && b.closest(".switch-ctl");
+    if (wrap) wrap.classList.toggle("loading", !!on);
   }
   function parseLabelRows(res) {
     const out = {};
@@ -4128,14 +4129,13 @@ self.onmessage = function (e) {
     enhanceEditor("buildText", "ttl");
     setEd("buildText", BUILD_SAMPLE);
 
-    // "Labels" decode toggle: float a human label over each IRI in the query.
+    // "Labels" decode switch — on by default; shows a human-label chip beside
+    // each IRI in the query. The checkbox is `checked` in the HTML, so enable
+    // decode to match on first mount.
     const decodeBtn = $("decodeToggle");
     if (decodeBtn && window.PlaygroundEditor) {
-      decodeBtn.onclick = () => {
-        const on = window.PlaygroundEditor.toggleDecode("q");
-        decodeBtn.classList.toggle("active", on);
-        decodeBtn.setAttribute("aria-pressed", on ? "true" : "false");
-      };
+      decodeBtn.onchange = () => window.PlaygroundEditor.setDecode("q", decodeBtn.checked);
+      if (decodeBtn.checked) window.PlaygroundEditor.setDecode("q", true);
     }
     // Entity finder panel beside the editor (debounced — a remote search is a
     // range-read round trip, so don't fire one on every keystroke).
