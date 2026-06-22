@@ -41,7 +41,12 @@
     fedGraphs: new Map(),
     // The last successful query result, kept so switching the Output type
     // re-renders it in the new view instead of re-running the query.
-    lastResult: null
+    lastResult: null,
+    // Find-a-term modal: the chosen label predicate ("auto" or a single IRI),
+    // and the predicate currently drilled into for a faceted value browse
+    // ({iri, label}) or null when showing the term list.
+    labelProp: "auto",
+    facet: null
   };
 
   const RDF_TYPE = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
@@ -629,6 +634,15 @@ self.onmessage = function (e) {
       `<span class="ef-label">${esc(label || localName(iri))}</span>` +
       `<span class="ef-iri"><span class="ef-kind ef-${kind}">${esc(kind)}</span> ${esc(localName(iri))}</span></button>`;
   }
+  // A schema-term row: the insert button, plus (for predicates) a "values ›"
+  // drill button that opens a faceted browse of the values that predicate takes.
+  function efTermRowHtml(t) {
+    const item = efItemHtml(t.iri, t.label, t.kind);
+    if (t.kind !== "predicate") return item;
+    return `<div class="ef-row">${item}` +
+      `<button type="button" class="ef-drill" data-iri="${esc(t.iri)}" data-label="${esc(t.label || localName(t.iri))}"` +
+      ` title="Browse the values this predicate takes — cached after the first read">values ›</button></div>`;
+  }
   // Tier 1: classes + predicates from the cached schema (the card), matched by
   // their hint label, local name, or IRI substring — instant, no graph reads.
   function searchSchemaTerms(q, limit) {
@@ -670,7 +684,7 @@ self.onmessage = function (e) {
     let html = "";
     if (schemaTerms.length) {
       html += `<div class="ef-group">Schema — classes &amp; predicates${browse ? " · type to filter" : ""}</div>` +
-        schemaTerms.map((t) => efItemHtml(t.iri, t.label, t.kind)).join("");
+        schemaTerms.map((t) => efTermRowHtml(t)).join("");
     }
     if (browse) {
       html += schemaTerms.length
@@ -688,6 +702,90 @@ self.onmessage = function (e) {
     $$("#efResults .ef-item").forEach((b) => {
       b.onclick = () => { insertAtCaret("q", "<" + b.dataset.iri + ">"); closeFinder(); };
     });
+    $$("#efResults .ef-drill").forEach((b) => {
+      b.onclick = (e) => { e.stopPropagation(); openFacet(b.dataset.iri, b.dataset.label); };
+    });
+  }
+  // ── Faceted value browse ─────────────────────────────────────────────────
+  // Click "values ›" on a predicate to see the distinct objects it takes (with
+  // human labels), then click one to drop it into the query. Each predicate's
+  // values are read once and cached, so re-opening is instant — exactly the
+  // "propose a predicate, then the values within it" flow. Works embedded
+  // (synchronous) and remote-lazy (a single range-read SPARQL round trip).
+  const facetCache = new Map(); // predicate IRI -> [{iri|lit, label}]
+  function facetValueQuery(pred) {
+    return "SELECT DISTINCT ?v ?l WHERE {\n" +
+      "  ?s <" + pred + "> ?v .\n" +
+      "  OPTIONAL { ?v ?lp ?l . VALUES ?lp { " + labelPredicates() + " } FILTER(isLiteral(?l)) }\n" +
+      "} LIMIT 120";
+  }
+  function parseFacetRows(res) {
+    const out = [], seen = new Set();
+    (res.rows || []).forEach((r) => {
+      const v = String(r.v || "");
+      if (!v || seen.has(v)) return;
+      seen.add(v);
+      if (v.startsWith("<") && v.endsWith(">")) {
+        const iri = v.slice(1, -1);
+        const lm = String(r.l || "").match(/^"((?:\\.|[^"\\])*)"/);
+        out.push({ iri, label: (lm ? lm[1] : "") || localName(iri) });
+      } else {
+        const lm = v.match(/^"((?:\\.|[^"\\])*)"/);
+        out.push({ lit: v, label: lm ? lm[1] : v });
+      }
+    });
+    return out.slice(0, 80);
+  }
+  function openFacet(iri, label) {
+    state.facet = { iri, label: label || localName(iri) };
+    const inp = $("efInput"); if (inp) inp.value = "";
+    const cached = facetCache.get(iri);
+    if (cached) { renderFacet(cached, false); return; }
+    renderFacet([], true);
+    const seq = ++efSeq;
+    const apply = (vals) => {
+      facetCache.set(iri, vals);
+      if (state.facet && state.facet.iri === iri && seq === efSeq) renderFacet(vals, false);
+    };
+    if (state.remote) {
+      remoteSparql(state.remote.url, facetValueQuery(iri), "table")
+        .then((out) => apply(parseFacetRows(JSON.parse(out.json))))
+        .catch(() => { if (state.facet && state.facet.iri === iri && seq === efSeq) renderFacet([], false); });
+      return;
+    }
+    let vals = [];
+    if (state.graph) { try { vals = parseFacetRows(JSON.parse(state.graph.query(facetValueQuery(iri), "table"))); } catch (_e) { vals = []; } }
+    apply(vals);
+  }
+  function renderFacet(values, loading) {
+    const box = $("efResults"); if (!box) return;
+    const f = state.facet || {};
+    const q = (($("efInput") || {}).value || "").trim().toLowerCase();
+    let shown = values;
+    if (q) shown = values.filter((x) => (x.label || "").toLowerCase().includes(q) || String(x.iri || x.lit || "").toLowerCase().includes(q));
+    let html = `<button type="button" class="ef-back" id="efBack">‹ Back to terms</button>`;
+    html += `<div class="ef-group">Values of <span class="ef-facet-pred">${esc(f.label || "")}</span></div>`;
+    if (loading) {
+      html += `<div class="ef-loading"><span class="spindle"></span> reading values${state.remote ? " over range reads" : ""}…</div>`;
+    } else if (!shown.length) {
+      html += `<p class="ef-empty">${values.length ? "No value matches your filter." : "No values found for this predicate."}</p>`;
+    } else {
+      html += shown.slice(0, 80).map((x) => {
+        if (x.iri) return efItemHtml(x.iri, x.label, "entity");
+        return `<button type="button" class="ef-item" data-lit="${esc(x.lit)}" title="${esc(x.lit)}">` +
+          `<span class="ef-label">${esc(x.label)}</span>` +
+          `<span class="ef-iri"><span class="ef-kind ef-literal">literal</span> ${esc(x.lit)}</span></button>`;
+      }).join("");
+    }
+    box.innerHTML = html;
+    const back = $("efBack");
+    if (back) back.onclick = () => { state.facet = null; const inp = $("efInput"); if (inp) inp.value = ""; efSearch(); };
+    $$("#efResults .ef-item").forEach((b) => {
+      b.onclick = () => {
+        insertAtCaret("q", b.dataset.iri ? ("<" + b.dataset.iri + ">") : b.dataset.lit);
+        closeFinder();
+      };
+    });
   }
   // Two-tier search: schema terms (instant, cached) + entities by label
   // (synchronous for embedded; a lazy worker range-read for remote, with a
@@ -697,6 +795,13 @@ self.onmessage = function (e) {
   function efSearch() {
     const inp = $("efInput");
     if (!inp) return;
+    // In faceted (value-drill) mode the input filters the loaded values
+    // client-side; openFacet owns the (cached) read, so don't re-fetch here.
+    if (state.facet) {
+      const cached = facetCache.get(state.facet.iri);
+      renderFacet(cached || [], !cached);
+      return;
+    }
     const q = (inp.value || "").trim();
     ensureSchemaForFinder();
     const schemaTerms = searchSchemaTerms(q, q ? 14 : 80);
@@ -717,8 +822,9 @@ self.onmessage = function (e) {
   }
   function openFinder() {
     $("finderModal").classList.remove("hidden");
+    state.facet = null; // always open on the term list
     const inp = $("efInput");
-    if (inp) { try { inp.focus(); inp.select(); } catch (_e) { /* ignore */ } }
+    if (inp) { try { inp.value = ""; inp.focus(); } catch (_e) { /* ignore */ } }
     efSearch();
   }
   function closeFinder() { $("finderModal").classList.add("hidden"); }
@@ -4328,6 +4434,7 @@ self.onmessage = function (e) {
       labelProp.onchange = () => {
         state.labelProp = labelProp.value;
         if (window.PlaygroundEditor && PlaygroundEditor.clearLabels) PlaygroundEditor.clearLabels("q");
+        facetCache.clear(); // cached value labels were read with the old predicate
         efSearch();
       };
     }

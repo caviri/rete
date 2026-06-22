@@ -265,3 +265,21 @@ HTTP range (a 120 MB / 1 GB graph stays interactive because only the touched
 tiles cross the wire), caches those reads across queries (above), and federates a
 query across **several** sources via the SPARQL console's **+ Add source** button
 — see [Federated queries](federation.md#in-the-playground).
+
+### Find a term
+
+The console's **🔎 Find a term** button opens a picker so you don't have to know
+a graph's IRIs by heart. It opens on the schema card's **classes and predicates**
+(instant, from the resident card) and, as you type, also searches **entities by
+label** — synchronously for an embedded graph, and over HTTP-range reads (with a
+spinner) for a remote-lazy one, using the bounded label index. Click any result
+to drop its `<IRI>` at the cursor.
+
+Each predicate row also carries a **values ›** drill: click it for a faceted
+browse of the distinct objects that predicate takes — IRIs resolved to their
+human labels, literals shown verbatim — then click one to insert it into the
+query. The values for a predicate are read once and cached, so re-opening is
+instant; on a remote graph the read is a single bounded range query. The **Label**
+selector at the top chooses which predicate is read as the human label
+(`rdfs:label`, `skos:prefLabel`, `schema:name`, … or `auto`), and the same choice
+drives the editor's inline **Labels** decode chips.

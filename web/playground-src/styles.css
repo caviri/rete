@@ -1018,6 +1018,23 @@ textarea {
 .ef-kind.ef-class { background: #e3f3ec; color: #0b6f4e; }
 .ef-kind.ef-predicate { background: #ece3f6; color: #5a3e86; }
 .ef-kind.ef-entity { background: #fbf0d8; color: #8a5a12; }
+.ef-kind.ef-literal { background: #e6eef6; color: #2c5677; }
+/* Faceted value browse: a predicate row carries a "values ›" drill button; the
+   facet view adds a "‹ Back to terms" link above the values. */
+.ef-row { display: flex; align-items: stretch; gap: 4px; }
+.ef-row .ef-item { flex: 1 1 auto; min-width: 0; }
+.ef-drill {
+  flex: 0 0 auto; align-self: center; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); color: var(--muted); font-size: 10.5px; font-weight: 700;
+  padding: 3px 7px; cursor: pointer; white-space: nowrap;
+}
+.ef-drill:hover { border-color: var(--accent); color: var(--accent); }
+.ef-back {
+  align-self: flex-start; border: none; background: transparent; color: var(--accent);
+  font-size: 11.5px; font-weight: 700; cursor: pointer; padding: 2px 2px 0; margin-bottom: 2px;
+}
+.ef-back:hover { text-decoration: underline; }
+.ef-facet-pred { color: var(--ink); text-transform: none; letter-spacing: 0; font-weight: 800; }
 /* Find-a-term modal (button + modal replaced the sidebar finder). */
 .finder-modal { width: min(620px, 100%); height: 72vh; max-height: 72vh; display: flex; flex-direction: column; }
 .finder-modal .modal-head { gap: 10px; align-items: center; }

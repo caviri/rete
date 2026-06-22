@@ -51,5 +51,9 @@ work; PR numbers reference [github.com/caviri/rete](https://github.com/caviri/re
 ### Tooling
 - `rete` CLI (build, inspect, query, reason, shacl, federate, search, …).
 - WASM browser client + the static playground.
+- Playground **Find a term** picker: browse a graph's classes/predicates (from
+  the resident schema card) and search entities by label (lazy over HTTP range on
+  remote graphs), with a **values ›** faceted drill that lists a predicate's
+  distinct objects — IRIs resolved to labels, cached after the first read.
 - Profilers: `rete-bench --build-mem` (build memory) and `--query-mem`
   (query/serialization memory).
