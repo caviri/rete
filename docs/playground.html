@@ -5633,27 +5633,34 @@ window.RETE_PLAYGROUND_CATALOG = {
   },
   examples: {
     // CauseNet-Full (256M triples / 4.56 GB) is the HEAVY lazy dataset: its
-    // dictionary holds 24.4M source sentences + 12.2M concepts, so every query
-    // pulls many dictionary chunks. The MB/time on each tip are real, benchmarked
-    // cold over HTTP range (`rete sparql-url`); a warm browser session (resident
-    // dictionary) is faster after the first query. Concepts are
-    // https://causenet.org/concept/<label>; cn: = https://causenet.org/ontology#.
+    // dictionary holds 24.4M source sentences + 12.2M concepts. CauseNet models
+    // POSITIVE causation only (cn:causes = "X causes Y" mined from text); there is
+    // no inhibitory/negative relation, so cn:support (the source count on the
+    // reified cn:CausalRelation) is the strong-vs-weak / confidence signal we surface
+    // as a 2nd column. The multi-column examples read the reified relation
+    // (cn:cause/effect/support), so they cost a bit more lazily than the bare
+    // cn:causes edge. cn: = https://causenet.org/ontology#; concepts are
+    // https://causenet.org/concept/<label>. (The small embedded `causal` dataset has
+    // a protective ex:reduces relation if you want true positive-vs-negative.)
     "causenet-full": [
-      {"family": "Select", "label": "What does smoking cause?", "view": "table",
-       "tip": "Direct cause->effect edges out of the 'smoking' concept along cn:causes (a bound-subject lazy read). Benchmarked lazy cost: ~57 MB of the 4.56 GB fetched, 49 range requests, ~18 s cold over HTTP range. Swap the IRI for /stress, /obesity or /war to follow a different cause.",
-       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?effect WHERE {\n  <https://causenet.org/concept/smoking> cn:causes ?effect\n}\nLIMIT 50"},
-      {"family": "Select", "label": "What causes obesity?", "view": "table",
-       "tip": "The reverse direction - every concept that points to 'obesity' via cn:causes, routed through the object-first index. Benchmarked lazy cost: ~95 MB over HTTP range, ~22 s cold. cn:causes is the direct edge; the reified claim uses cn:cause / cn:effect instead.",
-       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?cause WHERE {\n  ?cause cn:causes <https://causenet.org/concept/obesity>\n}\nLIMIT 50"},
+      {"family": "Select", "label": "What does smoking cause? (effect + evidence)", "view": "table",
+       "tip": "Everything 'smoking' is claimed to cause, each with cn:support = how many source sentences back the claim, so the best-evidenced effects (cancer, heart disease, death) sort to the top. Two columns: effect + support. Reads the reified cn:CausalRelation, so a bit heavier than the bare-edge version (which was ~57 MB lazy). Swap the IRI for /stress, /obesity, /war.",
+       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?effect ?support WHERE {\n  ?r cn:cause <https://causenet.org/concept/smoking> ;\n     cn:effect ?effect ;\n     cn:support ?support\n}\nORDER BY DESC(?support)\nLIMIT 50"},
+      {"family": "Select", "label": "What causes obesity? (cause + evidence)", "view": "table",
+       "tip": "The reverse direction with evidence: every concept claimed to cause 'obesity', ranked by source count. Columns: cause + support. Swap the effect IRI for /diabetes, /cancer or /depression to mine a different outcome.",
+       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?cause ?support WHERE {\n  ?r cn:effect <https://causenet.org/concept/obesity> ;\n     cn:cause ?cause ;\n     cn:support ?support\n}\nORDER BY DESC(?support)\nLIMIT 50"},
       {"family": "Aggregate", "label": "Best-evidenced causes of cancer", "view": "table",
-       "tip": "Each claim is a reified cn:CausalRelation whose cn:support is its TRUE number of source sentences. This ranks the causes of 'cancer' by how much web evidence backs them - bind cn:effect, then read cn:cause + cn:support. Benchmarked lazy cost: ~114 MB over HTTP range, ~42 s cold.",
+       "tip": "Causes of 'cancer' ranked by how much web evidence backs each claim (cn:support = true source count). Columns: cause + support. Benchmarked lazy cost on the lean file: ~114 MB over HTTP range, ~42 s cold.",
        "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?cause ?support WHERE {\n  ?r cn:effect <https://causenet.org/concept/cancer> ;\n     cn:cause ?cause ;\n     cn:support ?support\n}\nORDER BY DESC(?support)\nLIMIT 25"},
+      {"family": "Path", "label": "Causal chain: smoking -> X -> Y", "view": "table",
+       "tip": "A two-step chain over cn:causes: what smoking causes (column 1), and what each of those in turn causes (column 2) - tracing how one cause cascades. For full transitive closure use the Reach tab on cn:causes; this 2-hop join stays bounded.",
+       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?step1 ?step2 WHERE {\n  <https://causenet.org/concept/smoking> cn:causes ?step1 .\n  ?step1 cn:causes ?step2\n}\nLIMIT 50"},
+      {"family": "Select", "label": "Effects + evidence sentence (HEAVY, 3 cols)", "view": "table",
+       "tip": "Three columns - effect, support, and a REAL source sentence CauseNet mined the claim from (cn:hasSource -> cn:sentence). The richest view of a causal claim. HEAVIEST example: 'smoking' has thousands of sources, so it fetches 100s of MB over HTTP range; keep the LIMIT low or pick a narrower cause.",
+       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?effect ?support ?sentence WHERE {\n  ?r cn:cause <https://causenet.org/concept/smoking> ;\n     cn:effect ?effect ;\n     cn:support ?support ;\n     cn:hasSource ?s .\n  ?s cn:sentence ?sentence\n}\nLIMIT 10"},
       {"family": "Construct", "label": "Map smoking's effects (graph)", "view": "graph",
-       "tip": "CONSTRUCT a small cause->effect subgraph around 'smoking' for the graph view - the same selective cn:causes read as the table query (~57 MB lazy), rendered as nodes + arrows. Each arrow is a mined causal claim from Wikipedia / ClueWeb12.",
-       "q": "PREFIX cn: <https://causenet.org/ontology#>\nCONSTRUCT { <https://causenet.org/concept/smoking> cn:causes ?effect }\nWHERE { <https://causenet.org/concept/smoking> cn:causes ?effect }\nLIMIT 40"},
-      {"family": "Select", "label": "Evidence sentences behind a claim (HEAVY)", "view": "table",
-       "tip": "CauseNet keeps every source sentence it mined a claim from (cn:hasSource -> cn:sentence + the cn:pattern that matched it). This pulls the evidence for what smoking causes. HEAVIEST example: a hub like smoking has thousands of sources, so it fetches 400 MB+ over HTTP range - included to show the full provenance the graph preserves. For a snappy read pick one niche relation node instead.",
-       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?effect ?sentence WHERE {\n  ?r cn:cause <https://causenet.org/concept/smoking> ;\n     cn:effect ?effect ;\n     cn:hasSource ?s .\n  ?s cn:sentence ?sentence\n}\nLIMIT 8"}
+       "tip": "CONSTRUCT a small cause->effect subgraph around 'smoking' for the graph view - the selective bare cn:causes read (~57 MB lazy), rendered as nodes + arrows. Each arrow is a mined causal claim from Wikipedia / ClueWeb12.",
+       "q": "PREFIX cn: <https://causenet.org/ontology#>\nCONSTRUCT { <https://causenet.org/concept/smoking> cn:causes ?effect }\nWHERE { <https://causenet.org/concept/smoking> cn:causes ?effect }\nLIMIT 40"}
     ],
     causal: [
       {
