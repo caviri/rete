@@ -836,14 +836,38 @@ impl XhrRangeReader {
 /// Open a remote `.rete` lazily over HTTP range reads, returning the counting
 /// reader (for byte/request stats) and the `Rete`. The seam every `*_url`
 /// task shares with [`sparql_url`].
+/// Auto-tune the block-cache size from the FILE SIZE — known for free at open
+/// from the `Content-Range` of the single `bytes=0-0` request (one byte, no
+/// download; it's what `stats().fileLength` reports). Remote reads are
+/// round-trip-bound, so a bigger block means far fewer requests; benchmarked on
+/// wikidata-1GB: 64 KiB = 262 reqs / 63 s, 256 KiB = 83 / 27 s, 512 KiB = 51 / 19 s.
+/// Bigger files (bigger working sets + dictionaries) get bigger blocks as
+/// multiples of the 64 KiB `DEFAULT_BLOCK`; small files keep over-fetch modest.
+/// Per-query override comes via `RemoteGraph::with_block` (the Settings control).
+fn auto_block(len: u64) -> u64 {
+    const MB: u64 = 1 << 20;
+    let mult: u64 = if len > 100 * MB {
+        8 // 512 KiB — chebi, wikidata-100mb, ohm-full, wikidata-1GB, causenet
+    } else if len > 10 * MB {
+        4 // 256 KiB
+    } else {
+        2 // 128 KiB — small remotes (chemotion, getty-ulan)
+    };
+    mult * DEFAULT_BLOCK
+}
+
 fn open_url(url: &str) -> Result<(std::sync::Arc<CountingReader<XhrRangeReader>>, Rete), JsValue> {
     // `reader` counts the PHYSICAL fetches; a read-through block cache above it
     // turns the query's scattered range reads into a few aligned block fetches
     // (and reuses them) — working over any single-range backend (S3, a CDN),
     // not just a multi-range gateway. The block fetches still go through
-    // `read_many`, so a multi-range host coalesces them further.
+    // `read_many`, so a multi-range host coalesces them further. The block size
+    // is auto-tuned from the file size (known at open, no download).
     let reader = std::sync::Arc::new(CountingReader::new(XhrRangeReader::open(url)?));
-    let cached = std::sync::Arc::new(BlockCacheReader::new(reader.clone(), DEFAULT_BLOCK));
+    let cached = std::sync::Arc::new(BlockCacheReader::new(
+        reader.clone(),
+        auto_block(reader.len()),
+    ));
     let rete = Rete::open_ranged_lazy(cached).map_err(err)?;
     Ok((reader, rete))
 }
