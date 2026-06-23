@@ -2038,6 +2038,9 @@ pre {
   .mode-rail .rail-group { width: auto; flex-basis: 100%; padding: 6px 0 0 2px; }
   .mode-rail .rail-hist { margin-top: 0; }
   .mode-rail .rail-hist::before { display: none; }
+  /* The foot wrapper dissolves so History/Settings flow inline with the wrapped
+     row (no sticky/margin-auto in the horizontal rail). */
+  .mode-rail .rail-foot { display: contents; }
 
   .mode-rail .rail-tip {
     display: none;
@@ -2188,9 +2191,21 @@ pre {
 .lib-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 4px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 9px; align-content: start; }
 
-/* History button pinned to the very bottom of the mode rail (the flexible
-   margin pushes it down), separated from the Inspect group by a divider. */
-.mode-rail .rail-hist { margin-top: auto; }
+/* History + Settings sit at the foot of the rail. The flexible top margin pushes
+   the group to the rail's bottom when there's room; when the (expanded) header
+   leaves too little height and the rail would overflow the viewport, `sticky;
+   bottom` keeps the group above the viewport bottom — so Settings is never pushed
+   below the fold. The paper background masks any mode buttons it overlaps. */
+.mode-rail .rail-foot {
+  margin-top: auto;
+  position: sticky;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  background: var(--paper);
+}
 .mode-rail .rail-hist::before {
   content: ""; position: absolute; top: -8px; left: 6px; right: 6px;
   height: 1px; background: var(--line);

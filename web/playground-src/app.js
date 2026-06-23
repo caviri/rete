@@ -4312,24 +4312,55 @@ self.onmessage = function (e) {
       if (menu && !e.target.closest(".ds-load")) menu.classList.add("hidden");
     });
     // Keep the top bar pinned; the dataset header sticks just below it and
-    // condenses to a single line (title + metadata, no tagline) once scrolled.
+    // condenses to a single line (title + metadata, no tagline) once scrolled —
+    // BUT only when the main work area is tall enough to STAY scrolled after the
+    // header shrinks. Condensing reclaims ~Δpx of height, which shortens the page;
+    // if the content only just overflows the viewport, that shrink clamps scrollY
+    // back across the trigger and the toggle oscillates (the flicker). `.workbench`
+    // height is content-driven and does NOT change when the header condenses (it
+    // only shifts up), so gating on it can't feed the loop — and when it's short,
+    // the header simply never condenses.
     const dsHeader = document.querySelector(".ds-header");
     const topbar = document.querySelector(".topbar");
+    const workbench = document.querySelector(".workbench");
     if (dsHeader) {
-      const setTop = () => {
+      const updateGeometry = () => {
         const tb = topbar ? topbar.offsetHeight : 0;
         dsHeader.style.top = tb + "px";
-        // The mode rail sits just below both (sticky) headers — expose their
-        // combined height PLUS the console-shell's 12px top padding (so this
-        // equals the rail's actual top) for the rail's CSS top/min-height. It
-        // tracks the dataset header as it condenses on scroll.
+        // Expose the rail's top (both sticky headers + the console-shell's 12px top
+        // padding) so the mode rail tracks the header as it condenses.
         document.documentElement.style.setProperty("--rail-top", tb + dsHeader.offsetHeight + 12 + "px");
       };
-      setTop();
-      window.addEventListener("resize", setTop, { passive: true });
-      const onScroll = () => { dsHeader.classList.toggle("condensed", window.scrollY > 10); setTop(); };
-      window.addEventListener("scroll", onScroll, { passive: true });
-      onScroll();
+      let condensed = false;
+      let enoughRoom = false;
+      const measure = () => {
+        // "Enough space in the scrolling main area": the work area alone must be
+        // about a viewport tall, so the page stays scrollable past the trigger even
+        // after the header shrinks. This is measured off the workbench (stable across
+        // condense), never the document height (which the condense itself changes).
+        enoughRoom = !!workbench && workbench.offsetHeight > window.innerHeight - 24;
+      };
+      const apply = () => {
+        const want = enoughRoom && window.scrollY > 10;
+        if (want !== condensed) {
+          condensed = want;
+          dsHeader.classList.toggle("condensed", want);
+          updateGeometry();
+        }
+      };
+      measure();
+      updateGeometry();
+      apply();
+      window.addEventListener("scroll", apply, { passive: true });
+      window.addEventListener("resize", () => { measure(); updateGeometry(); apply(); }, { passive: true });
+      // Re-measure once the condense/expand transition settles (final header height).
+      dsHeader.addEventListener("transitionend", updateGeometry);
+      // Rendering results changes the work-area height → re-check whether condensing
+      // is allowed. This fires on real content/size changes, never on a condense
+      // (the workbench's own height is unaffected), so it can't loop.
+      if (workbench && "ResizeObserver" in window) {
+        new ResizeObserver(() => { measure(); apply(); }).observe(workbench);
+      }
     }
     $$("#exploreSeg button").forEach((btn) => {
       btn.onclick = () => setExploreView(btn.dataset.exp);
