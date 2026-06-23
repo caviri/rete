@@ -588,6 +588,9 @@ label.file-button:hover {
   cursor: default;
 }
 
+/* SHACL panel head: the Table/Text view toggle + the (Text-only) format select. */
+.shacl-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
 .console-shell {
   display: grid;
   grid-template-columns: auto minmax(240px, 312px) minmax(0, 1fr);
@@ -2645,14 +2648,20 @@ td.lit { color: var(--ink); }
             <h1>SHACL</h1>
             <p class="microcopy">Validate the loaded graph against Turtle shapes without leaving the static page.</p>
           </div>
-          <label>
-            <span>Format</span>
-            <select id="shaclFormat">
-              <option value="text">Text</option>
-              <option value="json">JSON</option>
-              <option value="ttl">Turtle</option>
-            </select>
-          </label>
+          <div class="shacl-controls">
+            <div id="shaclView" class="segmented" aria-label="SHACL output view">
+              <button type="button" data-view="table" class="active">Table</button>
+              <button type="button" data-view="text">Text</button>
+            </div>
+            <label id="shaclFormatLabel" class="hidden">
+              <span>Format</span>
+              <select id="shaclFormat">
+                <option value="ttl">Turtle</option>
+                <option value="json">JSON</option>
+                <option value="text">Text</option>
+              </select>
+            </label>
+          </div>
         </div>
         <div id="shaclExamples" class="example-list compact"></div>
         <textarea id="shapeText" spellcheck="false"></textarea>
@@ -12267,51 +12276,105 @@ self.onmessage = function (e) {
     setEd("shapeText", list[0].shape);
   }
 
-  function renderShaclJson(report, raw) {
-    if (report.conforms) {
-      return `<div class="banner">Conforms. No validation results.</div><pre>${esc(raw)}</pre>`;
+  // SHACL output: validate once, then view the report as a paginated violations
+  // TABLE (the default) or as RAW TEXT in a chosen serialization. Switching views
+  // and paging never re-validate — paging slices the in-memory report client-side,
+  // and each serialization is run at most once and cached.
+  const SHACL_PAGE = 25;
+  const shaclViewMode = () => state.shaclViewMode || "table";
+
+  // Validate in one serialization (json for the table; the chosen format for text).
+  // Local = synchronous wasm; remote = a single lazy range read. -> { text, meta }.
+  function shaclRunFmt(shapes, fmt) {
+    if (state.remote) {
+      return remoteRead("shacl_url", [state.remote.url, shapes, null, fmt], $("shaclOut"),
+        "Validating shapes over HTTP range…",
+        "SHACL fetches only the shapes' target nodes and their triples — a selective lazy read.")
+        .then((out) => ({ text: out.json, meta: "lazy · over HTTP range" }));
     }
-    const rows = (report.results || []).slice(0, 250).map((r) =>
-      `<tr><td class="iri">${esc(shorten(r.focusNode || ""))}</td><td class="iri">${esc(shorten(r.resultPath || ""))}</td><td>${esc(shorten(r.sourceConstraintComponent || ""))}</td><td>${esc(shorten((r.messages || []).join(" "), 120))}</td></tr>`
-    ).join("");
-    return `<div class="note">Does not conform: ${(report.results || []).length} validation result(s).</div>` +
-      `<table><thead><tr><th>focus</th><th>path</th><th>component</th><th>message</th></tr></thead><tbody>${rows}</tbody></table>`;
+    if (!state.bytes) return Promise.reject(new Error("Load a graph first."));
+    const t0 = performance.now();
+    const text = state.graph.shacl(shapes, null, fmt);
+    return Promise.resolve({ text, meta: `${(performance.now() - t0).toFixed(1)} ms` });
   }
 
-  function renderShaclText(text, fmt, metaSuffix) {
-    if (fmt === "json") {
-      const report = JSON.parse(text);
-      $("shaclOut").innerHTML = renderShaclJson(report, text);
-      $("shaclMeta").textContent = `${report.conforms ? "conforms" : "violations"} | ${metaSuffix}`;
-    } else {
-      $("shaclOut").innerHTML = `<pre>${esc(text)}</pre>`;
-      $("shaclMeta").textContent = `${text.startsWith("conforms: true") ? "conforms" : "report"} | ${metaSuffix}`;
-    }
-    updateResultVisibility();
-  }
   function runShacl() {
     const shapes = $("shapeText").value.trim();
     if (!shapes) return showError("shaclOut", "Enter a SHACL shape.");
-    const fmt = $("shaclFormat").value;
-    // Remote-lazy: validate over HTTP range — shacl_url fetches only the shapes'
-    // target nodes and their triples (worker-routed, like the query path).
-    if (state.remote) {
+    // Fresh run — drop any cached report/text from the previous shapes.
+    state.shaclState = { shapes, page: 0, report: null, meta: "", text: {} };
+    renderShaclView();
+  }
+
+  // Render the active view, validating (and caching) only the serialization it needs.
+  function renderShaclView() {
+    const st = state.shaclState;
+    if (!st) return;
+    const fail = (e) => { $("shaclMeta").textContent = ""; showError("shaclOut", "Validation failed: " + String((e && e.message) || e)); };
+    if (shaclViewMode() === "table") {
+      if (st.report) { renderShaclTable(); return; }
       $("shaclMeta").textContent = "";
-      remoteRead("shacl_url", [state.remote.url, shapes, null, fmt], $("shaclOut"),
-        "Validating shapes over HTTP range…",
-        "SHACL fetches only the shapes' target nodes and their triples — a selective lazy read.")
-        .then((out) => renderShaclText(out.json, fmt, "lazy · over HTTP range"))
-        .catch((e) => { $("shaclMeta").textContent = ""; showError("shaclOut", "Remote validation failed: " + String((e && e.message) || e)); });
+      shaclRunFmt(st.shapes, "json").then((r) => {
+        try { st.report = JSON.parse(r.text); }
+        catch (e) { showError("shaclOut", "Could not parse the validation report."); return; }
+        st.meta = r.meta; st.page = 0; renderShaclTable();
+      }).catch(fail);
+    } else {
+      const fmt = $("shaclFormat").value;
+      const cached = st.text[fmt];
+      if (cached) { renderShaclTextView(cached.text, fmt, cached.meta); return; }
+      $("shaclMeta").textContent = "";
+      shaclRunFmt(st.shapes, fmt).then((r) => { st.text[fmt] = r; renderShaclTextView(r.text, fmt, r.meta); }).catch(fail);
+    }
+  }
+
+  function renderShaclTextView(text, fmt, meta) {
+    $("shaclOut").innerHTML = `<pre>${esc(text)}</pre>`;
+    const conforms = fmt === "json"
+      ? /"conforms"\s*:\s*true/.test(text)
+      : /^conforms:\s*true|sh:conforms\s+true/im.test(text);
+    $("shaclMeta").textContent = `${conforms ? "conforms" : "report"} | ${meta}`;
+    updateResultVisibility();
+  }
+
+  // The non-conforming report as a client-paginated table (focus / path / severity /
+  // component / message), SHACL_PAGE results per page — Prev/Next just re-slice.
+  function renderShaclTable() {
+    const st = state.shaclState, report = st.report;
+    if (report.conforms) {
+      $("shaclOut").innerHTML = `<div class="banner">Conforms ✓ — no validation results.</div>`;
+      $("shaclMeta").textContent = `conforms | ${st.meta || ""}`;
+      updateResultVisibility();
       return;
     }
-    if (!state.bytes) return showError("shaclOut", "Load a graph first.");
-    const t0 = performance.now();
-    try {
-      renderShaclText(state.graph.shacl(shapes, null, fmt), fmt, `${(performance.now() - t0).toFixed(1)} ms`);
-    } catch (e) {
-      $("shaclMeta").textContent = "";
-      showError("shaclOut", String(e));
-    }
+    const results = report.results || [];
+    const total = results.length;
+    const pages = Math.max(1, Math.ceil(total / SHACL_PAGE));
+    st.page = Math.min(Math.max(st.page, 0), pages - 1);
+    const start = st.page * SHACL_PAGE;
+    const slice = results.slice(start, start + SHACL_PAGE);
+    const localName = (s) => { s = String(s || ""); const m = s.split(/[#/]/); return m[m.length - 1] || s; };
+    const rows = slice.map((r) =>
+      `<tr><td class="iri">${esc(shorten(r.focusNode || ""))}</td>` +
+      `<td class="iri">${esc(shorten(r.resultPath || ""))}</td>` +
+      `<td>${esc(localName(r.resultSeverity || r.severity || ""))}</td>` +
+      `<td>${esc(localName(r.sourceConstraintComponent || ""))}</td>` +
+      `<td>${esc(shorten((r.resultMessage || r.messages || []).join(" "), 180))}</td></tr>`
+    ).join("");
+    const from = total ? start + 1 : 0, to = start + slice.length;
+    $("shaclOut").innerHTML =
+      `<div class="note">Does not conform — ${total.toLocaleString()} validation result(s).</div>` +
+      `<div class="tbl"><table><thead><tr><th>focus</th><th>path</th><th>severity</th><th>component</th><th>message</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+      `<div class="entity-pager">` +
+        `<button type="button" id="shaclPrev" class="secondary"${st.page <= 0 ? " disabled" : ""}>‹ Prev</button>` +
+        `<span class="pager-info">${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} · page ${(st.page + 1).toLocaleString()} / ${pages.toLocaleString()}</span>` +
+        `<button type="button" id="shaclNext" class="secondary"${st.page + 1 >= pages ? " disabled" : ""}>Next ›</button>` +
+      `</div>`;
+    const prev = $("shaclPrev"), next = $("shaclNext");
+    if (prev) prev.onclick = () => { st.page -= 1; renderShaclTable(); };
+    if (next) next.onclick = () => { st.page += 1; renderShaclTable(); };
+    $("shaclMeta").textContent = `${total.toLocaleString()} violation(s) | ${st.meta || ""}`;
+    updateResultVisibility();
   }
 
   function runCoherence() {
@@ -12935,6 +12998,17 @@ self.onmessage = function (e) {
     $("fileInput").onchange = (e) => loadFromFile(e.target.files[0]);
     $("shareBtn").onclick = shareUrl;
     $("shaclRun").onclick = runShacl;
+    // SHACL Table/Text view toggle — the format select only applies to Text view.
+    $$("#shaclView button").forEach((b) => {
+      b.onclick = () => {
+        $$("#shaclView button").forEach((x) => x.classList.toggle("active", x === b));
+        state.shaclViewMode = b.dataset.view;
+        const lbl = $("shaclFormatLabel");
+        if (lbl) lbl.classList.toggle("hidden", state.shaclViewMode !== "text");
+        if (state.shaclState) renderShaclView();
+      };
+    });
+    $("shaclFormat").onchange = () => { if (state.shaclState && shaclViewMode() === "text") renderShaclView(); };
     $("coherenceRun").onclick = runCoherence;
     $("reachRun").onclick = runReach;
     $("whyRun").onclick = runProvenance;

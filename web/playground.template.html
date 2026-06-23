@@ -335,14 +335,20 @@ __PLAYGROUND_CSS__
             <h1>SHACL</h1>
             <p class="microcopy">Validate the loaded graph against Turtle shapes without leaving the static page.</p>
           </div>
-          <label>
-            <span>Format</span>
-            <select id="shaclFormat">
-              <option value="text">Text</option>
-              <option value="json">JSON</option>
-              <option value="ttl">Turtle</option>
-            </select>
-          </label>
+          <div class="shacl-controls">
+            <div id="shaclView" class="segmented" aria-label="SHACL output view">
+              <button type="button" data-view="table" class="active">Table</button>
+              <button type="button" data-view="text">Text</button>
+            </div>
+            <label id="shaclFormatLabel" class="hidden">
+              <span>Format</span>
+              <select id="shaclFormat">
+                <option value="ttl">Turtle</option>
+                <option value="json">JSON</option>
+                <option value="text">Text</option>
+              </select>
+            </label>
+          </div>
         </div>
         <div id="shaclExamples" class="example-list compact"></div>
         <textarea id="shapeText" spellcheck="false"></textarea>

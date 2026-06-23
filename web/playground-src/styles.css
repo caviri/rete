@@ -548,6 +548,9 @@ label.file-button:hover {
   cursor: default;
 }
 
+/* SHACL panel head: the Table/Text view toggle + the (Text-only) format select. */
+.shacl-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
 .console-shell {
   display: grid;
   grid-template-columns: auto minmax(240px, 312px) minmax(0, 1fr);
