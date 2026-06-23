@@ -5264,7 +5264,8 @@ window.RETE_PLAYGROUND_CATALOG = {
     {"key": "ohm-full", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/ohm-full.rete?token=sfdbgf1094by21hd128ru39802", "label": "ohm-full.rete - all of OpenHistoricalMap (remote, lazy)", "description": "The ENTIRE current OpenHistoricalMap planet (daily snapshot, 2026-06-14) as one range-queried .rete: 1,021,295 named + dated + geolocated historical features (~6.1M triples, 150 MB), queried lazily over HTTP - only the dictionary chunks and index tiles each query touches are fetched, never the whole file. Each feature is openhistoricalmap.org/{node,way,relation}/<id> with rdfs:label, ex:startYear/ex:endYear (signed integers, -10000..2100; 2100 = still present) and GeoSPARQL geometry (176k points, 690k lines, 155k polygons; admin boundaries assembled from multipolygon/boundary relations, simplified to ~50 m). Built from planet.openhistoricalmap.org with PyOsmium (scripts/fetch_ohm_planet.sh). CC0 1.0 - credit OpenHistoricalMap contributors. Pick selective shapes (a bound subject, a name, a point-in-polygon) for snappy lazy reads."},
     {"key": "wikidata-100mb", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/wikidata-100MB/wikidata.rete?token=sfdbgf1094by21hd128ru39802", "typePredicate": "<http://www.wikidata.org/prop/direct/P31>", "label": "wikidata-100MB.rete - a real 100 MB Wikidata slice (remote, lazy)", "description": "A real ~104 MB slice of Wikidata, queried lazily over HTTP range requests straight from a Hugging Face bucket - the browser fetches only the dictionary chunks and index tiles each query touches (a typical selective query reads ~10 MB of the 104 MB), never the whole file. People (wd:Q5 humans) carry rdfs:label (multilingual), occupation (wdt:P106 -> e.g. physicist Q169470, philosopher Q4964182, writer Q36180, politician Q82955), date of birth (wdt:P569), place of birth (wdt:P19), citizenship (wdt:P27) and 'influenced by' (wdt:P737). Entity/property IRIs stay as wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. Pick SELECTIVE shapes (a bound subject/object, an occupation intersection) for snappy reads; aggregates over a whole predicate scan more. CC0 (Wikidata). The 1 GB version (key: wikidata) is the same idea at 10x the data."},
     {"key": "chemotion", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/chemotion.rete?token=sfdbgf1094by21hd128ru39802", "label": "chemotion.rete - the Chemotion chemistry-ELN knowledge graph (remote, lazy)", "description": "The real Chemotion Electronic-Lab-Notebook knowledge graph (FIZ Karlsruhe, 2025) merged with the two ontologies the ELN annotates with - CHMO (Chemical Methods Ontology) and RXNO (Name Reaction Ontology). 1.53M triples queried lazily over HTTP range: 87.7k instances (20.7k datasets, 20.6k studies/processes typed obo:BFO_0000015, 3.7k molecules obo:CHEBI_23367, 4.9k substances obo:CHEBI_59999, 250 creators) aligned to BFO / NFDICore / ChEBI, plus the full CHMO method taxonomy (colorimetry, amperometry, NMR/MS/IR/Raman spectroscopy ...) and RXNO reaction types as an rdfs:subClassOf DAG. Molecules carry SMILES / InChI / InChIKey / chebi:formula. Built from github.com/ISE-FIZKarlsruhe/chemotion-kg (239 MB TTL) + purl.obolibrary.org/obo/{chmo,rxno}.owl with rete build --card. CC BY 4.0. Pick selective shapes (a bound class, a formula, a subClassOf path) for snappy lazy reads; whole-predicate aggregates scan more."},
-    {"key": "chebi-full", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/chebi-full.rete?token=sfdbgf1094by21hd128ru39802", "label": "chebi-full.rete - the complete ChEBI chemical ontology (remote, lazy)", "description": "The ENTIRE ChEBI ontology (Chemical Entities of Biological Interest, EMBL-EBI) as one range-queried .rete: 8.83M triples over ~205k chemical classes, their rdfs:subClassOf classification DAG (380k edges), textual definitions (obo:IAO_0000115), exact/related synonyms, ~900k database cross-references (as reified owl:Axiom annotations), and the structural data chemistry needs - molecular formula, charge, average & monoisotopic mass, InChI, InChIKey and SMILES, all under the ChemROF vocabulary (chemrof: https://w3id.org/chemrof/). Queried lazily over HTTP range: the browser fetches only the dictionary chunks and index tiles each query touches, never the 120 MB whole. CC BY 4.0 (EMBL-EBI). It shares its CHEBI_* class IRIs and rdfs:label / rdfs:subClassOf structure with the chemotion dataset, so the two FEDERATE: pick chebi-full, add chemotion as a second source (the 'Federation' example does this for you), and one SPARQL query resolves terms across both ontologies. Lossless Parquet / DuckDB / SQLite table companions sit beside it in the bucket. Pick selective shapes (a bound molecule, a formula, a subClassOf path) for snappy lazy reads; whole-predicate aggregates scan more."}
+    {"key": "chebi-full", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/chebi-full.rete?token=sfdbgf1094by21hd128ru39802", "label": "chebi-full.rete - the complete ChEBI chemical ontology (remote, lazy)", "description": "The ENTIRE ChEBI ontology (Chemical Entities of Biological Interest, EMBL-EBI) as one range-queried .rete: 8.83M triples over ~205k chemical classes, their rdfs:subClassOf classification DAG (380k edges), textual definitions (obo:IAO_0000115), exact/related synonyms, ~900k database cross-references (as reified owl:Axiom annotations), and the structural data chemistry needs - molecular formula, charge, average & monoisotopic mass, InChI, InChIKey and SMILES, all under the ChemROF vocabulary (chemrof: https://w3id.org/chemrof/). Queried lazily over HTTP range: the browser fetches only the dictionary chunks and index tiles each query touches, never the 120 MB whole. CC BY 4.0 (EMBL-EBI). It shares its CHEBI_* class IRIs and rdfs:label / rdfs:subClassOf structure with the chemotion dataset, so the two FEDERATE: pick chebi-full, add chemotion as a second source (the 'Federation' example does this for you), and one SPARQL query resolves terms across both ontologies. Lossless Parquet / DuckDB / SQLite table companions sit beside it in the bucket. Pick selective shapes (a bound molecule, a formula, a subClassOf path) for snappy lazy reads; whole-predicate aggregates scan more."},
+    {"key": "causenet-full", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/causenet-full.rete?token=sfdbgf1094by21hd128ru39802", "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", "label": "causenet-full.rete - a causality graph mined from the web (256M triples, remote, lazy)", "description": "CauseNet-Full (Heindorf et al., CIKM 2020): the complete causality graph mined from Wikipedia and ClueWeb12 - 11,609,890 cause->effect relations over 12,186,310 concepts, with full extraction provenance. Each relation keeps every one of its 24,443,421 source records: the exact sentence the cause/effect pair was found in, the dependency path-pattern it was matched by (e.g. '[[cause]]/N -nsubj caused/VBD +dobj [[effect]]/N'), and the Wikipedia page or ClueWeb12 web page it came from. Concepts are cn:Concept nodes (cn: = https://causenet.org/ontology#) carrying rdfs:label; cn:causes is the direct cause->effect edge (transitive - follow it with Reach for causal chains); each relation is reified as a cn:CausalRelation with cn:support (its true source count) and cn:hasSource links to the source records. 256,133,680 triples (4.56 GB), queried lazily over HTTP range - the browser fetches only the dictionary chunks and index tiles each query touches, never the whole file. CC BY 4.0 (credit Heindorf et al.). Pick SELECTIVE shapes (a bound concept, a bound relation, the evidence for one claim) for snappy lazy reads; whole-graph aggregates scan more. Lossless relations/sources/concepts Parquet/DuckDB/SQLite companions sit beside it in the bucket."}
   ],
   // Structured metadata for the dataset table. `triples`: exact for bundled
   // graphs (from `rete info`), approximate string for the big remote ones, null
@@ -5295,6 +5296,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "wikidata-100mb":        { triples: null,      size: "104 MB",  license: "CC0",                  source: "https://www.wikidata.org",                                 provenance: "A ~100 MB slice of the Wikidata truthy dump read from Parquet via DuckDB by scripts/wikidata_parquet_to_nt.py (datatypes recovered) to N-Triples, built with rete build (remote-lazy)." },
     "chemotion":             { triples: "1.53 M",  size: "4.8 MB",   license: "CC BY 4.0",            source: "https://chemotion.net",                                    provenance: "The FIZ-Karlsruhe Chemotion-KG (github.com/ISE-FIZKarlsruhe/chemotion-kg, a 239 MB Git-LFS TTL; BFO/NFDICore/ChEBI-aligned, 87.7k instances) merged with CHMO + RXNO (purl.obolibrary.org/obo/*.owl, RDF/XML converted to N-Triples via rdflib), assembled with rete build --card (remote-lazy)." },
     "chebi-full":            { triples: "8.83 M",  size: "120 MB",   license: "CC BY 4.0",            source: "https://www.ebi.ac.uk/chebi/",                              provenance: "The complete ChEBI ontology (chebi.owl, EMBL-EBI) converted from RDF/XML to N-Triples with rapper (raptor2), assembled with rete build --card (remote-lazy). Lossless Parquet/DuckDB/SQLite per-class table companions generated with scripts/rdf_to_entity_tables.py --nt --type-predicate rdf:type and uploaded alongside it." },
+    "causenet-full":         { triples: "256.1 M", size: "4.56 GB",  license: "CC BY 4.0",            source: "https://causenet.org/",                                    provenance: "CauseNet-Full (causenet-full.jsonl, Heindorf et al., CIKM 2020) converted to N-Triples by scripts/causenet_to_nt.py - every causal relation kept with its full Wikipedia/ClueWeb12 source provenance (24.4M source sentences + dependency patterns) - assembled with rete build --card (remote-lazy). Lossless relations/sources/concepts Parquet/DuckDB/SQLite companions via scripts/causenet_to_tables.py." },
   },
 
   // Companion encodings: the lossless Parquet / DuckDB / SQLite per-class entity
@@ -5569,6 +5571,34 @@ window.RETE_PLAYGROUND_CATALOG = {
         { name: "Venue", file: "Venue_.parquet", classIri: "https://orkg.org/class/Venue", label: "venue", entities: 412 },
       ],
     },
+    // causenet-full: native relational companions (NOT rdf:type entity tables) -
+    // the "CauseNet in SQL" form, generated by scripts/causenet_to_tables.py.
+    "causenet-full": {
+      rete: "playground/causenet-full.rete",
+      parquetDir: "playground/causenet-full-tables",
+      duckdb: "playground/causenet-full.duckdb",  duckdbSize: "8.95 GB",
+      sqlite: "playground/causenet-full.sqlite",  sqliteSize: "13.9 GB",
+      typePredicate: "rdf:type",
+      about: "CauseNet-Full as clean relational tables on Hugging Face: <code>relations</code> " +
+        "(11.6M cause/effect/support edges), <code>sources</code> (24.4M provenance rows - the " +
+        "sentence, dependency pattern and Wikipedia/ClueWeb12 page behind every claim), and " +
+        "<code>concepts</code> (12.2M, with in/out causal degree). The same data as the " +
+        "<code>.rete</code> graph, queried with SQL; each query fetches only the bytes it touches.",
+      sqlCols: ["cause", "effect", "support", "source_type", "sentence", "pattern", "concept",
+        "in_degree", "out_degree", "degree", "wikipedia_page_title", "clueweb12_page_reference"],
+      tables: [
+        { name: "relations", file: "relations.parquet", label: "cause -> effect edges + support", entities: 11609890 },
+        { name: "sources",   file: "sources.parquet",   label: "per-sentence provenance (Wikipedia + ClueWeb12)", entities: 24443421 },
+        { name: "concepts",  file: "concepts.parquet",  label: "concepts + causal in/out degree", entities: 12186310 },
+      ],
+      examples: [
+        { label: "Strongest causal claims (by evidence count)", duck: "SELECT cause, effect, support FROM \"relations\" ORDER BY support DESC LIMIT 25", sqlite: "SELECT cause, effect, support FROM relations ORDER BY support DESC LIMIT 25" },
+        { label: "What does 'smoking' cause?", duck: "SELECT effect, support FROM \"relations\" WHERE cause = 'smoking' ORDER BY support DESC LIMIT 50", sqlite: "SELECT effect, support FROM relations WHERE cause = 'smoking' ORDER BY support DESC LIMIT 50" },
+        { label: "The evidence sentences for smoking -> cancer", duck: "SELECT source_type, sentence FROM \"sources\" WHERE cause = 'smoking' AND effect = 'cancer' LIMIT 25", sqlite: "SELECT source_type, sentence FROM sources WHERE cause = 'smoking' AND effect = 'cancer' LIMIT 25" },
+        { label: "Most-caused effects (highest in-degree)", duck: "SELECT concept, in_degree FROM \"concepts\" ORDER BY in_degree DESC LIMIT 25", sqlite: "SELECT concept, in_degree FROM concepts ORDER BY in_degree DESC LIMIT 25" },
+        { label: "Where does the evidence come from?", duck: "SELECT source_type, COUNT(*) AS n FROM \"sources\" GROUP BY source_type ORDER BY n DESC", sqlite: "SELECT source_type, COUNT(*) AS n FROM sources GROUP BY source_type ORDER BY n DESC" },
+      ],
+    },
   },
 
   // Per-dataset visual identity + descriptive tags for the dataset browser.
@@ -5599,8 +5629,32 @@ window.RETE_PLAYGROUND_CATALOG = {
     "wikidata-100mb":        { icon: "🌐", tags: ["Wikidata", "people", "occupations"] },
     "chemotion":             { icon: "🧪", tags: ["chemistry", "ELN", "ontology", "ChEBI", "CHMO"] },
     "chebi-full":            { icon: "⚗️", tags: ["chemistry", "ontology", "ChEBI", "OBO", "federation"] },
+    "causenet-full":         { icon: "⛓️", tags: ["causality", "provenance", "web-extraction", "NLP", "reach"] },
   },
   examples: {
+    // CauseNet-Full (256M triples / 4.56 GB) is the HEAVY lazy dataset: its
+    // dictionary holds 24.4M source sentences + 12.2M concepts, so every query
+    // pulls many dictionary chunks. The MB/time on each tip are real, benchmarked
+    // cold over HTTP range (`rete sparql-url`); a warm browser session (resident
+    // dictionary) is faster after the first query. Concepts are
+    // https://causenet.org/concept/<label>; cn: = https://causenet.org/ontology#.
+    "causenet-full": [
+      {"family": "Select", "label": "What does smoking cause?", "view": "table",
+       "tip": "Direct cause->effect edges out of the 'smoking' concept along cn:causes (a bound-subject lazy read). Benchmarked lazy cost: ~57 MB of the 4.56 GB fetched, 49 range requests, ~18 s cold over HTTP range. Swap the IRI for /stress, /obesity or /war to follow a different cause.",
+       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?effect WHERE {\n  <https://causenet.org/concept/smoking> cn:causes ?effect\n}\nLIMIT 50"},
+      {"family": "Select", "label": "What causes obesity?", "view": "table",
+       "tip": "The reverse direction - every concept that points to 'obesity' via cn:causes, routed through the object-first index. Benchmarked lazy cost: ~95 MB over HTTP range, ~22 s cold. cn:causes is the direct edge; the reified claim uses cn:cause / cn:effect instead.",
+       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?cause WHERE {\n  ?cause cn:causes <https://causenet.org/concept/obesity>\n}\nLIMIT 50"},
+      {"family": "Aggregate", "label": "Best-evidenced causes of cancer", "view": "table",
+       "tip": "Each claim is a reified cn:CausalRelation whose cn:support is its TRUE number of source sentences. This ranks the causes of 'cancer' by how much web evidence backs them - bind cn:effect, then read cn:cause + cn:support. Benchmarked lazy cost: ~114 MB over HTTP range, ~42 s cold.",
+       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?cause ?support WHERE {\n  ?r cn:effect <https://causenet.org/concept/cancer> ;\n     cn:cause ?cause ;\n     cn:support ?support\n}\nORDER BY DESC(?support)\nLIMIT 25"},
+      {"family": "Construct", "label": "Map smoking's effects (graph)", "view": "graph",
+       "tip": "CONSTRUCT a small cause->effect subgraph around 'smoking' for the graph view - the same selective cn:causes read as the table query (~57 MB lazy), rendered as nodes + arrows. Each arrow is a mined causal claim from Wikipedia / ClueWeb12.",
+       "q": "PREFIX cn: <https://causenet.org/ontology#>\nCONSTRUCT { <https://causenet.org/concept/smoking> cn:causes ?effect }\nWHERE { <https://causenet.org/concept/smoking> cn:causes ?effect }\nLIMIT 40"},
+      {"family": "Select", "label": "Evidence sentences behind a claim (HEAVY)", "view": "table",
+       "tip": "CauseNet keeps every source sentence it mined a claim from (cn:hasSource -> cn:sentence + the cn:pattern that matched it). This pulls the evidence for what smoking causes. HEAVIEST example: a hub like smoking has thousands of sources, so it fetches 400 MB+ over HTTP range - included to show the full provenance the graph preserves. For a snappy read pick one niche relation node instead.",
+       "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?effect ?sentence WHERE {\n  ?r cn:cause <https://causenet.org/concept/smoking> ;\n     cn:effect ?effect ;\n     cn:hasSource ?s .\n  ?s cn:sentence ?sentence\n}\nLIMIT 8"}
+    ],
     causal: [
       {
         family: "Summary",
@@ -6442,9 +6496,58 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
     "theographic-graph": [{"family": "Summary", "label": "What's in the graph", "view": "table", "tip": "Predicate totals: tg:sibling/child/father kinship, foaf:gender, places with wgs84 coordinates, events.", "q": "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n) LIMIT 20"}, {"family": "Path", "label": "Descendants of Abraham", "view": "table", "tip": "Transitive tg:child+ from Abraham - the genealogical tree the text traces from the patriarch.", "q": "PREFIX tg: <http://theographic/ontology#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT DISTINCT ?name WHERE { <http://ex/person/abraham_58> tg:child+ ?d . ?d rdfs:label ?name } LIMIT 200"}, {"family": "Aggregate", "label": "Who had the most children", "view": "table", "tip": "Count tg:child edges per person - the prolific patriarchs and kings.", "q": "PREFIX tg: <http://theographic/ontology#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?name (COUNT(?c) AS ?children) WHERE { ?p tg:child ?c ; rdfs:label ?name } GROUP BY ?name ORDER BY DESC(?children) LIMIT 15"}, {"family": "Construct", "label": "Abraham's children", "view": "graph", "tip": "Child edges one hop from Abraham, relabelled to names for the graph view.", "q": "PREFIX tg: <http://theographic/ontology#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nCONSTRUCT { <http://ex/person/abraham_58> tg:child ?c . ?c rdfs:label ?n } WHERE { <http://ex/person/abraham_58> tg:child ?c . ?c rdfs:label ?n }"}],
     "monarch": [{"family": "Summary", "label": "What's in the graph", "view": "table", "tip": "Predicate totals across the biolink associations: has_phenotype, interacts_with, in_taxon, plus labels.", "q": "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n) LIMIT 20"}, {"family": "Select", "label": "Phenotypes in the graph", "view": "table", "tip": "Everything typed as a biolink PhenotypicFeature, with its label.", "q": "PREFIX bl: <https://w3id.org/biolink/vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?name WHERE { ?ph a bl:PhenotypicFeature ; rdfs:label ?name } ORDER BY ?name LIMIT 100"}, {"family": "Aggregate", "label": "Most-connected genes", "view": "table", "tip": "Rank genes by their biolink:interacts_with degree - the hubs of the interaction network.", "q": "PREFIX bl: <https://w3id.org/biolink/vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?name (COUNT(?o) AS ?deg) WHERE { ?g bl:interacts_with ?o . ?g rdfs:label ?name } GROUP BY ?name ORDER BY DESC(?deg) LIMIT 15"}],
     "opencitations": [{"family": "Summary", "label": "What's in the graph", "view": "table", "tip": "Predicate totals: cito:cites citation edges and the Dublin Core / FOAF bibliographic metadata.", "q": "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n) LIMIT 20"}, {"family": "Aggregate", "label": "Most-cited works", "view": "table", "tip": "In-degree over cito:cites joined to dct:title - the references everything points back to.", "q": "PREFIX cito: <http://purl.org/spar/cito/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?title (COUNT(?citing) AS ?cites) WHERE { ?citing cito:cites ?w . ?w dct:title ?title } GROUP BY ?title ORDER BY DESC(?cites) LIMIT 15"}, {"family": "Aggregate", "label": "Publications per year", "view": "table", "tip": "Group dct:date (xsd:gYear) to see the time profile of the neighbourhood.", "q": "PREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?year (COUNT(?w) AS ?n) WHERE { ?w dct:date ?year } GROUP BY ?year ORDER BY ?year"}, {"family": "Path", "label": "Citation closure of a seed paper", "view": "table", "tip": "Transitive cito:cites+ from one JAMA article - everything it reaches by following references.", "q": "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT DISTINCT ?w WHERE { <https://doi.org/10.1001/jama.2014.16543> cito:cites+ ?w } LIMIT 100"}],
-    "orkg": [{"family": "Summary", "label": "What's in the graph", "view": "table", "tip": "Predicate totals across the ORKG model: papers, contributions, hasAuthors and the Pxx contribution properties.", "q": "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n) LIMIT 20"}, {"family": "Select", "label": "Papers", "view": "table", "tip": "Everything typed as an ORKG Paper, with its title.", "q": "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?title WHERE { ?p a <https://orkg.org/class/Paper> ; rdfs:label ?title } ORDER BY ?title LIMIT 100"}, {"family": "Aggregate", "label": "Node types in the graph", "view": "table", "tip": "Count subjects per rdf:type - papers vs contributions vs lists vs problems.", "q": "SELECT ?type (COUNT(?s) AS ?n) WHERE { ?s a ?type } GROUP BY ?type ORDER BY DESC(?n) LIMIT 20"}]
+    "orkg": [{"family": "Summary", "label": "What's in the graph", "view": "table", "tip": "Predicate totals across the ORKG model: papers, contributions, hasAuthors and the Pxx contribution properties.", "q": "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n) LIMIT 20"}, {"family": "Select", "label": "Papers", "view": "table", "tip": "Everything typed as an ORKG Paper, with its title.", "q": "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?title WHERE { ?p a <https://orkg.org/class/Paper> ; rdfs:label ?title } ORDER BY ?title LIMIT 100"}, {"family": "Aggregate", "label": "Node types in the graph", "view": "table", "tip": "Count subjects per rdf:type - papers vs contributions vs lists vs problems.", "q": "SELECT ?type (COUNT(?s) AS ?n) WHERE { ?s a ?type } GROUP BY ?type ORDER BY DESC(?n) LIMIT 20"}],
+    "causenet-full": [
+      {"family": "Select", "label": "What does smoking cause?", "view": "table", "tip": "A bound concept (cn:causes from c:smoking) returns every effect CauseNet records for smoking, named via rdfs:label. A bound subject keeps this a selective tile read - the kind of shape lazy HTTP access likes.", "q": "PREFIX cn: <https://causenet.org/ontology#>\nPREFIX c: <https://causenet.org/concept/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?effect WHERE {\n  c:smoking cn:causes ?e .\n  ?e rdfs:label ?effect\n} ORDER BY ?effect LIMIT 200"},
+      {"family": "Select", "label": "The web evidence that smoking causes cancer", "view": "table", "tip": "CauseNet's signature: every causal claim is backed by the exact web sentences it was extracted from. This walks one bound relation (smoking/cancer) to its source records and reads each sentence - the real Wikipedia/ClueWeb12 text. A bound relation keeps it selective.", "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?sentence WHERE {\n  <https://causenet.org/relation/smoking/cancer> cn:hasSource ?s .\n  ?s cn:sentence ?sentence\n} LIMIT 25"},
+      {"family": "Aggregate", "label": "Strongest causal claims (most evidence)", "view": "table", "tip": "Each cn:CausalRelation carries cn:support = how many sources back it. Ranking by it surfaces the web's most-repeated extractions - CauseNet-Full is the high-recall graph, so the very top mixes solid facts with boilerplate phrases echoed across many pages. A whole-predicate scan, so it reads more than a bound query.", "q": "PREFIX cn: <https://causenet.org/ontology#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?cause ?effect ?support WHERE {\n  ?r a cn:CausalRelation ; cn:cause ?c ; cn:effect ?e ; cn:support ?support .\n  ?c rdfs:label ?cause . ?e rdfs:label ?effect\n} ORDER BY DESC(?support) LIMIT 25"},
+      {"family": "Aggregate", "label": "What has the most causes? (effect in-degree)", "view": "table", "tip": "Counts how many distinct concepts are recorded as causing each effect - the convergent 'sinks' of the causal web (death, pain, damage, disease ...). Scans the cn:causes relation, so it reads more.", "q": "PREFIX cn: <https://causenet.org/ontology#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?effect (COUNT(?c) AS ?causes) WHERE {\n  ?c cn:causes ?e .\n  ?e rdfs:label ?effect\n} GROUP BY ?effect ORDER BY DESC(?causes) LIMIT 25"},
+      {"family": "Path", "label": "Two-step causal chains from stress", "view": "table", "tip": "A bounded two-hop walk: what stress causes, and what those effects cause in turn (stress -> X -> Y). Explicit two-step keeps it snappy over HTTP range; for the unbounded transitive closure use the Reach tab on cn:causes.", "q": "PREFIX cn: <https://causenet.org/ontology#>\nPREFIX c: <https://causenet.org/concept/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?via ?endpoint WHERE {\n  c:stress cn:causes ?m . ?m cn:causes ?end .\n  ?m rdfs:label ?via . ?end rdfs:label ?endpoint\n} LIMIT 100"},
+      {"family": "Select", "label": "A claim's evidence, with its source page", "view": "table", "tip": "Provenance carries where each sentence came from. This reads the Wikipedia-sourced evidence for smoking->cancer with the article title each sentence sits on (ClueWeb12 sources carry cn:clueweb12PageReference instead). A bound relation - selective.", "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?page ?sentence WHERE {\n  <https://causenet.org/relation/smoking/cancer> cn:hasSource ?s .\n  ?s cn:sentence ?sentence ; cn:wikipediaPageTitle ?page\n} LIMIT 25"},
+      {"family": "Aggregate", "label": "The patterns CauseNet extracted causality from", "view": "table", "tip": "A meta view of the extraction method: cn:pattern is the typed dependency path that matched a cause/effect pair in text. Grouping shows the most productive linguistic patterns ('X causes Y', 'Y caused by X', 'X leads to Y' ...). A whole-predicate scan.", "q": "PREFIX cn: <https://causenet.org/ontology#>\nSELECT ?pattern (COUNT(*) AS ?n) WHERE {\n  ?s cn:pattern ?pattern\n} GROUP BY ?pattern ORDER BY DESC(?n) LIMIT 20"},
+      {"family": "Construct", "label": "Causal neighbourhood of obesity (graph)", "view": "graph", "tip": "Switch Output -> Graph. Builds a drawable star around obesity - both what it causes and what causes it - each node relabelled to its name. A bound concept keeps the two-sided neighbourhood selective.", "q": "PREFIX cn: <https://causenet.org/ontology#>\nPREFIX c: <https://causenet.org/concept/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nCONSTRUCT {\n  c:obesity cn:causes ?e . ?c cn:causes c:obesity .\n  ?e rdfs:label ?el . ?c rdfs:label ?cl . c:obesity rdfs:label ?ol\n} WHERE {\n  c:obesity rdfs:label ?ol\n  { c:obesity cn:causes ?e . ?e rdfs:label ?el }\n  UNION\n  { ?c cn:causes c:obesity . ?c rdfs:label ?cl }\n} LIMIT 40"},
+      {"family": "Summary", "label": "Shape of the graph (predicate totals)", "view": "table", "tip": "Predicate totals over all 256M triples: the provenance dominates (cn:sentence, cn:pattern and the ClueWeb12/Wikipedia page fields), then the causal core (cn:causes, cn:cause, cn:effect, cn:support) and rdfs:label. A full index scan over a remote 256M-triple file reads a lot - the embedded Dataset Card has these baked for free.", "q": "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n) LIMIT 25"}
+    ]
   },
   shacl: {
+    "causenet-full": [
+      {
+        label: "Every causal relation has a cause, an effect and a support count",
+        tip: "Data-integrity over the reified relations: every cn:CausalRelation must declare exactly one cn:cause and one cn:effect and at least one cn:support. Remote SHACL validates lazily over the shape's targets (range reads) - a broad target class fetches many targets, so give it a moment.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix cn: <https://causenet.org/ontology#> .
+
+[] a sh:NodeShape ;
+  sh:targetClass cn:CausalRelation ;
+  sh:property [ sh:path cn:cause ;   sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path cn:effect ;  sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path cn:support ; sh:minCount 1 ;
+    sh:datatype <http://www.w3.org/2001/XMLSchema#integer> ] .`
+      },
+      {
+        label: "Every concept is named",
+        tip: "Every cn:Concept node should carry an rdfs:label (its surface form). Validated lazily over the concept targets via HTTP range.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix cn: <https://causenet.org/ontology#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+[] a sh:NodeShape ;
+  sh:targetClass cn:Concept ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;
+    sh:message "Every concept should carry a label." ] .`
+      },
+      {
+        label: "Every ClueWeb12 source keeps its sentence and pattern",
+        tip: "Provenance completeness: every ClueWeb12 source record must keep the sentence it was extracted from and the dependency path-pattern that matched it. Validated lazily over the ClueWeb12 source targets.",
+        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix cn: <https://causenet.org/ontology#> .
+
+[] a sh:NodeShape ;
+  sh:targetClass cn:ClueWeb12SentenceSource ;
+  sh:property [ sh:path cn:sentence ; sh:minCount 1 ] ;
+  sh:property [ sh:path cn:pattern ;  sh:minCount 1 ] .`
+      }
+    ],
     chemotion: [
       {
         label: "Molecules carry a structure",
@@ -7679,6 +7782,15 @@ theo:PeopleGroupShape a sh:NodeShape ;
     ]
   },
   reach: {
+    "causenet-full": {
+      pred: "<https://causenet.org/ontology#causes>",
+      seeds: "<https://causenet.org/concept/smoking>",
+      examples: [
+        { label: "Everything smoking can lead to (causal closure)", pred: "<https://causenet.org/ontology#causes>", seeds: "<https://causenet.org/concept/smoking>", reverse: false },
+        { label: "Everything obesity can lead to", pred: "<https://causenet.org/ontology#causes>", seeds: "<https://causenet.org/concept/obesity>", reverse: false },
+        { label: "What leads to cancer (root causes, reverse)", pred: "<https://causenet.org/ontology#causes>", seeds: "<https://causenet.org/concept/cancer>", reverse: true }
+      ]
+    },
     chemotion: {
       pred: "<http://www.w3.org/2000/01/rdf-schema#subClassOf>",
       seeds: "<http://purl.obolibrary.org/obo/CHMO_0000228>",
@@ -7861,6 +7973,32 @@ theo:PeopleGroupShape a sh:NodeShape ;
     }
   },
   provenance: {
+    "causenet-full": {
+      predicate: "<https://causenet.org/ontology#sentence>",
+      examples: [
+        {
+          label: "Every evidence sentence",
+          tip: "Predicate-bound: the whole cn:sentence relation is one contiguous run in the POS permutation - each row shows the tile and byte range it was read from. This is the 24.4M-sentence provenance layer.",
+          predicate: "<https://causenet.org/ontology#sentence>"
+        },
+        {
+          label: "Every causal edge",
+          tip: "Predicate-bound cn:causes: the 11.6M direct cause->effect edges as one POS run, each with the tile/byte range it came from.",
+          predicate: "<https://causenet.org/ontology#causes>"
+        },
+        {
+          label: "All ClueWeb12 web sources",
+          tip: "Object-bound rdf:type pattern routed to OSP: every source record typed cn:ClueWeb12SentenceSource, with the tile/byte range each was read from.",
+          predicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+          object: "<https://causenet.org/ontology#ClueWeb12SentenceSource>"
+        },
+        {
+          label: "Every support count",
+          tip: "Predicate-bound cn:support: each relation's evidence count as one POS run - the numbers behind the 'strongest claims' ranking.",
+          predicate: "<https://causenet.org/ontology#support>"
+        }
+      ]
+    },
     chemotion: {
       predicate: "<http://purl.obolibrary.org/obo/chebi/smiles>",
       examples: [
