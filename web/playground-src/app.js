@@ -1575,6 +1575,10 @@ self.onmessage = function (e) {
     freeExploreEngines();
     cancelRemote();
   }
+  // Live refresh of the range-cache panel while Settings is open: the numbers grow
+  // as a running query's worker writes fetched blocks to IndexedDB; a spindle shows
+  // for ~1.5 s after each growth, so you watch the cache fill in real time.
+  let rcLiveTimer = null, rcPrevTotal = -1, rcPrevCount = -1, rcLastGrowAt = 0;
   async function renderRangeCache() {
     const t = $("rangeCacheToggle"); if (t) t.checked = !!state.rangeCacheOn;
     const info = $("rangeCacheInfo");
@@ -1583,16 +1587,27 @@ self.onmessage = function (e) {
       : "Off — the lazy backends keep fetched bytes only for this session; a reload re-fetches. Turn on to persist ranges across reloads and sessions (experimental).";
     const items = await rangeCacheBreakdown();
     const totalBytes = items.reduce((a, m) => a + (m.bytes || 0), 0);
+    // Live: spindle for ~1.5 s after any growth so you SEE bytes landing.
+    if (rcPrevTotal >= 0 && totalBytes > rcPrevTotal) rcLastGrowAt = performance.now();
+    const changed = totalBytes !== rcPrevTotal || items.length !== rcPrevCount;
+    rcPrevTotal = totalBytes; rcPrevCount = items.length;
+    const live = performance.now() - rcLastGrowAt < 1500;
     const sz = $("rangeCacheSize");
-    if (sz) sz.textContent = "Range cache: " + formatBytes(totalBytes) + (items.length ? ` · ${items.length} file(s)` : "");
+    if (sz) sz.innerHTML = "Range cache: " + esc(formatBytes(totalBytes)) +
+      (items.length ? " · " + items.length + " file(s)" : "") +
+      (live ? ` <span class="spindle" aria-hidden="true"></span><span class="rc-caching">caching…</span>` : "");
     const list = $("rangeCacheList");
     if (!list) return;
+    // Idle tick — nothing grew: leave the rows (and their Clear handlers) untouched.
+    if (!changed && list.dataset.ready === "1") return;
     if (!items.length) {
+      list.dataset.ready = "0";
       list.innerHTML = `<p class="cache-empty">${state.rangeCacheOn
         ? "No ranges cached yet — query a remote-lazy dataset and the byte ranges it touches are saved here, one row per file with how much of it you hold."
         : "Turn this on, then query a remote-lazy dataset: the ranges it fetches will be listed here per file, with the share of each file cached."}</p>`;
       return;
     }
+    list.dataset.ready = "1";
     items.sort((a, b) => b.bytes - a.bytes);
     list.innerHTML = items.map((m) => {
       const pct = m.total ? Math.min(100, (m.bytes / m.total) * 100) : 0;
@@ -1641,8 +1656,18 @@ self.onmessage = function (e) {
       info.textContent = "Off — reads are sequential (one coalesced multi-range request at a time). Turn on to fetch each query's byte ranges in parallel: the page reloads into cross-origin isolation. Graph/SPARQL only — it may limit the CDN-loaded DuckDB/SQLite Explore backends.";
     }
   }
-  function openSettings() { renderRangeCache(); renderParallel(); renderCacheList(); $("settingsModal").classList.remove("hidden"); }
-  function closeSettings() { $("settingsModal").classList.add("hidden"); }
+  function openSettings() {
+    rcPrevTotal = -1; rcPrevCount = -1; rcLastGrowAt = 0;
+    renderRangeCache(); renderParallel(); renderCacheList();
+    $("settingsModal").classList.remove("hidden");
+    // Poll while open so the cache size/bars tick up live as a running query caches.
+    if (rcLiveTimer) clearInterval(rcLiveTimer);
+    rcLiveTimer = setInterval(renderRangeCache, 600);
+  }
+  function closeSettings() {
+    $("settingsModal").classList.add("hidden");
+    if (rcLiveTimer) { clearInterval(rcLiveTimer); rcLiveTimer = null; }
+  }
 
   const LIB_KEY = "rete.pg.libCollapsed";
   function setLibCollapsed(collapsed) {

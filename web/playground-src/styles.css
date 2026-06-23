@@ -2247,8 +2247,11 @@ pre {
 .rc-bhead .ci-name { font-weight: 700; font-size: 12px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-bhead .ci-size { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rc-bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
-.rc-bar > span { display: block; height: 100%; min-width: 2px; background: var(--accent); border-radius: 3px; }
+.rc-bar > span { display: block; height: 100%; min-width: 2px; background: var(--accent); border-radius: 3px; transition: width .35s ease; }
 .rc-brow > .secondary { flex: 0 0 auto; }
+/* Live "caching…" indicator in the Range-cache header while a query fetches + caches. */
+.rc-caching { font-size: 11px; color: var(--muted); }
+#rangeCacheSize .spindle { vertical-align: -2px; margin: 0 3px 0 5px; }
 
 /* Cache-download progress modal: a spinning "spindle" of dots + a progress bar. */
 .cache-modal { width: min(440px, 100%); text-align: center; }
