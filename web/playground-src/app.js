@@ -417,34 +417,28 @@ self.onmessage = function (e) {
     const t0 = performance.now();
     const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
     const ofSize = meta.size ? " of " + meta.size : "";
-    let lastReq = 0, lastBytes = 0, logged = 0;
+    let lastReq = 0, lastBytes = 0;
+    // Compact, matching the SPARQL tab: the animated network spinner + ONE live-
+    // updating line (requests · bytes · elapsed) — NOT a line per range request,
+    // which floods the panel on a big lazy read (e.g. SHACL over a 4.56 GB graph
+    // can make 1000+ range requests). The per-request detail stays available in
+    // the "requests" inspector that runRemote logs.
     el.innerHTML =
       `<div class="range-read">` +
-        `<div class="range-read-cap">${esc(caption)}</div>` +
+        netSpinner(caption || "querying remote…") +
         `<div class="cache-bar indeterminate"><div class="cache-bar-fill"></div></div>` +
         `<div class="range-read-meta" id="rrMeta"></div>` +
         (hint ? `<div class="range-read-hint">${esc(hint)}</div>` : "") +
-        `<div class="cache-steps" id="rrSteps"><div class="cache-step active">Starting the query worker…</div></div>` +
       `</div>`;
     const metaEl = el.querySelector("#rrMeta");
-    const stepsEl = el.querySelector("#rrSteps");
     const paint = () => {
       const dt = (performance.now() - t0) / 1000;
-      if (metaEl) metaEl.textContent = `${lastReq} range request(s) · ${formatBytes(lastBytes)}${ofSize} fetched · ${dt.toFixed(1)}s`;
+      if (metaEl) metaEl.textContent = `⏳ ${lastReq} range request(s) · ${formatBytes(lastBytes)}${ofSize} fetched · ${dt.toFixed(1)}s`;
     };
     paint();
     const timer = setInterval(paint, 150);
     const prev = remoteOnProgress;
-    remoteOnProgress = (m) => {
-      lastReq = m.requests; lastBytes = m.bytes;
-      if (stepsEl && m.requests > logged) {
-        stepsEl.querySelectorAll(".cache-step.active").forEach((s) => s.classList.replace("active", "done"));
-        stepsEl.insertAdjacentHTML("beforeend",
-          `<div class="cache-step active">Range request #${m.requests} — ${formatBytes(m.bytes)} fetched</div>`);
-        logged = m.requests;
-      }
-      paint();
-    };
+    remoteOnProgress = (m) => { lastReq = m.requests; lastBytes = m.bytes; paint(); };
     const cleanup = () => { clearInterval(timer); remoteOnProgress = prev; };
     return remoteCall(fn, ...args).then((out) => { cleanup(); return out; }, (e) => { cleanup(); throw e; });
   }
