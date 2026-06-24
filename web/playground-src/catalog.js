@@ -46,10 +46,7 @@ window.RETE_PLAYGROUND_CATALOG = {
   perf: {
     "scholar": { "One query, all three engines (Whole · Progressive · Community)": 1, "Predicate totals": 1, "Author profiles": 2, "High-novelty papers": 2, "High-novelty, split by community": 9, "Citation closure (Whole index only)": 1, "Most-cited papers": 2, "Papers per field": 1, "Authors above the mean h-index": 1, "Novelty tiers (IF)": 1, "Title fingerprints (SHA-256)": 1, "Everything but citations": 2, "Coauthor ego network": 1 },
     "scholar-noisy": { "Predicate totals": 1, "Mangled titles": 1, "Authors missing ORCID": 1, "Noise-inflated closure": 1, "Temporal violations": 2, "Cross-field citation pairs": 2, "Cross-field cites from genomics": 2 },
-    "typed": { "Count knows edges": 1, "Who works where": 1, "Who knows whom": 1, "Social graph": 1 },
-    "deps": { "Count dependency edges": 1, "Direct dependencies": 1, "Blast radius of log4x": 1, "Dependencies per package": 1, "Dependency graph": 1 },
     "causal": { "What's in the model": 1, "Everything that leads to a heart attack": 1, "Downstream effects of obesity": 1, "Feedback loops (vicious cycles)": 1, "Confounders (a common cause of two factors)": 1, "Colliders (two causes, one effect)": 1, "How obesity leads to diabetes (mediators)": 1, "Biggest causal footprint": 1, "What lowers the risk of a heart attack": 1, "Exogenous root causes": 1 },
-    "citations": { "Count citation edges": 3, "Paper titles": 36, "Citations per year": 48, "Collaborator closure": 41, "Papers above average citations": 59, "Hub ego network": 35 },
     "history": { "Map: territories of 1914": 21, "Time: territories per year": 22, "Who ruled Paris in 1914?": 22, "Empires over Beijing through time": 56, "Territories around the British Isles (1815)": 23, "Nearest neighbours of London, 1914": 24, "Bounding box of each 1492 territory": 19, "Territories per era": 19 },
     "linked-jazz": { "Relationship-type totals": 3, "Everything Mary Lou Williams said about people": 2, "Most talked-about musicians": 8, "Who Count Basie reaches by word of mouth": 2, "Most-cited influences": 2, "Mary Lou Williams collaboration ego-network": 2 },
     "nomisma": { "Shape of the corpus": 9, "Silver tetradrachms of Alexander the Great": 8, "Most prolific mints": 6, "Coin types per issuing authority": 5, "Mints used by 3+ successive rulers": 8, "Who else struck at Cassander's mints": 46 },
@@ -85,42 +82,29 @@ window.RETE_PLAYGROUND_CATALOG = {
       description: "The same generator at --noise 0.25: rewired citations (incl. temporal violations), missing ORCIDs and ISSNs, and whitespace-mangled titles - for SHACL and data-quality demos."
     },
     {
-      key: "citations",
-      label: "citations - OpenCitations sample",
-      description: "Real citation edges around the AlphaFold paper, enriched with labelled synthetic metadata for richer SPARQL examples."
-    },
-    {
-      key: "typed",
-      label: "typed.rete - people and orgs",
-      description: "Small typed graph for fast schema, SHACL, and social-query smoke tests."
-    },
-    {
-      key: "deps",
-      label: "deps.rete - dependency graph",
-      description: "Package dependency graph for impact analysis, transitive reachability, and CVE-style examples."
-    },
-    {
       key: "causal",
       label: "causal.rete - cardiometabolic causal model (confounders, mediators, colliders, loops)",
       description: "A cardiometabolic causal model: ~30 typed factors (risk factors, conditions, diseases, symptoms, outcomes, treatments) wired by a transitive :causes relation, plus a protective :reduces relation. Built so the Query examples discover causal structure - confounders (forks), mediators (chains), colliders (common effects), feedback loops (?x :causes+ ?x), and exogenous root causes. The SHACL examples check data quality (three planted defects). And the Coherence tab still proves the schema defect: :Relapsed is a subclass of two owl:disjointWith classes (HealthyState, DiseaseState) so it is UNSATISFIABLE, and patient :p is typed as both states. ~170 triples."
     },
     {
       key: "history",
-      label: "history.rete - historical world borders (GeoSPARQL)",
+      kind: "remote-lazy",
+      url: "https://katospiegel-rete.hf.space/data/playground/history.rete?token=sfdbgf1094by21hd128ru39802",
+      label: "history.rete - historical world borders (GeoSPARQL, remote, lazy)",
       description: "World territorial borders at 7 snapshots from 323 BCE to 1994 CE (aourednik/historical-basemaps, GPL-3.0), each polygon stored as a geo:wktLiteral with an integer year. Query it with GeoSPARQL: point-in-polygon containment, bbox intersection, and distance — combined with temporal filters. Coordinates are CRS84 lon/lat, simplified to ~1 km."
     },
     {"key": "linked-jazz", "label": "linked-jazz.rete - jazz musician social network", "description": "Linked Jazz - a social network of jazz musicians reconstructed from oral-history transcripts. 54 interviewed musicians (the ego hubs) connect outward to ~1,940 people they mention, with who-knows-whom ties typed by the REL vocab (knowsOf, friendOf, hasMet, influencedBy, mentorOf), Music Ontology (collaborated_with) and the project's own ontology (playedTogether, inBandTogether, touredWith, bandLeaderOf). 40 of the 54 hubs also appear as objects, so genuine multi-hop paths exist (transitive knowsOf+ / mentorOf+ chains). Each person carries a foaf:name and usually a dbo:thumbnail. ~9,470 triples: 3,649 knowsOf, 2,009 names, 1,555 thumbnails, plus ~1,800 typed ties. Person IRIs are mostly dbpedia.org/resource, so nodes link out to DBpedia. CC BY-SA 3.0 (Pratt Institute; person data from DBpedia)."},
     {"key": "getty-ulan", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/getty-ulan.rete?token=sfdbgf1094by21hd128ru39802", "label": "getty-ulan.rete - artist mentorship lineage (remote, lazy)", "description": "Getty ULAN \"who-taught-whom\" lineage: a directed social graph of ~28,300 artists/agents from the Union List of Artist Names. Each person carries a preferred name (skos:prefLabel), an English one-line biography (schema:description, e.g. \"Dutch painter, printmaker, 1606-1669\"), nationality, and birth/death years (xsd:gYear). Persons are connected by gvp:teacherOf (34,561 master->pupil edges) and gvp:influenced (534 edges). Densely connected and deeply transitive - Rembrandt taught ~38 pupils and has ~369 artistic descendants via teacherOf+. IRIs stay as vocab.getty.edu/ulan/NNN so nodes round-trip to live Getty LOD. ~205k triples after de-dup. ODC-BY 1.0 (attribute The J. Paul Getty Trust)."},
     {"key": "nomisma", "label": "nomisma.rete - coinage of Alexander the Great (PELLA)", "description": "PELLA - Coinage of Alexander the Great and the Macedonian kingdom, from Nomisma.org. 7,228 ancient Greek coin TYPES struck under Philip II, Alexander III, Philip III Arrhidaeus and the Diadochi (Cassander, Lysimachus, Ptolemy I), spanning 359-65 BC. Each type links by real IRIs to its mint (~150 cities from Pella and Amphipolis to Babylon, Sardis, Sidon and Susa), issuing authority, material (silver/gold/bronze), denomination (tetradrachm, drachm, stater...), region, and start/end dates as xsd:gYear. Every mint/authority/material/denomination/region carries an English rdfs:label, so the graph is fully self-describing. ~53,535 triples, embeds to ~150 KB. ODbL 1.0 (PELLA coin data) + CC-BY 3.0 (Nomisma vocabulary); attribute the American Numismatic Society / Nomisma.org."},
     {"key": "mimotext", "label": "mimotext.rete - French Enlightenment novels + stylometry", "description": "MiMoTextBase, a Wikibase of French Enlightenment novels (c. 1751-1800) from the Trier Center for Digital Humanities. A self-contained literary graph: 1,774 works linked to authors (956 people), publication dates and places, genres, languages, narrative form and location, and 375 thematic concepts (4,096 work->theme edges). Its distinctive layer is computational: 520 work-to-work STYLOMETRIC SIMILARITY edges (a Burrows-Delta neighbourhood of which novels read alike), plus 191 scholarship-mention edges. English labels for every entity. ~25,155 triples, ~828 KB Turtle -> embeds. A browsable network of who wrote what, which novels are thematically and stylistically close, and which scholarship discusses them together. CC0 (public domain)."},
-    {"key": "mmm", "label": "mmm.rete - medieval manuscript provenance (GeoSPARQL)", "description": "Mapping Manuscript Migrations (MMM) - a CIDOC-CRM/FRBRoo graph (24M triples live) tracing the provenance of medieval and Renaissance manuscripts, unifying the Schoenberg Database, Bibale (IRHT) and Medieval Manuscripts in Oxford. This bounded subset is a self-contained provenance graph: 3,155 manuscripts produced in four book-production cities (Florence, Bruges, Rouen, Tours), each linked to its production city (with WGS84 coordinates) and date-range, its former/current owners (named historical persons with gender), the texts it carries and their authors. ~48,191 triples, ~6.5 MB N-Triples -> small .rete. Good for Path (ownership chains), Aggregate (books per city, most-traded manuscripts), Construct (provenance ego-networks), and Geo (the production cities carry coordinates). CC BY-NC 4.0 - non-commercial, attribute MMM."},
+    {"key": "mmm", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/mmm.rete?token=sfdbgf1094by21hd128ru39802", "label": "mmm.rete - medieval manuscript provenance (GeoSPARQL, remote, lazy)", "description": "Mapping Manuscript Migrations (MMM) - a CIDOC-CRM/FRBRoo graph (24M triples live) tracing the provenance of medieval and Renaissance manuscripts, unifying the Schoenberg Database, Bibale (IRHT) and Medieval Manuscripts in Oxford. This bounded subset is a self-contained provenance graph: 3,155 manuscripts produced in four book-production cities (Florence, Bruges, Rouen, Tours), each linked to its production city (with WGS84 coordinates) and date-range, its former/current owners (named historical persons with gender), the texts it carries and their authors. ~48,191 triples, ~6.5 MB N-Triples -> small .rete. Good for Path (ownership chains), Aggregate (books per city, most-traded manuscripts), Construct (provenance ego-networks), and Geo (the production cities carry coordinates). CC BY-NC 4.0 - non-commercial, attribute MMM."},
     {"key": "openalex-astrocytes", "label": "openalex-astrocytes.rete - astrocyte research graph (OpenAlex)", "description": "The 500 most-cited works on astrocytes (the star-shaped glial cells of the brain) from OpenAlex (CC0), as a connected citation core: 4,113 cito:cites edges linking 500 papers to 2,074 authors, 537 institutions and 875 sub-topics. Explore the most-cited papers, the most prolific labs, and which fields astrocyte research bridges (reactive astrocytes, blood-brain barrier, neuroinflammation, stem cells)."},
     {"key": "antarctic-expeditions", "label": "antarctic-expeditions.rete - Heroic-Age expeditions, crews & ships", "description": "Heroic-Age Antarctic exploration as an explorable social graph: 6 landmark expeditions (Discovery, Nimrod, Terra Nova, Endurance, Australasian, Belgian, 1897-1917) linked by ex:participant to ~76 crew, by ex:vessel to their 5 ships, and by ex:leader to their commanders (Scott, Shackleton, Mawson, de Gerlache). Each expedition carries ex:startYear/ex:endYear. Because expeditions share personnel and ships, genuine multi-hop paths exist (shared-crew bridges, leaders who served on earlier voyages). IRIs stay as wikidata.org/entity so nodes round-trip to live Wikidata. CC0. Pairs with the atlas 'Heroic-Age Sites' overlay: the huts and deaths on the map are where these crews lived and died."},
-    {"key": "factgrid-illuminati", "typePredicate": "<https://database.factgrid.de/prop/direct/P2>", "label": "factgrid-illuminati.rete - Order of the Illuminati prosopography", "description": "The 18th-century secret society as a prosopographical graph from FactGrid (CC0), an independent historical Wikibase: ~1,300 members of the Order of the Illuminati (Q10677) with their FactGrid properties and English labels. Property and object labels are resolved so the opaque P-numbers read in plain language."},
+    {"key": "factgrid-illuminati", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/factgrid-illuminati.rete?token=sfdbgf1094by21hd128ru39802", "typePredicate": "<https://database.factgrid.de/prop/direct/P2>", "label": "factgrid-illuminati.rete - Order of the Illuminati prosopography (remote, lazy)", "description": "The 18th-century secret society as a prosopographical graph from FactGrid (CC0), an independent historical Wikibase: ~1,300 members of the Order of the Illuminati (Q10677) with their FactGrid properties and English labels. Property and object labels are resolved so the opaque P-numbers read in plain language."},
     {"key": "theographic-graph", "label": "theographic-graph.rete - biblical narrative graph", "description": "Theographic Bible (CC BY-SA) as a narrative/genealogy graph (distinct from the atlas geo-events layer): ~3,000 people linked by tg:father/mother/child/sibling/partner, born/died places, group memberships, and events with participants. Walk genealogies and event chains."},
     {"key": "monarch", "label": "monarch.rete - disease/gene/phenotype graph", "description": "A bounded slice of the Monarch Initiative biomedical KG (CC-BY): a disease neighbourhood linking genes (biolink:Gene), phenotypes (biolink:has_phenotype), gene-gene interactions (biolink:interacts_with) and taxa, with rdfs:labels and skos:exactMatch cross-references."},
     {"key": "opencitations", "label": "opencitations.rete - a citation neighborhood", "description": "A citation neighbourhood from OpenCitations (CC0) around a seed paper: cito:cites edges plus dct:title / dct:date / dct:creator (foaf:name) / dct:publisher bibliographic metadata. Distinct from the small AlphaFold sample already in the catalog."},
-    {"key": "orkg", "label": "orkg.rete - research contributions", "description": "A slice of the Open Research Knowledge Graph (CC-BY): papers (orkg:Paper) and their structured contributions (orkg:Contribution), research problems, methods and results, with rdfs:labels - scholarly knowledge as data, not prose."},
+    {"key": "orkg", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/orkg.rete?token=sfdbgf1094by21hd128ru39802", "label": "orkg.rete - research contributions (remote, lazy)", "description": "A slice of the Open Research Knowledge Graph (CC-BY): papers (orkg:Paper) and their structured contributions (orkg:Contribution), research problems, methods and results, with rdfs:labels - scholarly knowledge as data, not prose."},
     {"key": "ohm-full", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/ohm-full.rete?token=sfdbgf1094by21hd128ru39802", "label": "ohm-full.rete - all of OpenHistoricalMap (remote, lazy)", "description": "The ENTIRE current OpenHistoricalMap planet (daily snapshot, 2026-06-14) as one range-queried .rete: 1,021,295 named + dated + geolocated historical features (~6.1M triples, 150 MB), queried lazily over HTTP - only the dictionary chunks and index tiles each query touches are fetched, never the whole file. Each feature is openhistoricalmap.org/{node,way,relation}/<id> with rdfs:label, ex:startYear/ex:endYear (signed integers, -10000..2100; 2100 = still present) and GeoSPARQL geometry (176k points, 690k lines, 155k polygons; admin boundaries assembled from multipolygon/boundary relations, simplified to ~50 m). Built from planet.openhistoricalmap.org with PyOsmium (scripts/fetch_ohm_planet.sh). CC0 1.0 - credit OpenHistoricalMap contributors. Pick selective shapes (a bound subject, a name, a point-in-polygon) for snappy lazy reads."},
     {"key": "wikidata-100mb", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/wikidata-100MB/wikidata.rete?token=sfdbgf1094by21hd128ru39802", "typePredicate": "<http://www.wikidata.org/prop/direct/P31>", "label": "wikidata-100MB.rete - a real 100 MB Wikidata slice (remote, lazy)", "description": "A real ~104 MB slice of Wikidata, queried lazily over HTTP range requests straight from a Hugging Face bucket - the browser fetches only the dictionary chunks and index tiles each query touches (a typical selective query reads ~10 MB of the 104 MB), never the whole file. People (wd:Q5 humans) carry rdfs:label (multilingual), occupation (wdt:P106 -> e.g. physicist Q169470, philosopher Q4964182, writer Q36180, politician Q82955), date of birth (wdt:P569), place of birth (wdt:P19), citizenship (wdt:P27) and 'influenced by' (wdt:P737). Entity/property IRIs stay as wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. Pick SELECTIVE shapes (a bound subject/object, an occupation intersection) for snappy reads; aggregates over a whole predicate scan more. CC0 (Wikidata). The 1 GB version (key: wikidata) is the same idea at 10x the data."},
     {"key": "chemotion", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/chemotion.rete?token=sfdbgf1094by21hd128ru39802", "label": "chemotion.rete - the Chemotion chemistry-ELN knowledge graph (remote, lazy)", "description": "The real Chemotion Electronic-Lab-Notebook knowledge graph (FIZ Karlsruhe, 2025) merged with the two ontologies the ELN annotates with - CHMO (Chemical Methods Ontology) and RXNO (Name Reaction Ontology). 1.53M triples queried lazily over HTTP range: 87.7k instances (20.7k datasets, 20.6k studies/processes typed obo:BFO_0000015, 3.7k molecules obo:CHEBI_23367, 4.9k substances obo:CHEBI_59999, 250 creators) aligned to BFO / NFDICore / ChEBI, plus the full CHMO method taxonomy (colorimetry, amperometry, NMR/MS/IR/Raman spectroscopy ...) and RXNO reaction types as an rdfs:subClassOf DAG. Molecules carry SMILES / InChI / InChIKey / chebi:formula. Built from github.com/ISE-FIZKarlsruhe/chemotion-kg (239 MB TTL) + purl.obolibrary.org/obo/{chmo,rxno}.owl with rete build --card. CC BY 4.0. Pick selective shapes (a bound class, a formula, a subClassOf path) for snappy lazy reads; whole-predicate aggregates scan more."},
@@ -134,10 +118,7 @@ window.RETE_PLAYGROUND_CATALOG = {
   datasetMeta: {
     "scholar":               { triples: 6954,      size: "51 KB",   license: "synthetic",            source: "",                                                          provenance: "Generated by scripts/synth_graph.py (--papers 250 --seed 42): a power-law citation/author/venue world emitted to N-Triples, then assembled with rete build." },
     "scholar-noisy":         { triples: 6671,      size: "50 KB",   license: "synthetic",            source: "",                                                          provenance: "Same scripts/synth_graph.py generator at --noise 0.25 (rewired citations, dropped ORCIDs/ISSNs, mangled titles), emitted to N-Triples and assembled with rete build." },
-    "typed":                 { triples: 6,         size: "498 B",   license: "example",              source: "",                                                          provenance: "Hand-authored tiny typed people/orgs example in N-Triples, assembled with rete build, for fast schema/SHACL/social-query smoke tests." },
-    "deps":                  { triples: 13,        size: "610 B",   license: "example",              source: "",                                                          provenance: "Hand-authored package dependency-graph example in N-Triples, assembled with rete build, for impact-analysis and transitive-reachability demos." },
     "causal":                { triples: 170,       size: "3.5 KB",  license: "example",              source: "",                                                          provenance: "Hand-curated cardiometabolic model emitted by scripts/synth_causal.py to examples/causal.nt (with planted coherence/SHACL defects), assembled with rete build." },
-    "citations":             { triples: 539334,    size: "2.2 MB",  license: "CC0 + synthetic",      source: "https://opencitations.net",                                provenance: "Real OpenCitations citation edges around the AlphaFold paper (scripts/fetch_opencitations.py), enriched with labelled synthetic metadata (scripts/enrich.py), built with rete build." },
     "history":               { triples: 14430,     size: "1.5 MB",  license: "GPL-3.0",              source: "https://github.com/aourednik/historical-basemaps",         provenance: "World border GeoJSON at 7 era snapshots (aourednik/historical-basemaps) converted to GeoSPARQL wktLiteral N-Triples by scripts/geo_to_rete.py basemaps, assembled with rete build." },
     "linked-jazz":           { triples: 9466,      size: "97 KB",   license: "CC BY-SA 3.0",         source: "https://linkedjazz.org",                                   provenance: "Linked Jazz people + relationship N-Triples pulled from its REST API, well-formedness-filtered and deduped by scripts/fetch_playground_kgs.sh, then assembled with rete build." },
     "getty-ulan":            { triples: "~205,000", size: "2.8 MB",  license: "ODC-BY 1.0",           source: "https://www.getty.edu/research/tools/vocabularies/ulan/",   provenance: "CONSTRUCTed from the Getty vocab.getty.edu SPARQL endpoint (teacherOf/influenced edges + names/bios/dates) by scripts/fetch_playground_kgs.sh getty-ulan, built with rete build (remote-lazy)." },
@@ -467,10 +448,7 @@ window.RETE_PLAYGROUND_CATALOG = {
   datasetExtra: {
     "scholar":               { icon: "🎓", tags: ["synthetic", "scholarly", "citations"] },
     "scholar-noisy":         { icon: "🎓", tags: ["synthetic", "data-quality", "noisy"] },
-    "typed":                 { icon: "👥", tags: ["example", "social", "tiny"] },
-    "deps":                  { icon: "📦", tags: ["dependencies", "impact-analysis", "tiny"] },
     "causal":                { icon: "🫀", tags: ["causal", "ontology", "OWL"], reasoning: true },
-    "citations":             { icon: "📚", tags: ["OpenCitations", "citations", "scholarly"] },
     "history":               { icon: "🗺️", tags: ["geospatial", "borders", "temporal"] },
     "linked-jazz":           { icon: "🎷", tags: ["social-network", "music", "DBpedia"] },
     "getty-ulan":            { icon: "🎨", tags: ["art", "lineage", "Getty"] },
@@ -1082,154 +1060,6 @@ CONSTRUCT { ?a ex:crossFieldCite ?b } WHERE {
 }`
       }
     ],
-    citations: [
-      {
-        family: "Summary",
-        label: "Count citation edges",
-        strategy: "progressive",
-        view: "table",
-        tip: "Progressive strategy: the total number of cito:cites edges read straight from the pyramid summary metadata - no triple-index access, just a few small range reads.",
-        q: `PREFIX cito: <http://purl.org/spar/cito/>
-SELECT (COUNT(*) AS ?citationEdges) WHERE { ?s cito:cites ?o }`
-      },
-      {
-        family: "Select",
-        label: "Paper titles",
-        view: "table",
-        tip: "A single-pattern scan of dct:title over the enriched citation metadata, capped at 50 - the simplest possible 'list the things' query, and a gentle warm-up for the joins below.",
-        q: `PREFIX dct: <http://purl.org/dc/terms/>
-SELECT ?paper ?title WHERE { ?paper dct:title ?title } LIMIT 50`
-      },
-      {
-        family: "Aggregate",
-        label: "Citations per year",
-        view: "table",
-        tip: "Joins the citation edges pointing at one fixed DOI (a 2021 Nature paper) with each citing paper's dct:date, then groups by year to chart how citations to it accrued over time.",
-        q: `PREFIX cito: <http://purl.org/spar/cito/>
-PREFIX dct: <http://purl.org/dc/terms/>
-SELECT ?year (COUNT(?paper) AS ?n) WHERE {
-  ?paper cito:cites <https://doi.org/10.1038/s41586-021-03819-2> .
-  ?paper dct:date ?year
-} GROUP BY ?year ORDER BY ?year`
-      },
-      {
-        family: "Path",
-        label: "Collaborator closure",
-        view: "table",
-        tip: "ex:coauthor+ walks the transitive coauthorship closure outward from one high-degree author (author/1235), reaching everyone connected through any chain of collaborators; LIMIT 100 keeps the walk bounded.",
-        q: `PREFIX ex: <http://ex/>
-SELECT DISTINCT ?collaborator WHERE {
-  <http://ex/author/1235> ex:coauthor+ ?collaborator
-} LIMIT 100`
-      },
-      {
-        family: "Aggregate",
-        label: "Papers above average citations",
-        view: "table",
-        tip: "A subquery computes the mean citation count; the outer query keeps the papers beating it — the new nested-SELECT support makes this a single query.",
-        q: `PREFIX ex: <http://ex/>
-PREFIX dct: <http://purl.org/dc/terms/>
-SELECT ?title ?c WHERE {
-  ?p ex:citationCount ?c ; dct:title ?title .
-  { SELECT (AVG(?x) AS ?avg) WHERE { ?q ex:citationCount ?x } }
-  FILTER(?c > ?avg)
-} ORDER BY DESC(?c) LIMIT 20`
-      },
-      {
-        family: "Construct",
-        label: "Hub ego network",
-        view: "graph",
-        tip: "CONSTRUCTs the direct coauthor star of one hub author (author/1235) as a small subgraph for the graph renderer - one bound subject and one predicate, so it touches very little of the file.",
-        q: `PREFIX ex: <http://ex/>
-CONSTRUCT { <http://ex/author/1235> ex:coauthor ?b } WHERE {
-  <http://ex/author/1235> ex:coauthor ?b
-}`
-      }
-    ],
-    typed: [
-      {
-        family: "Summary",
-        label: "Count knows edges",
-        strategy: "progressive",
-        view: "table",
-        tip: "Progressive strategy: the exact number of ex:knows edges taken from the pyramid's per-predicate totals, without scanning the triple index.",
-        q: `PREFIX ex: <http://ex/>
-SELECT (COUNT(*) AS ?knowsEdges) WHERE { ?s ex:knows ?o }`
-      },
-      {
-        family: "Select",
-        label: "Who works where",
-        view: "table",
-        tip: "Lists every ex:worksAt edge - the employment links from each person to the organization they work at - read as a single POS run over one predicate.",
-        q: `PREFIX ex: <http://ex/>
-SELECT ?person ?org WHERE { ?person ex:worksAt ?org }`
-      },
-      {
-        family: "Select",
-        label: "Who knows whom",
-        view: "table",
-        tip: "Lists every ex:knows edge: the direct 'who knows whom' social links in the graph, one bound predicate scanned as a single POS run.",
-        q: `PREFIX ex: <http://ex/>
-SELECT ?a ?b WHERE { ?a ex:knows ?b }`
-      },
-      {
-        family: "Construct",
-        label: "Social graph",
-        view: "graph",
-        tip: "CONSTRUCTs a combined social graph - both ex:knows and ex:worksAt edges, labelled by predicate via BIND - so the renderer draws people, their acquaintances and their employers together.",
-        q: `PREFIX ex: <http://ex/>
-CONSTRUCT { ?a ?p ?b } WHERE {
-  { ?a ex:knows ?b BIND(ex:knows AS ?p) }
-  UNION
-  { ?a ex:worksAt ?b BIND(ex:worksAt AS ?p) }
-}`
-      }
-    ],
-    deps: [
-      {
-        family: "Summary",
-        label: "Count dependency edges",
-        strategy: "progressive",
-        view: "table",
-        tip: "Progressive strategy: the exact number of ex:dependsOn edges read from the pyramid summary, with no triple-index scan needed.",
-        q: `PREFIX ex: <http://ex/>
-SELECT (COUNT(*) AS ?dependencyEdges) WHERE { ?s ex:dependsOn ?o }`
-      },
-      {
-        family: "Select",
-        label: "Direct dependencies",
-        view: "table",
-        tip: "Lists the direct ex:dependsOn edges - each package paired with a package it immediately requires - capped at 100 rows.",
-        q: `PREFIX ex: <http://ex/>
-SELECT ?package ?dependency WHERE { ?package ex:dependsOn ?dependency } LIMIT 100`
-      },
-      {
-        family: "Path",
-        label: "Blast radius of log4x",
-        view: "table",
-        tip: "ex:dependsOn+ walks the transitive dependency closure inward to ex:log4x, the vulnerable component, returning every package that depends on it directly or through any chain - its full blast radius.",
-        q: `PREFIX ex: <http://ex/>
-SELECT DISTINCT ?dependent WHERE { ?dependent ex:dependsOn+ ex:log4x }`
-      },
-      {
-        family: "Aggregate",
-        label: "Dependencies per package",
-        view: "table",
-        tip: "Counts each package's direct ex:dependsOn edges and ranks them, showing the dependency fan-out - which packages pull in the most others.",
-        q: `PREFIX ex: <http://ex/>
-SELECT ?package (COUNT(?dependency) AS ?deps) WHERE {
-  ?package ex:dependsOn ?dependency
-} GROUP BY ?package ORDER BY DESC(?deps)`
-      },
-      {
-        family: "Construct",
-        label: "Dependency graph",
-        view: "graph",
-        tip: "CONSTRUCTs the whole ex:dependsOn network as-is so the renderer draws the dependency graph, each edge running from a package to one of its dependencies.",
-        q: `PREFIX ex: <http://ex/>
-CONSTRUCT { ?a ex:dependsOn ?b } WHERE { ?a ex:dependsOn ?b }`
-      }
-    ],
     history: [
       {
         family: "Geo",
@@ -1679,158 +1509,6 @@ ex:NoisyPaperShape a sh:NodeShape ;
 ex:ConferenceShape a sh:NodeShape ;
   sh:targetClass ex:Conference ;
   sh:property [ sh:path ex:name ; sh:minCount 1 ; sh:message "Conference has no name." ] .`
-      }
-    ],
-    citations: [
-      {
-        label: "Citing paper metadata",
-        tip: "Checks title, date, and discipline for papers with citation edges.",
-        shape: `@prefix cito: <http://purl.org/spar/cito/> .
-@prefix dct: <http://purl.org/dc/terms/> .
-@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:CitingPaperMetadataShape
-  a sh:NodeShape ;
-  sh:targetSubjectsOf cito:cites ;
-  sh:property [ sh:path dct:title ; sh:minCount 1 ] ;
-  sh:property [ sh:path dct:date ; sh:minCount 1 ] ;
-  sh:property [ sh:path ex:discipline ; sh:minCount 1 ] .`
-      },
-      {
-        label: "Authors are named",
-        tip: "Every foaf:Person (author) should carry a foaf:name. The ~5.5k authors conform.",
-        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix foaf: <http://xmlns.com/foaf/0.1/> .
-
-foaf:AuthorNamedShape a sh:NodeShape ;
-  sh:targetClass foaf:Person ;
-  sh:property [ sh:path foaf:name ; sh:minCount 1 ;
-    sh:message "Every author should carry a name." ] .`
-      },
-      {
-        label: "Articles report a citation count",
-        tip: "Every fabio:JournalArticle should carry an ex:citationCount.",
-        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix fabio: <http://purl.org/spar/fabio/> .
-@prefix ex: <http://ex/> .
-
-fabio:CitationCountShape a sh:NodeShape ;
-  sh:targetClass fabio:JournalArticle ;
-  sh:property [ sh:path ex:citationCount ; sh:minCount 1 ;
-    sh:message "Article has no citation count." ] .`
-      },
-      {
-        label: "Articles name a publication venue",
-        tip: "Every fabio:JournalArticle should carry a PRISM publicationName and a date.",
-        shape: `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix fabio: <http://purl.org/spar/fabio/> .
-@prefix prism: <http://prismstandard.org/namespaces/basic/2.0/> .
-@prefix dct: <http://purl.org/dc/terms/> .
-
-fabio:VenueShape a sh:NodeShape ;
-  sh:targetClass fabio:JournalArticle ;
-  sh:property [ sh:path prism:publicationName ; sh:minCount 1 ;
-    sh:message "Article names no venue." ] ;
-  sh:property [ sh:path dct:date ; sh:minCount 1 ] .`
-      }
-    ],
-    typed: [
-      {
-        label: "Employment is an org",
-        tip: "Every worksAt value must be an organization.",
-        shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:PersonEmploymentShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Person ;
-  sh:property [
-    sh:path ex:worksAt ;
-    sh:class ex:Org ;
-    sh:maxCount 1
-  ] .`
-      },
-      {
-        label: "Every person needs a name",
-        tip: "Intentional MinCount violation in the tiny graph.",
-        shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:PersonNameShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Person ;
-  sh:property [
-    sh:path ex:name ;
-    sh:minCount 1 ;
-    sh:message "Every Person must have a name."
-  ] .`
-      },
-      {
-        label: "Acquaintances are people",
-        tip: "Every value of ex:knows must be a typed ex:Person.",
-        shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:KnowsPersonShape a sh:NodeShape ;
-  sh:targetObjectsOf ex:knows ;
-  sh:class ex:Person .`
-      },
-      {
-        label: "Employers are organizations",
-        tip: "Every value of ex:worksAt must be a typed ex:Org.",
-        shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:WorksAtOrgShape a sh:NodeShape ;
-  sh:targetObjectsOf ex:worksAt ;
-  sh:class ex:Org .`
-      }
-    ],
-    deps: [
-      {
-        label: "Application dependencies",
-        tip: "The application should have at least one dependency.",
-        shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:ApplicationDependencyShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Application ;
-  sh:property [
-    sh:path ex:dependsOn ;
-    sh:minCount 1
-  ] .`
-      },
-      {
-        label: "Dependencies are libraries",
-        tip: "Every value of ex:dependsOn must be a typed ex:Library — the dependency graph is well-formed.",
-        shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:DependencyIsLibraryShape a sh:NodeShape ;
-  sh:targetObjectsOf ex:dependsOn ;
-  sh:class ex:Library .`
-      },
-      {
-        label: "Vulnerable items are libraries",
-        tip: "Anything flagged with ex:hasVulnerability must be a typed ex:Library.",
-        shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:VulnLibraryShape a sh:NodeShape ;
-  sh:targetSubjectsOf ex:hasVulnerability ;
-  sh:class ex:Library .`
-      },
-      {
-        label: "Dependencies are IRIs",
-        tip: "Every value of ex:dependsOn must be an IRI node (never a literal).",
-        shape: `@prefix ex: <http://ex/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-ex:DependencyIriShape a sh:NodeShape ;
-  sh:targetObjectsOf ex:dependsOn ;
-  sh:nodeKind sh:IRI .`
       }
     ],
     "antarctic-expeditions": [
@@ -2694,30 +2372,6 @@ theo:PeopleGroupShape a sh:NodeShape ;
         { label: "Hub author's coauthor closure", pred: "<http://ex/coauthor>", seeds: "<http://ex/author/120>", reverse: false }
       ]
     },
-    citations: {
-      pred: "<http://ex/coauthor>",
-      seeds: "<http://ex/author/1235>",
-      examples: [
-        { label: "Author 1235 network", pred: "<http://ex/coauthor>", seeds: "<http://ex/author/1235>", reverse: false },
-        { label: "Who cites AlphaFold", pred: "<http://purl.org/spar/cito/cites>", seeds: "<https://doi.org/10.1038/s41586-021-03819-2>", reverse: true }
-      ]
-    },
-    typed: {
-      pred: "<http://ex/knows>",
-      seeds: "<http://ex/Alice>",
-      examples: [
-        { label: "Alice knows", pred: "<http://ex/knows>", seeds: "<http://ex/Alice>", reverse: false },
-        { label: "Who knows Bob", pred: "<http://ex/knows>", seeds: "<http://ex/Bob>", reverse: true }
-      ]
-    },
-    deps: {
-      pred: "<http://ex/dependsOn>",
-      seeds: "<http://ex/app>",
-      examples: [
-        { label: "App dependency closure", pred: "<http://ex/dependsOn>", seeds: "<http://ex/app>", reverse: false },
-        { label: "Log4x blast radius", pred: "<http://ex/dependsOn>", seeds: "<http://ex/log4x>", reverse: true }
-      ]
-    },
     causal: {
       pred: "<http://ex/causes>",
       seeds: "<http://ex/Poverty>",
@@ -2943,54 +2597,6 @@ theo:PeopleGroupShape a sh:NodeShape ;
           label: "Everything about the hub author",
           tip: "Subject-bound: SPO routing to a single tile.",
           subject: "<http://ex/author/120>"
-        }
-      ]
-    },
-    citations: {
-      predicate: "<http://purl.org/spar/cito/cites>",
-      object: "<https://doi.org/10.1038/s41586-021-03819-2>",
-      examples: [
-        {
-          label: "Who cites AlphaFold",
-          tip: "Object-bound over ~539k triples: OSP routes to the one tile holding the DOI's a-group.",
-          predicate: "<http://purl.org/spar/cito/cites>",
-          object: "<https://doi.org/10.1038/s41586-021-03819-2>"
-        },
-        {
-          label: "One author's facts",
-          tip: "Subject-bound: SPO — compare the byte ranges with the predicate-bound example.",
-          subject: "<http://ex/author/1235>"
-        }
-      ]
-    },
-    typed: {
-      predicate: "<http://ex/knows>",
-      examples: [
-        {
-          label: "All knows edges",
-          tip: "Predicate-bound: POS permutation; a tiny file is still one tile per permutation.",
-          predicate: "<http://ex/knows>"
-        },
-        {
-          label: "Everything about Alice",
-          tip: "Subject-bound: SPO routing.",
-          subject: "<http://ex/Alice>"
-        }
-      ]
-    },
-    deps: {
-      predicate: "<http://ex/dependsOn>",
-      examples: [
-        {
-          label: "All dependency edges",
-          tip: "Predicate-bound: POS permutation.",
-          predicate: "<http://ex/dependsOn>"
-        },
-        {
-          label: "Who depends on log4x",
-          tip: "Object-bound: OSP — the impact-analysis pattern at the byte level.",
-          predicate: "<http://ex/dependsOn>",
-          object: "<http://ex/log4x>"
         }
       ]
     },

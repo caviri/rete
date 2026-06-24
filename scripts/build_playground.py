@@ -47,9 +47,6 @@ RDFCONV_JS = SRC / "rdfconv.js"  # in-browser JSON-LD / RDF-XML -> N-Triples con
 APP_JS = SRC / "app.js"
 
 # Datasets to embed: (playground key, built .rete file under web/).
-# `citations` is the real OpenCitations network (citations of the AlphaFold paper,
-# 10.1038/s41586-021-03819-2) enriched with clearly-labelled synthetic metadata;
-# real DOIs / edges / years, fabricated titles/authors/venues/keywords.
 # The scholar datasets come from scripts/synth_graph.py; regenerate with:
 #   python3 scripts/synth_graph.py --papers 250 --seed 42 -o /tmp/scholar.nt
 #   python3 scripts/synth_graph.py --papers 250 --noise 0.25 --seed 42 -o /tmp/scholar-noisy.nt
@@ -60,33 +57,22 @@ APP_JS = SRC / "app.js"
 DATASETS = [
     ("scholar", "scholar.rete"),
     ("scholar-noisy", "scholar-noisy.rete"),
-    ("typed", "typed.rete"),
-    ("deps", "deps.rete"),
     # A tiny causal ontology with planted coherence defects — powers the Coherence
     # tab demo (rete build examples/causal.nt -o web/causal.rete).
     ("causal", "causal.rete"),
-    ("citations", "enriched-all.rete"),
-    # Historical world borders (aourednik/historical-basemaps, GPL-3.0) as
-    # GeoSPARQL geometry + time — built by scripts/geo_to_rete.py:
-    #   python3 scripts/geo_to_rete.py basemaps \
-    #     --years bc323,1000,1492,1815,1914,1945,1994 --prec 2 --min-bbox 0.3 \
-    #     --max-per-year 90 -o dev/geo/history.nt
-    #   rete build dev/geo/history.nt -o web/history.rete
-    ("history", "history.rete"),
     # Real-world knowledge graphs ingested for the playground (subgraphs built by the
     # fetch recipes in scripts/; see web/playground-src/catalog.js for the example queries):
     ("linked-jazz", "linked-jazz.rete"),     # jazz musician social network (Linked Jazz, CC BY-SA)
     ("nomisma", "nomisma.rete"),             # coinage of Alexander the Great (Nomisma PELLA, CC-BY)
     ("mimotext", "mimotext.rete"),           # French Enlightenment novels + stylometry (MiMoText, CC0)
-    ("mmm", "mmm.rete"),                     # medieval manuscript provenance (Mapping Manuscript Migrations)
     ("openalex-astrocytes", "openalex-astrocytes.rete"),  # astrocyte research citation graph (OpenAlex, CC0)
     ("antarctic-expeditions", "antarctic-expeditions.rete"),  # Heroic-Age expeditions, crews & ships (Wikidata, CC0)
-    ("factgrid-illuminati", "factgrid-illuminati.rete"),
     ("theographic-graph", "theographic-graph.rete"),
     ("monarch", "monarch.rete"),
     ("opencitations", "opencitations.rete"),
-    ("orkg", "orkg.rete"),
-    # getty-ulan is remote-lazy (2.96 MB, in the bucket) — not embedded; see catalog.js.
+    # Remote-lazy (served from the bucket, NOT embedded; see catalog.js): getty-ulan,
+    # history, mmm, orkg, factgrid-illuminati, wikidata-1GB/100mb, ohm-full, chemotion,
+    # chebi-full, causenet-full. Dropped entirely: citations (synthetic), typed, deps.
 ]
 
 
