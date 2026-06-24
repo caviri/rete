@@ -453,19 +453,61 @@ impl GraphIndex {
     /// not an error here: the tiles stay unloaded and the per-tile loader
     /// retries each one (recording failures) when the scan reaches it.
     fn prefetch_span(&self, section: usize, start: usize, end: usize) {
-        let Some(bulk) = &self.bulk else { return };
         let missing: Vec<usize> = (start..end)
             .filter(|&ti| self.sections[section][ti].data.get().is_none())
             .collect();
-        if missing.len() < 2 {
+        self.bulk_fault(section, &missing);
+    }
+
+    /// Bulk-fault a set of (possibly scattered, ascending) missing tile indices in
+    /// `section` through the bulk loader in one coalesced read, storing each image.
+    /// No-op without a bulk loader or for fewer than two tiles (a single fault
+    /// costs the same via the per-tile loader). A failed batch leaves the tiles
+    /// unloaded for the per-tile loader to retry. Shared by the consecutive-span
+    /// scan prefetch and the scattered batch-probe prefetch.
+    fn bulk_fault(&self, section: usize, tiles: &[usize]) {
+        if tiles.len() < 2 {
             return;
         }
-        if let Some(images) = bulk(section, &missing) {
-            if images.len() == missing.len() {
-                for (&ti, img) in missing.iter().zip(images) {
+        let Some(bulk) = &self.bulk else { return };
+        if let Some(images) = bulk(section, tiles) {
+            if images.len() == tiles.len() {
+                for (&ti, img) in tiles.iter().zip(images) {
                     let _ = self.sections[section][ti].data.set(img);
                 }
             }
+        }
+    }
+
+    /// Batch-fault the tiles a set of upcoming **probe** patterns will route to,
+    /// before they are probed one at a time. Each probe (a bound leading id)
+    /// routes to a single tile; gathered across the batch those tiles are
+    /// scattered, so faulting them together turns N sequential remote round trips
+    /// into a few coalesced parallel reads — the read-amplification win for a
+    /// label-heavy join over a lazy reader. Honors the synopsis prune (never
+    /// fetches a tile a bound secondary proves can't match). No-op for a local
+    /// index or when fewer than two tiles per section need faulting.
+    pub(crate) fn prefetch_probe_tiles(&self, patterns: &[Pattern]) {
+        if self.bulk.is_none() {
+            return;
+        }
+        let mut want: [std::collections::BTreeSet<usize>; NUM_PERMS] = Default::default();
+        for &pat in patterns {
+            let perm = Self::best_permutation(pat);
+            let [pa, pb, pc] = perm.order_pattern(pat);
+            let si = perm.section_index();
+            let (start, end) = self.tile_span(si, pa);
+            for ti in start..end {
+                if self.sections[si][ti].syn_admits(pb, pc)
+                    && self.sections[si][ti].data.get().is_none()
+                {
+                    want[si].insert(ti);
+                }
+            }
+        }
+        for (si, set) in want.iter().enumerate() {
+            let tiles: Vec<usize> = set.iter().copied().collect();
+            self.bulk_fault(si, &tiles);
         }
     }
 

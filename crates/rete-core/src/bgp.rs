@@ -195,8 +195,30 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
                 rows.len() <= BGP_PROBE_THRESHOLD
             };
         if do_probe {
-            let mut next: Vec<Row> = Vec::with_capacity(rows.len());
-            for base in std::mem::take(&mut rows) {
+            let taken = std::mem::take(&mut rows);
+            // Over a lazy reader each probe is a byte-range round trip, and they run
+            // one at a time. First fault the tiles the *whole* batch will route to,
+            // together — one coalesced parallel read per section instead of N
+            // sequential ones — so the probes below hit a warm tile cache. No-op
+            // for a local index (every tile is already resident).
+            if index.is_remote() {
+                let pats: Vec<Pattern> = taken
+                    .iter()
+                    .filter_map(|base| {
+                        match (
+                            probe_subject(ctx, &t.0, base),
+                            probe_predicate(ctx, &t.1, base),
+                            probe_object(ctx, &t.2, base),
+                        ) {
+                            (Some(s), Some(p), Some(o)) => Some((s, p, o)),
+                            _ => None,
+                        }
+                    })
+                    .collect();
+                index.prefetch_probe_tiles(&pats);
+            }
+            let mut next: Vec<Row> = Vec::with_capacity(taken.len());
+            for base in taken {
                 next.extend(probe_rows(ctx, index, t, base));
             }
             rows = next;
