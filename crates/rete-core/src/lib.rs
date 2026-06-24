@@ -36,7 +36,7 @@ pub use block_cache::{BlockCacheReader, DEFAULT_BLOCK};
 pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 pub use file::{
-    build_pyramid_meta, build_pyramid_meta_with, read_metadata_ranged,
+    build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with, read_metadata_ranged,
     read_schema_coherence_ranged, read_schema_summary_ranged, schema_classes, schema_coherence,
     schema_summary, verify, write_dataset, write_dataset_with_metadata, write_file, ByteRange,
     LayoutSegment, Rete, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD,
@@ -49,7 +49,7 @@ pub use meta::{
     PredStat, PyramidMeta,
 };
 pub use pyramid::{
-    build_dendrogram, louvain_one_level, project_graph, Dendrogram, Graph, Partition,
+    build_dendrogram, louvain_one_level, project_graph, Dendrogram, Graph, Partition, PyramidAlgo,
 };
 pub use reach::{batch_reach_serial, build_adjacency, reach_one};
 pub use reader::{CountingReader, RangeReader, SliceReader};

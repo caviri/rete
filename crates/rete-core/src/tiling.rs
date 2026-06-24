@@ -82,7 +82,12 @@ pub fn choose_round_for_budget(
     dend: &Dendrogram,
     budget_bytes: usize,
 ) -> usize {
-    if dend.rounds() == 0 {
+    // 0 rounds = no community structure; 1 round = the only choice is round 0
+    // anyway (the loop below would measure it and still return 0). Short-circuit
+    // both so a single-level dendrogram (e.g. `--pyramid-algo types`) never
+    // encodes every tile just to discard the measurement — on a 256 M-triple graph
+    // that wasted pass would re-encode the whole index.
+    if dend.rounds() <= 1 {
         return 0;
     }
     for round in (0..dend.rounds()).rev() {

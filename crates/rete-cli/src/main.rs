@@ -52,6 +52,14 @@ enum Command {
         /// queries need the pyramid.
         #[arg(long = "no-pyramid")]
         no_pyramid: bool,
+        /// Community algorithm for the pyramid: `louvain` (default — topological
+        /// modularity, single-threaded, byte-identical) or `types` (partition by
+        /// `rdf:type` — deterministic, parallelizable, self-naming communities, and
+        /// it still emits the planner's `query_stats`; falls back to louvain when
+        /// the graph is untyped). `types` makes a pyramid feasible on graphs too
+        /// large for the single-threaded Louvain build.
+        #[arg(long = "pyramid-algo", value_parser = ["louvain", "types"], default_value = "louvain")]
+        pyramid_algo: String,
         /// Build a **full-text index** over the literals: every string-literal
         /// word maps to the subjects that carry it, so `rete search --contains
         /// <word>` finds entities by content with no scan. Adds a `TextIndex`
@@ -196,6 +204,10 @@ enum Command {
         /// `wdt:P31`); same semantics as `build --type-predicate`.
         #[arg(long = "type-predicate")]
         type_predicate: Option<String>,
+        /// Community algorithm for the rebuilt pyramid: `louvain` or `types`
+        /// (same semantics as `build --pyramid-algo`).
+        #[arg(long = "pyramid-algo", value_parser = ["louvain", "types"], default_value = "louvain")]
+        pyramid_algo: String,
         /// Build a full-text (word/CONTAINS) index over the literals as a
         /// TEXT_INDEX section; same semantics as `build --text-index`.
         #[arg(long = "text-index")]
@@ -547,6 +559,7 @@ fn main() -> anyhow::Result<()> {
             materialize,
             reason,
             no_pyramid,
+            pyramid_algo,
             text_index,
             type_predicate,
             card,
@@ -563,6 +576,7 @@ fn main() -> anyhow::Result<()> {
             materialize,
             no_pyramid,
             reason,
+            rete_core::PyramidAlgo::from_cli(&pyramid_algo).unwrap_or_default(),
             text_index,
             type_predicate.as_deref(),
             commands::card::CardArgs {
@@ -609,6 +623,7 @@ fn main() -> anyhow::Result<()> {
             file,
             output,
             type_predicate,
+            pyramid_algo,
             text_index,
             card,
             card_file,
@@ -622,6 +637,7 @@ fn main() -> anyhow::Result<()> {
             &output,
             text_index,
             type_predicate.as_deref(),
+            rete_core::PyramidAlgo::from_cli(&pyramid_algo).unwrap_or_default(),
             commands::card::CardArgs {
                 enabled: card,
                 file: card_file,

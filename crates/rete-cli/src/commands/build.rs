@@ -101,6 +101,7 @@ pub(crate) fn build(
     materialize: bool,
     no_pyramid: bool,
     reason: bool,
+    pyramid_algo: rete_core::PyramidAlgo,
     text_index: bool,
     type_predicate: Option<&str>,
     card_args: CardArgs,
@@ -138,11 +139,12 @@ pub(crate) fn build(
             }
             Ok(())
         };
-        let (bytes, stats) = ingest::assemble_dataset_streaming(
+        let (bytes, stats) = ingest::assemble_dataset_streaming_algo(
             stream,
             !no_pyramid,
             text_index,
             type_predicate,
+            pyramid_algo,
             |stats, dict, triples| match curated {
                 Some(curated) => {
                     let blob = card::derive_card_encoded(
@@ -215,11 +217,12 @@ pub(crate) fn build(
     } else {
         None
     };
-    let (bytes, stats) = ingest::assemble_dataset_with_opts(
+    let (bytes, stats) = ingest::assemble_dataset_with_opts_algo(
         quads,
         !no_pyramid,
         text_index,
         type_predicate,
+        pyramid_algo,
         |stats, quads| match curated {
             Some(curated) => {
                 let mut dataset_card = card::derive_card(
@@ -270,6 +273,7 @@ pub(crate) fn repyramid(
     output: &str,
     text_index: bool,
     type_predicate: Option<&str>,
+    pyramid_algo: rete_core::PyramidAlgo,
     card_args: CardArgs,
 ) -> anyhow::Result<()> {
     let bytes = std::fs::read(input)?;
@@ -298,11 +302,12 @@ pub(crate) fn repyramid(
     } else {
         None
     };
-    let (out_bytes, stats) = ingest::assemble_dataset_with_opts(
+    let (out_bytes, stats) = ingest::assemble_dataset_with_opts_algo(
         quads,
         true,
         text_index,
         type_predicate,
+        pyramid_algo,
         |stats, quads| match curated {
             Some(curated) => {
                 let blob = card::derive_card(
@@ -364,6 +369,7 @@ mod tests {
             true,
             false,
             false,
+            rete_core::PyramidAlgo::Louvain,
             false,
             None,
             CardArgs::default(),
@@ -383,6 +389,7 @@ mod tests {
             false,
             false,
             false,
+            rete_core::PyramidAlgo::Louvain,
             false,
             None,
             CardArgs::default(),

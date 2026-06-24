@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use crate::dictionary::Dictionary;
 use crate::meta::{ClassNode, ClassRelation, CommunityDescriptor, LevelLinks, LevelRollup};
-use crate::pyramid::Dendrogram;
+use crate::pyramid::{Dendrogram, Partition};
 use crate::RDF_TYPE;
 
 const RDFS_SUBCLASS_OF: &str = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
@@ -105,6 +105,73 @@ fn pick_type_predicate(
         }
     }
     best.map(|(p, _)| p)
+}
+
+/// Build a flat, **type-based** dendrogram for `--pyramid-algo types`: each node's
+/// community is the class of the subject it represents (first `rdf:type` wins —
+/// the same representative class the descriptors use). Untyped or object-only
+/// nodes (including literals) fall into one «untyped» bucket. A single level, so
+/// round 0 is the leaf-class partition; the existing summarizer then yields the
+/// class→class quotient graph, and the schema pyramid's `subClassOf` rollups
+/// supply the coarser semantic levels.
+///
+/// This is the **parallelizable** pyramid: deterministic and a single linear pass
+/// (no Louvain), so a graph far too large for the single-threaded modularity build
+/// still gets a pyramid + the cost-based planner's `query_stats`. Communities are
+/// self-naming — a community *is* a class.
+///
+/// Returns `None` when the graph has no usable type predicate or no subject is
+/// typed, so the caller falls back to [`crate::pyramid::PyramidAlgo::Louvain`].
+pub fn build_type_dendrogram(
+    dict: &Dictionary,
+    triples: &[(u32, u32, u32)],
+    type_override: Option<&str>,
+) -> Option<Dendrogram> {
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+    let type_pid = pick_type_predicate(dict, triples, type_override)?;
+
+    // Representative class (object id) per subject id — first `rdf:type` wins, the
+    // same rule `build_schema_pyramid_with` uses for `subject_class`, so a
+    // community's class equals its descriptor's `dominant_class`.
+    let mut class_of_subject: HashMap<u32, u32> = HashMap::new();
+    let mut classes: BTreeSet<u32> = BTreeSet::new();
+    for &(s, p, o) in triples {
+        if p == type_pid {
+            class_of_subject.entry(s).or_insert(o);
+            classes.insert(o);
+        }
+    }
+    if classes.is_empty() {
+        return None;
+    }
+
+    // Deterministic class → raw community id (ascending class object-id); the
+    // «untyped» bucket — every node that is not a typed subject — gets the next id.
+    let class_comm: HashMap<u32, usize> =
+        classes.iter().enumerate().map(|(i, &c)| (c, i)).collect();
+    let untyped = classes.len();
+
+    let n = dict.node_count() as usize;
+    let mut comm = vec![untyped; n];
+    for (&sid, &cid) in &class_of_subject {
+        comm[dict.subject_node(sid) as usize] = class_comm[&cid];
+    }
+
+    // Densify to `0..count` (drops the «untyped» bucket when unused) per the
+    // `Partition` contract. The remap walks `comm` in node order, so the numbering
+    // is independent of the HashMap iteration order above — fully reproducible.
+    let mut remap: BTreeMap<usize, usize> = BTreeMap::new();
+    for c in &mut comm {
+        let next = remap.len();
+        *c = *remap.entry(*c).or_insert(next);
+    }
+    Some(Dendrogram {
+        levels: vec![Partition {
+            comm,
+            count: remap.len(),
+        }],
+    })
 }
 
 /// Compute the schema pyramid for a graph at the materialized `round`, auto-picking
@@ -685,6 +752,50 @@ mod tests {
         let g = project_graph(&dict, &ids);
         let dend = build_dendrogram(&g);
         (dict, ids, dend)
+    }
+
+    #[test]
+    fn type_dendrogram_partitions_by_class() {
+        // Two same-class subjects + one of a different class, each rdf:type'd.
+        let triples = vec![
+            ("<a>", TYPE, "<Concept>"),
+            ("<b>", TYPE, "<Concept>"),
+            ("<r>", TYPE, "<Relation>"),
+            ("<r>", "<cause>", "<a>"),
+            ("<r>", "<effect>", "<b>"),
+            ("<a>", "<label>", "\"a\""), // a literal object → «untyped» node, must not panic
+        ];
+        let (dict, ids, _louvain) = build(&triples);
+        let dend = build_type_dendrogram(&dict, &ids, None).expect("typed graph yields a dendrogram");
+        assert_eq!(dend.rounds(), 1, "flat single-level type partition");
+        let comm = |t: &str| {
+            let sid = dict.subject_id(t).unwrap();
+            dend.base_community(dict.subject_node(sid) as usize, 0)
+        };
+        // Both Concepts share a community; the Relation is a different one.
+        assert_eq!(comm("<a>"), comm("<b>"), "same class → same community");
+        assert_ne!(comm("<a>"), comm("<r>"), "different class → different community");
+
+        // The descriptor's dominant_class equals the community's class — the
+        // self-naming property the type pyramid is built for.
+        let descriptors = build_schema_pyramid(&dict, &ids, &dend, 0).descriptors;
+        let dom = |c: u32| {
+            descriptors
+                .iter()
+                .find(|d| d.community == c)
+                .and_then(|d| d.dominant_class.clone())
+        };
+        assert_eq!(dom(comm("<a>") as u32).as_deref(), Some("<Concept>"));
+        assert_eq!(dom(comm("<r>") as u32).as_deref(), Some("<Relation>"));
+    }
+
+    #[test]
+    fn type_dendrogram_none_without_types() {
+        // No rdf:type and no "instance of"-like predicate → None, so the caller
+        // (build_pyramid_meta_algo) falls back to Louvain.
+        let triples = vec![("<a>", "<knows>", "<b>"), ("<b>", "<knows>", "<c>")];
+        let (dict, ids, _l) = build(&triples);
+        assert!(build_type_dendrogram(&dict, &ids, None).is_none());
     }
 
     #[test]

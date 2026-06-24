@@ -124,6 +124,36 @@ pub struct Partition {
     pub count: usize,
 }
 
+/// Which algorithm forms the pyramid's communities. The format and every
+/// downstream consumer key on opaque community IDs, so the choice only changes
+/// *how the partition is computed* — all modes must be deterministic to keep the
+/// file content-hash reproducible (see `docs/BENCHMARK.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PyramidAlgo {
+    /// Topological communities by Louvain modularity (the default, byte-identical
+    /// across runs). "What clusters densely?"
+    #[default]
+    Louvain,
+    /// RDF-native partition: one community per `rdf:type` class (the type
+    /// predicate auto-detected, or forced via `--type-predicate`), untyped /
+    /// object-only nodes in one «untyped» bucket. Communities are self-naming
+    /// (a community *is* a class), the summary graph becomes the class→class
+    /// relation graph, and the subClassOf rollups supply the coarser levels.
+    /// Falls back to [`PyramidAlgo::Louvain`] when the graph has no usable typing.
+    Types,
+}
+
+impl PyramidAlgo {
+    /// Parse the CLI spelling (`louvain` / `types`); `None` for anything else.
+    pub fn from_cli(s: &str) -> Option<Self> {
+        match s {
+            "louvain" => Some(Self::Louvain),
+            "types" => Some(Self::Types),
+            _ => None,
+        }
+    }
+}
+
 /// One level of Louvain local-moving modularity optimization.
 ///
 /// Nodes start in their own community; each is greedily moved to the neighboring

@@ -14,8 +14,8 @@
 //! files, byte-compatible readers.
 
 use crate::{
-    build_pyramid_meta_with, write_dataset_with_metadata, Dictionary, DictionaryBuilder,
-    GraphIndexBuilder, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta_algo, write_dataset_with_metadata, Dictionary, DictionaryBuilder,
+    GraphIndexBuilder, PyramidAlgo, DEFAULT_TILE_BUDGET,
 };
 
 /// A parsed triple as three canonical term tokens.
@@ -279,12 +279,32 @@ pub fn assemble_dataset_with(
 /// pyramid-less file is fully queryable and markedly smaller (the pyramid is the
 /// largest section on highly-connected graphs). Only the community / summary /
 /// progressive paths need it.
-#[allow(clippy::too_many_arguments)]
 pub fn assemble_dataset_with_opts(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
+) -> (Vec<u8>, BuildStats) {
+    assemble_dataset_with_opts_algo(
+        quads,
+        with_pyramid,
+        with_text_index,
+        type_override,
+        PyramidAlgo::Louvain,
+        metadata,
+    )
+}
+
+/// Like [`assemble_dataset_with_opts`], but selects the community [`PyramidAlgo`]
+/// (the in-memory build path for `rete build --pyramid-algo …`).
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_dataset_with_opts_algo(
+    quads: Vec<RawQuad>,
+    with_pyramid: bool,
+    with_text_index: bool,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
 ) -> (Vec<u8>, BuildStats) {
     use std::collections::BTreeMap;
@@ -330,6 +350,7 @@ pub fn assemble_dataset_with_opts(
         with_pyramid,
         with_text_index,
         type_override,
+        algo,
         blob,
         stats,
     )
@@ -350,10 +371,34 @@ pub fn assemble_dataset_with_opts(
 /// default-graph id-triples (resolving terms through the dictionary), since the
 /// raw quads were never retained. `stream` propagates parse/IO errors.
 pub fn assemble_dataset_streaming<S>(
+    stream: S,
+    with_pyramid: bool,
+    with_text_index: bool,
+    type_override: Option<&str>,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> Vec<u8>,
+) -> Result<(Vec<u8>, BuildStats), IngestError>
+where
+    S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
+{
+    assemble_dataset_streaming_algo(
+        stream,
+        with_pyramid,
+        with_text_index,
+        type_override,
+        PyramidAlgo::Louvain,
+        metadata,
+    )
+}
+
+/// Like [`assemble_dataset_streaming`], but selects the community [`PyramidAlgo`]
+/// (the streaming, low-RAM build path for `rete build --pyramid-algo …`).
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_dataset_streaming_algo<S>(
     mut stream: S,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
+    algo: PyramidAlgo,
     metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> Vec<u8>,
 ) -> Result<(Vec<u8>, BuildStats), IngestError>
 where
@@ -394,6 +439,7 @@ where
         with_pyramid,
         with_text_index,
         type_override,
+        algo,
         blob,
         stats,
     ))
@@ -411,13 +457,14 @@ fn finish_assembly(
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
+    algo: PyramidAlgo,
     blob: Vec<u8>,
     mut stats: BuildStats,
 ) -> (Vec<u8>, BuildStats) {
     let has_named = !named.is_empty();
 
     let (meta, levels) = if with_pyramid {
-        build_pyramid_meta_with(&dict, &default_triples, DEFAULT_TILE_BUDGET, type_override)
+        build_pyramid_meta_algo(&dict, &default_triples, DEFAULT_TILE_BUDGET, type_override, algo)
     } else {
         (Vec::new(), 0)
     };

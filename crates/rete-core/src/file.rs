@@ -18,7 +18,7 @@ use crate::dictionary::Dictionary;
 use crate::header::{Header, FLAG_HAS_QUADS, FLAG_TILE_SYNOPSIS, HEADER_LEN, MAGIC};
 use crate::index::{GraphIndex, IndexPermutation, Pattern, NUM_PERMS};
 use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
-use crate::pyramid::{build_dendrogram, project_graph};
+use crate::pyramid::{build_dendrogram, project_graph, PyramidAlgo};
 use crate::reader::RangeReader;
 use crate::tiling::{choose_round_for_budget, summarize, SuperEdge};
 use crate::triples::Triple;
@@ -44,12 +44,29 @@ pub fn build_pyramid_meta(
 }
 
 /// Like [`build_pyramid_meta`], but `type_override` forces the schema-pyramid's
-/// type predicate (e.g. `wdt:P31`) instead of auto-detection.
+/// type predicate (e.g. `wdt:P31`) instead of auto-detection. Uses the default
+/// [`PyramidAlgo::Louvain`] community algorithm — byte-identical to before.
 pub fn build_pyramid_meta_with(
     dict: &Dictionary,
     triples: &[(u32, u32, u32)],
     budget: usize,
     type_override: Option<&str>,
+) -> (Vec<u8>, u16) {
+    build_pyramid_meta_algo(dict, triples, budget, type_override, PyramidAlgo::Louvain)
+}
+
+/// Like [`build_pyramid_meta_with`], but selects the community [`PyramidAlgo`].
+/// [`PyramidAlgo::Types`] partitions by `rdf:type` — the deterministic,
+/// parallelizable alternative to Louvain (one linear pass, no modularity) that
+/// still emits the full summary + `query_stats`; it falls back to Louvain when the
+/// graph has no usable typing. Everything downstream of the dendrogram (round
+/// choice, summary, schema pyramid, planner stats) is shared across algorithms.
+pub fn build_pyramid_meta_algo(
+    dict: &Dictionary,
+    triples: &[(u32, u32, u32)],
+    budget: usize,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
 ) -> (Vec<u8>, u16) {
     // Optional sub-phase timing (set RETE_BUILD_TIMING=1) — the pyramid build is
     // the dominant cost of a big `rete build`; this shows where inside it.
@@ -68,10 +85,32 @@ pub fn build_pyramid_meta_with(
         }
     };
 
-    let g = project_graph(dict, triples);
-    lap("project_graph");
-    let dend = build_dendrogram(&g);
-    lap("build_dendrogram (Louvain)");
+    // The community partition — the only step that differs by algorithm.
+    let louvain = |lap: &mut dyn FnMut(&str)| {
+        let g = project_graph(dict, triples);
+        lap("project_graph");
+        let d = build_dendrogram(&g);
+        lap("build_dendrogram (Louvain)");
+        d
+    };
+    let dend = match algo {
+        PyramidAlgo::Louvain => louvain(&mut lap),
+        PyramidAlgo::Types => {
+            match crate::schema_pyramid::build_type_dendrogram(dict, triples, type_override) {
+                Some(d) => {
+                    lap("build_type_dendrogram");
+                    d
+                }
+                None => {
+                    eprintln!(
+                        "  [pyramid] --pyramid-algo types: no usable rdf:type \
+                         predicate — falling back to louvain"
+                    );
+                    louvain(&mut lap)
+                }
+            }
+        }
+    };
     let round = choose_round_for_budget(dict, triples, &dend, budget);
     lap("choose_round_for_budget");
     let summary = summarize(dict, triples, &dend, round);
