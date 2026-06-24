@@ -349,7 +349,12 @@
       decodePlugin(ed),
       baseTheme,
       CM.keymap.of([].concat(CM.closeBracketsKeymap, CM.defaultKeymap, CM.historyKeymap, CM.completionKeymap, [CM.indentWithTab])),
-      CM.EditorView.updateListener.of((u) => { if (u.docChanged) ed.ta.value = u.state.doc.toString(); })
+      CM.EditorView.updateListener.of((u) => {
+        if (!u.docChanged) return;
+        const text = u.state.doc.toString();
+        ed.ta.value = text;
+        if (ed.ctx.onChange) { try { ed.ctx.onChange(text); } catch (_e) { /* never let a listener break editing */ } }
+      })
     ];
     ed.view = new CM.EditorView({ doc: ta.value || "", extensions, parent: host });
     ed.refresh = () => { ed.ta.value = ed.view.state.doc.toString(); };

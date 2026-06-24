@@ -450,28 +450,129 @@ __PLAYGROUND_CSS__
       <div class="panel" data-panel="build">
         <div class="editor-head">
           <div>
-            <h1>Build a .rete</h1>
-            <p class="microcopy">Paste or open N-Triples / N-Quads / Turtle and assemble a .rete file right here — nothing leaves your browser.</p>
+            <h1>Create a dataset</h1>
+            <p class="microcopy">Assemble a brand-new <code>.rete</code> from your own RDF — add an ontology, write the dataset card,
+              attach example SPARQL &amp; SHACL — and keep it in <strong>this browser</strong> (IndexedDB) right beside the bundled ones.
+              Nothing leaves your machine until you export it.</p>
           </div>
-          <label>
-            <span>Format</span>
-            <select id="buildFormat">
-              <option value="nt">N-Triples</option>
-              <option value="nq">N-Quads</option>
-              <option value="ttl">Turtle</option>
-            </select>
-          </label>
         </div>
-        <textarea id="buildText" spellcheck="false"></textarea>
-        <div class="action-row">
-          <button id="buildRun" type="button">Build .rete</button>
-          <label class="file-button" title="Open an .nt / .nq / .ttl file">
-            Open RDF file
-            <input id="buildFile" type="file" accept=".nt,.nq,.nquads,.ttl,.turtle,text/plain" hidden />
-          </label>
-          <button id="buildDownload" type="button" class="secondary" disabled>Download</button>
-          <button id="buildOpen" type="button" class="secondary" disabled>Open in console</button>
-          <span id="buildMeta" class="run-meta"></span>
+
+        <div class="builder">
+          <section class="builder-step">
+            <header class="builder-step-head">
+              <span class="builder-step-no">1</span>
+              <h2>RDF data</h2>
+              <label class="builder-fmt">
+                <span>Format</span>
+                <select id="buildFormat">
+                  <option value="nt">N-Triples</option>
+                  <option value="nq">N-Quads</option>
+                  <option value="ttl">Turtle</option>
+                  <option value="jsonld">JSON-LD</option>
+                  <option value="rdfxml">RDF/XML (.owl)</option>
+                </select>
+              </label>
+            </header>
+            <p class="microcopy">Paste your graph, or upload a file. <strong>Compatible formats:</strong> N-Triples
+              (<code>.nt</code>), N-Quads (<code>.nq</code>), Turtle (<code>.ttl</code>), JSON-LD
+              (<code>.jsonld</code> / <code>.json</code>) and RDF/XML (<code>.rdf</code> / <code>.owl</code>). Uploading sets
+              the Format from the file's extension; JSON-LD and RDF/XML are converted in your browser before building.</p>
+            <textarea id="buildText" spellcheck="false"></textarea>
+            <div class="builder-row">
+              <label class="file-button" title="Upload an .nt / .nq / .ttl / .jsonld / .rdf / .owl file (the format is set from its extension)">
+                Upload file
+                <input id="buildFile" type="file" accept=".nt,.nq,.nquads,.ttl,.turtle,.jsonld,.json,.rdf,.owl,.xml,text/plain,application/ld+json,application/rdf+xml" hidden />
+              </label>
+              <span class="builder-accept">.nt · .nq · .ttl · .jsonld · .rdf · .owl</span>
+              <span id="buildDataValid" class="build-valid"></span>
+              <span id="buildDataMeta" class="run-meta"></span>
+            </div>
+          </section>
+
+          <section class="builder-step">
+            <header class="builder-step-head">
+              <span class="builder-step-no">2</span>
+              <h2>Ontology / schema</h2>
+              <span class="builder-opt">optional</span>
+            </header>
+            <p class="microcopy">Class/property definitions (RDFS / OWL / SHACL vocabulary) merged into the same graph, so the
+              Schema, Reasoning and SHACL tabs light up. Use the <strong>same format</strong> you picked above — JSON-LD and
+              RDF/XML (incl. <code>.owl</code>) are converted in the browser before building.</p>
+            <textarea id="buildOntology" spellcheck="false" placeholder="(optional) ontology triples in the same format"></textarea>
+            <div class="builder-row">
+              <label class="file-button" title="Upload an ontology file (.ttl / .nt / .nq / .jsonld / .rdf / .owl)">
+                Upload ontology file
+                <input id="buildOntoFile" type="file" accept=".nt,.nq,.nquads,.ttl,.turtle,.jsonld,.json,.rdf,.owl,.xml,text/plain,application/ld+json,application/rdf+xml" hidden />
+              </label>
+              <span id="buildOntoValid" class="build-valid"></span>
+            </div>
+          </section>
+
+          <section class="builder-step">
+            <header class="builder-step-head">
+              <span class="builder-step-no">3</span>
+              <h2>Dataset card</h2>
+              <span class="builder-card-sync" id="cardCodeMsg">in sync</span>
+            </header>
+            <div class="builder-card-split">
+              <div class="builder-grid">
+                <label class="builder-field"><span>Title</span>
+                  <input id="cardTitle" type="text" placeholder="My graph" autocomplete="off" /></label>
+                <label class="builder-field"><span>Key <small>url-safe id</small></span>
+                  <input id="cardKey" type="text" placeholder="my-graph" autocomplete="off" spellcheck="false" /></label>
+                <label class="builder-field builder-icon"><span>Icon</span>
+                  <input id="cardIcon" type="text" maxlength="4" placeholder="📊" /></label>
+                <label class="builder-field"><span>License</span>
+                  <input id="cardLicense" type="text" placeholder="CC0 / CC-BY 4.0 / …" autocomplete="off" /></label>
+                <label class="builder-field"><span>Source URL</span>
+                  <input id="cardSource" type="url" placeholder="https://…" autocomplete="off" spellcheck="false" /></label>
+                <label class="builder-field"><span>Tags <small>comma-separated</small></span>
+                  <input id="cardTags" type="text" placeholder="ontology, social, demo" autocomplete="off" /></label>
+                <label class="builder-field builder-wide"><span>Description</span>
+                  <textarea id="cardDesc" rows="3" placeholder="What's in this graph, and what's interesting about it."></textarea></label>
+                <label class="builder-field builder-wide"><span>Provenance <small>how it was built (optional)</small></span>
+                  <textarea id="cardProvenance" rows="2" placeholder="e.g. CONSTRUCTed from the X endpoint, converted to N-Triples, assembled with rete build."></textarea></label>
+              </div>
+              <div class="builder-card-code">
+                <div class="builder-card-code-head">
+                  <span>Card JSON</span>
+                  <small>edit either side — they sync both ways</small>
+                  <label class="file-button card-import" title="Import a card or downloaded manifest JSON">
+                    Import JSON
+                    <input id="cardImportFile" type="file" accept=".json,application/json" hidden />
+                  </label>
+                </div>
+                <textarea id="cardCode" class="card-code" spellcheck="false" aria-label="Dataset card as JSON"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section class="builder-step">
+            <header class="builder-step-head">
+              <span class="builder-step-no">4</span>
+              <h2>Example queries</h2>
+              <span class="builder-opt">optional</span>
+            </header>
+            <p class="microcopy">Saved with the dataset and shown in its Query Library / SHACL tab — the same shape the bundled
+              datasets use.</p>
+            <div id="buildExamples" class="builder-examples"></div>
+            <div class="builder-row">
+              <button id="addSparqlEx" type="button" class="secondary">+ SPARQL example</button>
+              <button id="addShaclEx" type="button" class="secondary">+ SHACL shape</button>
+            </div>
+          </section>
+
+          <div class="builder-actions">
+            <button id="buildRun" type="button">Build &amp; save to browser</button>
+            <button id="buildOpen" type="button" class="secondary" disabled>Open in console</button>
+            <button id="buildDownload" type="button" class="secondary" disabled>Download .rete</button>
+            <button id="buildManifest" type="button" class="secondary" disabled
+              title="A JSON manifest of the card + examples — to PR into the repo or the plaza alongside the .rete">Download manifest</button>
+            <button id="buildReset" type="button" class="ghost">Clear form</button>
+            <span id="buildMeta" class="run-meta"></span>
+          </div>
+
+          <div id="buildSavedList" class="builder-saved"></div>
         </div>
       </div>
 
@@ -710,6 +811,9 @@ __PLAYGROUND_CM6_JS__
   </script>
   <script>
 __PLAYGROUND_EDITOR_JS__
+  </script>
+  <script>
+__PLAYGROUND_RDFCONV_JS__
   </script>
   <script>
 __PLAYGROUND_APP_JS__

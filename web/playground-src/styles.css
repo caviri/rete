@@ -2315,3 +2315,140 @@ pre {
 .t-lang { color: var(--muted); font-size: .82em; }
 td.num { font-variant-numeric: tabular-nums; }
 td.lit { color: var(--ink); }
+
+/* ── Dataset builder (the "Create a dataset" panel) ─────────────────────── */
+.builder { display: flex; flex-direction: column; gap: 14px; }
+.builder-step {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 12px 14px 14px;
+}
+.builder-step-head { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+.builder-step-head h2 { font-size: 15px; margin: 0; color: var(--accent-dark); }
+.builder-step-no {
+  flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 700;
+}
+.builder-opt {
+  font-size: 11px; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; padding: 1px 8px; font-weight: 600;
+}
+.builder-fmt { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.builder-fmt select { padding: 4px 6px; }
+.builder-step .microcopy { margin: 0 0 8px; }
+/* The plain (non-CM6) textareas in the builder are compact; CM6-enhanced ones
+   (#buildText / #buildOntology) get their height from .editor. */
+.builder-step textarea { min-height: 130px; }
+.builder .editor { min-height: 0; }
+.builder .editor textarea { min-height: 120px; }
+#buildOntology { min-height: 96px; }
+
+.builder-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 9px; }
+
+.builder-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+.builder-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.builder-field span { font-weight: 600; }
+.builder-field small { font-weight: 400; opacity: .8; }
+.builder-field input, .builder-field textarea, .build-ex input, .build-ex select, .build-ex textarea {
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--code-border); border-radius: 7px; padding: 7px 9px;
+}
+.builder-field textarea { min-height: 56px; resize: vertical; }
+.builder-field.builder-wide { grid-column: 1 / -1; }
+.builder-field.builder-icon { max-width: 96px; }
+.builder-field.builder-icon input { text-align: center; font-size: 18px; }
+.builder-field input:focus, .builder-field textarea:focus,
+.build-ex input:focus, .build-ex textarea:focus, .build-ex select:focus {
+  outline: none; border-color: var(--accent);
+}
+
+.builder-examples { display: flex; flex-direction: column; gap: 10px; }
+.builder-examples:empty { display: none; }
+.build-ex {
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; background: var(--side); padding: 10px 11px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.build-ex.shacl { border-left-color: var(--accent-2); }
+.build-ex-head { display: flex; align-items: center; gap: 8px; }
+.build-ex-kind {
+  font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: #fff; background: var(--accent); border-radius: 4px; padding: 2px 7px;
+}
+.build-ex.shacl .build-ex-kind { background: var(--accent-2); }
+.build-ex-head select { padding: 4px 6px; font-size: 12px; }
+.build-ex-head input { flex: 1; }
+.build-ex-del {
+  margin-left: auto; border: 0; background: transparent; color: var(--muted);
+  cursor: pointer; font-size: 18px; line-height: 1; padding: 0 4px;
+}
+.build-ex-del:hover { color: var(--bad); }
+.build-ex textarea { min-height: 78px; resize: vertical; }
+.build-ex .build-ex-tip { min-height: 0; }
+
+.builder-actions {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding-top: 4px; border-top: 1px solid var(--line); margin-top: 2px;
+}
+.builder-actions .builder-row { margin-top: 0; }
+
+.builder-saved:empty { display: none; }
+.builder-saved {
+  border: 1px solid var(--line); border-radius: 10px; background: var(--side); padding: 10px 12px;
+}
+.builder-saved h3 { font-size: 12px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.saved-item {
+  display: flex; align-items: center; gap: 10px; padding: 7px 4px;
+  border-top: 1px solid var(--line);
+}
+.saved-item:first-of-type { border-top: 0; }
+.saved-ico { font-size: 17px; }
+.saved-main { flex: 1; min-width: 0; }
+.saved-name { font-weight: 600; }
+.saved-sub { font-size: 11px; color: var(--muted); }
+.saved-item button { padding: 4px 10px; font-size: 12px; }
+
+/* "Local · in this browser" dataset (custom build) badge + delete in the modal. */
+.ds-badge.local { background: #efe7fb; color: #5b3a99; }
+.ds-tag.custom { background: #efe7fb; color: #5b3a99; }
+.ds-delete {
+  border: 1px solid var(--line); background: var(--surface); color: var(--bad);
+  border-radius: 7px; padding: 6px 11px; cursor: pointer; font-size: 12px; font-weight: 600;
+}
+.ds-delete:hover { border-color: var(--bad); background: var(--warn); }
+
+@media (max-width: 640px) {
+  .builder-grid { grid-template-columns: 1fr; }
+  .builder-card-split { grid-template-columns: 1fr; }
+}
+
+/* Dataset card: the form (left) ↔ live JSON code editor (right), two-way synced. */
+.builder-card-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: stretch; }
+.builder-card-code { display: flex; flex-direction: column; gap: 6px; }
+.builder-card-code-head { display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.builder-card-code-head small { font-weight: 400; opacity: .85; }
+.card-code {
+  flex: 1; min-height: 300px; resize: vertical;
+  border: 1px solid var(--code-border); border-radius: 8px;
+  background: var(--code); color: var(--ink); padding: 10px 12px;
+  font-family: "Cascadia Mono", "SF Mono", Consolas, ui-monospace, monospace;
+  font-size: 12.5px; line-height: 1.5; tab-size: 2;
+}
+.card-code:focus { outline: none; border-color: var(--accent); }
+.card-code.invalid { border-color: var(--bad); background: var(--warn); }
+.builder-card-sync { margin-left: auto; font-size: 11px; color: var(--muted); }
+.builder-card-sync.invalid { color: var(--bad); font-weight: 600; }
+.builder-card-code-head .card-import { margin-left: auto; padding: 3px 9px; font-size: 11px; }
+
+/* Accepted-extensions hint next to the Upload button. */
+.builder-accept {
+  font-size: 11px; color: var(--muted);
+  font-family: "Cascadia Mono", "SF Mono", Consolas, ui-monospace, monospace;
+}
+
+/* Live RDF syntax-validation status for editors 1 (data) & 2 (ontology). */
+.build-valid { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.build-valid.valid { color: var(--accent-dark); }
+.build-valid.invalid { color: var(--bad); }

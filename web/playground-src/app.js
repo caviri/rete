@@ -46,10 +46,23 @@
     // and the predicate currently drilled into for a faceted value browse
     // ({iri, label}) or null when showing the term list.
     labelProp: "auto",
-    facet: null
+    facet: null,
+    // The dataset builder's in-progress example rows (SPARQL/SHACL). The last
+    // built+saved dataset itself is kept in `state.built` (declared above).
+    buildEx: []
   };
 
   const RDF_TYPE = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+
+  // User-built datasets kept in this browser (IndexedDB): key -> raw .rete bytes.
+  // They're merged into CATALOG at boot so they behave like the bundled ones
+  // (selectable, queryable, with their own card + example library), and removed
+  // again on delete. See the dataset-builder section near the bottom of this file.
+  const userBytes = new Map();
+  // Set once the wasm engine is initialized, so the live RDF validator doesn't
+  // try to build before `wasm_bindgen()` has run (it fires on the first edit,
+  // which can race the boot await).
+  let wasmReady = false;
 
   // --- Remote lazy SPARQL worker ----------------------------------------
   // The engine is synchronous and wasm can't block on fetch, so remote
@@ -594,13 +607,14 @@ self.onmessage = function (e) {
     }));
   }
 
-  function enhanceEditor(id, lang) {
+  function enhanceEditor(id, lang, onChange) {
     if (!window.PlaygroundEditor) return;
     window.PlaygroundEditor.enhance(id, lang, {
       schema: () => state.schema,
       searchEntities: entitySearch,
       labelHints: labelHintsFor,
-      resolveLabels: resolveLabels
+      resolveLabels: resolveLabels,
+      onChange: onChange || null
     });
   }
 
@@ -995,14 +1009,16 @@ self.onmessage = function (e) {
   }
 
   function loadDataset(key) {
-    const b64 = RETE_DATASETS_B64[key];
-    if (!b64) {
-      setStatus("dataset not embedded: " + key);
+    let bytes = null;
+    if (userBytes.has(key)) bytes = userBytes.get(key);
+    else { const b64 = RETE_DATASETS_B64[key]; if (b64) bytes = b64ToBytes(b64); }
+    if (!bytes) {
+      setStatus("dataset not available: " + key);
       return;
     }
     state.dataset = key;
     setDatasetName(key);
-    loadBytes(b64ToBytes(b64), "bundled");
+    loadBytes(bytes, "bundled");
     renderExamples();
     const list = examplesForDataset();
     if (list.length) selectExample(0);
@@ -1083,7 +1099,18 @@ self.onmessage = function (e) {
     const tok = CATALOG.remoteToken ? "?token=" + CATALOG.remoteToken : "";
     return `${CATALOG.remoteBase}/playground/${key}.rete${tok}`;
   }
-  function isEmbedded(key) { return !!RETE_DATASETS_B64[key]; }
+  function isEmbedded(key) { return !!RETE_DATASETS_B64[key] || userBytes.has(key); }
+  // A user-built dataset (kept in this browser), vs a bundled/remote catalog one.
+  function isCustom(key) {
+    const ex = CATALOG.datasetExtra && CATALOG.datasetExtra[key];
+    return !!(ex && ex.custom);
+  }
+  // A key already taken by a bundled/remote dataset — a custom build may not shadow it.
+  function keyIsReserved(key) {
+    if (RETE_DATASETS_B64[key]) return true;
+    const d = CATALOG.datasets.find((x) => x.key === key);
+    return !!(d && !d.custom);
+  }
 
   // Downloaded-remote cache: fetch the whole .rete once, keep the bytes, then
   // query it in memory on later loads (the "cache" mode of the source switch).
@@ -1279,23 +1306,29 @@ self.onmessage = function (e) {
     const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[key]) || {};
     const remoteOnly = d.kind === "remote-lazy";
     const embedded = isEmbedded(key);
+    const custom = isCustom(key);
     const sup = datasetSupports(key);
     const fmtTri = (t) => (t == null ? "—" : typeof t === "number" ? t.toLocaleString() : esc(t));
     const host = (u) => { try { return new URL(u).host.replace(/^www\./, ""); } catch (e) { return u; } };
 
-    const badge = remoteOnly
+    const badge = custom
+      ? `<span class="ds-badge local">💾 Local · in this browser</span>`
+      : remoteOnly
       ? `<span class="ds-badge remote">🛰 Remote-only · lazy</span>`
       : `<span class="ds-badge bundled">Bundled in page</span>`;
     // Descriptive tags + capability chips (a distinct colour family) in one row.
     const capChips = ["SPARQL", "SHACL", "Reasoning", "Reach", "Provenance", "Geo"]
       .filter((c) => sup[c])
       .map((c) => `<span class="ds-cap on">${esc(c)}</span>`).join("");
-    const tags = (ex.tags || []).map((t) => `<span class="ds-tag">${esc(t)}</span>`).join("") +
+    const tags = (custom ? `<span class="ds-tag custom">local build</span>` : "") +
+      (ex.tags || []).map((t) => `<span class="ds-tag">${esc(t)}</span>`).join("") +
       (m.license ? `<span class="ds-tag license">${esc(m.license)}</span>` : "") + capChips;
 
     const defMode = embedded ? "bundled" : "lazy";
     const hints = {
-      bundled: "Loads the copy embedded in this page — instant, fully offline.",
+      bundled: custom
+        ? "Loads the copy saved in this browser (IndexedDB) — instant, fully offline."
+        : "Loads the copy embedded in this page — instant, fully offline.",
       cache: "Downloads the whole .rete from the bucket once, then queries it in memory (cached this session).",
       lazy: "Range-queries the remote .rete over HTTP — only the bytes each query touches are fetched."
     };
@@ -1306,10 +1339,13 @@ self.onmessage = function (e) {
     const loadMenu = `<div class="ds-load">` +
       `<button type="button" class="ds-load-btn" id="dsLoadBtn" aria-haspopup="true" aria-expanded="false"><span class="ds-eject-ic" aria-hidden="true">⏏</span>Load<span class="ds-load-caret" aria-hidden="true">⌄</span></button>` +
       `<div class="ds-load-menu hidden" id="dsLoadMenu">` +
-      modeItem("bundled", "Bundled", !embedded) +
-      modeItem("cache", "Cache remote", false) +
-      modeItem("lazy", "Lazy range", false) +
-      `</div></div>`;
+      (custom
+        ? modeItem("bundled", "Open (local copy)", false)
+        : modeItem("bundled", "Bundled", !embedded) +
+          modeItem("cache", "Cache remote", false) +
+          modeItem("lazy", "Lazy range", false)) +
+      `</div></div>` +
+      (custom ? `<button type="button" class="ds-delete" id="dsDeleteBtn" title="Remove this dataset from your browser">Delete</button>` : "");
 
     // Preview: the examples this dataset ships, each tagged by kind (SPARQL /
     // SHACL) with a one-line "what it's about" and an expandable query/shape —
@@ -1335,11 +1371,11 @@ self.onmessage = function (e) {
     const metaTable = `<table class="ds-meta-table"><tbody>` +
       `<tr><td>Triples</td><td class="num">${fmtTri(m.triples)}</td></tr>` +
       `<tr><td>.rete size</td><td class="num">${esc(m.size || "—")}</td></tr>` +
-      `<tr><td>Type</td><td>${remoteOnly ? "🛰 Remote · lazy" : "Bundled"}${embedded ? " · also in bucket" : ""}</td></tr>` +
+      `<tr><td>Type</td><td>${custom ? "💾 Local · in this browser (IndexedDB)" : remoteOnly ? "🛰 Remote · lazy" : "Bundled"}${(!custom && embedded) ? " · also in bucket" : ""}</td></tr>` +
       `<tr><td>License</td><td>${esc(m.license || "—")}</td></tr>` +
       `<tr><td>Source</td><td>${m.source ? `<a href="${esc(m.source)}" target="_blank" rel="noopener">${esc(host(m.source))} ↗</a>` : "—"}</td></tr>` +
       `<tr><td>Provenance</td><td>${m.provenance ? esc(m.provenance) : "—"}</td></tr>` +
-      `<tr><td>Bucket</td><td class="iri">playground/${esc(key)}.rete</td></tr>` +
+      `<tr><td>Bucket</td><td class="iri">${custom ? "— (local; export to publish)" : "playground/" + esc(key) + ".rete"}</td></tr>` +
       `</tbody></table>`;
 
     $("dsDetail").innerHTML =
@@ -1363,6 +1399,11 @@ self.onmessage = function (e) {
     $$("#dsLoadMenu button").forEach((b) => {
       b.onclick = () => { if (b.disabled) return; selectDatasetMode(key, b.dataset.mode); closeSource(); };
     });
+    const delBtn = $("dsDeleteBtn");
+    if (delBtn) delBtn.onclick = () => {
+      if (!confirm(`Delete "${dsShortLabel(key)}" from this browser? Its .rete, card and examples are removed locally (export first if you want to keep them).`)) return;
+      deleteUserDataset(key);
+    };
   }
 
   function openSource() {
@@ -4178,66 +4219,486 @@ self.onmessage = function (e) {
       `<div>Pyramid: ${esc(renderRange(p.pyramidRange))}</div>`;
   }
 
-  function buildFileName() {
-    const base = (state.built && state.built.name) || "graph";
-    return base.replace(/\.(nt|nq|nquads|ttl|turtle|txt)$/i, "") + ".rete";
+  // ── Dataset builder ("Create a dataset" panel) ───────────────────────────
+  // Assemble a brand-new .rete from pasted RDF (+ an optional ontology merged
+  // into the same graph), attach a dataset card + example SPARQL/SHACL, build it
+  // with the wasm engine, and persist the whole bundle to IndexedDB so it shows
+  // up beside the bundled datasets and survives reloads — until the user deletes
+  // it. Two export buttons let the user take the result out of the browser: the
+  // raw .rete, and a JSON manifest (card + examples) to PR into the repo/plaza.
+
+  const BUILD_FAMILY_DEFAULT = "Select";
+  function buildFamilies() { return (CATALOG.families && CATALOG.families.length) ? CATALOG.families : ["Select"]; }
+
+  function sanitizeKey(s) {
+    return String(s || "").toLowerCase().normalize("NFKD")
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
   }
 
-  function runBuild() {
-    const text = $("buildText").value;
-    if (!text.trim()) return showError("buildOut", "Paste some RDF first (or open a file).");
+  // The dataset-card form ↔ JSON code editor, kept in sync both ways. This flag
+  // guards against the programmatic write of one side re-triggering the other.
+  let cardSync = false;
+
+  // Read the card FORM into the canonical card object (the shape the JSON mirror
+  // shows). `key` is derived from the title when the key field is empty.
+  function cardFromForm() {
+    const title = ($("cardTitle").value || "").trim();
+    const key = ($("cardKey").value || "").trim();
+    return {
+      key: sanitizeKey(key || title),
+      title,
+      icon: ($("cardIcon").value || "").trim(),
+      license: ($("cardLicense").value || "").trim(),
+      source: ($("cardSource").value || "").trim(),
+      tags: ($("cardTags").value || "").split(",").map((s) => s.trim()).filter(Boolean),
+      description: ($("cardDesc").value || "").trim(),
+      provenance: ($("cardProvenance").value || "").trim()
+    };
+  }
+
+  // Build's view of the card (adds the "Untitled graph" fallback + `desc` alias).
+  function gatherCard() {
+    const c = cardFromForm();
+    return {
+      title: c.title || c.key || "Untitled graph",
+      key: c.key, icon: c.icon, license: c.license, source: c.source,
+      tags: c.tags, desc: c.description, provenance: c.provenance
+    };
+  }
+
+  // FORM → JSON: reflect the form into the code editor (unless the editor is the
+  // one being typed into right now).
+  function updateCardCode() {
+    if (cardSync) return;
+    const code = $("cardCode"); if (!code) return;
+    cardSync = true;
+    code.value = JSON.stringify(cardFromForm(), null, 2);
+    code.classList.remove("invalid");
+    setCardSyncMsg("in sync", false);
+    cardSync = false;
+  }
+
+  // JSON → FORM: parse the editor and populate the form. Invalid JSON leaves the
+  // form untouched and flags the editor.
+  function applyCardCode() {
+    if (cardSync) return;
+    const code = $("cardCode"); if (!code) return;
+    let obj;
+    try { obj = JSON.parse(code.value || "{}"); }
+    catch (e) { code.classList.add("invalid"); setCardSyncMsg("invalid JSON — form not updated", true); return; }
+    if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
+      code.classList.add("invalid"); setCardSyncMsg("expected a JSON object", true); return;
+    }
+    code.classList.remove("invalid");
+    setCardSyncMsg("in sync", false);
+    cardSync = true;
+    const set = (id, v) => { const el = $(id); if (el && v != null) el.value = String(v); };
+    if (obj.title != null) set("cardTitle", obj.title);
+    if (obj.key != null) { set("cardKey", obj.key); const ck = $("cardKey"); if (ck) ck.dataset.auto = "0"; }
+    set("cardIcon", obj.icon);
+    set("cardLicense", obj.license);
+    set("cardSource", obj.source);
+    if (obj.tags != null) set("cardTags", Array.isArray(obj.tags) ? obj.tags.join(", ") : obj.tags);
+    if (obj.description != null) set("cardDesc", obj.description);
+    if (obj.provenance != null) set("cardProvenance", obj.provenance);
+    cardSync = false;
+  }
+
+  function setCardSyncMsg(text, bad) {
+    const el = $("cardCodeMsg"); if (!el) return;
+    el.textContent = text; el.classList.toggle("invalid", !!bad);
+  }
+
+  // A card form field changed: keep the url-safe key auto-derived from the title
+  // until the user edits the key, then mirror the form into the JSON.
+  function onCardField(e) {
+    const ck = $("cardKey");
+    if (ck && e && e.target === $("cardTitle") && ck.dataset.auto !== "0") ck.value = sanitizeKey($("cardTitle").value);
+    if (ck && e && e.target === ck) ck.dataset.auto = ck.value.trim() ? "0" : "1";
+    updateCardCode();
+  }
+
+  // --- live RDF syntax validation for editors 1 (data) & 2 (ontology) ---------
+  // The engine has no parse-only entry point, so validation = a trial build in
+  // the chosen format (cheap for the small graphs the builder targets). It runs
+  // debounced on every edit / format change; very large inputs are deferred to
+  // the actual build to avoid rebuilding the whole graph on each keystroke.
+  const VALIDATE_CAP = 3_000_000; // ~3 MB of text — above this, validate on build only
+  let validateTimer = null;
+  function firstLine(s) { return String(s).split("\n")[0].replace(/^Error:\s*/, "").slice(0, 140); }
+  function setValidMsg(id, text, ok) {
+    const el = $(id); if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("valid", ok === true);
+    el.classList.toggle("invalid", ok === false);
+  }
+  function validateSource(statusId, data, onto, fmt, merged) {
+    if (!(data.trim() || onto.trim())) { setValidMsg(statusId, "", null); return; }
+    if (!wasmReady || !RC()) { setValidMsg(statusId, "", null); return; }
+    if ((data.length + onto.length) > VALIDATE_CAP) { setValidMsg(statusId, "large input — checked on build", null); return; }
+    try {
+      const info = JSON.parse(W().info(buildFromSources(data, onto, fmt)));
+      setValidMsg(statusId, `✓ valid${merged ? " (merged)" : ""} · ${info.quads} triples`, true);
+    } catch (e) {
+      setValidMsg(statusId, "✗ " + firstLine(e), false);
+    }
+  }
+  function runBuildValidation() {
+    const fmt = $("buildFormat").value;
+    const data = $("buildText").value || "";
+    const onto = $("buildOntology").value || "";
+    validateSource("buildDataValid", data, "", fmt, false);
+    // Editor 2 validates in the same combination the build uses, so an ontology
+    // that reuses the data's prefixes (Turtle) checks correctly.
+    if (onto.trim()) validateSource("buildOntoValid", data, onto, fmt, !!data.trim());
+    else setValidMsg("buildOntoValid", "", null);
+  }
+  function scheduleBuildValidation() { clearTimeout(validateTimer); validateTimer = setTimeout(runBuildValidation, 450); }
+
+  // --- format conversion: JSON-LD / RDF/XML → N-Quads / N-Triples -------------
+  // The wasm engine parses only nt/nq/ttl, so JSON-LD and RDF/XML are converted
+  // in the browser (RDFConvert, rdfconv.js) before building. `toEngineText`
+  // returns the converted text + the actual build format to hand to W().build.
+  function RC() { return window.RDFConvert; }
+  function toEngineText(text, fmt) {
+    if (fmt === "jsonld") return { text: RC().jsonldToNQuads(text), fmt: "nq" };
+    if (fmt === "rdfxml") return { text: RC().rdfxmlToNTriples(text, window.DOMParser), fmt: "nt" };
+    return { text: text, fmt: fmt };
+  }
+  // Build the merged graph (data + optional ontology) in the chosen source
+  // format. nt/nq/ttl sources are concatenated as text; jsonld/rdfxml sources
+  // are each converted, then the resulting line-based forms are concatenated.
+  function buildFromSources(data, onto, fmt) {
+    const parts = [];
+    let buildFmt = fmt;
+    if (data.trim()) { const c = toEngineText(data, fmt); buildFmt = c.fmt; parts.push(c.text.replace(/\s+$/, "")); }
+    if (onto.trim()) { const c = toEngineText(onto, fmt); buildFmt = c.fmt; parts.push(c.text.replace(/\s+$/, "")); }
+    return W().build(parts.join("\n"), buildFmt);
+  }
+
+  // --- import a card / manifest JSON file into editor 3 (and step 4) ----------
+  // Accepts either a flat card object {key,title,…} or a full manifest produced
+  // by "Download manifest" (datasetMeta / datasetExtra / examples / shacl), in
+  // which case the example rows are restored too.
+  async function importCardFile(file) {
+    if (!file) return;
+    let obj;
+    try { obj = JSON.parse(await file.text()); }
+    catch (e) { setCardSyncMsg("invalid JSON file", true); return; }
+    const isManifest = obj && (obj.datasetMeta || obj.datasetExtra || obj.examples || obj.shacl || obj.dataset);
+    let card = obj;
+    if (isManifest) {
+      const key = obj.key || (obj.datasetMeta && Object.keys(obj.datasetMeta)[0]) ||
+        (obj.dataset && obj.dataset.key) || (obj.examples && Object.keys(obj.examples)[0]) || "";
+      const meta = (obj.datasetMeta && obj.datasetMeta[key]) || {};
+      const extra = (obj.datasetExtra && obj.datasetExtra[key]) || {};
+      const ds = obj.dataset || {};
+      card = {
+        key, title: ds.label || ds.title || key,
+        icon: extra.icon || "", license: meta.license || "", source: meta.source || "",
+        tags: extra.tags || [], description: ds.description || "", provenance: meta.provenance || ""
+      };
+      // Restore the example rows (step 4) from the manifest.
+      const exs = (obj.examples && obj.examples[key]) || [];
+      const shp = (obj.shacl && obj.shacl[key]) || [];
+      if (exs.length || shp.length) {
+        state.buildEx = exs.map((e) => ({ type: "sparql", family: e.family || BUILD_FAMILY_DEFAULT, view: e.view || "table", label: e.label || "", tip: e.tip || "", q: e.q || "" }))
+          .concat(shp.map((s) => ({ type: "shacl", label: s.label || "", tip: s.tip || "", shape: s.shape || "" })));
+        renderBuildExamples();
+      }
+    }
+    const code = $("cardCode");
+    if (code) { code.value = JSON.stringify(card, null, 2); applyCardCode(); }
+    setCardSyncMsg(isManifest ? "imported manifest" : "imported card", false);
+  }
+
+  // Pull the current example-row DOM values back into state.buildEx (so a
+  // re-render — adding/removing a row — never loses what was typed).
+  function captureBuildExamples() {
+    const rows = $$("#buildExamples .build-ex");
+    rows.forEach((row, i) => {
+      const e = state.buildEx[i]; if (!e) return;
+      const v = (sel) => { const el = row.querySelector(sel); return el ? el.value : ""; };
+      e.label = v(".bx-label"); e.tip = v(".bx-tip");
+      if (e.type === "sparql") { e.family = v(".bx-family") || BUILD_FAMILY_DEFAULT; e.view = v(".bx-view") || "table"; e.q = v(".bx-q"); }
+      else { e.shape = v(".bx-shape"); }
+    });
+  }
+
+  function renderBuildExamples() {
+    const box = $("buildExamples");
+    if (!box) return;
+    box.innerHTML = state.buildEx.map((e, i) => {
+      const head = e.type === "sparql"
+        ? `<span class="build-ex-kind">SPARQL</span>` +
+          `<select class="bx-family">${buildFamilies().map((f) => `<option${f === e.family ? " selected" : ""}>${esc(f)}</option>`).join("")}</select>` +
+          `<input class="bx-label" placeholder="Example title" value="${esc(e.label || "")}" />` +
+          `<select class="bx-view"><option value="table"${e.view !== "graph" ? " selected" : ""}>table</option><option value="graph"${e.view === "graph" ? " selected" : ""}>graph</option></select>`
+        : `<span class="build-ex-kind">SHACL</span>` +
+          `<input class="bx-label" placeholder="Shape title" value="${esc(e.label || "")}" />`;
+      const body = e.type === "sparql"
+        ? `<textarea class="bx-q" spellcheck="false" placeholder="SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 25">${esc(e.q || "")}</textarea>`
+        : `<textarea class="bx-shape" spellcheck="false" placeholder="@prefix sh: <http://www.w3.org/ns/shacl#> .\n[] a sh:NodeShape ; sh:targetClass ... .">${esc(e.shape || "")}</textarea>`;
+      return `<div class="build-ex${e.type === "shacl" ? " shacl" : ""}" data-type="${e.type}">` +
+        `<div class="build-ex-head">${head}<button type="button" class="build-ex-del" data-del="${i}" title="Remove">×</button></div>` +
+        `<input class="bx-tip" placeholder="One-line description (the tip shown under the example)" value="${esc(e.tip || "")}" />` +
+        body +
+        `</div>`;
+    }).join("");
+    $$("#buildExamples .build-ex-del").forEach((b) => {
+      b.onclick = () => { captureBuildExamples(); state.buildEx.splice(Number(b.dataset.del), 1); renderBuildExamples(); };
+    });
+  }
+
+  function addBuildExample(type) {
+    captureBuildExamples();
+    state.buildEx.push(type === "shacl"
+      ? { type: "shacl", label: "", tip: "", shape: "" }
+      : { type: "sparql", family: BUILD_FAMILY_DEFAULT, view: "table", label: "", tip: "", q: "" });
+    renderBuildExamples();
+  }
+
+  // --- user-dataset persistence (its own IndexedDB DB, kept separate from the
+  // range/file cache DB so it never collides with the worker shim's v2 contract).
+  const UDB = "playgroundDatasets", UDS = "datasets";
+  function udbOpen() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open(UDB, 1);
+      r.onupgradeneeded = () => { const db = r.result; if (!db.objectStoreNames.contains(UDS)) db.createObjectStore(UDS); };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+  }
+  function udbPut(rec) {
+    return udbOpen().then((db) => new Promise((res, rej) => {
+      const t = db.transaction(UDS, "readwrite"); t.objectStore(UDS).put(rec, rec.key);
+      t.oncomplete = () => res(); t.onerror = () => rej(t.error);
+    }));
+  }
+  function udbDelete(key) {
+    return udbOpen().then((db) => new Promise((res) => {
+      const t = db.transaction(UDS, "readwrite"); t.objectStore(UDS).delete(key);
+      t.oncomplete = () => res(); t.onerror = () => res();
+    }));
+  }
+  function udbAll() {
+    return udbOpen().then((db) => new Promise((res) => {
+      const out = []; const c = db.transaction(UDS).objectStore(UDS).openCursor();
+      c.onsuccess = (e) => { const cur = e.target.result; if (cur) { out.push(cur.value); cur.continue(); } else res(out); };
+      c.onerror = () => res(out);
+    }));
+  }
+
+  // Splice a saved record into the live CATALOG so it behaves like a bundled
+  // dataset (sidebar entry, card, example library), and stash its bytes.
+  function mergeUserDataset(rec) {
+    userBytes.set(rec.key, rec.bytes);
+    const entry = { key: rec.key, label: rec.label, description: rec.description, custom: true };
+    const i = CATALOG.datasets.findIndex((d) => d.key === rec.key);
+    if (i >= 0) CATALOG.datasets[i] = entry; else CATALOG.datasets.push(entry);
+    CATALOG.datasetMeta = CATALOG.datasetMeta || {};
+    CATALOG.datasetExtra = CATALOG.datasetExtra || {};
+    CATALOG.datasetMeta[rec.key] = rec.meta;
+    CATALOG.datasetExtra[rec.key] = { icon: rec.extra.icon, tags: rec.extra.tags, custom: true };
+    CATALOG.examples[rec.key] = rec.examples || [];
+    CATALOG.shacl[rec.key] = rec.shacl || [];
+  }
+  function unmergeUserDataset(key) {
+    userBytes.delete(key);
+    const i = CATALOG.datasets.findIndex((d) => d.key === key);
+    if (i >= 0) CATALOG.datasets.splice(i, 1);
+    if (CATALOG.datasetMeta) delete CATALOG.datasetMeta[key];
+    if (CATALOG.datasetExtra) delete CATALOG.datasetExtra[key];
+    delete CATALOG.examples[key];
+    delete CATALOG.shacl[key];
+  }
+  async function loadUserDatasets() {
+    let recs = [];
+    try { recs = await udbAll(); } catch (e) { return; }
+    recs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    recs.forEach((r) => {
+      if (!r || !r.key || !r.bytes) return;
+      r.bytes = r.bytes instanceof Uint8Array ? r.bytes : new Uint8Array(r.bytes);
+      mergeUserDataset(r);
+    });
+  }
+
+  function setBuiltButtons(on) {
+    ["buildOpen", "buildDownload", "buildManifest"].forEach((id) => { const b = $(id); if (b) b.disabled = !on; });
+  }
+
+  async function runBuild() {
+    captureBuildExamples();
+    const data = $("buildText").value || "";
+    const onto = $("buildOntology").value || "";
+    if (!data.trim() && !onto.trim()) return showError("buildOut", "Paste some RDF data first (step 1) — or open a file.");
+    const card = gatherCard();
+    if (!card.key) return showError("buildOut", "Give the dataset a title or a key first (step 3).");
+    if (keyIsReserved(card.key)) return showError("buildOut", `The key “${esc(card.key)}” belongs to a bundled dataset — pick another in step 3.`);
+
     const fmt = $("buildFormat").value;
     const t0 = performance.now();
+    let bytes, info;
     try {
-      const bytes = W().build(text, fmt);
-      const dt = performance.now() - t0;
-      state.built = { bytes, name: (state.built && state.built.name) || "graph" };
-      const info = JSON.parse(W().info(bytes));
-      $("buildDownload").disabled = false;
-      $("buildOpen").disabled = false;
-      $("buildMeta").textContent = `${formatBytes(bytes.length)} | ${dt.toFixed(1)} ms`;
-      $("buildOut").innerHTML =
-        `<div class="banner">Built <strong>${esc(buildFileName())}</strong> — a complete, queryable .rete file.</div>` +
-        `<div class="metric-grid">` +
-        metric("Quads", info.quads) +
-        metric("Terms", info.terms) +
-        metric("Pyramid levels", info.pyramidLevels) +
-        metric("Named graphs", info.namedGraphs) +
-        metric("Size", formatBytes(bytes.length)) +
-        `</div>` +
-        `<p class="microcopy">Download it, or open it in this console to query it immediately. ` +
-        `In-browser builds write uncompressed sections (the wasm engine ships no zstd encoder); ` +
-        `<code>rete build</code> produces a smaller file from the same input.</p>`;
-      updateResultVisibility();
+      // Merge data + optional ontology into one graph (JSON-LD / RDF/XML are
+      // converted to N-Quads / N-Triples first; nt/nq/ttl are concatenated).
+      bytes = buildFromSources(data, onto, fmt);
+      info = JSON.parse(W().info(bytes));
     } catch (e) {
-      state.built = null;
-      $("buildDownload").disabled = true;
-      $("buildOpen").disabled = true;
-      $("buildMeta").textContent = "";
-      showError("buildOut", "Build failed: " + String(e));
+      state.built = null; setBuiltButtons(false); $("buildMeta").textContent = "";
+      return showError("buildOut", "Build failed: " + firstLine(e));
     }
+    const dt = performance.now() - t0;
+
+    const rec = {
+      key: card.key,
+      label: card.title,
+      description: card.desc || "A custom graph built in the browser.",
+      meta: {
+        triples: info.quads,
+        size: formatBytes(bytes.length),
+        license: card.license,
+        source: card.source,
+        provenance: card.provenance
+      },
+      extra: { icon: card.icon || "📦", tags: card.tags },
+      examples: state.buildEx.filter((e) => e.type === "sparql" && (e.q || "").trim())
+        .map((e) => ({ family: e.family || BUILD_FAMILY_DEFAULT, label: e.label || "Example", view: e.view || "table", tip: e.tip || "", q: e.q })),
+      shacl: state.buildEx.filter((e) => e.type === "shacl" && (e.shape || "").trim())
+        .map((e) => ({ label: e.label || "Shape", tip: e.tip || "", shape: e.shape })),
+      format: fmt,
+      bytes,
+      createdAt: Date.now(),
+      custom: true
+    };
+
+    let saved = true;
+    try { await udbPut(rec); } catch (e) { saved = false; }
+    mergeUserDataset(rec);
+    state.built = { bytes, key: rec.key, rec };
+    setBuiltButtons(true);
+    $("buildMeta").textContent = `${formatBytes(bytes.length)} · ${info.quads} triples · ${dt.toFixed(1)} ms`;
+    $("buildOut").innerHTML =
+      `<div class="banner">${saved ? "Saved" : "Built"} <strong>${esc(rec.key)}</strong> — ` +
+        `${saved ? "stored in this browser and added to the dataset list." : "could not write to IndexedDB (private mode?), but it's loaded for this session."}</div>` +
+      `<div class="metric-grid">` +
+      metric("Triples", info.quads) +
+      metric("Terms", info.terms) +
+      metric("Pyramid levels", info.pyramidLevels) +
+      metric("Examples", rec.examples.length + rec.shacl.length) +
+      metric("Size", formatBytes(bytes.length)) +
+      `</div>` +
+      `<p class="microcopy">Open it in the console to query it, or export it: <strong>Download .rete</strong> for the file, ` +
+      `<strong>Download manifest</strong> for the card + examples to PR into the repo or the plaza. ` +
+      `In-browser builds write uncompressed sections (the wasm engine ships no zstd encoder); ` +
+      `<code>rete build</code> on the CLI produces a smaller file from the same input.</p>`;
+    renderBuildSaved();
+    updateResultVisibility();
+  }
+
+  function triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
   }
 
   function downloadBuilt() {
     if (!state.built) return;
-    const blob = new Blob([state.built.bytes], { type: "application/octet-stream" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = buildFileName();
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    triggerDownload(new Blob([state.built.bytes], { type: "application/octet-stream" }), state.built.key + ".rete");
+  }
+
+  // A self-describing JSON manifest: the catalog fragments (card + examples) plus
+  // instructions to drop the sibling .rete into the repo/plaza. Mirrors the shape
+  // of web/playground-src/catalog.js so the fragments paste straight in.
+  function builtManifest() {
+    const r = state.built && state.built.rec;
+    if (!r) return null;
+    return {
+      "$schema": "rete-playground-dataset/v1",
+      key: r.key,
+      rete: { file: r.key + ".rete", bytes: r.bytes.length, format: r.format },
+      dataset: { key: r.key, label: r.label, description: r.description },
+      datasetMeta: { [r.key]: r.meta },
+      datasetExtra: { [r.key]: { icon: r.extra.icon, tags: r.extra.tags } },
+      examples: { [r.key]: r.examples },
+      shacl: { [r.key]: r.shacl },
+      instructions: [
+        `Save the sibling ${r.key}.rete into web/ (or 'hf buckets cp' it to playground/${r.key}.rete for a remote-lazy dataset).`,
+        `If embedding: add ("${r.key}", "${r.key}.rete") to DATASETS in scripts/build_playground.py.`,
+        "Merge the dataset / datasetMeta / datasetExtra / examples / shacl fragments into web/playground-src/catalog.js.",
+        "Run scripts/build_playground.py to regenerate docs/playground.html.",
+        "To contribute to the plaza, include both this manifest and the .rete file in your PR."
+      ]
+    };
+  }
+  function downloadManifest() {
+    const man = builtManifest();
+    if (!man) return;
+    triggerDownload(new Blob([JSON.stringify(man, null, 2)], { type: "application/json" }), state.built.key + ".manifest.json");
   }
 
   function openBuilt() {
     if (!state.built) return;
-    loadBytes(state.built.bytes, "built");
-    setStatus(`${buildFileName()} | ${formatBytes(state.built.bytes.byteLength)} | built in browser`);
-    $("dsDesc").textContent = "Graph built from RDF text in this session — query it like any dataset.";
-    setDatasetHeader(buildFileName(), "Graph built from RDF text in this session — query it like any dataset.");
+    loadDataset(state.built.key);
     setMode("sparql");
+  }
+
+  // The "Saved in this browser" list under the builder actions: every user
+  // dataset with Open + Delete.
+  function renderBuildSaved() {
+    const box = $("buildSavedList");
+    if (!box) return;
+    const keys = [...userBytes.keys()];
+    if (!keys.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<h3>Saved in this browser · ${keys.length}</h3>` + keys.map((k) => {
+      const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[k]) || {};
+      const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[k]) || {};
+      const nEx = (CATALOG.examples[k] || []).length + (CATALOG.shacl[k] || []).length;
+      const sub = [m.size, m.triples != null ? m.triples + " triples" : "", nEx ? nEx + " examples" : ""].filter(Boolean).join(" · ");
+      return `<div class="saved-item">` +
+        `<span class="saved-ico">${esc(ex.icon || "📦")}</span>` +
+        `<div class="saved-main"><div class="saved-name">${esc(dsShortLabel(k))}</div><div class="saved-sub">${esc(sub)}</div></div>` +
+        `<button type="button" class="secondary" data-load="${esc(k)}">Open</button>` +
+        `<button type="button" class="ds-delete" data-del="${esc(k)}">Delete</button>` +
+        `</div>`;
+    }).join("");
+    $$("#buildSavedList [data-load]").forEach((b) => { b.onclick = () => { loadDataset(b.dataset.load); setMode("sparql"); }; });
+    $$("#buildSavedList [data-del]").forEach((b) => { b.onclick = () => deleteUserDataset(b.dataset.del); });
+  }
+
+  async function deleteUserDataset(key) {
+    try { await udbDelete(key); } catch (e) { /* ignore */ }
+    unmergeUserDataset(key);
+    if (state.built && state.built.key === key) { state.built = null; setBuiltButtons(false); }
+    if (state.dataset === key) loadDataset(CATALOG.defaultDataset);
+    renderBuildSaved();
+    if (!$("sourceModal").classList.contains("hidden")) {
+      if (dsSelected === key) dsSelected = state.dataset;
+      renderDsSidebar(); renderDsDetail(dsSelected);
+    }
+  }
+
+  function resetBuilder() {
+    setEd("buildText", "");
+    setEd("buildOntology", "");
+    ["cardTitle", "cardKey", "cardIcon", "cardLicense", "cardSource", "cardTags", "cardDesc", "cardProvenance"]
+      .forEach((id) => { const el = $(id); if (el) el.value = ""; });
+    const ck = $("cardKey"); if (ck) ck.dataset.auto = "1";
+    state.buildEx = [];
+    renderBuildExamples();
+    state.built = null;
+    setBuiltButtons(false);
+    $("buildMeta").textContent = "";
+    $("buildDataMeta").textContent = "";
+    $("buildOut").innerHTML = "";
+    const cc = $("cardCode"); if (cc) cc.classList.remove("invalid");
+    setValidMsg("buildDataValid", "", null);
+    setValidMsg("buildOntoValid", "", null);
+    setCardSyncMsg("in sync", false);
+    updateCardCode();
+    updateResultVisibility();
   }
 
   async function loadBuildFile(file) {
@@ -4245,16 +4706,32 @@ self.onmessage = function (e) {
     try {
       const text = await file.text();
       setEd("buildText", text);
-      state.built = { bytes: null, name: file.name };
-      $("buildDownload").disabled = true;
-      $("buildOpen").disabled = true;
       const ext = (file.name.match(/\.(\w+)$/) || [])[1] || "";
-      const fmt = { nq: "nq", nquads: "nq", ttl: "ttl", turtle: "ttl" }[ext.toLowerCase()] || "nt";
+      const fmt = { nq: "nq", nquads: "nq", ttl: "ttl", turtle: "ttl",
+        jsonld: "jsonld", json: "jsonld", rdf: "rdfxml", owl: "rdfxml", xml: "rdfxml" }[ext.toLowerCase()] || "nt";
       $("buildFormat").value = fmt;
-      $("buildMeta").textContent = `${file.name} | ${formatBytes(file.size)} | ready to build`;
+      // Seed an empty card from the file name on first open.
+      const ct = $("cardTitle"), ck = $("cardKey");
+      if (ct && !ct.value.trim()) { ct.value = file.name.replace(/\.(\w+)$/, ""); if (ck && ck.dataset.auto !== "0") ck.value = sanitizeKey(ct.value); updateCardCode(); }
+      $("buildDataMeta").textContent = `${file.name} · ${formatBytes(file.size)} · ready to build`;
+      runBuildValidation();
     } catch (e) {
       showError("buildOut", "File read failed: " + e.message);
     }
+  }
+
+  async function loadOntoFile(file) {
+    if (!file) return;
+    try {
+      setEd("buildOntology", await file.text());
+      // The Format select is shared by both editors. If the data editor is still
+      // empty, adopt the ontology file's format so an ontology-only build works.
+      const ext = (file.name.match(/\.(\w+)$/) || [])[1] || "";
+      const fmt = { nq: "nq", nquads: "nq", ttl: "ttl", turtle: "ttl",
+        jsonld: "jsonld", json: "jsonld", rdf: "rdfxml", owl: "rdfxml", xml: "rdfxml" }[ext.toLowerCase()];
+      if (fmt && !($("buildText").value || "").trim()) $("buildFormat").value = fmt;
+      runBuildValidation();
+    } catch (e) { showError("buildOut", "Ontology read failed: " + e.message); }
   }
 
   function showError(targetId, message) {
@@ -4311,7 +4788,7 @@ self.onmessage = function (e) {
         setEd("q", h.query || "");
         setView(h.format || "table");
         setStrategy(h.strategy || "whole");
-        if (h.dataset && h.dataset !== state.dataset && RETE_DATASETS_B64[h.dataset]) loadDataset(h.dataset);
+        if (h.dataset && h.dataset !== state.dataset && (RETE_DATASETS_B64[h.dataset] || userBytes.has(h.dataset))) loadDataset(h.dataset);
         setMode("sparql");
         closeHistory();
       };
@@ -4459,8 +4936,24 @@ self.onmessage = function (e) {
     $("whyRun").onclick = runProvenance;
     $("buildRun").onclick = runBuild;
     $("buildDownload").onclick = downloadBuilt;
+    $("buildManifest").onclick = downloadManifest;
     $("buildOpen").onclick = openBuilt;
+    $("buildReset").onclick = resetBuilder;
     $("buildFile").onchange = (e) => loadBuildFile(e.target.files[0]);
+    $("buildOntoFile").onchange = (e) => loadOntoFile(e.target.files[0]);
+    $("buildFormat").onchange = scheduleBuildValidation;
+    $("addSparqlEx").onclick = () => addBuildExample("sparql");
+    $("addShaclEx").onclick = () => addBuildExample("shacl");
+    // Dataset-card form ↔ JSON two-way sync: every card field mirrors into the
+    // code editor; editing the JSON (or importing a card/manifest) drives the form.
+    const ck = $("cardKey");
+    if (ck) ck.dataset.auto = "1";
+    ["cardTitle", "cardKey", "cardIcon", "cardLicense", "cardSource", "cardTags", "cardDesc", "cardProvenance"]
+      .forEach((id) => { const el = $(id); if (el) el.oninput = onCardField; });
+    const cardCode = $("cardCode");
+    if (cardCode) cardCode.oninput = applyCardCode;
+    const cardImport = $("cardImportFile");
+    if (cardImport) cardImport.onchange = (e) => { importCardFile(e.target.files[0]); e.target.value = ""; };
 
     $("strategyHelp").onclick = () => $("strategyModal").classList.remove("hidden");
     $("roundHelp").onclick = () => $("strategyModal").classList.remove("hidden");
@@ -4540,7 +5033,7 @@ self.onmessage = function (e) {
     const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘↵" : "Ctrl+↵";
     [["run", "Run query"], ["shaclRun", "Validate"], ["reachRun", "Run reach"],
      ["whyRun", "Explain matches"], ["coherenceRun", "Check coherence"],
-     ["buildRun", "Build .rete"]].forEach(([id, label]) => {
+     ["buildRun", "Build & save"]].forEach(([id, label]) => {
       const b = $(id);
       if (b) b.title = `${label} (${shortcut})`;
     });
@@ -4588,8 +5081,11 @@ self.onmessage = function (e) {
     try { setLibCollapsed(localStorage.getItem(LIB_KEY) === "1"); } catch (_e) { /* ignore */ }
     enhanceEditor("q", "sparql");
     enhanceEditor("shapeText", "ttl");
-    enhanceEditor("buildText", "ttl");
+    enhanceEditor("buildText", "ttl", scheduleBuildValidation);
+    enhanceEditor("buildOntology", "ttl", scheduleBuildValidation);
     setEd("buildText", BUILD_SAMPLE);
+    renderBuildExamples();
+    updateCardCode();
 
     // "Labels" decode switch — on by default; shows a human-label chip beside
     // each IRI in the query. The checkbox is `checked` in the HTML, so enable
@@ -4625,10 +5121,17 @@ self.onmessage = function (e) {
     bindLinkPreviews();
 
     await wasm_bindgen(b64ToBytes(RETE_WASM_B64));
+    wasmReady = true;
+    runBuildValidation(); // validate the seeded sample now that the engine is up
+
+    // Pull any datasets the user built earlier (IndexedDB) into the live catalog
+    // so they're selectable and the "Saved in this browser" list is populated.
+    await loadUserDatasets();
+    renderBuildSaved();
 
     const params = readHash();
     const ds = params.get("dataset") || CATALOG.defaultDataset;
-    if (RETE_DATASETS_B64[ds]) state.dataset = ds;
+    if (RETE_DATASETS_B64[ds] || userBytes.has(ds)) state.dataset = ds;
     loadDataset(state.dataset);
 
     const q = params.get("q");
