@@ -6,8 +6,8 @@
 //! variants live in `commands::query` / `commands::inspect`.
 
 use rete_core::{
-    eval_query, BlockCacheReader, CountingReader, Header, RangeReader, Rete, SummaryView,
-    DEFAULT_BLOCK, HEADER_LEN,
+    auto_block, eval_query, BlockCacheReader, CountingReader, Header, RangeReader, Rete,
+    SummaryView, HEADER_LEN,
 };
 
 use crate::commands::card;
@@ -124,16 +124,22 @@ pub(crate) fn sparql_url(url: &str, query: &str, json: bool) -> anyhow::Result<(
     // block fetches. `RETE_BLOCK_KB=0` disables it (one fetch per logical read).
     let reader = std::sync::Arc::new(CountingReader::new(HttpRangeReader::open(url)?));
     let total = reader.len();
-    let block_kb: u64 = std::env::var("RETE_BLOCK_KB")
+    // Block size: an explicit `RETE_BLOCK_KB` wins (0 disables the cache); else
+    // auto-tune from the file length, exactly like the wasm client — bigger files
+    // get bigger blocks, so a remote query makes far fewer round trips.
+    let block: u64 = match std::env::var("RETE_BLOCK_KB")
         .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_BLOCK / 1024);
-    let rete = if block_kb == 0 {
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(kb) => kb * 1024,
+        None => auto_block(total),
+    };
+    let rete = if block == 0 {
         Rete::open_ranged_lazy(reader.clone())?
     } else {
         Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(
             reader.clone(),
-            block_kb * 1024,
+            block,
         )))?
     };
     let result = eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -168,16 +174,22 @@ pub(crate) fn why_url(
 ) -> anyhow::Result<()> {
     let reader = std::sync::Arc::new(CountingReader::new(HttpRangeReader::open(url)?));
     let total = reader.len();
-    let block_kb: u64 = std::env::var("RETE_BLOCK_KB")
+    // Block size: an explicit `RETE_BLOCK_KB` wins (0 disables the cache); else
+    // auto-tune from the file length, exactly like the wasm client — bigger files
+    // get bigger blocks, so a remote query makes far fewer round trips.
+    let block: u64 = match std::env::var("RETE_BLOCK_KB")
         .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_BLOCK / 1024);
-    let rete = if block_kb == 0 {
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(kb) => kb * 1024,
+        None => auto_block(total),
+    };
+    let rete = if block == 0 {
         Rete::open_ranged_lazy(reader.clone())?
     } else {
         Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(
             reader.clone(),
-            block_kb * 1024,
+            block,
         )))?
     };
     let results =

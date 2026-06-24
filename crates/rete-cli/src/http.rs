@@ -76,7 +76,10 @@ impl RangeReader for HttpRangeReader {
     /// several threads at once.
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
         /// Bounded so we never open a burst of sockets to a host for a big scan.
-        const MAX_CONCURRENCY: usize = 8;
+        /// 16 matches the wasm client's fetch-worker pool — a CDN/S3 serves this
+        /// many concurrent range reads happily (it's the parallelism, not the
+        /// bytes, that dominates wall time on a latency-bound link).
+        const MAX_CONCURRENCY: usize = 16;
         if ranges.len() <= 1 {
             return ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect();
         }

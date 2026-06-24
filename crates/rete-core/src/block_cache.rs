@@ -25,6 +25,24 @@ use std::sync::{Arc, Mutex};
 /// index tile in one fetch, small enough to keep over-fetch modest.
 pub const DEFAULT_BLOCK: u64 = 64 * 1024;
 
+/// Pick a [`BlockCacheReader`] block size from the file length: bigger files get
+/// bigger blocks so a remote query makes far fewer (but larger) round trips —
+/// 128 KiB ≤ 10 MB, 256 KiB ≤ 100 MB, 512 KiB above. The over-fetch is modest
+/// next to the round-trip latency it saves on a high-latency link (S3/CDN). Shared
+/// by the CLI and the wasm client so both size identically; the file length is
+/// known for free from the opening `HEAD` / `Content-Range`.
+pub fn auto_block(len: u64) -> u64 {
+    const MB: u64 = 1 << 20;
+    let mult: u64 = if len > 100 * MB {
+        8 // 512 KiB
+    } else if len > 10 * MB {
+        4 // 256 KiB
+    } else {
+        2 // 128 KiB
+    };
+    mult * DEFAULT_BLOCK
+}
+
 pub struct BlockCacheReader<R> {
     inner: R,
     block: u64,
