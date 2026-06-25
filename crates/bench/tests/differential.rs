@@ -186,11 +186,22 @@ fn expr_builtins_agree_with_oxigraph() {
         format!("SELECT (STR(<{XSD}string>(?o)) AS ?r) WHERE {{ {S} <http://ex/num> ?o }}"),
         format!("SELECT (STR(<{XSD}decimal>(\"2.5\")) AS ?r) WHERE {{ {S} <http://ex/str> ?o }}"),
         // --- type errors: a function on the wrong type yields no value, so the
-        //     projected ?r is simply unbound; both engines must agree on that.
-        //     (STRLEN/UCASE/… on a non-string is NOT tested here: rete is lenient
-        //     and operates on the lexical, where SPARQL requires a type error —
-        //     a known strictness gap, unlike CONCAT which does type-check.) ---
+        //     projected ?r is simply unbound; both engines must agree on that. ---
         format!("SELECT ?o (ABS(?o) AS ?r) WHERE {{ {S} <http://ex/str> ?o }}"),
+        // STRLEN/UCASE/SUBSTR/ENCODE_FOR_URI/MD5 on a *numeric* (non-string) literal
+        // is a type error → ?r unbound. rete used to operate on the lexical and
+        // return a value (the differential caught it); now it type-checks like
+        // CONCAT, so both engines agree the result is unbound.
+        format!("SELECT (STR(STRLEN(?o)) AS ?r) WHERE {{ {S} <http://ex/num> ?o }}"),
+        format!("SELECT (STR(UCASE(?o)) AS ?r) WHERE {{ {S} <http://ex/num> ?o }}"),
+        format!("SELECT (STR(SUBSTR(?o, 1, 2)) AS ?r) WHERE {{ {S} <http://ex/num> ?o }}"),
+        format!("SELECT (STR(ENCODE_FOR_URI(?o)) AS ?r) WHERE {{ {S} <http://ex/num> ?o }}"),
+        format!("SELECT (STR(MD5(?o)) AS ?r) WHERE {{ {S} <http://ex/num> ?o }}"),
+        // CONTAINS/STRSTARTS/STRENDS/REGEX on a non-string → type error → false,
+        // so the row is dropped; both engines must return no rows.
+        format!("SELECT ?o WHERE {{ {S} <http://ex/num> ?o FILTER(CONTAINS(?o, \"4\")) }}"),
+        format!("SELECT ?o WHERE {{ {S} <http://ex/num> ?o FILTER(STRSTARTS(?o, \"4\")) }}"),
+        format!("SELECT ?o WHERE {{ {S} <http://ex/num> ?o FILTER(REGEX(?o, \"4\")) }}"),
         // --- string / datetime edge cases ---
         format!("SELECT (STR(STRBEFORE(?o, \"zzz\")) AS ?r) WHERE {{ {S} <http://ex/str> ?o }}"),
         format!("SELECT (STR(SUBSTR(?o, 100)) AS ?r) WHERE {{ {S} <http://ex/str> ?o }}"),

@@ -165,14 +165,26 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
     };
     match f {
         Builtin::Str => s(lex(&a0()?)),
-        Builtin::StrLen => num(lex(&a0()?).chars().count() as f64),
+        // STRLEN/UCASE/LCASE/SUBSTR/ENCODE_FOR_URI and the hashes require a STRING
+        // literal argument — `string_arg` errors (→ None, a type error) on an IRI,
+        // blank node, or non-string typed literal, matching SPARQL (and CONCAT,
+        // which already type-checks). Without this, STRLEN(42) wrongly returned 2
+        // (Oxigraph differential). `string_arg`'s tag also carries the language onto
+        // the UCASE/LCASE/SUBSTR result.
+        Builtin::StrLen => {
+            let a = a0()?;
+            string_arg(&a)?;
+            num(lex(&a).chars().count() as f64)
+        }
         Builtin::UCase => {
             let a = a0()?;
-            sl(lex(&a).to_uppercase(), keep_lang(&a).as_deref())
+            let lang = string_arg(&a)?;
+            sl(lex(&a).to_uppercase(), lang.as_deref())
         }
         Builtin::LCase => {
             let a = a0()?;
-            sl(lex(&a).to_lowercase(), keep_lang(&a).as_deref())
+            let lang = string_arg(&a)?;
+            sl(lex(&a).to_lowercase(), lang.as_deref())
         }
         Builtin::Abs => num(as_number(&a0()?)?.abs()),
         Builtin::Ceil => num(as_number(&a0()?)?.ceil()),
@@ -201,6 +213,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         }
         Builtin::SubStr => {
             let a = a0()?;
+            let lang = string_arg(&a)?;
             let chars: Vec<char> = lex(&a).chars().collect();
             let start = as_number(&args.get(1)?.value(ctx, b)?)?.max(1.0) as usize - 1;
             let it = chars.iter().skip(start);
@@ -210,7 +223,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
                     .collect(),
                 None => it.collect(),
             };
-            sl(out, keep_lang(&a).as_deref())
+            sl(out, lang.as_deref())
         }
         // STRBEFORE/STRAFTER: arg1 and arg2 must both be string literals and be
         // argument-compatible (arg2 simple, or sharing arg1's tag) — else a type
@@ -257,7 +270,11 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
                 Some(Rc::from(format!("<{}>", lex(&a))))
             }
         }
-        Builtin::EncodeForUri => s(encode_for_uri(&lex(&a0()?))),
+        Builtin::EncodeForUri => {
+            let a = a0()?;
+            string_arg(&a)?;
+            s(encode_for_uri(&lex(&a)))
+        }
         Builtin::Replace => {
             let a = a0()?;
             let lang = string_arg(&a)?; // arg1 must be a string literal
@@ -272,7 +289,9 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
             sl(out, lang.as_deref())
         }
         Builtin::Md5 | Builtin::Sha1 | Builtin::Sha256 | Builtin::Sha384 | Builtin::Sha512 => {
-            s(hash_hex(f, &lex(&a0()?)))
+            let a = a0()?;
+            string_arg(&a)?;
+            s(hash_hex(f, &lex(&a)))
         }
         // Date/time accessors over an xsd:dateTime lexical form.
         Builtin::Year => num(parse_datetime(&lex(&a0()?))?.0 as f64),
@@ -409,12 +428,6 @@ fn geo_unit(token: &str) -> Option<crate::geo::Unit> {
 use crate::terms::{
     iri_content, is_iri, lang_tag as lang_of, literal_datatype as datatype_iri, make_literal,
 };
-
-/// The language tag to carry onto a string-function result: the argument's tag
-/// when it is a literal with a non-empty tag, else `None`.
-fn keep_lang(token: &str) -> Option<String> {
-    lang_of(token).filter(|l| !l.is_empty())
-}
 
 const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
 
@@ -754,8 +767,12 @@ fn hash_hex(f: Builtin, s: &str) -> String {
 /// Evaluate a boolean built-in (type checks / string predicates).
 fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
     let val = |i: usize| args.get(i).and_then(|e| e.value(ctx, b));
+    // CONTAINS/STRSTARTS/STRENDS take two string-literal args; a non-string is a
+    // type error → false in a FILTER (like CONCAT, which type-checks).
     let two = |g: fn(&str, &str) -> bool| match (val(0), val(1)) {
-        (Some(a), Some(c)) => g(&lexical(&a), &lexical(&c)),
+        (Some(a), Some(c)) if string_arg(&a).is_some() && string_arg(&c).is_some() => {
+            g(&lexical(&a), &lexical(&c))
+        }
         _ => false,
     };
     match f {
@@ -771,7 +788,9 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
         // The matcher is compiled once per query (memoized); literal patterns
         // skip the regex engine entirely.
         Builtin::Regex => match (val(0), val(1)) {
-            (Some(text), Some(pat)) => {
+            // The text argument must be a string literal — a non-string is a type
+            // error → no match (drops the row), matching SPARQL and CONTAINS above.
+            (Some(text), Some(pat)) if string_arg(&text).is_some() => {
                 let flags = val(2).map(|t| lexical(&t)).unwrap_or_default();
                 ctx.resolver
                     .regex_match(&lexical(&pat), &flags, &lexical(&text))
