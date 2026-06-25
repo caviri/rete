@@ -98,7 +98,11 @@ impl FExpr {
                 }
             }
             FExpr::Func(f, args) => func_bool(*f, args, ctx, b),
-            _ => false,
+            // A value-form expression used as a boolean (a bare `true` literal, a
+            // `?var`, arithmetic, COALESCE …) takes the SPARQL effective boolean
+            // value of its computed term — NOT a blanket false, which silently
+            // dropped every row of `FILTER(true)` (Oxigraph differential).
+            _ => self.ebv_opt(ctx, b).unwrap_or(false),
         }
     }
 
@@ -173,7 +177,10 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         Builtin::Abs => num(as_number(&a0()?)?.abs()),
         Builtin::Ceil => num(as_number(&a0()?)?.ceil()),
         Builtin::Floor => num(as_number(&a0()?)?.floor()),
-        Builtin::Round => num(as_number(&a0()?)?.round()),
+        // SPARQL ROUND rounds a tie toward +∞ (`floor(x + 0.5)`), unlike Rust's
+        // `f64::round` which rounds a tie away from zero — so ROUND(-3.5) is -3,
+        // not -4 (caught by the Oxigraph differential).
+        Builtin::Round => num((as_number(&a0()?)? + 0.5).floor()),
         Builtin::Concat => {
             // Every argument must be a string literal (else a type error); the
             // result keeps the common language tag iff all share that same
