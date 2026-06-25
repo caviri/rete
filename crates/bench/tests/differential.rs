@@ -34,6 +34,7 @@ fn nt() -> String {
 <http://ex/b> <http://ex/age> "25"^^<{XSD}integer> .
 <http://ex/c> <http://ex/age> "35"^^<{XSD}integer> .
 <http://ex/d> <http://ex/age> "30"^^<{XSD}integer> .
+<http://ex/blanksubj> <http://ex/has> _:bn .
 "#
     )
 }
@@ -72,7 +73,10 @@ fn lexical(term: &str) -> String {
 
 /// rete's solutions as a sorted multiset of canonical `var=lexical;…` rows.
 fn rete_rows(rete: &Rete, q: &str) -> Vec<String> {
-    let (_, sols) = eval_sparql(rete, q).expect("rete query");
+    let (_, sols) = match eval_sparql(rete, q) {
+        Ok(r) => r,
+        Err(e) => return vec![format!("RETE_ERR: {e}")],
+    };
     let mut out: Vec<String> = sols
         .iter()
         .map(|b| {
@@ -88,21 +92,30 @@ fn rete_rows(rete: &Rete, q: &str) -> Vec<String> {
 
 /// Oxigraph's solutions in the same canonical form.
 fn oxi_rows(store: &Store, q: &str) -> Vec<String> {
-    let ev = SparqlEvaluator::new().parse_query(q).expect("oxi parse");
-    let QueryResults::Solutions(sols) = ev.on_store(store).execute().expect("oxi exec") else {
-        panic!("expected solutions for: {q}");
+    let ev = match SparqlEvaluator::new().parse_query(q) {
+        Ok(e) => e,
+        Err(e) => return vec![format!("OXI_PARSE_ERR: {e}")],
     };
-    let mut out: Vec<String> = sols
-        .map(|s| {
-            let s = s.unwrap();
-            let mut parts: Vec<String> = s
-                .iter()
-                .map(|(var, term)| format!("{}={}", var.as_str(), lexical(&term.to_string())))
-                .collect();
-            parts.sort();
-            parts.join(";")
-        })
-        .collect();
+    let res = match ev.on_store(store).execute() {
+        Ok(r) => r,
+        Err(e) => return vec![format!("OXI_EXEC_ERR: {e}")],
+    };
+    let QueryResults::Solutions(sols) = res else {
+        return vec!["OXI_NOT_SOLUTIONS".to_string()];
+    };
+    let mut out = Vec::new();
+    for s in sols {
+        let s = match s {
+            Ok(s) => s,
+            Err(e) => return vec![format!("OXI_ROW_ERR: {e}")],
+        };
+        let mut parts: Vec<String> = s
+            .iter()
+            .map(|(var, term)| format!("{}={}", var.as_str(), lexical(&term.to_string())))
+            .collect();
+        parts.sort();
+        out.push(parts.join(";"));
+    }
     out.sort();
     out
 }
@@ -166,6 +179,30 @@ fn expr_builtins_agree_with_oxigraph() {
         "SELECT ?o WHERE { ?s <http://ex/num> ?o FILTER(?o IN (7, 99)) }".to_string(),
         "SELECT ?o WHERE { ?s <http://ex/fr> ?o FILTER(LANGMATCHES(LANG(?o), \"fr\")) }".to_string(),
         "SELECT ?o WHERE { ?s <http://ex/str> ?o FILTER(true) }".to_string(),
+        // --- casts (the cast_to dispatch) ---
+        format!("SELECT (STR(<{XSD}integer>(?o)) AS ?r) WHERE {{ {S} <http://ex/dec> ?o }}"),
+        format!("SELECT (STR(<{XSD}double>(?o)) AS ?r) WHERE {{ {S} <http://ex/num> ?o }}"),
+        format!("SELECT (STR(<{XSD}boolean>(?o)) AS ?r) WHERE {{ {S} <http://ex/num> ?o }}"),
+        format!("SELECT (STR(<{XSD}string>(?o)) AS ?r) WHERE {{ {S} <http://ex/num> ?o }}"),
+        format!("SELECT (STR(<{XSD}decimal>(\"2.5\")) AS ?r) WHERE {{ {S} <http://ex/str> ?o }}"),
+        // --- type errors: a function on the wrong type yields no value, so the
+        //     projected ?r is simply unbound; both engines must agree on that.
+        //     (STRLEN/UCASE/… on a non-string is NOT tested here: rete is lenient
+        //     and operates on the lexical, where SPARQL requires a type error —
+        //     a known strictness gap, unlike CONCAT which does type-check.) ---
+        format!("SELECT ?o (ABS(?o) AS ?r) WHERE {{ {S} <http://ex/str> ?o }}"),
+        // --- string / datetime edge cases ---
+        format!("SELECT (STR(STRBEFORE(?o, \"zzz\")) AS ?r) WHERE {{ {S} <http://ex/str> ?o }}"),
+        format!("SELECT (STR(SUBSTR(?o, 100)) AS ?r) WHERE {{ {S} <http://ex/str> ?o }}"),
+        format!("SELECT (STR(CONCAT(\"a\", \"b\", \"c\")) AS ?r) WHERE {{ {S} <http://ex/str> ?o }}"),
+        format!("SELECT (STR(REPLACE(?o, \"L\", \"_\", \"i\")) AS ?r) WHERE {{ {S} <http://ex/str> ?o }}"),
+        format!("SELECT (STR(SECONDS(?o)) AS ?r) WHERE {{ {S} <http://ex/dt> ?o }}"),
+        // --- more boolean / term functions ---
+        "SELECT ?s WHERE { ?s <http://ex/num> ?o FILTER(?o NOT IN (1, 2, 3)) }".to_string(),
+        format!("SELECT ?o WHERE {{ {S} ?p ?o FILTER(SAMETERM(?o, \"Hello World\")) }}"),
+        "SELECT ?s WHERE { ?s ?p ?o FILTER(BOUND(?o)) }".to_string(),
+        "SELECT ?s WHERE { ?s <http://ex/has> ?o FILTER(ISBLANK(?o)) }".to_string(),
+        format!("SELECT ?o WHERE {{ {S} <http://ex/str> ?o FILTER(REGEX(?o, \"hello\", \"i\")) }}"),
     ];
     check(&rete, &store, queries);
 }
@@ -216,6 +253,16 @@ fn paths_and_aggregates_agree_with_oxigraph() {
         format!("SELECT (COUNT(DISTINCT ?a) AS ?n) WHERE {{ ?x {AGE} ?a }}"),
         format!("SELECT ?a (COUNT(?x) AS ?n) WHERE {{ ?x {AGE} ?a }} GROUP BY ?a"),
         format!("SELECT ?a (COUNT(?x) AS ?n) WHERE {{ ?x {AGE} ?a }} GROUP BY ?a HAVING(COUNT(?x) > 1)"),
+        // more paths
+        format!("SELECT ?y WHERE {{ {A} !{K} ?y }}"),          // negated property set
+        format!("SELECT ?y WHERE {{ {A} ({K}/{K})? ?y }}"),    // optional nested sequence
+        format!("SELECT ?x ?y WHERE {{ ?x ^{K} ?y }}"),        // inverse over all
+        // more aggregates
+        format!("SELECT (COUNT(*) AS ?n) WHERE {{ ?x {AGE} ?a }}"),
+        // NB: SUM(?a * 2) (aggregate over an *expression*, not a bare variable) is
+        // an unsupported feature in rete today — it errors rather than mis-counts.
+        // A real gap to close, but feature work, so it's not asserted here.
+        "SELECT ?a ?t (COUNT(?x) AS ?n) WHERE { ?x <http://ex/age> ?a ; <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?t } GROUP BY ?a ?t".to_string(),
     ];
     check(&rete, &store, queries);
 }
