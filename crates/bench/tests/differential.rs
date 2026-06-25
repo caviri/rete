@@ -259,9 +259,11 @@ fn paths_and_aggregates_agree_with_oxigraph() {
         format!("SELECT ?x ?y WHERE {{ ?x ^{K} ?y }}"),        // inverse over all
         // more aggregates
         format!("SELECT (COUNT(*) AS ?n) WHERE {{ ?x {AGE} ?a }}"),
-        // NB: SUM(?a * 2) (aggregate over an *expression*, not a bare variable) is
-        // an unsupported feature in rete today — it errors rather than mis-counts.
-        // A real gap to close, but feature work, so it's not asserted here.
+        // aggregate over an EXPRESSION (not a bare variable) — now supported
+        format!("SELECT (SUM(?a * 2) AS ?s) WHERE {{ ?x {AGE} ?a }}"),
+        format!("SELECT (AVG(?a + 10) AS ?v) WHERE {{ ?x {AGE} ?a }}"),
+        format!("SELECT (MIN(?a * 2) AS ?m) WHERE {{ ?x {AGE} ?a }}"),
+        format!("SELECT (MAX(?a * ?a) AS ?m) WHERE {{ ?x {AGE} ?a }}"),
         "SELECT ?a ?t (COUNT(?x) AS ?n) WHERE { ?x <http://ex/age> ?a ; <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?t } GROUP BY ?a ?t".to_string(),
     ];
     check(&rete, &store, queries);

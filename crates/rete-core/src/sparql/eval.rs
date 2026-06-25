@@ -48,6 +48,13 @@ pub(super) fn query_ctx<'a>(rete: &'a Rete, sel: &Select) -> Ctx<'a> {
         slots.add(var);
     }
     if let Some(g) = &sel.group {
+        // Synthetic aggregate-over-expression columns: their expression's inputs
+        // and the synthetic var itself both need slots (the var is also the Agg's
+        // source var below, but add it explicitly so the dependency is local).
+        for (var, e) in &g.pre {
+            collect_expr_slots(e, &mut slots);
+            slots.add(var);
+        }
         for v in &g.by {
             slots.add(v);
         }

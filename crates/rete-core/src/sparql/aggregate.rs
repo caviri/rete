@@ -12,8 +12,19 @@ use super::{as_number, fmt_num_typed, lexical, Agg, GroupSpec};
 
 /// Group `rows` and compute aggregates, producing one row per group (group-by
 /// slots keep their values; each aggregate's result lands in its result slot).
-pub(super) fn aggregate(ctx: &Ctx, rows: Vec<Row>, g: &GroupSpec) -> Vec<Row> {
+pub(super) fn aggregate(ctx: &Ctx, mut rows: Vec<Row>, g: &GroupSpec) -> Vec<Row> {
     use std::collections::BTreeMap;
+    // Aggregate-over-expression: materialize each synthetic column per row BEFORE
+    // grouping, so the aggregate below reads it exactly like a plain variable's
+    // slot. An expression that errors on a row leaves that row's column unbound
+    // (and the aggregate filters it), matching SPARQL's error semantics.
+    for (var, expr) in &g.pre {
+        if let Some(slot) = ctx.slots.slot(var) {
+            for r in rows.iter_mut() {
+                r[slot] = expr.value(ctx, r).map(Val::Str);
+            }
+        }
+    }
     let by_slots: Vec<Option<usize>> = g.by.iter().map(|v| ctx.slots.slot(v)).collect();
 
     // BTreeMap keeps group order deterministic (by integer id / value order).

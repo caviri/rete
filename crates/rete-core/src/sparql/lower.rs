@@ -246,10 +246,11 @@ fn build(p: &GraphPattern, sel: &mut Select, in_where: bool) -> Result<Plan, Spa
         } => {
             let by = variables.iter().map(|v| v.as_str().to_string()).collect();
             let mut aggs = Vec::with_capacity(aggregates.len());
+            let mut pre: Vec<(String, FExpr)> = Vec::new();
             for (var, ae) in aggregates {
-                aggs.push((var.as_str().to_string(), convert_agg(ae)?));
+                aggs.push((var.as_str().to_string(), convert_agg(ae, &mut pre)?));
             }
-            sel.group = Some(GroupSpec { by, aggs });
+            sel.group = Some(GroupSpec { by, aggs, pre });
             // The group's inner *is* the WHERE pattern — any BIND inside it must
             // run per-row before aggregation, so descend as in-pattern.
             build(inner, sel, true)
@@ -288,7 +289,10 @@ fn build(p: &GraphPattern, sel: &mut Select, in_where: bool) -> Result<Plan, Spa
     }
 }
 
-fn convert_agg(ae: &AggregateExpression) -> Result<Agg, SparqlError> {
+fn convert_agg(
+    ae: &AggregateExpression,
+    pre: &mut Vec<(String, FExpr)>,
+) -> Result<Agg, SparqlError> {
     match ae {
         AggregateExpression::CountSolutions { distinct } => Ok(Agg::CountStar {
             distinct: *distinct,
@@ -300,7 +304,15 @@ fn convert_agg(ae: &AggregateExpression) -> Result<Agg, SparqlError> {
         } => {
             let var = match expr {
                 Expression::Variable(v) => v.as_str().to_string(),
-                _ => return Err(SparqlError::Unsupported("aggregate over non-variable")),
+                // Aggregate over an EXPRESSION (e.g. SUM(?a * 2), AVG(?x + ?y)):
+                // compute it into a synthetic per-row column before grouping, then
+                // aggregate that column — so all the aggregate machinery (and the
+                // summary-safe COUNT path) keeps treating the argument as a slot.
+                other => {
+                    let name = format!("__agg{}", pre.len());
+                    pre.push((name.clone(), convert_expr(other)?));
+                    name
+                }
             };
             Ok(match name {
                 AggregateFunction::Count => Agg::Count(var, *distinct),

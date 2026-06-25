@@ -89,6 +89,11 @@ pub struct GroupSpec {
     pub by: Vec<String>,
     /// `(result_variable, aggregate)` pairs.
     pub aggs: Vec<(String, Agg)>,
+    /// Synthetic per-row columns computed *before* grouping — `(var, expr)` for
+    /// each aggregate whose argument is an expression rather than a bare variable
+    /// (e.g. `SUM(?a * 2)` lowers to a hidden `__aggN = ?a * 2`, then `SUM(__aggN)`).
+    /// Empty for the common case (aggregating a plain variable).
+    pub pre: Vec<(String, FExpr)>,
 }
 
 /// A supported aggregate function.
