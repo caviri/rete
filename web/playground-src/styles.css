@@ -811,6 +811,17 @@ h3 {
   color: var(--muted);
   font-size: 12px;
 }
+/* The result columns each library query returns. */
+.example-card .ex-cols {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.example-card .ex-cols code {
+  color: var(--accent-dark);
+  font-weight: 600;
+  word-break: break-word;
+}
 
 .compact {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -1619,6 +1630,28 @@ pre {
   font-size: 12px;
 }
 
+/* Per-column render-type dropdown in the header (Auto/Text/Link/Image/Number). */
+th .coltype {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 2px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  vertical-align: middle;
+}
+th .coltype:hover { border-color: var(--accent); }
+/* Highlight when the column is on a non-default (forced) type. */
+th .coltype.coltype-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #f0f7f3;
+}
+.th-name { vertical-align: middle; }
+
 /* Legends for the Explore visualizations. */
 .viz-legend {
   display: flex;
@@ -2184,6 +2217,9 @@ pre {
 }
 .ex-desc .exd-label { font-weight: 700; color: var(--ink); }
 .ex-desc .exd-tip { display: block; margin-top: 3px; }
+/* The result columns the active query returns. */
+.ex-desc .exd-cols { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+.ex-desc .exd-cols code { color: var(--accent-dark); font-weight: 600; }
 .ex-desc code { font-size: 11px; }
 
 /* Query library modal (the relocated sidebar library). */

@@ -1474,6 +1474,61 @@ self.onmessage = function (e) {
     return `<span class="perf-badge ${tier}" title="Median local query time, benchmarked over 5 runs: ${ms} ms">${ms} ms</span>`;
   }
 
+  // The result columns a query produces — shown in the example list and the
+  // active-example strip so the output shape reads before running. Derived from
+  // the query text (always correct, no catalog upkeep): the SELECT projection
+  // (skipping vars *inside* an aggregate/expression, keeping its `AS ?name`),
+  // `subject predicate object` for CONSTRUCT/DESCRIBE, `boolean` for ASK, or all
+  // in-scope vars for SELECT *.
+  function projectionCols(proj) {
+    const cols = [];
+    let i = 0;
+    while (i < proj.length) {
+      const c = proj[i];
+      if (c === "(") {
+        // A `(expr AS ?name)` group contributes only its alias — skip the inner
+        // vars (e.g. ?p in `(COUNT(?p) AS ?people)`).
+        let depth = 0, j = i;
+        for (; j < proj.length; j++) {
+          if (proj[j] === "(") depth++;
+          else if (proj[j] === ")") { depth--; if (!depth) break; }
+        }
+        const a = /\bAS\s+[?$](\w+)/i.exec(proj.slice(i, j + 1));
+        if (a) cols.push(a[1]);
+        i = (j > i ? j : i) + 1;
+      } else if (c === "?" || c === "$") {
+        const v = /^[?$](\w+)/.exec(proj.slice(i));
+        if (v) { cols.push(v[1]); i += v[0].length; } else i++;
+      } else i++;
+    }
+    return cols;
+  }
+  function queryVars(s) {
+    const seen = [], set = new Set();
+    let m; const re = /[?$](\w+)/g;
+    while ((m = re.exec(s))) if (!set.has(m[1])) { set.add(m[1]); seen.push(m[1]); }
+    return seen;
+  }
+  function queryColumns(q) {
+    const body = String(q || "").replace(/#[^\n]*/g, " "); // drop line comments
+    const m = /\b(SELECT|CONSTRUCT|ASK|DESCRIBE)\b/i.exec(body);
+    if (!m) return { form: "", cols: [] };
+    const form = m[1].toLowerCase();
+    if (form === "ask") return { form, cols: ["boolean"] };
+    if (form === "construct" || form === "describe") return { form, cols: ["subject", "predicate", "object"] };
+    const after = body.slice(m.index + m[0].length);
+    const brace = after.indexOf("{");
+    const proj = brace >= 0 ? after.slice(0, brace) : after; // SELECT … up to the WHERE block
+    if (/^\s*(DISTINCT\s+|REDUCED\s+)?\*/i.test(proj)) return { form, cols: queryVars(body).slice(0, 12) };
+    return { form, cols: projectionCols(proj) };
+  }
+  // One-line column list for display (SELECT vars get a leading "?").
+  function columnsLabel(q) {
+    const { form, cols } = queryColumns(q);
+    if (!cols.length) return "";
+    return (form === "select" ? cols.map((c) => "?" + c) : cols).join(" ");
+  }
+
   function renderExamples() {
     renderFamilyFilters();
     renderQuickExamples();
@@ -1488,6 +1543,7 @@ self.onmessage = function (e) {
           `<span>${esc(ex.label)}</span>${perfBadge(state.dataset, ex.label)}` +
         `</button>` +
         `<div class="tagline">${esc(ex.family)} | ${esc(ex.tip)}</div>` +
+        (columnsLabel(ex.q) ? `<div class="ex-cols">Columns: <code>${esc(columnsLabel(ex.q))}</code></div>` : "") +
       `</article>`
     ).join("");
     $$("#examples [data-example]").forEach((btn) => {
@@ -1570,7 +1626,8 @@ self.onmessage = function (e) {
       `<span class="exd-fam">${esc(sel.family || "Query")}</span>` +
       `<span class="exd-label">${esc(sel.label)}</span>` +
       perfBadge(state.dataset, sel.label) +
-      (sel.tip ? `<span class="exd-tip">${esc(sel.tip)}</span>` : "");
+      (sel.tip ? `<span class="exd-tip">${esc(sel.tip)}</span>` : "") +
+      (columnsLabel(sel.q) ? `<span class="exd-cols" title="The result columns this query returns">Columns: <code>${esc(columnsLabel(sel.q))}</code></span>` : "");
   }
 
   function openLibrary() { renderExamples(); $("libraryModal").classList.remove("hidden"); }
@@ -2883,52 +2940,120 @@ self.onmessage = function (e) {
     // Commons FilePath takes ?width=N for a server-scaled thumbnail.
     return /Special:FilePath\//i.test(https) ? https + (https.includes("?") ? "&" : "?") + "width=200" : https;
   }
-  function prettyCell(raw) {
-    if (raw == null || raw === "") return `<td></td>`;
-    const t = parseTerm(raw);
+  // Force-renderers used when the user picks a type from a column's header
+  // dropdown — they override the per-value heuristic in `autoCell`. The point is
+  // to render, e.g., an image column whose URLs DON'T end in `.jpg` (a CDN/API
+  // URL or a bare entity IRI), or to stop a long IRI column from linking.
+  function imageCell(t) {
+    const url = httpsUpgrade(t.value);
+    return `<td class="iri thumb-cell"><a href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
+      `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="lazy" alt="" /></a></td>`;
+  }
+  function linkCell(t) {
+    const url = httpsUpgrade(t.value);
+    const disp = shorten(t.value, 96);
+    return `<td class="iri"><a class="iri-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
+      `data-url="${esc(t.value)}">${esc(disp)}</a></td>`;
+  }
+  // The default per-value heuristic (the behaviour for type "auto").
+  function autoCell(t, raw) {
     if (t.iri) {
       const disp = shorten(t.value, 96);
-      if (looksImageUrl(t.value)) {
-        // Render the picture as a thumbnail linking to the full image.
-        return `<td class="iri thumb-cell"><a href="${esc(httpsUpgrade(t.value))}" target="_blank" ` +
-          `rel="noopener noreferrer" title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="lazy" alt="" /></a></td>`;
-      }
-      if (looksWebUrl(t.value)) {
-        // Clickable (opens in a new tab) + a hover preview of the page. The link
-        // navigates to the https-upgraded URL; the text keeps the original IRI.
-        return `<td class="iri"><a class="iri-link" href="${esc(httpsUpgrade(t.value))}" target="_blank" ` +
-          `rel="noopener noreferrer" data-url="${esc(t.value)}">${esc(disp)}</a></td>`;
-      }
+      if (looksImageUrl(t.value)) return imageCell(t); // a Commons file or *.jpg/png/…
+      if (looksWebUrl(t.value)) return linkCell(t);     // a dereferenceable web URL
       return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
     }
     const num = t.datatype && NUM_DT.test(t.datatype);
     const lang = t.lang ? ` <span class="t-lang">@${esc(t.lang)}</span>` : "";
     return `<td class="lit${num ? " num" : ""}" title="${esc(raw)}">${esc(shorten(t.value, 110))}${lang}</td>`;
   }
+  // A table cell for an RDF term. `type` (from the column header dropdown) forces
+  // the rendering; "auto"/undefined uses the heuristic.
+  function prettyCell(raw, type) {
+    if (raw == null || raw === "") return `<td></td>`;
+    const t = parseTerm(raw);
+    switch (type) {
+      case "text": {
+        const lang = t.lang ? ` <span class="t-lang">@${esc(t.lang)}</span>` : "";
+        return `<td class="lit" title="${esc(raw)}">${esc(shorten(t.value, 160))}${lang}</td>`;
+      }
+      case "image": return imageCell(t);
+      case "link": return linkCell(t);
+      case "number": {
+        const n = Number(t.value);
+        return `<td class="lit num" title="${esc(raw)}">${esc(isFinite(n) ? String(n) : t.value)}</td>`;
+      }
+      default: return autoCell(t, raw);
+    }
+  }
+
+  // ---- per-column type override (the header dropdowns) -----------------------
+  // Each rendered SELECT/triples table registers its data under a short id; a
+  // column's dropdown stores a forced render type, and a delegated `change`
+  // handler (see wireEvents) re-renders just that table in place.
+  const COL_TYPES = [
+    ["auto", "Auto"], ["text", "Text"], ["link", "Link"],
+    ["image", "Image"], ["number", "Number"],
+  ];
+  const tableStates = new Map();
+  let tableSeq = 0;
+
+  function colTypeMenu(tid, col, cur) {
+    cur = cur || "auto";
+    const opts = COL_TYPES
+      .map(([v, label]) => `<option value="${v}"${v === cur ? " selected" : ""}>${label}</option>`)
+      .join("");
+    return `<select class="coltype${cur !== "auto" ? " coltype-on" : ""}" data-tid="${tid}" ` +
+      `data-col="${esc(col)}" title="Render this column as…" aria-label="Render type for column ${esc(col)}">${opts}</select>`;
+  }
+
+  // Build the inner HTML of a `.tbl` from its state (header dropdowns + collapsed
+  // body), so the delegated change handler can rebuild it after a type switch.
+  function tableInner(st) {
+    const shown = st.rows.slice(0, st.cap);
+    const head = `<tr>${st.vars
+      .map((v) => `<th><span class="th-name">${esc(v)}</span>${colTypeMenu(st.tid, v, st.types[v])}</th>`)
+      .join("")}</tr>`;
+    const rowHtmls = shown.map((row) =>
+      `<tr>${st.vars.map((v) => prettyCell(row[v], st.types[v] || "auto")).join("")}</tr>`);
+    const hidden = Math.max(0, rowHtmls.length - TABLE_HEAD_ROWS);
+    const body = rowHtmls
+      .map((r, i) => (i < TABLE_HEAD_ROWS ? r : r.replace("<tr", `<tr class="tr-hidden"`)))
+      .join("");
+    return (st.note || "") +
+      `<table><thead>${head}</thead><tbody>${body}</tbody></table>` +
+      (hidden > 0
+        ? `<button type="button" class="tbl-more secondary">Show ${Math.min(hidden, TABLE_MORE_STEP)} more (${hidden} hidden)</button>`
+        : "");
+  }
+
+  // A collapsed table whose columns carry a type-override dropdown.
+  function statefulTable(vars, rows, note) {
+    const tid = "t" + ++tableSeq;
+    const st = { tid, vars: vars || [], rows: rows || [], types: {}, cap: 500, note: note || "" };
+    tableStates.set(tid, st);
+    // Bound the registry — only the few visible tables need their data kept.
+    while (tableStates.size > 12) tableStates.delete(tableStates.keys().next().value);
+    return `<div class="tbl" data-tid="${tid}">${tableInner(st)}</div>`;
+  }
 
   function renderTable(vars, rows) {
     if (!(rows || []).length) return emptyState("rows");
-    const cap = 500;
-    const shown = (rows || []).slice(0, cap);
-    const head = `<tr>${(vars || []).map((v) => `<th>${esc(v)}</th>`).join("")}</tr>`;
-    const rowHtmls = shown.map((row) =>
-      `<tr>${(vars || []).map((v) => prettyCell(row[v])).join("")}</tr>`);
-    const note = (rows || []).length > cap
-      ? `<p class="microcopy">Showing first ${cap} of ${rows.length} rows.</p>`
+    const note = (rows || []).length > 500
+      ? `<p class="microcopy">Showing first 500 of ${rows.length} rows.</p>`
       : "";
-    return collapsedTable(head, rowHtmls, note);
+    return statefulTable(vars || [], rows || [], note);
   }
 
   function renderTriplesTable(triples) {
     if (!(triples || []).length) return emptyState("triples");
-    const cap = 500;
-    const shown = (triples || []).slice(0, cap);
-    const rowHtmls = shown.map((t) =>
-      `<tr>${prettyCell(t[0])}${prettyCell(t[1])}${prettyCell(t[2])}</tr>`);
-    const note = (triples || []).length > cap
-      ? `<p class="microcopy">Showing first ${cap} of ${triples.length} triples.</p>`
+    const note = (triples || []).length > 500
+      ? `<p class="microcopy">Showing first 500 of ${triples.length} triples.</p>`
       : "";
-    return collapsedTable(`<tr><th>subject</th><th>predicate</th><th>object</th></tr>`, rowHtmls, note);
+    // Normalize to the same {var: value} row shape so the object column gets a
+    // type dropdown too (commonly an image).
+    const rows = (triples || []).map((t) => ({ subject: t[0], predicate: t[1], object: t[2] }));
+    return statefulTable(["subject", "predicate", "object"], rows, note);
   }
 
   function triplesForGraph(res) {
@@ -5049,6 +5174,19 @@ self.onmessage = function (e) {
       const left = Math.max(0, hidden.length - TABLE_MORE_STEP);
       if (left === 0) btn.remove();
       else btn.textContent = `Show ${Math.min(left, TABLE_MORE_STEP)} more (${left} hidden)`;
+    });
+
+    // Column type dropdowns: pick a render type for a column (Auto/Text/Link/
+    // Image/Number) and re-render just that table in place (delegated, so it
+    // works for every dynamically-rendered SELECT/triples table).
+    document.addEventListener("change", (e) => {
+      const sel = e.target.closest && e.target.closest("select.coltype");
+      if (!sel) return;
+      const st = tableStates.get(sel.dataset.tid);
+      if (!st) return;
+      st.types[sel.dataset.col] = sel.value;
+      const wrap = document.querySelector(`.tbl[data-tid="${sel.dataset.tid}"]`);
+      if (wrap) wrap.innerHTML = tableInner(st);
     });
     $("clearHist").onclick = () => {
       localStorage.removeItem(HIST_KEY);
