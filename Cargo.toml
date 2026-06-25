@@ -7,6 +7,9 @@ members = [
     "crates/docgen",
     "crates/bench",
 ]
+# The cargo-fuzz harness is its own (nightly, instrumented) build — never part of
+# the normal workspace build/test. See fuzz/Cargo.toml.
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"

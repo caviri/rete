@@ -1,0 +1,43 @@
+# Coverage-guided fuzzing harness (cargo-fuzz / libFuzzer) for the untrusted-byte
+# surface — the SQLite "fuzz malformed database files" discipline, as a campaign
+# you leave running. The always-on net is the proptest fuzz in
+# crates/rete-core/tests/properties.rs; this digs deeper with coverage feedback.
+#
+# Run (needs nightly + the tool):
+#   cargo install cargo-fuzz
+#   cargo +nightly fuzz run open          # eager open + query
+#   cargo +nightly fuzz run open_lazy     # lazy/ranged open + query
+#   cargo +nightly fuzz run open -- -max_total_time=600
+[package]
+name = "rete-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rete-core = { path = "../crates/rete-core" }
+
+# Detach from the parent workspace (cargo-fuzz convention): a fuzz crate is its
+# own root so the nightly/instrumented build never touches the main build.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "open"
+path = "fuzz_targets/open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "open_lazy"
+path = "fuzz_targets/open_lazy.rs"
+test = false
+doc = false
+bench = false

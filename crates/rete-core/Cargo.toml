@@ -32,6 +32,12 @@ zstd = { workspace = true, optional = true }
 # is never pulled into wasm (the wasm crate builds with --no-default-features).
 rayon = { version = "1", optional = true }
 
+[dev-dependencies]
+# Property-based testing (tests only — never shipped, so the dep weight and the
+# transitive `rand` are fine here). Generates random graphs/queries and shrinks
+# any counterexample to a minimal failing case — the SQLite-style invariant net.
+proptest = "1"
+
 [features]
 default = ["compression"]
 # zstd needs a C toolchain; disable for targets that lack one (e.g. wasm).
