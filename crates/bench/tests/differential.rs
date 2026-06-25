@@ -23,6 +23,17 @@ fn nt() -> String {
 <http://ex/s> <http://ex/ref> <http://ex/thing> .
 <http://ex/t> <http://ex/str> "apple pie" .
 <http://ex/t> <http://ex/num> "7"^^<{XSD}integer> .
+<http://ex/a> <http://ex/knows> <http://ex/b> .
+<http://ex/b> <http://ex/knows> <http://ex/c> .
+<http://ex/c> <http://ex/knows> <http://ex/d> .
+<http://ex/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> .
+<http://ex/b> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> .
+<http://ex/c> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> .
+<http://ex/d> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> .
+<http://ex/a> <http://ex/age> "30"^^<{XSD}integer> .
+<http://ex/b> <http://ex/age> "25"^^<{XSD}integer> .
+<http://ex/c> <http://ex/age> "35"^^<{XSD}integer> .
+<http://ex/d> <http://ex/age> "30"^^<{XSD}integer> .
 "#
     )
 }
@@ -156,10 +167,16 @@ fn expr_builtins_agree_with_oxigraph() {
         "SELECT ?o WHERE { ?s <http://ex/fr> ?o FILTER(LANGMATCHES(LANG(?o), \"fr\")) }".to_string(),
         "SELECT ?o WHERE { ?s <http://ex/str> ?o FILTER(true) }".to_string(),
     ];
+    check(&rete, &store, queries);
+}
+
+/// Assert every query in `queries` returns the same result set on rete and
+/// Oxigraph, reporting all disagreements at once.
+fn check(rete: &Rete, store: &Store, queries: &[String]) {
     let mut failures = Vec::new();
     for q in queries {
-        let r = rete_rows(&rete, q);
-        let o = oxi_rows(&store, q);
+        let r = rete_rows(rete, q);
+        let o = oxi_rows(store, q);
         if r != o {
             failures.push(format!("MISMATCH\n  q: {q}\n  rete: {r:?}\n  oxi:  {o:?}"));
         }
@@ -171,4 +188,34 @@ fn expr_builtins_agree_with_oxigraph() {
         queries.len(),
         failures.join("\n")
     );
+}
+
+/// Property paths + aggregates over a chain/typed graph — the other two
+/// least-covered SPARQL files (`path.rs`, `aggregate.rs`).
+#[test]
+fn paths_and_aggregates_agree_with_oxigraph() {
+    let (rete, store) = engines();
+    const K: &str = "<http://ex/knows>";
+    const AGE: &str = "<http://ex/age>";
+    const A: &str = "<http://ex/a>";
+    let queries: &[String] = &[
+        // --- property paths ---
+        format!("SELECT ?y WHERE {{ {A} {K}+ ?y }}"), // transitive (one-or-more)
+        format!("SELECT ?y WHERE {{ {A} {K}* ?y }}"), // zero-or-more (includes self)
+        format!("SELECT ?y WHERE {{ {A} {K}? ?y }}"), // zero-or-one
+        format!("SELECT ?y WHERE {{ {A} {K}/{K} ?y }}"), // sequence (2 hops)
+        format!("SELECT ?x WHERE {{ <http://ex/c> ^{K} ?x }}"), // inverse
+        format!("SELECT ?y WHERE {{ {A} ({K}|{AGE}) ?y }}"), // alternative
+        format!("SELECT ?y WHERE {{ {A} {K}+/{AGE} ?y }}"), // path then property
+        // --- aggregates ---
+        "SELECT (COUNT(?p) AS ?n) WHERE { ?p <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> }".to_string(),
+        format!("SELECT (SUM(?a) AS ?s) WHERE {{ ?x {AGE} ?a }}"),
+        format!("SELECT (AVG(?a) AS ?v) WHERE {{ ?x {AGE} ?a }}"),
+        format!("SELECT (MIN(?a) AS ?m) WHERE {{ ?x {AGE} ?a }}"),
+        format!("SELECT (MAX(?a) AS ?m) WHERE {{ ?x {AGE} ?a }}"),
+        format!("SELECT (COUNT(DISTINCT ?a) AS ?n) WHERE {{ ?x {AGE} ?a }}"),
+        format!("SELECT ?a (COUNT(?x) AS ?n) WHERE {{ ?x {AGE} ?a }} GROUP BY ?a"),
+        format!("SELECT ?a (COUNT(?x) AS ?n) WHERE {{ ?x {AGE} ?a }} GROUP BY ?a HAVING(COUNT(?x) > 1)"),
+    ];
+    check(&rete, &store, queries);
 }
