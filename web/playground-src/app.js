@@ -3012,7 +3012,7 @@ self.onmessage = function (e) {
   function tableInner(st) {
     const shown = st.rows.slice(0, st.cap);
     const head = `<tr>${st.vars
-      .map((v) => `<th><span class="th-name">${esc(v)}</span>${colTypeMenu(st.tid, v, st.types[v])}</th>`)
+      .map((v) => `<th><div class="th-wrap"><span class="th-name">${esc(v)}</span>${colTypeMenu(st.tid, v, st.types[v])}</div></th>`)
       .join("")}</tr>`;
     const rowHtmls = shown.map((row) =>
       `<tr>${st.vars.map((v) => prettyCell(row[v], st.types[v] || "auto")).join("")}</tr>`);

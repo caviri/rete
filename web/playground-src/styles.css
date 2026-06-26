@@ -1630,27 +1630,39 @@ pre {
   font-size: 12px;
 }
 
-/* Per-column render-type dropdown in the header (Auto/Text/Link/Image/Number). */
+/* Per-column render-type dropdown (Auto/Text/Link/Image/Number): the label sits
+   left, the slim dropdown is pushed to the right edge of the header cell. */
+.th-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.th-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 th .coltype {
-  margin-left: 6px;
+  flex: none;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
   font-size: 10px;
   font-weight: 600;
-  padding: 1px 2px;
+  line-height: 16px;
+  padding: 0 15px 0 6px;
   border: 1px solid var(--line);
   border-radius: 5px;
-  background: #fff;
   color: var(--muted);
   cursor: pointer;
-  vertical-align: middle;
+  /* Slim: native chrome removed, a custom down-caret drawn on the right. */
+  background: #fff url("data:image/svg+xml;utf8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2010%206'%3E%3Cpath%20d='M1%201l4%204%204-4'%20fill='none'%20stroke='%2366746e'%20stroke-width='1.6'/%3E%3C/svg%3E") no-repeat right 5px center;
+  background-size: 8px 5px;
 }
 th .coltype:hover { border-color: var(--accent); }
 /* Highlight when the column is on a non-default (forced) type. */
 th .coltype.coltype-on {
   border-color: var(--accent);
   color: var(--accent);
-  background: #f0f7f3;
+  background-color: #f0f7f3;
 }
-.th-name { vertical-align: middle; }
 
 /* Legends for the Explore visualizations. */
 .viz-legend {
