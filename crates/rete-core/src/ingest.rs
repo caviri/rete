@@ -14,8 +14,8 @@
 //! files, byte-compatible readers.
 
 use crate::{
-    build_pyramid_meta_algo, write_dataset_with_metadata, Dictionary, DictionaryBuilder,
-    GraphIndexBuilder, PyramidAlgo, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta_algo, Dictionary, DictionaryBuilder, GraphIndexBuilder, PyramidAlgo,
+    DEFAULT_TILE_BUDGET,
 };
 
 /// A parsed triple as three canonical term tokens.
@@ -463,6 +463,8 @@ fn finish_assembly(
 ) -> (Vec<u8>, BuildStats) {
     let has_named = !named.is_empty();
 
+    // The pyramid and the full-text index are built FIRST, while the dictionary and
+    // the default id-triples are both still resident — both need the two together.
     let (meta, levels) = if with_pyramid {
         build_pyramid_meta_algo(&dict, &default_triples, DEFAULT_TILE_BUDGET, type_override, algo)
     } else {
@@ -470,25 +472,44 @@ fn finish_assembly(
     };
     stats.pyramid_levels = levels;
 
-    // Full-text index (opt-in) — computed while the default id-triples are still
-    // borrowable, before they are moved into the index builder below.
     let text_index = if with_text_index {
         crate::file::compute_text_index(&dict, &default_triples)
     } else {
         Vec::new()
     };
 
-    // Build the indexes from the OWNED id-triples (move, no per-triple copy); the
-    // default-graph triples were borrowed by the pyramid above and are consumed
-    // here, freeing them as the permutations are built.
-    let def = GraphIndexBuilder::from_triples(default_triples).build();
-    let named_indexes: Vec<(String, crate::GraphIndex)> = named
-        .into_iter()
-        .map(|(g, ts)| (g, GraphIndexBuilder::from_triples(ts).build()))
-        .collect();
+    // From here the dictionary is only needed for its own serialized bytes. Encode
+    // it, capture the header term count, then DROP it before building the
+    // permutation indexes — which work purely on id-triples and never touch the
+    // dictionary. On a large graph this frees the single biggest resident structure
+    // (the dictionary) right when the index sort needs the headroom. The output is
+    // byte-for-byte identical to serializing the dictionary inline.
+    let codec = crate::file::writer_codec();
+    let dict_container = crate::file::encode_dict_container(&dict, codec);
+    let term_count = dict.term_count() as u64;
+    drop(dict);
 
-    let bytes = write_dataset_with_metadata(
-        &dict,
+    // Build each graph's six permutations one-at-a-time on a large graph (a single
+    // permuted copy resident at a time, each sort still parallel) instead of all
+    // six concurrently; below the threshold the faster all-permutations-parallel
+    // build is used (its 6x transient copy is negligible there). `build_seq` is
+    // byte-identical to `build`.
+    let build_index = |triples: Vec<(u32, u32, u32)>| -> crate::GraphIndex {
+        let n = triples.len();
+        let b = GraphIndexBuilder::from_triples(triples);
+        if n > LOWMEM_TRIPLE_THRESHOLD {
+            b.build_seq()
+        } else {
+            b.build()
+        }
+    };
+    let def = build_index(default_triples);
+    let named_indexes: Vec<(String, crate::GraphIndex)> =
+        named.into_iter().map(|(g, ts)| (g, build_index(ts))).collect();
+
+    let bytes = crate::file::write_dataset_from_parts(
+        &dict_container,
+        term_count,
         &def,
         &named_indexes,
         has_named,
@@ -496,9 +517,16 @@ fn finish_assembly(
         levels,
         &blob,
         &text_index,
+        codec,
     );
     (bytes, stats)
 }
+
+/// Above this default-graph triple count, the index is built one permutation at a
+/// time (low peak RAM) instead of all six in parallel. Chosen so typical builds
+/// keep the faster parallel path while multi-hundred-million-triple graphs stay
+/// within a bounded memory budget.
+const LOWMEM_TRIPLE_THRESHOLD: usize = 30_000_000;
 
 #[cfg(test)]
 mod tests {

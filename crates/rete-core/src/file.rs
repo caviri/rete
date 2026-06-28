@@ -348,7 +348,7 @@ pub enum FileError {
 
 /// The codec the writer uses: zstd when the `compression` feature is on, else
 /// none. Reading honors whatever codec the header records (when supported).
-fn writer_codec() -> u8 {
+pub(crate) fn writer_codec() -> u8 {
     if cfg!(feature = "compression") {
         CODEC_ZSTD
     } else {
@@ -770,6 +770,15 @@ fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, Fi
 /// fetch and decompress exactly the tiles a query routes to. The directory
 /// itself is uncompressed (it must be readable before any tile).
 fn encode_tiled_section(tiles: &[crate::index::Tile], codec: u8) -> Vec<u8> {
+    // Per-tile compression is the bulk of serialization time on a large graph and
+    // the tiles are independent, so compress them across all cores. `par_iter`
+    // preserves order, so the output is byte-identical to the serial map.
+    #[cfg(feature = "parallel")]
+    let compressed: Vec<Vec<u8>> = {
+        use rayon::prelude::*;
+        tiles.par_iter().map(|t| compress(codec, t.bytes())).collect()
+    };
+    #[cfg(not(feature = "parallel"))]
     let compressed: Vec<Vec<u8>> = tiles.iter().map(|t| compress(codec, t.bytes())).collect();
     let mut out = Vec::new();
     write_uvarint(&mut out, tiles.len() as u64);
@@ -1205,6 +1214,27 @@ pub fn write_dataset(
 /// is omitted (`metadata_len = 0`, `dictionary_offset = HEADER_LEN`) and the hash
 /// is computed over exactly the same parts (a zero-length hash update is a no-op).
 #[allow(clippy::too_many_arguments)]
+/// Serialize a dictionary to its on-file container bytes (4 front-coded, chunked
+/// sections). Exposed so a low-RAM build can serialize **and drop** the live
+/// `Dictionary` before building the permutation index — the index build works on
+/// id-triples and never needs the dictionary.
+pub(crate) fn encode_dict_container(dict: &Dictionary, codec: u8) -> Vec<u8> {
+    let raw_sections = dict.sections();
+    let dict_payloads: Vec<Vec<u8>> = raw_sections
+        .iter()
+        .map(|raw| encode_chunked_dict_section(raw, codec))
+        .collect();
+    encode_container(
+        &[
+            dict_payloads[0].as_slice(),
+            dict_payloads[1].as_slice(),
+            dict_payloads[2].as_slice(),
+            dict_payloads[3].as_slice(),
+        ],
+        CODEC_NONE,
+    )
+}
+
 pub fn write_dataset_with_metadata(
     dict: &Dictionary,
     default_index: &GraphIndex,
@@ -1216,20 +1246,38 @@ pub fn write_dataset_with_metadata(
     text_index: &[u8],
 ) -> Vec<u8> {
     let codec = writer_codec();
-    let raw_sections = dict.sections();
-    let dict_payloads: Vec<Vec<u8>> = raw_sections
-        .iter()
-        .map(|raw| encode_chunked_dict_section(raw, codec))
-        .collect();
-    let dict_container = encode_container(
-        &[
-            dict_payloads[0].as_slice(),
-            dict_payloads[1].as_slice(),
-            dict_payloads[2].as_slice(),
-            dict_payloads[3].as_slice(),
-        ],
-        CODEC_NONE,
-    );
+    let dict_container = encode_dict_container(dict, codec);
+    write_dataset_from_parts(
+        &dict_container,
+        dict.term_count() as u64,
+        default_index,
+        named,
+        has_quads,
+        pyramid_meta,
+        pyramid_levels,
+        metadata,
+        text_index,
+        codec,
+    )
+}
+
+/// Assemble the final file image from an **already-serialized** dictionary
+/// container (so the caller can drop the live `Dictionary` before calling this)
+/// plus the permutation index and optional sections. The byte output is identical
+/// to serializing the dictionary inline.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_dataset_from_parts(
+    dict_container: &[u8],
+    term_count: u64,
+    default_index: &GraphIndex,
+    named: &[(String, GraphIndex)],
+    has_quads: bool,
+    pyramid_meta: &[u8],
+    pyramid_levels: u16,
+    metadata: &[u8],
+    text_index: &[u8],
+    codec: u8,
+) -> Vec<u8> {
     let index_container = encode_index_container(default_index, codec);
     let named_section = encode_named_graphs(named, codec);
 
@@ -1259,7 +1307,7 @@ pub fn write_dataset_with_metadata(
     if meta_section_len > 0 {
         parts.push(metadata);
     }
-    parts.push(&dict_container);
+    parts.push(dict_container);
     parts.push(&index_container);
     parts.push(pyramid_meta);
     if text_len > 0 {
@@ -1292,7 +1340,7 @@ pub fn write_dataset_with_metadata(
                 .iter()
                 .map(|(_, idx)| idx.triple_count() as u64)
                 .sum::<u64>(),
-        term_count: dict.term_count() as u64,
+        term_count,
         content_hash: content_hash(&parts),
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
         named_graphs_len: named_len,
@@ -1316,7 +1364,7 @@ pub fn write_dataset_with_metadata(
     if meta_section_len > 0 {
         out.extend_from_slice(metadata);
     }
-    out.extend_from_slice(&dict_container);
+    out.extend_from_slice(dict_container);
     out.extend_from_slice(&index_container);
     out.extend_from_slice(pyramid_meta);
     if text_len > 0 {

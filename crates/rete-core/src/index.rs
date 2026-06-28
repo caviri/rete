@@ -265,6 +265,43 @@ impl GraphIndexBuilder {
         self.triples.push(t);
     }
 
+    /// Build the six permutations **one at a time** (each permutation's internal
+    /// sort still uses every core), so only a single permuted copy of the triples
+    /// is resident at once instead of all six concurrently. Trades the cross-
+    /// permutation parallelism of [`Self::build`] for a much lower peak RAM — the
+    /// large-graph low-memory path. Output is byte-identical to [`Self::build`].
+    pub fn build_seq(self) -> GraphIndex {
+        let triples = &self.triples;
+        let budget = self.tile_budget;
+        // Permute (parallel) + sort (parallel inside `build_tiles`) one permutation
+        // at a time, so only a single permuted copy of the triples is resident — but
+        // every core is still busy. Process permutations in batches of two to
+        // overlap one permutation's tile-building with the next one's sort while
+        // keeping the resident permuted copies to two. Byte-identical to `build`.
+        let build_one = |perm: IndexPermutation| -> Vec<Tile> {
+            #[cfg(feature = "parallel")]
+            let permuted: Vec<Triple> = {
+                use rayon::prelude::*;
+                triples.par_iter().map(|&t| perm.forward(t)).collect()
+            };
+            #[cfg(not(feature = "parallel"))]
+            let permuted: Vec<Triple> = triples.iter().map(|&t| perm.forward(t)).collect();
+            build_tiles(permuted, budget)
+        };
+        #[cfg(feature = "parallel")]
+        let sections: [Vec<Tile>; NUM_PERMS] = {
+            use rayon::prelude::*;
+            let mut built: Vec<Vec<Tile>> = Vec::with_capacity(NUM_PERMS);
+            for chunk in ALL_PERMS.chunks(2) {
+                built.extend(chunk.to_vec().into_par_iter().map(build_one).collect::<Vec<_>>());
+            }
+            built.try_into().ok().expect("six permutations")
+        };
+        #[cfg(not(feature = "parallel"))]
+        let sections: [Vec<Tile>; NUM_PERMS] = ALL_PERMS.map(build_one);
+        GraphIndex::from_sections(sections)
+    }
+
     pub fn build(self) -> GraphIndex {
         let perms = ALL_PERMS;
         let triples = &self.triples;
