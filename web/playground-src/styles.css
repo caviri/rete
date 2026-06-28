@@ -2160,9 +2160,19 @@ th .coltype.coltype-on {
   .ds-header { flex-direction: column; align-items: stretch; gap: 6px; padding: 10px 12px 4px; }
   .ds-header.condensed { gap: 2px; }
   .ds-header-meta { justify-content: flex-start; flex-wrap: wrap; }
-  .ds-title { font-size: 18px; }
+  /* Title + tagline must WRAP inside the viewport. The tagline's desktop
+     max-width:78ch (~546px) is wider than a phone, so it overflowed the screen and
+     dragged the whole page (and the result table) off-edge — pin it to 100%. */
+  .ds-title { font-size: 17px; overflow-wrap: anywhere; word-break: break-word; }
   .ds-header.condensed .ds-title { font-size: 15px; }
-  .ds-tagline { font-size: 12px; }
+  .ds-tagline { font-size: 12px; max-width: 100%; overflow-wrap: anywhere; }
+  .ds-header-main { min-width: 0; }
+
+  /* Result tables: smaller font + a viewport-relative cell cap so a long IRI
+     scrolls *inside* the .tbl box instead of forcing the page wider than the
+     screen (the desktop cap is 560px — wider than a phone). */
+  table { font-size: 11px; }
+  .tbl th, .tbl td { max-width: 74vw; padding: 5px 7px; }
 
   .console-shell { padding: 10px 10px 26px; gap: 10px; }
 
