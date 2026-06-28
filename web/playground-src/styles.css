@@ -2063,10 +2063,45 @@ th .coltype.coltype-on {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* The details/source panel (2nd sidebar) floats as a right-side DRAWER over the
+     content instead of pushing the column layout. It starts collapsed on a phone
+     (see boot()); the › button opens it, the ‹ button (a big close target)
+     dismisses it. */
   .library-panel {
-    position: static;
-    max-height: none;
-    overflow: visible;
+    position: fixed;
+    top: 0; right: 0; bottom: 0; left: auto;
+    width: min(390px, 92vw);
+    max-width: 92vw;
+    max-height: 100vh;
+    overflow-y: auto;
+    z-index: 75;
+    margin: 0;
+    background: var(--surface);
+    border-left: 1px solid var(--line-strong);
+    box-shadow: -10px 0 28px rgba(0, 0, 0, .20);
+    padding: 50px 16px 28px;
+  }
+  .lib-collapse {
+    position: absolute;
+    top: 10px; right: 12px;
+    width: 36px; height: 36px;
+    font-size: 19px;
+  }
+  /* The collapsed-state opener becomes a labelled, touch-sized pill. */
+  .console-shell.lib-collapsed .lib-expand {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: auto; height: auto;
+    padding: 8px 14px;
+    border-radius: 9px;
+    font-size: 13px;
+    color: var(--accent-dark);
+    align-self: flex-start;
+  }
+  .console-shell.lib-collapsed .lib-expand::after {
+    content: "Details & source";
+    font-weight: 600;
   }
 
   .mode-rail {
@@ -2131,9 +2166,24 @@ th .coltype.coltype-on {
 
   .console-shell { padding: 10px 10px 26px; gap: 10px; }
 
-  /* Compact mode-rail buttons so they wrap to ~4 per row. */
-  .mode-rail { gap: 5px; }
-  .mode-rail button { padding: 7px 9px; gap: 5px; }
+  /* The tool rail becomes a single horizontal SCROLL strip (one tidy row that
+     swipes) instead of wrapping to 3–4 rows that eat the vertical space the
+     query + results need. Decorative group labels are dropped in the strip. */
+  .mode-rail {
+    gap: 5px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 3px;
+    margin: 0 -10px;        /* bleed to the screen edges so the strip feels full-width */
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .mode-rail::-webkit-scrollbar { display: none; }
+  .mode-rail .rail-group { display: none; }
+  .mode-rail button { padding: 7px 10px; gap: 5px; flex: 0 0 auto; }
   .mode-rail .rail-ic { width: 18px; height: 18px; }
   .mode-rail .rail-name { font-size: 11px; }
 

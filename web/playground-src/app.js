@@ -5216,7 +5216,13 @@ self.onmessage = function (e) {
     renderDatasetOptions();
     wireEvents();
     renderHistory();
-    try { setLibCollapsed(localStorage.getItem(LIB_KEY) === "1"); } catch (_e) { /* ignore */ }
+    // The details panel (2nd sidebar) is a space-cramping overlay on a phone, so
+    // it starts collapsed there regardless of the saved desktop preference; on
+    // wider screens the saved preference wins.
+    try {
+      const narrow = window.matchMedia("(max-width: 860px)").matches;
+      setLibCollapsed(narrow || localStorage.getItem(LIB_KEY) === "1");
+    } catch (_e) { /* ignore */ }
     enhanceEditor("q", "sparql");
     enhanceEditor("shapeText", "ttl");
     enhanceEditor("buildText", "ttl", scheduleBuildValidation);
