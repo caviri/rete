@@ -44,6 +44,17 @@ fn input_format(path: &str, override_fmt: Option<&str>) -> &'static str {
     }
 }
 
+/// True if `text` smells like a non-RDF OWL serialization (OWL/XML's `<Ontology>`
+/// document element, or OWL Functional Syntax's `Ontology(...)`) rather than
+/// RDF/XML — used only to enrich the parse error with a conversion hint.
+fn looks_like_non_rdf_owl(text: &str) -> bool {
+    let head = &text[..text.len().min(4096)];
+    // RDF/XML's document element is rdf:RDF; OWL/XML's is <Ontology …>. Functional
+    // Syntax has no XML prolog and opens with `Ontology(` (after optional prefixes).
+    (!head.contains("rdf:RDF") && head.contains("<Ontology"))
+        || (!head.trim_start().starts_with('<') && head.contains("Ontology("))
+}
+
 /// Parse one or more RDF inputs into quads (triples → default graph). Shared by
 /// `build` and `validate`. Returns a parse error (which input, what went wrong)
 /// if any input is malformed.
@@ -65,7 +76,21 @@ fn parse_inputs(inputs: &[String], format: Option<&str>) -> anyhow::Result<Vec<i
                 .map_err(|e| anyhow::anyhow!("{input}: {e}"))?
         } else {
             let text = read_input(input)?;
-            ingest::parse_statements(&text, fmt).map_err(|e| anyhow::anyhow!("{input}: {e}"))?
+            ingest::parse_statements(&text, fmt).map_err(|e| {
+                // OWL/XML and Functional Syntax look like ".owl" but are NOT RDF, so
+                // the RDF/XML reader rejects them. Point the user at the fix instead
+                // of leaving a cryptic XML error.
+                if fmt == "rdfxml" && looks_like_non_rdf_owl(&text) {
+                    anyhow::anyhow!(
+                        "{input}: {e}\n\
+                         hint: this looks like OWL/XML or OWL Functional Syntax, which \
+                         are not RDF. Convert to RDF/XML or Turtle first (e.g. owlready2, \
+                         `robot convert`, or Protégé → Save as → RDF/XML), then build that."
+                    )
+                } else {
+                    anyhow::anyhow!("{input}: {e}")
+                }
+            })?
         };
         // Move the first input's vec in; only pay an extend-copy when merging more.
         if quads.is_empty() {
