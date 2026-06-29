@@ -3569,12 +3569,98 @@ self.onmessage = function (e) {
       `<rect class="geo-bd" x="${gutL}" y="0" width="${mapW}" height="${mapH}"/>${ticks}</svg></td>`;
   }
 
+  // ---- 3D model cells -------------------------------------------------------
+  // A cell whose value is a streamable mesh (.glb/.gltf/.ply/.splat) opens an
+  // inline <model-viewer> lightbox — the web component is lazy-loaded from the CDN
+  // only when first opened (like the AI runtime), so the page stays light. A cell
+  // that is a 3D *viewer page* (INSCRIBE, PAITO, Sketchfab, a Nexus/3DHOP page) is
+  // an HTML page, not a mesh, and is usually all-rights-reserved — it can't be
+  // embedded, so it opens in a new tab instead.
+  function looksMeshUrl(v) {
+    return /^https?:\/\//i.test(v) && /\.(glb|gltf|ply|splat|ksplat)(\?|#|$)/i.test(v);
+  }
+  function looks3dViewerUrl(v) {
+    if (!/^https?:\/\//i.test(v)) return false;
+    return /\binscribercproject\.com\b/i.test(v)      // INSCRIBE 3DHOP tablet scans
+        || /\bpaitoproject\.it\b/i.test(v)            // PAITO Project (Phaistos + HT)
+        || /\bsketchfab\.com\/(3d-models|models)\//i.test(v)
+        || /\.nxz(\?|#|$)/i.test(v)                   // Nexus multiresolution mesh
+        || /\/3dhop\b/i.test(v);
+  }
+  function mesh3dCell(t) {
+    const url = httpsUpgrade(t.value);
+    return `<td class="iri model3d-cell"><button type="button" class="model3d-btn" data-mesh="${esc(url)}" ` +
+      `title="View 3D model — ${esc(t.value)}">🧊 3D</button></td>`;
+  }
+  function viewer3dCell(t) {
+    const url = httpsUpgrade(t.value);
+    return `<td class="iri model3d-cell"><a class="model3d-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
+      `title="Open the 3D viewer — ${esc(t.value)}">🧊 3D ↗</a></td>`;
+  }
+  function model3dCell(t) { return looksMeshUrl(t.value) ? mesh3dCell(t) : viewer3dCell(t); }
+
+  let modelViewerLoading = null;
+  function ensureModelViewer() {
+    if (modelViewerLoading) return modelViewerLoading;
+    modelViewerLoading = new Promise((resolve) => {
+      try {
+        if (window.customElements && customElements.get("model-viewer")) { resolve(true); return; }
+        const s = document.createElement("script");
+        s.type = "module";
+        s.src = "https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js";
+        s.onload = () => resolve(true);
+        s.onerror = () => resolve(false);
+        document.head.appendChild(s);
+      } catch (_e) { resolve(false); }
+    });
+    return modelViewerLoading;
+  }
+  let model3dModalEl = null;
+  function ensureModel3dModal() {
+    if (model3dModalEl) return model3dModalEl;
+    const el = document.createElement("div");
+    el.className = "model3d-modal hidden";
+    el.innerHTML =
+      '<div class="model3d-backdrop"></div>' +
+      '<div class="model3d-box" role="dialog" aria-modal="true" aria-label="3D model viewer">' +
+        '<button class="model3d-close" type="button" aria-label="close">×</button>' +
+        '<div class="model3d-stage"></div>' +
+        '<div class="model3d-foot"><span class="model3d-hint">drag to rotate · scroll to zoom</span>' +
+          '<a class="model3d-src" target="_blank" rel="noopener noreferrer">open file ↗</a></div>' +
+      '</div>';
+    document.body.appendChild(el);
+    const close = () => { el.classList.add("hidden"); el.querySelector(".model3d-stage").innerHTML = ""; };
+    el.querySelector(".model3d-close").addEventListener("click", close);
+    el.querySelector(".model3d-backdrop").addEventListener("click", close);
+    document.addEventListener("keydown", (e) => { if (!el.classList.contains("hidden") && e.key === "Escape") close(); });
+    model3dModalEl = el;
+    return el;
+  }
+  function openModel3d(url) {
+    const el = ensureModel3dModal();
+    const stage = el.querySelector(".model3d-stage");
+    stage.innerHTML = '<div class="model3d-loading">Loading 3D viewer…</div>';
+    el.querySelector(".model3d-src").href = url;
+    el.classList.remove("hidden");
+    ensureModelViewer().then((ok) => {
+      if (el.classList.contains("hidden")) return;        // closed before it loaded
+      stage.innerHTML = ok
+        ? '<model-viewer src="' + esc(url) + '" camera-controls auto-rotate touch-action="pan-y" ' +
+          'shadow-intensity="1" exposure="1.1" environment-image="neutral" ' +
+          'style="width:100%;height:100%;background:#15161a" alt="3D model"></model-viewer>'
+        : '<div class="model3d-loading">Couldn\'t load the 3D viewer (offline or CDN blocked). ' +
+          '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open the file ↗</a></div>';
+    });
+  }
+
   // The default per-value heuristic (the behaviour for type "auto").
   function autoCell(t, raw) {
     if (t.iri) {
       const disp = shorten(t.value, 96);
       if (looksImageUrl(t.value)) return imageCell(t); // a Commons file or *.jpg/png/…
       if (looksIiifUrl(t.value)) return iiifCell(t);    // a IIIF manifest → fetch + show its thumbnail
+      if (looksMeshUrl(t.value)) return mesh3dCell(t);  // a streamable mesh → inline 3D viewer
+      if (looks3dViewerUrl(t.value)) return viewer3dCell(t); // a 3D viewer page → open in a tab
       if (looksWebUrl(t.value)) return linkCell(t);     // a dereferenceable web URL
       return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
     }
@@ -3596,6 +3682,7 @@ self.onmessage = function (e) {
       case "image": return imageCell(t);
       case "iiif": return iiifCell(t);
       case "geo": return geoCell(t);
+      case "model3d": return model3dCell(t);
       case "link": return linkCell(t);
       case "number": {
         const n = Number(t.value);
@@ -3611,7 +3698,7 @@ self.onmessage = function (e) {
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"],
-    ["image", "Image"], ["iiif", "IIIF"], ["geo", "Map"], ["number", "Number"],
+    ["image", "Image"], ["iiif", "IIIF"], ["geo", "Map"], ["model3d", "3D"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
@@ -6141,6 +6228,11 @@ self.onmessage = function (e) {
         setTimeout(() => { pending = false; hydrateIiif(host); }, 60);
       });
       obs.observe(host, { childList: true, subtree: true });
+      // Delegated: a 🧊 3D button (a streamable mesh cell) opens the model viewer.
+      host.addEventListener("click", (e) => {
+        const btn = e.target && e.target.closest && e.target.closest(".model3d-btn");
+        if (btn) { e.preventDefault(); openModel3d(btn.getAttribute("data-mesh")); }
+      });
     } catch (_e) { /* ignore */ }
     // The details panel (2nd sidebar) is a space-cramping overlay on a phone, so
     // it starts collapsed there regardless of the saved desktop preference; on
