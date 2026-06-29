@@ -11065,7 +11065,13 @@ self.onmessage = function (e) {
         try { runQuery(); } catch (e) { /* surfaced in the result pane */ }
       });
     };
-    const messages = [{ role: "system", content: aiSystemPrompt() }].concat(aiHistory.slice(-8));
+    // Prime via a user/assistant pair rather than a `system` role — some chat
+    // templates (notably Gemma's) reject a system message; user/assistant is
+    // accepted everywhere.
+    const messages = [
+      { role: "user", content: aiSystemPrompt() },
+      { role: "assistant", content: "Understood — I'll answer each question with a single SPARQL query in a ```sparql code block, using only this dataset's prefixes and predicates." }
+    ].concat(aiHistory.slice(-6));
     ensureLlmWorker().postMessage({ type: "generate", messages });
   }
   function openAiModal() {
