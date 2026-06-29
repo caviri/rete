@@ -2448,7 +2448,11 @@ th .coltype.coltype-on {
 .iiif-modal.hidden { display: none; }
 .iiif-modal-backdrop { position: absolute; inset: 0; background: rgba(15, 25, 22, .68); backdrop-filter: blur(2px); }
 /* 3D model cells + lightbox (lazy <model-viewer>) */
-.model3d-cell { padding: 4px 8px; }
+.model3d-cell { padding: 6px 8px; position: relative; }
+.model3d-inline { width: 170px; height: 132px; display: block; background: #15161a; border-radius: 8px; --poster-color: #15161a; --progress-bar-color: #6d4aff; cursor: grab; }
+.model3d-inline:active { cursor: grabbing; }
+.model3d-expand { position: absolute; top: 10px; right: 12px; width: 22px; height: 22px; border: 1px solid var(--line); background: rgba(255, 255, 255, .85); color: var(--ink); border-radius: 6px; font-size: 12px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s; z-index: 2; }
+.model3d-cell:hover .model3d-expand, .model3d-expand:focus-visible { opacity: 1; }
 .model3d-btn, .model3d-link { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--side); color: var(--ink); cursor: pointer; text-decoration: none; white-space: nowrap; }
 .model3d-btn:hover, .model3d-link:hover { background: var(--accent-dark, #2b6); color: #fff; border-color: transparent; }
 .model3d-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }

@@ -3488,6 +3488,11 @@ self.onmessage = function (e) {
       });
     });
   }
+  // Inline 3D cells: load the <model-viewer> web component the first time one
+  // appears; each <model-viewer> element then upgrades and lazy-loads its own .glb.
+  function hydrateModel3d(scope) {
+    if ((scope || document).querySelector(".model3d-cell model-viewer")) ensureModelViewer();
+  }
   // ---- geo mini-map cells ---------------------------------------------------
   // A WKT geometry literal (geo:wktLiteral: POINT / POLYGON / LINESTRING …) drawn
   // as a small square locator map — the dot/shape on a light frame with lat-lon
@@ -3589,8 +3594,17 @@ self.onmessage = function (e) {
   }
   function mesh3dCell(t) {
     const url = httpsUpgrade(t.value);
-    return `<td class="iri model3d-cell"><button type="button" class="model3d-btn" data-mesh="${esc(url)}" ` +
-      `title="View 3D model — ${esc(t.value)}">🧊 3D</button></td>`;
+    // An inline, rotatable <model-viewer> right in the cell — drag to rotate, plus a
+    // gentle auto-spin. The web component is lazy-loaded once (hydrateModel3d); each
+    // viewer lazy-loads its .glb only when scrolled near the viewport (loading=lazy),
+    // so a 60-row table doesn't fetch 60 meshes at once. The ⛶ opens the full lightbox.
+    return `<td class="iri model3d-cell">` +
+      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate ` +
+      `auto-rotate-delay="0" rotation-per-second="28deg" interaction-prompt="none" disable-zoom ` +
+      `loading="lazy" reveal="auto" touch-action="pan-y" environment-image="neutral" ` +
+      `shadow-intensity="0.6" alt="3D model"></model-viewer>` +
+      `<button type="button" class="model3d-expand" data-mesh="${esc(url)}" ` +
+      `title="Enlarge — ${esc(t.value)}" aria-label="Enlarge 3D model">⛶</button></td>`;
   }
   function viewer3dCell(t) {
     const url = httpsUpgrade(t.value);
@@ -6225,12 +6239,12 @@ self.onmessage = function (e) {
       const obs = new MutationObserver(() => {
         if (pending) return;
         pending = true;
-        setTimeout(() => { pending = false; hydrateIiif(host); }, 60);
+        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); }, 60);
       });
       obs.observe(host, { childList: true, subtree: true });
-      // Delegated: a 🧊 3D button (a streamable mesh cell) opens the model viewer.
+      // Delegated: the ⛶ on an inline 3D cell (or a 🧊 3D button) opens the full viewer.
       host.addEventListener("click", (e) => {
-        const btn = e.target && e.target.closest && e.target.closest(".model3d-btn");
+        const btn = e.target && e.target.closest && e.target.closest(".model3d-btn, .model3d-expand");
         if (btn) { e.preventDefault(); openModel3d(btn.getAttribute("data-mesh")); }
       });
     } catch (_e) { /* ignore */ }
