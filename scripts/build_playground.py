@@ -153,6 +153,9 @@ DATASETS = [
     ("theographic-graph", "theographic-graph.rete"),
     ("monarch", "monarch.rete"),
     ("opencitations", "opencitations.rete"),
+    # MIrA — early Irish manuscripts, Wikidata-aligned, with 189 IIIF manifests
+    # (scripts/mira_to_nt.py enriches padraicmoran/MIrA's RDF; CC BY-NC-SA 4.0).
+    ("mira", "mira.rete"),
     # Remote-lazy (served from the bucket, NOT embedded; see catalog.js): getty-ulan,
     # history, mmm, orkg, factgrid-illuminati, wikidata-1GB/100mb, ohm-full, chemotion,
     # chebi-full, causenet-full. Dropped entirely: citations (synthetic), typed, deps.
