@@ -691,6 +691,10 @@ extern "C" {
         n: usize,
         dst_ptr: *mut u8,
     ) -> usize;
+    /// Async length probe (a `bytes=0-0` fetch; reads the total from
+    /// `Content-Range`). Writes the u64 length to `out_ptr`, returns 1 on
+    /// success. Lets the asyncify build open a file with NO sync XHR at all.
+    fn rete_file_len(url_ptr: *const u8, url_len: usize, out_ptr: *mut u64) -> usize;
 }
 
 #[cfg(feature = "asyncify")]
@@ -739,6 +743,23 @@ impl XhrRangeReader {
     /// and read the total from the `Content-Range` header (`bytes 0-0/TOTAL`),
     /// falling back to `Content-Length` if the host doesn't send a range.
     fn open(url: &str) -> Result<Self, JsValue> {
+        // Asyncify build: probe the length via the async import — no sync XHR.
+        #[cfg(feature = "asyncify")]
+        {
+            let mut len: u64 = 0;
+            let ok = unsafe { rete_file_len(url.as_ptr(), url.len(), &mut len as *mut u64) };
+            if ok == 0 || len == 0 {
+                return Err(JsValue::from_str(&format!(
+                    "could not determine length of {url}"
+                )));
+            }
+            return Ok(Self {
+                url: url.to_string(),
+                len,
+            });
+        }
+        #[cfg(not(feature = "asyncify"))]
+        {
         let xhr = web_sys::XmlHttpRequest::new()?;
         xhr.open_with_async("GET", url, false)?;
         xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
@@ -767,6 +788,7 @@ impl XhrRangeReader {
             url: url.to_string(),
             len,
         })
+        }
     }
 }
 

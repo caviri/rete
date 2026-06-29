@@ -39,6 +39,6 @@ rustup run nightly wasm-pack build crates/rete-wasm \
 RAW=web/pkg-nomodules-async/rete_wasm_bg.wasm
 node -e "const m=new WebAssembly.Module(require('fs').readFileSync('$RAW'));if(WebAssembly.Module.imports(m).some(i=>/externref/.test(i.name)))throw new Error('externref still present — asyncify will fail');console.log('externref gone, env.rete_fetch_ranges import present')"
 
-wasm-opt --asyncify --pass-arg=asyncify-imports@env.rete_fetch_ranges "$RAW" -o "$RAW.async"
+wasm-opt --asyncify --pass-arg=asyncify-imports@env.rete_fetch_ranges,env.rete_file_len "$RAW" -o "$RAW.async"
 mv "$RAW.async" "$RAW"
 echo ">> asyncified: $(stat -c%s "$RAW") bytes; asyncify control fns: $(node -e "const m=new WebAssembly.Module(require('fs').readFileSync('$RAW'));console.log(WebAssembly.Module.exports(m).filter(e=>/asyncify/.test(e.name)).map(e=>e.name).join(', '))")"
