@@ -31,6 +31,8 @@ OUT_EXTRA = os.path.join(HERE, "data", "mira", "mira_extra.nt")
 OUT_LABELS = os.path.join(HERE, "data", "mira", "mira_labels.nt")
 
 ENT = "https://mira.ie/entity/manuscript/"
+CATBASE = "https://mira.ie/entity/category/"   # MIrA inclusion-criterion categories
+CATXML = os.path.join(REPO, "data", "other", "categories.xml")
 PROP = "https://mira.ie/prop/"          # mira: literal extras
 WDT = "http://www.wikidata.org/prop/direct/"
 WD = "http://www.wikidata.org/entity/"
@@ -48,7 +50,19 @@ def lit(s):
 
 
 def main():
+    # The inclusion-criterion categories (the /about "Criteria for inclusion"):
+    # id -> label, from data/other/categories.xml.
+    cat_labels = {}
+    try:
+        for c in ET.parse(CATXML).getroot().iter("category"):
+            cid = c.get("id")
+            if cid and (c.text or "").strip():
+                cat_labels[cid] = c.text.strip()
+    except (ET.ParseError, FileNotFoundError):
+        pass
+
     extra = []
+    cats_used = set()
     n_iiif = n_ms = 0
     for path in sorted(glob.glob(os.path.join(MSS, "*.xml"))):
         try:
@@ -79,9 +93,16 @@ def main():
             txt = " ".join(cont.itertext()).strip()
             if txt:
                 extra.append(f"{s} <{PROP}contents> {lit(txt[:1000])} .")
+        # inclusion-criterion categories (notes/@categories = "#sc-ire #vern ...")
+        for nt in root.iter("notes"):
+            for code in (nt.get("categories") or "").split():
+                cid = code.lstrip("#")
+                if cid in cat_labels:
+                    extra.append(f"{s} <{PROP}category> <{CATBASE}{cid}> .")
+                    cats_used.add(cid)
     with open(OUT_EXTRA, "w", encoding="utf-8") as f:
         f.write("\n".join(extra) + "\n")
-    print(f"extra: {n_ms} mss, {n_iiif} IIIF manifests -> {OUT_EXTRA}")
+    print(f"extra: {n_ms} mss, {n_iiif} IIIF manifests, {len(cats_used)} categories -> {OUT_EXTRA}")
 
     # --- labels: every wd:Q* and wdt:P* used, from the Wikidata API ---------------
     ttl = open(TTL, encoding="utf-8").read()
@@ -112,8 +133,12 @@ def main():
             lines.append(f"<{WDT}{p}> <{RDFS}> {lit(labels[p])}@en .")
     # mira: predicate labels
     for pn, pl in [("name", "manuscript name"), ("script", "script"),
-                   ("folios", "folios"), ("contents", "contents")]:
+                   ("folios", "folios"), ("contents", "contents"),
+                   ("category", "inclusion criterion")]:
         lines.append(f"<{PROP}{pn}> <{RDFS}> {lit(pl)}@en .")
+    # category node labels (the /about criteria)
+    for cid in sorted(cats_used):
+        lines.append(f"<{CATBASE}{cid}> <{RDFS}> {lit(cat_labels[cid])}@en .")
     with open(OUT_LABELS, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"labels: {len(qids)} Q + {len(pids)} P codes resolved -> {OUT_LABELS}")
