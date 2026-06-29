@@ -2468,6 +2468,19 @@ th .coltype.coltype-on {
 .model3d-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); background: var(--bg, #fff); }
 .model3d-src { color: var(--accent-dark, #2b6); text-decoration: none; }
 .model3d-src:hover { text-decoration: underline; }
+/* lightbox lighting controls */
+.model3d-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 9px 12px; border-top: 1px solid var(--line); background: var(--side, #f6f6f6); }
+.m3-ctl { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--ink); white-space: nowrap; }
+.m3-ctl select { font: inherit; font-size: 11.5px; padding: 3px 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg, #fff); color: var(--ink); }
+.m3-ctl input[type="range"] { width: 96px; accent-color: #6d4aff; }
+.m3-spin { font: inherit; font-size: 11.5px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg, #fff); color: var(--muted); cursor: pointer; }
+.m3-spin.on { background: linear-gradient(135deg, #6d4aff, #a23bd6); color: #fff; border-color: transparent; }
+/* audio / video cells */
+.media-cell { padding: 6px 8px; position: relative; white-space: nowrap; }
+.cell-audio { width: 230px; height: 34px; vertical-align: middle; }
+.cell-video { width: 248px; max-height: 168px; display: block; border-radius: 6px; background: #000; }
+.media-src { margin-left: 6px; color: var(--accent-dark, #2b6); text-decoration: none; font-size: 13px; vertical-align: middle; }
+.media-src:hover { text-decoration: underline; }
 .iiif-modal-box { position: relative; z-index: 1; width: min(900px, 94vw); max-height: 92vh; overflow: auto; background: var(--bg, #fff); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 24px 70px rgba(0, 0, 0, .4); padding: 14px; }
 .iiif-modal-close { position: absolute; top: 8px; right: 10px; width: 30px; height: 30px; border: 1px solid var(--line); background: var(--side); color: var(--ink); border-radius: 8px; font-size: 19px; line-height: 1; cursor: pointer; z-index: 2; }
 .iiif-modal-close:hover { background: var(--accent-dark); color: #fff; }

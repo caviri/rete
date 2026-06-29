@@ -3629,7 +3629,16 @@ self.onmessage = function (e) {
     });
     return modelViewerLoading;
   }
-  let model3dModalEl = null;
+  let model3dModalEl = null, model3dApply = null;
+  // Lighting environments for the lightbox (image-based lighting). All verified to
+  // load with CORS from the model-viewer shared assets; "neutral" is built in,
+  // "flat" removes the environment for plain three-point lighting.
+  const M3_ENVS = {
+    sunrise: "https://modelviewer.dev/shared-assets/environments/spruit_sunrise_1k_HDR.jpg",
+    studio: "https://modelviewer.dev/shared-assets/environments/aircraft_workshop_01_1k.hdr",
+    hall: "https://modelviewer.dev/shared-assets/environments/music_hall_01_1k.hdr",
+    outdoor: "https://modelviewer.dev/shared-assets/environments/whipple_creek_regional_park_04_1k.hdr",
+  };
   function ensureModel3dModal() {
     if (model3dModalEl) return model3dModalEl;
     const el = document.createElement("div");
@@ -3639,11 +3648,44 @@ self.onmessage = function (e) {
       '<div class="model3d-box" role="dialog" aria-modal="true" aria-label="3D model viewer">' +
         '<button class="model3d-close" type="button" aria-label="close">×</button>' +
         '<div class="model3d-stage"></div>' +
+        '<div class="model3d-controls">' +
+          '<label class="m3-ctl">Lighting <select class="m3-env">' +
+            '<option value="neutral">Neutral</option>' +
+            '<option value="sunrise">Sunrise</option>' +
+            '<option value="studio">Studio</option>' +
+            '<option value="hall">Concert hall</option>' +
+            '<option value="outdoor">Outdoor</option>' +
+            '<option value="flat">Flat</option>' +
+          '</select></label>' +
+          '<label class="m3-ctl">Brightness <input type="range" class="m3-exposure" min="0.2" max="2.6" step="0.05" value="1.1"></label>' +
+          '<label class="m3-ctl">Shadow <input type="range" class="m3-shadow" min="0" max="1" step="0.05" value="1"></label>' +
+          '<button type="button" class="m3-spin on" aria-pressed="true">⟳ auto-rotate</button>' +
+        '</div>' +
         '<div class="model3d-foot"><span class="model3d-hint">drag to rotate · scroll to zoom</span>' +
           '<a class="model3d-src" target="_blank" rel="noopener noreferrer">open file ↗</a></div>' +
       '</div>';
     document.body.appendChild(el);
-    const close = () => { el.classList.add("hidden"); el.querySelector(".model3d-stage").innerHTML = ""; };
+    const stage = el.querySelector(".model3d-stage");
+    const envEl = el.querySelector(".m3-env"), expEl = el.querySelector(".m3-exposure"), shEl = el.querySelector(".m3-shadow");
+    const spinEl = el.querySelector(".m3-spin");
+    // Apply the current control values to the live <model-viewer> (called on every
+    // control change and once after a model loads, so settings persist across opens).
+    model3dApply = () => {
+      const mv = stage.querySelector("model-viewer"); if (!mv) return;
+      mv.setAttribute("exposure", expEl.value);
+      mv.setAttribute("shadow-intensity", shEl.value);
+      const v = envEl.value;
+      if (v === "flat") mv.removeAttribute("environment-image");
+      else mv.setAttribute("environment-image", v === "neutral" ? "neutral" : M3_ENVS[v]);
+      if (spinEl.classList.contains("on")) mv.setAttribute("auto-rotate", "");
+      else mv.removeAttribute("auto-rotate");
+    };
+    [envEl, expEl, shEl].forEach((c) => c.addEventListener("input", model3dApply));
+    spinEl.addEventListener("click", () => {
+      const on = !spinEl.classList.contains("on");
+      spinEl.classList.toggle("on", on); spinEl.setAttribute("aria-pressed", String(on)); model3dApply();
+    });
+    const close = () => { el.classList.add("hidden"); stage.innerHTML = ""; };
     el.querySelector(".model3d-close").addEventListener("click", close);
     el.querySelector(".model3d-backdrop").addEventListener("click", close);
     document.addEventListener("keydown", (e) => { if (!el.classList.contains("hidden") && e.key === "Escape") close(); });
@@ -3658,13 +3700,35 @@ self.onmessage = function (e) {
     el.classList.remove("hidden");
     ensureModelViewer().then((ok) => {
       if (el.classList.contains("hidden")) return;        // closed before it loaded
-      stage.innerHTML = ok
-        ? '<model-viewer src="' + esc(url) + '" camera-controls auto-rotate touch-action="pan-y" ' +
+      if (ok) {
+        stage.innerHTML = '<model-viewer src="' + esc(url) + '" camera-controls auto-rotate touch-action="pan-y" ' +
           'shadow-intensity="1" exposure="1.1" environment-image="neutral" ' +
-          'style="width:100%;height:100%;background:#15161a" alt="3D model"></model-viewer>'
-        : '<div class="model3d-loading">Couldn\'t load the 3D viewer (offline or CDN blocked). ' +
+          'style="width:100%;height:100%;background:#15161a" alt="3D model"></model-viewer>';
+        model3dApply();                                   // honour the current lighting controls
+      } else {
+        stage.innerHTML = '<div class="model3d-loading">Couldn\'t load the 3D viewer (offline or CDN blocked). ' +
           '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open the file ↗</a></div>';
+      }
     });
+  }
+
+  // ---- audio / video cells --------------------------------------------------
+  // A direct media URL renders an inline native player. Audio loads on demand
+  // (preload=none); video pulls only its metadata (a poster frame + duration).
+  function looksAudioUrl(v) {
+    return /^https?:\/\//i.test(v) && /\.(mp3|wav|ogg|oga|flac|m4a|aac|opus)(\?|#|$)/i.test(v);
+  }
+  function looksVideoUrl(v) {
+    return /^https?:\/\//i.test(v) && /\.(mp4|webm|ogv|m4v|mov)(\?|#|$)/i.test(v);
+  }
+  function audioCell(t) {
+    const url = httpsUpgrade(t.value);
+    return `<td class="iri media-cell"><audio class="cell-audio" controls preload="none" src="${esc(url)}"></audio>` +
+      `<a class="media-src" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(t.value)}">↗</a></td>`;
+  }
+  function videoCell(t) {
+    const url = httpsUpgrade(t.value);
+    return `<td class="iri media-cell"><video class="cell-video" controls preload="metadata" playsinline src="${esc(url)}"></video></td>`;
   }
 
   // The default per-value heuristic (the behaviour for type "auto").
@@ -3675,6 +3739,8 @@ self.onmessage = function (e) {
       if (looksIiifUrl(t.value)) return iiifCell(t);    // a IIIF manifest → fetch + show its thumbnail
       if (looksMeshUrl(t.value)) return mesh3dCell(t);  // a streamable mesh → inline 3D viewer
       if (looks3dViewerUrl(t.value)) return viewer3dCell(t); // a 3D viewer page → open in a tab
+      if (looksAudioUrl(t.value)) return audioCell(t);  // a media file → inline player
+      if (looksVideoUrl(t.value)) return videoCell(t);
       if (looksWebUrl(t.value)) return linkCell(t);     // a dereferenceable web URL
       return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
     }
@@ -3697,6 +3763,8 @@ self.onmessage = function (e) {
       case "iiif": return iiifCell(t);
       case "geo": return geoCell(t);
       case "model3d": return model3dCell(t);
+      case "audio": return audioCell(t);
+      case "video": return videoCell(t);
       case "link": return linkCell(t);
       case "number": {
         const n = Number(t.value);
@@ -3712,7 +3780,7 @@ self.onmessage = function (e) {
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"],
-    ["image", "Image"], ["iiif", "IIIF"], ["geo", "Map"], ["model3d", "3D"], ["number", "Number"],
+    ["image", "Image"], ["iiif", "IIIF"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
