@@ -17,8 +17,9 @@ struct Cli {
 enum Command {
     /// Build a `.rete` file from one or more RDF inputs (merged into one file).
     ///
-    /// Format is by extension: `.nt`/`.nq`/`.ttl`. Use `-` to read stdin
-    /// (defaults to N-Triples). `--format` overrides detection for all inputs.
+    /// Format is by extension: `.nt`/`.nq`/`.ttl`, plus `.rdf`/`.owl`/`.rdfxml`
+    /// (RDF/XML — how most OWL ontologies ship). Use `-` to read stdin (defaults to
+    /// N-Triples). `--format` overrides detection for all inputs.
     /// Example: `cat *.nt | rete build - -o out.rete`.
     Build {
         /// Input files (or `-` for stdin); multiple are merged.
@@ -27,8 +28,8 @@ enum Command {
         /// Output `.rete` file.
         #[arg(short, long)]
         output: String,
-        /// Force input format for all inputs: nt | nq | ttl.
-        #[arg(long, value_parser = ["nt", "nq", "ttl"])]
+        /// Force input format for all inputs: nt | nq | ttl | rdfxml.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "rdfxml"])]
         format: Option<String>,
         /// Materialize RDFS/OWL-RL entailments at build time: run the reasoner
         /// over the default graph (subClassOf/subPropertyOf/domain/range,
@@ -99,14 +100,14 @@ enum Command {
         #[arg(long)]
         created: Option<String>,
     },
-    /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle,
-    /// without building. Reports counts, or fails with a parse error.
+    /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle/
+    /// RDF-XML, without building. Reports counts, or fails with a parse error.
     Validate {
         /// Input files (or `-` for stdin).
         #[arg(required = true, num_args = 1..)]
         inputs: Vec<String>,
-        /// Force input format for all inputs: nt | nq | ttl.
-        #[arg(long, value_parser = ["nt", "nq", "ttl"])]
+        /// Force input format for all inputs: nt | nq | ttl | rdfxml.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "rdfxml"])]
         format: Option<String>,
     },
     /// Print the header of a `.rete` file.

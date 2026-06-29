@@ -12,6 +12,13 @@ contradictions such as an individual that belongs to two disjoint classes.
 > contradictions. OWL RL is the rule-based profile of OWL designed exactly for
 > forward-chaining materialization over triples, which is what this implements.
 
+> **Loading an OWL ontology.** An OWL ontology is just RDF triples. `rete build`
+> ingests the two common RDF serializations directly — **Turtle** (`.ttl`) and
+> **RDF/XML** (`.rdf` / `.owl`) — so `rete build my-ontology.owl -o onto.rete &&
+> rete reason onto.rete` works with no conversion step. (OWL/XML and Functional
+> Syntax are *not* RDF; convert them to RDF/XML first — see
+> [Compatibility](compatibility.md).)
+
 > **Scope — this is a prototype subset, NOT full OWL DL.** It covers the rules in
 > the tables below by exact-string matching on canonical N-Triples tokens. It does
 > not do equality reasoning beyond the checks listed, class expressions

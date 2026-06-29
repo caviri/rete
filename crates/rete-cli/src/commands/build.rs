@@ -26,6 +26,7 @@ fn input_format(path: &str, override_fmt: Option<&str>) -> &'static str {
         return match f {
             "nq" => "nq",
             "ttl" => "ttl",
+            "rdfxml" | "rdf" | "owl" | "xml" => "rdfxml",
             _ => "nt",
         };
     }
@@ -34,6 +35,10 @@ fn input_format(path: &str, override_fmt: Option<&str>) -> &'static str {
         "nq"
     } else if p.ends_with(".ttl") || p.ends_with(".turtle") {
         "ttl"
+    } else if p.ends_with(".rdf") || p.ends_with(".owl") || p.ends_with(".rdfxml") {
+        // RDF/XML — the common OWL serialization (an `rdf:RDF` root). `.xml` is left
+        // to default to N-Triples since it's ambiguous; pass `--format rdfxml` for it.
+        "rdfxml"
     } else {
         "nt"
     }

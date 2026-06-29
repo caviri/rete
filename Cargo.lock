@@ -733,8 +733,21 @@ checksum = "696223589ecbcab06b1a5df9b527dc25b0c656160cca38752fdb3878a5d3dd03"
 dependencies = [
  "oxjsonld",
  "oxrdf 0.3.3",
- "oxrdfxml",
+ "oxrdfxml 0.2.3",
  "oxttl 0.2.3",
+ "thiserror",
+]
+
+[[package]]
+name = "oxrdfxml"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8d4bf9c5331127f01efbd1245d90fd75b7c546a97cb3e95461121ce1ad5b1c8"
+dependencies = [
+ "oxilangtag",
+ "oxiri",
+ "oxrdf 0.2.4",
+ "quick-xml",
  "thiserror",
 ]
 
@@ -1105,6 +1118,7 @@ dependencies = [
  "getrandom 0.2.17",
  "md-5",
  "oxrdf 0.2.4",
+ "oxrdfxml 0.1.7",
  "oxttl 0.1.8",
  "proptest",
  "rayon",

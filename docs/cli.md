@@ -6,11 +6,13 @@ authoritative flags. Terms are written as canonical N-Triples tokens —
 
 ## Building
 
-### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl]`
+### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|rdfxml]`
 Build a file from one or more RDF inputs, merged under one shared dictionary.
-Format is detected by extension (`.nt` / `.nq` / `.ttl`); `-` reads stdin and
-defaults to N-Triples; `--format` forces a format for all inputs. N-Quads inputs
-produce a dataset with named graphs.
+Format is detected by extension (`.nt` / `.nq` / `.ttl`, plus `.rdf` / `.owl` /
+`.rdfxml` for RDF/XML — how most OWL ontologies ship); `-` reads stdin and
+defaults to N-Triples; `--format` forces a format for all inputs (use `--format
+rdfxml` for an RDF/XML file with a non-standard extension). N-Quads inputs produce
+a dataset with named graphs.
 
 ```sh
 rete build a.nt b.nt -o merged.rete

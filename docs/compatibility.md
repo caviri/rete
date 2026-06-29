@@ -21,20 +21,32 @@ It implements the RDF 1.1 data model:
 | SPARQL 1.1 query | ✅ — see [SPARQL support](sparql.md) |
 | SHACL Core validation | ✅ — see [SHACL validation](shacl.md) |
 
-**Input formats:** N-Triples (`.nt`), N-Quads (`.nq`), Turtle (`.ttl`).
+**Input formats:** N-Triples (`.nt`), N-Quads (`.nq`), Turtle (`.ttl`), and
+RDF/XML (`.rdf` / `.owl` / `.rdfxml`).
 **Output:** N-Quads (`rete export`, lossless round-trip), Turtle and expanded
 JSON-LD (`rete export --format ttl|jsonld`, default graph only), and SPARQL
 Results JSON (`rete sparql --json`).
 
-**Interop in practice:** anything that emits N-Triples/N-Quads/Turtle can feed
-`rete build`, and `rete export` round-trips back to N-Quads for any other RDF
+**Interop in practice:** anything that emits N-Triples/N-Quads/Turtle/RDF-XML can
+feed `rete build`, and `rete export` round-trips back to N-Quads for any other RDF
 tool. So `rete` slots in as a *publishing + query* layer next to your existing RDF
 pipeline.
 
+**OWL:** OWL is a *language*, not a file format — an ontology is a set of RDF
+triples that can be serialized several ways. The two common RDF serializations,
+**Turtle** and **RDF/XML**, both ingest directly (`.ttl`, `.rdf`/`.owl`), so most
+published OWL ontologies build with no conversion. The non-RDF serializations —
+**OWL/XML** (functional XML) and **OWL Functional Syntax** — are *not* RDF, so
+convert them to RDF first (e.g. `owlready2`, `robot convert`, or Protégé "Save
+as → RDF/XML"). Once ingested, OWL axioms are just triples you can query; to
+*materialize* OWL RL / RDFS entailments see [Reasoning](reasoning.md)
+(`rete build --reason` / `rete reason`).
+
 **Current limits (not RDF-incompatible, just unimplemented):** no RDF-star
-(quoted triples), and there is no SPARQL Update (the file is immutable by
-design). Turtle/JSON-LD export covers the default graph only (use N-Quads export
-for named graphs).
+(quoted triples); OWL/XML and Functional Syntax need an external convert-to-RDF
+step (above); and there is no SPARQL Update (the file is immutable by design).
+Turtle/JSON-LD export covers the default graph only (use N-Quads export for named
+graphs).
 
 ## Validation
 

@@ -27,9 +27,10 @@ your `PATH` (or substitute `cargo run -p rete-cli --`).
   <figcaption><code>rete build</code> packs your triples into one immutable file — dictionary, permutation indexes, and a community pyramid — that you can drop on any URL.</figcaption>
 </figure>
 
-`rete build` accepts N-Triples (`.nt`), N-Quads (`.nq`), and Turtle (`.ttl`),
-detected by extension. Multiple inputs are merged under one shared dictionary,
-and `-` reads standard input.
+`rete build` accepts N-Triples (`.nt`), N-Quads (`.nq`), Turtle (`.ttl`), and
+RDF/XML (`.rdf` / `.owl` / `.rdfxml` — the usual OWL serialization), detected by
+extension. Multiple inputs are merged under one shared dictionary, and `-` reads
+standard input.
 
 ```sh
 rete build data.nt -o data.rete                  # single file

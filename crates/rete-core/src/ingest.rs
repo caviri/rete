@@ -30,7 +30,9 @@ pub enum IngestError {
     Line(usize, &'static str),
     #[error("turtle: {0}")]
     Turtle(String),
-    #[error("unknown input format: {0} (expected nt, nq, or ttl)")]
+    #[error("rdf/xml: {0}")]
+    RdfXml(String),
+    #[error("unknown input format: {0} (expected nt, nq, ttl, or rdf/xml)")]
     UnknownFormat(String),
     #[error("io: {0}")]
     Io(String),
@@ -179,12 +181,33 @@ pub fn parse_turtle(text: &str) -> Result<Vec<RawTriple>, IngestError> {
     Ok(out)
 }
 
-/// Parse one text input by format name (`"nt"`, `"nq"`, or `"ttl"`) into quads
-/// (triples land in the default graph).
+/// Parse RDF/XML into canonical N-Triples-token triples via oxrdfxml. This is how
+/// most OWL ontologies ship (`.rdf`/`.owl`/`.xml` with an `rdf:RDF` root) — so rete
+/// ingests them directly, no external conversion. (OWL/XML — the non-RDF functional
+/// XML serialization — is a different language; convert it with owlready2 first.)
+pub fn parse_rdfxml(text: &str) -> Result<Vec<RawTriple>, IngestError> {
+    let mut out = Vec::new();
+    for r in oxrdfxml::RdfXmlParser::new().for_reader(text.as_bytes()) {
+        let t = r.map_err(|e| IngestError::RdfXml(e.to_string()))?;
+        out.push((
+            t.subject.to_string(),
+            t.predicate.to_string(),
+            t.object.to_string(),
+        ));
+    }
+    Ok(out)
+}
+
+/// Parse one text input by format name (`"nt"`, `"nq"`, `"ttl"`, or `"rdfxml"`)
+/// into quads (triples land in the default graph).
 pub fn parse_statements(text: &str, format: &str) -> Result<Vec<RawQuad>, IngestError> {
     match format {
         "nq" => parse_quads(text),
         "ttl" => Ok(parse_turtle(text)?
+            .into_iter()
+            .map(|(s, p, o)| (s, p, o, None))
+            .collect()),
+        "rdfxml" => Ok(parse_rdfxml(text)?
             .into_iter()
             .map(|(s, p, o)| (s, p, o, None))
             .collect()),
@@ -604,6 +627,34 @@ mod tests {
         let ttl = "@prefix ex: <http://ex/> .\nex:A ex:knows ex:B , ex:C .";
         assert_eq!(parse_statements(ttl, "ttl").unwrap().len(), 2);
         assert!(parse_statements(nt, "trig").is_err());
+    }
+
+    /// RDF/XML (how most OWL ontologies ship) parses to the same canonical tokens,
+    /// including the abbreviated typed-node syntax and `rdf:resource` references.
+    #[test]
+    fn parses_rdfxml_owl() {
+        let xml = r#"<?xml version="1.0"?>
+            <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+                     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+                     xmlns:owl="http://www.w3.org/2002/07/owl#">
+              <owl:Class rdf:about="http://ex/Dog">
+                <rdfs:subClassOf rdf:resource="http://ex/Animal"/>
+                <rdfs:label>Dog</rdfs:label>
+              </owl:Class>
+            </rdf:RDF>"#;
+        let triples = parse_rdfxml(xml).unwrap();
+        // rdf:type owl:Class, rdfs:subClassOf, rdfs:label = 3 triples.
+        assert_eq!(triples.len(), 3);
+        assert!(triples.iter().any(|(s, p, o)| s == "<http://ex/Dog>"
+            && p == "<http://www.w3.org/2000/01/rdf-schema#subClassOf>"
+            && o == "<http://ex/Animal>"));
+        // Same data through the format dispatcher (triples → default graph).
+        assert_eq!(parse_statements(xml, "rdfxml").unwrap().len(), 3);
+        // Malformed XML is a clear RdfXml error, not a silent empty parse.
+        assert!(matches!(
+            parse_statements("<rdf:RDF><not closed", "rdfxml"),
+            Err(IngestError::RdfXml(_))
+        ));
     }
 
     /// Text in, queryable file image out — the whole in-memory build path the
