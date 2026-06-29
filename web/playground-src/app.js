@@ -4231,7 +4231,8 @@ self.onmessage = function (e) {
     return out;
   }
   function fedParse(q) {
-    q = q.replace(/^\s*#.*$/gm, "");
+    // strip SPARQL # comments — but not a # inside an <IRI> or a "literal"
+    q = q.replace(/("(?:[^"\\]|\\.)*"|<[^>]*>)|#[^\n]*/g, (mm, keep) => keep || "");
     const prefixes = {}, prefixLines = []; let m;
     const re = /PREFIX\s+([A-Za-z0-9_-]*):\s*<([^>]*)>/gi;
     while ((m = re.exec(q))) { prefixes[m[1]] = m[2]; prefixLines.push(m[0]); }
