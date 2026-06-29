@@ -18,6 +18,14 @@ default = []
 # scripts/build_playground_threads.sh and scripts/serve_coi.py. NOT for the
 # normal `web/pkg` build.
 threads = ["rete-core/parallel", "dep:wasm-bindgen-rayon"]
+# EXPERIMENTAL Asyncify reads. Routes every remote range read through one async
+# import (`env.rete_fetch_ranges`, a `Promise.all` of `fetch`) instead of sync
+# XHR, so the synchronous engine fetches a query's byte ranges CONCURRENTLY with
+# no SharedArrayBuffer / cross-origin isolation. The wasm must then be run through
+# `wasm-opt --asyncify --pass-arg=asyncify-imports@env.rete_fetch_ranges` and the
+# worker must drive the suspend/rewind loop — see scripts/build_playground_async.sh.
+# A separate artifact (web/pkg-nomodules-async); the default build is unchanged.
+asyncify = []
 
 [dependencies]
 # No default features: the C zstd encoder isn't available on wasm; the pure-Rust

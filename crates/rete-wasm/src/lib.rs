@@ -673,6 +673,66 @@ struct XhrRangeReader {
     len: u64,
 }
 
+// Asyncify variant only (feature = "asyncify"): one dedicated async import in
+// module "env". The worker provides it as a `Promise.all` of `fetch` over the N
+// ranges, writing the spans concatenated into `dst` and returning the total
+// bytes. `wasm-opt --asyncify --pass-arg=asyncify-imports@env.rete_fetch_ranges`
+// instruments every fn that can reach it to SUSPEND the wasm while the worker
+// awaits the fetches, then RESUME — concurrent reads with no SAB / cross-origin
+// isolation. Proven in dev/asyncify-wbg-probe (wasm-bindgen × Asyncify).
+#[cfg(feature = "asyncify")]
+#[link(wasm_import_module = "env")]
+extern "C" {
+    fn rete_fetch_ranges(
+        url_ptr: *const u8,
+        url_len: usize,
+        offs_ptr: *const u64,
+        lens_ptr: *const u32,
+        n: usize,
+        dst_ptr: *mut u8,
+    ) -> usize;
+}
+
+#[cfg(feature = "asyncify")]
+impl XhrRangeReader {
+    /// Fetch all `ranges` through the async import in one suspend/resume, then
+    /// split the concatenated bytes back into per-range buffers.
+    fn read_ranges_async(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        let total: usize = ranges.iter().map(|&(_, l)| l as usize).sum();
+        if total == 0 {
+            return Ok(ranges.iter().map(|_| Vec::new()).collect());
+        }
+        let offs: Vec<u64> = ranges.iter().map(|&(o, _)| o).collect();
+        let lens: Vec<u32> = ranges.iter().map(|&(_, l)| l as u32).collect();
+        let mut dst = vec![0u8; total];
+        let got = unsafe {
+            rete_fetch_ranges(
+                self.url.as_ptr(),
+                self.url.len(),
+                offs.as_ptr(),
+                lens.as_ptr(),
+                ranges.len(),
+                dst.as_mut_ptr(),
+            )
+        };
+        if got != total {
+            return Err(std::io::Error::other(format!(
+                "async fetch returned {got} of {total} bytes for {}",
+                self.url
+            )));
+        }
+        report_progress(total);
+        let mut out = Vec::with_capacity(ranges.len());
+        let mut pos = 0usize;
+        for &(_, l) in ranges {
+            let end = pos + l as usize;
+            out.push(dst[pos..end].to_vec());
+            pos = end;
+        }
+        Ok(out)
+    }
+}
+
 impl XhrRangeReader {
     /// Probe the resource length. Some hosts reject `HEAD` (Hugging Face's
     /// signed-redirect storage answers `405`), so use a one-byte ranged `GET`
@@ -719,6 +779,17 @@ impl RangeReader for XhrRangeReader {
         if len == 0 {
             return Ok(Vec::new());
         }
+        // Asyncify build: a single read is a 1-range async fetch (suspends).
+        #[cfg(feature = "asyncify")]
+        {
+            return Ok(self
+                .read_ranges_async(&[(offset, len)])?
+                .into_iter()
+                .next()
+                .unwrap());
+        }
+        #[cfg(not(feature = "asyncify"))]
+        {
         let js = |e: JsValue| std::io::Error::other(format!("XHR error: {e:?}"));
         let xhr = web_sys::XmlHttpRequest::new().map_err(js)?;
         xhr.open_with_async("GET", &self.url, false).map_err(js)?;
@@ -753,6 +824,7 @@ impl RangeReader for XhrRangeReader {
         // opaque synchronous query (postMessage works mid-sync-call).
         report_progress(buf.len());
         Ok(buf)
+        }
     }
 
     /// Synchronous XHR can't run two requests at once on one thread, so the
@@ -764,6 +836,13 @@ impl RangeReader for XhrRangeReader {
     /// non-206, a short read). On `null` we fall back to the sequential reads
     /// below, which keep the rigorous per-range validation.
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        // Asyncify build: fetch the whole batch concurrently in one suspend.
+        #[cfg(feature = "asyncify")]
+        {
+            return self.read_ranges_async(ranges);
+        }
+        #[cfg(not(feature = "asyncify"))]
+        {
         if ranges.len() > 1 {
             if let Some(buf) = self.read_many_via_pool(ranges) {
                 let total: u64 = ranges.iter().map(|&(_, l)| l).sum();
@@ -780,6 +859,7 @@ impl RangeReader for XhrRangeReader {
             }
         }
         ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
+        }
     }
 }
 
@@ -794,6 +874,7 @@ fn report_progress(bytes: usize) {
     }
 }
 
+#[cfg(not(feature = "asyncify"))]
 impl XhrRangeReader {
     /// Call the optional JS parallel-fetch hook. Returns the concatenated span
     /// bytes on full success, or `None` if the hook is absent, threw, or
