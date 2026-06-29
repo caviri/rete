@@ -2449,6 +2449,38 @@ th .coltype.coltype-on {
 .iiif-modal-meta dl { display: grid; grid-template-columns: minmax(90px, 28%) 1fr; gap: 3px 12px; margin: 2px; font-size: 12px; }
 .iiif-modal-meta dt { color: var(--muted); font-weight: 600; }
 .iiif-modal-meta dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+/* ✨ Ask AI button + the in-browser SPARQL assistant modal */
+.ask-ai-btn { background: linear-gradient(135deg, #6d4aff, #a23bd6); color: #fff; border: 0; }
+.ask-ai-btn:hover { filter: brightness(1.08); }
+.ai-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; }
+.ai-modal.hidden { display: none; }
+.ai-modal-backdrop { position: absolute; inset: 0; background: rgba(15, 25, 22, .6); backdrop-filter: blur(2px); }
+.ai-modal-box { position: relative; z-index: 1; width: min(680px, 95vw); height: min(80vh, 760px); display: flex; flex-direction: column; background: var(--bg, #fff); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 24px 70px rgba(0, 0, 0, .4); overflow: hidden; }
+.ai-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+.ai-modal-title { font-weight: 700; font-size: 14px; }
+.ai-modal-close { width: 28px; height: 28px; border: 1px solid var(--line); background: var(--side); color: var(--ink); border-radius: 7px; font-size: 18px; line-height: 1; cursor: pointer; }
+.ai-modal-close:hover { background: var(--accent-dark); color: #fff; }
+.ai-gate { padding: 14px; }
+.ai-gate:empty { display: none; }
+.ai-gate-note { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0 0 10px; }
+.ai-gate-note code { background: var(--side); padding: 1px 4px; border-radius: 4px; }
+.ai-load-btn { background: linear-gradient(135deg, #6d4aff, #a23bd6); color: #fff; border: 0; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+.ai-load-btn:disabled { opacity: .6; cursor: default; }
+.ai-progress { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.ai-warn { color: var(--accent-2, #c84f2f); }
+.ai-transcript { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.ai-msg { max-width: 92%; padding: 8px 11px; border-radius: 12px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-user { align-self: flex-end; background: var(--accent-dark); color: #fff; border-bottom-right-radius: 4px; }
+.ai-bot { align-self: flex-start; background: var(--side); color: var(--ink); border-bottom-left-radius: 4px; }
+.ai-cursor { opacity: .5; animation: ai-blink 1s steps(2) infinite; }
+@keyframes ai-blink { 50% { opacity: 0; } }
+.ai-run-row { margin-top: 8px; }
+.ai-run-btn { background: var(--accent-dark); color: #fff; border: 0; padding: 5px 11px; border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.ai-run-btn:hover { filter: brightness(1.1); }
+.ai-input-row { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.ai-input { flex: 1; resize: none; font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.ai-send { background: var(--accent-dark); color: #fff; border: 0; padding: 0 16px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+.ai-send:hover { filter: brightness(1.1); }
 
 /* Time view — a GitHub-style multi-year heatmap; cell colour = item count. */
 .timeview { padding: 4px 2px 2px; }

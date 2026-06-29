@@ -254,6 +254,7 @@ __PLAYGROUND_CSS__
           <button id="roundHelp" type="button" class="help-button hidden" title="What is a round?" aria-label="Explain dendrogram rounds">?</button>
           <span id="qmeta" class="run-meta run-right"></span>
           <button id="reqLogBtn" type="button" class="req-log-btn hidden" title="Inspect the byte-range requests this query made">⊞ requests</button>
+          <button id="askAiBtn" type="button" class="ask-ai-btn" title="Ask an in-browser AI to write a SPARQL query for this dataset (WebGPU, runs locally)">✨ Ask AI</button>
           <button id="run" type="button">Run Query</button>
         </div>
         </div>
@@ -754,6 +755,10 @@ __PLAYGROUND_CSS__
       <section class="rc-section">
         <label class="rc-toggle"><input type="checkbox" id="asyncReadsToggle" /> <span>Concurrent reads (Asyncify)</span> <span class="rc-exp">experimental</span></label>
         <p class="microcopy" id="asyncReadsInfo"></p>
+      </section>
+      <section class="rc-section">
+        <div class="rc-line"><label class="microcopy">AI model (WebGPU) <input type="text" id="aiModelId" placeholder="onnx-community/gemma-3-1b-it-ONNX" style="width:22em" /></label></div>
+        <p class="microcopy" id="aiModelInfo">The “✨ Ask AI” button runs a small instruction model entirely in your browser via WebGPU to draft SPARQL for the current dataset (grounded in its example queries). The weights download once from the Hugging Face Hub and are cached — nothing is sent to a server. Default is Google’s <code>gemma-3-1b-it</code>; any Transformers.js-compatible chat model id works (a Llama, Qwen or other ONNX). Needs a WebGPU browser (Chrome/Edge desktop).</p>
       </section>
       <section class="rc-section">
         <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>

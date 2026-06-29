@@ -1723,6 +1723,194 @@ self.onmessage = function (e) {
       ? "On — remote queries load an asyncified wasm build that fetches each query's byte ranges in PARALLEL (no cross-origin isolation needed, so the DuckDB/SQLite Explore backends keep working). The variant is ~8 MB, fetched once. Graph/SPARQL only."
       : "Off — remote reads are sequential (one coalesced request at a time). Turn on to fetch a query's ranges concurrently via Asyncify — a big speedup on the lazy datasets, with no page reload and no cross-origin isolation (experimental).";
   }
+
+  // ── SPARQL assistant: an in-browser WebGPU LLM (Transformers.js) ───────────
+  // "✨ Ask AI" opens a chat that runs a small instruction model ENTIRELY in the
+  // browser (WebGPU, no server) to draft SPARQL for the current dataset, grounded
+  // in its description + real example queries. Weights download once from the HF
+  // Hub and are cached by the browser; nothing leaves the machine.
+  const AI_DEFAULT_MODEL = "onnx-community/gemma-3-1b-it-ONNX";
+  function aiModelId() { try { return localStorage.getItem("aiModelId") || AI_DEFAULT_MODEL; } catch (e) { return AI_DEFAULT_MODEL; } }
+  // A module worker that imports Transformers.js from the CDN, loads the model on
+  // WebGPU, and streams generated tokens back. Built as a blob so the page stays
+  // self-contained; the heavy library + weights load only when the chat is opened.
+  const LLM_WORKER_SRC =
+    'import { AutoTokenizer, AutoModelForCausalLM, TextStreamer, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6";\n' +
+    'env.allowLocalModels = false;\n' +
+    'let tok = null, model = null, curId = null;\n' +
+    'async function load(id) {\n' +
+    '  if (model && curId === id) { self.postMessage({ type: "ready" }); return; }\n' +
+    '  tok = null; model = null;\n' +
+    '  const pc = (p) => self.postMessage({ type: "progress", data: p });\n' +
+    '  tok = await AutoTokenizer.from_pretrained(id, { progress_callback: pc });\n' +
+    '  model = await AutoModelForCausalLM.from_pretrained(id, { dtype: "q4f16", device: "webgpu", progress_callback: pc });\n' +
+    '  curId = id;\n' +
+    '  self.postMessage({ type: "ready" });\n' +
+    '}\n' +
+    'async function generate(messages) {\n' +
+    '  const inputs = tok.apply_chat_template(messages, { add_generation_prompt: true, return_dict: true });\n' +
+    '  const streamer = new TextStreamer(tok, { skip_prompt: true, skip_special_tokens: true,\n' +
+    '    callback_function: (t) => self.postMessage({ type: "token", text: t }) });\n' +
+    '  await model.generate({ ...inputs, max_new_tokens: 768, do_sample: false, repetition_penalty: 1.1, streamer });\n' +
+    '  self.postMessage({ type: "done" });\n' +
+    '}\n' +
+    'self.onmessage = async (e) => {\n' +
+    '  const m = e.data;\n' +
+    '  try { if (m.type === "load") await load(m.id); else if (m.type === "generate") await generate(m.messages); }\n' +
+    '  catch (err) { self.postMessage({ type: "error", error: String((err && err.message) || err) }); }\n' +
+    '};\n';
+
+  let llmWorker = null, llmLoaded = false, llmModelId = null, llmBusy = false;
+  let aiHistory = [];           // [{role, content}] chat turns (excl. the system prompt)
+  let aiOnToken = null, aiOnDone = null, aiOnError = null, aiOnProgress = null;
+
+  function ensureLlmWorker() {
+    if (llmWorker) return llmWorker;
+    llmWorker = new Worker(URL.createObjectURL(new Blob([LLM_WORKER_SRC], { type: "text/javascript" })), { type: "module" });
+    llmWorker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "progress") { if (aiOnProgress) aiOnProgress(m.data); }
+      else if (m.type === "ready") { llmLoaded = true; if (aiOnDone && aiOnDone.__load) { const f = aiOnDone; aiOnDone = null; f(); } }
+      else if (m.type === "token") { if (aiOnToken) aiOnToken(m.text); }
+      else if (m.type === "done") { llmBusy = false; if (aiOnDone) { const f = aiOnDone; aiOnDone = null; f(); } }
+      else if (m.type === "error") { llmBusy = false; if (aiOnError) aiOnError(m.error); }
+    };
+    return llmWorker;
+  }
+
+  // The system prompt: ground the model in THIS dataset's description, predicates
+  // and (crucially) its real example queries, so it reuses the right prefixes.
+  function aiSystemPrompt() {
+    const key = state.dataset;
+    const rec = (CATALOG.datasets || []).find((d) => d.key === key) || {};
+    const exs = (CATALOG.examples[key] || []).slice(0, 6);
+    const preds = [];
+    try {
+      ((state.schema && state.schema.relations) || []).forEach((r) => { if (r[1] && preds.indexOf(r[1]) < 0) preds.push(r[1]); });
+    } catch (e) { /* no schema */ }
+    let sys = 'You are an expert at writing SPARQL. Help the user query the RDF dataset "' + (rec.label || key) +
+      '" in a browser SPARQL playground (the rete engine).\n\n';
+    if (rec.description) sys += "About the dataset: " + rec.description.slice(0, 1400) + "\n\n";
+    if (preds.length) sys += "Some predicates in this dataset:\n" + preds.slice(0, 40).join("\n") + "\n\n";
+    if (exs.length) sys += "Example queries that WORK on this dataset — reuse their PREFIX lines and predicates:\n\n" +
+      exs.map((e) => "# " + e.label + "\n" + (e.q || "").trim()).join("\n\n") + "\n\n";
+    sys += 'When the user asks something, reply with exactly ONE SPARQL query inside a ```sparql code block, valid for THIS dataset and reusing its prefixes/predicates, then one short sentence explaining it. Do NOT invent predicates or prefixes that are not shown above. Prefer SELECT with a small LIMIT unless asked otherwise.';
+    return sys;
+  }
+  function aiExtractSparql(text) {
+    const m = /```(?:sparql|sql)?\s*([\s\S]*?)```/i.exec(text);
+    if (m && m[1].trim()) return m[1].trim();
+    const t = (text || "").trim();
+    if (/^(PREFIX|SELECT|ASK|CONSTRUCT|DESCRIBE)\b/i.test(t)) return t;
+    return null;
+  }
+
+  // ---- the chat modal ----
+  let aiModalEl = null;
+  function ensureAiModal() {
+    if (aiModalEl) return aiModalEl;
+    const el = document.createElement("div");
+    el.className = "ai-modal hidden";
+    el.innerHTML =
+      '<div class="ai-modal-backdrop"></div>' +
+      '<div class="ai-modal-box" role="dialog" aria-modal="true" aria-label="SPARQL AI assistant">' +
+        '<div class="ai-modal-head"><span class="ai-modal-title">✨ SPARQL assistant</span>' +
+          '<button class="ai-modal-close" type="button" aria-label="close">×</button></div>' +
+        '<div class="ai-gate"></div>' +
+        '<div class="ai-transcript"></div>' +
+        '<form class="ai-input-row"><textarea class="ai-input" rows="2" placeholder="Ask in plain language — e.g. “the 10 most common predicates” or “manuscripts made in Ireland with an image”"></textarea>' +
+          '<button class="ai-send" type="submit">Send</button></form>' +
+      '</div>';
+    document.body.appendChild(el);
+    const close = () => el.classList.add("hidden");
+    el.querySelector(".ai-modal-close").addEventListener("click", close);
+    el.querySelector(".ai-modal-backdrop").addEventListener("click", close);
+    document.addEventListener("keydown", (e) => { if (!el.classList.contains("hidden") && e.key === "Escape") close(); });
+    el.querySelector(".ai-input-row").addEventListener("submit", (e) => { e.preventDefault(); aiSend(); });
+    el.querySelector(".ai-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); aiSend(); }
+    });
+    aiModalEl = el;
+    return el;
+  }
+  function aiAddMsg(role, html) {
+    const t = aiModalEl.querySelector(".ai-transcript");
+    const d = document.createElement("div");
+    d.className = "ai-msg ai-" + role;
+    d.innerHTML = html;
+    t.appendChild(d);
+    t.scrollTop = t.scrollHeight;
+    return d;
+  }
+  function aiRenderGate() {
+    const gate = aiModalEl.querySelector(".ai-gate");
+    if (!navigator.gpu) {
+      gate.innerHTML = '<p class="ai-warn">This assistant needs <b>WebGPU</b> — open the playground in Chrome or Edge (desktop) to use it.</p>';
+      aiModalEl.querySelector(".ai-input-row").style.display = "none";
+      return;
+    }
+    if (llmLoaded && llmModelId === aiModelId()) { gate.innerHTML = ""; aiModalEl.querySelector(".ai-input-row").style.display = ""; return; }
+    aiModalEl.querySelector(".ai-input-row").style.display = "none";
+    gate.innerHTML = '<p class="ai-gate-note">Runs <code>' + esc(aiModelId()) + '</code> entirely in your browser via WebGPU. The weights download once from the Hugging Face Hub (a few hundred MB to ~1 GB) and are cached — nothing is sent to a server.</p>' +
+      '<button type="button" class="ai-load-btn">Load model</button><div class="ai-progress"></div>';
+    gate.querySelector(".ai-load-btn").addEventListener("click", aiLoadModel);
+  }
+  function aiLoadModel() {
+    const gate = aiModalEl.querySelector(".ai-gate");
+    const prog = gate.querySelector(".ai-progress");
+    gate.querySelector(".ai-load-btn").disabled = true;
+    const files = {};
+    aiOnProgress = (p) => {
+      if (p && p.status === "progress" && p.file) {
+        files[p.file] = p.progress || 0;
+        const vals = Object.values(files);
+        const avg = vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length);
+        prog.textContent = "Downloading model… " + avg.toFixed(0) + "%";
+      } else if (p && p.status === "ready") { prog.textContent = "Initializing…"; }
+    };
+    aiOnError = (err) => { prog.innerHTML = '<span class="ai-warn">Failed to load: ' + esc(err) + '. Try a different model id in Settings.</span>'; gate.querySelector(".ai-load-btn").disabled = false; };
+    const done = () => { llmModelId = aiModelId(); aiRenderGate(); aiModalEl.querySelector(".ai-input").focus(); };
+    done.__load = true; aiOnDone = done;
+    ensureLlmWorker().postMessage({ type: "load", id: aiModelId() });
+  }
+  function aiSend() {
+    if (llmBusy || !llmLoaded) return;
+    const input = aiModalEl.querySelector(".ai-input");
+    const q = input.value.trim();
+    if (!q) return;
+    input.value = "";
+    aiAddMsg("user", esc(q));
+    aiHistory.push({ role: "user", content: q });
+    const bubble = aiAddMsg("bot", '<span class="ai-cursor">▌</span>');
+    let acc = "";
+    llmBusy = true;
+    aiOnToken = (tok) => { acc += tok; bubble.innerHTML = esc(acc) + '<span class="ai-cursor">▌</span>'; aiModalEl.querySelector(".ai-transcript").scrollTop = 1e9; };
+    aiOnError = (err) => { bubble.innerHTML = '<span class="ai-warn">' + esc(err) + '</span>'; llmBusy = false; };
+    aiOnDone = () => {
+      aiHistory.push({ role: "assistant", content: acc });
+      const sparql = aiExtractSparql(acc);
+      let html = esc(acc);
+      if (sparql) {
+        html += '<div class="ai-run-row"><button type="button" class="ai-run-btn">▶ Use &amp; run this query</button></div>';
+      }
+      bubble.innerHTML = html;
+      if (sparql) bubble.querySelector(".ai-run-btn").addEventListener("click", () => {
+        if (window.PlaygroundEditor) window.PlaygroundEditor.setText("q", sparql);
+        const ta = $("q"); if (ta) ta.value = sparql;
+        aiModalEl.classList.add("hidden");
+        try { runQuery(); } catch (e) { /* surfaced in the result pane */ }
+      });
+    };
+    const messages = [{ role: "system", content: aiSystemPrompt() }].concat(aiHistory.slice(-8));
+    ensureLlmWorker().postMessage({ type: "generate", messages });
+  }
+  function openAiModal() {
+    ensureAiModal();
+    aiModalEl.querySelector(".ai-modal-title").textContent = "✨ SPARQL assistant — " + (state.dataset || "");
+    aiRenderGate();
+    aiModalEl.classList.remove("hidden");
+    if (llmLoaded) aiModalEl.querySelector(".ai-input").focus();
+  }
   // Live refresh of the range-cache panel while Settings is open: the numbers grow
   // as a running query's worker writes fetched blocks to IndexedDB; a spindle shows
   // for ~1.5 s after each growth, so you watch the cache fill in real time.
@@ -5553,6 +5741,10 @@ self.onmessage = function (e) {
     $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };
     $("clearRangeCacheBtn").onclick = async () => { await clearRangeCache(); renderRangeCache(); };
     { const a = $("asyncReadsToggle"); if (a) a.onchange = (e) => setAsyncReads(e.target.checked); renderAsyncReads(); }
+    { const ai = $("aiModelId"); if (ai) { ai.value = (() => { try { return localStorage.getItem("aiModelId") || ""; } catch (e) { return ""; } })();
+      ai.onchange = () => { const v = ai.value.trim(); try { v ? localStorage.setItem("aiModelId", v) : localStorage.removeItem("aiModelId"); } catch (e) { /* private mode */ }
+        llmLoaded = false; if (llmWorker) { llmWorker.terminate(); llmWorker = null; } }; } }
+    { const b = $("askAiBtn"); if (b) b.onclick = openAiModal; }
     const parToggle = $("parallelToggle");
     if (parToggle) parToggle.onchange = (e) => setParallelParam(e.target.checked);
     const parWorkers = $("parallelWorkers");
