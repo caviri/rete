@@ -3062,12 +3062,34 @@ self.onmessage = function (e) {
     }
     return out;
   }
+  // General IIIF text: a string, {@value}, an array, or a v3 language map → plain text.
+  function iiifText(v) {
+    if (v == null) return "";
+    if (typeof v === "string") return v;
+    if (Array.isArray(v)) return v.map(iiifText).filter(Boolean).join("; ");
+    if (v["@value"]) return v["@value"];
+    if (typeof v === "object") { const k = Object.keys(v)[0]; return k ? iiifText(v[k]) : ""; }
+    return String(v);
+  }
+  // Manifest-level metadata for the modal: title + key/value fields + attribution/rights.
+  function iiifMeta(m, url) {
+    const fields = [];
+    (m.metadata || []).forEach((e) => {
+      const value = iiifText(e.value);
+      if (value) fields.push({ label: iiifText(e.label), value: value });
+    });
+    const attr = iiifText(m.attribution) || (m.requiredStatement && iiifText(m.requiredStatement.value));
+    if (attr) fields.push({ label: "Attribution", value: attr });
+    const rights = iiifText(m.license) || iiifText(m.rights);
+    if (rights) fields.push({ label: "Rights", value: rights });
+    return { label: iiifText(m.label), fields: fields.slice(0, 24), url: url };
+  }
   function fetchIiifDoc(url) {
     const key = httpsUpgrade(url);
     if (iiifDocCache.has(key)) return iiifDocCache.get(key);
     const p = fetch(key, { headers: { Accept: "application/json,application/ld+json,*/*" } })
       .then((r) => (r.ok ? r.json() : null))
-      .then((m) => (m ? { canvases: iiifCanvases(m) } : null))
+      .then((m) => (m ? { canvases: iiifCanvases(m), meta: iiifMeta(m, url) } : null))
       .catch(() => null);
     iiifDocCache.set(key, p);
     return p;
@@ -3078,59 +3100,104 @@ self.onmessage = function (e) {
       `<a class="iri-link iiif-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
       `title="IIIF manifest — ${esc(t.value)}"><span class="spindle"></span> IIIF</a></td>`;
   }
-  // Shared floating zoom popover (one element, follows the cursor).
-  let iiifZoomEl = null;
-  function iiifZoomShow(src) {
-    if (!iiifZoomEl) { iiifZoomEl = document.createElement("div"); iiifZoomEl.className = "iiif-zoom"; iiifZoomEl.innerHTML = '<img alt="" />'; document.body.appendChild(iiifZoomEl); }
-    iiifZoomEl.querySelector("img").src = src;
-    iiifZoomEl.classList.add("show");
-  }
-  function iiifZoomMove(e) {
-    if (!iiifZoomEl) return;
-    const w = 340; let x = e.clientX + 18;
-    if (x + w > window.innerWidth) x = e.clientX - 18 - w;
-    iiifZoomEl.style.left = Math.max(6, x) + "px";
-    iiifZoomEl.style.top = Math.max(6, Math.min(e.clientY + 18, window.innerHeight - 290)) + "px";
-  }
-  function iiifZoomHide() { if (iiifZoomEl) iiifZoomEl.classList.remove("show"); }
 
-  // Turn one pending IIIF cell into a paged mini-viewer: prev/next, a jump-to-page
-  // box, and hover-to-zoom. Each page faults from the IIIF Image API only when shown.
-  function renderIiifViewer(td, url, cs) {
-    const up = httpsUpgrade(url); let i = 0;
+  // ---- IIIF lightbox modal (click a cell → enlarged page + paging + metadata) ----
+  let iiifModalEl = null, iiifModal = null; // iiifModal = { canvases, meta, idx }
+  function ensureIiifModal() {
+    if (iiifModalEl) return iiifModalEl;
+    const el = document.createElement("div");
+    el.className = "iiif-modal hidden";
+    el.innerHTML =
+      '<div class="iiif-modal-backdrop"></div>' +
+      '<div class="iiif-modal-box" role="dialog" aria-modal="true" aria-label="IIIF page viewer">' +
+        '<button class="iiif-modal-close" type="button" aria-label="close">×</button>' +
+        '<div class="iiif-modal-stage">' +
+          '<button class="iiif-modal-prev" type="button" aria-label="previous page">‹</button>' +
+          '<img class="iiif-modal-img" alt="" />' +
+          '<button class="iiif-modal-next" type="button" aria-label="next page">›</button>' +
+        '</div>' +
+        '<div class="iiif-modal-bar"><span class="iiif-modal-page"></span>' +
+          '<a class="iiif-modal-link" target="_blank" rel="noopener noreferrer">IIIF manifest ↗</a></div>' +
+        '<div class="iiif-modal-meta"></div>' +
+      '</div>';
+    document.body.appendChild(el);
+    const close = () => el.classList.add("hidden");
+    el.querySelector(".iiif-modal-close").addEventListener("click", close);
+    el.querySelector(".iiif-modal-backdrop").addEventListener("click", close);
+    el.querySelector(".iiif-modal-prev").addEventListener("click", () => iiifModalGo(-1));
+    el.querySelector(".iiif-modal-next").addEventListener("click", () => iiifModalGo(1));
+    document.addEventListener("keydown", (e) => {
+      if (el.classList.contains("hidden")) return;
+      if (e.key === "Escape") close();
+      else if (e.key === "ArrowLeft") iiifModalGo(-1);
+      else if (e.key === "ArrowRight") iiifModalGo(1);
+    });
+    iiifModalEl = el;
+    return el;
+  }
+  function iiifModalGo(d) {
+    if (!iiifModal) return;
+    const n = iiifModal.canvases.length;
+    iiifModal.idx = ((iiifModal.idx + d) % n + n) % n;
+    renderIiifModal();
+  }
+  function renderIiifModal() {
+    const el = iiifModalEl, st = iiifModal;
+    if (!el || !st) return;
+    const c = st.canvases[st.idx];
+    const img = el.querySelector(".iiif-modal-img");
+    img.src = httpsUpgrade(c.zoom || c.thumb);
+    img.onerror = () => { img.onerror = null; img.src = httpsUpgrade(c.thumb); };
+    el.querySelector(".iiif-modal-page").textContent =
+      (c.label ? c.label + " · " : "") + "page " + (st.idx + 1) + " / " + st.canvases.length;
+    const link = el.querySelector(".iiif-modal-link");
+    link.href = httpsUpgrade(st.meta.url); link.title = st.meta.url;
+    let mh = st.meta.label ? '<h3 class="iiif-modal-title">' + esc(st.meta.label) + "</h3>" : "";
+    if (st.meta.fields.length) {
+      mh += "<dl>" + st.meta.fields.map((f) =>
+        (f.label ? "<dt>" + esc(f.label) + "</dt>" : "<dt></dt>") + "<dd>" + esc(f.value) + "</dd>").join("") + "</dl>";
+    }
+    el.querySelector(".iiif-modal-meta").innerHTML = mh;
+    const single = st.canvases.length <= 1;
+    el.querySelector(".iiif-modal-prev").style.visibility = single ? "hidden" : "";
+    el.querySelector(".iiif-modal-next").style.visibility = single ? "hidden" : "";
+  }
+  function openIiifModal(doc, idx) {
+    ensureIiifModal();
+    iiifModal = { canvases: doc.canvases, meta: doc.meta, idx: idx || 0 };
+    renderIiifModal();
+    iiifModalEl.classList.remove("hidden");
+  }
+
+  // Turn one pending IIIF cell into a paged thumbnail: prev/next + a jump box for
+  // quick in-table browsing; CLICKING the image opens the lightbox modal (enlarged
+  // page, paging, the manifest link and its metadata). Pages fault on demand.
+  function renderIiifViewer(td, url, doc) {
+    const cs = doc.canvases; let i = 0;
     td.classList.add("iiif-ready");
     td.innerHTML = `<div class="iiif-viewer">` +
-      `<a class="iiif-frame" href="${esc(up)}" target="_blank" rel="noopener noreferrer" title="open the full IIIF viewer"><img class="cell-thumb iiif-img" loading="lazy" alt="" /></a>` +
+      `<button type="button" class="iiif-frame" title="click to enlarge"><img class="cell-thumb iiif-img" loading="lazy" alt="" /></button>` +
       `<div class="iiif-nav${cs.length <= 1 ? " single" : ""}"><button type="button" class="iiif-prev" aria-label="previous page">‹</button>` +
       `<input class="iiif-page" type="text" inputmode="numeric" aria-label="page number" /><span class="iiif-total">/ ${cs.length}</span>` +
       `<button type="button" class="iiif-next" aria-label="next page">›</button></div></div>`;
     const img = td.querySelector(".iiif-img"), page = td.querySelector(".iiif-page"), frame = td.querySelector(".iiif-frame");
-    const show = (n) => {
-      i = ((n % cs.length) + cs.length) % cs.length;
-      img.src = httpsUpgrade(cs[i].thumb);
-      img.setAttribute("data-zoom", httpsUpgrade(cs[i].zoom));
-      page.value = String(i + 1);
-      frame.title = (cs[i].label ? cs[i].label + " — " : "") + "open the full IIIF viewer";
-    };
+    const show = (n) => { i = ((n % cs.length) + cs.length) % cs.length; img.src = httpsUpgrade(cs[i].thumb); page.value = String(i + 1); };
     const jump = () => { const v = parseInt(page.value, 10); if (isFinite(v)) show(v - 1); else page.value = String(i + 1); };
-    td.querySelector(".iiif-prev").addEventListener("click", (e) => { e.preventDefault(); show(i - 1); });
-    td.querySelector(".iiif-next").addEventListener("click", (e) => { e.preventDefault(); show(i + 1); });
+    td.querySelector(".iiif-prev").addEventListener("click", () => show(i - 1));
+    td.querySelector(".iiif-next").addEventListener("click", () => show(i + 1));
     page.addEventListener("change", jump);
     page.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); jump(); } });
-    img.addEventListener("mouseenter", () => iiifZoomShow(img.getAttribute("data-zoom") || img.src));
-    img.addEventListener("mousemove", iiifZoomMove);
-    img.addEventListener("mouseleave", iiifZoomHide);
+    frame.addEventListener("click", () => openIiifModal(doc, i));
     img.addEventListener("error", () => { if (cs.length > 1 && i < cs.length - 1) show(i + 1); });
     show(0);
   }
-  // After a table is in the DOM, turn its pending IIIF cells into paged viewers.
   function hydrateIiif(scope) {
     (scope || document).querySelectorAll("td.iiif-cell[data-iiif]").forEach((td) => {
       const url = td.getAttribute("data-iiif");
       td.removeAttribute("data-iiif"); // process once
       fetchIiifDoc(url).then((doc) => {
         if (!doc || !doc.canvases.length) return; // leave the fallback link
-        renderIiifViewer(td, url, doc.canvases);
+        renderIiifViewer(td, url, doc);
       });
     });
   }
