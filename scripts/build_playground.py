@@ -22,7 +22,90 @@ Run (deterministic):
 import base64
 import json
 import pathlib
+import re
 import sys
+
+# Patch spliced into the asyncified wasm-bindgen glue in place of the
+# `const import1 = require("env");` line (which throws in a browser). It defines
+# the two async imports (env.rete_fetch_ranges = Promise.all of fetch;
+# env.rete_file_len = a bytes=0-0 length probe), the Asyncify suspend/rewind
+# driver `reteDrive`, and `reteOpenRemote` (opens a resident RemoteGraph by
+# driving the raw constructor and wrapping the pointer ONCE after rewind — so the
+# unwind pass never registers a garbage instance with the FinalizationRegistry).
+# Sits inside the glue closure, so it can use wasm/passStringToWasm0/RemoteGraph/
+# takeObject/WASM_VECTOR_LEN directly. Proven end-to-end in dev/asyncify-e2e.cjs.
+ASYNC_ENV_JS = """
+        // ---- injected: Asyncify env imports + driver (replaces require("env")) ----
+        let __reteAD = 0, __retePending = null, __reteSleeping = false, __reteRes = 0;
+        function __reteStack() {
+          if (!__reteAD) {
+            const SIZE = 16 << 20; // 16 MiB Asyncify stack — the engine's recursive eval is deep
+            __reteAD = wasm.__wbindgen_malloc(8 + SIZE, 8);
+            const d = new DataView(wasm.memory.buffer);
+            d.setInt32(__reteAD, __reteAD + 8, true);
+            d.setInt32(__reteAD + 4, __reteAD + 8 + SIZE, true);
+          }
+        }
+        function __reteStr(ptr, len) { return new TextDecoder().decode(new Uint8Array(wasm.memory.buffer).slice(ptr, ptr + len)); }
+        async function __reteDoFetch(urlPtr, urlLen, offsPtr, lensPtr, n, dstPtr) {
+          const url = __reteStr(urlPtr, urlLen);
+          const dv = new DataView(wasm.memory.buffer);
+          const ranges = [];
+          for (let i = 0; i < n; i++) ranges.push([Number(dv.getBigUint64(offsPtr + i*8, true)), dv.getUint32(lensPtr + i*4, true)]);
+          const bufs = await Promise.all(ranges.map(([o,l]) =>
+            fetch(url, { headers: { Range: 'bytes=' + o + '-' + (o+l-1) } })
+              .then((r) => { if (r.status !== 206) throw new Error('Range status ' + r.status + ' (host must support HTTP range)'); return r.arrayBuffer(); })
+              .then((b) => new Uint8Array(b))));
+          const mem = new Uint8Array(wasm.memory.buffer);
+          let pos = dstPtr, total = 0;
+          for (const b of bufs) { mem.set(b, pos); pos += b.length; total += b.length; }
+          return total;
+        }
+        async function __reteDoLen(urlPtr, urlLen, outPtr) {
+          const url = __reteStr(urlPtr, urlLen);
+          const r = await fetch(url, { headers: { Range: 'bytes=0-0' } });
+          const cr = r.headers.get('content-range');
+          const total = cr ? Number(cr.split('/')[1]) : Number(r.headers.get('content-length') || 0);
+          new DataView(wasm.memory.buffer).setBigUint64(outPtr, BigInt(total || 0), true);
+          return total > 0 ? 1 : 0;
+        }
+        function __reteSuspend(makePromise) {
+          if (!__reteSleeping) { __retePending = makePromise(); wasm.asyncify_start_unwind(__reteAD); __reteSleeping = true; return 0; }
+          wasm.asyncify_stop_rewind(); __reteSleeping = false; return __reteRes;
+        }
+        function __reteFetchRanges(urlPtr, urlLen, offsPtr, lensPtr, n, dstPtr) { return __reteSuspend(() => __reteDoFetch(urlPtr, urlLen, offsPtr, lensPtr, n, dstPtr)); }
+        function __reteFileLen(urlPtr, urlLen, outPtr) { return __reteSuspend(() => __reteDoLen(urlPtr, urlLen, outPtr)); }
+        async function __reteDrive(thunk) {
+          __reteStack();
+          let r = thunk();
+          while (wasm.asyncify_get_state() === 1) {
+            wasm.asyncify_stop_unwind();
+            __reteRes = await __retePending;
+            wasm.asyncify_start_rewind(__reteAD);
+            r = thunk();
+          }
+          return r;
+        }
+        exports.reteDrive = __reteDrive;
+        exports.reteOpenRemote = async function (url) {
+          __reteStack();
+          const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+          const len0 = WASM_VECTOR_LEN;
+          let ret = wasm.remotegraph_new(ptr0, len0);
+          while (wasm.asyncify_get_state() === 1) {
+            wasm.asyncify_stop_unwind();
+            __reteRes = await __retePending;
+            wasm.asyncify_start_rewind(__reteAD);
+            ret = wasm.remotegraph_new(ptr0, len0);
+          }
+          if (ret[2]) throw takeObject(ret[1]);
+          const g = Object.create(RemoteGraph.prototype);
+          g.__wbg_ptr = ret[0];
+          RemoteGraphFinalization.register(g, g.__wbg_ptr, g);
+          return g;
+        };
+        const import1 = { rete_fetch_ranges: __reteFetchRanges, rete_file_len: __reteFileLen };
+"""
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -191,6 +274,30 @@ def main() -> None:
                 coi_out = out.parent / "coi-serviceworker.js"
                 coi_out.write_text(coi_text, encoding="utf-8")
                 print(f"  explorer: wrote {coi_out}")
+
+    # The asyncified wasm variant (opt-in "Concurrent reads" toggle): a separate
+    # glue + .wasm beside the page, fetched only when the toggle is on (so the
+    # default page stays unbloated). Built by scripts/build_playground_async.sh.
+    nomod_async = WEB / "pkg-nomodules-async"
+    aglue_path = nomod_async / "rete_wasm.js"
+    awasm_path = nomod_async / "rete_wasm_bg.wasm"
+    if aglue_path.exists() and awasm_path.exists():
+        aglue = aglue_path.read_text(encoding="utf-8")
+        if 'const import1 = require("env");' not in aglue:
+            die('async glue missing the require("env") anchor — rebuild web/pkg-nomodules-async')
+        aglue = aglue.replace('const import1 = require("env");', ASYNC_ENV_JS, 1)
+        # wasm-bindgen emits one `const importN = require("env")` per env import fn;
+        # the imports map only uses import1, so alias the rest to it.
+        aglue = re.sub(r'const import(\d+) = require\("env"\);', r"const import\1 = import1;", aglue)
+        if fetch_line in aglue:
+            aglue = aglue.replace(fetch_line, "            throw new Error('async variant: pass bytes, not a URL');")
+        ajs = OUT.parent / "rete_wasm_async.js"
+        ajs.write_text(aglue, encoding="utf-8")
+        (OUT.parent / "rete_wasm_async.wasm").write_bytes(awasm_path.read_bytes())
+        print(f"  async: wrote {ajs} + rete_wasm_async.wasm ({awasm_path.stat().st_size} bytes)")
+    else:
+        print("  async: web/pkg-nomodules-async not found — Concurrent-reads toggle inert "
+              "(run scripts/build_playground_async.sh)")
 
 
 if __name__ == "__main__":

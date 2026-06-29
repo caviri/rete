@@ -3343,6 +3343,10 @@ td.lit { color: var(--ink); }
         </div>
       </section>
       <section class="rc-section">
+        <label class="rc-toggle"><input type="checkbox" id="asyncReadsToggle" /> <span>Concurrent reads (Asyncify)</span> <span class="rc-exp">experimental</span></label>
+        <p class="microcopy" id="asyncReadsInfo"></p>
+      </section>
+      <section class="rc-section">
         <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>
         <p class="microcopy" id="rangeCacheInfo"></p>
         <div class="rc-line"><span id="rangeCacheSize" class="microcopy"></span><button id="clearRangeCacheBtn" class="ghost" type="button">Clear range cache</button></div>
@@ -9125,6 +9129,10 @@ theo:PeopleGroupShape a sh:NodeShape ;
     sqlDataset: null,
     // Persistent incremental range cache (opt-in via Settings, localStorage-backed).
     rangeCacheOn: (() => { try { return localStorage.getItem("rangeCacheOn") === "1"; } catch (e) { return false; } })(),
+    // Asyncify concurrent reads (opt-in): loads the asyncified wasm variant so a
+    // remote query fetches its byte ranges in parallel (Promise.all of fetch) with
+    // no cross-origin isolation. localStorage-backed; flipping recreates the worker.
+    asyncReadsOn: (() => { try { return localStorage.getItem("asyncReadsOn") === "1"; } catch (e) { return false; } })(),
     // Map view: which slippy-tile basemap sits behind the geometry ("none" =
     // the offline equirectangular vectors). localStorage-backed so it persists.
     mapBasemap: (() => { try { return localStorage.getItem("mapBasemap") || "none"; } catch (e) { return "none"; } })(),
@@ -9177,15 +9185,30 @@ theo:PeopleGroupShape a sh:NodeShape ;
   // cache — the same key a future IndexedDB store would use across reloads.
   var sessions = {};   // content_hash -> RemoteGraph
   var urlHash = {};    // url -> content_hash (avoid re-opening a known URL)
+  // ASYNC mode (the asyncified wasm variant): every read is a concurrent
+  // Promise.all of fetch, so each wasm query call must be driven through the
+  // Asyncify suspend/rewind loop (wasm_bindgen.reteDrive). OFF: the wasm runs
+  // synchronously over sync-XHR exactly as before. The flag is baked into the
+  // worker blob at creation (self.__RETE_ASYNC), so flipping it recreates the worker.
+  var ASYNC = !!self.__RETE_ASYNC;
+  // Drive one wasm call: glue-in-loop in async mode (the wrapper is re-entered
+  // each suspend), a plain sync call otherwise.
+  function _drive(fn) { return ASYNC ? wasm_bindgen.reteDrive(fn) : Promise.resolve(fn()); }
+  // Open (or reuse) a resident session. In async mode the OPEN is driven via
+  // reteOpenRemote (wraps the pointer once after rewind — no garbage instance for
+  // the FinalizationRegistry). content_hash()/stats() do no IO, so they stay sync.
   function _session(url) {
     var h = urlHash[url];
-    if (h && sessions[h]) return sessions[h];
-    var g = new wasm_bindgen.RemoteGraph(url); // opens once, reads the header
-    h = g.content_hash();
-    urlHash[url] = h;
-    if (sessions[h]) { g.free(); return sessions[h]; } // same file via another URL
-    sessions[h] = g;
-    return sessions[h];
+    if (h && sessions[h]) return Promise.resolve(sessions[h]);
+    var openP = ASYNC ? wasm_bindgen.reteOpenRemote(url)
+                      : Promise.resolve(new wasm_bindgen.RemoteGraph(url));
+    return Promise.resolve(openP).then(function (g) {
+      var hh = g.content_hash();
+      urlHash[url] = hh;
+      if (sessions[hh]) { try { g.free(); } catch (e) { /* dup URL */ } return sessions[hh]; }
+      sessions[hh] = g;
+      return sessions[hh];
+    });
   }
   function _now() { return (typeof performance !== "undefined" ? performance.now() : Date.now()); }
   self._reteLog = function (e) { e.t = (_now() - qStart) | 0; if (fetchLog.length < 6000) fetchLog.push(e); };
@@ -9208,11 +9231,10 @@ theo:PeopleGroupShape a sh:NodeShape ;
     }
     if (m.type === "query") {
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
-      Promise.resolve(ready).then(function () {
-        try {
-          var g = _session(m.url);
-          var before = JSON.parse(g.stats());
-          var res = JSON.parse(g.query(m.query, m.format));
+      Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
+        var before = JSON.parse(g.stats());
+        return _drive(function () { return g.query(m.query, m.format); }).then(function (resStr) {
+          var res = JSON.parse(resStr);
           var after = JSON.parse(g.stats());
           // Per-query physical traffic is the delta (a cache hit adds ~0); carry
           // the session-cumulative too so the UI can show what the cache saved.
@@ -9225,37 +9247,34 @@ theo:PeopleGroupShape a sh:NodeShape ;
             cached: (after.requests - before.requests) === 0
           };
           self.postMessage({ type: "result", id: m.id, ok: true, json: JSON.stringify(res), log: fetchLog });
-        } catch (err) {
-          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
-        }
+        });
+      }).catch(function (err) {
+        self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
       });
     }
     // Generic call to any *_url wasm export (schema_url, check_schema_url, …).
-    // These do synchronous range-read XHR, which is worker-only — so the main
-    // thread MUST route them here, never call wasm_bindgen.*_url directly.
+    // These do range-read IO (sync XHR, or driven Asyncify fetch), which is
+    // worker-only — so the main thread MUST route them here.
     if (m.type === "call") {
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
       Promise.resolve(ready).then(function () {
-        try {
-          var json = wasm_bindgen[m.fn].apply(null, m.args);
-          self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
-        } catch (err) {
-          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
-        }
+        return _drive(function () { return wasm_bindgen[m.fn].apply(null, m.args); });
+      }).then(function (json) {
+        self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
+      }).catch(function (err) {
+        self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
       });
     }
     // Label-prefix entity search over the resident remote session: faults only
-    // the label-index tiles (sync range XHR, worker-only), like a query.
+    // the label-index tiles, like a query.
     if (m.type === "psearch") {
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
-      Promise.resolve(ready).then(function () {
-        try {
-          var g = _session(m.url);
-          var json = g.prefix_search(m.prefix, m.limit || 12);
-          self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
-        } catch (err) {
-          self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
-        }
+      Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
+        return _drive(function () { return g.prefix_search(m.prefix, m.limit || 12); });
+      }).then(function (json) {
+        self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
+      }).catch(function (err) {
+        self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
       });
     }
   };
@@ -9472,28 +9491,45 @@ self.onmessage = function (e) {
     remoteOnProgress = null;
   }
 
+  // The asyncified wasm variant (glue + bytes) lives in separate files so it costs
+  // the default page nothing; fetched once, lazily, when the toggle is first used.
+  let asyncGlueText = null, asyncWasmBytes = null;
+  function loadAsyncAssets() {
+    if (asyncGlueText && asyncWasmBytes) return Promise.resolve();
+    return Promise.all([
+      fetch("rete_wasm_async.js").then((r) => { if (!r.ok) throw new Error("async glue " + r.status); return r.text(); }),
+      fetch("rete_wasm_async.wasm").then((r) => { if (!r.ok) throw new Error("async wasm " + r.status); return r.arrayBuffer(); }),
+    ]).then((a) => { asyncGlueText = a[0]; asyncWasmBytes = new Uint8Array(a[1]); });
+  }
+
   function ensureRemoteWorker() {
-    if (remoteWorker) return remoteReady;
-    const glue = document.getElementById("reteGlue").textContent;
-    const blob = new Blob([rcPrelude() + glue + REMOTE_HARNESS + COALESCE_JS], { type: "text/javascript" });
-    remoteWorker = new Worker(URL.createObjectURL(blob));
-    remoteWorker.onmessage = (e) => {
-      const m = e.data;
-      if (m.type === "ready") { if (remoteResolveReady) remoteResolveReady(); return; }
-      if (m.type === "progress") { if (remoteOnProgress) remoteOnProgress(m); return; }
-      if (m.type === "result") {
-        const p = remotePending.get(m.id);
-        if (!p) return;
-        remotePending.delete(m.id);
-        if (m.ok) p.resolve({ json: m.json, log: m.log || [] });
-        else { const err = new Error(m.error); err.log = m.log || []; p.reject(err); }
-      }
-    };
-    remoteReady = new Promise((res) => { remoteResolveReady = res; });
-    remoteWorker.postMessage({
-      type: "init", bytes: b64ToBytes(RETE_WASM_B64),
-      fetchSrc: FETCH_WORKER_SRC, poolSize: parallelWorkerCount()
+    if (remoteReady) return remoteReady; // built, or building (avoid a double-build race)
+    const asyncOn = !!state.asyncReadsOn;
+    remoteReady = (asyncOn ? loadAsyncAssets() : Promise.resolve()).then(() => {
+      const glue = asyncOn ? asyncGlueText : document.getElementById("reteGlue").textContent;
+      const flag = asyncOn ? "self.__RETE_ASYNC=true;\n" : "";
+      const blob = new Blob([flag + rcPrelude() + glue + REMOTE_HARNESS + COALESCE_JS], { type: "text/javascript" });
+      remoteWorker = new Worker(URL.createObjectURL(blob));
+      remoteWorker.onmessage = (e) => {
+        const m = e.data;
+        if (m.type === "ready") { if (remoteResolveReady) remoteResolveReady(); return; }
+        if (m.type === "progress") { if (remoteOnProgress) remoteOnProgress(m); return; }
+        if (m.type === "result") {
+          const p = remotePending.get(m.id);
+          if (!p) return;
+          remotePending.delete(m.id);
+          if (m.ok) p.resolve({ json: m.json, log: m.log || [] });
+          else { const err = new Error(m.error); err.log = m.log || []; p.reject(err); }
+        }
+      };
+      const rp = new Promise((res) => { remoteResolveReady = res; });
+      remoteWorker.postMessage({
+        type: "init", bytes: asyncOn ? asyncWasmBytes : b64ToBytes(RETE_WASM_B64),
+        fetchSrc: FETCH_WORKER_SRC, poolSize: parallelWorkerCount()
+      });
+      return rp;
     });
+    remoteReady.catch(() => { remoteWorker = null; remoteReady = null; }); // let a failed build retry
     return remoteReady;
   }
 
@@ -10768,6 +10804,21 @@ self.onmessage = function (e) {
     try { localStorage.setItem("rangeCacheOn", on ? "1" : "0"); } catch (e) { /* private mode */ }
     freeExploreEngines();
     cancelRemote();
+  }
+  // Flip Asyncify concurrent reads; recreate the remote worker so it loads the
+  // matching wasm variant (async vs sync) on the next query.
+  function setAsyncReads(on) {
+    state.asyncReadsOn = !!on;
+    try { localStorage.setItem("asyncReadsOn", on ? "1" : "0"); } catch (e) { /* private mode */ }
+    cancelRemote();
+    renderAsyncReads();
+  }
+  function renderAsyncReads() {
+    const t = $("asyncReadsToggle"); if (t) t.checked = !!state.asyncReadsOn;
+    const info = $("asyncReadsInfo");
+    if (info) info.textContent = state.asyncReadsOn
+      ? "On — remote queries load an asyncified wasm build that fetches each query's byte ranges in PARALLEL (no cross-origin isolation needed, so the DuckDB/SQLite Explore backends keep working). The variant is ~8 MB, fetched once. Graph/SPARQL only."
+      : "Off — remote reads are sequential (one coalesced request at a time). Turn on to fetch a query's ranges concurrently via Asyncify — a big speedup on the lazy datasets, with no page reload and no cross-origin isolation (experimental).";
   }
   // Live refresh of the range-cache panel while Settings is open: the numbers grow
   // as a running query's worker writes fetched blocks to IndexedDB; a spindle shows
@@ -14502,6 +14553,7 @@ self.onmessage = function (e) {
     };
     $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };
     $("clearRangeCacheBtn").onclick = async () => { await clearRangeCache(); renderRangeCache(); };
+    { const a = $("asyncReadsToggle"); if (a) a.onchange = (e) => setAsyncReads(e.target.checked); renderAsyncReads(); }
     const parToggle = $("parallelToggle");
     if (parToggle) parToggle.onchange = (e) => setParallelParam(e.target.checked);
     const parWorkers = $("parallelWorkers");
