@@ -153,22 +153,13 @@ DATASETS = [
     ("theographic-graph", "theographic-graph.rete"),
     ("monarch", "monarch.rete"),
     ("opencitations", "opencitations.rete"),
-    # MIrA — early Irish manuscripts, Wikidata-aligned, with 189 IIIF manifests
-    # (scripts/mira_to_nt.py enriches padraicmoran/MIrA's RDF; CC BY-NC-SA 4.0).
-    ("mira", "mira.rete"),
-    # MIrA↔Wikidata mappings as a shareable SSSOM linkset (scripts/mira_sssom.py) —
-    # skos:exactMatch + provenance; federates in to bridge MIrA and Wikidata.
-    ("mira-wikidata", "mira-wikidata.rete"),
-    # causalgraph: the Fraunhofer IWU causal-graph ontology (OWL→NT via owlready2)
-    # + an example Industry-4.0 causal model (scripts/causalgraph_example.py). MIT.
-    ("causalgraph", "causalgraph.rete"),
-    # Linear A — the complete undeciphered Minoan corpus (1,721 inscriptions linked
-    # through their signs & word-sequences). scripts/lineara_to_nt.js from the
-    # mwenge/lineara.xyz LinearA Explorer (GORILA/Douros text; images © EFA excluded).
-    ("lineara", "lineara.rete"),
+    # NOTE: mira, mira-wikidata, causalgraph and lineara moved to REMOTE-LAZY
+    # (served from the bucket, range-read; see catalog.js kind:"remote-lazy"), so
+    # they are intentionally NOT embedded here.
     # Remote-lazy (served from the bucket, NOT embedded; see catalog.js): getty-ulan,
     # history, mmm, orkg, factgrid-illuminati, wikidata-1GB/100mb, ohm-full, chemotion,
-    # chebi-full, causenet-full. Dropped entirely: citations (synthetic), typed, deps.
+    # chebi-full, causenet-full, mira, mira-wikidata, causalgraph, lineara.
+    # Dropped entirely: citations (synthetic), typed, deps.
 ]
 
 
