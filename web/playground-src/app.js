@@ -2955,11 +2955,81 @@ self.onmessage = function (e) {
     return `<td class="iri"><a class="iri-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
       `data-url="${esc(t.value)}">${esc(disp)}</a></td>`;
   }
+  // ---- IIIF cells -----------------------------------------------------------
+  // A IIIF *manifest* URL (e.g. biblissima prop:P196 → digi.vatlib.it/…/manifest.json)
+  // is not itself an image, but it points at one. Render a placeholder link, then
+  // (post-render, async) fetch the manifest and swap in its thumbnail. Works
+  // cross-origin where the IIIF server sends CORS (the spec recommends it); on any
+  // failure the link stays. Handles IIIF Presentation v2 and v3.
+  function looksIiifUrl(v) {
+    if (!/^https?:\/\//i.test(v)) return false;
+    return /\/manifest(\.json)?(\?|#|$)/i.test(v) || /\/iiif\//i.test(v);
+  }
+  const iiifThumbCache = new Map(); // manifest URL → Promise<thumb URL | null>
+  function iiifThumbFromManifest(m) {
+    try {
+      const svc = (s) => {
+        s = Array.isArray(s) ? s[0] : s;
+        const id = s && (s.id || s["@id"]);
+        return id ? id.replace(/\/$/, "") + "/full/!256,256/0/default.jpg" : null;
+      };
+      let tn = m.thumbnail;
+      if (tn) {
+        tn = Array.isArray(tn) ? tn[0] : tn;
+        if (typeof tn === "string") return tn;
+        if (tn.id || tn["@id"]) return tn.id || tn["@id"];
+        if (tn.service) return svc(tn.service);
+      }
+      const r2 = m.sequences && m.sequences[0] && m.sequences[0].canvases &&
+        m.sequences[0].canvases[0] && m.sequences[0].canvases[0].images &&
+        m.sequences[0].canvases[0].images[0] && m.sequences[0].canvases[0].images[0].resource;
+      if (r2) { if (r2.service) return svc(r2.service); if (r2["@id"]) return r2["@id"]; }
+      const a3 = m.items && m.items[0] && m.items[0].items && m.items[0].items[0] &&
+        m.items[0].items[0].items && m.items[0].items[0].items[0];
+      const b3 = a3 && a3.body;
+      if (b3) { if (b3.service) return svc(b3.service); if (b3.id) return b3.id; }
+    } catch (_e) { /* ignore */ }
+    return null;
+  }
+  function fetchIiifThumb(url) {
+    const key = httpsUpgrade(url);
+    if (iiifThumbCache.has(key)) return iiifThumbCache.get(key);
+    const p = fetch(key, { headers: { Accept: "application/json,application/ld+json,*/*" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((m) => (m ? iiifThumbFromManifest(m) : null))
+      .catch(() => null);
+    iiifThumbCache.set(key, p);
+    return p;
+  }
+  function iiifCell(t) {
+    const url = httpsUpgrade(t.value);
+    return `<td class="iri iiif-cell thumb-cell" data-iiif="${esc(t.value)}">` +
+      `<a class="iri-link iiif-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
+      `title="IIIF manifest — ${esc(t.value)}"><span class="spindle"></span> IIIF</a></td>`;
+  }
+  // After a table is in the DOM, turn its pending IIIF cells into thumbnails.
+  function hydrateIiif(scope) {
+    (scope || document).querySelectorAll("td.iiif-cell[data-iiif]").forEach((td) => {
+      const url = td.getAttribute("data-iiif");
+      td.removeAttribute("data-iiif"); // process once
+      fetchIiifThumb(url).then((thumb) => {
+        if (!thumb) return; // leave the fallback link
+        const up = httpsUpgrade(url);
+        td.innerHTML = `<a href="${esc(up)}" target="_blank" rel="noopener noreferrer" title="IIIF — ${esc(url)}">` +
+          `<img class="cell-thumb" src="${esc(httpsUpgrade(thumb))}" loading="lazy" alt="" /></a>`;
+        const img = td.querySelector("img");
+        if (img) img.addEventListener("error", () => {
+          td.innerHTML = `<a class="iri-link" href="${esc(up)}" target="_blank" rel="noopener noreferrer">IIIF</a>`;
+        });
+      });
+    });
+  }
   // The default per-value heuristic (the behaviour for type "auto").
   function autoCell(t, raw) {
     if (t.iri) {
       const disp = shorten(t.value, 96);
       if (looksImageUrl(t.value)) return imageCell(t); // a Commons file or *.jpg/png/…
+      if (looksIiifUrl(t.value)) return iiifCell(t);    // a IIIF manifest → fetch + show its thumbnail
       if (looksWebUrl(t.value)) return linkCell(t);     // a dereferenceable web URL
       return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
     }
@@ -2978,6 +3048,7 @@ self.onmessage = function (e) {
         return `<td class="lit" title="${esc(raw)}">${esc(shorten(t.value, 160))}${lang}</td>`;
       }
       case "image": return imageCell(t);
+      case "iiif": return iiifCell(t);
       case "link": return linkCell(t);
       case "number": {
         const n = Number(t.value);
@@ -2993,7 +3064,7 @@ self.onmessage = function (e) {
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"],
-    ["image", "Image"], ["number", "Number"],
+    ["image", "Image"], ["iiif", "IIIF"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
@@ -5216,6 +5287,18 @@ self.onmessage = function (e) {
     renderDatasetOptions();
     wireEvents();
     renderHistory();
+    // IIIF cells render their thumbnail asynchronously; hydrate them whenever a
+    // result table appears or re-renders (debounced; processed-once per cell).
+    try {
+      const host = document.querySelector(".console-shell") || document.body;
+      let pending = false;
+      const obs = new MutationObserver(() => {
+        if (pending) return;
+        pending = true;
+        setTimeout(() => { pending = false; hydrateIiif(host); }, 60);
+      });
+      obs.observe(host, { childList: true, subtree: true });
+    } catch (_e) { /* ignore */ }
     // The details panel (2nd sidebar) is a space-cramping overlay on a phone, so
     // it starts collapsed there regardless of the saved desktop preference; on
     // wider screens the saved preference wins.
