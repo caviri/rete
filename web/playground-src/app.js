@@ -3191,12 +3191,22 @@ self.onmessage = function (e) {
     img.addEventListener("error", () => { if (cs.length > 1 && i < cs.length - 1) show(i + 1); });
     show(0);
   }
+  // The manifest couldn't be loaded (the IIIF server blocked the cross-origin
+  // request, or it 404'd / wasn't valid JSON). Swap the spinner for a clear,
+  // non-spinning state with a link to open the manifest directly.
+  function iiifFailed(td, url) {
+    const up = httpsUpgrade(url);
+    td.classList.add("iiif-blocked");
+    td.innerHTML = `<a class="iri-link iiif-fail" href="${esc(up)}" target="_blank" rel="noopener noreferrer" ` +
+      `title="Couldn't load this IIIF manifest — the server likely blocks cross-origin (CORS) requests. Click to open it directly: ${esc(url)}">` +
+      `⚠ IIIF blocked</a>`;
+  }
   function hydrateIiif(scope) {
     (scope || document).querySelectorAll("td.iiif-cell[data-iiif]").forEach((td) => {
       const url = td.getAttribute("data-iiif");
       td.removeAttribute("data-iiif"); // process once
       fetchIiifDoc(url).then((doc) => {
-        if (!doc || !doc.canvases.length) return; // leave the fallback link
+        if (!doc || !doc.canvases.length) { iiifFailed(td, url); return; }
         renderIiifViewer(td, url, doc);
       });
     });
@@ -3559,12 +3569,31 @@ self.onmessage = function (e) {
 
   // --- Map & Time views: render SELECT bindings geographically / temporally ---
 
+  // Decode N-Triples string escapes properly — \uXXXX and \UXXXXXXXX (ANY script:
+  // accents, CJK, emoji…) plus \t \n \r \b \f \" \\ \' \/. Universal: data that
+  // carries escapes (e.g. "Genève" → "Genève") renders right instead of the
+  // old behaviour that just stripped the backslash ("Genu00E8ve").
+  function ntUnescape(s) {
+    if (s.indexOf("\\") < 0) return s;
+    return s.replace(/\\(u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[\s\S])/g, (m, e) => {
+      const h = e[0];
+      if (h === "u" || h === "U") {
+        try { return String.fromCodePoint(parseInt(e.slice(1), 16)); } catch (_e) { return m; }
+      }
+      switch (h) {
+        case "t": return "\t"; case "n": return "\n"; case "r": return "\r";
+        case "b": return "\b"; case "f": return "\f";
+        case '"': return '"'; case "\\": return "\\"; case "/": return "/"; case "'": return "'";
+        default: return h;
+      }
+    });
+  }
   // Parse a SPARQL JSON term string into {iri, value, datatype, lang}.
   function parseTerm(v) {
     const s = String(v == null ? "" : v);
     if (s.startsWith("<") && s.endsWith(">")) return { iri: true, value: s.slice(1, -1) };
     const m = /^"((?:[^"\\]|\\.)*)"(?:\^\^<([^>]+)>|@([\w-]+))?$/s.exec(s);
-    if (m) return { iri: false, value: m[1].replace(/\\(.)/g, "$1"), datatype: m[2] || null, lang: m[3] || null };
+    if (m) return { iri: false, value: ntUnescape(m[1]), datatype: m[2] || null, lang: m[3] || null };
     return { iri: false, value: s, datatype: null };
   }
   const termLabel = (t) => t.iri ? shorten(localName(t.value) || t.value, 60) : shorten(t.value, 60);
