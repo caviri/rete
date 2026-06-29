@@ -1,0 +1,15 @@
+# Headless turntable renderer: official Blender 3.6 LTS (glTF + Draco + bundled
+# Python/numpy) + ffmpeg + a virtual X display (xvfb) for EEVEE.
+# Build:  docker build -f scripts/Dockerfile.blender -t rete-blender .
+# Use:    docker run --rm -v "$PWD":/work -w /work rete-blender \
+#             sh scripts/glb_to_spin.sh data/x.glb data/x 36 512
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg xvfb xauth ca-certificates wget xz-utils \
+      libgl1 libegl1 libxrender1 libxxf86vm1 libxfixes3 libxi6 libsm6 \
+      libxkbcommon0 libxrandr2 libxinerama1 libxcursor1 libx11-6 && \
+    rm -rf /var/lib/apt/lists/*
+RUN wget -q https://download.blender.org/release/Blender3.6/blender-3.6.7-linux-x64.tar.xz -O /tmp/b.tar.xz && \
+    mkdir -p /opt/blender && tar -xf /tmp/b.tar.xz -C /opt/blender --strip-components=1 && \
+    rm /tmp/b.tar.xz && ln -s /opt/blender/blender /usr/local/bin/blender
+WORKDIR /work
