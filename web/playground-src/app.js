@@ -1742,12 +1742,17 @@ self.onmessage = function (e) {
   const LLM_WORKER_SRC =
     'import { AutoTokenizer, AutoModelForCausalLM, TextStreamer, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6";\n' +
     'env.allowLocalModels = false;\n' +
+    // Import succeeded — tell the main thread the runtime is up (so a hang BEFORE
+    // this point is unambiguously a failed/slow CDN import, caught by worker.onerror).
+    'self.postMessage({ type: "booted" });\n' +
     'let tok = null, model = null, curId = null;\n' +
     'async function load(id) {\n' +
     '  if (model && curId === id) { self.postMessage({ type: "ready" }); return; }\n' +
     '  tok = null; model = null;\n' +
     '  const pc = (p) => self.postMessage({ type: "progress", data: p });\n' +
+    '  self.postMessage({ type: "stage", stage: "tokenizer" });\n' +
     '  tok = await AutoTokenizer.from_pretrained(id, { progress_callback: pc });\n' +
+    '  self.postMessage({ type: "stage", stage: "model" });\n' +
     '  model = await AutoModelForCausalLM.from_pretrained(id, { dtype: "q4f16", device: "webgpu", progress_callback: pc });\n' +
     '  curId = id;\n' +
     '  self.postMessage({ type: "ready" });\n' +
@@ -1768,6 +1773,7 @@ self.onmessage = function (e) {
   let llmWorker = null, llmLoaded = false, llmModelId = null, llmBusy = false;
   let aiHistory = [];           // [{role, content}] chat turns (excl. the system prompt)
   let aiOnToken = null, aiOnDone = null, aiOnError = null, aiOnProgress = null;
+  let aiOnStage = null, aiOnLog = null, aiOnBooted = null;
 
   function ensureLlmWorker() {
     if (llmWorker) return llmWorker;
@@ -1775,11 +1781,24 @@ self.onmessage = function (e) {
     llmWorker.onmessage = (e) => {
       const m = e.data;
       if (m.type === "progress") { if (aiOnProgress) aiOnProgress(m.data); }
+      else if (m.type === "booted") { if (aiOnBooted) aiOnBooted(); }
+      else if (m.type === "stage") { if (aiOnStage) aiOnStage(m.stage); }
+      else if (m.type === "log") { if (aiOnLog) aiOnLog(m.text); }
       else if (m.type === "ready") { llmLoaded = true; if (aiOnDone && aiOnDone.__load) { const f = aiOnDone; aiOnDone = null; f(); } }
       else if (m.type === "token") { if (aiOnToken) aiOnToken(m.text); }
       else if (m.type === "done") { llmBusy = false; if (aiOnDone) { const f = aiOnDone; aiOnDone = null; f(); } }
       else if (m.type === "error") { llmBusy = false; if (aiOnError) aiOnError(m.error); }
     };
+    // A module-worker import failure (CDN blocked, offline, bad URL) throws at the
+    // TOP of the worker and is NOT caught by the try/catch inside onmessage — without
+    // this the load hangs forever with no signal. Surface it as a load error instead.
+    llmWorker.onerror = (e) => {
+      llmBusy = false;
+      const msg = (e && e.message) ||
+        "worker failed to start — couldn't import transformers.js (offline, or the CDN is blocked).";
+      if (aiOnError) aiOnError(msg);
+    };
+    llmWorker.onmessageerror = () => { if (aiOnError) aiOnError("worker message error (structured-clone failed)"); };
     return llmWorker;
   }
 
@@ -1864,18 +1883,77 @@ self.onmessage = function (e) {
     const gate = aiModalEl.querySelector(".ai-gate");
     const prog = gate.querySelector(".ai-progress");
     gate.querySelector(".ai-load-btn").disabled = true;
-    const files = {};
-    aiOnProgress = (p) => {
-      if (p && p.status === "progress" && p.file) {
-        files[p.file] = p.progress || 0;
-        const vals = Object.values(files);
-        const avg = vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length);
-        prog.textContent = "Downloading model… " + avg.toFixed(0) + "%";
-      } else if (p && p.status === "ready") { prog.textContent = "Initializing…"; }
+    prog.innerHTML =
+      '<div class="ai-stage">Starting the WebGPU runtime…</div>' +
+      '<div class="ai-bars"></div>' +
+      '<details class="ai-dl-log" open><summary>Download log</summary><div class="ai-log-lines"></div></details>';
+    const stageEl = prog.querySelector(".ai-stage");
+    const barsEl = prog.querySelector(".ai-bars");
+    const logEl = prog.querySelector(".ai-log-lines");
+    const bars = {}, seen = {};
+    let stage = "init";
+    const t0 = (typeof performance !== "undefined" ? performance.now() : 0);
+    const elapsed = () => ((((typeof performance !== "undefined" ? performance.now() : 0) - t0)) / 1000).toFixed(0) + "s";
+    const fmtMB = (b) => (b / 1048576).toFixed(1) + " MB";
+    function log(line) {
+      const d = document.createElement("div"); d.className = "ai-log-line";
+      d.textContent = "[" + elapsed() + "] " + line;
+      logEl.appendChild(d); logEl.scrollTop = logEl.scrollHeight;
+    }
+    function barFor(file) {
+      if (bars[file]) return bars[file];
+      const row = document.createElement("div"); row.className = "ai-bar-row";
+      row.innerHTML = '<span class="ai-bar-name" title="' + esc(file) + '">' + esc(file) + '</span>' +
+        '<span class="ai-bar-track"><span class="ai-bar-fill"></span></span>' +
+        '<span class="ai-bar-pct">0%</span>';
+      barsEl.appendChild(row);
+      const b = { fill: row.querySelector(".ai-bar-fill"), pct: row.querySelector(".ai-bar-pct"), done: false };
+      bars[file] = b; return b;
+    }
+    const allBarsDone = () => { const v = Object.values(bars); return v.length > 0 && v.every((x) => x.done); };
+
+    aiOnLog = (text) => log(text);
+    aiOnBooted = () => log("✓ transformers.js runtime loaded");
+    aiOnStage = (s) => {
+      stage = s;
+      stageEl.textContent = s === "tokenizer" ? "Downloading tokenizer…"
+        : s === "model" ? "Downloading model weights (a few hundred MB to ~1 GB)…" : String(s);
+      log("• " + stageEl.textContent);
     };
-    aiOnError = (err) => { prog.innerHTML = '<span class="ai-warn">Failed to load: ' + esc(err) + '. Try a different model id in Settings.</span>'; gate.querySelector(".ai-load-btn").disabled = false; };
-    const done = () => { llmModelId = aiModelId(); aiRenderGate(); aiModalEl.querySelector(".ai-input").focus(); };
+    aiOnProgress = (p) => {
+      if (!p || !p.file) return;
+      const file = p.file;
+      if ((p.status === "initiate" || p.status === "download") && !seen[file]) {
+        seen[file] = true; barFor(file); log("↓ " + file + (p.total ? " (" + fmtMB(p.total) + ")" : ""));
+      } else if (p.status === "progress") {
+        const b = barFor(file);
+        const pct = typeof p.progress === "number" ? p.progress : (p.total ? (p.loaded / p.total) * 100 : 0);
+        b.fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+        b.pct.textContent = (p.total ? fmtMB(p.loaded || 0) + " / " + fmtMB(p.total) + "  " : "") + pct.toFixed(0) + "%";
+      } else if (p.status === "done") {
+        const b = barFor(file); b.fill.style.width = "100%"; b.pct.textContent = "✓"; b.done = true;
+        log("✓ " + file);
+        // After the last weight file downloads there's a silent WebGPU compile — say so
+        // instead of looking frozen.
+        if (stage === "model" && allBarsDone()) {
+          stageEl.innerHTML = 'Compiling the model on WebGPU <span class="ai-spin">◴</span> ' +
+            '<span class="ai-dim">— can take 10–60 s, no further downloads</span>';
+          log("• all files downloaded — compiling on WebGPU…");
+        }
+      }
+    };
+    aiOnError = (err) => {
+      stageEl.innerHTML = '<span class="ai-warn">Failed to load: ' + esc(err) +
+        '</span> <span class="ai-dim">— try another model id in Settings, or check your network / WebGPU support.</span>';
+      log("✗ " + err);
+      gate.querySelector(".ai-load-btn").disabled = false;
+    };
+    const done = () => {
+      log("✓ model ready in " + elapsed());
+      llmModelId = aiModelId(); aiRenderGate(); aiModalEl.querySelector(".ai-input").focus();
+    };
     done.__load = true; aiOnDone = done;
+    log("• starting worker, importing transformers.js from the CDN…");
     ensureLlmWorker().postMessage({ type: "load", id: aiModelId() });
   }
   function aiSend() {
