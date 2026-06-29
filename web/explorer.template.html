@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RETE · explorador de redes en humanidades</title>
+<style>
+  :root{
+    --paper:#E8E4D5;        /* newsprint stock */
+    --paper-2:#DED9C6;
+    --ink:#16140F;          /* warm near-black text */
+    --blue:#1F2A6B;         /* riso ink 1 */
+    --pink:#FF4D7E;         /* riso ink 2 (fluoro) */
+    --teal:#0E8C6A;         /* sparing positive */
+    --line:rgba(31,42,107,.22);
+    --mono:ui-monospace,"Cascadia Code","JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  /* halftone / dither print overlay */
+  body::after{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:60;
+    background-image:radial-gradient(var(--ink) .5px,transparent .6px);
+    background-size:4px 4px;opacity:.05;mix-blend-mode:multiply;
+  }
+  .app{display:grid;grid-template-columns:344px 1fr;grid-template-rows:auto 1fr;height:100dvh}
+  /* ---------- masthead ---------- */
+  header{
+    grid-column:1/-1;border-bottom:2px solid var(--ink);
+    padding:14px 20px 12px;display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;
+    background:linear-gradient(180deg,var(--paper),var(--paper-2));
+  }
+  .brand{display:flex;align-items:flex-end;gap:14px;min-width:0}
+  .glyph{width:34px;height:34px;flex:0 0 auto;margin-bottom:6px}
+  h1{
+    font-family:var(--mono);font-weight:800;letter-spacing:-.03em;line-height:.82;
+    font-size:clamp(30px,6vw,58px);color:var(--blue);position:relative;margin:0;
+  }
+  h1::before{content:"RETE";position:absolute;left:3px;top:3px;color:var(--pink);z-index:-1;mix-blend-mode:multiply}
+  .tag{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.16em;color:var(--ink);opacity:.72;margin:0 0 5px}
+  .colophon{margin-left:auto;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--blue);text-align:right;line-height:1.5;opacity:.85}
+  .colophon b{color:var(--pink)}
+  /* ---------- rail ---------- */
+  aside{grid-column:1;grid-row:2;overflow:auto;border-right:2px solid var(--ink);padding:16px 16px 40px;background:var(--paper)}
+  .sec{border:1.5px solid var(--ink);background:rgba(255,255,255,.28);padding:12px 12px 14px;margin-bottom:14px}
+  .sec > h2{
+    font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.18em;
+    margin:0 0 10px;color:var(--ink);display:flex;align-items:center;gap:8px;
+  }
+  .sec > h2 .n{background:var(--blue);color:var(--paper);font-size:10px;padding:1px 6px;border-radius:0;letter-spacing:.1em}
+  label.f{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);opacity:.78;margin:10px 0 4px}
+  select,input[type=text],input[type=file]{
+    width:100%;font-family:var(--mono);font-size:13px;color:var(--ink);
+    background:var(--paper);border:1.5px solid var(--ink);padding:7px 8px;border-radius:0;
+  }
+  input[type=file]{font-size:11px;padding:6px}
+  select:focus,input:focus,button:focus-visible,.iconbtn:focus-visible{outline:3px solid var(--pink);outline-offset:1px}
+  .btn{
+    font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+    border:1.5px solid var(--ink);background:var(--blue);color:var(--paper);
+    padding:9px 10px;cursor:pointer;width:100%;transition:transform .05s ease;
+  }
+  .btn:hover{background:#172056}
+  .btn:active{transform:translate(1px,1px)}
+  .btn.ghost{background:var(--paper);color:var(--ink)}
+  .btn.ghost:hover{background:#fff}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .btn.pink{background:var(--pink);color:var(--ink);border-color:var(--ink)}
+  .btn + .btn{margin-top:8px}
+  .row{display:flex;gap:8px}
+  .row > *{flex:1}
+  .hint{font-size:11.5px;line-height:1.45;color:var(--ink);opacity:.72;margin:8px 0 0}
+  .drop{border:1.5px dashed var(--ink);padding:10px;text-align:center;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;opacity:.75;margin-top:8px;cursor:pointer}
+  .drop.over{background:var(--pink);opacity:1;color:var(--ink)}
+  .status{font-family:var(--mono);font-size:11px;margin-top:8px;min-height:14px;color:var(--blue)}
+  .status.err{color:#b3203a}
+  .slider{display:flex;align-items:center;gap:8px}
+  .slider input[type=range]{flex:1;accent-color:var(--pink)}
+  .slider .v{font-family:var(--mono);font-size:11px;min-width:42px;text-align:right;opacity:.8}
+  .stat{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:3px 0;border-bottom:1px dotted var(--line)}
+  .stat .k{opacity:.7;letter-spacing:.06em;text-transform:uppercase;font-size:10.5px}
+  .toplist,.neigh,.records{list-style:none;margin:8px 0 0;padding:0;font-family:var(--mono);font-size:12px}
+  .toplist li,.neigh li{display:flex;justify-content:space-between;gap:8px;padding:4px 6px;cursor:pointer;border:1px solid transparent}
+  .toplist li:hover,.neigh li:hover{border-color:var(--ink);background:rgba(255,255,255,.5)}
+  .toplist .dot,.neigh .dot,.swatch{width:9px;height:9px;flex:0 0 auto;display:inline-block;margin-right:6px;border:1px solid var(--ink)}
+  .toplist .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .toplist .w{opacity:.65}
+  .records{font-size:11.5px;max-height:190px;overflow:auto;border-top:1px dotted var(--line);margin-top:8px;padding-top:6px}
+  .records li{padding:3px 0;opacity:.85;line-height:1.35}
+  details summary{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;opacity:.8}
+  details[open] summary{margin-bottom:8px}
+  code{font-family:var(--mono);font-size:11px;background:var(--paper-2);padding:1px 4px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;margin-top:6px}
+  .legend span{display:flex;align-items:center}
+  .swatch.blue{background:var(--blue)} .swatch.pink{background:var(--pink)}
+  .selnote{font-family:var(--mono);font-size:11px;opacity:.7}
+  .selhead{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:14px;font-weight:700;word-break:break-word}
+  /* ---------- stage ---------- */
+  main{grid-column:2;grid-row:2;position:relative;overflow:hidden;background:
+      repeating-linear-gradient(0deg,transparent 0 23px,rgba(31,42,107,.04) 23px 24px),
+      repeating-linear-gradient(90deg,transparent 0 23px,rgba(31,42,107,.04) 23px 24px),
+      var(--paper)}
+  canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+  canvas.grabbing{cursor:grabbing}
+  .tools{position:absolute;right:14px;top:14px;display:flex;flex-direction:column;gap:6px;z-index:20}
+  .iconbtn{
+    width:38px;height:38px;border:1.5px solid var(--ink);background:var(--paper);color:var(--ink);
+    font-family:var(--mono);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  }
+  .iconbtn:hover{background:#fff}
+  .iconbtn.on{background:var(--blue);color:var(--paper)}
+  .stagelegend{position:absolute;left:14px;bottom:12px;z-index:20;background:rgba(232,228,213,.86);border:1.5px solid var(--ink);padding:7px 10px}
+  .tip{position:absolute;z-index:40;pointer-events:none;background:var(--ink);color:var(--paper);
+       font-family:var(--mono);font-size:11px;padding:5px 8px;max-width:240px;line-height:1.35;
+       transform:translate(-50%,calc(-100% - 12px));white-space:nowrap;opacity:0;transition:opacity .08s}
+  .tip b{color:var(--pink)}
+  .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;z-index:10}
+  .empty div{max-width:380px}
+  .empty .big{font-family:var(--mono);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);line-height:1.6}
+  .empty .sub{font-size:13px;opacity:.7;margin-top:10px;line-height:1.5}
+  @media (max-width:860px){
+    .app{grid-template-columns:1fr;grid-template-rows:auto auto 1fr}
+    aside{grid-column:1;grid-row:2;border-right:none;border-bottom:2px solid var(--ink);max-height:48vh}
+    main{grid-column:1;grid-row:3;min-height:52vh}
+    .colophon{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 40 40" aria-hidden="true">
+        <g fill="none" stroke="#1F2A6B" stroke-width="2.4">
+          <line x1="7" y1="9" x2="31" y2="20"/><line x1="31" y1="20" x2="12" y2="33"/>
+          <line x1="12" y1="33" x2="7" y2="9"/><line x1="7" y1="9" x2="33" y2="6"/>
+          <line x1="33" y1="6" x2="31" y2="20"/>
+        </g>
+        <g fill="#FF4D7E" stroke="#16140F" stroke-width="1.2">
+          <circle cx="7" cy="9" r="3.6"/><circle cx="31" cy="20" r="4.4"/><circle cx="12" cy="33" r="3"/><circle cx="33" cy="6" r="2.6"/>
+        </g>
+      </svg>
+      <div>
+        <p class="tag">explorador de redes</p>
+        <h1>RETE</h1>
+      </div>
+    </div>
+    <div class="colophon">
+      datos en <b>.rete</b> · consulta wasm en el navegador<br>
+      co-aparición + fuerzas · sin servidor<br>
+      <span id="enginestate">cargando motor…</span>
+    </div>
+  </header>
+
+  <aside>
+    <!-- DATA -->
+    <section class="sec">
+      <h2><span class="n">01</span> Corpus</h2>
+      <button class="btn pink" id="loadRete">Dataset rete embebido</button>
+      <button class="btn ghost" id="loadSample">Usar corpus de ejemplo</button>
+      <label class="f" for="file">Cargar .rete, CSV o JSON</label>
+      <input type="file" id="file" accept=".rete,.csv,.tsv,.json,application/octet-stream,text/csv,application/json">
+      <div class="drop" id="drop">o suelta el archivo aquí</div>
+      <div class="status" id="dataStatus">sin datos cargados</div>
+    </section>
+
+    <!-- BUILD -->
+    <section class="sec">
+      <h2><span class="n">02</span> Construir red</h2>
+      <label class="f" for="fieldA">Campo de nodos (A)</label>
+      <select id="fieldA" disabled></select>
+      <label class="f" for="fieldB">Vincular con campo (B)</label>
+      <select id="fieldB" disabled></select>
+      <button class="btn" id="build" disabled style="margin-top:12px">Construir red</button>
+      <p class="hint">Con A y B se cruzan los dos campos (red bipartita). Solo con A, los valores que aparecen juntos en un registro se enlazan (co-aparición); las celdas con <code>;</code> se separan en varios valores.</p>
+    </section>
+
+    <!-- EXPLORE -->
+    <section class="sec">
+      <h2><span class="n">03</span> Explorar</h2>
+      <label class="f" for="search">Buscar entidad</label>
+      <input type="text" id="search" placeholder="escribe para resaltar…" autocomplete="off">
+      <label class="f" for="minDeg">Ocultar nodos con grado menor que <span id="minDegV" style="opacity:.7">0</span></label>
+      <div class="slider"><input type="range" id="minDeg" min="0" max="20" step="1" value="0"><span class="v" id="minDegLbl">0</span></div>
+      <div class="legend" id="legend" style="display:none">
+        <span><i class="swatch blue"></i>&nbsp;campo A</span>
+        <span><i class="swatch pink"></i>&nbsp;campo B</span>
+      </div>
+    </section>
+
+    <!-- SELECTION -->
+    <section class="sec" id="selSec" style="display:none">
+      <h2><span class="n">04</span> Selección</h2>
+      <div id="selBody"></div>
+    </section>
+
+    <!-- STATS -->
+    <section class="sec" id="statSec" style="display:none">
+      <h2><span class="n">05</span> Métricas</h2>
+      <div class="stat"><span class="k">nodos</span><span id="mNodes">—</span></div>
+      <div class="stat"><span class="k">aristas</span><span id="mEdges">—</span></div>
+      <div class="stat"><span class="k">densidad</span><span id="mDens">—</span></div>
+      <div class="stat" style="border:none"><span class="k">grado máx.</span><span id="mMax">—</span></div>
+      <p class="selnote" id="capNote" style="margin-top:8px;display:none"></p>
+      <h2 style="margin-top:14px"><span class="n">↓</span> Nodos por grado</h2>
+      <ul class="toplist" id="topList"></ul>
+    </section>
+
+    <!-- ENGINE -->
+    <section class="sec">
+      <details>
+        <summary>Sobre el motor</summary>
+        <p class="hint" style="margin-top:0">Los datos viven en un archivo <code>.rete</code> incrustado en esta página como base64; el <b>motor rete real</b> (WebAssembly, wasm-bindgen) lo abre y responde SPARQL en el navegador — sin servidor ni red. La red se construye pivotando los triples a filas y cruzando los campos elegidos.</p>
+        <p class="hint">El <em>layout</em> dirigido por fuerzas (grado + repulsión O(n²)) corre en un segundo módulo WebAssembly minúsculo (~2 KB): rete <strong>almacena y consulta</strong> el grafo, este solo <strong>coloca</strong> los puntos. Puedes soltar tu propio <code>.rete</code> (o un CSV/JSON) en el recuadro de arriba.</p>
+      </details>
+    </section>
+  </aside>
+
+  <main>
+    <canvas id="cv" aria-label="Red interactiva del conjunto de datos"></canvas>
+    <div class="tools">
+      <button class="iconbtn" id="zin" title="Acercar" aria-label="Acercar">＋</button>
+      <button class="iconbtn" id="zout" title="Alejar" aria-label="Alejar">－</button>
+      <button class="iconbtn" id="fit" title="Encajar" aria-label="Encajar vista">⤢</button>
+      <button class="iconbtn" id="reorg" title="Reorganizar" aria-label="Reorganizar">↻</button>
+      <button class="iconbtn" id="play" title="Pausar/continuar" aria-label="Pausar o continuar">⏸</button>
+    </div>
+    <div class="stagelegend" id="stageLegend" style="display:none">
+      <div class="legend" style="margin:0">
+        <span><i class="swatch blue"></i>&nbsp;A</span>
+        <span><i class="swatch pink"></i>&nbsp;B</span>
+        <span style="opacity:.65">tamaño = grado</span>
+      </div>
+    </div>
+    <div class="tip" id="tip"></div>
+    <div class="empty" id="empty">
+      <div>
+        <div class="big">red vacía</div>
+        <div class="sub">Pulsa <strong>Dataset rete embebido</strong> o <strong>Usar corpus de ejemplo</strong>, o suelta tu propio <code>.rete</code> / CSV / JSON. Luego elige los campos y construye la red. Arrastra para mover, rueda para zoom, clic para inspeccionar.</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- rete wasm-bindgen no-modules glue (defines global wasm_bindgen) -->
+<script id="reteGlue">
+__GLUE_JS__
+</script>
+<!-- engines + embedded dataset, inlined by scripts/build_explorer.py -->
+<script>
+  const RETE_WASM_B64   = "__WASM_B64__";
+  const LAYOUT_WASM_B64 = "__LAYOUT_WASM_B64__";
+  const RETE_DATASET_B64 = "__DATASET_B64__";
+  const RETE_DATASET_KEY = "__DATASET_KEY__";
+  const RETE_DATASET_META = __DATASET_META_JSON__;
+</script>
+<script>
+__EXPLORER_JS__
+</script>
+</body>
+</html>
