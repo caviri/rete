@@ -32,6 +32,9 @@
     sqlDataset: null,
     // Persistent incremental range cache (opt-in via Settings, localStorage-backed).
     rangeCacheOn: (() => { try { return localStorage.getItem("rangeCacheOn") === "1"; } catch (e) { return false; } })(),
+    // Map view: which slippy-tile basemap sits behind the geometry ("none" =
+    // the offline equirectangular vectors). localStorage-backed so it persists.
+    mapBasemap: (() => { try { return localStorage.getItem("mapBasemap") || "none"; } catch (e) { return "none"; } })(),
     remote: null,
     // Federation: extra sources the SPARQL query also runs against. Each is
     // {id, kind:"remote"|"memory"|"endpoint", label, url?, key?, endpoint?}.
@@ -3365,7 +3368,25 @@ self.onmessage = function (e) {
   const fmtYear = (y) => y < 0 ? `${-y} BCE` : `${y}`;
   const note = (m) => `<div class="note">${esc(m)}</div>`;
 
+  // Slippy-tile basemaps. {z}/{x}/{y} (and optional {s} subdomain) are filled per
+  // tile; all serve standard Web-Mercator XYZ tiles with open CORS. "none" keeps
+  // the offline equirectangular vector view (no network), the default.
+  const BASEMAPS = [
+    { id: "none",  label: "None (offline)" },
+    { id: "osm",   label: "OpenStreetMap", url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", attr: "© OpenStreetMap contributors", max: 19 },
+    { id: "light", label: "Carto Light",   url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png", sub: "abcd", attr: "© OpenStreetMap · © CARTO", max: 20 },
+    { id: "dark",  label: "Carto Dark",    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",  sub: "abcd", attr: "© OpenStreetMap · © CARTO", max: 20 },
+    { id: "sat",   label: "Esri Satellite",url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attr: "Imagery © Esri", max: 19 },
+    { id: "topo",  label: "OpenTopoMap",   url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", sub: "abc", attr: "© OpenTopoMap (CC-BY-SA)", max: 17 },
+  ];
+  const clampLat = (v) => Math.max(-85.0511, Math.min(85.0511, v));
+  const lon2wx = (lon) => (lon + 180) / 360;                                    // 0..1
+  const lat2wy = (lat) => { const r = clampLat(lat) * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2; };
+
+  let lastMapRes = null; // kept so the basemap dropdown re-renders without re-querying
+
   function renderMap(res) {
+    lastMapRes = res;
     if (res.kind !== "select") { $("out").innerHTML = note("Map needs SELECT rows with a geometry column."); return "no map"; }
     const vars = res.vars || [], rows = res.rows || [];
     const geo = detectGeoCol(vars, rows);
@@ -3383,18 +3404,57 @@ self.onmessage = function (e) {
       }
     }
     if (!feats.length) { $("out").innerHTML = note("No parseable geometry in this result."); return "no geometry"; }
+
     const W = 760, H = 420, pad = 14;
-    const dx = (maxX - minX) || 1, dy = (maxY - minY) || 1;
-    const sx = (W - 2 * pad) / dx, sy = (H - 2 * pad) / dy, s = Math.min(sx, sy);
-    const px = (x) => pad + (x - minX) * s + ((W - 2 * pad) - dx * s) / 2;
-    const py = (y) => H - pad - (y - minY) * s - ((H - 2 * pad) - dy * s) / 2; // invert lat
+    const bmId = state.mapBasemap || "none";
+    const base = BASEMAPS.find((b) => b.id === bmId) || BASEMAPS[0];
+    const opts = BASEMAPS.map((b) => `<option value="${b.id}"${b.id === base.id ? " selected" : ""}>${esc(b.label)}</option>`).join("");
+    const tools = `<div class="map-tools"><label class="map-base-pick">Basemap <select id="mapBasemap" aria-label="basemap">${opts}</select></label></div>`;
+
+    let px, py, bg = "", cap, hasBase = false;
+    if (base.url) {
+      // Web-Mercator: project to world pixels at a zoom that fits the bbox, then
+      // lay the spanned XYZ tiles as SVG <image>s with the geometry drawn on top.
+      hasBase = true;
+      const padF = 0.12, maxZ = base.max || 19;
+      const nx0 = lon2wx(minX), nx1 = lon2wx(maxX);
+      const ny0 = lat2wy(maxY), ny1 = lat2wy(minY);            // north (maxY) → smaller y
+      const fw = Math.max(nx1 - nx0, 1e-9), fh = Math.max(ny1 - ny0, 1e-9);
+      const tiny = (maxX - minX) < 0.02 && (maxY - minY) < 0.02; // a single point / pin
+      let z = Math.floor(Math.min(Math.log2((W * (1 - 2 * padF)) / (fw * 256)),
+                                  Math.log2((H * (1 - 2 * padF)) / (fh * 256))));
+      z = tiny ? 12 : Math.max(2, Math.min(maxZ, isFinite(z) ? z : maxZ));
+      const wp = 256 * Math.pow(2, z), world = Math.pow(2, z);
+      const oX = nx0 * wp - (W - fw * wp) / 2, oY = ny0 * wp - (H - fh * wp) / 2;
+      px = (lon) => lon2wx(lon) * wp - oX;
+      py = (lat) => lat2wy(lat) * wp - oY;
+      const subs = base.sub ? base.sub.split("") : null;
+      const tx0 = Math.floor(oX / 256), tx1 = Math.floor((oX + W) / 256);
+      const ty0 = Math.floor(oY / 256), ty1 = Math.floor((oY + H) / 256);
+      for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) {
+        if (ty < 0 || ty >= world) continue;                  // no vertical wrap
+        const wx = ((tx % world) + world) % world;            // wrap longitude
+        const u = base.url.replace("{z}", z).replace("{x}", wx).replace("{y}", ty)
+                          .replace("{s}", subs ? subs[((tx % subs.length) + subs.length) % subs.length] : "");
+        bg += `<image class="mtile" href="${esc(u)}" x="${(tx * 256 - oX).toFixed(1)}" y="${(ty * 256 - oY).toFixed(1)}" width="256" height="256" preserveAspectRatio="none" />`;
+      }
+      cap = `${feats.length} feature(s) · lon ${minX.toFixed(1)}…${maxX.toFixed(1)}, lat ${minY.toFixed(1)}…${maxY.toFixed(1)} · z${z} · ${base.attr}`;
+    } else {
+      // Offline: uniform-scale equirectangular auto-fit (no network).
+      const dx = (maxX - minX) || 1, dy = (maxY - minY) || 1;
+      const s = Math.min((W - 2 * pad) / dx, (H - 2 * pad) / dy);
+      px = (x) => pad + (x - minX) * s + ((W - 2 * pad) - dx * s) / 2;
+      py = (y) => H - pad - (y - minY) * s - ((H - 2 * pad) - dy * s) / 2; // invert lat
+      cap = `${feats.length} feature(s) · lon ${minX.toFixed(1)}…${maxX.toFixed(1)}, lat ${minY.toFixed(1)}…${maxY.toFixed(1)} · equirectangular (offline)`;
+    }
+
     let svg = "";
     for (const f of feats) {
       const title = `<title>${esc(f.label)}</title>`;
       for (const ring of f.rings) {
         if (ring.length === 1) {
           const [x, y] = ring[0];
-          svg += `<circle class="mpt" cx="${px(x).toFixed(1)}" cy="${py(y).toFixed(1)}" r="3">${title}</circle>`;
+          svg += `<circle class="mpt" cx="${px(x).toFixed(1)}" cy="${py(y).toFixed(1)}" r="${hasBase ? 4 : 3}">${title}</circle>`;
         } else {
           const pts = ring.map(([x, y]) => `${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(" ");
           svg += f.isPoly
@@ -3403,9 +3463,15 @@ self.onmessage = function (e) {
         }
       }
     }
-    const cap = `${feats.length} feature(s) · lon ${minX.toFixed(1)}…${maxX.toFixed(1)}, lat ${minY.toFixed(1)}…${maxY.toFixed(1)} · equirectangular (offline)`;
-    $("out").innerHTML = `<div class="mapview"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="map of results">${svg}</svg>` +
+    $("out").innerHTML = `<div class="mapview">${tools}` +
+      `<svg class="${hasBase ? "has-base" : ""}" viewBox="0 0 ${W} ${H}" role="img" aria-label="map of results"><g class="mtiles">${bg}</g>${svg}</svg>` +
       `<div class="mapcap">${esc(cap)} — hover a feature for its label.</div></div>`;
+    const sel = $("mapBasemap");
+    if (sel) sel.addEventListener("change", () => {
+      state.mapBasemap = sel.value;
+      try { localStorage.setItem("mapBasemap", sel.value); } catch (e) { /* private mode */ }
+      if (lastMapRes) renderMap(lastMapRes);
+    });
     return `${feats.length} mapped feature(s)`;
   }
 

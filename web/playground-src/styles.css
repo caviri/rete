@@ -2402,6 +2402,15 @@ th .coltype.coltype-on {
 .mapview .mpt { fill: var(--accent-2, #c84f2f); stroke: #fff; stroke-width: .5; }
 .mapview .mgeo:hover, .mapview .mline:hover { stroke-width: 1.8; }
 .mapcap { font-size: 11.5px; color: var(--muted); margin-top: 7px; }
+/* basemap picker + higher-contrast geometry when drawn over slippy tiles */
+.map-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.map-base-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.map-base-pick select { font: inherit; font-size: 12px; padding: 3px 22px 3px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--side); color: var(--ink); cursor: pointer; }
+.mapview .mtiles image { image-rendering: auto; }
+.mapview svg.has-base .mgeo { fill: rgba(255, 90, 40, .22); stroke: #ff3b1f; stroke-width: 1.1; }
+.mapview svg.has-base .mline { fill: none; stroke: #ff3b1f; stroke-width: 1.6; }
+.mapview svg.has-base .mpt { fill: #ff3b1f; stroke: #fff; stroke-width: 1; }
+.mapview svg.has-base .mgeo:hover, .mapview svg.has-base .mline:hover { stroke-width: 2.6; }
 
 /* Time view — a GitHub-style multi-year heatmap; cell colour = item count. */
 .timeview { padding: 4px 2px 2px; }
