@@ -5627,7 +5627,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "history": { "Map: territories of 1914": 21, "Time: territories per year": 22, "Who ruled Paris in 1914?": 22, "Empires over Beijing through time": 56, "Territories around the British Isles (1815)": 23, "Nearest neighbours of London, 1914": 24, "Bounding box of each 1492 territory": 19, "Territories per era": 19 },
     "linked-jazz": { "Relationship-type totals": 3, "Everything Mary Lou Williams said about people": 2, "Most talked-about musicians": 8, "Who Count Basie reaches by word of mouth": 2, "Most-cited influences": 2, "Mary Lou Williams collaboration ego-network": 2 },
     "nomisma": { "Shape of the corpus": 9, "Silver tetradrachms of Alexander the Great": 8, "Most prolific mints": 6, "Coin types per issuing authority": 5, "Mints used by 3+ successive rulers": 8, "Who else struck at Cassander's mints": 46 },
-    "mira": { "Manuscripts you can SEE (IIIF)": 2, "Where early Irish books were made": 2, "The scholars, linked to Wikidata": 1, "Datable manuscripts over time": 2, "The largest manuscripts": 1, "Search the contents": 1, "What the catalogue describes": 1, "Why each book is in the corpus": 1, "The Old Irish glossed books (with images)": 1 },
+    "mira": { "Manuscripts you can SEE (IIIF)": 2, "Where early Irish books were made": 2, "The scholars, linked to Wikidata": 1, "Cross-source JOIN: MIrA people × live Wikidata": 1, "Datable manuscripts over time": 2, "The largest manuscripts": 1, "Search the contents": 1, "What the catalogue describes": 1, "Why each book is in the corpus": 1, "The Old Irish glossed books (with images)": 1 },
     "mimotext": { "What is in this graph?": 3, "Most common themes across the novels": 4, "Baculard d'Arnaud's novels, by year, with genre": 8, "Novels that share the most themes": 171, "Stylometrically closest novels": 3, "Author ego-network: Baculard d'Arnaud -> novels -> genre": 5 },
     "openalex-astrocytes": { "What's in the graph": 6, "Most-cited astrocyte papers": 4, "Most prolific astrocyte authors": 8, "Leading institutions": 7, "Adjacent sub-topics": 6, "Who cites the field's landmark paper": 4, "Citation network of the top papers": 5 },
     "antarctic-expeditions": { "Shape of the expedition graph": 1, "The crew of the Endurance": 1, "Crew who served on more than one expedition": 1, "Largest crews": 1, "Expedition -> leader + ship + crew ego-network": 1, "Time: expeditions by start year": 1 },
@@ -6841,6 +6841,7 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
       {"family": "Select", "label": "Manuscripts you can SEE (IIIF)", "view": "table", "tip": "189 of MIrA's manuscripts are digitised. The ?iiif column holds each one's IIIF manifest (wdt:P6108) from its holding library - the British Library, Trinity College Dublin, e-codices, the IRHT... The playground renders it as an in-table image viewer: page the folios with the ‹ › arrows, and CLICK a folio for the lightbox (enlarged page, prev/next, the manifest link and its metadata). ?manuscript is the shelfmark.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?manuscript ?iiif WHERE {\n  ?m wdt:P6108 ?iiif ; rdfs:label ?manuscript .\n} LIMIT 30"},
       {"family": "Aggregate", "label": "Where early Irish books were made", "view": "table", "tip": "wdt:P1071 'location of creation', resolved to its Wikidata label. Ireland leads (100), then Bobbio - the monastery Columbanus founded in Italy, a hub of Irish learning abroad - then France, Italy, Germany and Salzburg: the trail of the Irish 'peregrini' who carried their book-culture across early-medieval Europe.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?place (COUNT(?m) AS ?manuscripts) WHERE {\n  ?m wdt:P1071 ?p . ?p rdfs:label ?place .\n} GROUP BY ?place ORDER BY DESC(?manuscripts)"},
       {"family": "Select", "label": "The scholars, linked to Wikidata", "view": "table", "tip": "MIrA reconciles its named people to Wikidata with owl:sameAs - John Scottus Eriugena, Sedulius Scottus, Isidore, Dúngal... ?wikidata is a clickable link. Because of this alignment the dataset FEDERATES: add a Wikidata source with '+ Add source' and the ids join across both graphs.", "q": "PREFIX owl: <http://www.w3.org/2002/07/owl#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?person ?wikidata WHERE {\n  ?p owl:sameAs ?wikidata ; rdfs:label ?person .\n} ORDER BY ?person"},
+      {"family": "Path", "label": "Cross-source JOIN: MIrA people × live Wikidata", "view": "table", "fed": [{"endpoint": "https://query.wikidata.org/sparql", "label": "Wikidata"}], "tip": "The real thing: ONE query split across TWO sources and JOINED. MIrA answers the first two patterns (owl:sameAs + the person's name); LIVE Wikidata answers ?wd wdt:P106 ?occ (their occupations); they meet on the shared ?wd. The playground routes each pattern to the source that can answer it - by predicate AND variable provenance, so the SECOND rdfs:label correctly goes to Wikidata (where ?occ lives), not MIrA - then bound-joins. This is NOT union (run-everywhere-and-merge); it's a genuine cross-source join. Wikidata is pre-added as a live SPARQL endpoint (see the Sources strip). Result: Eriugena -> theologian/translator, Isidore -> polymath/musicologist, Sedulius Scottus -> poet/grammarian.", "q": "PREFIX owl: <http://www.w3.org/2002/07/owl#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?person ?occupation WHERE {\n  ?p owl:sameAs ?wd ; rdfs:label ?person .\n  ?wd wdt:P106 ?occ . ?occ rdfs:label ?occupation .\n  FILTER(LANG(?occupation) = \"en\")\n} LIMIT 40"},
       {"family": "Aggregate", "label": "Datable manuscripts over time", "view": "time", "tip": "Switch Output -> Time. wdt:P571 'inception' is an xsd:gYear; each manuscript carries an earliest+latest year, so the heatmap shows the surviving corpus thickening through the 6th-10th centuries - the height of the Irish scribal achievement.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?manuscript ?date WHERE {\n  ?m wdt:P571 ?date ; rdfs:label ?manuscript .\n}"},
       {"family": "Select", "label": "The largest manuscripts", "view": "table", "tip": "Page dimensions in cm: wdt:P2048 height x wdt:P2049 width. The grand display gospel-books at the top vs the tiny 'pocket gospels' Irish monks carried on their travels - the physical range of early Irish book production.", "q": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?manuscript ?height ?width WHERE {\n  ?m wdt:P2048 ?height ; wdt:P2049 ?width ; rdfs:label ?manuscript .\n} ORDER BY DESC(?height) LIMIT 25"},
       {"family": "Select", "label": "Search the contents", "view": "table", "tip": "Full-text search (a text index backs it) over what each manuscript actually contains. Here, the 32 books carrying gospels; change 'gospel' to 'psalm', 'Priscian', 'computus', 'Isidore'... to trace where a given text survives. ?script is the hand (e.g. 'Irish minuscule').", "q": "PREFIX mira: <https://mira.ie/prop/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?manuscript ?script ?contents WHERE {\n  ?m mira:contents ?contents ; rdfs:label ?manuscript .\n  OPTIONAL { ?m mira:script ?script }\n  FILTER(CONTAINS(LCASE(STR(?contents)), \"gospel\"))\n}"},
@@ -10778,6 +10779,11 @@ self.onmessage = function (e) {
     resetFed();
     if (Array.isArray(ex.fed) && ex.fed.length) {
       ex.fed.forEach((k) => {
+        // An entry can be a dataset key, or {endpoint, label} for a live SPARQL endpoint.
+        if (k && typeof k === "object" && k.endpoint) {
+          state.fedSources.push({ id: "f" + (++fedSeq), kind: "endpoint", label: k.label || shortUrlLabel(k.endpoint), endpoint: k.endpoint });
+          return;
+        }
         if (k === state.dataset || !datasetInfo(k)) return;
         state.fedSources.push(isEmbedded(k)
           ? { id: "f" + (++fedSeq), kind: "memory", label: dsShortLabel(k), key: k }
@@ -13366,7 +13372,169 @@ self.onmessage = function (e) {
       `<table><tbody>${lines}</tbody></table></div>`;
   }
 
+  // ── Cross-source BGP join ────────────────────────────────────────────────
+  // The union path (runFederatedUnion) runs the WHOLE query on each source and
+  // merges. This instead decomposes ONE basic graph pattern ACROSS sources — by
+  // predicate + variable provenance — and bound-joins them (VALUES injection), so
+  // a query like `?p owl:sameAs ?wd . ?wd wdt:P19 ?birthplace` resolves ?p/?wd on a
+  // .rete source and ?birthplace on a live Wikidata endpoint, joined on ?wd.
+  // Proven end-to-end in dev/fedjoin.cjs. Parses flat BGPs only; bails (→ null,
+  // → union fallback) on OPTIONAL/UNION/SERVICE/subselect/property-paths.
+  const FED_TOK = /<[^>]*>|"(?:[^"\\]|\\.)*"(?:@[\w-]+|\^\^<[^>]*>)?|\?[A-Za-z0-9_]+|[A-Za-z0-9_]+:[A-Za-z0-9_./%~#-]*|[A-Za-z_][A-Za-z0-9_]*|[.;,]|\S/g;
+  const fedIsVar = (t) => typeof t === "string" && t[0] === "?";
+  const fedVn = (t) => t.slice(1);
+  function fedParseTriples(where) {
+    const toks = where.match(FED_TOK);
+    if (!toks) return [];
+    const out = []; let s = null, p = null, k = 0;
+    for (const t of toks) {
+      if (t === ".") { s = p = null; k = 0; continue; }
+      if (t === ";") { p = null; k = 1; continue; }
+      if (t === ",") { k = 2; continue; }
+      if (k === 0) { s = t; k = 1; }
+      else if (k === 1) { p = (t === "a") ? "rdf:type" : t; k = 2; }
+      else out.push({ s, p, o: t });
+    }
+    return out;
+  }
+  function fedParse(q) {
+    q = q.replace(/^\s*#.*$/gm, "");
+    const prefixes = {}, prefixLines = []; let m;
+    const re = /PREFIX\s+([A-Za-z0-9_-]*):\s*<([^>]*)>/gi;
+    while ((m = re.exec(q))) { prefixes[m[1]] = m[2]; prefixLines.push(m[0]); }
+    const sm = /SELECT\s+(DISTINCT\s+|REDUCED\s+)?(.+?)\s+WHERE/is.exec(q);
+    if (!sm) return null;
+    const selVars = sm[2].trim() === "*" ? "*" : (sm[2].match(/\?[A-Za-z0-9_]+/g) || []).map(fedVn);
+    if (selVars !== "*" && /\(/.test(sm[2])) return null;   // aggregates/expressions → union
+    const wi = q.search(/WHERE\s*\{/i); if (wi < 0) return null;
+    let i = q.indexOf("{", wi), depth = 0, end = -1;
+    for (let j = i; j < q.length; j++) { if (q[j] === "{") depth++; else if (q[j] === "}") { depth--; if (!depth) { end = j; break; } } }
+    if (end < 0) return null;
+    let where = q.slice(i + 1, end);
+    if (/\b(OPTIONAL|UNION|SERVICE|MINUS|GROUP\s+BY|BIND|VALUES)\b|\{/i.test(where)) return null;
+    if (/[?\w):>]\s*[*+?]\s*[<?]/.test(where)) return null; // property paths
+    const filters = [];
+    where = where.replace(/FILTER\s*\(((?:[^()]|\([^()]*\))*)\)/gi, (mm, inner) => { filters.push("FILTER(" + inner + ")"); return " "; });
+    const patterns = fedParseTriples(where);
+    if (!patterns.length) return null;
+    const lm = /\bLIMIT\s+(\d+)/i.exec(q);
+    return { prefixes, prefixBlock: prefixLines.join("\n"), distinct: !!sm[1], selVars, patterns, filters, limit: lm ? +lm[1] : null };
+  }
+  function fedExpandIri(t, prefixes) {
+    if (t[0] === "<" && t.endsWith(">")) return t.slice(1, -1);
+    const m = /^([A-Za-z0-9_-]*):([A-Za-z0-9_./%~#-]*)$/.exec(t);
+    if (m && prefixes[m[1]] != null) return prefixes[m[1]] + m[2];
+    if (t === "rdf:type") return "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    return t;
+  }
+  const fedPatVars = (pat) => [pat.s, pat.p, pat.o].filter(fedIsVar).map(fedVn);
+  function fedRoute(parsed, sources) {
+    const can = (src, pred) => src.preds === null || (pred !== null && src.preds.has(pred));
+    const owner = {}, assign = new Array(parsed.patterns.length).fill(-1);
+    parsed.patterns.forEach((pat, idx) => {
+      const pred = fedIsVar(pat.p) ? null : fedExpandIri(pat.p, parsed.prefixes);
+      let si = -1;
+      if (fedIsVar(pat.s) && owner[fedVn(pat.s)] != null && can(sources[owner[fedVn(pat.s)]], pred)) si = owner[fedVn(pat.s)];
+      if (si < 0 && pred !== null) {
+        const sp = sources.findIndex((s) => s.preds !== null && s.preds.has(pred));
+        si = sp >= 0 ? sp : sources.findIndex((s) => s.preds === null);
+      }
+      if (si < 0) si = 0;
+      assign[idx] = si;
+      [pat.s, pat.o].forEach((tm) => { if (fedIsVar(tm) && owner[fedVn(tm)] == null) owner[fedVn(tm)] = si; });
+    });
+    return assign;
+  }
+  function fedHashJoin(left, right, keys) {
+    const idx = new Map();
+    for (const r of right) { const k = JSON.stringify(keys.map((v) => r[v])); if (!idx.has(k)) idx.set(k, []); idx.get(k).push(r); }
+    const out = [];
+    for (const l of left) for (const r of (idx.get(JSON.stringify(keys.map((v) => l[v]))) || [])) out.push(Object.assign({}, l, r));
+    return out;
+  }
+  async function fedJoinExec(parsed, sources, runOnSource, cap) {
+    cap = cap || 250;
+    const assign = fedRoute(parsed, sources);
+    const order = [], groups = new Map();
+    assign.forEach((si, i) => { if (!groups.has(si)) { groups.set(si, []); order.push(si); } groups.get(si).push(parsed.patterns[i]); });
+    if (order.length < 2) return null;
+    let table = [{}], bound = new Set();
+    for (const si of order) {
+      const pats = groups.get(si);
+      const gVars = [...new Set(pats.flatMap(fedPatVars))];
+      const shared = gVars.filter((v) => bound.has(v));
+      let sub = parsed.prefixBlock + "\nSELECT DISTINCT " + gVars.map((v) => "?" + v).join(" ") + " WHERE {\n" +
+        pats.map((p) => `  ${p.s} ${p.p} ${p.o} .`).join("\n") + "\n";
+      parsed.filters.forEach((f) => { const fv = (f.match(/\?[A-Za-z0-9_]+/g) || []).map((x) => x.slice(1)); if (fv.every((v) => gVars.includes(v))) sub += "  " + f + "\n"; });
+      if (shared.length) {
+        const tuples = [...new Set(table.map((r) => JSON.stringify(shared.map((v) => r[v]))))].slice(0, cap).map((s) => JSON.parse(s)).filter((t) => t.every((x) => x != null));
+        if (!tuples.length) return { vars: parsed.selVars === "*" ? [] : parsed.selVars, rows: [], groups: order.length };
+        sub += "  VALUES (" + shared.map((v) => "?" + v).join(" ") + ") {\n" +
+          tuples.map((t) => "    (" + t.join(" ") + ")").join("\n") + "\n  }\n";
+      }
+      sub += "}";
+      const rows = await runOnSource(sources[si], sub);
+      table = shared.length ? fedHashJoin(table, rows, shared)
+        : (table.length === 1 && !Object.keys(table[0]).length) ? rows
+        : (() => { const o = []; for (const l of table) for (const r of rows) o.push(Object.assign({}, l, r)); return o; })();
+      gVars.forEach((v) => bound.add(v));
+      if (!table.length) break;
+    }
+    let res = table;
+    if (parsed.selVars !== "*") res = res.map((r) => { const o = {}; parsed.selVars.forEach((v) => { if (r[v] != null) o[v] = r[v]; }); return o; });
+    const seen = new Set(), uniq = [];
+    for (const r of res) { const k = JSON.stringify(r); if (!seen.has(k)) { seen.add(k); uniq.push(r); } }
+    res = uniq;
+    if (parsed.limit) res = res.slice(0, parsed.limit);
+    return { vars: parsed.selVars === "*" ? [...new Set(res.flatMap((r) => Object.keys(r)))] : parsed.selVars, rows: res, groups: order.length, assign };
+  }
+  // Distinct-predicate set per source (cached). Endpoints are wildcards (null).
+  function fedSourcePreds(src) {
+    if (src.kind === "endpoint") return Promise.resolve(null);
+    if (src._preds) return Promise.resolve(src._preds);
+    return querySource(src, "SELECT DISTINCT ?p WHERE { ?s ?p ?o }", "select").then((r) => {
+      const set = new Set();
+      (r.rows || []).forEach((row) => { const p = row.p; if (p && p[0] === "<") set.add(p.slice(1, -1)); });
+      src._preds = set;
+      return set;
+    });
+  }
+
+  // Try the cross-source join; on any miss, fall back to the union behaviour.
   function runFederated(q, fmt) {
+    const parsed = fedParse(q);
+    if (!parsed || !state.fedSources.length) return runFederatedUnion(q, fmt);
+    const sources = allFedSources();
+    $("out").innerHTML = netSpinner("planning a cross-source join…");
+    updateResultVisibility();
+    const t0 = performance.now();
+    Promise.all(sources.map((s) => fedSourcePreds(s).then((preds) => Object.assign({}, s, { preds })).catch(() => Object.assign({}, s, { preds: null }))))
+      .then((withPreds) => {
+        const assign = fedRoute(parsed, withPreds);
+        if (new Set(assign).size < 2) return runFederatedUnion(q, fmt); // all one source → union
+        const run = (src, sub) => querySource(src, sub, "select").then((r) => r.rows || []);
+        return fedJoinExec(parsed, withPreds, run).then((out) => {
+          if (!out) return runFederatedUnion(q, fmt);
+          fedRenderJoin(out, parsed, q, fmt, withPreds, performance.now() - t0);
+        });
+      })
+      .catch(() => runFederatedUnion(q, fmt));
+  }
+  function fedRenderJoin(out, parsed, q, fmt, sources, dt) {
+    const merged = { kind: "select", vars: out.vars, rows: out.rows };
+    const renderFmt = ROW_VIEWS.has(fmt) && fmt !== "graph" ? fmt : "table";
+    const summary = renderResult(merged, renderFmt);
+    const rows = parsed.patterns.map((p, i) =>
+      `<tr><td class="num">${out.assign[i] != null ? esc(sources[out.assign[i]].label) : "?"}</td><td>${esc(p.s + " " + p.p + " " + p.o)}</td></tr>`).join("");
+    const banner = `<div class="fed-banner"><div class="fed-banner-head">Cross-source JOIN — ${out.rows.length} joined row(s) across ${out.groups} sources</div>` +
+      `<table><tbody>${rows}</tbody></table></div>`;
+    $("out").innerHTML = banner + $("out").innerHTML;
+    state.lastResult = { res: merged, rowShaped: true, q, strategy: "federated", remote: false, dataset: state.dataset, federated: true, fedBannerHtml: banner };
+    $("qmeta").textContent = `${summary} · cross-source join · ${dt.toFixed(0)} ms`;
+    updateResultVisibility();
+  }
+
+  function runFederatedUnion(q, fmt) {
     const kind = detectQueryKind(q);
     const sources = allFedSources();
     $("commOut").innerHTML = "";

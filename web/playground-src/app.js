@@ -1612,6 +1612,11 @@ self.onmessage = function (e) {
     resetFed();
     if (Array.isArray(ex.fed) && ex.fed.length) {
       ex.fed.forEach((k) => {
+        // An entry can be a dataset key, or {endpoint, label} for a live SPARQL endpoint.
+        if (k && typeof k === "object" && k.endpoint) {
+          state.fedSources.push({ id: "f" + (++fedSeq), kind: "endpoint", label: k.label || shortUrlLabel(k.endpoint), endpoint: k.endpoint });
+          return;
+        }
         if (k === state.dataset || !datasetInfo(k)) return;
         state.fedSources.push(isEmbedded(k)
           ? { id: "f" + (++fedSeq), kind: "memory", label: dsShortLabel(k), key: k }
@@ -4200,7 +4205,169 @@ self.onmessage = function (e) {
       `<table><tbody>${lines}</tbody></table></div>`;
   }
 
+  // ── Cross-source BGP join ────────────────────────────────────────────────
+  // The union path (runFederatedUnion) runs the WHOLE query on each source and
+  // merges. This instead decomposes ONE basic graph pattern ACROSS sources — by
+  // predicate + variable provenance — and bound-joins them (VALUES injection), so
+  // a query like `?p owl:sameAs ?wd . ?wd wdt:P19 ?birthplace` resolves ?p/?wd on a
+  // .rete source and ?birthplace on a live Wikidata endpoint, joined on ?wd.
+  // Proven end-to-end in dev/fedjoin.cjs. Parses flat BGPs only; bails (→ null,
+  // → union fallback) on OPTIONAL/UNION/SERVICE/subselect/property-paths.
+  const FED_TOK = /<[^>]*>|"(?:[^"\\]|\\.)*"(?:@[\w-]+|\^\^<[^>]*>)?|\?[A-Za-z0-9_]+|[A-Za-z0-9_]+:[A-Za-z0-9_./%~#-]*|[A-Za-z_][A-Za-z0-9_]*|[.;,]|\S/g;
+  const fedIsVar = (t) => typeof t === "string" && t[0] === "?";
+  const fedVn = (t) => t.slice(1);
+  function fedParseTriples(where) {
+    const toks = where.match(FED_TOK);
+    if (!toks) return [];
+    const out = []; let s = null, p = null, k = 0;
+    for (const t of toks) {
+      if (t === ".") { s = p = null; k = 0; continue; }
+      if (t === ";") { p = null; k = 1; continue; }
+      if (t === ",") { k = 2; continue; }
+      if (k === 0) { s = t; k = 1; }
+      else if (k === 1) { p = (t === "a") ? "rdf:type" : t; k = 2; }
+      else out.push({ s, p, o: t });
+    }
+    return out;
+  }
+  function fedParse(q) {
+    q = q.replace(/^\s*#.*$/gm, "");
+    const prefixes = {}, prefixLines = []; let m;
+    const re = /PREFIX\s+([A-Za-z0-9_-]*):\s*<([^>]*)>/gi;
+    while ((m = re.exec(q))) { prefixes[m[1]] = m[2]; prefixLines.push(m[0]); }
+    const sm = /SELECT\s+(DISTINCT\s+|REDUCED\s+)?(.+?)\s+WHERE/is.exec(q);
+    if (!sm) return null;
+    const selVars = sm[2].trim() === "*" ? "*" : (sm[2].match(/\?[A-Za-z0-9_]+/g) || []).map(fedVn);
+    if (selVars !== "*" && /\(/.test(sm[2])) return null;   // aggregates/expressions → union
+    const wi = q.search(/WHERE\s*\{/i); if (wi < 0) return null;
+    let i = q.indexOf("{", wi), depth = 0, end = -1;
+    for (let j = i; j < q.length; j++) { if (q[j] === "{") depth++; else if (q[j] === "}") { depth--; if (!depth) { end = j; break; } } }
+    if (end < 0) return null;
+    let where = q.slice(i + 1, end);
+    if (/\b(OPTIONAL|UNION|SERVICE|MINUS|GROUP\s+BY|BIND|VALUES)\b|\{/i.test(where)) return null;
+    if (/[?\w):>]\s*[*+?]\s*[<?]/.test(where)) return null; // property paths
+    const filters = [];
+    where = where.replace(/FILTER\s*\(((?:[^()]|\([^()]*\))*)\)/gi, (mm, inner) => { filters.push("FILTER(" + inner + ")"); return " "; });
+    const patterns = fedParseTriples(where);
+    if (!patterns.length) return null;
+    const lm = /\bLIMIT\s+(\d+)/i.exec(q);
+    return { prefixes, prefixBlock: prefixLines.join("\n"), distinct: !!sm[1], selVars, patterns, filters, limit: lm ? +lm[1] : null };
+  }
+  function fedExpandIri(t, prefixes) {
+    if (t[0] === "<" && t.endsWith(">")) return t.slice(1, -1);
+    const m = /^([A-Za-z0-9_-]*):([A-Za-z0-9_./%~#-]*)$/.exec(t);
+    if (m && prefixes[m[1]] != null) return prefixes[m[1]] + m[2];
+    if (t === "rdf:type") return "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    return t;
+  }
+  const fedPatVars = (pat) => [pat.s, pat.p, pat.o].filter(fedIsVar).map(fedVn);
+  function fedRoute(parsed, sources) {
+    const can = (src, pred) => src.preds === null || (pred !== null && src.preds.has(pred));
+    const owner = {}, assign = new Array(parsed.patterns.length).fill(-1);
+    parsed.patterns.forEach((pat, idx) => {
+      const pred = fedIsVar(pat.p) ? null : fedExpandIri(pat.p, parsed.prefixes);
+      let si = -1;
+      if (fedIsVar(pat.s) && owner[fedVn(pat.s)] != null && can(sources[owner[fedVn(pat.s)]], pred)) si = owner[fedVn(pat.s)];
+      if (si < 0 && pred !== null) {
+        const sp = sources.findIndex((s) => s.preds !== null && s.preds.has(pred));
+        si = sp >= 0 ? sp : sources.findIndex((s) => s.preds === null);
+      }
+      if (si < 0) si = 0;
+      assign[idx] = si;
+      [pat.s, pat.o].forEach((tm) => { if (fedIsVar(tm) && owner[fedVn(tm)] == null) owner[fedVn(tm)] = si; });
+    });
+    return assign;
+  }
+  function fedHashJoin(left, right, keys) {
+    const idx = new Map();
+    for (const r of right) { const k = JSON.stringify(keys.map((v) => r[v])); if (!idx.has(k)) idx.set(k, []); idx.get(k).push(r); }
+    const out = [];
+    for (const l of left) for (const r of (idx.get(JSON.stringify(keys.map((v) => l[v]))) || [])) out.push(Object.assign({}, l, r));
+    return out;
+  }
+  async function fedJoinExec(parsed, sources, runOnSource, cap) {
+    cap = cap || 250;
+    const assign = fedRoute(parsed, sources);
+    const order = [], groups = new Map();
+    assign.forEach((si, i) => { if (!groups.has(si)) { groups.set(si, []); order.push(si); } groups.get(si).push(parsed.patterns[i]); });
+    if (order.length < 2) return null;
+    let table = [{}], bound = new Set();
+    for (const si of order) {
+      const pats = groups.get(si);
+      const gVars = [...new Set(pats.flatMap(fedPatVars))];
+      const shared = gVars.filter((v) => bound.has(v));
+      let sub = parsed.prefixBlock + "\nSELECT DISTINCT " + gVars.map((v) => "?" + v).join(" ") + " WHERE {\n" +
+        pats.map((p) => `  ${p.s} ${p.p} ${p.o} .`).join("\n") + "\n";
+      parsed.filters.forEach((f) => { const fv = (f.match(/\?[A-Za-z0-9_]+/g) || []).map((x) => x.slice(1)); if (fv.every((v) => gVars.includes(v))) sub += "  " + f + "\n"; });
+      if (shared.length) {
+        const tuples = [...new Set(table.map((r) => JSON.stringify(shared.map((v) => r[v]))))].slice(0, cap).map((s) => JSON.parse(s)).filter((t) => t.every((x) => x != null));
+        if (!tuples.length) return { vars: parsed.selVars === "*" ? [] : parsed.selVars, rows: [], groups: order.length };
+        sub += "  VALUES (" + shared.map((v) => "?" + v).join(" ") + ") {\n" +
+          tuples.map((t) => "    (" + t.join(" ") + ")").join("\n") + "\n  }\n";
+      }
+      sub += "}";
+      const rows = await runOnSource(sources[si], sub);
+      table = shared.length ? fedHashJoin(table, rows, shared)
+        : (table.length === 1 && !Object.keys(table[0]).length) ? rows
+        : (() => { const o = []; for (const l of table) for (const r of rows) o.push(Object.assign({}, l, r)); return o; })();
+      gVars.forEach((v) => bound.add(v));
+      if (!table.length) break;
+    }
+    let res = table;
+    if (parsed.selVars !== "*") res = res.map((r) => { const o = {}; parsed.selVars.forEach((v) => { if (r[v] != null) o[v] = r[v]; }); return o; });
+    const seen = new Set(), uniq = [];
+    for (const r of res) { const k = JSON.stringify(r); if (!seen.has(k)) { seen.add(k); uniq.push(r); } }
+    res = uniq;
+    if (parsed.limit) res = res.slice(0, parsed.limit);
+    return { vars: parsed.selVars === "*" ? [...new Set(res.flatMap((r) => Object.keys(r)))] : parsed.selVars, rows: res, groups: order.length, assign };
+  }
+  // Distinct-predicate set per source (cached). Endpoints are wildcards (null).
+  function fedSourcePreds(src) {
+    if (src.kind === "endpoint") return Promise.resolve(null);
+    if (src._preds) return Promise.resolve(src._preds);
+    return querySource(src, "SELECT DISTINCT ?p WHERE { ?s ?p ?o }", "select").then((r) => {
+      const set = new Set();
+      (r.rows || []).forEach((row) => { const p = row.p; if (p && p[0] === "<") set.add(p.slice(1, -1)); });
+      src._preds = set;
+      return set;
+    });
+  }
+
+  // Try the cross-source join; on any miss, fall back to the union behaviour.
   function runFederated(q, fmt) {
+    const parsed = fedParse(q);
+    if (!parsed || !state.fedSources.length) return runFederatedUnion(q, fmt);
+    const sources = allFedSources();
+    $("out").innerHTML = netSpinner("planning a cross-source join…");
+    updateResultVisibility();
+    const t0 = performance.now();
+    Promise.all(sources.map((s) => fedSourcePreds(s).then((preds) => Object.assign({}, s, { preds })).catch(() => Object.assign({}, s, { preds: null }))))
+      .then((withPreds) => {
+        const assign = fedRoute(parsed, withPreds);
+        if (new Set(assign).size < 2) return runFederatedUnion(q, fmt); // all one source → union
+        const run = (src, sub) => querySource(src, sub, "select").then((r) => r.rows || []);
+        return fedJoinExec(parsed, withPreds, run).then((out) => {
+          if (!out) return runFederatedUnion(q, fmt);
+          fedRenderJoin(out, parsed, q, fmt, withPreds, performance.now() - t0);
+        });
+      })
+      .catch(() => runFederatedUnion(q, fmt));
+  }
+  function fedRenderJoin(out, parsed, q, fmt, sources, dt) {
+    const merged = { kind: "select", vars: out.vars, rows: out.rows };
+    const renderFmt = ROW_VIEWS.has(fmt) && fmt !== "graph" ? fmt : "table";
+    const summary = renderResult(merged, renderFmt);
+    const rows = parsed.patterns.map((p, i) =>
+      `<tr><td class="num">${out.assign[i] != null ? esc(sources[out.assign[i]].label) : "?"}</td><td>${esc(p.s + " " + p.p + " " + p.o)}</td></tr>`).join("");
+    const banner = `<div class="fed-banner"><div class="fed-banner-head">Cross-source JOIN — ${out.rows.length} joined row(s) across ${out.groups} sources</div>` +
+      `<table><tbody>${rows}</tbody></table></div>`;
+    $("out").innerHTML = banner + $("out").innerHTML;
+    state.lastResult = { res: merged, rowShaped: true, q, strategy: "federated", remote: false, dataset: state.dataset, federated: true, fedBannerHtml: banner };
+    $("qmeta").textContent = `${summary} · cross-source join · ${dt.toFixed(0)} ms`;
+    updateResultVisibility();
+  }
+
+  function runFederatedUnion(q, fmt) {
     const kind = detectQueryKind(q);
     const sources = allFedSources();
     $("commOut").innerHTML = "";
