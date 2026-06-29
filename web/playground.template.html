@@ -188,7 +188,7 @@ __PLAYGROUND_CSS__
         </div>
         <div class="console-controls">
         <div id="fedBar" class="fed-bar">
-          <span class="fed-label" title="Run this query across more than one source and merge the results (UNION + dedup), each fetched lazily.">Sources</span>
+          <span class="fed-label" title="Run this query across more than one source (other .rete files or a live SPARQL endpoint). If the query's patterns span sources, it does a cross-source JOIN (use 🔍 Plan to preview the routing); otherwise a UNION + dedup. Each source is fetched lazily.">Sources</span>
           <div id="fedChips" class="fed-chips"></div>
           <div class="fed-add-wrap">
             <button id="fedAdd" type="button" class="fed-add" title="Federate: add another .rete or a SPARQL endpoint and run the query across all of them">+ Add source</button>

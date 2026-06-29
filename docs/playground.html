@@ -1252,7 +1252,19 @@ textarea {
   border-radius: 50%;
 }
 .fed-chip .fed-x:hover { color: #b4453a; background: rgba(180,69,58,.1); }
-.fed-add-wrap { position: relative; }
+/* cross-source join: dry-run "Plan" button + the plan output */
+.fed-plan { border: 1px solid var(--line); background: var(--side); color: var(--ink); border-radius: 6px; padding: 2px 8px; font-size: 11.5px; cursor: pointer; }
+.fed-plan:hover { background: var(--accent-dark); color: #fff; border-color: var(--accent-dark); }
+.fed-plan-out { font-size: 12.5px; }
+.fed-plan-out h4 { margin: 12px 2px 6px; font-size: 13px; }
+.fed-plan-route { width: 100%; border-collapse: collapse; }
+.fed-plan-route th, .fed-plan-route td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.fed-plan-route th { color: var(--muted); font-weight: 600; }
+.fed-plan-route td:first-child { white-space: nowrap; font-weight: 600; color: var(--accent-dark); }
+.fed-plan-route code { font-size: 12px; }
+.fed-plan-step { margin: 6px 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.fed-plan-src { background: var(--side); padding: 5px 9px; font-weight: 600; font-size: 12px; }
+.fed-plan-step pre { margin: 0; padding: 8px 9px; font-size: 11.5px; overflow-x: auto; white-space: pre; }
 .fed-add {
   border: 1px dashed var(--line, #c5d2cc);
   background: none;
@@ -2828,7 +2840,7 @@ td.lit { color: var(--ink); }
         </div>
         <div class="console-controls">
         <div id="fedBar" class="fed-bar">
-          <span class="fed-label" title="Run this query across more than one source and merge the results (UNION + dedup), each fetched lazily.">Sources</span>
+          <span class="fed-label" title="Run this query across more than one source (other .rete files or a live SPARQL endpoint). If the query's patterns span sources, it does a cross-source JOIN (use 🔍 Plan to preview the routing); otherwise a UNION + dedup. Each source is fetched lazily.">Sources</span>
           <div id="fedChips" class="fed-chips"></div>
           <div class="fed-add-wrap">
             <button id="fedAdd" type="button" class="fed-add" title="Federate: add another .rete or a SPARQL endpoint and run the query across all of them">+ Add source</button>
@@ -13591,9 +13603,55 @@ self.onmessage = function (e) {
       `<span class="fed-chip"><span class="fed-chip-name" title="${esc(s.label)}">${esc(s.label)}</span>` +
       `<span class="fed-chip-kind">${s.kind === "remote" ? "lazy" : s.kind === "endpoint" ? "endpoint" : "in-memory"}</span>` +
       `<button type="button" class="fed-x" data-fedremove="${s.id}" title="Remove this source" aria-label="Remove ${esc(s.label)}">×</button></span>`).join("");
-    chips.innerHTML = self + extra;
+    chips.innerHTML = self + extra +
+      (fedActive() ? `<button type="button" class="fed-plan" id="fedPlanBtn" title="Dry run: preview WHICH source answers each triple pattern and the sub-queries that would run — without executing the join">🔍 Plan</button>` : "");
+    const pb = $("fedPlanBtn"); if (pb) pb.onclick = () => fedDryRun($("q").value);
     const run = $("run");
     if (run && run.textContent !== "Cancel") run.textContent = fedActive() ? "Run federated" : "Run Query";
+  }
+  // Dry run: show the join plan (pattern → source routing + the per-source sub-queries)
+  // WITHOUT executing the join. The only source contact is each source's predicate list
+  // (metadata, cached and reused by the real run).
+  function fedDryRun(q) {
+    $("commOut").innerHTML = "";
+    const parsed = fedParse(q);
+    if (!parsed) {
+      $("out").innerHTML = note("Not a flat BGP the cross-source planner handles (OPTIONAL / UNION / aggregates / property paths). Federation would run this as a UNION — the whole query on each source, results merged.");
+      updateResultVisibility(); return;
+    }
+    const sources = allFedSources();
+    $("out").innerHTML = netSpinner("planning the join (reading predicate lists)…");
+    updateResultVisibility();
+    Promise.all(sources.map((s) => fedSourcePreds(s).then((preds) => Object.assign({}, s, { preds })).catch(() => Object.assign({}, s, { preds: null }))))
+      .then((withPreds) => {
+        const assign = fedRoute(parsed, withPreds);
+        const nSrc = new Set(assign).size;
+        const routeRows = parsed.patterns.map((p, i) =>
+          `<tr><td>${esc(withPreds[assign[i]].label)}</td><td><code>${esc(p.s + " " + p.p + " " + p.o)}</code></td></tr>`).join("");
+        const order = [], groups = new Map();
+        assign.forEach((si, i) => { if (!groups.has(si)) { groups.set(si, []); order.push(si); } groups.get(si).push(parsed.patterns[i]); });
+        let bound = new Set(), subs = "";
+        for (const si of order) {
+          const pats = groups.get(si);
+          const gVars = [...new Set(pats.flatMap(fedPatVars))];
+          const shared = gVars.filter((v) => bound.has(v));
+          let sub = parsed.prefixBlock + "\nSELECT DISTINCT " + gVars.map((v) => "?" + v).join(" ") + " WHERE {\n" +
+            pats.map((p) => `  ${p.s} ${p.p} ${p.o} .`).join("\n") + "\n";
+          parsed.filters.forEach((f) => { const fv = (f.match(/\?[A-Za-z0-9_]+/g) || []).map((x) => x.slice(1)); if (fv.every((v) => gVars.includes(v))) sub += "  " + f + "\n"; });
+          if (shared.length) sub += "  VALUES (" + shared.map((v) => "?" + v).join(" ") + ") {  …keys bound by earlier sources, ≤250  }\n";
+          sub += "}";
+          subs += `<div class="fed-plan-step"><div class="fed-plan-src">${esc(withPreds[si].label)}${shared.length ? " · joins on " + shared.map((v) => "?" + v).join(", ") : " · seed (runs first)"}</div><pre>${esc(sub)}</pre></div>`;
+          gVars.forEach((v) => bound.add(v));
+        }
+        const verdict = nSrc < 2
+          ? `<p class="note">Every pattern routes to one source — this would run as a normal query / UNION, not a cross-source join.</p>`
+          : `<p class="microcopy">Cross-source JOIN across <b>${nSrc}</b> sources — executed left-to-right (bound-join: each step's keys VALUES-injected into the next, ≤250 per hop). This is a preview; no join was run.</p>`;
+        $("out").innerHTML = `<div class="fed-plan-out"><h4>Join plan — pattern routing</h4>${verdict}` +
+          `<table class="fed-plan-route"><thead><tr><th>Source</th><th>Triple pattern</th></tr></thead><tbody>${routeRows}</tbody></table>` +
+          (nSrc >= 2 ? `<h4>Sub-queries (one per source)</h4>${subs}` : "") + `</div>`;
+        updateResultVisibility();
+      })
+      .catch((e) => { $("out").innerHTML = note("Plan failed: " + String((e && e.message) || e)); updateResultVisibility(); });
   }
   function resetFed() {
     state.fedSources = [];
