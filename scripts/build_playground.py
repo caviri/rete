@@ -162,6 +162,10 @@ DATASETS = [
     # causalgraph: the Fraunhofer IWU causal-graph ontology (OWL→NT via owlready2)
     # + an example Industry-4.0 causal model (scripts/causalgraph_example.py). MIT.
     ("causalgraph", "causalgraph.rete"),
+    # Linear A — the complete undeciphered Minoan corpus (1,721 inscriptions linked
+    # through their signs & word-sequences). scripts/lineara_to_nt.js from the
+    # mwenge/lineara.xyz LinearA Explorer (GORILA/Douros text; images © EFA excluded).
+    ("lineara", "lineara.rete"),
     # Remote-lazy (served from the bucket, NOT embedded; see catalog.js): getty-ulan,
     # history, mmm, orkg, factgrid-illuminati, wikidata-1GB/100mb, ohm-full, chemotion,
     # chebi-full, causenet-full. Dropped entirely: citations (synthetic), typed, deps.
