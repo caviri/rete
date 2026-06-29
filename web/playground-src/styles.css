@@ -2411,6 +2411,15 @@ th .coltype.coltype-on {
 .mapview svg.has-base .mline { fill: none; stroke: #ff3b1f; stroke-width: 1.6; }
 .mapview svg.has-base .mpt { fill: #ff3b1f; stroke: #fff; stroke-width: 1; }
 .mapview svg.has-base .mgeo:hover, .mapview svg.has-base .mline:hover { stroke-width: 2.6; }
+/* per-cell geo mini-map (a WKT geometry rendered as a small locator) */
+.geo-cell { padding: 4px 6px; }
+.geo-cell svg { width: 108px; height: auto; display: block; background: #f3f7f5; border-radius: 6px; }
+.geo-cell .geo-bd { fill: none; stroke: var(--line); stroke-width: 1; }
+.geo-cell .geo-grid { stroke: rgba(110, 130, 124, .32); stroke-width: .5; }
+.geo-cell .geo-tick { fill: var(--muted); font-size: 6px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.geo-cell .geo-pt { fill: #ff3b1f; stroke: #fff; stroke-width: .6; }
+.geo-cell .geo-poly { fill: rgba(255, 90, 40, .30); stroke: #ff3b1f; stroke-width: .8; }
+.geo-cell .geo-line { fill: none; stroke: #ff3b1f; stroke-width: 1; }
 
 /* Time view — a GitHub-style multi-year heatmap; cell colour = item count. */
 .timeview { padding: 4px 2px 2px; }

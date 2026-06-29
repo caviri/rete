@@ -1079,7 +1079,7 @@ CONSTRUCT { ?a ex:crossFieldCite ?b } WHERE {
         family: "Geo",
         label: "Map: territories of 1914",
         view: "map",
-        tip: "Switch Output → Map. Binds each 1914 border's geometry (geo:asWKT), so the polygons plot on the offline map; ?territory is each feature's hover label.",
+        tip: "Switch Output → Map for the whole picture (try the new Basemap dropdown). Or stay on Table: the ?w geometry column renders a per-row mini-map — each 1914 border drawn in its own square with lat-lon ticks. ?territory is the label.",
         q: `PREFIX geo: <http://www.opengis.net/ont/geosparql#>
 PREFIX ex: <http://ex/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>

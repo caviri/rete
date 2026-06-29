@@ -3027,6 +3027,87 @@ self.onmessage = function (e) {
       });
     });
   }
+  // ---- geo mini-map cells ---------------------------------------------------
+  // A WKT geometry literal (geo:wktLiteral: POINT / POLYGON / LINESTRING …) drawn
+  // as a small square locator map — the dot/shape on a light frame with lat-lon
+  // ticks on the borders. A lone point sits on a cached world basemap tile (one
+  // shared, cached request) for "where on Earth" context; a shape fits its own
+  // bbox so you can read it. Fully offline for shapes (graticule only).
+  let geoSeq = 0;
+  function looksWktGeo(v) { return WKT_RE.test(String(v)); }
+  function geoDecimate(ring, cap) {
+    if (ring.length <= cap) return ring;
+    const step = ring.length / cap, out = [];
+    for (let i = 0; i < ring.length - 1; i += step) out.push(ring[Math.floor(i)]);
+    out.push(ring[ring.length - 1]);
+    return out;
+  }
+  // ~`want` round-number ticks spanning [lo,hi] (… −90, 0, 90 …).
+  function geoTicks(lo, hi, want) {
+    const span = hi - lo;
+    if (!(span > 0)) return [lo];
+    const raw = span / want, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const nrm = raw / mag, step = (nrm >= 5 ? 5 : nrm >= 2 ? 2 : 1) * mag;
+    const out = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9 && out.length < 8; v += step)
+      out.push(Math.round(v / step) * step);
+    return out;
+  }
+  const fmtDeg = (v) => (Math.abs(v) < 1e-9 ? "0" : (v < 0 ? "−" : "") + (Math.abs(v) % 1 ? Math.abs(v).toFixed(1) : String(Math.abs(v)))) + "°";
+
+  function geoCell(t) {
+    let rings = wktRings(t.value);
+    if (!rings.length) return `<td class="lit" title="${esc(t.value)}">${esc(shorten(t.value, 60))}</td>`;
+    // Keep the largest rings (the visually significant ones) and decimate each, so
+    // a many-island MULTIPOLYGON stays a cheap thumbnail rather than 10k SVG points.
+    rings = rings.sort((a, b) => b.length - a.length).slice(0, 40).map((r) => geoDecimate(r, 120));
+    let minX = 180, maxX = -180, minY = 90, maxY = -90;
+    for (const r of rings) for (const [x, y] of r) {
+      if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    const isPoint = rings.length === 1 && rings[0].length === 1;
+    const ext = Math.max(maxX - minX, maxY - minY);
+    const gutL = 16, gutB = 12, mapW = 86, mapH = 86, vbW = gutL + mapW, vbH = mapH + gutB;
+
+    let sx, sy, bg = "", lonTicks, latTicks;
+    if (isPoint || ext < 5e-4) {
+      // World Web-Mercator frame on a cached z0 basemap tile (same URL for every
+      // point cell → one real network fetch, then served from cache).
+      sx = (lon) => gutL + lon2wx(lon) * mapW;
+      sy = (lat) => lat2wy(lat) * mapH;
+      bg = `<image href="https://a.basemaps.cartocdn.com/light_all/0/0/0.png" x="${gutL}" y="0" width="${mapW}" height="${mapH}" preserveAspectRatio="none" />`;
+      lonTicks = [-90, 0, 90]; latTicks = [60, 0, -60];
+    } else {
+      // Local equirectangular fit to the geometry bbox (uniform, ~16% margin).
+      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, half = ext * 0.58;
+      const loX = cx - half, loY = cy - half;
+      sx = (lon) => gutL + ((lon - loX) / (2 * half)) * mapW;
+      sy = (lat) => ((cy + half - lat) / (2 * half)) * mapH;
+      lonTicks = geoTicks(loX, cx + half, 3); latTicks = geoTicks(loY, cy + half, 3);
+      for (const lon of lonTicks) { const x = sx(lon).toFixed(1); bg += `<line class="geo-grid" x1="${x}" y1="0" x2="${x}" y2="${mapH}"/>`; }
+      for (const lat of latTicks) { const y = sy(lat).toFixed(1); bg += `<line class="geo-grid" x1="${gutL}" y1="${y}" x2="${vbW}" y2="${y}"/>`; }
+    }
+    let geo = "";
+    for (const r of rings) {
+      if (r.length === 1) { const [x, y] = r[0]; geo += `<circle class="geo-pt" cx="${sx(x).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="2.6"/>`; }
+      else {
+        const pts = r.map(([x, y]) => `${sx(x).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
+        geo += /POLYGON/i.test(t.value) ? `<polygon class="geo-poly" points="${pts}"/>` : `<polyline class="geo-line" points="${pts}"/>`;
+      }
+    }
+    let ticks = "";
+    for (const lon of lonTicks) { const x = sx(lon); if (x < gutL - 1 || x > vbW + 1) continue; ticks += `<text class="geo-tick" x="${Math.min(vbW - 1, Math.max(gutL + 1, x)).toFixed(1)}" y="${vbH - 3}" text-anchor="middle">${esc(fmtDeg(lon))}</text>`; }
+    for (const lat of latTicks) { const y = sy(lat); if (y < -1 || y > mapH + 1) continue; ticks += `<text class="geo-tick" x="${gutL - 2}" y="${Math.min(mapH - 1, Math.max(6, y + 2)).toFixed(1)}" text-anchor="end">${esc(fmtDeg(lat))}</text>`; }
+    const id = "gc" + ++geoSeq;
+    const title = isPoint ? `POINT ${minX.toFixed(4)}, ${minY.toFixed(4)}`
+      : `bbox ${minX.toFixed(3)},${minY.toFixed(3)} … ${maxX.toFixed(3)},${maxY.toFixed(3)}`;
+    return `<td class="geo-cell" title="${esc(title)}">` +
+      `<svg viewBox="0 0 ${vbW} ${vbH}" role="img" aria-label="map preview of ${esc(title)}">` +
+      `<clipPath id="${id}"><rect x="${gutL}" y="0" width="${mapW}" height="${mapH}"/></clipPath>` +
+      `<g clip-path="url(#${id})">${bg}${geo}</g>` +
+      `<rect class="geo-bd" x="${gutL}" y="0" width="${mapW}" height="${mapH}"/>${ticks}</svg></td>`;
+  }
+
   // The default per-value heuristic (the behaviour for type "auto").
   function autoCell(t, raw) {
     if (t.iri) {
@@ -3036,6 +3117,7 @@ self.onmessage = function (e) {
       if (looksWebUrl(t.value)) return linkCell(t);     // a dereferenceable web URL
       return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
     }
+    if (looksWktGeo(t.value)) return geoCell(t);          // a WKT geometry → mini-map locator
     const num = t.datatype && NUM_DT.test(t.datatype);
     const lang = t.lang ? ` <span class="t-lang">@${esc(t.lang)}</span>` : "";
     return `<td class="lit${num ? " num" : ""}" title="${esc(raw)}">${esc(shorten(t.value, 110))}${lang}</td>`;
@@ -3052,6 +3134,7 @@ self.onmessage = function (e) {
       }
       case "image": return imageCell(t);
       case "iiif": return iiifCell(t);
+      case "geo": return geoCell(t);
       case "link": return linkCell(t);
       case "number": {
         const n = Number(t.value);
@@ -3067,7 +3150,7 @@ self.onmessage = function (e) {
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"],
-    ["image", "Image"], ["iiif", "IIIF"], ["number", "Number"],
+    ["image", "Image"], ["iiif", "IIIF"], ["geo", "Map"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
