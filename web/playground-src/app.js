@@ -2968,40 +2968,61 @@ self.onmessage = function (e) {
     if (!/^https?:\/\//i.test(v)) return false;
     return /\/manifest(\.json)?(\?|#|$)/i.test(v) || /\/iiif\//i.test(v);
   }
-  const iiifThumbCache = new Map(); // manifest URL → Promise<thumb URL | null>
-  function iiifThumbFromManifest(m) {
-    try {
-      const svc = (s) => {
-        s = Array.isArray(s) ? s[0] : s;
-        const id = s && (s.id || s["@id"]);
-        return id ? id.replace(/\/$/, "") + "/full/!256,256/0/default.jpg" : null;
-      };
-      let tn = m.thumbnail;
-      if (tn) {
-        tn = Array.isArray(tn) ? tn[0] : tn;
-        if (typeof tn === "string") return tn;
-        if (tn.id || tn["@id"]) return tn.id || tn["@id"];
-        if (tn.service) return svc(tn.service);
-      }
-      const r2 = m.sequences && m.sequences[0] && m.sequences[0].canvases &&
-        m.sequences[0].canvases[0] && m.sequences[0].canvases[0].images &&
-        m.sequences[0].canvases[0].images[0] && m.sequences[0].canvases[0].images[0].resource;
-      if (r2) { if (r2.service) return svc(r2.service); if (r2["@id"]) return r2["@id"]; }
-      const a3 = m.items && m.items[0] && m.items[0].items && m.items[0].items[0] &&
-        m.items[0].items[0].items && m.items[0].items[0].items[0];
-      const b3 = a3 && a3.body;
-      if (b3) { if (b3.service) return svc(b3.service); if (b3.id) return b3.id; }
-    } catch (_e) { /* ignore */ }
-    return null;
+  const iiifDocCache = new Map(); // manifest URL → Promise<{canvases:[{thumb,zoom,label}]} | null>
+  // A IIIF image resource (v2 resource / v3 body) → {thumb,zoom} via its Image API
+  // service (resizable) or the bare image id (static). Zoom capped at 1024px.
+  function iiifImageUrls(res) {
+    if (!res) return null;
+    let s = res.service; s = Array.isArray(s) ? s[0] : s;
+    const sid = s && (s.id || s["@id"]);
+    if (sid) {
+      const base = String(sid).replace(/\/$/, "");
+      return { thumb: base + "/full/!256,256/0/default.jpg", zoom: base + "/full/!1024,1024/0/default.jpg" };
+    }
+    const id = res.id || res["@id"];
+    return id ? { thumb: id, zoom: id } : null;
   }
-  function fetchIiifThumb(url) {
+  // A IIIF label (string, {@value}, or v3 language map) → plain text.
+  function iiifLabel(o) {
+    let l = o && o.label;
+    if (!l) return "";
+    if (typeof l === "string") return l;
+    if (Array.isArray(l)) l = l[0];
+    if (l && l["@value"]) return l["@value"];
+    if (l && typeof l === "object") { const v = l[Object.keys(l)[0]]; return Array.isArray(v) ? v[0] : String(v); }
+    return "";
+  }
+  // Every page/canvas of a manifest as {thumb,zoom,label} — IIIF Presentation v2
+  // (sequences→canvases→images→resource) and v3 (items→items→items→body).
+  function iiifCanvases(m) {
+    const out = [];
+    for (const seq of (m.sequences || [])) for (const cv of (seq.canvases || [])) {
+      const img = (cv.images || [])[0];
+      const u = img && iiifImageUrls(img.resource);
+      if (u) out.push(Object.assign(u, { label: iiifLabel(cv) }));
+    }
+    if (!out.length) for (const cv of (m.items || [])) {
+      const ann = cv.items && cv.items[0] && cv.items[0].items && cv.items[0].items[0];
+      let body = ann && ann.body; body = Array.isArray(body) ? body[0] : body;
+      const u = iiifImageUrls(body);
+      if (u) out.push(Object.assign(u, { label: iiifLabel(cv) }));
+    }
+    if (!out.length) {                                  // last resort: the manifest's own thumbnail
+      let tn = m.thumbnail; tn = Array.isArray(tn) ? tn[0] : tn;
+      const t = typeof tn === "string" ? tn
+        : tn && (tn.id || tn["@id"] || (tn.service && iiifImageUrls(tn) && iiifImageUrls(tn).thumb));
+      if (t) out.push({ thumb: t, zoom: t, label: "" });
+    }
+    return out;
+  }
+  function fetchIiifDoc(url) {
     const key = httpsUpgrade(url);
-    if (iiifThumbCache.has(key)) return iiifThumbCache.get(key);
+    if (iiifDocCache.has(key)) return iiifDocCache.get(key);
     const p = fetch(key, { headers: { Accept: "application/json,application/ld+json,*/*" } })
       .then((r) => (r.ok ? r.json() : null))
-      .then((m) => (m ? iiifThumbFromManifest(m) : null))
+      .then((m) => (m ? { canvases: iiifCanvases(m) } : null))
       .catch(() => null);
-    iiifThumbCache.set(key, p);
+    iiifDocCache.set(key, p);
     return p;
   }
   function iiifCell(t) {
@@ -3010,20 +3031,59 @@ self.onmessage = function (e) {
       `<a class="iri-link iiif-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
       `title="IIIF manifest — ${esc(t.value)}"><span class="spindle"></span> IIIF</a></td>`;
   }
-  // After a table is in the DOM, turn its pending IIIF cells into thumbnails.
+  // Shared floating zoom popover (one element, follows the cursor).
+  let iiifZoomEl = null;
+  function iiifZoomShow(src) {
+    if (!iiifZoomEl) { iiifZoomEl = document.createElement("div"); iiifZoomEl.className = "iiif-zoom"; iiifZoomEl.innerHTML = '<img alt="" />'; document.body.appendChild(iiifZoomEl); }
+    iiifZoomEl.querySelector("img").src = src;
+    iiifZoomEl.classList.add("show");
+  }
+  function iiifZoomMove(e) {
+    if (!iiifZoomEl) return;
+    const w = 340; let x = e.clientX + 18;
+    if (x + w > window.innerWidth) x = e.clientX - 18 - w;
+    iiifZoomEl.style.left = Math.max(6, x) + "px";
+    iiifZoomEl.style.top = Math.max(6, Math.min(e.clientY + 18, window.innerHeight - 290)) + "px";
+  }
+  function iiifZoomHide() { if (iiifZoomEl) iiifZoomEl.classList.remove("show"); }
+
+  // Turn one pending IIIF cell into a paged mini-viewer: prev/next, a jump-to-page
+  // box, and hover-to-zoom. Each page faults from the IIIF Image API only when shown.
+  function renderIiifViewer(td, url, cs) {
+    const up = httpsUpgrade(url); let i = 0;
+    td.classList.add("iiif-ready");
+    td.innerHTML = `<div class="iiif-viewer">` +
+      `<a class="iiif-frame" href="${esc(up)}" target="_blank" rel="noopener noreferrer" title="open the full IIIF viewer"><img class="cell-thumb iiif-img" loading="lazy" alt="" /></a>` +
+      `<div class="iiif-nav${cs.length <= 1 ? " single" : ""}"><button type="button" class="iiif-prev" aria-label="previous page">‹</button>` +
+      `<input class="iiif-page" type="text" inputmode="numeric" aria-label="page number" /><span class="iiif-total">/ ${cs.length}</span>` +
+      `<button type="button" class="iiif-next" aria-label="next page">›</button></div></div>`;
+    const img = td.querySelector(".iiif-img"), page = td.querySelector(".iiif-page"), frame = td.querySelector(".iiif-frame");
+    const show = (n) => {
+      i = ((n % cs.length) + cs.length) % cs.length;
+      img.src = httpsUpgrade(cs[i].thumb);
+      img.setAttribute("data-zoom", httpsUpgrade(cs[i].zoom));
+      page.value = String(i + 1);
+      frame.title = (cs[i].label ? cs[i].label + " — " : "") + "open the full IIIF viewer";
+    };
+    const jump = () => { const v = parseInt(page.value, 10); if (isFinite(v)) show(v - 1); else page.value = String(i + 1); };
+    td.querySelector(".iiif-prev").addEventListener("click", (e) => { e.preventDefault(); show(i - 1); });
+    td.querySelector(".iiif-next").addEventListener("click", (e) => { e.preventDefault(); show(i + 1); });
+    page.addEventListener("change", jump);
+    page.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); jump(); } });
+    img.addEventListener("mouseenter", () => iiifZoomShow(img.getAttribute("data-zoom") || img.src));
+    img.addEventListener("mousemove", iiifZoomMove);
+    img.addEventListener("mouseleave", iiifZoomHide);
+    img.addEventListener("error", () => { if (cs.length > 1 && i < cs.length - 1) show(i + 1); });
+    show(0);
+  }
+  // After a table is in the DOM, turn its pending IIIF cells into paged viewers.
   function hydrateIiif(scope) {
     (scope || document).querySelectorAll("td.iiif-cell[data-iiif]").forEach((td) => {
       const url = td.getAttribute("data-iiif");
       td.removeAttribute("data-iiif"); // process once
-      fetchIiifThumb(url).then((thumb) => {
-        if (!thumb) return; // leave the fallback link
-        const up = httpsUpgrade(url);
-        td.innerHTML = `<a href="${esc(up)}" target="_blank" rel="noopener noreferrer" title="IIIF — ${esc(url)}">` +
-          `<img class="cell-thumb" src="${esc(httpsUpgrade(thumb))}" loading="lazy" alt="" /></a>`;
-        const img = td.querySelector("img");
-        if (img) img.addEventListener("error", () => {
-          td.innerHTML = `<a class="iri-link" href="${esc(up)}" target="_blank" rel="noopener noreferrer">IIIF</a>`;
-        });
+      fetchIiifDoc(url).then((doc) => {
+        if (!doc || !doc.canvases.length) return; // leave the fallback link
+        renderIiifViewer(td, url, doc.canvases);
       });
     });
   }

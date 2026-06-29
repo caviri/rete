@@ -2420,6 +2420,18 @@ th .coltype.coltype-on {
 .geo-cell .geo-pt { fill: #ff3b1f; stroke: #fff; stroke-width: .6; }
 .geo-cell .geo-poly { fill: rgba(255, 90, 40, .30); stroke: #ff3b1f; stroke-width: .8; }
 .geo-cell .geo-line { fill: none; stroke: #ff3b1f; stroke-width: 1; }
+/* IIIF paged viewer (per-cell): thumbnail + prev/next + jump box + hover-zoom */
+.iiif-viewer { display: inline-flex; flex-direction: column; gap: 3px; align-items: center; }
+.iiif-frame { display: block; line-height: 0; }
+.iiif-frame .iiif-img { cursor: zoom-in; }
+.iiif-nav { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--muted); }
+.iiif-nav.single { display: none; }
+.iiif-nav button { width: 18px; height: 18px; padding: 0; line-height: 1; border: 1px solid var(--line); background: var(--side); color: var(--ink); border-radius: 4px; cursor: pointer; font-size: 13px; }
+.iiif-nav button:hover { background: var(--accent-dark); color: #fff; border-color: var(--accent-dark); }
+.iiif-page { width: 32px; padding: 1px 2px; text-align: center; font: inherit; font-size: 11px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--ink); }
+.iiif-zoom { position: fixed; z-index: 9999; display: none; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: 0 10px 34px rgba(0, 0, 0, .28); pointer-events: none; }
+.iiif-zoom.show { display: block; }
+.iiif-zoom img { display: block; max-width: 320px; max-height: 260px; border-radius: 4px; }
 
 /* Time view — a GitHub-style multi-year heatmap; cell colour = item count. */
 .timeview { padding: 4px 2px 2px; }
