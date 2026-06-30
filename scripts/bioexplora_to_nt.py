@@ -75,7 +75,8 @@ SKIP_COLS = {"id", "institutionID", "collectionID", "datasetID"}
 
 # Human labels for the properties used (the authored ontology layer).
 PROP_LABELS = {
-    DWC + "scientificName": "scientific name", DWC + "vernacularName": "common name",
+    DWC + "scientificName": "scientific name", DWC + "acceptedScientificName": "accepted name",
+    DWC + "vernacularName": "common name",
     DWC + "kingdom": "kingdom", DWC + "phylum": "phylum", DWC + "class": "class",
     DWC + "order": "order", DWC + "family": "family", DWC + "genus": "genus",
     DWC + "subgenus": "subgenus", DWC + "specificEpithet": "species epithet",
@@ -116,6 +117,52 @@ def localname_subject(coll, cat, fallback):
     return BASE + "specimen/" + urllib.parse.quote(key, safe="/")
 
 
+# Shared nodes for the connected-graph layer, deduped across BOTH specimens and
+# recordings — so a Recording of "Strix aluco" hangs off the same Taxon tree (and
+# Collector / Place nodes) as the specimens, and you can traverse between them.
+_taxa, _agents, _places = {}, {}, {}
+
+
+def _node_once(reg, kind, key, label):
+    node = reg.get(key)
+    if node is None:
+        node = BASE + kind + "/" + urllib.parse.quote(key, safe="/")
+        reg[key] = node
+        t(node, RDF, iri(C + {"taxon": "Taxon", "agent": "Agent", "place": "Place"}[kind]))
+        tl(node, LBL, label)
+        _node_once.fresh = node
+    else:
+        _node_once.fresh = None
+    return node
+
+
+def link_graph(subj, get):
+    """Wire `subj` into the taxonomy tree + its collector + its country. `get` is
+    a dict-style .get over Darwin Core keys (works for an occurrence row and an
+    audio record alike)."""
+    parent = finest = None
+    for col, rank in (("kingdom", "kingdom"), ("phylum", "phylum"), ("class", "class"),
+                      ("order", "order"), ("family", "family"), ("genus", "genus"),
+                      ("scientificName", "species")):
+        val = (get(col) or "").strip()
+        if not val:
+            continue
+        node = _node_once(_taxa, "taxon", rank + "/" + val, val)
+        if _node_once.fresh:
+            tl(node, P + "rank", rank)
+            if parent:
+                t(node, P + "parentTaxon", iri(parent))
+        parent = finest = node
+    if finest:
+        t(subj, P + "taxon", iri(finest))
+    rb = (get("recordedBy") or "").strip()
+    if rb and len(rb) <= 160:
+        t(subj, P + "collectedBy", iri(_node_once(_agents, "agent", rb, rb)))
+    co = (get("country") or "").strip()
+    if co and len(co) <= 80:
+        t(subj, P + "foundIn", iri(_node_once(_places, "place", co, co)))
+
+
 def emit_ontology():
     OWL = "http://www.w3.org/2002/07/owl#"
     for cls, label, comment in [
@@ -147,21 +194,6 @@ def emit_ontology():
 def parse_occurrences():
     n_spec = n_img = n_geo = n_prev = 0
     mirror = load_image_mirror()
-    # Shared nodes for the connected-graph layer (deduped across all records).
-    taxa, agents, places = {}, {}, {}
-
-    def node_once(reg, kind, key, label):
-        node = reg.get(key)
-        if node is None:
-            node = BASE + kind + "/" + urllib.parse.quote(key, safe="/")
-            reg[key] = node
-            t(node, RDF, iri(C + {"taxon": "Taxon", "agent": "Agent", "place": "Place"}[kind]))
-            tl(node, LBL, label)
-            node_once.fresh = node  # signal "newly created" to the caller
-        else:
-            node_once.fresh = None
-        return node
-
     for r in sorted(os.listdir(DWCA)):
         occ = os.path.join(DWCA, r, "occurrence.txt")
         if not os.path.isfile(occ):
@@ -203,30 +235,8 @@ def parse_occurrences():
                         n_geo += 1
                     except ValueError:
                         pass
-                # Connected graph: a taxonomy tree (specimen → species → genus →
-                # family → … via parentTaxon), the collector, and the country —
-                # shared nodes, so you can traverse instead of matching strings.
-                parent = finest = None
-                for col, rank in (("kingdom", "kingdom"), ("phylum", "phylum"), ("class", "class"),
-                                  ("order", "order"), ("family", "family"), ("genus", "genus"),
-                                  ("scientificName", "species")):
-                    val = (row.get(col) or "").strip()
-                    if not val:
-                        continue
-                    node = node_once(taxa, "taxon", rank + "/" + val, val)
-                    if node_once.fresh:
-                        tl(node, P + "rank", rank)
-                        if parent:
-                            t(node, P + "parentTaxon", iri(parent))
-                    parent = finest = node
-                if finest:
-                    t(subj, P + "taxon", iri(finest))
-                rb = (row.get("recordedBy") or "").strip()
-                if rb and len(rb) <= 160:
-                    t(subj, P + "collectedBy", iri(node_once(agents, "agent", rb, rb)))
-                co = (row.get("country") or "").strip()
-                if co and len(co) <= 80:
-                    t(subj, P + "foundIn", iri(node_once(places, "place", co, co)))
+                # Connected graph: taxonomy tree + collector + country (shared nodes).
+                link_graph(subj, row.get)
                 seen = set()
                 for url in media.get(rid, []):
                     p = coeli_portrait(url)          # reliable S3-backed source URL
@@ -239,7 +249,7 @@ def parse_occurrences():
                         t(subj, P + "preview", iri(mirror[nid])); n_prev += 1
         sys.stderr.write("  %-14s done\n" % r)
     sys.stderr.write("specimens: %d, image links: %d (%d webp previews), georeferenced: %d\n" % (n_spec, n_img, n_prev, n_geo))
-    sys.stderr.write("graph: %d taxa, %d collectors, %d places\n" % (len(taxa), len(agents), len(places)))
+    sys.stderr.write("graph: %d taxa, %d collectors, %d places\n" % (len(_taxa), len(_agents), len(_places)))
 
 
 def emit_3d():
@@ -294,15 +304,21 @@ def emit_audio():
         tl(s, LBL, (sn + (" — " + r["vernacularName"] if r.get("vernacularName") else "")).strip(" —") or str(key))
         if r.get("audioUrl"):
             t(s, P + "audio", iri(r["audioUrl"]))
-        for k, pid in (("scientificName", DWC + "scientificName"), ("vernacularName", DWC + "vernacularName"),
+        for k, pid in (("scientificName", DWC + "scientificName"), ("acceptedScientificName", DWC + "acceptedScientificName"),
+                       ("vernacularName", DWC + "vernacularName"), ("kingdom", DWC + "kingdom"),
                        ("class", DWC + "class"), ("order", DWC + "order"), ("family", DWC + "family"),
-                       ("recordedBy", DWC + "recordedBy"), ("country", DWC + "country"),
+                       ("genus", DWC + "genus"), ("recordedBy", DWC + "recordedBy"),
+                       ("country", DWC + "country"), ("countryCode", DWC + "countryCode"),
                        ("stateProvince", DWC + "stateProvince"), ("locality", DWC + "locality"),
                        ("eventDate", DWC + "eventDate"), ("behavior", DWC + "behavior"),
+                       ("sex", DWC + "sex"), ("lifeStage", DWC + "lifeStage"),
                        ("license", DCT + "license"), ("rightsHolder", DCT + "rightsHolder"),
                        ("references", DCT + "references")):
             if r.get(k):
                 tl(s, pid, str(r[k]))
+        # connect the recording into the SAME graph as the specimens (shared
+        # Taxon / Collector / Place nodes), so a sound joins its species' specimens.
+        link_graph(s, r.get)
         la, lo = r.get("decimalLatitude"), r.get("decimalLongitude")
         if la and lo:
             try:
