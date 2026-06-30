@@ -3252,7 +3252,7 @@ self.onmessage = function (e) {
   // among these never needs the query to run again — only a re-render. The
   // serialization views (TTL/JSON-LD) are a different engine output, so they
   // still run.
-  const ROW_VIEWS = new Set(["table", "graph", "map", "time"]);
+  const ROW_VIEWS = new Set(["table", "graph", "map", "tiles", "time"]);
 
   // Changing the Output type re-renders the last result in the new view with no
   // re-run, whenever that's possible: the cached result must be row-shaped, the
@@ -4541,6 +4541,88 @@ self.onmessage = function (e) {
     return `${feats.length} mapped feature(s)`;
   }
 
+  // ---- "Tiles" view: a PMTiles vector basemap PAIRED with rete (option B) ----------
+  // A dataset may carry a PMTiles archive (tippecanoe, true per-zoom LOD, HTTP-range-
+  // served) in CATALOG.pmtiles. The Tiles output renders ALL of its geometry as vector
+  // tiles via protomaps-leaflet (Canvas on the Leaflet we already load — no WebGL), and
+  // highlights the features the current SPARQL result names. Geometry rendering goes
+  // through the tiles; rete stays the graph next to it, joined by the feature name.
+  let tilesMap = null, protomapsP = null, tilesSeq = 0;
+  function loadProtomaps() {
+    if (protomapsP) return protomapsP;
+    protomapsP = loadLeaflet().then(() => new Promise((resolve, reject) => {
+      if (window.protomapsL) return resolve(window.protomapsL);
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/protomaps-leaflet@4.0.1/dist/protomaps-leaflet.js";
+      s.onload = () => resolve(window.protomapsL);
+      s.onerror = () => reject(new Error("protomaps-leaflet load failed"));
+      document.head.appendChild(s);
+    }));
+    return protomapsP;
+  }
+  // The set of human names in a result (literal, non-geometry values) — the join key
+  // to the tiles' shapeName/NAME, so result features light up on the basemap.
+  function resultNameSet(res) {
+    const out = new Set();
+    for (const r of (res.rows || [])) for (const k in r) {
+      const v = r[k]; if (typeof v !== "string" || !v || v[0] === "<") continue;
+      const t = parseTerm(v); if (t.iri || WKT_RE.test(t.value)) continue;
+      out.add(t.value);
+    }
+    return out;
+  }
+  // The lon/lat bbox of a result's geometry column, to fit the tile map to it.
+  function resultBbox(res) {
+    const vars = res.vars || [], rows = res.rows || [];
+    const geo = detectGeoCol(vars, rows); if (!geo) return null;
+    let minX = 180, maxX = -180, minY = 90, maxY = -90, found = false;
+    for (const r of rows) {
+      const t = parseTerm(r[geo] || ""); if (!t || !WKT_RE.test(t.value)) continue;
+      for (const ring of wktRings(t.value)) for (const [x, y] of ring) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; found = true;
+      }
+    }
+    return found ? { minX, maxX, minY, maxY } : null;
+  }
+  function renderTiles(res) {
+    const pm = CATALOG.pmtiles && CATALOG.pmtiles[state.dataset];
+    if (!pm) {
+      const avail = Object.keys(CATALOG.pmtiles || {}).join(", ") || "none";
+      $("out").innerHTML = note(`The Tiles view renders a PMTiles vector basemap paired with the dataset. This one has none — available for: ${avail}.`);
+      return "no vector tiles";
+    }
+    const mySeq = ++tilesSeq;
+    const names = resultNameSet(res), bb = resultBbox(res);
+    $("out").innerHTML = `<div class="tilesview"><div id="tilesMap" class="tiles-map"></div>` +
+      `<div class="mapcap" id="tilesCap">Loading vector tiles (PMTiles)…</div></div>`;
+    loadProtomaps().then((P) => {
+      if (tilesSeq !== mySeq) return;                 // view switched away
+      const L = window.L, mapDiv = document.getElementById("tilesMap");
+      if (!L || !mapDiv) return;
+      if (tilesMap) { tilesMap.remove(); tilesMap = null; }
+      tilesMap = L.map(mapDiv, { scrollWheelZoom: true, minZoom: 0, maxZoom: 12, worldCopyJump: true }).setView([20, 0], 2);
+      const poly = (fill, stroke, width, opacity) => new P.PolygonSymbolizer({ fill, stroke, width, opacity });
+      const base = [
+        { dataLayer: "countries", symbolizer: poly("#eaf0ed", "#b3c6bc", 0.8, 1) },
+        { dataLayer: "regions", symbolizer: poly("rgba(0,0,0,0)", "#c9d6cf", 0.4, 1), minzoom: 3 },
+        { dataLayer: "districts", symbolizer: poly("rgba(0,0,0,0)", "#dbe5e0", 0.25, 1), minzoom: 5 },
+        { dataLayer: "places", symbolizer: new P.CircleSymbolizer({ radius: 1.6, fill: "#7f8f88" }), minzoom: 3 },
+      ];
+      // result features in accent, drawn over the base (one rule per polygon layer)
+      const hit = (z, f) => f && f.props && names.has(f.props.shapeName);
+      const hl = ["countries", "regions", "districts"].map((dl) => ({
+        dataLayer: dl, symbolizer: poly("#147d69", "#0c5a4b", 1.6, 0.5), filter: hit,
+      }));
+      const layer = P.leafletLayer({ url: pm.url, paintRules: base.concat(hl), maxDataZoom: 9, attribution: "© OpenStreetMap (geoBoundaries) · PMTiles" });
+      layer.addTo(tilesMap);
+      if (bb) { try { tilesMap.fitBounds([[bb.minY, bb.minX], [bb.maxY, bb.maxX]], { padding: [22, 22], maxZoom: 9 }); } catch (_e) {} }
+      setTimeout(() => { if (tilesMap && tilesSeq === mySeq) tilesMap.invalidateSize(); }, 60);
+      const cap = document.getElementById("tilesCap");
+      if (cap) cap.textContent = `PMTiles vector basemap (${pm.label}, ${pm.size}) · ${names.size} result feature(s) highlighted · pan/zoom for ADM1→ADM2 detail (true per-zoom LOD). The tiles render the geometry; rete answers the query next to them.`;
+    }).catch(() => { if (tilesSeq === mySeq) $("out").innerHTML = note("Couldn't load the vector-tile renderer (offline?)."); });
+    return `vector tiles · ${names.size} feature(s) highlighted`;
+  }
+
   // A snappy cursor-following tooltip for the map: one delegated mousemove on the
   // SVG, rAF-throttled, reading the hovered feature's data-label — instant, vs the
   // ~1s-delayed native <title> popup it replaces.
@@ -4616,6 +4698,7 @@ self.onmessage = function (e) {
     renderProgressiveInfo(progressive);
 
     if (fmt === "map") return renderMap(res);
+    if (fmt === "tiles") return renderTiles(res);
     if (fmt === "time") return renderTime(res);
 
     if (fmt === "graph") {

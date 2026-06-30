@@ -2549,6 +2549,11 @@ th .coltype.coltype-on {
   overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, .28); }
 .map-tooltip[hidden] { display: none; }
 .mapcap { font-size: 11.5px; color: var(--muted); margin-top: 7px; }
+/* Tiles view: a full PMTiles vector basemap (protomaps-leaflet on Canvas). */
+.tilesview { position: relative; }
+.tiles-map { width: 100%; height: 64vh; min-height: 360px; border: 1px solid var(--line);
+  border-radius: 8px; background: #eef3f1; }
+.tiles-map .leaflet-container { background: #eef3f1; }
 /* basemap picker + higher-contrast geometry when drawn over slippy tiles */
 .map-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .map-base-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
@@ -2875,8 +2880,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 539b1da · 2026-06-30 17:16 UTC</span>
-    <script>window.RETE_BUILD = "539b1da · 2026-06-30 17:16 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build f055c68 · 2026-06-30 17:57 UTC</span>
+    <script>window.RETE_BUILD = "f055c68 · 2026-06-30 17:57 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -3057,6 +3062,7 @@ td.lit { color: var(--ink); }
               <option value="table">Table</option>
               <option value="graph">Graph</option>
               <option value="map">Map</option>
+              <option value="tiles">Tiles</option>
               <option value="time">Time</option>
               <option value="ttl">TTL</option>
               <option value="jsonld">JSON-LD</option>
@@ -5827,6 +5833,19 @@ window.RETE_PLAYGROUND_CATALOG = {
   // `url`; for the rest the URL is derived as remoteBase/playground/<key>.rete.
   remoteBase: "https://katospiegel-rete.hf.space/data",
   remoteToken: "sfdbgf1094by21hd128ru39802",
+  // Optional vector-tile basemap PAIRED with a dataset (option B of the geo-LOD work):
+  // a PMTiles archive (tippecanoe, true per-zoom LOD, HTTP-range-served) rendered in
+  // the "Tiles" output by protomaps-leaflet, with the SPARQL result features highlighted
+  // on top. The geometry rendering goes through PMTiles; rete stays the graph next to it.
+  pmtiles: {
+    "geoadmin": {
+      url: "https://katospiegel-rete.hf.space/data/playground/geoadmin.pmtiles?token=sfdbgf1094by21hd128ru39802",
+      label: "geoadmin (OSM admin areas)",
+      size: "113 MB",
+      // tippecanoe layer → the feature property carrying the human name we join on
+      layers: { countries: "shapeName", regions: "shapeName", districts: "shapeName", places: "NAME" }
+    }
+  },
   families: ["Summary", "Select", "Path", "Aggregate", "Geo", "Construct"],
   // Median local (in-memory) query time per example, in ms — benchmarked offline
   // by dev/bench_examples.cjs (5 runs each). Drives the speed badge on each
@@ -7146,6 +7165,7 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
     ],
     "geoadmin": [
       {"family": "Aggregate", "label": "Countries of the world", "view": "map", "cols": {"c": "Area", "country": "Country", "boundary": "Boundary"}, "tip": "All 213 country polygons (geoBoundaries ADM0, OSM-derived). Output → Map draws the world; in Table view each ?boundary cell is a mini-map (coarse ~1 km). Click one to open the full map — it fetches THAT country's fine-detail (~110 m) boundary on demand (multi-LOD: only the polygon you inspect is downloaded in detail).", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?c ?country ?boundary WHERE {\n  ?c a class:Country ; g:name ?country ; geo:asWKT ?boundary .\n} LIMIT 200"},
+      {"family": "Geo", "label": "★ Vector tiles (PMTiles next to rete)", "view": "tiles", "cols": {"s": "Area", "region": "Region", "boundary": "Boundary"}, "tip": "Output → Tiles renders a 113 MB PMTiles vector basemap (tippecanoe, true per-zoom LOD) of EVERY admin area — pan/zoom and ADM1→ADM2 detail streams in, only the visible tiles fetched. The features your SPARQL returns light up in green ON the basemap: here Spain's autonomous communities. The tiles draw the geometry; rete answers the query right next to them (option B of the geo-LOD work).", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?s ?region ?boundary WHERE {\n  ?s a class:Region ; g:country \"ES\" ; g:name ?region ; geo:asWKT ?boundary .\n}"},
       {"family": "Select", "label": "One country (multi-LOD on zoom)", "view": "map", "cols": {"c": "Area", "country": "Country", "boundary": "Boundary"}, "tip": "A single country by ISO code (change \"ES\" → FR, MA, IT, KE, PH…). The cell shows the coarse ~1 km outline; click it to open the full map and the modal sharpens to the fine ~110 m boundary — fetched on demand for just this one feature (the remote-lazy LOD payoff: zoom in → fetch only what you inspect).", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nSELECT ?c ?country ?boundary WHERE {\n  ?c g:iso \"ES\" ; g:name ?country ; geo:asWKT ?boundary .\n}"},
       {"family": "Aggregate", "label": "Regions / states (admin-1)", "view": "map", "cols": {"s": "Area", "region": "Region", "boundary": "Boundary"}, "tip": "3,133 first-level admin areas (geoBoundaries ADM1). Coarse outlines in the cells; click a region's map cell and the modal fetches its fine ~110 m boundary on demand — same multi-LOD model as countries.", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?s ?region ?boundary WHERE {\n  ?s a class:Region ; g:name ?region ; geo:asWKT ?boundary .\n} LIMIT 400"},
       {"family": "Select", "label": "Districts of a country (admin-2)", "view": "map", "cols": {"district": "District", "boundary": "Boundary"}, "tip": "48,362 second-level admin areas (geoBoundaries ADM2). Here every district of Spain (ES) — change the code to FR, MA, IT… Detailed OSM boundaries; click a cell for the full zoomable map.", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?district ?boundary WHERE {\n  ?d a class:District ; g:country \"ES\" ; g:name ?district ; geo:asWKT ?boundary .\n} LIMIT 400"},
@@ -12740,7 +12760,7 @@ self.onmessage = function (e) {
   // among these never needs the query to run again — only a re-render. The
   // serialization views (TTL/JSON-LD) are a different engine output, so they
   // still run.
-  const ROW_VIEWS = new Set(["table", "graph", "map", "time"]);
+  const ROW_VIEWS = new Set(["table", "graph", "map", "tiles", "time"]);
 
   // Changing the Output type re-renders the last result in the new view with no
   // re-run, whenever that's possible: the cached result must be row-shaped, the
@@ -14029,6 +14049,88 @@ self.onmessage = function (e) {
     return `${feats.length} mapped feature(s)`;
   }
 
+  // ---- "Tiles" view: a PMTiles vector basemap PAIRED with rete (option B) ----------
+  // A dataset may carry a PMTiles archive (tippecanoe, true per-zoom LOD, HTTP-range-
+  // served) in CATALOG.pmtiles. The Tiles output renders ALL of its geometry as vector
+  // tiles via protomaps-leaflet (Canvas on the Leaflet we already load — no WebGL), and
+  // highlights the features the current SPARQL result names. Geometry rendering goes
+  // through the tiles; rete stays the graph next to it, joined by the feature name.
+  let tilesMap = null, protomapsP = null, tilesSeq = 0;
+  function loadProtomaps() {
+    if (protomapsP) return protomapsP;
+    protomapsP = loadLeaflet().then(() => new Promise((resolve, reject) => {
+      if (window.protomapsL) return resolve(window.protomapsL);
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/protomaps-leaflet@4.0.1/dist/protomaps-leaflet.js";
+      s.onload = () => resolve(window.protomapsL);
+      s.onerror = () => reject(new Error("protomaps-leaflet load failed"));
+      document.head.appendChild(s);
+    }));
+    return protomapsP;
+  }
+  // The set of human names in a result (literal, non-geometry values) — the join key
+  // to the tiles' shapeName/NAME, so result features light up on the basemap.
+  function resultNameSet(res) {
+    const out = new Set();
+    for (const r of (res.rows || [])) for (const k in r) {
+      const v = r[k]; if (typeof v !== "string" || !v || v[0] === "<") continue;
+      const t = parseTerm(v); if (t.iri || WKT_RE.test(t.value)) continue;
+      out.add(t.value);
+    }
+    return out;
+  }
+  // The lon/lat bbox of a result's geometry column, to fit the tile map to it.
+  function resultBbox(res) {
+    const vars = res.vars || [], rows = res.rows || [];
+    const geo = detectGeoCol(vars, rows); if (!geo) return null;
+    let minX = 180, maxX = -180, minY = 90, maxY = -90, found = false;
+    for (const r of rows) {
+      const t = parseTerm(r[geo] || ""); if (!t || !WKT_RE.test(t.value)) continue;
+      for (const ring of wktRings(t.value)) for (const [x, y] of ring) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; found = true;
+      }
+    }
+    return found ? { minX, maxX, minY, maxY } : null;
+  }
+  function renderTiles(res) {
+    const pm = CATALOG.pmtiles && CATALOG.pmtiles[state.dataset];
+    if (!pm) {
+      const avail = Object.keys(CATALOG.pmtiles || {}).join(", ") || "none";
+      $("out").innerHTML = note(`The Tiles view renders a PMTiles vector basemap paired with the dataset. This one has none — available for: ${avail}.`);
+      return "no vector tiles";
+    }
+    const mySeq = ++tilesSeq;
+    const names = resultNameSet(res), bb = resultBbox(res);
+    $("out").innerHTML = `<div class="tilesview"><div id="tilesMap" class="tiles-map"></div>` +
+      `<div class="mapcap" id="tilesCap">Loading vector tiles (PMTiles)…</div></div>`;
+    loadProtomaps().then((P) => {
+      if (tilesSeq !== mySeq) return;                 // view switched away
+      const L = window.L, mapDiv = document.getElementById("tilesMap");
+      if (!L || !mapDiv) return;
+      if (tilesMap) { tilesMap.remove(); tilesMap = null; }
+      tilesMap = L.map(mapDiv, { scrollWheelZoom: true, minZoom: 0, maxZoom: 12, worldCopyJump: true }).setView([20, 0], 2);
+      const poly = (fill, stroke, width, opacity) => new P.PolygonSymbolizer({ fill, stroke, width, opacity });
+      const base = [
+        { dataLayer: "countries", symbolizer: poly("#eaf0ed", "#b3c6bc", 0.8, 1) },
+        { dataLayer: "regions", symbolizer: poly("rgba(0,0,0,0)", "#c9d6cf", 0.4, 1), minzoom: 3 },
+        { dataLayer: "districts", symbolizer: poly("rgba(0,0,0,0)", "#dbe5e0", 0.25, 1), minzoom: 5 },
+        { dataLayer: "places", symbolizer: new P.CircleSymbolizer({ radius: 1.6, fill: "#7f8f88" }), minzoom: 3 },
+      ];
+      // result features in accent, drawn over the base (one rule per polygon layer)
+      const hit = (z, f) => f && f.props && names.has(f.props.shapeName);
+      const hl = ["countries", "regions", "districts"].map((dl) => ({
+        dataLayer: dl, symbolizer: poly("#147d69", "#0c5a4b", 1.6, 0.5), filter: hit,
+      }));
+      const layer = P.leafletLayer({ url: pm.url, paintRules: base.concat(hl), maxDataZoom: 9, attribution: "© OpenStreetMap (geoBoundaries) · PMTiles" });
+      layer.addTo(tilesMap);
+      if (bb) { try { tilesMap.fitBounds([[bb.minY, bb.minX], [bb.maxY, bb.maxX]], { padding: [22, 22], maxZoom: 9 }); } catch (_e) {} }
+      setTimeout(() => { if (tilesMap && tilesSeq === mySeq) tilesMap.invalidateSize(); }, 60);
+      const cap = document.getElementById("tilesCap");
+      if (cap) cap.textContent = `PMTiles vector basemap (${pm.label}, ${pm.size}) · ${names.size} result feature(s) highlighted · pan/zoom for ADM1→ADM2 detail (true per-zoom LOD). The tiles render the geometry; rete answers the query next to them.`;
+    }).catch(() => { if (tilesSeq === mySeq) $("out").innerHTML = note("Couldn't load the vector-tile renderer (offline?)."); });
+    return `vector tiles · ${names.size} feature(s) highlighted`;
+  }
+
   // A snappy cursor-following tooltip for the map: one delegated mousemove on the
   // SVG, rAF-throttled, reading the hovered feature's data-label — instant, vs the
   // ~1s-delayed native <title> popup it replaces.
@@ -14104,6 +14206,7 @@ self.onmessage = function (e) {
     renderProgressiveInfo(progressive);
 
     if (fmt === "map") return renderMap(res);
+    if (fmt === "tiles") return renderTiles(res);
     if (fmt === "time") return renderTime(res);
 
     if (fmt === "graph") {

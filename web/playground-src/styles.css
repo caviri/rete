@@ -2509,6 +2509,11 @@ th .coltype.coltype-on {
   overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, .28); }
 .map-tooltip[hidden] { display: none; }
 .mapcap { font-size: 11.5px; color: var(--muted); margin-top: 7px; }
+/* Tiles view: a full PMTiles vector basemap (protomaps-leaflet on Canvas). */
+.tilesview { position: relative; }
+.tiles-map { width: 100%; height: 64vh; min-height: 360px; border: 1px solid var(--line);
+  border-radius: 8px; background: #eef3f1; }
+.tiles-map .leaflet-container { background: #eef3f1; }
 /* basemap picker + higher-contrast geometry when drawn over slippy tiles */
 .map-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .map-base-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }

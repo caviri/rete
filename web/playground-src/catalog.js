@@ -39,6 +39,19 @@ window.RETE_PLAYGROUND_CATALOG = {
   // `url`; for the rest the URL is derived as remoteBase/playground/<key>.rete.
   remoteBase: "https://katospiegel-rete.hf.space/data",
   remoteToken: "sfdbgf1094by21hd128ru39802",
+  // Optional vector-tile basemap PAIRED with a dataset (option B of the geo-LOD work):
+  // a PMTiles archive (tippecanoe, true per-zoom LOD, HTTP-range-served) rendered in
+  // the "Tiles" output by protomaps-leaflet, with the SPARQL result features highlighted
+  // on top. The geometry rendering goes through PMTiles; rete stays the graph next to it.
+  pmtiles: {
+    "geoadmin": {
+      url: "https://katospiegel-rete.hf.space/data/playground/geoadmin.pmtiles?token=sfdbgf1094by21hd128ru39802",
+      label: "geoadmin (OSM admin areas)",
+      size: "113 MB",
+      // tippecanoe layer → the feature property carrying the human name we join on
+      layers: { countries: "shapeName", regions: "shapeName", districts: "shapeName", places: "NAME" }
+    }
+  },
   families: ["Summary", "Select", "Path", "Aggregate", "Geo", "Construct"],
   // Median local (in-memory) query time per example, in ms — benchmarked offline
   // by dev/bench_examples.cjs (5 runs each). Drives the speed badge on each
@@ -1358,6 +1371,7 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
     ],
     "geoadmin": [
       {"family": "Aggregate", "label": "Countries of the world", "view": "map", "cols": {"c": "Area", "country": "Country", "boundary": "Boundary"}, "tip": "All 213 country polygons (geoBoundaries ADM0, OSM-derived). Output → Map draws the world; in Table view each ?boundary cell is a mini-map (coarse ~1 km). Click one to open the full map — it fetches THAT country's fine-detail (~110 m) boundary on demand (multi-LOD: only the polygon you inspect is downloaded in detail).", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?c ?country ?boundary WHERE {\n  ?c a class:Country ; g:name ?country ; geo:asWKT ?boundary .\n} LIMIT 200"},
+      {"family": "Geo", "label": "★ Vector tiles (PMTiles next to rete)", "view": "tiles", "cols": {"s": "Area", "region": "Region", "boundary": "Boundary"}, "tip": "Output → Tiles renders a 113 MB PMTiles vector basemap (tippecanoe, true per-zoom LOD) of EVERY admin area — pan/zoom and ADM1→ADM2 detail streams in, only the visible tiles fetched. The features your SPARQL returns light up in green ON the basemap: here Spain's autonomous communities. The tiles draw the geometry; rete answers the query right next to them (option B of the geo-LOD work).", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?s ?region ?boundary WHERE {\n  ?s a class:Region ; g:country \"ES\" ; g:name ?region ; geo:asWKT ?boundary .\n}"},
       {"family": "Select", "label": "One country (multi-LOD on zoom)", "view": "map", "cols": {"c": "Area", "country": "Country", "boundary": "Boundary"}, "tip": "A single country by ISO code (change \"ES\" → FR, MA, IT, KE, PH…). The cell shows the coarse ~1 km outline; click it to open the full map and the modal sharpens to the fine ~110 m boundary — fetched on demand for just this one feature (the remote-lazy LOD payoff: zoom in → fetch only what you inspect).", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nSELECT ?c ?country ?boundary WHERE {\n  ?c g:iso \"ES\" ; g:name ?country ; geo:asWKT ?boundary .\n}"},
       {"family": "Aggregate", "label": "Regions / states (admin-1)", "view": "map", "cols": {"s": "Area", "region": "Region", "boundary": "Boundary"}, "tip": "3,133 first-level admin areas (geoBoundaries ADM1). Coarse outlines in the cells; click a region's map cell and the modal fetches its fine ~110 m boundary on demand — same multi-LOD model as countries.", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?s ?region ?boundary WHERE {\n  ?s a class:Region ; g:name ?region ; geo:asWKT ?boundary .\n} LIMIT 400"},
       {"family": "Select", "label": "Districts of a country (admin-2)", "view": "map", "cols": {"district": "District", "boundary": "Boundary"}, "tip": "48,362 second-level admin areas (geoBoundaries ADM2). Here every district of Spain (ES) — change the code to FR, MA, IT… Detailed OSM boundaries; click a cell for the full zoomable map.", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?district ?boundary WHERE {\n  ?d a class:District ; g:country \"ES\" ; g:name ?district ; geo:asWKT ?boundary .\n} LIMIT 400"},

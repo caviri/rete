@@ -19,6 +19,9 @@ __pycache__/
 # Built graph files are artifacts of the .nt/.nq sources in examples/ — rebuild
 # with `rete build` (see README). The sources, not the binaries, are tracked.
 *.rete
+# Vector-tile basemaps (tippecanoe) paired with a dataset live only in the bucket.
+*.pmtiles
+*.mbtiles
 # Exception: a pyramid-less ~74 MB build is committed so the explorer's
 # same-origin "GitHub Pages" source has a real file to range-query (see the
 # Source modal). Regenerate with: rete build <data>.nq -o … --no-pyramid
