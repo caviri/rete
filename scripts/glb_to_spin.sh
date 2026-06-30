@@ -7,7 +7,12 @@ set -e
 GLB="$1"; OUT="$2"; FR="${3:-36}"; RES="${4:-512}"; GIFW="${5:-360}"
 [ -n "$GLB" ] && [ -n "$OUT" ] || { echo "usage: glb_to_spin.sh <glb> <outbase> [frames] [res] [gifw]"; exit 2; }
 TMP=$(mktemp -d)
-xvfb-run -a blender -b -noaudio --python scripts/blender_turntable.py -- "$GLB" "$TMP" "$FR" "$RES" >/dev/null 2>&1 || true
+# Cycles GPU is headless (no display); EEVEE needs xvfb's virtual display.
+if [ "$BLENDER_GPU" = "1" ]; then
+  blender -b -noaudio --python scripts/blender_turntable.py -- "$GLB" "$TMP" "$FR" "$RES" >/dev/null 2>&1 || true
+else
+  xvfb-run -a blender -b -noaudio --python scripts/blender_turntable.py -- "$GLB" "$TMP" "$FR" "$RES" >/dev/null 2>&1 || true
+fi
 N=$(ls "$TMP"/frame_*.png 2>/dev/null | wc -l)
 if [ "$N" -lt 2 ]; then echo "FAIL render: $GLB ($N frames)"; rm -rf "$TMP"; exit 1; fi
 # Looping WebM (VP9) — small, plays in the video cell.

@@ -67,7 +67,37 @@ ko = bpy.data.objects.new("key", key); bpy.context.scene.collection.objects.link
 ko.rotation_euler = (math.radians(55), math.radians(15), math.radians(35))
 
 scene = bpy.context.scene
-scene.render.engine = "BLENDER_EEVEE"
+# BLENDER_GPU=1 -> Cycles on the GPU (OptiX/CUDA, headless, no display needed, fast);
+# otherwise EEVEE (needs a virtual display via xvfb). Cycles also denoises so a low
+# sample count stays clean.
+if os.environ.get("BLENDER_GPU") == "1":
+    scene.render.engine = "CYCLES"
+    prefs = bpy.context.preferences.addons["cycles"].preferences
+    chosen = None
+    for backend in ("OPTIX", "CUDA"):
+        try:
+            prefs.compute_device_type = backend
+            prefs.refresh_devices()
+            devs = [d for d in prefs.devices if d.type == backend]
+            if devs:
+                for d in prefs.devices:
+                    d.use = (d.type == backend)
+                chosen = backend
+                break
+        except Exception as e:
+            sys.stderr.write("  %s unavailable: %s\n" % (backend, e))
+    scene.cycles.device = "GPU" if chosen else "CPU"
+    scene.cycles.samples = int(os.environ.get("CYCLES_SAMPLES", "24"))
+    try:
+        scene.cycles.use_denoising = True
+        scene.cycles.denoiser = "OPTIX" if chosen == "OPTIX" else "OPENIMAGEDENOISE"
+    except Exception:
+        pass
+    sys.stderr.write("TURNTABLE engine=CYCLES device=%s backend=%s samples=%d\n"
+                     % (scene.cycles.device, chosen, scene.cycles.samples))
+else:
+    scene.render.engine = "BLENDER_EEVEE"
+    sys.stderr.write("TURNTABLE engine=EEVEE (cpu/software via xvfb)\n")
 scene.render.film_transparent = False
 scene.render.resolution_x = scene.render.resolution_y = res
 scene.render.image_settings.file_format = "PNG"
