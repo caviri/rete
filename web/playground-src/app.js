@@ -3810,6 +3810,16 @@ self.onmessage = function (e) {
     return `<td class="iri media-cell"><video class="cell-video" controls preload="metadata" playsinline src="${esc(url)}"></video>` +
       `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div></td>`;
   }
+  // A pre-rendered turntable spin (bucket `*-spin/<id>.webm`): a tiny looping clip
+  // that auto-plays muted like a GIF — a lightweight preview that needs no WebGL.
+  function looksSpinUrl(v) {
+    return /^https?:\/\//i.test(v) && /-spin\/[^?#]*\.(webm|mp4)(\?|#|$)/i.test(v);
+  }
+  function spinCell(t) {
+    const url = httpsUpgrade(t.value);
+    return `<td class="iri media-cell"><video class="cell-video cell-spin" autoplay muted loop playsinline preload="metadata" src="${esc(url)}"></video>` +
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div></td>`;
+  }
 
   // ---- media metadata captions + 3D scale bar -------------------------------
   function fmtBytes(n) { n = +n; if (!n || n < 0) return ""; return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B"; }
@@ -3871,6 +3881,7 @@ self.onmessage = function (e) {
       if (looksMeshUrl(t.value)) return mesh3dCell(t);  // a streamable mesh → inline 3D viewer
       if (looks3dViewerUrl(t.value)) return viewer3dCell(t); // a 3D viewer page → open in a tab
       if (looksAudioUrl(t.value)) return audioCell(t);  // a media file → inline player
+      if (looksSpinUrl(t.value)) return spinCell(t);    // a pre-rendered turntable → looping spin
       if (looksVideoUrl(t.value)) return videoCell(t);
       if (looksWebUrl(t.value)) return linkCell(t);     // a dereferenceable web URL
       return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
@@ -3896,6 +3907,7 @@ self.onmessage = function (e) {
       case "model3d": return model3dCell(t);
       case "audio": return audioCell(t);
       case "video": return videoCell(t);
+      case "spin": return spinCell(t);
       case "link": return linkCell(t);
       case "number": {
         const n = Number(t.value);
@@ -3911,7 +3923,7 @@ self.onmessage = function (e) {
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"],
-    ["image", "Image"], ["iiif", "IIIF"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["number", "Number"],
+    ["image", "Image"], ["iiif", "IIIF"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;

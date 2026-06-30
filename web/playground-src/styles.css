@@ -2487,6 +2487,7 @@ th .coltype.coltype-on {
 .media-cell { padding: 6px 8px; position: relative; white-space: nowrap; }
 .cell-audio { width: 230px; height: 34px; vertical-align: middle; }
 .cell-video { width: 248px; max-height: 168px; display: block; border-radius: 6px; background: #000; }
+.cell-spin { width: 168px; height: 168px; max-height: 168px; object-fit: contain; cursor: default; }
 .media-src { margin-left: 6px; color: var(--accent-dark, #2b6); text-decoration: none; font-size: 13px; vertical-align: middle; }
 .media-src:hover { text-decoration: underline; }
 .iiif-modal-box { position: relative; z-index: 1; width: min(900px, 94vw); max-height: 92vh; overflow: auto; background: var(--bg, #fff); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 24px 70px rgba(0, 0, 0, .4); padding: 14px; }
