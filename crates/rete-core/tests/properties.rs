@@ -112,7 +112,9 @@ fn sample_queries(want: &BTreeSet<(String, String, String)>) -> Vec<String> {
             qs.push(format!("SELECT ?s ?p WHERE {{ ?s ?p {o} }}"));
         }
         // Two-hop join: a shared variable bridges two patterns.
-        qs.push(format!("SELECT ?s ?o WHERE {{ ?s {p} ?mid . ?mid ?p2 ?o }}"));
+        qs.push(format!(
+            "SELECT ?s ?o WHERE {{ ?s {p} ?mid . ?mid ?p2 ?o }}"
+        ));
     }
     qs
 }

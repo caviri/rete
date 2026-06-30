@@ -45,7 +45,9 @@ fn rand_is_in_unit_interval() {
     let r = rete();
     for _ in 0..25 {
         let v = val(&r, "SELECT (RAND() AS ?r) WHERE { ?s ?p ?o }");
-        let n: f64 = lex(&v).parse().unwrap_or_else(|_| panic!("RAND not numeric: {v}"));
+        let n: f64 = lex(&v)
+            .parse()
+            .unwrap_or_else(|_| panic!("RAND not numeric: {v}"));
         assert!((0.0..1.0).contains(&n), "RAND out of [0,1): {n}");
     }
 }
@@ -53,7 +55,10 @@ fn rand_is_in_unit_interval() {
 #[test]
 fn uuid_is_a_urn_uuid_iri() {
     let v = val(&rete(), "SELECT (STR(UUID()) AS ?r) WHERE { ?s ?p ?o }");
-    assert!(lex(&v).contains("urn:uuid:"), "UUID not a urn:uuid: IRI: {v}");
+    assert!(
+        lex(&v).contains("urn:uuid:"),
+        "UUID not a urn:uuid: IRI: {v}"
+    );
 }
 
 #[test]

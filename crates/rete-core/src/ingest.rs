@@ -489,7 +489,13 @@ fn finish_assembly(
     // The pyramid and the full-text index are built FIRST, while the dictionary and
     // the default id-triples are both still resident — both need the two together.
     let (meta, levels) = if with_pyramid {
-        build_pyramid_meta_algo(&dict, &default_triples, DEFAULT_TILE_BUDGET, type_override, algo)
+        build_pyramid_meta_algo(
+            &dict,
+            &default_triples,
+            DEFAULT_TILE_BUDGET,
+            type_override,
+            algo,
+        )
     } else {
         (Vec::new(), 0)
     };
@@ -527,8 +533,10 @@ fn finish_assembly(
         }
     };
     let def = build_index(default_triples);
-    let named_indexes: Vec<(String, crate::GraphIndex)> =
-        named.into_iter().map(|(g, ts)| (g, build_index(ts))).collect();
+    let named_indexes: Vec<(String, crate::GraphIndex)> = named
+        .into_iter()
+        .map(|(g, ts)| (g, build_index(ts)))
+        .collect();
 
     let bytes = crate::file::write_dataset_from_parts(
         &dict_container,

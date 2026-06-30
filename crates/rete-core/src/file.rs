@@ -776,7 +776,10 @@ fn encode_tiled_section(tiles: &[crate::index::Tile], codec: u8) -> Vec<u8> {
     #[cfg(feature = "parallel")]
     let compressed: Vec<Vec<u8>> = {
         use rayon::prelude::*;
-        tiles.par_iter().map(|t| compress(codec, t.bytes())).collect()
+        tiles
+            .par_iter()
+            .map(|t| compress(codec, t.bytes()))
+            .collect()
     };
     #[cfg(not(feature = "parallel"))]
     let compressed: Vec<Vec<u8>> = tiles.iter().map(|t| compress(codec, t.bytes())).collect();

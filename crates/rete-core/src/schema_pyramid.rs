@@ -766,7 +766,8 @@ mod tests {
             ("<a>", "<label>", "\"a\""), // a literal object → «untyped» node, must not panic
         ];
         let (dict, ids, _louvain) = build(&triples);
-        let dend = build_type_dendrogram(&dict, &ids, None).expect("typed graph yields a dendrogram");
+        let dend =
+            build_type_dendrogram(&dict, &ids, None).expect("typed graph yields a dendrogram");
         assert_eq!(dend.rounds(), 1, "flat single-level type partition");
         let comm = |t: &str| {
             let sid = dict.subject_id(t).unwrap();
@@ -774,7 +775,11 @@ mod tests {
         };
         // Both Concepts share a community; the Relation is a different one.
         assert_eq!(comm("<a>"), comm("<b>"), "same class → same community");
-        assert_ne!(comm("<a>"), comm("<r>"), "different class → different community");
+        assert_ne!(
+            comm("<a>"),
+            comm("<r>"),
+            "different class → different community"
+        );
 
         // The descriptor's dominant_class equals the community's class — the
         // self-naming property the type pyramid is built for.

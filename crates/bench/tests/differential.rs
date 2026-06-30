@@ -80,8 +80,10 @@ fn rete_rows(rete: &Rete, q: &str) -> Vec<String> {
     let mut out: Vec<String> = sols
         .iter()
         .map(|b| {
-            let mut parts: Vec<String> =
-                b.iter().map(|(k, v)| format!("{k}={}", lexical(v))).collect();
+            let mut parts: Vec<String> = b
+                .iter()
+                .map(|(k, v)| format!("{k}={}", lexical(v)))
+                .collect();
             parts.sort();
             parts.join(";")
         })

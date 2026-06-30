@@ -760,34 +760,36 @@ impl XhrRangeReader {
         }
         #[cfg(not(feature = "asyncify"))]
         {
-        let xhr = web_sys::XmlHttpRequest::new()?;
-        xhr.open_with_async("GET", url, false)?;
-        xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
-        xhr.set_request_header("Range", "bytes=0-0")?;
-        xhr.send()?;
-        let status = xhr.status()?;
-        if status != 206 && !(200..300).contains(&status) {
-            return Err(JsValue::from_str(&format!("probe {url}: status {status}")));
-        }
-        // `Content-Range: bytes 0-0/12345` — the part after `/` is the total.
-        let len = xhr
-            .get_response_header("Content-Range")?
-            .and_then(|v| {
-                v.rsplit('/')
-                    .next()
-                    .and_then(|t| t.trim().parse::<u64>().ok())
+            let xhr = web_sys::XmlHttpRequest::new()?;
+            xhr.open_with_async("GET", url, false)?;
+            xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
+            xhr.set_request_header("Range", "bytes=0-0")?;
+            xhr.send()?;
+            let status = xhr.status()?;
+            if status != 206 && !(200..300).contains(&status) {
+                return Err(JsValue::from_str(&format!("probe {url}: status {status}")));
+            }
+            // `Content-Range: bytes 0-0/12345` — the part after `/` is the total.
+            let len = xhr
+                .get_response_header("Content-Range")?
+                .and_then(|v| {
+                    v.rsplit('/')
+                        .next()
+                        .and_then(|t| t.trim().parse::<u64>().ok())
+                })
+                .or_else(|| {
+                    xhr.get_response_header("Content-Length")
+                        .ok()
+                        .flatten()
+                        .and_then(|v| v.parse::<u64>().ok())
+                })
+                .ok_or_else(|| {
+                    JsValue::from_str(&format!("could not determine length of {url}"))
+                })?;
+            Ok(Self {
+                url: url.to_string(),
+                len,
             })
-            .or_else(|| {
-                xhr.get_response_header("Content-Length")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.parse::<u64>().ok())
-            })
-            .ok_or_else(|| JsValue::from_str(&format!("could not determine length of {url}")))?;
-        Ok(Self {
-            url: url.to_string(),
-            len,
-        })
         }
     }
 }
@@ -812,40 +814,40 @@ impl RangeReader for XhrRangeReader {
         }
         #[cfg(not(feature = "asyncify"))]
         {
-        let js = |e: JsValue| std::io::Error::other(format!("XHR error: {e:?}"));
-        let xhr = web_sys::XmlHttpRequest::new().map_err(js)?;
-        xhr.open_with_async("GET", &self.url, false).map_err(js)?;
-        xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
-        let end = offset + len - 1; // HTTP ranges are inclusive
-        xhr.set_request_header("Range", &format!("bytes={offset}-{end}"))
-            .map_err(js)?;
-        xhr.send().map_err(js)?;
-        let status = xhr.status().map_err(js)?;
-        // Same contract as the CLI's HttpRangeReader: a 200 means the server
-        // ignored Range and is returning the whole body — reject it loudly
-        // rather than silently mis-slicing.
-        if status != 206 {
-            return Err(std::io::Error::other(format!(
-                "server ignored Range (status {status}, expected 206 Partial Content) for {}; \
+            let js = |e: JsValue| std::io::Error::other(format!("XHR error: {e:?}"));
+            let xhr = web_sys::XmlHttpRequest::new().map_err(js)?;
+            xhr.open_with_async("GET", &self.url, false).map_err(js)?;
+            xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
+            let end = offset + len - 1; // HTTP ranges are inclusive
+            xhr.set_request_header("Range", &format!("bytes={offset}-{end}"))
+                .map_err(js)?;
+            xhr.send().map_err(js)?;
+            let status = xhr.status().map_err(js)?;
+            // Same contract as the CLI's HttpRangeReader: a 200 means the server
+            // ignored Range and is returning the whole body — reject it loudly
+            // rather than silently mis-slicing.
+            if status != 206 {
+                return Err(std::io::Error::other(format!(
+                    "server ignored Range (status {status}, expected 206 Partial Content) for {}; \
                  the host must support HTTP range requests",
-                self.url
-            )));
-        }
-        let resp = xhr.response().map_err(js)?;
-        let mut buf = js_sys::Uint8Array::new(&resp).to_vec();
-        if (buf.len() as u64) < len {
-            return Err(std::io::Error::other(format!(
-                "short range response: got {} of {len} bytes at offset {offset} from {}",
-                buf.len(),
-                self.url
-            )));
-        }
-        buf.truncate(len as usize);
-        // Report this fetch to an optional progress hook so a worker can stream
-        // live "N requests · M bytes" updates to the UI *during* the otherwise
-        // opaque synchronous query (postMessage works mid-sync-call).
-        report_progress(buf.len());
-        Ok(buf)
+                    self.url
+                )));
+            }
+            let resp = xhr.response().map_err(js)?;
+            let mut buf = js_sys::Uint8Array::new(&resp).to_vec();
+            if (buf.len() as u64) < len {
+                return Err(std::io::Error::other(format!(
+                    "short range response: got {} of {len} bytes at offset {offset} from {}",
+                    buf.len(),
+                    self.url
+                )));
+            }
+            buf.truncate(len as usize);
+            // Report this fetch to an optional progress hook so a worker can stream
+            // live "N requests · M bytes" updates to the UI *during* the otherwise
+            // opaque synchronous query (postMessage works mid-sync-call).
+            report_progress(buf.len());
+            Ok(buf)
         }
     }
 
@@ -865,22 +867,22 @@ impl RangeReader for XhrRangeReader {
         }
         #[cfg(not(feature = "asyncify"))]
         {
-        if ranges.len() > 1 {
-            if let Some(buf) = self.read_many_via_pool(ranges) {
-                let total: u64 = ranges.iter().map(|&(_, l)| l).sum();
-                if buf.len() as u64 == total {
-                    let mut out = Vec::with_capacity(ranges.len());
-                    let mut pos = 0usize;
-                    for &(_, l) in ranges {
-                        let end = pos + l as usize;
-                        out.push(buf[pos..end].to_vec());
-                        pos = end;
+            if ranges.len() > 1 {
+                if let Some(buf) = self.read_many_via_pool(ranges) {
+                    let total: u64 = ranges.iter().map(|&(_, l)| l).sum();
+                    if buf.len() as u64 == total {
+                        let mut out = Vec::with_capacity(ranges.len());
+                        let mut pos = 0usize;
+                        for &(_, l) in ranges {
+                            let end = pos + l as usize;
+                            out.push(buf[pos..end].to_vec());
+                            pos = end;
+                        }
+                        return Ok(out);
                     }
-                    return Ok(out);
                 }
             }
-        }
-        ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
+            ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
         }
     }
 }

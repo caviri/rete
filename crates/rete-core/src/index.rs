@@ -293,7 +293,13 @@ impl GraphIndexBuilder {
             use rayon::prelude::*;
             let mut built: Vec<Vec<Tile>> = Vec::with_capacity(NUM_PERMS);
             for chunk in ALL_PERMS.chunks(2) {
-                built.extend(chunk.to_vec().into_par_iter().map(build_one).collect::<Vec<_>>());
+                built.extend(
+                    chunk
+                        .to_vec()
+                        .into_par_iter()
+                        .map(build_one)
+                        .collect::<Vec<_>>(),
+                );
             }
             built.try_into().ok().expect("six permutations")
         };
