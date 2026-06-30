@@ -2880,8 +2880,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build f055c68 · 2026-06-30 17:57 UTC</span>
-    <script>window.RETE_BUILD = "f055c68 · 2026-06-30 17:57 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 4b3c986 · 2026-06-30 18:21 UTC</span>
+    <script>window.RETE_BUILD = "4b3c986 · 2026-06-30 18:21 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -5844,6 +5844,16 @@ window.RETE_PLAYGROUND_CATALOG = {
       size: "113 MB",
       // tippecanoe layer → the feature property carrying the human name we join on
       layers: { countries: "shapeName", regions: "shapeName", districts: "shapeName", places: "NAME" }
+    },
+    // Option C: the tiles live INSIDE the .rete (a kind-7 section). `embedded` tells the
+    // Tiles view to parse the .rete header for the section offset and range-read tiles
+    // from this same URL — one file = graph + tiles. `url` is the .rete, not a .pmtiles.
+    "geoadmin-tiles": {
+      url: "https://katospiegel-rete.hf.space/data/playground/geoadmin-tiles.rete?token=sfdbgf1094by21hd128ru39802",
+      embedded: true,
+      label: "embedded in geoadmin-tiles.rete",
+      size: "113 MB section",
+      layers: { countries: "shapeName", regions: "shapeName", districts: "shapeName", places: "NAME" }
     }
   },
   families: ["Summary", "Select", "Path", "Aggregate", "Geo", "Construct"],
@@ -5909,6 +5919,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     {"key": "mira", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/mira.rete?token=sfdbgf1094by21hd128ru39802", "typePredicate": "<http://www.wikidata.org/prop/direct/P31>", "label": "mira.rete - early Irish manuscripts (MIrA, Wikidata-aligned, IIIF, remote, lazy)", "description": "MIrA - Manuscripts with Irish Associations (Pádraic Moran, University of Galway): a catalogue of c. 300 manuscripts written before AD 1000 in Ireland, in Irish script, or with Irish connections (often by Irish 'peregrini' on the Continent). Described with STANDARD Wikidata properties - P31 instance-of, P195 collection, P217 shelfmark, P571 inception (xsd:gYear), P1071 location-of-creation, P2048/P2049 height/width, P1574 exemplar-of - over wd:Q* values, every one of which carries an English rdfs:label fetched from Wikidata (so P1071 reads 'location of creation', Q142 reads 'France'). The named scholars (Eriugena, Sedulius Scottus, Isidore...) carry owl:sameAs to Wikidata, so the graph FEDERATES with the Wikidata datasets. 189 of the manuscripts are digitised: their IIIF manifests (wdt:P6108, from the British Library, Trinity College Dublin, e-codices, IRHT...) render as an in-table image viewer - click a folio for the lightbox. Plus mira: name / script / folios / contents (full-text indexed). Each manuscript is also tagged with MIrA's INCLUSION CRITERIA (mira:category, straight from the project's /about page) - Script: Irish (148), Origin: Ireland (106), Vernacular Old-Irish content (168 glossed pages across 84 manuscripts), Named Irish scribe (41), Exemplar: Irish, Text of Irish origin, plus the 'Insular (Irish?)' outline categories - so you can query exactly why each book is in the corpus. The catalogue draws on the standard palaeographical reference works (Bernhard Bischoff's Katalog der festländischen Handschriften and Südostdeutschen Schreibschulen, E. A. Lowe's Codices Latini Antiquiores); the RDF data was developed by Sudhansu Bala Das, funded by a Research Ireland Laureate award and the Insight Research Ireland Centre for Data Analytics. ~5k triples, embedded (instant, offline). Built from the padraicmoran/MIrA RDF dump + per-manuscript XML by scripts/mira_to_nt.py. CC BY-NC-SA 4.0 - non-commercial; cite as Pádraic Moran, Manuscripts with Irish Associations (MIrA), v1.0 (2026), https://mira.ie."},
     {"key": "bioexplora", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/bioexplora.rete?token=sfdbgf1094by21hd128ru39802", "label": "bioexplora.rete - 207k natural-history specimens (Museu de Ciencies Naturals de Barcelona, Darwin Core, remote, lazy)", "description": "The OPEN natural-history collections of the Museu de Ciencies Naturals de Barcelona (bioexplora.cat) as one queryable graph - 207,163 SPECIMENS in Darwin Core across the museum's six collections: arthropods (MCNB-Art, 82,900), molluscs (MCNB-Malac, 50,083), paleontology (MGB, 32,581), vertebrates (MCNB-Cord, 31,954), the tissue bank and general zoology. Every specimen carries its full taxonomy (kingdom -> species), catalogue number, collector, date, locality, georeference and type status, expressed with the REAL Darwin Core term IRIs (dwc:scientificName, dwc:family, dwc:decimalLatitude...) - i.e. the museum's own properties. 13,543 specimens are PHOTOGRAPHED: the IIIF images (museum server, CORS-open) render inline; 43,826 are GEOREFERENCED as GeoSPARQL points (switch Output -> Map); 672 are name-bearing TYPE specimens. Plus two media layers: 667 skull and bone 3D SCANS (the Atles osteologic) linking out to their Sketchfab viewers, and 173 nature SOUND recordings that play inline (CC BY-NC-ND, by Eloisa Matheu via Xeno-canto - NOT the MCNB). 7.19M triples, remote-lazy over HTTP range from the bucket. Harvested KEYLESS from GBIF (the museum publishes Darwin Core archives on ipt.gbif.es), the Sketchfab account laboratorinatura, and Xeno-canto, by scripts/bioexplora_to_nt.py. CC BY 4.0 - credit the Museu de Ciencies Naturals de Barcelona (the audio layer excepted)."},
     {"key": "geoadmin", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/geoadmin.rete?token=sfdbgf1094by21hd128ru39802", "label": "geoadmin.rete - world admin boundaries (geoBoundaries/OSM, 52k polygons, GeoSPARQL, remote, lazy)", "description": "World administrative boundaries with GeoSPARQL geometries, built for FEDERATED geospatial joins — 52k OSM-derived polygons (simplified to ~1 km), a lean 15 MB range-queried lazily. 213 COUNTRIES (ADM0), 3,133 REGIONS/states (ADM1) and 48,362 DISTRICTS (ADM2) as POLYGONS from geoBoundaries (OSM-derived, CC-BY), plus 1,251 populated PLACES as POINTS (Natural Earth) — three admin levels, points and polygons. Each entity carries a name, an ISO 3166-1 code (p:iso/p:country, alpha-2 mapped from geoBoundaries' alpha-3), an admin level (p:adminLevel) and its geometry (geo:asWKT). Add it as a federation source to ANY dataset and JOIN on the country code to pull in the boundary polygon — e.g. attach to every bioexplora specimen the polygon of the country it was collected in, then switch Output → Map. geoBoundaries CC-BY 4.0 (geoboundaries.org); places CC0 (Natural Earth). Built by scripts/geoboundaries_to_nt.py."},
+    {"key": "geoadmin-tiles", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/geoadmin-tiles.rete?token=sfdbgf1094by21hd128ru39802", "label": "geoadmin-tiles.rete - the admin-boundaries graph AND a PMTiles vector basemap in ONE file", "description": "The SAME world-admin graph as geoadmin, but with a PMTiles vector-tile archive EMBEDDED as a section inside the one .rete file (geo-LOD 'option C'). One immutable, content-hashed, HTTP-range-queryable file holds BOTH: run SPARQL on the RDF graph, then switch Output → Tiles and the map range-reads its vector tiles from a kind-7 section of the very same file (no separate .pmtiles, no second request target). The .rete reader ignores the unknown section, so the graph opens exactly as before; the browser parses the 1 KB header to find the tile section's byte offset and faults tiles from there. GeoSPARQL has no native tiling — this is the experiment of carrying pre-tiled vector geometry next to the graph in one range-served file. Tiles built with tippecanoe (z0-9, true per-zoom LOD) and embedded by scripts/embed_tiles.py."},
     {"key": "smithsonian3d", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/smithsonian3d.rete?token=sfdbgf1094by21hd128ru39802", "label": "smithsonian3d.rete - 2,199 interactive 3D models (Smithsonian Open Access, CC0, remote, lazy)", "description": "2,199 interactive 3D MODELS from the Smithsonian Open Access program (CC0, public domain) - every object streams a Draco-compressed .glb you can rotate, zoom and inspect right in the results table (the 🧊 3D viewer). The collection spans the Institution: the National Museum of Natural History dominates (primate and animal CRANIA, mandibles, fossils and zoological specimens - Hylobates, Pongo, fossil whales), alongside famous objects from the National Air and Space Museum (the Apollo Command Module Columbia, modelled inside and out), American History, the National Portrait Gallery (Abraham Lincoln's life masks), Cooper Hewitt, African American History and the Freer|Sackler. Each model carries its title, the holding museum unit, its catalogue number, and a link (?record) to the full Smithsonian record. Built KEYLESS from the public smithsonian-open-access S3 bucket (the 3d/ prefix - each model a Voyager scene.svx.json listing Low/Medium/High Draco .glb derivatives) by scripts/smithsonian3d_to_nt.py, taking the Medium-quality mesh for streaming; the .glb files are served with CORS from Amazon S3 so they render inline. 15k triples, remote-lazy from the bucket, with lossless Parquet / DuckDB / SQLite table companions beside it for the Explore tab (the Model3D table holds every object). CC0 1.0 - free to use, share and remix; credit the Smithsonian."},
     {"key": "lineara", "kind": "remote-lazy", "url": "https://katospiegel-rete.hf.space/data/playground/lineara.rete?token=sfdbgf1094by21hd128ru39802", "label": "lineara.rete - the Linear A corpus (undeciphered Minoan script, remote, lazy)", "description": "The complete surviving corpus of LINEAR A - the still-undeciphered script of Bronze-Age Minoan Crete (c. 1800-1450 BC), used for palace administration and religious dedications. 1,721 inscriptions (clay tablets, roundels, sealings, libation vessels) from Haghia Triada, Khania, Phaistos, Knossos, Zakros and beyond, each linked to its findspot, scribe, support type and Minoan period, with the Linear A Unicode transcription and the Latin transliteration. The analytical heart is the SIGN and WORD layer: every document is connected to the 375 distinct signs and 1,314 word-sequences it carries (6,039 sign-attestations, 4,100 word-attestations), so you can study sign frequencies, recurring sequences and sign co-occurrence - the main tools for probing an undeciphered script. KU-RO ('total') and KI-RO ('deficit'), the two Linear A words scholars do agree on, are right there at the bottom of the accounts. 67 of the artifacts also LINK (prop:model3d) to the ERC INSCRIBE project's high-resolution interactive 3D scans (3DHOP viewers, University of Bologna) - HT 29, the Khania (KH) and Phaistos (PH) tablets, plus nodules, roundels and a vessel - so you can rotate and measure the actual clay. A second archive, the PAITO Project (Sapienza, Prof. A. Greco; prop:paito), is linked for the Haghia Triada sealings (per-artifact) and the Phaistos corpus (catalogue). Text after the transcriptions of Louis Godart & Jean-Pierre Olivier (GORILA, Ecole Francaise d'Athenes) and the tabulation of George Douros; compiled by mwenge as the LinearA Explorer (github.com/mwenge/lineara.xyz). 38k triples, embedded (instant, offline). Built by scripts/lineara_to_nt.js + scripts/lineara_inscribe.js. Scholarly/educational derivative with full attribution - inscription IMAGES are (c) Ecole Francaise d'Athenes and the 3D MODELS are (c) INSCRIBE / Universita di Bologna (all rights reserved, non-profit scientific use); NEITHER is included here, only references/links; the source repo states no explicit license, so attribute GORILA / Douros / mwenge / INSCRIBE and treat as non-commercial research data."},
     {"key": "nomisma", "label": "nomisma.rete - coinage of Alexander the Great (PELLA)", "description": "PELLA - Coinage of Alexander the Great and the Macedonian kingdom, from Nomisma.org. 7,228 ancient Greek coin TYPES struck under Philip II, Alexander III, Philip III Arrhidaeus and the Diadochi (Cassander, Lysimachus, Ptolemy I), spanning 359-65 BC. Each type links by real IRIs to its mint (~150 cities from Pella and Amphipolis to Babylon, Sardis, Sidon and Susa), issuing authority, material (silver/gold/bronze), denomination (tetradrachm, drachm, stater...), region, and start/end dates as xsd:gYear. Every mint/authority/material/denomination/region carries an English rdfs:label, so the graph is fully self-describing. ~53,535 triples, embeds to ~150 KB. ODbL 1.0 (PELLA coin data) + CC-BY 3.0 (Nomisma vocabulary); attribute the American Numismatic Society / Nomisma.org."},
@@ -5948,6 +5959,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "getty-ulan":            { triples: "~205,000", size: "2.8 MB",  license: "ODC-BY 1.0",           source: "https://www.getty.edu/research/tools/vocabularies/ulan/",   provenance: "CONSTRUCTed from the Getty vocab.getty.edu SPARQL endpoint (teacherOf/influenced edges + names/bios/dates) by scripts/fetch_playground_kgs.sh getty-ulan, built with rete build (remote-lazy)." },
     "bioexplora":            { triples: "7.89 M",  size: "45 MB",   license: "CC BY 4.0 (specimens/images; audio CC BY-NC-ND)", source: "https://www.bioexplora.cat", provenance: "The 6 MCNB Darwin Core archives from GBIF/ipt.gbif.es (207,163 specimens, real dwc: term IRIs). A CONNECTED-GRAPH layer turns the flat Darwin Core into a navigable graph: 33,837 Taxon nodes wired into a tree by p:parentTaxon (specimen → p:taxon → species → genus → family → … ), 3,876 shared Collector (Agent) nodes via p:collectedBy, and 193 Place nodes via p:foundIn, with an OWL TBox (classes + object properties carrying rdfs:domain/range, so the Schema view draws the real graph). Media: ~9,000 specimen photos mirrored to the bucket as fast WebP (p:preview; source links normalised to the working coeli portraitMedia as p:image) — 43,826 GeoSPARQL points — 672 type specimens — 824 Atles-osteologic 3D scans (92 mirrored to the bucket as Draco+WebP .glb, inline via p:mesh) — and 173 Xeno-canto audio recordings (Eloisa Matheu, CC BY-NC-ND, not MCNB). Built KEYLESS by scripts/bioexplora_to_nt.py + rete build --pyramid-algo types --text-index --card. Remote-lazy. CC BY 4.0 (MCNB) except the audio." },
     "geoadmin":              { triples: "372.5 K", size: "39 MB",   license: "CC-BY 4.0 (geoBoundaries) + CC0 (Natural Earth places)", source: "https://www.geoboundaries.org", provenance: "geoBoundaries (OSM-derived, CC-BY 4.0) global admin boundaries CGAZ + Natural Earth places, converted to GeoSPARQL by scripts/geoboundaries_to_nt.py: 213 Country polygons (ADM0), 3,133 Region polygons (ADM1), 48,362 District polygons (ADM2), 1,251 populated-Place points. GeoJSON → WKT by hand (no GDAL); each entity with p:name, p:iso/p:country (alpha-2 mapped from geoBoundaries' alpha-3 via datasets/country-codes), p:adminLevel, p:partOf and geo:asWKT. The detailed OSM boundaries (Spain alone was ~1 MB of WKT, the biggest ~21 MB) are SIMPLIFIED with Douglas–Peucker: the default geo:asWKT at ~1 km (coarse, instant cells), plus a MULTI-LOD g:geomFine at ~110 m on the 3,206 large features (Country + Region). The playground fetches g:geomFine for JUST the feature you open in the map modal — zoom in → fetch only that one polygon's detail. 1.1 GB of raw N-Triples → a 39 MB .rete. Built as a FEDERATION partner: join another dataset's country code (e.g. dwc:countryCode) to attach the boundary geometry. rete build --pyramid-algo types --card." },
+    "geoadmin-tiles":        { triples: "372.5 K", size: "151 MB", license: "CC-BY 4.0 (geoBoundaries) + CC0 (Natural Earth places)", source: "https://www.geoboundaries.org", provenance: "The geoadmin RDF graph (39 MB) with a 113 MB PMTiles vector-tile archive EMBEDDED as a kind-7 section inside the one .rete file (geo-LOD 'option C': one file = graph + tiles, both HTTP-range-queryable). Tiles built from the full-detail geoBoundaries GeoJSON with tippecanoe (z0-9, 4 layers countries/regions/districts/places, true per-zoom LOD) by scripts/geoadmin_pmtiles.sh, then embedded by scripts/embed_tiles.py — which rewrites the .rete's 1 KB header to add the tile section's (offset, length) just before the footer, leaving every graph section byte-identical so the content hash and SPARQL are unchanged. The reader ignores the unknown section (Rete::open reads only known kinds); the browser parses the header to find the section offset and range-reads tiles from the same URL. Verified: rete query still answers the graph; the Tiles view faults the embedded tiles." },
     "smithsonian3d":         { triples: 15639,     size: "381 KB",  license: "CC0 1.0 (public domain)", source: "https://3d.si.edu", provenance: "The Smithsonian Open Access 3D collection, harvested KEYLESS from the public smithsonian-open-access S3 bucket (3d/ prefix; each model a Voyager scene.svx.json -> Medium-quality Draco .glb + title + EDAN record id) by scripts/smithsonian3d_to_nt.py. 2,199 models, each with prop:mesh (the streamable .glb, rendered inline by the 3D cell), prop:unit (museum), prop:catalogNumber and prop:record (link to si.edu). 200 of them also carry prop:spinVideo/prop:spinGif — a lightweight pre-rendered Blender Cycles turntable (webm/gif in the bucket *-spin/ prefix, scripts/render_turntables.sh) that loops in the cell without WebGL. rete build --pyramid-algo types --text-index --card. Remote-lazy from the bucket; lossless Parquet/DuckDB/SQLite companions for the Explore tab via scripts/rdf_to_entity_tables.py --nt --type-predicate rdf:type. CC0 - credit the Smithsonian." },
     "lineara":               { triples: 38306,     size: "355 KB",  license: "No explicit license (scholarly; attribute GORILA/Douros/mwenge/INSCRIBE/PAITO)", source: "https://lineara.xyz · 3D: inscribercproject.com · PAITO: paitoproject.it", provenance: "The LinearA Explorer corpus (github.com/mwenge/lineara.xyz, LinearAInscriptions.js — text after GORILA/Godart-Olivier + George Douros's tabulation) converted to RDF by scripts/lineara_to_nt.js: Inscription → site/scribe/support/period + Linear A transcription + Latin transliteration, plus the sign/word layer (Inscription → Word → Sign and Inscription → Sign). scripts/lineara_inscribe.js adds 91 prop:model3d LINKS to the ERC INSCRIBE 3D viewer pages (67 artifacts, each face linked); scripts/lineara_paito.js adds 89 prop:paito LINKS to the PAITO Project (Sapienza) — 23 Haghia Triada sealings per-artifact + 66 Phaistos documents to their PAITO sub-catalogue. Inscription images © EFA and the 3D/2D+ models © INSCRIBE & PAITO are NOT included — links only. rete build --pyramid-algo types --text-index --card." },
     "nomisma":               { triples: 53535,     size: "76 KB",   license: "ODbL 1.0 + CC-BY 3.0", source: "http://numismatics.org/pella/",                            provenance: "CONSTRUCTed from the Nomisma.org SPARQL endpoint (PELLA coin types + mints/authorities/materials/labels) by scripts/fetch_playground_kgs.sh nomisma, built with rete build." },
@@ -6319,6 +6331,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "getty-ulan":            { icon: "🎨", tags: ["art", "lineage", "Getty"] },
     "bioexplora":            { icon: "🦴", tags: ["natural-history", "biodiversity", "Darwin Core", "GBIF", "Barcelona", "IIIF", "3D", "audio"] },
     "geoadmin":              { icon: "🗺", tags: ["geo", "GeoSPARQL", "boundaries", "Natural Earth", "federation", "CC0"] },
+    "geoadmin-tiles":        { icon: "🧱", tags: ["geo", "GeoSPARQL", "PMTiles", "tiles-in-rete", "vector tiles", "option-C"] },
     "smithsonian3d":         { icon: "🗿", tags: ["3D", "museum", "Smithsonian", "CC0", "natural-history"] },
     "lineara":               { icon: "🏺", tags: ["Linear A", "Minoan", "epigraphy", "undeciphered", "Aegean"] },
     "nomisma":               { icon: "🪙", tags: ["numismatics", "ancient", "Alexander"] },
@@ -7170,6 +7183,10 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
       {"family": "Aggregate", "label": "Regions / states (admin-1)", "view": "map", "cols": {"s": "Area", "region": "Region", "boundary": "Boundary"}, "tip": "3,133 first-level admin areas (geoBoundaries ADM1). Coarse outlines in the cells; click a region's map cell and the modal fetches its fine ~110 m boundary on demand — same multi-LOD model as countries.", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?s ?region ?boundary WHERE {\n  ?s a class:Region ; g:name ?region ; geo:asWKT ?boundary .\n} LIMIT 400"},
       {"family": "Select", "label": "Districts of a country (admin-2)", "view": "map", "cols": {"district": "District", "boundary": "Boundary"}, "tip": "48,362 second-level admin areas (geoBoundaries ADM2). Here every district of Spain (ES) — change the code to FR, MA, IT… Detailed OSM boundaries; click a cell for the full zoomable map.", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?district ?boundary WHERE {\n  ?d a class:District ; g:country \"ES\" ; g:name ?district ; geo:asWKT ?boundary .\n} LIMIT 400"},
       {"family": "Aggregate", "label": "Populated places (points)", "view": "map", "cols": {"place": "Place", "point": "Location"}, "tip": "1,251 cities and towns as POINTS — points and polygons share one geometry model.", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?place ?point WHERE {\n  ?p a class:Place ; g:name ?place ; geo:asWKT ?point .\n} LIMIT 1251"}
+    ],
+    "geoadmin-tiles": [
+      {"family": "Geo", "label": "★ Graph + vector tiles in ONE .rete (option C)", "view": "tiles", "cols": {"s": "Area", "region": "Region", "boundary": "Boundary"}, "tip": "This dataset is ONE .rete file that holds BOTH the RDF graph AND a PMTiles vector basemap (a kind-7 section). The SPARQL below runs on the graph; Output → Tiles range-reads the vector tiles from the SAME file (the browser parses the 1 KB header for the section's byte offset, then faults tiles from there). The features the query returns light up in green — here Spain's regions. One immutable, content-hashed, range-queryable file = graph + map tiles.", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?s ?region ?boundary WHERE {\n  ?s a class:Region ; g:country \"ES\" ; g:name ?region ; geo:asWKT ?boundary .\n}"},
+      {"family": "Aggregate", "label": "The graph still works (countries)", "view": "table", "cols": {"country": "Country", "iso": "ISO", "boundary": "Boundary"}, "tip": "Proof the embedded tiles don't disturb the graph: a normal SPARQL query over the same one file. The .rete reader skips the unknown tile section, so quads, dictionary and pyramid open exactly as in plain geoadmin. Switch Output → Tiles to see the map come from the same bytes.", "q": "PREFIX g: <https://geoadmin.rete/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX class: <https://geoadmin.rete/class/>\nSELECT ?country ?iso ?boundary WHERE {\n  ?c a class:Country ; g:name ?country ; g:iso ?iso ; geo:asWKT ?boundary .\n} LIMIT 100"}
     ],
     "smithsonian3d": [
       {"family": "Select", "label": "3D models you can rotate", "view": "table", "tip": "Every row is an interactive 3D model. The ?model column is a Draco-compressed .glb streamed straight from the Smithsonian's S3 bucket — click 🧊 3D to open the inline viewer, then drag to rotate and scroll to zoom. All CC0 / public domain. 2,199 models in the collection; this shows the first 60.", "q": "PREFIX p: <https://3d.si.edu/prop/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?object ?model WHERE {\n  ?o p:mesh ?model ; rdfs:label ?object .\n} LIMIT 60"},
@@ -14068,6 +14085,53 @@ self.onmessage = function (e) {
     }));
     return protomapsP;
   }
+  // ---- option C: tiles embedded INSIDE the .rete -----------------------------------
+  // The standalone pmtiles library (PMTiles + a custom-Source interface); only needed
+  // for the embedded case — the separate-.pmtiles case (B) uses protomaps-leaflet's URL.
+  let pmtilesLibP = null;
+  function loadPmtilesLib() {
+    if (pmtilesLibP) return pmtilesLibP;
+    pmtilesLibP = new Promise((resolve, reject) => {
+      if (window.pmtiles) return resolve(window.pmtiles);
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js";
+      s.onload = () => resolve(window.pmtiles);
+      s.onerror = () => reject(new Error("pmtiles lib load failed"));
+      document.head.appendChild(s);
+    });
+    return pmtilesLibP;
+  }
+  // Range-read a .rete file's 1 KB header and return the (offset, length) of its TILES
+  // section (SectionKind 7), or null. The PMTiles archive lives INSIDE the .rete; this
+  // finds where, so we can range-read tiles from the SAME url at that base (option C).
+  async function reteTilesSection(reteUrl) {
+    const r = await fetch(reteUrl, { headers: { Range: "bytes=0-1023" } });
+    if (!r.ok && r.status !== 206) throw new Error("header read " + r.status);
+    const dv = new DataView(await r.arrayBuffer());
+    if (dv.getUint8(0) !== 0x52 || dv.getUint8(1) !== 0x45 || dv.getUint8(2) !== 0x54 || dv.getUint8(3) !== 0x45)
+      throw new Error("not a .rete file");
+    const sc = dv.getUint16(44, true);                 // section_count
+    for (let i = 0; i < sc; i++) {
+      const p = 64 + i * 24;                            // SECTION_DIR_OFFSET + i*ENTRY_LEN
+      if (dv.getUint16(p, true) === 7) {               // SectionKind::Tiles
+        return { offset: Number(dv.getBigUint64(p + 8, true)), length: Number(dv.getBigUint64(p + 16, true)) };
+      }
+    }
+    return null;
+  }
+  // A pmtiles Source that range-reads an archive embedded inside a .rete at `base`:
+  // every internal PMTiles offset is shifted into the .rete file.
+  function reteSectionSource(reteUrl, base) {
+    return {
+      getKey: () => reteUrl + "#tiles@" + base,
+      getBytes: async (offset, length, signal) => {
+        const start = base + offset, end = start + length - 1;
+        const r = await fetch(reteUrl, { headers: { Range: `bytes=${start}-${end}` }, signal });
+        if (!r.ok && r.status !== 206) throw new Error("tiles range read " + r.status);
+        return { data: await r.arrayBuffer() };
+      },
+    };
+  }
   // The set of human names in a result (literal, non-geometry values) — the join key
   // to the tiles' shapeName/NAME, so result features light up on the basemap.
   function resultNameSet(res) {
@@ -14103,10 +14167,21 @@ self.onmessage = function (e) {
     const names = resultNameSet(res), bb = resultBbox(res);
     $("out").innerHTML = `<div class="tilesview"><div id="tilesMap" class="tiles-map"></div>` +
       `<div class="mapcap" id="tilesCap">Loading vector tiles (PMTiles)…</div></div>`;
-    loadProtomaps().then((P) => {
+    loadProtomaps().then(async (P) => {
       if (tilesSeq !== mySeq) return;                 // view switched away
       const L = window.L, mapDiv = document.getElementById("tilesMap");
       if (!L || !mapDiv) return;
+      // Resolve the tile source: a PMTiles archive embedded INSIDE the .rete (option C —
+      // one file = graph + tiles), or a separate .pmtiles URL (option B).
+      let source = pm.url;
+      if (pm.embedded) {
+        const pmLib = await loadPmtilesLib();
+        if (tilesSeq !== mySeq) return;
+        const sec = await reteTilesSection(pm.url);    // pm.url = the .rete URL
+        if (tilesSeq !== mySeq) return;
+        if (!sec) throw new Error("no tiles section in the .rete");
+        source = new pmLib.PMTiles(reteSectionSource(pm.url, sec.offset));
+      }
       if (tilesMap) { tilesMap.remove(); tilesMap = null; }
       tilesMap = L.map(mapDiv, { scrollWheelZoom: true, minZoom: 0, maxZoom: 12, worldCopyJump: true }).setView([20, 0], 2);
       const poly = (fill, stroke, width, opacity) => new P.PolygonSymbolizer({ fill, stroke, width, opacity });
@@ -14121,12 +14196,14 @@ self.onmessage = function (e) {
       const hl = ["countries", "regions", "districts"].map((dl) => ({
         dataLayer: dl, symbolizer: poly("#147d69", "#0c5a4b", 1.6, 0.5), filter: hit,
       }));
-      const layer = P.leafletLayer({ url: pm.url, paintRules: base.concat(hl), maxDataZoom: 9, attribution: "© OpenStreetMap (geoBoundaries) · PMTiles" });
+      const layer = P.leafletLayer({ url: source, paintRules: base.concat(hl), maxDataZoom: 9, attribution: "© OpenStreetMap (geoBoundaries) · PMTiles" });
       layer.addTo(tilesMap);
       if (bb) { try { tilesMap.fitBounds([[bb.minY, bb.minX], [bb.maxY, bb.maxX]], { padding: [22, 22], maxZoom: 9 }); } catch (_e) {} }
       setTimeout(() => { if (tilesMap && tilesSeq === mySeq) tilesMap.invalidateSize(); }, 60);
       const cap = document.getElementById("tilesCap");
-      if (cap) cap.textContent = `PMTiles vector basemap (${pm.label}, ${pm.size}) · ${names.size} result feature(s) highlighted · pan/zoom for ADM1→ADM2 detail (true per-zoom LOD). The tiles render the geometry; rete answers the query next to them.`;
+      if (cap) cap.textContent = pm.embedded
+        ? `Vector tiles read from a section INSIDE this .rete (${pm.size}, kind-7 section) · ${names.size} result feature(s) highlighted · ONE immutable file = the RDF graph AND the map tiles, both HTTP-range-queryable. SPARQL hit the graph; this map range-read the tiles from the same file.`
+        : `PMTiles vector basemap (${pm.label}, ${pm.size}) · ${names.size} result feature(s) highlighted · pan/zoom for ADM1→ADM2 detail (true per-zoom LOD). The tiles render the geometry; rete answers the query next to them.`;
     }).catch(() => { if (tilesSeq === mySeq) $("out").innerHTML = note("Couldn't load the vector-tile renderer (offline?)."); });
     return `vector tiles · ${names.size} feature(s) highlighted`;
   }

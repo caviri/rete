@@ -4560,6 +4560,53 @@ self.onmessage = function (e) {
     }));
     return protomapsP;
   }
+  // ---- option C: tiles embedded INSIDE the .rete -----------------------------------
+  // The standalone pmtiles library (PMTiles + a custom-Source interface); only needed
+  // for the embedded case — the separate-.pmtiles case (B) uses protomaps-leaflet's URL.
+  let pmtilesLibP = null;
+  function loadPmtilesLib() {
+    if (pmtilesLibP) return pmtilesLibP;
+    pmtilesLibP = new Promise((resolve, reject) => {
+      if (window.pmtiles) return resolve(window.pmtiles);
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js";
+      s.onload = () => resolve(window.pmtiles);
+      s.onerror = () => reject(new Error("pmtiles lib load failed"));
+      document.head.appendChild(s);
+    });
+    return pmtilesLibP;
+  }
+  // Range-read a .rete file's 1 KB header and return the (offset, length) of its TILES
+  // section (SectionKind 7), or null. The PMTiles archive lives INSIDE the .rete; this
+  // finds where, so we can range-read tiles from the SAME url at that base (option C).
+  async function reteTilesSection(reteUrl) {
+    const r = await fetch(reteUrl, { headers: { Range: "bytes=0-1023" } });
+    if (!r.ok && r.status !== 206) throw new Error("header read " + r.status);
+    const dv = new DataView(await r.arrayBuffer());
+    if (dv.getUint8(0) !== 0x52 || dv.getUint8(1) !== 0x45 || dv.getUint8(2) !== 0x54 || dv.getUint8(3) !== 0x45)
+      throw new Error("not a .rete file");
+    const sc = dv.getUint16(44, true);                 // section_count
+    for (let i = 0; i < sc; i++) {
+      const p = 64 + i * 24;                            // SECTION_DIR_OFFSET + i*ENTRY_LEN
+      if (dv.getUint16(p, true) === 7) {               // SectionKind::Tiles
+        return { offset: Number(dv.getBigUint64(p + 8, true)), length: Number(dv.getBigUint64(p + 16, true)) };
+      }
+    }
+    return null;
+  }
+  // A pmtiles Source that range-reads an archive embedded inside a .rete at `base`:
+  // every internal PMTiles offset is shifted into the .rete file.
+  function reteSectionSource(reteUrl, base) {
+    return {
+      getKey: () => reteUrl + "#tiles@" + base,
+      getBytes: async (offset, length, signal) => {
+        const start = base + offset, end = start + length - 1;
+        const r = await fetch(reteUrl, { headers: { Range: `bytes=${start}-${end}` }, signal });
+        if (!r.ok && r.status !== 206) throw new Error("tiles range read " + r.status);
+        return { data: await r.arrayBuffer() };
+      },
+    };
+  }
   // The set of human names in a result (literal, non-geometry values) — the join key
   // to the tiles' shapeName/NAME, so result features light up on the basemap.
   function resultNameSet(res) {
@@ -4595,10 +4642,21 @@ self.onmessage = function (e) {
     const names = resultNameSet(res), bb = resultBbox(res);
     $("out").innerHTML = `<div class="tilesview"><div id="tilesMap" class="tiles-map"></div>` +
       `<div class="mapcap" id="tilesCap">Loading vector tiles (PMTiles)…</div></div>`;
-    loadProtomaps().then((P) => {
+    loadProtomaps().then(async (P) => {
       if (tilesSeq !== mySeq) return;                 // view switched away
       const L = window.L, mapDiv = document.getElementById("tilesMap");
       if (!L || !mapDiv) return;
+      // Resolve the tile source: a PMTiles archive embedded INSIDE the .rete (option C —
+      // one file = graph + tiles), or a separate .pmtiles URL (option B).
+      let source = pm.url;
+      if (pm.embedded) {
+        const pmLib = await loadPmtilesLib();
+        if (tilesSeq !== mySeq) return;
+        const sec = await reteTilesSection(pm.url);    // pm.url = the .rete URL
+        if (tilesSeq !== mySeq) return;
+        if (!sec) throw new Error("no tiles section in the .rete");
+        source = new pmLib.PMTiles(reteSectionSource(pm.url, sec.offset));
+      }
       if (tilesMap) { tilesMap.remove(); tilesMap = null; }
       tilesMap = L.map(mapDiv, { scrollWheelZoom: true, minZoom: 0, maxZoom: 12, worldCopyJump: true }).setView([20, 0], 2);
       const poly = (fill, stroke, width, opacity) => new P.PolygonSymbolizer({ fill, stroke, width, opacity });
@@ -4613,12 +4671,14 @@ self.onmessage = function (e) {
       const hl = ["countries", "regions", "districts"].map((dl) => ({
         dataLayer: dl, symbolizer: poly("#147d69", "#0c5a4b", 1.6, 0.5), filter: hit,
       }));
-      const layer = P.leafletLayer({ url: pm.url, paintRules: base.concat(hl), maxDataZoom: 9, attribution: "© OpenStreetMap (geoBoundaries) · PMTiles" });
+      const layer = P.leafletLayer({ url: source, paintRules: base.concat(hl), maxDataZoom: 9, attribution: "© OpenStreetMap (geoBoundaries) · PMTiles" });
       layer.addTo(tilesMap);
       if (bb) { try { tilesMap.fitBounds([[bb.minY, bb.minX], [bb.maxY, bb.maxX]], { padding: [22, 22], maxZoom: 9 }); } catch (_e) {} }
       setTimeout(() => { if (tilesMap && tilesSeq === mySeq) tilesMap.invalidateSize(); }, 60);
       const cap = document.getElementById("tilesCap");
-      if (cap) cap.textContent = `PMTiles vector basemap (${pm.label}, ${pm.size}) · ${names.size} result feature(s) highlighted · pan/zoom for ADM1→ADM2 detail (true per-zoom LOD). The tiles render the geometry; rete answers the query next to them.`;
+      if (cap) cap.textContent = pm.embedded
+        ? `Vector tiles read from a section INSIDE this .rete (${pm.size}, kind-7 section) · ${names.size} result feature(s) highlighted · ONE immutable file = the RDF graph AND the map tiles, both HTTP-range-queryable. SPARQL hit the graph; this map range-read the tiles from the same file.`
+        : `PMTiles vector basemap (${pm.label}, ${pm.size}) · ${names.size} result feature(s) highlighted · pan/zoom for ADM1→ADM2 detail (true per-zoom LOD). The tiles render the geometry; rete answers the query next to them.`;
     }).catch(() => { if (tilesSeq === mySeq) $("out").innerHTML = note("Couldn't load the vector-tile renderer (offline?)."); });
     return `vector tiles · ${names.size} feature(s) highlighted`;
   }
