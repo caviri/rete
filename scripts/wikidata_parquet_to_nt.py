@@ -173,6 +173,8 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--parts", type=int, default=1, help="number of ~900 MB partitions to read (1..80)")
+    ap.add_argument("--part-index", type=int, default=None,
+                    help="process ONLY this single partition (0..79) — for sharded XXL builds, one shard per partition; overrides --parts")
     ap.add_argument("--limit", type=int, default=None, help="hard cap on emitted triples (~12M ≈ 1 GB)")
     ap.add_argument("--local-dir", default=None, help="read part_*.parquet from a local dir instead of HF")
     ap.add_argument(
@@ -212,17 +214,19 @@ def main() -> None:
     if use_heuristic:
         print("  inferring dateTime/wktLiteral from values (heuristic)", file=sys.stderr)
 
+    # one specific partition (sharded build) or the first `--parts` of them
+    idxs = [args.part_index] if args.part_index is not None else list(range(args.parts))
     con = duckdb.connect()
     if args.local_dir:
         sources = [
-            os.path.join(args.local_dir, f"part_{i:04d}.parquet") for i in range(args.parts)
+            os.path.join(args.local_dir, f"part_{i:04d}.parquet") for i in idxs
         ]
         sources = [s for s in sources if os.path.exists(s)]
         if not sources:
             sys.exit(f"no part_*.parquet found in {args.local_dir}")
     else:
         con.execute("INSTALL httpfs; LOAD httpfs;")
-        sources = [f"{HF_BASE}/part_{i:04d}.parquet" for i in range(args.parts)]
+        sources = [f"{HF_BASE}/part_{i:04d}.parquet" for i in idxs]
 
     src_list = ", ".join(f"'{s}'" for s in sources)
     limit_sql = f" LIMIT {args.limit}" if args.limit else ""

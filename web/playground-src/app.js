@@ -445,6 +445,7 @@ self.onmessage = function (e) {
     }));
   }
 
+
   // Run any *_url wasm export (schema_url, check_schema_url, …) in the worker —
   // they use synchronous range-read XHR, which a document can't do. Resolves to
   // { json, log } like remoteSparql.
@@ -4855,7 +4856,23 @@ self.onmessage = function (e) {
   // the range-read worker, an in-memory dataset via a resident Graph, a live
   // SPARQL endpoint via fetch. No source is downloaded wholesale.
   let fedSeq = 0;
-  function fedActive() { return state.fedSources.length > 0; }
+  function fedActive() { return state.fedSources.length > 0 || shardSources().length > 0; }
+
+  // A SHARDED dataset (catalog `shards: [url0, url1, …]`) is one logical graph split
+  // across independent .rete files (too big to build as one). shards[0] is the primary
+  // (selfSource, via the dataset's url); the rest are intrinsic federation partners,
+  // derived on the fly so every query fans across all shards (UNION) — the
+  // sharded-rete model (one dataset bigger than any single file). resetFed never drops
+  // them (they're the dataset, not user-added partners).
+  function shardSources() {
+    const d = datasetInfo(state.dataset);
+    const sh = d && Array.isArray(d.shards) ? d.shards : null;
+    if (!sh || sh.length < 2) return [];
+    return sh.slice(1).map((u, i) => ({
+      id: "shard" + (i + 1), kind: "remote", label: "shard " + (i + 1),
+      url: u, key: state.dataset + "#s" + (i + 1), shard: true,
+    }));
+  }
 
   // The current dataset is always source #0, resolved at query time to whatever
   // it actually is — a lazy remote URL or the in-memory Graph handle.
@@ -4865,7 +4882,7 @@ self.onmessage = function (e) {
       ? { id: "self", kind: "remote", label: name, url: state.remote.url, self: true }
       : { id: "self", kind: "memory", label: name, self: true };
   }
-  function allFedSources() { return [selfSource()].concat(state.fedSources); }
+  function allFedSources() { return [selfSource()].concat(shardSources()).concat(state.fedSources); }
 
   function detectQueryKind(q) {
     const body = q.replace(/^\s*(?:#.*\n|PREFIX\s+[^\n]*\n|BASE\s+[^\n]*\n)*/i, "");
@@ -5177,7 +5194,12 @@ self.onmessage = function (e) {
       `<span class="fed-chip"><span class="fed-chip-name" title="${esc(s.label)}">${esc(s.label)}</span>` +
       `<span class="fed-chip-kind">${s.kind === "remote" ? "lazy" : s.kind === "endpoint" ? "endpoint" : "in-memory"}</span>` +
       `<button type="button" class="fed-x" data-fedremove="${s.id}" title="Remove this source" aria-label="Remove ${esc(s.label)}">×</button></span>`).join("");
-    chips.innerHTML = self + extra +
+    const sh = shardSources();
+    const shardChip = sh.length
+      ? `<span class="fed-chip fed-shards" title="This dataset is ONE logical graph split across ${sh.length + 1} independent .rete shards (too big to build as one file). Every query fans across all of them (UNION) and the rows are merged.">` +
+        `<span class="fed-chip-name">⛓ ${sh.length + 1} shards</span><span class="fed-chip-kind">federated</span></span>`
+      : "";
+    chips.innerHTML = self + shardChip + extra +
       (fedActive() ? `<button type="button" class="fed-plan" id="fedPlanBtn" title="Dry run: preview WHICH source answers each triple pattern and the sub-queries that would run — without executing the join">🔍 Plan</button>` : "");
     const pb = $("fedPlanBtn"); if (pb) pb.onclick = () => fedDryRun($("q").value);
     const run = $("run");

@@ -1240,6 +1240,9 @@ textarea {
   max-width: 260px;
 }
 .fed-chip.fed-self { background: var(--accent-weak, #eef6f2); border-color: var(--accent, #1c8c74); }
+/* a sharded dataset's intrinsic "N shards" chip (read-only — not a user-added source) */
+.fed-chip.fed-shards { background: #efe9fb; border-color: #c9b8ef; color: #5a3aa6; }
+.fed-chip.fed-shards .fed-chip-kind { color: #7a5fc0; }
 .fed-chip .fed-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fed-chip .fed-chip-kind {
   font-size: 10px;
