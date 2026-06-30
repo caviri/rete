@@ -3600,7 +3600,25 @@ self.onmessage = function (e) {
   // shared, cached request) for "where on Earth" context; a shape fits its own
   // bbox so you can read it. Fully offline for shapes (graticule only).
   let geoSeq = 0;
-  const geoData = {}; // cell id → its WKT, looked up when the cell opens the map modal
+  const geoData = {}; // cell id → { wkt, fineIri } — read when the cell opens the map modal
+  // The row currently being rendered (set by tableInner around each row's cells), so
+  // a geo cell can find its feature's IRI without threading it through every renderer.
+  let geoRowCtx = null;
+  const GEO_FINE_PRED = "https://geoadmin.rete/prop/geomFine";
+  // In a result row, find the geoadmin admin-area IRI (country/region/district) whose
+  // geometry this is, so the map modal can fetch that feature's fine LOD on demand.
+  // Returns null when the row carries no geoadmin entity → the modal shows the coarse
+  // shape only. (Places are points; they have no finer LOD, so they're excluded.)
+  function geoFeatureIri(row) {
+    if (!row) return null;
+    for (const k in row) {
+      const v = row[k];
+      if (typeof v !== "string") continue;
+      const m = /^<?(https:\/\/geoadmin\.rete\/(?:country|region)\/[^>\s"]+)>?$/.exec(v);
+      if (m) return m[1];
+    }
+    return null;
+  }
   function looksWktGeo(v) { return WKT_RE.test(String(v)); }
   function geoDecimate(ring, cap) {
     if (ring.length <= cap) return ring;
@@ -3675,10 +3693,12 @@ self.onmessage = function (e) {
     for (const lon of lonTicks) { const x = sx(lon); if (x < gutL - 1 || x > vbW + 1) continue; ticks += `<text class="geo-tick" x="${Math.min(vbW - 1, Math.max(gutL + 1, x)).toFixed(1)}" y="${vbH - 3}" text-anchor="middle">${esc(fmtDeg(lon))}</text>`; }
     for (const lat of latTicks) { const y = sy(lat); if (y < -1 || y > mapH + 1) continue; ticks += `<text class="geo-tick" x="${gutL - 2}" y="${Math.min(mapH - 1, Math.max(6, y + 2)).toFixed(1)}" text-anchor="end">${esc(fmtDeg(lat))}</text>`; }
     const id = "gc" + ++geoSeq;
-    geoData[id] = t.value;
+    const fineIri = geoFeatureIri(geoRowCtx);
+    geoData[id] = { wkt: t.value, fineIri };
     const title = (isPoint ? `POINT ${minX.toFixed(4)}, ${minY.toFixed(4)}`
-      : `bbox ${minX.toFixed(3)},${minY.toFixed(3)} … ${maxX.toFixed(3)},${maxY.toFixed(3)}`) + " — click to open the map";
-    return `<td class="geo-cell" data-geo="${id}" title="${esc(title)}">` +
+      : `bbox ${minX.toFixed(3)},${minY.toFixed(3)} … ${maxX.toFixed(3)},${maxY.toFixed(3)}`) + " — click to open the map" +
+      (fineIri ? " (fine detail on zoom)" : "");
+    return `<td class="geo-cell" data-geo="${id}"${fineIri ? ' data-fine="1"' : ''} title="${esc(title)}">` +
       `<svg viewBox="0 0 ${vbW} ${vbH}" role="img" aria-label="map preview of ${esc(title)}">` +
       `<clipPath id="${id}"><rect x="${gutL}" y="0" width="${mapW}" height="${mapH}"/></clipPath>` +
       `<g clip-path="url(#${id})">${bg}${geo}</g>` +
@@ -3689,7 +3709,7 @@ self.onmessage = function (e) {
   // Clicking a geo cell opens a full, pannable/zoomable Leaflet map (the library
   // is lazy-loaded from the CDN on first open, like model-viewer), fitted to the
   // geometry's bounds. Point → marker, line/polygon → vector overlay.
-  let geoModalEl = null, geoMap = null, leafletP = null;
+  let geoModalEl = null, geoMap = null, leafletP = null, geoModalSeq = 0;
   function loadLeaflet() {
     if (leafletP) return leafletP;
     leafletP = new Promise((resolve, reject) => {
@@ -3709,6 +3729,7 @@ self.onmessage = function (e) {
     geoModalEl.className = "geo-modal hidden";
     geoModalEl.innerHTML =
       `<div class="geo-modal-box"><div class="geo-modal-head"><span class="geo-modal-title"></span>` +
+      `<span class="geo-lod" aria-live="polite"></span>` +
       `<button class="geo-modal-close" type="button" aria-label="Close">✕</button></div>` +
       `<div class="geo-modal-map"></div><div class="geo-modal-foot mono"></div></div>`;
     document.body.appendChild(geoModalEl);
@@ -3719,31 +3740,61 @@ self.onmessage = function (e) {
     return geoModalEl;
   }
   function closeGeoModal() { if (geoModalEl) geoModalEl.classList.add("hidden"); }
-  async function openGeoModal(wkt) {
+  // Draw WKT rings as Leaflet vector layers (point → marker, polygon/line → vector).
+  function geoLayers(L, rings, wkt) {
+    const isPoly = /POLYGON/i.test(wkt);
+    return rings.map((r) => r.length === 1
+      ? L.circleMarker([r[0][1], r[0][0]], { radius: 8, color: "#fff", weight: 2, fillColor: "#c0392b", fillOpacity: .95 })
+      : (isPoly ? L.polygon(r.map(([x, y]) => [y, x]), { color: "#147d69", weight: 2, fillOpacity: .15 })
+                : L.polyline(r.map(([x, y]) => [y, x]), { color: "#147d69", weight: 2 })));
+  }
+  async function openGeoModal(entry) {
+    const wkt = entry && typeof entry === "object" ? entry.wkt : entry;
+    const fineIri = entry && typeof entry === "object" ? entry.fineIri : null;
     if (!wkt) return;
     ensureGeoModal();
     const rings = wktRings(wkt);
     if (!rings.length) return;
+    const mySeq = ++geoModalSeq;
     const isPoint = rings.length === 1 && rings[0].length === 1;
     geoModalEl.querySelector(".geo-modal-title").textContent = isPoint ? "📍 Location" : "🗺 Geometry";
     geoModalEl.querySelector(".geo-modal-foot").textContent = shorten(wkt, 200);
+    const lodEl = geoModalEl.querySelector(".geo-lod");
+    if (lodEl) { lodEl.textContent = ""; lodEl.className = "geo-lod"; }
     geoModalEl.classList.remove("hidden");
     const mapDiv = geoModalEl.querySelector(".geo-modal-map");
     let L;
     try { L = await loadLeaflet(); } catch (_e) { mapDiv.innerHTML = `<div class="note">Couldn't load the map library (offline?). The coordinates are below.</div>`; return; }
+    if (geoModalSeq !== mySeq) return; // a newer open superseded this one
     if (geoMap) { geoMap.remove(); geoMap = null; }
     mapDiv.innerHTML = "";
     geoMap = L.map(mapDiv, { scrollWheelZoom: true }).setView([0, 0], 2);
     L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
       { attribution: "© OpenStreetMap · © CARTO", maxZoom: 19, subdomains: "abcd" }).addTo(geoMap);
-    const isPoly = /POLYGON/i.test(wkt);
-    const layers = rings.map((r) => r.length === 1
-      ? L.circleMarker([r[0][1], r[0][0]], { radius: 8, color: "#fff", weight: 2, fillColor: "#c0392b", fillOpacity: .95 })
-      : (isPoly ? L.polygon(r.map(([x, y]) => [y, x]), { color: "#147d69", weight: 2, fillOpacity: .15 })
-                : L.polyline(r.map(([x, y]) => [y, x]), { color: "#147d69", weight: 2 })));
-    const group = L.featureGroup(layers).addTo(geoMap);
+    let group = L.featureGroup(geoLayers(L, rings, wkt)).addTo(geoMap);
     try { geoMap.fitBounds(group.getBounds().pad(0.4), { maxZoom: 13 }); } catch (_e) { /* single point: keep default */ }
     setTimeout(() => { if (geoMap) geoMap.invalidateSize(); }, 60); // the modal just became visible
+
+    // Multi-LOD: the cell + this first view use the coarse (~1 km) geometry. If this
+    // feature has a finer LOD in geoadmin, fetch JUST this one polygon's detail on
+    // demand (the remote-lazy payoff — zoom in, fetch only what you inspect) and swap
+    // it in. Any miss leaves the coarse shape in place.
+    if (fineIri && !isPoint && datasetInfo("geoadmin")) {
+      if (lodEl) { lodEl.textContent = "✨ fetching detail…"; lodEl.className = "geo-lod loading"; }
+      const q = `SELECT ?g WHERE { <${fineIri}> <${GEO_FINE_PRED}> ?g } LIMIT 1`;
+      remoteSparql(remoteUrlFor("geoadmin"), q, "table").then((out) => {
+        if (geoModalSeq !== mySeq || !geoMap) return; // modal closed or replaced meanwhile
+        let parsed = null; try { parsed = JSON.parse(out.json); } catch (_e) { parsed = null; }
+        const raw = parsed && parsed.rows && parsed.rows[0] && parsed.rows[0].g;
+        const fineWkt = raw ? parseTerm(raw).value : null;
+        const fineRings = fineWkt ? wktRings(fineWkt) : [];
+        if (!fineRings.length) { if (lodEl) { lodEl.textContent = ""; lodEl.className = "geo-lod"; } return; }
+        try { group.remove(); } catch (_e) {}
+        group = L.featureGroup(geoLayers(L, fineRings, fineWkt)).addTo(geoMap);
+        if (lodEl) { lodEl.textContent = "✨ fine detail · fetched on demand"; lodEl.className = "geo-lod done"; }
+        const foot = geoModalEl.querySelector(".geo-modal-foot"); if (foot) foot.textContent = shorten(fineWkt, 200);
+      }).catch(() => { if (lodEl && geoModalSeq === mySeq) { lodEl.textContent = ""; lodEl.className = "geo-lod"; } });
+    }
   }
 
   // ---- 3D model cells -------------------------------------------------------
@@ -4071,8 +4122,12 @@ self.onmessage = function (e) {
     const head = `<tr>${st.vars
       .map((v) => `<th><div class="th-wrap"><span class="th-name" title="?${esc(v)}">${esc(shorten(colLabel(st, v), 24))}</span>${colTypeMenu(st.tid, v, st.types[v])}</div></th>`)
       .join("")}</tr>`;
-    const rowHtmls = shown.map((row) =>
-      `<tr>${st.vars.map((v) => prettyCell(row[v], st.types[v] || "auto")).join("")}</tr>`);
+    const rowHtmls = shown.map((row) => {
+      geoRowCtx = row; // so a geo cell in this row can resolve its feature IRI
+      const tr = `<tr>${st.vars.map((v) => prettyCell(row[v], st.types[v] || "auto")).join("")}</tr>`;
+      geoRowCtx = null;
+      return tr;
+    });
     const hidden = Math.max(0, rowHtmls.length - TABLE_HEAD_ROWS);
     const body = rowHtmls
       .map((r, i) => (i < TABLE_HEAD_ROWS ? r : r.replace("<tr", `<tr class="tr-hidden"`)))

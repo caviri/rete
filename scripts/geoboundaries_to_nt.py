@@ -41,7 +41,14 @@ def tl(s, p, o): t(s, p, lit(o))
 # WKT). Simplify with Douglas–Peucker (iterative, no recursion limit) — at a ~1 km
 # tolerance a boundary is visually identical on a map but ~10-30x fewer points, so
 # the .rete shrinks and the browser parses each cell instantly.
-SIMPLIFY_EPS = 0.01  # degrees (~1.1 km)
+#
+# Multi-LOD: every admin area ships TWO resolutions. `geo:asWKT` is the coarse
+# overview used in the table cell + the locator map + federation. `g:geomFine` is a
+# finer LOD (only Country/Region — the large features where coarse is visible). The
+# playground fetches g:geomFine for JUST the feature you open in the map modal — the
+# remote-lazy payoff: zoom in → fetch only that one polygon's detail, not the corpus.
+SIMPLIFY_EPS = 0.01    # degrees (~1.1 km) — coarse, the default geo:asWKT
+FINE_EPS = 0.001       # degrees (~110 m) — the g:geomFine LOD, fetched on demand
 
 def dp(pts, eps):
     n = len(pts)
@@ -73,28 +80,28 @@ def dp(pts, eps):
             stack.append((i, idx)); stack.append((idx, j))
     return [pts[k] for k in range(n) if keep[k]]
 
-def simp(cs):
-    return dp([(c[0], c[1]) for c in cs if len(c) >= 2], SIMPLIFY_EPS)
+def simp(cs, eps=SIMPLIFY_EPS):
+    return dp([(c[0], c[1]) for c in cs if len(c) >= 2], eps)
 def fmt(pts):
     return ", ".join("%.4f %.4f" % (x, y) for x, y in pts)
-def poly_body(rings):
-    parts = [fmt(p) for p in (simp(r) for r in rings) if len(p) >= 4]  # drop degenerate rings
+def poly_body(rings, eps=SIMPLIFY_EPS):
+    parts = [fmt(p) for p in (simp(r, eps) for r in rings) if len(p) >= 4]  # drop degenerate rings
     return ", ".join("(%s)" % p for p in parts) if parts else None
-def geom_wkt(g):
+def geom_wkt(g, eps=SIMPLIFY_EPS):
     if not g:
         return None
     typ, c = g.get("type"), g.get("coordinates")
     if typ == "Point":
         return "POINT(%.5f %.5f)" % (c[0], c[1])
     if typ == "Polygon":
-        b = poly_body(c); return ("POLYGON(%s)" % b) if b else None
+        b = poly_body(c, eps); return ("POLYGON(%s)" % b) if b else None
     if typ == "MultiPolygon":
-        ps = [b for b in (poly_body(p) for p in c) if b]
+        ps = [b for b in (poly_body(p, eps) for p in c) if b]
         return ("MULTIPOLYGON(%s)" % ", ".join("(%s)" % b for b in ps)) if ps else None
     if typ == "LineString":
-        p = simp(c); return ("LINESTRING(%s)" % fmt(p)) if len(p) >= 2 else None
+        p = simp(c, eps); return ("LINESTRING(%s)" % fmt(p)) if len(p) >= 2 else None
     if typ == "MultiLineString":
-        ls = [fmt(p) for p in (simp(r) for r in c) if len(p) >= 2]
+        ls = [fmt(p) for p in (simp(r, eps) for r in c) if len(p) >= 2]
         return ("MULTILINESTRING(%s)" % ", ".join("(%s)" % p for p in ls)) if ls else None
     return None
 
@@ -123,7 +130,7 @@ def emit_ontology():
         t(C + cls, RDF, iri(OWL + "Class")); tl(C + cls, LBL, label); tl(C + cls, RDFS + "comment", comment)
     for pid, label in [("name", "name"), ("iso", "ISO 3166-1 alpha-2 code"), ("iso3", "ISO alpha-3 code"),
                        ("adminLevel", "admin level"), ("country", "country code"), ("partOf", "part of"),
-                       ("population", "population (est.)")]:
+                       ("population", "population (est.)"), ("geomFine", "detailed geometry (fine LOD, ~110 m)")]:
         tl(P + pid, LBL, label)
     for pid in ("country", "partOf"):
         t(P + pid, RDF, iri(OWL + "ObjectProperty"))
@@ -157,6 +164,13 @@ def emit_admin(fname, cls, level):
                 tl(s, P + "country", a2)
                 t(s, P + "partOf", iri(BASE + "country/" + urllib.parse.quote(a2, safe="")))
         t(s, WKT, "%s^^%s" % (lit(wkt), iri(WKT_DT)))
+        # A finer LOD for the big features (countries + regions) — fetched on demand
+        # when you open the feature in the map modal. Only when meaningfully finer
+        # than the coarse shape, so we don't duplicate already-tiny geometries.
+        if cls in ("Country", "Region"):
+            fine = geom_wkt(f.get("geometry"), FINE_EPS)
+            if fine and len(fine) > len(wkt) + 24:
+                t(s, P + "geomFine", "%s^^%s" % (lit(fine), iri(WKT_DT)))
         n += 1
     sys.stderr.write("%s (%s): %d\n" % (cls, fname, n))
     return n

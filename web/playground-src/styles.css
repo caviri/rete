@@ -2530,6 +2530,16 @@ th .coltype.coltype-on {
   width: min(900px, 92vw); max-height: 90vh; display: flex; flex-direction: column; box-shadow: var(--shadow); }
 .geo-modal-head { display: flex; align-items: center; justify-content: space-between;
   padding: 9px 13px; border-bottom: 1px solid var(--line); font-weight: 700; }
+/* LOD status: which resolution the modal is showing (coarse → fetching → fine). Sits
+   just after the title; margin-right:auto keeps the ✕ pinned to the right. */
+.geo-lod { margin-right: auto; margin-left: 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.geo-lod:empty { display: none; }
+.geo-lod.loading { color: var(--muted); }
+.geo-lod.loading::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 5px;
+  border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; vertical-align: -1px;
+  animation: geolod-spin .7s linear infinite; }
+@keyframes geolod-spin { to { transform: rotate(360deg); } }
+.geo-lod.done { color: #147d69; }
 .geo-modal-close { background: none; border: 0; color: var(--ink); font-size: 16px; cursor: pointer; padding: 2px 8px; min-height: 0; }
 .geo-modal-close:hover { background: var(--side); border-radius: 6px; }
 .geo-modal-map { width: 100%; height: 64vh; background: #eef2f0; }
