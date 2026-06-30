@@ -98,6 +98,9 @@ PROP_LABELS = {
     DCT + "license": "license", DCT + "modified": "modified", DCT + "language": "language",
     P + "image": "image", P + "preview": "photo (WebP preview)", P + "sketchfab": "3D model (Sketchfab)", P + "audio": "audio recording",
     P + "mesh": "3D model", P + "thumbnail": "thumbnail", P + "faceCount": "faces", P + "vertexCount": "vertices",
+    # the connected-graph layer: shared Taxon / Agent / Place nodes
+    P + "taxon": "taxon", P + "parentTaxon": "parent taxon", P + "rank": "rank",
+    P + "collectedBy": "collected by", P + "foundIn": "found in",
 }
 
 out = sys.stdout
@@ -114,15 +117,29 @@ def localname_subject(coll, cat, fallback):
 
 
 def emit_ontology():
+    OWL = "http://www.w3.org/2002/07/owl#"
     for cls, label, comment in [
         ("Specimen", "Specimen", "A natural-history specimen / Darwin Core occurrence held by the MCNB."),
         ("Image", "Image", "A specimen image (IIIF)."),
         ("Model3D", "3D model", "A 3D scan (Sketchfab, Atles osteologic)."),
         ("Recording", "Sound recording", "A nature sound recording (Xeno-canto, E. Matheu; CC BY-NC-ND)."),
+        ("Taxon", "Taxon", "A taxonomic name at one rank (kingdom … species), linked to its parent rank via parentTaxon — so the taxonomy is a navigable tree, not flat literals."),
+        ("Agent", "Collector", "A person or team that collected specimens (from dwc:recordedBy); shared across all of their records."),
+        ("Place", "Place", "A country where specimens were collected; shared across all records from there."),
     ]:
-        t(C + cls, RDF, iri("http://www.w3.org/2002/07/owl#Class"))
+        t(C + cls, RDF, iri(OWL + "Class"))
         tl(C + cls, LBL, label)
         tl(C + cls, RDFS + "comment", comment)
+    # Object properties carry rdfs:domain/range so the Schema view draws the real
+    # graph (Specimen → Taxon, Specimen → Collector, Taxon → Taxon, …).
+    for pid, dom, rng in [
+        (P + "taxon", "Specimen", "Taxon"), (P + "parentTaxon", "Taxon", "Taxon"),
+        (P + "collectedBy", "Specimen", "Agent"), (P + "foundIn", "Specimen", "Place"),
+        (P + "image", "Specimen", "Image"), (P + "preview", "Specimen", "Image"),
+    ]:
+        t(pid, RDF, iri(OWL + "ObjectProperty"))
+        t(pid, RDFS + "domain", iri(C + dom))
+        t(pid, RDFS + "range", iri(C + rng))
     for pid, label in PROP_LABELS.items():
         tl(pid, LBL, label)
 
@@ -130,6 +147,21 @@ def emit_ontology():
 def parse_occurrences():
     n_spec = n_img = n_geo = n_prev = 0
     mirror = load_image_mirror()
+    # Shared nodes for the connected-graph layer (deduped across all records).
+    taxa, agents, places = {}, {}, {}
+
+    def node_once(reg, kind, key, label):
+        node = reg.get(key)
+        if node is None:
+            node = BASE + kind + "/" + urllib.parse.quote(key, safe="/")
+            reg[key] = node
+            t(node, RDF, iri(C + {"taxon": "Taxon", "agent": "Agent", "place": "Place"}[kind]))
+            tl(node, LBL, label)
+            node_once.fresh = node  # signal "newly created" to the caller
+        else:
+            node_once.fresh = None
+        return node
+
     for r in sorted(os.listdir(DWCA)):
         occ = os.path.join(DWCA, r, "occurrence.txt")
         if not os.path.isfile(occ):
@@ -171,6 +203,30 @@ def parse_occurrences():
                         n_geo += 1
                     except ValueError:
                         pass
+                # Connected graph: a taxonomy tree (specimen → species → genus →
+                # family → … via parentTaxon), the collector, and the country —
+                # shared nodes, so you can traverse instead of matching strings.
+                parent = finest = None
+                for col, rank in (("kingdom", "kingdom"), ("phylum", "phylum"), ("class", "class"),
+                                  ("order", "order"), ("family", "family"), ("genus", "genus"),
+                                  ("scientificName", "species")):
+                    val = (row.get(col) or "").strip()
+                    if not val:
+                        continue
+                    node = node_once(taxa, "taxon", rank + "/" + val, val)
+                    if node_once.fresh:
+                        tl(node, P + "rank", rank)
+                        if parent:
+                            t(node, P + "parentTaxon", iri(parent))
+                    parent = finest = node
+                if finest:
+                    t(subj, P + "taxon", iri(finest))
+                rb = (row.get("recordedBy") or "").strip()
+                if rb and len(rb) <= 160:
+                    t(subj, P + "collectedBy", iri(node_once(agents, "agent", rb, rb)))
+                co = (row.get("country") or "").strip()
+                if co and len(co) <= 80:
+                    t(subj, P + "foundIn", iri(node_once(places, "place", co, co)))
                 seen = set()
                 for url in media.get(rid, []):
                     p = coeli_portrait(url)          # reliable S3-backed source URL
@@ -183,6 +239,7 @@ def parse_occurrences():
                         t(subj, P + "preview", iri(mirror[nid])); n_prev += 1
         sys.stderr.write("  %-14s done\n" % r)
     sys.stderr.write("specimens: %d, image links: %d (%d webp previews), georeferenced: %d\n" % (n_spec, n_img, n_prev, n_geo))
+    sys.stderr.write("graph: %d taxa, %d collectors, %d places\n" % (len(taxa), len(agents), len(places)))
 
 
 def emit_3d():
