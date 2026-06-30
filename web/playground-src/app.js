@@ -8,6 +8,7 @@
     mode: "sparql",
     family: "All",
     selectedExample: -1,
+    colLabels: null,
     activeSource: "bundled",
     schema: null,
     lastProgressive: null,
@@ -1601,6 +1602,7 @@ self.onmessage = function (e) {
     const ex = examplesForDataset()[index];
     if (!ex) return;
     state.selectedExample = index;
+    state.colLabels = ex.cols || null;   // per-example friendly column headers
     setEd("q", ex.q);
     setView(ex.view || "table");
     setStrategy(ex.strategy || "whole");
@@ -4022,12 +4024,21 @@ self.onmessage = function (e) {
       `data-col="${esc(col)}" title="Render this column as…" aria-label="Render type for column ${esc(col)}">${opts}</select>`;
   }
 
+  // A friendly column header: a per-example custom label if given, else the
+  // variable name prettified (camelCase / snake_case → "Title case"). The raw
+  // variable name stays as the header's hover title so the query is still legible.
+  function prettyColLabel(v) {
+    return String(v).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ")
+      .replace(/^./, (c) => c.toUpperCase());
+  }
+  function colLabel(st, v) { return (st.labels && st.labels[v]) || prettyColLabel(v); }
+
   // Build the inner HTML of a `.tbl` from its state (header dropdowns + collapsed
   // body), so the delegated change handler can rebuild it after a type switch.
   function tableInner(st) {
     const shown = st.rows.slice(0, st.cap);
     const head = `<tr>${st.vars
-      .map((v) => `<th><div class="th-wrap"><span class="th-name">${esc(v)}</span>${colTypeMenu(st.tid, v, st.types[v])}</div></th>`)
+      .map((v) => `<th><div class="th-wrap"><span class="th-name" title="?${esc(v)}">${esc(shorten(colLabel(st, v), 24))}</span>${colTypeMenu(st.tid, v, st.types[v])}</div></th>`)
       .join("")}</tr>`;
     const rowHtmls = shown.map((row) =>
       `<tr>${st.vars.map((v) => prettyCell(row[v], st.types[v] || "auto")).join("")}</tr>`);
@@ -4045,7 +4056,7 @@ self.onmessage = function (e) {
   // A collapsed table whose columns carry a type-override dropdown.
   function statefulTable(vars, rows, note) {
     const tid = "t" + ++tableSeq;
-    const st = { tid, vars: vars || [], rows: rows || [], types: {}, cap: 500, note: note || "" };
+    const st = { tid, vars: vars || [], rows: rows || [], types: {}, cap: 500, note: note || "", labels: state.colLabels || null };
     tableStates.set(tid, st);
     // Bound the registry — only the few visible tables need their data kept.
     while (tableStates.size > 12) tableStates.delete(tableStates.keys().next().value);
