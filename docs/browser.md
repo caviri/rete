@@ -15,6 +15,15 @@ uv run python scripts/build_playground.py
 python3 scripts/range_server.py 8000 web          # open http://localhost:8000
 ```
 
+> **Build the regular (`web` / `no-modules`) wasm in the `rete-dev` image, NOT
+> `rete-asyncify`.** rete-asyncify ships an old `wasm-opt` (binaryen v108) that
+> rewrites the `__wbindgen_externrefs` table export onto the wrong table, so the
+> page dies at boot with `RangeError: WebAssembly.Table.grow(): failed to grow
+> table by 4` in `__wbindgen_init_externref_table`. rete-dev has no `wasm-opt` on
+> PATH, so wasm-pack fetches its own (newer) one and the export stays correct.
+> rete-asyncify is only for the asyncify variant (`build_playground_async.sh`),
+> which disables reference-types and so has no externref table to corrupt.
+
 zstd's C encoder isn't used on wasm; decoding uses the pure-Rust `ruzstd`, so the
 browser reads compressed files fine. `rete-wasm` depends on `rete-core` with
 `--no-default-features`.
