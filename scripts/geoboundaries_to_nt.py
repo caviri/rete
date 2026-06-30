@@ -37,16 +37,65 @@ def t(s, p, o): w(iri(s) + " " + iri(p) + " " + o + " .")
 def tl(s, p, o): t(s, p, lit(o))
 
 
-def ring(cs): return ", ".join("%s %s" % (c[0], c[1]) for c in cs if len(c) >= 2)
-def poly_body(rings): return ", ".join("(%s)" % ring(r) for r in rings if r)
+# Detailed OSM polygons are too heavy to ship + render (Spain ~1 MB, max ~21 MB of
+# WKT). Simplify with Douglas–Peucker (iterative, no recursion limit) — at a ~1 km
+# tolerance a boundary is visually identical on a map but ~10-30x fewer points, so
+# the .rete shrinks and the browser parses each cell instantly.
+SIMPLIFY_EPS = 0.01  # degrees (~1.1 km)
+
+def dp(pts, eps):
+    n = len(pts)
+    if n <= 2:
+        return pts
+    keep = [False] * n
+    keep[0] = keep[n - 1] = True
+    eps2 = eps * eps
+    stack = [(0, n - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        ax, ay = pts[i]; bx, by = pts[j]
+        dx, dy = bx - ax, by - ay
+        ll = dx * dx + dy * dy
+        dmax, idx = -1.0, -1
+        for k in range(i + 1, j):
+            px, py = pts[k]
+            if ll == 0:
+                d = (px - ax) ** 2 + (py - ay) ** 2
+            else:
+                tcl = ((px - ax) * dx + (py - ay) * dy) / ll
+                d = (px - (ax + tcl * dx)) ** 2 + (py - (ay + tcl * dy)) ** 2
+            if d > dmax:
+                dmax, idx = d, k
+        if dmax > eps2:
+            keep[idx] = True
+            stack.append((i, idx)); stack.append((idx, j))
+    return [pts[k] for k in range(n) if keep[k]]
+
+def simp(cs):
+    return dp([(c[0], c[1]) for c in cs if len(c) >= 2], SIMPLIFY_EPS)
+def fmt(pts):
+    return ", ".join("%.4f %.4f" % (x, y) for x, y in pts)
+def poly_body(rings):
+    parts = [fmt(p) for p in (simp(r) for r in rings) if len(p) >= 4]  # drop degenerate rings
+    return ", ".join("(%s)" % p for p in parts) if parts else None
 def geom_wkt(g):
-    if not g: return None
+    if not g:
+        return None
     typ, c = g.get("type"), g.get("coordinates")
-    if typ == "Point": return "POINT(%s %s)" % (c[0], c[1])
-    if typ == "Polygon": return "POLYGON(%s)" % poly_body(c)
-    if typ == "MultiPolygon": return "MULTIPOLYGON(%s)" % ", ".join("(%s)" % poly_body(p) for p in c)
-    if typ == "LineString": return "LINESTRING(%s)" % ring(c)
-    if typ == "MultiLineString": return "MULTILINESTRING(%s)" % ", ".join("(%s)" % ring(r) for r in c)
+    if typ == "Point":
+        return "POINT(%.5f %.5f)" % (c[0], c[1])
+    if typ == "Polygon":
+        b = poly_body(c); return ("POLYGON(%s)" % b) if b else None
+    if typ == "MultiPolygon":
+        ps = [b for b in (poly_body(p) for p in c) if b]
+        return ("MULTIPOLYGON(%s)" % ", ".join("(%s)" % b for b in ps)) if ps else None
+    if typ == "LineString":
+        p = simp(c); return ("LINESTRING(%s)" % fmt(p)) if len(p) >= 2 else None
+    if typ == "MultiLineString":
+        ls = [fmt(p) for p in (simp(r) for r in c) if len(p) >= 2]
+        return ("MULTILINESTRING(%s)" % ", ".join("(%s)" % p for p in ls)) if ls else None
     return None
 
 
