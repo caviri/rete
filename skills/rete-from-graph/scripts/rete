@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Thin wrapper around the `rete` CLI so you don't memorize the Docker incantation.
+#
+# Resolution order:
+#   1. a `rete` already on PATH (a system/cargo install) — used directly;
+#   2. otherwise the project's Docker-only workflow: run the compiled binary
+#      (`/work/target/release/rete`) inside the `rete-dev` image, with the repo
+#      mounted at /work.
+#
+# Paths you pass should be /work-relative (e.g. /work/data/foo/foo.nt) when the
+# Docker path is taken; on a PATH `rete` they're used as-is. Override with:
+#   RETE_IMAGE   (default: rete-dev:latest)
+#   RETE_BIN     (default: /work/target/release/rete)
+#   RETE_MOUNT   (default: the git repo root, else $PWD)
+#
+# Examples:
+#   skills/rete-from-graph/scripts/rete validate /work/data/foo/foo.nt
+#   skills/rete-from-graph/scripts/rete build /work/data/foo/foo.nt -o /work/web/foo.rete --pyramid-algo types --card
+set -euo pipefail
+export MSYS_NO_PATHCONV=1   # Windows Git-Bash: don't rewrite /work into a Windows path
+
+if command -v rete >/dev/null 2>&1; then
+  exec rete "$@"
+fi
+
+mount="${RETE_MOUNT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+image="${RETE_IMAGE:-rete-dev:latest}"
+bin="${RETE_BIN:-/work/target/release/rete}"
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "rete: image '$image' not found. Build it (Docker-only workflow) or install rete on PATH." >&2
+  echo "      Set RETE_IMAGE / RETE_BIN to override." >&2
+  exit 127
+fi
+
+exec docker run --rm -v "$mount:/work" -w /work "$image" "$bin" "$@"
