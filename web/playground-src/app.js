@@ -3277,7 +3277,8 @@ self.onmessage = function (e) {
   function imageCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri thumb-cell"><a href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
-      `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="lazy" alt="" /></a></td>`;
+      `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="lazy" alt="" /></a>` +
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="image"></div></td>`;
   }
   function linkCell(t) {
     const url = httpsUpgrade(t.value);
@@ -3607,7 +3608,8 @@ self.onmessage = function (e) {
       `loading="lazy" reveal="auto" touch-action="pan-y" environment-image="neutral" ` +
       `shadow-intensity="0.6" alt="3D model"></model-viewer>` +
       `<button type="button" class="model3d-expand" data-mesh="${esc(url)}" ` +
-      `title="Enlarge — ${esc(t.value)}" aria-label="Enlarge 3D model">⛶</button></td>`;
+      `title="Enlarge — ${esc(t.value)}" aria-label="Enlarge 3D model">⛶</button>` +
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="mesh"></div></td>`;
   }
   function viewer3dCell(t) {
     const url = httpsUpgrade(t.value);
@@ -3665,6 +3667,7 @@ self.onmessage = function (e) {
           '<button type="button" class="m3-spin on" aria-pressed="true">⟳ auto-rotate</button>' +
         '</div>' +
         '<div class="model3d-foot"><span class="model3d-hint">drag to rotate · scroll to zoom</span>' +
+          '<span class="model3d-size" title="real-world size of the model"></span>' +
           '<a class="model3d-src" target="_blank" rel="noopener noreferrer">open file ↗</a></div>' +
       '</div>';
     document.body.appendChild(el);
@@ -3706,8 +3709,17 @@ self.onmessage = function (e) {
       if (ok) {
         stage.innerHTML = '<model-viewer src="' + esc(url) + '" camera-controls auto-rotate touch-action="pan-y" ' +
           'shadow-intensity="1" exposure="1.1" environment-image="neutral" ' +
-          'style="width:100%;height:100%;background:#15161a" alt="3D model"></model-viewer>';
+          'style="width:100%;height:100%;background:#15161a" alt="3D model"></model-viewer>' +
+          '<div class="model3d-scalebar" style="display:none"><span class="scalebar-fill"></span>' +
+          '<span class="scalebar-label"></span></div>';
         model3dApply();                                   // honour the current lighting controls
+        const mv = stage.querySelector("model-viewer");
+        const upd = () => updateScaleBar(mv, el);
+        mv.addEventListener("load", () => {
+          upd();
+          try { el.querySelector(".model3d-size").textContent = "≈ " + fmtDims(mv.getDimensions()); } catch (_e) {}
+        });
+        mv.addEventListener("camera-change", upd);
       } else {
         stage.innerHTML = '<div class="model3d-loading">Couldn\'t load the 3D viewer (offline or CDN blocked). ' +
           '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open the file ↗</a></div>';
@@ -3726,12 +3738,65 @@ self.onmessage = function (e) {
   }
   function audioCell(t) {
     const url = httpsUpgrade(t.value);
-    return `<td class="iri media-cell"><audio class="cell-audio" controls preload="none" src="${esc(url)}"></audio>` +
-      `<a class="media-src" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(t.value)}">↗</a></td>`;
+    return `<td class="iri media-cell"><audio class="cell-audio" controls preload="metadata" src="${esc(url)}"></audio>` +
+      `<a class="media-src" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(t.value)}">↗</a>` +
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="audio"></div></td>`;
   }
   function videoCell(t) {
     const url = httpsUpgrade(t.value);
-    return `<td class="iri media-cell"><video class="cell-video" controls preload="metadata" playsinline src="${esc(url)}"></video></td>`;
+    return `<td class="iri media-cell"><video class="cell-video" controls preload="metadata" playsinline src="${esc(url)}"></video>` +
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div></td>`;
+  }
+
+  // ---- media metadata captions + 3D scale bar -------------------------------
+  function fmtBytes(n) { n = +n; if (!n || n < 0) return ""; return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B"; }
+  function fmtDur(s) { s = Math.round(+s || 0); if (!s) return ""; return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+  function fmtExt(url) { const m = /\.([a-z0-9]{2,5})(\?|#|$)/i.exec(String(url).split("?")[0]); return m ? m[1].toUpperCase() : ""; }
+  function fmtDims(d) { const mx = Math.max(d.x, d.y, d.z); const u = mx < 0.01 ? 1000 : mx < 1 ? 100 : 1, s = mx < 0.01 ? "mm" : mx < 1 ? "cm" : "m"; const r = (v) => (v * u).toFixed(mx * u < 10 ? 1 : 0); return r(d.x) + "×" + r(d.y) + "×" + r(d.z) + " " + s; }
+  function niceSI(x) { if (!isFinite(x) || x <= 0) return 0; const p = Math.pow(10, Math.floor(Math.log10(x))); const f = x / p; return (f >= 5 ? 5 : f >= 2 ? 2 : 1) * p; }
+  function fmtSI(m) { if (m >= 1) return (Number.isInteger(m) ? m : m.toFixed(m < 10 ? 1 : 0)) + " m"; if (m >= 0.01) return Math.round(m * 100) + " cm"; return Math.round(m * 1000) + " mm"; }
+  // Fill the per-cell caption: format · (resolution / duration / real-size) · file size.
+  // file size via a best-effort HEAD (CORS permitting); intrinsic dims from the element.
+  function hydrateMediaMeta(scope) {
+    (scope || document).querySelectorAll(".media-meta[data-murl]").forEach((box) => {
+      const url = box.getAttribute("data-murl"), kind = box.getAttribute("data-mkind");
+      box.removeAttribute("data-murl");
+      const parts = []; const f = fmtExt(url); if (f) parts.push(f);
+      const render = () => { box.textContent = parts.filter(Boolean).join(" · "); box.title = box.textContent; };
+      render();
+      fetch(url, { method: "HEAD" }).then((r) => { const b = fmtBytes(r.headers.get("content-length")); if (b) { parts.push(b); render(); } }).catch(() => {});
+      const cell = box.closest("td"); if (!cell) return;
+      if (kind === "image") {
+        const img = cell.querySelector("img");
+        if (img) { const g = () => { if (img.naturalWidth) { parts.splice(1, 0, img.naturalWidth + "×" + img.naturalHeight); render(); } }; (img.complete && img.naturalWidth) ? g() : img.addEventListener("load", g, { once: true }); }
+      } else if (kind === "video") {
+        const v = cell.querySelector("video");
+        if (v) v.addEventListener("loadedmetadata", () => { const ins = [v.videoWidth ? v.videoWidth + "×" + v.videoHeight : "", fmtDur(v.duration)].filter(Boolean); parts.splice(1, 0, ...ins); render(); }, { once: true });
+      } else if (kind === "audio") {
+        const a = cell.querySelector("audio");
+        if (a) a.addEventListener("loadedmetadata", () => { const d = fmtDur(a.duration); if (d) { parts.splice(1, 0, d); render(); } }, { once: true });
+      } else if (kind === "mesh") {
+        const mv = cell.querySelector("model-viewer");
+        if (mv) mv.addEventListener("load", () => { try { parts.splice(1, 0, fmtDims(mv.getDimensions())); render(); } catch (_e) {} }, { once: true });
+      }
+    });
+  }
+  // A real-world scale bar for the lightbox: pixels-per-metre from the live camera
+  // (orbit radius + vertical FOV), so a round SI length (1 mm … 1 m) tracks zoom.
+  function updateScaleBar(mv, el) {
+    const wrap = el.querySelector(".model3d-scalebar"); if (!mv || !wrap) return;
+    try {
+      const orbit = mv.getCameraOrbit();
+      const fov = (((mv.getFieldOfView && mv.getFieldOfView()) || 30)) * Math.PI / 180;
+      const stage = el.querySelector(".model3d-stage"); const vh = (stage && stage.clientHeight) || 400;
+      const pxPerM = (vh / 2) / (orbit.radius * Math.tan(fov / 2));
+      if (!isFinite(pxPerM) || pxPerM <= 0) { wrap.style.display = "none"; return; }
+      const L = niceSI(70 / pxPerM), w = Math.round(L * pxPerM);
+      if (!L || w < 8 || w > 460) { wrap.style.display = "none"; return; }
+      wrap.style.display = "";
+      wrap.querySelector(".scalebar-fill").style.width = w + "px";
+      wrap.querySelector(".scalebar-label").textContent = fmtSI(L);
+    } catch (_e) { wrap.style.display = "none"; }
   }
 
   // The default per-value heuristic (the behaviour for type "auto").
@@ -6310,7 +6375,7 @@ self.onmessage = function (e) {
       const obs = new MutationObserver(() => {
         if (pending) return;
         pending = true;
-        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); }, 60);
+        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); }, 60);
       });
       obs.observe(host, { childList: true, subtree: true });
       // Delegated: the ⛶ on an inline 3D cell (or a 🧊 3D button) opens the full viewer.
