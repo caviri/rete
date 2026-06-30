@@ -760,37 +760,54 @@ impl XhrRangeReader {
         }
         #[cfg(not(feature = "asyncify"))]
         {
-            let xhr = web_sys::XmlHttpRequest::new()?;
-            xhr.open_with_async("GET", url, false)?;
-            xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
-            xhr.set_request_header("Range", "bytes=0-0")?;
-            xhr.send()?;
-            let status = xhr.status()?;
-            if status != 206 && !(200..300).contains(&status) {
-                return Err(JsValue::from_str(&format!("probe {url}: status {status}")));
+            // Hugging Face's Space gateway is intermittently flaky on the length
+            // probe (a 200 with no Content-Length, a chunked response with neither
+            // header, …). A fresh ranged GET usually lands on a healthy response,
+            // so retry a few times before surfacing the error.
+            let mut last = format!("could not determine length of {url}");
+            for _ in 0..4 {
+                match Self::probe_len(url) {
+                    Ok(len) => {
+                        return Ok(Self {
+                            url: url.to_string(),
+                            len,
+                        })
+                    }
+                    Err(e) => last = e,
+                }
             }
-            // `Content-Range: bytes 0-0/12345` — the part after `/` is the total.
-            let len = xhr
-                .get_response_header("Content-Range")?
-                .and_then(|v| {
-                    v.rsplit('/')
-                        .next()
-                        .and_then(|t| t.trim().parse::<u64>().ok())
-                })
-                .or_else(|| {
-                    xhr.get_response_header("Content-Length")
-                        .ok()
-                        .flatten()
-                        .and_then(|v| v.parse::<u64>().ok())
-                })
-                .ok_or_else(|| {
-                    JsValue::from_str(&format!("could not determine length of {url}"))
-                })?;
-            Ok(Self {
-                url: url.to_string(),
-                len,
-            })
+            Err(JsValue::from_str(&last))
         }
+    }
+
+    /// One length probe: a one-byte ranged `GET`, reading the total from
+    /// `Content-Range` (`bytes 0-0/TOTAL`), falling back to `Content-Length`.
+    #[cfg(not(feature = "asyncify"))]
+    fn probe_len(url: &str) -> Result<u64, String> {
+        let err = |m: &str| m.to_string();
+        let xhr = web_sys::XmlHttpRequest::new().map_err(|_| err("xhr"))?;
+        xhr.open_with_async("GET", url, false)
+            .map_err(|_| err("open"))?;
+        xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
+        xhr.set_request_header("Range", "bytes=0-0")
+            .map_err(|_| err("range header"))?;
+        xhr.send().map_err(|_| format!("probe {url}: network error"))?;
+        let status = xhr.status().map_err(|_| err("status"))?;
+        if status != 206 && !(200..300).contains(&status) {
+            return Err(format!("probe {url}: status {status}"));
+        }
+        // `Content-Range: bytes 0-0/12345` — the part after `/` is the total.
+        xhr.get_response_header("Content-Range")
+            .ok()
+            .flatten()
+            .and_then(|v| v.rsplit('/').next().and_then(|t| t.trim().parse::<u64>().ok()))
+            .or_else(|| {
+                xhr.get_response_header("Content-Length")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.parse::<u64>().ok())
+            })
+            .ok_or_else(|| format!("could not determine length of {url}"))
     }
 }
 

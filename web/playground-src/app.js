@@ -4266,14 +4266,17 @@ self.onmessage = function (e) {
     const vars = res.vars || [], rows = res.rows || [];
     const geo = detectGeoCol(vars, rows);
     if (!geo) { $("out").innerHTML = note("No geometry in this result — Map needs a WKT column (geo:wktLiteral: POINT / LINESTRING / POLYGON …)."); return "no geometry"; }
-    const labelCol = vars.find((v) => v !== geo) || geo;
+    const labelCols = vars.filter((v) => v !== geo);
     const feats = [];
     let minX = 180, maxX = -180, minY = 90, maxY = -90, n = 0;
     for (const r of rows) {
       const wkt = parseTerm(r[geo]).value; if (!WKT_RE.test(wkt)) continue;
       const rings = wktRings(wkt); if (!rings.length) continue;
       const isPoly = /POLYGON/i.test(wkt);
-      feats.push({ rings, isPoly, label: termLabel(parseTerm(r[labelCol])) });
+      // the tooltip value = every non-geometry column, so a year/name/count shows
+      const label = (labelCols.length ? labelCols : [geo])
+        .map((v) => termLabel(parseTerm(r[v]))).filter((s) => s !== "").join(" · ");
+      feats.push({ rings, isPoly, label });
       for (const ring of rings) for (const [x, y] of ring) {
         if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; n++;
       }
@@ -4323,31 +4326,65 @@ self.onmessage = function (e) {
       cap = `${feats.length} feature(s) · lon ${minX.toFixed(1)}…${maxX.toFixed(1)}, lat ${minY.toFixed(1)}…${maxY.toFixed(1)} · equirectangular (offline)`;
     }
 
+    // One <path> per feature — all of a (multi)polygon's rings become sub-paths of
+    // a single element, so a 30-ring empire is 1 DOM node, not 30. Points stay as
+    // circles. The label rides on data-label (read by one delegated handler) — no
+    // per-ring <title>, whose native tooltip is both slow and a node each.
     let svg = "";
     for (const f of feats) {
-      const title = `<title>${esc(f.label)}</title>`;
+      const lbl = esc(f.label);
+      let d = "", dots = "";
       for (const ring of f.rings) {
         if (ring.length === 1) {
           const [x, y] = ring[0];
-          svg += `<circle class="mpt" cx="${px(x).toFixed(1)}" cy="${py(y).toFixed(1)}" r="${hasBase ? 4 : 3}">${title}</circle>`;
+          dots += `<circle class="mpt" data-label="${lbl}" cx="${px(x).toFixed(1)}" cy="${py(y).toFixed(1)}" r="${hasBase ? 4 : 3}"/>`;
         } else {
-          const pts = ring.map(([x, y]) => `${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(" ");
-          svg += f.isPoly
-            ? `<polygon class="mgeo" points="${pts}">${title}</polygon>`
-            : `<polyline class="mline" points="${pts}">${title}</polyline>`;
+          d += "M" + ring.map(([x, y]) => `${px(x).toFixed(1)} ${py(y).toFixed(1)}`).join("L") + (f.isPoly ? "Z" : "");
         }
       }
+      if (d) svg += `<path class="${f.isPoly ? "mgeo" : "mline"}" data-label="${lbl}" d="${d}"/>`;
+      svg += dots;
     }
     $("out").innerHTML = `<div class="mapview">${tools}` +
       `<svg class="${hasBase ? "has-base" : ""}" viewBox="0 0 ${W} ${H}" role="img" aria-label="map of results"><g class="mtiles">${bg}</g>${svg}</svg>` +
-      `<div class="mapcap">${esc(cap)} — hover a feature for its label.</div></div>`;
+      `<div class="map-tooltip" hidden></div>` +
+      `<div class="mapcap">${esc(cap)} — hover a feature for its value.</div></div>`;
     const sel = $("mapBasemap");
     if (sel) sel.addEventListener("change", () => {
       state.mapBasemap = sel.value;
       try { localStorage.setItem("mapBasemap", sel.value); } catch (e) { /* private mode */ }
       if (lastMapRes) renderMap(lastMapRes);
     });
+    wireMapTooltip($("out").querySelector(".mapview"));
     return `${feats.length} mapped feature(s)`;
+  }
+
+  // A snappy cursor-following tooltip for the map: one delegated mousemove on the
+  // SVG, rAF-throttled, reading the hovered feature's data-label — instant, vs the
+  // ~1s-delayed native <title> popup it replaces.
+  function wireMapTooltip(mv) {
+    if (!mv) return;
+    const svgEl = mv.querySelector("svg"), tip = mv.querySelector(".map-tooltip");
+    if (!svgEl || !tip) return;
+    let pend = null, raf = 0;
+    const apply = () => {
+      raf = 0;
+      if (!pend) { tip.hidden = true; return; }
+      tip.textContent = pend.label;
+      tip.hidden = false;
+      const rect = mv.getBoundingClientRect();
+      let lx = pend.x - rect.left + 14, ly = pend.y - rect.top + 14;
+      if (lx + tip.offsetWidth + 6 > rect.width) lx = pend.x - rect.left - tip.offsetWidth - 14;
+      if (ly + tip.offsetHeight + 6 > rect.height) ly = pend.y - rect.top - tip.offsetHeight - 14;
+      tip.style.left = Math.max(2, lx) + "px";
+      tip.style.top = Math.max(2, ly) + "px";
+    };
+    svgEl.addEventListener("mousemove", (ev) => {
+      const el = ev.target.closest("[data-label]");
+      pend = el ? { label: el.getAttribute("data-label"), x: ev.clientX, y: ev.clientY } : null;
+      if (!raf) raf = requestAnimationFrame(apply);
+    });
+    svgEl.addEventListener("mouseleave", () => { pend = null; if (!raf) raf = requestAnimationFrame(apply); });
   }
 
   function renderTime(res) {

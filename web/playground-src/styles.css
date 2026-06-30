@@ -2412,11 +2412,20 @@ th .coltype.coltype-on {
 .range-read-hint { font-size: 12px; color: var(--muted); margin-top: 3px; opacity: .85; }
 
 /* Map view — an offline equirectangular plot of WKT geometries. */
+.mapview { position: relative; }
 .mapview svg { width: 100%; height: auto; background: var(--side); border: 1px solid var(--line); border-radius: 8px; }
-.mapview .mgeo { fill: rgba(20, 125, 105, .18); stroke: var(--accent-dark); stroke-width: .7; }
-.mapview .mline { fill: none; stroke: var(--accent-dark); stroke-width: 1; }
-.mapview .mpt { fill: var(--accent-2, #c84f2f); stroke: #fff; stroke-width: .5; }
+.mapview .mgeo { fill: rgba(20, 125, 105, .18); stroke: var(--accent-dark); stroke-width: .7; cursor: pointer; }
+.mapview .mline { fill: none; stroke: var(--accent-dark); stroke-width: 1; cursor: pointer; }
+.mapview .mpt { fill: var(--accent-2, #c84f2f); stroke: #fff; stroke-width: .5; cursor: pointer; }
 .mapview .mgeo:hover, .mapview .mline:hover { stroke-width: 1.8; }
+.mapview .mgeo:hover { fill: rgba(20, 125, 105, .34); }
+.mapview .mpt:hover { stroke-width: 1.4; }
+/* cursor-following value tooltip (replaces the slow native <title>) */
+.map-tooltip { position: absolute; pointer-events: none; z-index: 6; left: 0; top: 0;
+  background: rgba(28, 32, 36, .93); color: #fff; font-size: 12px; font-weight: 600;
+  padding: 3px 8px; border-radius: 5px; white-space: nowrap; max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, .28); }
+.map-tooltip[hidden] { display: none; }
 .mapcap { font-size: 11.5px; color: var(--muted); margin-top: 7px; }
 /* basemap picker + higher-contrast geometry when drawn over slippy tiles */
 .map-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
