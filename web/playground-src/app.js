@@ -6146,6 +6146,7 @@ self.onmessage = function (e) {
   function errorReport(message, tech) {
     const L = [];
     L.push("rete playground — error report");
+    if (window.RETE_BUILD) L.push("build: " + window.RETE_BUILD);
     try { L.push("time: " + new Date().toISOString()); } catch (_e) { /* ignore */ }
     L.push("error: " + String(message || ""));
     const t = tech && String(tech);

@@ -133,6 +133,12 @@ a {
   color: var(--muted);
   font-size: 12px;
 }
+/* Build stamp (commit · UTC) so a stale cache is obvious at a glance. */
+.build-ver {
+  font-size: 10.5px; color: var(--muted); opacity: .65; cursor: help;
+  font-variant-numeric: tabular-nums; white-space: nowrap; align-self: center;
+  padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px;
+}
 
 .status-cluster {
   display: flex;
@@ -2829,6 +2835,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 0049f9b · 2026-06-30 11:40 UTC</span>
+    <script>window.RETE_BUILD = "0049f9b · 2026-06-30 11:40 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -15570,6 +15578,7 @@ self.onmessage = function (e) {
   function errorReport(message, tech) {
     const L = [];
     L.push("rete playground — error report");
+    if (window.RETE_BUILD) L.push("build: " + window.RETE_BUILD);
     try { L.push("time: " + new Date().toISOString()); } catch (_e) { /* ignore */ }
     L.push("error: " + String(message || ""));
     const t = tech && String(tech);

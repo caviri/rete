@@ -20,9 +20,11 @@ Run (deterministic):
 """
 
 import base64
+import datetime
 import json
 import pathlib
 import re
+import subprocess
 import sys
 
 # Patch spliced into the asyncified wasm-bindgen glue in place of the
@@ -122,6 +124,21 @@ EXPLORE_OUTS = (ROOT / "docs" / "explore-100mb.html", WEB / "explore-100mb.html"
 
 GLUE_JS = NOMOD / "rete_wasm.js"
 WASM = NOMOD / "rete_wasm_bg.wasm"
+
+
+def build_version():
+    """A human build stamp: short git commit (HEAD at build time — i.e. the
+    *previous* commit, since the build is committed next) + the UTC build time.
+    Surfaced in the topbar and every error report so a stale cache is obvious."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except Exception:
+        commit = ""
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return f"{commit or 'dev'} · {ts}"
 CSS = SRC / "styles.css"
 CATALOG_JS = SRC / "catalog.js"
 CM6_JS = SRC / "cm6.bundle.js"  # bundled CodeMirror 6 (see cm6/README / package.json)
@@ -229,6 +246,7 @@ def main() -> None:
             RDFCONV_JS.read_text(encoding="utf-8").rstrip(),
         )
         .replace("__PLAYGROUND_APP_JS__", APP_JS.read_text(encoding="utf-8").rstrip())
+        .replace("__BUILD_VERSION__", build_version())
     )
     placeholders = (
         "__GLUE_JS__",

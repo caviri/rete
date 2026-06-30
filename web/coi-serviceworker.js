@@ -30,8 +30,12 @@ self.addEventListener("fetch", (event) => {
   // everything that isn't a navigation straight through, untouched.
   if (r.mode !== "navigate") return;
 
+  // Always REVALIDATE the top-level document with the server (a cheap 304 when
+  // unchanged, fresh bytes when it changed). Without this the worker re-serves
+  // the navigation from the browser's HTTP cache, so a deploy looks "stuck" on
+  // the old page even after Clear-cache — only an unregister / private tab helped.
   event.respondWith(
-    fetch(r)
+    fetch(r.url, { cache: "no-cache", credentials: "same-origin" })
       .then((response) => {
         if (response.status === 0) return response; // opaque — leave as-is
         const headers = new Headers(response.headers);

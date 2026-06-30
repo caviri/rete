@@ -93,6 +93,12 @@ a {
   color: var(--muted);
   font-size: 12px;
 }
+/* Build stamp (commit · UTC) so a stale cache is obvious at a glance. */
+.build-ver {
+  font-size: 10.5px; color: var(--muted); opacity: .65; cursor: help;
+  font-variant-numeric: tabular-nums; white-space: nowrap; align-self: center;
+  padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px;
+}
 
 .status-cluster {
   display: flex;
