@@ -3465,8 +3465,13 @@ td.lit { color: var(--ink); }
         <p class="microcopy" id="asyncReadsInfo"></p>
       </section>
       <section class="rc-section">
-        <div class="rc-line"><label class="microcopy">AI model (WebGPU) <input type="text" id="aiModelId" placeholder="onnx-community/gemma-3-1b-it-ONNX" style="width:22em" /></label></div>
-        <p class="microcopy" id="aiModelInfo">The “✨ Ask AI” button runs a small instruction model entirely in your browser via WebGPU to draft SPARQL for the current dataset (grounded in its example queries). The weights download once from the Hugging Face Hub and are cached — nothing is sent to a server. Default is Google’s <code>gemma-3-1b-it</code>; any Transformers.js-compatible chat model id works (a Llama, Qwen or other ONNX). Needs a WebGPU browser (Chrome/Edge desktop).</p>
+        <div class="rc-line"><label class="microcopy">AI model (WebGPU) <input type="text" id="aiModelId" list="aiModelList" placeholder="onnx-community/gemma-3-1b-it-ONNX" style="width:22em" /></label>
+          <datalist id="aiModelList">
+            <option value="onnx-community/gemma-3-1b-it-ONNX">Gemma 3 1B (ONNX, default)</option>
+            <option value="google/gemma-4-E2B-it-qat-mobile-transformers">Gemma 4 E2B (mobile, custom WebGPU kernels)</option>
+            <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B (ONNX, small)</option>
+          </datalist></div>
+        <p class="microcopy" id="aiModelInfo">The “✨ Ask AI” button runs a small instruction model entirely in your browser via WebGPU to draft SPARQL for the current dataset (grounded in its example queries). The weights download once from the Hugging Face Hub and are cached — nothing is sent to a server. Default is Google’s <code>gemma-3-1b-it</code>; any Transformers.js-compatible chat model id works (a Llama, Qwen or other ONNX). You can also pick <code>google/gemma-4-E2B-it-qat-mobile-transformers</code> — Gemma 4 E2B, which runs via the webml-community custom WebGPU kernels (a separate, faster runtime) instead of ONNX. Needs a WebGPU browser (Chrome/Edge desktop).</p>
       </section>
       <section class="rc-section">
         <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>
@@ -11064,6 +11069,13 @@ self.onmessage = function (e) {
   // Hub and are cached by the browser; nothing leaves the machine.
   const AI_DEFAULT_MODEL = "onnx-community/gemma-3-1b-it-ONNX";
   function aiModelId() { try { return localStorage.getItem("aiModelId") || AI_DEFAULT_MODEL; } catch (e) { return AI_DEFAULT_MODEL; } }
+  // Gemma 4 E2B (mobile) isn't an ONNX model: it runs through the webml-community
+  // custom WebGPU kernels (the `Gemma4Mobile` class, on the main thread), not the
+  // standard Transformers.js worker. Pick it by setting this id in Settings.
+  const AI_GEMMA4 = "google/gemma-4-E2B-it-qat-mobile-transformers";
+  const GEMMA4_URL = "https://webml-community-gemma-4-webgpu-kernels.static.hf.space/gemma-4-e2b.js";
+  function aiIsGemma4() { return aiModelId() === AI_GEMMA4; }
+  let aiGemma4 = null, aiGemma4Abort = null;
   // A module worker that imports Transformers.js from the CDN, loads the model on
   // WebGPU, and streams generated tokens back. Built as a blob so the page stays
   // self-contained; the heavy library + weights load only when the chat is opened.
@@ -11240,6 +11252,43 @@ self.onmessage = function (e) {
     }
     const allBarsDone = () => { const v = Object.values(bars); return v.length > 0 && v.every((x) => x.done); };
 
+    // Gemma 4 path: import the custom-kernel runtime + run it on the main thread.
+    if (aiIsGemma4()) {
+      stageEl.textContent = "Loading the Gemma 4 WebGPU runtime (custom kernels)…";
+      log("• importing Gemma4Mobile from the webml-community Space…");
+      const onP = (p) => {
+        const b = barFor("gemma-4-e2b");
+        let pct = 0, label = "";
+        if (typeof p === "number") pct = p <= 1 ? p * 100 : p;
+        else if (p && typeof p === "object") {
+          if (typeof p.progress === "number") pct = p.progress <= 1 ? p.progress * 100 : p.progress;
+          else if (p.total) pct = ((p.loaded || 0) / p.total) * 100;
+          label = p.text || p.status || p.file || p.name || "";
+        }
+        b.fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+        b.pct.textContent = pct.toFixed(0) + "%";
+        if (label && !seen[label]) { seen[label] = 1; stageEl.textContent = String(label); log("• " + label); }
+      };
+      import(/* @vite-ignore */ GEMMA4_URL)
+        .then((mod) => {
+          log("✓ Gemma4Mobile runtime loaded");
+          stageEl.innerHTML = 'Downloading + compiling Gemma 4 E2B on WebGPU <span class="ai-spin">◴</span>';
+          return mod.Gemma4Mobile.load(null, { onProgress: onP });
+        })
+        .then((model) => {
+          aiGemma4 = model; llmLoaded = true;
+          log("✓ Gemma 4 ready in " + elapsed());
+          llmModelId = aiModelId(); aiRenderGate(); aiModalEl.querySelector(".ai-input").focus();
+        })
+        .catch((err) => {
+          const m = String((err && err.message) || err);
+          stageEl.innerHTML = '<span class="ai-warn">Failed to load Gemma 4: ' + esc(m) +
+            '</span> <span class="ai-dim">— needs WebGPU (Chrome/Edge desktop); the custom kernels come from the webml-community Space.</span>';
+          log("✗ " + m); gate.querySelector(".ai-load-btn").disabled = false;
+        });
+      return;
+    }
+
     aiOnLog = (text) => log(text);
     aiOnBooted = () => log("✓ transformers.js runtime loaded");
     aiOnStage = (s) => {
@@ -11284,6 +11333,20 @@ self.onmessage = function (e) {
     log("• starting worker, importing transformers.js from the CDN…");
     ensureLlmWorker().postMessage({ type: "load", id: aiModelId() });
   }
+  // Finalize a bot bubble: render the text, and if it contains a SPARQL block add a
+  // "Use & run" button. Shared by the worker (TJS) and the Gemma 4 main-thread path.
+  function aiFinishBubble(bubble, acc) {
+    const sparql = aiExtractSparql(acc);
+    let html = esc(acc);
+    if (sparql) html += '<div class="ai-run-row"><button type="button" class="ai-run-btn">▶ Use &amp; run this query</button></div>';
+    bubble.innerHTML = html;
+    if (sparql) bubble.querySelector(".ai-run-btn").addEventListener("click", () => {
+      if (window.PlaygroundEditor) window.PlaygroundEditor.setText("q", sparql);
+      const ta = $("q"); if (ta) ta.value = sparql;
+      aiModalEl.classList.add("hidden");
+      try { runQuery(); } catch (e) { /* surfaced in the result pane */ }
+    });
+  }
   function aiSend() {
     if (llmBusy || !llmLoaded) return;
     const input = aiModalEl.querySelector(".ai-input");
@@ -11297,21 +11360,7 @@ self.onmessage = function (e) {
     llmBusy = true;
     aiOnToken = (tok) => { acc += tok; bubble.innerHTML = esc(acc) + '<span class="ai-cursor">▌</span>'; aiModalEl.querySelector(".ai-transcript").scrollTop = 1e9; };
     aiOnError = (err) => { bubble.innerHTML = '<span class="ai-warn">' + esc(err) + '</span>'; llmBusy = false; };
-    aiOnDone = () => {
-      aiHistory.push({ role: "assistant", content: acc });
-      const sparql = aiExtractSparql(acc);
-      let html = esc(acc);
-      if (sparql) {
-        html += '<div class="ai-run-row"><button type="button" class="ai-run-btn">▶ Use &amp; run this query</button></div>';
-      }
-      bubble.innerHTML = html;
-      if (sparql) bubble.querySelector(".ai-run-btn").addEventListener("click", () => {
-        if (window.PlaygroundEditor) window.PlaygroundEditor.setText("q", sparql);
-        const ta = $("q"); if (ta) ta.value = sparql;
-        aiModalEl.classList.add("hidden");
-        try { runQuery(); } catch (e) { /* surfaced in the result pane */ }
-      });
-    };
+    aiOnDone = () => { aiHistory.push({ role: "assistant", content: acc }); aiFinishBubble(bubble, acc); };
     // Prime via a user/assistant pair rather than a `system` role — some chat
     // templates (notably Gemma's) reject a system message; user/assistant is
     // accepted everywhere.
@@ -11319,6 +11368,25 @@ self.onmessage = function (e) {
       { role: "user", content: aiSystemPrompt() },
       { role: "assistant", content: "Understood — I'll answer each question with a single SPARQL query in a ```sparql code block, using only this dataset's prefixes and predicates." }
     ].concat(aiHistory.slice(-6));
+    // Gemma 4 runs on the main thread (custom kernels) and streams an async iterable
+    // of cumulative {text}; the TJS models stream tokens from the worker.
+    if (aiIsGemma4() && aiGemma4) {
+      aiGemma4Abort = (typeof AbortController !== "undefined") ? new AbortController() : null;
+      (async () => {
+        try {
+          const stream = aiGemma4.generate(messages, { maxNewTokens: 1024, signal: aiGemma4Abort && aiGemma4Abort.signal });
+          for await (const chunk of stream) {
+            acc = (chunk && chunk.text != null) ? chunk.text : (typeof chunk === "string" ? chunk : acc);
+            bubble.innerHTML = esc(acc) + '<span class="ai-cursor">▌</span>';
+            aiModalEl.querySelector(".ai-transcript").scrollTop = 1e9;
+          }
+          aiHistory.push({ role: "assistant", content: acc }); aiFinishBubble(bubble, acc); llmBusy = false;
+        } catch (err) {
+          bubble.innerHTML = '<span class="ai-warn">' + esc(String((err && err.message) || err)) + '</span>'; llmBusy = false;
+        }
+      })();
+      return;
+    }
     ensureLlmWorker().postMessage({ type: "generate", messages });
   }
   function openAiModal() {

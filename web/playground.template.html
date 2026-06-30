@@ -757,8 +757,13 @@ __PLAYGROUND_CSS__
         <p class="microcopy" id="asyncReadsInfo"></p>
       </section>
       <section class="rc-section">
-        <div class="rc-line"><label class="microcopy">AI model (WebGPU) <input type="text" id="aiModelId" placeholder="onnx-community/gemma-3-1b-it-ONNX" style="width:22em" /></label></div>
-        <p class="microcopy" id="aiModelInfo">The “✨ Ask AI” button runs a small instruction model entirely in your browser via WebGPU to draft SPARQL for the current dataset (grounded in its example queries). The weights download once from the Hugging Face Hub and are cached — nothing is sent to a server. Default is Google’s <code>gemma-3-1b-it</code>; any Transformers.js-compatible chat model id works (a Llama, Qwen or other ONNX). Needs a WebGPU browser (Chrome/Edge desktop).</p>
+        <div class="rc-line"><label class="microcopy">AI model (WebGPU) <input type="text" id="aiModelId" list="aiModelList" placeholder="onnx-community/gemma-3-1b-it-ONNX" style="width:22em" /></label>
+          <datalist id="aiModelList">
+            <option value="onnx-community/gemma-3-1b-it-ONNX">Gemma 3 1B (ONNX, default)</option>
+            <option value="google/gemma-4-E2B-it-qat-mobile-transformers">Gemma 4 E2B (mobile, custom WebGPU kernels)</option>
+            <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B (ONNX, small)</option>
+          </datalist></div>
+        <p class="microcopy" id="aiModelInfo">The “✨ Ask AI” button runs a small instruction model entirely in your browser via WebGPU to draft SPARQL for the current dataset (grounded in its example queries). The weights download once from the Hugging Face Hub and are cached — nothing is sent to a server. Default is Google’s <code>gemma-3-1b-it</code>; any Transformers.js-compatible chat model id works (a Llama, Qwen or other ONNX). You can also pick <code>google/gemma-4-E2B-it-qat-mobile-transformers</code> — Gemma 4 E2B, which runs via the webml-community custom WebGPU kernels (a separate, faster runtime) instead of ONNX. Needs a WebGPU browser (Chrome/Edge desktop).</p>
       </section>
       <section class="rc-section">
         <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>
