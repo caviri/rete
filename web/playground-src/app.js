@@ -890,7 +890,7 @@ self.onmessage = function (e) {
       `<a class="lp-open" target="_blank" rel="noopener noreferrer">Open ↗</a></div>` +
       `<div class="lp-frame"><div class="lp-loading"><span class="spindle"></span></div>` +
       `<iframe class="lp-iframe" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe></div>` +
-      `<div class="lp-note">Live preview — some sites block embedding; use Open ↗.</div>`;
+      `<div class="lp-note">Scaled desktop preview — some sites block embedding; use Open ↗.</div>`;
     document.body.appendChild(lpEl);
     lpEl.addEventListener("mouseenter", () => clearTimeout(lpHideTimer));
     lpEl.addEventListener("mouseleave", hideLinkPreview);
@@ -898,7 +898,7 @@ self.onmessage = function (e) {
   }
   function positionLinkPreview(anchor) {
     const r = anchor.getBoundingClientRect();
-    const w = lpEl.offsetWidth || 380, h = lpEl.offsetHeight || 320;
+    const w = lpEl.offsetWidth || 420, h = lpEl.offsetHeight || 360;
     let left = Math.min(r.left, window.innerWidth - w - 8);
     let top = r.bottom + 8;
     if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 8);

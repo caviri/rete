@@ -1340,6 +1340,68 @@ struct JoinIter<'q> {
     matched: bool,
 }
 
+/// Does `other` certainly bind one of the path's endpoint variables? If so the
+/// path can be driven from that binding (the cheap `(Const, _)` traversal in
+/// [`eval_path`]) rather than enumerated from every node in the graph.
+fn path_endpoint_bound(ctx: &Ctx, other: &Plan, s: &PatternTerm, o: &PatternTerm) -> bool {
+    let cb = certain_bound(ctx, other, ctx.slots.len());
+    [s, o].into_iter().any(|t| match t {
+        PatternTerm::Var(v) => ctx.slots.slot(v).is_some_and(|i| cb[i]),
+        PatternTerm::Const(_) => false,
+    })
+}
+
+/// Substitute the value of an endpoint variable, if `lrow` binds it, so the path
+/// can be evaluated from a fixed constant endpoint.
+fn fix_endpoint(ctx: &Ctx, t: &PatternTerm, lrow: &Row) -> PatternTerm {
+    if let PatternTerm::Var(v) = t {
+        if let Some(val) = ctx.slots.slot(v).and_then(|i| lrow[i].as_ref()) {
+            if let Some(term) = ctx.resolver.str_once(val) {
+                return PatternTerm::Const(term);
+            }
+        }
+    }
+    t.clone()
+}
+
+/// Correlated property-path join: for each row of the already-bound `bound`
+/// side, fix any endpoint variable the path shares with it, evaluate the path
+/// from that fixed endpoint, and merge. The cheap alternative to materializing
+/// an unbounded whole-graph path and hash-joining. `optional`/`cond` give
+/// `OPTIONAL { ?x <path> ?y }` left-join semantics (an unmatched left row is
+/// emitted unchanged).
+fn correlated_path_join<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    nf: Option<&'q [String]>,
+    bound: &'q Plan,
+    subj: &'q PatternTerm,
+    spec: &'q PathAst,
+    obj: &'q PatternTerm,
+    optional: bool,
+    cond: Option<&'q FExpr>,
+) -> RowIter<'q> {
+    Box::new(eval_plan_iter(ctx, index, nf, bound).flat_map(move |lrow| {
+        let (s2, o2) = (
+            fix_endpoint(ctx, subj, &lrow),
+            fix_endpoint(ctx, obj, &lrow),
+        );
+        let mut cache = ExistsCache::new();
+        let mut out: Vec<Row> = Vec::new();
+        for pr in eval_path(ctx, index, &s2, spec, &o2) {
+            if let Some(m) = merge_rows(&lrow, &pr) {
+                if cond.is_none_or(|f| f.boolean(ctx, index, &m, &mut cache)) {
+                    out.push(m);
+                }
+            }
+        }
+        if optional && out.is_empty() {
+            out.push(lrow);
+        }
+        out.into_iter()
+    }))
+}
+
 fn join_iter<'q>(
     ctx: &'q Ctx<'q>,
     index: &'q GraphIndex,
@@ -1371,6 +1433,26 @@ fn join_iter<'q>(
                     None if optional => eval_plan_iter(ctx, index, nf, l),
                     None => Box::new(std::iter::empty()),
                 };
+            }
+        }
+    }
+    // A property path joined with a side that already binds one of its
+    // endpoints: drive the path from that binding (the cheap `(Const, _)`
+    // traversal in `eval_path`) instead of materializing an unbounded
+    // `(?s, ?o)` path. The unbounded form enumerates *every* node in the graph
+    // (`eval_path`'s Var/Var arm), which on a large remote graph buries the
+    // 32-bit WASM heap and faults the whole geometry/asWKT index — the cause of
+    // a "null function" crash on e.g. `?x rdfs:label ?l ; geo:hasGeometry/geo:asWKT ?w`.
+    // Same multiset as the hash join below.
+    if let Plan::Path(s, spec, o) = r {
+        if path_endpoint_bound(ctx, l, s, o) {
+            return correlated_path_join(ctx, index, nf, l, s, spec, o, optional, cond);
+        }
+    }
+    if !optional {
+        if let Plan::Path(s, spec, o) = l {
+            if path_endpoint_bound(ctx, r, s, o) {
+                return correlated_path_join(ctx, index, nf, r, s, spec, o, false, cond);
             }
         }
     }

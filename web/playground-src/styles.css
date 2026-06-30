@@ -1101,7 +1101,7 @@ textarea {
 }
 .cell-thumb:hover { border-color: var(--accent); }
 .link-preview {
-  position: fixed; z-index: 80; width: 380px;
+  position: fixed; z-index: 80; width: 420px;
   border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface);
   box-shadow: var(--shadow); overflow: hidden; font-size: 12px;
 }
@@ -1111,8 +1111,12 @@ textarea {
 .lp-host { font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lp-open { flex: 0 0 auto; color: var(--accent-dark); font-weight: 700; text-decoration: none; font-size: 11.5px; }
 .lp-open:hover { color: var(--accent); }
-.lp-frame { position: relative; height: 280px; background: #fff; }
-.lp-iframe { width: 100%; height: 100%; border: 0; display: block; }
+.lp-frame { position: relative; width: 420px; height: 320px; background: #fff; overflow: hidden; }
+/* Render the page at a real desktop width (1260px) and scale it to 1/3 so the
+   site's *desktop* layout shows as a legible thumbnail, instead of squeezing a
+   380px viewport that trips responsive/mobile breakpoints into a broken look. */
+.lp-iframe { width: 1260px; height: 960px; border: 0; display: block;
+  transform: scale(0.33333); transform-origin: top left; }
 .lp-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 .lp-note { padding: 5px 11px; color: var(--muted); font-size: 10.5px; border-top: 1px solid var(--line); background: var(--side); }
 
