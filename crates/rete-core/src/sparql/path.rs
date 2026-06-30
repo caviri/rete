@@ -10,13 +10,16 @@ use crate::row::{Ctx, Row, Val};
 
 use super::{reverse, PathAst, Rep};
 
-/// Cached adjacency keyed by `(predicate, reversed)` → start node → successor
-/// nodes. Everything is in the unified integer node space — no term strings.
-type AdjCache =
-    std::collections::HashMap<(String, bool), std::collections::BTreeMap<u32, Vec<u32>>>;
+/// Per-start-node successor cache keyed by `(predicate-or-negated-set, reversed,
+/// start node)`. Only the edges a path actually traverses are read and kept, so
+/// it never materializes a predicate's **whole** adjacency — a full predicate
+/// scan over a planet-scale graph (e.g. every `geo:asWKT`) buries a 32-bit WASM
+/// heap and was the cause of an intermittent `RuntimeError: unreachable`.
+type AdjCache = std::collections::HashMap<(String, bool, u32), Vec<u32>>;
 
-/// Successor nodes of `start` along a single predicate (built and cached on
-/// first use, directly from integer node pairs — no term resolution).
+/// Successor nodes of `start` along a single predicate — a **targeted** routed
+/// read of just this node's edges (forward: `start` as subject; reverse: `start`
+/// as object), mapped back into the unified node space. Cached per start node.
 fn successors(
     ctx: &Ctx,
     index: &GraphIndex,
@@ -25,29 +28,34 @@ fn successors(
     rev: bool,
     start: u32,
 ) -> Vec<u32> {
-    let key = (pred.to_string(), rev);
-    if !cache.contains_key(&key) {
-        let dict = ctx.rete.dictionary();
-        let pairs: Vec<(u32, u32)> = match dict.predicate_id(pred) {
-            Some(pid) => index
-                .match_pattern((None, Some(pid), None))
+    let key = (pred.to_string(), rev, start);
+    if let Some(v) = cache.get(&key) {
+        return v.clone();
+    }
+    let dict = ctx.rete.dictionary();
+    let succ: Vec<u32> = match dict.predicate_id(pred) {
+        // forward: out-edges of `start` (one tile, not the predicate's whole index)
+        Some(pid) if !rev => match dict.node_as_subject_id(start) {
+            Some(sid) => index
+                .match_pattern((Some(sid), Some(pid), None))
                 .into_iter()
-                .map(|(s, _p, o)| (dict.subject_node(s), dict.object_node(o)))
+                .map(|(_s, _p, o)| dict.object_node(o))
                 .collect(),
             None => Vec::new(),
-        };
-        let mut adj: std::collections::BTreeMap<u32, Vec<u32>> = Default::default();
-        for (s, o) in pairs {
-            let (from, to) = if rev { (o, s) } else { (s, o) };
-            adj.entry(from).or_default().push(to);
-        }
-        cache.insert(key.clone(), adj);
-    }
-    cache
-        .get(&key)
-        .and_then(|a| a.get(&start))
-        .cloned()
-        .unwrap_or_default()
+        },
+        // reverse: in-edges of `start` (it appears as the object)
+        Some(pid) => match dict.node_as_object_id(start) {
+            Some(oid) => index
+                .match_pattern((None, Some(pid), Some(oid)))
+                .into_iter()
+                .map(|(s, _p, _o)| dict.subject_node(s))
+                .collect(),
+            None => Vec::new(),
+        },
+        None => Vec::new(),
+    };
+    cache.insert(key, succ.clone());
+    succ
 }
 
 /// Successors of `start` over a **negated property set**: any predicate not in
@@ -61,27 +69,38 @@ fn negated_successors(
     rev: bool,
     start: u32,
 ) -> Vec<u32> {
-    let key = (format!("!\u{1}{}", set.join("\u{1}")), rev);
-    if !cache.contains_key(&key) {
-        let dict = ctx.rete.dictionary();
-        let excluded: std::collections::HashSet<u32> =
-            set.iter().filter_map(|p| dict.predicate_id(p)).collect();
-        let mut adj: std::collections::BTreeMap<u32, Vec<u32>> = Default::default();
-        for (s, p, o) in index.match_pattern((None, None, None)) {
-            if excluded.contains(&p) {
-                continue;
-            }
-            let (sn, on) = (dict.subject_node(s), dict.object_node(o));
-            let (from, to) = if rev { (on, sn) } else { (sn, on) };
-            adj.entry(from).or_default().push(to);
-        }
-        cache.insert(key.clone(), adj);
+    let key = (format!("!\u{1}{}", set.join("\u{1}")), rev, start);
+    if let Some(v) = cache.get(&key) {
+        return v.clone();
     }
-    cache
-        .get(&key)
-        .and_then(|a| a.get(&start))
-        .cloned()
-        .unwrap_or_default()
+    let dict = ctx.rete.dictionary();
+    let excluded: std::collections::HashSet<u32> =
+        set.iter().filter_map(|p| dict.predicate_id(p)).collect();
+    // Read only `start`'s own edges (any predicate), then drop the excluded ones —
+    // never a scan of every triple in the graph.
+    let succ: Vec<u32> = if !rev {
+        match dict.node_as_subject_id(start) {
+            Some(sid) => index
+                .match_pattern((Some(sid), None, None))
+                .into_iter()
+                .filter(|(_s, p, _o)| !excluded.contains(p))
+                .map(|(_s, _p, o)| dict.object_node(o))
+                .collect(),
+            None => Vec::new(),
+        }
+    } else {
+        match dict.node_as_object_id(start) {
+            Some(oid) => index
+                .match_pattern((None, None, Some(oid)))
+                .into_iter()
+                .filter(|(_s, p, _o)| !excluded.contains(p))
+                .map(|(s, _p, _o)| dict.subject_node(s))
+                .collect(),
+            None => Vec::new(),
+        }
+    };
+    cache.insert(key, succ.clone());
+    succ
 }
 
 /// Nodes reachable from `start` along `ast` — forward from the start node, so a

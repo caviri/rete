@@ -1146,11 +1146,49 @@ textarea {
 
 /* One-row console controls: Sources + Output/Strategy/Labels/Run on a single
    line when the screen allows it, wrapping to stacked rows when it doesn't. */
-.console-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 22px; margin-top: 10px; }
+.console-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 10px; }
 .console-controls .fed-bar,
-.console-controls .action-row { margin-top: 0; }
+.console-controls .action-row { margin-top: 0; align-items: center; }
 .console-controls .fed-bar { flex: 0 1 auto; }
 .console-controls .action-row { flex: 1 1 380px; }
+
+/* ── Harmonized console bar ────────────────────────────────────────────────
+   One pill language for every control: the same 34px height, 8px radius and
+   weight, with role shown by fill — green = Run, purple = SPARQL AI, outline =
+   secondary (requests / + Add source). Keeps the bar tidy and consistent. */
+.action-row > #run,
+.action-row > .ask-ai-btn,
+.action-row > .req-log-btn,
+.fed-add {
+  min-height: 34px; height: 34px; box-sizing: border-box;
+  border-radius: 8px; padding: 0 14px; margin: 0;
+  font-size: 12.5px; font-weight: 700; line-height: 1;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+/* secondary / outline pills */
+.action-row > .req-log-btn,
+.fed-add {
+  border: 1px solid var(--line-strong, #c5d2cc);
+  background: var(--surface, #fff);
+  color: var(--accent-dark, #0b4f42);
+}
+.action-row > .req-log-btn:hover,
+.fed-add:hover { border-color: var(--accent); background: var(--accent-weak, #eef6f2); color: var(--accent-dark); }
+.fed-add { border-style: dashed; padding: 0 13px; }   /* keep "add" visually distinct */
+/* the ? help buttons + the Labels switch align to the same height */
+.action-row .help-button { width: 34px; min-height: 34px; height: 34px; align-self: center; }
+.action-row .switch-ctl { min-height: 34px; }
+/* the source chip aligns to the pill height + radius */
+.fed-bar .fed-chip { min-height: 30px; border-radius: 8px; }
+
+/* The run read-out wraps to a second line instead of shoving the buttons out:
+   it takes the slack between the controls and the action buttons and reflows. */
+.action-row .run-meta.run-right {
+  margin-left: auto;
+  flex: 1 1 200px; min-width: 0;
+  text-align: right; white-space: normal; line-height: 1.35;
+  align-self: center;
+}
 
 /* A real toggle switch (the Labels control). */
 .switch-ctl { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
