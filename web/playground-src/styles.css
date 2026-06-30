@@ -2548,7 +2548,7 @@ th .coltype.coltype-on {
 .scalebar-label { font-size: 11px; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .9); font-variant-numeric: tabular-nums; }
 .model3d-size { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* per-cell media metadata caption */
-.media-meta { font-size: 10px; line-height: 1.3; color: var(--muted); margin-top: 3px; max-width: 246px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-meta { font-size: 10px; line-height: 1.3; color: var(--muted); margin-top: 3px; max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .media-meta:empty { display: none; }
 .model3d-loading { color: #cfd2da; font-size: 13px; padding: 20px; text-align: center; }
 .model3d-loading a { color: #9ad; }
@@ -2564,7 +2564,7 @@ th .coltype.coltype-on {
 .m3-spin.on { background: linear-gradient(135deg, #6d4aff, #a23bd6); color: #fff; border-color: transparent; }
 /* audio / video cells */
 .media-cell { padding: 6px 8px; position: relative; white-space: nowrap; }
-.cell-audio { width: 230px; height: 34px; vertical-align: middle; }
+.cell-audio { width: 100%; min-width: 460px; max-width: 720px; height: 38px; vertical-align: middle; }
 .cell-video { width: 248px; max-height: 168px; display: block; border-radius: 6px; background: #000; }
 .cell-spin { width: 168px; height: 168px; max-height: 168px; object-fit: contain; cursor: default; }
 .media-src { margin-left: 6px; color: var(--accent-dark, #2b6); text-decoration: none; font-size: 13px; vertical-align: middle; }

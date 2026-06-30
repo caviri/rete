@@ -19,7 +19,34 @@ for the Darwin Core / media properties used, so the Schema view and Labels read.
 
 Usage: python3 scripts/bioexplora_to_nt.py > data/bioexplora/bioexplora.nt
 """
-import csv, json, os, sys, urllib.parse
+import csv, json, os, re, sys, urllib.parse
+
+
+# Coeli media URLs come in two flavours — app.coeli.cat/.../portraitMedia and
+# iiif.coeli.cat/.../default.jpg. The iiif endpoint is flaky (503s); the
+# portraitMedia one 303-redirects to the CORS-open S3 original and is reliable,
+# so normalise every image to it (this also collapses the two URLs of one object
+# into a single prop:image). prop:preview points to our bucket WebP mirror.
+def coeli_nid(url):
+    m = re.search(r"/HeritageObject/(N\w+?)/", url)
+    return m.group(1) if m else None
+
+
+def coeli_portrait(url):
+    nid = coeli_nid(url)
+    return ("https://app.coeli.cat/coeli/ICUB-NAT/HeritageObject/%s/portraitMedia" % nid) if nid else url
+
+
+def load_image_mirror():
+    """uid -> bucket WebP URL, from scripts/bioexplora_images.sh's TSV (if present)."""
+    mp = os.path.join(os.path.dirname(__file__), "..", "data", "bioexplora", "images.tsv")
+    out = {}
+    if os.path.isfile(mp):
+        for line in open(mp, encoding="utf-8"):
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) == 2:
+                out[parts[0]] = parts[1]
+    return out
 
 csv.field_size_limit(10 * 1024 * 1024)
 sys.stdout.reconfigure(encoding="utf-8")
@@ -69,7 +96,7 @@ PROP_LABELS = {
     DWC + "basisOfRecord": "basis of record", DWC + "collectionCode": "collection", DWC + "institutionCode": "institution",
     DWC + "datasetName": "dataset", DWC + "occurrenceID": "occurrence id",
     DCT + "license": "license", DCT + "modified": "modified", DCT + "language": "language",
-    P + "image": "image", P + "sketchfab": "3D model (Sketchfab)", P + "audio": "audio recording",
+    P + "image": "image", P + "preview": "photo (WebP preview)", P + "sketchfab": "3D model (Sketchfab)", P + "audio": "audio recording",
     P + "mesh": "3D model", P + "thumbnail": "thumbnail", P + "faceCount": "faces", P + "vertexCount": "vertices",
 }
 
@@ -101,7 +128,8 @@ def emit_ontology():
 
 
 def parse_occurrences():
-    n_spec = n_img = n_geo = 0
+    n_spec = n_img = n_geo = n_prev = 0
+    mirror = load_image_mirror()
     for r in sorted(os.listdir(DWCA)):
         occ = os.path.join(DWCA, r, "occurrence.txt")
         if not os.path.isfile(occ):
@@ -143,11 +171,18 @@ def parse_occurrences():
                         n_geo += 1
                     except ValueError:
                         pass
+                seen = set()
                 for url in media.get(rid, []):
-                    t(subj, P + "image", iri(url))
-                    n_img += 1
+                    p = coeli_portrait(url)          # reliable S3-backed source URL
+                    if p in seen:
+                        continue
+                    seen.add(p)
+                    t(subj, P + "image", iri(p)); n_img += 1
+                    nid = coeli_nid(url)
+                    if nid and nid in mirror:         # our fast, durable WebP mirror
+                        t(subj, P + "preview", iri(mirror[nid])); n_prev += 1
         sys.stderr.write("  %-14s done\n" % r)
-    sys.stderr.write("specimens: %d, image links: %d, georeferenced: %d\n" % (n_spec, n_img, n_geo))
+    sys.stderr.write("specimens: %d, image links: %d (%d webp previews), georeferenced: %d\n" % (n_spec, n_img, n_prev, n_geo))
 
 
 def emit_3d():

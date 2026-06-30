@@ -2588,7 +2588,7 @@ th .coltype.coltype-on {
 .scalebar-label { font-size: 11px; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .9); font-variant-numeric: tabular-nums; }
 .model3d-size { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* per-cell media metadata caption */
-.media-meta { font-size: 10px; line-height: 1.3; color: var(--muted); margin-top: 3px; max-width: 246px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-meta { font-size: 10px; line-height: 1.3; color: var(--muted); margin-top: 3px; max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .media-meta:empty { display: none; }
 .model3d-loading { color: #cfd2da; font-size: 13px; padding: 20px; text-align: center; }
 .model3d-loading a { color: #9ad; }
@@ -2604,7 +2604,7 @@ th .coltype.coltype-on {
 .m3-spin.on { background: linear-gradient(135deg, #6d4aff, #a23bd6); color: #fff; border-color: transparent; }
 /* audio / video cells */
 .media-cell { padding: 6px 8px; position: relative; white-space: nowrap; }
-.cell-audio { width: 230px; height: 34px; vertical-align: middle; }
+.cell-audio { width: 100%; min-width: 460px; max-width: 720px; height: 38px; vertical-align: middle; }
 .cell-video { width: 248px; max-height: 168px; display: block; border-radius: 6px; background: #000; }
 .cell-spin { width: 168px; height: 168px; max-height: 168px; object-fit: contain; cursor: default; }
 .media-src { margin-left: 6px; color: var(--accent-dark, #2b6); text-decoration: none; font-size: 13px; vertical-align: middle; }
@@ -2835,8 +2835,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 0049f9b · 2026-06-30 11:40 UTC</span>
-    <script>window.RETE_BUILD = "0049f9b · 2026-06-30 11:40 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 018a2a2 · 2026-06-30 12:01 UTC</span>
+    <script>window.RETE_BUILD = "018a2a2 · 2026-06-30 12:01 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -7088,7 +7088,8 @@ SELECT ?year (COUNT(*) AS ?territories) WHERE {
     ],
     "bioexplora": [
       {"family": "Summary", "label": "The collection at a glance", "view": "table", "tip": "The museum's six collections by specimen count: arthropods (MCNB-Art, 82,900) and molluscs (MCNB-Malac, 50,083) dominate, then paleontology (MGB), vertebrates (MCNB-Cord), the tissue bank and general zoology. 207,163 Darwin Core specimens in all.", "q": "PREFIX dwc: <http://rs.tdwg.org/dwc/terms/>\nSELECT ?collection (COUNT(*) AS ?specimens) WHERE {\n  ?s dwc:collectionCode ?collection .\n} GROUP BY ?collection ORDER BY DESC(?specimens)"},
-      {"family": "Select", "label": "Specimens you can SEE (photos)", "view": "table", "tip": "13,543 specimens are photographed. The ?photo column is the museum's IIIF image (CORS-open) and renders INLINE in the table — molluscs, crustaceans, insects, fossils. CC BY 4.0, credit the Museu de Ciencies Naturals de Barcelona.", "q": "PREFIX dwc: <http://rs.tdwg.org/dwc/terms/>\nPREFIX p: <https://bioexplora.cat/prop/>\nSELECT ?species ?photo WHERE {\n  ?s dwc:scientificName ?species ; p:image ?photo .\n} LIMIT 40"},
+      {"family": "Select", "label": "Specimens you can SEE (photos)", "view": "table", "tip": "13,543 specimens are photographed. The ?photo column renders INLINE in the table — molluscs, crustaceans, insects, fossils. Images are mirrored to the bucket as fast WebP (p:preview, ~10-40 KB) and also kept as the museum's source link (p:image). CC BY 4.0, credit the Museu de Ciencies Naturals de Barcelona.", "q": "PREFIX dwc: <http://rs.tdwg.org/dwc/terms/>\nPREFIX p: <https://bioexplora.cat/prop/>\nSELECT ?species ?photo WHERE {\n  ?s dwc:scientificName ?species ; p:image ?photo .\n} LIMIT 40"},
+      {"family": "Path", "label": "See it, hear it, place it — photo + sound + map", "view": "table", "tip": "One row, four media: each PHOTOGRAPHED, GEOREFERENCED specimen joined to a Xeno-canto RECORDING of the SAME species (on dwc:scientificName). A bird like the Great Crested Grebe shows its specimen photo, its call (inline player) and where it was collected (a mini-map) — all together. Stay in Table view to see all four at once.", "q": "PREFIX dwc: <http://rs.tdwg.org/dwc/terms/>\nPREFIX p: <https://bioexplora.cat/prop/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nSELECT ?species ?photo ?sound ?location WHERE {\n  ?s dwc:scientificName ?species ; p:image ?photo ; geo:asWKT ?location .\n  ?r dwc:scientificName ?species ; p:audio ?sound .\n} LIMIT 24"},
       {"family": "Aggregate", "label": "Map of the collection", "view": "map", "tip": "43,826 specimens are georeferenced (GeoSPARQL points). Switch Output -> Map to see where the holdings were collected across the world — Catalonia and Spain dominate, with material from Morocco, Mexico, France and beyond. Shows up to 3,000 points.", "q": "PREFIX dwc: <http://rs.tdwg.org/dwc/terms/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nSELECT ?species ?point WHERE {\n  ?s dwc:scientificName ?species ; geo:asWKT ?point .\n} LIMIT 3000"},
       {"family": "Select", "label": "Type specimens (the holotypes)", "view": "table", "tip": "672 name-bearing TYPE specimens — the single most scientifically important objects in any natural-history collection, because each one anchors a species name. ?type is the kind (Holotype, Paratype, Syntype...), ?cat the catalogue number.", "q": "PREFIX dwc: <http://rs.tdwg.org/dwc/terms/>\nSELECT ?species ?type ?cat WHERE {\n  ?s dwc:typeStatus ?type ; dwc:scientificName ?species ; dwc:catalogNumber ?cat .\n} LIMIT 40"},
       {"family": "Select", "label": "3D skull scans you can rotate (Atles osteologic)", "view": "table", "tip": "Skull and bone 3D scans from the museum's Atles osteologic. The ?mesh column is a Draco-compressed .glb streamed from the bucket and rendered INLINE — click 🧊 3D, then drag to turn the actual cranium of a hyena, fox or bird. 62 models stream inline so far (mirrored + compressed from Sketchfab account laboratorinatura); the rest link out via p:sketchfab. CC BY.", "q": "PREFIX class: <https://bioexplora.cat/class/>\nPREFIX p: <https://bioexplora.cat/prop/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?model ?mesh WHERE {\n  ?m a class:Model3D ; rdfs:label ?model ; p:mesh ?mesh .\n} LIMIT 40"},
@@ -13257,6 +13258,10 @@ self.onmessage = function (e) {
   function fmtBytes(n) { n = +n; if (!n || n < 0) return ""; return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B"; }
   function fmtDur(s) { s = Math.round(+s || 0); if (!s) return ""; return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
   function fmtExt(url) { const m = /\.([a-z0-9]{2,5})(\?|#|$)/i.exec(String(url).split("?")[0]); return m ? m[1].toUpperCase() : ""; }
+  // A friendly file-type label from a MIME type — used when the URL has no
+  // extension (e.g. an xeno-canto `/download` that serves `audio/mpeg`).
+  const MIME_TYPE = { "audio/mpeg": "MP3", "audio/mp3": "MP3", "audio/wav": "WAV", "audio/x-wav": "WAV", "audio/ogg": "OGG", "audio/flac": "FLAC", "audio/aac": "AAC", "audio/mp4": "M4A", "audio/webm": "WEBM", "video/mp4": "MP4", "video/webm": "WEBM", "video/ogg": "OGV", "video/quicktime": "MOV", "image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP", "image/gif": "GIF", "image/svg+xml": "SVG", "model/gltf-binary": "GLB", "model/gltf+json": "GLTF" };
+  function mimeToType(ct) { if (!ct) return ""; ct = String(ct).split(";")[0].trim().toLowerCase(); if (MIME_TYPE[ct]) return MIME_TYPE[ct]; const sub = ct.split("/")[1] || ""; return sub ? sub.replace(/^x-/, "").toUpperCase().slice(0, 5) : ""; }
   function fmtDims(d) { const mx = Math.max(d.x, d.y, d.z); const u = mx < 0.01 ? 1000 : mx < 1 ? 100 : 1, s = mx < 0.01 ? "mm" : mx < 1 ? "cm" : "m"; const r = (v) => (v * u).toFixed(mx * u < 10 ? 1 : 0); return r(d.x) + "×" + r(d.y) + "×" + r(d.z) + " " + s; }
   function niceSI(x) { if (!isFinite(x) || x <= 0) return 0; const p = Math.pow(10, Math.floor(Math.log10(x))); const f = x / p; return (f >= 5 ? 5 : f >= 2 ? 2 : 1) * p; }
   function fmtSI(m) { if (m >= 1) return (Number.isInteger(m) ? m : m.toFixed(m < 10 ? 1 : 0)) + " m"; if (m >= 0.01) return Math.round(m * 100) + " cm"; return Math.round(m * 1000) + " mm"; }
@@ -13269,7 +13274,13 @@ self.onmessage = function (e) {
       const parts = []; const f = fmtExt(url); if (f) parts.push(f);
       const render = () => { box.textContent = parts.filter(Boolean).join(" · "); box.title = box.textContent; };
       render();
-      fetch(url, { method: "HEAD" }).then((r) => { const b = fmtBytes(r.headers.get("content-length")); if (b) { parts.push(b); render(); } }).catch(() => {});
+      fetch(url, { method: "HEAD" }).then((r) => {
+        // file type: from the URL extension, else the Content-Type header — so a
+        // no-extension media URL (e.g. xeno-canto /download) still shows "MP3".
+        if (!f) { const ct = mimeToType(r.headers.get("content-type")); if (ct && parts[0] !== ct) parts.unshift(ct); }
+        const b = fmtBytes(r.headers.get("content-length")); if (b) parts.push(b);
+        render();
+      }).catch(() => {});
       const cell = box.closest("td"); if (!cell) return;
       if (kind === "image") {
         const img = cell.querySelector("img");

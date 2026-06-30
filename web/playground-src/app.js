@@ -3825,6 +3825,10 @@ self.onmessage = function (e) {
   function fmtBytes(n) { n = +n; if (!n || n < 0) return ""; return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B"; }
   function fmtDur(s) { s = Math.round(+s || 0); if (!s) return ""; return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
   function fmtExt(url) { const m = /\.([a-z0-9]{2,5})(\?|#|$)/i.exec(String(url).split("?")[0]); return m ? m[1].toUpperCase() : ""; }
+  // A friendly file-type label from a MIME type — used when the URL has no
+  // extension (e.g. an xeno-canto `/download` that serves `audio/mpeg`).
+  const MIME_TYPE = { "audio/mpeg": "MP3", "audio/mp3": "MP3", "audio/wav": "WAV", "audio/x-wav": "WAV", "audio/ogg": "OGG", "audio/flac": "FLAC", "audio/aac": "AAC", "audio/mp4": "M4A", "audio/webm": "WEBM", "video/mp4": "MP4", "video/webm": "WEBM", "video/ogg": "OGV", "video/quicktime": "MOV", "image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP", "image/gif": "GIF", "image/svg+xml": "SVG", "model/gltf-binary": "GLB", "model/gltf+json": "GLTF" };
+  function mimeToType(ct) { if (!ct) return ""; ct = String(ct).split(";")[0].trim().toLowerCase(); if (MIME_TYPE[ct]) return MIME_TYPE[ct]; const sub = ct.split("/")[1] || ""; return sub ? sub.replace(/^x-/, "").toUpperCase().slice(0, 5) : ""; }
   function fmtDims(d) { const mx = Math.max(d.x, d.y, d.z); const u = mx < 0.01 ? 1000 : mx < 1 ? 100 : 1, s = mx < 0.01 ? "mm" : mx < 1 ? "cm" : "m"; const r = (v) => (v * u).toFixed(mx * u < 10 ? 1 : 0); return r(d.x) + "×" + r(d.y) + "×" + r(d.z) + " " + s; }
   function niceSI(x) { if (!isFinite(x) || x <= 0) return 0; const p = Math.pow(10, Math.floor(Math.log10(x))); const f = x / p; return (f >= 5 ? 5 : f >= 2 ? 2 : 1) * p; }
   function fmtSI(m) { if (m >= 1) return (Number.isInteger(m) ? m : m.toFixed(m < 10 ? 1 : 0)) + " m"; if (m >= 0.01) return Math.round(m * 100) + " cm"; return Math.round(m * 1000) + " mm"; }
@@ -3837,7 +3841,13 @@ self.onmessage = function (e) {
       const parts = []; const f = fmtExt(url); if (f) parts.push(f);
       const render = () => { box.textContent = parts.filter(Boolean).join(" · "); box.title = box.textContent; };
       render();
-      fetch(url, { method: "HEAD" }).then((r) => { const b = fmtBytes(r.headers.get("content-length")); if (b) { parts.push(b); render(); } }).catch(() => {});
+      fetch(url, { method: "HEAD" }).then((r) => {
+        // file type: from the URL extension, else the Content-Type header — so a
+        // no-extension media URL (e.g. xeno-canto /download) still shows "MP3".
+        if (!f) { const ct = mimeToType(r.headers.get("content-type")); if (ct && parts[0] !== ct) parts.unshift(ct); }
+        const b = fmtBytes(r.headers.get("content-length")); if (b) parts.push(b);
+        render();
+      }).catch(() => {});
       const cell = box.closest("td"); if (!cell) return;
       if (kind === "image") {
         const img = cell.querySelector("img");
