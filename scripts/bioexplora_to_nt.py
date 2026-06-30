@@ -70,7 +70,7 @@ PROP_LABELS = {
     DWC + "datasetName": "dataset", DWC + "occurrenceID": "occurrence id",
     DCT + "license": "license", DCT + "modified": "modified", DCT + "language": "language",
     P + "image": "image", P + "sketchfab": "3D model (Sketchfab)", P + "audio": "audio recording",
-    P + "thumbnail": "thumbnail", P + "faceCount": "faces", P + "vertexCount": "vertices",
+    P + "mesh": "3D model", P + "thumbnail": "thumbnail", P + "faceCount": "faces", P + "vertexCount": "vertices",
 }
 
 out = sys.stdout
@@ -155,7 +155,17 @@ def emit_3d():
     if not os.path.isfile(path):
         sys.stderr.write("3d: models3d.json not present yet — skipped\n"); return
     models = json.load(open(path, encoding="utf-8"))
-    n = 0
+    # Streamable .glb meshes we mirrored to the bucket (scripts/bioexplora_sketchfab.sh
+    # downloads each downloadable model, Draco+webp compresses it ~40x and uploads it);
+    # meshes.tsv maps uid -> the bucket URL the playground renders inline (3D cell).
+    mesh = {}
+    mp = os.path.join(DATA, "meshes.tsv")
+    if os.path.isfile(mp):
+        for line in open(mp, encoding="utf-8"):
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) == 2:
+                mesh[parts[0]] = parts[1]
+    n = m3 = 0
     for m in models:
         uid = m.get("uid")
         if not uid:
@@ -164,6 +174,8 @@ def emit_3d():
         t(s, RDF, iri(C + "Model3D")); n += 1
         tl(s, LBL, m.get("name") or uid)
         t(s, P + "sketchfab", iri(m.get("viewerUrl") or ("https://sketchfab.com/models/" + uid)))
+        if uid in mesh:
+            t(s, P + "mesh", iri(mesh[uid])); m3 += 1
         if m.get("thumbnail"):
             t(s, P + "thumbnail", iri(m["thumbnail"]))
         for k, pid in (("faceCount", P + "faceCount"), ("vertexCount", P + "vertexCount")):
@@ -171,7 +183,7 @@ def emit_3d():
                 tl(s, pid, str(m[k]))
         if m.get("license"):
             tl(s, DCT + "license", str(m["license"]))
-    sys.stderr.write("3d models: %d\n" % n)
+    sys.stderr.write("3d models: %d (%d with an inline bucket mesh)\n" % (n, m3))
 
 
 def emit_audio():

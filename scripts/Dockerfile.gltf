@@ -1,0 +1,7 @@
+# glTF/GLB toolbox: gltf-transform (Draco/Meshopt compression, optimize) on Node.
+# Build:  docker build -f scripts/Dockerfile.gltf -t rete-gltf .
+# Use:    docker run --rm -v "$PWD":/work -w /work rete-gltf \
+#             gltf-transform optimize in.glb out.glb --compress draco
+FROM node:20-slim
+RUN npm install -g @gltf-transform/cli@4
+WORKDIR /work
