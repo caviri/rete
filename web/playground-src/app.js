@@ -3260,6 +3260,9 @@ self.onmessage = function (e) {
   function looksImageUrl(v) {
     if (!/^https?:\/\//i.test(v)) return false;
     return /commons\.wikimedia\.org\/wiki\/Special:FilePath\//i.test(v) ||
+      // Coeli (MCNB / bioexplora) image URLs have no extension: a portraitMedia
+      // redirect or a IIIF Image-API path. Both resolve to a CORS-open JPEG.
+      (/\bcoeli\b/i.test(v) && /(portraitMedia|\/full\/|\/iiif\/)/i.test(v)) ||
       /\.(jpe?g|png|gif|svg|webp)$/i.test(String(v).split("?")[0]);
   }
   function thumbUrl(v) {
