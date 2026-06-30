@@ -15,10 +15,11 @@ else
 fi
 N=$(ls "$TMP"/frame_*.png 2>/dev/null | wc -l)
 if [ "$N" -lt 2 ]; then echo "FAIL render: $GLB ($N frames)"; rm -rf "$TMP"; exit 1; fi
-# Looping WebM (VP9) — small, plays in the video cell.
-ffmpeg -y -framerate 24 -i "$TMP/frame_%03d.png" -c:v libvpx-vp9 -b:v 0 -crf 33 -pix_fmt yuv420p "$OUT.webm" >/dev/null 2>&1
+# Looping WebM (VP9) — small, plays in the video cell. -nostdin so ffmpeg never
+# eats a caller's stdin (e.g. the TSV of a `while read` batch loop).
+ffmpeg -nostdin -y -framerate 24 -i "$TMP/frame_%03d.png" -c:v libvpx-vp9 -b:v 0 -crf 33 -pix_fmt yuv420p "$OUT.webm" >/dev/null 2>&1
 # Palette-optimized GIF (narrower) for the ultra-light image-cell preview.
-ffmpeg -y -framerate 18 -i "$TMP/frame_%03d.png" \
+ffmpeg -nostdin -y -framerate 18 -i "$TMP/frame_%03d.png" \
   -vf "scale=$GIFW:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" \
   "$OUT.gif" >/dev/null 2>&1
 rm -rf "$TMP"

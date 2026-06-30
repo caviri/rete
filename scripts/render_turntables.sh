@@ -14,8 +14,9 @@ while IFS="$TAB" read -r uid url; do
   i=$((i + 1))
   [ "$LIMIT" -gt 0 ] && [ "$i" -gt "$LIMIT" ] && break
   if [ -f "$OUT/$uid.webm" ]; then ok=$((ok + 1)); continue; fi
-  wget -q -O /tmp/m.glb "$url" 2>/dev/null || { echo "[$i] dl-fail $uid"; continue; }
-  sh scripts/glb_to_spin.sh /tmp/m.glb "$OUT/$uid" "$FR" "$RES" 320 >/dev/null 2>&1
+  wget -q -O /tmp/m.glb "$url" 2>/dev/null </dev/null || { echo "[$i] dl-fail $uid"; continue; }
+  # </dev/null: keep every inner command's stdin OFF the loop's TSV input.
+  sh scripts/glb_to_spin.sh /tmp/m.glb "$OUT/$uid" "$FR" "$RES" 320 >/dev/null 2>&1 </dev/null
   rm -f /tmp/m.glb
   if [ -f "$OUT/$uid.webm" ]; then
     ok=$((ok + 1))
