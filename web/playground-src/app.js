@@ -5029,7 +5029,7 @@ self.onmessage = function (e) {
           $("out").innerHTML = `<div class="note">Query cancelled — the worker was stopped. Run again to retry.</div>`;
         } else {
           $("qmeta").textContent = "";
-          showError("out", "Remote query failed: " + msg);
+          showError("out", "Remote query failed: " + msg, e && e.stack);
         }
       });
       return;
@@ -6117,8 +6117,61 @@ self.onmessage = function (e) {
     } catch (e) { showError("buildOut", "Ontology read failed: " + e.message); }
   }
 
-  function showError(targetId, message) {
-    $(targetId).innerHTML = `<div class="error-box">${esc(message)}</div>`;
+  // Turn a raw error into a friendly, personalized headline + what-to-do advice
+  // + a tone. Transient/host hiccups reassure ("just try again"); engine snags ask
+  // to retry-then-report; query mistakes nudge a fix without alarm.
+  function classifyError(message) {
+    const m = String(message || "");
+    if (/could not determine length|short range|failed to fetch|networkerror|network error|load failed|status\s*0\b|status\s*5\d\d|timeout|connection|err_|range req|ignored Range/i.test(m)) {
+      return { tone: "transient", emoji: "🔁", headline: "A hiccup with the remote connection",
+        advice: "No worries — this is almost always a momentary blip on the dataset's host, not your query. Just run it again. If it keeps failing, give it a few seconds and retry; the technical details below are there if you need them." };
+    }
+    if (/runtimeerror|unreachable|null function|out of memory|memory access|table\.grow|rust_?panic|panicked|wasm/i.test(m)) {
+      return { tone: "bug", emoji: "🐞", headline: "The engine tripped on this one",
+        advice: "Try running it again first — these are often intermittent. If it keeps happening, it's a real bug and worth reporting: expand the technical details below, hit Copy, and send them to the developer. They contain everything needed to reproduce it — you don't need to do anything else." };
+    }
+    if (/^enter a |parse error|syntax|unexpected token|expected |no geometry|no temporal|no parseable|needs a |needs select/i.test(m)) {
+      return { tone: "user", emoji: "✏️", headline: "Let's adjust the query", advice: m };
+    }
+    if (/load a graph|load a dataset|load a /i.test(m)) {
+      return { tone: "user", emoji: "📂", headline: "Pick a dataset first", advice: m };
+    }
+    return { tone: "bug", emoji: "⚠️", headline: "That didn't go through",
+      advice: "Give it another try. If it persists, open the technical details below, copy them, and share them with the developer so it can be fixed — no need to worry about wording it, the report has it all." };
+  }
+
+  // A copy-pasteable report with everything needed to reproduce: the error, the
+  // dataset + load mode + source URL, the mode/strategy, the exact query, and the
+  // environment. This is what the user hands the developer.
+  function errorReport(message, tech) {
+    const L = [];
+    L.push("rete playground — error report");
+    try { L.push("time: " + new Date().toISOString()); } catch (_e) { /* ignore */ }
+    L.push("error: " + String(message || ""));
+    const t = tech && String(tech);
+    if (t && t !== String(message)) L.push("detail: " + t);
+    L.push("dataset: " + (state.dataset || "?") + " · load: " + (state.activeSource || "?"));
+    if (state.remote && state.remote.url) L.push("source: " + state.remote.url);
+    L.push("mode: " + (state.mode || "?") + " · strategy: " + (($("strategy") && $("strategy").value) || "?"));
+    const q = state.mode === "sparql" && $("q") ? ($("q").value || "").trim() : "";
+    if (q) L.push("query:\n  " + q.replace(/\n/g, "\n  "));
+    L.push("page: " + location.href);
+    L.push("agent: " + navigator.userAgent);
+    return L.join("\n");
+  }
+
+  function showError(targetId, message, tech) {
+    const c = classifyError(message);
+    const tech_html = c.tone === "user" ? "" :
+      `<details class="err-tech"><summary>Technical details for the developer ` +
+      `<button class="err-copy" type="button">Copy</button></summary>` +
+      `<pre class="err-tech-body">${esc(errorReport(message, tech))}</pre>` +
+      `<div class="err-tech-hint">How to reproduce: open this dataset, paste the query above, and run it.</div></details>`;
+    $(targetId).innerHTML =
+      `<div class="error-box err-${c.tone}">` +
+      `<div class="err-headline"><span class="err-emoji">${c.emoji}</span>${esc(c.headline)}</div>` +
+      `<div class="err-advice">${esc(c.advice)}</div>` +
+      tech_html + `</div>`;
     updateResultVisibility();
   }
 
@@ -6218,6 +6271,20 @@ self.onmessage = function (e) {
   function wireEvents() {
     $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
+    // Copy button inside an error's "Technical details" expander: copy the report
+    // (and don't let the click toggle the <details>).
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest && e.target.closest(".err-copy");
+      if (!btn) return;
+      e.preventDefault(); e.stopPropagation();
+      const det = btn.closest(".err-tech");
+      const pre = det && det.querySelector(".err-tech-body");
+      const text = pre ? pre.textContent : "";
+      const done = (ok) => { const o = btn.textContent; btn.textContent = ok ? "Copied ✓" : "Copy failed"; setTimeout(() => { btn.textContent = o; }, 1500); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => done(true)).catch(() => done(false));
+      } else { done(false); }
+    });
     $("strategy").onchange = () => setStrategy($("strategy").value);
     // Switching the Output type re-renders the last result in the new view
     // (no re-run) when it can; otherwise it runs the query.

@@ -1431,6 +1431,28 @@ pre {
   background: #fff1ef;
   color: var(--bad);
 }
+/* Friendly error: a human headline + advice, with the raw technical report tucked
+   into an expander (+ Copy) so the page stays calm but nothing is lost. */
+.error-box.err-transient { border-color: #cfe0c6; background: #f3f8ef; color: #355e2a; }
+.error-box.err-user { border-color: #cdd9ea; background: #f1f5fb; color: #2c4b73; }
+.error-box.err-bug { border-color: #f3c9a0; background: #fff6ec; color: #864f1a; }
+.err-headline { font-weight: 700; font-size: 13.5px; display: flex; align-items: center; gap: 7px; }
+.err-emoji { font-size: 15px; line-height: 1; }
+.err-advice { margin-top: 5px; line-height: 1.5; color: inherit; opacity: .92; }
+.err-tech { margin-top: 9px; }
+.err-tech > summary { cursor: pointer; font-size: 11.5px; font-weight: 600; opacity: .8;
+  display: flex; align-items: center; gap: 9px; list-style: none; }
+.err-tech > summary::-webkit-details-marker { display: none; }
+.err-tech > summary::before { content: "▸"; font-size: 10px; opacity: .7; }
+.err-tech[open] > summary::before { content: "▾"; }
+.err-copy { font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+  border: 1px solid currentColor; background: transparent; color: inherit;
+  border-radius: 5px; padding: 1px 8px; opacity: .85; }
+.err-copy:hover { opacity: 1; background: rgba(0, 0, 0, .05); }
+.err-tech-body { margin: 8px 0 4px; padding: 9px 10px; background: rgba(0, 0, 0, .04);
+  border-radius: 6px; font-size: 11px; line-height: 1.5; white-space: pre-wrap;
+  word-break: break-word; max-height: 240px; overflow: auto; color: var(--ink); }
+.err-tech-hint { font-size: 10.5px; opacity: .7; }
 
 .meta-strip {
   display: flex;
