@@ -3567,6 +3567,7 @@ self.onmessage = function (e) {
   // shared, cached request) for "where on Earth" context; a shape fits its own
   // bbox so you can read it. Fully offline for shapes (graticule only).
   let geoSeq = 0;
+  const geoData = {}; // cell id → its WKT, looked up when the cell opens the map modal
   function looksWktGeo(v) { return WKT_RE.test(String(v)); }
   function geoDecimate(ring, cap) {
     if (ring.length <= cap) return ring;
@@ -3604,12 +3605,21 @@ self.onmessage = function (e) {
 
     let sx, sy, bg = "", lonTicks, latTicks;
     if (isPoint || ext < 5e-4) {
-      // World Web-Mercator frame on a cached z0 basemap tile (same URL for every
-      // point cell → one real network fetch, then served from cache).
-      sx = (lon) => gutL + lon2wx(lon) * mapW;
-      sy = (lat) => lat2wy(lat) * mapH;
-      bg = `<image href="https://a.basemaps.cartocdn.com/light_all/0/0/0.png" x="${gutL}" y="0" width="${mapW}" height="${mapH}" preserveAspectRatio="none" />`;
-      lonTicks = [-90, 0, 90]; latTicks = [60, 0, -60];
+      // Zoom to the point (region level) — a lone dot on a whole-world tile tells
+      // you nothing. Centre the point in the cell and lay the spanning z6 tiles.
+      const clon = (minX + maxX) / 2, clat = (minY + maxY) / 2, Z = 6;
+      const wp = 256 * Math.pow(2, Z), world = Math.pow(2, Z);
+      const oX = lon2wx(clon) * wp - mapW / 2, oY = lat2wy(clat) * wp - mapH / 2;
+      sx = (lon) => gutL + (lon2wx(lon) * wp - oX);
+      sy = (lat) => (lat2wy(lat) * wp - oY);
+      const tx0 = Math.floor(oX / 256), tx1 = Math.floor((oX + mapW) / 256);
+      const ty0 = Math.floor(oY / 256), ty1 = Math.floor((oY + mapH) / 256);
+      for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) {
+        if (ty < 0 || ty >= world) continue;
+        const wx = ((tx % world) + world) % world;
+        bg += `<image href="https://a.basemaps.cartocdn.com/light_all/${Z}/${wx}/${ty}.png" x="${(gutL + tx * 256 - oX).toFixed(1)}" y="${(ty * 256 - oY).toFixed(1)}" width="256" height="256" preserveAspectRatio="none" />`;
+      }
+      lonTicks = []; latTicks = [];
     } else {
       // Local equirectangular fit to the geometry bbox (uniform, ~16% margin).
       const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, half = ext * 0.58;
@@ -3632,13 +3642,75 @@ self.onmessage = function (e) {
     for (const lon of lonTicks) { const x = sx(lon); if (x < gutL - 1 || x > vbW + 1) continue; ticks += `<text class="geo-tick" x="${Math.min(vbW - 1, Math.max(gutL + 1, x)).toFixed(1)}" y="${vbH - 3}" text-anchor="middle">${esc(fmtDeg(lon))}</text>`; }
     for (const lat of latTicks) { const y = sy(lat); if (y < -1 || y > mapH + 1) continue; ticks += `<text class="geo-tick" x="${gutL - 2}" y="${Math.min(mapH - 1, Math.max(6, y + 2)).toFixed(1)}" text-anchor="end">${esc(fmtDeg(lat))}</text>`; }
     const id = "gc" + ++geoSeq;
-    const title = isPoint ? `POINT ${minX.toFixed(4)}, ${minY.toFixed(4)}`
-      : `bbox ${minX.toFixed(3)},${minY.toFixed(3)} … ${maxX.toFixed(3)},${maxY.toFixed(3)}`;
-    return `<td class="geo-cell" title="${esc(title)}">` +
+    geoData[id] = t.value;
+    const title = (isPoint ? `POINT ${minX.toFixed(4)}, ${minY.toFixed(4)}`
+      : `bbox ${minX.toFixed(3)},${minY.toFixed(3)} … ${maxX.toFixed(3)},${maxY.toFixed(3)}`) + " — click to open the map";
+    return `<td class="geo-cell" data-geo="${id}" title="${esc(title)}">` +
       `<svg viewBox="0 0 ${vbW} ${vbH}" role="img" aria-label="map preview of ${esc(title)}">` +
       `<clipPath id="${id}"><rect x="${gutL}" y="0" width="${mapW}" height="${mapH}"/></clipPath>` +
       `<g clip-path="url(#${id})">${bg}${geo}</g>` +
       `<rect class="geo-bd" x="${gutL}" y="0" width="${mapW}" height="${mapH}"/>${ticks}</svg></td>`;
+  }
+
+  // ---- geometry map modal ---------------------------------------------------
+  // Clicking a geo cell opens a full, pannable/zoomable Leaflet map (the library
+  // is lazy-loaded from the CDN on first open, like model-viewer), fitted to the
+  // geometry's bounds. Point → marker, line/polygon → vector overlay.
+  let geoModalEl = null, geoMap = null, leafletP = null;
+  function loadLeaflet() {
+    if (leafletP) return leafletP;
+    leafletP = new Promise((resolve, reject) => {
+      const css = document.createElement("link");
+      css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      document.head.appendChild(css);
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      s.onload = () => resolve(window.L); s.onerror = () => reject(new Error("leaflet load failed"));
+      document.head.appendChild(s);
+    });
+    return leafletP;
+  }
+  function ensureGeoModal() {
+    if (geoModalEl) return geoModalEl;
+    geoModalEl = document.createElement("div");
+    geoModalEl.className = "geo-modal hidden";
+    geoModalEl.innerHTML =
+      `<div class="geo-modal-box"><div class="geo-modal-head"><span class="geo-modal-title"></span>` +
+      `<button class="geo-modal-close" type="button" aria-label="Close">✕</button></div>` +
+      `<div class="geo-modal-map"></div><div class="geo-modal-foot mono"></div></div>`;
+    document.body.appendChild(geoModalEl);
+    geoModalEl.addEventListener("click", (e) => {
+      if (e.target === geoModalEl || e.target.closest(".geo-modal-close")) closeGeoModal();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeGeoModal(); });
+    return geoModalEl;
+  }
+  function closeGeoModal() { if (geoModalEl) geoModalEl.classList.add("hidden"); }
+  async function openGeoModal(wkt) {
+    if (!wkt) return;
+    ensureGeoModal();
+    const rings = wktRings(wkt);
+    if (!rings.length) return;
+    const isPoint = rings.length === 1 && rings[0].length === 1;
+    geoModalEl.querySelector(".geo-modal-title").textContent = isPoint ? "📍 Location" : "🗺 Geometry";
+    geoModalEl.querySelector(".geo-modal-foot").textContent = shorten(wkt, 200);
+    geoModalEl.classList.remove("hidden");
+    const mapDiv = geoModalEl.querySelector(".geo-modal-map");
+    let L;
+    try { L = await loadLeaflet(); } catch (_e) { mapDiv.innerHTML = `<div class="note">Couldn't load the map library (offline?). The coordinates are below.</div>`; return; }
+    if (geoMap) { geoMap.remove(); geoMap = null; }
+    mapDiv.innerHTML = "";
+    geoMap = L.map(mapDiv, { scrollWheelZoom: true }).setView([0, 0], 2);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+      { attribution: "© OpenStreetMap · © CARTO", maxZoom: 19, subdomains: "abcd" }).addTo(geoMap);
+    const isPoly = /POLYGON/i.test(wkt);
+    const layers = rings.map((r) => r.length === 1
+      ? L.circleMarker([r[0][1], r[0][0]], { radius: 8, color: "#fff", weight: 2, fillColor: "#c0392b", fillOpacity: .95 })
+      : (isPoly ? L.polygon(r.map(([x, y]) => [y, x]), { color: "#147d69", weight: 2, fillOpacity: .15 })
+                : L.polyline(r.map(([x, y]) => [y, x]), { color: "#147d69", weight: 2 })));
+    const group = L.featureGroup(layers).addTo(geoMap);
+    try { geoMap.fitBounds(group.getBounds().pad(0.4), { maxZoom: 13 }); } catch (_e) { /* single point: keep default */ }
+    setTimeout(() => { if (geoMap) geoMap.invalidateSize(); }, 60); // the modal just became visible
   }
 
   // ---- 3D model cells -------------------------------------------------------
@@ -3794,7 +3866,10 @@ self.onmessage = function (e) {
   // A direct media URL renders an inline native player. Audio loads on demand
   // (preload=none); video pulls only its metadata (a poster frame + duration).
   function looksAudioUrl(v) {
-    return /^https?:\/\//i.test(v) && /\.(mp3|wav|ogg|oga|flac|m4a|aac|opus)(\?|#|$)/i.test(v);
+    return /^https?:\/\//i.test(v) && (
+      /\.(mp3|wav|ogg|oga|flac|m4a|aac|opus)(\?|#|$)/i.test(v) ||
+      // xeno-canto download links have no extension but serve audio/mpeg
+      /xeno-canto\.org\/\d+\/download/i.test(v));
   }
   function looksVideoUrl(v) {
     return /^https?:\/\//i.test(v) && /\.(mp4|webm|ogv|m4v|mov)(\?|#|$)/i.test(v);
@@ -6576,7 +6651,9 @@ self.onmessage = function (e) {
       // Delegated: the ⛶ on an inline 3D cell (or a 🧊 3D button) opens the full viewer.
       host.addEventListener("click", (e) => {
         const btn = e.target && e.target.closest && e.target.closest(".model3d-btn, .model3d-expand");
-        if (btn) { e.preventDefault(); openModel3d(btn.getAttribute("data-mesh")); }
+        if (btn) { e.preventDefault(); openModel3d(btn.getAttribute("data-mesh")); return; }
+        const gc = e.target && e.target.closest && e.target.closest(".geo-cell[data-geo]");
+        if (gc) { e.preventDefault(); openGeoModal(geoData[gc.getAttribute("data-geo")]); }
       });
     } catch (_e) { /* ignore */ }
     // The details panel (2nd sidebar) is a space-cramping overlay on a phone, so
