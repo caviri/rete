@@ -6181,6 +6181,11 @@ self.onmessage = function (e) {
   function updateHash() {
     const params = new URLSearchParams();
     params.set("dataset", state.dataset);
+    // Record HOW the dataset is loaded so a reload restores the same mode — a
+    // remote-lazy graph is not embedded, so without this the deep link couldn't
+    // tell it apart from a bundled one and fell back to the default dataset.
+    const load = { remote: "lazy", cached: "cache", bundled: "bundled" }[state.activeSource];
+    if (load) params.set("load", load);
     params.set("mode", state.mode);
     const q = $("q").value.trim();
     if (q) params.set("q", q);
@@ -6554,9 +6559,18 @@ self.onmessage = function (e) {
     renderBuildSaved();
 
     const params = readHash();
-    const ds = params.get("dataset") || CATALOG.defaultDataset;
-    if (RETE_DATASETS_B64[ds] || userBytes.has(ds)) state.dataset = ds;
-    loadDataset(state.dataset);
+    const ds = params.get("dataset");
+    const load = params.get("load");
+    // Restore the deep-linked dataset in its load mode. Remote-lazy/cache datasets
+    // aren't in RETE_DATASETS_B64, so the old embedded-only check silently fell
+    // back to the default (scholar) on every reload of a remote dataset.
+    if (ds && (datasetInfo(ds) || userBytes.has(ds))) {
+      if (load === "lazy") enterRemote(remoteUrlFor(ds), ds);
+      else if (load === "cache") await loadCachedRemote(ds);
+      else selectDataset(ds); // bundled if embedded, else lazy (the safe default)
+    } else {
+      loadDataset(CATALOG.defaultDataset);
+    }
 
     const q = params.get("q");
     if (q) {

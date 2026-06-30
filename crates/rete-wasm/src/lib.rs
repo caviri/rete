@@ -12,6 +12,19 @@ use rete_core::{
 };
 use wasm_bindgen::prelude::*;
 
+/// Module init: route Rust panics to `console.error` with their message and
+/// location. In release wasm a panic otherwise aborts as a bare
+/// `RuntimeError: unreachable` with no clue where — this turns that into a
+/// `rete-wasm panic: panicked at '…', src/…:line` line in the devtools console,
+/// so an intermittent first-query crash (e.g. a parser tripping on a flaky
+/// range read) can actually be diagnosed.
+#[wasm_bindgen(start)]
+pub fn __start() {
+    std::panic::set_hook(Box::new(|info| {
+        web_sys::console::error_1(&JsValue::from_str(&format!("rete-wasm panic: {info}")));
+    }));
+}
+
 /// Header summary as JSON: `{ "quads": N, "terms": N, "pyramidLevels": N }`.
 #[wasm_bindgen]
 pub fn info(bytes: &[u8]) -> Result<String, JsValue> {
