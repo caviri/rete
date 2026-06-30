@@ -1916,7 +1916,7 @@ th .coltype.coltype-on {
 .ds-sidebar-list { display: grid; gap: 3px; }
 .ds-side-item {
   display: grid;
-  grid-template-columns: 26px 1fr auto;
+  grid-template-columns: 26px 1fr auto auto;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -1940,7 +1940,23 @@ th .coltype.coltype-on {
   font-size: 10px; font-weight: 700; color: var(--muted); white-space: nowrap;
   background: var(--side); border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px;
 }
-.ds-side-size.remote { color: #0f6b3a; background: #e7f7ee; border-color: #bfe6cd; }
+/* Weight ramp: the tag's colour now tracks the .rete size (green = instant → red =
+   heavy) so the cost of a dataset is legible at a glance. Tier wins over .remote. */
+.ds-side-size.sz-xs { color: #0f6b3a; background: #e7f7ee; border-color: #bfe6cd; } /* < 10 MB  */
+.ds-side-size.sz-sm { color: #0a6b5e; background: #e3f6f1; border-color: #bfe6dd; } /* 10–100MB */
+.ds-side-size.sz-md { color: #8a5a00; background: #fdf3df; border-color: #f0dca8; } /* 0.1–1 GB */
+.ds-side-size.sz-lg { color: #9a4a16; background: #fcecde; border-color: #f3cfae; } /* 1–5 GB   */
+.ds-side-size.sz-xl { color: #9b2c2c; background: #fbe6e6; border-color: #f1c2c2; } /* ≥ 5 GB   */
+
+/* ⚡ shortcut: load this dataset straight into lazy (remote-range) mode. Subtle by
+   default, full-strength on hover; lives in the row's 4th grid column. */
+.ds-side-load {
+  font-size: 11px; font-weight: 700; line-height: 1; color: var(--accent-dark);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 6px; cursor: pointer; opacity: .55; transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+.ds-side-item:hover .ds-side-load { opacity: 1; }
+.ds-side-load:hover { background: var(--accent); color: #fff; border-color: var(--accent); opacity: 1; }
 .ds-side-item.active .ds-side-name { color: var(--accent-dark); }
 
 .ds-detail {

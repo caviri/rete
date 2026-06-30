@@ -1308,6 +1308,24 @@ self.onmessage = function (e) {
   // and an example preview.
   let dsSelected = null;
 
+  // Parse a human .rete size ("4.8 MB", "4.56 GB", "120 MB") back to bytes, so the
+  // size tag can be coloured on a green→red weight ramp (heavier file = warmer tag).
+  function sizeToBytes(s) {
+    const m = /([\d.]+)\s*(B|KB|MB|GB|TB)/i.exec(String(s || ""));
+    if (!m) return 0;
+    const mult = { B: 1, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 }[m[2].toUpperCase()] || 1;
+    return parseFloat(m[1]) * mult;
+  }
+  function sizeTier(s) {
+    const b = sizeToBytes(s);
+    if (!b) return "";
+    if (b < 10e6) return "sz-xs";   // < 10 MB   — instant
+    if (b < 100e6) return "sz-sm";  // 10–100 MB
+    if (b < 1e9) return "sz-md";    // 100 MB–1 GB
+    if (b < 5e9) return "sz-lg";    // 1–5 GB
+    return "sz-xl";                 // ≥ 5 GB    — heavy
+  }
+
   function renderDsSidebar() {
     const q = ($("dsSearch").value || "").trim().toLowerCase();
     const items = CATALOG.datasets.filter((d) => {
@@ -1325,14 +1343,27 @@ self.onmessage = function (e) {
       const remote = d.kind === "remote-lazy";
       const active = d.key === dsSelected;
       const size = m.size || "—";
+      // The ⚡ shortcut range-queries the remote .rete straight away — every catalog
+      // (non-custom) dataset lives in the bucket, so lazy mode always applies there.
+      const lazyBtn = isCustom(d.key) ? "" :
+        `<span class="ds-side-load" role="button" tabindex="0" data-lazy="${esc(d.key)}" title="Load now in lazy mode — range-query the remote .rete (only the bytes each query touches are fetched)">⚡</span>`;
       return `<button type="button" class="ds-side-item${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
         `<span class="ds-side-ico">${esc(ex.icon || "📊")}</span>` +
         `<span class="ds-side-name">${esc(dsShortLabel(d.key))}</span>` +
-        `<span class="ds-side-size${remote ? " remote" : ""}" title="${remote ? "remote-only · " : ""}.rete size">${remote ? "🛰 " : ""}${esc(size)}</span>` +
+        `<span class="ds-side-size ${sizeTier(size)}${remote ? " remote" : ""}" title="${remote ? "remote-only · " : ""}.rete size">${remote ? "🛰 " : ""}${esc(size)}</span>` +
+        lazyBtn +
         `</button>`;
     }).join("");
     $$("#dsSidebar .ds-side-item").forEach((b) => {
       b.onclick = () => { dsSelected = b.dataset.ds; renderDsSidebar(); renderDsDetail(dsSelected); };
+    });
+    // The ⚡ lazy shortcut loads that dataset over HTTP range immediately, without
+    // first opening the detail pane + Load menu. Stop the click so the row's own
+    // select handler (which would just preview it) doesn't also fire.
+    $$("#dsSidebar .ds-side-load").forEach((el) => {
+      const go = (e) => { e.stopPropagation(); e.preventDefault(); selectDatasetMode(el.dataset.lazy, "lazy"); closeSource(); };
+      el.onclick = go;
+      el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") go(e); };
     });
   }
 
@@ -6727,6 +6758,7 @@ self.onmessage = function (e) {
     const params = readHash();
     const ds = params.get("dataset");
     const load = params.get("load");
+    let bootShowCatalog = false;
     // Restore the deep-linked dataset in its load mode. Remote-lazy/cache datasets
     // aren't in RETE_DATASETS_B64, so the old embedded-only check silently fell
     // back to the default (scholar) on every reload of a remote dataset.
@@ -6735,7 +6767,12 @@ self.onmessage = function (e) {
       else if (load === "cache") await loadCachedRemote(ds);
       else selectDataset(ds); // bundled if embedded, else lazy (the safe default)
     } else {
+      // No deep link: land on the dataset listing so the first thing the visitor
+      // sees is the catalog (pick + load), not a pre-opened default. The default
+      // still loads behind the modal so the console isn't empty if they dismiss it.
       loadDataset(CATALOG.defaultDataset);
+      dsSelected = CATALOG.defaultDataset;
+      bootShowCatalog = true;
     }
 
     const q = params.get("q");
@@ -6746,6 +6783,8 @@ self.onmessage = function (e) {
     }
     setMode(params.get("mode") || "sparql");
     updateResultVisibility();
+    // Open the catalog last, over a fully-rendered console (see the no-deep-link branch).
+    if (bootShowCatalog) openSource();
   }
 
   boot().catch((e) => {
