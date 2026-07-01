@@ -44,8 +44,8 @@ window.RETE_PLAYGROUND_CATALOG = {
   remoteToken: "",
   // The SQL Explore companions (parquet/duckdb/sqlite) are NOT on R2 (huge, secondary) —
   // they still stream from the HF Space at their original playground/<...> paths.
-  companionBase: "https://katospiegel-rete.hf.space/data",
-  companionToken: "sfdbgf1094by21hd128ru39802",
+  companionBase: "https://data.graphplaza.com",
+  companionToken: "",
   // Optional vector-tile basemap PAIRED with a dataset (option B of the geo-LOD work):
   // a PMTiles archive (tippecanoe, true per-zoom LOD, HTTP-range-served) rendered in
   // the "Tiles" output by protomaps-leaflet, with the SPARQL result features highlighted
@@ -219,10 +219,10 @@ window.RETE_PLAYGROUND_CATALOG = {
   // A dataset with no entry here shows only the rete Graph backend (no companions).
   companions: {
     "smithsonian3d": {
-      rete: "playground/smithsonian3d.rete",
-      parquetDir: "playground/smithsonian3d-tables",  // *.parquet + _manifest.parquet
-      duckdb: "playground/smithsonian3d.duckdb",  duckdbSize: "1.3 MB",
-      sqlite: "playground/smithsonian3d.sqlite",  sqliteSize: "1.2 MB",
+      rete: "smithsonian3d/smithsonian3d.rete",
+      parquetDir: "smithsonian3d/smithsonian3d-tables",  // *.parquet + _manifest.parquet
+      duckdb: "smithsonian3d/smithsonian3d.duckdb",  duckdbSize: "1.3 MB",
+      sqlite: "smithsonian3d/smithsonian3d.sqlite",  sqliteSize: "1.2 MB",
       typePredicate: "rdf:type",
       seed: "https://3d.si.edu/object/d8c6457e-4ebc-11ea-b77f-2e728ce88125", // Apollo Command Module Exterior
       about: "The Smithsonian Open Access 3D collection (2,199 CC0 models) in four lossless encodings on " +
@@ -254,10 +254,10 @@ window.RETE_PLAYGROUND_CATALOG = {
       ],
     },
     "chebi-full": {
-      rete: "playground/chebi-full.rete",
-      parquetDir: "playground/chebi-full-tables",   // *.parquet + _manifest.parquet
-      duckdb: "playground/chebi-full.duckdb",  duckdbSize: "123 MB",
-      sqlite: "playground/chebi-full.sqlite",  sqliteSize: "586 MB",
+      rete: "chebi-full/chebi-full.rete",
+      parquetDir: "chebi-full/chebi-full-tables",   // *.parquet + _manifest.parquet
+      duckdb: "chebi-full/chebi-full.duckdb",  duckdbSize: "123 MB",
+      sqlite: "chebi-full/chebi-full.sqlite",  sqliteSize: "586 MB",
       typePredicate: "rdf:type",
       seed: "http://purl.obolibrary.org/obo/CHEBI_27732", // caffeine (owl:Class)
       about: "The complete ChEBI ontology (8.83 M triples) in four lossless encodings on " +
@@ -426,10 +426,10 @@ window.RETE_PLAYGROUND_CATALOG = {
     // structural columns (smiles/inchikey/formula); the CHMO/RXNO ontology classes
     // are owl:Class. Shares CHEBI IRIs with chebi-full (they federate).
     "chemotion": {
-      rete: "playground/chemotion.rete",
-      parquetDir: "playground/chemotion-tables",
-      duckdb: "playground/chemotion.duckdb",  duckdbSize: "48 MB",
-      sqlite: "playground/chemotion.sqlite",  sqliteSize: "167 MB",
+      rete: "chemotion/chemotion.rete",
+      parquetDir: "chemotion/chemotion-tables",
+      duckdb: "chemotion/chemotion.duckdb",  duckdbSize: "48 MB",
+      sqlite: "chemotion/chemotion.sqlite",  sqliteSize: "167 MB",
       typePredicate: "rdf:type",
       about: "The Chemotion electronic-lab-notebook knowledge graph (FIZ Karlsruhe) merged with " +
         "CHMO + RXNO — 1.53 M triples — in four lossless encodings. The 78k instances (datasets, " +
@@ -469,15 +469,15 @@ window.RETE_PLAYGROUND_CATALOG = {
     // Smaller datasets (companions generated 2026-06-21, same wasm-dump pipeline).
     // Tables only — the entity-table selector + SQL tab work without curated examples.
     "getty-ulan": {
-      rete: "playground/getty-ulan.rete", parquetDir: "playground/getty-ulan-tables",
-      duckdb: "playground/getty-ulan.duckdb", sqlite: "playground/getty-ulan.sqlite", typePredicate: "rdf:type",
+      rete: "getty-ulan/getty-ulan.rete", parquetDir: "getty-ulan/getty-ulan-tables",
+      duckdb: "getty-ulan/getty-ulan.duckdb", sqlite: "getty-ulan/getty-ulan.sqlite", typePredicate: "rdf:type",
       tables: [
         { name: "Person", file: "Person_.parquet", classIri: "http://xmlns.com/foaf/0.1/Person", label: "artist / agent (teacherOf, influenced)", entities: 28279 },
       ],
     },
     "monarch": {
-      rete: "playground/monarch.rete", parquetDir: "playground/monarch-tables",
-      duckdb: "playground/monarch.duckdb", sqlite: "playground/monarch.sqlite", typePredicate: "rdf:type",
+      rete: "monarch/monarch.rete", parquetDir: "monarch/monarch-tables",
+      duckdb: "monarch/monarch.duckdb", sqlite: "monarch/monarch.sqlite", typePredicate: "rdf:type",
       tables: [
         { name: "Gene", file: "Gene_.parquet", classIri: "https://w3id.org/biolink/vocab/Gene", label: "gene", entities: 534 },
         { name: "PhenotypicFeature", file: "PhenotypicFeature_.parquet", classIri: "https://w3id.org/biolink/vocab/PhenotypicFeature", label: "phenotype", entities: 312 },
@@ -488,8 +488,8 @@ window.RETE_PLAYGROUND_CATALOG = {
       ],
     },
     "opencitations": {
-      rete: "playground/opencitations.rete", parquetDir: "playground/opencitations-tables",
-      duckdb: "playground/opencitations.duckdb", sqlite: "playground/opencitations.sqlite", typePredicate: "rdf:type",
+      rete: "opencitations/opencitations.rete", parquetDir: "opencitations/opencitations-tables",
+      duckdb: "opencitations/opencitations.duckdb", sqlite: "opencitations/opencitations.sqlite", typePredicate: "rdf:type",
       tables: [
         { name: "JournalArticle", file: "JournalArticle_.parquet", classIri: "http://purl.org/spar/fabio/JournalArticle", label: "journal article", entities: 297 },
         { name: "BookChapter", file: "BookChapter_.parquet", classIri: "http://purl.org/spar/fabio/BookChapter", label: "book chapter", entities: 23 },
@@ -497,8 +497,8 @@ window.RETE_PLAYGROUND_CATALOG = {
       ],
     },
     "orkg": {
-      rete: "playground/orkg.rete", parquetDir: "playground/orkg-tables",
-      duckdb: "playground/orkg.duckdb", sqlite: "playground/orkg.sqlite", typePredicate: "rdf:type",
+      rete: "orkg/orkg.rete", parquetDir: "orkg/orkg-tables",
+      duckdb: "orkg/orkg.duckdb", sqlite: "orkg/orkg.sqlite", typePredicate: "rdf:type",
       tables: [
         { name: "Contribution", file: "Contribution_.parquet", classIri: "https://orkg.org/class/Contribution", label: "contribution", entities: 932 },
         { name: "C23008", file: "C23008_.parquet", classIri: "https://orkg.org/class/C23008", label: "C23008", entities: 561 },
@@ -511,10 +511,10 @@ window.RETE_PLAYGROUND_CATALOG = {
     // causenet-full: native relational companions (NOT rdf:type entity tables) -
     // the "CauseNet in SQL" form, generated by scripts/causenet_to_tables.py.
     "causenet-full": {
-      rete: "playground/causenet-full.rete",
-      parquetDir: "playground/causenet-full-tables",
-      duckdb: "playground/causenet-full.duckdb",  duckdbSize: "8.95 GB",
-      sqlite: "playground/causenet-full.sqlite",  sqliteSize: "13.9 GB",
+      rete: "causenet-full/causenet-full.rete",
+      parquetDir: "causenet-full/causenet-full-tables",
+      duckdb: "causenet-full/causenet-full.duckdb",  duckdbSize: "8.95 GB",
+      sqlite: "causenet-full/causenet-full.sqlite",  sqliteSize: "13.9 GB",
       typePredicate: "rdf:type",
       about: "CauseNet-Full as clean relational tables on Hugging Face: <code>relations</code> " +
         "(11.6M cause/effect/support edges), <code>sources</code> (24.4M provenance rows - the " +
