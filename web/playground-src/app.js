@@ -5062,6 +5062,14 @@ self.onmessage = function (e) {
     const prefixes = {}, prefixLines = []; let m;
     const re = /PREFIX\s+([A-Za-z0-9_-]*):\s*<([^>]*)>/gi;
     while ((m = re.exec(q))) { prefixes[m[1]] = m[2]; prefixLines.push(m[0]); }
+    // `a` (rdf:type shorthand) becomes `rdf:type` in the generated per-source sub-BGPs,
+    // so the sub-query needs the `rdf:` prefix DECLARED even if the user's query used `a`
+    // and never wrote `PREFIX rdf:`. Without this the sub-query fails to parse, the join
+    // throws, and it silently falls back to a UNION that matches nothing (0 rows).
+    if (prefixes.rdf == null) {
+      prefixes.rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+      prefixLines.push("PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>");
+    }
     const sm = /SELECT\s+(DISTINCT\s+|REDUCED\s+)?(.+?)\s+WHERE/is.exec(q);
     if (!sm) return null;
     const selVars = sm[2].trim() === "*" ? "*" : (sm[2].match(/\?[A-Za-z0-9_]+/g) || []).map(fedVn);
