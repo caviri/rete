@@ -6777,11 +6777,13 @@ self.onmessage = function (e) {
       let condensed = false;
       let enoughRoom = false;
       const measure = () => {
-        // "Enough space in the scrolling main area": the work area alone must be
-        // about a viewport tall, so the page stays scrollable past the trigger even
-        // after the header shrinks. This is measured off the workbench (stable across
-        // condense), never the document height (which the condense itself changes).
-        enoughRoom = !!workbench && workbench.offsetHeight > window.innerHeight - 24;
+        // "Enough space in the scrolling main area": the work area must be at least
+        // ~1.7 viewports tall, so after the header condenses (reclaiming ~Δpx) there's
+        // still plenty of scroll room past the trigger — a page that only *just*
+        // overflows would clamp scrollY back across the trigger and the toggle would
+        // oscillate (the jump). Measured off the workbench (stable across condense),
+        // never the document height (which the condense itself changes).
+        enoughRoom = !!workbench && workbench.offsetHeight > window.innerHeight * 1.7;
       };
       const apply = () => {
         const want = enoughRoom && window.scrollY > 10;

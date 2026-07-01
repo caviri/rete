@@ -599,7 +599,11 @@ label.file-button:hover {
 
 .console-shell {
   display: grid;
-  grid-template-columns: auto minmax(240px, 312px) minmax(0, 1fr);
+  /* The details sidebar is a FIXED 312 px only on very wide screens; below that it is
+     capped at ~16% of the shell (never under a readable 240 px), so at intermediate
+     widths (~1080p) the workbench keeps the same generous proportion it has at 4k
+     instead of the sidebar eating ~24% of the row. */
+  grid-template-columns: auto minmax(240px, min(312px, 16%)) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
   padding: 12px 18px 28px;
@@ -2173,7 +2177,10 @@ th .coltype.coltype-on {
 
 @media (max-width: 1220px) {
   .console-shell {
-    grid-template-columns: auto minmax(220px, 290px) minmax(0, 1fr);
+    /* keep the sidebar proportional (≈16%, floor 210px) down toward the tablet
+       breakpoint, so the workbench stays the dominant column instead of the layout
+       feeling cramped before it stacks */
+    grid-template-columns: auto minmax(210px, min(288px, 16%)) minmax(0, 1fr);
   }
 
   .inspector {
@@ -2893,8 +2900,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 7c8e4ad · 2026-07-01 12:41 UTC</span>
-    <script>window.RETE_BUILD = "7c8e4ad · 2026-07-01 12:41 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 59f794b · 2026-07-01 13:00 UTC</span>
+    <script>window.RETE_BUILD = "59f794b · 2026-07-01 13:00 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -16382,11 +16389,13 @@ self.onmessage = function (e) {
       let condensed = false;
       let enoughRoom = false;
       const measure = () => {
-        // "Enough space in the scrolling main area": the work area alone must be
-        // about a viewport tall, so the page stays scrollable past the trigger even
-        // after the header shrinks. This is measured off the workbench (stable across
-        // condense), never the document height (which the condense itself changes).
-        enoughRoom = !!workbench && workbench.offsetHeight > window.innerHeight - 24;
+        // "Enough space in the scrolling main area": the work area must be at least
+        // ~1.7 viewports tall, so after the header condenses (reclaiming ~Δpx) there's
+        // still plenty of scroll room past the trigger — a page that only *just*
+        // overflows would clamp scrollY back across the trigger and the toggle would
+        // oscillate (the jump). Measured off the workbench (stable across condense),
+        // never the document height (which the condense itself changes).
+        enoughRoom = !!workbench && workbench.offsetHeight > window.innerHeight * 1.7;
       };
       const apply = () => {
         const want = enoughRoom && window.scrollY > 10;

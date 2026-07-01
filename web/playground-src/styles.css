@@ -559,7 +559,11 @@ label.file-button:hover {
 
 .console-shell {
   display: grid;
-  grid-template-columns: auto minmax(240px, 312px) minmax(0, 1fr);
+  /* The details sidebar is a FIXED 312 px only on very wide screens; below that it is
+     capped at ~16% of the shell (never under a readable 240 px), so at intermediate
+     widths (~1080p) the workbench keeps the same generous proportion it has at 4k
+     instead of the sidebar eating ~24% of the row. */
+  grid-template-columns: auto minmax(240px, min(312px, 16%)) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
   padding: 12px 18px 28px;
@@ -2133,7 +2137,10 @@ th .coltype.coltype-on {
 
 @media (max-width: 1220px) {
   .console-shell {
-    grid-template-columns: auto minmax(220px, 290px) minmax(0, 1fr);
+    /* keep the sidebar proportional (≈16%, floor 210px) down toward the tablet
+       breakpoint, so the workbench stays the dominant column instead of the layout
+       feeling cramped before it stacks */
+    grid-template-columns: auto minmax(210px, min(288px, 16%)) minmax(0, 1fr);
   }
 
   .inspector {
