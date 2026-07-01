@@ -1145,7 +1145,17 @@ textarea {
   display: block; max-width: 128px; max-height: 104px; border-radius: 5px;
   border: 1px solid var(--line); background: var(--side); object-fit: cover;
 }
-.cell-thumb:hover { border-color: var(--accent); }
+.cell-thumb:hover { border-color: var(--accent); cursor: zoom-in; }
+/* Floating hover-zoom of a table image — anchored beside the thumb, clamped to the
+   viewport (positioned in JS), so a scan/photo reads without opening the lightbox. */
+.thumb-zoom {
+  position: fixed; z-index: 95; max-width: 360px; max-height: 340px;
+  border-radius: 10px; border: 1px solid var(--line-strong, #cfd9d5);
+  background: var(--surface, #fff); padding: 4px; object-fit: contain;
+  box-shadow: 0 16px 44px -12px rgba(0, 0, 0, .45);
+  pointer-events: none; opacity: 1; transition: opacity .12s ease;
+}
+.thumb-zoom.hidden { opacity: 0; visibility: hidden; }
 .link-preview {
   position: fixed; z-index: 80; width: 420px;
   border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface);
@@ -1921,7 +1931,7 @@ th .coltype.coltype-on {
 /* Dataset browser (the "Datasets" modal): a wide two-pane layout — a sidebar
    list on the left, the selected dataset's details + preview on the right. */
 .ds-modal {
-  width: min(1080px, 100%);
+  width: min(1340px, 96vw);
   height: 86vh;
   max-height: 86vh;
   display: flex;
@@ -1947,8 +1957,8 @@ th .coltype.coltype-on {
   margin-top: 12px;
 }
 .ds-sidebar {
-  width: 268px;
-  flex: 0 0 268px;
+  width: 360px;
+  flex: 0 0 360px;
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--line);
@@ -2883,8 +2893,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 3a5578d · 2026-07-01 08:09 UTC</span>
-    <script>window.RETE_BUILD = "3a5578d · 2026-07-01 08:09 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build aa02546 · 2026-07-01 10:14 UTC</span>
+    <script>window.RETE_BUILD = "aa02546 · 2026-07-01 10:14 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -10511,6 +10521,63 @@ self.onmessage = function (e) {
     });
   }
 
+  // ---- Image thumbnail hover-zoom -------------------------------------------
+  // Hovering an image cell (.cell-thumb — imageCell + IIIF) pops a larger, crisp
+  // preview in a floating box, so you can read a scan/photo without leaving the table
+  // or opening the lightbox. Positioned HARMONICALLY: anchored beside the thumb (right,
+  // or left when there's no room), vertically centred on it, and always clamped inside
+  // the viewport — never clipped by the table's own scroll/overflow. Reuses one fixed
+  // element. A Commons `width=200` thumb is re-requested at a larger width so the zoom
+  // is sharp, not upscaled.
+  let tzEl = null, tzShowTimer = 0;
+  function ensureThumbZoom() {
+    if (tzEl) return tzEl;
+    tzEl = document.createElement("img");
+    tzEl.className = "thumb-zoom hidden";
+    tzEl.alt = "";
+    tzEl.addEventListener("error", hideThumbZoom);
+    document.body.appendChild(tzEl);
+    return tzEl;
+  }
+  function positionThumbZoom(img) {
+    if (!tzEl) return;
+    const r = img.getBoundingClientRect();
+    const zw = tzEl.offsetWidth || 320, zh = tzEl.offsetHeight || 280;
+    const m = 12, vw = window.innerWidth, vh = window.innerHeight;
+    let left = r.right + m;                              // prefer to the right of the thumb
+    if (left + zw + m > vw) left = r.left - m - zw;      // no room → to the left
+    left = Math.max(m, Math.min(vw - zw - m, left));     // clamp horizontally
+    let top = r.top + r.height / 2 - zh / 2;             // centre on the thumb
+    top = Math.max(m, Math.min(vh - zh - m, top));       // clamp vertically
+    tzEl.style.left = left + "px";
+    tzEl.style.top = top + "px";
+  }
+  function showThumbZoom(img) {
+    const src0 = img.currentSrc || img.src;
+    if (!src0) return;
+    const src = src0.replace(/([?&]width=)200\b/, (m, g1) => g1 + "900"); // sharper for Commons thumbs
+    const z = ensureThumbZoom();
+    z.onload = () => positionThumbZoom(img);
+    z.src = src;
+    z.classList.remove("hidden");
+    positionThumbZoom(img);                              // place now (re-placed on load)
+  }
+  function hideThumbZoom() { if (tzEl) tzEl.classList.add("hidden"); }
+  function bindThumbZoom() {
+    document.body.addEventListener("mouseover", (e) => {
+      const img = e.target.closest && e.target.closest(".cell-thumb");
+      if (!img) return;
+      clearTimeout(tzShowTimer);
+      tzShowTimer = setTimeout(() => showThumbZoom(img), 200);
+    });
+    document.body.addEventListener("mouseout", (e) => {
+      const img = e.target.closest && e.target.closest(".cell-thumb");
+      if (!img) return;
+      clearTimeout(tzShowTimer);
+      hideThumbZoom();
+    });
+  }
+
   // Show the loaded dataset's short name on the topbar chip (which opens the
   // Datasets browser). Replaces the old <select> dropdown.
   function setDatasetName(key) {
@@ -10913,7 +10980,7 @@ self.onmessage = function (e) {
       // The ⚡ shortcut range-queries the remote .rete straight away — every catalog
       // (non-custom) dataset lives in the bucket, so lazy mode always applies there.
       const lazyBtn = isCustom(d.key) ? "" :
-        `<span class="ds-side-load" role="button" tabindex="0" data-lazy="${esc(d.key)}" title="Load now in lazy mode — range-query the remote .rete (only the bytes each query touches are fetched)">⚡</span>`;
+        `<span class="ds-side-load" role="button" tabindex="0" data-lazy="${esc(d.key)}" title="Load now in lazy mode — range-query the remote .rete (only the bytes each query touches are fetched)">📥</span>`;
       return `<button type="button" class="ds-side-item${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
         `<span class="ds-side-ico">${esc(ex.icon || "📊")}</span>` +
         `<span class="ds-side-name">${esc(dsShortLabel(d.key))}</span>` +
@@ -16531,6 +16598,8 @@ self.onmessage = function (e) {
     }
     // Hover preview + click-through for http(s) URLs in result tables.
     bindLinkPreviews();
+    // Hover-zoom for image thumbnails in result tables.
+    bindThumbZoom();
 
     await wasm_bindgen(b64ToBytes(RETE_WASM_B64));
     wasmReady = true;

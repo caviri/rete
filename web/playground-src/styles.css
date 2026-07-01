@@ -1105,7 +1105,17 @@ textarea {
   display: block; max-width: 128px; max-height: 104px; border-radius: 5px;
   border: 1px solid var(--line); background: var(--side); object-fit: cover;
 }
-.cell-thumb:hover { border-color: var(--accent); }
+.cell-thumb:hover { border-color: var(--accent); cursor: zoom-in; }
+/* Floating hover-zoom of a table image — anchored beside the thumb, clamped to the
+   viewport (positioned in JS), so a scan/photo reads without opening the lightbox. */
+.thumb-zoom {
+  position: fixed; z-index: 95; max-width: 360px; max-height: 340px;
+  border-radius: 10px; border: 1px solid var(--line-strong, #cfd9d5);
+  background: var(--surface, #fff); padding: 4px; object-fit: contain;
+  box-shadow: 0 16px 44px -12px rgba(0, 0, 0, .45);
+  pointer-events: none; opacity: 1; transition: opacity .12s ease;
+}
+.thumb-zoom.hidden { opacity: 0; visibility: hidden; }
 .link-preview {
   position: fixed; z-index: 80; width: 420px;
   border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface);
@@ -1881,7 +1891,7 @@ th .coltype.coltype-on {
 /* Dataset browser (the "Datasets" modal): a wide two-pane layout — a sidebar
    list on the left, the selected dataset's details + preview on the right. */
 .ds-modal {
-  width: min(1080px, 100%);
+  width: min(1340px, 96vw);
   height: 86vh;
   max-height: 86vh;
   display: flex;
@@ -1907,8 +1917,8 @@ th .coltype.coltype-on {
   margin-top: 12px;
 }
 .ds-sidebar {
-  width: 268px;
-  flex: 0 0 268px;
+  width: 360px;
+  flex: 0 0 360px;
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--line);

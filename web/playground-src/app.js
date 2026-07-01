@@ -945,6 +945,63 @@ self.onmessage = function (e) {
     });
   }
 
+  // ---- Image thumbnail hover-zoom -------------------------------------------
+  // Hovering an image cell (.cell-thumb — imageCell + IIIF) pops a larger, crisp
+  // preview in a floating box, so you can read a scan/photo without leaving the table
+  // or opening the lightbox. Positioned HARMONICALLY: anchored beside the thumb (right,
+  // or left when there's no room), vertically centred on it, and always clamped inside
+  // the viewport — never clipped by the table's own scroll/overflow. Reuses one fixed
+  // element. A Commons `width=200` thumb is re-requested at a larger width so the zoom
+  // is sharp, not upscaled.
+  let tzEl = null, tzShowTimer = 0;
+  function ensureThumbZoom() {
+    if (tzEl) return tzEl;
+    tzEl = document.createElement("img");
+    tzEl.className = "thumb-zoom hidden";
+    tzEl.alt = "";
+    tzEl.addEventListener("error", hideThumbZoom);
+    document.body.appendChild(tzEl);
+    return tzEl;
+  }
+  function positionThumbZoom(img) {
+    if (!tzEl) return;
+    const r = img.getBoundingClientRect();
+    const zw = tzEl.offsetWidth || 320, zh = tzEl.offsetHeight || 280;
+    const m = 12, vw = window.innerWidth, vh = window.innerHeight;
+    let left = r.right + m;                              // prefer to the right of the thumb
+    if (left + zw + m > vw) left = r.left - m - zw;      // no room → to the left
+    left = Math.max(m, Math.min(vw - zw - m, left));     // clamp horizontally
+    let top = r.top + r.height / 2 - zh / 2;             // centre on the thumb
+    top = Math.max(m, Math.min(vh - zh - m, top));       // clamp vertically
+    tzEl.style.left = left + "px";
+    tzEl.style.top = top + "px";
+  }
+  function showThumbZoom(img) {
+    const src0 = img.currentSrc || img.src;
+    if (!src0) return;
+    const src = src0.replace(/([?&]width=)200\b/, (m, g1) => g1 + "900"); // sharper for Commons thumbs
+    const z = ensureThumbZoom();
+    z.onload = () => positionThumbZoom(img);
+    z.src = src;
+    z.classList.remove("hidden");
+    positionThumbZoom(img);                              // place now (re-placed on load)
+  }
+  function hideThumbZoom() { if (tzEl) tzEl.classList.add("hidden"); }
+  function bindThumbZoom() {
+    document.body.addEventListener("mouseover", (e) => {
+      const img = e.target.closest && e.target.closest(".cell-thumb");
+      if (!img) return;
+      clearTimeout(tzShowTimer);
+      tzShowTimer = setTimeout(() => showThumbZoom(img), 200);
+    });
+    document.body.addEventListener("mouseout", (e) => {
+      const img = e.target.closest && e.target.closest(".cell-thumb");
+      if (!img) return;
+      clearTimeout(tzShowTimer);
+      hideThumbZoom();
+    });
+  }
+
   // Show the loaded dataset's short name on the topbar chip (which opens the
   // Datasets browser). Replaces the old <select> dropdown.
   function setDatasetName(key) {
@@ -1347,7 +1404,7 @@ self.onmessage = function (e) {
       // The ⚡ shortcut range-queries the remote .rete straight away — every catalog
       // (non-custom) dataset lives in the bucket, so lazy mode always applies there.
       const lazyBtn = isCustom(d.key) ? "" :
-        `<span class="ds-side-load" role="button" tabindex="0" data-lazy="${esc(d.key)}" title="Load now in lazy mode — range-query the remote .rete (only the bytes each query touches are fetched)">⚡</span>`;
+        `<span class="ds-side-load" role="button" tabindex="0" data-lazy="${esc(d.key)}" title="Load now in lazy mode — range-query the remote .rete (only the bytes each query touches are fetched)">📥</span>`;
       return `<button type="button" class="ds-side-item${active ? " active" : ""}" data-ds="${esc(d.key)}">` +
         `<span class="ds-side-ico">${esc(ex.icon || "📊")}</span>` +
         `<span class="ds-side-name">${esc(dsShortLabel(d.key))}</span>` +
@@ -6965,6 +7022,8 @@ self.onmessage = function (e) {
     }
     // Hover preview + click-through for http(s) URLs in result tables.
     bindLinkPreviews();
+    // Hover-zoom for image thumbnails in result tables.
+    bindThumbZoom();
 
     await wasm_bindgen(b64ToBytes(RETE_WASM_B64));
     wasmReady = true;
