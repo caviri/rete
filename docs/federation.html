@@ -392,7 +392,27 @@ triple-union — and a per-source banner reports the rows and bytes each source
 contributed. Each source keeps its own lazy reader, so two remote <code>.rete</code> files
 are read independently and lazily into one merge; it is orchestrated in the
 playground's JS over the existing single-source query paths, so no extra engine
-code runs. An example can pre-load its partner with one click.</p>
+code runs. An example can pre-load its partner with one click. A <strong>live line ticks
+during the query</strong> — <code>N/M sources answered · range requests · MB · elapsed</code> — so a
+long multi-source fan-out isn't a silent spinner.</p>
+<h3>Beyond union — cross-source joins and sharded datasets</h3>
+<p>The playground goes past the CLI's union: it also does a <strong>term-level cross-source
+JOIN</strong> — one BGP split across sources and joined on the shared variables — so the
+"cross-file join is not found" limit above is a <em>CLI</em> limit, not a playground one.
+<code>runFederated</code> parses a flat BGP, routes each triple pattern to a source by predicate
+<strong>and</strong> subject-variable provenance (the owner of a shared predicate like <code>rdfs:label</code>
+wins), runs each source's sub-BGP with a <code>VALUES</code> injection of the already-bound join
+keys, and hash-joins. It falls back to the union path for anything it can't split
+(OPTIONAL / UNION / aggregates / property paths). So e.g. USTC editions ⋈ the Embassy
+books they cite, joined on the book IRI, returns real joined rows across the two files.
+(One sharp edge worth knowing: a query that writes <code>a</code> for <code>rdf:type</code> is fine — the
+generated sub-queries declare the <code>rdf:</code> prefix themselves.)</p>
+<p>A <strong>sharded dataset</strong> is registered as one logical graph with a <code>shards: [url0, url1, …]</code> list in the catalog; the playground treats <code>url0</code> as the primary and the rest as
+intrinsic federation partners, so <strong>every query auto-fans across all shards</strong> (union)
+and the rows merge — you query it like one dataset (a "⛓ N shards" chip shows in the
+Sources strip). This is how a graph too big to build as a single file — e.g. a 600 M-
+triple Wikidata split into six independent <code>--no-pyramid</code> shards — is served and queried
+as one. The path to a bigger graph is just more shards.</p>
 <p><strong>Worked example — resolve five terms across two ontologies.</strong> The bundled
 <code>chebi-full</code> (the complete ChEBI ontology, 8.83 M triples) and <code>chemotion</code> (a
 chemistry ELN graph merged with CHMO + RXNO) share <code>CHEBI_*</code> IRIs plus

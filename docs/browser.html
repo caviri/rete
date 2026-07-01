@@ -245,6 +245,15 @@ rete build examples/deps.nt  -o web/deps.rete    # CVE-impact demo (dependsOn+)
 uv run python scripts/build_playground.py
 python3 scripts/range_server.py 8000 web          # open http://localhost:8000
 </code></pre>
+<blockquote>
+<p><strong>Build the regular (<code>web</code> / <code>no-modules</code>) wasm in the <code>rete-dev</code> image, NOT
+<code>rete-asyncify</code>.</strong> rete-asyncify ships an old <code>wasm-opt</code> (binaryen v108) that
+rewrites the <code>__wbindgen_externrefs</code> table export onto the wrong table, so the
+page dies at boot with <code>RangeError: WebAssembly.Table.grow(): failed to grow table by 4</code> in <code>__wbindgen_init_externref_table</code>. rete-dev has no <code>wasm-opt</code> on
+PATH, so wasm-pack fetches its own (newer) one and the export stays correct.
+rete-asyncify is only for the asyncify variant (<code>build_playground_async.sh</code>),
+which disables reference-types and so has no externref table to corrupt.</p>
+</blockquote>
 <p>zstd's C encoder isn't used on wasm; decoding uses the pure-Rust <code>ruzstd</code>, so the
 browser reads compressed files fine. <code>rete-wasm</code> depends on <code>rete-core</code> with
 <code>--no-default-features</code>.</p>
@@ -489,6 +498,144 @@ instant; on a remote graph the read is a single bounded range query. The <strong
 selector at the top chooses which predicate is read as the human label
 (<code>rdfs:label</code>, <code>skos:prefLabel</code>, <code>schema:name</code>, … or <code>auto</code>), and the same choice
 drives the editor's inline <strong>Labels</strong> decode chips.</p>
+<h2>Media in the playground</h2>
+<p>A SELECT (or triples) result cell whose value is an IRI/URL is rendered
+<strong>inline</strong> when its URL matches a media heuristic — an image becomes a
+thumbnail, a <code>.glb</code> becomes a rotatable 3D model, a <code>.mp3</code> an audio player, a
+WKT literal a mini-map, and so on. The relevant code is the cell renderers in
+<code>web/playground-src/app.js</code> (<code>autoCell</code>, <code>prettyCell</code>, and the <code>looks*Url</code> /
+<code>*Cell</code> pairs).</p>
+<h3>how cells render</h3>
+<p><code>autoCell</code> is the default per-value heuristic. For an IRI it tries each detector
+in order and falls through to a plain link / text; for a literal it checks for a
+WKT geometry. A column header dropdown (<code>COL_TYPES</code>) can <strong>force</strong> a render type,
+overriding the heuristic — useful for an image/3D column whose URLs don't end in
+a known extension (a CDN/API URL or a bare entity IRI), or to stop a long IRI
+column from rendering.</p>
+<p>URL pattern → renderer (the detector functions, in <code>autoCell</code>'s order):</p>
+<table><thead><tr><th>value looks like</th><th>detector</th><th>renders as</th></tr></thead><tbody>
+<tr><td>Wikimedia Commons <code>Special:FilePath/…</code>, a <code>coeli</code> portraitMedia/IIIF-Image path, or <code>.jpg .jpeg .png .gif .svg .webp</code></td><td><code>looksImageUrl</code> → <code>imageCell</code></td><td>clickable thumbnail (Commons gets <code>?width=200</code>)</td></tr>
+<tr><td><code>…/manifest(.json)</code> or <code>…/iiif/…</code></td><td><code>looksIiifUrl</code> → <code>iiifCell</code></td><td>placeholder, then async-fetch the manifest and swap in a paged thumbnail; click → lightbox (enlarged page + paging + manifest metadata). Supports IIIF Presentation v2 and v3</td></tr>
+<tr><td><code>.glb .gltf .ply .splat .ksplat</code></td><td><code>looksMeshUrl</code> → <code>mesh3dCell</code></td><td>inline <code>&lt;model-viewer&gt;</code> (drag-rotate, auto-spin, ⛶ lightbox with lighting/exposure/shadow controls and a real-world scale bar). The web component lazy-loads from the jsDelivr CDN on first appearance; each viewer lazy-loads its own mesh (<code>loading="lazy"</code>) so a 60-row table doesn't fetch 60 meshes at once</td></tr>
+<tr><td>INSCRIBE (<code>inscribercproject.com</code>), PAITO (<code>paitoproject.it</code>), `sketchfab.com/(3d-models</td><td>models)/…<code>, </code>.nxz<code>(Nexus), or</code>/3dhop`</td><td><code>looks3dViewerUrl</code> → <code>viewer3dCell</code></td></tr>
+<tr><td><code>.mp3 .wav .ogg .oga .flac .m4a .aac .opus</code></td><td><code>looksAudioUrl</code> → <code>audioCell</code></td><td>inline <code>&lt;audio controls preload=metadata&gt;</code></td></tr>
+<tr><td>a bucket <code>…-spin/&lt;id&gt;.webm</code> (or <code>.mp4</code>)</td><td><code>looksSpinUrl</code> → <code>spinCell</code></td><td>autoplaying, muted, looping clip (a pre-rendered turntable preview — no WebGL)</td></tr>
+<tr><td><code>.mp4 .webm .ogv .m4v .mov</code></td><td><code>looksVideoUrl</code> → <code>videoCell</code></td><td>inline <code>&lt;video controls preload=metadata&gt;</code></td></tr>
+<tr><td>a WKT literal (<code>POINT</code>/<code>POLYGON</code>/<code>LINESTRING</code>/… — <code>looksWktGeo</code>)</td><td><code>geoCell</code></td><td>a small locator mini-map (a point sits on a cached world basemap tile; a shape fits its own bbox). With many geo rows, <strong>Output → Map</strong> plots the whole result set</td></tr>
+</tbody></table>
+<p>Notes:</p>
+<ul>
+<li>Each media cell gets a <strong>caption</strong> (<code>hydrateMediaMeta</code>): <code>format · dimensions/duration/real-size · file size</code>. The file size comes from a
+best-effort <code>HEAD</code> request; dimensions/duration/3D real-size come from the
+loaded element (<code>updateScaleBar</code> drives the lightbox scale bar from the live
+camera).</li>
+<li>The column dropdown options (<code>COL_TYPES</code>) are <strong>Auto / Text / Link / Image /
+IIIF / Map / 3D / Audio / Video / Spin / Number</strong>.</li>
+<li><strong>Image hover-zoom.</strong> Hovering an image thumbnail (<code>imageCell</code>/IIIF) pops a larger
+preview in a floating box anchored beside the cell and clamped to the viewport (never
+clipped by the table's scroll). A Commons <code>?width=200</code> thumb is re-requested at
+<code>width=900</code> so the zoom is sharp. Click still opens the full image / lightbox.</li>
+<li><strong>Geo cell → full map, multi-LOD.</strong> Clicking a mini-map opens a pannable/zoomable
+Leaflet map. For a dataset that ships a finer level of detail (e.g. <code>geoadmin</code>'s
+<code>g:geomFine</code> alongside the coarse <code>geo:asWKT</code>), the modal range-fetches <strong>just that
+feature's</strong> fine geometry on demand and swaps it in — the remote-lazy LOD payoff
+(zoom in → fetch only what you inspect). GeoSPARQL has no native tiling, so this is
+modelled with a second geometry property.</li>
+<li><strong>Tiles output (vector basemap).</strong> A dataset can carry a PMTiles archive
+(<code>CATALOG.pmtiles[key]</code>) — built with tippecanoe for true per-zoom LOD — rendered in
+the <strong>Output → Tiles</strong> view by protomaps-leaflet (Canvas, no WebGL). The tiles draw
+all the geometry; the SPARQL result features are highlighted on top (joined by name).
+The PMTiles can sit next to the <code>.rete</code> (a separate file) or <strong>inside</strong> it as a
+section (<code>embedded: true</code>; the reader parses the header for the section offset and
+range-reads tiles from the same URL) — one file = graph + map tiles.</li>
+<li>The page is served over HTTPS, so an <code>http://</code> media URL is upgraded to
+<code>https://</code> for the fetch (<code>httpsUpgrade</code>); the original IRI is still shown.</li>
+<li><strong>CORS is a hard requirement.</strong> Every inline-rendered media URL is fetched
+cross-origin by the browser, so the host <strong>must</strong> send
+<code>access-control-allow-origin</code>. If it doesn't, the image/IIIF/3D/audio/video
+fails to load (a IIIF manifest blocked by CORS degrades to a <code>⚠ IIIF blocked</code>
+link). The bucket-served files below are CORS-open; so are Wikimedia Commons,
+most IIIF servers, and <code>iiif.coeli.cat</code>.</li>
+</ul>
+<h2>preparing media for a dataset</h2>
+<p>To make a cell render inline, emit a triple whose object is a CORS-open URL (or,
+for geo, a WKT literal) on a property the renderers recognise. <code>prop:</code> below is
+each dataset's own property namespace; the renderers key off the <strong>value</strong>, not
+the predicate name, so any predicate works — these are just the conventions used
+by the existing datasets.</p>
+<table><thead><tr><th>media</th><th>emit</th><th>object</th></tr></thead><tbody>
+<tr><td>image</td><td><code>prop:image</code></td><td>a CORS-open image URL or a IIIF manifest</td></tr>
+<tr><td>geo</td><td><code>geo:asWKT</code> (<code>http://www.opengis.net/ont/geosparql#asWKT</code>, a <code>geo:wktLiteral</code>)</td><td>a WKT geometry literal</td></tr>
+<tr><td>audio / video</td><td><code>prop:audio</code> / <code>prop:video</code></td><td>a CORS-open media file</td></tr>
+<tr><td>streamable 3D</td><td><code>prop:mesh</code></td><td>a bucket <code>.glb</code> URL</td></tr>
+<tr><td>turntable spin</td><td><code>prop:spinVideo</code> / <code>prop:spinGif</code></td><td>a bucket <code>…-spin/&lt;id&gt;.{webm,gif}</code> URL</td></tr>
+</tbody></table>
+<p><code>scripts/bioexplora_to_nt.py</code> and <code>scripts/smithsonian3d_to_nt.py</code> are the worked
+examples (specimens → <code>prop:image</code> + <code>geo:asWKT</code>; 3D models → <code>prop:mesh</code> +
+<code>prop:spinVideo</code>/<code>prop:spinGif</code>).</p>
+<h3>streamable 3D (.glb)</h3>
+<p>Source meshes are usually too big to stream (20–50 MB). Compress with
+<code>gltf-transform optimize</code> (Draco geometry + WebP textures, ~40× smaller, e.g.
+20–50 MB → ~0.5–1 MB), run inside the <code>rete-gltf</code> node image:</p>
+<pre><code class="language-bash">docker build -f scripts/Dockerfile.gltf -t rete-gltf .
+docker run --rm -v "$PWD":/work -w /work rete-gltf \
+  gltf-transform optimize in.glb out.glb --compress draco --texture-compress webp
+</code></pre>
+<p>Upload the compressed <code>.glb</code> to the bucket (below) and emit <code>prop:mesh</code> to the
+bucket URL. <code>scripts/bioexplora_sketchfab.sh</code> is the end-to-end worked example:
+Sketchfab Data API → download each downloadable <code>.glb</code> → Draco+WebP compress →
+upload → write a <code>uid → mesh-url</code> TSV that <code>bioexplora_to_nt.py</code> reads.</p>
+<h3>turntable spin previews</h3>
+<p>A pre-rendered rotating clip is a lightweight preview that plays like a GIF and
+needs no WebGL on the client. Render it with headless Blender (Cycles on
+OptiX/CUDA GPU) in the <code>rete-blender</code> image (the official Blender 3.6 LTS tarball
+— it ships the glTF/Draco importer and bundled numpy):</p>
+<pre><code class="language-bash">docker build -f scripts/Dockerfile.blender -t rete-blender .
+# batch over a "id&lt;TAB&gt;glb_url" TSV; GPU + a mounted OptiX kernel cache:
+docker run --rm --gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -e BLENDER_GPU=1 \
+  -v "$PWD":/work -v "$PWD/data/.blendercache":/root/.cache -w /work rete-blender \
+  sh scripts/render_turntables.sh data/&lt;ds&gt;/mesh_list.tsv data/&lt;ds&gt;/turntables
+</code></pre>
+<p><code>render_turntables.sh</code> loops the TSV → <code>glb_to_spin.sh</code> (per model) →
+<code>blender_turntable.py</code> (the Blender script: import, centre, frame a camera, spin
+0→360°, write PNG frames), then ffmpeg makes a tiny VP9 <code>.webm</code> plus a
+palette-optimized <code>.gif</code> fallback. Upload under a <code>…-spin/&lt;id&gt;.{webm,gif}</code> prefix
+and emit <code>prop:spinVideo</code> / <code>prop:spinGif</code>.</p>
+<h3>uploading to the bucket</h3>
+<pre><code class="language-bash"># single files:
+hf buckets cp &lt;file&gt; hf://buckets/katospiegel/knowledge-graphs/playground/&lt;path&gt;
+# a whole directory:
+hf buckets sync &lt;localdir&gt; hf://buckets/katospiegel/knowledge-graphs/playground/&lt;prefix&gt;
+</code></pre>
+<p>The uploaded files are then served (CORS-open) at
+<code>https://katospiegel-rete.hf.space/data/playground/&lt;path&gt;?token=sfdbgf1094by21hd128ru39802</code>
+— that read token is a shareable read-only token committed throughout the repo's
+scripts; append it as the <code>token=</code> query param on each emitted URL. (Source-API
+secrets such as <code>SKETCHFAB_TOKEN</code> come from <code>.env</code> and must never be committed.)</p>
+<h3>gotchas</h3>
+<ul>
+<li><strong>CORS is mandatory</strong> — see above; the single most common reason a media cell
+shows nothing is a host that doesn't send <code>access-control-allow-origin</code>.</li>
+<li><strong>Windows Python writes CRLF.</strong> <code>print()</code> on Windows emits <code>\r\n</code>, so a
+uid/URL list piped through <code>python</code> carries a trailing <code>\r</code> that corrupts the
+next URL/header. Strip it (<code>tr -d '\r'</code>, or <code>uid=${uid%$'\r'}</code> after <code>read</code>),
+or generate the list with Linux python (e.g. inside the dev container).</li>
+<li><strong><code>while read … done &lt; file</code> eats the loop's stdin.</strong> Any inner command that
+reads stdin (ffmpeg, sometimes curl/wget, a nested script) consumes the loop's
+TSV → truncated/garbled iterations. Pass <code>-nostdin</code> to ffmpeg and <code>&lt;/dev/null</code>
+to curl/wget and nested script calls inside such loops.</li>
+<li><strong>Source-API rate limits.</strong> The Sketchfab <code>/download</code> endpoint throttles
+bursts; add a small delay between requests and retry with exponential backoff
+(see <code>glb_url()</code> in <code>bioexplora_sketchfab.sh</code>: 2,4,8,16 s).</li>
+<li><strong>Atomic writes.</strong> Download/compress to a <code>.part</code> temp then <code>mv</code> into place, so
+an interrupted run never leaves a truncated file that a <code>[ -s file ] &amp;&amp; continue</code> resume-guard would wrongly accept as complete.</li>
+<li><strong>Blender headless.</strong> Use the official Blender tarball (the distro <code>apt</code>
+package can lack <code>libextern_draco.so</code> and bundled numpy). Cycles renders
+headless on GPU (OptiX); on a new GPU arch the first run pays a one-time
+~200 s OptiX kernel JIT that caches under <code>/root/.nv</code> — mount it to keep warm.</li>
+<li><strong>Image split.</strong> <code>gltf-transform</code> runs in the <code>rete-gltf</code> node image; Blender
+in the <code>rete-blender</code> image.</li>
+</ul>
 
       </article>
       <aside class="rail" aria-label="On this page">

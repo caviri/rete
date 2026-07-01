@@ -198,7 +198,31 @@ triple-union — and a per-source banner reports the rows and bytes each source
 contributed. Each source keeps its own lazy reader, so two remote `.rete` files
 are read independently and lazily into one merge; it is orchestrated in the
 playground's JS over the existing single-source query paths, so no extra engine
-code runs. An example can pre-load its partner with one click.
+code runs. An example can pre-load its partner with one click. A **live line ticks
+during the query** — `N/M sources answered · range requests · MB · elapsed` — so a
+long multi-source fan-out isn't a silent spinner.
+
+### Beyond union — cross-source joins and sharded datasets
+
+The playground goes past the CLI's union: it also does a **term-level cross-source
+JOIN** — one BGP split across sources and joined on the shared variables — so the
+"cross-file join is not found" limit above is a *CLI* limit, not a playground one.
+`runFederated` parses a flat BGP, routes each triple pattern to a source by predicate
+**and** subject-variable provenance (the owner of a shared predicate like `rdfs:label`
+wins), runs each source's sub-BGP with a `VALUES` injection of the already-bound join
+keys, and hash-joins. It falls back to the union path for anything it can't split
+(OPTIONAL / UNION / aggregates / property paths). So e.g. USTC editions ⋈ the Embassy
+books they cite, joined on the book IRI, returns real joined rows across the two files.
+(One sharp edge worth knowing: a query that writes `a` for `rdf:type` is fine — the
+generated sub-queries declare the `rdf:` prefix themselves.)
+
+A **sharded dataset** is registered as one logical graph with a `shards: [url0, url1,
+…]` list in the catalog; the playground treats `url0` as the primary and the rest as
+intrinsic federation partners, so **every query auto-fans across all shards** (union)
+and the rows merge — you query it like one dataset (a "⛓ N shards" chip shows in the
+Sources strip). This is how a graph too big to build as a single file — e.g. a 600 M-
+triple Wikidata split into six independent `--no-pyramid` shards — is served and queried
+as one. The path to a bigger graph is just more shards.
 
 **Worked example — resolve five terms across two ontologies.** The bundled
 `chebi-full` (the complete ChEBI ontology, 8.83 M triples) and `chemotion` (a

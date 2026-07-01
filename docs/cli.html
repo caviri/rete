@@ -238,11 +238,12 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 authoritative flags. Terms are written as canonical N-Triples tokens —
 <code>&lt;http://ex/Alice&gt;</code> for an IRI, <code>"30"</code> or <code>"30"^^&lt;…#integer&gt;</code> for a literal.</p>
 <h2>Building</h2>
-<h3><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl]</code></h3>
+<h3><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|rdfxml]</code></h3>
 <p>Build a file from one or more RDF inputs, merged under one shared dictionary.
-Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code>); <code>-</code> reads stdin and
-defaults to N-Triples; <code>--format</code> forces a format for all inputs. N-Quads inputs
-produce a dataset with named graphs.</p>
+Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code>, plus <code>.rdf</code> / <code>.owl</code> /
+<code>.rdfxml</code> for RDF/XML — how most OWL ontologies ship); <code>-</code> reads stdin and
+defaults to N-Triples; <code>--format</code> forces a format for all inputs (use <code>--format rdfxml</code> for an RDF/XML file with a non-standard extension). N-Quads inputs produce
+a dataset with named graphs.</p>
 <pre><code class="language-sh">rete build a.nt b.nt -o merged.rete
 curl -s https://host/data.nt | rete build - -o data.rete
 </code></pre>

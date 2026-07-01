@@ -342,6 +342,23 @@ Notes:
   camera).
 - The column dropdown options (`COL_TYPES`) are **Auto / Text / Link / Image /
   IIIF / Map / 3D / Audio / Video / Spin / Number**.
+- **Image hover-zoom.** Hovering an image thumbnail (`imageCell`/IIIF) pops a larger
+  preview in a floating box anchored beside the cell and clamped to the viewport (never
+  clipped by the table's scroll). A Commons `?width=200` thumb is re-requested at
+  `width=900` so the zoom is sharp. Click still opens the full image / lightbox.
+- **Geo cell → full map, multi-LOD.** Clicking a mini-map opens a pannable/zoomable
+  Leaflet map. For a dataset that ships a finer level of detail (e.g. `geoadmin`'s
+  `g:geomFine` alongside the coarse `geo:asWKT`), the modal range-fetches **just that
+  feature's** fine geometry on demand and swaps it in — the remote-lazy LOD payoff
+  (zoom in → fetch only what you inspect). GeoSPARQL has no native tiling, so this is
+  modelled with a second geometry property.
+- **Tiles output (vector basemap).** A dataset can carry a PMTiles archive
+  (`CATALOG.pmtiles[key]`) — built with tippecanoe for true per-zoom LOD — rendered in
+  the **Output → Tiles** view by protomaps-leaflet (Canvas, no WebGL). The tiles draw
+  all the geometry; the SPARQL result features are highlighted on top (joined by name).
+  The PMTiles can sit next to the `.rete` (a separate file) or **inside** it as a
+  section (`embedded: true`; the reader parses the header for the section offset and
+  range-reads tiles from the same URL) — one file = graph + map tiles.
 - The page is served over HTTPS, so an `http://` media URL is upgraded to
   `https://` for the fetch (`httpsUpgrade`); the original IRI is still shown.
 - **CORS is a hard requirement.** Every inline-rendered media URL is fetched

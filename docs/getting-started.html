@@ -253,9 +253,10 @@ your <code>PATH</code> (or substitute <code>cargo run -p rete-cli --</code>).</p
   <img src="img/build-pipeline.svg" alt="A pipeline: .nt, .ttl and .nq inputs feed into 'rete build', which produces one social.rete file containing a dictionary, indexes and a pyramid, ready to put on an HTTP host or URL.">
   <figcaption><code>rete build</code> packs your triples into one immutable file — dictionary, permutation indexes, and a community pyramid — that you can drop on any URL.</figcaption>
 </figure>
-<p><code>rete build</code> accepts N-Triples (<code>.nt</code>), N-Quads (<code>.nq</code>), and Turtle (<code>.ttl</code>),
-detected by extension. Multiple inputs are merged under one shared dictionary,
-and <code>-</code> reads standard input.</p>
+<p><code>rete build</code> accepts N-Triples (<code>.nt</code>), N-Quads (<code>.nq</code>), Turtle (<code>.ttl</code>), and
+RDF/XML (<code>.rdf</code> / <code>.owl</code> / <code>.rdfxml</code> — the usual OWL serialization), detected by
+extension. Multiple inputs are merged under one shared dictionary, and <code>-</code> reads
+standard input.</p>
 <pre><code class="language-sh">rete build data.nt -o data.rete                  # single file
 rete build part1.nt part2.nt -o merged.rete      # merge several inputs
 curl -s https://host/data.nt | rete build - -o data.rete   # from a pipe
