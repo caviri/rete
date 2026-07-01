@@ -1190,8 +1190,9 @@ self.onmessage = function (e) {
   function remoteUrlFor(key) {
     const d = datasetInfo(key);
     if (d && d.url) return d.url;
+    // Derived datasets live one-folder-per-dataset on the CDN: <base>/<key>/<key>.rete.
     const tok = CATALOG.remoteToken ? "?token=" + CATALOG.remoteToken : "";
-    return `${CATALOG.remoteBase}/playground/${key}.rete${tok}`;
+    return `${CATALOG.remoteBase}/${key}/${key}.rete${tok}`;
   }
   function isEmbedded(key) { return !!RETE_DATASETS_B64[key] || userBytes.has(key); }
   // A user-built dataset (kept in this browser), vs a bundled/remote catalog one.
@@ -2425,10 +2426,14 @@ self.onmessage = function (e) {
   function currentCompanion() {
     return (CATALOG.companions && CATALOG.companions[state.dataset]) || null;
   }
-  // Build a bucket URL the same way remoteUrlFor does (remoteBase + ?token).
+  // SQL Explore companions (parquet/duckdb/sqlite) still live on the HF Space at their
+  // original playground/<...> paths — they are NOT migrated to R2 (huge, secondary), so
+  // they use their own base/token, independent of the graph CDN (remoteBase = R2).
   function companionUrl(path) {
-    const tok = CATALOG.remoteToken ? "?token=" + CATALOG.remoteToken : "";
-    return `${CATALOG.remoteBase}/${path}${tok}`;
+    const base = CATALOG.companionBase || CATALOG.remoteBase;
+    const t = CATALOG.companionToken != null ? CATALOG.companionToken : CATALOG.remoteToken;
+    const tok = t ? "?token=" + t : "";
+    return `${base}/${path}${tok}`;
   }
   // Map the Explore-selected class (a term like `<…#Class>`) to its companion
   // table. Bare-IRI compare so the `<>` wrapping doesn't matter.
