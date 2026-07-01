@@ -2893,8 +2893,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build aa02546 · 2026-07-01 10:14 UTC</span>
-    <script>window.RETE_BUILD = "aa02546 · 2026-07-01 10:14 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 33b7310 · 2026-07-01 10:23 UTC</span>
+    <script>window.RETE_BUILD = "33b7310 · 2026-07-01 10:23 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -14775,14 +14775,39 @@ self.onmessage = function (e) {
     const sources = allFedSources();
     $("commOut").innerHTML = "";
     $("reqLogBtn").classList.add("hidden");
-    $("out").innerHTML = netSpinner(`federating across ${sources.length} sources…`);
+    // LIVE progress across the sub-queries — else a long multi-shard federation is a
+    // silent spinner for minutes (the sub-queries serialize on the one worker). The
+    // worker resets its request/byte counters per query (keyed by id), so we sum the
+    // latest per id for the running total, and tick a "done/N sources · req · bytes ·
+    // elapsed" line. remoteOnProgress is the same global hook runRemote uses.
+    $("out").innerHTML =
+      `<div class="range-read">` +
+        netSpinner(`federating across ${sources.length} sources…`) +
+        `<div class="cache-bar indeterminate"><div class="cache-bar-fill"></div></div>` +
+        `<div class="range-read-meta" id="fedMeta"></div>` +
+      `</div>`;
     updateResultVisibility();
     const t0 = performance.now();
+    const perId = new Map();
+    let done = 0;
+    const paint = () => {
+      const el = document.getElementById("fedMeta"); if (!el) return;
+      let req = 0, bytes = 0;
+      perId.forEach((v) => { req += v.requests; bytes += v.bytes; });
+      el.textContent = `${done}/${sources.length} sources answered · ${req} range request(s) · ` +
+        `${formatBytes(bytes)} · ${((performance.now() - t0) / 1000).toFixed(1)}s`;
+    };
+    const progTimer = setInterval(paint, 250);
+    const prevProg = remoteOnProgress;
+    remoteOnProgress = (m) => { perId.set(m.id, { requests: m.requests || 0, bytes: m.bytes || 0 }); paint(); };
+    const cleanupProg = () => { clearInterval(progTimer); remoteOnProgress = prevProg; };
+    paint();
     const jobs = sources.map((src) =>
       Promise.resolve().then(() => querySource(src, q, kind))
-        .then((r) => ({ src, r, ok: true }))
-        .catch((e) => ({ src, ok: false, error: String((e && e.message) || e) })));
+        .then((r) => { done++; paint(); return { src, r, ok: true }; })
+        .catch((e) => { done++; paint(); return { src, ok: false, error: String((e && e.message) || e) }; }));
     Promise.all(jobs).then((settled) => {
+      cleanupProg();
       const dt = performance.now() - t0;
       const oks = settled.filter((s) => s.ok);
       let merged;
