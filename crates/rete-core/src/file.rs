@@ -1206,17 +1206,6 @@ pub fn write_dataset(
     )
 }
 
-/// Serialize a dataset with an opaque **metadata** payload occupying the file's
-/// metadata section (the application layer defines its meaning â€” the CLI stores a
-/// JSON Dataset Card there). The section sits immediately after the 128-byte
-/// header and before the dictionary, so `metadata_offset` stays at `HEADER_LEN`
-/// and every downstream section shifts by `metadata.len()`. The payload is folded
-/// into the `content_hash`, so `verify` covers it and it is tamper-evident.
-///
-/// Passing an empty `metadata` is byte-identical to [`write_dataset`]: the section
-/// is omitted (`metadata_len = 0`, `dictionary_offset = HEADER_LEN`) and the hash
-/// is computed over exactly the same parts (a zero-length hash update is a no-op).
-#[allow(clippy::too_many_arguments)]
 /// Serialize a dictionary to its on-file container bytes (4 front-coded, chunked
 /// sections). Exposed so a low-RAM build can serialize **and drop** the live
 /// `Dictionary` before building the permutation index — the index build works on
@@ -1238,6 +1227,17 @@ pub(crate) fn encode_dict_container(dict: &Dictionary, codec: u8) -> Vec<u8> {
     )
 }
 
+/// Serialize a dataset with an opaque **metadata** payload occupying the file's
+/// metadata section (the application layer defines its meaning — the CLI stores a
+/// JSON Dataset Card there). The section sits immediately after the header and
+/// before the dictionary, so `metadata_offset` stays at `HEADER_LEN` and every
+/// downstream section shifts by `metadata.len()`. The payload is folded into the
+/// `content_hash`, so `verify` covers it and it is tamper-evident.
+///
+/// Passing an empty `metadata` is byte-identical to [`write_dataset`]: the section
+/// is omitted (`metadata_len = 0`, `dictionary_offset = HEADER_LEN`) and the hash
+/// is computed over exactly the same parts (a zero-length hash update is a no-op).
+#[allow(clippy::too_many_arguments)]
 pub fn write_dataset_with_metadata(
     dict: &Dictionary,
     default_index: &GraphIndex,
@@ -1306,6 +1306,8 @@ pub(crate) fn write_dataset_from_parts(
     // Hash parts in physical order, with the metadata payload prepended when
     // present. Omitting it entirely (rather than hashing an empty slice) keeps the
     // no-metadata output's hash byte-identical to the pre-metadata writer.
+    // `verify()` rebuilds this exact list from the header — any section added
+    // here must be added there too (and covered by a tamper test).
     let mut parts: Vec<&[u8]> = Vec::with_capacity(5);
     if meta_section_len > 0 {
         parts.push(metadata);
@@ -1475,15 +1477,19 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     } else {
         &[]
     };
-    // Match the writer's ordering exactly: the metadata payload is prepended when
-    // present, then dict, index, pyramid-meta, and (if any) the named graphs.
-    let mut parts: Vec<&[u8]> = Vec::with_capacity(5);
+    // Match the writer's ordering exactly (see `write_dataset_from_parts`): the
+    // metadata payload is prepended when present, then dict, index, pyramid-meta,
+    // and — when present — the text index and the named graphs.
+    let mut parts: Vec<&[u8]> = Vec::with_capacity(6);
     if header.metadata_len > 0 {
         parts.push(slice(header.metadata_offset, header.metadata_len)?);
     }
     parts.push(d);
     parts.push(i);
     parts.push(m);
+    if header.text_index_len > 0 {
+        parts.push(slice(header.text_index_offset, header.text_index_len)?);
+    }
     if header.named_graphs_len > 0 {
         parts.push(slice(header.named_graphs_offset, header.named_graphs_len)?);
     }
@@ -3219,6 +3225,30 @@ mod tests {
             "search pulled {pulled} B but the section is {ti_len} B — faulted too much"
         );
         assert!(!lazy.index_incomplete());
+    }
+
+    /// The TEXT_INDEX section is inside the content hash: a freshly built
+    /// text-indexed file must pass `verify()`, and flipping a byte inside the
+    /// section must break it. (Regression: `verify()` once rebuilt the hash
+    /// without the text index, so every `--text-index` file failed as corrupt.)
+    #[test]
+    fn text_index_is_tamper_evident_and_verifies() {
+        let triples: Vec<(String, String, String)> = vec![(
+            "<http://ex/s0>".to_string(),
+            "<http://ex/label>".to_string(),
+            "\"alpha glucose phosphate\"".to_string(),
+        )];
+        let bytes = build_text_indexed(&triples);
+        let header = Rete::open(&bytes).unwrap().header().clone();
+        assert!(header.text_index_len > 0);
+        assert!(verify(&bytes).unwrap(), "a text-indexed build must verify");
+
+        let mut tampered = bytes.clone();
+        tampered[header.text_index_offset as usize] ^= 0xff;
+        assert!(
+            !verify(&tampered).unwrap(),
+            "tampering with the text index must break verify()"
+        );
     }
 
     /// End-to-end win: on a remote (range-read) file, a lookup whose routed tile

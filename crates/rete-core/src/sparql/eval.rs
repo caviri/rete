@@ -1370,6 +1370,7 @@ fn fix_endpoint(ctx: &Ctx, t: &PatternTerm, lrow: &Row) -> PatternTerm {
 /// an unbounded whole-graph path and hash-joining. `optional`/`cond` give
 /// `OPTIONAL { ?x <path> ?y }` left-join semantics (an unmatched left row is
 /// emitted unchanged).
+#[allow(clippy::too_many_arguments)]
 fn correlated_path_join<'q>(
     ctx: &'q Ctx<'q>,
     index: &'q GraphIndex,
