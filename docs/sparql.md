@@ -165,6 +165,9 @@ SELECT ?book ?label WHERE {
 
 Notes:
 
+- rete can also **be** the endpoint: `rete serve <file>` (see [cli](cli.md))
+  exposes a `.rete` over the SPARQL Protocol — queries *and* SPARQL Update —
+  so one rete file can `SERVICE` against another rete served live.
 - `SERVICE SILENT` follows the spec: a failed call degrades to one empty
   solution instead of failing the query.
 - The block is sent **as written** (no bound-join injection yet), so keep it

@@ -370,6 +370,9 @@ SELECT ?book ?label WHERE {
 </code></pre>
 <p>Notes:</p>
 <ul>
+<li>rete can also <strong>be</strong> the endpoint: <code>rete serve &lt;file&gt;</code> (see <a href="cli.html">cli</a>)
+exposes a <code>.rete</code> over the SPARQL Protocol — queries <em>and</em> SPARQL Update —
+so one rete file can <code>SERVICE</code> against another rete served live.</li>
 <li><code>SERVICE SILENT</code> follows the spec: a failed call degrades to one empty
 solution instead of failing the query.</li>
 <li>The block is sent <strong>as written</strong> (no bound-join injection yet), so keep it

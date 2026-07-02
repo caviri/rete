@@ -184,6 +184,35 @@ standard SPARQL Results JSON (for `SELECT`/`ASK`). See [SPARQL support](sparql.m
 rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 ```
 
+### `rete serve <file> [--bind addr] [--token t] [--journal path]`
+Serve one `.rete` as a live **SPARQL 1.1 Protocol endpoint — queries and
+SPARQL Update**. The base file is **never mutated**: updates append to a
+plain-text journal next to it (`<file>.changes`, one `+`/`-`-prefixed N-Quads
+line per change) and the merged state answers the very next query; a restart
+replays the journal. `GET /snapshot.rete` downloads the current state as a
+fresh `.rete` — the update cycle's publishable artifact (upload the snapshot,
+delete the journal). Any rete client — including the browser playground — can
+federate against the endpoint with `SERVICE <http://host:port/sparql>`.
+
+- `GET/POST /sparql` with `query=` → results (`application/sparql-results+json`;
+  CONSTRUCT as N-Triples). Queries may themselves contain `SERVICE` blocks.
+- `POST /sparql` (or `/update`) with `update=` or an
+  `application/sparql-update` body → `INSERT DATA` / `DELETE DATA` /
+  `DELETE/INSERT … WHERE` / `CLEAR` / `DROP` (`LOAD` and `USING` are rejected).
+- Binds loopback by default. Expose deliberately (`--bind 0.0.0.0:7878`) and
+  set `--token`: updates then require `Authorization: Bearer <t>` (reads stay
+  open). CORS is enabled, so browsers can query it directly.
+- Scale: the state lives in memory and rebuilds after writes — built for
+  living small/medium datasets (annotation, curation; up to a few million
+  triples), not the multi-GB catalog files.
+
+```sh
+rete serve notes.rete
+curl -s --data-urlencode 'query=SELECT * WHERE { ?s ?p ?o } LIMIT 5' http://127.0.0.1:7878/sparql
+curl -s --data-urlencode 'update=INSERT DATA { <http://ex/n1> <http://ex/note> "hello" }' http://127.0.0.1:7878/sparql
+curl -sO http://127.0.0.1:7878/snapshot.rete   # the updated companion .rete
+```
+
 ### `rete cost <file-or-url> "<query>" [--json] [--explain]`
 Preview the byte/range-request cost of a SPARQL query without evaluating it.
 The report parses the query, lists the concrete predicates that can drive

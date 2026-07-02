@@ -103,6 +103,67 @@ fn escape_literal_into(s: &str, out: &mut String) {
     }
 }
 
+// --- the serializer (the inverse of the parser above) --------------------------
+//
+// `rete serve` speaks the SPARQL Protocol, so it must EMIT
+// `application/sparql-results+json` too. Serializing here, next to the parser,
+// keeps the whole JSON↔token mapping in one file (and round-trip-testable).
+
+/// Serialize a SELECT result as a SPARQL 1.1 Query Results JSON document.
+/// `vars` fixes the `head` order (pass the projection); solutions' bindings are
+/// term tokens exactly as the engine returns them.
+pub fn sparql_json_results(vars: &[String], solutions: &[Binding]) -> String {
+    use serde_json::{json, Map, Value};
+    let bindings: Vec<Value> = solutions
+        .iter()
+        .map(|sol| {
+            let mut obj = Map::new();
+            for (var, token) in sol {
+                if let Some(term) = token_json_term(token) {
+                    obj.insert(var.clone(), term);
+                }
+            }
+            Value::Object(obj)
+        })
+        .collect();
+    json!({
+        "head": { "vars": vars },
+        "results": { "bindings": bindings },
+    })
+    .to_string()
+}
+
+/// Serialize an ASK result as a SPARQL 1.1 Query Results JSON document.
+pub fn sparql_json_ask(boolean: bool) -> String {
+    serde_json::json!({ "head": {}, "boolean": boolean }).to_string()
+}
+
+/// One N-Triples term token → its JSON result term. `None` for a malformed
+/// token (the binding is then omitted, never a panic).
+fn token_json_term(token: &str) -> Option<serde_json::Value> {
+    use crate::terms;
+    use serde_json::json;
+    if let Some(iri) = terms::iri_content(token) {
+        return Some(json!({ "type": "uri", "value": iri }));
+    }
+    if terms::is_blank(token) {
+        return Some(json!({ "type": "bnode", "value": token.strip_prefix("_:")? }));
+    }
+    if terms::is_literal(token) {
+        let value = terms::literal_lexical(token)?;
+        let lang = terms::lang_tag(token)?;
+        if !lang.is_empty() {
+            return Some(json!({ "type": "literal", "value": value, "xml:lang": lang }));
+        }
+        let dt = terms::literal_datatype(token)?;
+        if dt == "http://www.w3.org/2001/XMLSchema#string" {
+            return Some(json!({ "type": "literal", "value": value }));
+        }
+        return Some(json!({ "type": "literal", "value": value, "datatype": dt }));
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +218,42 @@ mod tests {
             .is_empty());
         assert!(parse_sparql_json_results("not json").is_err());
         assert!(parse_sparql_json_results(r#"{"results": {}}"#).is_err());
+    }
+
+    /// The serializer is the parser's inverse: every term shape (IRI, plain /
+    /// lang / typed / escaped literal, bnode, unbound) survives
+    /// serialize→parse unchanged — the property `rete serve` relies on when a
+    /// rete SERVICE client queries a rete endpoint.
+    #[test]
+    fn serialize_parse_round_trips_every_term_shape() {
+        let vars: Vec<String> = ["s", "l", "n", "b", "e", "u"]
+            .iter()
+            .map(|v| v.to_string())
+            .collect();
+        let sols = vec![
+            binding_of(&[
+                ("s", "<http://ex/a>"),
+                ("l", "\"hi\"@en"),
+                ("n", "\"42\"^^<http://www.w3.org/2001/XMLSchema#integer>"),
+                ("b", "_:b0"),
+                ("e", "\"a \\\"q\\\"\\nb\\\\c\""),
+                // `u` unbound
+            ]),
+            binding_of(&[("s", "<http://ex/b>"), ("l", "\"plain\"")]),
+        ];
+        let doc = sparql_json_results(&vars, &sols);
+        let back = parse_sparql_json_results(&doc).unwrap();
+        assert_eq!(back, sols, "serialize→parse must be the identity");
+        // ASK round-trips to zero solutions (the parser's ASK contract).
+        assert!(parse_sparql_json_results(&sparql_json_ask(true))
+            .unwrap()
+            .is_empty());
+    }
+
+    fn binding_of(pairs: &[(&str, &str)]) -> Binding {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 }

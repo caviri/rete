@@ -26,3 +26,8 @@ serde_json.workspace = true
 # webpki-roots (pure-Rust, no system OpenSSL) so `query-url`/`summary-url` work
 # against https hosts — S3, GitHub, any CDN — which is the actual deployment story.
 ureq = { version = "2", default-features = false, features = ["tls"] }
+# `rete serve` — the minimal synchronous HTTP server behind the SPARQL endpoint
+# (no async runtime; the engine is synchronous anyway).
+tiny_http = "0.12"
+# SPARQL *Update* parsing for `rete serve` (queries go through rete-core).
+spargebra.workspace = true

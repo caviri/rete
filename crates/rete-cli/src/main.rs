@@ -452,6 +452,26 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Serve a `.rete` as a live SPARQL 1.1 Protocol endpoint — queries AND
+    /// SPARQL Update. The base file is never mutated: updates append to a
+    /// journal (`<file>.changes`) and the merged state is queryable
+    /// immediately; `GET /snapshot.rete` downloads it as a fresh `.rete`
+    /// (publish = upload the snapshot, delete the journal). Other rete
+    /// clients can federate against it with `SERVICE <http://host:port/sparql>`.
+    Serve {
+        /// Path to the `.rete` file to serve.
+        file: String,
+        /// Address to bind. Loopback by default — bind 0.0.0.0 deliberately,
+        /// and set --token when you do.
+        #[arg(long, default_value = "127.0.0.1:7878")]
+        bind: String,
+        /// Bearer token required for updates (queries stay open).
+        #[arg(long)]
+        token: Option<String>,
+        /// Journal path override (default: `<file>.changes`).
+        #[arg(long)]
+        journal: Option<String>,
+    },
     /// Run a read-only **Cypher subset** by translating it to SPARQL.
     ///
     /// Prototype `MATCH … [WHERE …] RETURN … [LIMIT n]`. Bare label/rel/property
@@ -730,6 +750,12 @@ fn main() -> anyhow::Result<()> {
             json,
         } => commands::progressive::progressive(&source, &query, json),
         Command::Sparql { file, query, json } => commands::query::sparql(&file, &query, json),
+        Command::Serve {
+            file,
+            bind,
+            token,
+            journal,
+        } => commands::serve::serve(&file, &bind, token.as_deref(), journal.as_deref()),
         Command::Cypher {
             file,
             query,

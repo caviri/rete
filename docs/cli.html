@@ -372,6 +372,33 @@ range. Pre-tiling (v0.1) files report tile provenance as <code>not_materialized<
 standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a href="sparql.html">SPARQL support</a>.</p>
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 </code></pre>
+<h3><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
+<p>Serve one <code>.rete</code> as a live <strong>SPARQL 1.1 Protocol endpoint — queries and
+SPARQL Update</strong>. The base file is <strong>never mutated</strong>: updates append to a
+plain-text journal next to it (<code>&lt;file&gt;.changes</code>, one <code>+</code>/<code>-</code>-prefixed N-Quads
+line per change) and the merged state answers the very next query; a restart
+replays the journal. <code>GET /snapshot.rete</code> downloads the current state as a
+fresh <code>.rete</code> — the update cycle's publishable artifact (upload the snapshot,
+delete the journal). Any rete client — including the browser playground — can
+federate against the endpoint with <code>SERVICE &lt;http://host:port/sparql&gt;</code>.</p>
+<ul>
+<li><code>GET/POST /sparql</code> with <code>query=</code> → results (<code>application/sparql-results+json</code>;
+CONSTRUCT as N-Triples). Queries may themselves contain <code>SERVICE</code> blocks.</li>
+<li><code>POST /sparql</code> (or <code>/update</code>) with <code>update=</code> or an
+<code>application/sparql-update</code> body → <code>INSERT DATA</code> / <code>DELETE DATA</code> /
+<code>DELETE/INSERT … WHERE</code> / <code>CLEAR</code> / <code>DROP</code> (<code>LOAD</code> and <code>USING</code> are rejected).</li>
+<li>Binds loopback by default. Expose deliberately (<code>--bind 0.0.0.0:7878</code>) and
+set <code>--token</code>: updates then require <code>Authorization: Bearer &lt;t&gt;</code> (reads stay
+open). CORS is enabled, so browsers can query it directly.</li>
+<li>Scale: the state lives in memory and rebuilds after writes — built for
+living small/medium datasets (annotation, curation; up to a few million
+triples), not the multi-GB catalog files.</li>
+</ul>
+<pre><code class="language-sh">rete serve notes.rete
+curl -s --data-urlencode 'query=SELECT * WHERE { ?s ?p ?o } LIMIT 5' http://127.0.0.1:7878/sparql
+curl -s --data-urlencode 'update=INSERT DATA { &lt;http://ex/n1&gt; &lt;http://ex/note&gt; "hello" }' http://127.0.0.1:7878/sparql
+curl -sO http://127.0.0.1:7878/snapshot.rete   # the updated companion .rete
+</code></pre>
 <h3><code>rete cost &lt;file-or-url&gt; "&lt;query&gt;" [--json] [--explain]</code></h3>
 <p>Preview the byte/range-request cost of a SPARQL query without evaluating it.
 The report parses the query, lists the concrete predicates that can drive

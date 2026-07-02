@@ -26,8 +26,11 @@
   and named graphs (quads).
 
 ### Non-goals (v0)
-- **Mutation.** The file is build-once / read-many. Updates = rebuild (or, later,
-  a separate overlay file). This buys aggressive compression and CDN caching.
+- **Mutation.** The file is build-once / read-many; this buys aggressive
+  compression and CDN caching. Updates happen *around* the file, not in it:
+  `rete serve` accepts SPARQL Update into an append-only journal beside the
+  base and publishes the merged state as a fresh `.rete` snapshot (see
+  [cli](cli.md)); an in-file overlay section remains future work.
 - **Full SPARQL 1.1** on day one. We stage it (see §8).
 - **Inference / reasoning** at query time. Materialize before build if wanted.
 
