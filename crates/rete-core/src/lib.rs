@@ -23,6 +23,7 @@ pub mod reason;
 pub mod results;
 mod row;
 pub mod schema_pyramid;
+pub mod service;
 pub mod shacl;
 pub mod sparql;
 pub mod terms;
@@ -56,6 +57,7 @@ pub use reader::{CountingReader, RangeReader, SliceReader};
 pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};
 pub use results::{push_json_string, results_envelope_json};
 pub use schema_pyramid::build_schema_pyramid;
+pub use service::{parse_sparql_json_results, ServiceClient};
 pub use shacl::{
     validate_shacl, DataGraph, GraphView, ReteGraph, Severity, ShaclError, ShaclShapes,
     ValidationReport, ValidationResult,

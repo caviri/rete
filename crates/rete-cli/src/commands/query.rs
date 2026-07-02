@@ -185,7 +185,9 @@ pub(crate) fn bgp(file: &str, query: &str) -> anyhow::Result<()> {
 /// Run a SPARQL query (SELECT / ASK / CONSTRUCT) against a local file.
 pub(crate) fn sparql(file: &str, query: &str, json: bool) -> anyhow::Result<()> {
     let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let mut rete = Rete::open(&bytes)?;
+    // SERVICE blocks federate to remote SPARQL endpoints over HTTP.
+    rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
     let result = eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{e}"))?;
     print_query_output(&result, json);
     Ok(())

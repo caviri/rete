@@ -323,8 +323,8 @@ switchable. Slow operations (a lazy query, the cached download) show a <strong>l
 that explains what's happening; identical queries are <strong>cached</strong> (re-running is
 instant), and a <strong>⚙ Settings</strong> modal inspects/clears the query cache and the
 cached <code>.rete</code>.</li>
-<li><strong>Federate with Wikidata.</strong> Engine-level <code>SERVICE</code> isn't built, so federation is
-done <strong>client-side</strong>: the identify panel's <strong>🔎 Wikidata</strong> button looks an entity
+<li><strong>Federate with Wikidata.</strong> This app predates engine-level <code>SERVICE</code> (now
+shipped — see <a href="sparql.html">sparql</a>), so its federation is done <strong>client-side</strong>: the identify panel's <strong>🔎 Wikidata</strong> button looks an entity
 up by name, and <strong>🔗 Wikidata</strong> runs a real federated SPARQL query — it feeds the
 era's territory names as <code>VALUES</code> into a query against
 <a href="https://query.wikidata.org">query.wikidata.org</a>, joins the matches back, and
@@ -392,7 +392,7 @@ state back to defaults while keeping your named views.</li>
 </ol>
 <figure class="fig-center">
   <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">
-  <figcaption>Client-side federation: the era's territory names are fed as <code>VALUES</code> into a SPARQL query run against Wikidata's public endpoint, then joined back — each territory linked to its Wikidata entity with population. (Engine-side <code>SERVICE</code> is on the roadmap; this is the browser doing the join.)</figcaption>
+  <figcaption>Client-side federation: the era's territory names are fed as <code>VALUES</code> into a SPARQL query run against Wikidata's public endpoint, then joined back — each territory linked to its Wikidata entity with population. (This app does the join in the browser; the engine now also supports <code>SERVICE</code> directly.)</figcaption>
 </figure>
 <figure class="fig-center">
   <img src="img/atlas-layers.png" alt="The Historical Atlas with data-layer overlays at 1815 CE: battles (red dots) and archaeological sites (purple dots) scattered over the borders, a 'Data layers' panel in the sidebar with per-layer counts, and two histogram tracks beneath the timeline showing each layer's temporal distribution with a playhead.">

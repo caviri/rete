@@ -360,7 +360,9 @@ smaller (the join is symmetric on the key), bounding the hash table — and afte
 this ordering the accumulating left side is usually the small one.</p>
 <p>Unsupported SPARQL constructs are rejected with clear errors. Nested <code>SELECT</code>
 subqueries are supported (lowered to an independent inner plan, then joined on
-shared variables); the main remaining gap is <code>SERVICE</code> federation.</p>
+shared variables), and so is <code>SERVICE</code> federation — the block ships to the
+remote endpoint through a host-injected <code>ServiceClient</code> and its solutions join
+like any other operand (see <a href="sparql.html">sparql</a>).</p>
 <h2>Result Provenance</h2>
 <p><code>Rete::query_with_provenance</code> is the core API behind <code>rete why</code>. It runs the same
 triple-pattern path as <code>Rete::query</code>, then attaches:</p>

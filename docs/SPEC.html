@@ -690,10 +690,14 @@ export; SPARQL Results JSON output.</li>
 <li><strong>Supported:</strong> nested <code>SELECT</code> <strong>subqueries</strong> — evaluated independently to their
 projected solutions, which then join with the surrounding pattern on shared
 variables.</li>
+<li><strong>Supported:</strong> SPARQL 1.1 <strong><code>SERVICE</code> federation</strong> — the block is shipped (as
+written) to the remote endpoint through a host-injected <code>ServiceClient</code> (the
+engine does no I/O itself; the CLI and browser clients attach HTTP transport)
+and its solutions join on shared variables. <code>SERVICE SILENT</code> degrades a failed
+call to one empty solution per the spec.</li>
 <li><strong>Not supported (rejected with a clear error, never silently mis-evaluated):</strong>
-<code>SERVICE</code> (federation — out of scope for a single self-contained file). Complex
-ORDER BY key <em>expressions</em> (beyond a bare variable/constant) are also not yet
-evaluated for ordering.</li>
+<code>SERVICE ?var</code> (a variable-bound endpoint). Complex ORDER BY key <em>expressions</em>
+(beyond a bare variable/constant) are also not yet evaluated for ordering.</li>
 </ul>
 <p>The planner's job is to minimize <strong>bytes fetched</strong>, not CPU — the cost model is
 dominated by range-request count and block sizes.</p>

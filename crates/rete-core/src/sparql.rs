@@ -33,6 +33,11 @@ pub enum SparqlError {
     Parse(String),
     #[error("unsupported query feature: {0}")]
     Unsupported(&'static str),
+    /// A (non-SILENT) `SERVICE` block failed: the endpoint errored, returned
+    /// unparseable results, or no [`ServiceClient`](crate::ServiceClient) is
+    /// attached to the file handle. Partial results are never returned.
+    #[error("SERVICE federation: {0}")]
+    Service(String),
 }
 
 /// A lowered SELECT query: solution modifiers plus the evaluation plan tree.
@@ -149,6 +154,23 @@ pub enum Plan {
     /// solutions, which then join with the surrounding pattern on shared
     /// variables (only the subquery's projected variables are visible outside).
     Subquery(Box<Select>),
+    /// `SERVICE [SILENT] <endpoint> { … }` — SPARQL 1.1 federated query. The
+    /// inner pattern is shipped (as `query`, its re-serialized SPARQL text) to
+    /// the remote endpoint through the file's attached
+    /// [`ServiceClient`](crate::ServiceClient) at evaluation time; the returned
+    /// solutions join the surrounding pattern on shared variables like any
+    /// other operand. Under `silent`, a failed call degrades to one empty
+    /// solution (per the spec); otherwise it fails the whole query.
+    Service {
+        silent: bool,
+        /// The endpoint IRI (no angle brackets) — where the sub-query is sent.
+        endpoint: String,
+        /// Variables the inner pattern can bind (an over-approximation is fine:
+        /// unreturned variables just stay unbound).
+        vars: Vec<String>,
+        /// The inner pattern as a standalone `SELECT`, exactly what is sent.
+        query: String,
+    },
 }
 
 /// The target of a `GRAPH` block.
@@ -717,18 +739,35 @@ pub fn eval_select_communities(
     round: Option<usize>,
 ) -> Result<CommunitySelect, SparqlError> {
     let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
-    match parsed {
+    let out = match parsed {
         Query::Select {
             pattern, dataset, ..
         } => run_select_communities(rete, &lower_select(&pattern, &dataset)?, round),
         _ => Err(SparqlError::Unsupported(
             "community-split evaluation supports SELECT queries only",
         )),
+    };
+    // See `eval_query`: a failed non-SILENT SERVICE call must become an error
+    // (and must not linger to poison a later query on the same handle).
+    match rete.take_service_error() {
+        Some(e) => Err(SparqlError::Service(e)),
+        None => out,
     }
 }
 
 /// Evaluate any supported SPARQL query form (SELECT / ASK / CONSTRUCT).
 pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> {
+    let out = eval_query_inner(rete, query);
+    // A failed non-SILENT SERVICE call is recorded out-of-band (the row
+    // pipeline is infallible, like lazy tile fetches) — surface it here so a
+    // partial answer is never returned as if it were complete.
+    match rete.take_service_error() {
+        Some(e) => Err(SparqlError::Service(e)),
+        None => out,
+    }
+}
+
+fn eval_query_inner(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> {
     let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
     match parsed {
         Query::Select {
@@ -789,7 +828,12 @@ pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> 
 /// solutions)`.
 pub fn eval_sparql(rete: &Rete, query: &str) -> Result<(Vec<String>, Vec<Binding>), SparqlError> {
     let sel = parse_select(query)?;
-    Ok(run_select(rete, &sel))
+    let out = run_select(rete, &sel);
+    // See `eval_query`: a failed non-SILENT SERVICE call must become an error.
+    match rete.take_service_error() {
+        Some(e) => Err(SparqlError::Service(e)),
+        None => Ok(out),
+    }
 }
 
 /// Format a computed number as an N-Triples *typed* literal so the result

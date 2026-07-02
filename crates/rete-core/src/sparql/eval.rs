@@ -1,4 +1,4 @@
-﻿//! Plan evaluation: turn a lowered [`Select`]/[`Plan`] into solution rows.
+//! Plan evaluation: turn a lowered [`Select`]/[`Plan`] into solution rows.
 //!
 //! Evaluation is a lazy pull pipeline (volcano model): every algebra node in
 //! [`eval_plan_iter`] yields an iterator of integer slot [`Row`]s, so `LIMIT`,
@@ -143,6 +143,13 @@ fn collect_plan_slots(plan: &Plan, slots: &mut Slots) {
                 slots.add(v);
             }
         }
+        // A SERVICE block's solutions can bind any variable its pattern
+        // mentions (`vars` over-approximates; unreturned ones stay unbound).
+        Plan::Service { vars, .. } => {
+            for v in vars {
+                slots.add(v);
+            }
+        }
         Plan::Graph(target, inner) => {
             if let GraphTarget::Var(v) = target {
                 slots.add(v);
@@ -275,6 +282,9 @@ fn mark_certain(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
             mark_certain(ctx, r, m);
         }
         Plan::LeftJoin(l, _, _) | Plan::Minus(l, _) => mark_certain(ctx, l, m),
+        // A remote endpoint may leave any variable unbound (OPTIONAL inside the
+        // block, a SILENT failure's empty solution) — nothing is certain.
+        Plan::Service { .. } => {}
         Plan::Graph(target, inner) => {
             if let GraphTarget::Var(v) = target {
                 mark_var(v, m);
@@ -350,6 +360,11 @@ fn mark_possible(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
             mark_possible(ctx, r, m);
         }
         Plan::Minus(l, _) => mark_possible(ctx, l, m),
+        Plan::Service { vars, .. } => {
+            for v in vars {
+                mark_var(v, m);
+            }
+        }
         Plan::Graph(target, inner) => {
             if let GraphTarget::Var(v) = target {
                 mark_var(v, m);
@@ -1081,19 +1096,39 @@ pub(crate) fn eval_plan_iter<'q>(
         // projected solutions as an outer row (only the projected vars are set).
         Plan::Subquery(sub) => {
             let (_vars, bindings) = run_select(ctx.rete, sub);
-            let rows: Vec<Row> = bindings
-                .into_iter()
-                .map(|b| {
-                    let mut row = ctx.slots.empty_row();
-                    for (var, term) in &b {
-                        if let Some(slot) = ctx.slots.slot(var) {
-                            row[slot] = Some(ctx.resolver.canon_term(term));
-                        }
-                    }
-                    row
-                })
-                .collect();
-            Box::new(rows.into_iter())
+            Box::new(bindings_to_rows(ctx, bindings).into_iter())
+        }
+        // SPARQL 1.1 federated query: ship the block's SPARQL text to the
+        // endpoint through the host-injected client, land the returned
+        // solutions in slots, and let the surrounding join machinery treat
+        // them like any other operand. A failure under SILENT is one empty
+        // solution (per spec); otherwise it is recorded out-of-band and the
+        // top-level entry turns it into an error (the row pipeline itself is
+        // infallible, mirroring the lazy-fetch contract).
+        Plan::Service {
+            silent,
+            endpoint,
+            query,
+            ..
+        } => {
+            let result = match ctx.rete.service_client() {
+                Some(client) => client.query(endpoint, query),
+                None => Err("no SERVICE client attached to this file handle (the host \
+                     must provide one; the CLI and browser clients do)"
+                    .to_string()),
+            };
+            match result {
+                Ok(bindings) => Box::new(bindings_to_rows(ctx, bindings).into_iter()),
+                Err(e) if *silent => {
+                    // SERVICE SILENT failure = a single empty solution mapping.
+                    let _ = e;
+                    Box::new(std::iter::once(ctx.slots.empty_row()))
+                }
+                Err(e) => {
+                    ctx.rete.record_service_error(&format!("{endpoint}: {e}"));
+                    Box::new(std::iter::empty())
+                }
+            }
         }
         // In-pattern BIND: set `var` from `expr` per row (unbound where it errors).
         Plan::Extend(var, expr, inner) => {
@@ -1156,6 +1191,25 @@ pub(crate) fn eval_plan_iter<'q>(
             )
         }
     }
+}
+
+/// Land externally-produced bindings (a subquery's projection, a SERVICE
+/// block's solutions) in this query's slot rows, canonicalizing each term
+/// token so joins compare ids where the term is local. Variables without a
+/// slot (never mentioned outside) are dropped.
+fn bindings_to_rows(ctx: &Ctx, bindings: Vec<Binding>) -> Vec<Row> {
+    bindings
+        .into_iter()
+        .map(|b| {
+            let mut row = ctx.slots.empty_row();
+            for (var, term) in &b {
+                if let Some(slot) = ctx.slots.slot(var) {
+                    row[slot] = Some(ctx.resolver.canon_term(term));
+                }
+            }
+            row
+        })
+        .collect()
 }
 
 /// Substitute bound variables into a BGP's patterns, turning each bound

@@ -283,9 +283,118 @@ fn build(p: &GraphPattern, sel: &mut Select, in_where: bool) -> Result<Plan, Spa
             }
             build(inner, sel, in_where)
         }
-        _ => Err(SparqlError::Unsupported(
-            "unsupported SPARQL construct (e.g. SERVICE federation)",
-        )),
+        // SPARQL 1.1 federated query: the inner pattern is not lowered — it is
+        // re-serialized to SPARQL text (spargebra round-trips, prefixes already
+        // expanded) and shipped verbatim to the endpoint at evaluation time.
+        // Only the variables it can bind are collected, so the returned
+        // solutions land in slots and join like any other operand.
+        GraphPattern::Service {
+            name,
+            inner,
+            silent,
+        } => {
+            let endpoint = match name {
+                NamedNodePattern::NamedNode(n) => n.as_str().to_string(),
+                NamedNodePattern::Variable(_) => {
+                    return Err(SparqlError::Unsupported("SERVICE with a variable endpoint"))
+                }
+            };
+            let mut vars = std::collections::BTreeSet::new();
+            collect_pattern_variables(inner, &mut vars);
+            let query = Query::Select {
+                dataset: None,
+                pattern: (**inner).clone(),
+                base_iri: None,
+            }
+            .to_string();
+            Ok(Plan::Service {
+                silent: *silent,
+                endpoint,
+                vars: vars.into_iter().collect(),
+                query,
+            })
+        }
+    }
+}
+
+/// Collect the variables a graph pattern can bind — used to give a `SERVICE`
+/// block's results their slots. Deliberately an **over-approximation** (e.g. a
+/// nested SELECT's non-projected variables are included): an extra slot just
+/// stays unbound, while a missed one would silently drop a returned binding.
+fn collect_pattern_variables(p: &GraphPattern, out: &mut std::collections::BTreeSet<String>) {
+    let term_var = |t: &TermPattern, out: &mut std::collections::BTreeSet<String>| {
+        if let TermPattern::Variable(v) = t {
+            out.insert(v.as_str().to_string());
+        }
+    };
+    match p {
+        GraphPattern::Bgp { patterns } => {
+            for tp in patterns {
+                term_var(&tp.subject, out);
+                if let NamedNodePattern::Variable(v) = &tp.predicate {
+                    out.insert(v.as_str().to_string());
+                }
+                term_var(&tp.object, out);
+            }
+        }
+        GraphPattern::Path {
+            subject, object, ..
+        } => {
+            term_var(subject, out);
+            term_var(object, out);
+        }
+        GraphPattern::Values { variables, .. } => {
+            for v in variables {
+                out.insert(v.as_str().to_string());
+            }
+        }
+        GraphPattern::Join { left, right }
+        | GraphPattern::Union { left, right }
+        | GraphPattern::Minus { left, right } => {
+            collect_pattern_variables(left, out);
+            collect_pattern_variables(right, out);
+        }
+        GraphPattern::LeftJoin { left, right, .. } => {
+            collect_pattern_variables(left, out);
+            collect_pattern_variables(right, out);
+        }
+        GraphPattern::Extend {
+            inner, variable, ..
+        } => {
+            out.insert(variable.as_str().to_string());
+            collect_pattern_variables(inner, out);
+        }
+        GraphPattern::Group {
+            inner,
+            variables,
+            aggregates,
+        } => {
+            for v in variables {
+                out.insert(v.as_str().to_string());
+            }
+            for (v, _) in aggregates {
+                out.insert(v.as_str().to_string());
+            }
+            collect_pattern_variables(inner, out);
+        }
+        GraphPattern::Graph { name, inner } => {
+            if let NamedNodePattern::Variable(v) = name {
+                out.insert(v.as_str().to_string());
+            }
+            collect_pattern_variables(inner, out);
+        }
+        GraphPattern::Project { inner, variables } => {
+            for v in variables {
+                out.insert(v.as_str().to_string());
+            }
+            collect_pattern_variables(inner, out);
+        }
+        GraphPattern::Filter { inner, .. }
+        | GraphPattern::OrderBy { inner, .. }
+        | GraphPattern::Distinct { inner }
+        | GraphPattern::Reduced { inner }
+        | GraphPattern::Slice { inner, .. }
+        | GraphPattern::Service { inner, .. } => collect_pattern_variables(inner, out),
     }
 }
 

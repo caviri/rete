@@ -145,11 +145,41 @@ PREFIX cito: <http://purl.org/spar/cito/>
 CONSTRUCT { ?a cito:cites ?b } WHERE { ?a cito:cites ?b } LIMIT 50
 ```
 
+## Federation: `SERVICE`
+
+SPARQL 1.1 federated query is supported: a `SERVICE <endpoint> { … }` block is
+shipped (as written) to the remote SPARQL endpoint at evaluation time and its
+solutions join the surrounding pattern on shared variables — so one query can
+span a `.rete` file *and* a live endpoint (Wikidata, DBpedia, …):
+
+```sparql
+# Local entities enriched with live DBpedia labels, in one query.
+SELECT ?book ?label WHERE {
+  ?book <http://ex/about> ?ent .
+  SERVICE <https://dbpedia.org/sparql> {
+    VALUES ?ent { <http://dbpedia.org/resource/Douglas_Adams> }
+    ?ent rdfs:label ?label . FILTER(lang(?label) = "en")
+  }
+}
+```
+
+Notes:
+
+- `SERVICE SILENT` follows the spec: a failed call degrades to one empty
+  solution instead of failing the query.
+- The block is sent **as written** (no bound-join injection yet), so keep it
+  selective — an unconstrained pattern asks the remote endpoint for everything
+  it knows. Put `VALUES`/constants inside the block, as above.
+- The engine performs no I/O itself: the CLI and the browser client attach the
+  HTTP transport (`ServiceClient`); in the browser the endpoint must allow
+  CORS (the big public ones do).
+- `SERVICE ?endpoint { … }` (a variable endpoint) is not supported.
+
 ## Not supported
 
 These are **rejected with a clear error** — never silently mis-evaluated:
 
-- **`SERVICE`** (federation) — out of scope for a single self-contained file.
+- **`SERVICE ?var`** — federation to a variable-bound endpoint.
 - Complex `ORDER BY` **key expressions** beyond a bare variable/constant are not
   yet evaluated for ordering.
 

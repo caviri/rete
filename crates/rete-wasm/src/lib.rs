@@ -956,6 +956,41 @@ impl XhrRangeReader {
     }
 }
 
+/// The browser's [`rete_core::ServiceClient`]: a `SERVICE <endpoint> { … }`
+/// block POSTs its sub-query to the endpoint over synchronous XHR (worker-only,
+/// like every other read here — the engine is synchronous) and rete-core parses
+/// the SPARQL JSON results. The endpoint must send CORS headers (the public
+/// ones — Wikidata, DBpedia — do).
+struct XhrServiceClient;
+
+impl rete_core::ServiceClient for XhrServiceClient {
+    fn query(&self, endpoint: &str, query: &str) -> Result<Vec<rete_core::Binding>, String> {
+        let e = |m: &str| format!("{endpoint}: {m}");
+        let xhr = web_sys::XmlHttpRequest::new().map_err(|_| e("xhr"))?;
+        xhr.open_with_async("POST", endpoint, false)
+            .map_err(|_| e("open"))?;
+        xhr.set_request_header("Content-Type", "application/x-www-form-urlencoded")
+            .map_err(|_| e("header"))?;
+        xhr.set_request_header("Accept", "application/sparql-results+json")
+            .map_err(|_| e("header"))?;
+        let body = format!(
+            "query={}",
+            String::from(js_sys::encode_uri_component(query))
+        );
+        xhr.send_with_opt_str(Some(&body))
+            .map_err(|_| e("network error (endpoint down or no CORS)"))?;
+        let status = xhr.status().map_err(|_| e("status"))?;
+        if !(200..300).contains(&status) {
+            return Err(e(&format!("HTTP {status}")));
+        }
+        let text = xhr
+            .response_text()
+            .map_err(|_| e("read"))?
+            .unwrap_or_default();
+        rete_core::parse_sparql_json_results(&text).map_err(|m| e(&m))
+    }
+}
+
 /// Run a SPARQL query against a **remote `.rete` URL**, fetching only the
 /// byte ranges the query needs: header, dictionary chunk directories, tile
 /// directories, then just the touched chunks and tiles (full scans coalesce
@@ -1003,7 +1038,9 @@ fn open_url(url: &str) -> Result<(std::sync::Arc<CountingReader<XhrRangeReader>>
         reader.clone(),
         auto_block(reader.len()),
     ));
-    let rete = Rete::open_ranged_lazy(cached).map_err(err)?;
+    let mut rete = Rete::open_ranged_lazy(cached).map_err(err)?;
+    // SERVICE blocks federate to remote SPARQL endpoints over sync XHR.
+    rete.set_service_client(Box::new(XhrServiceClient));
     Ok((reader, rete))
 }
 
@@ -2060,7 +2097,10 @@ fn unescape_nt(s: &str) -> String {
 }
 
 fn open(bytes: &[u8]) -> Result<Rete, JsValue> {
-    Rete::open(bytes).map_err(err)
+    let mut rete = Rete::open(bytes).map_err(err)?;
+    // SERVICE blocks federate to remote SPARQL endpoints over sync XHR.
+    rete.set_service_client(Box::new(XhrServiceClient));
+    Ok(rete)
 }
 
 fn err<E: std::fmt::Display>(e: E) -> JsValue {

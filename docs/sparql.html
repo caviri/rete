@@ -354,10 +354,36 @@ SELECT ?a ?p ?b WHERE { ?a ?p ?b . FILTER(?p = cito:cites) } LIMIT 50
 PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
 CONSTRUCT { ?a cito:cites ?b } WHERE { ?a cito:cites ?b } LIMIT 50
 </code></pre>
+<h2>Federation: <code>SERVICE</code></h2>
+<p>SPARQL 1.1 federated query is supported: a <code>SERVICE &lt;endpoint&gt; { … }</code> block is
+shipped (as written) to the remote SPARQL endpoint at evaluation time and its
+solutions join the surrounding pattern on shared variables — so one query can
+span a <code>.rete</code> file <em>and</em> a live endpoint (Wikidata, DBpedia, …):</p>
+<pre><code class="language-sparql"># Local entities enriched with live DBpedia labels, in one query.
+SELECT ?book ?label WHERE {
+  ?book &lt;http://ex/about&gt; ?ent .
+  SERVICE &lt;https://dbpedia.org/sparql&gt; {
+    VALUES ?ent { &lt;http://dbpedia.org/resource/Douglas_Adams&gt; }
+    ?ent rdfs:label ?label . FILTER(lang(?label) = "en")
+  }
+}
+</code></pre>
+<p>Notes:</p>
+<ul>
+<li><code>SERVICE SILENT</code> follows the spec: a failed call degrades to one empty
+solution instead of failing the query.</li>
+<li>The block is sent <strong>as written</strong> (no bound-join injection yet), so keep it
+selective — an unconstrained pattern asks the remote endpoint for everything
+it knows. Put <code>VALUES</code>/constants inside the block, as above.</li>
+<li>The engine performs no I/O itself: the CLI and the browser client attach the
+HTTP transport (<code>ServiceClient</code>); in the browser the endpoint must allow
+CORS (the big public ones do).</li>
+<li><code>SERVICE ?endpoint { … }</code> (a variable endpoint) is not supported.</li>
+</ul>
 <h2>Not supported</h2>
 <p>These are <strong>rejected with a clear error</strong> — never silently mis-evaluated:</p>
 <ul>
-<li><strong><code>SERVICE</code></strong> (federation) — out of scope for a single self-contained file.</li>
+<li><strong><code>SERVICE ?var</code></strong> — federation to a variable-bound endpoint.</li>
 <li>Complex <code>ORDER BY</code> <strong>key expressions</strong> beyond a bare variable/constant are not
 yet evaluated for ordering.</li>
 </ul>

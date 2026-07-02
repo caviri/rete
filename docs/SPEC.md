@@ -511,10 +511,14 @@ plan algebra — `Bgp`/`Join`/`Union`/`Minus`/`LeftJoin`/`Filter`/`Path`/`Values
 - **Supported:** nested `SELECT` **subqueries** — evaluated independently to their
   projected solutions, which then join with the surrounding pattern on shared
   variables.
+- **Supported:** SPARQL 1.1 **`SERVICE` federation** — the block is shipped (as
+  written) to the remote endpoint through a host-injected `ServiceClient` (the
+  engine does no I/O itself; the CLI and browser clients attach HTTP transport)
+  and its solutions join on shared variables. `SERVICE SILENT` degrades a failed
+  call to one empty solution per the spec.
 - **Not supported (rejected with a clear error, never silently mis-evaluated):**
-  `SERVICE` (federation — out of scope for a single self-contained file). Complex
-  ORDER BY key *expressions* (beyond a bare variable/constant) are also not yet
-  evaluated for ordering.
+  `SERVICE ?var` (a variable-bound endpoint). Complex ORDER BY key *expressions*
+  (beyond a bare variable/constant) are also not yet evaluated for ordering.
 
 The planner's job is to minimize **bytes fetched**, not CPU — the cost model is
 dominated by range-request count and block sizes.

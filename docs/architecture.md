@@ -144,7 +144,9 @@ this ordering the accumulating left side is usually the small one.
 
 Unsupported SPARQL constructs are rejected with clear errors. Nested `SELECT`
 subqueries are supported (lowered to an independent inner plan, then joined on
-shared variables); the main remaining gap is `SERVICE` federation.
+shared variables), and so is `SERVICE` federation — the block ships to the
+remote endpoint through a host-injected `ServiceClient` and its solutions join
+like any other operand (see [sparql](sparql.html)).
 
 ## Result Provenance
 

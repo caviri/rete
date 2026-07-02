@@ -17,5 +17,6 @@ pub(crate) mod range_source;
 pub(crate) mod reach;
 pub(crate) mod reason;
 pub(crate) mod render;
+pub(crate) mod service_http;
 pub(crate) mod shacl;
 pub(crate) mod url;

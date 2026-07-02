@@ -107,9 +107,11 @@ python scripts/sparql_conformance.py \
    cross-check against Oxigraph in [BENCHMARK](BENCHMARK.html).
 
 3. **Out of scope (counted, but not engine bugs):**
-   - **SERVICE** (7) — SPARQL federation to a remote endpoint; rete is a file,
-     not an endpoint. (Cross-*file* federation is a different feature — see
-     [federation](federation.html).)
+   - **SERVICE** (7) — counted out-of-scope when this run was recorded. Engine
+     `SERVICE` federation has since shipped (the block is sent to the remote
+     endpoint and joined — see [sparql](sparql.html)); these tests need a live
+     endpoint, so they stay out of the offline suite. (Cross-*file* federation
+     is a different feature — see [federation](federation.html).)
    - **entailment** (≈49) — RDFS/OWL entailment regimes; rete answers these only
      when entailments are baked in at build time (`rete build --materialize`),
      which this run does not do.

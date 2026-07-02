@@ -134,7 +134,7 @@ pub(crate) fn sparql_url(url: &str, query: &str, json: bool) -> anyhow::Result<(
         Some(kb) => kb * 1024,
         None => auto_block(total),
     };
-    let rete = if block == 0 {
+    let mut rete = if block == 0 {
         Rete::open_ranged_lazy(reader.clone())?
     } else {
         Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(
@@ -142,6 +142,8 @@ pub(crate) fn sparql_url(url: &str, query: &str, json: bool) -> anyhow::Result<(
             block,
         )))?
     };
+    // SERVICE blocks federate to remote SPARQL endpoints over HTTP.
+    rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
     let result = eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{e}"))?;
     // Lazy tile fetches surface failures out-of-band: a partial answer must
     // become an error, never quietly fewer rows.

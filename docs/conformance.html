@@ -347,9 +347,11 @@ cross-check against Oxigraph in <a href="BENCHMARK.html">BENCHMARK</a>.</p>
 <li>
 <p><strong>Out of scope (counted, but not engine bugs):</strong></p>
 <ul>
-<li><strong>SERVICE</strong> (7) — SPARQL federation to a remote endpoint; rete is a file,
-not an endpoint. (Cross-<em>file</em> federation is a different feature — see
-<a href="federation.html">federation</a>.)</li>
+<li><strong>SERVICE</strong> (7) — counted out-of-scope when this run was recorded. Engine
+<code>SERVICE</code> federation has since shipped (the block is sent to the remote
+endpoint and joined — see <a href="sparql.html">sparql</a>); these tests need a live
+endpoint, so they stay out of the offline suite. (Cross-<em>file</em> federation
+is a different feature — see <a href="federation.html">federation</a>.)</li>
 <li><strong>entailment</strong> (≈49) — RDFS/OWL entailment regimes; rete answers these only
 when entailments are baked in at build time (<code>rete build --materialize</code>),
 which this run does not do.</li>

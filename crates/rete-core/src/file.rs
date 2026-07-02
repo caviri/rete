@@ -1546,6 +1546,15 @@ pub struct Rete {
     /// Only [`Rete::open`] populates it; [`Rete::open_ranged`] leaves it empty to
     /// preserve its minimal-fetch budget.
     metadata: Vec<u8>,
+    /// Executes remote `SERVICE` blocks (SPARQL 1.1 federated query) — attached
+    /// by the host via [`Rete::set_service_client`]; `None` means a non-SILENT
+    /// `SERVICE` fails the query. Like the range readers, the engine never does
+    /// I/O itself.
+    service_client: Option<Box<dyn crate::service::ServiceClient>>,
+    /// First failed non-SILENT `SERVICE` call of the current query. The row
+    /// pipeline is infallible (the same contract as lazy tile fetches), so the
+    /// failure is recorded here and taken by the top-level eval entry points.
+    service_error: std::sync::Mutex<Option<String>>,
 }
 
 impl Rete {
@@ -1626,7 +1635,35 @@ impl Rete {
             text_index,
             named_graphs,
             metadata,
+            service_client: None,
+            service_error: std::sync::Mutex::new(None),
         })
+    }
+
+    /// Attach the client that executes `SERVICE <endpoint> { … }` blocks
+    /// (SPARQL 1.1 federated query) against remote SPARQL endpoints. Without
+    /// one, a non-SILENT `SERVICE` fails the query with a clear error and a
+    /// `SERVICE SILENT` degrades to one empty solution, per the spec.
+    pub fn set_service_client(&mut self, client: Box<dyn crate::service::ServiceClient>) {
+        self.service_client = Some(client);
+    }
+
+    pub(crate) fn service_client(&self) -> Option<&dyn crate::service::ServiceClient> {
+        self.service_client.as_deref()
+    }
+
+    /// Record a failed non-SILENT `SERVICE` call (first error wins).
+    pub(crate) fn record_service_error(&self, msg: &str) {
+        let mut e = self.service_error.lock().unwrap();
+        if e.is_none() {
+            *e = Some(msg.to_string());
+        }
+    }
+
+    /// Take (and clear) the pending `SERVICE` failure — called by every
+    /// top-level eval entry so it can never leak into a later query.
+    pub(crate) fn take_service_error(&self) -> Option<String> {
+        self.service_error.lock().unwrap().take()
     }
 
     pub fn header(&self) -> &Header {
@@ -1989,6 +2026,8 @@ impl Rete {
             text_index,
             named_graphs,
             metadata: Vec::new(),
+            service_client: None,
+            service_error: std::sync::Mutex::new(None),
         })
     }
 
@@ -2199,6 +2238,8 @@ impl Rete {
             text_index,
             named_graphs,
             metadata: Vec::new(),
+            service_client: None,
+            service_error: std::sync::Mutex::new(None),
         })
     }
 
