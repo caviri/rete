@@ -212,7 +212,8 @@ __PLAYGROUND_CSS__
                 </div>
                 <div data-fedbody="endpoint" class="hidden">
                   <input id="fedEndpoint" type="text" spellcheck="false" placeholder="https://query.wikidata.org/sparql" />
-                  <p class="fed-hint">A live SPARQL endpoint (SELECT / ASK). Answered over the SPARQL protocol — subject to the endpoint's CORS policy.</p>
+                  <label class="fed-lazy"><input type="checkbox" id="fedEndpointLive"> 🔌 <b>live mode</b> — make it the <em>only</em> target and enable SPARQL <b>Update</b> (e.g. a local <code>rete serve data.rete</code>)</label>
+                  <p class="fed-hint">Unchecked: one more read source federated into the query. Checked: the playground becomes the editing UI over the endpoint — INSERT/DELETE run there, SELECT shows the new state. Subject to the endpoint's CORS policy (<code>rete serve</code> is CORS-open).</p>
                 </div>
               </div>
               <div class="fed-pop-foot">

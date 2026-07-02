@@ -47,6 +47,10 @@
     // partner is cached in fedGraphs so repeated federated runs don't re-decode.
     fedSources: [],
     fedGraphs: new Map(),
+    // Live-endpoint mode: a SPARQL Protocol URL (e.g. a local `rete serve`)
+    // that becomes the ONLY query target, with SPARQL *Update* enabled — the
+    // playground as the editing UI over a live, updatable rete. null = off.
+    liveEndpoint: null,
     // The last successful query result, kept so switching the Output type
     // re-renders it in the new view instead of re-running the query.
     lastResult: null,
@@ -5283,6 +5287,18 @@ self.onmessage = function (e) {
   function renderFedBar() {
     const chips = $("fedChips");
     if (!chips) return;
+    // Live-endpoint mode replaces every other source chip: the endpoint is
+    // deliberately the ONLY target (reads and writes both go to it).
+    if (state.liveEndpoint) {
+      chips.innerHTML =
+        `<span class="fed-chip fed-live" title="Live SPARQL endpoint — the only query target; SPARQL Update enabled (e.g. rete serve). ${esc(state.liveEndpoint)}">` +
+        `<span class="fed-chip-name">🔌 ${esc((() => { try { return new URL(state.liveEndpoint).host; } catch (e) { return shortUrlLabel(state.liveEndpoint); } })())}</span>` +
+        `<span class="fed-chip-kind">live · editable</span>` +
+        `<button type="button" class="fed-x" data-liveremove="1" title="Disconnect the live endpoint" aria-label="Disconnect live endpoint">×</button></span>`;
+      const runb = $("run");
+      if (runb && runb.textContent !== "Cancel") runb.textContent = "Run on endpoint";
+      return;
+    }
     const self = `<span class="fed-chip fed-self" title="The dataset selected above"><span class="fed-chip-name">${esc(dsShortLabel(state.dataset))}</span>` +
       `<span class="fed-chip-kind">${state.remote ? "lazy" : "in-memory"}</span></span>`;
     const extra = state.fedSources.map((s) =>
@@ -5382,6 +5398,13 @@ self.onmessage = function (e) {
     } else {
       const ep = $("fedEndpoint").value.trim();
       if (!ep) return;
+      // Live mode: the endpoint becomes the ONLY target with Update enabled,
+      // instead of one more federated read source.
+      if ($("fedEndpointLive") && $("fedEndpointLive").checked) {
+        connectLiveEndpoint(ep);
+        closeFedPop();
+        return;
+      }
       src = { id: "f" + (++fedSeq), kind: "endpoint", label: shortUrlLabel(ep), endpoint: ep };
     }
     const dup = state.fedSources.some((s) =>
@@ -5395,10 +5418,108 @@ self.onmessage = function (e) {
     renderFedBar();
   }
 
+  // --- live-endpoint mode --------------------------------------------------
+  // Connect a SPARQL Protocol endpoint (a local `rete serve`, Fuseki, …) as
+  // the ONLY query target, with SPARQL Update enabled: SELECT/ASK read it,
+  // INSERT/DELETE/CLEAR write to it. Deep-linkable via #endpoint=<url>.
+  function connectLiveEndpoint(url) {
+    state.liveEndpoint = url;
+    renderFedBar();
+    updateHash();
+    $("qmeta").textContent =
+      "🔌 live endpoint connected — SELECT/ASK query it; INSERT DATA / DELETE … WHERE update it";
+  }
+  function disconnectLiveEndpoint() {
+    state.liveEndpoint = null;
+    renderFedBar();
+    updateHash();
+    $("qmeta").textContent = "";
+  }
+
+  /// Is the editor text a SPARQL *Update* (vs a query)? First keyword after
+  /// the prologue (comments / PREFIX / BASE) decides.
+  function isUpdateText(q) {
+    let body = q.replace(/#[^\n]*/g, " ").trim();
+    for (;;) {
+      const m = body.match(/^(PREFIX\s+[A-Za-z0-9_.-]*:\s*<[^>]*>|BASE\s*<[^>]*>)\s*/i);
+      if (!m) break;
+      body = body.slice(m[0].length);
+    }
+    return /^(INSERT|DELETE|CLEAR|DROP|CREATE|LOAD|COPY|MOVE|ADD|WITH)\b/i.test(body);
+  }
+
+  async function runLiveEndpoint(q, fmt) {
+    $("commOut").innerHTML = "";
+    $("out").innerHTML = netSpinner("live endpoint…");
+    updateResultVisibility();
+    const t0 = performance.now();
+    const ms = () => (performance.now() - t0).toFixed(0) + " ms";
+    try {
+      if (isUpdateText(q)) {
+        const res = await fetch(state.liveEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "update=" + encodeURIComponent(q),
+        });
+        if (!res.ok) {
+          const detail = (await res.text()).slice(0, 300);
+          throw new Error(`update rejected: HTTP ${res.status}${res.status === 401
+            ? " — this endpoint guards updates with a Bearer token" : ""} ${detail}`);
+        }
+        $("out").innerHTML = note(
+          "✓ update accepted by the live endpoint. Run a SELECT to see the new state — " +
+          "or download the updated file from <code>…/snapshot.rete</code>.");
+        $("qmeta").textContent = `✓ update applied · live endpoint · ${ms()}`;
+        updateResultVisibility();
+        return;
+      }
+      const sep = state.liveEndpoint.includes("?") ? "&" : "?";
+      const res = await fetch(state.liveEndpoint + sep + "query=" + encodeURIComponent(q),
+        { headers: { Accept: "application/sparql-results+json" } });
+      if (!res.ok) throw new Error("HTTP " + res.status + " " + (await res.text()).slice(0, 300));
+      const ct = res.headers.get("Content-Type") || "";
+      if (ct.includes("n-triples")) {
+        // CONSTRUCT/DESCRIBE arrive as N-Triples text — show them verbatim.
+        const text = await res.text();
+        $("out").innerHTML = `<pre>${esc(text)}</pre>`;
+        $("qmeta").textContent =
+          `${text.split("\n").filter(Boolean).length} triple(s) · live endpoint · ${ms()}`;
+        updateResultVisibility();
+        return;
+      }
+      const j = await res.json();
+      let r;
+      if (typeof j.boolean === "boolean") {
+        r = { kind: "ask", boolean: j.boolean, vars: [], rows: [], triples: [] };
+      } else {
+        const vars = (j.head && j.head.vars) || [];
+        const rows = ((j.results && j.results.bindings) || []).map((bnd) => {
+          const o = {};
+          vars.forEach((v) => { const t = endpointTerm(bnd[v]); if (t !== undefined) o[v] = t; });
+          return o;
+        });
+        r = { kind: "select", vars, rows, triples: [] };
+      }
+      state.lastResult = { res: r, rowShaped: true, q, strategy: "endpoint", remote: false, dataset: "(live)" };
+      const summary = renderResult(r, fmt === "graph" ? "table" : fmt);
+      $("qmeta").textContent = `${summary} · live endpoint · ${ms()}`;
+    } catch (e) {
+      showError("out", "Live endpoint: " + (e.message || e));
+      $("qmeta").textContent = "";
+    }
+  }
+
   function runQuery() {
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
     const fmt = $("fmt").value;
+    // Live-endpoint mode overrides everything: one target, updates allowed.
+    if (state.liveEndpoint) { runLiveEndpoint(q, fmt); return; }
+    if (isUpdateText(q)) {
+      return showError("out",
+        "That's a SPARQL Update — the in-browser engine is read-only. Connect a live endpoint " +
+        "(+ Add source → SPARQL endpoint → live mode; e.g. a local `rete serve data.rete`) to apply it.");
+    }
     if (fedActive()) return runFederated(q, fmt);
     // Clear the previous message and show the network spinner. We deliberately
     // KEEP state.lastResult: the reuse guard already requires the query text,
@@ -6677,6 +6798,7 @@ self.onmessage = function (e) {
   function updateHash() {
     const params = new URLSearchParams();
     params.set("dataset", state.dataset);
+    if (state.liveEndpoint) params.set("endpoint", state.liveEndpoint);
     // Record HOW the dataset is loaded so a reload restores the same mode — a
     // remote-lazy graph is not embedded, so without this the deep link couldn't
     // tell it apart from a bundled one and fell back to the default dataset.
@@ -6742,6 +6864,8 @@ self.onmessage = function (e) {
     $$("#fedModes button").forEach((b) => { b.onclick = () => setFedMode(b.dataset.fedmode); });
     $("fedPop").addEventListener("click", (e) => e.stopPropagation());
     $("fedChips").addEventListener("click", (e) => {
+      const live = e.target.closest("[data-liveremove]");
+      if (live) return disconnectLiveEndpoint();
       const x = e.target.closest("[data-fedremove]");
       if (x) removeFedSource(x.getAttribute("data-fedremove"));
     });
@@ -7077,6 +7201,9 @@ self.onmessage = function (e) {
     const params = readHash();
     const ds = params.get("dataset");
     const load = params.get("load");
+    // A deep-linked live endpoint (#endpoint=…) connects immediately and takes
+    // over query routing — no catalog modal over it.
+    const liveEp = params.get("endpoint");
     let bootShowCatalog = false;
     // Restore the deep-linked dataset in its load mode. Remote-lazy/cache datasets
     // aren't in RETE_DATASETS_B64, so the old embedded-only check silently fell
@@ -7101,9 +7228,10 @@ self.onmessage = function (e) {
       renderExamples();
     }
     setMode(params.get("mode") || "sparql");
+    if (liveEp) connectLiveEndpoint(liveEp);
     updateResultVisibility();
     // Open the catalog last, over a fully-rendered console (see the no-deep-link branch).
-    if (bootShowCatalog) openSource();
+    if (bootShowCatalog && !liveEp) openSource();
   }
 
   boot().catch((e) => {
