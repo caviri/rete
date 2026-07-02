@@ -20,8 +20,9 @@ use crate::bgp::Binding;
 /// and returns its solutions. Implementations own transport, auth, and
 /// timeouts; they typically `POST` the query with
 /// `Accept: application/sparql-results+json` and feed the body through
-/// [`parse_sparql_json_results`]. Errors are strings — the engine maps them to
-/// a query error (or, under `SERVICE SILENT`, swallows them per the spec).
+/// [`parse_sparql_json_results`]. Errors are strings, surfaced verbatim as the
+/// query error (or, under `SERVICE SILENT`, swallowed per the spec) — name the
+/// endpoint in the message, the engine adds no prefix.
 pub trait ServiceClient: Send + Sync {
     fn query(&self, endpoint: &str, query: &str) -> Result<Vec<Binding>, String>;
 }

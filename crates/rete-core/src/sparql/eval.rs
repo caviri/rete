@@ -1113,9 +1113,10 @@ pub(crate) fn eval_plan_iter<'q>(
         } => {
             let result = match ctx.rete.service_client() {
                 Some(client) => client.query(endpoint, query),
-                None => Err("no SERVICE client attached to this file handle (the host \
-                     must provide one; the CLI and browser clients do)"
-                    .to_string()),
+                None => Err(format!(
+                    "{endpoint}: no SERVICE client attached to this file handle \
+                     (the host must provide one; the CLI and browser clients do)"
+                )),
             };
             match result {
                 Ok(bindings) => Box::new(bindings_to_rows(ctx, bindings).into_iter()),
@@ -1125,7 +1126,9 @@ pub(crate) fn eval_plan_iter<'q>(
                     Box::new(std::iter::once(ctx.slots.empty_row()))
                 }
                 Err(e) => {
-                    ctx.rete.record_service_error(&format!("{endpoint}: {e}"));
+                    // The client's message names the endpoint (its contract) —
+                    // recorded verbatim, no second prefix.
+                    ctx.rete.record_service_error(&e);
                     Box::new(std::iter::empty())
                 }
             }

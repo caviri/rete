@@ -35,16 +35,19 @@ pub(crate) fn source_predicates(
 }
 
 /// Evaluate `query` against one source (path or URL), returning its result.
+/// Each source gets the HTTP `ServiceClient`, so a federated query may itself
+/// carry `SERVICE` blocks — N `.rete` files and a live SPARQL endpoint in one
+/// query.
 fn eval_source(source: &str, query: &str) -> anyhow::Result<QueryOutput> {
-    if is_url(source) {
+    let mut rete = if is_url(source) {
         let reader = HttpRangeReader::open(source)?;
-        let rete = Rete::open_ranged(&reader)?;
-        eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{source}: {e}"))
+        Rete::open_ranged(&reader)?
     } else {
         let bytes = std::fs::read(source)?;
-        let rete = Rete::open(&bytes)?;
-        eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{source}: {e}"))
-    }
+        Rete::open(&bytes)?
+    };
+    rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
+    eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{source}: {e}"))
 }
 
 /// `rete federate`: run one SPARQL query across several `.rete` sources (local
