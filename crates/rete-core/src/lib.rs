@@ -32,7 +32,7 @@ pub mod triples;
 pub mod varint;
 
 pub use bgp::{eval_bgp, Binding, PatternTerm, TriplePattern};
-pub use block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK};
+pub use block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
 pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 pub use file::{
