@@ -80,28 +80,53 @@ registered in `web/playground-src/catalog.js`:
 
 - **Embedded** — small graphs base64-inlined into the page at build time (instant,
   offline).
-- **Remote-lazy** — bigger graphs range-queried over HTTP straight from the Hugging
-  Face **bucket**, served through the `katospiegel-rete.hf.space` Space (a FastAPI
-  Range+CORS file server). Only the bytes each query touches are fetched.
+- **Remote-lazy** — bigger graphs range-queried over HTTP straight from **Cloudflare R2**
+  at `https://data.graphplaza.com`, **one folder per dataset** (`<key>/<key>.rete`). Only
+  the bytes each query touches are fetched. R2 direct-serves HTTP range + CORS with **no
+  redirect and no token**, so rete's default synchronous-XHR reader works and it is ~3.5×
+  faster than the old HF Space it replaced (now retired).
 
-Catalog entries carry `datasets` / `datasetMeta` / `datasetExtra` / `examples`, plus
-optional `shards: [urls]` (one logical graph split across independent `.rete` files,
-**auto-federated** — every query UNION-fans across the shards) and `pmtiles` (a
-tippecanoe vector-tile basemap for the "Tiles" output; can also be embedded inside the
-`.rete` as a section). See `docs/browser.md` and `docs/federation.md`.
+Catalog knobs: each dataset has an explicit `url`, or derives `remoteBase/<key>/<key>.rete`
+via `remoteUrlFor()` when it has none. `remoteBase` = `https://data.graphplaza.com`,
+`remoteToken` = "". SQL Explore companions (parquet/duckdb/sqlite) use a separate
+`companionBase` (also R2). Plus `shards: [urls]` (one logical graph split across
+independent `.rete` files, **auto-federated** — every query UNION-fans across the shards)
+and `pmtiles` (a tippecanoe vector-tile basemap for the "Tiles" output; can also live
+inside the `.rete` as a section). See `docs/browser.md` and `docs/federation.md`.
 
-Build + publish (details in `skills/`): `rete build <in.nt> -o <out.rete>
---pyramid-algo types --card`, then `hf buckets cp <file> hf://buckets/.../playground/`.
-In the Docker image the binary is `/work/target/release/rete` (not on `PATH`).
+**Build + publish** (details in `skills/`): `rete build <in.nt> -o <out.rete>
+--pyramid-algo types --card` (Docker: the binary is `/work/target/release/rete`, not on
+`PATH`), then upload to the R2 bucket `rete` under `<key>/<key>.rete`. R2 S3 credentials
+(`ACCESS_KEY_ID` / `SECRET_ACCESS_KEY` / `S3_API_ENDPOINT`) live in the gitignored
+`.env`; upload via boto3 (`dev/r2_s3.py put rete <local> <key>`). Bulk HF-bucket → R2
+migration tooling is in `dev/` (gitignored): `gen_migration.py`, `migrate_to_r2.py`
+(huggingface_hub download + boto3 upload, resumable, all-in-Docker: `--user root` + mount
+`~/.cache/huggingface` for HF auth), `update_catalog.py`. Two gotchas: `.env` is CRLF —
+source it as `set -a; . <(tr -d '\r' < .env); set +a` (a stray `\r` corrupts the SigV4
+signature header); run the scripts with `python3 -P` (a `dev/inspect.py` shadows stdlib
+`inspect`).
 
-**Hosting caveat (do not "fix" by switching to resolve URLs):** the host MUST serve
-range requests **directly**. HF dataset `resolve` URLs 302-redirect to a per-range
-signed CDN URL, and rete's default reader uses **synchronous XHR**, which does not
-follow a cross-origin redirect — so `resolve` URLs work from curl/CLI but fail in the
-browser (and are ~2× slower). The Space (cpu-basic) serves directly but can wedge under
-heavy concurrent load; recover with `HfApi().restart_space("katospiegel/rete")`
-(~20 s). Diagnose Space-vs-code by hitting a bucket URL with `curl` (500/000/slow = the
-Space, not rete).
+**R2 rules of the road:**
+- **CORS is required and MUST ExposeHeaders `Content-Range`** — rete's open probe reads
+  the total file length from `Content-Range: bytes 0-0/N`; without exposing it the file
+  will not open in a browser (curl/CLI ignore CORS, so ALWAYS verify in a browser).
+  Policy: `AllowedOrigins ["*"]`, `AllowedMethods ["GET","HEAD"]`, `AllowedHeaders
+  ["Range"]`, `ExposeHeaders ["Content-Range","Content-Length","Accept-Ranges","ETag"]`.
+- **Cost:** egress is **free** (no per-request / per-user bandwidth charge — R2's whole
+  point vs S3); storage ~$0.015/GB-month (~$1/mo for the ~70 GB here); reads are Class B
+  ops (10M/month free, then $0.36/M — a query is ~20-30 range reads).
+- **CDN caching is OFF by default** (`Cf-Cache-Status: DYNAMIC` — Cloudflare only caches
+  known static extensions, not `.rete`). A Cache Rule would edge-cache files **≤512 MB**
+  (the Free/Pro object-size cap; the big datasets exceed it and stay direct-from-R2,
+  which is fine given free egress). Optional, not essential.
+
+**Why not the alternatives (do not "regress" to them):** HF dataset/bucket `resolve` URLs
+302-redirect to a per-range signed Xet CDN URL, and rete's default reader uses
+**synchronous XHR**, which does not follow a cross-origin redirect — so `resolve` URLs
+work from curl/CLI but fail in the browser (and are ~2× slower). An HF **bucket** exposes
+no public HTTP-range URL at all (Xet chunk storage, `hf_xet` client only). The retired
+`katospiegel-rete.hf.space` Space (a FastAPI FUSE-bucket Range proxy) served directly but
+wedged under load — R2 replaced it and it is now unused.
 
 ## Commits
 
