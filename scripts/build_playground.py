@@ -65,9 +65,16 @@ ASYNC_ENV_JS = """
         }
         async function __reteDoLen(urlPtr, urlLen, outPtr) {
           const url = __reteStr(urlPtr, urlLen);
-          const r = await fetch(url, { headers: { Range: 'bytes=0-0' } });
-          const cr = r.headers.get('content-range');
-          const total = cr ? Number(cr.split('/')[1]) : Number(r.headers.get('content-length') || 0);
+          // HEAD first: Content-Length is the full size and CORS-safelisted, so it is
+          // readable even when the host hides Content-Range (e.g. Zenodo). Fall back to a
+          // bytes=0-0 GET's Content-Range for hosts that reject HEAD (HF signed storage).
+          let total = 0;
+          try { const h = await fetch(url, { method: 'HEAD' }); if (h.ok) total = Number(h.headers.get('content-length') || 0); } catch (e) { /* fall back */ }
+          if (!total) {
+            const r = await fetch(url, { headers: { Range: 'bytes=0-0' } });
+            const cr = r.headers.get('content-range');
+            total = cr ? Number(cr.split('/')[1]) : Number(r.headers.get('content-length') || 0);
+          }
           new DataView(wasm.memory.buffer).setBigUint64(outPtr, BigInt(total || 0), true);
           return total > 0 ? 1 : 0;
         }

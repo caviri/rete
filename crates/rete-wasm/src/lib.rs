@@ -773,6 +773,18 @@ impl XhrRangeReader {
         }
         #[cfg(not(feature = "asyncify"))]
         {
+            // Prefer a HEAD: its `Content-Length` is the full file size AND is a
+            // CORS-safelisted response header, so it is readable cross-origin even when
+            // the host does NOT expose `Content-Range` (e.g. Zenodo). The ranged-GET
+            // probe below cannot see a hidden `Content-Range` and would mis-read the
+            // 1-byte partial `Content-Length` as the size ("range out of bounds"). Falls
+            // through when the host rejects HEAD (HF's signed-redirect storage 405s it).
+            if let Some(len) = Self::head_len(url) {
+                return Ok(Self {
+                    url: url.to_string(),
+                    len,
+                });
+            }
             // Hugging Face's Space gateway is intermittently flaky on the length
             // probe (a 200 with no Content-Length, a chunked response with neither
             // header, …). A fresh ranged GET usually lands on a healthy response,
@@ -791,6 +803,26 @@ impl XhrRangeReader {
             }
             Err(JsValue::from_str(&last))
         }
+    }
+
+    /// A HEAD length probe: `Content-Length` is the full size and is CORS-safelisted
+    /// (readable cross-origin with no `access-control-expose-headers` entry needed).
+    /// Returns `None` on a non-2xx (some hosts 405 HEAD) or a missing/zero length, so
+    /// the caller can fall back to the ranged-GET probe.
+    #[cfg(not(feature = "asyncify"))]
+    fn head_len(url: &str) -> Option<u64> {
+        let xhr = web_sys::XmlHttpRequest::new().ok()?;
+        xhr.open_with_async("HEAD", url, false).ok()?;
+        xhr.send().ok()?;
+        let status = xhr.status().ok()?;
+        if !(200..300).contains(&status) {
+            return None;
+        }
+        xhr.get_response_header("Content-Length")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&n| n > 0)
     }
 
     /// One length probe: a one-byte ranged `GET`, reading the total from

@@ -109,6 +109,22 @@ window.RETE_PLAYGROUND_CATALOG = {
       description: "A real ~1.04 GB slice of Wikidata, queried entirely in the browser over HTTP range requests - the point is that a GIGABYTE-scale knowledge graph stays interactive because a selective SPARQL query only faults in the bytes it needs (a typical query reads ~40 MB of the 1.04 GB, never the whole file). Holds both PLACES (e.g. wd:Q100001 Bemelen, with multilingual schema:description) and PEOPLE (wd:Q5 humans with wdt:P106 occupation, wdt:P569 birth date, wdt:P737 influenced-by). Entity/property IRIs stay as wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. Use bound subjects/objects and occupation intersections for snappy reads; avoid full scans. CC0 (Wikidata). See also the dedicated 100 MB / 1 GB explorer."
     },
     {
+      key: "wikidata-zenodo",
+      kind: "remote-lazy",
+      url: "https://zenodo.org/api/records/21168821/files/wikidata.rete/content",
+      typePredicate: "<http://www.wikidata.org/prop/direct/P31>",
+      label: "wikidata (1 GB) - hosted on Zenodo (DOI, permanent)",
+      description: "The SAME ~1.5 GB Wikidata .rete graph, but served straight from a Zenodo record - a free, permanent, citable research-data host with a DOI. It streams over HTTP range exactly like the R2 copy: a selective query faults ~27 MB of the 1.49 GB, never the whole file. Benchmarked in-browser at open ~3.8 s / query ~0.5 s - on par with the R2-hosted copy. The point: a .rete needs NO special server - any host that serves HTTP range + CORS works, including academic repositories, so you can publish a queryable gigabyte-scale graph as a citable artifact. (Zenodo does not expose the Content-Range header, so rete's reader learns the file length with a HEAD request.) CC0 (Wikidata).",
+      examples: [
+        { label: "20 typed entities (instance-of)", note: "A cheap bound-predicate scan over a Zenodo-hosted gigabyte - reads a few MB, not the whole file.",
+          sparql: `SELECT ?s ?type WHERE {\n  ?s <http://www.wikidata.org/prop/direct/P31> ?type\n} LIMIT 20` },
+        { label: "Physicists who were also philosophers", note: "Occupation intersection (P106 = physicist Q169470 AND philosopher Q4964182) - a selective join, all from Zenodo over HTTP range.",
+          sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?p ?who WHERE {\n  ?p wdt:P106 <http://www.wikidata.org/entity/Q169470> ;\n     wdt:P106 <http://www.wikidata.org/entity/Q4964182> ;\n     rdfs:label ?who . FILTER(LANG(?who) = "en")\n}` },
+        { label: "Everything about Plato", note: "One entity, every fact - a tall read for a single bound subject (wd:Q859).",
+          sparql: `SELECT ?p ?o WHERE {\n  <http://www.wikidata.org/entity/Q859> ?p ?o\n}` }
+      ]
+    },
+    {
       key: "scholar-noisy",
       label: "scholar-noisy.rete - same world, 25% noise",
       description: "The same generator at --noise 0.25: rewired citations (incl. temporal violations), missing ORCIDs and ISSNs, and whitespace-mangled titles - for SHACL and data-quality demos."
