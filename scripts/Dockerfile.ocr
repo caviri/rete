@@ -1,0 +1,16 @@
+# OCR toolchain for the BVPB IIIF/OCR pipeline: Tesseract + Latin/Spanish/English
+# language data. Page extraction is done locally with PyMuPDF; this image only
+# runs `tesseract <page>.jpg <out> hocr -l lat` to produce hOCR (word bboxes).
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      tesseract-ocr \
+      tesseract-ocr-lat \
+      tesseract-ocr-spa \
+      tesseract-ocr-eng \
+      tesseract-ocr-cat \
+      curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY ocr.sh /ocr.sh
+COPY ocr_r2.sh /ocr_r2.sh
+RUN chmod +x /ocr.sh /ocr_r2.sh
+WORKDIR /work
