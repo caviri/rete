@@ -589,6 +589,9 @@ window.RETE_PLAYGROUND_CATALOG = {
   },
   examples: {
     "ustc": [
+      {"family": "Select", "label": "Digitised editions \u2014 cover + IIIF", "view": "table",
+       "tip": "USTC hosts no images itself, but ~40% of these editions link to a digitised copy at an open IIIF library (Bavarian State Library / MDZ, Gallica, ONB Austria, Google Books). A cover thumbnail is resolved deterministically from that link (schema:image, renders inline) plus a link to the full IIIF manifest \u2014 here the Rosicrucian, Kabbalah and Hermetic title-pages. Providers like ProQuest/EEBO are subscription-gated, so they stay as plain out-links.",
+       "q": "PREFIX schema: <http://schema.org/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX u: <https://www.ustc.ac.uk/ontology#>\nSELECT ?cover ?title ?year ?manifest WHERE {\n  ?e schema:image ?cover ; rdfs:label ?title ; schema:datePublished ?year .\n  OPTIONAL { ?e u:iiifManifest ?manifest }\n}\nLIMIT 40"},
       {"family": "Summary", "label": "What's in this USTC subset", "view": "table",
        "tip": "The shape of the extract: 727 early-modern Editions, 10,779 library Copies (physical holdings), 1,146 Libraries, and ~1,226 Persons (authors + printers). One count per rdf:type. This is only the 727 editions the Embassy/BPH collection cites - a fair-use slice of USTC's ~1M records.",
        "q": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?type (COUNT(?s) AS ?count) WHERE {\n  ?s rdf:type ?type\n}\nGROUP BY ?type\nORDER BY DESC(?count)"},

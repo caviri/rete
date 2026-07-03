@@ -10,6 +10,7 @@ Vocab: schema.org + Dublin Core + SKOS + a small ustc ontology (u:).
 Entities: Edition, Person (author/printer), Library (holdings), Place, Concept
 (classification), Copy (a physical exemplar with shelfmark).
 """
+import argparse
 import glob
 import json
 import os
@@ -84,10 +85,47 @@ def year_of(v):
     return m.group(0) if m else None
 
 
+def resolve_iiif(url):
+    """USTC hosts no images; it links out to digitisations. For the open,
+    IIIF-capable providers, DETERMINISTICALLY construct a IIIF manifest and/or a
+    cover thumbnail from the link's id (no fetching). Returns (manifest, cover),
+    either may be None. Verified recipes: MDZ/BSB, Gallica, ONB, Google Books."""
+    u = url or ""
+    m = re.search(r"bsb\d{6,}", u)                       # Bavarian State Library / MDZ
+    if m and ("digitale-sammlungen" in u or "mdz-nbn" in u or "bvb:12-bsb" in u):
+        b = m.group(0)
+        return (f"https://api.digitale-sammlungen.de/iiif/presentation/v2/{b}/manifest",
+                f"https://api.digitale-sammlungen.de/iiif/image/v2/{b}_00001/full/300,/0/default.jpg")
+    m = re.search(r"ark:/12148/([a-z0-9]+)", u)          # Gallica (BnF)
+    if m and "gallica" in u:
+        a = f"ark:/12148/{m.group(1)}"
+        return (f"https://gallica.bnf.fr/iiif/{a}/manifest.json",
+                f"https://gallica.bnf.fr/iiif/{a}/f1/full/,300/0/default.jpg")
+    m = re.search(r"data\.onb\.ac\.at/ABO/(\+\w+)", u)   # Austrian National Library
+    if m:
+        return (f"https://iiif.onb.ac.at/presentation/ABO/{m.group(1)}/manifest", None)
+    m = re.search(r"[?&]id=([\w-]+)", u)                 # Google Books (cover only, no IIIF)
+    if m and "books.google" in u:
+        return (None, f"https://books.google.com/books/content?id={m.group(1)}&printsec=frontcover&img=1&zoom=1")
+    return (None, None)
+
+
 def main():
-    files = sorted(glob.glob(os.path.join(EDS, "*.json")))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--full", action="store_true",
+                    help="read the FULL internal crawl (data/ustc/crawl/**) -> ustc-full.nt "
+                         "(LOCAL only — do NOT publish)")
+    a = ap.parse_args()
+    if a.full:
+        files = sorted(glob.glob(os.path.join(ROOT, "data", "ustc", "crawl", "**", "*.json"),
+                                 recursive=True))
+        out = os.path.join(ROOT, "data", "ustc", "ustc-full.nt")
+    else:
+        files = sorted(glob.glob(os.path.join(EDS, "*.json")))
+        out = OUT
+    print(f"converting {len(files)} records ({'FULL crawl' if a.full else '727 subset'}) -> {out}")
     bmap = bph_map()
-    fh = open(OUT, "w", encoding="utf-8")
+    fh = open(out, "w", encoding="utf-8")
     w = W(fh)
     seen = set()
     n_ed = n_copy = 0
@@ -212,6 +250,12 @@ def main():
             w.iri(E, RDFS + "seeAlso", url)
             if dg.get("provider"):
                 w.lit(E, U + "digitisationProvider", dg["provider"])
+            man, cov = resolve_iiif(dg.get("url"))       # deterministic IIIF/cover, open providers
+            if man:
+                w.iri(E, U + "iiifManifest", man)
+            if cov:
+                w.iri(E, SCHEMA + "image", cov)
+                w.iri(E, U + "coverImage", cov)
         # references (bibliography)
         for rf in (r.get("references") or []):
             code = rf.get("ustc_reference_code") or ""
@@ -221,7 +265,7 @@ def main():
             if txt:
                 w.lit(E, U + "bibReference", txt)
     fh.close()
-    print(f"done: {n_ed} editions, {n_copy} copies, {w.n} triples -> {OUT}")
+    print(f"done: {n_ed} editions, {n_copy} copies, {w.n} triples -> {out}")
 
 
 if __name__ == "__main__":
