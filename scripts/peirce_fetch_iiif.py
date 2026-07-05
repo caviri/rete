@@ -52,13 +52,38 @@ def get(url, dest, binary=False):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=120) as r:
         data = r.read()
-    mode = "wb" if binary else "w"
     if binary:
         open(dest, "wb").write(data)
     else:
         open(dest, "w", encoding="utf-8", newline="\n").write(
             data.decode("utf-8"))
     return len(data)
+
+
+# --- 429-aware pacing (the image API rate-limits sustained pulls) ---
+import threading
+_cooldown_until = [0.0]
+_cd_lock = threading.Lock()
+
+
+def get_paced(url, dest, retries=12):
+    """get() that honors 429 Retry-After with a GLOBAL cool-down all workers
+    respect, exponential fallback, and a few retries before giving up."""
+    for attempt in range(retries):
+        wait = _cooldown_until[0] - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            return get(url, dest, binary=True)
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                ra = e.headers.get("Retry-After")
+                pause = float(ra) if ra and ra.isdigit() else min(60 * 2 ** attempt, 900)
+                with _cd_lock:
+                    _cooldown_until[0] = max(_cooldown_until[0], time.time() + pause)
+                continue
+            raise
+    raise RuntimeError(f"429 persisted after {retries} backoffs: {url}")
 
 
 def fetch_manifests():
@@ -100,8 +125,9 @@ def census(pr=True):
     return rows
 
 
-def fetch_images(width, limit, workers=4):
+def fetch_images(width, limit, workers=4, delay=None):
     from concurrent.futures import ThreadPoolExecutor
+    a_delay = [DELAY if delay is None else delay]
     os.makedirs(IDIR, exist_ok=True)
     size = "full" if not width else f"{width},"
     # build the full work list first (skipping already-downloaded pages)
@@ -132,7 +158,7 @@ def fetch_images(width, limit, workers=4):
     def one(job):
         url, dest = job
         try:
-            nbytes[0] += get(url, dest, binary=True)
+            nbytes[0] += get_paced(url, dest)
             done[0] += 1
         except Exception as e:
             err[0] += 1
@@ -142,7 +168,7 @@ def fetch_images(width, limit, workers=4):
             dt = time.time() - t0
             eta = (len(jobs) - n) / (n / dt) / 60
             print(f"  {n}/{len(jobs)} ({nbytes[0] / 1e9:.2f} GB, {n / dt:.1f}/s, ~{eta:.0f} min left)")
-        time.sleep(DELAY)
+        time.sleep(a_delay[0])
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         list(ex.map(one, jobs))
@@ -157,10 +183,12 @@ if __name__ == "__main__":
                     help="IIIF width for images (0 = full resolution)")
     ap.add_argument("--limit", type=int, default=0, help="max new images this run")
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--delay", type=float, default=None,
+                    help="per-worker sleep between requests (default 0.4)")
     a = ap.parse_args()
     if a.cmd == "manifests":
         fetch_manifests()
     elif a.cmd == "census":
         census()
     else:
-        fetch_images(a.width, a.limit, a.workers)
+        fetch_images(a.width, a.limit, a.workers, a.delay)
