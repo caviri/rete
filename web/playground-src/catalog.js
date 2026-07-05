@@ -113,16 +113,8 @@ window.RETE_PLAYGROUND_CATALOG = {
       kind: "remote-lazy",
       url: "https://zenodo.org/api/records/21168821/files/wikidata.rete/content",
       typePredicate: "<http://www.wikidata.org/prop/direct/P31>",
-      label: "wikidata (1 GB) - hosted on Zenodo (DOI, permanent)",
-      description: "The SAME ~1.5 GB Wikidata .rete graph, but served straight from a Zenodo record - a free, permanent, citable research-data host with a DOI. It streams over HTTP range exactly like the R2 copy: a selective query faults ~27 MB of the 1.49 GB, never the whole file. Benchmarked in-browser at open ~3.8 s / query ~0.5 s - on par with the R2-hosted copy. The point: a .rete needs NO special server - any host that serves HTTP range + CORS works, including academic repositories, so you can publish a queryable gigabyte-scale graph as a citable artifact. (Zenodo does not expose the Content-Range header, so rete's reader learns the file length with a HEAD request.) CC0 (Wikidata).",
-      examples: [
-        { label: "20 typed entities (instance-of)", note: "A cheap bound-predicate scan over a Zenodo-hosted gigabyte - reads a few MB, not the whole file.",
-          sparql: `SELECT ?s ?type WHERE {\n  ?s <http://www.wikidata.org/prop/direct/P31> ?type\n} LIMIT 20` },
-        { label: "Physicists who were also philosophers", note: "Occupation intersection (P106 = physicist Q169470 AND philosopher Q4964182) - a selective join, all from Zenodo over HTTP range.",
-          sparql: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?p ?who WHERE {\n  ?p wdt:P106 <http://www.wikidata.org/entity/Q169470> ;\n     wdt:P106 <http://www.wikidata.org/entity/Q4964182> ;\n     rdfs:label ?who . FILTER(LANG(?who) = "en")\n}` },
-        { label: "Everything about Plato", note: "One entity, every fact - a tall read for a single bound subject (wd:Q859).",
-          sparql: `SELECT ?p ?o WHERE {\n  <http://www.wikidata.org/entity/Q859> ?p ?o\n}` }
-      ]
+      label: "wikidata on Zenodo (1 GB, DOI) - a real 1 GB Wikidata graph queried from a Zenodo record",
+      description: "The SAME ~1.5 GB Wikidata .rete graph, but served straight from a Zenodo record - a free, permanent, citable research-data host with a DOI. It streams over HTTP range exactly like the R2 copy: a selective query faults ~27 MB of the 1.49 GB, never the whole file. Benchmarked in-browser at open ~3.8 s / query ~0.5 s - on par with the R2-hosted copy. The point: a .rete needs NO special server - any host that serves HTTP range + CORS works, including academic repositories, so you can publish a queryable gigabyte-scale graph as a citable artifact. (Zenodo does not expose the Content-Range header, so rete's reader learns the file length with a HEAD request.) CC0 (Wikidata)."
     },
     {
       key: "scholar-noisy",
@@ -874,6 +866,32 @@ SELECT DISTINCT ?root WHERE {
       {"family": "Select", "label": "All facts about one feature", "view": "table", "tip": "A bound subject is the most selective shape - minimal bytes fetched. This is the OHM node for Abdera; the IRI round-trips to openhistoricalmap.org.", "q": "SELECT ?p ?o WHERE { <https://www.openhistoricalmap.org/node/2095928201> ?p ?o }"},
       {"family": "Aggregate", "label": "How many features predate the Common Era?", "view": "table", "tip": "Counts features whose start year is negative (BCE) - 2,057. An aggregate scans the whole ex:startYear predicate, so it fetches more tiles than the selective examples above.", "q": "PREFIX ex: <http://ex/>\nSELECT (COUNT(*) AS ?n) WHERE { ?x ex:startYear ?s . FILTER(?s < 0) }"},
       {"family": "Select", "label": "The oldest things on the map", "view": "table", "tip": "Order every feature by its start year, oldest first - deep-BCE sites (down to the -10000 clamp): ancient settlements, megaliths and prehistoric landmarks.", "q": "PREFIX ex: <http://ex/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?label ?s ?e WHERE {\n  ?x rdfs:label ?label ; ex:startYear ?s ; ex:endYear ?e\n} ORDER BY ?s LIMIT 25"}
+    ],
+    "wikidata-zenodo": [
+      { family: "Select", label: "Everything about Plato", view: "table",
+        tip: "A bound subject is the most selective shape: SPO routing jumps straight to the tiles holding wd:Q859, so the reader fetches only a few HTTP ranges - from the Zenodo DOI, never a scan of the 1.5 GB.",
+        q: `SELECT ?p ?o WHERE { <http://www.wikidata.org/entity/Q859> ?p ?o }` },
+      { family: "Select", label: "20 typed entities (instance-of)", view: "table",
+        tip: "A cheap bound-predicate scan over a gigabyte hosted on Zenodo. Wikidata types entities with wdt:P31 (instance of), not rdf:type; reads a few MB, not the whole file.",
+        q: `SELECT ?s ?type WHERE { ?s <http://www.wikidata.org/prop/direct/P31> ?type } LIMIT 20` },
+      { family: "Select", label: "Physicists who were also philosophers", view: "table",
+        tip: "Occupation intersection: P106 = physicist (Q169470) AND philosopher (Q4964182), with an English label. A selective join, every byte range-fetched from the Zenodo record.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?p ?who WHERE {
+  ?p wdt:P106 <http://www.wikidata.org/entity/Q169470> ;
+     wdt:P106 <http://www.wikidata.org/entity/Q4964182> ;
+     rdfs:label ?who . FILTER(LANG(?who) = "en")
+}` },
+      { family: "Aggregate", label: "Most common occupations", view: "table",
+        tip: "GROUP BY + COUNT over the P106 predicate. Aggregates touch more tiles than a bound query but still only the occupation slices - a good stress test of HTTP range-reads against Zenodo.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+SELECT ?occ (COUNT(?p) AS ?n) WHERE {
+  ?p wdt:P106 ?occ
+}
+GROUP BY ?occ
+ORDER BY DESC(?n)
+LIMIT 15` }
     ],
     wikidata: [
       {
