@@ -114,6 +114,11 @@ __PLAYGROUND_CSS__
         <span class="rail-name">Explore</span>
         <span class="rail-tip"><b>Explore</b>Entity tables, the community pyramid, and the file byte map.</span>
       </button>
+      <button type="button" data-mode="semantic" class="hidden">
+        <svg class="rail-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/><path d="M10.5 7.5v6M7.5 10.5h6"/></svg>
+        <span class="rail-name">Semantic</span>
+        <span class="rail-tip"><b>Semantic search</b>Natural-language retrieval — in-browser embeddings (WebGPU), ranked over the graph. No server.</span>
+      </button>
       <div class="rail-foot">
       <button type="button" id="histBtn" class="rail-hist">
         <span id="histCount" class="rail-badge hidden">0</span>
@@ -334,6 +339,13 @@ __PLAYGROUND_CSS__
         </div>
       </div>
 
+      <div class="panel" data-panel="semantic">
+        <div id="semanticBar" class="hidden" style="display:flex;gap:.5rem;margin:.2rem 0 .7rem">
+          <input id="semanticQ" type="text" placeholder="Search by meaning — e.g. the philosopher's stone and transmutation of metals" style="flex:1;padding:.45rem .6rem">
+          <button id="semanticGo" type="button" class="primary">Search</button>
+        </div>
+        <div id="semanticOut"><p class="microcopy">Loading the semantic index…</p></div>
+      </div>
       <div class="panel" data-panel="shacl">
         <div class="editor-head">
           <div>

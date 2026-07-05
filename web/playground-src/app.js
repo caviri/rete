@@ -1660,6 +1660,7 @@ self.onmessage = function (e) {
   }
 
   function renderExamples() {
+    updateSemanticTab();
     renderFamilyFilters();
     renderQuickExamples();
     const items = filteredExamples();
@@ -2260,6 +2261,118 @@ self.onmessage = function (e) {
     try { localStorage.setItem(LIB_KEY, collapsed ? "1" : "0"); } catch (_e) { /* ignore */ }
   }
 
+  // ── Semantic search (RAG over a .rete) ─────────────────────────────────────
+  // The "Semantic" tab. A Transformers.js feature-extraction worker (WebGPU, model
+  // from the HF Hub — the same no-server pattern as Ask-AI) embeds the query; the
+  // dataset's precomputed doc embeddings (a Float32 matrix on the bucket, one row
+  // per entity, declared in CATALOG.rag) are cosine-ranked entirely in the browser.
+  // Results link into the graph. Verified end-to-end headless in dev/playwright/check_rag.
+  const RAG_WORKER_SRC =
+    'import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6";\n' +
+    'env.allowLocalModels = false;\n' +
+    'self.postMessage({ type: "booted" });\n' +
+    'let ex = null, curId = null;\n' +
+    'self.onmessage = async (e) => { const m = e.data; try {\n' +
+    '  if (m.type === "load") {\n' +
+    '    if (!ex || curId !== m.id) {\n' +
+    '      try { ex = await pipeline("feature-extraction", m.id, { device: "webgpu", dtype: "q8" }); }\n' +
+    '      catch (_) { ex = await pipeline("feature-extraction", m.id, { device: "wasm", dtype: "q8" }); }\n' +
+    '      curId = m.id;\n' +
+    '    }\n' +
+    '    self.postMessage({ type: "ready" });\n' +
+    '  } else if (m.type === "embed") {\n' +
+    '    const r = await ex(m.prefix + m.text, { pooling: "mean", normalize: true });\n' +
+    '    self.postMessage({ type: "vec", vec: Array.from(r.data) });\n' +
+    '  }\n' +
+    '} catch (err) { self.postMessage({ type: "error", error: String((err && err.message) || err) }); } };\n';
+
+  let ragWorker = null, ragOnMsg = null;
+  const ragState = { key: null, emb: null, index: null, dim: 0, ready: false, loading: false, bound: false };
+
+  function ensureRagWorker() {
+    if (ragWorker) return ragWorker;
+    ragWorker = new Worker(URL.createObjectURL(new Blob([RAG_WORKER_SRC], { type: "text/javascript" })), { type: "module" });
+    ragWorker.onmessage = (e) => { if (ragOnMsg) ragOnMsg(e.data); };
+    ragWorker.onerror = () => { if (ragOnMsg) ragOnMsg({ type: "error", error: "couldn't import transformers.js (offline, or the CDN is blocked)." }); };
+    return ragWorker;
+  }
+  // One in-flight request at a time (load or embed); resolves on the matching reply.
+  function ragCall(msg) {
+    return new Promise((resolve, reject) => {
+      ragOnMsg = (m) => {
+        if (m.type === "vec") resolve(m.vec);
+        else if (m.type === "ready") resolve(true);
+        else if (m.type === "error") reject(new Error(m.error));
+      };
+      ensureRagWorker().postMessage(msg);
+    });
+  }
+  // Show the Semantic rail tab only for datasets that carry a rag index.
+  function updateSemanticTab() {
+    const btn = $$('#modeTabs button[data-mode="semantic"]')[0];
+    if (btn) btn.classList.toggle("hidden", !((CATALOG.rag || {})[state.dataset]));
+  }
+
+  async function ensureSemantic() {
+    const out = $("semanticOut"), bar = $("semanticBar");
+    if (!ragState.bound) {
+      ragState.bound = true;
+      $("semanticGo").onclick = runSemantic;
+      $("semanticQ").addEventListener("keydown", (e) => { if (e.key === "Enter") runSemantic(); });
+    }
+    const rag = (CATALOG.rag || {})[state.dataset];
+    if (!rag) { bar.classList.add("hidden"); out.innerHTML = note("This dataset has no semantic index."); return; }
+    if (ragState.ready && ragState.key === state.dataset) { bar.classList.remove("hidden"); return; }
+    if (ragState.loading) return;
+    ragState.loading = true;
+    out.innerHTML = `<p class="microcopy">Loading the semantic model + ${(rag.count || 0).toLocaleString()} embeddings…</p>`;
+    try {
+      const [buf, idx] = await Promise.all([
+        fetch(rag.emb).then((r) => r.arrayBuffer()),
+        fetch(rag.index).then((r) => r.json()),
+      ]);
+      ragState.emb = new Float32Array(buf);
+      ragState.index = idx;
+      ragState.dim = ragState.emb.length / idx.length;
+      await ragCall({ type: "load", id: rag.model });
+      ragState.key = state.dataset; ragState.ready = true;
+      bar.classList.remove("hidden");
+      out.innerHTML = note(`Ready — ${idx.length.toLocaleString()} documents indexed (${ragState.dim}-dim, ${rag.model}, WebGPU). Type a natural-language query above.`);
+    } catch (e) {
+      out.innerHTML = ""; showError("semanticOut", "Semantic search unavailable: " + (e && e.message || e));
+    } finally { ragState.loading = false; }
+  }
+
+  // Cosine-rank a query vector against the loaded embeddings and render. Also the
+  // headless test hook (window.__ragRank) — the model embed is proven separately.
+  function ragRank(qv, q) {
+    const { emb, index, dim } = ragState;
+    if (!emb || !qv) return [];
+    const scored = new Array(index.length);
+    for (let i = 0; i < index.length; i++) {
+      let s = 0; const o = i * dim;
+      for (let d = 0; d < dim; d++) s += qv[d] * emb[o + d];
+      scored[i] = [s, i];
+    }
+    scored.sort((a, b) => b[0] - a[0]);
+    const rows = scored.slice(0, 20).map(([s, i]) => ({ score: s, iri: index[i].iri, title: index[i].title }));
+    $("semanticOut").innerHTML =
+      `<div class="banner">Top ${rows.length} for &ldquo;${esc(q)}&rdquo; — cosine over ${index.length.toLocaleString()} in-browser embeddings, no server.</div>` +
+      rows.map((r) => `<div style="padding:.4rem 0;border-bottom:1px solid var(--line,#ececec)"><b>${r.score.toFixed(3)}</b> &nbsp; <a href="${esc(r.iri)}" target="_blank" rel="noopener">${esc(r.title || r.iri)}</a></div>`).join("");
+    return rows;
+  }
+
+  async function runSemantic() {
+    const q = ($("semanticQ").value || "").trim();
+    if (!q) return;
+    if (!ragState.ready || ragState.key !== state.dataset) { await ensureSemantic(); if (!ragState.ready) return; }
+    const rag = (CATALOG.rag || {})[state.dataset];
+    $("semanticOut").innerHTML = `<p class="microcopy">Embedding the query (WebGPU)…</p>`;
+    try { const qv = await ragCall({ type: "embed", text: q, prefix: rag.queryPrefix || "query: " }); ragRank(qv, q); }
+    catch (e) { $("semanticOut").innerHTML = ""; showError("semanticOut", "Query failed: " + (e && e.message || e)); }
+  }
+  try { window.__ragState = ragState; window.__ragRank = ragRank; window.__ragEnsure = ensureSemantic; } catch (e) { /* test hooks */ }
+
   function setMode(mode) {
     state.mode = mode;
     $$("#modeTabs button").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
@@ -2270,6 +2383,7 @@ self.onmessage = function (e) {
     $$(".library-panel section[data-modes]").forEach((sec) =>
       sec.classList.toggle("hidden", !sec.dataset.modes.split(" ").includes(mode)));
     if (mode === "explore") ensureExplore();
+    if (mode === "semantic") ensureSemantic();
     if (mode === "schema" && state.remote && !state.schema) ensureRemoteSchema();
     updateResultVisibility();
     updateHash();

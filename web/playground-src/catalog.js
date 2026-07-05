@@ -555,6 +555,18 @@ window.RETE_PLAYGROUND_CATALOG = {
   },
 
   // Per-dataset visual identity + descriptive tags for the dataset browser.
+  // Semantic-search (RAG) indexes: precomputed doc embeddings (a Float32 matrix,
+  // one row per entity) on the bucket + the Transformers.js model that embeds the
+  // query. The "Semantic" tab loads these, embeds the query in-browser (WebGPU),
+  // and cosine-ranks entirely client-side — no server.
+  rag: {
+    "bph": {
+      emb: "https://katospiegel-rete.hf.space/data/playground/bph-rag/bph_emb.f32?token=sfdbgf1094by21hd128ru39802",
+      index: "https://katospiegel-rete.hf.space/data/playground/bph-rag/bph_emb_index.json?token=sfdbgf1094by21hd128ru39802",
+      model: "Xenova/multilingual-e5-small", queryPrefix: "query: ", dim: 384, count: 2307,
+    },
+  },
+
   // `icon` is the tile glyph; `tags` are quick descriptive labels; `reasoning`
   // marks graphs where the Coherence/OWL reasoner is illustrative.
   datasetExtra: {
