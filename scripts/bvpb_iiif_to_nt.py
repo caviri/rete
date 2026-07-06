@@ -36,6 +36,11 @@ def main():
                 continue
             subj = f"<https://bvpb.mcu.es/es/consulta/registro.do?id={rec['id']}>"
             text = open(txtf, encoding="utf-8").read().strip()
+            # Strip characters that are OCR noise AND trip a rete-core bug: a `"`
+            # or `\` embedded in a literal truncates CONTAINS/REGEX at the first
+            # occurrence (see dev/rete-contains-embedded-quote-bug.md). Removing
+            # them makes the whole book full-text searchable. Collapse to spaces.
+            text = text.replace('"', " ").replace("\\", " ")
             if not text:
                 continue
             pj = os.path.join(PAGES, ctrl, "pages.json")
