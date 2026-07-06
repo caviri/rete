@@ -565,6 +565,11 @@ window.RETE_PLAYGROUND_CATALOG = {
       index: "https://katospiegel-rete.hf.space/data/playground/bph-rag/bph_emb_index.json?token=sfdbgf1094by21hd128ru39802",
       model: "Xenova/multilingual-e5-small", queryPrefix: "query: ", dim: 384, count: 2307,
     },
+    "ustc": {
+      emb: "https://katospiegel-rete.hf.space/data/playground/ustc-rag/ustc_emb.f32?token=sfdbgf1094by21hd128ru39802",
+      index: "https://katospiegel-rete.hf.space/data/playground/ustc-rag/ustc_emb_index.json?token=sfdbgf1094by21hd128ru39802",
+      model: "Xenova/multilingual-e5-small", queryPrefix: "query: ", dim: 384, count: 727,
+    },
   },
 
   // `icon` is the tile glyph; `tags` are quick descriptive labels; `reasoning`

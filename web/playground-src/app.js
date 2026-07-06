@@ -2319,6 +2319,7 @@ self.onmessage = function (e) {
       ragState.bound = true;
       $("semanticGo").onclick = runSemantic;
       $("semanticQ").addEventListener("keydown", (e) => { if (e.key === "Enter") runSemantic(); });
+      const ab = $("semanticAnswerBtn"); if (ab) ab.onclick = ragAnswer;
     }
     const rag = (CATALOG.rag || {})[state.dataset];
     if (!rag) { bar.classList.add("hidden"); out.innerHTML = note("This dataset has no semantic index."); return; }
@@ -2348,18 +2349,77 @@ self.onmessage = function (e) {
   function ragRank(qv, q) {
     const { emb, index, dim } = ragState;
     if (!emb || !qv) return [];
-    const scored = new Array(index.length);
+    const scope = ragScopeSet();                 // hybrid: restrict to the current query's IRIs
+    const scored = [];
     for (let i = 0; i < index.length; i++) {
+      if (scope && !scope.has(index[i].iri)) continue;
       let s = 0; const o = i * dim;
       for (let d = 0; d < dim; d++) s += qv[d] * emb[o + d];
-      scored[i] = [s, i];
+      scored.push([s, i]);
     }
     scored.sort((a, b) => b[0] - a[0]);
     const rows = scored.slice(0, 20).map(([s, i]) => ({ score: s, iri: index[i].iri, title: index[i].title }));
-    $("semanticOut").innerHTML =
-      `<div class="banner">Top ${rows.length} for &ldquo;${esc(q)}&rdquo; — cosine over ${index.length.toLocaleString()} in-browser embeddings, no server.</div>` +
-      rows.map((r) => `<div style="padding:.4rem 0;border-bottom:1px solid var(--line,#ececec)"><b>${r.score.toFixed(3)}</b> &nbsp; <a href="${esc(r.iri)}" target="_blank" rel="noopener">${esc(r.title || r.iri)}</a></div>`).join("");
+    ragState.lastQuery = q; ragState.lastHits = rows;
+    const scopeNote = scope ? ` <span class="ai-dim">(scoped to ${scope.size.toLocaleString()} IRIs from your query)</span>` : "";
+    $("semanticOut").innerHTML = rows.length
+      ? `<div class="banner">Top ${rows.length} for &ldquo;${esc(q)}&rdquo; — cosine over ${index.length.toLocaleString()} in-browser embeddings, no server.${scopeNote}</div>` +
+        rows.map((r) => `<div style="padding:.4rem 0;border-bottom:1px solid var(--line,#ececec)"><b>${r.score.toFixed(3)}</b> &nbsp; <a href="${esc(r.iri)}" target="_blank" rel="noopener">${esc(r.title || r.iri)}</a></div>`).join("")
+      : note("No results" + (scope ? " within the current query's IRIs — uncheck 'scope' or widen the query." : "."));
+    const wrap = $("semanticAnswerWrap");
+    if (wrap) { wrap.classList.toggle("hidden", !rows.length); const a = $("semanticAnswer"); if (a) a.innerHTML = ""; }
     return rows;
+  }
+
+  // Hybrid pre-filter: the set of IRIs bound by the current SPARQL result (any
+  // column), used to restrict the vector ranking when "scope" is checked.
+  function ragScopeSet() {
+    const cb = $("semanticScope");
+    if (!cb || !cb.checked) return null;
+    const res = state.lastResult;
+    const rws = res && (res.rows || res.bindings);
+    if (!rws || !rws.length) return null;
+    const set = new Set();
+    for (const row of rws) for (const k in row) {
+      let s = row[k]; if (s && s.value != null) s = s.value;
+      if (typeof s !== "string") continue;
+      s = s.replace(/^<|>$/g, "");               // strip N-Triples IRI brackets if present
+      if (/^https?:\/\//.test(s)) set.add(s);
+    }
+    return set.size ? set : null;
+  }
+
+  // "Answer with AI": feed the top hits + query to the existing Gemma worker for a
+  // grounded, cited answer (loads the model once, like Ask-AI). Browser-only-verifiable.
+  async function ragAnswer() {
+    if (llmBusy) return;
+    const q = ragState.lastQuery, hits = ragState.lastHits || [];
+    const ansEl = $("semanticAnswer");
+    if (!q || !hits.length || !ansEl) return;
+    if (aiIsGemma4() && !aiGemma4) { ansEl.innerHTML = note("Open ✨ Ask AI once to load the model, then try again."); return; }
+    const ctx = hits.slice(0, 8).map((h, i) => `[${i + 1}] ${h.title}`).join("\n");
+    const messages = [{ role: "user", content:
+      `Using ONLY these retrieved records from the ${state.dataset} collection, answer the question. Cite records by [number]; if they don't cover it, say so.\n\nRecords:\n${ctx}\n\nQuestion: ${q}\n\nConcise, grounded answer:` }];
+    let acc = "";
+    const stream = () => {
+      acc = ""; llmBusy = true; ansEl.innerHTML = '<span class="ai-cursor">▌</span>';
+      aiOnToken = (t) => { acc += t; ansEl.innerHTML = esc(acc) + '<span class="ai-cursor">▌</span>'; };
+      aiOnError = (e) => { ansEl.innerHTML = '<span class="ai-warn">' + esc(e) + '</span>'; llmBusy = false; };
+      aiOnDone = () => { ansEl.innerHTML = esc(acc); llmBusy = false; };
+      if (aiIsGemma4() && aiGemma4) {
+        (async () => { try {
+          for await (const c of aiGemma4.generate(messages, { maxNewTokens: 512 })) { acc = (c && c.text != null) ? c.text : acc; ansEl.innerHTML = esc(acc) + '<span class="ai-cursor">▌</span>'; }
+          ansEl.innerHTML = esc(acc); llmBusy = false;
+        } catch (e) { ansEl.innerHTML = '<span class="ai-warn">' + esc(String((e && e.message) || e)) + '</span>'; llmBusy = false; } })();
+        return;
+      }
+      ensureLlmWorker().postMessage({ type: "generate", messages });
+    };
+    if (llmLoaded || (aiIsGemma4() && aiGemma4)) { stream(); return; }
+    ansEl.innerHTML = '<span class="ai-dim">loading the AI model (first time)…</span>';
+    const onLoad = () => { llmLoaded = true; stream(); };
+    onLoad.__load = true; aiOnDone = onLoad;
+    aiOnError = (e) => { ansEl.innerHTML = '<span class="ai-warn">model load failed: ' + esc(e) + '</span>'; };
+    ensureLlmWorker().postMessage({ type: "load", id: aiModelId() });
   }
 
   async function runSemantic() {
