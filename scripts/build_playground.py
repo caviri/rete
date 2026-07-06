@@ -177,7 +177,6 @@ DATASETS = [
     ("theographic-graph", "theographic-graph.rete"),
     ("monarch", "monarch.rete"),
     ("opencitations", "opencitations.rete"),
-    ("fuero_juzgo", "fuero-juzgo.rete"),     # Fuero Juzgo manuscript tradition (IIIF, Wikidata, Biblissima)
     # NOTE: mira, mira-wikidata, causalgraph and lineara moved to REMOTE-LAZY
     # (served from the bucket, range-read; see catalog.js kind:"remote-lazy"), so
     # they are intentionally NOT embedded here.
