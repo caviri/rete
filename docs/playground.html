@@ -2900,8 +2900,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 6a11dfb · 2026-07-06 18:12 UTC</span>
-    <script>window.RETE_BUILD = "6a11dfb · 2026-07-06 18:12 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 4b1d953 · 2026-07-06 18:27 UTC</span>
+    <script>window.RETE_BUILD = "4b1d953 · 2026-07-06 18:27 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -6082,6 +6082,42 @@ window.RETE_PLAYGROUND_CATALOG = {
   // Paths are relative to remoteBase; the explorer appends ?token=remoteToken.
   // A dataset with no entry here shows only the rete Graph backend (no companions).
   companions: {
+    "ramon_llull": {
+      rete: "ramon_llull/ramon_llull.rete",
+      parquetDir: "ramon_llull/ramon_llull-tables",  // ProvidedCHO_.parquet + _manifest.parquet
+      duckdb: "ramon_llull/ramon_llull.duckdb",  duckdbSize: "0.80 MB",
+      sqlite: "ramon_llull/ramon_llull.sqlite",  sqliteSize: "0.20 MB",
+      typePredicate: "rdf:type",
+      seed: "https://bvpb.mcu.es/es/consulta/registro.do?id=397825", // Operum Tomus I (868 p.)
+      about: "The BVPB Ramón Llull collection (142 works) as relational companions on R2: per-class " +
+        "<code>.parquet</code>, one <code>.duckdb</code>, one <code>.sqlite</code> — beside the rete " +
+        "<code>.rete</code> graph. Every work is one wide row in the <code>ProvidedCHO</code> table: title, " +
+        "creator, date, publisher, subject, language, type, physical description, the digitised PDF " +
+        "(<code>pdf</code>), and — for the 71 printed editions — <code>pageCount</code> and the IIIF " +
+        "<code>iiifManifest</code>. Multi-valued fields are LIST columns. The ~8.7 M-word OCR full text is " +
+        "NOT in the tables (it stays a rete search feature); everything else round-trips losslessly.",
+      tables: [
+        { name: "ProvidedCHO", file: "ProvidedCHO_.parquet", classIri: "http://www.europeana.eu/schemas/edm/ProvidedCHO", label: "ProvidedCHO — Ramón Llull works", entities: 142 },
+      ],
+      sqlCols: ["entity", "label", "title", "creator", "date", "publisher", "subject", "language", "type", "format", "pdf", "pageCount", "iiifManifest", "types"],
+      examples: [
+        { label: "Everything about one work (Operum Tomus I)", table: { file: "ProvidedCHO_.parquet", name: "ProvidedCHO" },
+          sparql: `SELECT ?p ?o WHERE {\n  <https://bvpb.mcu.es/es/consulta/registro.do?id=397825> ?p ?o\n}`,
+          duck: `SELECT *\nFROM {T}\nWHERE entity = 'https://bvpb.mcu.es/es/consulta/registro.do?id=397825';`,
+          sqlite: `SELECT *\nFROM "ProvidedCHO"\nWHERE entity = 'https://bvpb.mcu.es/es/consulta/registro.do?id=397825';`,
+          note: "One work, every column — title, creator, imprint, physical description, the PDF, page count and IIIF manifest — in a single wide row (vs the graph's row-per-fact)." },
+        { label: "The busiest printers & publishers", table: { file: "ProvidedCHO_.parquet", name: "ProvidedCHO" },
+          sparql: `PREFIX dc: <http://purl.org/dc/elements/1.1/>\nSELECT ?publisher (COUNT(?s) AS ?n) WHERE {\n  ?s dc:publisher ?publisher\n}\nGROUP BY ?publisher ORDER BY DESC(?n) LIMIT 15`,
+          duck: `SELECT publisher, COUNT(*) AS n\nFROM (SELECT UNNEST(publisher) AS publisher FROM {T} WHERE len(publisher) > 0)\nGROUP BY publisher ORDER BY n DESC LIMIT 15;`,
+          sqlite: `SELECT je.value AS publisher, COUNT(*) AS n\nFROM "ProvidedCHO", json_each("ProvidedCHO".publisher) je\nGROUP BY 1 ORDER BY n DESC LIMIT 15;`,
+          note: "The publisher column is a LIST — DuckDB UNNESTs it, SQLite walks it with json_each. The early-modern Mallorca presses (Viuda de Guasp, Typis Viduae Frau) surface." },
+        { label: "Printed editions with a IIIF viewer, by page count", table: { file: "ProvidedCHO_.parquet", name: "ProvidedCHO" },
+          sparql: `PREFIX dc: <http://purl.org/dc/elements/1.1/>\nPREFIX bvpb: <https://bvpb.mcu.es/ns#>\nSELECT ?title ?pages ?manifest WHERE {\n  ?s bvpb:iiifManifest ?manifest ; dc:title ?title ; bvpb:pageCount ?pages .\n}\nORDER BY DESC(?pages) LIMIT 30`,
+          duck: `SELECT label AS title, CAST(pageCount[1] AS INT) AS pages, iiifManifest[1] AS manifest\nFROM {T}\nWHERE len(iiifManifest) > 0\nORDER BY pages DESC LIMIT 30;`,
+          sqlite: `SELECT label AS title, CAST(json_extract(pageCount,'$[0]') AS INT) AS pages, json_extract(iiifManifest,'$[0]') AS manifest\nFROM "ProvidedCHO"\nWHERE iiifManifest != '[]'\nORDER BY pages DESC LIMIT 30;`,
+          note: "The 71 printed editions that were OCR'd and given a IIIF manifest, largest first — the Operum Tomus volumes run past 1,000 pages." },
+      ],
+    },
     "smithsonian3d": {
       rete: "smithsonian3d/smithsonian3d.rete",
       parquetDir: "smithsonian3d/smithsonian3d-tables",  // *.parquet + _manifest.parquet
