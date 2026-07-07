@@ -118,7 +118,9 @@ fjo:philobiblonManid a owl:DatatypeProperty ; rdfs:label "PhiloBiblon BETA manid
 fjo:philobiblonAnaid a owl:DatatypeProperty ; rdfs:label "PhiloBiblon BETA anaid"@en ; rdfs:range xsd:integer .
 fjo:philobiblonWorkId a owl:DatatypeProperty ; rdfs:label "PhiloBiblon BETA texid"@en ; rdfs:range xsd:integer .
 fjo:iiifManifest a owl:ObjectProperty ; rdfs:label "IIIF manifest"@en ;
-    rdfs:comment "IIIF Presentation manifest for the digitized witness (indexed by Biblissima); IRI-valued so it renders as a viewer in the rete playground."@en .
+    rdfs:comment "Self-hosted IIIF Presentation manifest (on our R2) for the digitized witness; IRI-valued so it renders as a viewer in the rete playground."@en .
+fjo:sourceManifest a owl:ObjectProperty ; rdfs:label "source IIIF manifest"@en ;
+    rdfs:comment "The original (external) IIIF manifest the R2 copy was mirrored from -- kept for provenance."@en .
 fjo:image a owl:ObjectProperty ; rdfs:label "image"@en ; rdfs:subPropertyOf schema:image ;
     rdfs:comment "A representative image (IRI) that renders inline in the rete playground."@en .
 fjo:onlineViewer a owl:ObjectProperty ; rdfs:label "online viewer"@en ;
@@ -254,6 +256,22 @@ BIBLISSIMA = {
     8: "https://data.biblissima.fr/entity/Q44277",    # BnF Espagnol 256
     32: "https://data.biblissima.fr/entity/Q264558",  # BSB Cod.hisp. 6
 }
+
+# ---- Self-hosted IIIF on R2 -------------------------------------------------
+# Every digitized witness' full IIIF (manifest + all page images) is mirrored
+# into our R2 bucket by scripts/fuero_juzgo_iiif_mirror.py. Point iiifManifest +
+# image at OUR copy (renders in the playground AND is downloadable) and keep the
+# original external manifest as fjo:sourceManifest for provenance.
+R2IIIF = "https://data.graphplaza.com/fuero_juzgo/iiif"
+MIRROR = {6: "Z-III-18", 8: "bnf-esp-256", 9: "bsb00160754", 14: "Z-III-6",
+          15: "M-III-5", 17: "bodleian-holkham-46", 18: "Z-III-21", 19: "P-II-17",
+          20: "M-II-18", 25: "d-III-18", 26: "Z-II-9", 32: "bsb00094631"}
+for _n, _wk in MIRROR.items():
+    ent = IIIF.setdefault(_n, {})
+    if ent.get("manifest"):
+        ent["sourceManifest"] = ent["manifest"]      # keep the external file
+    ent["manifest"] = "%s/%s/manifest.json" % (R2IIIF, _wk)
+    ent["image"] = "%s/%s/thumb.jpg" % (R2IIIF, _wk)  # small self-hosted thumbnail
 
 
 def wd_sameas(key, subj):
@@ -705,6 +723,8 @@ for w in WITNESSES:
     if iiif:
         if iiif.get("manifest"):
             out_iri(s, FJO + "iiifManifest", iiif["manifest"])
+        if iiif.get("sourceManifest"):
+            out_iri(s, FJO + "sourceManifest", iiif["sourceManifest"])
         if iiif.get("image"):
             out_iri(s, FJO + "image", iiif["image"])
         if iiif.get("viewer"):
