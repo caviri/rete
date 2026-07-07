@@ -3053,18 +3053,20 @@ self.onmessage = function (e) {
   function ensureExploreSql() {
     const comp = currentCompanion(); if (!comp) return;
     const seg = $("sqlBackendSeg"); if (!seg) return;
-    if (!seg.dataset.wired) {
-      seg.innerHTML = SQL_BACKENDS.map(([id, l]) => `<button type="button" data-sb="${esc(id)}">${esc(l)}</button>`).join("");
+    if (!seg.dataset.wired) { $("sqlRun").onclick = runSql; seg.dataset.wired = "1"; }
+    // A fresh dataset re-renders the backend buttons (gated on which companion
+    // files this dataset actually ships — a big graph may skip the 2 GB SQLite)
+    // and clears the editor/output so the default query + examples re-seed.
+    if (state.sqlDataset !== state.dataset) {
+      state.sqlDataset = state.dataset;
+      const avail = SQL_BACKENDS.filter(([id]) =>
+        id === "duck-parquet" ? comp.parquetDir : id === "duck-db" ? comp.duckdb : comp.sqlite);
+      if (!avail.some(([id]) => id === state.sqlBackend)) state.sqlBackend = (avail[0] || SQL_BACKENDS[0])[0];
+      seg.innerHTML = avail.map(([id, l]) => `<button type="button" data-sb="${esc(id)}">${esc(l)}</button>`).join("");
       seg.querySelectorAll("[data-sb]").forEach((b) => b.onclick = () => {
         seg.querySelectorAll("[data-sb]").forEach((x) => x.classList.toggle("active", x === b));
         state.sqlBackend = b.dataset.sb; renderSqlExamples();
       });
-      $("sqlRun").onclick = runSql;
-      seg.dataset.wired = "1";
-    }
-    // A fresh dataset clears the editor/output so the default query + examples re-seed.
-    if (state.sqlDataset !== state.dataset) {
-      state.sqlDataset = state.dataset;
       $("sqlEditor").value = ""; $("sqlOut").innerHTML = ""; $("sqlMeta").textContent = "";
     }
     seg.querySelectorAll("[data-sb]").forEach((b) => b.classList.toggle("active", b.dataset.sb === state.sqlBackend));
