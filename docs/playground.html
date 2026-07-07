@@ -2900,8 +2900,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 7eb323a · 2026-07-07 16:08 UTC</span>
-    <script>window.RETE_BUILD = "7eb323a · 2026-07-07 16:08 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build d659049 · 2026-07-07 16:32 UTC</span>
+    <script>window.RETE_BUILD = "d659049 · 2026-07-07 16:32 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -6088,6 +6088,7 @@ window.RETE_PLAYGROUND_CATALOG = {
   // Paths are relative to remoteBase; the explorer appends ?token=remoteToken.
   // A dataset with no entry here shows only the rete Graph backend (no companions).
   companions: {
+    "bcul": {"rete": "bcul/bcul.rete", "parquetDir": "bcul/bcul-tables", "flat": true, "about": "The full BCU Lausanne twin as a flat <code>triples</code> table (subject, predicate, object token + decoded value / datatype / lang) in Parquet — the same 117.5M facts, queryable in SQL (DuckDB-WASM, HTTP-range over the 2.8&nbsp;GB file) to compare against the rete engine. The standalone .duckdb (16&nbsp;GB) and .sqlite (48&nbsp;GB) aren't hosted — at 117M rows they're disproportionate, and DuckDB-WASM reads the Parquet directly.", "tables": [{"name": "triples", "file": "triples.parquet", "label": "triples — every fact (S, P, O)", "entities": 117472563}], "sqlCols": ["subject", "predicate", "object", "otype", "value", "datatype", "lang"], "examples": [{"label": "Predicate totals", "table": {"file": "triples.parquet", "name": "triples"}, "sparql": "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n)", "duck": "SELECT predicate, COUNT(*) AS n\nFROM {T}\nGROUP BY predicate\nORDER BY n DESC;", "note": "How often each predicate is used — the shape of the graph (schema:about, heldAt, creator …)."}, {"label": "Availability across all holdings", "table": {"file": "triples.parquet", "name": "triples"}, "sparql": "PREFIX b: <https://data.bcu-lausanne.ch/>\nSELECT ?avail (COUNT(*) AS ?n) WHERE { ?s b:availability ?avail } GROUP BY ?avail ORDER BY DESC(?n)", "duck": "SELECT value AS availability, COUNT(*) AS n\nFROM {T}\nWHERE predicate = 'https://data.bcu-lausanne.ch/availability'\nGROUP BY value\nORDER BY n DESC;", "note": "available / unavailable / check_holdings / online — the live status of every copy in the network."}]},
     "ramon_llull": {
       rete: "ramon_llull/ramon_llull.rete",
       parquetDir: "ramon_llull/ramon_llull-tables",  // ProvidedCHO_.parquet + _manifest.parquet
