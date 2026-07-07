@@ -2900,8 +2900,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 0cbb730 · 2026-07-07 13:18 UTC</span>
-    <script>window.RETE_BUILD = "0cbb730 · 2026-07-07 13:18 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build e4c3da9 · 2026-07-07 13:30 UTC</span>
+    <script>window.RETE_BUILD = "e4c3da9 · 2026-07-07 13:30 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -12235,8 +12235,21 @@ self.onmessage = function (e) {
     'self.onmessage = async (e) => { const m = e.data; try {\n' +
     '  if (m.type === "load") {\n' +
     '    if (!ex || curId !== m.id) {\n' +
+    '      let dev = "webgpu";\n' +
     '      try { ex = await pipeline("feature-extraction", m.id, { device: "webgpu", dtype: "q8" }); }\n' +
-    '      catch (_) { ex = await pipeline("feature-extraction", m.id, { device: "wasm", dtype: "q8" }); }\n' +
+    '      catch (_) { dev = "wasm"; ex = await pipeline("feature-extraction", m.id, { device: "wasm", dtype: "q8" }); }\n' +
+    // Some WebGPU backends (notably software SwiftShader) load fine but return
+    // degenerate vectors — every text ~identical, so ranking is noise. Probe two
+    // unrelated strings: healthy backends score ~0.8, degenerate ones >0.94. If it
+    // fails (or NaNs), fall back to WASM, which is correct everywhere.
+    '      if (dev === "webgpu") {\n' +
+    '        try {\n' +
+    '          const pa = (await ex("query: dog", { pooling: "mean", normalize: true })).data;\n' +
+    '          const pb = (await ex("query: constitutional law", { pooling: "mean", normalize: true })).data;\n' +
+    '          let c = 0; for (let i = 0; i < pa.length; i++) c += pa[i] * pb[i];\n' +
+    '          if (!(c < 0.9)) ex = await pipeline("feature-extraction", m.id, { device: "wasm", dtype: "q8" });\n' +
+    '        } catch (_) { ex = await pipeline("feature-extraction", m.id, { device: "wasm", dtype: "q8" }); }\n' +
+    '      }\n' +
     '      curId = m.id;\n' +
     '    }\n' +
     '    self.postMessage({ type: "ready" });\n' +

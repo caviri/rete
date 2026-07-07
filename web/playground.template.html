@@ -345,8 +345,10 @@ __PLAYGROUND_CSS__
           <button id="semanticGo" type="button" class="primary">Search</button>
           <label style="font-size:.85em;color:var(--muted,#888);white-space:nowrap"><input type="checkbox" id="semanticScope"> scope to current query result</label>
         </div>
+        <div id="semanticExamples" class="chip-list hidden" style="margin:0 0 .7rem"></div>
         <div id="semanticOut"><p class="microcopy">Loading the semantic index…</p></div>
         <div id="semanticAnswerWrap" class="hidden" style="margin-top:.8rem;padding-top:.6rem;border-top:1px solid var(--line,#ececec)">
+          <button id="semanticSparqlBtn" type="button" class="primary">↗ Query these in SPARQL</button>
           <button id="semanticAnswerBtn" type="button">✨ Answer with AI</button>
           <div id="semanticAnswer" style="margin-top:.5rem;line-height:1.5"></div>
         </div>

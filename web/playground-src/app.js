@@ -2275,8 +2275,21 @@ self.onmessage = function (e) {
     'self.onmessage = async (e) => { const m = e.data; try {\n' +
     '  if (m.type === "load") {\n' +
     '    if (!ex || curId !== m.id) {\n' +
+    '      let dev = "webgpu";\n' +
     '      try { ex = await pipeline("feature-extraction", m.id, { device: "webgpu", dtype: "q8" }); }\n' +
-    '      catch (_) { ex = await pipeline("feature-extraction", m.id, { device: "wasm", dtype: "q8" }); }\n' +
+    '      catch (_) { dev = "wasm"; ex = await pipeline("feature-extraction", m.id, { device: "wasm", dtype: "q8" }); }\n' +
+    // Some WebGPU backends (notably software SwiftShader) load fine but return
+    // degenerate vectors — every text ~identical, so ranking is noise. Probe two
+    // unrelated strings: healthy backends score ~0.8, degenerate ones >0.94. If it
+    // fails (or NaNs), fall back to WASM, which is correct everywhere.
+    '      if (dev === "webgpu") {\n' +
+    '        try {\n' +
+    '          const pa = (await ex("query: dog", { pooling: "mean", normalize: true })).data;\n' +
+    '          const pb = (await ex("query: constitutional law", { pooling: "mean", normalize: true })).data;\n' +
+    '          let c = 0; for (let i = 0; i < pa.length; i++) c += pa[i] * pb[i];\n' +
+    '          if (!(c < 0.9)) ex = await pipeline("feature-extraction", m.id, { device: "wasm", dtype: "q8" });\n' +
+    '        } catch (_) { ex = await pipeline("feature-extraction", m.id, { device: "wasm", dtype: "q8" }); }\n' +
+    '      }\n' +
     '      curId = m.id;\n' +
     '    }\n' +
     '    self.postMessage({ type: "ready" });\n' +
@@ -2320,9 +2333,11 @@ self.onmessage = function (e) {
       $("semanticGo").onclick = runSemantic;
       $("semanticQ").addEventListener("keydown", (e) => { if (e.key === "Enter") runSemantic(); });
       const ab = $("semanticAnswerBtn"); if (ab) ab.onclick = ragAnswer;
+      const sb = $("semanticSparqlBtn"); if (sb) sb.onclick = semanticToSparql;
     }
     const rag = (CATALOG.rag || {})[state.dataset];
     if (!rag) { bar.classList.add("hidden"); out.innerHTML = note("This dataset has no semantic index."); return; }
+    renderSemanticExamples();
     if (ragState.ready && ragState.key === state.dataset) { bar.classList.remove("hidden"); return; }
     if (ragState.loading) return;
     ragState.loading = true;
@@ -2430,6 +2445,37 @@ self.onmessage = function (e) {
     $("semanticOut").innerHTML = `<p class="microcopy">Embedding the query (WebGPU)…</p>`;
     try { const qv = await ragCall({ type: "embed", text: q, prefix: rag.queryPrefix || "query: " }); ragRank(qv, q); }
     catch (e) { $("semanticOut").innerHTML = ""; showError("semanticOut", "Query failed: " + (e && e.message || e)); }
+  }
+  // Clickable starter queries for the Semantic tab (CATALOG.rag[key].examples).
+  function renderSemanticExamples() {
+    const box = $("semanticExamples");
+    if (!box) return;
+    const rag = (CATALOG.rag || {})[state.dataset] || {};
+    const exs = Array.isArray(rag.examples) ? rag.examples : [];
+    if (!exs.length) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+    box.classList.remove("hidden");
+    box.innerHTML = '<span style="font-size:.82em;color:var(--muted,#888);align-self:center">Try:</span>' +
+      exs.map((q) => `<button type="button" class="chip" style="cursor:pointer" data-q="${esc(q)}">${esc(q)}</button>`).join("");
+    $$("#semanticExamples button").forEach((b) => { b.onclick = () => { $("semanticQ").value = b.dataset.q; runSemantic(); }; });
+  }
+
+  // Hand the norms the semantic search surfaced to the SPARQL tab as a VALUES-bound
+  // query, so the user can pull structured columns / ask follow-ups over exactly
+  // those hits (CATALOG.rag[key].enrich.q, %IRIS% = the ranked result IRIs).
+  function semanticToSparql() {
+    const hits = ragState.lastHits || [];
+    if (!hits.length) return;
+    const rag = (CATALOG.rag || {})[state.dataset] || {};
+    const enrich = rag.enrich || {};
+    const values = hits.map((h) => "<" + h.iri + ">").join(" ");
+    const tmpl = enrich.q || "SELECT ?s ?p ?o WHERE {\n  VALUES ?s { %IRIS% }\n  ?s ?p ?o\n}\nLIMIT 300";
+    setEd("q", tmpl.replace("%IRIS%", values));
+    state.colLabels = enrich.cols || null;
+    state.selectedExample = null;
+    setView("table");
+    setStrategy("whole");
+    setMode("sparql");
+    runQuery();
   }
   try { window.__ragState = ragState; window.__ragRank = ragRank; window.__ragEnsure = ensureSemantic; } catch (e) { /* test hooks */ }
 

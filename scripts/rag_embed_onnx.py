@@ -25,9 +25,12 @@ RAG = os.path.join(ROOT, "data", "rag")
 REPO = "Xenova/multilingual-e5-small"
 DIM = 384
 BATCH = 64
+# q8 (model_quantized.onnx) matches what the browser query uses and the canonical
+# rag_embed_all.mjs; retrieval is identical to fp32 under WASM. Override with RAG_ONNX.
+ONNX_FILE = os.environ.get("RAG_ONNX", "onnx/model_quantized.onnx")
 
-print("loading model + tokenizer ...", flush=True)
-model_path = hf_hub_download(REPO, "onnx/model_quantized.onnx")
+print(f"loading {ONNX_FILE} + tokenizer ...", flush=True)
+model_path = hf_hub_download(REPO, ONNX_FILE)
 tok = AutoTokenizer.from_pretrained(REPO)
 sess = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
 IN = {i.name for i in sess.get_inputs()}
