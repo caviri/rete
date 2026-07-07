@@ -135,6 +135,8 @@ def _build_one(r):
         return ctrl, "cached"
     meta = json.load(open(pj, encoding="utf-8"))
     base = f"{BASE}/{ctrl}"
+    annodir = os.path.join(IIIF, ctrl, "anno")
+    os.makedirs(annodir, exist_ok=True)
     canvases, fulltext, nwords = [], [], 0
     for p in meta["pages"]:
         hp = os.path.join(pdir, os.path.splitext(p["file"])[0] + ".hocr")
@@ -154,13 +156,24 @@ def _build_one(r):
                                                  "width": p["w"], "height": p["h"]},
                                         "target": cid}]}]}
         if words:
-            canvas["annotations"] = [{"id": f"{base}/anno/p{p['n']}", "type": "AnnotationPage",
+            # Externalize the OCR word layer. The manifest only REFERENCES a per-canvas
+            # AnnotationPage (id + type, no items); a viewer fetches it lazily when it
+            # renders that page. Inlining every word (100k-500k per book) made the
+            # manifest 100-185 MB and froze the viewer on open — the whole file had to
+            # download + parse before page 1 could paint. The words now live in
+            # iiif/<ctrl>/anno/p{n}.json, served from the same R2 prefix.
+            page_anno_id = f"{base}/anno/p{p['n']}.json"
+            canvas["annotations"] = [{"id": page_anno_id, "type": "AnnotationPage"}]
+            annopage = {"@context": "http://iiif.io/api/presentation/3/context.json",
+                "id": page_anno_id, "type": "AnnotationPage",
                 "items": [{"id": f"{base}/anno/p{p['n']}-w{i}", "type": "Annotation",
                            "motivation": "supplementing",
                            "body": {"type": "TextualBody", "value": w["t"],
                                     "format": "text/plain", "language": "la"},
                            "target": f"{cid}#xywh={w['x']},{w['y']},{w['w']},{w['h']}"}
-                          for i, w in enumerate(words)]}]
+                          for i, w in enumerate(words)]}
+            json.dump(annopage, open(os.path.join(annodir, f"p{p['n']}.json"), "w",
+                                     encoding="utf-8"), ensure_ascii=False)
         canvases.append(canvas)
 
     title = dc(ctrl, "title") or ctrl

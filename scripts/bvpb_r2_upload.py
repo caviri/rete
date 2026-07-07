@@ -42,12 +42,20 @@ def jobs(kind):
         for f in glob.glob(os.path.join(ROOT, "iiif", "*", "manifest.json")):
             ctrl = os.path.basename(os.path.dirname(f))
             out.append((f, f"ramon_llull/iiif/{ctrl}/manifest.json", "application/json"))
+    if kind in ("anno", "all"):
+        # externalized per-canvas OCR AnnotationPages (iiif/<ctrl>/anno/p{n}.json),
+        # referenced from the slim manifest and fetched lazily by the viewer.
+        for f in glob.glob(os.path.join(ROOT, "iiif", "*", "anno", "p*.json")):
+            ctrl = os.path.basename(os.path.dirname(os.path.dirname(f)))
+            out.append((f, f"ramon_llull/iiif/{ctrl}/anno/{os.path.basename(f)}", "application/json"))
     return out
 
 
 def main():
     kind = sys.argv[1] if len(sys.argv) > 1 else "all"
-    done = load_done()
+    # FORCE=1 ignores the ledger — needed to re-upload the manifests after slimming
+    # them (their keys are already recorded as done from the first upload).
+    done = set() if os.environ.get("FORCE") else load_done()
     todo = [j for j in jobs(kind) if j[1] not in done]
     print(f"upload[{kind}]: {len(todo)} objects to {BUCKET} ({len(done)} already done)")
     n = [0]; led = open(LEDGER, "a", encoding="utf-8")
