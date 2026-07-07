@@ -3648,6 +3648,9 @@ self.onmessage = function (e) {
       // Coeli (MCNB / bioexplora) image URLs have no extension: a portraitMedia
       // redirect or a IIIF Image-API path. Both resolve to a CORS-open JPEG.
       (/\bcoeli\b/i.test(v) && /(portraitMedia|\/full\/|\/iiif\/)/i.test(v)) ||
+      // Patrinum (BCUL) nanna thumbnails have no extension: /nanna/thumbnail/v2/<id>?redirect=1
+      // 302s to a CORS-open JPEG; treat as an image so covers render inline.
+      /patrinum\.ch\/nanna\/(thumbnail|record-thumb)\//i.test(v) ||
       /\.(jpe?g|png|gif|svg|webp)$/i.test(String(v).split("?")[0]);
   }
   function thumbUrl(v) {
