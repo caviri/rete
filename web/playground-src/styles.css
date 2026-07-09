@@ -2198,15 +2198,26 @@ th .coltype.coltype-on {
     border-left: 1px solid var(--line-strong);
     box-shadow: -10px 0 28px rgba(0, 0, 0, .20);
     padding: 50px 16px 28px;
+    /* CLOSED by default on phones, in pure CSS — do NOT rely on boot() to add
+       .lib-collapsed, because that runs after async work (WASM init + loading a
+       remote dataset) and on a slow load left this 92vw drawer sitting open over
+       the content ("sidebar in the middle"). The drawer shows only when the shell
+       is explicitly .lib-open (set by the › opener); the default and collapsed
+       states are both closed. */
+    display: none;
   }
+  .console-shell.lib-open .library-panel { display: block; }
   .lib-collapse {
     position: absolute;
     top: 10px; right: 12px;
     width: 36px; height: 36px;
     font-size: 19px;
   }
-  /* The collapsed-state opener becomes a labelled, touch-sized pill. */
-  .console-shell.lib-collapsed .lib-expand {
+  /* The opener is a labelled, touch-sized pill whenever the drawer is closed, and
+     hides once it is open. `:not(.lib-open)` matches both the default (no class)
+     and the collapsed state, and ties the desktop `.lib-collapsed .lib-expand`
+     rule on specificity (0,3,0) so source order wins it here. */
+  .console-shell:not(.lib-open) .lib-expand {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -2217,10 +2228,11 @@ th .coltype.coltype-on {
     color: var(--accent-dark);
     align-self: flex-start;
   }
-  .console-shell.lib-collapsed .lib-expand::after {
+  .console-shell:not(.lib-open) .lib-expand::after {
     content: "Details & source";
     font-weight: 600;
   }
+  .console-shell.lib-open .lib-expand { display: none; }
 
   .mode-rail {
     position: static;

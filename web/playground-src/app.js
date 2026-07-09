@@ -2257,7 +2257,14 @@ self.onmessage = function (e) {
   const LIB_KEY = "rete.pg.libCollapsed";
   function setLibCollapsed(collapsed) {
     const shell = document.querySelector(".console-shell");
-    if (shell) shell.classList.toggle("lib-collapsed", collapsed);
+    if (shell) {
+      shell.classList.toggle("lib-collapsed", collapsed);
+      // On phones the details panel is a drawer that the mobile stylesheet keeps
+      // CLOSED by default; `lib-open` is the explicit "opened" flag it keys off.
+      // Toggling it here lets the ‹/› buttons drive the drawer. No effect on
+      // desktop — all lib-open rules live inside the ≤860px media query.
+      shell.classList.toggle("lib-open", !collapsed);
+    }
     try { localStorage.setItem(LIB_KEY, collapsed ? "1" : "0"); } catch (_e) { /* ignore */ }
   }
 
