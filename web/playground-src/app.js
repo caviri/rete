@@ -7038,7 +7038,16 @@ self.onmessage = function (e) {
     if (load) params.set("load", load);
     params.set("mode", state.mode);
     const q = $("q").value.trim();
-    if (q) params.set("q", q);
+    // Prefer a short link: if an unedited catalog example is active, share its
+    // index (#…&ex=3) instead of the whole URL-encoded SPARQL. Fall back to the
+    // full query when it was edited or is ad-hoc.
+    const exList = examplesForDataset();
+    const exi = state.selectedExample;
+    if (exi != null && exi >= 0 && exList[exi] && (exList[exi].q || "").trim() === q) {
+      params.set("ex", String(exi));
+    } else if (q) {
+      params.set("q", q);
+    }
     history.replaceState(null, "", "#" + params.toString());
   }
 
@@ -7454,9 +7463,15 @@ self.onmessage = function (e) {
     }
 
     const q = params.get("q");
+    const exParam = params.get("ex");
     if (q) {
       setEd("q", q);
       state.selectedExample = -1;
+      renderExamples();
+    } else if (exParam != null && ds) {
+      // Short deep link: #dataset=<key>&ex=<n> selects the catalog's Nth example
+      // (its query, view and column headers) — no need to URL-encode the SPARQL.
+      selectExample(parseInt(exParam, 10));
       renderExamples();
     }
     setMode(params.get("mode") || "sparql");
