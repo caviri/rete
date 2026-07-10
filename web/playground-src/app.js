@@ -1670,15 +1670,33 @@ self.onmessage = function (e) {
     }
     $("examples").innerHTML = items.map(({ ex, index }) =>
       `<article class="example-card" data-family="${esc(ex.family)}">` +
-        `<button type="button" class="example-button ${index === state.selectedExample ? "active" : ""}" data-example="${index}">` +
-          `<span>${esc(ex.label)}</span>${perfBadge(state.dataset, ex.label)}` +
-        `</button>` +
+        `<div class="ex-head">` +
+          `<button type="button" class="example-button ${index === state.selectedExample ? "active" : ""}" data-example="${index}">` +
+            `<span>${esc(ex.label)}</span>${perfBadge(state.dataset, ex.label)}` +
+          `</button>` +
+          `<button type="button" class="ex-copy" data-copy="${index}" title="Copy a short share link to this example" aria-label="Copy link to this example">🔗</button>` +
+        `</div>` +
         `<div class="tagline">${esc(ex.family)} | ${esc(ex.tip)}</div>` +
         (columnsLabel(ex.q) ? `<div class="ex-cols">Columns: <code>${esc(columnsLabel(ex.q))}</code></div>` : "") +
       `</article>`
     ).join("");
     $$("#examples [data-example]").forEach((btn) => {
       btn.onclick = () => selectExample(Number(btn.dataset.example));
+    });
+    // Copy a short, index-based share link (#dataset=…&ex=N) for any example.
+    $$("#examples [data-copy]").forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const i = Number(btn.dataset.copy);
+        const url = location.origin + location.pathname + "#dataset=" +
+          encodeURIComponent(state.dataset) + "&ex=" + i;
+        const ok = () => {
+          btn.textContent = "✓"; btn.title = "Copied!";
+          setTimeout(() => { btn.textContent = "🔗"; btn.title = "Copy a short share link to this example"; }, 1200);
+        };
+        (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+          .then(ok).catch(() => { const qm = $("qmeta"); if (qm) qm.textContent = "Share link: " + url; });
+      };
     });
   }
 

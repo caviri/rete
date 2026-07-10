@@ -843,6 +843,16 @@ h3 {
   color: var(--ink);
 }
 
+/* One-click "copy short share link" (#dataset=…&ex=N) next to each example. */
+.example-card .ex-head { display: flex; align-items: center; gap: 6px; }
+.example-card .ex-head .example-button { flex: 1 1 auto; min-width: 0; }
+.example-card .ex-copy {
+  flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
+  color: var(--muted); font-size: 13px; line-height: 1; padding: 2px 5px;
+  border-radius: 6px; opacity: 0.6;
+}
+.example-card .ex-copy:hover { opacity: 1; background: var(--side); color: var(--accent-dark); }
+
 /* Speed badge (median local query time, benchmarked) on each example. */
 .perf-badge {
   flex: 0 0 auto; display: inline-block; font-size: 10px; font-weight: 700;
@@ -2912,8 +2922,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 8b0368c · 2026-07-10 10:39 UTC</span>
-    <script>window.RETE_BUILD = "8b0368c · 2026-07-10 10:39 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 2a6dc96 · 2026-07-10 10:43 UTC</span>
+    <script>window.RETE_BUILD = "2a6dc96 · 2026-07-10 10:43 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -11660,15 +11670,33 @@ self.onmessage = function (e) {
     }
     $("examples").innerHTML = items.map(({ ex, index }) =>
       `<article class="example-card" data-family="${esc(ex.family)}">` +
-        `<button type="button" class="example-button ${index === state.selectedExample ? "active" : ""}" data-example="${index}">` +
-          `<span>${esc(ex.label)}</span>${perfBadge(state.dataset, ex.label)}` +
-        `</button>` +
+        `<div class="ex-head">` +
+          `<button type="button" class="example-button ${index === state.selectedExample ? "active" : ""}" data-example="${index}">` +
+            `<span>${esc(ex.label)}</span>${perfBadge(state.dataset, ex.label)}` +
+          `</button>` +
+          `<button type="button" class="ex-copy" data-copy="${index}" title="Copy a short share link to this example" aria-label="Copy link to this example">🔗</button>` +
+        `</div>` +
         `<div class="tagline">${esc(ex.family)} | ${esc(ex.tip)}</div>` +
         (columnsLabel(ex.q) ? `<div class="ex-cols">Columns: <code>${esc(columnsLabel(ex.q))}</code></div>` : "") +
       `</article>`
     ).join("");
     $$("#examples [data-example]").forEach((btn) => {
       btn.onclick = () => selectExample(Number(btn.dataset.example));
+    });
+    // Copy a short, index-based share link (#dataset=…&ex=N) for any example.
+    $$("#examples [data-copy]").forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const i = Number(btn.dataset.copy);
+        const url = location.origin + location.pathname + "#dataset=" +
+          encodeURIComponent(state.dataset) + "&ex=" + i;
+        const ok = () => {
+          btn.textContent = "✓"; btn.title = "Copied!";
+          setTimeout(() => { btn.textContent = "🔗"; btn.title = "Copy a short share link to this example"; }, 1200);
+        };
+        (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+          .then(ok).catch(() => { const qm = $("qmeta"); if (qm) qm.textContent = "Share link: " + url; });
+      };
     });
   }
 

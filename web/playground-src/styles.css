@@ -803,6 +803,16 @@ h3 {
   color: var(--ink);
 }
 
+/* One-click "copy short share link" (#dataset=…&ex=N) next to each example. */
+.example-card .ex-head { display: flex; align-items: center; gap: 6px; }
+.example-card .ex-head .example-button { flex: 1 1 auto; min-width: 0; }
+.example-card .ex-copy {
+  flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
+  color: var(--muted); font-size: 13px; line-height: 1; padding: 2px 5px;
+  border-radius: 6px; opacity: 0.6;
+}
+.example-card .ex-copy:hover { opacity: 1; background: var(--side); color: var(--accent-dark); }
+
 /* Speed badge (median local query time, benchmarked) on each example. */
 .perf-badge {
   flex: 0 0 auto; display: inline-block; font-size: 10px; font-weight: 700;
