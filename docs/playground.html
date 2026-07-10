@@ -2912,8 +2912,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 00edc14 · 2026-07-09 22:09 UTC</span>
-    <script>window.RETE_BUILD = "00edc14 · 2026-07-09 22:09 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 4c75d0f · 2026-07-10 10:19 UTC</span>
+    <script>window.RETE_BUILD = "4c75d0f · 2026-07-10 10:19 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -6078,6 +6078,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "orkg":                  { triples: 37314,     size: "393 KB",  license: "CC-BY",                source: "https://orkg.org",                                         provenance: "A slice of the Open Research Knowledge Graph (papers, contributions, problems/methods/results + labels) fetched from ORKG, exported to N-Triples and assembled with rete build." },
     "ohm-full":              { triples: "~6.1 M",  size: "150 MB",   license: "CC0 1.0",              source: "https://www.openhistoricalmap.org",                        provenance: "The entire OpenHistoricalMap daily planet .osm.pbf streamed and simplified with PyOsmium (scripts/fetch_ohm_planet.sh) to GeoSPARQL N-Triples, assembled with rete build (remote-lazy)." },
     "wikidata":              { triples: null,      size: "1.04 GB", license: "CC0",                  source: "https://www.wikidata.org",                                 provenance: "A ~1 GB cross-section of the Wikidata truthy dump read from Parquet via DuckDB by scripts/wikidata_parquet_to_nt.py (datatypes recovered) to N-Triples, built with rete build (remote-lazy)." },
+    "wikidata-zenodo":       { triples: null,      size: "1.49 GB", license: "CC0",                  source: "https://zenodo.org/records/21168821",                      provenance: "The same Wikidata cross-section as wikidata-1GB (scripts/wikidata_parquet_to_nt.py → rete build), published to Zenodo as a citable research artifact (record 21168821, DOI 10.5281/zenodo.21168821) and range-queried STRAIGHT from the Zenodo record — no special server, any HTTP-range + CORS host works. Zenodo hides Content-Range, so rete's reader learns the file length via a HEAD request (fix ee7a5f9). Remote-lazy." },
     "wikidata-100mb":        { triples: null,      size: "104 MB",  license: "CC0",                  source: "https://www.wikidata.org",                                 provenance: "A ~100 MB slice of the Wikidata truthy dump read from Parquet via DuckDB by scripts/wikidata_parquet_to_nt.py (datatypes recovered) to N-Triples, built with rete build (remote-lazy)." },
     "wikidata-xxl":          { triples: "600 M",   size: "5.4 GB (6 shards)", license: "CC0",         source: "https://www.wikidata.org",                                 provenance: "600M triples of the Wikidata truthy dump (piebro/wikidata-extraction Parquet) as 6 INDEPENDENT --no-pyramid .rete shards (100M / ~906 MB each), one per ~900 MB Parquet partition. Streamed + built shard-by-shard with bounded RAM/disk by scripts/build_wikidata_xxl.sh (--part-index streaming → rete build --no-pyramid → drop the ~10.7 GB N-Triples → next; ~16 min/shard). The playground auto-federates the shards (catalog `shards: [...]` → every query UNIONs across all 6). The sharded-rete model that scales past a single file toward full Wikidata (~80 shards). Heuristic datatypes (WDQS rate-limited the property map). CC0 (Wikidata)." },
     "chemotion":             { triples: "1.53 M",  size: "4.8 MB",   license: "CC BY 4.0",            source: "https://chemotion.net",                                    provenance: "The FIZ-Karlsruhe Chemotion-KG (github.com/ISE-FIZKarlsruhe/chemotion-kg, a 239 MB Git-LFS TTL; BFO/NFDICore/ChEBI-aligned, 87.7k instances) merged with CHMO + RXNO (purl.obolibrary.org/obo/*.owl, RDF/XML converted to N-Triples via rdflib), assembled with rete build --card (remote-lazy)." },
@@ -6586,6 +6587,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "orkg":                  { icon: "🔬", tags: ["research", "contributions", "scholarly"] },
     "ohm-full":              { icon: "🗺️", tags: ["geospatial", "OpenHistoricalMap", "CC0"] },
     "wikidata":              { icon: "🌐", tags: ["Wikidata", "people", "places"] },
+    "wikidata-zenodo":       { icon: "🏛️", tags: ["Wikidata", "Zenodo", "DOI", "citable-data", "HTTP-range", "people", "places"] },
     "wikidata-100mb":        { icon: "🌐", tags: ["Wikidata", "people", "occupations"] },
     "wikidata-xxl":          { icon: "⛓", tags: ["Wikidata", "sharded", "federation", "XXL", "600M", "CC0"] },
     "chemotion":             { icon: "🧪", tags: ["chemistry", "ELN", "ontology", "ChEBI", "CHMO"] },
