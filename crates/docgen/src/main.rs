@@ -29,9 +29,9 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
-        "Interactive explorations",
+        "Explore in the browser",
         &[
-            ("playground.html", "Interactive playground"),
+            ("playground-guide.md", "Playground"),
             ("plaza/index.html", "Plaza — dataset gallery"),
             ("atlas.md", "Historical atlas — SPARQL + GIS"),
             ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
@@ -46,11 +46,18 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("sparql.md", "SPARQL support"),
             ("geosparql.md", "GeoSPARQL (geometry + time)"),
             ("shacl.md", "SHACL validation"),
-            ("dataset-cards.md", "Dataset Cards"),
-            ("semantic-zoom.md", "Semantic zoom (schema pyramid)"),
             ("reasoning.md", "Reasoning & coherence"),
             ("federation.md", "Federated queries"),
-            ("compatibility.md", "Compatibility & interop"),
+            ("semantic-zoom.md", "Semantic zoom (schema pyramid)"),
+            ("compatibility.md", "Compatibility & Cypher"),
+        ],
+    ),
+    (
+        "Publish & share",
+        &[
+            ("dataset-cards.md", "Dataset Cards"),
+            ("hosting.md", "Hosting your .rete"),
+            ("media-companions.md", "Media & SQL companions"),
         ],
     ),
     (
@@ -61,17 +68,13 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
-        "In the browser",
-        &[
-            ("browser.md", "Browser / WASM"),
-            ("parallel-browser.md", "Parallel in browser (exp.)"),
-        ],
-    ),
-    (
-        "Internals",
+        "Development",
         &[
             ("architecture.md", "Architecture"),
             ("SPEC.md", "Format specification"),
+            ("browser.md", "WASM & JavaScript API"),
+            ("parallel-browser.md", "Parallel in browser (exp.)"),
+            ("data-engineering.md", "Tables, VKG & big builds"),
             ("BENCHMARK.md", "Benchmarks"),
             ("conformance.md", "SPARQL 1.1 conformance"),
         ],
@@ -149,6 +152,10 @@ fn rewrite_links(html: &str) -> String {
 /// the rest are pre-built apps that open in a new tab.
 fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
     match md {
+        "playground-guide.md" => Some(&[
+            ("playground-guide.html", "overview"),
+            ("playground.html", "launch the playground →"),
+        ]),
         "graph-map.md" => Some(&[
             ("graph-map.html", "overview"),
             ("graph-map/viewer.html", "structural map"),
