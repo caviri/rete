@@ -94,7 +94,7 @@ The playground renders one result several ways — Table, Graph, Map, Time,
 TTL/JSON-LD — and each view expects a particular query shape (a geometry column
 for Map, a year/date column for Time, …). That matrix lives with the rest of the
 playground documentation: see
-[Playground — output views](playground-guide.md#output-views--query-shapes).
+[Playground — output views](playground-guide.md#output-views).
 
 ## Federation: `SERVICE`
 
