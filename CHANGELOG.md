@@ -1,11 +1,55 @@
 # Changelog
 
 Notable changes to the **rete** crates. The crate version is tracked separately
-from the on-disk **format** version (currently `v0.2`, readers still accept
-`v0.1`); the format version lives in the header and is documented in
+from the on-disk **format** version (currently `v0.4`; each format step is a
+clean break — readers accept only the current version, so rebuild older
+files); the format version lives in the header and is documented in
 [`docs/SPEC.md`](docs/SPEC.md).
 
 The project is experimental: the format is not yet stable across versions.
+
+## Unreleased
+
+### Format & storage
+- **Format `v0.4`: six permutation indexes** (SPO/POS/OSP + SOP/PSO/OPS, #57) —
+  every triple-pattern shape gets a prefix-routed, co-sorted permutation, the
+  precondition for sort-merge joins. Roughly doubles the index payload vs the
+  three-permutation `v0.3`; a clean break (rebuild older files).
+- Format `v0.3`: the 128-byte header became a **1 KB typed section directory**
+  (up to 40 sections; new sections are just new directory entries).
+- Opt-in **full-text index** (`TEXT_INDEX` section, kind 6, #55): word → sorted
+  subject ids, range-readable per word; `rete build --text-index` +
+  `rete search --contains <word…>` (~39× a `FILTER(CONTAINS)` literal scan).
+- `rete repyramid` — rebuild a file's pyramid / schema pyramid / card / text
+  index in place, straight from the existing `.rete` (no export/build round-trip).
+
+### Query & serve
+- **SPARQL 1.1 `SERVICE` federation**: a `SERVICE <endpoint> { … }` block is
+  shipped to the remote endpoint and joined on shared variables (SILENT
+  honored; transport injected by the host — ureq in the CLI, sync XHR in wasm).
+- **`rete serve`** — a live SPARQL 1.1 Protocol endpoint (query **and Update**)
+  over one `.rete`: the base file is never mutated, updates append to an
+  N-Quads journal, `GET /snapshot.rete` publishes the merged state.
+- Nested `SELECT` subqueries; correlated property-path evaluation from a bound
+  endpoint; SPARQL 1.1 conformance at 232/309 (75.1%) of the W3C
+  query-evaluation suite.
+- **GeoSPARQL** filter functions (contains/within/intersects/disjoint/equals +
+  distance/envelope) over `geo:wktLiteral` geometry.
+- `rete shacl-url` — lazy remote SHACL: validation routed as range reads, only
+  each shape's targets fetched (#58).
+- Engine rework: lazy pull pipeline over integer slot rows, adaptive
+  index-nested-loop joins, top-k ORDER BY — wins or ties Oxigraph on 20/24
+  benchmark operators.
+
+### Ecosystem
+- Datasets are served **directly from Cloudflare R2 / any range+CORS host**
+  (Zenodo DOIs included — the length probe tries `HEAD` first); the docs grew
+  a [hosting guide](docs/hosting.md).
+- The playground grew to **40+ real datasets** with cross-source joins,
+  sharded-dataset fan-out, SQL companions (DuckDB/SQLite/Parquet), semantic
+  (RAG) search, a local SPARQL-drafting AI, media-aware result cells, and a
+  live-endpoint editing mode over `rete serve` — see the
+  [playground guide](docs/playground-guide.md).
 
 ## 0.1.0
 
