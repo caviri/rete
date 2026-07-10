@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Federated queries · rete docs</title>
+  <title>Media & SQL companions · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -212,13 +212,13 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
-        <li><a href="federation.html" class="active">Federated queries</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
         <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="compatibility.html">Compatibility & Cypher</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
-        <li><a href="media-companions.html">Media & SQL companions</a></li>
+        <li><a href="media-companions.html" class="active">Media & SQL companions</a></li>
         <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
@@ -236,202 +236,167 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Federated queries across several <code>.rete</code> files</h1>
-<p><code>rete federate</code> runs <strong>one SPARQL query across many <code>.rete</code> sources</strong> — local
-file paths and/or <code>http(s)://</code> URLs, mixed freely — and merges the results. It is
-the answer to "my data is sharded into several files; query them as one."</p>
-<pre><code class="language-sh">rete federate &lt;source…&gt; --query "&lt;SPARQL&gt;" [--json] [--no-route]
-</code></pre>
-<p>This is an honest <strong>prototype</strong>: it does <em>union</em> federation, not distributed
-joins. Read <a href="#limitations">Limitations</a> before relying on it. (Federating with
-a <strong>live SPARQL endpoint</strong> from <em>inside</em> a query is a different feature — the
-SPARQL 1.1 <code>SERVICE</code> clause, covered in <a href="sparql.html">SPARQL support</a>.)</p>
-<p>The same union+routing federation is also available <strong>in the browser</strong> — the
-<a href="#in-the-playground">playground</a> turns the SPARQL console into a multi-source
-one with a "<strong>+ Add source</strong>" button, each source range-queried lazily.</p>
-<h2>Why federation works at the term level</h2>
-<figure class="fig-right">
-  <img src="img/federation.svg" alt="A SPARQL query goes to a router that does predicate routing, fans out to three .rete files each with its own dictionary, then results are merged at the term level into a row set.">
-  <figcaption>Each file keeps its own dictionary; the router sends each pattern only to files holding its predicate, then results merge at the term level.</figcaption>
-</figure>
-<p>Every <code>.rete</code> file carries its <strong>own dictionary</strong> — the integer IDs that encode
-terms are local to one file. ID <code>42</code> in <code>cites-2021.rete</code> and ID <code>42</code> in
-<code>cites-2024.rete</code> are unrelated. So you <strong>cannot</strong> merge files by combining their
-integer indexes.</p>
-<p>Federation therefore works at the <strong>term (string) level</strong>: the query is
-evaluated independently on each file with the existing single-file engine, and
-the <strong>term-level result rows are merged</strong>. This is exactly correct for
-<strong>sharded datasets where each file independently yields complete result rows</strong> —
-the citation data below, sharded by citing year, is precisely this shape: each
-<code>cites</code> edge (and its <code>date</code>/<code>type</code>) lives wholly within one year-shard, so each
-shard produces whole, self-contained answer rows.</p>
-<h2>Merge semantics</h2>
-<table><thead><tr><th>Query form</th><th>Merge across sources</th></tr></thead><tbody>
-<tr><td><code>SELECT</code></td><td><strong>Union</strong> of solution rows, <strong>deduped</strong> (identical rows collapse), stable order (source order, then within-source order).</td></tr>
-<tr><td><code>ASK</code></td><td><strong>Logical OR</strong> — true if any source matches.</td></tr>
-<tr><td><code>CONSTRUCT</code></td><td><strong>Union</strong> of constructed triples, <strong>deduped</strong>.</td></tr>
+<h1>Media &amp; SQL companions</h1>
+<p>A <code>.rete</code> file holds the graph; a <em>published dataset</em> is usually a little more
+than that. This page covers the two kinds of companion that make a dataset shine
+in the <a href="playground-guide.html">playground</a>: <strong>media</strong> — images, IIIF pages, 3D
+models, audio, video and maps rendered inline in query results — and <strong>SQL
+companions</strong> — the same triples as Parquet/DuckDB/SQLite files for the Explore
+tab. The first half is for anyone publishing a dataset; the pipeline recipes and
+gotchas at the end are development notes.</p>
+<h2>How result cells render</h2>
+<p>A SELECT (or triples) result cell whose value is an IRI/URL is rendered
+<strong>inline</strong> when its URL matches a media heuristic — an image becomes a
+thumbnail, a <code>.glb</code> becomes a rotatable 3D model, a <code>.mp3</code> an audio player, a
+WKT literal a mini-map, and so on. The relevant code is the cell renderers in
+<code>web/playground-src/app.js</code> (<code>autoCell</code>, <code>prettyCell</code>, and the <code>looks*Url</code> /
+<code>*Cell</code> pairs).</p>
+<p><code>autoCell</code> is the default per-value heuristic. For an IRI it tries each detector
+in order and falls through to a plain link / text; for a literal it checks for a
+WKT geometry. A column header dropdown (<code>COL_TYPES</code>) can <strong>force</strong> a render type,
+overriding the heuristic — useful for an image/3D column whose URLs don't end in
+a known extension (a CDN/API URL or a bare entity IRI), or to stop a long IRI
+column from rendering.</p>
+<p>URL pattern → renderer (the detector functions, in <code>autoCell</code>'s order):</p>
+<table><thead><tr><th>value looks like</th><th>detector</th><th>renders as</th></tr></thead><tbody>
+<tr><td>Wikimedia Commons <code>Special:FilePath/…</code>, a <code>coeli</code> portraitMedia/IIIF-Image path, or <code>.jpg .jpeg .png .gif .svg .webp</code></td><td><code>looksImageUrl</code> → <code>imageCell</code></td><td>clickable thumbnail (Commons gets <code>?width=200</code>)</td></tr>
+<tr><td><code>…/manifest(.json)</code> or <code>…/iiif/…</code></td><td><code>looksIiifUrl</code> → <code>iiifCell</code></td><td>placeholder, then async-fetch the manifest and swap in a paged thumbnail; click → lightbox (enlarged page + paging + manifest metadata). Supports IIIF Presentation v2 and v3</td></tr>
+<tr><td><code>.glb .gltf .ply .splat .ksplat</code></td><td><code>looksMeshUrl</code> → <code>mesh3dCell</code></td><td>inline <code>&lt;model-viewer&gt;</code> (drag-rotate, auto-spin, ⛶ lightbox with lighting/exposure/shadow controls and a real-world scale bar). The web component lazy-loads from the jsDelivr CDN on first appearance; each viewer lazy-loads its own mesh (<code>loading="lazy"</code>) so a 60-row table doesn't fetch 60 meshes at once</td></tr>
+<tr><td>INSCRIBE (<code>inscribercproject.com</code>), PAITO (<code>paitoproject.it</code>), `sketchfab.com/(3d-models</td><td>models)/…<code>, </code>.nxz<code>(Nexus), or</code>/3dhop`</td><td><code>looks3dViewerUrl</code> → <code>viewer3dCell</code></td></tr>
+<tr><td><code>.mp3 .wav .ogg .oga .flac .m4a .aac .opus</code></td><td><code>looksAudioUrl</code> → <code>audioCell</code></td><td>inline <code>&lt;audio controls preload=metadata&gt;</code></td></tr>
+<tr><td>a bucket <code>…-spin/&lt;id&gt;.webm</code> (or <code>.mp4</code>)</td><td><code>looksSpinUrl</code> → <code>spinCell</code></td><td>autoplaying, muted, looping clip (a pre-rendered turntable preview — no WebGL)</td></tr>
+<tr><td><code>.mp4 .webm .ogv .m4v .mov</code></td><td><code>looksVideoUrl</code> → <code>videoCell</code></td><td>inline <code>&lt;video controls preload=metadata&gt;</code></td></tr>
+<tr><td>a WKT literal (<code>POINT</code>/<code>POLYGON</code>/<code>LINESTRING</code>/… — <code>looksWktGeo</code>)</td><td><code>geoCell</code></td><td>a small locator mini-map (a point sits on a cached world basemap tile; a shape fits its own bbox). With many geo rows, <strong>Output → Map</strong> plots the whole result set</td></tr>
 </tbody></table>
-<p>Dedup is over the projected variables for <code>SELECT *</code> it is over all bound
-variables. A row that appears in two shards (e.g. a node that cites the target
-and shows up in two files) is reported once.</p>
-<h2>Routing / pruning (default on)</h2>
-<p>Before evaluating, <code>federate</code> reads each source's <strong>predicate set</strong> cheaply from
-its pyramid <strong>summary</strong> — the (large) triple <strong>index is never touched</strong> (the same
-"summary first" path used by <code>rete predicates</code> and <code>rete summary-url</code>). It also
-extracts the <strong>concrete predicate IRIs</strong> the query constrains on (from the parsed
-query's basic graph patterns and property paths). A source whose predicate set is
-<strong>disjoint</strong> from the query's predicates <strong>cannot contribute a row</strong> and is
-<strong>skipped</strong>.</p>
+<p>Notes:</p>
 <ul>
-<li><code>--no-route</code> disables pruning and queries <strong>every</strong> source.</li>
-<li>A query that pins <strong>no</strong> concrete predicate (every pattern uses a variable
-predicate, e.g. <code>?s ?p ?o</code>) cannot be routed — all sources are queried.</li>
-<li>A source with no summary cannot be inspected, so it is <strong>never</strong> pruned.</li>
+<li>Each media cell gets a <strong>caption</strong> (<code>hydrateMediaMeta</code>): <code>format · dimensions/duration/real-size · file size</code>. The file size comes from a
+best-effort <code>HEAD</code> request; dimensions/duration/3D real-size come from the
+loaded element (<code>updateScaleBar</code> drives the lightbox scale bar from the live
+camera).</li>
+<li>The column dropdown options (<code>COL_TYPES</code>) are <strong>Auto / Text / Link / Image /
+IIIF / Map / 3D / Audio / Video / Spin / Number</strong>.</li>
+<li><strong>Image hover-zoom.</strong> Hovering an image thumbnail (<code>imageCell</code>/IIIF) pops a larger
+preview in a floating box anchored beside the cell and clamped to the viewport (never
+clipped by the table's scroll). A Commons <code>?width=200</code> thumb is re-requested at
+<code>width=900</code> so the zoom is sharp. Click still opens the full image / lightbox.</li>
+<li><strong>Geo cell → full map, multi-LOD.</strong> Clicking a mini-map opens a pannable/zoomable
+Leaflet map. For a dataset that ships a finer level of detail (e.g. <code>geoadmin</code>'s
+<code>g:geomFine</code> alongside the coarse <code>geo:asWKT</code>), the modal range-fetches <strong>just that
+feature's</strong> fine geometry on demand and swaps it in — the remote-lazy LOD payoff
+(zoom in → fetch only what you inspect). GeoSPARQL has no native tiling, so this is
+modelled with a second geometry property.</li>
+<li><strong>Tiles output (vector basemap).</strong> A dataset can carry a PMTiles archive
+(<code>CATALOG.pmtiles[key]</code>) — built with tippecanoe for true per-zoom LOD — rendered in
+the <strong>Output → Tiles</strong> view by protomaps-leaflet (Canvas, no WebGL). The tiles draw
+all the geometry; the SPARQL result features are highlighted on top (joined by name).
+The PMTiles can sit next to the <code>.rete</code> (a separate file) or <strong>inside</strong> it as a
+section (<code>embedded: true</code>; the reader parses the header for the section offset and
+range-reads tiles from the same URL) — one file = graph + map tiles.</li>
+<li>The page is served over HTTPS, so an <code>http://</code> media URL is upgraded to
+<code>https://</code> for the fetch (<code>httpsUpgrade</code>); the original IRI is still shown.</li>
+<li><strong>CORS is a hard requirement.</strong> Every inline-rendered media URL is fetched
+cross-origin by the browser, so the host <strong>must</strong> send
+<code>access-control-allow-origin</code>. If it doesn't, the image/IIIF/3D/audio/video
+fails to load (a IIIF manifest blocked by CORS degrades to a <code>⚠ IIIF blocked</code>
+link). The project's own storage is CORS-open; so are Wikimedia Commons, most
+IIIF servers, and <code>iiif.coeli.cat</code>.</li>
 </ul>
-<p>For local files routing reads a few hundred bytes per source; for URLs it issues
-a handful of HTTP <strong>range</strong> requests (header + dictionary + summary) — never the
-whole file.</p>
-<p>Per-source diagnostics (rows contributed + time), the queried-vs-pruned tally,
-and the list of pruned sources are written to <strong>stderr</strong> the merged results go to
-stdout.</p>
-<h2>Limitations</h2>
-<p>This is a deliberately honest prototype — it is correct for sharded data and
-clear about what it does <strong>not</strong> do.</p>
+<h2>Preparing media for a dataset</h2>
+<p>To make a cell render inline, emit a triple whose object is a CORS-open URL (or,
+for geo, a WKT literal) on a property the renderers recognise. <code>prop:</code> below is
+each dataset's own property namespace; the renderers key off the <strong>value</strong>, not
+the predicate name, so any predicate works — these are just the conventions used
+by the existing datasets.</p>
+<table><thead><tr><th>media</th><th>emit</th><th>object</th></tr></thead><tbody>
+<tr><td>image</td><td><code>prop:image</code></td><td>a CORS-open image URL or a IIIF manifest</td></tr>
+<tr><td>geo</td><td><code>geo:asWKT</code> (<code>http://www.opengis.net/ont/geosparql#asWKT</code>, a <code>geo:wktLiteral</code>)</td><td>a WKT geometry literal</td></tr>
+<tr><td>audio / video</td><td><code>prop:audio</code> / <code>prop:video</code></td><td>a CORS-open media file</td></tr>
+<tr><td>streamable 3D</td><td><code>prop:mesh</code></td><td>a hosted <code>.glb</code> URL</td></tr>
+<tr><td>turntable spin</td><td><code>prop:spinVideo</code> / <code>prop:spinGif</code></td><td>a hosted <code>…-spin/&lt;id&gt;.{webm,gif}</code> URL</td></tr>
+</tbody></table>
+<p><code>scripts/bioexplora_to_nt.py</code> and <code>scripts/smithsonian3d_to_nt.py</code> are the worked
+examples (specimens → <code>prop:image</code> + <code>geo:asWKT</code>; 3D models → <code>prop:mesh</code> +
+<code>prop:spinVideo</code>/<code>prop:spinGif</code>).</p>
+<h2>SQL companions (the Explore tab)</h2>
+<p>The playground's <strong>Explore</strong> tab queries the <em>same data</em> through DuckDB-WASM and
+SQLite-WASM, side by side with the rete engine — both fetch lazily over HTTP
+ranges (<code>httpfs</code> / VFS), so the comparison is transport-fair.
+<code>skills/rete-publish/scripts/make_companions.py</code> emits the flat, lossless
+<code>triples</code> table from the same N-Triples the <code>.rete</code> was built from:</p>
+<pre><code class="language-sh">python skills/rete-publish/scripts/make_companions.py foo.nt -o foo --parquet --duckdb --sqlite
+#  → foo.parquet, foo.duckdb, foo.sqlite
+#    columns: subject, predicate, object (raw token), otype, value, datatype, lang
+</code></pre>
+<p>Upload them next to the <code>.rete</code> and register them under <code>CATALOG.companions[key]</code>.
+For a richer one-wide-table-per-class layout, use
+<code>scripts/rdf_to_entity_tables.py</code> instead — see
+<a href="data-engineering.html">Tables, VKG &amp; big builds</a>.</p>
+<h2>Pipeline recipes (development)</h2>
+<h3>Streamable 3D (.glb)</h3>
+<p>Source meshes are usually too big to stream (20–50 MB). Compress with
+<code>gltf-transform optimize</code> (Draco geometry + WebP textures, ~40× smaller, e.g.
+20–50 MB → ~0.5–1 MB), run inside the <code>rete-gltf</code> node image:</p>
+<pre><code class="language-bash">docker build -f scripts/Dockerfile.gltf -t rete-gltf .
+docker run --rm -v "$PWD":/work -w /work rete-gltf \
+  gltf-transform optimize in.glb out.glb --compress draco --texture-compress webp
+</code></pre>
+<p>Upload the compressed <code>.glb</code> (below) and emit <code>prop:mesh</code> with its URL.
+<code>scripts/bioexplora_sketchfab.sh</code> is the end-to-end worked example:
+Sketchfab Data API → download each downloadable <code>.glb</code> → Draco+WebP compress →
+upload → write a <code>uid → mesh-url</code> TSV that <code>bioexplora_to_nt.py</code> reads.</p>
+<h3>Turntable spin previews</h3>
+<p>A pre-rendered rotating clip is a lightweight preview that plays like a GIF and
+needs no WebGL on the client. Render it with headless Blender (Cycles on
+OptiX/CUDA GPU) in the <code>rete-blender</code> image (the official Blender 3.6 LTS tarball
+— it ships the glTF/Draco importer and bundled numpy):</p>
+<pre><code class="language-bash">docker build -f scripts/Dockerfile.blender -t rete-blender .
+# batch over a "id&lt;TAB&gt;glb_url" TSV; GPU + a mounted OptiX kernel cache:
+docker run --rm --gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -e BLENDER_GPU=1 \
+  -v "$PWD":/work -v "$PWD/data/.blendercache":/root/.cache -w /work rete-blender \
+  sh scripts/render_turntables.sh data/&lt;ds&gt;/mesh_list.tsv data/&lt;ds&gt;/turntables
+</code></pre>
+<p><code>render_turntables.sh</code> loops the TSV → <code>glb_to_spin.sh</code> (per model) →
+<code>blender_turntable.py</code> (the Blender script: import, centre, frame a camera, spin
+0→360°, write PNG frames), then ffmpeg makes a tiny VP9 <code>.webm</code> plus a
+palette-optimized <code>.gif</code> fallback. Upload under a <code>…-spin/&lt;id&gt;.{webm,gif}</code> prefix
+and emit <code>prop:spinVideo</code> / <code>prop:spinGif</code>.</p>
+<h3>Uploading to storage</h3>
+<p>The playground's datasets and media are served from Cloudflare R2 at
+<code>https://data.graphplaza.com/&lt;key&gt;</code> — CORS-open, direct <code>206</code> range responses,
+no token. Upload with the S3 helper (credentials from env, never committed):</p>
+<pre><code class="language-bash"># env: S3_API_ENDPOINT, ACCESS_KEY_ID, SECRET_ACCESS_KEY
+python3 dev/r2_s3.py put &lt;bucket&gt; local/file.glb datasets/&lt;ds&gt;/file.glb
+#  → served at https://data.graphplaza.com/datasets/&lt;ds&gt;/file.glb
+</code></pre>
+<p>Any HTTP host that serves ranges + CORS works just as well — see
+<a href="hosting.html">Hosting your .rete</a> for the requirements and alternatives.
+(Source-API secrets such as <code>SKETCHFAB_TOKEN</code> come from <code>.env</code> and must never
+be committed.)</p>
+<h3>Gotchas</h3>
 <ul>
-<li><strong>Union only, no cross-file joins.</strong> A solution that needs a triple from file A
-joined with a triple from file B (e.g. <code>?x</code> from one shard joined to <code>?y</code> from
-another) will <strong>not</strong> be found. Each shard is queried in isolation. Cross-file
-joins need a term-level federated BGP engine that ships intermediate bindings
-between sources — future work.</li>
-<li><strong>Aggregates and <code>LIMIT</code> are per source, then unioned.</strong> A federated
-<code>SELECT (COUNT(*) AS ?n)</code> returns <strong>one count per source</strong> (unioned), not a
-global sum and <code>LIMIT 5</code> over two shards can return up to <strong>10</strong> rows (5 from
-each). This keeps the prototype honest rather than silently wrong. Sum / cap
-client-side, or wait for a future <code>--reduce</code> that folds per-source aggregates.</li>
-<li><strong><code>GROUP BY</code></strong> is likewise evaluated per source then unioned, so the same group
-key can appear once per shard.</li>
+<li><strong>CORS is mandatory</strong> — see above; the single most common reason a media cell
+shows nothing is a host that doesn't send <code>access-control-allow-origin</code>.</li>
+<li><strong>Windows Python writes CRLF.</strong> <code>print()</code> on Windows emits <code>\r\n</code>, so a
+uid/URL list piped through <code>python</code> carries a trailing <code>\r</code> that corrupts the
+next URL/header. Strip it (<code>tr -d '\r'</code>, or <code>uid=${uid%$'\r'}</code> after <code>read</code>),
+or generate the list with Linux python (e.g. inside the dev container).</li>
+<li><strong><code>while read … done &lt; file</code> eats the loop's stdin.</strong> Any inner command that
+reads stdin (ffmpeg, sometimes curl/wget, a nested script) consumes the loop's
+TSV → truncated/garbled iterations. Pass <code>-nostdin</code> to ffmpeg and <code>&lt;/dev/null</code>
+to curl/wget and nested script calls inside such loops.</li>
+<li><strong>Source-API rate limits.</strong> The Sketchfab <code>/download</code> endpoint throttles
+bursts; add a small delay between requests and retry with exponential backoff
+(see <code>glb_url()</code> in <code>bioexplora_sketchfab.sh</code>: 2,4,8,16 s).</li>
+<li><strong>Atomic writes.</strong> Download/compress to a <code>.part</code> temp then <code>mv</code> into place, so
+an interrupted run never leaves a truncated file that a <code>[ -s file ] &amp;&amp; continue</code> resume-guard would wrongly accept as complete.</li>
+<li><strong>Blender headless.</strong> Use the official Blender tarball (the distro <code>apt</code>
+package can lack <code>libextern_draco.so</code> and bundled numpy). Cycles renders
+headless on GPU (OptiX); on a new GPU arch the first run pays a one-time
+~200 s OptiX kernel JIT that caches under <code>/root/.nv</code> — mount it to keep warm.</li>
+<li><strong>Image split.</strong> <code>gltf-transform</code> runs in the <code>rete-gltf</code> node image; Blender
+in the <code>rete-blender</code> image.</li>
 </ul>
-<h2>Real example — OpenCitations, sharded by citing year</h2>
-<p>The repo ships a real dataset: citations <strong>of the AlphaFold paper</strong>
-(<code>&lt;https://doi.org/10.1038/s41586-021-03819-2&gt;</code>), sharded by citing year into
-<code>data/opencitations/cites-&lt;year&gt;.rete</code>. Each shard uses
-<code>&lt;http://purl.org/spar/cito/cites&gt;</code>, <code>&lt;http://purl.org/dc/terms/date&gt;</code>, and
-<code>rdf:type</code>. (Regenerate with <code>python3 scripts/fetch_opencitations.py</code>, then
-<code>for f in data/opencitations/*.nt; do rete build "$f" -o "${f%.nt}.rete"; done</code>.)</p>
-<h3>Federated SELECT across two year-shards</h3>
-<pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE {
-             ?citing &lt;http://purl.org/spar/cito/cites&gt;
-                     &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'
-</code></pre>
-<pre><code>  data/opencitations/cites-2021.rete: 5 row(s) in 3.6ms
-  data/opencitations/cites-2024.rete: 5 row(s) in 15.6ms
-10 solution(s)
-federated 2 source(s): 2 queried, 0 pruned (routing on); 10 merged result(s)
-?citing=&lt;https://doi.org/10.1001/jama.2021.15728&gt;
-?citing=&lt;https://doi.org/10.1002/2211-5463.13301&gt;
-?citing=&lt;https://doi.org/10.1002/2211-5463.13316&gt;
-?citing=&lt;https://doi.org/10.1002/advs.202102592&gt;
-?citing=&lt;https://doi.org/10.1002/advs.202103807&gt;
-?citing=&lt;https://doi.org/10.1001/jamadermatol.2024.1126&gt;
-?citing=&lt;https://doi.org/10.1001/jamaophthalmol.2024.3829&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14811&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14823&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14836&gt;
-</code></pre>
-<p>Note the <strong>per-source <code>LIMIT</code></strong> caveat in action: <code>LIMIT 5</code> yielded 5 rows from
-<em>each</em> shard, so the union holds 10. The first five are 2021 citers, the last
-five 2024 citers.</p>
-<h3>Routing in action — a predicate-disjoint shard is pruned</h3>
-<p>Add a source that uses a different predicate (here a shard whose only predicate
-is <code>rdfs:label</code>, not <code>cito:cites</code>). The <code>cites</code> query prunes it without ever
-reading its index:</p>
-<pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete other-demo.rete data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE {
-             ?citing &lt;http://purl.org/spar/cito/cites&gt;
-                     &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 3'
-</code></pre>
-<pre><code>  data/opencitations/cites-2021.rete: 3 row(s) in 3.4ms
-  data/opencitations/cites-2024.rete: 3 row(s) in 15.8ms
-6 solution(s)
-federated 3 source(s): 2 queried, 1 pruned (routing on); 6 merged result(s)
-  pruned (predicate-disjoint): other-demo.rete
-…
-</code></pre>
-<p><code>--no-route</code> would instead query all three (the label-only shard contributing 0
-rows). For year-shards that all share <code>cito:cites</code>, routing keeps every shard —
-pruning helps when sources are <strong>heterogeneous</strong> (different predicates per file),
-which is the common federation case.</p>
-<h3>ASK federation (logical OR)</h3>
-<pre><code class="language-sh">rete federate data/opencitations/cites-2017.rete data/opencitations/cites-2024.rete \
-  --query 'ASK { ?x &lt;http://purl.org/spar/cito/cites&gt;
-                    &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; }'
-# → true   (at least one shard has a citation)
-</code></pre>
-<h3>URL sources</h3>
-<p>Sources may be <code>http(s)://</code> URLs of <code>.rete</code> files hosted on S3, GitHub, or any
-CDN that honors HTTP <strong>Range</strong> requests — mix them with local paths freely:</p>
-<pre><code class="language-sh">rete federate \
-  https://example.org/cites-2021.rete \
-  data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
-                                          &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; }'
-</code></pre>
-<p>Each URL is opened with range reads (header → dictionary → index → pyramid),
-never a full download both routing and evaluation fetch only the bytes they need.</p>
-<h2>In the playground</h2>
-<p>The <a href="playground.html">playground</a> brings the same federation to the browser:
-<strong>federation is a kind of SPARQL</strong>, so it lives in the SPARQL console rather than
-a separate mode. Under the query editor a <strong>Sources</strong> strip shows the current
-dataset; a <strong>+ Add source</strong> button federates with another source three ways:</p>
-<ul>
-<li><strong>From catalog</strong> — any registered dataset (a remote one is range-queried
-lazily; a bundled one is queried in memory);</li>
-<li><strong>.rete link</strong> — a pasted remote URL, range-queried lazily;</li>
-<li><strong>SPARQL endpoint</strong> — a live endpoint (<code>SELECT</code> / <code>ASK</code>) over the SPARQL
-protocol, subject to the endpoint's CORS policy.</li>
-</ul>
-<p>Running with <strong>two or more sources</strong> fans the same query out to each and merges
-with the exact CLI semantics above — <code>SELECT</code> union+dedup, <code>ASK</code> OR, <code>CONSTRUCT</code>
-triple-union — and a per-source banner reports the rows and bytes each source
-contributed. Each source keeps its own lazy reader, so two remote <code>.rete</code> files
-are read independently and lazily into one merge; it is orchestrated in the
-playground's JS over the existing single-source query paths, so no extra engine
-code runs. An example can pre-load its partner with one click. A <strong>live line ticks
-during the query</strong> — <code>N/M sources answered · range requests · MB · elapsed</code> — so a
-long multi-source fan-out isn't a silent spinner.</p>
-<h3>Beyond union — cross-source joins and sharded datasets</h3>
-<p>The playground goes past the CLI's union: it also does a <strong>term-level cross-source
-JOIN</strong> — one BGP split across sources and joined on the shared variables — so the
-"cross-file join is not found" limit above is a <em>CLI</em> limit, not a playground one.
-Each triple pattern is routed to a source by its predicate (and by where its
-subject was bound), each source answers its own sub-pattern with the join keys
-already narrowed down, and the partial rows are joined in the browser. Queries
-that can't be split this way (OPTIONAL / UNION / aggregates / property paths)
-fall back to the union path. So e.g. USTC editions ⋈ the Embassy books they
-cite, joined on the book IRI, returns real joined rows across the two files.</p>
-<p>A <strong>sharded dataset</strong> is registered as one logical graph with a <code>shards: [url0, url1, …]</code> list in the catalog; the playground treats <code>url0</code> as the primary and the rest as
-intrinsic federation partners, so <strong>every query auto-fans across all shards</strong> (union)
-and the rows merge — you query it like one dataset (a "⛓ N shards" chip shows in the
-Sources strip). This is how a graph too big to build as a single file — e.g. a 600 M-
-triple Wikidata split into six independent <code>--no-pyramid</code> shards — is served and queried
-as one. The path to a bigger graph is just more shards.</p>
-<p><strong>Worked example — resolve five terms across two ontologies.</strong> The bundled
-<code>chebi-full</code> (the complete ChEBI ontology, 8.83 M triples) and <code>chemotion</code> (a
-chemistry ELN graph merged with CHMO + RXNO) share <code>CHEBI_*</code> IRIs plus
-<code>rdfs:label</code>/<code>rdfs:subClassOf</code>, but neither resolves every label. Pick either
-dataset, open its <strong>Federation</strong> example (it adds the other as a second source),
-and run:</p>
-<pre><code class="language-sparql">PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
-PREFIX obo:  &lt;http://purl.obolibrary.org/obo/&gt;
-SELECT ?term ?label WHERE {
-  VALUES ?term { obo:CHEBI_15377 obo:CHEBI_27732 obo:CHMO_0000228 obo:BFO_0000015 obo:CHEBI_23367 }
-  ?term rdfs:label ?label
-}
-</code></pre>
-<p><code>chebi-full</code> answers <code>water</code> / <code>caffeine</code> / <code>molecular entity</code>; <code>chemotion</code>
-answers <code>spectroscopy</code> / <code>process</code>; the union resolves all five. The result line
-shows the per-source split — no single file has all the answers.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -439,7 +404,7 @@ shows the per-source split — no single file has all the answers.</p>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/federation.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/media-companions.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

@@ -199,8 +199,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
-        <li class="nav-h">Interactive explorations</li>
-        <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-h">Explore in the browser</li>
+        <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
         <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
         <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
@@ -211,20 +211,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="sparql.html" class="active">SPARQL support</a></li>
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
-        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
+        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
+        <li class="nav-h">Publish & share</li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="hosting.html">Hosting your .rete</a></li>
+        <li><a href="media-companions.html">Media & SQL companions</a></li>
         <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li class="nav-h">In the browser</li>
-        <li><a href="browser.html">Browser / WASM</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li class="nav-h">Internals</li>
+        <li class="nav-h">Development</li>
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="browser.html">WASM & JavaScript API</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
         <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
     </ul>
@@ -274,8 +277,7 @@ SELECT ?x WHERE { ?x ex:knows? ex:Carol }
 counts, without reading the triple index:</p>
 <pre><code class="language-sh">rete predicates data.rete            # CLI
 </code></pre>
-<pre><code class="language-sparql"># (the summary path; see SummaryView::predicate_totals)
-</code></pre>
+<p>The same per-predicate totals back the playground's index-free aggregate path.</p>
 <h3>Evaluation model</h3>
 <p>The algebra evaluates as a lazy pull pipeline over integer slot rows: joins,
 <code>MINUS</code>, <code>DISTINCT</code>, filters, and <code>GRAPH</code> stream, so <code>LIMIT</code> and <code>ASK</code> stop the
@@ -287,7 +289,7 @@ join order is a selectivity heuristic — and the benchmark page separates
 correctness coverage from latency and calls out the shapes where Oxigraph still
 wins.</p>
 <h3>Community-split evaluation</h3>
-<p><code>eval_select_communities</code> evaluates a SELECT with a <strong>split-where-sound,
+<p>The engine can also evaluate a SELECT with a <strong>split-where-sound,
 global-where-not</strong> strategy that always returns exactly the whole-graph
 answer. The one place the pyramid partition genuinely applies is a <em>subject
 star</em> — a group of triple patterns sharing one variable subject — because
@@ -304,56 +306,11 @@ rows. A query is refused only when nothing in it can split (no BGP with a
 variable subject — the strategy would add nothing) or under <code>FROM</code> / <code>FROM NAMED</code>. The playground's "Split by community" strategy uses this; natively
 the per-star, per-community partials are the seam for parallel evaluation.</p>
 <h2>Output views &amp; query shapes</h2>
-<p>The WASM playground's <strong>Output</strong> menu renders one result several ways. Each view
-expects a particular query shape — write your <code>SELECT</code>/<code>CONSTRUCT</code> so the columns
-it needs are present.</p>
-<table><thead><tr><th>Output</th><th>Needs</th><th>Query shape</th></tr></thead><tbody>
-<tr><td><strong>Table</strong></td><td>anything</td><td>any <code>SELECT</code>, <code>ASK</code>, or <code>CONSTRUCT</code></td></tr>
-<tr><td><strong>Graph</strong></td><td>edges to draw</td><td>a <code>CONSTRUCT { ?a ?p ?b } …</code>, or a <code>SELECT</code> with <strong>≥ 2 variables</strong> — 2 vars are read as <code>v1 → v2</code> ("related") edges; <strong>3 vars</strong> are read as (subject, predicate, object). A 1-variable <code>SELECT</code> has nothing to connect.</td></tr>
-<tr><td><strong>Map</strong></td><td>a WKT geometry column</td><td>a <code>SELECT</code> that binds a variable to a <code>geo:wktLiteral</code> (e.g. <code>?w</code> via <code>geo:hasGeometry/geo:asWKT ?w</code>). <code>POINT</code> / <code>LINESTRING</code> / <code>POLYGON</code> / <code>MULTI*</code> all plot; the first <strong>non-geometry</strong> column becomes each feature's hover label.</td></tr>
-<tr><td><strong>Time</strong></td><td>a year / date column</td><td>a <code>SELECT</code> that binds a variable to <code>xsd:gYear</code>, <code>xsd:date</code> / <code>xsd:dateTime</code>, or a plain <strong>year integer</strong> (e.g. <code>ex:year ?y</code>). The other selected column(s) become the items listed in each cell's tooltip.</td></tr>
-<tr><td><strong>TTL / JSON-LD</strong></td><td>triples</td><td>a <code>CONSTRUCT</code> query — these serialise the constructed graph. A <code>SELECT</code> has no triples to serialise.</td></tr>
-</tbody></table>
-<p>Rules of thumb:</p>
-<ul>
-<li><strong>Map, Time and Graph render the bindings of a <code>SELECT</code></strong>, so put the geometry /
-year / edge columns in your <code>SELECT</code> list. (<code>CONSTRUCT</code> also feeds Graph / TTL /
-JSON-LD directly.)</li>
-<li><strong>Map</strong> and <strong>Time</strong> are available on <strong>every</strong> query (no per-dataset gating):
-each detects its column in the actual result and renders, or shows a short note
-if it's absent — so geometry or dates a query surfaces unexpectedly (e.g. from a
-federated join, or data the dataset's examples never touch) still plot.</li>
-<li>Run these views under the <strong>Whole index</strong> (or <strong>Split by community</strong>) strategy.
-<strong>Progressive</strong> answers only from the pyramid summary (counts and community
-structure), so it has no per-row geometry or dates to plot.</li>
-<li><strong>Time</strong> buckets years automatically to fit the span (per-year for short ranges,
-up to per-1000-year for very long ones); negative years are read as <strong>BCE</strong>. A
-cell's colour encodes the <strong>number of items</strong> in that bucket — hover for the list.</li>
-<li>The map is an <strong>offline equirectangular plot</strong> of the WKT coordinates (no tiles /
-network), auto-fit to the bounding box of the returned geometries.</li>
-</ul>
-<pre><code class="language-sparql"># MAP — labelled territories as polygons (history dataset)
-PREFIX geo:  &lt;http://www.opengis.net/ont/geosparql#&gt;
-PREFIX ex:   &lt;http://ex/&gt;
-PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
-SELECT ?territory ?w WHERE {
-  ?t ex:year 1914 ; rdfs:label ?territory ;
-     geo:hasGeometry/geo:asWKT ?w .
-}
-
-# TIME — how many territories exist per year, as a multi-year heatmap
-PREFIX ex:   &lt;http://ex/&gt;
-PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
-SELECT ?year ?territory WHERE { ?t ex:year ?year ; rdfs:label ?territory }
-
-# GRAPH — a 3-variable SELECT read as (subject, predicate, object)
-PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
-SELECT ?a ?p ?b WHERE { ?a ?p ?b . FILTER(?p = cito:cites) } LIMIT 50
-
-# TTL / JSON-LD — a CONSTRUCT produces serialisable triples
-PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
-CONSTRUCT { ?a cito:cites ?b } WHERE { ?a cito:cites ?b } LIMIT 50
-</code></pre>
+<p>The playground renders one result several ways — Table, Graph, Map, Time,
+TTL/JSON-LD — and each view expects a particular query shape (a geometry column
+for Map, a year/date column for Time, …). That matrix lives with the rest of the
+playground documentation: see
+<a href="playground-guide.html#output-views">Playground — output views</a>.</p>
 <h2>Federation: <code>SERVICE</code></h2>
 <p>SPARQL 1.1 federated query is supported: a <code>SERVICE &lt;endpoint&gt; { … }</code> block is
 shipped (as written) to the remote SPARQL endpoint at evaluation time and its

@@ -199,8 +199,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
         <li><a href="scenario.html" class="active">Real-world scenario</a></li>
-        <li class="nav-h">Interactive explorations</li>
-        <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-h">Explore in the browser</li>
+        <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
         <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
         <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
@@ -211,20 +211,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
-        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
+        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
+        <li class="nav-h">Publish & share</li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="hosting.html">Hosting your .rete</a></li>
+        <li><a href="media-companions.html">Media & SQL companions</a></li>
         <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li class="nav-h">In the browser</li>
-        <li><a href="browser.html">Browser / WASM</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li class="nav-h">Internals</li>
+        <li class="nav-h">Development</li>
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="browser.html">WASM & JavaScript API</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
         <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
     </ul>
@@ -251,7 +254,7 @@ CVE?"</em> — over HTTP, fetching only the bytes the query needs, with no datab
 #  valid: 13 statement(s) — 13 in the default graph, 0 named graph(s)
 
 rete build examples/deps.nt -o deps.rete
-#  wrote deps.rete: 13 triples, 12 terms, 2 pyramid level(s), 610 bytes
+#  wrote deps.rete: 13 triples, 12 terms, 2 pyramid level(s), 2035 bytes
 
 rete verify deps.rete        # confirm the content hash
 #  OK — content hash matches
@@ -268,14 +271,17 @@ doubles as an ETag-like id, so clients can cache byte ranges forever.</p>
 <p>Everything that (transitively) depends on the vulnerable <code>log4x</code>:</p>
 <pre><code class="language-sh">rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
-#  ?d=&lt;http://ex/app&gt;
+#  4 solution(s)
+#  (fetched 2035 bytes in 1 range request(s); file is 2035 bytes)
 #  ?d=&lt;http://ex/auth&gt;
 #  ?d=&lt;http://ex/logging&gt;
 #  ?d=&lt;http://ex/web&gt;
-#  (fetched 606 bytes in 4 range request(s); file is 610 bytes)
+#  ?d=&lt;http://ex/app&gt;
 </code></pre>
-<p><code>safejson</code> is correctly excluded — it doesn't reach the vulnerable package. The
-client fetched the file in <strong>4 bounded range requests</strong>, never scanning linearly.</p>
+<p><code>safejson</code> is correctly excluded — it doesn't reach the vulnerable package. At
+this toy size the whole file fits in <strong>one bounded range request</strong>; on a real
+graph the same query pulls a handful of small ranges — dictionary chunks and
+index tiles — from a file thousands of times larger, never scanning linearly.</p>
 <h3>Just the affected <em>libraries</em>, with the CVE id</h3>
 <pre><code class="language-sh">rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete \
   "PREFIX e: &lt;http://ex/&gt;
@@ -309,7 +315,7 @@ curl -s -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | head -c 4 ; ech
 #  RETE
 curl -sD - -o /dev/null -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | grep -i '206\|content-range'
 #  HTTP/2 206
-#  content-range: bytes 0-1023/1610
+#  content-range: bytes 0-1023/2035
 </code></pre>
 <p>That <code>206</code> is the contract: a host that ignores <code>Range</code> and returns <code>200</code> is
 rejected by the client (it would otherwise read the wrong bytes). For large

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Federated queries · rete docs</title>
+  <title>Playground · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -200,7 +200,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="getting-started.html">Getting started</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li class="nav-h">Explore in the browser</li>
-        <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
+        <li class="nav-group"><details open><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html" class="active">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
         <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
         <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
@@ -212,7 +212,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
-        <li><a href="federation.html" class="active">Federated queries</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
         <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="compatibility.html">Compatibility & Cypher</a></li>
         <li class="nav-h">Publish & share</li>
@@ -236,202 +236,165 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Federated queries across several <code>.rete</code> files</h1>
-<p><code>rete federate</code> runs <strong>one SPARQL query across many <code>.rete</code> sources</strong> — local
-file paths and/or <code>http(s)://</code> URLs, mixed freely — and merges the results. It is
-the answer to "my data is sharded into several files; query them as one."</p>
-<pre><code class="language-sh">rete federate &lt;source…&gt; --query "&lt;SPARQL&gt;" [--json] [--no-route]
-</code></pre>
-<p>This is an honest <strong>prototype</strong>: it does <em>union</em> federation, not distributed
-joins. Read <a href="#limitations">Limitations</a> before relying on it. (Federating with
-a <strong>live SPARQL endpoint</strong> from <em>inside</em> a query is a different feature — the
-SPARQL 1.1 <code>SERVICE</code> clause, covered in <a href="sparql.html">SPARQL support</a>.)</p>
-<p>The same union+routing federation is also available <strong>in the browser</strong> — the
-<a href="#in-the-playground">playground</a> turns the SPARQL console into a multi-source
-one with a "<strong>+ Add source</strong>" button, each source range-queried lazily.</p>
-<h2>Why federation works at the term level</h2>
-<figure class="fig-right">
-  <img src="img/federation.svg" alt="A SPARQL query goes to a router that does predicate routing, fans out to three .rete files each with its own dictionary, then results are merged at the term level into a row set.">
-  <figcaption>Each file keeps its own dictionary; the router sends each pattern only to files holding its predicate, then results merge at the term level.</figcaption>
-</figure>
-<p>Every <code>.rete</code> file carries its <strong>own dictionary</strong> — the integer IDs that encode
-terms are local to one file. ID <code>42</code> in <code>cites-2021.rete</code> and ID <code>42</code> in
-<code>cites-2024.rete</code> are unrelated. So you <strong>cannot</strong> merge files by combining their
-integer indexes.</p>
-<p>Federation therefore works at the <strong>term (string) level</strong>: the query is
-evaluated independently on each file with the existing single-file engine, and
-the <strong>term-level result rows are merged</strong>. This is exactly correct for
-<strong>sharded datasets where each file independently yields complete result rows</strong> —
-the citation data below, sharded by citing year, is precisely this shape: each
-<code>cites</code> edge (and its <code>date</code>/<code>type</code>) lives wholly within one year-shard, so each
-shard produces whole, self-contained answer rows.</p>
-<h2>Merge semantics</h2>
-<table><thead><tr><th>Query form</th><th>Merge across sources</th></tr></thead><tbody>
-<tr><td><code>SELECT</code></td><td><strong>Union</strong> of solution rows, <strong>deduped</strong> (identical rows collapse), stable order (source order, then within-source order).</td></tr>
-<tr><td><code>ASK</code></td><td><strong>Logical OR</strong> — true if any source matches.</td></tr>
-<tr><td><code>CONSTRUCT</code></td><td><strong>Union</strong> of constructed triples, <strong>deduped</strong>.</td></tr>
+<h1>The playground</h1>
+<p><strong><a href="playground.html">▶ Launch the playground</a></strong> — one static HTML page that runs
+the full rete engine in WebAssembly. No server, no account, no install: it
+works offline, even opened from <code>file://</code>. Everything below happens in your
+browser.</p>
+<p>It is the fastest way to understand what rete <em>is</em>: pick one of the <strong>40+
+published datasets</strong> — library catalogues, citation networks, ontologies,
+historical maps, 3D museum collections — and query it live. The small ones are
+embedded in the page; the big ones (up to a <strong>117 M-triple library graph</strong> and
+a <strong>1 GB Wikidata slice</strong>) stay on their URL and are <strong>range-read lazily</strong>: a
+query fetches only the byte ranges it touches, and a counter shows exactly how
+few bytes crossed the wire.</p>
+<h2>Pick a dataset</h2>
+<p>The dataset picker groups the catalog by theme (heritage, science, reference,
+demos). Each entry shows its size, license, and a description; picking one
+loads its <strong>example queries</strong> as one-click chips, each with a short tip
+explaining what the query shows. A 🔗 on every chip copies a <strong>deep link</strong> —
+<code>playground.html#dataset=&lt;key&gt;&amp;ex=&lt;n&gt;</code> — that reopens the playground on that
+dataset with that example loaded, ready to share.</p>
+<p>A dataset can also be <strong>sharded</strong>: one logical graph served as several files
+(a "⛓ N shards" chip appears). Every query fans out across the shards and the
+rows merge — you just query it as one dataset.</p>
+<p>Not in the catalog? <strong>+ Add source → Connect (lazy)</strong> opens any <code>.rete</code> URL
+whose host serves ranges + CORS (see <a href="hosting.html">Hosting your .rete</a>), and the
+<strong>Build</strong> mode (below) turns your own RDF into a queryable file without leaving
+the page.</p>
+<h2>Write a query</h2>
+<p>The SPARQL editor comes with syntax highlighting and context autocomplete. When
+you don't know the graph's vocabulary yet:</p>
+<ul>
+<li><strong>🔎 Find a term</strong> browses the dataset's classes and predicates (instant,
+from the self-describing card) and searches <strong>entities by label</strong> — lazily
+over HTTP ranges on a remote graph. Click a result to drop its IRI at the
+cursor; each predicate offers a <strong>values ›</strong> drill listing the distinct
+objects it takes.</li>
+<li><strong>Labels chips</strong> decode the IRIs in your query to human labels inline, so
+<code>wd:Q937</code> reads as <em>Albert Einstein</em> while you type.</li>
+<li><strong>✨ SPARQL AI</strong> drafts a query from a plain-language request using a small
+language model that runs <strong>locally on your GPU</strong> (WebGPU) — nothing is sent
+to any API. It is grounded in the dataset's example queries, so its drafts
+use the right vocabulary.</li>
+</ul>
+<p>Results stream into the table with media-aware cells: images become
+thumbnails, IIIF manifests page through scans, <code>.glb</code> models rotate inline,
+WKT geometries plot on mini-maps — see
+<a href="media-companions.html">Media &amp; SQL companions</a> for the full matrix.</p>
+<h2>Output views</h2>
+<p>The <strong>Output</strong> menu renders one result several ways. Each view expects a
+particular query shape — write your <code>SELECT</code>/<code>CONSTRUCT</code> so the columns it
+needs are present.</p>
+<table><thead><tr><th>Output</th><th>Needs</th><th>Query shape</th></tr></thead><tbody>
+<tr><td><strong>Table</strong></td><td>anything</td><td>any <code>SELECT</code>, <code>ASK</code>, or <code>CONSTRUCT</code></td></tr>
+<tr><td><strong>Graph</strong></td><td>edges to draw</td><td>a <code>CONSTRUCT { ?a ?p ?b } …</code>, or a <code>SELECT</code> with <strong>≥ 2 variables</strong> — 2 vars are read as <code>v1 → v2</code> ("related") edges; <strong>3 vars</strong> are read as (subject, predicate, object). A 1-variable <code>SELECT</code> has nothing to connect.</td></tr>
+<tr><td><strong>Map</strong></td><td>a WKT geometry column</td><td>a <code>SELECT</code> that binds a variable to a <code>geo:wktLiteral</code> (e.g. <code>?w</code> via <code>geo:hasGeometry/geo:asWKT ?w</code>). <code>POINT</code> / <code>LINESTRING</code> / <code>POLYGON</code> / <code>MULTI*</code> all plot; the first <strong>non-geometry</strong> column becomes each feature's hover label.</td></tr>
+<tr><td><strong>Time</strong></td><td>a year / date column</td><td>a <code>SELECT</code> that binds a variable to <code>xsd:gYear</code>, <code>xsd:date</code> / <code>xsd:dateTime</code>, or a plain <strong>year integer</strong> (e.g. <code>ex:year ?y</code>). The other selected column(s) become the items listed in each cell's tooltip.</td></tr>
+<tr><td><strong>TTL / JSON-LD</strong></td><td>triples</td><td>a <code>CONSTRUCT</code> query — these serialise the constructed graph. A <code>SELECT</code> has no triples to serialise.</td></tr>
 </tbody></table>
-<p>Dedup is over the projected variables for <code>SELECT *</code> it is over all bound
-variables. A row that appears in two shards (e.g. a node that cites the target
-and shows up in two files) is reported once.</p>
-<h2>Routing / pruning (default on)</h2>
-<p>Before evaluating, <code>federate</code> reads each source's <strong>predicate set</strong> cheaply from
-its pyramid <strong>summary</strong> — the (large) triple <strong>index is never touched</strong> (the same
-"summary first" path used by <code>rete predicates</code> and <code>rete summary-url</code>). It also
-extracts the <strong>concrete predicate IRIs</strong> the query constrains on (from the parsed
-query's basic graph patterns and property paths). A source whose predicate set is
-<strong>disjoint</strong> from the query's predicates <strong>cannot contribute a row</strong> and is
-<strong>skipped</strong>.</p>
+<p>Rules of thumb:</p>
 <ul>
-<li><code>--no-route</code> disables pruning and queries <strong>every</strong> source.</li>
-<li>A query that pins <strong>no</strong> concrete predicate (every pattern uses a variable
-predicate, e.g. <code>?s ?p ?o</code>) cannot be routed — all sources are queried.</li>
-<li>A source with no summary cannot be inspected, so it is <strong>never</strong> pruned.</li>
+<li><strong>Map, Time and Graph render the bindings of a <code>SELECT</code></strong>, so put the geometry /
+year / edge columns in your <code>SELECT</code> list. (<code>CONSTRUCT</code> also feeds Graph / TTL /
+JSON-LD directly.)</li>
+<li><strong>Map</strong> and <strong>Time</strong> are available on <strong>every</strong> query (no per-dataset gating):
+each detects its column in the actual result and renders, or shows a short note
+if it's absent — so geometry or dates a query surfaces unexpectedly (e.g. from a
+federated join) still plot.</li>
+<li>Run these views under the <strong>Whole index</strong> (or <strong>Split by community</strong>) strategy.
+<strong>Progressive</strong> answers only from the pyramid summary (counts and community
+structure), so it has no per-row geometry or dates to plot.</li>
+<li><strong>Time</strong> buckets years automatically to fit the span (per-year for short ranges,
+up to per-1000-year for very long ones); negative years are read as <strong>BCE</strong>. A
+cell's colour encodes the <strong>number of items</strong> in that bucket — hover for the list.</li>
+<li>The map is an <strong>offline equirectangular plot</strong> of the WKT coordinates (no tiles /
+network), auto-fit to the bounding box of the returned geometries. A dataset
+that ships a PMTiles basemap adds a true tiled <strong>Output → Tiles</strong> view.</li>
 </ul>
-<p>For local files routing reads a few hundred bytes per source; for URLs it issues
-a handful of HTTP <strong>range</strong> requests (header + dictionary + summary) — never the
-whole file.</p>
-<p>Per-source diagnostics (rows contributed + time), the queried-vs-pruned tally,
-and the list of pruned sources are written to <strong>stderr</strong> the merged results go to
-stdout.</p>
-<h2>Limitations</h2>
-<p>This is a deliberately honest prototype — it is correct for sharded data and
-clear about what it does <strong>not</strong> do.</p>
-<ul>
-<li><strong>Union only, no cross-file joins.</strong> A solution that needs a triple from file A
-joined with a triple from file B (e.g. <code>?x</code> from one shard joined to <code>?y</code> from
-another) will <strong>not</strong> be found. Each shard is queried in isolation. Cross-file
-joins need a term-level federated BGP engine that ships intermediate bindings
-between sources — future work.</li>
-<li><strong>Aggregates and <code>LIMIT</code> are per source, then unioned.</strong> A federated
-<code>SELECT (COUNT(*) AS ?n)</code> returns <strong>one count per source</strong> (unioned), not a
-global sum and <code>LIMIT 5</code> over two shards can return up to <strong>10</strong> rows (5 from
-each). This keeps the prototype honest rather than silently wrong. Sum / cap
-client-side, or wait for a future <code>--reduce</code> that folds per-source aggregates.</li>
-<li><strong><code>GROUP BY</code></strong> is likewise evaluated per source then unioned, so the same group
-key can appear once per shard.</li>
-</ul>
-<h2>Real example — OpenCitations, sharded by citing year</h2>
-<p>The repo ships a real dataset: citations <strong>of the AlphaFold paper</strong>
-(<code>&lt;https://doi.org/10.1038/s41586-021-03819-2&gt;</code>), sharded by citing year into
-<code>data/opencitations/cites-&lt;year&gt;.rete</code>. Each shard uses
-<code>&lt;http://purl.org/spar/cito/cites&gt;</code>, <code>&lt;http://purl.org/dc/terms/date&gt;</code>, and
-<code>rdf:type</code>. (Regenerate with <code>python3 scripts/fetch_opencitations.py</code>, then
-<code>for f in data/opencitations/*.nt; do rete build "$f" -o "${f%.nt}.rete"; done</code>.)</p>
-<h3>Federated SELECT across two year-shards</h3>
-<pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE {
-             ?citing &lt;http://purl.org/spar/cito/cites&gt;
-                     &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'
-</code></pre>
-<pre><code>  data/opencitations/cites-2021.rete: 5 row(s) in 3.6ms
-  data/opencitations/cites-2024.rete: 5 row(s) in 15.6ms
-10 solution(s)
-federated 2 source(s): 2 queried, 0 pruned (routing on); 10 merged result(s)
-?citing=&lt;https://doi.org/10.1001/jama.2021.15728&gt;
-?citing=&lt;https://doi.org/10.1002/2211-5463.13301&gt;
-?citing=&lt;https://doi.org/10.1002/2211-5463.13316&gt;
-?citing=&lt;https://doi.org/10.1002/advs.202102592&gt;
-?citing=&lt;https://doi.org/10.1002/advs.202103807&gt;
-?citing=&lt;https://doi.org/10.1001/jamadermatol.2024.1126&gt;
-?citing=&lt;https://doi.org/10.1001/jamaophthalmol.2024.3829&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14811&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14823&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14836&gt;
-</code></pre>
-<p>Note the <strong>per-source <code>LIMIT</code></strong> caveat in action: <code>LIMIT 5</code> yielded 5 rows from
-<em>each</em> shard, so the union holds 10. The first five are 2021 citers, the last
-five 2024 citers.</p>
-<h3>Routing in action — a predicate-disjoint shard is pruned</h3>
-<p>Add a source that uses a different predicate (here a shard whose only predicate
-is <code>rdfs:label</code>, not <code>cito:cites</code>). The <code>cites</code> query prunes it without ever
-reading its index:</p>
-<pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete other-demo.rete data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE {
-             ?citing &lt;http://purl.org/spar/cito/cites&gt;
-                     &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 3'
-</code></pre>
-<pre><code>  data/opencitations/cites-2021.rete: 3 row(s) in 3.4ms
-  data/opencitations/cites-2024.rete: 3 row(s) in 15.8ms
-6 solution(s)
-federated 3 source(s): 2 queried, 1 pruned (routing on); 6 merged result(s)
-  pruned (predicate-disjoint): other-demo.rete
-…
-</code></pre>
-<p><code>--no-route</code> would instead query all three (the label-only shard contributing 0
-rows). For year-shards that all share <code>cito:cites</code>, routing keeps every shard —
-pruning helps when sources are <strong>heterogeneous</strong> (different predicates per file),
-which is the common federation case.</p>
-<h3>ASK federation (logical OR)</h3>
-<pre><code class="language-sh">rete federate data/opencitations/cites-2017.rete data/opencitations/cites-2024.rete \
-  --query 'ASK { ?x &lt;http://purl.org/spar/cito/cites&gt;
-                    &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; }'
-# → true   (at least one shard has a citation)
-</code></pre>
-<h3>URL sources</h3>
-<p>Sources may be <code>http(s)://</code> URLs of <code>.rete</code> files hosted on S3, GitHub, or any
-CDN that honors HTTP <strong>Range</strong> requests — mix them with local paths freely:</p>
-<pre><code class="language-sh">rete federate \
-  https://example.org/cites-2021.rete \
-  data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
-                                          &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; }'
-</code></pre>
-<p>Each URL is opened with range reads (header → dictionary → index → pyramid),
-never a full download both routing and evaluation fetch only the bytes they need.</p>
-<h2>In the playground</h2>
-<p>The <a href="playground.html">playground</a> brings the same federation to the browser:
-<strong>federation is a kind of SPARQL</strong>, so it lives in the SPARQL console rather than
-a separate mode. Under the query editor a <strong>Sources</strong> strip shows the current
-dataset; a <strong>+ Add source</strong> button federates with another source three ways:</p>
-<ul>
-<li><strong>From catalog</strong> — any registered dataset (a remote one is range-queried
-lazily; a bundled one is queried in memory);</li>
-<li><strong>.rete link</strong> — a pasted remote URL, range-queried lazily;</li>
-<li><strong>SPARQL endpoint</strong> — a live endpoint (<code>SELECT</code> / <code>ASK</code>) over the SPARQL
-protocol, subject to the endpoint's CORS policy.</li>
-</ul>
-<p>Running with <strong>two or more sources</strong> fans the same query out to each and merges
-with the exact CLI semantics above — <code>SELECT</code> union+dedup, <code>ASK</code> OR, <code>CONSTRUCT</code>
-triple-union — and a per-source banner reports the rows and bytes each source
-contributed. Each source keeps its own lazy reader, so two remote <code>.rete</code> files
-are read independently and lazily into one merge; it is orchestrated in the
-playground's JS over the existing single-source query paths, so no extra engine
-code runs. An example can pre-load its partner with one click. A <strong>live line ticks
-during the query</strong> — <code>N/M sources answered · range requests · MB · elapsed</code> — so a
-long multi-source fan-out isn't a silent spinner.</p>
-<h3>Beyond union — cross-source joins and sharded datasets</h3>
-<p>The playground goes past the CLI's union: it also does a <strong>term-level cross-source
-JOIN</strong> — one BGP split across sources and joined on the shared variables — so the
-"cross-file join is not found" limit above is a <em>CLI</em> limit, not a playground one.
-Each triple pattern is routed to a source by its predicate (and by where its
-subject was bound), each source answers its own sub-pattern with the join keys
-already narrowed down, and the partial rows are joined in the browser. Queries
-that can't be split this way (OPTIONAL / UNION / aggregates / property paths)
-fall back to the union path. So e.g. USTC editions ⋈ the Embassy books they
-cite, joined on the book IRI, returns real joined rows across the two files.</p>
-<p>A <strong>sharded dataset</strong> is registered as one logical graph with a <code>shards: [url0, url1, …]</code> list in the catalog; the playground treats <code>url0</code> as the primary and the rest as
-intrinsic federation partners, so <strong>every query auto-fans across all shards</strong> (union)
-and the rows merge — you query it like one dataset (a "⛓ N shards" chip shows in the
-Sources strip). This is how a graph too big to build as a single file — e.g. a 600 M-
-triple Wikidata split into six independent <code>--no-pyramid</code> shards — is served and queried
-as one. The path to a bigger graph is just more shards.</p>
-<p><strong>Worked example — resolve five terms across two ontologies.</strong> The bundled
-<code>chebi-full</code> (the complete ChEBI ontology, 8.83 M triples) and <code>chemotion</code> (a
-chemistry ELN graph merged with CHMO + RXNO) share <code>CHEBI_*</code> IRIs plus
-<code>rdfs:label</code>/<code>rdfs:subClassOf</code>, but neither resolves every label. Pick either
-dataset, open its <strong>Federation</strong> example (it adds the other as a second source),
-and run:</p>
-<pre><code class="language-sparql">PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
-PREFIX obo:  &lt;http://purl.obolibrary.org/obo/&gt;
-SELECT ?term ?label WHERE {
-  VALUES ?term { obo:CHEBI_15377 obo:CHEBI_27732 obo:CHMO_0000228 obo:BFO_0000015 obo:CHEBI_23367 }
-  ?term rdfs:label ?label
+<pre><code class="language-sparql"># MAP — labelled territories as polygons (history dataset)
+PREFIX geo:  &lt;http://www.opengis.net/ont/geosparql#&gt;
+PREFIX ex:   &lt;http://ex/&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+SELECT ?territory ?w WHERE {
+  ?t ex:year 1914 ; rdfs:label ?territory ;
+     geo:hasGeometry/geo:asWKT ?w .
 }
+
+# TIME — how many territories exist per year, as a multi-year heatmap
+PREFIX ex:   &lt;http://ex/&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+SELECT ?year ?territory WHERE { ?t ex:year ?year ; rdfs:label ?territory }
+
+# GRAPH — a 3-variable SELECT read as (subject, predicate, object)
+PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
+SELECT ?a ?p ?b WHERE { ?a ?p ?b . FILTER(?p = cito:cites) } LIMIT 50
+
+# TTL / JSON-LD — a CONSTRUCT produces serialisable triples
+PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
+CONSTRUCT { ?a cito:cites ?b } WHERE { ?a cito:cites ?b } LIMIT 50
 </code></pre>
-<p><code>chebi-full</code> answers <code>water</code> / <code>caffeine</code> / <code>molecular entity</code>; <code>chemotion</code>
-answers <code>spectroscopy</code> / <code>process</code>; the union resolves all five. The result line
-shows the per-source split — no single file has all the answers.</p>
+<h2>Beyond SPARQL: the other modes</h2>
+<p>The mode strip turns the same open file around several ways:</p>
+<ul>
+<li><strong>Schema</strong> — the dataset's effective schema (classes and how they relate),
+read index-free from the schema pyramid; the entry point for
+<a href="semantic-zoom.html">semantic zoom</a>.</li>
+<li><strong>Explore</strong> — browse per-class entity tables, and (for datasets with
+companions) a <strong>SQL</strong> sub-tab that runs DuckDB-WASM / SQLite-WASM over the
+same triples as Parquet — the columnar engines and the graph engine, side by
+side, both lazy over HTTP.</li>
+<li><strong>Semantic</strong> — natural-language search over the dataset's <strong>meaning</strong>: a
+sentence-embedding model (running locally, multilingual) embeds your phrase
+and ranks entities by similarity — no keywords needed. <strong>↗ Query these in
+SPARQL</strong> turns the hits into a <code>VALUES</code> block; <strong>✨ Answer with AI</strong> drafts a
+grounded answer from them. Available on datasets that ship an embedding
+index.</li>
+<li><strong>SHACL</strong> — validate the graph against shapes in the editor; on a remote
+dataset only each shape's targets are range-read.</li>
+<li><strong>Reach</strong> — transitive reachability from seed entities along one predicate.</li>
+<li><strong>Provenance</strong> — "why is this triple in the result?": the physical
+dictionary/index/tile ranges behind a match.</li>
+<li><strong>Coherence</strong> — the tiered OWL coherence checks, from an index-free schema
+scan to full materialization (see <a href="reasoning.html">Reasoning</a>).</li>
+<li><strong>Build</strong> — paste or upload RDF (N-Triples / N-Quads / Turtle), build a real
+<code>.rete</code> <strong>in the browser</strong>, query it immediately, save it to the browser for
+next time, or download the file. The full publish path (ontology, card,
+examples) is in <a href="media-companions.html">Media &amp; SQL companions</a> and
+<a href="hosting.html">Hosting your .rete</a>.</li>
+</ul>
+<h2>Federation: query several sources as one</h2>
+<p><strong>+ Add source</strong> adds a second (third, …) <code>.rete</code> — from the catalog or any
+URL — and the query runs across all of them: union merge with predicate
+routing, and for flat BGPs a real <strong>cross-source join</strong> (a pattern's rows from
+one file joined against another's on the shared variables). See
+<a href="federation.html#in-the-playground">Federated queries</a>.</p>
+<p>A source can also be a <strong>SPARQL endpoint</strong>. With the 🔌 <strong>live</strong> checkbox the
+endpoint becomes the query target and <strong>SPARQL Update is enabled</strong> — pointed at
+a running <code>rete serve</code>, the playground becomes the <em>editing UI</em> over a live
+graph: <code>INSERT DATA</code>, watch the next SELECT reflect it, download the snapshot.
+(Deep-linkable as <code>#endpoint=&lt;url&gt;</code>.)</p>
+<h2>Watching the bytes (and the caches)</h2>
+<p>For a remote dataset the result line reports what the query physically did —
+<code>N range requests · M KB fetched · file is X MB</code> — and <strong>⊞ requests</strong> opens the
+actual byte-range log. Re-running a query reports <em>"served from cache, 0 new
+bytes"</em>: reads are cached per session, and <strong>Settings</strong> adds opt-in extras:</p>
+<ul>
+<li><strong>Persist fetched ranges across reloads</strong> — mirrors fetched blocks into
+IndexedDB (per-file usage bars + Clear), so tomorrow's session starts warm.</li>
+<li><strong>Parallel range reads</strong> — a cross-origin-isolated worker pool fetches
+ranges concurrently (reloads once to enable isolation; disables the
+CDN-loaded DuckDB/SQLite backends while on).</li>
+<li><strong>Concurrent reads (Asyncify)</strong> — an alternative engine build that overlaps
+remote reads without isolation.</li>
+</ul>
+<h2>Under the hood</h2>
+<p>The page is generated by <code>scripts/build_playground.py</code> from
+<code>web/playground.template.html</code> + <code>web/playground-src/</code>: the WASM engine, its
+JS glue, and the embedded datasets are inlined into one self-contained file.
+The JS API it drives is documented in <a href="browser.html">WASM &amp; JavaScript API</a>; how
+datasets get registered is <code>web/playground-src/catalog.js</code> (see the repo's
+<code>skills/rete-publish</code> for the full recipe).</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -439,7 +402,7 @@ shows the per-source split — no single file has all the answers.</p>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/federation.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/playground-guide.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

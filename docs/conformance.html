@@ -199,8 +199,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
-        <li class="nav-h">Interactive explorations</li>
-        <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-h">Explore in the browser</li>
+        <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
         <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
         <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
@@ -211,20 +211,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
-        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="compatibility.html">Compatibility & interop</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
+        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
+        <li class="nav-h">Publish & share</li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="hosting.html">Hosting your .rete</a></li>
+        <li><a href="media-companions.html">Media & SQL companions</a></li>
         <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li class="nav-h">In the browser</li>
-        <li><a href="browser.html">Browser / WASM</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li class="nav-h">Internals</li>
+        <li class="nav-h">Development</li>
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="browser.html">WASM & JavaScript API</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
         <li><a href="conformance.html" class="active">SPARQL 1.1 conformance</a></li>
     </ul>
@@ -267,110 +270,45 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <tr><td>functions</td><td style="text-align: right">73 / 75</td><td style="text-align: right">1</td><td>nearly full — only NOW() + IRI() base resolution</td></tr>
 <tr><td>entailment</td><td style="text-align: right">28 / 70</td><td style="text-align: right">4</td><td>needs <code>build --materialize</code></td></tr>
 <tr><td>subquery</td><td style="text-align: right">2 / 14</td><td style="text-align: right">12</td><td>nested SELECT joins; GRAPH-scoped + RDF/XML data n/a</td></tr>
-<tr><td>service</td><td style="text-align: right">0 / 7</td><td style="text-align: right">7</td><td>SPARQL federation (N/A)</td></tr>
+<tr><td>service</td><td style="text-align: right">0 / 7</td><td style="text-align: right">7</td><td><code>SERVICE</code> <strong>is</strong> implemented — these tests need a live endpoint, so they're excluded from the offline run</td></tr>
 <tr><td>csv-tsv-res</td><td style="text-align: right">0 / 3</td><td style="text-align: right">3</td><td>CSV/TSV result format</td></tr>
 <tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>232 / 309 (75.1%)</strong></td><td style="text-align: right">33</td><td></td></tr>
 </tbody></table>
-<h2>Findings</h2>
+<h2>Coverage notes</h2>
+<p><strong>Strong areas.</strong> Negation (<code>MINUS</code> / <code>NOT EXISTS</code>), JSON results, XSD casts
+(with strict lexical validation), and projection expressions are 100%. Property
+paths are near-full — including negated property sets (<code>!(:p1|…|:pn)</code>) and the
+zero-length identity solution on <code>*</code>/<code>?</code> even against empty data. <code>BIND</code> inside
+a WHERE pattern is visible to later filters and joins; nested <code>SELECT</code>
+subqueries are evaluated independently and joined on their projected variables;
+the aggregate set is complete (<code>GROUP_CONCAT</code> with <code>DISTINCT</code>/<code>SEPARATOR</code>,
+typed computed numerics, 15-significant-digit decimal round-trips). The
+built-in function library covers strings (language-tag-preserving
+<code>REPLACE</code>/<code>CONCAT</code>/<code>SUBSTR</code>/…, <code>STRDT</code>/<code>STRLANG</code>, <code>ENCODE_FOR_URI</code>,
+<code>LANGMATCHES</code>), the <code>MD5</code>…<code>SHA512</code> hashes, the <code>xsd:dateTime</code> accessors, and
+<code>IF</code>/<code>IN</code>/<code>sameTerm</code> — all in pure Rust, so the same coverage holds in the WASM
+client. <code>CONSTRUCT</code> answers are verified by graph isomorphism. This matches the
+24-operator cross-check against Oxigraph in <a href="BENCHMARK.html">BENCHMARK</a>.</p>
+<p><strong>Out of scope (counted against the total, but not engine bugs):</strong></p>
 <ul>
-<li>
-<p><strong>Boolean-valued projections + strict arithmetic (fixed — +3 tests).</strong> A
-comparison or logical expression in value position — <code>(?y = ?z AS ?eq)</code> —
-yields a typed <code>xsd:boolean</code>, and arithmetic (<code>+ - * /</code>) now requires
-numeric-typed operands (a <code>"1"^^xsd:string</code> is a type error, not 1), matching
-the RDF 1.1 "corrected" expectations. <code>project-expression</code> is now 100%.</p>
-</li>
-<li>
-<p><strong>Property paths — negated sets + zero-length on empty data (fixed — +9
-tests, → 71.8%).</strong> <code>!(:p1|…|:pn)</code> (and its inverse members, which <code>spargebra</code>
-wraps in a <code>Reverse</code>) is now a <code>PathAst::NegatedSet</code> evaluated as one step over
-any predicate not in the set. And a zero-length-capable path (<code>*</code>/<code>?</code>) with a
-constant endpoint that isn't in the graph now yields the identity solution
-(<code>:x :p* ?o</code> ⇒ <code>?o = :x</code>, even on an empty dataset). <code>property-path</code> 21 → 30.</p>
-</li>
-<li>
-<p><strong>Subqueries + aggregate completeness (fixed — +9 tests, → 68.9%).</strong> A nested
-<code>SELECT</code> is now lowered to an in-tree <code>Plan::Subquery</code>, evaluated independently
-to its projected solutions, which then join with the surrounding pattern on
-shared variables (so <code>{ {SELECT (GROUP_CONCAT(?o) AS ?g)…} FILTER(?g=…) }</code>
-works). On the back of that, the aggregate set was finished: <code>GROUP_CONCAT</code>
-returns a real simple literal and honours <code>DISTINCT</code>/<code>SEPARATOR</code>, <code>AVG</code> of an
-empty group is <code>0</code> (and a non-numeric value is a type error), and computed
-decimals round-trip through 15 significant digits so a sum like <code>11.1</code> no
-longer serializes as <code>11.100000000000001</code>. <code>aggregates</code> 27 → 39, <code>grouping</code>
-100%. Remaining subquery gaps are GRAPH-scoped subqueries and tests whose data
-ships as RDF/XML.</p>
-</li>
-</ul>
-<ol start="0">
-<li>
-<p><strong>In-pattern <code>BIND</code> scoping (fixed — +10 tests, → 64.4%).</strong> A <code>BIND(expr AS ?v)</code> written <em>inside</em> a WHERE pattern is now an in-tree plan node, so a
-<em>following</em> <code>FILTER</code> or join sees the bound variable (previously the BIND was
-deferred to projection time, after filtering — so <code>{ ?s :v ?o BIND(?o+1 AS ?z) FILTER(?z=3) }</code> wrongly returned nothing). Top-level projection aliases
-(<code>SELECT (expr AS ?v)</code>) still apply after aggregation, unchanged. This took
-<code>bind</code> and <code>grouping</code> to 100% and lifted four entailment BIND tests.</p>
-</li>
-<li>
-<p><strong>Built-in function coverage (fixed — +52 tests).</strong> Two pushes lifted strict
-conformance from <strong>34.6% → 61.2%</strong>:</p>
-<ul>
-<li><strong>Computed numerics are typed.</strong> Arithmetic / aggregates / numeric
-functions evaluate to the right <em>value</em>; <code>sparql::fmt_num_typed</code> tags the
-result <code>xsd:integer</code> (whole) or <code>xsd:decimal</code> (fractional) so the
-serializer emits the datatype (34.6% → 44.3%).</li>
-<li><strong>The string/cast/hash/datetime built-ins now exist, and return proper
-terms</strong> (44.3% → 61.2%). <code>functions</code> went 19 → 64 and <code>cast</code> 0 → 6:
-<ul>
-<li><strong>Strings:</strong> <code>STRBEFORE</code>/<code>STRAFTER</code> (with the SPARQL argument-compatibility
-and language-tag rules), <code>REPLACE</code>, <code>CONCAT</code>, <code>UCASE</code>/<code>LCASE</code>/<code>SUBSTR</code>
-now preserve the language tag and emit a real literal term (<code>"FOO"@en</code>)
-rather than bare text; <code>STRDT</code>/<code>STRLANG</code>, <code>IRI</code>/<code>URI</code>, <code>ENCODE_FOR_URI</code>,
-<code>LANGMATCHES</code>.</li>
-<li><strong>Hashes:</strong> <code>MD5</code>, <code>SHA1</code>, <code>SHA256</code>, <code>SHA384</code>, <code>SHA512</code> (pure-Rust
-RustCrypto, so they compile to wasm too).</li>
-<li><strong>Date/time:</strong> <code>YEAR</code>/<code>MONTH</code>/<code>DAY</code>/<code>HOURS</code>/<code>MINUTES</code>/<code>SECONDS</code>/<code>TZ</code>/
-<code>TIMEZONE</code> over <code>xsd:dateTime</code>.</li>
-<li><strong>XSD casts:</strong> <code>xsd:integer/decimal/float/double/boolean/string(...)</code>,
-with strict lexical validation (a non-conforming string is a type error)
-and canonicalization on cast-to-string.</li>
-<li><strong>Expression forms:</strong> <code>IF</code>, <code>IN</code>/<code>NOT IN</code>, <code>sameTerm</code>.</li>
-</ul>
-</li>
-</ul>
-</li>
-<li>
-<p><strong>Genuinely strong areas:</strong> negation (<code>MINUS</code> / <code>NOT EXISTS</code>), JSON results,
-and the XSD casts are 100%; property paths, VALUES, GROUP BY, and CONSTRUCT
-(verified by graph isomorphism) are solid. This matches the 24-operator
-cross-check against Oxigraph in <a href="BENCHMARK.html">BENCHMARK</a>.</p>
-</li>
-<li>
-<p><strong>Out of scope (counted, but not engine bugs):</strong></p>
-<ul>
-<li><strong>SERVICE</strong> (7) — counted out-of-scope when this run was recorded. Engine
-<code>SERVICE</code> federation has since shipped (the block is sent to the remote
-endpoint and joined — see <a href="sparql.html">sparql</a>); these tests need a live
-endpoint, so they stay out of the offline suite. (Cross-<em>file</em> federation
-is a different feature — see <a href="federation.html">federation</a>.)</li>
+<li><strong>SERVICE</strong> (7) — <code>SERVICE</code> federation is implemented (the block is sent to
+the remote endpoint and joined — see <a href="sparql.html">sparql</a>); these tests need
+a live endpoint, so they stay out of the offline suite. (Cross-<em>file</em>
+federation is a different feature — see <a href="federation.html">federation</a>.)</li>
 <li><strong>entailment</strong> (≈49) — RDFS/OWL entailment regimes; rete answers these only
 when entailments are baked in at build time (<code>rete build --materialize</code>),
 which this run does not do.</li>
-<li><strong>subquery</strong> (12 n/s) — plain nested <code>SELECT</code> <em>is</em> evaluated (see the
-scorecard and finding above); the remaining n/s are GRAPH-scoped subqueries
-and tests whose data ships as RDF/XML, not the subquery feature itself.</li>
+<li><strong>subquery</strong> (12 n/s) — plain nested <code>SELECT</code> <em>is</em> evaluated (see above); the
+remaining n/s are GRAPH-scoped subqueries and tests whose data ships as
+RDF/XML, not the subquery feature itself.</li>
 <li><strong>csv-tsv-res</strong> (3) — the CSV/TSV result serialization isn't implemented.</li>
 </ul>
-</li>
-<li>
-<p><strong>What's left in <code>functions</code> (2):</strong> <code>NOW()</code> (no wall clock on the
+<p><strong>Remaining gaps in <code>functions</code> (2):</strong> <code>NOW()</code> (no wall clock on the
 <code>wasm32-unknown-unknown</code> target the engine must also compile to) and <code>IRI()</code>
 relative-base resolution. The non-deterministic builtins <code>RAND</code>,
-<code>UUID</code>/<code>STRUUID</code>, <code>BNODE</code> are implemented on <code>getrandom</code> (browser backend via
-its <code>js</code> feature, so they work in the WASM client too), and <code>IF</code> now
-propagates an error in its condition rather than silently taking the
-else-branch.</p>
-</li>
-</ol>
+<code>UUID</code>/<code>STRUUID</code>, <code>BNODE</code> work in the browser too (via <code>getrandom</code>'s <code>js</code>
+backend), and an error in an <code>IF</code> condition propagates rather than silently
+taking the else-branch.</p>
 <h2>The same answers, lazily and remotely</h2>
 <p>The conformance run opens each file <strong>locally (in memory)</strong>. rete's three read
 modes — local, <strong>remote-lazy</strong> (HTTP range reads via <code>sparql_url</code> /

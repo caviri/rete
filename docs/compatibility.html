@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Compatibility & interop · rete docs</title>
+  <title>Compatibility & Cypher · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -199,8 +199,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
-        <li class="nav-h">Interactive explorations</li>
-        <li><a href="playground.html">Interactive playground</a></li>
+        <li class="nav-h">Explore in the browser</li>
+        <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
         <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
         <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
@@ -211,20 +211,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
-        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="compatibility.html" class="active">Compatibility & interop</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
+        <li><a href="compatibility.html" class="active">Compatibility & Cypher</a></li>
+        <li class="nav-h">Publish & share</li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="hosting.html">Hosting your .rete</a></li>
+        <li><a href="media-companions.html">Media & SQL companions</a></li>
         <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li class="nav-h">In the browser</li>
-        <li><a href="browser.html">Browser / WASM</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li class="nav-h">Internals</li>
+        <li class="nav-h">Development</li>
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="browser.html">WASM & JavaScript API</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
         <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
     </ul>
@@ -271,9 +274,10 @@ as → RDF/XML"). Once ingested, OWL axioms are just triples you can query; to
 (<code>rete build --reason</code> / <code>rete reason</code>).</p>
 <p><strong>Current limits (not RDF-incompatible, just unimplemented):</strong> no RDF-star
 (quoted triples); OWL/XML and Functional Syntax need an external convert-to-RDF
-step (above); and there is no SPARQL Update (the file is immutable by design).
-Turtle/JSON-LD export covers the default graph only (use N-Quads export for named
-graphs).</p>
+step (above); and there is no in-place SPARQL Update — the file is immutable by
+design, though <a href="cli.html"><code>rete serve</code></a> runs a live endpoint that accepts SPARQL
+Update into a journal beside the untouched base file. Turtle/JSON-LD export
+covers the default graph only (use N-Quads export for named graphs).</p>
 <h2>Validation</h2>
 <p>There are five independent ways to check correctness:</p>
 <ol>
