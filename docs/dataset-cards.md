@@ -176,8 +176,8 @@ between the header and the dictionary:
 A few properties worth knowing:
 
 - **No format break.** Without a card, `metadata_len` is `0` and the dictionary
-  starts at offset 128 exactly as before — the output is byte-identical to a
-  pre-card build, and existing files keep verifying unchanged.
+  starts right after the 1 KB header exactly as before — the output is
+  byte-identical to a cardless build, and existing files keep verifying unchanged.
 - **Integrity-covered.** The card bytes are part of the `blake3` content hash, so
   `rete verify` validates the card too and any edit to it is detected.
 - **Off the query path.** Range-reading opens (`rete query-url`, `sparql-url`,

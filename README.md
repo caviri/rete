@@ -39,8 +39,9 @@ WebAssembly, so a **browser can query the file directly with no backend**.
   UNION, MINUS, FILTER, subqueries, property paths, GROUP BY / aggregates, XSD
   casts and the SPARQL 1.1 function library, named graphs, and **GeoSPARQL**
   (geometry + time) — **[~75% of the W3C query-evaluation suite](https://caviri.github.io/rete/conformance.html)**
-  (309 tests; ≈89% excluding the RDFS/OWL-entailment and SERVICE-federation
-  regimes rete leaves out by design).
+  (309 tests; ≈89% excluding the RDFS/OWL-entailment regime rete leaves out by
+  design and the SERVICE tests, which need a live endpoint — `SERVICE`
+  federation itself [is supported](https://caviri.github.io/rete/sparql.html)).
 - **Lazy over HTTP.** Range-read a remote file: a selective query faults in only
   the dictionary chunks and index tiles it touches, so a **1 GB graph stays
   interactive** in the browser ([try it](https://caviri.github.io/rete/explore-100mb.html)).
@@ -144,14 +145,14 @@ rete sparql-url https://my-bucket.s3.amazonaws.com/social.rete "SELECT * WHERE {
 ```
 
 `query-url` resolves bound terms from the dictionary, then range-fetches only the
-selected SPO/POS/OSP permutation payload for that triple pattern; `sparql-url`
+best-matching permutation payload for that triple pattern; `sparql-url`
 faults in index tiles as a query touches them. `rete cost --explain` shows when a
 query can use the summary-only or routed-pattern budgets.
 
 ### Try it in your browser (no install)
 
 The **[playground](https://caviri.github.io/rete/playground.html)** is a
-self-contained offline page bundling the WASM engine and **21 example datasets**
+self-contained offline page bundling the WASM engine and **40+ example datasets**
 — from tiny embedded graphs to **remote, lazily-queried** ones served over HTTP
 range requests:
 
@@ -227,11 +228,12 @@ regenerated with `cargo run -p docgen`).
 Working end-to-end — the single-file format, dictionary + permutation indexes, the
 community summary and a self-describing **schema pyramid**, SPARQL + GeoSPARQL,
 lazy HTTP-range queries (with per-tile synopses that prune a routed tile before
-fetching it), and the browser/WASM engine. The **on-disk format (header version 3,
-a 1 KB section directory) is still a draft and is not guaranteed stable across
-releases** — rebuild to upgrade (v0.3 is a clean break from the earlier
-128-byte-header layouts). SPARQL evaluation is exact for supported shapes (no OWL/RDFS query-time
-entailment), and federation is UNION-only.
+fetching it), and the browser/WASM engine. The **on-disk format (v0.4 — a 1 KB
+section directory, six permutation indexes) is still a draft and is not
+guaranteed stable across releases** — each version step is a clean break, so
+rebuild older files to upgrade. SPARQL evaluation is exact for supported shapes
+(no OWL/RDFS query-time entailment); cross-file federation is UNION-only, while
+SPARQL 1.1 `SERVICE` calls external endpoints from inside a query.
 
 ## Develop (Docker only)
 

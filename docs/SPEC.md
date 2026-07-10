@@ -1,6 +1,6 @@
 # Rete — a cloud-native, range-queryable RDF graph file
 
-**Status:** Draft 0.1 (design) · **File extension:** `.rete` · **Magic:** `RETE\x01`
+**Status:** Format **v0.4**, implemented (draft — each version step is a clean break; readers accept only the current version) · **File extension:** `.rete` · **Magic:** `RETE\x01`
 
 > One file. Put it on S3, GitHub, or any HTTP server that honors `Range`.
 > Give a client the URL. Run SPARQL. No database server.
@@ -25,7 +25,7 @@
 - **RDF-faithful**: IRIs, blank nodes, literals (with datatype + language tag),
   and named graphs (quads).
 
-### Non-goals (v0)
+### Non-goals
 - **Mutation.** The file is build-once / read-many; this buys aggressive
   compression and CDN caching. Updates happen *around* the file, not in it:
   `rete serve` accepts SPARQL Update into an append-only journal beside the
@@ -67,8 +67,8 @@ Three transformations make it range-queryable:
 
 ## 4. File layout
 
-v0 on-disk layout (what `write_file`/`write_dataset` actually emit). The header
-is the directory: it carries the absolute offset+length of every section, so a
+The v0.4 on-disk layout (what `write_file`/`write_dataset` actually emit). The
+header is the directory: it carries the absolute offset+length of every section, so a
 client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.
 
@@ -189,10 +189,9 @@ the section's length.
 - Literals carry datatype IRI (as a dictionary ID) and optional language tag.
 - The dictionary is four independently-decompressible **sections** (shared /
   subjects / objects / predicates), each with a restart-indexed table (§5.1) that
-  supports `O(log n)` term↔ID lookup once loaded. In v0 a client fetches the whole
-  dictionary section as one range; splitting each section into independently
-  range-fetchable chunks (so resolving one IRI pulls only its run) is future work
-  the restart table already enables.
+  supports `O(log n)` term↔ID lookup once loaded. Each section is additionally
+  **chunked** for ranged access (§6.2): resolving one IRI faults in exactly one
+  ~64 KiB chunk rather than the whole section.
 
 ### 5.1 Section encoding (front-coded, restart-indexed)
 
@@ -235,8 +234,8 @@ fetches just the run(s) covering the IDs/terms a query touches.
 - Each permutation is encoded as an **adjacency / bitmap-triples** structure
   (HDT-style): for SPO, a sorted list of subjects, each with its predicate
   list, each with its object list, delta-encoded.
-- Quads (named graphs) add a `G` dimension; v0 stores per-graph triple sets plus
-  a default-graph union. (Full GSPO permutations are a later optimization.)
+- Quads (named graphs) add a `G` dimension; the format stores per-graph triple
+  sets plus a default-graph union. (Full GSPO permutations are a later optimization.)
 - Triples are **partitioned by pyramid tile** (see §7), and within a tile split
   into fixed-size **blocks**. Every block is prefixed with a **zone map**
   (min ID, max ID, count) so the query planner can skip blocks — Parquet-style.
@@ -375,8 +374,9 @@ The headline feature. "Zoom" = level of graph detail.
 *Top to bottom: coarse community summary → communities → full triples. Fewer bytes at the top, more detail below; clients fetch the overview first and drill down on demand.*
 
 ### 7.1 Build time
-1. Run hierarchical community detection (**Leiden**, falling back to Louvain) on
-   the (optionally edge-weighted) graph. This yields a dendrogram of communities.
+1. Run hierarchical community detection (**Louvain**; `--pyramid-algo types`
+   swaps in a deterministic `rdf:type` partition instead) on the (optionally
+   edge-weighted) graph. This yields a dendrogram of communities.
 2. Cut the dendrogram into levels. **Level 0** = coarsest: each top-level
    community becomes a **supernode**. **Level N-1** = the full graph.
 
@@ -530,8 +530,8 @@ dominated by range-request count and block sizes.
 
 ## 9. Access protocol (the client)
 
-v0 (the header *is* the directory — every section offset/length is in it, so no
-separate directory/footer round-trip is needed):
+The header *is* the directory — every section offset/length is in it, so no
+separate directory/footer round-trip is needed:
 
 ```
 1. GET bytes=0-1023         → header: all section offsets/lengths + content hash

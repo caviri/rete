@@ -44,9 +44,10 @@ as → RDF/XML"). Once ingested, OWL axioms are just triples you can query; to
 
 **Current limits (not RDF-incompatible, just unimplemented):** no RDF-star
 (quoted triples); OWL/XML and Functional Syntax need an external convert-to-RDF
-step (above); and there is no SPARQL Update (the file is immutable by design).
-Turtle/JSON-LD export covers the default graph only (use N-Quads export for named
-graphs).
+step (above); and there is no in-place SPARQL Update — the file is immutable by
+design, though [`rete serve`](cli.md) runs a live endpoint that accepts SPARQL
+Update into a journal beside the untouched base file. Turtle/JSON-LD export
+covers the default graph only (use N-Quads export for named graphs).
 
 ## Validation
 

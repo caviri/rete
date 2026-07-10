@@ -100,8 +100,10 @@ question. Here's the whole map on one page — and what `rete` does with each.
 
 Two honest caveats up front: SHACL support targets **SHACL Core** rather than
 SHACL-SPARQL, SHACL-AF, or ShEx, and the reasoner is a **documented OWL RL
-subset**, not a full OWL DL engine. `rete` also has no SPARQL Update / writes —
-a `.rete` file is immutable by design.
+subset**, not a full OWL DL engine. A `.rete` file itself is immutable by design
+— there is no in-place SPARQL Update; for a *living* graph, [`rete serve`](cli.md)
+runs a small live endpoint that accepts SPARQL Update into a journal while the
+base file stays untouched.
 
 ## What kinds of questions can you actually ask `rete`?
 

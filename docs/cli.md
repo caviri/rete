@@ -36,15 +36,20 @@ e.g. Wikidata's `--type-predicate http://www.wikidata.org/prop/direct/P31`.
 `--no-pyramid` skips the community pyramid entirely (no pyramid section): SPARQL /
 SHACL / triple-pattern / reachability queries don't use it, so the file stays
 fully queryable and is markedly smaller — only community / summary / progressive
-queries need the pyramid. All of these are opt-in; without them the output is
-byte-identical to a plain build.
+queries need the pyramid. `--pyramid-algo louvain|types` picks the community
+algorithm: `louvain` (default) detects topological communities; `types` partitions
+by `rdf:type` instead — deterministic, self-naming communities that stay feasible
+on graphs too large for the single-threaded Louvain build (it falls back to
+Louvain when the graph is untyped). All of these are opt-in; without them the
+output is byte-identical to a plain build.
 
-### `rete repyramid <file> -o <out.rete> [--type-predicate <IRI>] [--text-index] [--card …]`
+### `rete repyramid <file> -o <out.rete> [--type-predicate <IRI>] [--pyramid-algo louvain|types] [--text-index] [--card …]`
 Rebuild a file's pyramid **in place**, reading the triples straight from the
 existing `.rete` — no `export | build` N-Quads round-trip. Use it to add a schema
 pyramid (or a `--text-index` / a Dataset Card) to a file built before those
-existed, or to re-derive the schema pyramid under a different `--type-predicate`.
-The card flags match `rete build` (`--card-file` / `--title` / `--license` / …).
+existed, or to re-derive the schema pyramid under a different `--type-predicate`
+or `--pyramid-algo` (same semantics as `rete build`). The card flags match
+`rete build` (`--card-file` / `--title` / `--license` / …).
 
 ```sh
 rete repyramid old.rete -o new.rete --type-predicate http://www.wikidata.org/prop/direct/P31
@@ -166,7 +171,7 @@ rete why-url https://host/data.rete --predicate '<http://ex/knows>'
 Provenance is honest about the physical layout: it identifies the index
 container, the selected permutation payload, and — for tiled files —
 the physical tile holding each match (`PERM/index`) with its compressed byte
-range. Pre-tiling (v0.1) files report tile provenance as `not_materialized`.
+range.
 
 ### `rete bgp <file> "<pattern> . <pattern> …"`
 Evaluate a Basic Graph Pattern. Patterns are separated by ` . `, terms by spaces;
@@ -444,8 +449,7 @@ files): the open fetches the header, dictionary, pyramid, and the index's
 small tile directories; index tiles are then range-fetched only when the
 query's scans and probes touch them, so a selective query reads O(touched
 tiles) rather than the whole index. A range failure mid-query is reported as
-an error, never as silently fewer rows. Pre-tiling (v0.1) files fall back to
-fetching the index whole.
+an error, never as silently fewer rows.
 
 ```sh
 rete sparql-url https://host/data.rete \

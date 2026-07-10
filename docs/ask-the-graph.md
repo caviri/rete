@@ -38,8 +38,12 @@ The selector offers a bundled **demo** (a handful of papers embedded in the
 page), and remote **Wikidata** slices (100 MB / 1 GB) served over HTTP range from
 the project's storage. Pick one, let the model warm up once, and ask away.
 
+The same idea has since graduated into the playground: its **Semantic search
+tab** runs an in-browser RAG over any dataset that ships a precomputed
+embedding index — see the [playground guide](playground-guide.md).
+
 This page is part of the
 [graph-map / lance-rag experiments](graph-map.html); the model + vector approach
 (transformers.js in the browser, vectors as a sidecar to the `.rete`) is written
 up there. For the query engine itself, see [SPARQL support](sparql.html) and
-[Browser / WASM](browser.html).
+the [WASM & JavaScript API](browser.html).

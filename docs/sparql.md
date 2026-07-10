@@ -53,9 +53,8 @@ counts, without reading the triple index:
 ```sh
 rete predicates data.rete            # CLI
 ```
-```sparql
-# (the summary path; see SummaryView::predicate_totals)
-```
+
+The same per-predicate totals back the playground's index-free aggregate path.
 
 ### Evaluation model
 
@@ -71,7 +70,7 @@ wins.
 
 ### Community-split evaluation
 
-`eval_select_communities` evaluates a SELECT with a **split-where-sound,
+The engine can also evaluate a SELECT with a **split-where-sound,
 global-where-not** strategy that always returns exactly the whole-graph
 answer. The one place the pyramid partition genuinely applies is a *subject
 star* — a group of triple patterns sharing one variable subject — because
@@ -91,59 +90,11 @@ the per-star, per-community partials are the seam for parallel evaluation.
 
 ## Output views & query shapes
 
-The WASM playground's **Output** menu renders one result several ways. Each view
-expects a particular query shape — write your `SELECT`/`CONSTRUCT` so the columns
-it needs are present.
-
-| Output | Needs | Query shape |
-| --- | --- | --- |
-| **Table** | anything | any `SELECT`, `ASK`, or `CONSTRUCT` |
-| **Graph** | edges to draw | a `CONSTRUCT { ?a ?p ?b } …`, or a `SELECT` with **≥ 2 variables** — 2 vars are read as `v1 → v2` ("related") edges; **3 vars** are read as (subject, predicate, object). A 1-variable `SELECT` has nothing to connect. |
-| **Map** | a WKT geometry column | a `SELECT` that binds a variable to a `geo:wktLiteral` (e.g. `?w` via `geo:hasGeometry/geo:asWKT ?w`). `POINT` / `LINESTRING` / `POLYGON` / `MULTI*` all plot; the first **non-geometry** column becomes each feature's hover label. |
-| **Time** | a year / date column | a `SELECT` that binds a variable to `xsd:gYear`, `xsd:date` / `xsd:dateTime`, or a plain **year integer** (e.g. `ex:year ?y`). The other selected column(s) become the items listed in each cell's tooltip. |
-| **TTL / JSON-LD** | triples | a `CONSTRUCT` query — these serialise the constructed graph. A `SELECT` has no triples to serialise. |
-
-Rules of thumb:
-
-- **Map, Time and Graph render the bindings of a `SELECT`**, so put the geometry /
-  year / edge columns in your `SELECT` list. (`CONSTRUCT` also feeds Graph / TTL /
-  JSON-LD directly.)
-- **Map** and **Time** are available on **every** query (no per-dataset gating):
-  each detects its column in the actual result and renders, or shows a short note
-  if it's absent — so geometry or dates a query surfaces unexpectedly (e.g. from a
-  federated join, or data the dataset's examples never touch) still plot.
-- Run these views under the **Whole index** (or **Split by community**) strategy.
-  **Progressive** answers only from the pyramid summary (counts and community
-  structure), so it has no per-row geometry or dates to plot.
-- **Time** buckets years automatically to fit the span (per-year for short ranges,
-  up to per-1000-year for very long ones); negative years are read as **BCE**. A
-  cell's colour encodes the **number of items** in that bucket — hover for the list.
-- The map is an **offline equirectangular plot** of the WKT coordinates (no tiles /
-  network), auto-fit to the bounding box of the returned geometries.
-
-```sparql
-# MAP — labelled territories as polygons (history dataset)
-PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
-PREFIX ex:   <http://ex/>
-PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?territory ?w WHERE {
-  ?t ex:year 1914 ; rdfs:label ?territory ;
-     geo:hasGeometry/geo:asWKT ?w .
-}
-
-# TIME — how many territories exist per year, as a multi-year heatmap
-PREFIX ex:   <http://ex/>
-PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?year ?territory WHERE { ?t ex:year ?year ; rdfs:label ?territory }
-
-# GRAPH — a 3-variable SELECT read as (subject, predicate, object)
-PREFIX cito: <http://purl.org/spar/cito/>
-SELECT ?a ?p ?b WHERE { ?a ?p ?b . FILTER(?p = cito:cites) } LIMIT 50
-
-# TTL / JSON-LD — a CONSTRUCT produces serialisable triples
-PREFIX cito: <http://purl.org/spar/cito/>
-CONSTRUCT { ?a cito:cites ?b } WHERE { ?a cito:cites ?b } LIMIT 50
-```
+The playground renders one result several ways — Table, Graph, Map, Time,
+TTL/JSON-LD — and each view expects a particular query shape (a geometry column
+for Map, a year/date column for Time, …). That matrix lives with the rest of the
+playground documentation: see
+[Playground — output views](playground-guide.md#output-views--query-shapes).
 
 ## Federation: `SERVICE`
 

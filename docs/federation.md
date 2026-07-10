@@ -9,7 +9,9 @@ rete federate <source…> --query "<SPARQL>" [--json] [--no-route]
 ```
 
 This is an honest **prototype**: it does *union* federation, not distributed
-joins. Read [Limitations](#limitations) before relying on it.
+joins. Read [Limitations](#limitations) before relying on it. (Federating with
+a **live SPARQL endpoint** from *inside* a query is a different feature — the
+SPARQL 1.1 `SERVICE` clause, covered in [SPARQL support](sparql.md).)
 
 The same union+routing federation is also available **in the browser** — the
 [playground](#in-the-playground) turns the SPARQL console into a multi-source
@@ -207,14 +209,12 @@ long multi-source fan-out isn't a silent spinner.
 The playground goes past the CLI's union: it also does a **term-level cross-source
 JOIN** — one BGP split across sources and joined on the shared variables — so the
 "cross-file join is not found" limit above is a *CLI* limit, not a playground one.
-`runFederated` parses a flat BGP, routes each triple pattern to a source by predicate
-**and** subject-variable provenance (the owner of a shared predicate like `rdfs:label`
-wins), runs each source's sub-BGP with a `VALUES` injection of the already-bound join
-keys, and hash-joins. It falls back to the union path for anything it can't split
-(OPTIONAL / UNION / aggregates / property paths). So e.g. USTC editions ⋈ the Embassy
-books they cite, joined on the book IRI, returns real joined rows across the two files.
-(One sharp edge worth knowing: a query that writes `a` for `rdf:type` is fine — the
-generated sub-queries declare the `rdf:` prefix themselves.)
+Each triple pattern is routed to a source by its predicate (and by where its
+subject was bound), each source answers its own sub-pattern with the join keys
+already narrowed down, and the partial rows are joined in the browser. Queries
+that can't be split this way (OPTIONAL / UNION / aggregates / property paths)
+fall back to the union path. So e.g. USTC editions ⋈ the Embassy books they
+cite, joined on the book IRI, returns real joined rows across the two files.
 
 A **sharded dataset** is registered as one logical graph with a `shards: [url0, url1,
 …]` list in the catalog; the playground treats `url0` as the primary and the rest as

@@ -40,93 +40,47 @@ python scripts/sparql_conformance.py \
 | functions | 73 / 75 | 1 | nearly full — only NOW() + IRI() base resolution |
 | entailment | 28 / 70 | 4 | needs `build --materialize` |
 | subquery | 2 / 14 | 12 | nested SELECT joins; GRAPH-scoped + RDF/XML data n/a |
-| service | 0 / 7 | 7 | SPARQL federation (N/A) |
+| service | 0 / 7 | 7 | `SERVICE` **is** implemented — these tests need a live endpoint, so they're excluded from the offline run |
 | csv-tsv-res | 0 / 3 | 3 | CSV/TSV result format |
 | **TOTAL** | **232 / 309 (75.1%)** | 33 | |
 
-## Findings
+## Coverage notes
 
-- **Boolean-valued projections + strict arithmetic (fixed — +3 tests).** A
-  comparison or logical expression in value position — `(?y = ?z AS ?eq)` —
-  yields a typed `xsd:boolean`, and arithmetic (`+ - * /`) now requires
-  numeric-typed operands (a `"1"^^xsd:string` is a type error, not 1), matching
-  the RDF 1.1 "corrected" expectations. `project-expression` is now 100%.
+**Strong areas.** Negation (`MINUS` / `NOT EXISTS`), JSON results, XSD casts
+(with strict lexical validation), and projection expressions are 100%. Property
+paths are near-full — including negated property sets (`!(:p1|…|:pn)`) and the
+zero-length identity solution on `*`/`?` even against empty data. `BIND` inside
+a WHERE pattern is visible to later filters and joins; nested `SELECT`
+subqueries are evaluated independently and joined on their projected variables;
+the aggregate set is complete (`GROUP_CONCAT` with `DISTINCT`/`SEPARATOR`,
+typed computed numerics, 15-significant-digit decimal round-trips). The
+built-in function library covers strings (language-tag-preserving
+`REPLACE`/`CONCAT`/`SUBSTR`/…, `STRDT`/`STRLANG`, `ENCODE_FOR_URI`,
+`LANGMATCHES`), the `MD5`…`SHA512` hashes, the `xsd:dateTime` accessors, and
+`IF`/`IN`/`sameTerm` — all in pure Rust, so the same coverage holds in the WASM
+client. `CONSTRUCT` answers are verified by graph isomorphism. This matches the
+24-operator cross-check against Oxigraph in [BENCHMARK](BENCHMARK.html).
 
-- **Property paths — negated sets + zero-length on empty data (fixed — +9
-  tests, → 71.8%).** `!(:p1|…|:pn)` (and its inverse members, which `spargebra`
-  wraps in a `Reverse`) is now a `PathAst::NegatedSet` evaluated as one step over
-  any predicate not in the set. And a zero-length-capable path (`*`/`?`) with a
-  constant endpoint that isn't in the graph now yields the identity solution
-  (`:x :p* ?o` ⇒ `?o = :x`, even on an empty dataset). `property-path` 21 → 30.
+**Out of scope (counted against the total, but not engine bugs):**
 
-- **Subqueries + aggregate completeness (fixed — +9 tests, → 68.9%).** A nested
-  `SELECT` is now lowered to an in-tree `Plan::Subquery`, evaluated independently
-  to its projected solutions, which then join with the surrounding pattern on
-  shared variables (so `{ {SELECT (GROUP_CONCAT(?o) AS ?g)…} FILTER(?g=…) }`
-  works). On the back of that, the aggregate set was finished: `GROUP_CONCAT`
-  returns a real simple literal and honours `DISTINCT`/`SEPARATOR`, `AVG` of an
-  empty group is `0` (and a non-numeric value is a type error), and computed
-  decimals round-trip through 15 significant digits so a sum like `11.1` no
-  longer serializes as `11.100000000000001`. `aggregates` 27 → 39, `grouping`
-  100%. Remaining subquery gaps are GRAPH-scoped subqueries and tests whose data
-  ships as RDF/XML.
+- **SERVICE** (7) — `SERVICE` federation is implemented (the block is sent to
+  the remote endpoint and joined — see [sparql](sparql.html)); these tests need
+  a live endpoint, so they stay out of the offline suite. (Cross-*file*
+  federation is a different feature — see [federation](federation.html).)
+- **entailment** (≈49) — RDFS/OWL entailment regimes; rete answers these only
+  when entailments are baked in at build time (`rete build --materialize`),
+  which this run does not do.
+- **subquery** (12 n/s) — plain nested `SELECT` *is* evaluated (see above); the
+  remaining n/s are GRAPH-scoped subqueries and tests whose data ships as
+  RDF/XML, not the subquery feature itself.
+- **csv-tsv-res** (3) — the CSV/TSV result serialization isn't implemented.
 
-0. **In-pattern `BIND` scoping (fixed — +10 tests, → 64.4%).** A `BIND(expr AS
-   ?v)` written *inside* a WHERE pattern is now an in-tree plan node, so a
-   *following* `FILTER` or join sees the bound variable (previously the BIND was
-   deferred to projection time, after filtering — so `{ ?s :v ?o BIND(?o+1 AS
-   ?z) FILTER(?z=3) }` wrongly returned nothing). Top-level projection aliases
-   (`SELECT (expr AS ?v)`) still apply after aggregation, unchanged. This took
-   `bind` and `grouping` to 100% and lifted four entailment BIND tests.
-
-1. **Built-in function coverage (fixed — +52 tests).** Two pushes lifted strict
-   conformance from **34.6% → 61.2%**:
-   - **Computed numerics are typed.** Arithmetic / aggregates / numeric
-     functions evaluate to the right *value*; `sparql::fmt_num_typed` tags the
-     result `xsd:integer` (whole) or `xsd:decimal` (fractional) so the
-     serializer emits the datatype (34.6% → 44.3%).
-   - **The string/cast/hash/datetime built-ins now exist, and return proper
-     terms** (44.3% → 61.2%). `functions` went 19 → 64 and `cast` 0 → 6:
-     - **Strings:** `STRBEFORE`/`STRAFTER` (with the SPARQL argument-compatibility
-       and language-tag rules), `REPLACE`, `CONCAT`, `UCASE`/`LCASE`/`SUBSTR`
-       now preserve the language tag and emit a real literal term (`"FOO"@en`)
-       rather than bare text; `STRDT`/`STRLANG`, `IRI`/`URI`, `ENCODE_FOR_URI`,
-       `LANGMATCHES`.
-     - **Hashes:** `MD5`, `SHA1`, `SHA256`, `SHA384`, `SHA512` (pure-Rust
-       RustCrypto, so they compile to wasm too).
-     - **Date/time:** `YEAR`/`MONTH`/`DAY`/`HOURS`/`MINUTES`/`SECONDS`/`TZ`/
-       `TIMEZONE` over `xsd:dateTime`.
-     - **XSD casts:** `xsd:integer/decimal/float/double/boolean/string(...)`,
-       with strict lexical validation (a non-conforming string is a type error)
-       and canonicalization on cast-to-string.
-     - **Expression forms:** `IF`, `IN`/`NOT IN`, `sameTerm`.
-
-2. **Genuinely strong areas:** negation (`MINUS` / `NOT EXISTS`), JSON results,
-   and the XSD casts are 100%; property paths, VALUES, GROUP BY, and CONSTRUCT
-   (verified by graph isomorphism) are solid. This matches the 24-operator
-   cross-check against Oxigraph in [BENCHMARK](BENCHMARK.html).
-
-3. **Out of scope (counted, but not engine bugs):**
-   - **SERVICE** (7) — counted out-of-scope when this run was recorded. Engine
-     `SERVICE` federation has since shipped (the block is sent to the remote
-     endpoint and joined — see [sparql](sparql.html)); these tests need a live
-     endpoint, so they stay out of the offline suite. (Cross-*file* federation
-     is a different feature — see [federation](federation.html).)
-   - **entailment** (≈49) — RDFS/OWL entailment regimes; rete answers these only
-     when entailments are baked in at build time (`rete build --materialize`),
-     which this run does not do.
-   - **subquery** (12 n/s) — plain nested `SELECT` *is* evaluated (see the
-     scorecard and finding above); the remaining n/s are GRAPH-scoped subqueries
-     and tests whose data ships as RDF/XML, not the subquery feature itself.
-   - **csv-tsv-res** (3) — the CSV/TSV result serialization isn't implemented.
-
-4. **What's left in `functions` (2):** `NOW()` (no wall clock on the
-   `wasm32-unknown-unknown` target the engine must also compile to) and `IRI()`
-   relative-base resolution. The non-deterministic builtins `RAND`,
-   `UUID`/`STRUUID`, `BNODE` are implemented on `getrandom` (browser backend via
-   its `js` feature, so they work in the WASM client too), and `IF` now
-   propagates an error in its condition rather than silently taking the
-   else-branch.
+**Remaining gaps in `functions` (2):** `NOW()` (no wall clock on the
+`wasm32-unknown-unknown` target the engine must also compile to) and `IRI()`
+relative-base resolution. The non-deterministic builtins `RAND`,
+`UUID`/`STRUUID`, `BNODE` work in the browser too (via `getrandom`'s `js`
+backend), and an error in an `IF` condition propagates rather than silently
+taking the else-branch.
 
 ## The same answers, lazily and remotely
 

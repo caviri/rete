@@ -21,7 +21,7 @@ Both deliver as a single HTTP **range-readable** `.pmtiles` rendered by MapLibre
 GL in the browser — the same publish-and-query-by-byte-range story as `.rete`
 itself: no server, no full download.
 
-> **Open the live viewers** (tiles range-read from the HF Space):
+> **Open the live viewers** (tiles range-read from the project's R2 storage):
 > [structural map](graph-map/viewer.html) ·
 > [topic map (pyramidal LDA)](graph-map/viewer-topics.html) ·
 > [3D side-elevation — deck.gl](graph-map/viewer-3d.html) ·
