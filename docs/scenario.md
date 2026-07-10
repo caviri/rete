@@ -24,7 +24,7 @@ rete validate examples/deps.nt
 #  valid: 13 statement(s) — 13 in the default graph, 0 named graph(s)
 
 rete build examples/deps.nt -o deps.rete
-#  wrote deps.rete: 13 triples, 12 terms, 2 pyramid level(s), 610 bytes
+#  wrote deps.rete: 13 triples, 12 terms, 2 pyramid level(s), 2035 bytes
 
 rete verify deps.rete        # confirm the content hash
 #  OK — content hash matches
@@ -51,15 +51,18 @@ Everything that (transitively) depends on the vulnerable `log4x`:
 ```sh
 rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete \
   "PREFIX e: <http://ex/> SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
-#  ?d=<http://ex/app>
+#  4 solution(s)
+#  (fetched 2035 bytes in 1 range request(s); file is 2035 bytes)
 #  ?d=<http://ex/auth>
 #  ?d=<http://ex/logging>
 #  ?d=<http://ex/web>
-#  (fetched 606 bytes in 4 range request(s); file is 610 bytes)
+#  ?d=<http://ex/app>
 ```
 
-`safejson` is correctly excluded — it doesn't reach the vulnerable package. The
-client fetched the file in **4 bounded range requests**, never scanning linearly.
+`safejson` is correctly excluded — it doesn't reach the vulnerable package. At
+this toy size the whole file fits in **one bounded range request**; on a real
+graph the same query pulls a handful of small ranges — dictionary chunks and
+index tiles — from a file thousands of times larger, never scanning linearly.
 
 ### Just the affected *libraries*, with the CVE id
 
@@ -112,7 +115,7 @@ curl -s -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | head -c 4 ; ech
 #  RETE
 curl -sD - -o /dev/null -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | grep -i '206\|content-range'
 #  HTTP/2 206
-#  content-range: bytes 0-1023/1610
+#  content-range: bytes 0-1023/2035
 ```
 
 That `206` is the contract: a host that ignores `Range` and returns `200` is
