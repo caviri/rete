@@ -226,7 +226,7 @@ pub fn parse_statements(text: &str, format: &str) -> Result<Vec<RawQuad>, Ingest
 }
 
 /// Take one term from the front of `s`, returning `(term, remainder)`.
-fn take_term(s: &str) -> Option<(String, &str)> {
+pub(crate) fn take_term(s: &str) -> Option<(String, &str)> {
     let bytes = s.as_bytes();
     let first = *bytes.first()?;
     match first {
@@ -289,6 +289,22 @@ fn take_term(s: &str) -> Option<(String, &str)> {
         }
         _ => None,
     }
+}
+
+/// Split a canonical quoted-triple token `<<s p o>>` (RDF-star) into its three
+/// component term tokens, or `None` if `t` is not a quoted triple. Reuses
+/// [`take_term`] for term-boundary scanning, so nested quoting parses correctly.
+/// The inverse of the `<<…>>` construction; used by the SUBJECT/PREDICATE/OBJECT
+/// SPARQL-star builtins.
+pub(crate) fn quoted_triple_parts(t: &str) -> Option<(String, String, String)> {
+    let inner = t.strip_prefix("<<")?.strip_suffix(">>")?.trim();
+    let (s, r) = take_term(inner)?;
+    let (p, r) = take_term(r.trim_start())?;
+    let (o, r) = take_term(r.trim_start())?;
+    if !r.trim().is_empty() {
+        return None;
+    }
+    Some((s, p, o))
 }
 
 /// Counts describing an assembled file, for status lines and UIs.

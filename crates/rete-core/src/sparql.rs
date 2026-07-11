@@ -297,6 +297,15 @@ pub enum Builtin {
     GeoSfEquals,
     GeoDistance,
     GeoEnvelope,
+    // RDF-star / SPARQL-star: construct + inspect quoted triples (`<<s p o>>`).
+    /// `TRIPLE(s, p, o)` → the quoted triple term.
+    TripleTerm,
+    /// `isTRIPLE(t)` → whether `t` is a quoted triple (a boolean builtin).
+    IsTriple,
+    /// `SUBJECT(t)` / `PREDICATE(t)` / `OBJECT(t)` → the component of a quoted triple.
+    Subject,
+    Predicate,
+    Object,
 }
 
 /// A small boolean/comparison expression for FILTER (a subset of SPARQL exprs).

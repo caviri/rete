@@ -124,6 +124,32 @@ fn rdf_star_ingest_header_flag_and_concrete_query() {
     let subj = col(&rete, "SELECT ?s WHERE { ?s <http://ex/count> \"5\" }", "s");
     assert_eq!(subj.len(), 1);
     assert!(subj[0].starts_with("<<") && subj[0].ends_with(">>"));
+
+    // SPARQL-star builtins: isTRIPLE filters quoted triples; SUBJECT/OBJECT
+    // decompose them (so inner-variable queries work via the builtins).
+    let annotated_subjects = col(
+        &rete,
+        "SELECT ?s WHERE { ?qt <http://ex/recordedBy> ?who FILTER(isTRIPLE(?qt)) \
+         BIND(SUBJECT(?qt) AS ?s) }",
+        "s",
+    );
+    assert_eq!(annotated_subjects, vec!["<http://ex/occ1>".to_string()]);
+
+    // TRIPLE(s, p, o) constructs a quoted triple in canonical surface.
+    let built = col(
+        &rete,
+        &format!(
+            "SELECT ?t WHERE {{ <http://ex/occ1> ?p ?o \
+             BIND(TRIPLE(<http://ex/occ1>, ?p, ?o) AS ?t) }}"
+        ),
+        "t",
+    );
+    assert_eq!(
+        built,
+        vec![format!(
+            "<<<http://ex/occ1> {rdf} <http://ex/Swallow>>>"
+        )]
+    );
 }
 
 #[test]

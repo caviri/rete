@@ -165,6 +165,25 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
     };
     match f {
         Builtin::Str => s(lex(&a0()?)),
+        // RDF-star accessors return the component TERM (an IRI/literal/quoted
+        // triple), not a lexical string; TRIPLE builds a quoted triple from three
+        // term values. `None` (a type error) when the argument is not a quoted
+        // triple, matching the SPARQL-star spec.
+        Builtin::Subject => {
+            crate::ingest::quoted_triple_parts(&a0()?).map(|(x, _, _)| Rc::from(x.as_str()))
+        }
+        Builtin::Predicate => {
+            crate::ingest::quoted_triple_parts(&a0()?).map(|(_, x, _)| Rc::from(x.as_str()))
+        }
+        Builtin::Object => {
+            crate::ingest::quoted_triple_parts(&a0()?).map(|(_, _, x)| Rc::from(x.as_str()))
+        }
+        Builtin::TripleTerm => {
+            let sub = a0()?;
+            let pred = args.get(1).and_then(|e| e.value(ctx, b))?;
+            let obj = args.get(2).and_then(|e| e.value(ctx, b))?;
+            Some(Rc::from(format!("<<{sub} {pred} {obj}>>")))
+        }
         // STRLEN/UCASE/LCASE/SUBSTR/ENCODE_FOR_URI and the hashes require a STRING
         // literal argument — `string_arg` errors (→ None, a type error) on an IRI,
         // blank node, or non-string typed literal, matching SPARQL (and CONCAT,
@@ -780,6 +799,8 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
         Builtin::IsBlank => val(0).is_some_and(|t| t.starts_with("_:")),
         Builtin::IsLiteral => val(0).is_some_and(|t| t.starts_with('"')),
         Builtin::IsNumeric => val(0).and_then(|t| as_number(&t)).is_some(),
+        // RDF-star: is the argument a quoted triple (`<<s p o>>`)?
+        Builtin::IsTriple => val(0).is_some_and(|t| crate::terms::is_quoted_triple(&t)),
         Builtin::Contains => two(|a, c| a.contains(c)),
         Builtin::StrStarts => two(|a, c| a.starts_with(c)),
         Builtin::StrEnds => two(|a, c| a.ends_with(c)),

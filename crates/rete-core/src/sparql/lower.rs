@@ -579,6 +579,12 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
                 Function::Uuid => Builtin::Uuid,
                 Function::StrUuid => Builtin::StrUuid,
                 Function::BNode => Builtin::BNode,
+                // RDF-star / SPARQL-star.
+                Function::Triple => Builtin::TripleTerm,
+                Function::IsTriple => Builtin::IsTriple,
+                Function::Subject => Builtin::Subject,
+                Function::Predicate => Builtin::Predicate,
+                Function::Object => Builtin::Object,
                 // An `xsd:<type>(expr)` constructor parses as a call to the
                 // datatype IRI — map the supported XSD casts.
                 Function::Custom(nn) => match nn.as_str() {
