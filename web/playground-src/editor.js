@@ -348,12 +348,13 @@
       CM.autocompletion({ override: [completionSource(ed)], icons: true, activateOnTyping: true }),
       decodePlugin(ed),
       // Phones: wrap long lines (no sideways scrolling to read a PREFIX) and
-      // bump the type to 16px — iOS zooms the whole page when a focused
-      // field's text is any smaller. Listed BEFORE baseTheme: for CM6 themes,
-      // earlier in the extension array = higher precedence, so this fontSize
-      // beats baseTheme's 13px.
+      // shrink the type — the editor is a contenteditable div (not a form
+      // control), so a small font here doesn't trigger iOS's focus-zoom the
+      // way a bare <input> does; 11px keeps the query compact on a phone.
+      // Listed BEFORE baseTheme: for CM6 themes, earlier in the extension
+      // array = higher precedence, so this fontSize beats baseTheme's 13px.
       ...(window.matchMedia && window.matchMedia("(max-width: 560px)").matches
-        ? [CM.EditorView.lineWrapping, CM.EditorView.theme({ "&": { fontSize: "16px" } })]
+        ? [CM.EditorView.lineWrapping, CM.EditorView.theme({ "&": { fontSize: "11px" } })]
         : []),
       baseTheme,
       CM.keymap.of([].concat(CM.closeBracketsKeymap, CM.defaultKeymap, CM.historyKeymap, CM.completionKeymap, [CM.indentWithTab])),
