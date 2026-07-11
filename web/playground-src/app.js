@@ -6043,6 +6043,19 @@ self.onmessage = function (e) {
         if (msg === "cancelled") {
           $("qmeta").textContent = "cancelled";
           $("out").innerHTML = `<div class="note">Query cancelled — the worker was stopped. Run again to retry.</div>`;
+        } else if (/maximum call stack/i.test(msg)) {
+          // A wasm call-stack overflow — the engine recurses deeper than the
+          // browser's WebAssembly stack allows. Reproduces ONLY on iOS/iPad
+          // Safari (JavaScriptCore has a much smaller wasm call-stack limit than
+          // Chrome/Firefox), and only on structurally deep queries (several
+          // nested OPTIONALs). The query itself is fine — it runs on desktop.
+          resetRemoteWorker();
+          $("qmeta").textContent = "query too deep for this browser";
+          $("out").innerHTML =
+            `<div class="note"><b>This query is too deeply nested for iPhone / iPad Safari.</b> ` +
+            `Its structure makes the engine recurse deeper than Safari's WebAssembly call-stack allows — a Safari-specific limit; the same query runs on a desktop browser.<br><br>` +
+            `Try: <b>fewer <code>OPTIONAL</code> blocks</b> (each one nests deeper — split the query, or drop the ones you don't need), or open this dataset on a desktop browser. ` +
+            `The engine has been reset — you can run another query now.</div>`;
         } else if (isEngineTrap(msg)) {
           // A wasm trap poisons the instance — rebuild a fresh worker either way.
           resetRemoteWorker();
