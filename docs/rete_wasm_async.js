@@ -566,6 +566,19 @@ let wasm_bindgen = (function(exports) {
     exports.RemoteGraph = RemoteGraph;
 
     /**
+     * Module init: route Rust panics to `console.error` with their message and
+     * location. In release wasm a panic otherwise aborts as a bare
+     * `RuntimeError: unreachable` with no clue where — this turns that into a
+     * `rete-wasm panic: panicked at '…', src/…:line` line in the devtools console,
+     * so an intermittent first-query crash (e.g. a parser tripping on a flaky
+     * range read) can actually be diagnosed.
+     */
+    function __start() {
+        wasm.__start();
+    }
+    exports.__start = __start;
+
+    /**
      * Build a complete `.rete` file image from RDF text, entirely in the browser.
      *
      * `format` is `"nt"` (N-Triples), `"nq"` (N-Quads; named graphs become a
@@ -1760,6 +1773,13 @@ let wasm_bindgen = (function(exports) {
                 const ret = getObject(arg0).crypto;
                 return addHeapObject(ret);
             },
+            __wbg_encodeURIComponent_9ff907ad9d03c7bb: function(arg0, arg1) {
+                const ret = encodeURIComponent(getStringFromWasm0(arg0, arg1));
+                return addHeapObject(ret);
+            },
+            __wbg_error_78ff5b3a29b770e0: function(arg0) {
+                console.error(getObject(arg0));
+            },
             __wbg_getRandomValues_c44a50d8cfdaebeb: function() { return handleError(function (arg0, arg1) {
                 getObject(arg0).getRandomValues(getObject(arg1));
             }, arguments); },
@@ -1775,6 +1795,10 @@ let wasm_bindgen = (function(exports) {
                 const ret = getObject(arg0).msCrypto;
                 return addHeapObject(ret);
             },
+            __wbg_new_2ee370dca414d926: function() { return handleError(function () {
+                const ret = new XMLHttpRequest();
+                return addHeapObject(ret);
+            }, arguments); },
             __wbg_new_with_length_36a4998e27b014c5: function(arg0) {
                 const ret = new Uint8Array(arg0 >>> 0);
                 return addHeapObject(ret);
@@ -1783,6 +1807,9 @@ let wasm_bindgen = (function(exports) {
                 const ret = getObject(arg0).node;
                 return addHeapObject(ret);
             },
+            __wbg_open_837bab9ccb9e06da: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4, arg5) {
+                getObject(arg0).open(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4), arg5 !== 0);
+            }, arguments); },
             __wbg_process_44c7a14e11e9f69e: function(arg0) {
                 const ret = getObject(arg0).process;
                 return addHeapObject(ret);
@@ -1796,6 +1823,19 @@ let wasm_bindgen = (function(exports) {
             __wbg_require_b4edbdcf3e2a1ef0: function() { return handleError(function () {
                 const ret = module.require;
                 return addHeapObject(ret);
+            }, arguments); },
+            __wbg_responseText_266ec252b6be1e56: function() { return handleError(function (arg0, arg1) {
+                const ret = getObject(arg1).responseText;
+                var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                var len1 = WASM_VECTOR_LEN;
+                getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+                getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+            }, arguments); },
+            __wbg_send_4e22a258e556a44c: function() { return handleError(function (arg0, arg1, arg2) {
+                getObject(arg0).send(arg1 === 0 ? undefined : getStringFromWasm0(arg1, arg2));
+            }, arguments); },
+            __wbg_setRequestHeader_b5e8e6d03614f3e5: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
+                getObject(arg0).setRequestHeader(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
             }, arguments); },
             __wbg_static_accessor_GLOBAL_9d53f2689e622ca1: function() {
                 const ret = typeof global === 'undefined' ? null : global;
@@ -1813,6 +1853,10 @@ let wasm_bindgen = (function(exports) {
                 const ret = typeof window === 'undefined' ? null : window;
                 return isLikeNone(ret) ? 0 : addHeapObject(ret);
             },
+            __wbg_status_214edd0820ca76fc: function() { return handleError(function (arg0) {
+                const ret = getObject(arg0).status;
+                return ret;
+            }, arguments); },
             __wbg_subarray_4aa221f6a4f5ab22: function(arg0, arg1, arg2) {
                 const ret = getObject(arg0).subarray(arg1 >>> 0, arg2 >>> 0);
                 return addHeapObject(ret);
@@ -2006,6 +2050,7 @@ let wasm_bindgen = (function(exports) {
         wasmModule = module;
         cachedDataViewMemory0 = null;
         cachedUint8ArrayMemory0 = null;
+        wasm.__wbindgen_start();
         return wasm;
     }
 
