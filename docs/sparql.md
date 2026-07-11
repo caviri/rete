@@ -32,6 +32,7 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 | **Aggregation** | `GROUP BY`, `HAVING`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` (incl. `COUNT(DISTINCT …)`) |
 | **Datasets** | `GRAPH <iri>` / `GRAPH ?g`, `FROM` (RDF-merge default graph), `FROM NAMED` (scope which graphs `GRAPH` sees); `EXISTS` honors the active graph |
 | **Output** | SPARQL Results JSON (`--json`), with correct `uri`/`literal`/`bnode` typing, datatype, and `xml:lang`; literal values are properly unescaped |
+| **RDF-star** | Quoted triples `<< s p o >>` in subject/object position — ingest (N-Triples-star & Turtle-star), storage, and SPARQL-star: quoted-triple patterns (incl. inner variables `<< ?s :p ?o >>`) and the `isTRIPLE` / `TRIPLE` / `SUBJECT` / `PREDICATE` / `OBJECT` built-ins. See [below](#rdf-star). |
 
 ### Property-path zero-length semantics
 
@@ -128,6 +129,70 @@ Notes:
   HTTP transport (`ServiceClient`); in the browser the endpoint must allow
   CORS (the big public ones do).
 - `SERVICE ?endpoint { … }` (a variable endpoint) is not supported.
+
+## RDF-star
+
+rete supports **RDF-star**: a *quoted triple* `<< s p o >>` may stand in the
+subject or object position of another triple, so you can make statements **about
+statements** — the natural home for provenance and annotation (who recorded a
+fact, when, with what confidence).
+
+```turtle
+:occ1 a :BarnSwallow .
+# annotate the statement above:
+<< :occ1 a :BarnSwallow >> :recordedBy :jsmith ;
+                           :individualCount 5 ;
+                           :observedOn "2023-05-01"^^xsd:date .
+```
+
+**Ingest & storage.** Quoted triples parse from both **N-Triples-star** and
+**Turtle-star** (`rete build data.ttls`, `rete validate`) and are stored as
+ordinary dictionary terms — no format change, no version bump, and an old reader
+stays forward-compatible. A file that contains any quoted triple sets a header
+flag (`FLAG_HAS_QUOTED_TRIPLES`), so a plain-RDF consumer can tell from the header
+alone, without scanning; `rete info` shows it. Quoted triples round-trip
+losslessly through `rete export`, and `rete verify` covers them.
+
+**Query — SPARQL-star.** A quoted triple can appear in a query pattern, with
+constants or inner variables:
+
+```sparql
+# Who recorded that occ1 is a Barn Swallow?  (concrete quoted triple)
+SELECT ?who WHERE { << :occ1 a :BarnSwallow >> :recordedBy ?who }
+
+# Every recorded identification, with the sighting and species bound from the
+# quoted triple (inner variables):
+SELECT ?occ ?species ?who WHERE {
+  << ?occ a ?species >> :recordedBy ?who
+}
+
+# A quoted variable that is also bound by a regular pattern joins on it:
+SELECT ?who WHERE {
+  ?occ :place ?p .
+  << ?occ a ?species >> :recordedBy ?who     # ?occ unifies across both
+}
+```
+
+**Built-in functions** inspect and construct quoted triples:
+
+| Function | Result |
+|---|---|
+| `isTRIPLE(t)` | whether `t` is a quoted triple |
+| `SUBJECT(t)` / `PREDICATE(t)` / `OBJECT(t)` | the component of a quoted triple |
+| `TRIPLE(s, p, o)` | build a quoted triple from three terms |
+
+```sparql
+# Equivalent to the inner-variable pattern above, spelled with the built-ins:
+SELECT ?occ ?who WHERE {
+  ?qt :recordedBy ?who
+  FILTER(isTRIPLE(?qt))
+  BIND(SUBJECT(?qt) AS ?occ)
+}
+```
+
+`CONSTRUCT` (and `rete serve`'s SPARQL Update) may build quoted triples in their
+templates. Nested quoting (`<< << … >> :p ?o >>`) works. rete follows the
+RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.
 
 ## Not supported
 

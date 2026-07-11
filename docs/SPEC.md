@@ -125,7 +125,7 @@ headers, the three-permutation `0x03` — is a clean break, so rebuild old files
 |---|---|---|
 | 0 | 4 | magic `RETE` |
 | 4 | 1 | format version (`0x04`) |
-| 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer) |
+| 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples) |
 | 6 | 2 | header length (= 1024) |
 | 8 | 16 | content hash (blake3, first 16 bytes) — also an ETag-like id |
 | 24 | 8 | total quad count |
@@ -187,6 +187,12 @@ the section's length.
   and object position. Predicates and graphs occupy their own independent ID
   spaces. This is what `dictionary.rs` builds on top of the §5.1 sections.
 - Literals carry datatype IRI (as a dictionary ID) and optional language tag.
+- **RDF-star quoted triples** (`<< s p o >>`) are stored as ordinary terms: a
+  quoted triple is interned by its canonical N-Triples-star surface, exactly like
+  an IRI or literal, so the dictionary, the permutation indexes, and this layout
+  need no change for RDF-star — hence no format-version bump. A file that contains
+  any quoted triple sets header flag bit 2 (§4.1) so a plain-RDF reader can detect
+  it without scanning. See [SPARQL § RDF-star](sparql.html#rdf-star).
 - The dictionary is four independently-decompressible **sections** (shared /
   subjects / objects / predicates), each with a restart-indexed table (§5.1) that
   supports `O(log n)` term↔ID lookup once loaded. Each section is additionally

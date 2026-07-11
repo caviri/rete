@@ -343,7 +343,7 @@ headers, the three-permutation <code>0x03</code> — is a clean break, so rebuil
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
 <tr><td>4</td><td>1</td><td>format version (<code>0x04</code>)</td></tr>
-<tr><td>5</td><td>1</td><td>flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer)</td></tr>
+<tr><td>5</td><td>1</td><td>flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples)</td></tr>
 <tr><td>6</td><td>2</td><td>header length (= 1024)</td></tr>
 <tr><td>8</td><td>16</td><td>content hash (blake3, first 16 bytes) — also an ETag-like id</td></tr>
 <tr><td>24</td><td>8</td><td>total quad count</td></tr>
@@ -403,6 +403,14 @@ spaces. This is what <code>dictionary.rs</code> builds on top of the §5.1 secti
 </li>
 <li>
 <p>Literals carry datatype IRI (as a dictionary ID) and optional language tag.</p>
+</li>
+<li>
+<p><strong>RDF-star quoted triples</strong> (<code>&lt;&lt; s p o &gt;&gt;</code>) are stored as ordinary terms: a
+quoted triple is interned by its canonical N-Triples-star surface, exactly like
+an IRI or literal, so the dictionary, the permutation indexes, and this layout
+need no change for RDF-star — hence no format-version bump. A file that contains
+any quoted triple sets header flag bit 2 (§4.1) so a plain-RDF reader can detect
+it without scanning. See <a href="sparql.html#rdf-star">SPARQL § RDF-star</a>.</p>
 </li>
 <li>
 <p>The dictionary is four independently-decompressible <strong>sections</strong> (shared /
