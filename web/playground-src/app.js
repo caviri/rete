@@ -3566,7 +3566,7 @@ self.onmessage = function (e) {
   // among these never needs the query to run again — only a re-render. The
   // serialization views (TTL/JSON-LD) are a different engine output, so they
   // still run.
-  const ROW_VIEWS = new Set(["table", "graph", "map", "tiles", "time"]);
+  const ROW_VIEWS = new Set(["table", "cards", "graph", "map", "tiles", "time"]);
 
   // Changing the Output type re-renders the last result in the new view with no
   // re-run, whenever that's possible: the cached result must be row-shaped, the
@@ -3898,7 +3898,9 @@ self.onmessage = function (e) {
       `⚠ IIIF blocked</a>`;
   }
   function hydrateIiif(scope) {
-    (scope || document).querySelectorAll("td.iiif-cell[data-iiif]").forEach((td) => {
+    // Class-based (not td-scoped): IIIF cells render inside table cells AND card
+    // field divs — both carry .iiif-cell.
+    (scope || document).querySelectorAll(".iiif-cell[data-iiif]").forEach((td) => {
       const url = td.getAttribute("data-iiif");
       td.removeAttribute("data-iiif"); // process once
       fetchIiifDoc(url).then((doc) => {
@@ -4474,6 +4476,85 @@ self.onmessage = function (e) {
       ? `<p class="microcopy">Showing first 500 of ${rows.length} rows.</p>`
       : "";
     return statefulTable(vars || [], rows || [], note);
+  }
+
+  // ---- Cards view -------------------------------------------------------------
+  // One card per result row, fields stacked label-over-value — phone-friendly
+  // (media renders full-width), flowing as a CSS-columns masonry on wide screens.
+  // Rendering reuses the table's cell machinery: `prettyCell` produces a `<td>`,
+  // which is re-wrapped as the card field's value `<div>`, so every renderer
+  // (image / IIIF / 3D / audio / geo / …) and the hydration observers work
+  // unchanged. Per-field type overrides live in the SAME `st.types` map the
+  // table header dropdowns use — the ⚙ Fields modal just edits it.
+  const CARDS_HEAD = 24, CARDS_MORE_STEP = 48;
+  function cellDiv(raw, type) {
+    let h = prettyCell(raw, type);
+    h = h.replace(/^<td(?=[\s>])/, "<div").replace(/<\/td>\s*$/, "</div>");
+    return h.startsWith('<div class="')
+      ? h.replace('<div class="', '<div class="cf-v ')
+      : h.replace(/^<div/, '<div class="cf-v"');
+  }
+  function cardsInner(st) {
+    const shown = st.rows.slice(0, st.cap);
+    const cardHtmls = shown.map((row) => {
+      geoRowCtx = row; // so a geo field in this card can resolve its feature IRI
+      const fields = st.vars.map((v) => {
+        const raw = row[v];
+        if (raw == null || raw === "") return ""; // cards skip empty bindings
+        return `<div class="cf"><div class="cf-k" title="?${esc(v)}">${esc(colLabel(st, v))}</div>${cellDiv(raw, st.types[v] || "auto")}</div>`;
+      }).join("");
+      geoRowCtx = null;
+      return `<article class="rcard">${fields || `<div class="cf"><div class="cf-v">(empty row)</div></div>`}</article>`;
+    });
+    const hidden = Math.max(0, cardHtmls.length - CARDS_HEAD);
+    const body = cardHtmls
+      .map((c, i) => (i < CARDS_HEAD ? c : c.replace("<article class=\"rcard", "<article class=\"rcard rcard-hidden")))
+      .join("");
+    return (st.note || "") +
+      `<div class="cards-bar"><button type="button" class="cards-fields secondary" data-tid="${st.tid}">⚙ Fields</button>` +
+      `<span class="microcopy">${st.rows.length} card(s)</span></div>` +
+      `<div class="cards-grid">${body}</div>` +
+      (hidden > 0
+        ? `<button type="button" class="cards-more secondary">Show ${Math.min(hidden, CARDS_MORE_STEP)} more (${hidden} hidden)</button>`
+        : "");
+  }
+  function renderCards(vars, rows, note) {
+    if (!(rows || []).length) return emptyState("rows");
+    const tid = "t" + ++tableSeq;
+    const st = { tid, kind: "cards", vars: vars || [], rows: rows || [], types: {}, cap: 500,
+      note: note || ((rows || []).length > 500 ? `<p class="microcopy">Showing first 500 of ${rows.length} rows.</p>` : ""),
+      labels: state.colLabels || null };
+    tableStates.set(tid, st);
+    while (tableStates.size > 12) tableStates.delete(tableStates.keys().next().value);
+    return `<div class="cards" data-tid="${tid}">${cardsInner(st)}</div>`;
+  }
+  function renderCardsResult(res, progressive) {
+    if (res.kind === "ask") {
+      $("out").innerHTML = progressiveBanner(progressive) +
+        `<div class="banner">ASK result: <strong>${esc(res.boolean)}</strong></div>`;
+      return `ASK ${res.boolean}`;
+    }
+    if (res.kind === "select") {
+      $("out").innerHTML = progressiveBanner(progressive) + renderCards(res.vars || [], res.rows || []);
+      return `${(res.rows || []).length} row(s)`;
+    }
+    if (res.triples && res.triples.length) {
+      // CONSTRUCT/DESCRIBE: same normalization as the triples table — one card
+      // per triple, with the object field commonly the media one.
+      const rows = res.triples.map((t) => ({ subject: t[0], predicate: t[1], object: t[2] }));
+      $("out").innerHTML = renderCards(["subject", "predicate", "object"], rows);
+      return `${res.triples.length} triple(s)`;
+    }
+    $("out").innerHTML = `<div class="note">Cards need result rows — run a <b>SELECT</b> (or a CONSTRUCT evaluated to triples).</div>`;
+    return "cards: no rows";
+  }
+  function openCardsFields(tid) {
+    const st = tableStates.get(tid);
+    if (!st) return;
+    $("cardsFieldsBody").innerHTML = st.vars.map((v) =>
+      `<label class="cfm-row"><span class="cfm-name" title="?${esc(v)}">${esc(colLabel(st, v))}</span>` +
+      `${colTypeMenu(tid, v, st.types[v])}</label>`).join("");
+    $("cardsFieldsModal").classList.remove("hidden");
   }
 
   function renderTriplesTable(triples) {
@@ -5079,6 +5160,7 @@ self.onmessage = function (e) {
     if (fmt === "map") return renderMap(res);
     if (fmt === "tiles") return renderTiles(res);
     if (fmt === "time") return renderTime(res);
+    if (fmt === "cards") return renderCardsResult(res, progressive);
 
     if (fmt === "graph") {
       let triples = triplesForGraph(res);
@@ -5857,8 +5939,8 @@ self.onmessage = function (e) {
 
   function runEmbeddedQuery(q, fmt) {
     const strategy = $("strategy").value;
-    // graph / map / time are renderings of SELECT bindings — ask the engine for table rows.
-    const rowView = fmt === "graph" || fmt === "map" || fmt === "time";
+    // graph / map / time / cards are renderings of SELECT bindings — ask the engine for table rows.
+    const rowView = fmt === "graph" || fmt === "map" || fmt === "time" || fmt === "cards";
     const queryFmt = strategy === "progressive" || rowView ? "table" : fmt;
     const t0 = performance.now();
     try {
@@ -7305,6 +7387,7 @@ self.onmessage = function (e) {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
         $("outputModal").classList.add("hidden");
+        $("cardsFieldsModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");
         closeLibrary();
         closeHistory();
@@ -7350,8 +7433,31 @@ self.onmessage = function (e) {
       const st = tableStates.get(sel.dataset.tid);
       if (!st) return;
       st.types[sel.dataset.col] = sel.value;
-      const wrap = document.querySelector(`.tbl[data-tid="${sel.dataset.tid}"]`);
-      if (wrap) wrap.innerHTML = tableInner(st);
+      // Re-render the owning view in place — a table, or a cards grid (whose
+      // type selects live in the ⚙ Fields modal, so changes preview live).
+      const wrap = document.querySelector(`.tbl[data-tid="${sel.dataset.tid}"], .cards[data-tid="${sel.dataset.tid}"]`);
+      if (wrap) wrap.innerHTML = st.kind === "cards" ? cardsInner(st) : tableInner(st);
+    });
+
+    // Cards: the "Show more" reveal and the ⚙ Fields modal (delegated — cards
+    // grids are rendered dynamically, like tables).
+    document.addEventListener("click", (e) => {
+      const more = e.target.closest && e.target.closest(".cards-more");
+      if (more) {
+        const wrap = more.closest(".cards");
+        const hidden = $$(".rcard-hidden", wrap);
+        hidden.slice(0, CARDS_MORE_STEP).forEach((c) => c.classList.remove("rcard-hidden"));
+        const left = Math.max(0, hidden.length - CARDS_MORE_STEP);
+        if (left === 0) more.remove();
+        else more.textContent = `Show ${Math.min(left, CARDS_MORE_STEP)} more (${left} hidden)`;
+        return;
+      }
+      const fields = e.target.closest && e.target.closest(".cards-fields");
+      if (fields) openCardsFields(fields.dataset.tid);
+    });
+    $("cardsFieldsClose").onclick = () => $("cardsFieldsModal").classList.add("hidden");
+    $("cardsFieldsModal").addEventListener("click", (e) => {
+      if (e.target === $("cardsFieldsModal")) $("cardsFieldsModal").classList.add("hidden");
     });
     $("clearHist").onclick = () => {
       localStorage.removeItem(HIST_KEY);

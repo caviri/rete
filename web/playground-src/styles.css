@@ -1120,6 +1120,48 @@ textarea {
   border: 1px solid var(--line); background: var(--side); object-fit: cover;
 }
 .cell-thumb:hover { border-color: var(--accent); cursor: zoom-in; }
+
+/* ── Cards output view ─────────────────────────────────────────────────────
+   One card per result row, fields stacked label-over-value. CSS multi-columns
+   give the masonry: cards fill each column top-to-bottom and the column count
+   adapts (~300px per column on a desktop, naturally one on a phone);
+   break-inside keeps a card whole. Cell values reuse the table renderers (the
+   same .iri/.lit/.geo-cell/… classes on a div instead of a td), so media
+   hydration works unchanged — media just gets full card width. */
+.cards-bar { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; }
+.cards-bar .microcopy { margin: 0; }
+.cards-fields { font-size: 12px; padding: 5px 11px; }
+.cards-grid { columns: 300px; column-gap: 12px; }
+.rcard {
+  display: inline-block; width: 100%; break-inside: avoid;
+  margin: 0 0 12px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  box-shadow: 0 1px 3px rgba(32, 47, 41, .06);
+}
+.rcard.rcard-hidden { display: none; }
+.rcard .cf { margin: 0 0 10px; min-width: 0; }
+.rcard .cf:last-child { margin-bottom: 0; }
+.rcard .cf-k {
+  font-size: 9.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 3px;
+}
+.rcard .cf-v { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; }
+/* The lead field reads as the card's title when it's a plain literal. */
+.rcard .cf:first-child .cf-v.lit { font-size: 14.5px; font-weight: 700; }
+.rcard .cf-v.num { font-variant-numeric: tabular-nums; }
+/* Media fills the card width (the table caps thumbs at 128px). */
+.rcard .cf-v .cell-thumb { width: 100%; max-width: 100%; max-height: 340px; }
+.rcard .cf-v.geo-cell svg { width: 100%; }
+.rcard .cf-v .media-meta { max-width: 100%; }
+.rcard .cf-v model-viewer { width: 100%; }
+.cards-more { display: block; margin: 4px auto 0; }
+/* The ⚙ Fields modal rows (per-field render-type pickers). */
+.cfm-list { max-height: 60vh; overflow-y: auto; overscroll-behavior: contain; }
+.cfm-row { display: flex; align-items: center; gap: 12px; padding: 8px 2px; border-bottom: 1px solid var(--line); }
+.cfm-row:last-child { border-bottom: 0; }
+.cfm-row .cfm-name { flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfm-row select.coltype { flex: 0 0 auto; }
+
 /* Floating hover-zoom of a table image — anchored beside the thumb, clamped to the
    viewport (positioned in JS), so a scan/photo reads without opening the lightbox. */
 .thumb-zoom {
@@ -2298,7 +2340,13 @@ th .coltype.coltype-on {
   .docs-link { display: none; }
 
   .ds-header { flex-direction: column; align-items: stretch; gap: 6px; padding: 10px 12px 4px; }
-  .ds-header.condensed { gap: 2px; }
+  /* `stretch` must survive the condensed state: the desktop rule
+     `.ds-header.condensed { align-items: center }` outweighs the phone
+     `.ds-header` rule, and in THIS column layout `center` sizes the title block
+     to its nowrap max-content and centers it — a long title then spills past
+     BOTH viewport edges instead of ellipsizing inside its box. */
+  .ds-header.condensed { gap: 2px; align-items: stretch; }
+  .ds-header.condensed .ds-title { max-width: 100%; }
   .ds-header-meta { justify-content: flex-start; flex-wrap: wrap; }
   /* Title + tagline must WRAP inside the viewport. The tagline's desktop
      max-width:78ch (~546px) is wider than a phone, so it overflowed the screen and
