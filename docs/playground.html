@@ -3074,8 +3074,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build d783f20 · 2026-07-11 17:02 UTC</span>
-    <script>window.RETE_BUILD = "d783f20 · 2026-07-11 17:02 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 161b0c1 · 2026-07-11 17:42 UTC</span>
+    <script>window.RETE_BUILD = "161b0c1 · 2026-07-11 17:42 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -10682,6 +10682,23 @@ self.onmessage = function (e) {
     remoteOnProgress = null;
   }
 
+  // Tear down the remote worker WITHOUT rejecting pending as "cancelled" — used
+  // after a wasm trap (see below), where the query already failed with its real
+  // error. A trapped wasm instance is poisoned and can't be reused, so the next
+  // query must rebuild a fresh worker.
+  function resetRemoteWorker() {
+    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; }
+    remoteOnProgress = null;
+  }
+
+  // A wasm trap ("unreachable") or an allocation/memory error — almost always the
+  // browser hitting its WebAssembly memory limit on a heavy query over a large
+  // remote file. Common on iPhone/iPad Safari, which caps per-tab memory well
+  // below desktop.
+  function isEngineMemoryError(msg) {
+    return /unreachable|out of memory|memory access out of bounds|allocation|rangeerror|maximum call stack/i.test(String(msg || ""));
+  }
+
   // The asyncified wasm variant (glue + bytes) lives in separate files so it costs
   // the default page nothing; fetched once, lazily, when the toggle is first used.
   let asyncGlueText = null, asyncWasmBytes = null;
@@ -12486,7 +12503,8 @@ self.onmessage = function (e) {
       ? "On — fetched byte ranges (rete, DuckDB and SQLite) are saved to IndexedDB and reused after a reload. They persist across browser sessions until you clear them. Toggling recreates the query engines."
       : "Off — the lazy backends keep fetched bytes only for this session; a reload re-fetches. Turn on to persist ranges across reloads and sessions (experimental).";
     const items = await rangeCacheBreakdown();
-    const totalBytes = items.reduce((a, m) => a + (m.bytes || 0), 0);
+    // Cap each file at its own size (block rounding can overshoot on tiny files).
+    const totalBytes = items.reduce((a, m) => a + Math.min(m.bytes || 0, m.total || (m.bytes || 0)), 0);
     // Live: spindle for ~1.5 s after any growth so you SEE bytes landing.
     if (rcPrevTotal >= 0 && totalBytes > rcPrevTotal) rcLastGrowAt = performance.now();
     const changed = totalBytes !== rcPrevTotal || items.length !== rcPrevCount;
@@ -12512,7 +12530,11 @@ self.onmessage = function (e) {
     list.innerHTML = items.map((m) => {
       const pct = m.total ? Math.min(100, (m.bytes / m.total) * 100) : 0;
       const pctTxt = m.total ? (pct >= 9.95 ? pct.toFixed(0) : pct.toFixed(1)) + "%" : "size unknown";
-      const size = formatBytes(m.bytes) + (m.total ? " / " + formatBytes(m.total) : "") + " · " + pctTxt;
+      // Cap the shown cached bytes at the file size — the tally rounds each fetch
+      // up to whole 1 MiB blocks, so a small file can accrue slightly more block
+      // bytes than it contains (e.g. "2 MB / 1.5 MB"); clamp so it reads sanely.
+      const held = m.total ? Math.min(m.bytes, m.total) : m.bytes;
+      const size = formatBytes(held) + (m.total ? " / " + formatBytes(m.total) : "") + " · " + pctTxt;
       return `<div class="rc-brow"><div class="rc-bcol">` +
         `<div class="rc-bhead"><span class="ci-name" title="${esc(m.key)}">${esc(rcLabelForKey(m.key))}</span>` +
         `<span class="ci-size">${esc(size)}</span></div>` +
@@ -16290,6 +16312,18 @@ self.onmessage = function (e) {
         if (msg === "cancelled") {
           $("qmeta").textContent = "cancelled";
           $("out").innerHTML = `<div class="note">Query cancelled — the worker was stopped. Run again to retry.</div>`;
+        } else if (isEngineMemoryError(msg)) {
+          // The wasm instance trapped (out of memory). Rebuild a fresh worker so
+          // the next query works, and explain it — don't dump a raw wasm stack.
+          resetRemoteWorker();
+          $("qmeta").textContent = "out of memory";
+          const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
+          const sizeNote = meta.size ? ` (${esc(meta.size)})` : "";
+          $("out").innerHTML =
+            `<div class="note"><b>This query ran out of memory.</b> It needed more than the browser allows for a query over this remote dataset${sizeNote}. ` +
+            `This is common on <b>iPhone / iPad Safari</b>, which caps per-tab memory well below a desktop browser.<br><br>` +
+            `Try: a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or add a country / year / type filter), the <b>Progressive</b> strategy for counts/overviews, or open this dataset on a desktop browser. ` +
+            `The engine has been reset — you can run another query now.</div>`;
         } else {
           $("qmeta").textContent = "";
           showError("out", "Remote query failed: " + msg, e && e.stack);
