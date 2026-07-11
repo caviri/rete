@@ -67,6 +67,11 @@ pub struct Select {
     pub from_named: Option<Vec<String>>,
     /// The graph-pattern evaluation plan.
     pub plan: Plan,
+    /// Monotonic counter for minting query-unique fresh variable names while
+    /// lowering (e.g. the `?__qtN` holders that desugar RDF-star quoted-triple
+    /// patterns). Kept on `Select` so it stays unique across every BGP in one
+    /// query — two joined BGPs must not both mint `__qt1` and get unified.
+    pub star_counter: usize,
 }
 
 impl Default for Select {
@@ -83,6 +88,7 @@ impl Default for Select {
             from: Vec::new(),
             from_named: None,
             plan: Plan::Bgp(Vec::new()),
+            star_counter: 0,
         }
     }
 }

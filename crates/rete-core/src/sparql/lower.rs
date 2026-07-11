@@ -142,7 +142,7 @@ fn collect_path_predicates(
 /// post-evaluation [`Select::extends`] list (applied after any aggregation).
 fn build(p: &GraphPattern, sel: &mut Select, in_where: bool) -> Result<Plan, SparqlError> {
     match p {
-        GraphPattern::Bgp { patterns } => Ok(Plan::Bgp(patterns.iter().map(convert).collect())),
+        GraphPattern::Bgp { patterns } => Ok(lower_bgp(patterns, &mut sel.star_counter)),
         GraphPattern::Join { left, right } => Ok(Plan::Join(
             Box::new(build(left, sel, true)?),
             Box::new(build(right, sel, true)?),
@@ -634,6 +634,166 @@ fn convert(tp: &SpTriplePattern) -> TriplePattern {
         s: term_to_pattern(&tp.subject),
         p: named_to_pattern(&tp.predicate),
         o: term_to_pattern(&tp.object),
+    }
+}
+
+/// Whether a term position is an RDF-star quoted triple that carries INNER
+/// VARIABLES (`<< ?s :p ?o >>`) — a fully-concrete one is a plain constant term.
+fn is_var_quoted(t: &TermPattern) -> bool {
+    matches!(t, TermPattern::Triple(inner) if ground_quoted_token(inner).is_none())
+}
+
+/// Lower a BGP, desugaring RDF-star quoted-triple patterns with inner variables
+/// (Stage 3b). A quoted position `<< ?s :p ?o >>` is replaced by a fresh variable
+/// `?__qtN`, and the plan is wrapped so the quoted triple's components are
+/// constrained/bound: `FILTER(isTRIPLE(?__qtN))`, plus per component either a
+/// `sameTerm` FILTER (a concrete inner term, or an inner variable that is also
+/// bound by a regular pattern → a join) or a BIND via `Plan::Extend` (a fresh
+/// inner variable). Nested quoting recurses. A BGP with no inner-variable quoted
+/// pattern returns the plain `Plan::Bgp` unchanged (the hot path is untouched).
+fn lower_bgp(patterns: &[SpTriplePattern], counter: &mut usize) -> Plan {
+    if !patterns
+        .iter()
+        .any(|tp| is_var_quoted(&tp.subject) || is_var_quoted(&tp.object))
+    {
+        return Plan::Bgp(patterns.iter().map(convert).collect());
+    }
+
+    // Variables appearing in a REGULAR (non-quoted) position are bound by a scan,
+    // so an inner-quoted occurrence of one is a JOIN (FILTER sameTerm), not a BIND.
+    let mut regular_vars: std::collections::BTreeSet<String> = Default::default();
+    for tp in patterns {
+        for t in [&tp.subject, &tp.object] {
+            if let TermPattern::Variable(v) = t {
+                regular_vars.insert(v.as_str().to_string());
+            }
+        }
+        if let NamedNodePattern::Variable(v) = &tp.predicate {
+            regular_vars.insert(v.as_str().to_string());
+        }
+    }
+
+    let mut st = StarRewrite {
+        counter,
+        regular_vars,
+        filters: Vec::new(),
+        binds: Vec::new(),
+        bound: Default::default(),
+    };
+    let rewritten: Vec<TriplePattern> = patterns
+        .iter()
+        .map(|tp| TriplePattern {
+            s: st.rewrite_term(&tp.subject),
+            p: named_to_pattern(&tp.predicate),
+            o: st.rewrite_term(&tp.object),
+        })
+        .collect();
+
+    // Bgp innermost; each BIND (Extend) wraps it in the order recorded (a nested
+    // `?__qtN` is bound before the component vars extracted from it); the combined
+    // FILTER sits outermost — it may reference vars bound by those Extends.
+    let mut plan = Plan::Bgp(rewritten);
+    for (var, expr) in st.binds {
+        plan = Plan::Extend(var, expr, Box::new(plan));
+    }
+    if let Some(cond) = st
+        .filters
+        .into_iter()
+        .reduce(|a, b| FExpr::And(Box::new(a), Box::new(b)))
+    {
+        plan = Plan::Filter(cond, Box::new(plan));
+    }
+    plan
+}
+
+/// Scratch state for the quoted-pattern rewrite in [`lower_bgp`].
+struct StarRewrite<'a> {
+    counter: &'a mut usize,
+    regular_vars: std::collections::BTreeSet<String>,
+    filters: Vec<FExpr>,
+    binds: Vec<(String, FExpr)>,
+    bound: std::collections::BTreeSet<String>,
+}
+
+fn star_accessor(f: Builtin, qt: &str) -> FExpr {
+    FExpr::Func(f, vec![FExpr::Var(qt.to_string())])
+}
+fn star_same(a: FExpr, b: FExpr) -> FExpr {
+    FExpr::SameTerm(Box::new(a), Box::new(b))
+}
+
+impl StarRewrite<'_> {
+    /// Rewrite a subject/object position; a quoted-with-vars becomes a fresh
+    /// variable whose decomposition constraints are recorded.
+    fn rewrite_term(&mut self, t: &TermPattern) -> PatternTerm {
+        if is_var_quoted(t) {
+            let TermPattern::Triple(inner) = t else {
+                unreachable!("is_var_quoted implies Triple");
+            };
+            *self.counter += 1;
+            let qt = format!("__qt{}", self.counter);
+            self.filters
+                .push(FExpr::Func(Builtin::IsTriple, vec![FExpr::Var(qt.clone())]));
+            self.decompose(inner, &qt);
+            PatternTerm::Var(qt)
+        } else {
+            term_to_pattern(t)
+        }
+    }
+
+    /// Constrain the three components of quoted triple `inner` against the
+    /// variable `qt` that holds it.
+    fn decompose(&mut self, inner: &SpTriplePattern, qt: &str) {
+        self.constrain(&inner.subject, star_accessor(Builtin::Subject, qt));
+        match &inner.predicate {
+            NamedNodePattern::NamedNode(n) => self.filters.push(star_same(
+                star_accessor(Builtin::Predicate, qt),
+                FExpr::Const(n.to_string()),
+            )),
+            NamedNodePattern::Variable(v) => {
+                self.constrain_var(v.as_str(), star_accessor(Builtin::Predicate, qt))
+            }
+        }
+        self.constrain(&inner.object, star_accessor(Builtin::Object, qt));
+    }
+
+    fn constrain(&mut self, t: &TermPattern, acc: FExpr) {
+        match t {
+            TermPattern::NamedNode(n) => {
+                self.filters.push(star_same(acc, FExpr::Const(n.to_string())))
+            }
+            TermPattern::Literal(l) => {
+                self.filters.push(star_same(acc, FExpr::Const(l.to_string())))
+            }
+            TermPattern::Variable(v) => self.constrain_var(v.as_str(), acc),
+            TermPattern::BlankNode(b) => self.constrain_var(&b.to_string(), acc),
+            TermPattern::Triple(nested) => {
+                if let Some(tok) = ground_quoted_token(nested) {
+                    self.filters.push(star_same(acc, FExpr::Const(tok)));
+                } else {
+                    // Nested quoted-with-vars: bind a fresh var to this accessor,
+                    // assert it is a triple, then recurse.
+                    *self.counter += 1;
+                    let qt2 = format!("__qt{}", self.counter);
+                    self.binds.push((qt2.clone(), acc));
+                    self.filters
+                        .push(FExpr::Func(Builtin::IsTriple, vec![FExpr::Var(qt2.clone())]));
+                    self.decompose(nested, &qt2);
+                }
+            }
+        }
+    }
+
+    /// An inner variable: JOIN (FILTER sameTerm) if it is bound elsewhere,
+    /// otherwise BIND it from the accessor.
+    fn constrain_var(&mut self, name: &str, acc: FExpr) {
+        let name = name.to_string();
+        if self.regular_vars.contains(&name) || self.bound.contains(&name) {
+            self.filters.push(star_same(acc, FExpr::Var(name)));
+        } else {
+            self.binds.push((name.clone(), acc));
+            self.bound.insert(name);
+        }
     }
 }
 

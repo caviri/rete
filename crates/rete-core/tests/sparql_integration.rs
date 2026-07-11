@@ -153,6 +153,63 @@ fn rdf_star_ingest_header_flag_and_concrete_query() {
 }
 
 #[test]
+fn rdf_star_quoted_triple_patterns() {
+    use rete_core::ingest::{assemble_dataset, parse};
+    let rdf = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+    let nt = format!(
+        "<http://ex/occ1> {rdf} <http://ex/Swallow> .\n\
+         << <http://ex/occ1> {rdf} <http://ex/Swallow> >> <http://ex/recordedBy> \"J. Smith\" .\n\
+         <http://ex/occ2> {rdf} <http://ex/Robin> .\n\
+         << <http://ex/occ2> {rdf} <http://ex/Robin> >> <http://ex/recordedBy> \"A. Jones\" .\n\
+         <http://ex/occ1> <http://ex/place> \"Wetland\" .\n"
+    );
+    let quads: Vec<_> = parse(&nt)
+        .unwrap()
+        .into_iter()
+        .map(|(s, p, o)| (s, p, o, None))
+        .collect();
+    let (image, _) = assemble_dataset(quads, &[]);
+    let rete = Rete::open(&image).unwrap();
+
+    // Pattern sugar, EXTRACTION: inner variables are bound from the matched
+    // quoted triple.
+    let species = col(
+        &rete,
+        &format!("SELECT ?o WHERE {{ << ?s {rdf} ?o >> <http://ex/recordedBy> ?who }}"),
+        "o",
+    );
+    assert_eq!(
+        species,
+        vec![
+            "<http://ex/Robin>".to_string(),
+            "<http://ex/Swallow>".to_string()
+        ]
+    );
+
+    // A CONCRETE inner term filters the match.
+    let who = col(
+        &rete,
+        &format!(
+            "SELECT ?who WHERE {{ << ?s {rdf} <http://ex/Swallow> >> <http://ex/recordedBy> ?who }}"
+        ),
+        "who",
+    );
+    assert_eq!(who, vec!["\"J. Smith\"".to_string()]);
+
+    // JOIN: `?occ` is bound by a regular pattern AND appears inside the quoted
+    // triple, so the two must unify (only occ1 has a place).
+    let joined = col(
+        &rete,
+        &format!(
+            "SELECT ?who WHERE {{ ?occ <http://ex/place> ?p . \
+             << ?occ {rdf} ?sp >> <http://ex/recordedBy> ?who }}"
+        ),
+        "who",
+    );
+    assert_eq!(joined, vec!["\"J. Smith\"".to_string()]);
+}
+
+#[test]
 fn property_path_zero_length_semantics() {
     // `*` and `?` include the zero-length path (a node reaches itself); `+` does
     // not. Checked in all three binding directions, since each takes a different
