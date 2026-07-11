@@ -160,15 +160,15 @@ graph: `INSERT DATA`, watch the next SELECT reflect it, download the snapshot.
 For a remote dataset the result line reports what the query physically did —
 `N range requests · M KB fetched · file is X MB` — and **⊞ requests** opens the
 actual byte-range log. Re-running a query reports *"served from cache, 0 new
-bytes"*: reads are cached per session, and **Settings** adds opt-in extras:
+bytes"*: reads are cached per session and fetched **concurrently by default**
+(the engine overlaps each query's byte-range requests via Asyncify, no
+cross-origin isolation needed). **Settings** adds further opt-in extras:
 
 - **Persist fetched ranges across reloads** — mirrors fetched blocks into
   IndexedDB (per-file usage bars + Clear), so tomorrow's session starts warm.
 - **Parallel range reads** — a cross-origin-isolated worker pool fetches
   ranges concurrently (reloads once to enable isolation; disables the
   CDN-loaded DuckDB/SQLite backends while on).
-- **Concurrent reads (Asyncify)** — an alternative engine build that overlaps
-  remote reads without isolation.
 
 ## Under the hood
 

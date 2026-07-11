@@ -3074,8 +3074,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 9838538 · 2026-07-11 18:54 UTC</span>
-    <script>window.RETE_BUILD = "9838538 · 2026-07-11 18:54 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build a898b74 · 2026-07-11 19:06 UTC</span>
+    <script>window.RETE_BUILD = "a898b74 · 2026-07-11 19:06 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -3843,10 +3843,6 @@ td.lit { color: var(--ink); }
         <div class="rc-line">
           <label class="microcopy">Fetch workers <input type="number" id="parallelWorkers" min="1" max="32" placeholder="auto" style="width:3.6em" /></label>
         </div>
-      </section>
-      <section class="rc-section">
-        <label class="rc-toggle"><input type="checkbox" id="asyncReadsToggle" /> <span>Concurrent reads (Asyncify)</span> <span class="rc-exp">experimental</span></label>
-        <p class="microcopy" id="asyncReadsInfo"></p>
       </section>
       <section class="rc-section">
         <div class="rc-line"><label class="microcopy">AI model (WebGPU) <input type="text" id="aiModelId" list="aiModelList" placeholder="onnx-community/gemma-3-1b-it-ONNX" style="width:22em" /></label>
@@ -10316,10 +10312,12 @@ theo:PeopleGroupShape a sh:NodeShape ;
     sqlDataset: null,
     // Persistent incremental range cache (opt-in via Settings, localStorage-backed).
     rangeCacheOn: (() => { try { return localStorage.getItem("rangeCacheOn") === "1"; } catch (e) { return false; } })(),
-    // Asyncify concurrent reads (opt-in): loads the asyncified wasm variant so a
-    // remote query fetches its byte ranges in parallel (Promise.all of fetch) with
-    // no cross-origin isolation. localStorage-backed; flipping recreates the worker.
-    asyncReadsOn: (() => { try { return localStorage.getItem("asyncReadsOn") === "1"; } catch (e) { return false; } })(),
+    // Asyncify concurrent reads: the asyncified wasm variant fetches each remote
+    // query's byte ranges in parallel (Promise.all of fetch), no cross-origin
+    // isolation. ON by default and no longer user-exposed — the only opt-out is a
+    // console `localStorage.setItem("asyncReadsOn","0")` escape hatch. Costs the
+    // ~8 MB async wasm only when a REMOTE query first runs (embedded stays sync).
+    asyncReadsOn: (() => { try { return localStorage.getItem("asyncReadsOn") !== "0"; } catch (e) { return true; } })(),
     // Map view: which slippy-tile basemap sits behind the geometry ("none" =
     // the offline equirectangular vectors). localStorage-backed so it persists.
     mapBasemap: (() => { try { return localStorage.getItem("mapBasemap") || "none"; } catch (e) { return "none"; } })(),
@@ -12166,21 +12164,8 @@ self.onmessage = function (e) {
     freeExploreEngines();
     cancelRemote();
   }
-  // Flip Asyncify concurrent reads; recreate the remote worker so it loads the
-  // matching wasm variant (async vs sync) on the next query.
-  function setAsyncReads(on) {
-    state.asyncReadsOn = !!on;
-    try { localStorage.setItem("asyncReadsOn", on ? "1" : "0"); } catch (e) { /* private mode */ }
-    cancelRemote();
-    renderAsyncReads();
-  }
-  function renderAsyncReads() {
-    const t = $("asyncReadsToggle"); if (t) t.checked = !!state.asyncReadsOn;
-    const info = $("asyncReadsInfo");
-    if (info) info.textContent = state.asyncReadsOn
-      ? "On — remote queries load an asyncified wasm build that fetches each query's byte ranges in PARALLEL (no cross-origin isolation needed, so the DuckDB/SQLite Explore backends keep working). The variant is ~8 MB, fetched once. Graph/SPARQL only."
-      : "Off — remote reads are sequential (one coalesced request at a time). Turn on to fetch a query's ranges concurrently via Asyncify — a big speedup on the lazy datasets, with no page reload and no cross-origin isolation (experimental).";
-  }
+  // Asyncify concurrent reads are always on now (see state.asyncReadsOn above) and
+  // no longer have a Settings toggle — ensureRemoteWorker() reads the flag directly.
 
   // ── SPARQL assistant: an in-browser WebGPU LLM (Transformers.js) ───────────
   // "✨ Ask AI" opens a chat that runs a small instruction model ENTIRELY in the
@@ -17909,7 +17894,6 @@ self.onmessage = function (e) {
     };
     $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };
     $("clearRangeCacheBtn").onclick = async () => { await clearRangeCache(); renderRangeCache(); };
-    { const a = $("asyncReadsToggle"); if (a) a.onchange = (e) => setAsyncReads(e.target.checked); renderAsyncReads(); }
     { const ai = $("aiModelId"); if (ai) { ai.value = (() => { try { return localStorage.getItem("aiModelId") || ""; } catch (e) { return ""; } })();
       ai.onchange = () => { const v = ai.value.trim(); try { v ? localStorage.setItem("aiModelId", v) : localStorage.removeItem("aiModelId"); } catch (e) { /* private mode */ }
         llmLoaded = false; if (llmWorker) { llmWorker.terminate(); llmWorker = null; } }; } }
