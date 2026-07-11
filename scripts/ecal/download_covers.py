@@ -34,6 +34,11 @@ def main():
     args = ap.parse_args()
 
     base = Path(args.base_dir)
+    # A .STOP_COVERS flag makes this exit 0, so the run_covers.sh driver's
+    # "if exit==0: break" fires and the loop stops itself cleanly.
+    if (base / ".STOP_COVERS").exists():
+        print("STOP flag present — exiting cleanly (0)", flush=True)
+        return 0
     cov_dir = base / "covers"; cov_dir.mkdir(parents=True, exist_ok=True)
     jsonl = base / "normalized" / "ecal.jsonl"
     log = base / "logs" / "covers.log"; log.parent.mkdir(parents=True, exist_ok=True)
