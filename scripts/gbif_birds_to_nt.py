@@ -170,6 +170,12 @@ def emit_occurrences(con):
       -- source dataset
       SELECT {occ} || ' <{SOURCE_DS}> <https://www.gbif.org/dataset/' || datasetkey || '> .'
         FROM read_parquet('{PARQUET}') WHERE datasetkey IS NOT NULL
+      UNION ALL
+      -- individual count: the estimated number of individuals in the sighting
+      -- (dwc:individualCount, ~41% populated). This is the per-occurrence
+      -- "number estimated"; the species-level aggregate lives in birds_enrich.nt.
+      SELECT {occ} || ' <{DWC}individualCount> "' || individualcount || '"^^<{XSD}integer> .'
+        FROM read_parquet('{PARQUET}') WHERE individualcount IS NOT NULL AND individualcount > 0
     ) TO '{OUT_OCC}' (FORMAT csv, HEADER false, QUOTE '', DELIMITER E'\\x01');
     """
     con.execute(q)
