@@ -2517,6 +2517,12 @@ th .coltype.coltype-on {
      so it doesn't create a scroll container that would break sticky headers. */
   body { overflow-x: clip; }
 
+  /* "Explore full map" fills the whole phone screen (edge to edge). !important
+     because the desktop .geo-modal-full rules sit later in the source at equal
+     specificity and would otherwise win here. */
+  .geo-modal.geo-modal-full { padding: 0 !important; }
+  .geo-modal.geo-modal-full .geo-modal-box { width: 100vw !important; height: 100vh !important; max-height: 100vh !important; border-radius: 0 !important; }
+
   /* iOS zooms the page when a focused field's text is under 16px — keep every
      typing surface at 16px (the CM editor does the same via its theme). */
   input[type="text"], input[type="search"], input[type="url"], textarea, select { font-size: 16px; }
@@ -2739,6 +2745,8 @@ th .coltype.coltype-on {
 .map-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .map-base-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .map-base-pick select { font: inherit; font-size: 12px; padding: 3px 22px 3px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--side); color: var(--ink); cursor: pointer; }
+.map-fs-btn { margin-left: auto; font-size: 12px; font-weight: 650; padding: 5px 11px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--accent-dark); cursor: pointer; white-space: nowrap; }
+.map-fs-btn:hover { border-color: var(--accent); background: var(--side); }
 .mapview .mtiles image { image-rendering: auto; }
 .mapview svg.has-base .mgeo { fill: rgba(255, 90, 40, .22); stroke: #ff3b1f; stroke-width: 1.1; }
 .mapview svg.has-base .mline { fill: none; stroke: #ff3b1f; stroke-width: 1.6; }
@@ -2768,7 +2776,12 @@ th .coltype.coltype-on {
 .geo-lod.done { color: #147d69; }
 .geo-modal-close { background: none; border: 0; color: var(--ink); font-size: 16px; cursor: pointer; padding: 2px 8px; min-height: 0; }
 .geo-modal-close:hover { background: var(--side); border-radius: 6px; }
-.geo-modal-map { width: 100%; height: 64vh; background: #eef2f0; }
+.geo-modal-map { width: 100%; height: 64vh; background: #eef2f0; touch-action: none; }
+/* "Explore full map" — a near-fullscreen interactive map (Leaflet handles the
+   pinch/scroll zoom); the map pane grows to fill the taller box. */
+.geo-modal.geo-modal-full { padding: 10px; }
+.geo-modal-full .geo-modal-box { width: min(1100px, 96vw); max-height: 94vh; height: 94vh; }
+.geo-modal-full .geo-modal-map { flex: 1 1 auto; height: auto; }
 .geo-modal-foot { padding: 7px 13px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--line);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .geo-cell .geo-bd { fill: none; stroke: var(--line); stroke-width: 1; }
@@ -3061,8 +3074,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 469c0e7 · 2026-07-11 16:55 UTC</span>
-    <script>window.RETE_BUILD = "469c0e7 · 2026-07-11 16:55 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build d783f20 · 2026-07-11 17:02 UTC</span>
+    <script>window.RETE_BUILD = "d783f20 · 2026-07-11 17:02 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -14363,7 +14376,7 @@ self.onmessage = function (e) {
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeGeoModal(); });
     return geoModalEl;
   }
-  function closeGeoModal() { if (geoModalEl) geoModalEl.classList.add("hidden"); }
+  function closeGeoModal() { if (geoModalEl) { geoModalEl.classList.add("hidden"); geoModalEl.classList.remove("geo-modal-full"); } }
   // Draw WKT rings as Leaflet vector layers (point → marker, polygon/line → vector).
   function geoLayers(L, rings, wkt) {
     const isPoly = /POLYGON/i.test(wkt);
@@ -14381,6 +14394,7 @@ self.onmessage = function (e) {
     if (!rings.length) return;
     const mySeq = ++geoModalSeq;
     const isPoint = rings.length === 1 && rings[0].length === 1;
+    geoModalEl.classList.remove("geo-modal-full"); // single-cell view: normal size
     geoModalEl.querySelector(".geo-modal-title").textContent = isPoint ? "📍 Location" : "🗺 Geometry";
     geoModalEl.querySelector(".geo-modal-foot").textContent = shorten(wkt, 200);
     const lodEl = geoModalEl.querySelector(".geo-lod");
@@ -14419,6 +14433,47 @@ self.onmessage = function (e) {
         const foot = geoModalEl.querySelector(".geo-modal-foot"); if (foot) foot.textContent = shorten(fineWkt, 200);
       }).catch(() => { if (lodEl && geoModalSeq === mySeq) { lodEl.textContent = ""; lodEl.className = "geo-lod"; } });
     }
+  }
+
+  // Open ALL of a SELECT result's geometries in the full interactive Leaflet
+  // modal (pan + native pinch/scroll zoom), from the Map view's ⛶ button — the
+  // static SVG map is fine at a glance, this is for exploring. Reuses the same
+  // modal/machinery as the single-cell geo modal.
+  async function openResultMap(res) {
+    if (!res || res.kind !== "select") return;
+    const vars = res.vars || [], rows = res.rows || [];
+    const geo = detectGeoCol(vars, rows);
+    if (!geo) return;
+    const labelCols = vars.filter((v) => v !== geo);
+    ensureGeoModal();
+    const mySeq = ++geoModalSeq;
+    geoModalEl.querySelector(".geo-modal-title").textContent = "🗺 Map";
+    geoModalEl.querySelector(".geo-modal-foot").textContent = "Pinch or scroll to zoom · drag to pan";
+    const lodEl = geoModalEl.querySelector(".geo-lod"); if (lodEl) { lodEl.textContent = ""; lodEl.className = "geo-lod"; }
+    geoModalEl.classList.add("geo-modal-full");
+    geoModalEl.classList.remove("hidden");
+    const mapDiv = geoModalEl.querySelector(".geo-modal-map");
+    let L;
+    try { L = await loadLeaflet(); } catch (_e) { mapDiv.innerHTML = `<div class="note">Couldn't load the map library (offline?).</div>`; return; }
+    if (geoModalSeq !== mySeq) return;
+    if (geoMap) { geoMap.remove(); geoMap = null; }
+    mapDiv.innerHTML = "";
+    geoMap = L.map(mapDiv, { scrollWheelZoom: true }).setView([20, 0], 2);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+      { attribution: "© OpenStreetMap · © CARTO", maxZoom: 19, subdomains: "abcd" }).addTo(geoMap);
+    const layers = [];
+    for (const r of rows) {
+      const raw = r[geo]; if (raw == null) continue;
+      const wkt = parseTerm(raw).value; if (!WKT_RE.test(wkt)) continue;
+      const rings = wktRings(wkt); if (!rings.length) continue;
+      const label = (labelCols.length ? labelCols : [geo]).map((v) => termLabel(parseTerm(r[v]))).filter((s) => s !== "").join(" · ");
+      geoLayers(L, rings, wkt).forEach((ly) => { if (label) ly.bindTooltip(label); layers.push(ly); });
+    }
+    if (!layers.length) return;
+    const group = L.featureGroup(layers).addTo(geoMap);
+    geoModalEl.querySelector(".geo-modal-title").textContent = `🗺 Map · ${layers.length} feature(s)`;
+    try { geoMap.fitBounds(group.getBounds().pad(0.15)); } catch (_e) { /* keep default view */ }
+    setTimeout(() => { if (geoMap) geoMap.invalidateSize(); }, 60);
   }
 
   // ---- 3D model cells -------------------------------------------------------
@@ -15176,7 +15231,8 @@ self.onmessage = function (e) {
     const bmId = state.mapBasemap || "none";
     const base = BASEMAPS.find((b) => b.id === bmId) || BASEMAPS[0];
     const opts = BASEMAPS.map((b) => `<option value="${b.id}"${b.id === base.id ? " selected" : ""}>${esc(b.label)}</option>`).join("");
-    const tools = `<div class="map-tools"><label class="map-base-pick">Basemap <select id="mapBasemap" aria-label="basemap">${opts}</select></label></div>`;
+    const tools = `<div class="map-tools"><label class="map-base-pick">Basemap <select id="mapBasemap" aria-label="basemap">${opts}</select></label>` +
+      `<button id="mapFullscreen" type="button" class="map-fs-btn" title="Open a full interactive map — pan and pinch/scroll to zoom">⛶ Explore full map</button></div>`;
 
     let px, py, bg = "", cap, hasBase = false;
     if (base.url) {
@@ -15244,6 +15300,8 @@ self.onmessage = function (e) {
       try { localStorage.setItem("mapBasemap", sel.value); } catch (e) { /* private mode */ }
       if (lastMapRes) renderMap(lastMapRes);
     });
+    const fsBtn = $("mapFullscreen");
+    if (fsBtn) fsBtn.onclick = () => openResultMap(lastMapRes);
     wireMapTooltip($("out").querySelector(".mapview"));
     return `${feats.length} mapped feature(s)`;
   }

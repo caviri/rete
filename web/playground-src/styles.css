@@ -2477,6 +2477,12 @@ th .coltype.coltype-on {
      so it doesn't create a scroll container that would break sticky headers. */
   body { overflow-x: clip; }
 
+  /* "Explore full map" fills the whole phone screen (edge to edge). !important
+     because the desktop .geo-modal-full rules sit later in the source at equal
+     specificity and would otherwise win here. */
+  .geo-modal.geo-modal-full { padding: 0 !important; }
+  .geo-modal.geo-modal-full .geo-modal-box { width: 100vw !important; height: 100vh !important; max-height: 100vh !important; border-radius: 0 !important; }
+
   /* iOS zooms the page when a focused field's text is under 16px — keep every
      typing surface at 16px (the CM editor does the same via its theme). */
   input[type="text"], input[type="search"], input[type="url"], textarea, select { font-size: 16px; }
@@ -2699,6 +2705,8 @@ th .coltype.coltype-on {
 .map-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .map-base-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .map-base-pick select { font: inherit; font-size: 12px; padding: 3px 22px 3px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--side); color: var(--ink); cursor: pointer; }
+.map-fs-btn { margin-left: auto; font-size: 12px; font-weight: 650; padding: 5px 11px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--accent-dark); cursor: pointer; white-space: nowrap; }
+.map-fs-btn:hover { border-color: var(--accent); background: var(--side); }
 .mapview .mtiles image { image-rendering: auto; }
 .mapview svg.has-base .mgeo { fill: rgba(255, 90, 40, .22); stroke: #ff3b1f; stroke-width: 1.1; }
 .mapview svg.has-base .mline { fill: none; stroke: #ff3b1f; stroke-width: 1.6; }
@@ -2728,7 +2736,12 @@ th .coltype.coltype-on {
 .geo-lod.done { color: #147d69; }
 .geo-modal-close { background: none; border: 0; color: var(--ink); font-size: 16px; cursor: pointer; padding: 2px 8px; min-height: 0; }
 .geo-modal-close:hover { background: var(--side); border-radius: 6px; }
-.geo-modal-map { width: 100%; height: 64vh; background: #eef2f0; }
+.geo-modal-map { width: 100%; height: 64vh; background: #eef2f0; touch-action: none; }
+/* "Explore full map" — a near-fullscreen interactive map (Leaflet handles the
+   pinch/scroll zoom); the map pane grows to fill the taller box. */
+.geo-modal.geo-modal-full { padding: 10px; }
+.geo-modal-full .geo-modal-box { width: min(1100px, 96vw); max-height: 94vh; height: 94vh; }
+.geo-modal-full .geo-modal-map { flex: 1 1 auto; height: auto; }
 .geo-modal-foot { padding: 7px 13px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--line);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .geo-cell .geo-bd { fill: none; stroke: var(--line); stroke-width: 1; }

@@ -4093,7 +4093,7 @@ self.onmessage = function (e) {
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeGeoModal(); });
     return geoModalEl;
   }
-  function closeGeoModal() { if (geoModalEl) geoModalEl.classList.add("hidden"); }
+  function closeGeoModal() { if (geoModalEl) { geoModalEl.classList.add("hidden"); geoModalEl.classList.remove("geo-modal-full"); } }
   // Draw WKT rings as Leaflet vector layers (point → marker, polygon/line → vector).
   function geoLayers(L, rings, wkt) {
     const isPoly = /POLYGON/i.test(wkt);
@@ -4111,6 +4111,7 @@ self.onmessage = function (e) {
     if (!rings.length) return;
     const mySeq = ++geoModalSeq;
     const isPoint = rings.length === 1 && rings[0].length === 1;
+    geoModalEl.classList.remove("geo-modal-full"); // single-cell view: normal size
     geoModalEl.querySelector(".geo-modal-title").textContent = isPoint ? "📍 Location" : "🗺 Geometry";
     geoModalEl.querySelector(".geo-modal-foot").textContent = shorten(wkt, 200);
     const lodEl = geoModalEl.querySelector(".geo-lod");
@@ -4149,6 +4150,47 @@ self.onmessage = function (e) {
         const foot = geoModalEl.querySelector(".geo-modal-foot"); if (foot) foot.textContent = shorten(fineWkt, 200);
       }).catch(() => { if (lodEl && geoModalSeq === mySeq) { lodEl.textContent = ""; lodEl.className = "geo-lod"; } });
     }
+  }
+
+  // Open ALL of a SELECT result's geometries in the full interactive Leaflet
+  // modal (pan + native pinch/scroll zoom), from the Map view's ⛶ button — the
+  // static SVG map is fine at a glance, this is for exploring. Reuses the same
+  // modal/machinery as the single-cell geo modal.
+  async function openResultMap(res) {
+    if (!res || res.kind !== "select") return;
+    const vars = res.vars || [], rows = res.rows || [];
+    const geo = detectGeoCol(vars, rows);
+    if (!geo) return;
+    const labelCols = vars.filter((v) => v !== geo);
+    ensureGeoModal();
+    const mySeq = ++geoModalSeq;
+    geoModalEl.querySelector(".geo-modal-title").textContent = "🗺 Map";
+    geoModalEl.querySelector(".geo-modal-foot").textContent = "Pinch or scroll to zoom · drag to pan";
+    const lodEl = geoModalEl.querySelector(".geo-lod"); if (lodEl) { lodEl.textContent = ""; lodEl.className = "geo-lod"; }
+    geoModalEl.classList.add("geo-modal-full");
+    geoModalEl.classList.remove("hidden");
+    const mapDiv = geoModalEl.querySelector(".geo-modal-map");
+    let L;
+    try { L = await loadLeaflet(); } catch (_e) { mapDiv.innerHTML = `<div class="note">Couldn't load the map library (offline?).</div>`; return; }
+    if (geoModalSeq !== mySeq) return;
+    if (geoMap) { geoMap.remove(); geoMap = null; }
+    mapDiv.innerHTML = "";
+    geoMap = L.map(mapDiv, { scrollWheelZoom: true }).setView([20, 0], 2);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+      { attribution: "© OpenStreetMap · © CARTO", maxZoom: 19, subdomains: "abcd" }).addTo(geoMap);
+    const layers = [];
+    for (const r of rows) {
+      const raw = r[geo]; if (raw == null) continue;
+      const wkt = parseTerm(raw).value; if (!WKT_RE.test(wkt)) continue;
+      const rings = wktRings(wkt); if (!rings.length) continue;
+      const label = (labelCols.length ? labelCols : [geo]).map((v) => termLabel(parseTerm(r[v]))).filter((s) => s !== "").join(" · ");
+      geoLayers(L, rings, wkt).forEach((ly) => { if (label) ly.bindTooltip(label); layers.push(ly); });
+    }
+    if (!layers.length) return;
+    const group = L.featureGroup(layers).addTo(geoMap);
+    geoModalEl.querySelector(".geo-modal-title").textContent = `🗺 Map · ${layers.length} feature(s)`;
+    try { geoMap.fitBounds(group.getBounds().pad(0.15)); } catch (_e) { /* keep default view */ }
+    setTimeout(() => { if (geoMap) geoMap.invalidateSize(); }, 60);
   }
 
   // ---- 3D model cells -------------------------------------------------------
@@ -4906,7 +4948,8 @@ self.onmessage = function (e) {
     const bmId = state.mapBasemap || "none";
     const base = BASEMAPS.find((b) => b.id === bmId) || BASEMAPS[0];
     const opts = BASEMAPS.map((b) => `<option value="${b.id}"${b.id === base.id ? " selected" : ""}>${esc(b.label)}</option>`).join("");
-    const tools = `<div class="map-tools"><label class="map-base-pick">Basemap <select id="mapBasemap" aria-label="basemap">${opts}</select></label></div>`;
+    const tools = `<div class="map-tools"><label class="map-base-pick">Basemap <select id="mapBasemap" aria-label="basemap">${opts}</select></label>` +
+      `<button id="mapFullscreen" type="button" class="map-fs-btn" title="Open a full interactive map — pan and pinch/scroll to zoom">⛶ Explore full map</button></div>`;
 
     let px, py, bg = "", cap, hasBase = false;
     if (base.url) {
@@ -4974,6 +5017,8 @@ self.onmessage = function (e) {
       try { localStorage.setItem("mapBasemap", sel.value); } catch (e) { /* private mode */ }
       if (lastMapRes) renderMap(lastMapRes);
     });
+    const fsBtn = $("mapFullscreen");
+    if (fsBtn) fsBtn.onclick = () => openResultMap(lastMapRes);
     wireMapTooltip($("out").querySelector(".mapview"));
     return `${feats.length} mapped feature(s)`;
   }
