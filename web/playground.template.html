@@ -234,44 +234,60 @@ __PLAYGROUND_CSS__
           </div>
         </div>
         <div class="action-row">
-          <label>
-            <span>Output</span>
-            <select id="fmt" aria-label="Result output type">
-              <option value="table">Table</option>
-              <option value="cards">Cards</option>
-              <option value="graph">Graph</option>
-              <option value="map">Map</option>
-              <option value="tiles">Tiles</option>
-              <option value="time">Time</option>
-              <option value="ttl">TTL</option>
-              <option value="jsonld">JSON-LD</option>
-            </select>
-          </label>
-          <button id="outputHelp" type="button" class="help-button" title="How to write queries for each output view" aria-label="Explain the output views">?</button>
-          <label>
-            <span>Strategy</span>
-            <select id="strategy">
-              <option value="whole">Whole index</option>
-              <option value="progressive">Progressive summary</option>
-              <option value="community">Split by community</option>
-            </select>
-          </label>
-          <button id="strategyHelp" type="button" class="help-button" title="What do these strategies do?" aria-label="Explain the evaluation strategies">?</button>
-          <label class="switch-ctl" id="decodeSwitch" title="Show a human-readable label beside each IRI in the query. Purely visual — it never changes what the query does.">
-            <input type="checkbox" id="decodeToggle" checked />
-            <span class="switch" aria-hidden="true"></span>
-            <span class="switch-txt">🏷 Labels</span>
-          </label>
-          <label id="roundWrap" class="hidden">
-            <span>Round</span>
-            <input id="round" type="number" min="0" placeholder="auto" />
-          </label>
-          <button id="roundHelp" type="button" class="help-button hidden" title="What is a round?" aria-label="Explain dendrogram rounds">?</button>
+          <!-- On desktop `qs-controls` is `display:contents`, so these flow as
+               direct items of the action row (unchanged). On a phone they are
+               moved (by boot()) into the ⚙ Settings modal, leaving a compact
+               Settings + Run row. -->
+          <div id="qsControls" class="qs-controls">
+            <label>
+              <span>Output</span>
+              <select id="fmt" aria-label="Result output type">
+                <option value="table">Table</option>
+                <option value="cards">Cards</option>
+                <option value="graph">Graph</option>
+                <option value="map">Map</option>
+                <option value="tiles">Tiles</option>
+                <option value="time">Time</option>
+                <option value="ttl">TTL</option>
+                <option value="jsonld">JSON-LD</option>
+              </select>
+            </label>
+            <button id="outputHelp" type="button" class="help-button" title="How to write queries for each output view" aria-label="Explain the output views">?</button>
+            <label>
+              <span>Strategy</span>
+              <select id="strategy">
+                <option value="whole">Whole index</option>
+                <option value="progressive">Progressive summary</option>
+                <option value="community">Split by community</option>
+              </select>
+            </label>
+            <button id="strategyHelp" type="button" class="help-button" title="What do these strategies do?" aria-label="Explain the evaluation strategies">?</button>
+            <label class="switch-ctl" id="decodeSwitch" title="Show a human-readable label beside each IRI in the query. Purely visual — it never changes what the query does.">
+              <input type="checkbox" id="decodeToggle" checked />
+              <span class="switch" aria-hidden="true"></span>
+              <span class="switch-txt">🏷 Labels</span>
+            </label>
+            <label id="roundWrap" class="hidden">
+              <span>Round</span>
+              <input id="round" type="number" min="0" placeholder="auto" />
+            </label>
+            <button id="roundHelp" type="button" class="help-button hidden" title="What is a round?" aria-label="Explain dendrogram rounds">?</button>
+          </div>
           <span id="qmeta" class="run-meta run-right"></span>
           <button id="reqLogBtn" type="button" class="req-log-btn hidden" title="Inspect the byte-range requests this query made">⊞ requests</button>
           <button id="askAiBtn" type="button" class="ask-ai-btn" title="Let an in-browser AI draft a SPARQL query for this dataset (WebGPU, runs locally)">✨ SPARQL AI</button>
+          <button id="qsBtn" type="button" class="qs-btn" title="Output, strategy, labels, sources & AI">⚙ Settings</button>
           <button id="run" type="button">Run Query</button>
         </div>
+        </div>
+        <div id="querySettingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="qsTitle">
+          <div class="modal-card">
+            <div class="modal-head">
+              <h3 id="qsTitle">Query settings</h3>
+              <button id="qsClose" class="ghost" type="button" aria-label="Close">×</button>
+            </div>
+            <div id="qsBody" class="qs-body"></div>
+          </div>
         </div>
       </div>
 

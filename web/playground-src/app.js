@@ -7278,6 +7278,47 @@ self.onmessage = function (e) {
     // phone/tablet); the backdrop closes it.
     { const b = $("dsDetailsBtn"); if (b) b.onclick = () => setLibCollapsed(false); }
     { const bd = $("libBackdrop"); if (bd) bd.onclick = () => setLibCollapsed(true); }
+
+    // Phone: fold the Sources bar + secondary controls (Output / Strategy /
+    // Labels / help / AI) into a ⚙ Settings modal, leaving a compact
+    // Settings + Run row. Desktop keeps them inline (qs-controls is
+    // display:contents there). The nodes are MOVED, not duplicated, so all their
+    // existing wiring (by id) stays intact.
+    (function setupQuerySettings() {
+      const fedBar = $("fedBar"), qsControls = $("qsControls"), qsBody = $("qsBody"),
+        modal = $("querySettingsModal");
+      if (!fedBar || !qsControls || !qsBody || !modal || !window.matchMedia) return;
+      const aiBtn = $("askAiBtn");
+      const consoleControls = fedBar.parentNode, actionRow = qsControls.parentNode;
+      const fedAnchor = fedBar.nextElementSibling;    // .action-row — restore before it
+      const qsAnchor = qsControls.nextElementSibling; // #qmeta — restore before it
+      const aiAnchor = aiBtn && aiBtn.nextElementSibling; // #qsBtn — restore before it
+      const mq = window.matchMedia("(max-width: 560px)");
+      const place = () => {
+        if (mq.matches) {
+          if (fedBar.parentNode !== qsBody) qsBody.appendChild(fedBar);
+          if (qsControls.parentNode !== qsBody) qsBody.appendChild(qsControls);
+          if (aiBtn && aiBtn.parentNode !== qsBody) qsBody.appendChild(aiBtn);
+        } else {
+          if (fedBar.parentNode !== consoleControls) consoleControls.insertBefore(fedBar, fedAnchor);
+          if (qsControls.parentNode !== actionRow) actionRow.insertBefore(qsControls, qsAnchor);
+          if (aiBtn && aiBtn.parentNode !== actionRow) actionRow.insertBefore(aiBtn, aiAnchor);
+          modal.classList.add("hidden"); // never leave it open on desktop
+        }
+      };
+      place();
+      // Re-run after layout settles: if boot ran before the viewport width was
+      // final (a wrong initial matchMedia read), this self-corrects. place() is
+      // idempotent (it checks the parent before moving), so extra calls are free.
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(place);
+      setTimeout(place, 250);
+      (mq.addEventListener ? mq.addEventListener.bind(mq, "change") : mq.addListener.bind(mq))(place);
+      window.addEventListener("resize", place, { passive: true });
+      const qsBtn = $("qsBtn");
+      if (qsBtn) qsBtn.onclick = () => modal.classList.remove("hidden");
+      $("qsClose").onclick = () => modal.classList.add("hidden");
+      modal.addEventListener("click", (e) => { if (e.target === modal) modal.classList.add("hidden"); });
+    })();
     // Close the dataset Load dropdown on any click outside it.
     document.addEventListener("click", (e) => {
       const menu = $("dsLoadMenu");
@@ -7466,6 +7507,7 @@ self.onmessage = function (e) {
         $("strategyModal").classList.add("hidden");
         $("outputModal").classList.add("hidden");
         $("cardsFieldsModal").classList.add("hidden");
+        $("querySettingsModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");
         setLibCollapsed(true); // close the Details & source modal (phone/tablet)
         closeLibrary();

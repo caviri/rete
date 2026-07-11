@@ -1292,27 +1292,42 @@ textarea {
 .console-controls .fed-bar { flex: 0 1 auto; }
 .console-controls .action-row { flex: 1 1 380px; }
 
+/* The secondary-controls wrapper is transparent to layout on desktop, so its
+   children flow as direct items of the action row (unchanged bar). On a phone
+   the wrapper is moved into the ⚙ Settings modal, where it lays out as a
+   stacked column (see the phone block). */
+.qs-controls { display: contents; }
+/* ⚙ Settings opener — phone only (desktop shows the controls inline). */
+.qs-btn { display: none; }
+
 /* ── Harmonized console bar ────────────────────────────────────────────────
    One pill language for every control: the same 34px height, 8px radius and
    weight, with role shown by fill — green = Run, purple = SPARQL AI, outline =
    secondary (requests / + Add source). Keeps the bar tidy and consistent. */
 .action-row > #run,
-.action-row > .ask-ai-btn,
+.action-row .ask-ai-btn,
 .action-row > .req-log-btn,
+.action-row > .qs-btn,
 .fed-add {
   min-height: 34px; height: 34px; box-sizing: border-box;
   border-radius: 8px; padding: 0 14px; margin: 0;
   font-size: 12.5px; font-weight: 700; line-height: 1;
   display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
 }
+/* ⚙ Settings shares the pill look above, but stays hidden on desktop (this
+   rule follows the shared one at equal specificity, so it wins there; the phone
+   block re-shows it with !important). */
+.action-row > .qs-btn { display: none; }
 /* secondary / outline pills */
 .action-row > .req-log-btn,
+.action-row > .qs-btn,
 .fed-add {
   border: 1px solid var(--line-strong, #c5d2cc);
   background: var(--surface, #fff);
   color: var(--accent-dark, #0b4f42);
 }
 .action-row > .req-log-btn:hover,
+.action-row > .qs-btn:hover,
 .fed-add:hover { border-color: var(--accent); background: var(--accent-weak, #eef6f2); color: var(--accent-dark); }
 .fed-add { border-style: dashed; padding: 0 13px; }   /* keep "add" visually distinct */
 /* the ? help buttons + the Labels switch align to the same height */
@@ -2443,10 +2458,29 @@ th .coltype.coltype-on {
   .mode-rail .rail-ic { width: 18px; height: 18px; }
   .mode-rail .rail-name { font-size: 11px; }
 
-  /* Run becomes a full-width button on its own line. */
+  /* The secondary controls live in the ⚙ Settings modal now, so the console row
+     is just [⚙ Settings] [Run] (+ the technical log below). Both buttons share
+     the row at a normal — not oversized — height; the log wraps beneath. */
   .action-row { gap: 8px; }
-  .action-row .run-right { margin-left: 0; }
-  #run { flex: 1 1 100%; padding-top: 11px; padding-bottom: 11px; }
+  .action-row .run-right { margin-left: 0; order: 3; flex: 1 1 100%; text-align: left; }
+  .qs-btn { display: inline-flex !important; flex: 1 1 auto; justify-content: center; }
+  #run { flex: 2 1 auto; padding-top: 9px; padding-bottom: 9px; }
+  /* ⊞ requests stays available but compact, on the log line. */
+  .action-row > .req-log-btn { order: 4; }
+
+  /* Query-settings modal body: the moved controls stack full-width. */
+  #qsBody { display: flex; flex-direction: column; gap: 14px; }
+  #qsBody .qs-controls { display: flex; flex-direction: column; gap: 14px; align-items: stretch; }
+  #qsBody .action-row label,
+  #qsBody label { display: grid; gap: 5px; }
+  #qsBody select { width: 100%; min-height: 40px; }
+  #qsBody .ask-ai-btn { width: 100%; height: auto; min-height: 42px; justify-content: center; }
+  #qsBody .fed-bar { flex-direction: column; align-items: stretch; gap: 8px; }
+  #qsBody .fed-add { align-self: flex-start; }
+  /* The inline ? help buttons are redundant in the stacked modal — hide them
+     (the modals they open are still reachable, and each control is labelled). */
+  #qsBody .help-button { display: none; }
+  #qsBody .switch-ctl { align-self: flex-start; min-height: 40px; }
 
   h1 { font-size: 20px; }
   .panel > .editor-head h1 { font-size: 19px; }
@@ -3005,8 +3039,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 5ad1877 · 2026-07-11 16:33 UTC</span>
-    <script>window.RETE_BUILD = "5ad1877 · 2026-07-11 16:33 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 9e791b0 · 2026-07-11 16:44 UTC</span>
+    <script>window.RETE_BUILD = "9e791b0 · 2026-07-11 16:44 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -3192,44 +3226,60 @@ td.lit { color: var(--ink); }
           </div>
         </div>
         <div class="action-row">
-          <label>
-            <span>Output</span>
-            <select id="fmt" aria-label="Result output type">
-              <option value="table">Table</option>
-              <option value="cards">Cards</option>
-              <option value="graph">Graph</option>
-              <option value="map">Map</option>
-              <option value="tiles">Tiles</option>
-              <option value="time">Time</option>
-              <option value="ttl">TTL</option>
-              <option value="jsonld">JSON-LD</option>
-            </select>
-          </label>
-          <button id="outputHelp" type="button" class="help-button" title="How to write queries for each output view" aria-label="Explain the output views">?</button>
-          <label>
-            <span>Strategy</span>
-            <select id="strategy">
-              <option value="whole">Whole index</option>
-              <option value="progressive">Progressive summary</option>
-              <option value="community">Split by community</option>
-            </select>
-          </label>
-          <button id="strategyHelp" type="button" class="help-button" title="What do these strategies do?" aria-label="Explain the evaluation strategies">?</button>
-          <label class="switch-ctl" id="decodeSwitch" title="Show a human-readable label beside each IRI in the query. Purely visual — it never changes what the query does.">
-            <input type="checkbox" id="decodeToggle" checked />
-            <span class="switch" aria-hidden="true"></span>
-            <span class="switch-txt">🏷 Labels</span>
-          </label>
-          <label id="roundWrap" class="hidden">
-            <span>Round</span>
-            <input id="round" type="number" min="0" placeholder="auto" />
-          </label>
-          <button id="roundHelp" type="button" class="help-button hidden" title="What is a round?" aria-label="Explain dendrogram rounds">?</button>
+          <!-- On desktop `qs-controls` is `display:contents`, so these flow as
+               direct items of the action row (unchanged). On a phone they are
+               moved (by boot()) into the ⚙ Settings modal, leaving a compact
+               Settings + Run row. -->
+          <div id="qsControls" class="qs-controls">
+            <label>
+              <span>Output</span>
+              <select id="fmt" aria-label="Result output type">
+                <option value="table">Table</option>
+                <option value="cards">Cards</option>
+                <option value="graph">Graph</option>
+                <option value="map">Map</option>
+                <option value="tiles">Tiles</option>
+                <option value="time">Time</option>
+                <option value="ttl">TTL</option>
+                <option value="jsonld">JSON-LD</option>
+              </select>
+            </label>
+            <button id="outputHelp" type="button" class="help-button" title="How to write queries for each output view" aria-label="Explain the output views">?</button>
+            <label>
+              <span>Strategy</span>
+              <select id="strategy">
+                <option value="whole">Whole index</option>
+                <option value="progressive">Progressive summary</option>
+                <option value="community">Split by community</option>
+              </select>
+            </label>
+            <button id="strategyHelp" type="button" class="help-button" title="What do these strategies do?" aria-label="Explain the evaluation strategies">?</button>
+            <label class="switch-ctl" id="decodeSwitch" title="Show a human-readable label beside each IRI in the query. Purely visual — it never changes what the query does.">
+              <input type="checkbox" id="decodeToggle" checked />
+              <span class="switch" aria-hidden="true"></span>
+              <span class="switch-txt">🏷 Labels</span>
+            </label>
+            <label id="roundWrap" class="hidden">
+              <span>Round</span>
+              <input id="round" type="number" min="0" placeholder="auto" />
+            </label>
+            <button id="roundHelp" type="button" class="help-button hidden" title="What is a round?" aria-label="Explain dendrogram rounds">?</button>
+          </div>
           <span id="qmeta" class="run-meta run-right"></span>
           <button id="reqLogBtn" type="button" class="req-log-btn hidden" title="Inspect the byte-range requests this query made">⊞ requests</button>
           <button id="askAiBtn" type="button" class="ask-ai-btn" title="Let an in-browser AI draft a SPARQL query for this dataset (WebGPU, runs locally)">✨ SPARQL AI</button>
+          <button id="qsBtn" type="button" class="qs-btn" title="Output, strategy, labels, sources & AI">⚙ Settings</button>
           <button id="run" type="button">Run Query</button>
         </div>
+        </div>
+        <div id="querySettingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="qsTitle">
+          <div class="modal-card">
+            <div class="modal-head">
+              <h3 id="qsTitle">Query settings</h3>
+              <button id="qsClose" class="ghost" type="button" aria-label="Close">×</button>
+            </div>
+            <div id="qsBody" class="qs-body"></div>
+          </div>
         </div>
       </div>
 
@@ -17476,6 +17526,47 @@ self.onmessage = function (e) {
     // phone/tablet); the backdrop closes it.
     { const b = $("dsDetailsBtn"); if (b) b.onclick = () => setLibCollapsed(false); }
     { const bd = $("libBackdrop"); if (bd) bd.onclick = () => setLibCollapsed(true); }
+
+    // Phone: fold the Sources bar + secondary controls (Output / Strategy /
+    // Labels / help / AI) into a ⚙ Settings modal, leaving a compact
+    // Settings + Run row. Desktop keeps them inline (qs-controls is
+    // display:contents there). The nodes are MOVED, not duplicated, so all their
+    // existing wiring (by id) stays intact.
+    (function setupQuerySettings() {
+      const fedBar = $("fedBar"), qsControls = $("qsControls"), qsBody = $("qsBody"),
+        modal = $("querySettingsModal");
+      if (!fedBar || !qsControls || !qsBody || !modal || !window.matchMedia) return;
+      const aiBtn = $("askAiBtn");
+      const consoleControls = fedBar.parentNode, actionRow = qsControls.parentNode;
+      const fedAnchor = fedBar.nextElementSibling;    // .action-row — restore before it
+      const qsAnchor = qsControls.nextElementSibling; // #qmeta — restore before it
+      const aiAnchor = aiBtn && aiBtn.nextElementSibling; // #qsBtn — restore before it
+      const mq = window.matchMedia("(max-width: 560px)");
+      const place = () => {
+        if (mq.matches) {
+          if (fedBar.parentNode !== qsBody) qsBody.appendChild(fedBar);
+          if (qsControls.parentNode !== qsBody) qsBody.appendChild(qsControls);
+          if (aiBtn && aiBtn.parentNode !== qsBody) qsBody.appendChild(aiBtn);
+        } else {
+          if (fedBar.parentNode !== consoleControls) consoleControls.insertBefore(fedBar, fedAnchor);
+          if (qsControls.parentNode !== actionRow) actionRow.insertBefore(qsControls, qsAnchor);
+          if (aiBtn && aiBtn.parentNode !== actionRow) actionRow.insertBefore(aiBtn, aiAnchor);
+          modal.classList.add("hidden"); // never leave it open on desktop
+        }
+      };
+      place();
+      // Re-run after layout settles: if boot ran before the viewport width was
+      // final (a wrong initial matchMedia read), this self-corrects. place() is
+      // idempotent (it checks the parent before moving), so extra calls are free.
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(place);
+      setTimeout(place, 250);
+      (mq.addEventListener ? mq.addEventListener.bind(mq, "change") : mq.addListener.bind(mq))(place);
+      window.addEventListener("resize", place, { passive: true });
+      const qsBtn = $("qsBtn");
+      if (qsBtn) qsBtn.onclick = () => modal.classList.remove("hidden");
+      $("qsClose").onclick = () => modal.classList.add("hidden");
+      modal.addEventListener("click", (e) => { if (e.target === modal) modal.classList.add("hidden"); });
+    })();
     // Close the dataset Load dropdown on any click outside it.
     document.addEventListener("click", (e) => {
       const menu = $("dsLoadMenu");
@@ -17664,6 +17755,7 @@ self.onmessage = function (e) {
         $("strategyModal").classList.add("hidden");
         $("outputModal").classList.add("hidden");
         $("cardsFieldsModal").classList.add("hidden");
+        $("querySettingsModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");
         setLibCollapsed(true); // close the Details & source modal (phone/tablet)
         closeLibrary();
