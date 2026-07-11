@@ -3074,8 +3074,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 161b0c1 · 2026-07-11 17:42 UTC</span>
-    <script>window.RETE_BUILD = "161b0c1 · 2026-07-11 17:42 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 9838538 · 2026-07-11 18:54 UTC</span>
+    <script>window.RETE_BUILD = "9838538 · 2026-07-11 18:54 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -10699,6 +10699,22 @@ self.onmessage = function (e) {
     return /unreachable|out of memory|memory access out of bounds|allocation|rangeerror|maximum call stack/i.test(String(msg || ""));
   }
 
+  // Viewport-based "small device" check, for the memory-reclamation paths below.
+  function isPhoneView() { return !!(window.matchMedia && window.matchMedia("(max-width: 560px)").matches); }
+
+  // Free everything reclaimable that isn't needed right now, to keep a phone's
+  // tab under iOS Safari's memory budget. A wasm heap only shrinks by discarding
+  // the whole instance, so this tears the workers down — they rebuild lazily on
+  // next use (a remote re-query re-fetches; the range cache, if on, makes that
+  // cheap). No-op'd engines/graphs are skipped.
+  function freeMobileMemory() {
+    cancelRemote();        // the remote worker caches a RemoteGraph per URL — the big accumulator
+    freeExploreEngines();  // DuckDB / SQLite WASM backends
+    // The in-browser LLM (Ask AI) holds a large WebGPU/wasm model — drop it when
+    // idle; the next Ask AI reloads it (weights come from the browser HTTP cache).
+    if (llmWorker && !llmBusy) { try { llmWorker.terminate(); } catch (e) { /* ignore */ } llmWorker = null; llmLoaded = false; }
+  }
+
   // The asyncified wasm variant (glue + bytes) lives in separate files so it costs
   // the default page nothing; fetched once, lazily, when the toggle is first used.
   let asyncGlueText = null, asyncWasmBytes = null;
@@ -11348,6 +11364,9 @@ self.onmessage = function (e) {
   // (the cache modal) narrate the steps; a `tick()` before each heavy call lets
   // that label paint before the engine blocks the thread.
   async function loadBytes(bytes, source, onPhase) {
+    // Phone: leaving remote-lazy mode for an in-memory graph — free a leftover
+    // remote worker so the prior remote dataset's heap is reclaimed.
+    if (isPhoneView() && remoteWorker) cancelRemote();
     state.bytes = bytes;
     state.activeSource = source;
     state.remote = null; // an in-memory load leaves remote-lazy mode
@@ -11444,6 +11463,11 @@ self.onmessage = function (e) {
   // example query library shows; a custom URL (no key) gets no library.
   function enterRemote(url, datasetKey) {
     if (!url) return;
+    // Phone: switching to a DIFFERENT remote dataset — tear down the old remote
+    // worker so the previous dataset's resident heap (the worker caches a
+    // RemoteGraph per URL) doesn't accumulate. Desktop keeps it for fast
+    // switch-back. Same-URL re-entry keeps the resident engine.
+    if (isPhoneView() && state.remote && state.remote.url !== url) cancelRemote();
     state.bytes = null;
     if (state.graph) { state.graph.free(); state.graph = null; }
     resetFed(); // switching to a remote dataset drops federation partners
@@ -17579,6 +17603,21 @@ self.onmessage = function (e) {
   function wireEvents() {
     $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
+
+    // Phone: reclaim memory when the tab is backgrounded. iOS Safari is most
+    // likely to jetsam a hidden tab, so freeing the wasm workers keeps the page
+    // alive to return to. A short grace period avoids thrashing on a quick app
+    // switch; coming back before it fires cancels the free.
+    let mobileFreeTimer = null;
+    document.addEventListener("visibilitychange", () => {
+      if (!isPhoneView()) return;
+      if (document.hidden) {
+        if (mobileFreeTimer) clearTimeout(mobileFreeTimer);
+        mobileFreeTimer = setTimeout(() => { mobileFreeTimer = null; freeMobileMemory(); }, 8000);
+      } else if (mobileFreeTimer) {
+        clearTimeout(mobileFreeTimer); mobileFreeTimer = null;
+      }
+    });
     // Copy button inside an error's "Technical details" expander: copy the report
     // (and don't let the click toggle the <details>).
     document.addEventListener("click", (e) => {

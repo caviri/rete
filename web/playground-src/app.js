@@ -33,10 +33,12 @@
     sqlDataset: null,
     // Persistent incremental range cache (opt-in via Settings, localStorage-backed).
     rangeCacheOn: (() => { try { return localStorage.getItem("rangeCacheOn") === "1"; } catch (e) { return false; } })(),
-    // Asyncify concurrent reads (opt-in): loads the asyncified wasm variant so a
-    // remote query fetches its byte ranges in parallel (Promise.all of fetch) with
-    // no cross-origin isolation. localStorage-backed; flipping recreates the worker.
-    asyncReadsOn: (() => { try { return localStorage.getItem("asyncReadsOn") === "1"; } catch (e) { return false; } })(),
+    // Asyncify concurrent reads: the asyncified wasm variant fetches each remote
+    // query's byte ranges in parallel (Promise.all of fetch), no cross-origin
+    // isolation. ON by default and no longer user-exposed — the only opt-out is a
+    // console `localStorage.setItem("asyncReadsOn","0")` escape hatch. Costs the
+    // ~8 MB async wasm only when a REMOTE query first runs (embedded stays sync).
+    asyncReadsOn: (() => { try { return localStorage.getItem("asyncReadsOn") !== "0"; } catch (e) { return true; } })(),
     // Map view: which slippy-tile basemap sits behind the geometry ("none" =
     // the offline equirectangular vectors). localStorage-backed so it persists.
     mapBasemap: (() => { try { return localStorage.getItem("mapBasemap") || "none"; } catch (e) { return "none"; } })(),
@@ -414,6 +416,22 @@ self.onmessage = function (e) {
   // below desktop.
   function isEngineMemoryError(msg) {
     return /unreachable|out of memory|memory access out of bounds|allocation|rangeerror|maximum call stack/i.test(String(msg || ""));
+  }
+
+  // Viewport-based "small device" check, for the memory-reclamation paths below.
+  function isPhoneView() { return !!(window.matchMedia && window.matchMedia("(max-width: 560px)").matches); }
+
+  // Free everything reclaimable that isn't needed right now, to keep a phone's
+  // tab under iOS Safari's memory budget. A wasm heap only shrinks by discarding
+  // the whole instance, so this tears the workers down — they rebuild lazily on
+  // next use (a remote re-query re-fetches; the range cache, if on, makes that
+  // cheap). No-op'd engines/graphs are skipped.
+  function freeMobileMemory() {
+    cancelRemote();        // the remote worker caches a RemoteGraph per URL — the big accumulator
+    freeExploreEngines();  // DuckDB / SQLite WASM backends
+    // The in-browser LLM (Ask AI) holds a large WebGPU/wasm model — drop it when
+    // idle; the next Ask AI reloads it (weights come from the browser HTTP cache).
+    if (llmWorker && !llmBusy) { try { llmWorker.terminate(); } catch (e) { /* ignore */ } llmWorker = null; llmLoaded = false; }
   }
 
   // The asyncified wasm variant (glue + bytes) lives in separate files so it costs
@@ -1065,6 +1083,9 @@ self.onmessage = function (e) {
   // (the cache modal) narrate the steps; a `tick()` before each heavy call lets
   // that label paint before the engine blocks the thread.
   async function loadBytes(bytes, source, onPhase) {
+    // Phone: leaving remote-lazy mode for an in-memory graph — free a leftover
+    // remote worker so the prior remote dataset's heap is reclaimed.
+    if (isPhoneView() && remoteWorker) cancelRemote();
     state.bytes = bytes;
     state.activeSource = source;
     state.remote = null; // an in-memory load leaves remote-lazy mode
@@ -1161,6 +1182,11 @@ self.onmessage = function (e) {
   // example query library shows; a custom URL (no key) gets no library.
   function enterRemote(url, datasetKey) {
     if (!url) return;
+    // Phone: switching to a DIFFERENT remote dataset — tear down the old remote
+    // worker so the previous dataset's resident heap (the worker caches a
+    // RemoteGraph per URL) doesn't accumulate. Desktop keeps it for fast
+    // switch-back. Same-URL re-entry keeps the resident engine.
+    if (isPhoneView() && state.remote && state.remote.url !== url) cancelRemote();
     state.bytes = null;
     if (state.graph) { state.graph.free(); state.graph = null; }
     resetFed(); // switching to a remote dataset drops federation partners
@@ -1859,21 +1885,8 @@ self.onmessage = function (e) {
     freeExploreEngines();
     cancelRemote();
   }
-  // Flip Asyncify concurrent reads; recreate the remote worker so it loads the
-  // matching wasm variant (async vs sync) on the next query.
-  function setAsyncReads(on) {
-    state.asyncReadsOn = !!on;
-    try { localStorage.setItem("asyncReadsOn", on ? "1" : "0"); } catch (e) { /* private mode */ }
-    cancelRemote();
-    renderAsyncReads();
-  }
-  function renderAsyncReads() {
-    const t = $("asyncReadsToggle"); if (t) t.checked = !!state.asyncReadsOn;
-    const info = $("asyncReadsInfo");
-    if (info) info.textContent = state.asyncReadsOn
-      ? "On — remote queries load an asyncified wasm build that fetches each query's byte ranges in PARALLEL (no cross-origin isolation needed, so the DuckDB/SQLite Explore backends keep working). The variant is ~8 MB, fetched once. Graph/SPARQL only."
-      : "Off — remote reads are sequential (one coalesced request at a time). Turn on to fetch a query's ranges concurrently via Asyncify — a big speedup on the lazy datasets, with no page reload and no cross-origin isolation (experimental).";
-  }
+  // Asyncify concurrent reads are always on now (see state.asyncReadsOn above) and
+  // no longer have a Settings toggle — ensureRemoteWorker() reads the flag directly.
 
   // ── SPARQL assistant: an in-browser WebGPU LLM (Transformers.js) ───────────
   // "✨ Ask AI" opens a chat that runs a small instruction model ENTIRELY in the
@@ -7296,6 +7309,21 @@ self.onmessage = function (e) {
   function wireEvents() {
     $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
+
+    // Phone: reclaim memory when the tab is backgrounded. iOS Safari is most
+    // likely to jetsam a hidden tab, so freeing the wasm workers keeps the page
+    // alive to return to. A short grace period avoids thrashing on a quick app
+    // switch; coming back before it fires cancels the free.
+    let mobileFreeTimer = null;
+    document.addEventListener("visibilitychange", () => {
+      if (!isPhoneView()) return;
+      if (document.hidden) {
+        if (mobileFreeTimer) clearTimeout(mobileFreeTimer);
+        mobileFreeTimer = setTimeout(() => { mobileFreeTimer = null; freeMobileMemory(); }, 8000);
+      } else if (mobileFreeTimer) {
+        clearTimeout(mobileFreeTimer); mobileFreeTimer = null;
+      }
+    });
     // Copy button inside an error's "Technical details" expander: copy the report
     // (and don't let the click toggle the <details>).
     document.addEventListener("click", (e) => {
@@ -7587,7 +7615,6 @@ self.onmessage = function (e) {
     };
     $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };
     $("clearRangeCacheBtn").onclick = async () => { await clearRangeCache(); renderRangeCache(); };
-    { const a = $("asyncReadsToggle"); if (a) a.onchange = (e) => setAsyncReads(e.target.checked); renderAsyncReads(); }
     { const ai = $("aiModelId"); if (ai) { ai.value = (() => { try { return localStorage.getItem("aiModelId") || ""; } catch (e) { return ""; } })();
       ai.onchange = () => { const v = ai.value.trim(); try { v ? localStorage.setItem("aiModelId", v) : localStorage.removeItem("aiModelId"); } catch (e) { /* private mode */ }
         llmLoaded = false; if (llmWorker) { llmWorker.terminate(); llmWorker = null; } }; } }
