@@ -1017,8 +1017,18 @@ textarea {
 }
 .ed-tool:hover { border-color: var(--accent); }
 .ed-tool.active { border-color: var(--accent); background: #e3f0ec; color: var(--accent-dark); }
-/* The editor-head tool cluster (Wrap + Find a term). */
-.ed-tools { display: flex; gap: 8px; align-items: start; flex: 0 0 auto; }
+/* The editor-head tool cluster (Wrap + Find a term, and on phone also ⚙ Settings
+   + ✨ SPARQL AI, moved here by boot()). */
+.ed-tools { display: flex; gap: 8px; align-items: start; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
+/* Settings + AI, when moved into the toolbar, take the compact ed-tool shape
+   (the AI keeps its purple gradient from .ask-ai-btn). */
+#edTools .qs-btn, #edTools .ask-ai-btn {
+  min-height: 32px; height: auto; box-sizing: border-box; border-radius: 7px;
+  padding: 6px 11px; margin: 0; font-size: 12px; font-weight: 650; line-height: 1.1;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+#edTools .qs-btn { border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+#edTools .qs-btn:hover { border-color: var(--accent); }
 #wrapBtn { min-width: 92px; text-align: center; }
 #wrapBtn.on { border-color: var(--accent); background: #e3f0ec; color: var(--accent-dark); }
 
@@ -2092,7 +2102,15 @@ th .coltype.coltype-on {
   background: var(--accent-weak, #eef6f2);
   border: 1px solid var(--line);
 }
-.ds-detail-head h2 { margin: 2px 0 2px; font-size: 19px; font-family: Georgia, "Times New Roman", serif; }
+.ds-detail-head h2 {
+  margin: 2px 0 2px; font-size: 18px; line-height: 1.2;
+  font-family: Georgia, "Times New Roman", serif;
+  /* A real title, not a section label — undo the global h2 uppercase + tracking
+     (which, on the long dataset labels, blew this up into a huge multi-line
+     block) and let a long name wrap gracefully / clamp. */
+  text-transform: none; letter-spacing: 0; color: var(--ink);
+  overflow-wrap: anywhere;
+}
 .ds-detail-sub { font-size: 12px; color: var(--muted); }
 
 .ds-badge { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
@@ -2418,15 +2436,19 @@ th .coltype.coltype-on {
   .mode-rail .rail-ic { width: 18px; height: 18px; }
   .mode-rail .rail-name { font-size: 11px; }
 
-  /* The secondary controls live in the ⚙ Settings modal now, so the console row
-     is just [⚙ Settings] [Run] (+ the technical log below). Both buttons share
-     the row at a normal — not oversized — height; the log wraps beneath. */
+  /* ⚙ Settings + ✨ SPARQL AI moved up to the editor toolbar, so the bottom
+     console row is just Run (full width, moderate height) with the technical
+     log wrapping beneath. */
   .action-row { gap: 8px; }
   .action-row .run-right { margin-left: 0; order: 3; flex: 1 1 100%; text-align: left; }
-  .qs-btn { display: inline-flex !important; flex: 1 1 auto; justify-content: center; }
-  #run { flex: 2 1 auto; padding-top: 9px; padding-bottom: 9px; }
+  .qs-btn { display: inline-flex !important; }   /* shown (it now lives in #edTools) */
+  #run { flex: 1 1 100%; padding-top: 9px; padding-bottom: 9px; }
   /* ⊞ requests stays available but compact, on the log line. */
   .action-row > .req-log-btn { order: 4; }
+  /* Let the editor head stack its title over the (wrapping) tool cluster so the
+     four toolbar buttons have room. */
+  .editor-head { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  #edTools { justify-content: flex-start; width: 100%; }
 
   /* Query-settings modal body: the moved controls stack full-width. */
   #qsBody { display: flex; flex-direction: column; gap: 14px; }

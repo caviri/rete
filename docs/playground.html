@@ -1057,8 +1057,18 @@ textarea {
 }
 .ed-tool:hover { border-color: var(--accent); }
 .ed-tool.active { border-color: var(--accent); background: #e3f0ec; color: var(--accent-dark); }
-/* The editor-head tool cluster (Wrap + Find a term). */
-.ed-tools { display: flex; gap: 8px; align-items: start; flex: 0 0 auto; }
+/* The editor-head tool cluster (Wrap + Find a term, and on phone also ⚙ Settings
+   + ✨ SPARQL AI, moved here by boot()). */
+.ed-tools { display: flex; gap: 8px; align-items: start; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
+/* Settings + AI, when moved into the toolbar, take the compact ed-tool shape
+   (the AI keeps its purple gradient from .ask-ai-btn). */
+#edTools .qs-btn, #edTools .ask-ai-btn {
+  min-height: 32px; height: auto; box-sizing: border-box; border-radius: 7px;
+  padding: 6px 11px; margin: 0; font-size: 12px; font-weight: 650; line-height: 1.1;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+#edTools .qs-btn { border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+#edTools .qs-btn:hover { border-color: var(--accent); }
 #wrapBtn { min-width: 92px; text-align: center; }
 #wrapBtn.on { border-color: var(--accent); background: #e3f0ec; color: var(--accent-dark); }
 
@@ -2132,7 +2142,15 @@ th .coltype.coltype-on {
   background: var(--accent-weak, #eef6f2);
   border: 1px solid var(--line);
 }
-.ds-detail-head h2 { margin: 2px 0 2px; font-size: 19px; font-family: Georgia, "Times New Roman", serif; }
+.ds-detail-head h2 {
+  margin: 2px 0 2px; font-size: 18px; line-height: 1.2;
+  font-family: Georgia, "Times New Roman", serif;
+  /* A real title, not a section label — undo the global h2 uppercase + tracking
+     (which, on the long dataset labels, blew this up into a huge multi-line
+     block) and let a long name wrap gracefully / clamp. */
+  text-transform: none; letter-spacing: 0; color: var(--ink);
+  overflow-wrap: anywhere;
+}
 .ds-detail-sub { font-size: 12px; color: var(--muted); }
 
 .ds-badge { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
@@ -2458,15 +2476,19 @@ th .coltype.coltype-on {
   .mode-rail .rail-ic { width: 18px; height: 18px; }
   .mode-rail .rail-name { font-size: 11px; }
 
-  /* The secondary controls live in the ⚙ Settings modal now, so the console row
-     is just [⚙ Settings] [Run] (+ the technical log below). Both buttons share
-     the row at a normal — not oversized — height; the log wraps beneath. */
+  /* ⚙ Settings + ✨ SPARQL AI moved up to the editor toolbar, so the bottom
+     console row is just Run (full width, moderate height) with the technical
+     log wrapping beneath. */
   .action-row { gap: 8px; }
   .action-row .run-right { margin-left: 0; order: 3; flex: 1 1 100%; text-align: left; }
-  .qs-btn { display: inline-flex !important; flex: 1 1 auto; justify-content: center; }
-  #run { flex: 2 1 auto; padding-top: 9px; padding-bottom: 9px; }
+  .qs-btn { display: inline-flex !important; }   /* shown (it now lives in #edTools) */
+  #run { flex: 1 1 100%; padding-top: 9px; padding-bottom: 9px; }
   /* ⊞ requests stays available but compact, on the log line. */
   .action-row > .req-log-btn { order: 4; }
+  /* Let the editor head stack its title over the (wrapping) tool cluster so the
+     four toolbar buttons have room. */
+  .editor-head { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  #edTools { justify-content: flex-start; width: 100%; }
 
   /* Query-settings modal body: the moved controls stack full-width. */
   #qsBody { display: flex; flex-direction: column; gap: 14px; }
@@ -3039,8 +3061,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 9e791b0 · 2026-07-11 16:44 UTC</span>
-    <script>window.RETE_BUILD = "9e791b0 · 2026-07-11 16:44 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 469c0e7 · 2026-07-11 16:55 UTC</span>
+    <script>window.RETE_BUILD = "469c0e7 · 2026-07-11 16:55 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -3180,7 +3202,7 @@ td.lit { color: var(--ink); }
             <h1>SPARQL Console</h1>
             <p class="microcopy">Default path for exact queries, summary-safe progressive queries, and graph rendering.</p>
           </div>
-          <div class="ed-tools">
+          <div class="ed-tools" id="edTools">
             <button id="wrapBtn" type="button" class="ed-tool" aria-pressed="false" title="Wrap long lines / keep them on one line (horizontal scroll)">⤶ Wrap</button>
             <button id="finderBtn" type="button" class="ed-tool" title="Browse and search this graph's classes, predicates and entities — click a result to drop its IRI into the query.">🔎 Find a term</button>
           </div>
@@ -11342,8 +11364,8 @@ self.onmessage = function (e) {
 
     const infoRow = datasetInfo(state.dataset);
     const catalogSource = source === "bundled" || source === "cached";
-    $("dsDesc").textContent = catalogSource
-      ? infoRow.description
+    $("dsDesc").innerHTML = catalogSource
+      ? mdLite(infoRow.description)
       : "Custom graph loaded into the same in-browser engine.";
     if (catalogSource && infoRow) {
       setDatasetHeader(infoRow.label, firstSentence(infoRow.description));
@@ -11407,9 +11429,10 @@ self.onmessage = function (e) {
     }
     state.selectedExample = -1;
     updateSourcePill();
-    setStatus("remote (lazy) — queries range-fetch only what they touch");
+    // The source pill already says "remote (lazy)" — don't repeat it here.
+    setStatus("queries range-fetch only what they touch");
     const info = datasetKey ? datasetInfo(datasetKey) : null;
-    $("dsDesc").textContent = info ? info.description : "Remote graph, queried lazily over HTTP range: " + url;
+    $("dsDesc").innerHTML = info ? mdLite(info.description) : "Remote graph, queried lazily over HTTP range: " + esc(url);
     setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
       info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.");
     renderExamples();
@@ -11601,16 +11624,29 @@ self.onmessage = function (e) {
   }
 
   // Tiny markdown for descriptions: **bold**, `code`, *italic* (input escaped).
+  // Lightweight inline markdown → HTML (safe: escapes first, then adds a small
+  // set of tags). Handles links, bold, code, italic, and — importantly for the
+  // dataset descriptions — newlines, so a multi-paragraph description reads as
+  // paragraphs instead of a wall of text. Returns inline HTML (no block tags),
+  // so it's safe to drop inside a <p>/<div>.
   function mdLite(s) {
     return esc(String(s || ""))
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
+      .replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>")
+      .replace(/\n{2,}/g, "<br><br>")
+      .replace(/\n/g, "<br>");
   }
 
   function dsShortLabel(key) {
     const d = datasetInfo(key);
-    return d ? d.label.split(" - ")[0] : key;
+    if (!d) return key;
+    // The short name is the first segment before a separator — a hyphen or
+    // em/en-dash surrounded by spaces, or an opening parenthesis. (Some labels
+    // use " — " which the old " - " split missed, so the whole long label leaked
+    // through as the "short" name.)
+    return d.label.split(/\s[—–-]\s|\s\(/)[0].trim();
   }
 
   // The "Datasets" browser: a sidebar list (left) + a detail/preview pane
@@ -17536,21 +17572,25 @@ self.onmessage = function (e) {
       const fedBar = $("fedBar"), qsControls = $("qsControls"), qsBody = $("qsBody"),
         modal = $("querySettingsModal");
       if (!fedBar || !qsControls || !qsBody || !modal || !window.matchMedia) return;
-      const aiBtn = $("askAiBtn");
+      const aiBtn = $("askAiBtn"), qsBtn2 = $("qsBtn"), edTools = $("edTools"), runBtn = $("run");
       const consoleControls = fedBar.parentNode, actionRow = qsControls.parentNode;
       const fedAnchor = fedBar.nextElementSibling;    // .action-row — restore before it
       const qsAnchor = qsControls.nextElementSibling; // #qmeta — restore before it
-      const aiAnchor = aiBtn && aiBtn.nextElementSibling; // #qsBtn — restore before it
       const mq = window.matchMedia("(max-width: 560px)");
       const place = () => {
         if (mq.matches) {
           if (fedBar.parentNode !== qsBody) qsBody.appendChild(fedBar);
           if (qsControls.parentNode !== qsBody) qsBody.appendChild(qsControls);
-          if (aiBtn && aiBtn.parentNode !== qsBody) qsBody.appendChild(aiBtn);
+          // Phone: Settings + SPARQL AI sit next to Find a term in the editor
+          // toolbar (not in the bottom row / modal).
+          if (qsBtn2 && edTools && qsBtn2.parentNode !== edTools) edTools.appendChild(qsBtn2);
+          if (aiBtn && edTools && aiBtn.parentNode !== edTools) edTools.appendChild(aiBtn);
         } else {
           if (fedBar.parentNode !== consoleControls) consoleControls.insertBefore(fedBar, fedAnchor);
           if (qsControls.parentNode !== actionRow) actionRow.insertBefore(qsControls, qsAnchor);
-          if (aiBtn && aiBtn.parentNode !== actionRow) actionRow.insertBefore(aiBtn, aiAnchor);
+          // Restore to the action row in original order: … AI, Settings, Run.
+          if (aiBtn && runBtn && aiBtn.parentNode !== actionRow) actionRow.insertBefore(aiBtn, runBtn);
+          if (qsBtn2 && runBtn && qsBtn2.parentNode !== actionRow) actionRow.insertBefore(qsBtn2, runBtn);
           modal.classList.add("hidden"); // never leave it open on desktop
         }
       };

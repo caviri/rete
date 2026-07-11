@@ -1094,8 +1094,8 @@ self.onmessage = function (e) {
 
     const infoRow = datasetInfo(state.dataset);
     const catalogSource = source === "bundled" || source === "cached";
-    $("dsDesc").textContent = catalogSource
-      ? infoRow.description
+    $("dsDesc").innerHTML = catalogSource
+      ? mdLite(infoRow.description)
       : "Custom graph loaded into the same in-browser engine.";
     if (catalogSource && infoRow) {
       setDatasetHeader(infoRow.label, firstSentence(infoRow.description));
@@ -1159,9 +1159,10 @@ self.onmessage = function (e) {
     }
     state.selectedExample = -1;
     updateSourcePill();
-    setStatus("remote (lazy) — queries range-fetch only what they touch");
+    // The source pill already says "remote (lazy)" — don't repeat it here.
+    setStatus("queries range-fetch only what they touch");
     const info = datasetKey ? datasetInfo(datasetKey) : null;
-    $("dsDesc").textContent = info ? info.description : "Remote graph, queried lazily over HTTP range: " + url;
+    $("dsDesc").innerHTML = info ? mdLite(info.description) : "Remote graph, queried lazily over HTTP range: " + esc(url);
     setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
       info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.");
     renderExamples();
@@ -1353,16 +1354,29 @@ self.onmessage = function (e) {
   }
 
   // Tiny markdown for descriptions: **bold**, `code`, *italic* (input escaped).
+  // Lightweight inline markdown → HTML (safe: escapes first, then adds a small
+  // set of tags). Handles links, bold, code, italic, and — importantly for the
+  // dataset descriptions — newlines, so a multi-paragraph description reads as
+  // paragraphs instead of a wall of text. Returns inline HTML (no block tags),
+  // so it's safe to drop inside a <p>/<div>.
   function mdLite(s) {
     return esc(String(s || ""))
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
+      .replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>")
+      .replace(/\n{2,}/g, "<br><br>")
+      .replace(/\n/g, "<br>");
   }
 
   function dsShortLabel(key) {
     const d = datasetInfo(key);
-    return d ? d.label.split(" - ")[0] : key;
+    if (!d) return key;
+    // The short name is the first segment before a separator — a hyphen or
+    // em/en-dash surrounded by spaces, or an opening parenthesis. (Some labels
+    // use " — " which the old " - " split missed, so the whole long label leaked
+    // through as the "short" name.)
+    return d.label.split(/\s[—–-]\s|\s\(/)[0].trim();
   }
 
   // The "Datasets" browser: a sidebar list (left) + a detail/preview pane
@@ -7288,21 +7302,25 @@ self.onmessage = function (e) {
       const fedBar = $("fedBar"), qsControls = $("qsControls"), qsBody = $("qsBody"),
         modal = $("querySettingsModal");
       if (!fedBar || !qsControls || !qsBody || !modal || !window.matchMedia) return;
-      const aiBtn = $("askAiBtn");
+      const aiBtn = $("askAiBtn"), qsBtn2 = $("qsBtn"), edTools = $("edTools"), runBtn = $("run");
       const consoleControls = fedBar.parentNode, actionRow = qsControls.parentNode;
       const fedAnchor = fedBar.nextElementSibling;    // .action-row — restore before it
       const qsAnchor = qsControls.nextElementSibling; // #qmeta — restore before it
-      const aiAnchor = aiBtn && aiBtn.nextElementSibling; // #qsBtn — restore before it
       const mq = window.matchMedia("(max-width: 560px)");
       const place = () => {
         if (mq.matches) {
           if (fedBar.parentNode !== qsBody) qsBody.appendChild(fedBar);
           if (qsControls.parentNode !== qsBody) qsBody.appendChild(qsControls);
-          if (aiBtn && aiBtn.parentNode !== qsBody) qsBody.appendChild(aiBtn);
+          // Phone: Settings + SPARQL AI sit next to Find a term in the editor
+          // toolbar (not in the bottom row / modal).
+          if (qsBtn2 && edTools && qsBtn2.parentNode !== edTools) edTools.appendChild(qsBtn2);
+          if (aiBtn && edTools && aiBtn.parentNode !== edTools) edTools.appendChild(aiBtn);
         } else {
           if (fedBar.parentNode !== consoleControls) consoleControls.insertBefore(fedBar, fedAnchor);
           if (qsControls.parentNode !== actionRow) actionRow.insertBefore(qsControls, qsAnchor);
-          if (aiBtn && aiBtn.parentNode !== actionRow) actionRow.insertBefore(aiBtn, aiAnchor);
+          // Restore to the action row in original order: … AI, Settings, Run.
+          if (aiBtn && runBtn && aiBtn.parentNode !== actionRow) actionRow.insertBefore(aiBtn, runBtn);
+          if (qsBtn2 && runBtn && qsBtn2.parentNode !== actionRow) actionRow.insertBefore(qsBtn2, runBtn);
           modal.classList.add("hidden"); // never leave it open on desktop
         }
       };
