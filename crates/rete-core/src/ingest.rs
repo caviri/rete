@@ -279,11 +279,16 @@ pub(crate) fn take_term(s: &str) -> Option<(String, &str)> {
                 let close = s[end..].find('>')? + end;
                 end = close + 1;
             } else if s[end..].starts_with('@') {
-                let stop = s[end..]
-                    .find(char::is_whitespace)
-                    .map(|p| p + end)
-                    .unwrap_or(s.len());
-                end = stop;
+                // Language tag: '@' then BCP-47 subtags `[a-zA-Z0-9-]+`. Stop at
+                // the first char that can't be part of a tag — normally the
+                // whitespace before the predicate, but ALSO the `>>` that closes
+                // a quoted triple when this literal is its object (`"x"@en>>`),
+                // where there is no separating whitespace.
+                let mut j = end + 1; // past '@'
+                while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'-') {
+                    j += 1;
+                }
+                end = j;
             }
             Some((s[..end].to_string(), &s[end..]))
         }
@@ -633,6 +638,35 @@ mod tests {
         let t = parse(input).unwrap();
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].2, r#""a \"quoted\" phrase here""#);
+    }
+
+    /// RDF-star: a quoted triple whose object is a **language-tagged literal**
+    /// sits directly against the closing `>>` with no separating whitespace
+    /// (`"name"@fr>>`). The language-tag scan must stop at `>` — a regression
+    /// guard for the greedy scan-to-whitespace that swallowed `@fr>>` as the tag.
+    #[test]
+    fn quoted_triple_langtagged_object() {
+        let s = r#"<<<http://ex/sp> <http://ex/name> "Hirondelle rustique"@fr>>"#;
+        let (tok, rest) = take_term(s).unwrap();
+        assert_eq!(
+            tok,
+            r#"<<<http://ex/sp> <http://ex/name> "Hirondelle rustique"@fr>>"#
+        );
+        assert_eq!(rest, "");
+        // and it round-trips through a full annotation line
+        let line = r#"<<<http://ex/sp> <http://ex/name> "Oreneta vulgar"@ca>> <http://purl.org/dc/terms/source> "Catalogue of Life" ."#;
+        let t = parse(line).unwrap();
+        assert_eq!(t.len(), 1);
+        assert_eq!(
+            t[0].0,
+            r#"<<<http://ex/sp> <http://ex/name> "Oreneta vulgar"@ca>>"#
+        );
+        assert_eq!(t[0].2, r#""Catalogue of Life""#);
+        // a plain lang-tagged object still terminates at whitespace
+        assert_eq!(
+            take_term(r#""x"@pt-BR ."#).unwrap().0,
+            r#""x"@pt-BR"#
+        );
     }
 
     #[test]
