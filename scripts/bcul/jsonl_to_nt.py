@@ -38,7 +38,11 @@ def clean_iri(url):
     return enc if IRI_OK.match(enc) else None
 
 REPO = Path(__file__).resolve().parents[2]
-BASE = "https://data.bcu-lausanne.ch/"
+BASE = "https://data.bcu-lausanne.ch/"   # minted-node namespace; override with --base
+MINT = False                             # mint clean item IRIs (--mint) vs use record_url
+SRC_LABEL = {"patrinum": "BCU Lausanne — patrinum", "renouvaud": "BCU Lausanne — renouvaud",
+             "ecodices": "BCU Lausanne — e-codices", "scriptorium": "BCU Lausanne — Scriptorium",
+             "ecal": "ECAL — Bibliothèque"}
 SCHEMA = "http://schema.org/"
 DCT = "http://purl.org/dc/terms/"
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
@@ -78,6 +82,15 @@ class Writer:
         self._collections = set()
         self._langs = set()
         self._libraries = set()
+        self._sources = set()
+
+    def source(self, key):
+        u = f"{BASE}source/{key}"
+        if key not in self._sources:
+            self._sources.add(key)
+            self.iri(u, RDF + "type", SCHEMA + "Collection")
+            self.lit(u, RDFS + "label", SRC_LABEL.get(key, key))
+        return u
 
     def triple(self, s, p, o):
         self.fh.write(f"<{s}> <{p}> {o} .\n")
@@ -148,6 +161,8 @@ class Writer:
 
 def subject_iri(rec) -> str:
     src, lid = rec["source"], rec["local_id"]
+    if MINT:
+        return f"{BASE}item/{src}/{lid}"   # clean minted IRI (e.g. ecal:item/ecal/3)
     return clean_iri(rec.get("record_url")) or f"{BASE}item/{src}/{lid}"
 
 
@@ -157,7 +172,7 @@ def convert(rec, w: Writer):
     w.iri(s, RDF + "type", SCHEMA + cls)
     w.lit(s, DCT + "type", rec.get("type") or "")
     w.lit(s, SCHEMA + "identifier", rec["id"])
-    w.iri(s, SCHEMA + "isPartOf", f"{BASE}source/{rec['source']}")
+    w.iri(s, SCHEMA + "isPartOf", w.source(rec["source"]))
 
     if rec.get("title"):
         w.lit(s, SCHEMA + "name", rec["title"])
@@ -244,19 +259,20 @@ def convert(rec, w: Writer):
 
 
 def main():
+    global BASE, MINT
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", default=str(REPO / "data" / "bcul" / "normalized" / "bcul.jsonl"))
     ap.add_argument("--out", default=str(REPO / "data" / "bcul" / "bcul.nt"))
+    ap.add_argument("--base", default=BASE, help="minted-node namespace (e.g. https://data.ecal.ch/)")
+    ap.add_argument("--mint", action="store_true", help="mint clean item IRIs instead of record_url")
     args = ap.parse_args()
+    BASE = args.base if args.base.endswith("/") else args.base + "/"
+    MINT = args.mint
 
     n_rec = 0
     with open(args.inp, encoding="utf-8") as fin, open(args.out, "w", encoding="utf-8") as fout:
-        # source nodes
+        # source nodes are emitted lazily by Writer.source() as records reference them
         w = Writer(fout)
-        for src in ("patrinum", "renouvaud", "ecodices", "scriptorium"):
-            u = f"{BASE}source/{src}"
-            w.iri(u, RDF + "type", SCHEMA + "Collection")
-            w.lit(u, RDFS + "label", f"BCU Lausanne — {src}")
         for line in fin:
             line = line.strip()
             if not line:

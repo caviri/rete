@@ -3676,6 +3676,8 @@ self.onmessage = function (e) {
       // Patrinum (BCUL) nanna thumbnails have no extension: /nanna/thumbnail/v2/<id>?redirect=1
       // 302s to a CORS-open JPEG; treat as an image so covers render inline.
       /patrinum\.ch\/nanna\/(thumbnail|record-thumb)\//i.test(v) ||
+      // ECAL (BiblioMaker) book covers, also extension-less: …/BM_DOCUMENT_COVER_PAGE[_THUMBNAIL]/<id>
+      /bibliomaker\.ch[:/][^"]*BM_DOCUMENT_COVER_PAGE/i.test(v) ||
       /\.(jpe?g|png|gif|svg|webp)$/i.test(String(v).split("?")[0]);
   }
   function thumbUrl(v) {
