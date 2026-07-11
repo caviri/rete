@@ -132,6 +132,49 @@ fn collect_path_predicates(
     }
 }
 
+/// Lower a left-deep chain of `Join` / `LeftJoin` **iteratively** (see the note
+/// in `build`'s Join/LeftJoin arm). Walks the left spine collecting each
+/// operator (its right side, and a LeftJoin's optional condition), lowers the
+/// base and each right, then folds the plan back up — the identical plan tree
+/// the recursive lowering would produce, but the spine costs O(1) call-stack
+/// depth instead of one (large) frame per operand.
+fn build_left_spine(p: &GraphPattern, sel: &mut Select) -> Result<Plan, SparqlError> {
+    enum SpineOp {
+        Join(Plan),
+        LeftJoin(Plan, Option<FExpr>),
+    }
+    let mut ops: Vec<SpineOp> = Vec::new();
+    let mut cur = p;
+    loop {
+        match cur {
+            GraphPattern::Join { left, right } => {
+                ops.push(SpineOp::Join(build(right, sel, true)?));
+                cur = left;
+            }
+            GraphPattern::LeftJoin {
+                left,
+                right,
+                expression,
+            } => {
+                let cond = expression.as_ref().map(convert_expr).transpose()?;
+                ops.push(SpineOp::LeftJoin(build(right, sel, true)?, cond));
+                cur = left;
+            }
+            _ => break,
+        }
+    }
+    // `cur` now points at the spine's base (the first non-Join/LeftJoin node).
+    let mut plan = build(cur, sel, true)?;
+    // `ops` is outermost-first; fold innermost-first to rebuild the same tree.
+    for op in ops.into_iter().rev() {
+        plan = match op {
+            SpineOp::Join(r) => Plan::Join(Box::new(plan), Box::new(r)),
+            SpineOp::LeftJoin(r, c) => Plan::LeftJoin(Box::new(plan), Box::new(r), c),
+        };
+    }
+    Ok(plan)
+}
+
 /// Build the evaluation [`Plan`] for a graph pattern, capturing the solution
 /// modifiers (projection/DISTINCT/slice) into `sel` as transparent wrappers.
 ///
@@ -143,10 +186,14 @@ fn collect_path_predicates(
 fn build(p: &GraphPattern, sel: &mut Select, in_where: bool) -> Result<Plan, SparqlError> {
     match p {
         GraphPattern::Bgp { patterns } => Ok(lower_bgp(patterns, &mut sel.star_counter)),
-        GraphPattern::Join { left, right } => Ok(Plan::Join(
-            Box::new(build(left, sel, true)?),
-            Box::new(build(right, sel, true)?),
-        )),
+        // Join and LeftJoin nest left-deep — `A . B OPTIONAL C OPTIONAL D` is
+        // `LeftJoin(LeftJoin(Join(A,B),C),D)`. Recursing straight down that spine
+        // costs one (large) stack frame per operand, which overflows the small
+        // WASM call stack on iOS/iPad Safari for deep queries (several OPTIONALs)
+        // — before any data is even fetched. Walk the spine ITERATIVELY instead:
+        // collect its operators, build the base + each (shallow) right, then fold
+        // the plan back up. Same plan tree, O(1) recursion depth for the spine.
+        GraphPattern::Join { .. } | GraphPattern::LeftJoin { .. } => build_left_spine(p, sel),
         GraphPattern::Union { left, right } => Ok(Plan::Union(
             Box::new(build(left, sel, true)?),
             Box::new(build(right, sel, true)?),
@@ -161,18 +208,6 @@ fn build(p: &GraphPattern, sel: &mut Select, in_where: bool) -> Result<Plan, Spa
                 NamedNodePattern::Variable(v) => GraphTarget::Var(v.as_str().to_string()),
             };
             Ok(Plan::Graph(target, Box::new(build(inner, sel, true)?)))
-        }
-        GraphPattern::LeftJoin {
-            left,
-            right,
-            expression,
-        } => {
-            let cond = expression.as_ref().map(convert_expr).transpose()?;
-            Ok(Plan::LeftJoin(
-                Box::new(build(left, sel, true)?),
-                Box::new(build(right, sel, true)?),
-                cond,
-            ))
         }
         GraphPattern::Path {
             subject,
