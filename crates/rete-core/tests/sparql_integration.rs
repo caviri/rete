@@ -210,6 +210,56 @@ fn rdf_star_quoted_triple_patterns() {
 }
 
 #[test]
+fn rdf_star_multiple_annotations_on_one_quoted_triple() {
+    // Two annotations on ONE inner-variable quoted triple
+    // (`<< ?s p ?o >> :a ?x ; :b ?y`) must JOIN on the shared statement — the
+    // natural provenance shape (a name annotated with BOTH source and date).
+    // Regression: the rewrite used to mint a distinct fresh var per occurrence,
+    // so the two BGP patterns shared no variable and Cartesian-multiplied every
+    // annotated triple against every other (correct on tiny data, but a hang on
+    // real data — this locks in the correctness half).
+    use rete_core::ingest::{assemble_dataset, parse};
+    let rdf = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+    let nt = format!(
+        "<http://ex/occ1> {rdf} <http://ex/Swallow> .\n\
+         << <http://ex/occ1> {rdf} <http://ex/Swallow> >> <http://ex/by> \"Smith\" .\n\
+         << <http://ex/occ1> {rdf} <http://ex/Swallow> >> <http://ex/n> \"5\" .\n\
+         <http://ex/occ2> {rdf} <http://ex/Robin> .\n\
+         << <http://ex/occ2> {rdf} <http://ex/Robin> >> <http://ex/by> \"Jones\" .\n\
+         <http://ex/occ3> {rdf} <http://ex/Swallow> .\n\
+         << <http://ex/occ3> {rdf} <http://ex/Swallow> >> <http://ex/by> \"Lee\" .\n\
+         << <http://ex/occ3> {rdf} <http://ex/Swallow> >> <http://ex/n> \"3\" .\n"
+    );
+    let quads: Vec<_> = parse(&nt)
+        .unwrap()
+        .into_iter()
+        .map(|(s, p, o)| (s, p, o, None))
+        .collect();
+    let (image, _) = assemble_dataset(quads, &[]);
+    let rete = Rete::open(&image).unwrap();
+
+    // occ1 and occ3 have BOTH annotations; occ2 has only :by, so it is excluded.
+    let who = col(
+        &rete,
+        &format!(
+            "SELECT ?who WHERE {{ << ?s {rdf} ?o >> <http://ex/by> ?who ; <http://ex/n> ?count }}"
+        ),
+        "who",
+    );
+    assert_eq!(who, vec!["\"Lee\"".to_string(), "\"Smith\"".to_string()]);
+
+    // And the second annotation's value binds correctly (not crossed).
+    let counts = col(
+        &rete,
+        &format!(
+            "SELECT ?count WHERE {{ << ?s {rdf} ?o >> <http://ex/by> ?who ; <http://ex/n> ?count }}"
+        ),
+        "count",
+    );
+    assert_eq!(counts, vec!["\"3\"".to_string(), "\"5\"".to_string()]);
+}
+
+#[test]
 fn property_path_zero_length_semantics() {
     // `*` and `?` include the zero-length path (a node reaches itself); `+` does
     // not. Checked in all three binding directions, since each takes a different

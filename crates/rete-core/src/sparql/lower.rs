@@ -714,6 +714,7 @@ fn lower_bgp(patterns: &[SpTriplePattern], counter: &mut usize) -> Plan {
         filters: Vec::new(),
         binds: Vec::new(),
         bound: Default::default(),
+        seen: Default::default(),
     };
     let rewritten: Vec<TriplePattern> = patterns
         .iter()
@@ -748,6 +749,12 @@ struct StarRewrite<'a> {
     filters: Vec<FExpr>,
     binds: Vec<(String, FExpr)>,
     bound: std::collections::BTreeSet<String>,
+    /// Canonical quoted-triple text → the `__qtN` var already allocated for it,
+    /// so a quoted triple that appears in more than one pattern (e.g.
+    /// `<< s p o >> :a ?x ; :b ?y`, two annotations on one statement) REUSES the
+    /// same var. Without this the two patterns share no variable and the BGP is
+    /// a Cartesian product of every annotated triple against every other.
+    seen: std::collections::BTreeMap<String, String>,
 }
 
 fn star_accessor(f: Builtin, qt: &str) -> FExpr {
@@ -765,8 +772,16 @@ impl StarRewrite<'_> {
             let TermPattern::Triple(inner) = t else {
                 unreachable!("is_var_quoted implies Triple");
             };
+            // Reuse the same fresh var for a quoted triple already seen in this
+            // BGP, so repeated occurrences JOIN on it instead of forming a
+            // Cartesian product (its decomposition constraints are added once).
+            let key = format!("{inner:?}");
+            if let Some(qt) = self.seen.get(&key) {
+                return PatternTerm::Var(qt.clone());
+            }
             *self.counter += 1;
             let qt = format!("__qt{}", self.counter);
+            self.seen.insert(key, qt.clone());
             self.filters
                 .push(FExpr::Func(Builtin::IsTriple, vec![FExpr::Var(qt.clone())]));
             self.decompose(inner, &qt);
