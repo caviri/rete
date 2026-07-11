@@ -2331,10 +2331,12 @@ th .coltype.coltype-on {
   .topbar { padding: 8px 12px; }
   .brand-sub { display: none; }
   .brand-mark { font-size: 20px; }
-  .top-actions { width: 100%; }
-  /* The dataset chip grows to fill the row; its name truncates instead of pushing
-     the layout wide. */
+  /* Dataset chip + Build + ↗ share on ONE row: the actions bar takes the full
+     width (its own row under the brand) and does NOT wrap — the dataset chip
+     flexes/truncates so Build and ↗ keep their natural size beside it. */
+  .top-actions { width: 100%; flex-wrap: nowrap; gap: 8px; }
   .dataset-button { flex: 1 1 auto; min-width: 0; }
+  #buildBtn, #shareBtn { flex: 0 0 auto; }
   .dataset-button #dsName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* The eject icon stays (tap to change dataset); its "Change dataset" label and
      the Browser-API docs link are dropped to make room for Build. */
