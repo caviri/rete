@@ -3074,8 +3074,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build a898b74 · 2026-07-11 19:06 UTC</span>
-    <script>window.RETE_BUILD = "a898b74 · 2026-07-11 19:06 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 6824612 · 2026-07-11 21:31 UTC</span>
+    <script>window.RETE_BUILD = "6824612 · 2026-07-11 21:31 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -10689,12 +10689,13 @@ self.onmessage = function (e) {
     remoteOnProgress = null;
   }
 
-  // A wasm trap ("unreachable") or an allocation/memory error — almost always the
-  // browser hitting its WebAssembly memory limit on a heavy query over a large
-  // remote file. Common on iPhone/iPad Safari, which caps per-tab memory well
-  // below desktop.
-  function isEngineMemoryError(msg) {
-    return /unreachable|out of memory|memory access out of bounds|allocation|rangeerror|maximum call stack/i.test(String(msg || ""));
+  // A wasm trap that a memory limit *could* explain: an `unreachable` (Rust
+  // abort, e.g. a failed allocation) or a memory access out of bounds. Kept
+  // NARROW on purpose — generic errors (a plain RangeError, a stack overflow, a
+  // bug) must NOT be mislabeled "out of memory". The caller also gates on the
+  // dataset actually being large; a small file can't genuinely OOM the engine.
+  function isEngineTrap(msg) {
+    return /unreachable|out of memory|memory access out of bounds/i.test(String(msg || ""));
   }
 
   // Viewport-based "small device" check, for the memory-reclamation paths below.
@@ -16321,18 +16322,25 @@ self.onmessage = function (e) {
         if (msg === "cancelled") {
           $("qmeta").textContent = "cancelled";
           $("out").innerHTML = `<div class="note">Query cancelled — the worker was stopped. Run again to retry.</div>`;
-        } else if (isEngineMemoryError(msg)) {
-          // The wasm instance trapped (out of memory). Rebuild a fresh worker so
-          // the next query works, and explain it — don't dump a raw wasm stack.
+        } else if (isEngineTrap(msg)) {
+          // A wasm trap poisons the instance — rebuild a fresh worker either way.
           resetRemoteWorker();
-          $("qmeta").textContent = "out of memory";
           const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
-          const sizeNote = meta.size ? ` (${esc(meta.size)})` : "";
-          $("out").innerHTML =
-            `<div class="note"><b>This query ran out of memory.</b> It needed more than the browser allows for a query over this remote dataset${sizeNote}. ` +
-            `This is common on <b>iPhone / iPad Safari</b>, which caps per-tab memory well below a desktop browser.<br><br>` +
-            `Try: a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or add a country / year / type filter), the <b>Progressive</b> strategy for counts/overviews, or open this dataset on a desktop browser. ` +
-            `The engine has been reset — you can run another query now.</div>`;
+          const fileBytes = sizeToBytes(meta.size) || 0;
+          // Only *call it* out-of-memory when memory is plausible — a large file
+          // (≥150 MB). On a small dataset a trap is a real bug, not OOM: show the
+          // raw error so it isn't hidden behind a misleading message.
+          if (fileBytes >= 150e6) {
+            $("qmeta").textContent = "out of memory";
+            $("out").innerHTML =
+              `<div class="note"><b>This query ran out of memory.</b> It needed more than the browser allows for a query over this remote dataset${meta.size ? ` (${esc(meta.size)})` : ""}. ` +
+              `This is common on <b>iPhone / iPad Safari</b>, which caps per-tab memory well below a desktop browser.<br><br>` +
+              `Try: a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or add a country / year / type filter), the <b>Progressive</b> strategy for counts/overviews, or open this dataset on a desktop browser. ` +
+              `The engine has been reset — you can run another query now.</div>`;
+          } else {
+            $("qmeta").textContent = "";
+            showError("out", "Query failed (engine reset — run again to retry): " + msg, e && e.stack);
+          }
         } else {
           $("qmeta").textContent = "";
           showError("out", "Remote query failed: " + msg, e && e.stack);
