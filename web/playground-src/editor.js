@@ -327,7 +327,12 @@
   function enhance(id, lang, ctx) {
     const ta = $(id);
     if (!ta || EDITORS[id] || !ensureCM()) return;
-    const ed = { ta, lang, ctx: ctx || {}, labels: new Map(), pending: new Set(), decode: false, view: null };
+    const phone = !!(window.matchMedia && window.matchMedia("(max-width: 560px)").matches);
+    const ed = { ta, lang, ctx: ctx || {}, labels: new Map(), pending: new Set(), decode: false, view: null,
+      // Line wrapping lives in a Compartment so the ⤶ toolbar button can flip it
+      // at runtime. Default: wrap on a phone (no sideways scroll to read a
+      // PREFIX), horizontal scroll on desktop.
+      wrapC: new CM.Compartment(), wrap: phone };
     const host = document.createElement("div");
     host.className = "cm-host";
     ta.parentNode.insertBefore(host, ta);
@@ -347,15 +352,14 @@
       CM.syntaxHighlighting(highlightStyle),
       CM.autocompletion({ override: [completionSource(ed)], icons: true, activateOnTyping: true }),
       decodePlugin(ed),
-      // Phones: wrap long lines (no sideways scrolling to read a PREFIX) and
-      // shrink the type — the editor is a contenteditable div (not a form
-      // control), so a small font here doesn't trigger iOS's focus-zoom the
-      // way a bare <input> does; 11px keeps the query compact on a phone.
-      // Listed BEFORE baseTheme: for CM6 themes, earlier in the extension
-      // array = higher precedence, so this fontSize beats baseTheme's 13px.
-      ...(window.matchMedia && window.matchMedia("(max-width: 560px)").matches
-        ? [CM.EditorView.lineWrapping, CM.EditorView.theme({ "&": { fontSize: "11px" } })]
-        : []),
+      // Reconfigurable line wrapping (toggled by the toolbar button).
+      ed.wrapC.of(ed.wrap ? CM.EditorView.lineWrapping : []),
+      // Phones: shrink the type — the editor is a contenteditable div (not a
+      // form control), so a small font here doesn't trigger iOS's focus-zoom
+      // the way a bare <input> does; 11px keeps the query compact on a phone.
+      // Listed BEFORE baseTheme: for CM6 themes, earlier in the extension array
+      // = higher precedence, so this fontSize beats baseTheme's 13px.
+      ...(phone ? [CM.EditorView.theme({ "&": { fontSize: "11px" } })] : []),
       baseTheme,
       CM.keymap.of([].concat(CM.closeBracketsKeymap, CM.defaultKeymap, CM.historyKeymap, CM.completionKeymap, [CM.indentWithTab])),
       CM.EditorView.updateListener.of((u) => {
@@ -397,6 +401,17 @@
   }
   function toggleDecode(id) { const ed = EDITORS[id]; return ed ? setDecode(id, !ed.decode) : false; }
 
+  // Line wrapping — reconfigure the wrap compartment in place (no editor rebuild).
+  function setWrap(id, on) {
+    const ed = EDITORS[id];
+    if (!ed || !ed.wrapC) return false;
+    ed.wrap = !!on;
+    ed.view.dispatch({ effects: ed.wrapC.reconfigure(ed.wrap ? CM.EditorView.lineWrapping : []) });
+    return ed.wrap;
+  }
+  function toggleWrap(id) { const ed = EDITORS[id]; return ed ? setWrap(id, !ed.wrap) : false; }
+  function isWrapped(id) { const ed = EDITORS[id]; return ed ? !!ed.wrap : false; }
+
   // Drop every cached label (incl. negatives) and re-resolve — used when the
   // label predicate changes so live lookups run again against the new property.
   function clearLabels(id) {
@@ -407,5 +422,5 @@
     if (ed.decode) renderDecorations(ed);
   }
 
-  window.PlaygroundEditor = { enhance, setText, insert, setDecode, toggleDecode, clearLabels, editors: EDITORS, KEYWORD_INFO, __chips: chipsFor };
+  window.PlaygroundEditor = { enhance, setText, insert, setDecode, toggleDecode, setWrap, toggleWrap, isWrapped, clearLabels, editors: EDITORS, KEYWORD_INFO, __chips: chipsFor };
 })();

@@ -3700,10 +3700,18 @@ self.onmessage = function (e) {
   // dropdown — they override the per-value heuristic in `autoCell`. The point is
   // to render, e.g., an image column whose URLs DON'T end in `.jpg` (a CDN/API
   // URL or a bare entity IRI), or to stop a long IRI column from linking.
+  // When true, image cells load eagerly instead of `loading="lazy"`. Set while
+  // rendering the *visible* cards (see cardsInner): a card's photo is the point
+  // of the view, and the cards are tall, so native lazy-loading leaves most of
+  // them blank until scrolled to. `onerror` marks a genuinely-missing image so
+  // it shows a placeholder rather than an unexplained blank box.
+  let mediaEager = false;
   function imageCell(t) {
     const url = httpsUpgrade(t.value);
+    const loading = mediaEager ? "eager" : "lazy";
     return `<td class="iri thumb-cell"><a href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
-      `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="lazy" alt="" /></a>` +
+      `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="${loading}" alt="" ` +
+      `onerror="this.classList.add('cell-thumb-broken');this.alt='image unavailable'" /></a>` +
       `<div class="media-meta" data-murl="${esc(url)}" data-mkind="image"></div></td>`;
   }
   function linkCell(t) {
@@ -4507,7 +4515,10 @@ self.onmessage = function (e) {
   }
   function cardsInner(st) {
     const shown = st.rows.slice(0, st.cap);
-    const cardHtmls = shown.map((row) => {
+    const cardHtmls = shown.map((row, i) => {
+      // Visible cards (before the "show more" fold) load their media eagerly so
+      // every card on screen actually shows its photo; hidden ones stay lazy.
+      mediaEager = i < CARDS_HEAD;
       geoRowCtx = row; // so a geo field in this card can resolve its feature IRI
       const fields = st.vars.map((v) => {
         const raw = row[v];
@@ -4515,6 +4526,7 @@ self.onmessage = function (e) {
         return `<div class="cf"><div class="cf-k" title="?${esc(v)}">${esc(colLabel(st, v))}</div>${cellDiv(raw, st.types[v] || "auto")}</div>`;
       }).join("");
       geoRowCtx = null;
+      mediaEager = false;
       return `<article class="rcard">${fields || `<div class="cf"><div class="cf-v">(empty row)</div></div>`}</article>`;
     });
     const hidden = Math.max(0, cardHtmls.length - CARDS_HEAD);
@@ -5887,7 +5899,8 @@ self.onmessage = function (e) {
       let lastReq = 0, lastBytes = 0;
       const showProg = () => {
         const dt = (performance.now() - t0) / 1000;
-        $("qmeta").textContent = `⏳ querying ${dsName} — ${lastReq} request(s) · ` +
+        // Technical only — no dataset title (it's already named in the header/chip).
+        $("qmeta").textContent = `⏳ querying · ${lastReq} request(s) · ` +
           `${formatBytes(lastBytes)}${ofSize} fetched · ${dt.toFixed(1)}s`;
       };
       const runBtn = $("run");
@@ -7261,6 +7274,10 @@ self.onmessage = function (e) {
     $("histBtn").onclick = openHistory;
     $("libCollapse").onclick = () => setLibCollapsed(true);
     $("libExpand").onclick = () => setLibCollapsed(false);
+    // The dataset-header "ⓘ Details & source" button opens the panel (a modal on
+    // phone/tablet); the backdrop closes it.
+    { const b = $("dsDetailsBtn"); if (b) b.onclick = () => setLibCollapsed(false); }
+    { const bd = $("libBackdrop"); if (bd) bd.onclick = () => setLibCollapsed(true); }
     // Close the dataset Load dropdown on any click outside it.
     document.addEventListener("click", (e) => {
       const menu = $("dsLoadMenu");
@@ -7286,19 +7303,40 @@ self.onmessage = function (e) {
         // padding) so the mode rail tracks the header as it condenses.
         document.documentElement.style.setProperty("--rail-top", tb + dsHeader.offsetHeight + 12 + "px");
       };
+      const isPhone = () => !!(window.matchMedia && window.matchMedia("(max-width: 560px)").matches);
+      const tagline = dsHeader.querySelector(".ds-tagline");
       let condensed = false;
       let enoughRoom = false;
+      let saving = 0; // px the condense frees (the tagline) — sampled while expanded
       const measure = () => {
-        // "Enough space in the scrolling main area": the work area must be at least
-        // ~1.7 viewports tall, so after the header condenses (reclaiming ~Δpx) there's
-        // still plenty of scroll room past the trigger — a page that only *just*
-        // overflows would clamp scrollY back across the trigger and the toggle would
-        // oscillate (the jump). Measured off the workbench (stable across condense),
-        // never the document height (which the condense itself changes).
-        enoughRoom = !!workbench && workbench.offsetHeight > window.innerHeight * 1.7;
+        if (isPhone()) {
+          // Phone: condense as soon as you scroll, guarded only by "does the page
+          // still scroll after the header shrinks?" — if condensing would make the
+          // content fit the viewport, scrollY clamps to 0 and it'd un-condense (the
+          // flicker). Compare the FULL (expanded) doc height against the viewport
+          // plus what condensing frees. `saving` is the tagline height, sampled
+          // while expanded so it's stable across the toggle.
+          if (!condensed && tagline) saving = tagline.offsetHeight;
+          const fullDocH = document.documentElement.scrollHeight + (condensed ? saving : 0);
+          enoughRoom = (fullDocH - saving) > window.innerHeight + 16;
+        } else {
+          // Desktop: the work area must be ~1.7 viewports tall, so after the header
+          // condenses there's still plenty of scroll room past the 10px trigger —
+          // a page that only *just* overflows would clamp scrollY back across the
+          // trigger and the toggle would oscillate. Measured off the workbench
+          // (stable across condense), never the document height (which condense
+          // itself changes).
+          enoughRoom = !!workbench && workbench.offsetHeight > window.innerHeight * 1.7;
+        }
       };
       const apply = () => {
-        const want = enoughRoom && window.scrollY > 10;
+        const y = window.scrollY;
+        // Phone: condense the instant you scroll (hysteresis — expand only right
+        // back at the top — so the near-top toggle can't chatter). Desktop keeps
+        // the single 10px trigger, backed by the 1.7× room guard above.
+        const want = isPhone()
+          ? enoughRoom && (condensed ? y > 2 : y > 4)
+          : enoughRoom && y > 10;
         if (want !== condensed) {
           condensed = want;
           dsHeader.classList.toggle("condensed", want);
@@ -7429,6 +7467,7 @@ self.onmessage = function (e) {
         $("outputModal").classList.add("hidden");
         $("cardsFieldsModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");
+        setLibCollapsed(true); // close the Details & source modal (phone/tablet)
         closeLibrary();
         closeHistory();
         closeSettings();
@@ -7486,7 +7525,12 @@ self.onmessage = function (e) {
       if (more) {
         const wrap = more.closest(".cards");
         const hidden = $$(".rcard-hidden", wrap);
-        hidden.slice(0, CARDS_MORE_STEP).forEach((c) => c.classList.remove("rcard-hidden"));
+        hidden.slice(0, CARDS_MORE_STEP).forEach((c) => {
+          c.classList.remove("rcard-hidden");
+          // Force the just-revealed cards' images to load (they were lazy while
+          // hidden) so they don't sit blank.
+          $$("img.cell-thumb[loading='lazy']", c).forEach((im) => { im.loading = "eager"; });
+        });
         const left = Math.max(0, hidden.length - CARDS_MORE_STEP);
         if (left === 0) more.remove();
         else more.textContent = `Show ${Math.min(left, CARDS_MORE_STEP)} more (${left} hidden)`;
@@ -7573,6 +7617,18 @@ self.onmessage = function (e) {
     // search is a range-read round trip, so don't fire one on every keystroke).
     const finderBtn = $("finderBtn");
     if (finderBtn) finderBtn.onclick = openFinder;
+    // Wrap/no-wrap toggle for the query editor.
+    const wrapBtn = $("wrapBtn");
+    if (wrapBtn && window.PlaygroundEditor) {
+      const syncWrapBtn = () => {
+        const on = window.PlaygroundEditor.isWrapped("q");
+        wrapBtn.setAttribute("aria-pressed", on ? "true" : "false");
+        wrapBtn.classList.toggle("on", on);
+        wrapBtn.textContent = on ? "⤶ Wrap" : "→ No wrap";
+      };
+      syncWrapBtn();
+      wrapBtn.onclick = () => { window.PlaygroundEditor.toggleWrap("q"); syncWrapBtn(); };
+    }
     const finderClose = $("finderModalClose");
     if (finderClose) finderClose.onclick = closeFinder;
     const efInput = $("efInput");

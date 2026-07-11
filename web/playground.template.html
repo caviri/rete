@@ -72,6 +72,7 @@ __PLAYGROUND_CSS__
     <div class="ds-header-meta" aria-label="Loaded graph status">
       <span id="sourcePill" class="status-pill">bundled</span>
       <span id="meta" class="statline">loading wasm...</span>
+      <button id="dsDetailsBtn" class="ds-details-btn" type="button" title="Dataset source, the selected example, and inspector details">ⓘ Details &amp; source</button>
     </div>
   </div>
 
@@ -135,6 +136,7 @@ __PLAYGROUND_CSS__
     </nav>
 
     <button id="libExpand" class="lib-expand" type="button" title="Show the details panel" aria-label="Show the details panel">›</button>
+    <div id="libBackdrop" class="lib-backdrop" aria-hidden="true"></div>
 
     <aside class="library-panel" aria-label="Source and inspector">
       <button id="libCollapse" class="lib-collapse" type="button" title="Hide the details panel" aria-label="Hide the details panel">‹</button>
@@ -186,7 +188,10 @@ __PLAYGROUND_CSS__
             <h1>SPARQL Console</h1>
             <p class="microcopy">Default path for exact queries, summary-safe progressive queries, and graph rendering.</p>
           </div>
-          <button id="finderBtn" type="button" class="ed-tool" title="Browse and search this graph's classes, predicates and entities — click a result to drop its IRI into the query.">🔎 Find a term</button>
+          <div class="ed-tools">
+            <button id="wrapBtn" type="button" class="ed-tool" aria-pressed="false" title="Wrap long lines / keep them on one line (horizontal scroll)">⤶ Wrap</button>
+            <button id="finderBtn" type="button" class="ed-tool" title="Browse and search this graph's classes, predicates and entities — click a result to drop its IRI into the query.">🔎 Find a term</button>
+          </div>
         </div>
         <div id="exampleQuick" class="ex-quick" aria-label="Example suggestions"></div>
         <div id="exampleDesc" class="ex-desc" aria-live="polite"></div>
