@@ -512,6 +512,16 @@ fn inst_term(ctx: &Ctx, t: &TermPattern, b: &Row) -> Option<String> {
         TermPattern::Literal(l) => Some(l.to_string()),
         TermPattern::BlankNode(bn) => Some(bn.to_string()),
         TermPattern::Variable(v) => row_var(ctx, v.as_str(), b),
+        // RDF-star: a quoted triple in a CONSTRUCT template instantiates
+        // recursively (inner variables resolved from the row), yielding the
+        // canonical `<< s p o >>` token — the same surface the ingest tokenizer
+        // and oxrdf's Triple Display produce.
+        TermPattern::Triple(tp) => {
+            let s = inst_term(ctx, &tp.subject, b)?;
+            let p = inst_named(ctx, &tp.predicate, b)?;
+            let o = inst_term(ctx, &tp.object, b)?;
+            Some(format!("<<{s} {p} {o}>>"))
+        }
     }
 }
 

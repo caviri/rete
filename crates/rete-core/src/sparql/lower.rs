@@ -640,7 +640,39 @@ fn term_to_pattern(t: &TermPattern) -> PatternTerm {
         // `a/b`). Its label is stable across occurrences, so it joins correctly.
         TermPattern::BlankNode(b) => PatternTerm::Var(b.to_string()),
         TermPattern::Variable(v) => PatternTerm::Var(v.as_str().to_string()),
+        // RDF-star: a FULLY-CONCRETE quoted triple (`<< :s :p :o >>`) lowers to
+        // its canonical dictionary token — an ordinary constant, matched by the
+        // existing BGP engine (annotation lookup on a known statement). A quoted
+        // pattern with INNER VARIABLES (`<< ?s :p ?o >>`) can't be a Const/Var
+        // yet; that needs a `PatternTerm::Quoted` matcher (rdf-star Stage 3). For
+        // now it lowers to a token that cannot exist in the dictionary, so it
+        // matches nothing (empty result) rather than mis-matching.
+        TermPattern::Triple(tp) => match ground_quoted_token(tp) {
+            Some(tok) => PatternTerm::Const(tok),
+            None => PatternTerm::Const("<< rdf-star inner-var pattern >>".to_string()),
+        },
     }
+}
+
+/// The canonical `<< s p o >>` token for a quoted triple pattern, or `None` if
+/// any inner term is a variable/blank (not yet a resolvable constant). Recurses
+/// for nested quoting. Mirrors the ingest tokenizer + oxrdf's `Triple` Display.
+fn ground_quoted_token(tp: &SpTriplePattern) -> Option<String> {
+    fn ground(t: &TermPattern) -> Option<String> {
+        match t {
+            TermPattern::NamedNode(n) => Some(n.to_string()),
+            TermPattern::Literal(l) => Some(l.to_string()),
+            TermPattern::Triple(inner) => ground_quoted_token(inner),
+            TermPattern::BlankNode(_) | TermPattern::Variable(_) => None,
+        }
+    }
+    let s = ground(&tp.subject)?;
+    let p = match &tp.predicate {
+        NamedNodePattern::NamedNode(n) => n.to_string(),
+        NamedNodePattern::Variable(_) => return None,
+    };
+    let o = ground(&tp.object)?;
+    Some(format!("<<{s} {p} {o}>>"))
 }
 
 fn named_to_pattern(n: &NamedNodePattern) -> PatternTerm {

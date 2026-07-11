@@ -309,6 +309,10 @@ impl Store {
                         })
                         .clone(),
                 ),
+                // RDF-star quoted triple in a template: resolve recursively to the
+                // canonical `<< s p o >>` token (blank nodes inside a quoted triple
+                // are not minted — skip if present).
+                TermPattern::Triple(_) => quoted_term_token(t, sol),
             }
         };
         Some((
@@ -353,6 +357,31 @@ fn ground_term(t: &GroundTermPattern, sol: &rete_core::Binding) -> Option<String
         GroundTermPattern::NamedNode(n) => Some(n.to_string()),
         GroundTermPattern::Literal(l) => Some(l.to_string()),
         GroundTermPattern::Variable(v) => sol.get(v.as_str()).cloned(),
+        // RDF-star quoted triple in a ground (DELETE) template.
+        GroundTermPattern::Triple(tp) => {
+            let s = ground_term(&tp.subject, sol)?;
+            let p = named_term(&tp.predicate, sol)?;
+            let o = ground_term(&tp.object, sol)?;
+            Some(format!("<<{s} {p} {o}>>"))
+        }
+    }
+}
+
+/// Resolve an RDF-star quoted triple in a CONSTRUCT/INSERT template against a
+/// solution → the canonical `<< s p o >>` token. Recurses for nesting; a blank
+/// node inside a quoted triple yields `None` (not minted).
+fn quoted_term_token(t: &TermPattern, sol: &rete_core::Binding) -> Option<String> {
+    match t {
+        TermPattern::NamedNode(n) => Some(n.to_string()),
+        TermPattern::Literal(l) => Some(l.to_string()),
+        TermPattern::Variable(v) => sol.get(v.as_str()).cloned(),
+        TermPattern::BlankNode(_) => None,
+        TermPattern::Triple(tp) => {
+            let s = quoted_term_token(&tp.subject, sol)?;
+            let p = named_term(&tp.predicate, sol)?;
+            let o = quoted_term_token(&tp.object, sol)?;
+            Some(format!("<<{s} {p} {o}>>"))
+        }
     }
 }
 

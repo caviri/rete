@@ -15,7 +15,9 @@
 //! single permutation payload from that container.
 
 use crate::dictionary::Dictionary;
-use crate::header::{Header, FLAG_HAS_QUADS, FLAG_TILE_SYNOPSIS, HEADER_LEN, MAGIC};
+use crate::header::{
+    Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN, MAGIC,
+};
 use crate::index::{GraphIndex, IndexPermutation, Pattern, NUM_PERMS};
 use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
 use crate::pyramid::{build_dendrogram, project_graph, PyramidAlgo};
@@ -1256,6 +1258,7 @@ pub fn write_dataset_with_metadata(
         default_index,
         named,
         has_quads,
+        dict.has_quoted_triples(),
         pyramid_meta,
         pyramid_levels,
         metadata,
@@ -1269,12 +1272,14 @@ pub fn write_dataset_with_metadata(
 /// plus the permutation index and optional sections. The byte output is identical
 /// to serializing the dictionary inline.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_dataset_from_parts(
     dict_container: &[u8],
     term_count: u64,
     default_index: &GraphIndex,
     named: &[(String, GraphIndex)],
     has_quads: bool,
+    has_quoted_triples: bool,
     pyramid_meta: &[u8],
     pyramid_levels: u16,
     metadata: &[u8],
@@ -1328,7 +1333,13 @@ pub(crate) fn write_dataset_from_parts(
 
     let header = Header {
         version: crate::header::VERSION,
-        flags: FLAG_TILE_SYNOPSIS | if has_quads { FLAG_HAS_QUADS } else { 0 },
+        flags: FLAG_TILE_SYNOPSIS
+            | if has_quads { FLAG_HAS_QUADS } else { 0 }
+            | if has_quoted_triples {
+                FLAG_HAS_QUOTED_TRIPLES
+            } else {
+                0
+            },
         metadata_offset: HEADER_LEN as u64,
         metadata_len: meta_section_len,
         dictionary_offset: dict_offset,

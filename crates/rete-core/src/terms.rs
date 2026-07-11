@@ -58,13 +58,26 @@ const RDF_LANG_STRING: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langSt
 /// Is `t` an IRI term (`<…>`)?
 #[inline]
 pub fn is_iri(t: &TermToken) -> bool {
-    t.starts_with('<') && t.ends_with('>')
+    // A quoted triple (`<< … >>`, RDF-star) also starts with `<` and ends with
+    // `>`, so exclude it explicitly — it is its own term kind, not an IRI.
+    t.starts_with('<') && !t.starts_with("<<") && t.ends_with('>')
+}
+
+/// Is `t` a **quoted triple** term (`<< s p o >>`, RDF-star)? These appear only
+/// in subject/object position and are stored in the dictionary as their
+/// canonical N-Triples-star surface, exactly like any other term.
+#[inline]
+pub fn is_quoted_triple(t: &TermToken) -> bool {
+    t.starts_with("<<") && t.ends_with(">>")
 }
 
 /// The content of an IRI term without its angle brackets (`<http://x>` →
 /// `http://x`), or `None` if `t` is not an IRI term.
 #[inline]
 pub fn iri_content(t: &TermToken) -> Option<&str> {
+    if is_quoted_triple(t) {
+        return None;
+    }
     t.strip_prefix('<').and_then(|s| s.strip_suffix('>'))
 }
 

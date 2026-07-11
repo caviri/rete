@@ -170,7 +170,13 @@ pub fn stream_reader<R: std::io::BufRead>(
 /// Parse Turtle into canonical N-Triples-token triples via oxttl.
 pub fn parse_turtle(text: &str) -> Result<Vec<RawTriple>, IngestError> {
     let mut out = Vec::new();
-    for r in oxttl::TurtleParser::new().for_reader(text.as_bytes()) {
+    // `with_quoted_triples` accepts RDF-star quoted triples (`<< s p o >>`) in
+    // subject/object position; oxrdf's `Term::Triple` then Displays as the
+    // canonical `<< … >>` token our N-Triples-star tokenizer also emits.
+    for r in oxttl::TurtleParser::new()
+        .with_quoted_triples()
+        .for_reader(text.as_bytes())
+    {
         let t = r.map_err(|e| IngestError::Turtle(e.to_string()))?;
         out.push((
             t.subject.to_string(),
@@ -224,6 +230,26 @@ fn take_term(s: &str) -> Option<(String, &str)> {
     let bytes = s.as_bytes();
     let first = *bytes.first()?;
     match first {
+        // Quoted triple (RDF-star): `<< subject predicate object >>`, where the
+        // inner terms are themselves terms (so this recurses — nesting works).
+        // `<<` starts with `<`, and an IRI scan would stop at the first inner `>`,
+        // so it must be handled before the plain-IRI case. Re-emitted in the
+        // canonical `<< s p o >>` surface (single spaces) — identical to
+        // oxrdf's `Triple` Display, so N-Triples-star and Turtle-star produce the
+        // same dictionary token and dedupe.
+        b'<' if bytes.get(1) == Some(&b'<') => {
+            let inner = s[2..].trim_start();
+            let (subj, r) = take_term(inner)?;
+            let (pred, r) = take_term(r.trim_start())?;
+            let (obj, r) = take_term(r.trim_start())?;
+            let rest = r.trim_start().strip_prefix(">>")?;
+            // Canonical surface = oxrdf's `Triple` Display: `<<s p o>>` (tight
+            // brackets, single spaces between components). Matching it exactly is
+            // what makes N-Triples-star and Turtle-star (which round-trips through
+            // oxrdf) produce the SAME dictionary token, so they dedupe and a query
+            // written either way matches either source.
+            Some((format!("<<{subj} {pred} {obj}>>"), rest))
+        }
         b'<' => {
             // IRI ref: up to the closing '>'.
             let end = s.find('>')?;
@@ -516,6 +542,7 @@ fn finish_assembly(
     let codec = crate::file::writer_codec();
     let dict_container = crate::file::encode_dict_container(&dict, codec);
     let term_count = dict.term_count() as u64;
+    let has_quoted_triples = dict.has_quoted_triples();
     drop(dict);
 
     // Build each graph's six permutations one-at-a-time on a large graph (a single
@@ -544,6 +571,7 @@ fn finish_assembly(
         &def,
         &named_indexes,
         has_named,
+        has_quoted_triples,
         &meta,
         levels,
         &blob,

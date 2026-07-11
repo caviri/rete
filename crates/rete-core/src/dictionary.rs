@@ -97,8 +97,16 @@ impl DictionaryBuilder {
             pred_b.push(p.clone());
         }
 
+        // RDF-star: a quoted triple only ever appears in subject/object position,
+        // so a single prefix scan of those term sets detects the whole file.
+        let has_quoted_triples = subjects.iter().any(|s| s.starts_with("<<"))
+            || objects.iter().any(|o| o.starts_with("<<"));
+
         let shared = shared_b.build();
-        Dictionary::from_sections([shared, subj_b.build(), obj_b.build(), pred_b.build()])
+        let mut dict =
+            Dictionary::from_sections([shared, subj_b.build(), obj_b.build(), pred_b.build()]);
+        dict.has_quoted_triples = has_quoted_triples;
+        dict
     }
 }
 
@@ -111,6 +119,10 @@ pub struct Dictionary {
     /// shared, subjects, objects, predicates.
     sections: [ChunkedSection; 4],
     shared_len: u32,
+    /// Whether any term is an RDF-star quoted triple (`<< … >>`). Set at build
+    /// time (from the observed terms); `false` on the read path, where the
+    /// header's `FLAG_HAS_QUOTED_TRIPLES` is the source of truth instead.
+    has_quoted_triples: bool,
 }
 
 impl Dictionary {
@@ -126,12 +138,20 @@ impl Dictionary {
         Dictionary {
             sections,
             shared_len,
+            has_quoted_triples: false,
         }
     }
 
     /// Total number of distinct terms across all four sections.
     pub fn term_count(&self) -> u32 {
         self.sections.iter().map(|s| s.term_count()).sum()
+    }
+
+    /// Does this dataset contain RDF-star quoted triples? Meaningful only for a
+    /// freshly built dictionary (a read-back one carries the truth in the file
+    /// header's `FLAG_HAS_QUOTED_TRIPLES`, not here).
+    pub fn has_quoted_triples(&self) -> bool {
+        self.has_quoted_triples
     }
 
     /// Did any lazy chunk fetch fail since this dictionary was opened?

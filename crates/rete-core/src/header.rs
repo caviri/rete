@@ -45,6 +45,14 @@ pub const FLAG_HAS_QUADS: u8 = 0b0000_0001;
 /// component *before* fetching it. See `file.rs::encode_tiled_section`.
 pub const FLAG_TILE_SYNOPSIS: u8 = 0b0000_0010;
 
+/// Flag bit: the file contains **RDF-star quoted triples** (`<< s p o >>`) as
+/// dictionary terms. Purely informational for compatibility — a plain-RDF
+/// consumer can detect from the header alone that some terms are quoted triples
+/// (which it may not understand) without scanning the dictionary. The file is
+/// otherwise a normal `.rete`: quoted triples are stored like any other term, so
+/// this needs no format-version bump and old readers stay forward-compatible.
+pub const FLAG_HAS_QUOTED_TRIPLES: u8 = 0b0000_0100;
+
 /// A top-level file section, addressed by [`SectionKind`] in the header directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SectionKind {
@@ -317,6 +325,11 @@ impl Header {
 
     pub fn has_quads(&self) -> bool {
         self.flags & FLAG_HAS_QUADS != 0
+    }
+
+    /// Does the file contain RDF-star quoted triples ([`FLAG_HAS_QUOTED_TRIPLES`])?
+    pub fn has_quoted_triples(&self) -> bool {
+        self.flags & FLAG_HAS_QUOTED_TRIPLES != 0
     }
 
     /// Do the tiled index sections carry a [`FLAG_TILE_SYNOPSIS`] trailer?

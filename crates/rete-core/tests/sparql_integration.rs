@@ -87,6 +87,46 @@ fn col(rete: &Rete, q: &str, var: &str) -> Vec<String> {
 }
 
 #[test]
+fn rdf_star_ingest_header_flag_and_concrete_query() {
+    use rete_core::ingest::{assemble_dataset, parse};
+    let rdf = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+    // A sighting typed, then two annotations ON that typing statement (RDF-star).
+    let nt = format!(
+        "<http://ex/occ1> {rdf} <http://ex/Swallow> .\n\
+         << <http://ex/occ1> {rdf} <http://ex/Swallow> >> <http://ex/recordedBy> \"J. Smith\" .\n\
+         << <http://ex/occ1> {rdf} <http://ex/Swallow> >> <http://ex/count> \"5\" .\n"
+    );
+    let quads: Vec<_> = parse(&nt)
+        .unwrap()
+        .into_iter()
+        .map(|(s, p, o)| (s, p, o, None))
+        .collect();
+    let (image, _) = assemble_dataset(quads, &[]);
+    let rete = Rete::open(&image).unwrap();
+
+    // The header records that the file contains quoted triples (the RDF/RDF-star
+    // compatibility signal — a plain-RDF consumer reads it without scanning).
+    assert!(rete.header().has_quoted_triples());
+
+    // SPARQL-star: look up an annotation on a KNOWN (concrete) quoted triple.
+    let who = col(
+        &rete,
+        &format!(
+            "SELECT ?who WHERE {{ << <http://ex/occ1> {rdf} <http://ex/Swallow> >> \
+             <http://ex/recordedBy> ?who }}"
+        ),
+        "who",
+    );
+    assert_eq!(who, vec!["\"J. Smith\"".to_string()]);
+
+    // The quoted triple is itself a first-class term: it binds as a subject and
+    // round-trips in its canonical `<< s p o >>` surface.
+    let subj = col(&rete, "SELECT ?s WHERE { ?s <http://ex/count> \"5\" }", "s");
+    assert_eq!(subj.len(), 1);
+    assert!(subj[0].starts_with("<<") && subj[0].ends_with(">>"));
+}
+
+#[test]
 fn property_path_zero_length_semantics() {
     // `*` and `?` include the zero-length path (a node reaches itself); `+` does
     // not. Checked in all three binding directions, since each takes a different
