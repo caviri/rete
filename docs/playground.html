@@ -1195,6 +1195,9 @@ textarea {
 .rcard .cf-v .media-meta { max-width: 100%; }
 .rcard .cf-v model-viewer { width: 100%; }
 .cards-more { display: block; margin: 4px auto 0; }
+/* Phone sticky Run bar — hidden everywhere; the ≤560px block shows it when
+   app.js flags it `.on` (Run button off-screen, SPARQL mode). */
+.mrb { display: none; }
 /* The ⚙ Fields modal rows (per-field render-type pickers). */
 .cfm-list { max-height: 60vh; overflow-y: auto; overscroll-behavior: contain; }
 .cfm-row { display: flex; align-items: center; gap: 12px; padding: 8px 2px; border-bottom: 1px solid var(--line); }
@@ -2442,6 +2445,23 @@ th .coltype.coltype-on {
   /* Belt-and-braces against a stray horizontal scrollbar. `clip` (not `hidden`)
      so it doesn't create a scroll container that would break sticky headers. */
   body { overflow-x: clip; }
+
+  /* iOS zooms the page when a focused field's text is under 16px — keep every
+     typing surface at 16px (the CM editor does the same via its theme). */
+  input[type="text"], input[type="search"], input[type="url"], textarea, select { font-size: 16px; }
+
+  /* The sticky Run bar (shown by app.js when the real Run button scrolls out
+     of view in SPARQL mode): Run + an Output mirror, above the home indicator. */
+  .mrb.on {
+    display: flex; gap: 8px; align-items: stretch;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    background: var(--paper); border-top: 1px solid var(--line-strong);
+    box-shadow: 0 -8px 22px rgba(32, 47, 41, .10);
+  }
+  .mrb select { flex: 0 1 auto; min-width: 0; max-width: 40%; }
+  .mrb button { flex: 1 1 auto; }
+  body.mrb-open .console-shell { padding-bottom: 92px; }
 }
 
 /* Network query spinner — a hub firing packets to nodes while a query runs. */
@@ -2970,8 +2990,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 887458f · 2026-07-11 15:23 UTC</span>
-    <script>window.RETE_BUILD = "887458f · 2026-07-11 15:23 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build ebaf819 · 2026-07-11 15:31 UTC</span>
+    <script>window.RETE_BUILD = "ebaf819 · 2026-07-11 15:31 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -3651,6 +3671,13 @@ td.lit { color: var(--ink); }
       </dl>
       <p class="microcopy">Map, Time and Graph render <code>SELECT</code> bindings, so include the geometry / year / edge columns. Run them under <strong>Whole index</strong> or <strong>Split by community</strong> — <strong>Progressive</strong> answers only from the pyramid summary, with no per-row geometry or dates to plot.</p>
     </div>
+  </div>
+
+  <!-- Phone-only sticky Run bar: shows when the real Run button scrolls out of
+       view in SPARQL mode (wired in app.js; display gated to ≤560px in CSS). -->
+  <div id="mobileRunBar" class="mrb" aria-hidden="true">
+    <select id="mrbFmt" aria-label="Output view"></select>
+    <button id="mrbRun" type="button">Run Query</button>
   </div>
 
   <div id="cardsFieldsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cardsFieldsTitle">
@@ -9768,6 +9795,14 @@ theo:PeopleGroupShape a sh:NodeShape ;
       CM.syntaxHighlighting(highlightStyle),
       CM.autocompletion({ override: [completionSource(ed)], icons: true, activateOnTyping: true }),
       decodePlugin(ed),
+      // Phones: wrap long lines (no sideways scrolling to read a PREFIX) and
+      // bump the type to 16px — iOS zooms the whole page when a focused
+      // field's text is any smaller. Listed BEFORE baseTheme: for CM6 themes,
+      // earlier in the extension array = higher precedence, so this fontSize
+      // beats baseTheme's 13px.
+      ...(window.matchMedia && window.matchMedia("(max-width: 560px)").matches
+        ? [CM.EditorView.lineWrapping, CM.EditorView.theme({ "&": { fontSize: "16px" } })]
+        : []),
       baseTheme,
       CM.keymap.of([].concat(CM.closeBracketsKeymap, CM.defaultKeymap, CM.historyKeymap, CM.completionKeymap, [CM.indentWithTab])),
       CM.EditorView.updateListener.of((u) => {
@@ -12641,6 +12676,7 @@ self.onmessage = function (e) {
     if (mode === "schema" && state.remote && !state.schema) ensureRemoteSchema();
     updateResultVisibility();
     updateHash();
+    if (mrbUpdate) mrbUpdate(); // the phone Run bar only shows in SPARQL mode
   }
 
   // Lazy Schema: read the class/relation summary from the schema pyramid (the
@@ -13680,7 +13716,17 @@ self.onmessage = function (e) {
     }
   }
 
+  // Refreshes the phone's sticky Run bar (set in wireEvents; null on desktop).
+  let mrbUpdate = null;
+
   function setView(view) {
+    // On a phone, a default "table" view becomes Cards — the table is the one
+    // output that fights a small screen, and Cards renders the same rows
+    // stacked. An example that declares any other view (map / graph / time / …)
+    // keeps it, and the user can always switch back to Table by hand.
+    if (view === "table" && window.matchMedia && window.matchMedia("(max-width: 560px)").matches) {
+      view = "cards";
+    }
     $("fmt").value = view;
   }
 
@@ -17320,6 +17366,35 @@ self.onmessage = function (e) {
     // Switching the Output type re-renders the last result in the new view
     // (no re-run) when it can; otherwise it runs the query.
     $("fmt").onchange = onOutputTypeChange;
+    // Phone: a sticky bottom Run bar (Run + an Output mirror) appears when the
+    // real Run button scrolls out of view in SPARQL mode — tweak-and-rerun and
+    // flip Table/Cards/Map without scrolling back up.
+    {
+      const mrb = $("mobileRunBar");
+      if (mrb && window.matchMedia) {
+        const mq = window.matchMedia("(max-width: 560px)");
+        const mrbFmt = $("mrbFmt");
+        mrbFmt.innerHTML = $("fmt").innerHTML; // same options, mirrored value
+        // Scroll-driven (like the header condense), not an IntersectionObserver —
+        // deterministic, and one rect read per scroll tick is cheap.
+        const runOffScreen = () => {
+          const r = $("run").getBoundingClientRect();
+          return r.bottom <= 0 || r.top >= window.innerHeight;
+        };
+        mrbUpdate = () => {
+          const on = mq.matches && state.mode === "sparql" && runOffScreen();
+          mrb.classList.toggle("on", on);
+          mrb.setAttribute("aria-hidden", on ? "false" : "true");
+          document.body.classList.toggle("mrb-open", on);
+          if (on) mrbFmt.value = $("fmt").value;
+        };
+        window.addEventListener("scroll", mrbUpdate, { passive: true });
+        window.addEventListener("resize", mrbUpdate, { passive: true });
+        $("mrbRun").onclick = () => $("run").click();
+        mrbFmt.onchange = () => { $("fmt").value = mrbFmt.value; onOutputTypeChange(); };
+        $("fmt").addEventListener("change", () => { mrbFmt.value = $("fmt").value; });
+      }
+    }
     // Federation: the "+ Add source" popover + its source chips.
     $("fedAdd").onclick = (e) => {
       e.stopPropagation();

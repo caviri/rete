@@ -347,6 +347,14 @@
       CM.syntaxHighlighting(highlightStyle),
       CM.autocompletion({ override: [completionSource(ed)], icons: true, activateOnTyping: true }),
       decodePlugin(ed),
+      // Phones: wrap long lines (no sideways scrolling to read a PREFIX) and
+      // bump the type to 16px — iOS zooms the whole page when a focused
+      // field's text is any smaller. Listed BEFORE baseTheme: for CM6 themes,
+      // earlier in the extension array = higher precedence, so this fontSize
+      // beats baseTheme's 13px.
+      ...(window.matchMedia && window.matchMedia("(max-width: 560px)").matches
+        ? [CM.EditorView.lineWrapping, CM.EditorView.theme({ "&": { fontSize: "16px" } })]
+        : []),
       baseTheme,
       CM.keymap.of([].concat(CM.closeBracketsKeymap, CM.defaultKeymap, CM.historyKeymap, CM.completionKeymap, [CM.indentWithTab])),
       CM.EditorView.updateListener.of((u) => {

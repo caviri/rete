@@ -730,6 +730,13 @@ __PLAYGROUND_CSS__
     </div>
   </div>
 
+  <!-- Phone-only sticky Run bar: shows when the real Run button scrolls out of
+       view in SPARQL mode (wired in app.js; display gated to ≤560px in CSS). -->
+  <div id="mobileRunBar" class="mrb" aria-hidden="true">
+    <select id="mrbFmt" aria-label="Output view"></select>
+    <button id="mrbRun" type="button">Run Query</button>
+  </div>
+
   <div id="cardsFieldsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cardsFieldsTitle">
     <div class="modal-card">
       <div class="modal-head">

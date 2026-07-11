@@ -2518,6 +2518,7 @@ self.onmessage = function (e) {
     if (mode === "schema" && state.remote && !state.schema) ensureRemoteSchema();
     updateResultVisibility();
     updateHash();
+    if (mrbUpdate) mrbUpdate(); // the phone Run bar only shows in SPARQL mode
   }
 
   // Lazy Schema: read the class/relation summary from the schema pyramid (the
@@ -3557,7 +3558,17 @@ self.onmessage = function (e) {
     }
   }
 
+  // Refreshes the phone's sticky Run bar (set in wireEvents; null on desktop).
+  let mrbUpdate = null;
+
   function setView(view) {
+    // On a phone, a default "table" view becomes Cards — the table is the one
+    // output that fights a small screen, and Cards renders the same rows
+    // stacked. An example that declares any other view (map / graph / time / …)
+    // keeps it, and the user can always switch back to Table by hand.
+    if (view === "table" && window.matchMedia && window.matchMedia("(max-width: 560px)").matches) {
+      view = "cards";
+    }
     $("fmt").value = view;
   }
 
@@ -7197,6 +7208,35 @@ self.onmessage = function (e) {
     // Switching the Output type re-renders the last result in the new view
     // (no re-run) when it can; otherwise it runs the query.
     $("fmt").onchange = onOutputTypeChange;
+    // Phone: a sticky bottom Run bar (Run + an Output mirror) appears when the
+    // real Run button scrolls out of view in SPARQL mode — tweak-and-rerun and
+    // flip Table/Cards/Map without scrolling back up.
+    {
+      const mrb = $("mobileRunBar");
+      if (mrb && window.matchMedia) {
+        const mq = window.matchMedia("(max-width: 560px)");
+        const mrbFmt = $("mrbFmt");
+        mrbFmt.innerHTML = $("fmt").innerHTML; // same options, mirrored value
+        // Scroll-driven (like the header condense), not an IntersectionObserver —
+        // deterministic, and one rect read per scroll tick is cheap.
+        const runOffScreen = () => {
+          const r = $("run").getBoundingClientRect();
+          return r.bottom <= 0 || r.top >= window.innerHeight;
+        };
+        mrbUpdate = () => {
+          const on = mq.matches && state.mode === "sparql" && runOffScreen();
+          mrb.classList.toggle("on", on);
+          mrb.setAttribute("aria-hidden", on ? "false" : "true");
+          document.body.classList.toggle("mrb-open", on);
+          if (on) mrbFmt.value = $("fmt").value;
+        };
+        window.addEventListener("scroll", mrbUpdate, { passive: true });
+        window.addEventListener("resize", mrbUpdate, { passive: true });
+        $("mrbRun").onclick = () => $("run").click();
+        mrbFmt.onchange = () => { $("fmt").value = mrbFmt.value; onOutputTypeChange(); };
+        $("fmt").addEventListener("change", () => { mrbFmt.value = $("fmt").value; });
+      }
+    }
     // Federation: the "+ Add source" popover + its source chips.
     $("fedAdd").onclick = (e) => {
       e.stopPropagation();

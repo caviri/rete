@@ -1155,6 +1155,9 @@ textarea {
 .rcard .cf-v .media-meta { max-width: 100%; }
 .rcard .cf-v model-viewer { width: 100%; }
 .cards-more { display: block; margin: 4px auto 0; }
+/* Phone sticky Run bar — hidden everywhere; the ≤560px block shows it when
+   app.js flags it `.on` (Run button off-screen, SPARQL mode). */
+.mrb { display: none; }
 /* The ⚙ Fields modal rows (per-field render-type pickers). */
 .cfm-list { max-height: 60vh; overflow-y: auto; overscroll-behavior: contain; }
 .cfm-row { display: flex; align-items: center; gap: 12px; padding: 8px 2px; border-bottom: 1px solid var(--line); }
@@ -2402,6 +2405,23 @@ th .coltype.coltype-on {
   /* Belt-and-braces against a stray horizontal scrollbar. `clip` (not `hidden`)
      so it doesn't create a scroll container that would break sticky headers. */
   body { overflow-x: clip; }
+
+  /* iOS zooms the page when a focused field's text is under 16px — keep every
+     typing surface at 16px (the CM editor does the same via its theme). */
+  input[type="text"], input[type="search"], input[type="url"], textarea, select { font-size: 16px; }
+
+  /* The sticky Run bar (shown by app.js when the real Run button scrolls out
+     of view in SPARQL mode): Run + an Output mirror, above the home indicator. */
+  .mrb.on {
+    display: flex; gap: 8px; align-items: stretch;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    background: var(--paper); border-top: 1px solid var(--line-strong);
+    box-shadow: 0 -8px 22px rgba(32, 47, 41, .10);
+  }
+  .mrb select { flex: 0 1 auto; min-width: 0; max-width: 40%; }
+  .mrb button { flex: 1 1 auto; }
+  body.mrb-open .console-shell { padding-bottom: 92px; }
 }
 
 /* Network query spinner — a hub firing packets to nodes while a query runs. */
