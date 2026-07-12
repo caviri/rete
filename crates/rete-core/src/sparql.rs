@@ -795,10 +795,11 @@ fn eval_query_opts(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutput
     }
 }
 
-/// Apply OWL 2 QL plan rewriting when reasoning is on (no-op otherwise).
-fn maybe_reason(mut sel: Select, reason: bool) -> Select {
+/// Apply OWL 2 QL plan rewriting when reasoning is on (no-op otherwise). Reads a
+/// small TBox slice from `rete` to gate the rewrite (see [`ql`]).
+fn maybe_reason(rete: &Rete, mut sel: Select, reason: bool) -> Select {
     if reason {
-        sel.plan = ql::reason_rewrite(sel.plan);
+        sel.plan = ql::reason_rewrite(sel.plan, rete);
     }
     sel
 }
@@ -811,18 +812,18 @@ fn eval_query_inner(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutpu
         } => {
             let (vars, rows) = run_select(
                 rete,
-                &maybe_reason(lower_select(&pattern, &dataset)?, reason),
+                &maybe_reason(rete, lower_select(&pattern, &dataset)?, reason),
             );
             Ok(QueryOutput::Select(vars, rows))
         }
         Query::Ask { pattern, .. } => {
-            let sel = maybe_reason(lower_pattern(&pattern)?, reason);
+            let sel = maybe_reason(rete, lower_pattern(&pattern)?, reason);
             Ok(QueryOutput::Ask(ask_solution(rete, &sel)))
         }
         Query::Construct {
             template, pattern, ..
         } => {
-            let sel = maybe_reason(lower_pattern(&pattern)?, reason);
+            let sel = maybe_reason(rete, lower_pattern(&pattern)?, reason);
             let (ctx, sols) = raw_solutions(rete, &sel);
             Ok(QueryOutput::Construct(instantiate(&ctx, &template, &sols)))
         }
@@ -831,7 +832,7 @@ fn eval_query_inner(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutpu
         } => {
             // The projected variables' values are the resources to describe;
             // we return each one's outgoing triples (concise bounded description).
-            let sel = maybe_reason(lower_select(&pattern, &dataset)?, reason);
+            let sel = maybe_reason(rete, lower_select(&pattern, &dataset)?, reason);
             let (ctx, rows) = raw_solutions(rete, &sel);
             let mut resources = std::collections::BTreeSet::new();
             for row in &rows {
@@ -882,7 +883,7 @@ fn eval_sparql_opts(
     query: &str,
     reason: bool,
 ) -> Result<(Vec<String>, Vec<Binding>), SparqlError> {
-    let sel = maybe_reason(parse_select(query)?, reason);
+    let sel = maybe_reason(rete, parse_select(query)?, reason);
     let out = run_select(rete, &sel);
     // See `eval_query`: a failed non-SILENT SERVICE call must become an error.
     match rete.take_service_error() {

@@ -309,6 +309,57 @@ fn owl_ql_subclass_reasoning() {
 }
 
 #[test]
+fn owl_ql_subproperty_reasoning() {
+    // OWL 2 QL Stage 1a: a role atom `?x P ?y` is entailed by any `?x Q ?y` with
+    // Q rdfs:subPropertyOf* P. Rewritten to walk subPropertyOf* over the raw data.
+    let subp = "<http://www.w3.org/2000/01/rdf-schema#subPropertyOf>";
+    let mk = |n: &str| format!("<http://ex/{n}>");
+    let t: Vec<(String, String, String)> = vec![
+        (mk("hasFather"), subp.to_string(), mk("hasParent")),
+        (mk("hasMother"), subp.to_string(), mk("hasParent")),
+        (mk("a"), mk("hasFather"), mk("b")),
+        (mk("c"), mk("hasMother"), mk("d")),
+        (mk("e"), mk("hasParent"), mk("f")), // a direct hasParent assertion
+    ];
+    let refs: Vec<(&str, &str, &str)> = t
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let rete = Rete::open(&build(&refs)).unwrap();
+    let pairs = |sols: Vec<rete_core::Binding>| {
+        let mut v: Vec<String> = sols
+            .iter()
+            .map(|b| format!("{}->{}", b.get("x").unwrap(), b.get("y").unwrap()))
+            .collect();
+        v.sort();
+        v
+    };
+
+    // `?x :hasParent ?y`: plain = only the direct assertion; reasoned = the
+    // hasFather / hasMother edges too.
+    let q = format!("{PREFIX}SELECT ?x ?y WHERE {{ ?x ex:hasParent ?y }}");
+    assert_eq!(
+        pairs(eval_sparql(&rete, &q).unwrap().1),
+        vec!["<http://ex/e>-><http://ex/f>"]
+    );
+    assert_eq!(
+        pairs(eval_sparql_reasoned(&rete, &q).unwrap().1),
+        vec![
+            "<http://ex/a>-><http://ex/b>",
+            "<http://ex/c>-><http://ex/d>",
+            "<http://ex/e>-><http://ex/f>",
+        ]
+    );
+
+    // A property with no subproperties is left exactly as written (gate skips it).
+    let ql = format!("{PREFIX}SELECT ?x ?y WHERE {{ ?x ex:hasFather ?y }}");
+    assert_eq!(
+        pairs(eval_sparql_reasoned(&rete, &ql).unwrap().1),
+        vec!["<http://ex/a>-><http://ex/b>"]
+    );
+}
+
+#[test]
 fn property_path_zero_length_semantics() {
     // `*` and `?` include the zero-length path (a node reaches itself); `+` does
     // not. Checked in all three binding directions, since each takes a different
