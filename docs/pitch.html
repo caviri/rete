@@ -46,6 +46,11 @@
     padding:6px 10px;cursor:pointer;font-size:12px;font-variant-numeric:tabular-nums}
   .speeds button.on{background:var(--accent);color:#06180d;border-color:var(--accent);font-weight:700}
   .toggle{display:inline-flex;align-items:center;gap:7px;color:var(--mut);font-size:12.5px;cursor:pointer;user-select:none}
+  select.sel{background:#12241a;color:#cfe6d6;border:1px solid var(--edge);border-radius:8px;padding:5px 8px;
+    font-size:12px;cursor:pointer;max-width:170px}
+  select.sel:disabled{opacity:.4}
+  .heatramp{width:66px;height:9px;border-radius:5px;display:inline-block;
+    background:linear-gradient(90deg,rgba(40,110,220,.45),rgba(35,200,140,.7),rgba(235,215,70,.85),rgba(245,130,45,.92),rgba(235,55,40,.96))}
   .legend{display:flex;gap:16px;align-items:center;margin-top:12px;font-size:12px;color:var(--mut);flex-wrap:wrap}
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .dot{width:11px;height:11px;border-radius:50%;display:inline-block}
@@ -81,11 +86,13 @@
       <input type="range" id="scrub" min="0" max="1000" value="0" disabled/>
       <div class="speeds" id="speeds"></div>
       <label class="toggle"><input type="checkbox" id="trails" checked/> Trails</label>
+      <label class="toggle">Heatmap <select class="sel" id="heat" disabled><option value="">Off</option></select></label>
     </div>
     <div class="legend">
       <span><i class="dot" style="background:var(--home)"></i> Home</span>
       <span><i class="dot" style="background:var(--away)"></i> Away</span>
       <span><i class="dot" style="background:var(--ball);border:1px solid #333"></i> Ball</span>
+      <span id="heatleg" style="display:none"><i class="heatramp"></i> less&nbsp;→&nbsp;more time</span>
       <span id="objcount"></span>
     </div>
   </div>
@@ -94,6 +101,8 @@
     Every dot is a <b>position row</b> in <code>tracking.rete</code> — a spatiotemporal graph storing the 2D
     location of each player and the ball, ~5&nbsp;frames/second, on a 105×68&nbsp;m pitch (<a href="playground.html#dataset=tracking">query it
     in the playground</a>). This page fetches the positions from R2 and interpolates between frames to animate.
+    The <b>heatmap</b> layer is just an aggregation of that graph — every <code>tr:x</code>/<code>tr:y</code> for a
+    player, team, or the ball, binned over the whole match into an occupancy density.
     The finest grain of “over time”, from an open sample match (Metrica Sports, anonymised).
   </p>
 </div>
@@ -136,8 +145,49 @@
     if(xb==null) return [x/10,y/10];
     return [(x+(xb-x)*a)/10, (y+(yb-y)*a)/10];
   }
+  // ---- heatmap: density of an object's (or team's) positions over the whole match ----
+  let heatKey=null; const HEAT=new Map();
+  const GW=170, GH=110;                              // density grid (~0.62 m/cell)
+  const HK=(function(){ const R=5,s=R/2,k=[]; for(let dy=-R;dy<=R;dy++)for(let dx=-R;dx<=R;dx++){
+    const w=Math.exp(-(dx*dx+dy*dy)/(2*s*s)); if(w>0.02)k.push([dx,dy,w]); } return k; })();
+  function objsForKey(key){
+    if(key==="ball") return ballIdx>=0?[ballIdx]:[];
+    if(key==="team:Home"||key==="team:Away"){ const tm=key.slice(5); return order.filter(k=>!OBJ[k].ball&&OBJ[k].team===tm); }
+    if(key.startsWith("obj:")) return [parseInt(key.slice(4),10)];
+    return [];
+  }
+  function heatColor(v){  // v in [0,1] -> [r,g,b,a]; transparent at 0, blue→green→yellow→red
+    const S=[[0,40,110,220,0],[0.16,40,110,220,110],[0.4,35,200,140,165],[0.62,235,215,70,200],[0.82,245,130,45,225],[1,235,55,40,242]];
+    for(let i=1;i<S.length;i++){ if(v<=S[i][0]){ const a=S[i-1],b=S[i],f=(v-a[0])/((b[0]-a[0])||1);
+      return [a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f,a[3]+(b[3]-a[3])*f,a[4]+(b[4]-a[4])*f]; } }
+    return S[S.length-1].slice(1);
+  }
+  function heatCanvas(key){
+    if(HEAT.has(key)) return HEAT.get(key);
+    const ks=objsForKey(key), acc=new Float32Array(GW*GH);
+    for(let fi=0;fi<F.length;fi++){ const flat=F[fi][1];
+      for(const k of ks){ const x=flat[k*2], y=flat[k*2+1]; if(x==null||y==null) continue;
+        const cx=Math.round((x/10/PL)*GW), cy=Math.round((y/10/PW)*GH);
+        for(const [dx,dy,w] of HK){ const gx=cx+dx, gy=cy+dy;
+          if(gx>=0&&gy>=0&&gx<GW&&gy<GH) acc[gy*GW+gx]+=w; } } }
+    let max=0; for(let i=0;i<acc.length;i++) if(acc[i]>max) max=acc[i];
+    const off=document.createElement("canvas"); off.width=GW; off.height=GH;
+    const octx=off.getContext("2d"), img=octx.createImageData(GW,GH), inv=max>0?1/max:0;
+    for(let i=0;i<acc.length;i++){ let v=acc[i]*inv; if(v<=0) continue; v=Math.pow(v,0.55);
+      const c=heatColor(v), o=i*4; img.data[o]=c[0]; img.data[o+1]=c[1]; img.data[o+2]=c[2]; img.data[o+3]=c[3]; }
+    octx.putImageData(img,0,0); HEAT.set(key,off); return off;
+  }
+  function drawHeat(){
+    if(!heatKey) return;
+    const off=heatCanvas(heatKey);
+    ctx.save(); ctx.beginPath(); ctx.rect(M,M,W-2*M,H-2*M); ctx.clip();
+    ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high"; ctx.globalAlpha=0.9;
+    ctx.drawImage(off,M,M,W-2*M,H-2*M); ctx.restore();
+  }
+
   function draw(tt){
     drawPitch();
+    drawHeat();
     if(showTrails){
       for(const k of order){
         const o=OBJ[k], steps=o.ball?18:8, dt=0.12;
@@ -191,6 +241,15 @@
     el("mtitle").textContent="Metrica Sports — Sample Game 2";
     el("msub").textContent=Math.round(DUR/60)+" min · "+F.length.toLocaleString()+" frames · "+OBJ.length+" objects · "+PL+"×"+PW+" m";
     el("objcount").textContent=OBJ.length+" tracked objects";
+    // build heatmap selector: Ball, each team, then each player
+    const hs=el("heat"), opt=(v,t)=>{const o=document.createElement("option");o.value=v;o.textContent=t;return o;};
+    if(ballIdx>=0) hs.appendChild(opt("ball","Ball"));
+    hs.appendChild(opt("team:Home","Home team (all)")); hs.appendChild(opt("team:Away","Away team (all)"));
+    ["Home","Away"].forEach(tm=>{ const g=document.createElement("optgroup"); g.label=tm+" players";
+      order.filter(k=>!OBJ[k].ball&&OBJ[k].team===tm).forEach(k=>g.appendChild(opt("obj:"+k, tm+" #"+(OBJ[k].num||"?"))));
+      hs.appendChild(g); });
+    hs.disabled=false;
+    hs.onchange=e=>{ heatKey=e.target.value||null; el("heatleg").style.display=heatKey?"inline-flex":"none"; if(!playing)draw(t); };
     el("load").style.display="none"; el("play").disabled=false; el("scrub").disabled=false; ready=true; draw(T0);
   }).catch(e=>{ el("loadtxt").textContent="Couldn't load the match ("+e.message+")."; el("load").querySelector(".spin").style.display="none"; });
   requestAnimationFrame(tick);
