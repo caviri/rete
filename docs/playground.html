@@ -3131,8 +3131,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build a057115 · 2026-07-12 09:50 UTC</span>
-    <script>window.RETE_BUILD = "a057115 · 2026-07-12 09:50 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 9d0923f · 2026-07-12 10:02 UTC</span>
+    <script>window.RETE_BUILD = "9d0923f · 2026-07-12 10:02 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -7108,7 +7108,7 @@ window.RETE_PLAYGROUND_CATALOG = {
        "q": "PREFIX eli: <http://data.europa.eu/eli/ontology#>\nSELECT ?derogada WHERE {\n  <https://www.boe.es/eli/es/c/1978/12/27/(1)> eli:repeals ?n .\n  ?n eli:title ?derogada .\n}"},
       {"family": "Aggregate", "label": "Most challenged before the Constitutional Court", "view": "table", "cols": {"title": "Norma", "recursos": "Recursos / cuestiones"},
        "tip": "bx:challenges gathers the recursos and cuestiones de inconstitucionalidad and conflictos raised against a norm (BOE análisis relation codes 520/530/552/694). The most-contested law in force is the Ley Orgánica 10/1995 del Código Penal (51 challenges), then the Ley 24/1983 de saneamiento de las Haciendas Locales and the Real Decreto-ley 28/2012 on the Seguridad Social pension freeze — the fault lines of Spanish constitutional litigation.",
-       "q": "PREFIX eli: <http://data.europa.eu/eli/ontology#>\nPREFIX bx: <https://graphplaza.com/ns/boe#>\nSELECT ?title (COUNT(?s) AS ?recursos) WHERE {\n  ?s bx:challenges ?n .\n  ?n eli:title ?title .\n} GROUP BY ?n ?title ORDER BY DESC(?recursos) LIMIT 20"},
+       "q": "PREFIX eli: <http://data.europa.eu/eli/ontology#>\nPREFIX bx: <https://w3id.org/rete/boe#>\nSELECT ?title (COUNT(?s) AS ?recursos) WHERE {\n  ?s bx:challenges ?n .\n  ?n eli:title ?title .\n} GROUP BY ?n ?title ORDER BY DESC(?recursos) LIMIT 20"},
       {"family": "Select", "label": "Search: laws on artificial intelligence", "view": "table", "cols": {"title": "Norma", "fecha": "Fecha"},
        "tip": "Full-text search over the 41k norm titles (a rete text index backs CONTAINS). 'Inteligencia artificial' surfaces the Real Decreto 729/2023 that created AESIA — the Agencia Española de Supervisión de Inteligencia Artificial, the first such national supervisor in the EU — and Extremadura's Decreto-ley 2/2023. Swap the phrase for 'cambio climático', 'protección de datos', 'memoria democrática', 'vivienda' or any ministry's name.",
        "q": "PREFIX eli: <http://data.europa.eu/eli/ontology#>\nSELECT ?title ?fecha WHERE {\n  ?s eli:title ?title ; eli:date_document ?fecha .\n  FILTER(CONTAINS(LCASE(STR(?title)), \"inteligencia artificial\"))\n} ORDER BY DESC(?fecha) LIMIT 40"},

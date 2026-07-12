@@ -57,7 +57,7 @@ UA = "rete-boe/1.0 (graphplaza; open-data reuse; contact carlosvivarrios@gmail.c
 WORKERS = 10
 
 ELI = "http://data.europa.eu/eli/ontology#"
-BX = "https://graphplaza.com/ns/boe#"        # our extension vocabulary (neutral ns)
+BX = "https://w3id.org/rete/boe#"            # extension vocab (norm-type classes + BOE-specific props with no ELI equivalent); neutral w3id PURL, not a project-branded host
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
 OWL = "http://www.w3.org/2002/07/owl#"
