@@ -264,6 +264,7 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 <tr><td><strong>Datasets</strong></td><td><code>GRAPH &lt;iri&gt;</code> / <code>GRAPH ?g</code>, <code>FROM</code> (RDF-merge default graph), <code>FROM NAMED</code> (scope which graphs <code>GRAPH</code> sees); <code>EXISTS</code> honors the active graph</td></tr>
 <tr><td><strong>Output</strong></td><td>SPARQL Results JSON (<code>--json</code>), with correct <code>uri</code>/<code>literal</code>/<code>bnode</code> typing, datatype, and <code>xml:lang</code>; literal values are properly unescaped</td></tr>
 <tr><td><strong>RDF-star</strong></td><td>Quoted triples <code>&lt;&lt; s p o &gt;&gt;</code> in subject/object position — ingest (N-Triples-star &amp; Turtle-star), storage, and SPARQL-star: quoted-triple patterns (incl. inner variables <code>&lt;&lt; ?s :p ?o &gt;&gt;</code>) and the <code>isTRIPLE</code> / <code>TRIPLE</code> / <code>SUBJECT</code> / <code>PREDICATE</code> / <code>OBJECT</code> built-ins. See <a href="#rdf-star">below</a>.</td></tr>
+<tr><td><strong>Reasoning (OWL 2 QL)</strong></td><td>Opt-in ontology-mediated answering by <strong>query rewriting</strong> — no materialization: <code>rdfs:subClassOf</code> / <code>subPropertyOf</code> hierarchy + <code>rdfs:domain</code> / <code>range</code> type inference, computed over the raw data. <code>rete sparql … --entail</code>, or the playground <strong>🧠 Reason</strong> toggle. See <a href="#reasoning-owl-2-ql">below</a>.</td></tr>
 </tbody></table>
 <h3>Property-path zero-length semantics</h3>
 <p><code>*</code> and <code>?</code> include the zero-length path (a node reaches itself); <code>+</code> does not.
@@ -392,6 +393,43 @@ SELECT ?occ ?who WHERE {
 <p><code>CONSTRUCT</code> (and <code>rete serve</code>'s SPARQL Update) may build quoted triples in their
 templates. Nested quoting (<code>&lt;&lt; &lt;&lt; … &gt;&gt; :p ?o &gt;&gt;</code>) works. rete follows the
 RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.</p>
+<h2>Reasoning (OWL 2 QL)</h2>
+<p>rete answers ontology-mediated queries by <strong>rewriting the query</strong>, not by
+materializing entailments. That is the OWL 2 QL idea, and it is the profile that
+fits a cloud-native, range-queried file: the TBox is small, the ABox is huge and
+maybe remote, so instead of baking inferences into the data (bloating the file,
+forcing a rebuild — what <code>rete build --materialize</code> does) the <em>query</em> is expanded
+so that evaluating it over the <strong>raw</strong> data yields the entailed answers. A remote
+<code>.rete</code> becomes ontology-aware with no rebuild, and only the bytes the rewritten
+query touches are fetched.</p>
+<p>Reasoning is <strong>opt-in</strong> — <code>rete sparql|sparql-url … --entail</code>, or the playground's
+<strong>🧠 Reason</strong> toggle. A plain query is never changed.</p>
+<p><strong>What is entailed</strong> (the RDFS-plus core of OWL 2 QL):</p>
+<table><thead><tr><th>Axiom</th><th>A query for … also returns …</th></tr></thead><tbody>
+<tr><td><code>rdfs:subClassOf</code></td><td><code>?x a C</code> → instances of every subclass of <code>C</code> (transitively)</td></tr>
+<tr><td><code>rdfs:subPropertyOf</code></td><td><code>?x P ?y</code> → pairs related by any subproperty of <code>P</code></td></tr>
+<tr><td><code>rdfs:domain</code></td><td><code>?x a C</code> → subjects of a property whose domain is <code>⊑ C</code></td></tr>
+<tr><td><code>rdfs:range</code></td><td><code>?x a C</code> → objects of a property whose range is <code>⊑ C</code></td></tr>
+</tbody></table>
+<pre><code class="language-sparql"># Over gbif-birds (occurrences are typed to their SPECIES, and each species has a
+# subClassOf chain up to :Aves). WITHOUT reasoning this matches nothing directly;
+# WITH --entail it returns real occurrences via the taxonomy — no hand-written path.
+SELECT ?o WHERE { ?o a &lt;https://w3id.org/rete/gbif/taxon/class/Aves&gt; } LIMIT 20
+</code></pre>
+<p><strong>How</strong> — a hierarchy atom is lowered to the property path that already walks the
+hierarchy: <code>?x a C</code> becomes <code>?x a ?c . ?c rdfs:subClassOf* C</code> (reflexive, so a
+direct type still matches), and likewise <code>subPropertyOf*</code> for roles; <code>domain</code> /
+<code>range</code> add <code>UNION</code> branches. A small TBox read gates the rewrite, so an atom
+whose class/property has no sub-terms — and every non-reasoned query — is
+untouched. The reasoning reaches nested patterns (<code>UNION</code> / <code>OPTIONAL</code> /
+subqueries).</p>
+<p><strong>Boundary.</strong> This ships the sound, complete-for-its-fragment RDFS-plus core.
+Existential axioms (<code>owl:someValuesFrom</code>, <code>A ⊑ ∃P.B</code>), <code>owl:inverseOf</code>, and the
+<code>domain</code>∘<code>subPropertyOf</code> interaction are not yet rewritten — they are the full
+DL-Lite_R (PerfectRef) roadmap. Reasoning is never <em>unsound</em>: with it off you get
+exact matches; with it on you get the entailed answers for the supported axioms.
+The whole-graph RL reasoner (<code>rete reason</code> / the Coherence tab) is a separate,
+materializing tool for coherence checking.</p>
 <h2>Not supported</h2>
 <p>These are <strong>rejected with a clear error</strong> — never silently mis-evaluated:</p>
 <ul>

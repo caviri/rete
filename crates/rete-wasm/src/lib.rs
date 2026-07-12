@@ -4,7 +4,8 @@
 
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
-    eval_select_communities, eval_sparql, project_graph, schema_classes, schema_summary,
+    eval_query_reasoned, eval_select_communities, eval_sparql, project_graph, schema_classes,
+    schema_summary,
     summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader, ByteRange,
     CountingReader, DataGraph, Header, QueryOutput, RangeReader, Rete, ReteGraph, ShaclShapes,
     SliceReader, SummaryQueryShape, SummaryView, TripleProvenance, ValidationReport, DEFAULT_BLOCK,
@@ -216,6 +217,12 @@ impl Graph {
         query_json(&self.rete, query, format, "")
     }
 
+    /// As [`query`], with OWL 2 QL entailment on (`rdfs:subClassOf` /
+    /// `subPropertyOf` / `domain` / `range` reasoning by query rewriting).
+    pub fn query_reasoned(&self, query: &str, format: &str) -> Result<String, JsValue> {
+        query_json_reasoned(&self.rete, query, format, "")
+    }
+
     /// See [`query_triples`].
     pub fn query_triples(
         &self,
@@ -374,6 +381,14 @@ impl RemoteGraph {
     /// See [`sparql_url`] — same query, but over the resident, cached handle.
     pub fn query(&self, query: &str, format: &str) -> Result<String, JsValue> {
         let s = query_json(&self.rete, query, format, "")?;
+        incomplete_guard(&self.rete, "query")?;
+        Ok(s)
+    }
+
+    /// As [`query`], with OWL 2 QL entailment on (reason over the ontology while
+    /// reading only the bytes the rewritten query touches).
+    pub fn query_reasoned(&self, query: &str, format: &str) -> Result<String, JsValue> {
+        let s = query_json_reasoned(&self.rete, query, format, "")?;
         incomplete_guard(&self.rete, "query")?;
         Ok(s)
     }
@@ -647,7 +662,33 @@ pub fn text_search(
 /// clones per cell) and costs more than the query itself; writing direct cuts the
 /// serialization peak heap ~13× and the time ~10× (see `rete-bench --query-mem`).
 fn query_json(rete: &Rete, query: &str, format: &str, extra: &str) -> Result<String, JsValue> {
-    let out = eval_query(rete, query).map_err(err)?;
+    query_json_opt(rete, query, format, extra, false)
+}
+
+/// As [`query_json`], but with OWL 2 QL entailment on (the query is rewritten so
+/// the answer includes ontology-entailed solutions, computed over the raw data).
+fn query_json_reasoned(
+    rete: &Rete,
+    query: &str,
+    format: &str,
+    extra: &str,
+) -> Result<String, JsValue> {
+    query_json_opt(rete, query, format, extra, true)
+}
+
+fn query_json_opt(
+    rete: &Rete,
+    query: &str,
+    format: &str,
+    extra: &str,
+    reason: bool,
+) -> Result<String, JsValue> {
+    let out = if reason {
+        eval_query_reasoned(rete, query)
+    } else {
+        eval_query(rete, query)
+    }
+    .map_err(err)?;
     Ok(write_query_json(&out, format, extra))
 }
 
