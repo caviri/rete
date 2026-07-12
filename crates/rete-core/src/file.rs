@@ -1933,6 +1933,30 @@ impl Rete {
             .collect()
     }
 
+    /// Stream every triple of a graph (`None` = default) to `f`, resolving terms
+    /// one at a time — no full `Vec` materialization, so it is safe on graphs far
+    /// larger than RAM. `rete export` uses this to serialize 100M+ triple files
+    /// that `dump()` (which collects every term into a `Vec<String>`) would OOM on.
+    pub fn dump_each<F: FnMut(&str, &str, &str)>(&self, graph: Option<&str>, mut f: F) {
+        self.dict.prefetch_all();
+        let index = match graph {
+            None => &self.index,
+            Some(g) => match self.graph_index(g) {
+                Some(i) => i,
+                None => return,
+            },
+        };
+        for (s, p, o) in index.scan_iter((None, None, None)) {
+            if let (Some(st), Some(pt), Some(ot)) = (
+                self.dict.subject_term(s),
+                self.dict.predicate_term(p),
+                self.dict.object_term(o),
+            ) {
+                f(&st, &pt, &ot);
+            }
+        }
+    }
+
     /// All named graphs as `(iri, index)`.
     pub fn named_graphs(&self) -> &[(String, GraphIndex)] {
         &self.named_graphs

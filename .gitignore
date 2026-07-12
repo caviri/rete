@@ -79,3 +79,5 @@ __pycache__/
 # Docker cargo cache (CARGO_HOME mounted into the rust image for docgen/builds)
 /.cargo-home/
 target-star/
+target-std/
+target-wasm/

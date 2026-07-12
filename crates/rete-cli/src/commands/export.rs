@@ -11,15 +11,22 @@ pub(crate) fn export(file: &str, format: &str) -> anyhow::Result<()> {
     let rete = Rete::open(&bytes)?;
     match format {
         // N-Quads: lossless dump of the default graph + every named graph.
+        // Streamed (dump_each) so a 100M+ triple file serializes in constant
+        // memory instead of materializing every term into a Vec (which OOMs).
         "nq" => {
-            for (s, p, o) in rete.dump(None) {
-                println!("{s} {p} {o} .");
+            use std::io::Write;
+            let stdout = std::io::stdout();
+            let mut out = std::io::BufWriter::new(stdout.lock());
+            rete.dump_each(None, |s, p, o| {
+                let _ = writeln!(out, "{s} {p} {o} .");
+            });
+            let names: Vec<String> = rete.graph_names().iter().map(|s| s.to_string()).collect();
+            for g in names {
+                rete.dump_each(Some(&g), |s, p, o| {
+                    let _ = writeln!(out, "{s} {p} {o} {g} .");
+                });
             }
-            for g in rete.graph_names() {
-                for (s, p, o) in rete.dump(Some(g)) {
-                    println!("{s} {p} {o} {g} .");
-                }
-            }
+            out.flush()?;
         }
         // Turtle / JSON-LD are single-graph formats here: emit the default graph.
         "ttl" => print!("{}", export_turtle(&rete.dump(None))),
