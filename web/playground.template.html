@@ -267,6 +267,11 @@ __PLAYGROUND_CSS__
               <span class="switch" aria-hidden="true"></span>
               <span class="switch-txt">🏷 Labels</span>
             </label>
+            <label class="switch-ctl" id="reasonSwitch" title="OWL 2 QL reasoning: rewrite the query so it ALSO returns entailed answers — rdfs:subClassOf / subPropertyOf / domain / range — computed over the raw data with no materialization. Opt-in; e.g. with it on, ?x a :Aves matches every occurrence via the taxonomy.">
+              <input type="checkbox" id="owlReason" />
+              <span class="switch" aria-hidden="true"></span>
+              <span class="switch-txt">🧠 Reason</span>
+            </label>
             <label id="roundWrap" class="hidden">
               <span>Round</span>
               <input id="round" type="number" min="0" placeholder="auto" />

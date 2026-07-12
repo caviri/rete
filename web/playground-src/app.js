@@ -143,7 +143,7 @@
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
       Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
         var before = JSON.parse(g.stats());
-        return _drive(function () { return g.query(m.query, m.format); }).then(function (resStr) {
+        return _drive(function () { return m.reason ? g.query_reasoned(m.query, m.format) : g.query(m.query, m.format); }).then(function (resStr) {
           var res = JSON.parse(resStr);
           var after = JSON.parse(g.stats());
           // Per-query physical traffic is the delta (a cache hit adds ~0); carry
@@ -477,11 +477,11 @@ self.onmessage = function (e) {
     return remoteReady;
   }
 
-  function remoteSparql(url, query, fmt) {
+  function remoteSparql(url, query, fmt, reason) {
     return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
       const id = ++remoteSeq;
       remotePending.set(id, { resolve, reject });
-      remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table" });
+      remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table", reason: !!reason });
     }));
   }
 
@@ -6106,6 +6106,9 @@ self.onmessage = function (e) {
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
     const fmt = $("fmt").value;
+    // OWL 2 QL reasoning: rewrite the query to include subClassOf/subPropertyOf/
+    // domain/range entailments (opt-in toggle; applies to the default strategy).
+    const reason = !!($("owlReason") && $("owlReason").checked);
     // Live-endpoint mode overrides everything: one target, updates allowed.
     if (state.liveEndpoint) { runLiveEndpoint(q, fmt); return; }
     if (isUpdateText(q)) {
@@ -6157,7 +6160,7 @@ self.onmessage = function (e) {
       // TTL / JSON-LD ask the worker to serialize (a CONSTRUCT carries res.text);
       // every other view wants table rows (graph/map/time derive from them).
       const remoteFmt = (fmt === "ttl" || fmt === "jsonld") ? fmt : "table";
-      remoteSparql(state.remote.url, q, remoteFmt).then((out) => {
+      remoteSparql(state.remote.url, q, remoteFmt, reason).then((out) => {
         cleanup();
         state.lastRemoteLog = out.log || [];
         const res = JSON.parse(out.json);
@@ -6226,10 +6229,10 @@ self.onmessage = function (e) {
 
     if (!state.bytes) return showError("out", "Load a graph first.");
     // Defer the (synchronous) engine call one frame so the spinner paints first.
-    setTimeout(() => runEmbeddedQuery(q, fmt), 0);
+    setTimeout(() => runEmbeddedQuery(q, fmt, reason), 0);
   }
 
-  function runEmbeddedQuery(q, fmt) {
+  function runEmbeddedQuery(q, fmt, reason) {
     const strategy = $("strategy").value;
     // graph / map / time / cards are renderings of SELECT bindings — ask the engine for table rows.
     const rowView = fmt === "graph" || fmt === "map" || fmt === "time" || fmt === "cards";
@@ -6260,7 +6263,7 @@ self.onmessage = function (e) {
         const roundText = $("round").value.trim();
         raw = state.graph.query_communities(q, roundText === "" ? undefined : Number(roundText));
       } else {
-        raw = state.graph.query(q, queryFmt);
+        raw = reason ? state.graph.query_reasoned(q, queryFmt) : state.graph.query(q, queryFmt);
       }
       const res = JSON.parse(raw);
       const summary = renderResult(res, strategy !== "whole" && fmt === "graph" ? "table" : fmt);
