@@ -146,9 +146,7 @@ fn rdf_star_ingest_header_flag_and_concrete_query() {
     );
     assert_eq!(
         built,
-        vec![format!(
-            "<<<http://ex/occ1> {rdf} <http://ex/Swallow>>>"
-        )]
+        vec![format!("<<<http://ex/occ1> {rdf} <http://ex/Swallow>>>")]
     );
 }
 

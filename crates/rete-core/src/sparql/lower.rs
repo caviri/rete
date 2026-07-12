@@ -809,12 +809,12 @@ impl StarRewrite<'_> {
 
     fn constrain(&mut self, t: &TermPattern, acc: FExpr) {
         match t {
-            TermPattern::NamedNode(n) => {
-                self.filters.push(star_same(acc, FExpr::Const(n.to_string())))
-            }
-            TermPattern::Literal(l) => {
-                self.filters.push(star_same(acc, FExpr::Const(l.to_string())))
-            }
+            TermPattern::NamedNode(n) => self
+                .filters
+                .push(star_same(acc, FExpr::Const(n.to_string()))),
+            TermPattern::Literal(l) => self
+                .filters
+                .push(star_same(acc, FExpr::Const(l.to_string()))),
             TermPattern::Variable(v) => self.constrain_var(v.as_str(), acc),
             TermPattern::BlankNode(b) => self.constrain_var(&b.to_string(), acc),
             TermPattern::Triple(nested) => {
@@ -826,8 +826,10 @@ impl StarRewrite<'_> {
                     *self.counter += 1;
                     let qt2 = format!("__qt{}", self.counter);
                     self.binds.push((qt2.clone(), acc));
-                    self.filters
-                        .push(FExpr::Func(Builtin::IsTriple, vec![FExpr::Var(qt2.clone())]));
+                    self.filters.push(FExpr::Func(
+                        Builtin::IsTriple,
+                        vec![FExpr::Var(qt2.clone())],
+                    ));
                     self.decompose(nested, &qt2);
                 }
             }

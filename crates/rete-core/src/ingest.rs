@@ -663,10 +663,7 @@ mod tests {
         );
         assert_eq!(t[0].2, r#""Catalogue of Life""#);
         // a plain lang-tagged object still terminates at whitespace
-        assert_eq!(
-            take_term(r#""x"@pt-BR ."#).unwrap().0,
-            r#""x"@pt-BR"#
-        );
+        assert_eq!(take_term(r#""x"@pt-BR ."#).unwrap().0, r#""x"@pt-BR"#);
     }
 
     #[test]

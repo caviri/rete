@@ -836,7 +836,8 @@ impl XhrRangeReader {
         xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
         xhr.set_request_header("Range", "bytes=0-0")
             .map_err(|_| err("range header"))?;
-        xhr.send().map_err(|_| format!("probe {url}: network error"))?;
+        xhr.send()
+            .map_err(|_| format!("probe {url}: network error"))?;
         let status = xhr.status().map_err(|_| err("status"))?;
         if status != 206 && !(200..300).contains(&status) {
             return Err(format!("probe {url}: status {status}"));
@@ -845,7 +846,11 @@ impl XhrRangeReader {
         xhr.get_response_header("Content-Range")
             .ok()
             .flatten()
-            .and_then(|v| v.rsplit('/').next().and_then(|t| t.trim().parse::<u64>().ok()))
+            .and_then(|v| {
+                v.rsplit('/')
+                    .next()
+                    .and_then(|t| t.trim().parse::<u64>().ok())
+            })
             .or_else(|| {
                 xhr.get_response_header("Content-Length")
                     .ok()
