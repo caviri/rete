@@ -6211,12 +6211,12 @@ self.onmessage = function (e) {
           // (≥150 MB). On a small dataset a trap is a real bug, not OOM: show the
           // raw error so it isn't hidden behind a misleading message.
           if (fileBytes >= 150e6) {
-            $("qmeta").textContent = "out of memory";
+            $("qmeta").textContent = "reached this browser's limit";
             $("out").innerHTML =
-              `<div class="note"><b>This query ran out of memory.</b> It needed more than the browser allows for a query over this remote dataset${meta.size ? ` (${esc(meta.size)})` : ""}. ` +
-              `This is common on <b>iPhone / iPad Safari</b>, which caps per-tab memory well below a desktop browser.<br><br>` +
-              `Try: a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or add a country / year / type filter), the <b>Progressive</b> strategy for counts/overviews, or open this dataset on a desktop browser. ` +
-              `The engine has been reset — you can run another query now.</div>`;
+              `<div class="note"><b>We ran this, but it reached iPhone / iPad Safari's memory limit for a dataset this big${meta.size ? ` (${esc(meta.size)})` : ""}.</b> ` +
+              `It's not the bytes downloaded — it's the working memory to <em>unpack</em> this remote graph's index/dictionary while answering (a phone caps a tab well below a desktop, so the same query runs on a computer).<br><br>` +
+              `Try a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), the <b>Progressive</b> strategy for overviews, or open this dataset on a desktop browser. ` +
+              `The engine has been reset — run another query any time.</div>`;
           } else {
             $("qmeta").textContent = "";
             showError("out", "Query failed (engine reset — run again to retry): " + msg, e && e.stack);
