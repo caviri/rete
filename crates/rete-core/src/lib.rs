@@ -63,10 +63,10 @@ pub use shacl::{
     ValidationReport, ValidationResult,
 };
 pub use sparql::{
-    eval_query, eval_select_communities, eval_sparql, parse_select, query_predicates,
-    routed_triple_pattern, summary_query_shape, Agg, CommunityPartial, CommunitySelect, FExpr,
-    GraphTarget, GroupSpec, Op, PathAst, Plan, QueryOutput, Rep, RoutedTriplePattern, Select,
-    SparqlError, SummaryQueryShape,
+    eval_query, eval_query_reasoned, eval_select_communities, eval_sparql, eval_sparql_reasoned,
+    parse_select, query_predicates, routed_triple_pattern, summary_query_shape, Agg,
+    CommunityPartial, CommunitySelect, FExpr, GraphTarget, GroupSpec, Op, PathAst, Plan,
+    QueryOutput, Rep, RoutedTriplePattern, Select, SparqlError, SummaryQueryShape,
 };
 pub use terms::{NodeId, ObjectId, PredicateId, SubjectId, TermToken};
 pub use text_index::{tokenize, TextIndex, TextIndexBuilder};

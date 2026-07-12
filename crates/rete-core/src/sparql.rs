@@ -19,6 +19,7 @@ mod eval;
 mod expr;
 mod lower;
 mod path;
+mod ql;
 
 use eval::{ask_solution, instantiate, raw_solutions, run_select, run_select_communities};
 use lower::{lower_pattern, lower_select};
@@ -772,7 +773,19 @@ pub fn eval_select_communities(
 
 /// Evaluate any supported SPARQL query form (SELECT / ASK / CONSTRUCT).
 pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> {
-    let out = eval_query_inner(rete, query);
+    eval_query_opts(rete, query, false)
+}
+
+/// Like [`eval_query`], but with **OWL 2 QL entailment** on: the lowered plan is
+/// rewritten (see [`ql`]) so the answer includes ontology-entailed solutions
+/// (Stage 1a: `rdfs:subClassOf`), computed over the raw data with no
+/// materialization. Opt-in — a plain [`eval_query`] is byte-identical to before.
+pub fn eval_query_reasoned(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> {
+    eval_query_opts(rete, query, true)
+}
+
+fn eval_query_opts(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutput, SparqlError> {
+    let out = eval_query_inner(rete, query, reason);
     // A failed non-SILENT SERVICE call is recorded out-of-band (the row
     // pipeline is infallible, like lazy tile fetches) — surface it here so a
     // partial answer is never returned as if it were complete.
@@ -782,23 +795,34 @@ pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> 
     }
 }
 
-fn eval_query_inner(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> {
+/// Apply OWL 2 QL plan rewriting when reasoning is on (no-op otherwise).
+fn maybe_reason(mut sel: Select, reason: bool) -> Select {
+    if reason {
+        sel.plan = ql::reason_rewrite(sel.plan);
+    }
+    sel
+}
+
+fn eval_query_inner(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutput, SparqlError> {
     let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
     match parsed {
         Query::Select {
             pattern, dataset, ..
         } => {
-            let (vars, rows) = run_select(rete, &lower_select(&pattern, &dataset)?);
+            let (vars, rows) = run_select(
+                rete,
+                &maybe_reason(lower_select(&pattern, &dataset)?, reason),
+            );
             Ok(QueryOutput::Select(vars, rows))
         }
         Query::Ask { pattern, .. } => {
-            let sel = lower_pattern(&pattern)?;
+            let sel = maybe_reason(lower_pattern(&pattern)?, reason);
             Ok(QueryOutput::Ask(ask_solution(rete, &sel)))
         }
         Query::Construct {
             template, pattern, ..
         } => {
-            let sel = lower_pattern(&pattern)?;
+            let sel = maybe_reason(lower_pattern(&pattern)?, reason);
             let (ctx, sols) = raw_solutions(rete, &sel);
             Ok(QueryOutput::Construct(instantiate(&ctx, &template, &sols)))
         }
@@ -807,7 +831,7 @@ fn eval_query_inner(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError
         } => {
             // The projected variables' values are the resources to describe;
             // we return each one's outgoing triples (concise bounded description).
-            let sel = lower_select(&pattern, &dataset)?;
+            let sel = maybe_reason(lower_select(&pattern, &dataset)?, reason);
             let (ctx, rows) = raw_solutions(rete, &sel);
             let mut resources = std::collections::BTreeSet::new();
             for row in &rows {
@@ -842,7 +866,23 @@ fn eval_query_inner(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError
 /// projection, DISTINCT, OFFSET, and LIMIT. Returns `(projected_vars,
 /// solutions)`.
 pub fn eval_sparql(rete: &Rete, query: &str) -> Result<(Vec<String>, Vec<Binding>), SparqlError> {
-    let sel = parse_select(query)?;
+    eval_sparql_opts(rete, query, false)
+}
+
+/// Like [`eval_sparql`], but with OWL 2 QL entailment on (see [`eval_query_reasoned`]).
+pub fn eval_sparql_reasoned(
+    rete: &Rete,
+    query: &str,
+) -> Result<(Vec<String>, Vec<Binding>), SparqlError> {
+    eval_sparql_opts(rete, query, true)
+}
+
+fn eval_sparql_opts(
+    rete: &Rete,
+    query: &str,
+    reason: bool,
+) -> Result<(Vec<String>, Vec<Binding>), SparqlError> {
+    let sel = maybe_reason(parse_select(query)?, reason);
     let out = run_select(rete, &sel);
     // See `eval_query`: a failed non-SILENT SERVICE call must become an error.
     match rete.take_service_error() {

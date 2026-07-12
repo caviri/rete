@@ -3,8 +3,8 @@
 //! features combine. Complements the per-feature unit tests in `src/sparql.rs`.
 
 use rete_core::{
-    build_pyramid_meta, eval_query, eval_sparql, write_dataset, write_file, DictionaryBuilder,
-    GraphIndexBuilder, QueryOutput, Rete, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, eval_query, eval_sparql, eval_sparql_reasoned, write_dataset, write_file,
+    DictionaryBuilder, GraphIndexBuilder, QueryOutput, Rete, DEFAULT_TILE_BUDGET,
 };
 
 const XSD_INT: &str = "<http://www.w3.org/2001/XMLSchema#integer>";
@@ -253,6 +253,59 @@ fn rdf_star_multiple_annotations_on_one_quoted_triple() {
         "count",
     );
     assert_eq!(counts, vec!["\"3\"".to_string(), "\"5\"".to_string()]);
+}
+
+#[test]
+fn owl_ql_subclass_reasoning() {
+    // OWL 2 QL Stage 1a: `?x a C` is entailed by any `?x a D` with D ⊑* C. With
+    // reasoning ON the query is rewritten to walk `subClassOf*` over the RAW data;
+    // OFF, it is the plain (direct-type-only) query. Sound + complete for subClassOf.
+    let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+    let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+    let mk = |n: &str| format!("<http://ex/{n}>");
+    // Sparrow ⊑ Passerine ⊑ Bird ; Eagle ⊑ Raptor ⊑ Bird ; three typed individuals.
+    let t: Vec<(String, String, String)> = vec![
+        (mk("Sparrow"), sub.to_string(), mk("Passerine")),
+        (mk("Passerine"), sub.to_string(), mk("Bird")),
+        (mk("Eagle"), sub.to_string(), mk("Raptor")),
+        (mk("Raptor"), sub.to_string(), mk("Bird")),
+        (mk("occ1"), ty.to_string(), mk("Sparrow")),
+        (mk("occ2"), ty.to_string(), mk("Eagle")),
+        (mk("occ3"), ty.to_string(), mk("Bird")),
+    ];
+    let refs: Vec<(&str, &str, &str)> = t
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let rete = Rete::open(&build(&refs)).unwrap();
+    let sorted = |sols: Vec<rete_core::Binding>| {
+        let mut v: Vec<String> = sols.iter().filter_map(|b| b.get("x").cloned()).collect();
+        v.sort();
+        v
+    };
+
+    // `?x a :Bird`: plain = the direct instance only; reasoned = subclasses too.
+    let q = format!("{PREFIX}SELECT ?x WHERE {{ ?x a ex:Bird }}");
+    assert_eq!(sorted(eval_sparql(&rete, &q).unwrap().1), vec![mk("occ3")]);
+    assert_eq!(
+        sorted(eval_sparql_reasoned(&rete, &q).unwrap().1),
+        vec![mk("occ1"), mk("occ2"), mk("occ3")]
+    );
+
+    // A mid-level class: `?x a :Passerine` reasons to occ1 (Sparrow ⊑ Passerine).
+    let qp = format!("{PREFIX}SELECT ?x WHERE {{ ?x a ex:Passerine }}");
+    assert!(eval_sparql(&rete, &qp).unwrap().1.is_empty());
+    assert_eq!(
+        sorted(eval_sparql_reasoned(&rete, &qp).unwrap().1),
+        vec![mk("occ1")]
+    );
+
+    // Reasoning also composes with other patterns: a leaf class is unchanged.
+    let ql = format!("{PREFIX}SELECT ?x WHERE {{ ?x a ex:Sparrow }}");
+    assert_eq!(
+        sorted(eval_sparql_reasoned(&rete, &ql).unwrap().1),
+        vec![mk("occ1")]
+    );
 }
 
 #[test]

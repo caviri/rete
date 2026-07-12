@@ -117,7 +117,7 @@ pub(crate) fn query_url(
 /// when the query's scans and probes actually touch them. A selective query
 /// reads O(touched tiles), not the whole index. (Pre-tiling v0.1 files fall
 /// back to fetching the index whole.)
-pub(crate) fn sparql_url(url: &str, query: &str, json: bool) -> anyhow::Result<()> {
+pub(crate) fn sparql_url(url: &str, query: &str, json: bool, entail: bool) -> anyhow::Result<()> {
     // `reader` always counts the PHYSICAL HTTP fetches. A read-through block
     // cache (client-side; works over any single-range backend incl. S3) sits
     // above it, so a query's scattered range reads coalesce into a few aligned
@@ -144,7 +144,12 @@ pub(crate) fn sparql_url(url: &str, query: &str, json: bool) -> anyhow::Result<(
     };
     // SERVICE blocks federate to remote SPARQL endpoints over HTTP.
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
-    let result = eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let eval = if entail {
+        rete_core::eval_query_reasoned
+    } else {
+        eval_query
+    };
+    let result = eval(&rete, query).map_err(|e| anyhow::anyhow!("{e}"))?;
     // Lazy tile fetches surface failures out-of-band: a partial answer must
     // become an error, never quietly fewer rows.
     if rete.index_incomplete() {

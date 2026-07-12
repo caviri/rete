@@ -451,6 +451,11 @@ enum Command {
         /// Emit standard SPARQL Results JSON (SELECT/ASK).
         #[arg(long)]
         json: bool,
+        /// OWL 2 QL entailment: rewrite the query against the ontology so the
+        /// answer includes `rdfs:subClassOf`-entailed solutions, computed over
+        /// the raw data with no materialization (opt-in; off = exact-match).
+        #[arg(long)]
+        entail: bool,
     },
     /// Serve a `.rete` as a live SPARQL 1.1 Protocol endpoint — queries AND
     /// SPARQL Update. The base file is never mutated: updates append to a
@@ -552,6 +557,10 @@ enum Command {
         /// Emit standard SPARQL Results JSON (SELECT/ASK).
         #[arg(long)]
         json: bool,
+        /// OWL 2 QL entailment (see `sparql --entail`): reason over the ontology
+        /// while reading only the bytes the rewritten query touches.
+        #[arg(long)]
+        entail: bool,
     },
     /// Explain a triple-pattern result over a **remote** `.rete` (HTTP range):
     /// which permutation, section, and byte ranges answer it — fetching only the
@@ -749,7 +758,12 @@ fn main() -> anyhow::Result<()> {
             query,
             json,
         } => commands::progressive::progressive(&source, &query, json),
-        Command::Sparql { file, query, json } => commands::query::sparql(&file, &query, json),
+        Command::Sparql {
+            file,
+            query,
+            json,
+            entail,
+        } => commands::query::sparql(&file, &query, json, entail),
         Command::Serve {
             file,
             bind,
@@ -769,7 +783,12 @@ fn main() -> anyhow::Result<()> {
             predicate,
             object,
         } => commands::url::query_url(&url, subject, predicate, object),
-        Command::SparqlUrl { url, query, json } => commands::url::sparql_url(&url, &query, json),
+        Command::SparqlUrl {
+            url,
+            query,
+            json,
+            entail,
+        } => commands::url::sparql_url(&url, &query, json, entail),
         Command::WhyUrl {
             url,
             subject,
