@@ -28,6 +28,10 @@
   .speeds button{background:#12241a;color:#a9cdb6;border:1px solid #244a33;border-radius:7px;
     padding:5px 9px;cursor:pointer;font-size:12px;font-variant-numeric:tabular-nums}
   .speeds button.on{background:#39c46e;color:#06180d;border-color:#39c46e;font-weight:600}
+  .heatlab{display:inline-flex;align-items:center;gap:7px;color:#a9cdb6;font-size:12px}
+  select.sel{background:#12241a;color:#cfe6d6;border:1px solid #244a33;border-radius:8px;padding:5px 8px;font-size:12px;cursor:pointer;max-width:168px}
+  .heatramp{width:66px;height:9px;border-radius:5px;display:inline-block;
+    background:linear-gradient(90deg,rgba(40,110,220,.45),rgba(35,200,140,.7),rgba(235,215,70,.85),rgba(245,130,45,.92),rgba(235,55,40,.96))}
   .legend{display:flex;gap:16px;align-items:center;margin-top:10px;font-size:12px;color:#9cc3aa;flex-wrap:wrap}
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .dot{width:11px;height:11px;border-radius:50%;display:inline-block}
@@ -49,11 +53,13 @@
     <span class="clock"><b id="clock">00:00</b><span class="half" id="half"></span></span>
     <input type="range" id="scrub" min="0" max="1000" value="0"/>
     <div class="speeds" id="speeds"></div>
+    <span class="heatlab">Heatmap <select class="sel" id="heat"><option value="">Off</option></select></span>
   </div>
   <div class="legend">
     <span><i class="dot" style="background:var(--home)"></i> Home</span>
     <span><i class="dot" style="background:var(--away)"></i> Away</span>
     <span><i class="dot" style="background:var(--ball);border:1px solid #333"></i> Ball</span>
+    <span id="heatleg" style="display:none"><i class="heatramp"></i> less&nbsp;→&nbsp;more time</span>
     <span id="objcount"></span>
   </div>
   <p class="foot">
@@ -67,8 +73,11 @@
 <script>
 (function(){
   const DATA = JSON.parse(document.getElementById("data").textContent);
-  const [PL,PW] = DATA.pitch, OBJ = DATA.objects, F = DATA.frames;
+  const [PL,PW] = DATA.pitch, F = DATA.frames;
+  const OBJ = DATA.objects.map(o=>({...o,num:(o.label.match(/#\s*(\d+)/)||[])[1]}));
   const T0 = F[0][0], T1 = F[F.length-1][0], DUR = T1-T0;
+  const order=[]; let ballIdx=-1;
+  OBJ.forEach((o,k)=>{ if(o.ball)ballIdx=k; else order.push(k); }); if(ballIdx>=0) order.push(ballIdx);
   document.getElementById("title").textContent = "2D match replay — " + (OBJ.length) + " tracked objects";
   document.getElementById("sub").textContent = "Metrica Sample Game 2 · " + Math.round(DUR/60) + " min · " + F.length.toLocaleString() + " frames";
   document.getElementById("objcount").textContent = OBJ.length + " objects · " + (F.length).toLocaleString() + " frames";
@@ -102,15 +111,51 @@
     while(lo<hi){ const mid=(lo+hi)>>1; if(F[mid][0]<t) lo=mid+1; else hi=mid; }
     const j=Math.max(1,lo), i=j-1; return [i,j];
   }
+  // ---- heatmap: occupancy density of an object/team over the whole match ----
+  let heatKey=null; const HEAT=new Map();
+  const GW=170, GH=110;
+  const HK=(function(){ const R=5,s=R/2,k=[]; for(let dy=-R;dy<=R;dy++)for(let dx=-R;dx<=R;dx++){
+    const w=Math.exp(-(dx*dx+dy*dy)/(2*s*s)); if(w>0.02)k.push([dx,dy,w]); } return k; })();
+  function objsForKey(key){
+    if(key==="ball") return ballIdx>=0?[ballIdx]:[];
+    if(key==="team:Home"||key==="team:Away"){ const tm=key.slice(5); return order.filter(k=>!OBJ[k].ball&&OBJ[k].team===tm); }
+    if(key.startsWith("obj:")) return [parseInt(key.slice(4),10)];
+    return [];
+  }
+  function heatColor(v){
+    const S=[[0,40,110,220,0],[0.16,40,110,220,110],[0.4,35,200,140,165],[0.62,235,215,70,200],[0.82,245,130,45,225],[1,235,55,40,242]];
+    for(let i=1;i<S.length;i++){ if(v<=S[i][0]){ const a=S[i-1],b=S[i],f=(v-a[0])/((b[0]-a[0])||1);
+      return [a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f,a[3]+(b[3]-a[3])*f,a[4]+(b[4]-a[4])*f]; } }
+    return S[S.length-1].slice(1);
+  }
+  function heatCanvas(key){
+    if(HEAT.has(key)) return HEAT.get(key);
+    const ks=objsForKey(key), acc=new Float32Array(GW*GH);
+    for(let fi=0;fi<F.length;fi++){ const flat=F[fi][1];
+      for(const k of ks){ const x=flat[k*2], y=flat[k*2+1]; if(x==null||y==null) continue;
+        const cx=Math.round((x/10/PL)*GW), cy=Math.round((y/10/PW)*GH);
+        for(const [dx,dy,w] of HK){ const gx=cx+dx, gy=cy+dy;
+          if(gx>=0&&gy>=0&&gx<GW&&gy<GH) acc[gy*GW+gx]+=w; } } }
+    let max=0; for(let i=0;i<acc.length;i++) if(acc[i]>max) max=acc[i];
+    const off=document.createElement("canvas"); off.width=GW; off.height=GH;
+    const octx=off.getContext("2d"), img=octx.createImageData(GW,GH), inv=max>0?1/max:0;
+    for(let i=0;i<acc.length;i++){ let v=acc[i]*inv; if(v<=0) continue; v=Math.pow(v,0.55);
+      const c=heatColor(v), o=i*4; img.data[o]=c[0]; img.data[o+1]=c[1]; img.data[o+2]=c[2]; img.data[o+3]=c[3]; }
+    octx.putImageData(img,0,0); HEAT.set(key,off); return off;
+  }
+  function drawHeat(){
+    if(!heatKey) return; const off=heatCanvas(heatKey);
+    ctx.save(); ctx.beginPath(); ctx.rect(M,M,W-2*M,H-2*M); ctx.clip();
+    ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high"; ctx.globalAlpha=0.9;
+    ctx.drawImage(off,M,M,W-2*M,H-2*M); ctx.restore();
+  }
+
   function draw(t){
     drawPitch();
+    drawHeat();
     const [i,j]=bracket(t); const fa=F[i], fb=F[j];
     const span=(fb[0]-fa[0])||1, a=Math.min(1,Math.max(0,(t-fa[0])/span));
     const pa=fa[1], pb=fb[1];
-    // players first, ball last (on top)
-    const order=[]; let ballIdx=-1;
-    for(let k=0;k<OBJ.length;k++){ if(OBJ[k].ball){ballIdx=k;} else order.push(k); }
-    if(ballIdx>=0) order.push(ballIdx);
     for(const k of order){
       let x=pa[k*2], y=pa[k*2+1];
       const xb=pb[k*2], yb=pb[k*2+1];
@@ -150,6 +195,13 @@
   const speedsEl=document.getElementById("speeds");
   [0.5,1,2,4].forEach(s=>{ const b=document.createElement("button"); b.textContent=s+"×"; if(s===1)b.classList.add("on");
     b.onclick=()=>{ speed=s; [...speedsEl.children].forEach(c=>c.classList.toggle("on",c===b)); }; speedsEl.appendChild(b); });
+  const heatSel=document.getElementById("heat"), heatOpt=(v,t)=>{const o=document.createElement("option");o.value=v;o.textContent=t;return o;};
+  if(ballIdx>=0) heatSel.appendChild(heatOpt("ball","Ball"));
+  heatSel.appendChild(heatOpt("team:Home","Home team (all)")); heatSel.appendChild(heatOpt("team:Away","Away team (all)"));
+  ["Home","Away"].forEach(tm=>{ const g=document.createElement("optgroup"); g.label=tm+" players";
+    order.filter(k=>!OBJ[k].ball&&OBJ[k].team===tm).forEach(k=>g.appendChild(heatOpt("obj:"+k, tm+" #"+(OBJ[k].num||"?"))));
+    heatSel.appendChild(g); });
+  heatSel.onchange=e=>{ heatKey=e.target.value||null; document.getElementById("heatleg").style.display=heatKey?"inline-flex":"none"; if(!playing)draw(t); };
   draw(T0); requestAnimationFrame(tick);
 })();
 </script>
