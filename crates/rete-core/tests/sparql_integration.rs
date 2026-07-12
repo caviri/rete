@@ -138,10 +138,8 @@ fn rdf_star_ingest_header_flag_and_concrete_query() {
     // TRIPLE(s, p, o) constructs a quoted triple in canonical surface.
     let built = col(
         &rete,
-        &format!(
-            "SELECT ?t WHERE {{ <http://ex/occ1> ?p ?o \
-             BIND(TRIPLE(<http://ex/occ1>, ?p, ?o) AS ?t) }}"
-        ),
+        "SELECT ?t WHERE { <http://ex/occ1> ?p ?o \
+         BIND(TRIPLE(<http://ex/occ1>, ?p, ?o) AS ?t) }",
         "t",
     );
     assert_eq!(

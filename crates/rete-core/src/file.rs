@@ -1272,7 +1272,6 @@ pub fn write_dataset_with_metadata(
 /// plus the permutation index and optional sections. The byte output is identical
 /// to serializing the dictionary inline.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_dataset_from_parts(
     dict_container: &[u8],
     term_count: u64,
