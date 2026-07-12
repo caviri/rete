@@ -607,6 +607,55 @@ fn owl_ql_domain_subproperty_composition() {
 }
 
 #[test]
+fn rdf12_base_direction_and_version() {
+    // RDF 1.2: a base-direction language string `"x"@lang--dir` has datatype
+    // rdf:dirLangString and LANG() = the language only. SPARQL 1.2: a leading
+    // VERSION declaration is accepted (and dropped). Both without a crate swap.
+    let dir = "http://www.w3.org/1999/02/22-rdf-syntax-ns#dirLangString";
+    let plain = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
+    let refs: Vec<(&str, &str, &str)> = vec![
+        ("<http://ex/s>", "<http://ex/a>", "\"hello\"@en--ltr"), // directional
+        ("<http://ex/s>", "<http://ex/b>", "\"hi\"@en"),         // plain lang string
+    ];
+    let rete = Rete::open(&build(&refs)).unwrap();
+
+    // LANG strips the base direction: "hello"@en--ltr → "en".
+    assert_eq!(
+        col(
+            &rete,
+            "SELECT ?l WHERE { ex:s ex:a ?x BIND(LANG(?x) AS ?l) }",
+            "l"
+        ),
+        vec!["\"en\""]
+    );
+    // DATATYPE distinguishes directional (dirLangString) from plain (langString).
+    assert_eq!(
+        col(
+            &rete,
+            "SELECT ?d WHERE { ex:s ex:a ?x BIND(DATATYPE(?x) AS ?d) }",
+            "d"
+        ),
+        vec![format!("<{dir}>")]
+    );
+    assert_eq!(
+        col(
+            &rete,
+            "SELECT ?d WHERE { ex:s ex:b ?x BIND(DATATYPE(?x) AS ?d) }",
+            "d"
+        ),
+        vec![format!("<{plain}>")]
+    );
+
+    // A leading SPARQL 1.2 VERSION declaration parses and runs (it is dropped).
+    let (_, sols) = eval_sparql(
+        &rete,
+        "VERSION \"1.2\" PREFIX ex: <http://ex/> SELECT ?x WHERE { ex:s ex:a ?x }",
+    )
+    .unwrap();
+    assert_eq!(sols.len(), 1);
+}
+
+#[test]
 fn property_path_zero_length_semantics() {
     // `*` and `?` include the zero-length path (a node reaches itself); `+` does
     // not. Checked in all three binding directions, since each takes a different

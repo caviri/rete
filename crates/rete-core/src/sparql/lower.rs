@@ -37,9 +37,43 @@ pub(super) fn lower_select(
     Ok(sel)
 }
 
+/// SPARQL 1.2 permits a leading `VERSION "…"` declaration; the pinned parser
+/// (SPARQL 1.1) rejects it. Accept and drop it — there is one query language, so
+/// the version is advisory. Only a declaration at the very start (after leading
+/// whitespace and `#` comments) is removed; `VERSION` anywhere else is untouched.
+/// The result is always a subslice of `query`.
+pub(super) fn strip_version(query: &str) -> &str {
+    let mut rest = query;
+    loop {
+        let t = rest.trim_start();
+        if let Some(after_hash) = t.strip_prefix('#') {
+            match after_hash.split_once('\n') {
+                Some((_, r)) => rest = r, // skip a leading comment line, look again
+                None => return query,     // comment to EOF — no VERSION
+            }
+            continue;
+        }
+        if t.len() >= 7 && t[..7].eq_ignore_ascii_case("VERSION") {
+            let after = t[7..].trim_start();
+            if let Some(q) = after.chars().next().filter(|c| *c == '"' || *c == '\'') {
+                if let Some(close) = after[q.len_utf8()..].find(q) {
+                    return &after[q.len_utf8() + close + q.len_utf8()..];
+                }
+            }
+        }
+        return query; // no leading VERSION declaration
+    }
+}
+
+/// Parse a SPARQL query — the single entry point, so every caller drops a
+/// SPARQL-1.2 `VERSION` declaration and reports a uniform parse error.
+pub(super) fn parse_query(query: &str) -> Result<Query, SparqlError> {
+    Query::parse(strip_version(query), None).map_err(|e| SparqlError::Parse(e.to_string()))
+}
+
 /// Parse a SPARQL `SELECT` query and lower it to a [`Select`].
 pub fn parse_select(query: &str) -> Result<Select, SparqlError> {
-    let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
+    let parsed = parse_query(query)?;
     match parsed {
         Query::Select {
             pattern, dataset, ..
@@ -58,7 +92,7 @@ pub fn parse_select(query: &str) -> Result<Select, SparqlError> {
 /// Returns an empty set when the query pins no concrete predicate (e.g. every
 /// pattern uses a variable predicate) — callers should then query every source.
 pub fn query_predicates(query: &str) -> Result<std::collections::BTreeSet<String>, SparqlError> {
-    let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
+    let parsed = parse_query(query)?;
     let mut preds = std::collections::BTreeSet::new();
     let pattern = match &parsed {
         Query::Select { pattern, .. } => pattern,

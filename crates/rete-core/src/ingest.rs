@@ -230,24 +230,35 @@ pub(crate) fn take_term(s: &str) -> Option<(String, &str)> {
     let bytes = s.as_bytes();
     let first = *bytes.first()?;
     match first {
-        // Quoted triple (RDF-star): `<< subject predicate object >>`, where the
-        // inner terms are themselves terms (so this recurses — nesting works).
-        // `<<` starts with `<`, and an IRI scan would stop at the first inner `>`,
-        // so it must be handled before the plain-IRI case. Re-emitted in the
-        // canonical `<< s p o >>` surface (single spaces) — identical to
-        // oxrdf's `Triple` Display, so N-Triples-star and Turtle-star produce the
-        // same dictionary token and dedupe.
+        // A quoted triple / triple term, in EITHER surface — the inner terms are
+        // themselves terms (so this recurses; nesting works). `<<` starts with `<`
+        // and an IRI scan would stop at the first inner `>`, so it must be handled
+        // before the plain-IRI case.
+        //   * RDF-star:  `<< subject predicate object >>`
+        //   * RDF 1.2:   `<<( subject predicate object )>>`  (triple term)
+        // Both re-emit the SAME canonical token `<<s p o>>`, so a file written in
+        // either surface — and a query written either way — dedupe and match. This
+        // makes RDF 1.2 N-Triples interoperable with the RDF-star we already store,
+        // with no format change and no dependency swap.
         b'<' if bytes.get(1) == Some(&b'<') => {
-            let inner = s[2..].trim_start();
+            // Distinguish `<<(` (RDF 1.2) from `<<` (RDF-star) by the char after `<<`.
+            let (inner, rdf12) = match s[2..].strip_prefix('(') {
+                Some(after) => (after.trim_start(), true),
+                None => (s[2..].trim_start(), false),
+            };
             let (subj, r) = take_term(inner)?;
             let (pred, r) = take_term(r.trim_start())?;
             let (obj, r) = take_term(r.trim_start())?;
-            let rest = r.trim_start().strip_prefix(">>")?;
+            let r = r.trim_start();
+            let rest = if rdf12 {
+                r.strip_prefix(")>>")?
+            } else {
+                r.strip_prefix(">>")?
+            };
             // Canonical surface = oxrdf's `Triple` Display: `<<s p o>>` (tight
-            // brackets, single spaces between components). Matching it exactly is
-            // what makes N-Triples-star and Turtle-star (which round-trips through
-            // oxrdf) produce the SAME dictionary token, so they dedupe and a query
-            // written either way matches either source.
+            // brackets, single spaces between components) — the same token for both
+            // input surfaces, so N-Triples-star, Turtle-star, and RDF 1.2 triple
+            // terms all resolve to one dictionary entry.
             Some((format!("<<{subj} {pred} {obj}>>"), rest))
         }
         b'<' => {
@@ -664,6 +675,28 @@ mod tests {
         assert_eq!(t[0].2, r#""Catalogue of Life""#);
         // a plain lang-tagged object still terminates at whitespace
         assert_eq!(take_term(r#""x"@pt-BR ."#).unwrap().0, r#""x"@pt-BR"#);
+    }
+
+    /// RDF 1.2 triple-term surface `<<( s p o )>>` parses to the SAME canonical
+    /// token as the RDF-star `<< s p o >>`, so the two are interoperable (a query
+    /// written either way matches data ingested either way).
+    #[test]
+    fn rdf12_triple_term_same_token_as_rdf_star() {
+        let rdf12 = r#"<http://ex/r> <http://ex/p> <<( <http://ex/s> <http://ex/q> "o" )>> ."#;
+        let star = r#"<http://ex/r> <http://ex/p> << <http://ex/s> <http://ex/q> "o" >> ."#;
+        let a = parse(rdf12).unwrap();
+        let b = parse(star).unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].2, r#"<<<http://ex/s> <http://ex/q> "o">>"#);
+        assert_eq!(
+            a[0].2, b[0].2,
+            "RDF 1.2 and RDF-star must dedupe to one token"
+        );
+        // take_term consumes exactly the triple term (nothing left dangling).
+        let (tok, rest) =
+            take_term(r#"<<( <http://ex/s> <http://ex/q> <http://ex/o> )>>"#).unwrap();
+        assert_eq!(tok, "<<<http://ex/s> <http://ex/q> <http://ex/o>>>");
+        assert_eq!(rest, "");
     }
 
     #[test]

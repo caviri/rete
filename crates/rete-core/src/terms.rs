@@ -54,6 +54,8 @@ pub type TermToken = str;
 
 const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
 const RDF_LANG_STRING: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
+/// RDF 1.2 base-direction language string: `"…"@lang--dir` (dir = `ltr`/`rtl`).
+const RDF_DIR_LANG_STRING: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#dirLangString";
 
 /// Is `t` an IRI term (`<…>`)?
 #[inline]
@@ -150,7 +152,14 @@ pub fn literal_datatype(token: &TermToken) -> Option<String> {
     if let Some(dt) = suffix.strip_prefix("^^<").and_then(|s| s.strip_suffix('>')) {
         Some(dt.to_string())
     } else if suffix.starts_with('@') {
-        Some(RDF_LANG_STRING.to_string())
+        // RDF 1.2: a language string WITH a base direction (`@lang--dir`) is an
+        // `rdf:dirLangString`; a plain `@lang` is `rdf:langString`. `--` never
+        // occurs in a well-formed BCP-47 tag, so this is unambiguous.
+        if suffix.contains("--") {
+            Some(RDF_DIR_LANG_STRING.to_string())
+        } else {
+            Some(RDF_LANG_STRING.to_string())
+        }
     } else if suffix.is_empty() {
         Some(XSD_STRING.to_string())
     } else {
@@ -159,9 +168,25 @@ pub fn literal_datatype(token: &TermToken) -> Option<String> {
 }
 
 /// The language tag of a literal term (`"hi"@en` → `en`), `""` when the literal
-/// is untagged, or `None` for a non-literal.
+/// is untagged, or `None` for a non-literal. For an RDF 1.2 directional string
+/// (`"x"@ar--rtl`) this is the LANGUAGE only (`ar`) — the base direction is
+/// separate (see [`lang_dir`]), matching SPARQL 1.2 `LANG`.
 pub fn lang_tag(token: &TermToken) -> Option<String> {
-    literal_suffix(token).map(|s| s.strip_prefix('@').unwrap_or("").to_string())
+    literal_suffix(token).map(|s| {
+        s.strip_prefix('@')
+            .unwrap_or("")
+            .split("--")
+            .next()
+            .unwrap_or("")
+            .to_string()
+    })
+}
+
+/// The base direction of an RDF 1.2 directional language string (`"x"@ar--rtl` →
+/// `rtl`), or `None` if the literal has no direction (or is not a literal).
+pub fn lang_dir(token: &TermToken) -> Option<String> {
+    let tag = literal_suffix(token)?.strip_prefix('@')?;
+    tag.split("--").nth(1).map(str::to_string)
 }
 
 /// Numeric value of a term: the lexical part of a literal parsed as `f64`

@@ -133,7 +133,7 @@ fn inverse_pairs(rete: &Rete) -> HashMap<String, Vec<String>> {
 /// is safe (fewer existential rewrites); undercounting would be UNSOUND, so every
 /// position that references a variable is counted.
 fn plan_var_occurrences(plan: &Plan, c: &mut HashMap<String, usize>) {
-    let mut term = |t: &PatternTerm, c: &mut HashMap<String, usize>| {
+    let term = |t: &PatternTerm, c: &mut HashMap<String, usize>| {
         if let PatternTerm::Var(v) = t {
             *c.entry(v.clone()).or_insert(0) += 1;
         }

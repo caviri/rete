@@ -22,7 +22,7 @@ mod path;
 mod ql;
 
 use eval::{ask_solution, instantiate, raw_solutions, run_select, run_select_communities};
-use lower::{lower_pattern, lower_select};
+use lower::{lower_pattern, lower_select, parse_query};
 pub use lower::{parse_select, query_predicates};
 // Re-exported so the sibling modules' `use super::*` can reach the evaluator
 // (expr's FILTER EXISTS evaluates a sub-plan via `eval_plan_in`).
@@ -509,7 +509,7 @@ pub struct RoutedTriplePattern {
 /// change the underlying range access, but named graphs, FROM, joins, filters,
 /// paths, and other algebra need the full SPARQL evaluator.
 pub fn routed_triple_pattern(query: &str) -> Result<Option<RoutedTriplePattern>, SparqlError> {
-    let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
+    let parsed = parse_query(query)?;
     let sel = match parsed {
         Query::Select {
             pattern, dataset, ..
@@ -548,7 +548,7 @@ fn term_const(term: &PatternTerm) -> Option<String> {
 /// index. The only accepted DISTINCT shape is a predicate list over one fully
 /// unbound triple pattern.
 pub fn summary_query_shape(query: &str) -> Result<Option<SummaryQueryShape>, SparqlError> {
-    let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
+    let parsed = parse_query(query)?;
     match parsed {
         Query::Select {
             pattern, dataset, ..
@@ -754,7 +754,7 @@ pub fn eval_select_communities(
     query: &str,
     round: Option<usize>,
 ) -> Result<CommunitySelect, SparqlError> {
-    let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
+    let parsed = parse_query(query)?;
     let out = match parsed {
         Query::Select {
             pattern, dataset, ..
@@ -806,7 +806,7 @@ fn maybe_reason(rete: &Rete, mut sel: Select, reason: bool) -> Select {
 }
 
 fn eval_query_inner(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutput, SparqlError> {
-    let parsed = Query::parse(query, None).map_err(|e| SparqlError::Parse(e.to_string()))?;
+    let parsed = parse_query(query)?;
     match parsed {
         Query::Select {
             pattern, dataset, ..
