@@ -28,6 +28,8 @@ use std::collections::HashSet;
 const RDF_TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
 const SUBCLASS_OF: &str = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
 const SUBPROPERTY_OF: &str = "<http://www.w3.org/2000/01/rdf-schema#subPropertyOf>";
+const RDFS_DOMAIN: &str = "<http://www.w3.org/2000/01/rdf-schema#domain>";
+const RDFS_RANGE: &str = "<http://www.w3.org/2000/01/rdf-schema#range>";
 
 /// The slice of the ontology (TBox) that gates the Stage 1a rewrite: which
 /// classes/properties actually have sub-terms, so we only rewrite atoms that can
@@ -40,6 +42,11 @@ struct QlTbox {
     superclasses: HashSet<String>,
     /// Properties that are the object of a `subPropertyOf` edge (⇒ have ≥1 subproperty).
     superprops: HashSet<String>,
+    /// The graph declares at least one `rdfs:domain` axiom (enables the domain
+    /// branch of a class-atom rewrite; the branch self-filters on the actual class).
+    has_domain: bool,
+    /// The graph declares at least one `rdfs:range` axiom.
+    has_range: bool,
 }
 
 impl QlTbox {
@@ -47,10 +54,20 @@ impl QlTbox {
         QlTbox {
             superclasses: objects_of(rete, SUBCLASS_OF),
             superprops: objects_of(rete, SUBPROPERTY_OF),
+            has_domain: has_predicate(rete, RDFS_DOMAIN),
+            has_range: has_predicate(rete, RDFS_RANGE),
         }
     }
     fn is_empty(&self) -> bool {
-        self.superclasses.is_empty() && self.superprops.is_empty()
+        self.superclasses.is_empty()
+            && self.superprops.is_empty()
+            && !self.has_domain
+            && !self.has_range
+    }
+    /// Does a concrete class atom `?x a C` need rewriting? (has subclasses, or
+    /// there are domain/range axioms that could infer the type from a property.)
+    fn class_rewritable(&self, c: &str) -> bool {
+        self.superclasses.contains(c) || self.has_domain || self.has_range
     }
 }
 
@@ -62,6 +79,12 @@ fn objects_of(rete: &Rete, pred: &str) -> HashSet<String> {
         Ok((_, sols)) => sols.iter().filter_map(|b| b.get("o").cloned()).collect(),
         Err(_) => HashSet::new(),
     }
+}
+
+/// Whether the graph has any triple with predicate `pred` (a one-row probe).
+fn has_predicate(rete: &Rete, pred: &str) -> bool {
+    let q = format!("SELECT ?s WHERE {{ ?s {pred} ?o }} LIMIT 1");
+    matches!(super::eval_sparql(rete, &q), Ok((_, s)) if !s.is_empty())
 }
 
 /// Rewrite a lowered plan for OWL 2 QL entailment (Stage 1a). Entry point.
@@ -126,46 +149,142 @@ fn star_path(subject: PatternTerm, pred: &str, target: PatternTerm) -> Plan {
     )
 }
 
-/// Rewrite one BGP. A class atom `?x a C` where C has subclasses becomes
-/// `?x a ?cN` (residual) joined with `?cN subClassOf* C`; a role atom `?x P ?y`
-/// where P has subproperties becomes `?x ?pN ?y` (residual) joined with
-/// `?pN subPropertyOf* P`. Every other atom stays in the residual BGP untouched;
-/// a BGP with nothing to rewrite is returned unchanged (the hot path).
+/// A fresh, query-unique variable name for a rewrite-introduced binding.
+fn fresh(counter: &mut usize, tag: &str) -> String {
+    *counter += 1;
+    format!("__ql{tag}{}", counter)
+}
+
+fn single(tp: TriplePattern) -> Plan {
+    Plan::Bgp(vec![tp])
+}
+fn join(a: Plan, b: Plan) -> Plan {
+    Plan::Join(Box::new(a), Box::new(b))
+}
+fn union(a: Plan, b: Plan) -> Plan {
+    Plan::Union(Box::new(a), Box::new(b))
+}
+fn atom(s: PatternTerm, p: &str, o: PatternTerm) -> TriplePattern {
+    TriplePattern {
+        s,
+        p: PatternTerm::Const(p.to_string()),
+        o,
+    }
+}
+
+/// The plan for a single class atom `subject a C` under QL: a UNION of the
+/// **typing** branch (subject typed to C or a subclass) and — when the graph has
+/// them — the **domain** and **range** branches (subject inferred to be a C
+/// because it is the subject/object of a property whose domain/range is `⊑* C`).
+fn class_atom_plan(subject: PatternTerm, class: &str, tbox: &QlTbox, counter: &mut usize) -> Plan {
+    // Typing: `subject a ?c . ?c subClassOf* C` (reflexive → direct type too).
+    // If C has no subclasses, the plain atom is exactly equivalent and cheaper.
+    let typing = if tbox.superclasses.contains(class) {
+        let c = fresh(counter, "c");
+        join(
+            single(atom(subject.clone(), RDF_TYPE, PatternTerm::Var(c.clone()))),
+            star_path(
+                PatternTerm::Var(c),
+                SUBCLASS_OF,
+                PatternTerm::Const(class.to_string()),
+            ),
+        )
+    } else {
+        single(atom(
+            subject.clone(),
+            RDF_TYPE,
+            PatternTerm::Const(class.to_string()),
+        ))
+    };
+    let mut plan = typing;
+    // Domain: `?p rdfs:domain ?dc . ?dc subClassOf* C . subject ?p ?_` — a
+    // property whose domain is `⊑* C` makes each of its subjects a C.
+    if tbox.has_domain {
+        let (p, dc, anon) = (
+            fresh(counter, "dp"),
+            fresh(counter, "dc"),
+            fresh(counter, "da"),
+        );
+        let branch = join(
+            join(
+                single(atom(
+                    PatternTerm::Var(p.clone()),
+                    RDFS_DOMAIN,
+                    PatternTerm::Var(dc.clone()),
+                )),
+                star_path(
+                    PatternTerm::Var(dc),
+                    SUBCLASS_OF,
+                    PatternTerm::Const(class.to_string()),
+                ),
+            ),
+            single(TriplePattern {
+                s: subject.clone(),
+                p: PatternTerm::Var(p),
+                o: PatternTerm::Var(anon),
+            }),
+        );
+        plan = union(plan, branch);
+    }
+    // Range: `?p rdfs:range ?rc . ?rc subClassOf* C . ?_ ?p subject` — a property
+    // whose range is `⊑* C` makes each of its objects a C.
+    if tbox.has_range {
+        let (p, rc, anon) = (
+            fresh(counter, "rp"),
+            fresh(counter, "rc"),
+            fresh(counter, "ra"),
+        );
+        let branch = join(
+            join(
+                single(atom(
+                    PatternTerm::Var(p.clone()),
+                    RDFS_RANGE,
+                    PatternTerm::Var(rc.clone()),
+                )),
+                star_path(
+                    PatternTerm::Var(rc),
+                    SUBCLASS_OF,
+                    PatternTerm::Const(class.to_string()),
+                ),
+            ),
+            single(TriplePattern {
+                s: PatternTerm::Var(anon),
+                p: PatternTerm::Var(p),
+                o: subject.clone(),
+            }),
+        );
+        plan = union(plan, branch);
+    }
+    plan
+}
+
+/// Rewrite one BGP. Each concrete class atom `?x a C` (needing reasoning) becomes
+/// a class-atom UNION plan; each role atom `?x P ?y` whose P has subproperties
+/// becomes `?x ?pN ?y` joined with `?pN subPropertyOf* P`. Every other atom stays
+/// in the residual BGP; a BGP with nothing to rewrite is returned unchanged.
 fn rewrite_bgp(patterns: Vec<TriplePattern>, tbox: &QlTbox, counter: &mut usize) -> Plan {
     let rewritable = |tp: &TriplePattern| {
-        type_atom_class(tp).is_some_and(|c| tbox.superclasses.contains(c))
+        type_atom_class(tp).is_some_and(|c| tbox.class_rewritable(c))
             || role_atom_pred(tp).is_some_and(|p| tbox.superprops.contains(p))
     };
     if !patterns.iter().any(rewritable) {
         return Plan::Bgp(patterns);
     }
     let mut residual: Vec<TriplePattern> = Vec::new();
-    let mut paths: Vec<Plan> = Vec::new();
+    let mut extra: Vec<Plan> = Vec::new();
     for tp in patterns {
-        if type_atom_class(&tp).is_some_and(|c| tbox.superclasses.contains(c)) {
+        if type_atom_class(&tp).is_some_and(|c| tbox.class_rewritable(c)) {
             let class = type_atom_class(&tp).unwrap().to_string();
-            *counter += 1;
-            let cvar = format!("__qlc{}", counter);
-            residual.push(TriplePattern {
-                s: tp.s,
-                p: PatternTerm::Const(RDF_TYPE.to_string()),
-                o: PatternTerm::Var(cvar.clone()),
-            });
-            paths.push(star_path(
-                PatternTerm::Var(cvar),
-                SUBCLASS_OF,
-                PatternTerm::Const(class),
-            ));
+            extra.push(class_atom_plan(tp.s, &class, tbox, counter));
         } else if role_atom_pred(&tp).is_some_and(|p| tbox.superprops.contains(p)) {
             let pred = role_atom_pred(&tp).unwrap().to_string();
-            *counter += 1;
-            let pvar = format!("__qlp{}", counter);
+            let pvar = fresh(counter, "p");
             residual.push(TriplePattern {
                 s: tp.s,
                 p: PatternTerm::Var(pvar.clone()),
                 o: tp.o,
             });
-            paths.push(star_path(
+            extra.push(star_path(
                 PatternTerm::Var(pvar),
                 SUBPROPERTY_OF,
                 PatternTerm::Const(pred),
@@ -174,9 +293,17 @@ fn rewrite_bgp(patterns: Vec<TriplePattern>, tbox: &QlTbox, counter: &mut usize)
             residual.push(tp);
         }
     }
-    let mut plan = Plan::Bgp(residual);
-    for p in paths {
-        plan = Plan::Join(Box::new(plan), Box::new(p));
+    // Conjoin the residual BGP with each extra plan. If every atom was rewritten,
+    // start from the first extra plan (avoid an empty-BGP left operand).
+    let mut plan;
+    let mut iter = extra.into_iter();
+    if residual.is_empty() {
+        plan = iter.next().expect("rewritable ⇒ at least one extra plan");
+    } else {
+        plan = Plan::Bgp(residual);
+    }
+    for p in iter {
+        plan = join(plan, p);
     }
     plan
 }

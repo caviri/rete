@@ -360,6 +360,58 @@ fn owl_ql_subproperty_reasoning() {
 }
 
 #[test]
+fn owl_ql_domain_range_reasoning() {
+    // OWL 2 QL Stage 1b: a subject of a property whose DOMAIN is `⊑* C` is a C;
+    // an object of a property whose RANGE is `⊑* C` is a C. Rewritten to patterns
+    // over the raw data (no materialization). Composes with subClassOf.
+    let dom = "<http://www.w3.org/2000/01/rdf-schema#domain>";
+    let rng = "<http://www.w3.org/2000/01/rdf-schema#range>";
+    let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+    let mk = |n: &str| format!("<http://ex/{n}>");
+    let t: Vec<(String, String, String)> = vec![
+        (mk("worksAt"), dom.to_string(), mk("Employee")),
+        (mk("hasCapital"), rng.to_string(), mk("City")),
+        (mk("Employee"), sub.to_string(), mk("Person")), // Employee ⊑ Person
+        (mk("alice"), mk("worksAt"), mk("acme")),
+        (mk("france"), mk("hasCapital"), mk("paris")),
+    ];
+    let refs: Vec<(&str, &str, &str)> = t
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let rete = Rete::open(&build(&refs)).unwrap();
+    let xs = |sols: Vec<rete_core::Binding>| {
+        let mut v: Vec<String> = sols.iter().filter_map(|b| b.get("x").cloned()).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+
+    // Domain: alice worksAt acme ⇒ alice a :Employee (nothing asserts it directly).
+    let qe = format!("{PREFIX}SELECT ?x WHERE {{ ?x a ex:Employee }}");
+    assert!(eval_sparql(&rete, &qe).unwrap().1.is_empty());
+    assert_eq!(
+        xs(eval_sparql_reasoned(&rete, &qe).unwrap().1),
+        vec![mk("alice")]
+    );
+
+    // Range: france hasCapital paris ⇒ paris a :City.
+    let qc = format!("{PREFIX}SELECT ?x WHERE {{ ?x a ex:City }}");
+    assert!(eval_sparql(&rete, &qc).unwrap().1.is_empty());
+    assert_eq!(
+        xs(eval_sparql_reasoned(&rete, &qc).unwrap().1),
+        vec![mk("paris")]
+    );
+
+    // Composition: alice is an Employee (domain) and Employee ⊑ Person ⇒ Person.
+    let qp = format!("{PREFIX}SELECT ?x WHERE {{ ?x a ex:Person }}");
+    assert_eq!(
+        xs(eval_sparql_reasoned(&rete, &qp).unwrap().1),
+        vec![mk("alice")]
+    );
+}
+
+#[test]
 fn property_path_zero_length_semantics() {
     // `*` and `?` include the zero-length path (a node reaches itself); `+` does
     // not. Checked in all three binding directions, since each takes a different
