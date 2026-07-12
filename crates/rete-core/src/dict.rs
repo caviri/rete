@@ -246,6 +246,12 @@ pub struct SectionChunk {
     first_term: Vec<u8>,
     body_start: usize,
     data: OnceLock<Vec<u8>>,
+    /// This chunk's per-run byte offsets, **relative to its own decompressed
+    /// body** — the chunk-local stand-in for the section-wide restart table.
+    /// Derived by scanning the body once on first lookup and cached, so a
+    /// remote open never materializes the section's millions of restart
+    /// offsets (a 50 M-term section's table is ~24 MiB — an iOS-Safari OOM).
+    runs: OnceLock<Vec<usize>>,
 }
 
 impl SectionChunk {
@@ -256,6 +262,7 @@ impl SectionChunk {
             first_term,
             body_start,
             data: OnceLock::new(),
+            runs: OnceLock::new(),
         }
     }
 
@@ -273,8 +280,38 @@ impl SectionChunk {
             first_term,
             body_start,
             data: cell,
+            runs: OnceLock::new(),
         }
     }
+
+    /// The byte offset (into `data`) of each run in this chunk, computed once by
+    /// scanning the decompressed body and cached. `data` must be this chunk's
+    /// body. Offset 0 is the chunk's first run (chunks are run-aligned); every
+    /// `restart_interval` terms starts the next run.
+    fn run_offsets(&self, data: &[u8], restart_interval: usize) -> &[usize] {
+        self.runs
+            .get_or_init(|| chunk_run_offsets(data, restart_interval))
+    }
+}
+
+/// Scan a chunk's decompressed body for the byte offset of each run start (see
+/// [`SectionChunk::run_offsets`]). O(terms-in-chunk), run once per faulted chunk.
+fn chunk_run_offsets(data: &[u8], restart_interval: usize) -> Vec<usize> {
+    let mut offs = vec![0usize];
+    let mut pos = 0usize;
+    let mut buf = Vec::new();
+    let mut count = 0usize;
+    while pos < data.len() {
+        let Some(next) = entry_into(data, pos, &mut buf) else {
+            break;
+        };
+        count += 1;
+        pos = next;
+        if pos < data.len() && count % restart_interval == 0 {
+            offs.push(pos);
+        }
+    }
+    offs
 }
 
 /// The first (full) term of the run starting at `off`, as raw bytes. `None`
@@ -315,6 +352,7 @@ impl ChunkedSection {
                 first_term: Vec::new(),
                 body_start: 0,
                 data,
+                runs: OnceLock::new(),
             }],
             loader: None,
             bulk: None,
@@ -422,21 +460,51 @@ impl ChunkedSection {
         self.chunk_of_run(run)
     }
 
+    /// The byte offset (into chunk `ci`'s decompressed body `bytes`) of `run`.
+    /// Full/local sections use the section-wide restart table (unchanged
+    /// behavior); a *lite* remote section (empty `restart_offsets`) derives it
+    /// from the chunk itself, so the open never holds the whole table.
+    fn run_off_in_chunk(&self, ci: usize, run: usize, bytes: &[u8], ri: usize) -> Option<usize> {
+        let chunk = &self.chunks[ci];
+        if self.meta.restart_offsets.is_empty() {
+            chunk
+                .run_offsets(bytes, ri)
+                .get(run.checked_sub(chunk.first_run)?)
+                .copied()
+        } else {
+            self.meta
+                .restart_offsets
+                .get(run)?
+                .checked_sub(chunk.body_start)
+        }
+    }
+
+    /// One past the last run index held by chunk `ci` (its run range is
+    /// `[first_run, run_end)`).
+    fn run_end_of_chunk(&self, ci: usize, bytes: &[u8], ri: usize) -> usize {
+        if let Some(next) = self.chunks.get(ci + 1) {
+            return next.first_run;
+        }
+        let chunk = &self.chunks[ci];
+        if self.meta.restart_offsets.is_empty() {
+            chunk.first_run + chunk.run_offsets(bytes, ri).len()
+        } else {
+            self.meta.restart_offsets.len()
+        }
+    }
+
     /// Resolve `id` (1-based) to its term. One chunk fault at most.
     pub fn term(&self, id: u32) -> Option<String> {
         if id == ABSENT || id > self.meta.term_count {
             return None;
         }
         let idx = (id - 1) as usize;
-        let run = idx / self.meta.restart_interval as usize;
-        let steps = idx % self.meta.restart_interval as usize;
+        let ri = self.meta.restart_interval as usize;
+        let run = idx / ri;
+        let steps = idx % ri;
         let ci = self.chunk_of_run(run)?;
         let bytes = self.chunk_data(ci);
-        let off = self
-            .meta
-            .restart_offsets
-            .get(run)?
-            .checked_sub(self.chunks[ci].body_start)?;
+        let off = self.run_off_in_chunk(ci, run, bytes, ri)?;
         let mut buf = Vec::new();
         let mut pos = run_entry_into(bytes, off, &mut buf)?;
         for _ in 0..steps {
@@ -451,6 +519,7 @@ impl ChunkedSection {
         if self.chunks.is_empty() {
             return None;
         }
+        let ri = self.meta.restart_interval as usize;
         // Pick the chunk: the last one whose first term is <= `term` (the
         // single local chunk skips the search — its `first_term` is unset).
         let ci = if self.chunks.len() == 1 {
@@ -461,22 +530,17 @@ impl ChunkedSection {
                 .partition_point(|c| c.first_term.as_slice() <= term.as_bytes());
             i.checked_sub(1)?
         };
-        let chunk = &self.chunks[ci];
+        let first_run = self.chunks[ci].first_run;
         let bytes = self.chunk_data(ci);
-        let base = chunk.body_start;
 
         // Binary search this chunk's runs by their first (full) term.
-        let run_end = self
-            .chunks
-            .get(ci + 1)
-            .map(|c| c.first_run)
-            .unwrap_or(self.meta.restart_offsets.len());
+        let run_end = self.run_end_of_chunk(ci, bytes, ri);
         let mut buf = Vec::new();
-        let mut lo = chunk.first_run;
+        let mut lo = first_run;
         let mut hi = run_end;
         while lo < hi {
             let mid = (lo + hi) / 2;
-            let off = self.meta.restart_offsets.get(mid)?.checked_sub(base)?;
+            let off = self.run_off_in_chunk(ci, mid, bytes, ri)?;
             run_entry_into(bytes, off, &mut buf)?;
             if buf.as_slice() <= term.as_bytes() {
                 lo = mid + 1;
@@ -484,13 +548,13 @@ impl ChunkedSection {
                 hi = mid;
             }
         }
-        if lo == chunk.first_run {
+        if lo == first_run {
             return None; // smaller than every term in (and before) this chunk
         }
         let run = lo - 1;
-        let off = self.meta.restart_offsets.get(run)?.checked_sub(base)?;
+        let off = self.run_off_in_chunk(ci, run, bytes, ri)?;
         let mut pos = run_entry_into(bytes, off, &mut buf)?;
-        let base_id = (run * self.meta.restart_interval as usize) as u32 + 1;
+        let base_id = (run * ri) as u32 + 1;
         // saturating_sub: corrupt metadata must not underflow-panic.
         let run_len = self.meta.restart_interval.min(
             self.meta

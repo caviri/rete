@@ -5,11 +5,10 @@
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
     eval_query_reasoned, eval_select_communities, eval_sparql, project_graph, schema_classes,
-    schema_summary,
-    summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader, ByteRange,
-    CountingReader, DataGraph, Header, QueryOutput, RangeReader, Rete, ReteGraph, ShaclShapes,
-    SliceReader, SummaryQueryShape, SummaryView, TripleProvenance, ValidationReport, DEFAULT_BLOCK,
-    DEFAULT_TILE_BUDGET,
+    schema_summary, summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader,
+    ByteRange, CountingReader, DataGraph, Header, QueryOutput, RangeReader, Rete, ReteGraph,
+    ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TripleProvenance, ValidationReport,
+    DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
 };
 use wasm_bindgen::prelude::*;
 

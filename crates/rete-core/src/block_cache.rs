@@ -48,12 +48,17 @@ pub const DEFAULT_CACHE_CAP: u64 = 256 * 1024 * 1024;
 /// known for free from the opening `HEAD` / `Content-Range`.
 pub fn auto_block(len: u64) -> u64 {
     const MB: u64 = 1 << 20;
+    // The reader coalesces byte-adjacent missing blocks into one request, so a
+    // large block buys little on a contiguous read — it only over-fetches the
+    // *scattered* faults that dominate a selective query (a dictionary chunk is
+    // 64 KiB; a 512 KiB block dragged in 8× the bytes). Keep the block near the
+    // chunk size; nearby-but-not-adjacent faults still merge when they share a
+    // block, and the bigger tier for huge files trades a little over-fetch for
+    // fewer round trips on the biggest scans.
     let mult: u64 = if len > 100 * MB {
-        8 // 512 KiB
-    } else if len > 10 * MB {
-        4 // 256 KiB
-    } else {
         2 // 128 KiB
+    } else {
+        1 // 64 KiB
     };
     mult * DEFAULT_BLOCK
 }

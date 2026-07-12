@@ -713,20 +713,124 @@ fn parse_chunked_dict_dir(
 /// Fetch and parse a remote chunked dict section's header + directory: read a
 /// small prefix and grow it geometrically until it parses, never fetching past
 /// the section.
+/// Read a chunked dictionary section's directory over a range reader WITHOUT
+/// materializing the section-wide restart table. That table is one offset per
+/// restart run — a 50 M-term section has ~3 M of them (~24 MiB resident), and
+/// holding it is an iOS-Safari OOM on a big remote file. We read only the tiny
+/// header prefix (term_count / interval) and the chunk directory, skipping the
+/// restart-table bytes entirely; per-run offsets are derived per chunk on fault
+/// (`SectionChunk::run_offsets`). The returned meta has an empty
+/// `restart_offsets`, which the chunked lookups read as "derive per chunk".
 fn read_dict_dir_ranged<R: RangeReader>(
     reader: &R,
     section: ByteRange,
 ) -> Result<(crate::dict::SectionMeta, Vec<DictChunkEntry>), FileError> {
     let total = section.len as usize;
-    let mut prefetch = 4096.min(total);
+    // Initial prefix: the header prefix ([header_len][term_count][interval]) and,
+    // for a *small* section, the whole chunk directory too — so those still cost
+    // a single read. A big section has a huge restart table between the header
+    // and the directory; we detect that (dir_start past the prefix) and range-
+    // read only the directory below, never fetching the table.
+    let init = 8192.min(total); // never over-read past the section (a tiny/empty
+                                // section holds only its header + a stub directory)
+    let head = reader.read_at(section.offset, init as u64)?;
+    let (header_len, n0) =
+        read_uvarint(&head).ok_or(FileError::Container("truncated dict header len"))?;
+    let hbase = n0; // first byte of the header body
+    let (term_count, n1) = read_uvarint(head.get(hbase..).unwrap_or(&[]))
+        .ok_or(FileError::Container("truncated dict term_count"))?;
+    let (restart_interval, _n2) = read_uvarint(head.get(hbase + n1..).unwrap_or(&[]))
+        .ok_or(FileError::Container("truncated dict interval"))?;
+    if restart_interval == 0 {
+        return Err(FileError::Container("zero restart interval"));
+    }
+    // The chunk directory begins right after the header body — i.e. past the
+    // `header_len` bytes, which include the restart table we never materialize.
+    let dir_start = hbase
+        .checked_add(header_len as usize)
+        .filter(|&d| d <= total)
+        .ok_or(FileError::Container("dict header overruns section"))?;
+    let dir_total = total - dir_start;
+    let meta = crate::dict::SectionMeta {
+        term_count: term_count as u32,
+        restart_interval: restart_interval as u32,
+        restart_offsets: Vec::new(),
+    };
+    let finish = |mut entries: Vec<DictChunkEntry>| {
+        for e in &mut entries {
+            e.start += dir_start; // dir-relative → section-relative
+            e.end += dir_start;
+        }
+        (meta.clone(), entries)
+    };
+    // Fast path: the directory already sits in the prefix we read (small section
+    // — its restart table is tiny, so the ~few KiB over-read is negligible).
+    if dir_start < head.len() {
+        if let Ok(entries) = parse_chunk_dir_only(&head[dir_start..], dir_total) {
+            return Ok(finish(entries));
+        }
+    }
+    // Big section: range-read the directory on its own, skipping the table.
+    let mut prefetch = 4096.min(dir_total).max(1);
     loop {
-        let prefix = reader.read_at(section.offset, prefetch as u64)?;
-        match parse_chunked_dict_dir(&prefix, total) {
-            Ok(parsed) => return Ok(parsed),
-            Err(_) if prefetch < total => prefetch = prefetch.saturating_mul(2).min(total),
+        let dir = reader.read_at(section.offset + dir_start as u64, prefetch as u64)?;
+        match parse_chunk_dir_only(&dir, dir_total) {
+            Ok(entries) => return Ok(finish(entries)),
+            Err(_) if prefetch < dir_total => prefetch = prefetch.saturating_mul(2).min(dir_total),
             Err(e) => return Err(e),
         }
     }
+}
+
+/// Parse just the chunk directory (the bytes after a section header):
+/// `[num_chunks][per chunk: Δfirst_run, first_term_len, first_term, comp_len]`.
+/// Chunk byte ranges (`start`/`end`) come back relative to the directory's own
+/// start; `body_start` is 0 (a lite section never uses it — lookups derive run
+/// offsets per chunk). Bodies aren't needed here, so `dir` may end at the first
+/// body as long as it covers the whole directory.
+fn parse_chunk_dir_only(dir: &[u8], dir_total: usize) -> Result<Vec<DictChunkEntry>, FileError> {
+    let mut pos = 0usize;
+    let take = |pos: &mut usize| -> Result<u64, FileError> {
+        let (v, n) = read_uvarint(dir.get(*pos..).unwrap_or(&[]))
+            .ok_or(FileError::Container("truncated dict chunk directory"))?;
+        *pos += n;
+        Ok(v)
+    };
+    let num_chunks = take(&mut pos)? as usize;
+    let mut entries = Vec::with_capacity(num_chunks.min(dir.len()));
+    let mut lens = Vec::with_capacity(num_chunks.min(dir.len()));
+    let mut prev_run = 0usize;
+    for _ in 0..num_chunks {
+        let drun = take(&mut pos)? as usize;
+        let tlen = take(&mut pos)? as usize;
+        let term = dir
+            .get(pos..pos.saturating_add(tlen))
+            .ok_or(FileError::Container("truncated dict chunk first term"))?
+            .to_vec();
+        pos += tlen;
+        let clen = take(&mut pos)? as usize;
+        let first_run = prev_run + drun;
+        entries.push(DictChunkEntry {
+            first_run,
+            first_term: term,
+            body_start: 0,
+            start: 0,
+            end: 0,
+        });
+        lens.push(clen);
+        prev_run = first_run;
+    }
+    let mut start = pos;
+    for (e, len) in entries.iter_mut().zip(lens) {
+        let end = start
+            .checked_add(len)
+            .filter(|&e| e <= dir_total)
+            .ok_or(FileError::Container("dict chunk overruns section"))?;
+        e.start = start;
+        e.end = end;
+        start = end;
+    }
+    Ok(entries)
 }
 
 /// Decode one chunked dictionary section payload into a resident
