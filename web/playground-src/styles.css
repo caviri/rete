@@ -1190,6 +1190,38 @@ textarea {
 .rcard .cf-v .media-meta { max-width: 100%; }
 .rcard .cf-v model-viewer { width: 100%; }
 .cards-more { display: block; margin: 4px auto 0; }
+/* A card is tappable — it opens the focus modal — but its own links/media keep
+   their normal cursor and clicks. */
+.rcard { cursor: pointer; }
+.rcard a, .rcard button, .rcard model-viewer, .rcard audio, .rcard video,
+.rcard .iiif-frame, .rcard select { cursor: auto; }
+/* Focused single card: a big, swipeable one-card view with prev/next. */
+#cardFocusModal .modal-card.cardfocus-card {
+  width: min(560px, 100%); max-height: 92vh;
+  display: flex; flex-direction: column; padding: 12px 14px 14px;
+}
+.cardfocus-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.cardfocus-body {
+  /* also carries .rcard, so it inherits the card look — flatten it for the
+     full-size view and let it scroll on its own. */
+  display: block; cursor: auto; flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  border: 0; box-shadow: none; margin: 0; padding: 2px 2px 4px;
+  -webkit-user-select: text; user-select: text; touch-action: pan-y;
+}
+.cardfocus-body .cf-v .cell-thumb { max-height: min(64vh, 560px); object-fit: contain; }
+.cardfocus-body .cf:first-child .cf-v.lit { font-size: 17px; }
+.cardfocus-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.cardfocus-nav .secondary { min-width: 88px; flex: 0 0 auto; }
+.cardfocus-nav .secondary[disabled] { opacity: .4; pointer-events: none; }
+.cardfocus-hint { flex: 1 1 auto; text-align: center; }
+@keyframes cfSlideL { from { transform: translateX(22px); opacity: .35; } to { transform: none; opacity: 1; } }
+@keyframes cfSlideR { from { transform: translateX(-22px); opacity: .35; } to { transform: none; opacity: 1; } }
+.cardfocus-body.cf-slide-l { animation: cfSlideL .18s ease; }
+.cardfocus-body.cf-slide-r { animation: cfSlideR .18s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .cardfocus-body.cf-slide-l, .cardfocus-body.cf-slide-r { animation: none; }
+}
 /* Phone sticky Run bar — hidden everywhere; the ≤560px block shows it when
    app.js flags it `.on` (Run button off-screen, SPARQL mode). */
 .mrb { display: none; }

@@ -4605,22 +4605,29 @@ self.onmessage = function (e) {
       ? h.replace('<div class="', '<div class="cf-v ')
       : h.replace(/^<div/, '<div class="cf-v"');
   }
+  // One card's field list. Shared by the cards grid and the focused, swipeable
+  // single-card modal. `eager` forces this card's media to load now (grid cards
+  // past the fold stay lazy; the focus modal always loads its media).
+  function cardFieldsHtml(st, row, eager) {
+    mediaEager = eager;
+    geoRowCtx = row; // so a geo field in this card can resolve its feature IRI
+    const fields = st.vars.map((v) => {
+      const raw = row[v];
+      if (raw == null || raw === "") return ""; // cards skip empty bindings
+      return `<div class="cf"><div class="cf-k" title="?${esc(v)}">${esc(colLabel(st, v))}</div>${cellDiv(raw, st.types[v] || "auto")}</div>`;
+    }).join("");
+    geoRowCtx = null;
+    mediaEager = false;
+    return fields || `<div class="cf"><div class="cf-v">(empty row)</div></div>`;
+  }
   function cardsInner(st) {
     const shown = st.rows.slice(0, st.cap);
-    const cardHtmls = shown.map((row, i) => {
-      // Visible cards (before the "show more" fold) load their media eagerly so
-      // every card on screen actually shows its photo; hidden ones stay lazy.
-      mediaEager = i < CARDS_HEAD;
-      geoRowCtx = row; // so a geo field in this card can resolve its feature IRI
-      const fields = st.vars.map((v) => {
-        const raw = row[v];
-        if (raw == null || raw === "") return ""; // cards skip empty bindings
-        return `<div class="cf"><div class="cf-k" title="?${esc(v)}">${esc(colLabel(st, v))}</div>${cellDiv(raw, st.types[v] || "auto")}</div>`;
-      }).join("");
-      geoRowCtx = null;
-      mediaEager = false;
-      return `<article class="rcard">${fields || `<div class="cf"><div class="cf-v">(empty row)</div></div>`}</article>`;
-    });
+    // Visible cards (before the "show more" fold) load their media eagerly so
+    // every card on screen actually shows its photo; hidden ones stay lazy.
+    // data-ci is the row index — tapping a card opens it in the focus modal.
+    const cardHtmls = shown.map((row, i) =>
+      `<article class="rcard" data-ci="${i}">${cardFieldsHtml(st, row, i < CARDS_HEAD)}</article>`
+    );
     const hidden = Math.max(0, cardHtmls.length - CARDS_HEAD);
     const body = cardHtmls
       .map((c, i) => (i < CARDS_HEAD ? c : c.replace("<article class=\"rcard", "<article class=\"rcard rcard-hidden")))
@@ -4670,6 +4677,53 @@ self.onmessage = function (e) {
       `<label class="cfm-row"><span class="cfm-name" title="?${esc(v)}">${esc(colLabel(st, v))}</span>` +
       `${colTypeMenu(tid, v, st.types[v])}</label>`).join("");
     $("cardsFieldsModal").classList.remove("hidden");
+  }
+
+  // Tap a card to open it full-screen, then swipe (or use ‹ ›, ← →) through the
+  // whole result set like a photo stack. The focused card renders the same
+  // fields as the grid, with its media loaded eagerly.
+  let cardFocus = null; // { tid, i } while open, null when closed
+  function openCardFocus(tid, i) {
+    const st = tableStates.get(tid);
+    if (!st || !st.rows.length) return;
+    cardFocus = { tid, i };
+    renderCardFocus(0);
+    $("cardFocusModal").classList.remove("hidden");
+    document.body.classList.add("cardfocus-open");
+  }
+  function renderCardFocus(dir) {
+    if (!cardFocus) return;
+    const st = tableStates.get(cardFocus.tid);
+    if (!st || !st.rows.length) return closeCardFocus();
+    const n = st.rows.length;
+    cardFocus.i = Math.max(0, Math.min(cardFocus.i, n - 1));
+    const body = $("cardFocusBody");
+    body.innerHTML = cardFieldsHtml(st, st.rows[cardFocus.i], true);
+    // Hydrate media (IIIF thumbnails, inline 3D, audio/video meta) in the
+    // freshly-injected card — the same steps the results MutationObserver runs.
+    hydrateIiif(body); hydrateModel3d(body); hydrateMediaMeta(body);
+    $("cardFocusCount").textContent = `${cardFocus.i + 1} / ${n}`;
+    $("cardFocusPrev").disabled = cardFocus.i === 0;
+    $("cardFocusNext").disabled = cardFocus.i === n - 1;
+    if (dir) { // brief slide cue in the swipe direction
+      body.classList.remove("cf-slide-l", "cf-slide-r");
+      void body.offsetWidth; // reflow so the animation restarts
+      body.classList.add(dir < 0 ? "cf-slide-r" : "cf-slide-l");
+    }
+  }
+  function stepCardFocus(d) {
+    if (!cardFocus) return;
+    const st = tableStates.get(cardFocus.tid);
+    if (!st) return;
+    const ni = Math.max(0, Math.min(cardFocus.i + d, st.rows.length - 1));
+    if (ni === cardFocus.i) return; // already at an end
+    cardFocus.i = ni;
+    renderCardFocus(d);
+  }
+  function closeCardFocus() {
+    $("cardFocusModal").classList.add("hidden");
+    document.body.classList.remove("cardfocus-open");
+    cardFocus = null;
   }
 
   function renderTriplesTable(triples) {
@@ -7378,8 +7432,19 @@ self.onmessage = function (e) {
           const r = $("run").getBoundingClientRect();
           return r.bottom <= 0 || r.top >= window.innerHeight;
         };
+        // The bar is unwanted while browsing a tall result — it covers the very
+        // images you're scrolling through. So mirror the mobile-browser toolbar:
+        // while the Run button is off-screen, only SHOW the bar when the user
+        // scrolls UP (heading back to edit/re-run) and HIDE it on scroll-down.
+        let mrbLastY = window.scrollY;
         mrbUpdate = () => {
-          const on = mq.matches && state.mode === "sparql" && runOffScreen();
+          const eligible = mq.matches && state.mode === "sparql" && runOffScreen();
+          const y = window.scrollY, dy = y - mrbLastY;
+          mrbLastY = y;
+          let on = mrb.classList.contains("on");
+          if (!eligible) on = false;          // Run in view (or wrong mode) → gone
+          else if (dy > 4) on = false;        // scrolling down through results → hide
+          else if (dy < -4) on = true;        // scrolling back up → reveal
           mrb.classList.toggle("on", on);
           mrb.setAttribute("aria-hidden", on ? "false" : "true");
           document.body.classList.toggle("mrb-open", on);
@@ -7724,11 +7789,46 @@ self.onmessage = function (e) {
         return;
       }
       const fields = e.target.closest && e.target.closest(".cards-fields");
-      if (fields) openCardsFields(fields.dataset.tid);
+      if (fields) { openCardsFields(fields.dataset.tid); return; }
+      // Tap a card — but not a link, media, or control inside it — to open it
+      // in the focus modal (swipeable single-card view).
+      const card = e.target.closest && e.target.closest(".rcard");
+      if (card && card.dataset.ci != null &&
+          !(e.target.closest && e.target.closest("a, button, input, select, label, model-viewer, audio, video, .iiif-frame, .coltype"))) {
+        const wrap = card.closest(".cards");
+        if (wrap) openCardFocus(wrap.dataset.tid, +card.dataset.ci);
+      }
     });
     $("cardsFieldsClose").onclick = () => $("cardsFieldsModal").classList.add("hidden");
     $("cardsFieldsModal").addEventListener("click", (e) => {
       if (e.target === $("cardsFieldsModal")) $("cardsFieldsModal").classList.add("hidden");
+    });
+    // Focus-card modal: prev/next, swipe, keyboard, and backdrop/✕ close.
+    $("cardFocusPrev").onclick = () => stepCardFocus(-1);
+    $("cardFocusNext").onclick = () => stepCardFocus(1);
+    $("cardFocusClose").onclick = closeCardFocus;
+    $("cardFocusModal").addEventListener("click", (e) => {
+      if (e.target === $("cardFocusModal")) closeCardFocus();
+    });
+    { // swipe left → next card, swipe right → previous (Tinder-style)
+      let x0 = null, y0 = null;
+      const body = $("cardFocusBody");
+      body.addEventListener("touchstart", (e) => {
+        x0 = e.changedTouches[0].clientX; y0 = e.changedTouches[0].clientY;
+      }, { passive: true });
+      body.addEventListener("touchend", (e) => {
+        if (x0 == null) return;
+        const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+        x0 = null;
+        // Horizontal, decisive swipe only — don't fight vertical scrolling.
+        if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.4) stepCardFocus(dx < 0 ? 1 : -1);
+      }, { passive: true });
+    }
+    document.addEventListener("keydown", (e) => {
+      if (!cardFocus) return;
+      if (e.key === "Escape") closeCardFocus();
+      else if (e.key === "ArrowLeft") stepCardFocus(-1);
+      else if (e.key === "ArrowRight") stepCardFocus(1);
     });
     $("clearHist").onclick = () => {
       localStorage.removeItem(HIST_KEY);
