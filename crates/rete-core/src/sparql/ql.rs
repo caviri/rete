@@ -355,65 +355,85 @@ fn class_atom_plan(subject: PatternTerm, class: &str, tbox: &QlTbox, counter: &m
         ))
     };
     let mut plan = typing;
-    // Domain: `?p rdfs:domain ?dc . ?dc subClassOf* C . subject ?p ?_` — a
-    // property whose domain is `⊑* C` makes each of its subjects a C.
+    // Domain: a property whose domain is `⊑* C` makes each of its subjects a C.
     if tbox.has_domain {
-        let (p, dc, anon) = (
-            fresh(counter, "dp"),
-            fresh(counter, "dc"),
-            fresh(counter, "da"),
-        );
-        let branch = join(
-            join(
-                single(atom(
-                    PatternTerm::Var(p.clone()),
-                    RDFS_DOMAIN,
-                    PatternTerm::Var(dc.clone()),
-                )),
-                star_path(
-                    PatternTerm::Var(dc),
-                    SUBCLASS_OF,
-                    PatternTerm::Const(class.to_string()),
-                ),
-            ),
-            single(TriplePattern {
-                s: subject.clone(),
-                p: PatternTerm::Var(p),
-                o: PatternTerm::Var(anon),
-            }),
-        );
-        plan = union(plan, branch);
+        plan = union(plan, dr_branch(subject.clone(), true, class, tbox, counter));
     }
-    // Range: `?p rdfs:range ?rc . ?rc subClassOf* C . ?_ ?p subject` — a property
-    // whose range is `⊑* C` makes each of its objects a C.
+    // Range: a property whose range is `⊑* C` makes each of its objects a C.
     if tbox.has_range {
-        let (p, rc, anon) = (
-            fresh(counter, "rp"),
-            fresh(counter, "rc"),
-            fresh(counter, "ra"),
+        plan = union(
+            plan,
+            dr_branch(subject.clone(), false, class, tbox, counter),
         );
-        let branch = join(
-            join(
-                single(atom(
-                    PatternTerm::Var(p.clone()),
-                    RDFS_RANGE,
-                    PatternTerm::Var(rc.clone()),
-                )),
-                star_path(
-                    PatternTerm::Var(rc),
-                    SUBCLASS_OF,
-                    PatternTerm::Const(class.to_string()),
-                ),
-            ),
-            single(TriplePattern {
-                s: PatternTerm::Var(anon),
-                p: PatternTerm::Var(p),
-                o: subject.clone(),
-            }),
-        );
-        plan = union(plan, branch);
     }
     plan
+}
+
+/// The domain (`is_domain`) or range branch of a class atom `subject a C`:
+/// `?pd rdfs:domain|range ?dc . ?dc subClassOf* C` and `subject` uses a property
+/// that is `subPropertyOf* ?pd` (in subject/object position respectively). When
+/// the graph has subproperties the used property walks `subPropertyOf*` (so a
+/// subproperty of a domain/range-declared property also infers the type); with
+/// none it is `?pd` directly.
+fn dr_branch(
+    subject: PatternTerm,
+    is_domain: bool,
+    class: &str,
+    tbox: &QlTbox,
+    counter: &mut usize,
+) -> Plan {
+    let (pd, dc, anon) = (
+        fresh(counter, "drp"),
+        fresh(counter, "drc"),
+        fresh(counter, "dra"),
+    );
+    let dr_pred = if is_domain { RDFS_DOMAIN } else { RDFS_RANGE };
+    // `?pd <domain|range> ?dc . ?dc subClassOf* C`
+    let restr = join(
+        single(atom(
+            PatternTerm::Var(pd.clone()),
+            dr_pred,
+            PatternTerm::Var(dc.clone()),
+        )),
+        star_path(
+            PatternTerm::Var(dc),
+            SUBCLASS_OF,
+            PatternTerm::Const(class.to_string()),
+        ),
+    );
+    // The property `subject` actually uses — `?pd`, or (composing) a subproperty
+    // `?q` with `?q subPropertyOf* ?pd`.
+    let (used, compose) = if tbox.superprops.is_empty() {
+        (pd.clone(), None)
+    } else {
+        let q = fresh(counter, "drq");
+        (
+            q.clone(),
+            Some(star_path(
+                PatternTerm::Var(q),
+                SUBPROPERTY_OF,
+                PatternTerm::Var(pd.clone()),
+            )),
+        )
+    };
+    let use_pat = if is_domain {
+        single(TriplePattern {
+            s: subject,
+            p: PatternTerm::Var(used),
+            o: PatternTerm::Var(anon),
+        })
+    } else {
+        single(TriplePattern {
+            s: PatternTerm::Var(anon),
+            p: PatternTerm::Var(used),
+            o: subject,
+        })
+    };
+    let mut branch = join(restr, use_pat);
+    if let Some(e) = compose {
+        branch = join(branch, e);
+    }
+    branch
 }
 
 /// One directional branch matching `s pred o`, expanded over `subPropertyOf*`
@@ -501,16 +521,28 @@ fn role_atom_plan(
             plan = union(plan, branch);
         }
     }
-    if tbox.has_restrictions && object_is_existential(&o, exq) {
-        plan = union(plan, existential_branch(s, pred, counter));
+    if tbox.has_restrictions && is_existential(&o, exq) {
+        // Forward existential `A ⊑ ∃P`: the OBJECT is existential, so `s` is
+        // entailed to have a P-successor when it is (transitively) such an A.
+        plan = union(plan, existential_branch(s.clone(), pred, counter));
+    }
+    if tbox.has_restrictions && is_existential(&s, exq) {
+        // Inverse existential `A ⊑ ∃P⁻`: the SUBJECT is existential, so `o` is
+        // entailed to be a P-object when it is an A restricted on P's inverse Q
+        // (∃Q ≡ ∃P⁻). Uses each NAMED inverse of P.
+        if let Some(invs) = tbox.inverses.get(pred) {
+            for q in invs {
+                plan = union(plan, existential_branch(o.clone(), q, counter));
+            }
+        }
     }
     plan
 }
 
-/// `true` iff `o` is a variable that the query uses purely existentially (so an
-/// anonymous `∃P` successor is an admissible answer).
-fn object_is_existential(o: &PatternTerm, exq: &HashSet<String>) -> bool {
-    matches!(o, PatternTerm::Var(v) if exq.contains(v))
+/// `true` iff `t` is a variable that the query uses purely existentially (occurs
+/// once, not returned), so an anonymous `∃` successor is an admissible answer.
+fn is_existential(t: &PatternTerm, exq: &HashSet<String>) -> bool {
+    matches!(t, PatternTerm::Var(v) if exq.contains(v))
 }
 
 /// Rewrite one BGP. Each concrete class atom `?x a C` (needing reasoning) becomes
@@ -523,11 +555,15 @@ fn rewrite_bgp(
     exq: &HashSet<String>,
     counter: &mut usize,
 ) -> Plan {
-    // A role atom needs rewriting if P has subproperties/inverses, OR its object
-    // is purely existential and the graph has `∃P` restrictions.
+    // A role atom needs rewriting if P has subproperties/inverses, OR (with `∃`
+    // restrictions in the graph) its object is existential (forward `∃P`), or its
+    // subject is existential and P has an inverse (inverse `∃P⁻`).
     let role_needs = |tp: &TriplePattern| {
         role_atom_pred(tp).is_some_and(|p| {
-            tbox.role_rewritable(p) || (tbox.has_restrictions && object_is_existential(&tp.o, exq))
+            tbox.role_rewritable(p)
+                || (tbox.has_restrictions
+                    && (is_existential(&tp.o, exq)
+                        || (is_existential(&tp.s, exq) && tbox.inverses.contains_key(p))))
         })
     };
     let rewritable = |tp: &TriplePattern| {

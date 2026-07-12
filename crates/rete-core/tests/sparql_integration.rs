@@ -523,6 +523,90 @@ fn owl_ql_existential_reasoning() {
 }
 
 #[test]
+fn owl_ql_inverse_existential_reasoning() {
+    // OWL 2 QL: inverse existential `A ⊑ ∃P⁻`. With `hasChild owl:inverseOf
+    // hasParent` and `Parent ⊑ ∃hasChild`, a Parent is (anonymously) someone's
+    // parent, so `?y hasParent ?x` (subject `?y` existential) returns Parents.
+    let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+    let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+    let inv = "<http://www.w3.org/2002/07/owl#inverseOf>";
+    let onp = "<http://www.w3.org/2002/07/owl#onProperty>";
+    let svf = "<http://www.w3.org/2002/07/owl#someValuesFrom>";
+    let mk = |n: &str| format!("<http://ex/{n}>");
+    let t: Vec<(String, String, String)> = vec![
+        (mk("hasChild"), inv.to_string(), mk("hasParent")),
+        (mk("Parent"), sub.to_string(), mk("R")),
+        (mk("R"), onp.to_string(), mk("hasChild")),
+        (mk("R"), svf.to_string(), mk("Person")),
+        (mk("alice"), ty.to_string(), mk("Parent")),
+        (mk("bob"), mk("hasParent"), mk("carol")), // a ground hasParent
+    ];
+    let refs: Vec<(&str, &str, &str)> = t
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let rete = Rete::open(&build(&refs)).unwrap();
+    let xs = |sols: Vec<rete_core::Binding>| {
+        let mut v: Vec<String> = sols.iter().filter_map(|b| b.get("x").cloned()).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+
+    // `?y hasParent ?x` with `?y` existential: plain = the ground object; reasoned
+    // = alice too (Parent ⊑ ∃hasChild ≡ ∃hasParent⁻).
+    let q = format!("{PREFIX}SELECT ?x WHERE {{ ?y ex:hasParent ?x }}");
+    assert_eq!(xs(eval_sparql(&rete, &q).unwrap().1), vec![mk("carol")]);
+    assert_eq!(
+        xs(eval_sparql_reasoned(&rete, &q).unwrap().1),
+        vec![mk("alice"), mk("carol")]
+    );
+
+    // SOUNDNESS — `?y` projected: the anonymous child can't be returned.
+    let qp = format!("{PREFIX}SELECT ?x ?y WHERE {{ ?y ex:hasParent ?x }}");
+    assert_eq!(
+        xs(eval_sparql_reasoned(&rete, &qp).unwrap().1),
+        vec![mk("carol")]
+    );
+}
+
+#[test]
+fn owl_ql_domain_subproperty_composition() {
+    // OWL 2 QL: domain composes with subPropertyOf. `hasSalary rdfs:domain
+    // Employee` and `hasBonus ⊑ hasSalary`, so a subject of hasBonus (a
+    // subproperty) is also an Employee.
+    let dom = "<http://www.w3.org/2000/01/rdf-schema#domain>";
+    let subp = "<http://www.w3.org/2000/01/rdf-schema#subPropertyOf>";
+    let mk = |n: &str| format!("<http://ex/{n}>");
+    let t: Vec<(String, String, String)> = vec![
+        (mk("hasSalary"), dom.to_string(), mk("Employee")),
+        (mk("hasBonus"), subp.to_string(), mk("hasSalary")),
+        (mk("alice"), mk("hasBonus"), mk("v1000")),
+        (mk("bob"), mk("hasSalary"), mk("v2000")),
+    ];
+    let refs: Vec<(&str, &str, &str)> = t
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let rete = Rete::open(&build(&refs)).unwrap();
+    let xs = |sols: Vec<rete_core::Binding>| {
+        let mut v: Vec<String> = sols.iter().filter_map(|b| b.get("x").cloned()).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+
+    // `?x a :Employee`: reasoned finds bob (direct hasSalary) AND alice, whose
+    // hasBonus is a subproperty of the domain-declared hasSalary.
+    let q = format!("{PREFIX}SELECT ?x WHERE {{ ?x a ex:Employee }}");
+    assert!(eval_sparql(&rete, &q).unwrap().1.is_empty());
+    assert_eq!(
+        xs(eval_sparql_reasoned(&rete, &q).unwrap().1),
+        vec![mk("alice"), mk("bob")]
+    );
+}
+
+#[test]
 fn property_path_zero_length_semantics() {
     // `*` and `?` include the zero-length path (a node reaches itself); `+` does
     // not. Checked in all three binding directions, since each takes a different
