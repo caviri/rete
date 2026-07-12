@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>rete · World Cup 2022 final</title>
+<meta name="description" content="Argentina 3–3 France, the 2022 World Cup final, replayed from real StatsBomb positional freeze-frames — every player's place at every moment of the match."/>
+<style>
+  :root{
+    --bg:#0a0e12; --panel:#121820; --ink:#eef2f6; --mut:#8fa0b0; --faint:#63788a;
+    --grass:#276b3f; --line:rgba(255,255,255,.72); --edge:#233040;
+    --arg:#6ca6e8; --fra:#e0554e; --gold:#f4c95d; --ball:#ffffff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:radial-gradient(1200px 600px at 50% -12%,#132033,#0a0e12 62%);
+    color:var(--ink);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  a{color:var(--gold);text-decoration:none} a:hover{text-decoration:underline}
+  .wrap{max-width:1080px;margin:0 auto;padding:20px 16px 44px}
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  .brand{font-weight:800;letter-spacing:.5px;font-size:15px}
+  .brand b{color:var(--gold)}
+  h1{font-size:15px;font-weight:600;margin:0;color:var(--mut)}
+  .nav{margin-left:auto;display:flex;gap:14px;font-size:12.5px}
+  .nav a{color:var(--mut)}
+  .card{background:linear-gradient(180deg,#121820,#0e141b);border:1px solid var(--edge);border-radius:14px;
+    padding:14px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+  /* scoreboard */
+  .score{display:flex;align-items:center;justify-content:center;gap:16px;margin:2px 0 12px;font-variant-numeric:tabular-nums}
+  .score .tm{font-weight:700;font-size:16px} .score .arg{color:var(--arg)} .score .fra{color:var(--fra)}
+  .score .n{font-size:30px;font-weight:800;min-width:26px;text-align:center}
+  .score .dash{color:var(--faint)}
+  .score .stage{font-size:11px;color:var(--faint);border:1px solid var(--edge);border-radius:999px;padding:3px 10px;margin-left:6px}
+  .stage-wrap{position:relative;border-radius:11px;overflow:hidden}
+  canvas{display:block;width:100%;height:auto;background:var(--grass)}
+  .cap{position:absolute;left:0;right:0;bottom:0;padding:8px 12px;font-size:12.5px;color:#eaf2ea;
+    background:linear-gradient(0deg,rgba(4,8,6,.78),rgba(4,8,6,0));display:flex;gap:10px;align-items:baseline}
+  .cap .tc{font-variant-numeric:tabular-nums;color:var(--gold);font-weight:700}
+  .cap .ev{color:#cfe0d4} .cap b.arg{color:var(--arg)} .cap b.fra{color:var(--fra)}
+  .loading{position:absolute;inset:0;display:grid;place-items:center;background:rgba(6,10,8,.78);color:var(--mut);
+    font-size:13px;gap:12px;text-align:center;padding:20px;z-index:5}
+  .spin{width:34px;height:34px;border-radius:50%;border:3px solid #233040;border-top-color:var(--gold);animation:s 1s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .track{position:relative;height:16px;margin:14px 4px 2px}
+  .gtick{position:absolute;top:1px;width:3px;height:13px;border-radius:1px;cursor:pointer}
+  .ctrls{display:flex;align-items:center;gap:14px;margin-top:6px;flex-wrap:wrap}
+  button.play{width:48px;height:48px;border-radius:50%;border:0;cursor:pointer;flex:0 0 auto;
+    background:var(--gold);color:#1a1206;font-size:18px;display:grid;place-items:center;transition:transform .1s}
+  button.play:active{transform:scale(.93)} button.play:disabled{opacity:.4;cursor:default}
+  .clock{font-variant-numeric:tabular-nums;font-size:15px;min-width:112px;color:#dbe6ef}
+  .clock b{color:#fff} .clock .per{color:var(--mut);font-size:12px;margin-left:6px}
+  input[type=range]{flex:1;min-width:150px;accent-color:var(--gold);height:5px}
+  .speeds{display:flex;gap:4px}
+  .speeds button{background:#182230;color:#b9c9d8;border:1px solid var(--edge);border-radius:8px;
+    padding:6px 10px;cursor:pointer;font-size:12px;font-variant-numeric:tabular-nums}
+  .speeds button.on{background:var(--gold);color:#1a1206;border-color:var(--gold);font-weight:700}
+  .goals{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+  .goals .g{font-size:11.5px;border:1px solid var(--edge);border-radius:8px;padding:4px 8px;cursor:pointer;
+    color:#cdd8e2;background:#131b24;font-variant-numeric:tabular-nums}
+  .goals .g:hover{border-color:var(--gold)}
+  .goals .g.arg{box-shadow:inset 3px 0 0 var(--arg)} .goals .g.fra{box-shadow:inset 3px 0 0 var(--fra)}
+  .legend{display:flex;gap:16px;align-items:center;margin-top:12px;font-size:12px;color:var(--mut);flex-wrap:wrap}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .foot{margin-top:16px;color:var(--faint);font-size:11.5px;line-height:1.65;max-width:76ch}
+  .foot code{background:#182230;padding:1px 5px;border-radius:4px;color:#b9c9d8}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="brand"><b>rete</b> · World Cup 2022 final</span>
+    <h1 id="h1">real positions, every moment of the match</h1>
+    <nav class="nav">
+      <a href="playground.html#dataset=worldcup">Query WC ↗</a>
+      <a href="pitch.html">Match replay</a>
+      <a href="index.html">Docs</a>
+    </nav>
+  </header>
+
+  <div class="card">
+    <div class="score">
+      <span class="tm arg" id="homeName">Argentina</span>
+      <span class="n arg" id="homeScore">0</span>
+      <span class="dash">–</span>
+      <span class="n fra" id="awayScore">0</span>
+      <span class="tm fra" id="awayName">France</span>
+      <span class="stage" id="stage">World Cup 2022 · Final</span>
+    </div>
+    <div class="stage-wrap">
+      <canvas id="c" width="1080" height="720"></canvas>
+      <div class="cap" id="cap"></div>
+      <div class="loading" id="load"><div class="spin"></div><div id="loadtxt">Fetching the final from R2…</div></div>
+    </div>
+    <div class="track" id="track"></div>
+    <div class="ctrls">
+      <button class="play" id="play" disabled aria-label="Play/pause">▶</button>
+      <span class="clock"><b id="clock">0:00</b><span class="per" id="per"></span></span>
+      <input type="range" id="scrub" min="0" max="1000" value="0" disabled/>
+      <div class="speeds" id="speeds"></div>
+    </div>
+    <div class="goals" id="goals"></div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--arg)"></i> Argentina</span>
+      <span><i class="dot" style="background:var(--fra)"></i> France</span>
+      <span><i class="dot" style="background:var(--ball);border:1px solid #333"></i> Ball</span>
+      <span><i class="dot" style="background:transparent;border:2px solid var(--gold)"></i> On the ball</span>
+      <span><i class="dot" style="background:transparent;border:2px solid #fff"></i> Keeper</span>
+    </div>
+  </div>
+
+  <p class="foot">
+    Each moment is a <b>StatsBomb 360 freeze-frame</b>: the real on-pitch position of every visible player at the
+    instant of an event (a pass, a shot…), on a 120×80&nbsp;m pitch. There's no continuous ball track and no shirt
+    numbers in this open data, so it's a sequence of true <b>snapshots</b> stepped on the match clock — not smooth
+    tracking. The dot ringed in gold is the player on the ball; the ball sits at the event. Data:
+    <a href="https://github.com/statsbomb/open-data">StatsBomb Open Data</a> (free, with attribution) — the actual
+    Argentina&nbsp;3–3&nbsp;France final, 18&nbsp;Dec&nbsp;2022. For continuous movement see the
+    <a href="pitch.html">Metrica match replay</a>; for the tournament as a graph, the
+    <a href="playground.html#dataset=worldcup">World Cup dataset</a>.
+  </p>
+</div>
+
+<script>
+(function(){
+  const DATA_URL = new URLSearchParams(location.search).get("data")
+     || "https://data.graphplaza.com/wcfinal/wcfinal.json";
+  const el=id=>document.getElementById(id);
+  const cv=el("c"), ctx=cv.getContext("2d"); const W=cv.width, H=cv.height, M=36;
+  let PL=120, PW=80, F=[], G=[], COL={A:"#6ca6e8",F:"#e0554e"}, T0=0, T1=0, DUR=0, ready=false;
+  let t=0, playing=false, speed=1, last=0;
+  const PER={1:"1st half",2:"2nd half",3:"extra time",4:"extra time",5:"penalties"};
+
+  const sx=x=>M+(x/PL)*(W-2*M), sy=y=>M+(y/PW)*(H-2*M);
+  function drawPitch(){
+    ctx.fillStyle="#276b3f"; ctx.fillRect(0,0,W,H);
+    const n=14, sw=(W-2*M)/n; for(let i=0;i<n;i++){ if(i%2){ctx.fillStyle="rgba(255,255,255,.03)"; ctx.fillRect(M+i*sw,M,sw,H-2*M);} }
+    ctx.strokeStyle="rgba(255,255,255,.72)"; ctx.lineWidth=2; ctx.strokeRect(M,M,W-2*M,H-2*M);
+    ctx.beginPath(); ctx.moveTo(W/2,M); ctx.lineTo(W/2,H-M); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W/2,H/2,(9.15/PL)*(W-2*M),0,7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W/2,H/2,3,0,7); ctx.fillStyle="rgba(255,255,255,.72)"; ctx.fill();
+    const pAw=(16.5/PL)*(W-2*M), pAh=(40.3/PW)*(H-2*M), gAw=(5.5/PL)*(W-2*M), gAh=(18.3/PW)*(H-2*M);
+    [[M,1],[W-M,-1]].forEach(([ex,d])=>{ ctx.strokeRect(ex,(H-pAh)/2,pAw*d,pAh); ctx.strokeRect(ex,(H-gAh)/2,gAw*d,gAh); });
+  }
+  function frameAt(tt){ let lo=0,hi=F.length-1,ans=0; while(lo<=hi){const m=(lo+hi)>>1; if(F[m].t<=tt){ans=m;lo=m+1;} else hi=m-1;} return F[ans]; }
+
+  function draw(tt){
+    drawPitch();
+    const fr=frameAt(tt); if(!fr) return;
+    for(const p of fr.pl){
+      const px=sx(p[0]), py=sy(p[1]), flags=p[3];
+      ctx.beginPath(); ctx.arc(px,py,8.5,0,7); ctx.fillStyle=COL[p[2]]; ctx.fill();
+      ctx.lineWidth=1.5; ctx.strokeStyle=(flags&2)?"#fff":"rgba(0,0,0,.35)"; ctx.stroke();  // keeper = white ring
+      if(flags&1){ ctx.beginPath(); ctx.arc(px,py,12.5,0,7); ctx.lineWidth=2.4; ctx.strokeStyle="#f4c95d"; ctx.stroke(); }  // on the ball
+    }
+    const bx=sx(fr.b[0]), by=sy(fr.b[1]);
+    ctx.beginPath(); ctx.arc(bx,by,5,0,7); ctx.fillStyle="#fff"; ctx.fill(); ctx.lineWidth=1.5; ctx.strokeStyle="#111"; ctx.stroke();
+    // caption + scoreboard
+    const tcol = fr.tm==="A" ? "arg":"fra";
+    el("cap").innerHTML='<span class="tc">'+clk(fr.t)+'</span><span class="ev"><b class="'+tol(tcol)+'">'+fr.by+'</b> · '+fr.ty+'</span>';
+    let ah=0,af=0; for(const g of G){ if(g.period<=4 && g.t<=tt){ if(g.team==="A")ah++; else af++; } }
+    el("homeScore").textContent=ah; el("awayScore").textContent=af;
+    for(const d of el("track").children) d.style.opacity = (d._t<=tt)?1:.45;
+  }
+  function tol(c){ return c; }
+  function clk(sec){ return Math.floor(sec/60)+":"+String(Math.floor(sec%60)).padStart(2,"0"); }
+  function perOf(tt){ const fr=frameAt(tt); return fr?PER[fr.p]:""; }
+
+  function setPlay(){ el("play").textContent=playing?"⏸":"▶"; }
+  function tick(ts){
+    if(ready){
+      if(playing){ if(last){ t+=(ts-last)/1000*speed; if(t>=T1){t=T1;playing=false;setPlay();} } last=ts; } else last=ts;
+      draw(t); el("clock").textContent=clk(t); el("per").textContent=perOf(t);
+      el("scrub").value=Math.round((t-T0)/DUR*1000);
+    }
+    requestAnimationFrame(tick);
+  }
+  el("play").onclick=()=>{ if(!ready)return; if(t>=T1)t=T0; playing=!playing; last=0; setPlay(); };
+  el("scrub").oninput=()=>{ t=T0+(el("scrub").value/1000)*DUR; if(!playing)draw(t); };
+  const sp=el("speeds"); [1,2,4,8].forEach(s=>{ const b=document.createElement("button"); b.textContent=s+"×"; if(s===2)b.classList.add("on");
+    b.onclick=()=>{ speed=s; [...sp.children].forEach(c=>c.classList.toggle("on",c===b)); }; sp.appendChild(b); });
+  function seek(sec){ t=Math.max(T0,Math.min(T1,sec)); playing=false; setPlay(); draw(t); el("scrub").value=Math.round((t-T0)/DUR*1000); el("clock").textContent=clk(t); el("per").textContent=perOf(t); }
+
+  fetch(DATA_URL).then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(d=>{
+    [PL,PW]=d.match.pitch; F=d.frames; G=d.goals||[]; COL=d.colors||COL;
+    T0=F[0].t; T1=F[F.length-1].t; DUR=(T1-T0)||1; t=T0; speed=2;
+    el("homeName").textContent=d.match.home; el("awayName").textContent=d.match.away;
+    el("stage").textContent=d.match.competition+" · "+d.match.venue;
+    el("h1").textContent=d.match.result;
+    // goal ticks + jump buttons
+    const tr=el("track"), gl=el("goals");
+    for(const g of G){
+      const tk=document.createElement("div"); tk.className="gtick"; tk._t=g.t;
+      tk.style.left=((g.t-T0)/DUR*100)+"%"; tk.style.background=COL[g.team];
+      tk.title=g.min+"' "+g.player; tk.onclick=()=>seek(g.t); tr.appendChild(tk);
+      if(g.period<=4){ const b=document.createElement("div"); b.className="g "+(g.team==="A"?"arg":"fra");
+        b.textContent=g.min+"' "+g.player+(g.pen?" (pen)":""); b.onclick=()=>seek(g.t); gl.appendChild(b); }
+    }
+    el("load").style.display="none"; el("play").disabled=false; el("scrub").disabled=false; ready=true; draw(T0);
+  }).catch(e=>{ el("loadtxt").textContent="Couldn't load the final ("+e.message+")."; el("load").querySelector(".spin").style.display="none"; });
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
