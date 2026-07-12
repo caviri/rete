@@ -28,6 +28,9 @@
   .metabar{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:0 2px 12px;color:var(--mut);font-size:12.5px}
   .metabar .t{color:var(--ink);font-weight:600;font-size:14px}
   .metabar .pill{border:1px solid var(--edge);border-radius:999px;padding:3px 10px;color:var(--faint);font-size:11px}
+  select.matchsel{background:#12241a;color:var(--ink);font-weight:600;font-size:14px;border:1px solid var(--edge);
+    border-radius:9px;padding:5px 9px;cursor:pointer;max-width:340px}
+  select.matchsel:disabled{opacity:.5}
   .stage{position:relative;border-radius:11px;overflow:hidden}
   canvas{display:block;width:100%;height:auto;background:var(--grass)}
   .loading{position:absolute;inset:0;display:grid;place-items:center;background:rgba(8,16,11,.72);color:var(--mut);
@@ -72,7 +75,7 @@
 
   <div class="card">
     <div class="metabar">
-      <span class="t" id="mtitle">Loading…</span>
+      <select class="matchsel" id="matchsel" disabled title="Choose a match"><option>Loading…</option></select>
       <span id="msub"></span>
       <span class="pill" id="mpill">tracking.rete</span>
     </div>
@@ -103,14 +106,14 @@
     in the playground</a>). This page fetches the positions from R2 and interpolates between frames to animate.
     The <b>heatmap</b> layer is just an aggregation of that graph — every <code>tr:x</code>/<code>tr:y</code> for a
     player, team, or the ball, binned over the whole match into an occupancy density.
-    The finest grain of “over time”, from an open sample match (Metrica Sports, anonymised).
+    The finest grain of “over time”, from open sample matches (Metrica Sports, anonymised) — pick one above.
   </p>
 </div>
 
 <script>
 (function(){
-  const DATA_URL = new URLSearchParams(location.search).get("data")
-     || "https://data.graphplaza.com/tracking/positions.json";
+  const Q = new URLSearchParams(location.search);
+  const MANIFEST_URL = Q.get("matches") || "https://data.graphplaza.com/tracking/matches.json";
   const cv=document.getElementById("c"), ctx=cv.getContext("2d");
   const W=cv.width, H=cv.height, M=34;
   const el=id=>document.getElementById(id);
@@ -231,27 +234,50 @@
   el("play").onclick=()=>{ if(!ready)return; if(t>=T1)t=T0; playing=!playing; last=0; setPlay(); };
   el("scrub").oninput=()=>{ t=T0+(el("scrub").value/1000)*DUR; if(!playing)draw(t); };
   el("trails").onchange=e=>{ showTrails=e.target.checked; if(!playing)draw(t); };
+  el("heat").onchange=e=>{ heatKey=e.target.value||null; el("heatleg").style.display=heatKey?"inline-flex":"none"; if(!playing)draw(t); };
   const sp=el("speeds"); [0.5,1,2,4].forEach(s=>{ const b=document.createElement("button"); b.textContent=s+"×"; if(s===1)b.classList.add("on");
     b.onclick=()=>{ speed=s; [...sp.children].forEach(c=>c.classList.toggle("on",c===b)); }; sp.appendChild(b); });
 
-  fetch(DATA_URL).then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(d=>{
-    DATA=d; [PL,PW]=d.pitch; OBJ=d.objects.map(o=>({...o,num:(o.label.match(/#\s*(\d+)/)||[])[1]})); F=d.frames;
-    T0=F[0][0]; T1=F[F.length-1][0]; DUR=T1-T0; t=T0;
-    OBJ.forEach((o,k)=>{ if(o.ball)ballIdx=k; else order.push(k); }); if(ballIdx>=0)order.push(ballIdx);
-    el("mtitle").textContent="Metrica Sports — Sample Game 2";
-    el("msub").textContent=Math.round(DUR/60)+" min · "+F.length.toLocaleString()+" frames · "+OBJ.length+" objects · "+PL+"×"+PW+" m";
-    el("objcount").textContent=OBJ.length+" tracked objects";
-    // build heatmap selector: Ball, each team, then each player
-    const hs=el("heat"), opt=(v,t)=>{const o=document.createElement("option");o.value=v;o.textContent=t;return o;};
-    if(ballIdx>=0) hs.appendChild(opt("ball","Ball"));
-    hs.appendChild(opt("team:Home","Home team (all)")); hs.appendChild(opt("team:Away","Away team (all)"));
-    ["Home","Away"].forEach(tm=>{ const g=document.createElement("optgroup"); g.label=tm+" players";
-      order.filter(k=>!OBJ[k].ball&&OBJ[k].team===tm).forEach(k=>g.appendChild(opt("obj:"+k, tm+" #"+(OBJ[k].num||"?"))));
-      hs.appendChild(g); });
-    hs.disabled=false;
-    hs.onchange=e=>{ heatKey=e.target.value||null; el("heatleg").style.display=heatKey?"inline-flex":"none"; if(!playing)draw(t); };
-    el("load").style.display="none"; el("play").disabled=false; el("scrub").disabled=false; ready=true; draw(T0);
-  }).catch(e=>{ el("loadtxt").textContent="Couldn't load the match ("+e.message+")."; el("load").querySelector(".spin").style.display="none"; });
+  // load one match's positions.json into the player (resets state + heatmap cache)
+  function loadMatch(url){
+    ready=false; playing=false; setPlay(); heatKey=null; HEAT.clear();
+    el("heatleg").style.display="none"; el("play").disabled=true; el("scrub").disabled=true;
+    el("loadtxt").textContent="Fetching the match from R2…";
+    el("load").style.display="grid"; el("load").querySelector(".spin").style.display="";
+    return fetch(url).then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(d=>{
+      DATA=d; [PL,PW]=d.pitch; OBJ=d.objects.map(o=>({...o,num:(o.label.match(/#\s*(\d+)/)||[])[1]})); F=d.frames;
+      T0=F[0][0]; T1=F[F.length-1][0]; DUR=T1-T0; t=T0;
+      order=[]; ballIdx=-1;
+      OBJ.forEach((o,k)=>{ if(o.ball)ballIdx=k; else order.push(k); }); if(ballIdx>=0)order.push(ballIdx);
+      el("msub").textContent=Math.round(DUR/60)+" min · "+F.length.toLocaleString()+" frames · "+OBJ.length+" objects · "+PL+"×"+PW+" m";
+      el("objcount").textContent=OBJ.length+" tracked objects";
+      // rebuild heatmap selector for this match (Ball, each team, then each player)
+      const hs=el("heat"); hs.innerHTML='<option value="">Off</option>';
+      const opt=(v,tx)=>{const o=document.createElement("option");o.value=v;o.textContent=tx;return o;};
+      if(ballIdx>=0) hs.appendChild(opt("ball","Ball"));
+      hs.appendChild(opt("team:Home","Home team (all)")); hs.appendChild(opt("team:Away","Away team (all)"));
+      ["Home","Away"].forEach(tm=>{ const g=document.createElement("optgroup"); g.label=tm+" players";
+        order.filter(k=>!OBJ[k].ball&&OBJ[k].team===tm).forEach(k=>g.appendChild(opt("obj:"+k, tm+" #"+(OBJ[k].num||"?"))));
+        hs.appendChild(g); });
+      hs.value=""; hs.disabled=false;
+      el("load").style.display="none"; el("play").disabled=false; el("scrub").disabled=false; el("scrub").value=0; ready=true; draw(T0);
+    }).catch(e=>{ el("loadtxt").textContent="Couldn't load the match ("+e.message+")."; el("load").querySelector(".spin").style.display="none"; });
+  }
+
+  // a single ?data= file bypasses the manifest (local testing); otherwise load the match list
+  const single=Q.get("data");
+  if(single){ el("matchsel").style.display="none"; loadMatch(single); }
+  else {
+    fetch(MANIFEST_URL).then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(man=>{
+      const ms=el("matchsel"); ms.innerHTML="";
+      man.matches.forEach(m=>{ const o=document.createElement("option"); o.value=m.url; o.textContent=m.label; o.dataset.id=m.id; ms.appendChild(o); });
+      ms.disabled=false; ms.onchange=()=>loadMatch(ms.value);
+      const want=Q.get("match");
+      let start = (want && man.matches.find(m=>m.id===want)) || man.matches[0];
+      ms.value=start.url; loadMatch(start.url);
+    }).catch(()=>{ // manifest missing → fall back to the original single file
+      el("matchsel").style.display="none"; loadMatch("https://data.graphplaza.com/tracking/positions.json"); });
+  }
   requestAnimationFrame(tick);
 })();
 </script>

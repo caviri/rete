@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>rete · subtitle timeline</title>
+<meta name="description" content="One film subtitled in 20 languages, over time — scrub the timeline and watch a line of dialogue appear in every language at once, from a rete temporal graph."/>
+<style>
+  :root{
+    --bg:#0b0b0f; --panel:#141319; --ink:#efe9dd; --mut:#9b93a6; --faint:#6e6779;
+    --gold:#f4c95d; --amber:#e8a13a; --edge:#2a2833; --hot:#1c1a24;
+    --rtl:#8fd0c8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;
+    background:radial-gradient(1100px 560px at 50% -12%,#1a1722,#0b0b0f 60%);
+    color:var(--ink);font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  a{color:var(--gold);text-decoration:none} a:hover{text-decoration:underline}
+  .wrap{max-width:1080px;margin:0 auto;padding:20px 16px 44px}
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  .brand{font-weight:800;letter-spacing:.5px;font-size:15px}
+  .brand b{color:var(--gold)}
+  h1{font-size:16px;font-weight:600;margin:0;color:var(--mut)}
+  .nav{margin-left:auto;display:flex;gap:14px;font-size:12.5px}
+  .nav a{color:var(--mut)}
+  .card{background:linear-gradient(180deg,#141319,#100f15);border:1px solid var(--edge);border-radius:14px;
+    padding:14px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+  .metabar{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:0 2px 12px;color:var(--mut);font-size:12.5px}
+  .metabar .t{color:var(--ink);font-weight:600;font-size:14px}
+  .metabar .pill{border:1px solid var(--edge);border-radius:999px;padding:3px 10px;color:var(--faint);font-size:11px}
+  /* hero: the current line in the primary language, like a subtitle over film */
+  .stage{position:relative;border-radius:11px;overflow:hidden;background:
+    linear-gradient(180deg,#0a0a0e,#050507);border:1px solid #201e29}
+  .loading{position:absolute;inset:0;display:grid;place-items:center;background:rgba(6,6,10,.8);color:var(--mut);
+    font-size:13px;gap:12px;text-align:center;padding:20px;z-index:5}
+  .spin{width:34px;height:34px;border-radius:50%;border:3px solid #2a2833;border-top-color:var(--gold);animation:s 1s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .hero{min-height:132px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:8px;padding:26px 22px 20px;text-align:center;transition:opacity .25s}
+  .hero.gap{opacity:.32}
+  .herolang{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--amber)}
+  .heroline{font-size:clamp(20px,3.2vw,32px);font-weight:600;line-height:1.3;color:var(--gold);
+    text-shadow:0 2px 18px rgba(0,0,0,.6);max-width:20ch;text-wrap:balance}
+  .heroline[dir=rtl]{color:var(--rtl)}
+  .herotime{font-variant-numeric:tabular-nums;font-size:11.5px;color:var(--faint)}
+  /* the 20-language grid */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1px;
+    background:var(--edge);border-top:1px solid var(--edge)}
+  .cell{background:#0e0d13;padding:9px 12px;min-height:52px;cursor:pointer;transition:background .18s}
+  .cell:hover{background:#151420}
+  .cell.on{background:var(--hot)}
+  .cell.primary{background:#221d15;box-shadow:inset 3px 0 0 var(--amber)}
+  .cell .lg{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--faint);display:flex;gap:6px;align-items:center}
+  .cell.on .lg{color:var(--amber)}
+  .cell .rtlmark{color:var(--rtl);font-size:9px;border:1px solid #2f4f4a;border-radius:4px;padding:0 4px}
+  .cell .tx{margin-top:3px;font-size:14px;color:#d7cfc0;line-height:1.35;min-height:19px}
+  .cell.on .tx{color:var(--ink)}
+  .cell[dir=rtl] .lg{flex-direction:row-reverse}
+  /* timeline ticks + controls */
+  .track{position:relative;height:16px;margin:14px 4px 2px}
+  .tick{position:absolute;top:4px;width:2px;height:8px;background:#39343f;border-radius:1px}
+  .tick.past{background:var(--amber)}
+  .ctrls{display:flex;align-items:center;gap:14px;margin-top:6px;flex-wrap:wrap}
+  button.play{width:48px;height:48px;border-radius:50%;border:0;cursor:pointer;flex:0 0 auto;
+    background:var(--gold);color:#1a1206;font-size:18px;display:grid;place-items:center;transition:transform .1s}
+  button.play:active{transform:scale(.93)} button.play:disabled{opacity:.4;cursor:default}
+  .clock{font-variant-numeric:tabular-nums;font-size:15px;min-width:98px;color:#e7dcc8}
+  .clock b{color:#fff} .clock .of{color:var(--faint);font-size:12px}
+  input[type=range]{flex:1;min-width:160px;accent-color:var(--gold);height:5px}
+  .speeds{display:flex;gap:4px}
+  .speeds button{background:#181620;color:#c8bda9;border:1px solid var(--edge);border-radius:8px;
+    padding:6px 10px;cursor:pointer;font-size:12px;font-variant-numeric:tabular-nums}
+  .speeds button.on{background:var(--gold);color:#1a1206;border-color:var(--gold);font-weight:700}
+  .sel{display:inline-flex;align-items:center;gap:7px;color:var(--mut);font-size:12.5px}
+  select.pri{background:#181620;color:#e7dcc8;border:1px solid var(--edge);border-radius:8px;padding:5px 8px;font-size:12px;cursor:pointer}
+  .foot{margin-top:18px;color:var(--faint);font-size:11.5px;line-height:1.65;max-width:74ch}
+  .foot code{background:#181620;padding:1px 5px;border-radius:4px;color:#c8bda9}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="brand"><b>rete</b> · subtitle timeline</span>
+    <h1 id="h1">one film, 20 languages, over time</h1>
+    <nav class="nav">
+      <a href="playground.html#dataset=subtitles&ex=1">Query it ↗</a>
+      <a href="playground.html">Playground</a>
+      <a href="index.html">Docs</a>
+    </nav>
+  </header>
+
+  <div class="card">
+    <div class="metabar">
+      <span class="t" id="mtitle">Loading…</span>
+      <span id="msub"></span>
+      <span class="pill" id="mpill">subtitles.rete</span>
+    </div>
+    <div class="stage">
+      <div class="hero gap" id="hero">
+        <div class="herolang" id="herolang"></div>
+        <div class="heroline" id="heroline">—</div>
+        <div class="herotime" id="herotime"></div>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div class="loading" id="load"><div class="spin"></div><div id="loadtxt">Fetching the subtitles from R2…</div></div>
+    </div>
+    <div class="track" id="track"></div>
+    <div class="ctrls">
+      <button class="play" id="play" disabled aria-label="Play/pause">▶</button>
+      <span class="clock"><b id="clock">0:00</b> <span class="of" id="dur"></span></span>
+      <input type="range" id="scrub" min="0" max="1000" value="0" disabled/>
+      <div class="speeds" id="speeds"></div>
+      <label class="sel">Primary <select class="pri" id="primary" disabled></select></label>
+    </div>
+    <p class="foot">
+      Every line here is a <b>su:Line</b> in <code>subtitles.rete</code> — one moment in the film carrying the
+      same utterance in 20 languages as language-tagged literals (<a href="playground.html#dataset=subtitles">query it</a>).
+      This page fetches them from R2 and plays them back on the film's clock, so a line of dialogue ripples across
+      every language at once. Film + subtitles: <a href="https://mango.blender.org/">Tears of Steel</a>, Blender
+      Foundation, CC&nbsp;BY&nbsp;3.0. Click any language to make it the big line.
+    </p>
+  </div>
+</div>
+
+<script>
+(function(){
+  const DATA_URL = new URLSearchParams(location.search).get("data")
+     || "https://data.graphplaza.com/subtitles/subtitles.json";
+  const el=id=>document.getElementById(id);
+  let LINES=[], LANGS=[], T0=0, T1=0, DUR=0, primary="en", ready=false;
+  let t=0, playing=false, speed=1, last=0, curIdx=-2;
+
+  function fmt(sec){ sec=Math.max(0,sec); return Math.floor(sec/60)+":"+String(Math.floor(sec%60)).padStart(2,"0"); }
+  function isRTL(code){ const l=LANGS.find(x=>x.code===code); return l && l.dir==="rtl"; }
+
+  // last line whose start <= t (binary search); active if t within [start,end]
+  function lineAt(tt){
+    let lo=0,hi=LINES.length-1,ans=-1;
+    while(lo<=hi){ const m=(lo+hi)>>1; if(LINES[m].start<=tt){ans=m;lo=m+1;} else hi=m-1; }
+    const L = ans>=0 ? LINES[ans] : null;
+    const active = L && tt>=L.start && tt<=L.end + 0.25;
+    return {idx:ans, line:L, active};
+  }
+
+  const cells={};              // lang -> {el, tx}
+  function buildGrid(){
+    const grid=el("grid"); grid.innerHTML="";
+    for(const L of LANGS){
+      const c=document.createElement("div");
+      c.className="cell"+(L.code===primary?" primary":"");
+      if(L.dir==="rtl") c.dir="rtl";
+      const lg=document.createElement("div"); lg.className="lg";
+      lg.innerHTML="<span>"+L.code.toUpperCase()+" · "+L.name+"</span>"+(L.dir==="rtl"?"<span class='rtlmark'>RTL</span>":"");
+      const tx=document.createElement("div"); tx.className="tx";
+      c.appendChild(lg); c.appendChild(tx);
+      c.onclick=()=>{ setPrimary(L.code); };
+      grid.appendChild(c); cells[L.code]={el:c, tx:tx};
+    }
+  }
+  function buildTrack(){
+    const tr=el("track"); tr.innerHTML="";
+    for(const L of LINES){
+      const d=document.createElement("div"); d.className="tick";
+      d.style.left=((L.start-T0)/DUR*100)+"%"; d._t=L.start; tr.appendChild(d);
+    }
+  }
+  function setPrimary(code){
+    primary=code;
+    for(const L of LANGS) cells[L.code].el.classList.toggle("primary", L.code===code);
+    el("primary").value=code; curIdx=-2; render(t);
+  }
+
+  function render(tt){
+    const {idx, line, active}=lineAt(tt);
+    // hero (primary language)
+    const hero=el("hero"), hl=el("heroline");
+    const ptxt = line ? (line.text[primary]||"") : "";
+    hl.textContent = ptxt || "♪";
+    hl.dir = isRTL(primary) ? "rtl":"ltr";
+    el("herolang").textContent = (LANGS.find(l=>l.code===primary)||{}).name || primary;
+    el("herotime").textContent = line ? (fmt(line.start)+" – "+fmt(line.end)+"  ·  line "+line.i+" / "+LINES.length) : "";
+    hero.classList.toggle("gap", !active);
+    // grid — only rewrite text when the line changes (cheap)
+    if(idx!==curIdx){
+      curIdx=idx;
+      for(const L of LANGS){ cells[L.code].tx.textContent = line ? (line.text[L.code]||"·") : ""; }
+    }
+    for(const L of LANGS) cells[L.code].el.classList.toggle("on", active);
+    // ticks
+    const ticks=el("track").children;
+    for(const d of ticks) d.classList.toggle("past", d._t<=tt);
+  }
+
+  function setPlay(){ el("play").textContent = playing ? "⏸" : "▶"; }
+  function tick(ts){
+    if(ready){
+      if(playing){ if(last){ t+=(ts-last)/1000*speed; if(t>=T1){t=T1;playing=false;setPlay();} } last=ts; } else last=ts;
+      render(t);
+      el("clock").textContent=fmt(t);
+      el("scrub").value=Math.round((t-T0)/DUR*1000);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  el("play").onclick=()=>{ if(!ready)return; if(t>=T1)t=T0; playing=!playing; last=0; setPlay(); };
+  el("scrub").oninput=()=>{ t=T0+(el("scrub").value/1000)*DUR; if(!playing)render(t); };
+  const sp=el("speeds"); [0.5,1,2,4].forEach(s=>{ const b=document.createElement("button"); b.textContent=s+"×"; if(s===1)b.classList.add("on");
+    b.onclick=()=>{ speed=s; [...sp.children].forEach(c=>c.classList.toggle("on",c===b)); }; sp.appendChild(b); });
+
+  fetch(DATA_URL).then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(d=>{
+    LINES=d.lines.slice().sort((a,b)=>a.start-b.start); LANGS=d.languages;
+    T0=LINES[0].start; T1=Math.max(...LINES.map(l=>l.end)); DUR=T1-T0; t=T0;
+    el("mtitle").textContent=d.work.title;
+    el("msub").textContent=LANGS.length+" languages · "+LINES.length+" lines · "+d.work.license;
+    el("dur").textContent="/ "+fmt(T1);
+    const ps=el("primary");
+    LANGS.forEach(L=>{ const o=document.createElement("option"); o.value=L.code; o.textContent=L.name; ps.appendChild(o); });
+    ps.value="en"; ps.onchange=e=>setPrimary(e.target.value);
+    buildGrid(); buildTrack();
+    el("load").style.display="none"; el("play").disabled=false; el("scrub").disabled=false; el("primary").disabled=false;
+    ready=true; render(T0);
+  }).catch(e=>{ el("loadtxt").textContent="Couldn't load the subtitles ("+e.message+")."; el("load").querySelector(".spin").style.display="none"; });
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
