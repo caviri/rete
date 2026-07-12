@@ -6188,18 +6188,20 @@ self.onmessage = function (e) {
           $("qmeta").textContent = "cancelled";
           $("out").innerHTML = `<div class="note">Query cancelled — the worker was stopped. Run again to retry.</div>`;
         } else if (/maximum call stack/i.test(msg)) {
-          // A wasm call-stack overflow — the engine recurses deeper than the
-          // browser's WebAssembly stack allows. Reproduces ONLY on iOS/iPad
-          // Safari (JavaScriptCore has a much smaller wasm call-stack limit than
-          // Chrome/Firefox), and only on structurally deep queries (several
-          // nested OPTIONALs). The query itself is fine — it runs on desktop.
+          // We DID run the query — it reached this browser's WebAssembly
+          // call-stack limit partway. iOS / iPad Safari (JavaScriptCore) sets
+          // that limit far lower than desktop Chrome/Firefox, so a large or
+          // structurally involved query can trip it on a phone while running
+          // fine on a computer. Reset the (now-poisoned) instance and explain
+          // plainly — no blaming the query's shape (an expensive but perfectly
+          // ordinary query lands here too).
           resetRemoteWorker();
-          $("qmeta").textContent = "query too deep for this browser";
+          $("qmeta").textContent = "reached this browser's limit";
           $("out").innerHTML =
-            `<div class="note"><b>This query is too deeply nested for iPhone / iPad Safari.</b> ` +
-            `Its structure makes the engine recurse deeper than Safari's WebAssembly call-stack allows — a Safari-specific limit; the same query runs on a desktop browser.<br><br>` +
-            `Try: <b>fewer <code>OPTIONAL</code> blocks</b> (each one nests deeper — split the query, or drop the ones you don't need), or open this dataset on a desktop browser. ` +
-            `The engine has been reset — you can run another query now.</div>`;
+            `<div class="note"><b>We ran this, but it reached what iPhone / iPad Safari can handle.</b> ` +
+            `The query hit Safari's WebAssembly limit partway through — a limit on this device, not a problem with the query (it runs on a desktop browser).<br><br>` +
+            `To fit it on a phone: a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), or the <b>Progressive</b> strategy for overviews — or open this dataset on a desktop browser. ` +
+            `The engine has been reset — run another query any time.</div>`;
         } else if (isEngineTrap(msg)) {
           // A wasm trap poisons the instance — rebuild a fresh worker either way.
           resetRemoteWorker();
