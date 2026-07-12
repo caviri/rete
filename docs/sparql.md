@@ -219,6 +219,8 @@ Reasoning is **opt-in** — `rete sparql|sparql-url … --entail`, or the playgr
 | `rdfs:range` | `?x a C` → objects of a property whose range is `⊑ C` |
 | `owl:inverseOf` | `?x P ?y` → pairs `?y Q ?x` for any `Q` inverse to `P` |
 | `owl:someValuesFrom` (`A ⊑ ∃P`) | `?x P ?_` (existential object) → every `?x` that is (transitively) an `A` |
+| existential inverse (`A ⊑ ∃P⁻`) | `?_ P ?x` (existential subject) → every such `?x`, via `P`'s inverse |
+| `domain`/`range` ∘ `subPropertyOf` | type inferred through a *subproperty* of a domain/range-declared property |
 
 ```sparql
 # Over gbif-birds (occurrences are typed to their SPECIES, and each species has a
@@ -241,13 +243,15 @@ and is not returned — because an anonymous `∃P` successor can neither be pro
 nor joined. Where the object is bound, shared, or in the `SELECT`, the rewrite is
 skipped.
 
-**Boundary.** This covers most of DL-Lite_R. Not yet rewritten: inverse
-existentials (`A ⊑ ∃P⁻`), the `domain`∘`subPropertyOf` interaction, and the
-PerfectRef *reduction* step (atom unification) needed for the last few
-existential-chaining cases. Reasoning is never *unsound*: with it off you get
-exact matches; with it on you get the entailed answers for the supported axioms.
-The whole-graph RL reasoner (`rete reason` / the Coherence tab) is a separate,
-materializing tool for coherence checking.
+**Boundary.** Every DL-Lite_R axiom *type* is covered. The one remaining gap is
+the PerfectRef *reduction* step — existential **chaining**, where a shared join
+constraint is itself entailed by an existential (e.g. a query joins `?x P ?y`
+with `?y a C` and `∃P⁻ ⊑ C` makes the `?y a C` atom redundant). That query shape
+is rare, and reasoning is never *unsound* regardless: with it off you get exact
+matches; with it on you get the entailed answers for the supported cases — it can
+only ever be *incomplete* for that one chaining shape. The whole-graph RL reasoner
+(`rete reason` / the Coherence tab) is a separate, materializing tool for
+coherence checking.
 
 ## Not supported
 

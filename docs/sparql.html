@@ -412,6 +412,8 @@ query touches are fetched.</p>
 <tr><td><code>rdfs:range</code></td><td><code>?x a C</code> → objects of a property whose range is <code>⊑ C</code></td></tr>
 <tr><td><code>owl:inverseOf</code></td><td><code>?x P ?y</code> → pairs <code>?y Q ?x</code> for any <code>Q</code> inverse to <code>P</code></td></tr>
 <tr><td><code>owl:someValuesFrom</code> (<code>A ⊑ ∃P</code>)</td><td><code>?x P ?_</code> (existential object) → every <code>?x</code> that is (transitively) an <code>A</code></td></tr>
+<tr><td>existential inverse (<code>A ⊑ ∃P⁻</code>)</td><td><code>?_ P ?x</code> (existential subject) → every such <code>?x</code>, via <code>P</code>'s inverse</td></tr>
+<tr><td><code>domain</code>/<code>range</code> ∘ <code>subPropertyOf</code></td><td>type inferred through a <em>subproperty</em> of a domain/range-declared property</td></tr>
 </tbody></table>
 <pre><code class="language-sparql"># Over gbif-birds (occurrences are typed to their SPECIES, and each species has a
 # subClassOf chain up to :Aves). WITHOUT reasoning this matches nothing directly;
@@ -430,13 +432,15 @@ object variable is purely existential — it occurs exactly once in the whole qu
 and is not returned — because an anonymous <code>∃P</code> successor can neither be projected
 nor joined. Where the object is bound, shared, or in the <code>SELECT</code>, the rewrite is
 skipped.</p>
-<p><strong>Boundary.</strong> This covers most of DL-Lite_R. Not yet rewritten: inverse
-existentials (<code>A ⊑ ∃P⁻</code>), the <code>domain</code>∘<code>subPropertyOf</code> interaction, and the
-PerfectRef <em>reduction</em> step (atom unification) needed for the last few
-existential-chaining cases. Reasoning is never <em>unsound</em>: with it off you get
-exact matches; with it on you get the entailed answers for the supported axioms.
-The whole-graph RL reasoner (<code>rete reason</code> / the Coherence tab) is a separate,
-materializing tool for coherence checking.</p>
+<p><strong>Boundary.</strong> Every DL-Lite_R axiom <em>type</em> is covered. The one remaining gap is
+the PerfectRef <em>reduction</em> step — existential <strong>chaining</strong>, where a shared join
+constraint is itself entailed by an existential (e.g. a query joins <code>?x P ?y</code>
+with <code>?y a C</code> and <code>∃P⁻ ⊑ C</code> makes the <code>?y a C</code> atom redundant). That query shape
+is rare, and reasoning is never <em>unsound</em> regardless: with it off you get exact
+matches; with it on you get the entailed answers for the supported cases — it can
+only ever be <em>incomplete</em> for that one chaining shape. The whole-graph RL reasoner
+(<code>rete reason</code> / the Coherence tab) is a separate, materializing tool for
+coherence checking.</p>
 <h2>Not supported</h2>
 <p>These are <strong>rejected with a clear error</strong> — never silently mis-evaluated:</p>
 <ul>
