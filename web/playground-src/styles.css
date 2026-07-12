@@ -1214,9 +1214,12 @@ textarea {
    wide so the neighbours peek at the edges; ::before/::after spacers give the
    first/last slide room to snap to centre. Swipe = native momentum scroll. */
 .cardfocus-track {
-  display: flex; gap: 12px; flex: 1 1 auto; min-height: 0;
+  display: flex; gap: 12px; flex: 1 1 auto; min-height: 0; align-items: stretch;
   overflow-x: auto; overflow-y: hidden;
   scroll-snap-type: x mandatory;
+  /* Horizontal pans move the carousel; a slide's own vertical pan (below) wins
+     for up/down drags. Contain keeps the scroll from leaking to the page. */
+  touch-action: pan-x;
   -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   scrollbar-width: none;
 }
@@ -1224,10 +1227,16 @@ textarea {
 .cardfocus-track::before, .cardfocus-track::after { content: ""; flex: 0 0 8%; }
 .cardfocus-slide {
   flex: 0 0 84%; width: 84%; scroll-snap-align: center; cursor: auto;
-  max-height: 76vh; overflow-y: auto; overscroll-behavior: contain;
+  /* The slide fills the track's height and scrolls its OWN overflow, so a tall
+     card shows all its fields on a vertical drag instead of being clipped. */
+  align-self: stretch; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
   display: block; margin: 0;
   transition: transform .2s ease, opacity .2s ease;
 }
+/* Lock the page behind the open carousel so a vertical drag never scrolls it. */
+body.cardfocus-open { overflow: hidden; }
 /* Neighbours read as "behind": slightly smaller and dimmer than the centred one
    (which app.js marks .is-current as it scrolls). */
 .cardfocus-slide:not(.is-current) { transform: scale(.94); opacity: .72; }

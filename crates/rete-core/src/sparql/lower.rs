@@ -183,7 +183,76 @@ fn build_left_spine(p: &GraphPattern, sel: &mut Select) -> Result<Plan, SparqlEr
 /// (`BIND`) lands: an in-pattern BIND becomes an in-tree [`Plan::Extend`] so a
 /// following FILTER/join sees it, while a top-level projection alias goes to the
 /// post-evaluation [`Select::extends`] list (applied after any aggregation).
-fn build(p: &GraphPattern, sel: &mut Select, in_where: bool) -> Result<Plan, SparqlError> {
+fn build(mut p: &GraphPattern, sel: &mut Select, mut in_where: bool) -> Result<Plan, SparqlError> {
+    // Peel the transparent single-child solution modifiers ITERATIVELY. Each one
+    // only records state into `sel` (or flips `in_where`) before descending to
+    // its inner pattern, so a stack of Slice / ORDER BY / DISTINCT / projection /
+    // GROUP BY / top-level BIND nests without one `build` stack frame per level.
+    // With `build`'s large frame, that per-level recursion overflows iOS/iPad
+    // Safari's small WASM call stack even on shallow queries — a plain
+    // `GROUP BY … ORDER BY … LIMIT` is already four wrappers deep.
+    loop {
+        match p {
+            GraphPattern::Distinct { inner } | GraphPattern::Reduced { inner } => {
+                sel.distinct = true;
+                p = inner;
+            }
+            GraphPattern::Slice {
+                inner,
+                start,
+                length,
+            } => {
+                sel.offset = *start;
+                sel.limit = *length;
+                p = inner;
+            }
+            // A *top-level* projection (a nested SELECT stays a subquery — handled
+            // in the match below, where its guard still holds).
+            GraphPattern::Project { inner, variables } if !in_where && sel.project.is_empty() => {
+                for v in variables {
+                    sel.project.push(v.as_str().to_string());
+                }
+                p = inner;
+            }
+            GraphPattern::Group {
+                inner,
+                variables,
+                aggregates,
+            } => {
+                let by = variables.iter().map(|v| v.as_str().to_string()).collect();
+                let mut aggs = Vec::with_capacity(aggregates.len());
+                let mut pre: Vec<(String, FExpr)> = Vec::new();
+                for (var, ae) in aggregates {
+                    aggs.push((var.as_str().to_string(), convert_agg(ae, &mut pre)?));
+                }
+                sel.group = Some(GroupSpec { by, aggs, pre });
+                in_where = true; // the group's inner *is* the WHERE pattern
+                p = inner;
+            }
+            GraphPattern::OrderBy { inner, expression } => {
+                for oe in expression {
+                    let (e, desc) = match oe {
+                        OrderExpression::Asc(e) => (e, false),
+                        OrderExpression::Desc(e) => (e, true),
+                    };
+                    sel.order.push((convert_expr(e)?, desc));
+                }
+                p = inner;
+            }
+            // A top-level projection alias `(expr AS ?v)`; a BIND *inside* the
+            // pattern stays in the plan tree (the match's `Extend` arm).
+            GraphPattern::Extend {
+                inner,
+                variable,
+                expression,
+            } if !in_where => {
+                sel.extends
+                    .push((variable.as_str().to_string(), convert_expr(expression)?));
+                p = inner;
+            }
+            _ => break,
+        }
+    }
     match p {
         GraphPattern::Bgp { patterns } => Ok(lower_bgp(patterns, &mut sel.star_counter)),
         // Join and LeftJoin nest left-deep — `A . B OPTIONAL C OPTIONAL D` is
