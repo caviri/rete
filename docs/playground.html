@@ -3131,8 +3131,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 163d35f · 2026-07-12 09:36 UTC</span>
-    <script>window.RETE_BUILD = "163d35f · 2026-07-12 09:36 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build a057115 · 2026-07-12 09:50 UTC</span>
+    <script>window.RETE_BUILD = "a057115 · 2026-07-12 09:50 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -14572,6 +14572,37 @@ self.onmessage = function (e) {
   // modal (pan + native pinch/scroll zoom), from the Map view's ⛶ button — the
   // static SVG map is fine at a glance, this is for exploring. Reuses the same
   // modal/machinery as the single-cell geo modal.
+  // A Leaflet base-layer switcher (radio control, top-right) for the full-screen
+  // map, built from the same BASEMAPS as the inline map's dropdown. Opens on the
+  // inline map's current pick — falling back to Carto Light when that is "none",
+  // since a slippy map needs tiles — and syncs a change back to
+  // `state.mapBasemap` (+ localStorage + the inline map) so both views agree.
+  function addBasemapSwitcher(L, map) {
+    const layers = {};
+    const idByLabel = {};
+    let current = null;
+    const prefer = state.mapBasemap && state.mapBasemap !== "none" ? state.mapBasemap : "light";
+    for (const b of BASEMAPS) {
+      if (!b.url) continue; // skip "none" (the offline vector view — no tiles)
+      const opts = { attribution: b.attr, maxZoom: b.max || 19 };
+      if (b.sub) opts.subdomains = b.sub;
+      const layer = L.tileLayer(b.url, opts);
+      layers[b.label] = layer;
+      idByLabel[b.label] = b.id;
+      if (b.id === prefer) current = layer;
+    }
+    if (!current) current = Object.values(layers)[0];
+    current.addTo(map);
+    L.control.layers(layers, null, { collapsed: true, position: "topright" }).addTo(map);
+    map.on("baselayerchange", (e) => {
+      const id = idByLabel[e.name];
+      if (!id) return;
+      state.mapBasemap = id;
+      try { localStorage.setItem("mapBasemap", id); } catch (_e) { /* private mode */ }
+      if (lastMapRes) renderMap(lastMapRes); // re-render the (hidden) inline map to match
+    });
+  }
+
   async function openResultMap(res) {
     if (!res || res.kind !== "select") return;
     const vars = res.vars || [], rows = res.rows || [];
@@ -14592,8 +14623,7 @@ self.onmessage = function (e) {
     if (geoMap) { geoMap.remove(); geoMap = null; }
     mapDiv.innerHTML = "";
     geoMap = L.map(mapDiv, { scrollWheelZoom: true }).setView([20, 0], 2);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-      { attribution: "© OpenStreetMap · © CARTO", maxZoom: 19, subdomains: "abcd" }).addTo(geoMap);
+    addBasemapSwitcher(L, geoMap);
     const layers = [];
     for (const r of rows) {
       const raw = r[geo]; if (raw == null) continue;
