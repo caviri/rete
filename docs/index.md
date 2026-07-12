@@ -64,6 +64,7 @@ rete schema  social.rete    # semantic (by rdf:type)
 - **[Playground](playground-guide.md)** — the flagship demo: 40+ real datasets queried live over HTTP ranges, with SPARQL + SQL + semantic search, media viewers, and AI helpers. [Launch it →](playground.html)
 - **[Plaza — dataset gallery](plaza/index.html)** — browse published datasets as live cards.
 - **[Historical atlas](atlas.md)** — SPARQL + GIS: border polygons, timeline, five projections.
+- **[2D match replay](pitch.html)** — a football match replayed on a canvas pitch from a spatiotemporal `.rete` (player + ball positions, 5 fps). [Launch it →](pitch.html)
 - **[Ask the graph](ask-the-graph.md)** — graphRAG search over a `.rete`, entirely in the browser.
 - **[Wikidata lazy explorer](explore-100mb.html)** — range-read a 100 MB / 1 GB Wikidata file in place.
 - **[Graph-map, topic-map & 3D (experimental)](graph-map.md)** — the community pyramid as a slippy map.
