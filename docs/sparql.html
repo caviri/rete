@@ -393,6 +393,14 @@ SELECT ?occ ?who WHERE {
 <p><code>CONSTRUCT</code> (and <code>rete serve</code>'s SPARQL Update) may build quoted triples in their
 templates. Nested quoting (<code>&lt;&lt; &lt;&lt; … &gt;&gt; :p ?o &gt;&gt;</code>) works. rete follows the
 RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.</p>
+<p><strong>RDF 1.2 interop.</strong> Ingest also accepts the ratified RDF 1.2 object triple-term
+syntax <code>&lt;&lt;( s p o )&gt;&gt;</code>, mapped to the <em>same</em> canonical token as <code>&lt;&lt; s p o &gt;&gt;</code> — so
+an RDF 1.2 N-Triples file and an RDF-star file are interchangeable. RDF 1.2
+<strong>base-direction strings</strong> (<code>"…"@lang--dir</code>) are modelled: <code>DATATYPE</code> reports
+<code>rdf:dirLangString</code> and <code>LANG</code> returns the language subtag; a leading SPARQL 1.2
+<code>VERSION "1.2"</code> declaration is accepted. RDF 1.2 reification (<code>rdf:reifies</code>) and
+the new SPARQL 1.2 direction functions are not yet supported — see
+<a href="compatibility.html#is-it-compatible-with-rdf">Compatibility</a>.</p>
 <h2>Reasoning (OWL 2 QL)</h2>
 <p>rete answers ontology-mediated queries by <strong>rewriting the query</strong>, not by
 materializing entailments. That is the OWL 2 QL idea, and it is the profile that

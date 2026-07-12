@@ -272,12 +272,26 @@ convert them to RDF first (e.g. <code>owlready2</code>, <code>robot convert</cod
 as → RDF/XML"). Once ingested, OWL axioms are just triples you can query; to
 <em>materialize</em> OWL RL / RDFS entailments see <a href="reasoning.html">Reasoning</a>
 (<code>rete build --reason</code> / <code>rete reason</code>).</p>
-<p><strong>Current limits (not RDF-incompatible, just unimplemented):</strong> no RDF-star
-(quoted triples); OWL/XML and Functional Syntax need an external convert-to-RDF
-step (above); and there is no in-place SPARQL Update — the file is immutable by
-design, though <a href="cli.html"><code>rete serve</code></a> runs a live endpoint that accepts SPARQL
-Update into a journal beside the untouched base file. Turtle/JSON-LD export
-covers the default graph only (use N-Quads export for named graphs).</p>
+<p><strong>RDF-star &amp; RDF 1.2.</strong> rete ingests, stores, and queries <strong>quoted triples</strong> —
+statements about statements — in the widely-deployed RDF-star surface
+<code>&lt;&lt; s p o &gt;&gt;</code> (subject or object), with the SPARQL-star patterns and built-ins
+(see <a href="sparql.html#rdf-star">SPARQL support</a>). It also accepts the ratified <strong>RDF 1.2</strong>
+object triple-term syntax <code>&lt;&lt;( s p o )&gt;&gt;</code> on ingest, mapping it to the <em>same</em>
+canonical token, so an RDF 1.2 file and an RDF-star file are interoperable.
+<strong>Base-direction language strings</strong> (<code>"…"@lang--dir</code>, RDF 1.2's
+<code>rdf:dirLangString</code>) are modelled — <code>DATATYPE</code> reports <code>rdf:dirLangString</code> and
+<code>LANG</code> returns the language subtag — and a leading SPARQL 1.2 <code>VERSION "1.2"</code>
+declaration is accepted. Not yet: RDF 1.2 <strong>reification</strong> (<code>rdf:reifies</code> /
+Turtle-1.2 annotation syntax) and the new SPARQL 1.2 direction <em>functions</em>
+(<code>LANGDIR</code>…), which would require swapping the parser to the RDF-1.2 model that
+reinterprets <code>&lt;&lt; &gt;&gt;</code> as reification — deliberately deferred to keep the deployed
+RDF-star data working.</p>
+<p><strong>Current limits (not RDF-incompatible, just unimplemented):</strong> OWL/XML and
+Functional Syntax need an external convert-to-RDF step (above); and there is no
+in-place SPARQL Update — the file is immutable by design, though
+<a href="cli.html"><code>rete serve</code></a> runs a live endpoint that accepts SPARQL Update into a
+journal beside the untouched base file. Turtle/JSON-LD export covers the default
+graph only (use N-Quads export for named graphs).</p>
 <h2>Validation</h2>
 <p>There are five independent ways to check correctness:</p>
 <ol>

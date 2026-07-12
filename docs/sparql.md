@@ -195,6 +195,15 @@ SELECT ?occ ?who WHERE {
 templates. Nested quoting (`<< << … >> :p ?o >>`) works. rete follows the
 RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.
 
+**RDF 1.2 interop.** Ingest also accepts the ratified RDF 1.2 object triple-term
+syntax `<<( s p o )>>`, mapped to the *same* canonical token as `<< s p o >>` — so
+an RDF 1.2 N-Triples file and an RDF-star file are interchangeable. RDF 1.2
+**base-direction strings** (`"…"@lang--dir`) are modelled: `DATATYPE` reports
+`rdf:dirLangString` and `LANG` returns the language subtag; a leading SPARQL 1.2
+`VERSION "1.2"` declaration is accepted. RDF 1.2 reification (`rdf:reifies`) and
+the new SPARQL 1.2 direction functions are not yet supported — see
+[Compatibility](compatibility.md#is-it-compatible-with-rdf).
+
 ## Reasoning (OWL 2 QL)
 
 rete answers ontology-mediated queries by **rewriting the query**, not by

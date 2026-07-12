@@ -42,12 +42,27 @@ as → RDF/XML"). Once ingested, OWL axioms are just triples you can query; to
 *materialize* OWL RL / RDFS entailments see [Reasoning](reasoning.md)
 (`rete build --reason` / `rete reason`).
 
-**Current limits (not RDF-incompatible, just unimplemented):** no RDF-star
-(quoted triples); OWL/XML and Functional Syntax need an external convert-to-RDF
-step (above); and there is no in-place SPARQL Update — the file is immutable by
-design, though [`rete serve`](cli.md) runs a live endpoint that accepts SPARQL
-Update into a journal beside the untouched base file. Turtle/JSON-LD export
-covers the default graph only (use N-Quads export for named graphs).
+**RDF-star & RDF 1.2.** rete ingests, stores, and queries **quoted triples** —
+statements about statements — in the widely-deployed RDF-star surface
+`<< s p o >>` (subject or object), with the SPARQL-star patterns and built-ins
+(see [SPARQL support](sparql.md#rdf-star)). It also accepts the ratified **RDF 1.2**
+object triple-term syntax `<<( s p o )>>` on ingest, mapping it to the *same*
+canonical token, so an RDF 1.2 file and an RDF-star file are interoperable.
+**Base-direction language strings** (`"…"@lang--dir`, RDF 1.2's
+`rdf:dirLangString`) are modelled — `DATATYPE` reports `rdf:dirLangString` and
+`LANG` returns the language subtag — and a leading SPARQL 1.2 `VERSION "1.2"`
+declaration is accepted. Not yet: RDF 1.2 **reification** (`rdf:reifies` /
+Turtle-1.2 annotation syntax) and the new SPARQL 1.2 direction *functions*
+(`LANGDIR`…), which would require swapping the parser to the RDF-1.2 model that
+reinterprets `<< >>` as reification — deliberately deferred to keep the deployed
+RDF-star data working.
+
+**Current limits (not RDF-incompatible, just unimplemented):** OWL/XML and
+Functional Syntax need an external convert-to-RDF step (above); and there is no
+in-place SPARQL Update — the file is immutable by design, though
+[`rete serve`](cli.md) runs a live endpoint that accepts SPARQL Update into a
+journal beside the untouched base file. Turtle/JSON-LD export covers the default
+graph only (use N-Quads export for named graphs).
 
 ## Validation
 
