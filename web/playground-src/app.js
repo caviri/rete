@@ -3770,6 +3770,15 @@ self.onmessage = function (e) {
     return `<td class="iri"><a class="iri-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
       `data-url="${esc(t.value)}">${esc(disp)}</a></td>`;
   }
+  // A URL rendered as a call-to-action button (opens in a new tab) — e.g. a
+  // record/detail page. Force it with the column's "Button" render type when a
+  // plain link should read as an action. Non-URL values fall back to a link.
+  function buttonCell(t) {
+    const url = httpsUpgrade(t.value);
+    const label = t.iri || looksWebUrl(t.value) ? "Open ↗" : shorten(t.value, 40);
+    return `<td class="iri"><a class="cell-btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
+      `title="${esc(t.value)}" data-url="${esc(t.value)}">${esc(label)}</a></td>`;
+  }
   // ---- IIIF cells -----------------------------------------------------------
   // A IIIF *manifest* URL (e.g. biblissima prop:P196 → digi.vatlib.it/…/manifest.json)
   // is not itself an image, but it points at one. Render a placeholder link, then
@@ -4510,6 +4519,7 @@ self.onmessage = function (e) {
       case "video": return videoCell(t);
       case "spin": return spinCell(t);
       case "link": return linkCell(t);
+      case "button": return buttonCell(t);
       case "number": {
         const n = Number(t.value);
         return `<td class="lit num" title="${esc(raw)}">${esc(isFinite(n) ? String(n) : t.value)}</td>`;
@@ -4523,7 +4533,7 @@ self.onmessage = function (e) {
   // column's dropdown stores a forced render type, and a delegated `change`
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
-    ["auto", "Auto"], ["text", "Text"], ["link", "Link"],
+    ["auto", "Auto"], ["text", "Text"], ["link", "Link"], ["button", "Button"],
     ["image", "Image"], ["iiif", "IIIF"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
   ];
   const tableStates = new Map();
@@ -4679,50 +4689,97 @@ self.onmessage = function (e) {
     $("cardsFieldsModal").classList.remove("hidden");
   }
 
-  // Tap a card to open it full-screen, then swipe (or use ‹ ›, ← →) through the
-  // whole result set like a photo stack. The focused card renders the same
-  // fields as the grid, with its media loaded eagerly.
-  let cardFocus = null; // { tid, i } while open, null when closed
+  // Tap a card to open a swipeable carousel: every result row becomes a slide,
+  // the current one centred with its neighbours peeking on the sides. Swiping
+  // (native horizontal scroll-snap — momentum + snap for free) or ‹ ›/← → moves
+  // between them. Media hydrates lazily per slide so a big result stays cheap.
+  let cardFocus = null; // { tid, n, io } while open, null when closed
   function openCardFocus(tid, i) {
     const st = tableStates.get(tid);
     if (!st || !st.rows.length) return;
-    cardFocus = { tid, i };
-    renderCardFocus(0);
+    const rows = st.rows.slice(0, st.cap);
+    const track = $("cardFocusTrack");
+    track.innerHTML = rows.map((row, k) =>
+      // Lazy media (mediaEager=false): images self-lazy-load; IIIF/3D are
+      // hydrated by the observer below only as a slide nears the viewport.
+      `<article class="rcard cardfocus-slide" data-ci="${k}">${cardFieldsHtml(st, row, false)}</article>`
+    ).join("");
+    cardFocus = { tid, n: rows.length, io: null };
+    // Hydrate a slide's IIIF/3D/media the moment it (or a neighbour) scrolls near.
+    cardFocus.io = new IntersectionObserver((ents) => {
+      ents.forEach((en) => {
+        if (!en.isIntersecting) return;
+        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target);
+        en.target.querySelectorAll("img.cell-thumb[loading='lazy']").forEach((im) => { im.loading = "eager"; });
+        cardFocus.io.unobserve(en.target);
+      });
+    }, { root: track, rootMargin: "0px 150% 0px 150%" });
     $("cardFocusModal").classList.remove("hidden");
     document.body.classList.add("cardfocus-open");
+    track.onscroll = onFocusScroll;
+    centerFocusSlide(i, "instant"); // open on the tapped card
+    // Observe + re-centre once the now-visible modal has laid out (slide widths
+    // and offsets are only real after the modal stops being display:none).
+    requestAnimationFrame(() => {
+      if (!cardFocus) return;
+      centerFocusSlide(i, "instant");
+      [...track.children].forEach((s) => cardFocus.io.observe(s));
+      updateFocusCount();
+    });
+    updateFocusCount();
   }
-  function renderCardFocus(dir) {
+  function focusMetrics() { // pitch between slide centres + the first slide's centre
+    const kids = $("cardFocusTrack").children;
+    const first = kids[0];
+    const pitch = kids.length > 1 ? kids[1].offsetLeft - first.offsetLeft
+      : (first ? first.offsetWidth : 1);
+    return { pitch: pitch || 1, firstCenter: first ? first.offsetLeft + first.offsetWidth / 2 : 0 };
+  }
+  function focusIndex() {
+    if (!cardFocus) return 0;
+    const track = $("cardFocusTrack");
+    const { pitch, firstCenter } = focusMetrics();
+    const viewCenter = track.scrollLeft + track.clientWidth / 2;
+    return Math.max(0, Math.min(Math.round((viewCenter - firstCenter) / pitch), cardFocus.n - 1));
+  }
+  function centerFocusSlide(i, behavior) {
+    const track = $("cardFocusTrack");
+    i = Math.max(0, Math.min(i, cardFocus.n - 1));
+    const slide = track.children[i];
+    if (!slide) return;
+    // Instant jump (programmatic smooth-scroll fights mandatory snap and is
+    // flaky/paused off-screen); the .is-current scale/opacity transition gives
+    // the visual cue, and a finger swipe animates natively via scroll momentum.
+    track.scrollTo({ left: slide.offsetLeft - (track.clientWidth - slide.offsetWidth) / 2, behavior: behavior || "instant" });
+    setFocusUi(i); // reflect the known target immediately (button nav)
+  }
+  // Update the counter, prev/next disabling, and which slide is "current" (the
+  // scale/opacity cue) for a given index.
+  function setFocusUi(i) {
     if (!cardFocus) return;
-    const st = tableStates.get(cardFocus.tid);
-    if (!st || !st.rows.length) return closeCardFocus();
-    const n = st.rows.length;
-    cardFocus.i = Math.max(0, Math.min(cardFocus.i, n - 1));
-    const body = $("cardFocusBody");
-    body.innerHTML = cardFieldsHtml(st, st.rows[cardFocus.i], true);
-    // Hydrate media (IIIF thumbnails, inline 3D, audio/video meta) in the
-    // freshly-injected card — the same steps the results MutationObserver runs.
-    hydrateIiif(body); hydrateModel3d(body); hydrateMediaMeta(body);
-    $("cardFocusCount").textContent = `${cardFocus.i + 1} / ${n}`;
-    $("cardFocusPrev").disabled = cardFocus.i === 0;
-    $("cardFocusNext").disabled = cardFocus.i === n - 1;
-    if (dir) { // brief slide cue in the swipe direction
-      body.classList.remove("cf-slide-l", "cf-slide-r");
-      void body.offsetWidth; // reflow so the animation restarts
-      body.classList.add(dir < 0 ? "cf-slide-r" : "cf-slide-l");
-    }
+    const kids = $("cardFocusTrack").children;
+    for (let k = 0; k < kids.length; k++) kids[k].classList.toggle("is-current", k === i);
+    $("cardFocusCount").textContent = `${i + 1} / ${cardFocus.n}`;
+    $("cardFocusPrev").disabled = i <= 0;
+    $("cardFocusNext").disabled = i >= cardFocus.n - 1;
   }
+  let focusScrollRaf = 0;
+  function onFocusScroll() { // native-swipe driven: derive the index from position
+    if (focusScrollRaf) return;
+    focusScrollRaf = requestAnimationFrame(() => { focusScrollRaf = 0; updateFocusCount(); });
+  }
+  function updateFocusCount() { if (cardFocus) setFocusUi(focusIndex()); }
   function stepCardFocus(d) {
     if (!cardFocus) return;
-    const st = tableStates.get(cardFocus.tid);
-    if (!st) return;
-    const ni = Math.max(0, Math.min(cardFocus.i + d, st.rows.length - 1));
-    if (ni === cardFocus.i) return; // already at an end
-    cardFocus.i = ni;
-    renderCardFocus(d);
+    centerFocusSlide(focusIndex() + d, "instant");
   }
   function closeCardFocus() {
     $("cardFocusModal").classList.add("hidden");
     document.body.classList.remove("cardfocus-open");
+    if (cardFocus && cardFocus.io) cardFocus.io.disconnect();
+    const track = $("cardFocusTrack");
+    track.onscroll = null;
+    track.innerHTML = ""; // release the slides' media
     cardFocus = null;
   }
 
@@ -7803,27 +7860,14 @@ self.onmessage = function (e) {
     $("cardsFieldsModal").addEventListener("click", (e) => {
       if (e.target === $("cardsFieldsModal")) $("cardsFieldsModal").classList.add("hidden");
     });
-    // Focus-card modal: prev/next, swipe, keyboard, and backdrop/✕ close.
+    // Focus carousel: prev/next buttons, keyboard, and backdrop/✕ close.
+    // Swiping is native — horizontal scroll-snap on the track (momentum + snap).
     $("cardFocusPrev").onclick = () => stepCardFocus(-1);
     $("cardFocusNext").onclick = () => stepCardFocus(1);
     $("cardFocusClose").onclick = closeCardFocus;
     $("cardFocusModal").addEventListener("click", (e) => {
       if (e.target === $("cardFocusModal")) closeCardFocus();
     });
-    { // swipe left → next card, swipe right → previous (Tinder-style)
-      let x0 = null, y0 = null;
-      const body = $("cardFocusBody");
-      body.addEventListener("touchstart", (e) => {
-        x0 = e.changedTouches[0].clientX; y0 = e.changedTouches[0].clientY;
-      }, { passive: true });
-      body.addEventListener("touchend", (e) => {
-        if (x0 == null) return;
-        const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
-        x0 = null;
-        // Horizontal, decisive swipe only — don't fight vertical scrolling.
-        if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.4) stepCardFocus(dx < 0 ? 1 : -1);
-      }, { passive: true });
-    }
     document.addEventListener("keydown", (e) => {
       if (!cardFocus) return;
       if (e.key === "Escape") closeCardFocus();
