@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>rete · 2D match replay</title>
+<meta name="description" content="A football match replayed in 2D from a rete spatiotemporal graph — every player and the ball, position by position."/>
+<style>
+  :root{
+    --bg:#0a130d; --panel:#0f1c14; --ink:#e8f0ea; --mut:#8fb69b; --faint:#6f9a80;
+    --grass:#2f8f4e; --line:rgba(255,255,255,.78);
+    --home:#2f6df6; --away:#ef4444; --ball:#ffffff; --accent:#39c46e;
+    --edge:#234a32;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:radial-gradient(1200px 600px at 50% -10%,#12241a,#0a130d 60%);
+    color:var(--ink);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  .wrap{max-width:1080px;margin:0 auto;padding:20px 16px 40px}
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  .brand{font-weight:800;letter-spacing:.5px;font-size:15px}
+  .brand b{color:var(--accent)}
+  h1{font-size:16px;font-weight:600;margin:0;color:var(--mut)}
+  .nav{margin-left:auto;display:flex;gap:14px;font-size:12.5px}
+  .nav a{color:var(--mut)}
+  .card{background:linear-gradient(180deg,#0f1c14,#0c170f);border:1px solid var(--edge);border-radius:14px;
+    padding:14px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  .metabar{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:0 2px 12px;color:var(--mut);font-size:12.5px}
+  .metabar .t{color:var(--ink);font-weight:600;font-size:14px}
+  .metabar .pill{border:1px solid var(--edge);border-radius:999px;padding:3px 10px;color:var(--faint);font-size:11px}
+  .stage{position:relative;border-radius:11px;overflow:hidden}
+  canvas{display:block;width:100%;height:auto;background:var(--grass)}
+  .loading{position:absolute;inset:0;display:grid;place-items:center;background:rgba(8,16,11,.72);color:var(--mut);
+    font-size:13px;gap:12px;text-align:center;padding:20px}
+  .spin{width:34px;height:34px;border-radius:50%;border:3px solid #234a32;border-top-color:var(--accent);animation:s 1s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .ctrls{display:flex;align-items:center;gap:14px;margin-top:14px;flex-wrap:wrap}
+  button.play{width:48px;height:48px;border-radius:50%;border:0;cursor:pointer;flex:0 0 auto;
+    background:var(--ink);color:#0a130d;font-size:18px;display:grid;place-items:center;transition:transform .1s}
+  button.play:active{transform:scale(.93)} button.play:disabled{opacity:.4;cursor:default}
+  .clock{font-variant-numeric:tabular-nums;font-size:15px;min-width:112px;color:#cfe6d6}
+  .clock b{color:#fff} .clock .half{color:var(--mut);font-size:12px;margin-left:6px}
+  input[type=range]{flex:1;min-width:160px;accent-color:var(--accent);height:5px}
+  .speeds{display:flex;gap:4px}
+  .speeds button{background:#12241a;color:#a9cdb6;border:1px solid var(--edge);border-radius:8px;
+    padding:6px 10px;cursor:pointer;font-size:12px;font-variant-numeric:tabular-nums}
+  .speeds button.on{background:var(--accent);color:#06180d;border-color:var(--accent);font-weight:700}
+  .toggle{display:inline-flex;align-items:center;gap:7px;color:var(--mut);font-size:12.5px;cursor:pointer;user-select:none}
+  .legend{display:flex;gap:16px;align-items:center;margin-top:12px;font-size:12px;color:var(--mut);flex-wrap:wrap}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .foot{margin-top:18px;color:var(--faint);font-size:11.5px;line-height:1.65;max-width:70ch}
+  .foot code{background:#12241a;padding:1px 5px;border-radius:4px;color:#a9cdb6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="brand"><b>rete</b> · match replay</span>
+    <h1 id="h1">a football match as a spatiotemporal graph</h1>
+    <nav class="nav">
+      <a href="playground.html#dataset=tracking&ex=2">Query it ↗</a>
+      <a href="playground.html">Playground</a>
+      <a href="index.html">Docs</a>
+    </nav>
+  </header>
+
+  <div class="card">
+    <div class="metabar">
+      <span class="t" id="mtitle">Loading…</span>
+      <span id="msub"></span>
+      <span class="pill" id="mpill">tracking.rete</span>
+    </div>
+    <div class="stage">
+      <canvas id="c" width="1050" height="680"></canvas>
+      <div class="loading" id="load"><div class="spin"></div><div id="loadtxt">Fetching the match from R2…</div></div>
+    </div>
+    <div class="ctrls">
+      <button class="play" id="play" disabled aria-label="Play/pause">▶</button>
+      <span class="clock"><b id="clock">00:00</b><span class="half" id="half"></span></span>
+      <input type="range" id="scrub" min="0" max="1000" value="0" disabled/>
+      <div class="speeds" id="speeds"></div>
+      <label class="toggle"><input type="checkbox" id="trails" checked/> Trails</label>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--home)"></i> Home</span>
+      <span><i class="dot" style="background:var(--away)"></i> Away</span>
+      <span><i class="dot" style="background:var(--ball);border:1px solid #333"></i> Ball</span>
+      <span id="objcount"></span>
+    </div>
+  </div>
+
+  <p class="foot">
+    Every dot is a <b>position row</b> in <code>tracking.rete</code> — a spatiotemporal graph storing the 2D
+    location of each player and the ball, ~5&nbsp;frames/second, on a 105×68&nbsp;m pitch (<a href="playground.html#dataset=tracking">query it
+    in the playground</a>). This page fetches the positions from R2 and interpolates between frames to animate.
+    The finest grain of “over time”, from an open sample match (Metrica Sports, anonymised).
+  </p>
+</div>
+
+<script>
+(function(){
+  const DATA_URL = new URLSearchParams(location.search).get("data")
+     || "https://data.graphplaza.com/tracking/positions.json";
+  const cv=document.getElementById("c"), ctx=cv.getContext("2d");
+  const W=cv.width, H=cv.height, M=34;
+  const el=id=>document.getElementById(id);
+  let DATA=null, PL=105, PW=68, OBJ=[], F=[], T0=0, T1=0, DUR=0, ballIdx=-1, order=[];
+  let t=0, playing=false, speed=1, last=0, showTrails=true, ready=false;
+
+  const sx = x => M + (x/PL)*(W-2*M);
+  const sy = y => M + (y/PW)*(H-2*M);
+  const _css={}; const css=v=>_css[v]||(_css[v]=getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+
+  function drawPitch(){
+    ctx.fillStyle=css("--grass"); ctx.fillRect(0,0,W,H);
+    const n=12, sw=(W-2*M)/n;
+    for(let i=0;i<n;i++){ if(i%2){ctx.fillStyle="rgba(255,255,255,.035)"; ctx.fillRect(M+i*sw,M,sw,H-2*M);} }
+    ctx.strokeStyle=css("--line"); ctx.lineWidth=2;
+    ctx.strokeRect(M,M,W-2*M,H-2*M);
+    ctx.beginPath(); ctx.moveTo(W/2,M); ctx.lineTo(W/2,H-M); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W/2,H/2,(9.15/PL)*(W-2*M),0,7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W/2,H/2,3,0,7); ctx.fillStyle=css("--line"); ctx.fill();
+    const pAw=(16.5/PL)*(W-2*M), pAh=(40.3/PW)*(H-2*M), gAw=(5.5/PL)*(W-2*M), gAh=(18.3/PW)*(H-2*M);
+    ctx.strokeStyle=css("--line");
+    [[M,1],[W-M,-1]].forEach(([ex,d])=>{ ctx.strokeRect(ex,(H-pAh)/2,pAw*d,pAh); ctx.strokeRect(ex,(H-gAh)/2,gAw*d,gAh); });
+  }
+  function bracket(tt){ let lo=0,hi=F.length-1; while(lo<hi){const m=(lo+hi)>>1; if(F[m][0]<tt)lo=m+1; else hi=m;} const j=Math.max(1,lo); return [j-1,j]; }
+  // interpolated [x,y] (metres) for object k at time tt, or null
+  function posAt(k,tt){
+    const [i,j]=bracket(tt), fa=F[i], fb=F[j];
+    const span=(fb[0]-fa[0])||1, a=Math.min(1,Math.max(0,(tt-fa[0])/span));
+    let x=fa[1][k*2], y=fa[1][k*2+1], xb=fb[1][k*2], yb=fb[1][k*2+1];
+    if(x==null&&xb==null) return null;
+    if(x==null) return [xb/10,yb/10];
+    if(xb==null) return [x/10,y/10];
+    return [(x+(xb-x)*a)/10, (y+(yb-y)*a)/10];
+  }
+  function draw(tt){
+    drawPitch();
+    if(showTrails){
+      for(const k of order){
+        const o=OBJ[k], steps=o.ball?18:8, dt=0.12;
+        ctx.lineWidth=o.ball?2.2:1.6; ctx.lineCap="round";
+        let prev=null;
+        for(let s=steps;s>=0;s--){
+          const p=posAt(k, tt-s*dt); if(!p){prev=null;continue;}
+          const px=sx(p[0]), py=sy(p[1]);
+          if(prev){ ctx.strokeStyle=(o.ball?"rgba(255,255,255,":(o.team==="Home"?"rgba(47,109,246,":"rgba(239,68,68,"))+(0.10+0.5*(1-s/steps)).toFixed(3)+")";
+            ctx.beginPath(); ctx.moveTo(prev[0],prev[1]); ctx.lineTo(px,py); ctx.stroke(); }
+          prev=[px,py];
+        }
+      }
+    }
+    for(const k of order){
+      const p=posAt(k,tt); if(!p) continue;
+      const px=sx(p[0]), py=sy(p[1]), o=OBJ[k];
+      if(o.ball){
+        ctx.beginPath(); ctx.arc(px,py,5.5,0,7); ctx.fillStyle="#fff"; ctx.fill();
+        ctx.lineWidth=1.5; ctx.strokeStyle="#111"; ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(px,py,9.5,0,7);
+        ctx.fillStyle=o.team==="Home"?css("--home"):css("--away"); ctx.fill();
+        ctx.lineWidth=1.5; ctx.strokeStyle="rgba(0,0,0,.35)"; ctx.stroke();
+        if(o.num){ ctx.fillStyle="#fff"; ctx.font="700 10px system-ui"; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(o.num,px,py+.5); }
+      }
+    }
+  }
+  function fmt(s){ s=Math.max(0,s-T0); return String(Math.floor(s/60)).padStart(2,"0")+":"+String(Math.floor(s%60)).padStart(2,"0"); }
+  function setPlay(){ el("play").textContent=playing?"⏸":"▶"; }
+  function tick(ts){
+    if(ready){
+      if(playing){ if(last){ t+=(ts-last)/1000*speed; if(t>=T1){t=T1;playing=false;setPlay();} } last=ts; } else last=ts;
+      draw(t);
+      el("clock").textContent=fmt(t); el("half").textContent=t<T0+DUR/2?"1st half":"2nd half";
+      el("scrub").value=Math.round((t-T0)/DUR*1000);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  el("play").onclick=()=>{ if(!ready)return; if(t>=T1)t=T0; playing=!playing; last=0; setPlay(); };
+  el("scrub").oninput=()=>{ t=T0+(el("scrub").value/1000)*DUR; if(!playing)draw(t); };
+  el("trails").onchange=e=>{ showTrails=e.target.checked; if(!playing)draw(t); };
+  const sp=el("speeds"); [0.5,1,2,4].forEach(s=>{ const b=document.createElement("button"); b.textContent=s+"×"; if(s===1)b.classList.add("on");
+    b.onclick=()=>{ speed=s; [...sp.children].forEach(c=>c.classList.toggle("on",c===b)); }; sp.appendChild(b); });
+
+  fetch(DATA_URL).then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(d=>{
+    DATA=d; [PL,PW]=d.pitch; OBJ=d.objects.map(o=>({...o,num:(o.label.match(/#\s*(\d+)/)||[])[1]})); F=d.frames;
+    T0=F[0][0]; T1=F[F.length-1][0]; DUR=T1-T0; t=T0;
+    OBJ.forEach((o,k)=>{ if(o.ball)ballIdx=k; else order.push(k); }); if(ballIdx>=0)order.push(ballIdx);
+    el("mtitle").textContent="Metrica Sports — Sample Game 2";
+    el("msub").textContent=Math.round(DUR/60)+" min · "+F.length.toLocaleString()+" frames · "+OBJ.length+" objects · "+PL+"×"+PW+" m";
+    el("objcount").textContent=OBJ.length+" tracked objects";
+    el("load").style.display="none"; el("play").disabled=false; el("scrub").disabled=false; ready=true; draw(T0);
+  }).catch(e=>{ el("loadtxt").textContent="Couldn't load the match ("+e.message+")."; el("load").querySelector(".spin").style.display="none"; });
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
