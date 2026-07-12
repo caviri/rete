@@ -181,12 +181,20 @@ Evaluate a Basic Graph Pattern. Patterns are separated by ` . `, terms by spaces
 rete bgp data.rete "?x <http://ex/knows> ?y . ?y <http://ex/knows> ?z"
 ```
 
-### `rete sparql <file> "<query>" [--json]`
+### `rete sparql <file> "<query>" [--json] [--entail]`
 Run SPARQL: `SELECT` / `ASK` / `CONSTRUCT` / `DESCRIBE`. With `--json`, emit
 standard SPARQL Results JSON (for `SELECT`/`ASK`). See [SPARQL support](sparql.md).
 
+`--entail` turns on **OWL 2 QL reasoning**: the query is rewritten so the answer
+includes ontology-entailed solutions (`rdfs:subClassOf` / `subPropertyOf` /
+`domain` / `range` / `owl:inverseOf` / `someValuesFrom`), computed over the raw
+data with no materialization — off by default, so a plain query is unchanged. Same
+flag on `rete sparql-url` reasons over a remote file, fetching only what the
+rewritten query touches. See [Reasoning by query rewriting](reasoning.md#reasoning-by-query-rewriting-owl-2-ql).
+
 ```sh
 rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
+rete sparql data.rete "SELECT ?o WHERE { ?o a <…/Aves> }" --entail    # ontology-aware
 ```
 
 ### `rete serve <file> [--bind addr] [--token t] [--journal path]`

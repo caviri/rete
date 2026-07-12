@@ -237,6 +237,21 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1>Reasoning &amp; coherence checking</h1>
+<p>rete reasons over an ontology <strong>two complementary ways</strong>:</p>
+<ul>
+<li><strong>Query rewriting — OWL 2 QL</strong> (<a href="#reasoning-by-query-rewriting-owl-2-ql">jump</a>):
+rewrite the <em>query</em> so its answer includes the entailed solutions, computed over
+the <strong>raw data with no materialization</strong>. Opt-in, lazy — it works over a remote
+file with no rebuild and fetches only the bytes the rewritten query touches — and
+the natural fit for ontology-mediated <strong>query answering</strong>.</li>
+<li><strong>Materialization — OWL RL / RDFS</strong> (the rest of this page): forward-chain the
+entailed <em>triples</em> to a fixpoint, to either <strong>bake</strong> them into the file
+(<code>rete build --materialize</code>) or <strong>coherence-check</strong> it (<code>rete reason</code>).</li>
+</ul>
+<p>Rule of thumb: reach for <strong>query rewriting</strong> to <em>answer queries</em> under an ontology
+without touching the data; reach for <strong>materialization</strong> to <em>persist</em> inferences
+or <em>detect contradictions</em>.</p>
+<hr />
 <p><code>rete reason</code> runs a <strong>prototype forward-chaining OWL RL / RDFS reasoner</strong> over a
 file's default graph: it materializes the obvious RDFS/OWL entailments to a
 fixpoint, then scans the closed graph for <strong>incoherent points</strong> — logical
@@ -418,6 +433,71 @@ defect planted: Tier 0 reports <code>:Relapsed</code> <strong>unsatisfiable</str
 disjoint <code>HealthyState</code> and <code>DiseaseState</code>) from ~2–3 ranges; Tier 1/2 report the
 <strong>instance</strong> clash (<code>:p</code> is both). The live counter shows how few bytes each tier
 fetches.</p>
+<h2>Reasoning by query rewriting (OWL 2 QL)</h2>
+<p>Everything above <strong>materializes</strong>: it computes entailed triples and (optionally)
+stores them. That fixes the inferences at build time and grows the file — the
+opposite of rete's cloud-native, range-queried design, where the ABox may be
+hundreds of millions of triples on a remote host.</p>
+<p>The <strong>OWL 2 QL</strong> profile exists for exactly this case — a large ABox, a small
+TBox, and queries that are <em>first-order rewritable</em>. Instead of baking inferences
+into the data, rete rewrites the <strong>query</strong> so that evaluating it over the <strong>raw</strong>
+data yields the certain (entailed) answers. A remote <code>.rete</code> becomes
+ontology-aware with <strong>no rebuild</strong>, and only the bytes the rewritten query touches
+are fetched.</p>
+<p>Reasoning is <strong>opt-in</strong> — a plain query is never changed:</p>
+<pre><code class="language-sh">rete sparql     data.rete "SELECT ?o WHERE { ?o a :Aves }" --entail
+rete sparql-url https://host/data.rete "…" --entail        # lazy, over HTTP range
+</code></pre>
+<p>In the browser, the <a href="playground-guide.html">playground</a>'s <strong>🧠 Reason</strong> toggle
+(beside the Labels switch) runs the active query with entailment on; the WASM API
+is <code>Graph.query_reasoned</code> / <code>RemoteGraph.query_reasoned</code>.</p>
+<h3>What is entailed</h3>
+<table><thead><tr><th>Axiom</th><th>A query for … also returns …</th></tr></thead><tbody>
+<tr><td><code>rdfs:subClassOf</code></td><td><code>?x a C</code> → instances of every subclass of <code>C</code> (transitively)</td></tr>
+<tr><td><code>rdfs:subPropertyOf</code></td><td><code>?x P ?y</code> → pairs related by any subproperty of <code>P</code></td></tr>
+<tr><td><code>rdfs:domain</code> / <code>range</code></td><td><code>?x a C</code> → subjects/objects of a property whose domain/range is <code>⊑ C</code> (composing through <code>subPropertyOf</code>)</td></tr>
+<tr><td><code>owl:inverseOf</code></td><td><code>?x P ?y</code> → pairs <code>?y Q ?x</code> for any <code>Q</code> inverse to <code>P</code></td></tr>
+<tr><td><code>owl:someValuesFrom</code> (<code>A ⊑ ∃P</code>, <code>A ⊑ ∃P⁻</code>)</td><td><code>?x P ?_</code> (or <code>?_ P ?x</code>) with an existential end → every <code>?x</code> that is (transitively) such an <code>A</code></td></tr>
+</tbody></table>
+<pre><code class="language-sparql"># gbif-birds: occurrences are typed to their SPECIES, and each species carries a
+# subClassOf chain up to :Aves. WITHOUT reasoning this matches nothing directly;
+# WITH --entail it returns real occurrences via the taxonomy — no hand-written path.
+SELECT ?o WHERE { ?o a &lt;https://w3id.org/rete/gbif/taxon/class/Aves&gt; } LIMIT 20
+</code></pre>
+<h3>How it works</h3>
+<p>The rewrite is a <strong>post-lowering pass on the query plan</strong> — the hot triple matcher
+and every non-reasoned query are byte-identical.</p>
+<ul>
+<li><strong>Hierarchy</strong> (<code>subClassOf</code> / <code>subPropertyOf</code>) is exactly what rete's
+goal-directed <a href="sparql.html#property-paths">property paths</a> already do, so a
+hierarchy atom becomes a path over the raw data — <code>?x a C</code> → <code>?x a ?c . ?c rdfs:subClassOf* C</code> (reflexive, so a direct type still matches). No <code>UNION</code>
+enumeration, so it does <strong>not</strong> blow up on deep taxonomies (gbif's ~1,200 classes
+stay one path, not 1,200 query branches).</li>
+<li><strong>Domain / range / inverseOf / existentials</strong> add <code>UNION</code> branches. A tiny TBox
+read (the objects of the hierarchy predicates, plus whether the graph declares
+domain/range/inverse/<code>someValuesFrom</code> axioms at all) <strong>gates</strong> the rewrite, so an
+atom whose class/property has no relevant axioms — and a graph with no ontology —
+is left untouched, making reasoning <strong>zero-overhead where it can add nothing</strong>.</li>
+</ul>
+<h3>Existential soundness</h3>
+<p>The existential rewrite (<code>?x P ?y</code> answered from <code>A ⊑ ∃P</code>) is <strong>sound by
+construction</strong>: it fires only when the existential end (<code>?y</code>, or the subject for
+<code>∃P⁻</code>) is <em>purely existential</em> — it occurs exactly once in the whole query and is
+not returned — because an anonymous <code>∃P</code> successor can neither be projected nor
+joined. <code>reason_rewrite</code> counts every variable occurrence across the plan
+(patterns, paths, filter/bind expressions, sub-queries) and consults the <code>SELECT</code>
+list; where the end is bound, shared, or projected, the branch is skipped.</p>
+<h3>Boundary</h3>
+<p>Every DL-Lite_R axiom <strong>type</strong> is covered. The one remaining case is the PerfectRef
+<strong>reduction</strong> step — existential <em>chaining</em>, where a shared join constraint is
+itself entailed by an existential (a query joins <code>?x P ?y</code> with <code>?y a C</code>, and
+<code>∃P⁻ ⊑ C</code> makes the <code>?y a C</code> atom redundant so <code>?y</code> becomes existential). That
+query shape is rare, and reasoning is <strong>never unsound</strong> regardless: with it off you
+get exact matches; with it on you get the entailed answers for the supported cases
+— it can only ever be <em>incomplete</em> for that one chaining shape, never wrong.</p>
+<p>This query-rewriting reasoner and the materializing one above are independent: use
+<code>--entail</code> to answer queries under the ontology lazily; use <code>--materialize</code> /
+<code>rete reason</code> to bake inferences or check coherence.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

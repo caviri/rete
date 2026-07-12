@@ -375,10 +375,17 @@ range.</p>
 <code>?name</code> is a variable (terms may not contain spaces).</p>
 <pre><code class="language-sh">rete bgp data.rete "?x &lt;http://ex/knows&gt; ?y . ?y &lt;http://ex/knows&gt; ?z"
 </code></pre>
-<h3><code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json]</code></h3>
+<h3><code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json] [--entail]</code></h3>
 <p>Run SPARQL: <code>SELECT</code> / <code>ASK</code> / <code>CONSTRUCT</code> / <code>DESCRIBE</code>. With <code>--json</code>, emit
 standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a href="sparql.html">SPARQL support</a>.</p>
+<p><code>--entail</code> turns on <strong>OWL 2 QL reasoning</strong>: the query is rewritten so the answer
+includes ontology-entailed solutions (<code>rdfs:subClassOf</code> / <code>subPropertyOf</code> /
+<code>domain</code> / <code>range</code> / <code>owl:inverseOf</code> / <code>someValuesFrom</code>), computed over the raw
+data with no materialization — off by default, so a plain query is unchanged. Same
+flag on <code>rete sparql-url</code> reasons over a remote file, fetching only what the
+rewritten query touches. See <a href="reasoning.html#reasoning-by-query-rewriting-owl-2-ql">Reasoning by query rewriting</a>.</p>
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
+rete sparql data.rete "SELECT ?o WHERE { ?o a &lt;…/Aves&gt; }" --entail    # ontology-aware
 </code></pre>
 <h3><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
 <p>Serve one <code>.rete</code> as a live <strong>SPARQL 1.1 Protocol endpoint — queries and

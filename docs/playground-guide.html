@@ -273,6 +273,14 @@ cursor; each predicate offers a <strong>values ›</strong> drill listing the di
 objects it takes.</li>
 <li><strong>Labels chips</strong> decode the IRIs in your query to human labels inline, so
 <code>wd:Q937</code> reads as <em>Albert Einstein</em> while you type.</li>
+<li><strong>🧠 Reason</strong> (beside the Labels switch) runs the query with <strong>OWL 2 QL
+reasoning</strong> on — the answer then includes ontology-entailed solutions
+(<code>rdfs:subClassOf</code> / <code>subPropertyOf</code> / <code>domain</code> / <code>range</code> / <code>owl:inverseOf</code> /
+<code>someValuesFrom</code>), computed over the raw data with no materialization. So on
+gbif-birds, <code>?o a :Aves</code> returns real occurrences via the taxonomy with the
+toggle on, and nothing with it off. Opt-in and lazy — over a remote dataset it
+fetches only what the rewritten query touches. See
+<a href="reasoning.html#reasoning-by-query-rewriting-owl-2-ql">Reasoning by query rewriting</a>.</li>
 <li><strong>✨ SPARQL AI</strong> drafts a query from a plain-language request using a small
 language model that runs <strong>locally on your GPU</strong> (WebGPU) — nothing is sent
 to any API. It is grounded in the dataset's example queries, so its drafts

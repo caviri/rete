@@ -43,6 +43,14 @@ you don't know the graph's vocabulary yet:
   objects it takes.
 - **Labels chips** decode the IRIs in your query to human labels inline, so
   `wd:Q937` reads as *Albert Einstein* while you type.
+- **🧠 Reason** (beside the Labels switch) runs the query with **OWL 2 QL
+  reasoning** on — the answer then includes ontology-entailed solutions
+  (`rdfs:subClassOf` / `subPropertyOf` / `domain` / `range` / `owl:inverseOf` /
+  `someValuesFrom`), computed over the raw data with no materialization. So on
+  gbif-birds, `?o a :Aves` returns real occurrences via the taxonomy with the
+  toggle on, and nothing with it off. Opt-in and lazy — over a remote dataset it
+  fetches only what the rewritten query touches. See
+  [Reasoning by query rewriting](reasoning.md#reasoning-by-query-rewriting-owl-2-ql).
 - **✨ SPARQL AI** drafts a query from a plain-language request using a small
   language model that runs **locally on your GPU** (WebGPU) — nothing is sent
   to any API. It is grounded in the dataset's example queries, so its drafts
