@@ -799,7 +799,8 @@ fn eval_query_opts(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutput
 /// small TBox slice from `rete` to gate the rewrite (see [`ql`]).
 fn maybe_reason(rete: &Rete, mut sel: Select, reason: bool) -> Select {
     if reason {
-        sel.plan = ql::reason_rewrite(sel.plan, rete);
+        let projected = sel.project.clone();
+        sel.plan = ql::reason_rewrite(sel.plan, rete, &projected);
     }
     sel
 }

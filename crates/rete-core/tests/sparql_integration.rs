@@ -412,6 +412,117 @@ fn owl_ql_domain_range_reasoning() {
 }
 
 #[test]
+fn owl_ql_inverse_reasoning() {
+    // OWL 2 QL Stage 2: a role atom `?x P ?y` is also entailed by `?y Q ?x` when
+    // Q owl:inverseOf P (either declared direction), rewritten as a UNION branch.
+    let inv = "<http://www.w3.org/2002/07/owl#inverseOf>";
+    let mk = |n: &str| format!("<http://ex/{n}>");
+    let t: Vec<(String, String, String)> = vec![
+        (mk("hasChild"), inv.to_string(), mk("hasParent")),
+        (mk("alice"), mk("hasChild"), mk("bob")), // ⇒ bob hasParent alice
+        (mk("carol"), mk("hasParent"), mk("dave")), // a direct hasParent
+    ];
+    let refs: Vec<(&str, &str, &str)> = t
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let rete = Rete::open(&build(&refs)).unwrap();
+    let pairs = |sols: Vec<rete_core::Binding>| {
+        let mut v: Vec<String> = sols
+            .iter()
+            .map(|b| format!("{}->{}", b.get("x").unwrap(), b.get("y").unwrap()))
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+
+    // `?x :hasParent ?y`: plain = the direct edge; reasoned = the inverse of
+    // hasChild too (alice hasChild bob ⇒ bob hasParent alice).
+    let q = format!("{PREFIX}SELECT ?x ?y WHERE {{ ?x ex:hasParent ?y }}");
+    assert_eq!(
+        pairs(eval_sparql(&rete, &q).unwrap().1),
+        vec!["<http://ex/carol>-><http://ex/dave>"]
+    );
+    assert_eq!(
+        pairs(eval_sparql_reasoned(&rete, &q).unwrap().1),
+        vec![
+            "<http://ex/bob>-><http://ex/alice>",
+            "<http://ex/carol>-><http://ex/dave>",
+        ]
+    );
+
+    // And the other direction: `?x :hasChild ?y` reasons over hasParent's inverse
+    // (carol hasParent dave ⇒ dave hasChild carol), plus the direct edge.
+    let qc = format!("{PREFIX}SELECT ?x ?y WHERE {{ ?x ex:hasChild ?y }}");
+    assert_eq!(
+        pairs(eval_sparql_reasoned(&rete, &qc).unwrap().1),
+        vec![
+            "<http://ex/alice>-><http://ex/bob>",
+            "<http://ex/dave>-><http://ex/carol>",
+        ]
+    );
+}
+
+#[test]
+fn owl_ql_existential_reasoning() {
+    // OWL 2 QL Stage 2: `A ⊑ ∃P` (someValuesFrom). A query `?x P ?y` with `?y`
+    // PURELY existential (occurs once, not returned) is entailed for every `?x`
+    // that is (transitively) an A — the anonymous successor satisfies it. Must be
+    // SOUND: it may NOT fire when `?y` is projected or shared elsewhere.
+    let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+    let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+    let onp = "<http://www.w3.org/2002/07/owl#onProperty>";
+    let svf = "<http://www.w3.org/2002/07/owl#someValuesFrom>";
+    let mk = |n: &str| format!("<http://ex/{n}>");
+    // Parent ⊑ ∃hasChild.Person ; alice a Parent (no ground child) ; bob hasChild carol.
+    let t: Vec<(String, String, String)> = vec![
+        (mk("Parent"), sub.to_string(), mk("R1")),
+        (mk("R1"), onp.to_string(), mk("hasChild")),
+        (mk("R1"), svf.to_string(), mk("Person")),
+        (mk("alice"), ty.to_string(), mk("Parent")),
+        (mk("bob"), mk("hasChild"), mk("carol")),
+        (mk("carol"), ty.to_string(), mk("Person")),
+    ];
+    let refs: Vec<(&str, &str, &str)> = t
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let rete = Rete::open(&build(&refs)).unwrap();
+    let xs = |sols: Vec<rete_core::Binding>| {
+        let mut v: Vec<String> = sols.iter().filter_map(|b| b.get("x").cloned()).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+
+    // Existential object: plain = only the ground edge; reasoned = alice too
+    // (Parent ⊑ ∃hasChild), even with no ground child.
+    let q = format!("{PREFIX}SELECT ?x WHERE {{ ?x ex:hasChild ?y }}");
+    assert_eq!(xs(eval_sparql(&rete, &q).unwrap().1), vec![mk("bob")]);
+    assert_eq!(
+        xs(eval_sparql_reasoned(&rete, &q).unwrap().1),
+        vec![mk("alice"), mk("bob")]
+    );
+
+    // SOUNDNESS 1 — `?y` is PROJECTED: the anonymous successor can't be returned,
+    // so alice must NOT appear (only the ground pair).
+    let qp = format!("{PREFIX}SELECT ?x ?y WHERE {{ ?x ex:hasChild ?y }}");
+    assert_eq!(
+        xs(eval_sparql_reasoned(&rete, &qp).unwrap().1),
+        vec![mk("bob")]
+    );
+
+    // SOUNDNESS 2 — `?y` is SHARED (used in another atom): the anonymous successor
+    // can't satisfy `?y a :Person`, so alice must NOT appear.
+    let qs = format!("{PREFIX}SELECT ?x WHERE {{ ?x ex:hasChild ?y . ?y a ex:Person }}");
+    assert_eq!(
+        xs(eval_sparql_reasoned(&rete, &qs).unwrap().1),
+        vec![mk("bob")]
+    );
+}
+
+#[test]
 fn property_path_zero_length_semantics() {
     // `*` and `?` include the zero-length path (a node reaches itself); `+` does
     // not. Checked in all three binding directions, since each takes a different
