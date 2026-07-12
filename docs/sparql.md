@@ -217,6 +217,8 @@ Reasoning is **opt-in** — `rete sparql|sparql-url … --entail`, or the playgr
 | `rdfs:subPropertyOf` | `?x P ?y` → pairs related by any subproperty of `P` |
 | `rdfs:domain` | `?x a C` → subjects of a property whose domain is `⊑ C` |
 | `rdfs:range` | `?x a C` → objects of a property whose range is `⊑ C` |
+| `owl:inverseOf` | `?x P ?y` → pairs `?y Q ?x` for any `Q` inverse to `P` |
+| `owl:someValuesFrom` (`A ⊑ ∃P`) | `?x P ?_` (existential object) → every `?x` that is (transitively) an `A` |
 
 ```sparql
 # Over gbif-birds (occurrences are typed to their SPECIES, and each species has a
@@ -233,10 +235,16 @@ whose class/property has no sub-terms — and every non-reasoned query — is
 untouched. The reasoning reaches nested patterns (`UNION` / `OPTIONAL` /
 subqueries).
 
-**Boundary.** This ships the sound, complete-for-its-fragment RDFS-plus core.
-Existential axioms (`owl:someValuesFrom`, `A ⊑ ∃P.B`), `owl:inverseOf`, and the
-`domain`∘`subPropertyOf` interaction are not yet rewritten — they are the full
-DL-Lite_R (PerfectRef) roadmap. Reasoning is never *unsound*: with it off you get
+The existential rewrite is **sound by construction**: it fires only when the
+object variable is purely existential — it occurs exactly once in the whole query
+and is not returned — because an anonymous `∃P` successor can neither be projected
+nor joined. Where the object is bound, shared, or in the `SELECT`, the rewrite is
+skipped.
+
+**Boundary.** This covers most of DL-Lite_R. Not yet rewritten: inverse
+existentials (`A ⊑ ∃P⁻`), the `domain`∘`subPropertyOf` interaction, and the
+PerfectRef *reduction* step (atom unification) needed for the last few
+existential-chaining cases. Reasoning is never *unsound*: with it off you get
 exact matches; with it on you get the entailed answers for the supported axioms.
 The whole-graph RL reasoner (`rete reason` / the Coherence tab) is a separate,
 materializing tool for coherence checking.

@@ -410,6 +410,8 @@ query touches are fetched.</p>
 <tr><td><code>rdfs:subPropertyOf</code></td><td><code>?x P ?y</code> → pairs related by any subproperty of <code>P</code></td></tr>
 <tr><td><code>rdfs:domain</code></td><td><code>?x a C</code> → subjects of a property whose domain is <code>⊑ C</code></td></tr>
 <tr><td><code>rdfs:range</code></td><td><code>?x a C</code> → objects of a property whose range is <code>⊑ C</code></td></tr>
+<tr><td><code>owl:inverseOf</code></td><td><code>?x P ?y</code> → pairs <code>?y Q ?x</code> for any <code>Q</code> inverse to <code>P</code></td></tr>
+<tr><td><code>owl:someValuesFrom</code> (<code>A ⊑ ∃P</code>)</td><td><code>?x P ?_</code> (existential object) → every <code>?x</code> that is (transitively) an <code>A</code></td></tr>
 </tbody></table>
 <pre><code class="language-sparql"># Over gbif-birds (occurrences are typed to their SPECIES, and each species has a
 # subClassOf chain up to :Aves). WITHOUT reasoning this matches nothing directly;
@@ -423,10 +425,15 @@ direct type still matches), and likewise <code>subPropertyOf*</code> for roles; 
 whose class/property has no sub-terms — and every non-reasoned query — is
 untouched. The reasoning reaches nested patterns (<code>UNION</code> / <code>OPTIONAL</code> /
 subqueries).</p>
-<p><strong>Boundary.</strong> This ships the sound, complete-for-its-fragment RDFS-plus core.
-Existential axioms (<code>owl:someValuesFrom</code>, <code>A ⊑ ∃P.B</code>), <code>owl:inverseOf</code>, and the
-<code>domain</code>∘<code>subPropertyOf</code> interaction are not yet rewritten — they are the full
-DL-Lite_R (PerfectRef) roadmap. Reasoning is never <em>unsound</em>: with it off you get
+<p>The existential rewrite is <strong>sound by construction</strong>: it fires only when the
+object variable is purely existential — it occurs exactly once in the whole query
+and is not returned — because an anonymous <code>∃P</code> successor can neither be projected
+nor joined. Where the object is bound, shared, or in the <code>SELECT</code>, the rewrite is
+skipped.</p>
+<p><strong>Boundary.</strong> This covers most of DL-Lite_R. Not yet rewritten: inverse
+existentials (<code>A ⊑ ∃P⁻</code>), the <code>domain</code>∘<code>subPropertyOf</code> interaction, and the
+PerfectRef <em>reduction</em> step (atom unification) needed for the last few
+existential-chaining cases. Reasoning is never <em>unsound</em>: with it off you get
 exact matches; with it on you get the entailed answers for the supported axioms.
 The whole-graph RL reasoner (<code>rete reason</code> / the Coherence tab) is a separate,
 materializing tool for coherence checking.</p>
