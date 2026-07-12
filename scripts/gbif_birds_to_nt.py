@@ -27,7 +27,7 @@ PARQUET = os.environ.get("GBIF_PARQUET", os.path.join(DATA, "parts", "part_*.par
 OUT_TBOX = os.environ.get("GBIF_OUT_TBOX", os.path.join(DATA, "birds_tbox.nt"))
 OUT_OCC = os.environ.get("GBIF_OUT_OCC", os.path.join(DATA, "birds_occ.nt"))
 
-NS = "https://rete.graphplaza.com/gbif/"          # our dataset namespace
+NS = "https://w3id.org/rete/gbif/"                # dataset namespace (neutral w3id PURL, not a project host)
 TAXON = NS + "taxon/"                              # taxon classes
 OCC = "https://www.gbif.org/occurrence/"          # round-trips to GBIF
 GBIF_SP = "https://www.gbif.org/species/"          # round-trips to GBIF
@@ -41,11 +41,13 @@ XSD = "http://www.w3.org/2001/XMLSchema#"
 SUBCLASS = RDFS + "subClassOf"
 LABEL = RDFS + "label"
 
-# vs: dataset vocab
-V = NS + "vocab#"
-IN_COUNTRY = V + "inCountry"
-SOURCE_DS = V + "sourceDataset"
-RANK = V + "rank"
+# Standard vocab (was a bespoke `vocab#` namespace):
+VOID = "http://rdfs.org/ns/void#"
+SCHEMA = "http://schema.org/"
+V = NS + "vocab#"                # kept only for the Country/Dataset class IRIs
+IN_COUNTRY = DCT + "spatial"     # occurrence's spatial coverage = its country (Dublin Core)
+SOURCE_DS = VOID + "inDataset"   # occurrence is in this VoID dataset
+RANK = DWC + "taxonRank"         # Darwin Core taxonomic rank (literal)
 
 RANKS = ["kingdom", "phylum", "class", "order_", "family", "genus"]  # species handled by key
 RANK_LABEL = {"kingdom": "kingdom", "phylum": "phylum", "class": "class",
@@ -126,15 +128,15 @@ def emit_tbox(con):
     # --- country nodes ---
     for cc, name in [("ES", "Spain"), ("CH", "Switzerland")]:
         c = f"{NS}country/{cc}"
-        t(c, RDF, V + "Country"); t(c, LABEL, lit=name); t(c, DCT + "identifier", lit=cc)
-    t(V + "Country", RDF, RDFS + "Class"); t(V + "Country", LABEL, lit="Country")
+        t(c, RDF, SCHEMA + "Country"); t(c, LABEL, lit=name); t(c, DCT + "identifier", lit=cc)
+    t(SCHEMA + "Country", RDF, RDFS + "Class"); t(SCHEMA + "Country", LABEL, lit="Country")
 
     # --- dataset nodes (provenance): label = the GBIF datasetKey for now ---
     ds = con.execute("SELECT DISTINCT datasetkey FROM read_parquet(?) WHERE datasetkey IS NOT NULL", [PARQUET]).fetchall()
     for (dk,) in ds:
         d = f"https://www.gbif.org/dataset/{dk}"
-        t(d, RDF, V + "Dataset"); t(d, LABEL, lit=dk)
-    t(V + "Dataset", RDF, RDFS + "Class"); t(V + "Dataset", LABEL, lit="Source dataset")
+        t(d, RDF, VOID + "Dataset"); t(d, LABEL, lit=dk)
+    t(VOID + "Dataset", RDF, RDFS + "Class"); t(VOID + "Dataset", LABEL, lit="Source dataset")
 
     fh.close()
     print(f"tbox: {n:,} triples, {n_species:,} species, {len(ds):,} datasets", file=sys.stderr)
