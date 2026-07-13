@@ -3170,6 +3170,21 @@ td.lit { color: var(--ink); }
 .cardfocus-slide .cf.cf-zoom { background: var(--side); padding: 8px; }
 .cardfocus-slide .cf.cf-zoom .cf-v { font-size: 17px; line-height: 1.55; }
 .cardfocus-slide .cf.cf-zoom .cf-v .cell-thumb { max-height: none; }
+/* Image cells: a placeholder with a spinner until each image arrives (they
+   lazy-load one by one as they enter the viewport); the box collapses to the
+   real image once loaded, or shows the broken-image note on error. */
+.img-wrap { position: relative; display: block; }
+.img-wrap:not(.img-done) { min-height: 110px; background: var(--side); border-radius: 8px; }
+.img-wrap:not(.img-done) .cell-thumb { opacity: 0; }
+.img-wrap:not(.img-done)::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+  margin: -11px 0 0 -11px; border-radius: 50%;
+  border: 2.5px solid var(--line); border-top-color: var(--accent);
+  animation: imgspin .8s linear infinite;
+}
+.img-wrap.img-done { min-height: 0; background: none; }
+@keyframes imgspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .img-wrap:not(.img-done)::after { animation-duration: 2s; } }
   </style>
 </head>
 <body>
@@ -3178,8 +3193,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 49116f9 · 2026-07-13 18:26 UTC</span>
-    <script>window.RETE_BUILD = "49116f9 · 2026-07-13 18:26 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 92564d8 · 2026-07-13 18:29 UTC</span>
+    <script>window.RETE_BUILD = "92564d8 · 2026-07-13 18:29 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -14567,9 +14582,10 @@ self.onmessage = function (e) {
   function imageCell(t) {
     const url = httpsUpgrade(t.value);
     const loading = mediaEager ? "eager" : "lazy";
-    return `<td class="iri thumb-cell"><a href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
-      `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="${loading}" alt="" ` +
-      `onerror="this.classList.add('cell-thumb-broken');this.alt='image unavailable'" /></a>` +
+    return `<td class="iri thumb-cell"><a class="img-wrap" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
+      `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="${loading}" decoding="async" alt="" ` +
+      `onload="this.closest('a').classList.add('img-done')" ` +
+      `onerror="this.classList.add('cell-thumb-broken');this.alt='image unavailable';this.closest('a').classList.add('img-done')" /></a>` +
       `<div class="media-meta" data-murl="${esc(url)}" data-mkind="image"></div></td>`;
   }
   function linkCell(t) {

@@ -3130,3 +3130,18 @@ td.lit { color: var(--ink); }
 .cardfocus-slide .cf.cf-zoom { background: var(--side); padding: 8px; }
 .cardfocus-slide .cf.cf-zoom .cf-v { font-size: 17px; line-height: 1.55; }
 .cardfocus-slide .cf.cf-zoom .cf-v .cell-thumb { max-height: none; }
+/* Image cells: a placeholder with a spinner until each image arrives (they
+   lazy-load one by one as they enter the viewport); the box collapses to the
+   real image once loaded, or shows the broken-image note on error. */
+.img-wrap { position: relative; display: block; }
+.img-wrap:not(.img-done) { min-height: 110px; background: var(--side); border-radius: 8px; }
+.img-wrap:not(.img-done) .cell-thumb { opacity: 0; }
+.img-wrap:not(.img-done)::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+  margin: -11px 0 0 -11px; border-radius: 50%;
+  border: 2.5px solid var(--line); border-top-color: var(--accent);
+  animation: imgspin .8s linear infinite;
+}
+.img-wrap.img-done { min-height: 0; background: none; }
+@keyframes imgspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .img-wrap:not(.img-done)::after { animation-duration: 2s; } }

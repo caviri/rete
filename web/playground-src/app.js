@@ -3966,9 +3966,10 @@ self.onmessage = function (e) {
   function imageCell(t) {
     const url = httpsUpgrade(t.value);
     const loading = mediaEager ? "eager" : "lazy";
-    return `<td class="iri thumb-cell"><a href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
-      `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="${loading}" alt="" ` +
-      `onerror="this.classList.add('cell-thumb-broken');this.alt='image unavailable'" /></a>` +
+    return `<td class="iri thumb-cell"><a class="img-wrap" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
+      `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="${loading}" decoding="async" alt="" ` +
+      `onload="this.closest('a').classList.add('img-done')" ` +
+      `onerror="this.classList.add('cell-thumb-broken');this.alt='image unavailable';this.closest('a').classList.add('img-done')" /></a>` +
       `<div class="media-meta" data-murl="${esc(url)}" data-mkind="image"></div></td>`;
   }
   function linkCell(t) {
