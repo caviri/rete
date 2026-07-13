@@ -3170,8 +3170,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 3918581 · 2026-07-13 14:25 UTC</span>
-    <script>window.RETE_BUILD = "3918581 · 2026-07-13 14:25 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 699ee4e · 2026-07-13 14:45 UTC</span>
+    <script>window.RETE_BUILD = "699ee4e · 2026-07-13 14:45 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -6454,7 +6454,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     {"key": "subtitles", "kind": "remote-lazy", "url": "https://data.graphplaza.com/subtitles/tears_of_steel.rete", "label": "subtitles.rete — one film, 20 languages, over time (Tears of Steel · CC-BY)", "description": "Tears of Steel — the Blender Foundation's open sci-fi short — subtitled in TWENTY languages, as one temporal + multilingual knowledge graph (14,376 triples). It's the 'over time' idea applied to language. Every su:Line is a MOMENT in the film (su:start / su:end in seconds) carrying the SAME utterance in all 20 tongues as language-tagged literals: English, Spanish, German, French, Italian, Dutch, Russian, Polish, Czech, Hungarian, Greek, Portuguese (BR), Danish, Indonesian, Norwegian, Japanese, Chinese (Simplified + Traditional), and right-to-left Persian & Hebrew. Each su:Cue is one language track's own timed segment (its real start/end + su:text \"…\"@lang), aligned to the English original by time-overlap — 1,536 cues over 76 lines. So you can scrub a timeline and watch the dialogue appear in every language at once, ask 'what's on screen at 1:05 in Japanese and Persian', diff how one line was rendered across 20 cultures, or full-text-search the dialogue (a TEXT_INDEX is baked in). Subtitles are all timed to the same audio, so the shared timeline IS the cross-language alignment. Open data: Tears of Steel (CC BY 3.0, Blender Foundation, mango.blender.org), subtitle .srt files from media.xiph.org/mango. su: vocab + schema.org + Dublin Core on w3id.org/rete."},
     {"key": "mtg", "kind": "remote-lazy", "url": "https://data.graphplaza.com/mtg/mtg.rete", "label": "mtg.rete — Magic: The Gathering: the whole card pool as a graph (34,633 cards, with images)", "description": "The entire Magic: The Gathering card pool as a queryable knowledge graph — 34,633 unique cards (Oracle-level concepts, from MTGJSON's AtomicCards, MIT-licensed) richly interlinked with their colors, card types, subtypes, keywords, mana, formats and named+dated sets, each carrying its Scryfall card IMAGE, full Oracle text and official rulings (76,990 of them). Card types are OWL classes (Creature, Instant, Sorcery, Land, Artifact, Enchantment, Planeswalker … rdfs:subClassOf mtg:Card) and every card rdf:type its types, so the Schema tab is a card-type zoom and the reasoner has a real TBox. Oracle text lives in a TEXT_INDEX, so you can find cards by what they DO ('draw two cards', 'destroy target creature'). Ask for red creatures with flying legal in Modern (and see the cards), every Goblin or Dragon ranked by EDHREC popularity, the colour pie, legendary planeswalkers, cards on the Reserved List, or what a set contains. This is the card-semantics layer from the semantic-MTG-engine plan (building on cmdoret/mtg_ontology): the executable rules engine is a separate deterministic system, but the cards ARE a graph — a big, fun, richly-joined one. mtg: vocab on w3id.org/rete + schema.org; card data MIT (MTGJSON), images © Wizards of the Coast served via Scryfall's CDN. Cyril Matthey-Doret's mtg_ontology is merged in as the TBox foundation — each card type is owl:equivalentClass its class in his ontology, and colours/keywords link to his concepts, so you can query the cards THROUGH his vocabulary."},
     {"key": "mtg-game", "kind": "remote-lazy", "url": "https://data.graphplaza.com/mtg-game/mtg_game.rete", "label": "mtg-game.rete — a live Magic game state as OWL + SPARQL (no engine)", "description": "The DECLARATIVE half of the semantic-MTG-engine plan, in miniature: a runtime OWL ontology (GameState, Player, Zone, ZoneMembership, CardInstance, SpellInstance, the Stack), a handful of cards modelled with their real STRUCTURED abilities (cost / condition / effect / action — the way cmdoret/mtg_ontology intends, e.g. Bonders' Enclave's “{3},{T}: draw a card, only if you control a creature with power ≥ 4”), and one concrete match — Alice vs Bob — captured as two immutable snapshots: state S1 (Alice's turn 3, main phase) and its successor S2 after she casts Lightning Bolt at Bob's Grizzly Bears (the spell now sits on the stack, a Mountain is tapped). There is NO game engine here — just OWL classes and data — yet plain SPARQL answers the plan's question families: DESCRIBE the board, VALIDATE that every card instance is in exactly one zone, decide LEGALITY (which instants Alice can actually pay for from her untapped lands), read what each card DOES from its ability structure, and diff S1→S2. Card concepts reuse the 34k-catalogue IRIs (the `mtg` dataset), so the two graphs are one entity space. mtgg: runtime vocab on w3id.org/rete, building on Cyril Matthey-Doret's mtg_ontology (mtgo: structural classes + MTG-wiki action classes). CC BY 4.0. Its companion `mtg` is the whole card pool; this is one match modelled in full."},
-    {"key": "arxiu", "kind": "remote-lazy", "url": "https://data.graphplaza.com/arxiu/arxiu.rete", "label": "arxiu.rete — Arxius en Línia: Catalan national archives, with scanned documents (sample)", "description": "A working SAMPLE of the Generalitat de Catalunya's online archives (Arxius en Línia) — 500 archival units across 36 archives and 64 fonds, each with its holding archive, fonds, reference code, dates, description AND its scanned document image. Every scan is shown as a downsized WebP (~180 KB, ~15% of the ~1.5 MB original) mirrored to R2 so it renders inline in query results, while the original full-res JPEG on Gencat's server is kept as arx:originalImage — the source of record. The full archive behind the same open API is enormous — ~5.9 million records and ~16.3 million scanned images (~1.5 TB) — so this is a first slice proving the harvest + WebP pipeline before scaling. Modelled with schema.org archival vocabulary (schema:ArchiveComponent held by an ArchiveOrganization, part of a Collection/fonds) on w3id.org/rete. Descriptions are openly reusable (Llicència oberta d'ús d'informació / Llei 37/2007, Generalitat de Catalunya, with attribution); the reservat rights flag is respected — reserved images are linked, never re-hosted."},
+    {"key": "arxiu", "kind": "remote-lazy", "url": "https://data.graphplaza.com/arxiu/arxiu.rete", "label": "arxiu.rete — Arxiu Històric de Tarragona: a complete Catalan archive, with scanned documents", "description": "The COMPLETE Arxiu Històric de Tarragona as it appears in the Generalitat de Catalunya's online archives (Arxius en Línia) — every one of its 7,401 archival units that has a digital image, across 63 fonds (the Govern Civil de Tarragona, the Yxart and Martí family archives, medieval charters, the historical land registry …). Each unit carries its holding archive, fonds, reference code, dates, description AND its scanned document. Non-reserved scans (3,101) are shown as a downsized WebP (~180 KB, ~15% of the ~1.5 MB original) mirrored to R2 so they render inline in query results; every unit also keeps arx:originalImage → the original full-res JPEG on Gencat's own server (the source of record). This is one complete archive of many — the same open API holds ~1.43M image-records across ~65 Catalan archives (~1.5 TB), and the harvester scales archive by archive. Modelled with schema.org archival vocabulary (schema:ArchiveComponent held by an ArchiveOrganization, part of a Collection/fonds) on w3id.org/rete. Descriptions are openly reusable (Llicència oberta d'ús d'informació / Llei 37/2007, Generalitat de Catalunya, with attribution); the reservat rights flag is respected — reserved units (~56% here) keep only the original link, never re-hosted."},
   ],
   // Structured metadata for the dataset table. `triples`: exact for bundled
   // graphs (from `rete info`), approximate string for the big remote ones, null
@@ -6465,7 +6465,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "subtitles":             { triples: "14.4 K", size: "187 KB", license: "CC BY 3.0 (Blender Foundation)", source: "https://media.xiph.org/mango/subtitles/", provenance: "Built 2026-07-13 from the 20 official .srt subtitle files at media.xiph.org/mango/subtitles/ (Tears of Steel, Blender 'Mango' open movie, CC BY 3.0). scripts/subtitles/build_subtitles_graph.py parses each .srt (BOM/encoding auto-detect incl. UTF-16, tolerant timecode regex, handles double-spaced files), emits per-language su:Cue nodes keyed by zero-padded start-ms (time-ordered = contiguous range reads) plus su:Line 'moment' nodes (English pivot) carrying every language's overlapping text as @lang literals; foreign cues aligned to lines by max time-overlap. rete build --pyramid-algo types --text-index --card. 20 languages, 1,536 cues, 76 lines." },
     "mtg":                   { triples: "1.23 M", size: "16.3 MB", license: "Card data MIT (MTGJSON); images © WotC via Scryfall; ontology GPL-3.0 (cmdoret)", source: "https://mtgjson.com/", provenance: "Built 2026-07-13 from MTGJSON AtomicCards (Oracle-level, 34,633 cards) + SetList (named/dated sets) + AtomicCards rulings (76,990) + Scryfall oracle-cards bulk (card images), with cmdoret/mtg_ontology (GPL-3.0) merged in as the TBox. scripts/mtg/build_mtg_graph.py maps each card to colors, card types (OWL classes rdfs:subClassOf mtg:Card, owl:equivalentClass the cmdoret class), subtypes, keywords (bridged to Cyril's concepts), legalities, sets, rulings and Oracle text. rete build (mtg.nt + mtg_ontology.owl.ttl) --pyramid-algo types --text-index --card. The card-semantics layer of a semantic MTG engine." },
     "mtg-game":              { triples: "341", size: "55 KB", license: "CC BY 4.0; builds on cmdoret/mtg_ontology (GPL-3.0)", source: "", provenance: "Hand-authored 2026-07-13 as the declarative counterpart to the MTG card catalogue — scripts/mtg/mtg_game.ttl: a runtime OWL ontology (GameState/Zone/ZoneMembership/CardInstance/SpellInstance/Stack), cards with structured abilities (cost/condition/effect/action, à la cmdoret/mtg_ontology, incl. Bonders' Enclave), and a two-snapshot game state (Alice vs Bob; S2 = Lightning Bolt on the stack). rete build (Turtle) --pyramid-algo types --text-index --card. Card concepts reuse the `mtg` catalogue IRIs. No engine — the plan's Describe/Validate/Legality answered in pure SPARQL." },
-    "arxiu":                 { triples: "7.2 K", size: "266 KB", license: "Descriptions: Llicència oberta / CC0 (Llei 37/2007); images © holding archives", source: "https://arxiusenlinia.cultura.gencat.cat/", provenance: "Harvested 2026-07-13 (sample of 500 records with images) from the open backend API (backend.arxiusenlinia.cultura.gencat.cat/unitat/search/advanced, mostrar=AMB_FITXER). scripts/arxiu/harvest_and_mirror.py pages the search + mirrors each non-reserved image as a downsized WebP (max 1400px, q80, ~15% of original) to R2 while keeping the original Gencat link; scripts/arxiu/build_arxiu_graph.py → schema.org archival N-Triples → rete build --pyramid-algo types --text-index --card. Full archive is ~5.9M records / ~16.3M images (~1.5 TB)." },
+    "arxiu":                 { triples: "89 K", size: "1.6 MB", license: "Descriptions: Llicència oberta / CC0 (Llei 37/2007); images © Arxiu Històric de Tarragona", source: "https://arxiusenlinia.cultura.gencat.cat/", provenance: "Harvested 2026-07-13 — the COMPLETE Arxiu Històric de Tarragona (codiArxiu=330, 7,401 units with images, 63 fonds) from the open backend API (backend.arxiusenlinia.cultura.gencat.cat/unitat/search/advanced, mostrar=AMB_FITXER, sort=id for stable complete pagination). scripts/arxiu/harvest_and_mirror.py pages the archive + mirrors each non-reserved image as a downsized WebP (max 1400px, q80, ~15% of original, 3,101 of them) to R2 while keeping the original Gencat link; scripts/arxiu/build_arxiu_graph.py (accumulative over records_*.jsonl) → schema.org archival N-Triples → rete build --pyramid-algo types --text-index --card. One archive of ~65; full archive ~1.43M image-records (~1.5 TB)." },
     "worldcup2026":          { triples: "4.6 K", size: "107 KB", license: "Open data (OpenFootball PD, Wikidata CC0) — LIVE, unverified", source: "https://github.com/openfootball/worldcup", provenance: "Built 2026-07-12 from OpenFootball (github.com/openfootball/worldcup/2026--usa: groups, matches, scores, scorers, 16 stadiums) + star-player careers from Wikidata (P54 with start/end qualifiers). LIVE tournament, so incomplete (100/104 matches) and unverified — treat as 'as recorded by OpenFootball'. scripts/worldcup/build_wc2026_graph.py + fetch_wc2026_players.py -> N-Triples -> rete build --card. Sibling of the completed `worldcup` (2022) twin; no prediction layer (538 retired)." },
     "worldcup":              { triples: "8.1 K", size: "108 KB", license: "Open data (OpenFootball PD, 538 CC-BY, Wikidata CC0)", source: "https://github.com/openfootball/worldcup", provenance: "Built 2026-07-12 from open data: match backbone (groups, all 64 matches, scores, scorers, stadiums) from OpenFootball (github.com/openfootball/worldcup); the FiveThirtyEight SPI forecast (wc_forecasts.csv, 6 snapshots, via the Wayback Machine since 538's API is retired) + documented pre-tournament Opta & bookmaker champion odds; star-player club careers from Wikidata (P54 with start/end qualifiers). scripts/worldcup/*.py -> N-Triples (schema.org+DCTerms+GeoSPARQL+wc:) -> rete build --pyramid-algo types --card. Predictions modelled as n-ary PROV-attributed nodes (fully SPARQL-queryable)." },
     "ecal":                  { triples: "1.02 M", size: "13.7 MB", license: "Metadata; ECAL catalogue data", source: "https://library.ecal.ch/", provenance: "Harvested 2026-07-11 from the ECAL BiblioMaker OPAC (cloud7.bibliomaker.ch) by polite single-thread ID-iteration over detail pages (scripts/ecal/harvest_ecal.py, ~1 req/1.2 s, resumable, auto-restart driver): 28,741 records, 93% with covers, full-res covers mirrored. BiblioMaker fields → unified JSON (scripts/ecal, incl. Auteurs/Matières as shared nodes) → schema.org+DCTerms N-Triples (scripts/bcul/jsonl_to_nt.py --base data.ecal.ch --mint) → rete build --pyramid-algo types --card." },
@@ -6984,7 +6984,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "subtitles":             { icon: "💬", tags: ["subtitles","multilingual","20 languages","temporal","translation","film","Tears of Steel","CC-BY","RTL","CJK"] },
     "mtg":                   { icon: "🃏", tags: ["Magic: The Gathering","MTG","cards","games","MTGJSON","Scryfall","OWL types","text search","card images","34k cards"], reasoning: true },
     "mtg-game":              { icon: "🎴", tags: ["Magic: The Gathering","game state","OWL","runtime ontology","abilities","stack","SPARQL","no engine","cmdoret"], reasoning: true },
-    "arxiu":                 { icon: "🗃️", tags: ["archives","Catalonia","Generalitat","manuscripts","scanned documents","WebP","IIIF-free","schema.org","open data","sample"] },
+    "arxiu":                 { icon: "🗃️", tags: ["archives","Tarragona","Catalonia","Generalitat","manuscripts","scanned documents","WebP","schema.org","open data","complete archive"] },
     "worldcup2026":          { icon: "🔴", tags: ["football","soccer","World Cup 2026","live","USA","Canada","Mexico","48 teams","OpenFootball","GeoSPARQL"] },
     "worldcup":              { icon: "⚽", tags: ["football","soccer","World Cup","Qatar 2022","predictions","FiveThirtyEight","provenance","GeoSPARQL","schema.org"] },
     "bph":                   { icon: "📜", tags: ["hermetica", "alchemy", "esoterica", "rare-books", "Amsterdam", "multilingual", "IIIF"] },
@@ -7073,10 +7073,10 @@ window.RETE_PLAYGROUND_CATALOG = {
       {"family": "Counterfactual", "label": "🔁 What changed from S1 to S2", "view": "table", "cols": {"card": "Newly tapped"}, "tip": "Diff two snapshots: permanents that were untapped in S1 but tapped in S2 — i.e. what paying for the Bolt cost. Here it's the one Mountain Alice tapped for {R}.\nComparing states is just a join across two mtgg:inState values.", "q": "PREFIX mtgg: <https://w3id.org/rete/mtg/game#>\nPREFIX schema: <http://schema.org/>\nSELECT ?card WHERE {\n  ?m2 mtgg:inState <https://w3id.org/rete/mtg/game/s2> ; mtgg:object ?o ; mtgg:tapped true .\n  ?m1 mtgg:inState <https://w3id.org/rete/mtg/game/s1> ; mtgg:object ?o ; mtgg:tapped false .\n  ?o mtgg:ofCard ?c . ?c schema:name ?card .\n}"}
     ],
     "arxiu": [
-      {"family": "Summary", "label": "🏛 Archives in this sample", "view": "table", "cols": {"archive": "Archive", "units": "Units"}, "tip": "The sample spans 36 Catalan archives (the Arxiu Nacional, the comarcal archives, the historical provincial archives …), each holding a share of the 500 units.\nEvery unit is a schema:ArchiveComponent linked to its holding archive.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?archive (COUNT(?u) AS ?units) WHERE {\n  ?u schema:holdingArchive ?a . ?a schema:name ?archive .\n} GROUP BY ?archive ORDER BY DESC(?units)"},
-      {"family": "Media", "label": "🖼 Scanned documents (gallery)", "view": "table", "cols": {"image": "Scan", "title": "Title", "archive": "Archive"}, "tip": "The scanned documents themselves — each schema:image is the downsized WebP mirrored to R2 (rendered here), ~15% the size of Gencat's original JPEG. Many are medieval parish and notarial records.\nDrop the LIMIT to browse the whole sample.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?image ?title ?archive WHERE {\n  ?u schema:image ?image ; schema:name ?title ; schema:holdingArchive ?a .\n  ?a schema:name ?archive .\n} LIMIT 30"},
+      {"family": "Summary", "label": "📚 The fonds of the archive", "view": "table", "cols": {"fonds": "Fonds", "units": "Units"}, "tip": "The 63 fonds (record groups) that make up the Arxiu Històric de Tarragona — the Govern Civil, family archives, notarial and parish series — with how many digitised units each holds.\nEvery unit schema:isPartOf a fonds (a schema:Collection).", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?fonds (COUNT(?u) AS ?units) WHERE {\n  ?u schema:isPartOf ?f . ?f schema:name ?fonds .\n} GROUP BY ?fonds ORDER BY DESC(?units)"},
+      {"family": "Media", "label": "🖼 Scanned documents (gallery)", "view": "table", "cols": {"image": "Scan", "title": "Title", "archive": "Archive"}, "tip": "The scanned documents themselves — each schema:image is the downsized WebP mirrored to R2 (rendered here), ~15% the size of Gencat's original JPEG. Many are medieval charters, notarial and land-registry records.\nDrop the LIMIT to browse all 3,101 scans.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?image ?title ?archive WHERE {\n  ?u schema:image ?image ; schema:name ?title ; schema:holdingArchive ?a .\n  ?a schema:name ?archive .\n} LIMIT 30"},
       {"family": "Explore", "label": "📅 The oldest documents", "view": "table", "cols": {"image": "Scan", "title": "Title", "start": "From"}, "tip": "Units that carry a parsed start date, earliest first — the deep end of the archive (charters, cartularies).\nDates come from schema:startDate; not every unit has a machine-readable one.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?image ?title ?start WHERE {\n  ?u schema:startDate ?start ; schema:name ?title .\n  OPTIONAL { ?u schema:image ?image }\n} ORDER BY ?start LIMIT 24"},
-      {"family": "Search", "label": "🔎 Documents mentioning Barcelona", "view": "table", "cols": {"image": "Scan", "title": "Title", "desc": "Description"}, "tip": "Full-text over the descriptions (a TEXT_INDEX is built in): units whose description mentions “Barcelona”, with their scan.\nChange the word to search the catalogue by content.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?image ?title ?desc WHERE {\n  ?u schema:description ?desc ; schema:name ?title .\n  OPTIONAL { ?u schema:image ?image }\n  FILTER(CONTAINS(LCASE(?desc), \"barcelona\"))\n} LIMIT 24"},
+      {"family": "Search", "label": "🔎 Documents mentioning Tarragona", "view": "table", "cols": {"image": "Scan", "title": "Title", "desc": "Description"}, "tip": "Full-text over the descriptions (a TEXT_INDEX is built in): units whose description mentions “Tarragona” (848 of them), with their scan.\nChange the word — Reus, Tortosa, cadastre … — to search the catalogue by content.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?image ?title ?desc WHERE {\n  ?u schema:description ?desc ; schema:name ?title .\n  OPTIONAL { ?u schema:image ?image }\n  FILTER(CONTAINS(LCASE(?desc), \"tarragona\"))\n} LIMIT 24"},
       {"family": "Media", "label": "🔗 WebP copy + original Gencat link", "view": "table", "cols": {"image": "WebP (R2)", "title": "Title", "original": "Original (Gencat)"}, "tip": "Every scan is kept two ways: a downsized WebP on R2 (schema:image, rendered here) and the original full-res JPEG on Gencat's own server (arx:originalImage) — the source of record always points back to the holding archive.\nThe reservat flag is respected: reserved images are linked, never re-hosted.", "q": "PREFIX schema: <http://schema.org/>\nPREFIX arx: <https://w3id.org/rete/arxiu#>\nSELECT ?image ?title ?original WHERE {\n  ?u schema:image ?image ; schema:name ?title ; arx:originalImage ?original .\n} LIMIT 20"}
     ],
     "worldcup2026": [
@@ -10751,7 +10751,14 @@ theo:PeopleGroupShape a sh:NodeShape ;
       self.__fetchSrc = m.fetchSrc;   // parallel fetch-worker source (pool)
       self.__poolSize = m.poolSize;   // ?workers=N, or null = auto
       ready = wasm_bindgen(m.bytes);
-      ready.then(function () { self.postMessage({ type: "ready" }); });
+      // A wasm instantiate failure (CompileError, or OOM allocating the module's
+      // memory on a low-RAM device) MUST be reported — otherwise no "ready" is
+      // ever posted and the main thread awaits readiness forever ("querying…", no
+      // rows, no error). Post an initError so it can reject + surface.
+      ready.then(
+        function () { self.postMessage({ type: "ready" }); },
+        function (err) { self.postMessage({ type: "initError", error: (err && err.stack) || String((err && err.message) || err) }); }
+      );
       return;
     }
     if (m.type === "query") {
@@ -11002,7 +11009,7 @@ self.onmessage = function (e) {
       RANGE_CACHE_SHIM + "\n";
   }
 
-  let remoteWorker = null, remoteReady = null, remoteResolveReady = null, remoteSeq = 0;
+  let remoteWorker = null, remoteReady = null, remoteResolveReady = null, remoteRejectReady = null, remoteSeq = 0;
   let remoteOnProgress = null;
   const remotePending = new Map();
 
@@ -11010,7 +11017,7 @@ self.onmessage = function (e) {
   // interrupted cooperatively, so we terminate the worker (it rebuilds on the
   // next query) and reject anything in flight.
   function cancelRemote() {
-    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; }
+    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; remoteRejectReady = null; }
     remotePending.forEach((p) => p.reject(new Error("cancelled")));
     remotePending.clear();
     remoteOnProgress = null;
@@ -11021,7 +11028,7 @@ self.onmessage = function (e) {
   // error. A trapped wasm instance is poisoned and can't be reused, so the next
   // query must rebuild a fresh worker.
   function resetRemoteWorker() {
-    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; }
+    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; remoteRejectReady = null; }
     remoteOnProgress = null;
   }
 
@@ -11069,9 +11076,21 @@ self.onmessage = function (e) {
       const flag = asyncOn ? "self.__RETE_ASYNC=true;\n" : "";
       const blob = new Blob([flag + rcPrelude() + glue + REMOTE_HARNESS + COALESCE_JS], { type: "text/javascript" });
       remoteWorker = new Worker(URL.createObjectURL(blob));
+      const w = remoteWorker; // capture THIS generation (a reset nulls remoteWorker)
+      // Reject readiness AND every in-flight query, so nothing hangs waiting on a
+      // worker that failed to start or died. Guards on `w === remoteWorker` so a
+      // stale/terminated worker's late error can't nuke a freshly-rebuilt one.
+      const failWorker = (err) => {
+        if (w !== remoteWorker) return;
+        clearTimeout(watchdog);
+        if (remoteRejectReady) { remoteRejectReady(err); remoteRejectReady = null; }
+        remotePending.forEach((p) => p.reject(err));
+        remotePending.clear();
+      };
       remoteWorker.onmessage = (e) => {
         const m = e.data;
-        if (m.type === "ready") { if (remoteResolveReady) remoteResolveReady(); return; }
+        if (m.type === "ready") { clearTimeout(watchdog); if (remoteResolveReady) remoteResolveReady(); return; }
+        if (m.type === "initError") { failWorker(new Error("The engine couldn't start in your browser: " + m.error)); return; }
         if (m.type === "progress") { if (remoteOnProgress) remoteOnProgress(m); return; }
         if (m.type === "result") {
           const p = remotePending.get(m.id);
@@ -11081,7 +11100,14 @@ self.onmessage = function (e) {
           else { const err = new Error(m.error); err.log = m.log || []; p.reject(err); }
         }
       };
-      const rp = new Promise((res) => { remoteResolveReady = res; });
+      // A worker that throws during init, or a runtime error inside it, would
+      // otherwise leave `rp` pending forever (infinite "querying…").
+      remoteWorker.onerror = (ev) => { try { ev.preventDefault(); } catch (e) { /* ignore */ } failWorker(new Error("engine worker error: " + ((ev && (ev.message || ev.filename)) || "unknown"))); };
+      remoteWorker.onmessageerror = () => failWorker(new Error("engine worker message error"));
+      const rp = new Promise((res, rej) => { remoteResolveReady = res; remoteRejectReady = rej; });
+      // Watchdog: a wedged instantiate (no "ready", no error event) must not hang
+      // the UI forever — time out and reject so the query surfaces a real error.
+      const watchdog = setTimeout(() => failWorker(new Error("the engine didn't start in time — please try again")), 30000);
       remoteWorker.postMessage({
         type: "init", bytes: asyncOn ? asyncWasmBytes : b64ToBytes(RETE_WASM_B64),
         fetchSrc: FETCH_WORKER_SRC, poolSize: parallelWorkerCount()
@@ -13017,9 +13043,16 @@ self.onmessage = function (e) {
   function refreshSession() {
     try { cancelRemote(); } catch (_e) { /* ignore */ }
     const ds = state.dataset;
-    const u = new URL(location.href);
-    u.search = ""; u.hash = ds ? "dataset=" + ds : "";
-    location.assign(u.toString());
+    closeSettings();
+    // A fragment-only location change does NOT reload the document (the app is
+    // hash-routed, so location.search is usually already empty) — the old
+    // location.assign did nothing visible. Set the target URL, then FORCE a real
+    // reload: if only the fragment changed the href assignment won't navigate, so
+    // location.reload() does it; if the search changed (e.g. ?parallel=1 dropped)
+    // the assignment already navigates.
+    const base = location.origin + location.pathname;
+    location.href = base + (ds ? "#dataset=" + ds : "");
+    location.reload();
   }
   function openSettings() {
     rcPrevTotal = -1; rcPrevCount = -1; rcLastGrowAt = 0;
@@ -16928,20 +16961,32 @@ self.onmessage = function (e) {
         if (msg === "cancelled") {
           $("qmeta").textContent = "cancelled";
           $("out").innerHTML = `<div class="note">Query cancelled — the worker was stopped. Run again to retry.</div>`;
+        } else if (IS_IOS && state.asyncReadsOn && (/maximum call stack/i.test(msg) || isEngineTrap(msg))) {
+          // On iOS/iPadOS the concurrent-reads (asyncify) wasm variant trips
+          // Safari's small WebAssembly stack on some ordinary queries — the real
+          // cause here, NOT memory or query size. Self-heal: switch this device to
+          // the reliable SYNC reader (the same engine cached datasets use fine),
+          // which also rescues anyone stranded on a stale asyncReadsOn="1" from an
+          // older build, and invite a re-run.
+          setAsyncReads(false); // persists the choice + rebuilds on the sync variant
+          $("qmeta").textContent = "switched readers";
+          $("out").innerHTML =
+            `<div class="note"><b>Your device's browser tripped on the fast concurrent reader.</b> ` +
+            `We've switched this device to the <b>reliable reader</b> — the same engine your cached datasets use — so this shouldn't happen again. ` +
+            `Just <b>run the query again</b>.</div>` +
+            techDetailsHtml(msg, e && e.stack);
         } else if (/maximum call stack/i.test(msg)) {
-          // We DID run the query — it reached this browser's WebAssembly
-          // call-stack limit partway. iOS / iPad Safari (JavaScriptCore) sets
-          // that limit far lower than desktop Chrome/Firefox, so a large or
-          // structurally involved query can trip it on a phone while running
-          // fine on a computer. Reset the (now-poisoned) instance and explain
-          // plainly — no blaming the query's shape (an expensive but perfectly
-          // ordinary query lands here too).
+          // We DID run the query — it reached this browser's WebAssembly call-stack
+          // limit partway (a large or structurally involved query). Reset the
+          // (now-poisoned) instance and explain plainly — no blaming the query's
+          // shape (an expensive but perfectly ordinary query lands here too).
           resetRemoteWorker();
           $("qmeta").textContent = "reached this browser's limit";
+          const dev = IS_IOS ? "iPhone / iPad Safari" : "this browser";
           $("out").innerHTML =
-            `<div class="note"><b>We ran this, but it reached what iPhone / iPad Safari can handle.</b> ` +
-            `The query hit Safari's WebAssembly limit partway through — a limit on this device, not a problem with the query (it runs on a desktop browser).<br><br>` +
-            `To fit it on a phone: a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), or the <b>Progressive</b> strategy for overviews — or open this dataset on a desktop browser. ` +
+            `<div class="note"><b>We ran this, but it reached what ${dev} can handle.</b> ` +
+            `The query hit ${IS_IOS ? "Safari's" : "the browser's"} WebAssembly stack limit partway through — a limit on this device, not a problem with the query.<br><br>` +
+            `To fit it: a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), or the <b>Progressive</b> strategy for overviews${IS_IOS ? " — or open this dataset on a desktop browser" : ""}. ` +
             `The engine has been reset — run another query any time.</div>` +
             techDetailsHtml(msg, e && e.stack);
         } else if (isEngineTrap(msg)) {
@@ -16954,10 +16999,11 @@ self.onmessage = function (e) {
           // raw error so it isn't hidden behind a misleading message.
           if (fileBytes >= 150e6) {
             $("qmeta").textContent = "reached this browser's limit";
+            const dev = IS_IOS ? "iPhone / iPad Safari's" : "this browser's";
             $("out").innerHTML =
-              `<div class="note"><b>We ran this, but it reached iPhone / iPad Safari's memory limit for a dataset this big${meta.size ? ` (${esc(meta.size)})` : ""}.</b> ` +
-              `It's not the bytes downloaded — it's the working memory to <em>unpack</em> this remote graph's index/dictionary while answering (a phone caps a tab well below a desktop, so the same query runs on a computer).<br><br>` +
-              `Try a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), the <b>Progressive</b> strategy for overviews, or open this dataset on a desktop browser. ` +
+              `<div class="note"><b>We ran this, but it reached ${dev} memory limit for a dataset this big${meta.size ? ` (${esc(meta.size)})` : ""}.</b> ` +
+              `It's not the bytes downloaded — it's the working memory to <em>unpack</em> this remote graph's index/dictionary while answering (a browser tab caps well below the full machine).<br><br>` +
+              `Try a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), the <b>Progressive</b> strategy for overviews${IS_IOS ? ", or open this dataset on a desktop browser" : ""}. ` +
               `The engine has been reset — run another query any time.</div>` +
               techDetailsHtml(msg, e && e.stack);
           } else {

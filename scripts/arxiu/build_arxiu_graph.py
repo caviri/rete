@@ -9,7 +9,8 @@ import json, re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-SRC  = REPO / "data" / "arxiu" / "records.jsonl"
+# accumulative: build from every complete-archive harvest (records_<code>.jsonl)
+SRCS = sorted((REPO / "data" / "arxiu").glob("records_*.jsonl"))
 OUT  = REPO / "data" / "arxiu" / "arxiu.nt"
 
 ARX    = "https://w3id.org/rete/arxiu#"
@@ -42,10 +43,13 @@ def main():
 
     archives, fondses = {}, {}
     n = nimg = 0
-    for line in SRC.open(encoding="utf-8"):
+    seen = set()
+    lines = (line for src in SRCS for line in src.open(encoding="utf-8"))
+    for line in lines:
         r = json.loads(line)
         ref = r.get("codiReferencia")
-        if not ref: continue
+        if not ref or ref in seen: continue
+        seen.add(ref)
         u = B + "unit/" + safe(ref)
         iri(u, RDF, SCHEMA + "ArchiveComponent"); iri(u, RDF, ARX + "Unit")
         if r.get("titol"): lit(u, SCHEMA + "name", clean(r["titol"]))
