@@ -2309,8 +2309,90 @@ self.onmessage = function (e) {
       info.textContent = "Off — reads are sequential (one coalesced multi-range request at a time). Turn on to fetch each query's byte ranges in parallel: the page reloads into cross-origin isolation. Graph/SPARQL only — it may limit the CDN-loaded DuckDB/SQLite Explore backends.";
     }
   }
+  // Storage panel — the honest total of everything the site holds on the device,
+  // with a per-category breakdown. The AI model weights (biggest, in the Cache
+  // API) show up here as the residual of the browser estimate minus the caches we
+  // can measure directly — so the user finally SEES the GB the model took.
+  async function renderStorage() {
+    const [est, ranges, files] = await Promise.all([storageEstimate(), rangeCacheBreakdown(), idbListMeta()]);
+    const rangeBytes = ranges.reduce((a, m) => a + Math.min(m.bytes || 0, m.total || (m.bytes || 0)), 0);
+    const fileBytes = files.reduce((a, m) => a + (m.size || 0), 0);
+    const models = est.usage != null ? Math.max(0, est.usage - rangeBytes - fileBytes) : null;
+    const bar = $("storageBar");
+    if (bar && bar.firstElementChild) {
+      const pct = est.usage != null && est.quota ? Math.min(100, (est.usage / est.quota) * 100) : 0;
+      bar.firstElementChild.style.width = pct.toFixed(1) + "%";
+      bar.classList.toggle("stg-hi", pct > 80);
+    }
+    const info = $("storageInfo");
+    if (info) info.textContent = est.usage != null
+      ? "Using " + formatBytes(est.usage) + (est.quota ? " of ~" + formatBytes(est.quota) + " the browser allows" : "") + " for this site."
+      : "This browser doesn't report a storage total — per-category sizes are below.";
+    const rows = [
+      models != null ? { label: "AI models & app data", sub: "downloaded model weights + misc", bytes: models } : null,
+      { label: "Cached data ranges", sub: ranges.length + " file(s) · lazy reads", bytes: rangeBytes },
+      { label: "Whole cached files", sub: files.length + " file(s) · Explore backends", bytes: fileBytes },
+    ].filter(Boolean);
+    const bd = $("storageBreakdown");
+    if (bd) bd.innerHTML = rows.map((r) =>
+      `<div class="stg-row"><span class="stg-rl">${esc(r.label)}<span class="stg-rs">${esc(r.sub)}</span></span>` +
+      `<span class="stg-rb">${esc(r.bytes ? formatBytes(r.bytes) : "—")}</span></div>`).join("");
+  }
+  // Flash "N freed" after a clear (or a plain ✓ when the browser gives no total).
+  function showFreed(before, after, label) {
+    const el = $("storageFreed"); if (!el) return;
+    el.textContent = (before != null && after != null && before > after)
+      ? "✓ " + formatBytes(before - after) + " freed" : "✓ " + (label || "cleared");
+    setTimeout(() => { if (el) el.textContent = ""; }, 6000);
+  }
+  function relTime(ts) {
+    if (!ts) return "";
+    const s = Math.max(0, (Date.now() - ts) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  }
+  // Session run-log: the recent queries (from the same store the History modal
+  // uses), surfaced in Settings so it's easy to see what's been run and retrace or
+  // replay it — tap a row to load it back into the editor.
+  function renderSession() {
+    const info = $("sessionInfo"), log = $("sessionLog");
+    const hist = loadHistory();
+    if (info) info.textContent = hist.length
+      ? hist.length + " recent run(s). Tap one to load it back into the editor."
+      : "No queries run yet — the ones you run appear here so you can retrace or replay them.";
+    if (!log) return;
+    if (!hist.length) { log.innerHTML = `<p class="cache-empty">Nothing run yet.</p>`; return; }
+    log.innerHTML = hist.slice(0, 8).map((h, i) =>
+      `<button type="button" class="stg-logrow" data-sess="${i}">` +
+      `<span class="stg-lq mono">${esc(shorten((h.query || "").replace(/\s+/g, " "), 64))}</span>` +
+      `<span class="stg-lm">${esc(h.dataset || "")}${h.resultSummary ? " · " + esc(h.resultSummary) : ""}${h.ts ? " · " + esc(relTime(h.ts)) : ""}</span>` +
+      `</button>`).join("");
+    log.querySelectorAll("[data-sess]").forEach((el) => el.onclick = () => {
+      const h = loadHistory()[Number(el.dataset.sess)];
+      if (!h) return;
+      setEd("q", h.query || "");
+      setView(h.format || "table");
+      setStrategy(h.strategy || "whole");
+      if (h.dataset && h.dataset !== state.dataset && (RETE_DATASETS_B64[h.dataset] || userBytes.has(h.dataset))) loadDataset(h.dataset);
+      setMode("sparql");
+      closeSettings();
+    });
+  }
+  // Start fresh: reload to a clean page on the SAME dataset (drops the in-memory
+  // engine/worker and any crashed state, keeps the persistent caches). The one-tap
+  // "refresh the session" the user asked for after a device hiccup.
+  function refreshSession() {
+    try { cancelRemote(); } catch (_e) { /* ignore */ }
+    const ds = state.dataset;
+    const u = new URL(location.href);
+    u.search = ""; u.hash = ds ? "dataset=" + ds : "";
+    location.assign(u.toString());
+  }
   function openSettings() {
     rcPrevTotal = -1; rcPrevCount = -1; rcLastGrowAt = 0;
+    renderStorage(); renderSession();
     renderRangeCache(); renderParallel(); renderCacheList();
     $("settingsModal").classList.remove("hidden");
     // Poll while open so the cache size/bars tick up live as a running query caches.
@@ -2914,13 +2996,41 @@ self.onmessage = function (e) {
       t.onerror = () => res(out);
     })).catch(() => []);
   }
+  // Clear the WHOLE rete cache DB — all four stores. The old version cleared only
+  // FILES+META, silently leaving the persistent range cache (RANGES/RMETA) behind,
+  // so "Clear all" barely freed anything. Now it wipes everything this DB holds.
   async function idbClearAll() {
     const db = await idbOpen();
     return new Promise((res) => {
-      const t = db.transaction([FILES, META], "readwrite");
-      t.objectStore(FILES).clear(); t.objectStore(META).clear();
+      const t = db.transaction([FILES, META, RANGES, RMETA], "readwrite");
+      [FILES, META, RANGES, RMETA].forEach((s) => t.objectStore(s).clear());
       t.oncomplete = () => res(); t.onerror = () => res();
     });
+  }
+  // The AI/embedding model weights (Gemma, Qwen, e5 …) are the BIGGEST thing on
+  // disk — hundreds of MB to ~1 GB — and Transformers.js stores them in the Cache
+  // API (`transformers-cache`), NOT IndexedDB. Nothing cleared them before, which
+  // is why the phone stayed full after "Clear all". Wipe every Cache API bucket
+  // (all are re-fetchable; the page/COI worker re-registers on the next load).
+  // NOTE: this can't reach the browser's own HTTP cache (e.g. the Gemma-4 custom
+  // kernels) — only a browser-level "clear website data" removes that.
+  async function cachesClearAll() {
+    try {
+      if (typeof caches === "undefined" || !caches.keys) return;
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch (_e) { /* private mode / unsupported */ }
+  }
+  // Browser storage estimate — the honest total (IndexedDB + Cache API + more).
+  // Available on iOS Safari 17+; returns {usage, quota} or nulls when unsupported.
+  async function storageEstimate() {
+    try {
+      if (navigator.storage && navigator.storage.estimate) {
+        const e = await navigator.storage.estimate();
+        return { usage: e.usage || 0, quota: e.quota || 0 };
+      }
+    } catch (_e) { /* ignore */ }
+    return { usage: null, quota: null };
   }
 
   // The single cached file the active backend + selected class needs to run local.
@@ -7840,12 +7950,33 @@ self.onmessage = function (e) {
       if (e.target === $("settingsModal")) closeSettings();
     });
     $("clearCacheAll").onclick = async () => {
-      await idbClearAll();
-      await clearRangeCache(); // "Clear all" wipes the persistent ranges too
+      const btn = $("clearCacheAll"), prev = btn.textContent; btn.disabled = true; btn.textContent = "Clearing…";
+      const before = (await storageEstimate()).usage;
+      await idbClearAll();       // all four rete stores (files, meta, ranges, rangeMeta)
+      await cachesClearAll();    // the AI model weights in the Cache API — the big one
       freeExploreEngines();
-      renderCacheList();
-      renderRangeCache();
-      renderCacheCtl();
+      const after = (await storageEstimate()).usage;
+      btn.disabled = false; btn.textContent = prev;
+      showFreed(before, after, "cleared");
+      renderStorage(); renderCacheList(); renderRangeCache(); renderCacheCtl();
+    };
+    $("clearModelsBtn").onclick = async () => {
+      const btn = $("clearModelsBtn"), prev = btn.textContent; btn.disabled = true; btn.textContent = "Clearing…";
+      const before = (await storageEstimate()).usage;
+      await cachesClearAll();
+      // Drop any in-memory model so the next open re-downloads fresh (frees RAM too).
+      try { llmLoaded = false; if (llmWorker) { llmWorker.terminate(); llmWorker = null; } } catch (_e) { /* ignore */ }
+      try { aiGemma4 = null; } catch (_e) { /* ignore */ }
+      const after = (await storageEstimate()).usage;
+      btn.disabled = false; btn.textContent = prev;
+      showFreed(before, after, "models cleared");
+      renderStorage();
+    };
+    $("refreshSessionBtn").onclick = refreshSession;
+    $("clearLogBtn").onclick = () => {
+      try { localStorage.removeItem(HIST_KEY); } catch (_e) { /* ignore */ }
+      renderSession(); updateHistCount();
+      if (typeof renderHistory === "function") renderHistory();
     };
     $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };
     $("clearRangeCacheBtn").onclick = async () => { await clearRangeCache(); renderRangeCache(); };

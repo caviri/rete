@@ -826,37 +826,67 @@ __PLAYGROUND_CSS__
   </div>
 
   <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
-    <div class="modal-card hist-modal">
+    <div class="modal-card set-modal">
       <div class="modal-head">
         <h3 id="settingsModalTitle">Settings</h3>
-        <button id="clearCacheAll" class="ghost" type="button">Clear all</button>
         <button id="settingsModalClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
-      <section class="rc-section">
-        <label class="rc-toggle"><input type="checkbox" id="parallelToggle" /> <span>Parallel range reads</span> <span class="rc-exp">faster · experimental</span></label>
-        <p class="microcopy" id="parallelInfo"></p>
-        <div class="rc-line">
-          <label class="microcopy">Fetch workers <input type="number" id="parallelWorkers" min="1" max="32" placeholder="auto" style="width:3.6em" /></label>
+
+      <!-- Storage: the honest total of everything this site holds on the device
+           (IndexedDB + the Cache API where the AI model weights live), with a
+           per-category breakdown and controls that ACTUALLY free it. -->
+      <section class="rc-section" id="storageSection">
+        <div class="set-h">Storage on this device</div>
+        <div id="storageBar" class="stg-bar"><span style="width:0%"></span></div>
+        <p class="microcopy" id="storageInfo">Measuring…</p>
+        <div id="storageBreakdown" class="stg-breakdown"></div>
+        <div class="rc-line rc-actions">
+          <button id="clearModelsBtn" class="secondary" type="button">Clear AI models</button>
+          <button id="clearCacheAll" class="secondary" type="button">Clear everything</button>
+          <span id="storageFreed" class="stg-freed microcopy" role="status"></span>
         </div>
       </section>
-      <section class="rc-section">
-        <div class="rc-line"><label class="microcopy">AI model (WebGPU) <input type="text" id="aiModelId" list="aiModelList" placeholder="onnx-community/gemma-3-1b-it-ONNX" style="width:22em" /></label>
-          <datalist id="aiModelList">
-            <option value="onnx-community/gemma-3-1b-it-ONNX">Gemma 3 1B (ONNX, default)</option>
-            <option value="google/gemma-4-E2B-it-qat-mobile-transformers">Gemma 4 E2B (mobile, custom WebGPU kernels)</option>
-            <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B (ONNX, small)</option>
-          </datalist></div>
-        <p class="microcopy" id="aiModelInfo">The “✨ SPARQL AI” button runs a small instruction model entirely in your browser via WebGPU to draft SPARQL for the current dataset (grounded in its example queries). The weights download once from the Hugging Face Hub and are cached — nothing is sent to a server. Default is Google’s <code>gemma-3-1b-it</code>; any Transformers.js-compatible chat model id works (a Llama, Qwen or other ONNX). You can also pick <code>google/gemma-4-E2B-it-qat-mobile-transformers</code> — Gemma 4 E2B, which runs via the webml-community custom WebGPU kernels (a separate, faster runtime) instead of ONNX. Needs a WebGPU browser (Chrome/Edge desktop).</p>
+
+      <!-- Session: what's been run + a one-tap way to start fresh. -->
+      <section class="rc-section" id="sessionSection">
+        <div class="set-h">This session
+          <button id="refreshSessionBtn" class="secondary sm" type="button" title="Reload the playground fresh — drops the loaded dataset and in-memory engine (kept caches stay)">↻ Refresh session</button>
+        </div>
+        <p class="microcopy" id="sessionInfo"></p>
+        <div id="sessionLog" class="stg-log"></div>
+        <div class="rc-line"><button id="clearLogBtn" class="ghost sm" type="button">Clear log</button></div>
       </section>
+
       <section class="rc-section">
-        <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>
-        <p class="microcopy" id="rangeCacheInfo"></p>
-        <div class="rc-line"><span id="rangeCacheSize" class="microcopy"></span><button id="clearRangeCacheBtn" class="ghost" type="button">Clear range cache</button></div>
-        <div id="rangeCacheList" class="rc-breakdown"></div>
+        <label class="rc-lbl" for="aiModelId">AI model <span class="rc-exp">WebGPU</span></label>
+        <input type="text" id="aiModelId" class="rc-input" list="aiModelList" placeholder="onnx-community/gemma-3-1b-it-ONNX" />
+        <datalist id="aiModelList">
+          <option value="onnx-community/gemma-3-1b-it-ONNX">Gemma 3 1B (ONNX, default)</option>
+          <option value="google/gemma-4-E2B-it-qat-mobile-transformers">Gemma 4 E2B (mobile, custom WebGPU kernels)</option>
+          <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B (ONNX, small)</option>
+        </datalist>
+        <p class="microcopy" id="aiModelInfo">The “✨ SPARQL AI” button runs a small instruction model entirely in your browser via WebGPU to draft SPARQL for the current dataset (grounded in its example queries). Weights download once from the Hugging Face Hub and are cached — nothing is sent to a server. Default is Google’s <code>gemma-3-1b-it</code>; any Transformers.js-compatible chat model id works. <code>google/gemma-4-E2B-it-qat-mobile-transformers</code> runs via the webml-community custom WebGPU kernels (a separate, faster runtime). Needs a WebGPU browser (Chrome/Edge desktop).</p>
       </section>
-      <h4 class="rc-subhead">Whole-file caches</h4>
-      <p class="microcopy">Companion files cached locally in your browser (IndexedDB). The lazy backends fetch only what a query touches; <b>Cache locally</b> stores the whole file so it survives reloads. <span id="cacheTotal"></span></p>
-      <div id="cacheList" class="history-list cache-list"></div>
+
+      <details class="rc-adv">
+        <summary>Advanced — reads &amp; caches</summary>
+        <section class="rc-section">
+          <label class="rc-toggle"><input type="checkbox" id="parallelToggle" /> <span>Parallel range reads</span> <span class="rc-exp">faster · experimental</span></label>
+          <p class="microcopy" id="parallelInfo"></p>
+          <div class="rc-line">
+            <label class="microcopy">Fetch workers <input type="number" id="parallelWorkers" class="rc-num" min="1" max="32" placeholder="auto" /></label>
+          </div>
+        </section>
+        <section class="rc-section">
+          <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>
+          <p class="microcopy" id="rangeCacheInfo"></p>
+          <div class="rc-line"><span id="rangeCacheSize" class="microcopy"></span><button id="clearRangeCacheBtn" class="ghost sm" type="button">Clear range cache</button></div>
+          <div id="rangeCacheList" class="rc-breakdown"></div>
+        </section>
+        <h4 class="rc-subhead">Whole-file caches</h4>
+        <p class="microcopy">Companion files cached locally in your browser (IndexedDB). The lazy backends fetch only what a query touches; <b>Cache locally</b> stores the whole file so it survives reloads. <span id="cacheTotal"></span></p>
+        <div id="cacheList" class="history-list cache-list"></div>
+      </details>
     </div>
   </div>
 

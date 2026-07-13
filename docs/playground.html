@@ -2725,11 +2725,44 @@ th .coltype.coltype-on {
 .cache-list .cache-row .ci-name { font-weight: 600; word-break: break-all; }
 .cache-list .cache-row .ci-size { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; white-space: nowrap; }
 .cache-list .cache-empty { color: var(--muted); padding: 6px 2px; }
+/* Settings modal: never wider than the viewport; long tokens/inputs must wrap or
+   scroll, never push the card out (the phone overflow the user hit). */
+.set-modal { width: min(640px, 100%); max-width: 100%; max-height: 86vh; overflow: auto; }
+.set-modal * { min-width: 0; }
 .rc-section { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; background: var(--code); }
-.rc-toggle { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+.rc-toggle { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; flex-wrap: wrap; }
 .rc-toggle input { width: 15px; height: 15px; }
 .rc-exp { font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--accent-2, #c84f2f); }
-.rc-line { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+/* Section heading with an optional inline action (e.g. ↻ Refresh session). */
+.set-h { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+.set-h .secondary { margin-left: auto; }
+/* Model-id / worker inputs: full width, box-sized, so 22em never overflows a phone. */
+.rc-lbl { display: block; font-weight: 600; font-size: 12.5px; margin-bottom: 5px; }
+.rc-input { width: 100%; max-width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-family: "Cascadia Mono", "SF Mono", Consolas, ui-monospace, monospace; font-size: 12.5px; }
+.rc-num { width: 4.2em; max-width: 100%; box-sizing: border-box; }
+/* Storage summary: usage bar + per-category breakdown. */
+.stg-bar { height: 8px; border-radius: 5px; background: var(--line); overflow: hidden; margin: 2px 0 7px; }
+.stg-bar > span { display: block; height: 100%; min-width: 2px; background: var(--accent); border-radius: 5px; transition: width .4s ease; }
+.stg-bar.stg-hi > span { background: var(--accent-2, #c84f2f); }
+.stg-breakdown { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 4px; }
+.stg-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+.stg-rl { display: flex; flex-direction: column; min-width: 0; }
+.stg-rs { color: var(--muted); font-size: 10.5px; }
+.stg-rb { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.stg-freed { color: var(--accent-dark, #0b4f42); font-weight: 700; }
+/* Session run-log: tappable rows of recent queries. */
+.stg-log { display: flex; flex-direction: column; gap: 5px; margin: 4px 0; }
+.stg-logrow { display: flex; flex-direction: column; gap: 2px; text-align: left; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); cursor: pointer; }
+.stg-logrow:hover { border-color: var(--accent); background: var(--accent-weak, #eef6f2); }
+.stg-lq { font-size: 11.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stg-lm { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* "Advanced" fold keeps the technical reads/caches controls out of the way. */
+.rc-adv { margin: 0 0 6px; }
+.rc-adv > summary { cursor: pointer; font-weight: 700; font-size: 13px; padding: 4px 0; color: var(--accent-dark, #0b4f42); }
+.rc-adv[open] > summary { margin-bottom: 8px; }
+.sm { font-size: 11.5px; padding: 3px 9px; }
+.rc-actions { flex-wrap: wrap; }
+.rc-line { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
 .rc-line #rangeCacheSize { margin: 0; margin-right: auto; font-variant-numeric: tabular-nums; }
 .rc-subhead { margin: 4px 0 6px; font-size: 13px; }
 /* Per-file range-cache breakdown: one row per cached .rete with a fill bar
@@ -3137,8 +3170,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build a50308d · 2026-07-13 09:07 UTC</span>
-    <script>window.RETE_BUILD = "a50308d · 2026-07-13 09:07 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 3100a25 · 2026-07-13 10:22 UTC</span>
+    <script>window.RETE_BUILD = "3100a25 · 2026-07-13 10:22 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -3916,37 +3949,67 @@ td.lit { color: var(--ink); }
   </div>
 
   <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
-    <div class="modal-card hist-modal">
+    <div class="modal-card set-modal">
       <div class="modal-head">
         <h3 id="settingsModalTitle">Settings</h3>
-        <button id="clearCacheAll" class="ghost" type="button">Clear all</button>
         <button id="settingsModalClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
-      <section class="rc-section">
-        <label class="rc-toggle"><input type="checkbox" id="parallelToggle" /> <span>Parallel range reads</span> <span class="rc-exp">faster · experimental</span></label>
-        <p class="microcopy" id="parallelInfo"></p>
-        <div class="rc-line">
-          <label class="microcopy">Fetch workers <input type="number" id="parallelWorkers" min="1" max="32" placeholder="auto" style="width:3.6em" /></label>
+
+      <!-- Storage: the honest total of everything this site holds on the device
+           (IndexedDB + the Cache API where the AI model weights live), with a
+           per-category breakdown and controls that ACTUALLY free it. -->
+      <section class="rc-section" id="storageSection">
+        <div class="set-h">Storage on this device</div>
+        <div id="storageBar" class="stg-bar"><span style="width:0%"></span></div>
+        <p class="microcopy" id="storageInfo">Measuring…</p>
+        <div id="storageBreakdown" class="stg-breakdown"></div>
+        <div class="rc-line rc-actions">
+          <button id="clearModelsBtn" class="secondary" type="button">Clear AI models</button>
+          <button id="clearCacheAll" class="secondary" type="button">Clear everything</button>
+          <span id="storageFreed" class="stg-freed microcopy" role="status"></span>
         </div>
       </section>
-      <section class="rc-section">
-        <div class="rc-line"><label class="microcopy">AI model (WebGPU) <input type="text" id="aiModelId" list="aiModelList" placeholder="onnx-community/gemma-3-1b-it-ONNX" style="width:22em" /></label>
-          <datalist id="aiModelList">
-            <option value="onnx-community/gemma-3-1b-it-ONNX">Gemma 3 1B (ONNX, default)</option>
-            <option value="google/gemma-4-E2B-it-qat-mobile-transformers">Gemma 4 E2B (mobile, custom WebGPU kernels)</option>
-            <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B (ONNX, small)</option>
-          </datalist></div>
-        <p class="microcopy" id="aiModelInfo">The “✨ SPARQL AI” button runs a small instruction model entirely in your browser via WebGPU to draft SPARQL for the current dataset (grounded in its example queries). The weights download once from the Hugging Face Hub and are cached — nothing is sent to a server. Default is Google’s <code>gemma-3-1b-it</code>; any Transformers.js-compatible chat model id works (a Llama, Qwen or other ONNX). You can also pick <code>google/gemma-4-E2B-it-qat-mobile-transformers</code> — Gemma 4 E2B, which runs via the webml-community custom WebGPU kernels (a separate, faster runtime) instead of ONNX. Needs a WebGPU browser (Chrome/Edge desktop).</p>
+
+      <!-- Session: what's been run + a one-tap way to start fresh. -->
+      <section class="rc-section" id="sessionSection">
+        <div class="set-h">This session
+          <button id="refreshSessionBtn" class="secondary sm" type="button" title="Reload the playground fresh — drops the loaded dataset and in-memory engine (kept caches stay)">↻ Refresh session</button>
+        </div>
+        <p class="microcopy" id="sessionInfo"></p>
+        <div id="sessionLog" class="stg-log"></div>
+        <div class="rc-line"><button id="clearLogBtn" class="ghost sm" type="button">Clear log</button></div>
       </section>
+
       <section class="rc-section">
-        <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>
-        <p class="microcopy" id="rangeCacheInfo"></p>
-        <div class="rc-line"><span id="rangeCacheSize" class="microcopy"></span><button id="clearRangeCacheBtn" class="ghost" type="button">Clear range cache</button></div>
-        <div id="rangeCacheList" class="rc-breakdown"></div>
+        <label class="rc-lbl" for="aiModelId">AI model <span class="rc-exp">WebGPU</span></label>
+        <input type="text" id="aiModelId" class="rc-input" list="aiModelList" placeholder="onnx-community/gemma-3-1b-it-ONNX" />
+        <datalist id="aiModelList">
+          <option value="onnx-community/gemma-3-1b-it-ONNX">Gemma 3 1B (ONNX, default)</option>
+          <option value="google/gemma-4-E2B-it-qat-mobile-transformers">Gemma 4 E2B (mobile, custom WebGPU kernels)</option>
+          <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B (ONNX, small)</option>
+        </datalist>
+        <p class="microcopy" id="aiModelInfo">The “✨ SPARQL AI” button runs a small instruction model entirely in your browser via WebGPU to draft SPARQL for the current dataset (grounded in its example queries). Weights download once from the Hugging Face Hub and are cached — nothing is sent to a server. Default is Google’s <code>gemma-3-1b-it</code>; any Transformers.js-compatible chat model id works. <code>google/gemma-4-E2B-it-qat-mobile-transformers</code> runs via the webml-community custom WebGPU kernels (a separate, faster runtime). Needs a WebGPU browser (Chrome/Edge desktop).</p>
       </section>
-      <h4 class="rc-subhead">Whole-file caches</h4>
-      <p class="microcopy">Companion files cached locally in your browser (IndexedDB). The lazy backends fetch only what a query touches; <b>Cache locally</b> stores the whole file so it survives reloads. <span id="cacheTotal"></span></p>
-      <div id="cacheList" class="history-list cache-list"></div>
+
+      <details class="rc-adv">
+        <summary>Advanced — reads &amp; caches</summary>
+        <section class="rc-section">
+          <label class="rc-toggle"><input type="checkbox" id="parallelToggle" /> <span>Parallel range reads</span> <span class="rc-exp">faster · experimental</span></label>
+          <p class="microcopy" id="parallelInfo"></p>
+          <div class="rc-line">
+            <label class="microcopy">Fetch workers <input type="number" id="parallelWorkers" class="rc-num" min="1" max="32" placeholder="auto" /></label>
+          </div>
+        </section>
+        <section class="rc-section">
+          <label class="rc-toggle"><input type="checkbox" id="rangeCacheToggle" /> <span>Persist fetched ranges across reloads</span> <span class="rc-exp">experimental</span></label>
+          <p class="microcopy" id="rangeCacheInfo"></p>
+          <div class="rc-line"><span id="rangeCacheSize" class="microcopy"></span><button id="clearRangeCacheBtn" class="ghost sm" type="button">Clear range cache</button></div>
+          <div id="rangeCacheList" class="rc-breakdown"></div>
+        </section>
+        <h4 class="rc-subhead">Whole-file caches</h4>
+        <p class="microcopy">Companion files cached locally in your browser (IndexedDB). The lazy backends fetch only what a query touches; <b>Cache locally</b> stores the whole file so it survives reloads. <span id="cacheTotal"></span></p>
+        <div id="cacheList" class="history-list cache-list"></div>
+      </details>
     </div>
   </div>
 
@@ -12824,8 +12887,90 @@ self.onmessage = function (e) {
       info.textContent = "Off — reads are sequential (one coalesced multi-range request at a time). Turn on to fetch each query's byte ranges in parallel: the page reloads into cross-origin isolation. Graph/SPARQL only — it may limit the CDN-loaded DuckDB/SQLite Explore backends.";
     }
   }
+  // Storage panel — the honest total of everything the site holds on the device,
+  // with a per-category breakdown. The AI model weights (biggest, in the Cache
+  // API) show up here as the residual of the browser estimate minus the caches we
+  // can measure directly — so the user finally SEES the GB the model took.
+  async function renderStorage() {
+    const [est, ranges, files] = await Promise.all([storageEstimate(), rangeCacheBreakdown(), idbListMeta()]);
+    const rangeBytes = ranges.reduce((a, m) => a + Math.min(m.bytes || 0, m.total || (m.bytes || 0)), 0);
+    const fileBytes = files.reduce((a, m) => a + (m.size || 0), 0);
+    const models = est.usage != null ? Math.max(0, est.usage - rangeBytes - fileBytes) : null;
+    const bar = $("storageBar");
+    if (bar && bar.firstElementChild) {
+      const pct = est.usage != null && est.quota ? Math.min(100, (est.usage / est.quota) * 100) : 0;
+      bar.firstElementChild.style.width = pct.toFixed(1) + "%";
+      bar.classList.toggle("stg-hi", pct > 80);
+    }
+    const info = $("storageInfo");
+    if (info) info.textContent = est.usage != null
+      ? "Using " + formatBytes(est.usage) + (est.quota ? " of ~" + formatBytes(est.quota) + " the browser allows" : "") + " for this site."
+      : "This browser doesn't report a storage total — per-category sizes are below.";
+    const rows = [
+      models != null ? { label: "AI models & app data", sub: "downloaded model weights + misc", bytes: models } : null,
+      { label: "Cached data ranges", sub: ranges.length + " file(s) · lazy reads", bytes: rangeBytes },
+      { label: "Whole cached files", sub: files.length + " file(s) · Explore backends", bytes: fileBytes },
+    ].filter(Boolean);
+    const bd = $("storageBreakdown");
+    if (bd) bd.innerHTML = rows.map((r) =>
+      `<div class="stg-row"><span class="stg-rl">${esc(r.label)}<span class="stg-rs">${esc(r.sub)}</span></span>` +
+      `<span class="stg-rb">${esc(r.bytes ? formatBytes(r.bytes) : "—")}</span></div>`).join("");
+  }
+  // Flash "N freed" after a clear (or a plain ✓ when the browser gives no total).
+  function showFreed(before, after, label) {
+    const el = $("storageFreed"); if (!el) return;
+    el.textContent = (before != null && after != null && before > after)
+      ? "✓ " + formatBytes(before - after) + " freed" : "✓ " + (label || "cleared");
+    setTimeout(() => { if (el) el.textContent = ""; }, 6000);
+  }
+  function relTime(ts) {
+    if (!ts) return "";
+    const s = Math.max(0, (Date.now() - ts) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  }
+  // Session run-log: the recent queries (from the same store the History modal
+  // uses), surfaced in Settings so it's easy to see what's been run and retrace or
+  // replay it — tap a row to load it back into the editor.
+  function renderSession() {
+    const info = $("sessionInfo"), log = $("sessionLog");
+    const hist = loadHistory();
+    if (info) info.textContent = hist.length
+      ? hist.length + " recent run(s). Tap one to load it back into the editor."
+      : "No queries run yet — the ones you run appear here so you can retrace or replay them.";
+    if (!log) return;
+    if (!hist.length) { log.innerHTML = `<p class="cache-empty">Nothing run yet.</p>`; return; }
+    log.innerHTML = hist.slice(0, 8).map((h, i) =>
+      `<button type="button" class="stg-logrow" data-sess="${i}">` +
+      `<span class="stg-lq mono">${esc(shorten((h.query || "").replace(/\s+/g, " "), 64))}</span>` +
+      `<span class="stg-lm">${esc(h.dataset || "")}${h.resultSummary ? " · " + esc(h.resultSummary) : ""}${h.ts ? " · " + esc(relTime(h.ts)) : ""}</span>` +
+      `</button>`).join("");
+    log.querySelectorAll("[data-sess]").forEach((el) => el.onclick = () => {
+      const h = loadHistory()[Number(el.dataset.sess)];
+      if (!h) return;
+      setEd("q", h.query || "");
+      setView(h.format || "table");
+      setStrategy(h.strategy || "whole");
+      if (h.dataset && h.dataset !== state.dataset && (RETE_DATASETS_B64[h.dataset] || userBytes.has(h.dataset))) loadDataset(h.dataset);
+      setMode("sparql");
+      closeSettings();
+    });
+  }
+  // Start fresh: reload to a clean page on the SAME dataset (drops the in-memory
+  // engine/worker and any crashed state, keeps the persistent caches). The one-tap
+  // "refresh the session" the user asked for after a device hiccup.
+  function refreshSession() {
+    try { cancelRemote(); } catch (_e) { /* ignore */ }
+    const ds = state.dataset;
+    const u = new URL(location.href);
+    u.search = ""; u.hash = ds ? "dataset=" + ds : "";
+    location.assign(u.toString());
+  }
   function openSettings() {
     rcPrevTotal = -1; rcPrevCount = -1; rcLastGrowAt = 0;
+    renderStorage(); renderSession();
     renderRangeCache(); renderParallel(); renderCacheList();
     $("settingsModal").classList.remove("hidden");
     // Poll while open so the cache size/bars tick up live as a running query caches.
@@ -13429,13 +13574,41 @@ self.onmessage = function (e) {
       t.onerror = () => res(out);
     })).catch(() => []);
   }
+  // Clear the WHOLE rete cache DB — all four stores. The old version cleared only
+  // FILES+META, silently leaving the persistent range cache (RANGES/RMETA) behind,
+  // so "Clear all" barely freed anything. Now it wipes everything this DB holds.
   async function idbClearAll() {
     const db = await idbOpen();
     return new Promise((res) => {
-      const t = db.transaction([FILES, META], "readwrite");
-      t.objectStore(FILES).clear(); t.objectStore(META).clear();
+      const t = db.transaction([FILES, META, RANGES, RMETA], "readwrite");
+      [FILES, META, RANGES, RMETA].forEach((s) => t.objectStore(s).clear());
       t.oncomplete = () => res(); t.onerror = () => res();
     });
+  }
+  // The AI/embedding model weights (Gemma, Qwen, e5 …) are the BIGGEST thing on
+  // disk — hundreds of MB to ~1 GB — and Transformers.js stores them in the Cache
+  // API (`transformers-cache`), NOT IndexedDB. Nothing cleared them before, which
+  // is why the phone stayed full after "Clear all". Wipe every Cache API bucket
+  // (all are re-fetchable; the page/COI worker re-registers on the next load).
+  // NOTE: this can't reach the browser's own HTTP cache (e.g. the Gemma-4 custom
+  // kernels) — only a browser-level "clear website data" removes that.
+  async function cachesClearAll() {
+    try {
+      if (typeof caches === "undefined" || !caches.keys) return;
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch (_e) { /* private mode / unsupported */ }
+  }
+  // Browser storage estimate — the honest total (IndexedDB + Cache API + more).
+  // Available on iOS Safari 17+; returns {usage, quota} or nulls when unsupported.
+  async function storageEstimate() {
+    try {
+      if (navigator.storage && navigator.storage.estimate) {
+        const e = await navigator.storage.estimate();
+        return { usage: e.usage || 0, quota: e.quota || 0 };
+      }
+    } catch (_e) { /* ignore */ }
+    return { usage: null, quota: null };
   }
 
   // The single cached file the active backend + selected class needs to run local.
@@ -18355,12 +18528,33 @@ self.onmessage = function (e) {
       if (e.target === $("settingsModal")) closeSettings();
     });
     $("clearCacheAll").onclick = async () => {
-      await idbClearAll();
-      await clearRangeCache(); // "Clear all" wipes the persistent ranges too
+      const btn = $("clearCacheAll"), prev = btn.textContent; btn.disabled = true; btn.textContent = "Clearing…";
+      const before = (await storageEstimate()).usage;
+      await idbClearAll();       // all four rete stores (files, meta, ranges, rangeMeta)
+      await cachesClearAll();    // the AI model weights in the Cache API — the big one
       freeExploreEngines();
-      renderCacheList();
-      renderRangeCache();
-      renderCacheCtl();
+      const after = (await storageEstimate()).usage;
+      btn.disabled = false; btn.textContent = prev;
+      showFreed(before, after, "cleared");
+      renderStorage(); renderCacheList(); renderRangeCache(); renderCacheCtl();
+    };
+    $("clearModelsBtn").onclick = async () => {
+      const btn = $("clearModelsBtn"), prev = btn.textContent; btn.disabled = true; btn.textContent = "Clearing…";
+      const before = (await storageEstimate()).usage;
+      await cachesClearAll();
+      // Drop any in-memory model so the next open re-downloads fresh (frees RAM too).
+      try { llmLoaded = false; if (llmWorker) { llmWorker.terminate(); llmWorker = null; } } catch (_e) { /* ignore */ }
+      try { aiGemma4 = null; } catch (_e) { /* ignore */ }
+      const after = (await storageEstimate()).usage;
+      btn.disabled = false; btn.textContent = prev;
+      showFreed(before, after, "models cleared");
+      renderStorage();
+    };
+    $("refreshSessionBtn").onclick = refreshSession;
+    $("clearLogBtn").onclick = () => {
+      try { localStorage.removeItem(HIST_KEY); } catch (_e) { /* ignore */ }
+      renderSession(); updateHistCount();
+      if (typeof renderHistory === "function") renderHistory();
     };
     $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };
     $("clearRangeCacheBtn").onclick = async () => { await clearRangeCache(); renderRangeCache(); };
