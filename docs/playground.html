@@ -3170,8 +3170,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 3100a25 · 2026-07-13 10:22 UTC</span>
-    <script>window.RETE_BUILD = "3100a25 · 2026-07-13 10:22 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build b84704d · 2026-07-13 10:40 UTC</span>
+    <script>window.RETE_BUILD = "b84704d · 2026-07-13 10:40 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -12326,12 +12326,12 @@ self.onmessage = function (e) {
         const i = Number(btn.dataset.copy);
         const url = location.origin + location.pathname + "#dataset=" +
           encodeURIComponent(state.dataset) + "&ex=" + i;
-        const ok = () => {
-          btn.textContent = "✓"; btn.title = "Copied!";
-          setTimeout(() => { btn.textContent = "🔗"; btn.title = "Copy a short share link to this example"; }, 1200);
-        };
-        (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
-          .then(ok).catch(() => { const qm = $("qmeta"); if (qm) qm.textContent = "Share link: " + url; });
+        copyToClipboard(url).then((done) => {
+          if (done) {
+            btn.textContent = "✓"; btn.title = "Copied!";
+            setTimeout(() => { btn.textContent = "🔗"; btn.title = "Copy a short share link to this example"; }, 1200);
+          } else { const qm = $("qmeta"); if (qm) qm.textContent = "Share link: " + url; }
+        });
       };
     });
   }
@@ -18015,10 +18015,13 @@ self.onmessage = function (e) {
         advice: "Try running it again first — these are often intermittent. If it keeps happening, it's a real bug and worth reporting: expand the technical details below, hit Copy, and send them to the developer. They contain everything needed to reproduce it — you don't need to do anything else." };
     }
     if (/^enter a |parse error|syntax|unexpected token|expected |no geometry|no temporal|no parseable|needs a |needs select/i.test(m)) {
-      return { tone: "user", emoji: "✏️", headline: "Let's adjust the query", advice: m };
+      // A query mistake — friendly tone, but STILL offer the copy button: the user
+      // may want to share the exact parse error (and it carries the dataset/engine
+      // context that makes "expected X at L:C" reproducible).
+      return { tone: "user", emoji: "✏️", headline: "Let's adjust the query", advice: m, copyable: true };
     }
     if (/load a graph|load a dataset|load a /i.test(m)) {
-      return { tone: "user", emoji: "📂", headline: "Pick a dataset first", advice: m };
+      return { tone: "user", emoji: "📂", headline: "Pick a dataset first", advice: m, copyable: false };
     }
     return { tone: "bug", emoji: "⚠️", headline: "That didn't go through",
       advice: "Give it another try. If it persists, open the technical details below, copy them, and share them with the developer so it can be fixed — no need to worry about wording it, the report has it all." };
@@ -18078,6 +18081,43 @@ self.onmessage = function (e) {
     return L.join("\n");
   }
 
+  // Clipboard copy that ACTUALLY WORKS ON iOS SAFARI — used by every copy button
+  // (error log, 🔗 example link, share URL). iOS routinely rejects the async
+  // Clipboard API, and an execCommand fallback chained AFTER that rejection runs
+  // outside the user gesture, where iOS blocks copy — which is why the buttons
+  // "copied nothing". So try a SYNCHRONOUS execCommand copy FIRST, inside the tap,
+  // with the iOS dance: an IN-VIEWPORT (not off-screen) textarea, contentEditable,
+  // a Range selection AND setSelectionRange. Fall back to the async API only after.
+  // Returns Promise<boolean> (true = copied).
+  function copyToClipboard(text) {
+    const s = String(text == null ? "" : text);
+    let ok = false;
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = s;
+      ta.contentEditable = "true";
+      ta.readOnly = false;
+      // Top-left, 1px, transparent — iOS refuses to select an off-screen node,
+      // so the old left:-9999px silently copied nothing.
+      ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;margin:0;opacity:0;";
+      document.body.appendChild(ta);
+      const sel = window.getSelection && window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(ta);
+      if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+      ta.setSelectionRange(0, s.length);   // iOS needs the explicit range on the field
+      ta.focus();
+      ok = !!(document.execCommand && document.execCommand("copy"));
+      if (sel) sel.removeAllRanges();
+      document.body.removeChild(ta);
+    } catch (_e) { ok = false; }
+    if (ok) return Promise.resolve(true);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(s).then(() => true, () => false);
+    }
+    return Promise.resolve(false);
+  }
+
   // The collapsible full-diagnostics block with a one-tap copy button — SHARED by
   // showError and the specific OOM / call-stack notices (which build their own
   // HTML and otherwise had no way to copy). Open by default so the button shows.
@@ -18090,7 +18130,9 @@ self.onmessage = function (e) {
 
   function showError(targetId, message, tech) {
     const c = classifyError(message);
-    const tech_html = c.tone === "user" ? "" : techDetailsHtml(message, tech);
+    // Show the copy-log block unless the classifier marks it non-copyable (the
+    // trivial "pick a dataset" prompt). Parse/syntax errors ARE copyable now.
+    const tech_html = c.copyable === false ? "" : techDetailsHtml(message, tech);
     $(targetId).innerHTML =
       `<div class="error-box err-${c.tone}">` +
       `<div class="err-headline"><span class="err-emoji">${c.emoji}</span>${esc(c.headline)}</div>` +
@@ -18186,10 +18228,12 @@ self.onmessage = function (e) {
   async function shareUrl() {
     updateHash();
     const url = location.href;
-    try {
-      await navigator.clipboard.writeText(url);
-      $("shareBtn").title = "Copied";
-    } catch (_e) {
+    const ok = await copyToClipboard(url);
+    const b = $("shareBtn");
+    if (ok) {
+      if (b) { const o = b.title; b.title = "Copied ✓"; setTimeout(() => { b.title = o || "Copy link to this view"; }, 1500); }
+      $("qmeta").textContent = "Link copied ✓";
+    } else {
       $("qmeta").textContent = "Share URL: " + url;
     }
   }
@@ -18229,25 +18273,15 @@ self.onmessage = function (e) {
       const det = btn.closest(".err-tech");
       const pre = det && det.querySelector(".err-tech-body");
       const text = pre ? pre.textContent : "";
-      const done = (ok) => { const o = btn.textContent; btn.textContent = ok ? "Copied ✓" : "Selected — long-press → Copy"; setTimeout(() => { btn.textContent = o; }, 2500); };
-      // iOS Safari's async clipboard can reject silently; fall back to an
-      // execCommand copy, and if that fails too, SELECT the report so a manual
-      // long-press → Copy still works. A phone must always be able to copy this.
-      const fallback = () => {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = text; ta.style.position = "fixed"; ta.style.left = "-9999px";
-          document.body.appendChild(ta); ta.focus(); ta.select();
-          const ok = document.execCommand && document.execCommand("copy");
-          document.body.removeChild(ta);
-          if (ok) { done(true); return; }
-        } catch (_e) { /* ignore */ }
+      const orig = btn.textContent;
+      const flash = (msg) => { btn.textContent = msg; setTimeout(() => { btn.textContent = orig; }, 2500); };
+      copyToClipboard(text).then((ok) => {
+        if (ok) { flash("Copied ✓"); return; }
+        // Couldn't copy programmatically — select the report so a manual
+        // long-press → Copy still works. A phone must always be able to copy this.
         try { if (pre) { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } } catch (_e) { /* ignore */ }
-        done(false);
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(() => done(true)).catch(fallback);
-      } else { fallback(); }
+        flash("Selected — long-press → Copy");
+      });
     });
     $("strategy").onchange = () => setStrategy($("strategy").value);
     // Switching the Output type re-renders the last result in the new view
