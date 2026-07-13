@@ -93,7 +93,14 @@ def main():
     print(f"harvesting {'ALL' if a.all else limit} records"
           + (f" from archive {a.arxiu}" if a.arxiu else "") + f" (sort {a.sort}) …", flush=True)
     recs = harvest(limit, a.arxiu, a.sort)
-    print(f"got {len(recs)} records; checking R2 for already-mirrored images…", flush=True)
+    # durably save metadata BEFORE the (possibly long) mirror, so a crash can't lose it;
+    # backfill_media.py can then fill/refresh WebP resumably over this file.
+    Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+    with open(a.out, "w", encoding="utf-8") as f:
+        for r in recs:
+            r.setdefault("webp", None)
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    print(f"saved {len(recs)} records (metadata) -> {a.out}; checking R2 for already-mirrored images…", flush=True)
     existing = list_existing()
     print(f"  {len(existing)} images already on R2; mirroring the rest…", flush=True)
     with ThreadPoolExecutor(max_workers=6) as ex:
