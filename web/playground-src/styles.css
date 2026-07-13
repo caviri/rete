@@ -3145,3 +3145,12 @@ td.lit { color: var(--ink); }
 .img-wrap.img-done { min-height: 0; background: none; }
 @keyframes imgspin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .img-wrap:not(.img-done)::after { animation-duration: 2s; } }
+/* In-page image lightbox (click a photo). Click the image again = 2x magnify. */
+.img-lb { position: fixed; inset: 0; z-index: 80; background: rgba(20,28,25,.82); display: flex; flex-direction: column; }
+.img-lb.hidden { display: none; }
+.img-lb-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; }
+.img-lb-bar a { color: #fff; font-size: 13px; text-decoration: underline; }
+.img-lb-bar .img-lb-close { color: #fff; font-size: 26px; background: none; border: 0; cursor: pointer; }
+.img-lb-body { flex: 1 1 auto; overflow: auto; display: grid; place-items: center; touch-action: pinch-zoom pan-x pan-y; }
+.img-lb-body img { max-width: 96vw; max-height: 88vh; cursor: zoom-in; }
+.img-lb-body img.img-lb-zoom { max-width: none; max-height: none; width: 190vw; cursor: zoom-out; }

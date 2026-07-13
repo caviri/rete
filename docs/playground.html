@@ -3185,6 +3185,15 @@ td.lit { color: var(--ink); }
 .img-wrap.img-done { min-height: 0; background: none; }
 @keyframes imgspin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .img-wrap:not(.img-done)::after { animation-duration: 2s; } }
+/* In-page image lightbox (click a photo). Click the image again = 2x magnify. */
+.img-lb { position: fixed; inset: 0; z-index: 80; background: rgba(20,28,25,.82); display: flex; flex-direction: column; }
+.img-lb.hidden { display: none; }
+.img-lb-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; }
+.img-lb-bar a { color: #fff; font-size: 13px; text-decoration: underline; }
+.img-lb-bar .img-lb-close { color: #fff; font-size: 26px; background: none; border: 0; cursor: pointer; }
+.img-lb-body { flex: 1 1 auto; overflow: auto; display: grid; place-items: center; touch-action: pinch-zoom pan-x pan-y; }
+.img-lb-body img { max-width: 96vw; max-height: 88vh; cursor: zoom-in; }
+.img-lb-body img.img-lb-zoom { max-width: none; max-height: none; width: 190vw; cursor: zoom-out; }
   </style>
 </head>
 <body>
@@ -3193,8 +3202,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 92564d8 · 2026-07-13 18:29 UTC</span>
-    <script>window.RETE_BUILD = "92564d8 · 2026-07-13 18:29 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build adac498 · 2026-07-13 18:35 UTC</span>
+    <script>window.RETE_BUILD = "adac498 · 2026-07-13 18:35 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -18850,6 +18859,33 @@ self.onmessage = function (e) {
     // Swiping is native — horizontal scroll-snap on the track (momentum + snap).
     $("cardFocusPrev").onclick = () => stepCardFocus(-1);
     $("cardFocusNext").onclick = () => stepCardFocus(1);
+    // Image lightbox: clicking a photo zooms IN-PAGE (no tab jump); clicking the
+    // zoomed image toggles 2x magnify (scrollable); backdrop/Esc close; the top
+    // bar keeps a link to the original.
+    document.addEventListener("click", (e) => {
+      const a = e.target.closest && e.target.closest("a.img-wrap");
+      if (!a || !a.classList.contains("img-done")) return;
+      const img = a.querySelector("img.cell-thumb");
+      if (!img || img.classList.contains("cell-thumb-broken")) return;
+      e.preventDefault();
+      let lb = document.getElementById("imgLightbox");
+      if (!lb) {
+        lb = document.createElement("div");
+        lb.id = "imgLightbox"; lb.className = "img-lb hidden";
+        lb.innerHTML = `<div class="img-lb-bar"><a class="img-lb-open" target="_blank" rel="noopener noreferrer">open original ↗</a><button class="ghost img-lb-close" aria-label="Close">×</button></div><div class="img-lb-body"><img alt=""/></div>`;
+        document.body.appendChild(lb);
+        const close = () => lb.classList.add("hidden");
+        lb.querySelector(".img-lb-close").onclick = close;
+        lb.addEventListener("click", (ev) => { if (ev.target === lb || ev.target.classList.contains("img-lb-body")) close(); });
+        document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") close(); });
+        lb.querySelector(".img-lb-body img").onclick = function () { this.classList.toggle("img-lb-zoom"); };
+      }
+      const big = lb.querySelector(".img-lb-body img");
+      big.classList.remove("img-lb-zoom");
+      big.src = a.href;
+      lb.querySelector(".img-lb-open").href = a.href;
+      lb.classList.remove("hidden");
+    }, true);
     $("cardFocusClose").onclick = closeCardFocus;
     // Tap a section of the focused card to zoom it for reading (tap again to
     // reset) - links/media keep their own behavior.

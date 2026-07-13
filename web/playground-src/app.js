@@ -8234,6 +8234,33 @@ self.onmessage = function (e) {
     // Swiping is native — horizontal scroll-snap on the track (momentum + snap).
     $("cardFocusPrev").onclick = () => stepCardFocus(-1);
     $("cardFocusNext").onclick = () => stepCardFocus(1);
+    // Image lightbox: clicking a photo zooms IN-PAGE (no tab jump); clicking the
+    // zoomed image toggles 2x magnify (scrollable); backdrop/Esc close; the top
+    // bar keeps a link to the original.
+    document.addEventListener("click", (e) => {
+      const a = e.target.closest && e.target.closest("a.img-wrap");
+      if (!a || !a.classList.contains("img-done")) return;
+      const img = a.querySelector("img.cell-thumb");
+      if (!img || img.classList.contains("cell-thumb-broken")) return;
+      e.preventDefault();
+      let lb = document.getElementById("imgLightbox");
+      if (!lb) {
+        lb = document.createElement("div");
+        lb.id = "imgLightbox"; lb.className = "img-lb hidden";
+        lb.innerHTML = `<div class="img-lb-bar"><a class="img-lb-open" target="_blank" rel="noopener noreferrer">open original ↗</a><button class="ghost img-lb-close" aria-label="Close">×</button></div><div class="img-lb-body"><img alt=""/></div>`;
+        document.body.appendChild(lb);
+        const close = () => lb.classList.add("hidden");
+        lb.querySelector(".img-lb-close").onclick = close;
+        lb.addEventListener("click", (ev) => { if (ev.target === lb || ev.target.classList.contains("img-lb-body")) close(); });
+        document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") close(); });
+        lb.querySelector(".img-lb-body img").onclick = function () { this.classList.toggle("img-lb-zoom"); };
+      }
+      const big = lb.querySelector(".img-lb-body img");
+      big.classList.remove("img-lb-zoom");
+      big.src = a.href;
+      lb.querySelector(".img-lb-open").href = a.href;
+      lb.classList.remove("hidden");
+    }, true);
     $("cardFocusClose").onclick = closeCardFocus;
     // Tap a section of the focused card to zoom it for reading (tap again to
     // reset) - links/media keep their own behavior.
