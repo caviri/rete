@@ -2,6 +2,7 @@
 // + range-length-validation fix — runs the exact mtg GROUP BY the user hit, lazily,
 // against the live R2 file. Asserts rows come back and no console/page errors.
 import { chromium } from "playwright";
+import { runWithRetry } from "./_util.mjs";
 
 const Q = `PREFIX mtg: <https://w3id.org/rete/mtg#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -14,8 +15,10 @@ const main = async () => {
   const browser = await chromium.launch();
   const page = await browser.newPage();
   const errs = [];
+  const asyncWasmReqs = [];
   page.on("pageerror", (e) => errs.push("page: " + String(e).slice(0, 200)));
   page.on("console", (m) => { if (m.type() === "error") errs.push("console: " + m.text().slice(0, 200)); });
+  page.on("request", (r) => { if (/rete_wasm_async/.test(r.url())) asyncWasmReqs.push(r.url().split("/").pop()); });
   const PORT = process.env.PGPORT || "8090";
   // Force async reads ON (the asyncify variant — the path that was failing).
   await page.addInitScript(() => { try { localStorage.setItem("asyncReadsOn", "1"); } catch (e) {} });
@@ -25,25 +28,15 @@ const main = async () => {
   await page.waitForTimeout(4000); // let the header/remote open
 
   await page.evaluate((q) => window.PlaygroundEditor.setText("q", q), Q);
-  await page.evaluate(() => document.getElementById("run").click());
+  const out = await runWithRetry(page, { steps: 60 }); // retries a transient R2 blip
 
-  let out = { rows: 0, text: "", variant: null };
-  for (let i = 0; i < 60; i++) { // up to ~60s
-    await page.waitForTimeout(1000);
-    out = await page.evaluate(() => {
-      const rows = document.querySelectorAll("#out table tbody tr").length;
-      const errBlock = !!document.querySelector("#out .err-tech-body");
-      const errText = errBlock ? document.querySelector("#out .err-tech-body").textContent.slice(0, 500) : "";
-      const qmeta = (document.getElementById("qmeta") || {}).textContent || "";
-      const variant = window.state ? !!window.state.asyncReadsOn : null;
-      return { rows, text: errText, qmeta, errBlock, variant };
-    });
-    if (out.rows > 0 || out.errBlock) break;
-  }
-
-  const verdict = out.rows > 0 && !out.errBlock ? "PASS" : "FAIL";
-  console.log(JSON.stringify({ verdict, rows: out.rows, qmeta: out.qmeta, asyncVariant: out.variant, errBlock: out.errBlock, errSample: out.text, consoleErrs: errs.slice(0, 4) }, null, 2));
+  // PASS requires: rows, no error box, NO console/page errors, AND proof the
+  // async path actually ran (the async wasm was fetched). Without the last two the
+  // check could pass while silently falling back or logging engine errors.
+  const asyncRan = asyncWasmReqs.length > 0;
+  const pass = out.rows > 0 && !out.errBlock && errs.length === 0 && asyncRan;
+  console.log(JSON.stringify({ verdict: pass ? "PASS" : "FAIL", rows: out.rows, qmeta: out.qmeta, tries: out.tries, asyncVariantRan: asyncRan, asyncWasmFetched: asyncWasmReqs, errBlock: out.errBlock, errSample: out.errText.slice(0, 200), consoleErrs: errs.slice(0, 4) }, null, 2));
   await browser.close();
-  process.exit(verdict === "PASS" ? 0 : 1);
+  process.exit(pass ? 0 : 1);
 };
 main();

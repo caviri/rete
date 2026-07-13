@@ -2,6 +2,7 @@
 // reader: it should NOT fetch the async wasm, the remote query must still run,
 // and the Settings toggle must reflect "off" with iPhone-specific advice.
 import { chromium } from "playwright";
+import { runWithRetry } from "./_util.mjs";
 
 const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1";
 const Q = `PREFIX wc: <https://w3id.org/rete/worldcup#>
@@ -28,24 +29,8 @@ const main = async () => {
   await page.waitForTimeout(3500);
 
   await page.evaluate((q) => window.PlaygroundEditor.setText("q", q), Q);
-  await page.evaluate(() => document.getElementById("run").click());
-
-  // On the mobile viewport the default view is CARDS, not a table — count either,
-  // and fall back to the qmeta "N row(s)" tally.
-  let out = { rows: 0, errBlock: false, qmeta: "" };
-  for (let i = 0; i < 45; i++) {
-    await page.waitForTimeout(1000);
-    out = await page.evaluate(() => {
-      const qm = (document.getElementById("qmeta") || {}).textContent || "";
-      const m = qm.match(/(\d+)\s+row/);
-      return {
-        rows: document.querySelectorAll("#out table tbody tr, #out .cards .card, #out .cards [data-card]").length || (m ? Number(m[1]) : 0),
-        errBlock: !!document.querySelector("#out .error-box"),
-        qmeta: qm,
-      };
-    });
-    if (out.rows > 0 || out.errBlock) break;
-  }
+  // runWithRetry counts cards (mobile default view) and retries a transient R2 blip.
+  const out = await runWithRetry(page);
 
   // Inspect the Settings toggle.
   await page.evaluate(() => { const b = document.getElementById("settingsBtn"); if (b) b.click(); document.getElementById("settingsModal").classList.remove("hidden"); });

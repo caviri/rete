@@ -12,11 +12,18 @@ export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 ROOT="$(git rev-parse --show-toplevel)"
 mkdir -p "$ROOT/tests/gate/.cache"
 
-# Fixture for the node async-wasm harness (cached; ~270 KB from R2).
+# Fixture for the node async-wasm harness (cached; ~270 KB from R2). Use -f so an
+# HTTP error / captive-portal page is a curl FAILURE (not a 0-exit that writes an
+# HTML error body into the cache), --retry for transient blips, and validate the
+# magic bytes ("RETE") + a sane size before trusting a cached copy — otherwise a
+# poisoned fixture would persist across runs and red the gate forever.
 FIX="$ROOT/tests/gate/.cache/worldcup2026.rete"
-if [ ! -f "$FIX" ]; then
+valid_fixture() { [ -f "$FIX" ] && [ "$(stat -c%s "$FIX" 2>/dev/null || echo 0)" -gt 1000 ] && [ "$(head -c 4 "$FIX")" = "RETE" ]; }
+if ! valid_fixture; then
   echo "fetching gate fixture worldcup2026.rete…"
-  curl -sSL "https://data.graphplaza.com/worldcup2026/worldcup2026.rete" -o "$FIX"
+  rm -f "$FIX"
+  curl -fsSL --retry 3 --retry-delay 2 "https://data.graphplaza.com/worldcup2026/worldcup2026.rete" -o "$FIX" || { echo "ERROR: could not fetch the gate fixture (network?). G1 will report missing."; rm -f "$FIX"; }
+  if [ -f "$FIX" ] && ! valid_fixture; then echo "ERROR: fetched fixture is not a valid .rete (poisoned response); removing."; rm -f "$FIX"; fi
 fi
 
 # First run: install the playwright npm package next to the checks (the image

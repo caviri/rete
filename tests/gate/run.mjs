@@ -34,11 +34,37 @@ function g0() {
   }
   try {
     const html = fs.readFileSync(`${ROOT}/docs/playground.html`, "utf8");
-    const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g;
+    // Match <script …>…</script> keeping the open-tag attrs so we can skip
+    // non-classic types: type="module" (ESM — new vm.Script would reject
+    // import/export), and data islands (application/json, text/html templates).
+    const re = /<script((?![^>]*\bsrc=)[^>]*)>([\s\S]*?)<\/script>/g;
     let m, n = 0, bad = 0, msg = "";
-    while ((m = re.exec(html))) { n++; if (!m[1].trim()) continue; try { new vm.Script(m[1]); } catch (e) { bad++; msg = e.message; } }
+    while ((m = re.exec(html))) {
+      const attrs = m[1] || "", body = m[2];
+      const type = (attrs.match(/\btype\s*=\s*["']([^"']+)["']/) || [])[1];
+      if (type && !/^(text|application)\/(java|ecma)script$/i.test(type)) continue; // module / json / template
+      if (!body.trim()) continue;
+      n++;
+      try { new vm.Script(body); } catch (e) { bad++; msg = e.message; }
+    }
     record("G0", `playground.html inline scripts (${n})`, bad === 0, bad ? msg.slice(0, 120) : "");
   } catch (e) { record("G0", "playground.html inline scripts", false, String(e).slice(0, 120)); }
+  // The async wasm variant is rebuilt SEPARATELY (build_playground_async.sh);
+  // build_playground.py only COPIES it — so an engine change can leave it stale
+  // while the sync wasm is fresh, and G1/G2 would pass on the old binary. Flag it
+  // if the async source wasm is older than the sync one.
+  try {
+    const syncW = `${ROOT}/web/pkg-nomodules/rete_wasm_bg.wasm`;
+    const asyncW = `${ROOT}/web/pkg-nomodules-async/rete_wasm_bg.wasm`;
+    if (fs.existsSync(syncW) && fs.existsSync(asyncW)) {
+      const st = (p) => fs.statSync(p).mtimeMs;
+      const fresh = st(asyncW) >= st(syncW) - 5000; // 5 s tolerance
+      record("G0", "async wasm not older than sync wasm", fresh,
+        fresh ? "" : "async variant STALE — run scripts/build_playground_async.sh");
+    } else {
+      record("G0", "async wasm present", fs.existsSync(asyncW), fs.existsSync(asyncW) ? "" : "web/pkg-nomodules-async missing");
+    }
+  } catch (e) { record("G0", "async wasm freshness", false, String(e).slice(0, 120)); }
   // Catalog example queries: every prefixed name must be PREFIX-declared.
   try {
     const src = fs.readFileSync(`${ROOT}/web/playground-src/catalog.js`, "utf8");
@@ -49,9 +75,12 @@ function g0() {
       if (!e || !e.q) return; checked++;
       let s = e.q.replace(/<[^>]*>/g, " ").replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
       const declared = new Set(); let m2; const pre = /PREFIX\s+([A-Za-z][\w.\-]*)?:/gi;
-      while ((m2 = pre.exec(s))) declared.add((m2[1] || "").toLowerCase());
-      const used = new Set(); const u = /(?:^|[\s(^,;.|\/*!])([A-Za-z][\w.\-]*):[A-Za-z0-9_%]/g;
-      while ((m2 = u.exec(s))) used.add(m2[1].toLowerCase());
+      while ((m2 = pre.exec(s))) declared.add((m2[1] || "").toLowerCase()); // "" = default prefix
+      // A prefixed name is <prefix>:<local> where prefix may be EMPTY (the default
+      // prefix, `:local`). The delimiter class must include {, [, =, >, } etc. — the
+      // old scanner missed `{br:s`, `?o=ns:x`, and the whole empty-prefix case.
+      const used = new Set(); const u = /(?:^|[\s(){}\[\]^,;.|\/*!=><+])([A-Za-z][\w.\-]*)?:[A-Za-z0-9_%]/g;
+      while ((m2 = u.exec(s))) used.add((m2[1] || "").toLowerCase());
       const missing = [...used].filter((p) => !declared.has(p));
       if (missing.length) bad.push(`${ds}#${i}:${missing.join(",")}`);
     });
@@ -78,7 +107,30 @@ function runChild(cmd, argv, env, timeoutMs, cwd = `${ROOT}/tests/gate`) {
     p.on("exit", (code) => { clearTimeout(t); res({ code, out }); });
   });
 }
-const lastJson = (out) => { const m = out.match(/\{[\s\S]*\}/g); if (!m) return null; try { return JSON.parse(m[m.length - 1]); } catch (e) { return null; } };
+// Extract a check's JSON verdict robustly. The old greedy /\{[\s\S]*\}/ grabbed
+// from the FIRST { (often a Node "(node:12) Warning … { code:'X' }" on stderr) to
+// the LAST }, so any brace-bearing warning made it return null → false RED. This
+// scans every top-level {…} (string-aware, so braces inside "…" don't miscount)
+// and returns the LAST one that JSON.parses — the check's real result object.
+function lastJson(out) {
+  let best = null;
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] !== "{") continue;
+    let depth = 0, inStr = false, esc = false, j = i;
+    for (; j < out.length; j++) {
+      const c = out[j];
+      if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; }
+      else if (c === '"') inStr = true;
+      else if (c === "{") depth++;
+      else if (c === "}") { depth--; if (depth === 0) break; }
+    }
+    if (depth === 0 && j < out.length) {
+      try { best = JSON.parse(out.slice(i, j + 1)); } catch (e) { /* not JSON */ }
+      i = j; // skip the whole object so its NESTED { aren't treated as new starts
+    }              // (else a nested {fields:{…}} would win over the outer verdict)
+  }
+  return best;
+}
 
 // ---------- G1 node async harness ----------
 async function g1() {

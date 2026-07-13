@@ -30,9 +30,19 @@ const main = async () => {
     const card = document.querySelector("#settingsModal .modal-card");
     const input = q("aiModelId");
     const vw = window.innerWidth;
+    // Open the Advanced fold so its controls are laid out, then check EVERY
+    // control's right edge — a child wider than a card with overflow:hidden won't
+    // grow scrollWidth (clipped), so page/card overflow alone can miss it.
+    document.querySelectorAll("#settingsModal .rc-adv").forEach((d) => { d.open = true; });
+    const clipped = [];
+    document.querySelectorAll("#settingsModal input, #settingsModal button, #settingsModal .rc-input, #settingsModal .stg-row, #settingsModal .set-h").forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.right > vw + 1) clipped.push((el.id || el.className || el.tagName) + "@" + Math.round(rect.right));
+    });
     return {
       pageOverflow: document.documentElement.scrollWidth - vw,       // >0 == horizontal scroll (bad)
       cardOverflow: card ? card.scrollWidth - card.clientWidth : -1, // >0 == content wider than card (bad)
+      clippedControls: clipped,                                      // controls whose right edge exceeds the viewport
       inputRight: input ? Math.round(input.getBoundingClientRect().right) : -1,
       vw,
       inputFits: input ? input.getBoundingClientRect().right <= vw + 1 : false,
@@ -47,7 +57,7 @@ const main = async () => {
   });
 
   const pass =
-    r.pageOverflow <= 1 && r.cardOverflow <= 1 && r.inputFits &&
+    r.pageOverflow <= 1 && r.cardOverflow <= 1 && r.inputFits && r.clippedControls.length === 0 &&
     r.hasClearAll && r.hasClearModels && r.hasRefresh &&
     r.breakdownRows >= 2 && r.sessionRows >= 1 && errs.length === 0;
   console.log(JSON.stringify({ verdict: pass ? "PASS" : "FAIL", ...r, errs: errs.slice(0, 4) }, null, 2));

@@ -45,7 +45,10 @@ const main = async () => {
     shareClip = await page.evaluate(() => navigator.clipboard.readText().catch(() => "READ_FAILED"));
   }
 
-  const parseErrShown = /parse|expected|adjust the query/i.test(report) || report.includes("error:");
+  // Must actually be a parse-tone error report — NOT just "the block rendered"
+  // (the old `|| report.includes("error:")` was a tautology: every report has an
+  // error: field, so it passed for any error at all).
+  const parseErrShown = /parse|expected|adjust the query/i.test(report);
   const errCopied = errClip.includes("rete playground — error report");
   const shareCopied = !hasShare || shareClip.includes("playground.html");
   const pass = btn && parseErrShown && errCopied && shareCopied && errs.length === 0;

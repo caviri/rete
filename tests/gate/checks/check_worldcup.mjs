@@ -1,6 +1,7 @@
 // Verify the worldcup2026 ex=0 squad query now runs (parse error fixed) against
 // the live remote dataset. Usage: node check_worldcup.mjs
 import { chromium } from "playwright";
+import { runWithRetry } from "./_util.mjs";
 
 const main = async () => {
   const browser = await chromium.launch();
@@ -13,27 +14,15 @@ const main = async () => {
   await page.waitForTimeout(4000); // dataset open + example load
 
   const q = await page.evaluate(() => (window.PlaygroundEditor.getText ? window.PlaygroundEditor.getText("q") : (document.getElementById("q") || {}).value) || "");
-  await page.evaluate(() => document.getElementById("run").click());
-
-  let out = { rows: 0, err: "", qmeta: "" };
-  for (let i = 0; i < 45; i++) {
-    await page.waitForTimeout(1000);
-    out = await page.evaluate(() => ({
-      rows: document.querySelectorAll("#out table tbody tr").length,
-      err: (document.querySelector("#out .err-tech-body") || document.querySelector("#out .err-advice") || {}).textContent || "",
-      errBlock: !!document.querySelector("#out .error-box"),
-      qmeta: (document.getElementById("qmeta") || {}).textContent || "",
-    }));
-    if (out.rows > 0 || out.errBlock) break;
-  }
+  const out = await runWithRetry(page); // retries a transient R2 blip
 
   const hasXsd = /PREFIX xsd:/i.test(q);
   const pass = hasXsd && out.rows > 0 && !out.errBlock && errs.length === 0;
   console.log(JSON.stringify({
     verdict: pass ? "PASS" : "FAIL",
     queryHasXsdPrefix: hasXsd,
-    rows: out.rows, qmeta: out.qmeta,
-    errText: out.err.slice(0, 160),
+    rows: out.rows, qmeta: out.qmeta, tries: out.tries,
+    errText: out.errText.slice(0, 160),
     errs: errs.slice(0, 3),
   }, null, 2));
   await browser.close();
