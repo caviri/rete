@@ -21,6 +21,15 @@ MTG    = "https://w3id.org/rete/mtg#"
 B      = "https://w3id.org/rete/mtg/"
 SCHEMA = "http://schema.org/"
 DCT    = "http://purl.org/dc/terms/"
+MTGO   = "https://cmdoret.net/mtg_ontology/"      # Cyril Matthey-Doret's structural classes
+FANDOM = "https://mtg.fandom.com/wiki/"           # ...and his wiki-linked concept classes
+
+# bridges to cmdoret/mtg_ontology (the plan's semantic foundation)
+TYPE_EQUIV = {"Creature", "Instant", "Sorcery", "Land", "Artifact", "Enchantment"}  # ≡ mtgo:<same>
+COLOR_FANDOM = {"W": "white", "U": "blue", "B": "black", "R": "red", "G": "green", "C": "colorless"}
+EVERGREEN = {"deathtouch", "defender", "double_strike", "first_strike", "flash", "flying",
+             "haste", "hexproof", "indestructible", "lifelink", "menace", "protection",
+             "reach", "trample", "vigilance", "ward"}
 RDF    = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 TYPE   = RDF + "type"
 RDFS   = "http://www.w3.org/2000/01/rdf-schema#"
@@ -42,6 +51,11 @@ def main():
     data = json.load(open(SRC, encoding="utf-8"))["data"]
     img_path = REPO / "data" / "mtg" / "raw" / "oracle_images.json"
     images = json.load(open(img_path, encoding="utf-8")) if img_path.exists() else {}
+    set_path = REPO / "data" / "mtg" / "raw" / "SetList.json"
+    set_meta = {}
+    if set_path.exists():
+        for s in json.load(open(set_path, encoding="utf-8"))["data"]:
+            set_meta[s["code"]] = s
     out = open(OUT, "w", encoding="utf-8")
     W = out.write
     def iri(s, p, o): W(f"<{s}> <{p}> <{o}> .\n")
@@ -110,6 +124,17 @@ def main():
             pred = {"Legal": "legalIn", "Restricted": "restrictedIn", "Banned": "bannedIn"}.get(status)
             if pred: iri(c, MTG + pred, B + "format/" + fmt); formats.add(fmt)
         for s in prints:      iri(c, MTG + "printedIn", B + "set/" + s); sets.add(s)
+        # rulings (dedup across faces) — the plan's rule-evidence layer; text feeds the TEXT_INDEX
+        seen_r = set(); ri = 0
+        for f in faces:
+            for r in (f.get("rulings") or []):
+                key = (r.get("date"), r.get("text"))
+                if key in seen_r or not r.get("text"): continue
+                seen_r.add(key)
+                rn = B + f"ruling/{slug}/{ri}"; ri += 1
+                iri(c, MTG + "ruling", rn); iri(rn, TYPE, MTG + "Ruling")
+                if r.get("date"): lit(rn, DCT + "date", r["date"], XSD + "date")
+                lit(rn, RDFS + "comment", r["text"])
         n_cards += 1
 
     # vocab: card-type classes (TBox), colors, subtypes, supertypes, keywords, formats, sets
@@ -128,7 +153,29 @@ def main():
     for fmt in sorted(formats):
         n = B + "format/" + fmt; iri(n, TYPE, MTG + "Format"); lit(n, RDFS + "label", fmt.capitalize())
     for s in sorted(sets):
-        n = B + "set/" + s; iri(n, TYPE, MTG + "Set"); lit(n, RDFS + "label", s)
+        n = B + "set/" + s; iri(n, TYPE, MTG + "Set")
+        meta = set_meta.get(s)
+        if meta:
+            lit(n, SCHEMA + "name", meta["name"]); lit(n, RDFS + "label", meta["name"])
+            if meta.get("releaseDate"): lit(n, MTG + "releaseDate", meta["releaseDate"], XSD + "date")
+            if meta.get("type"): lit(n, MTG + "setType", meta["type"])
+            if meta.get("totalSetSize") is not None: lit(n, MTG + "setSize", meta["totalSetSize"], XSD + "integer")
+        else:
+            lit(n, RDFS + "label", s)
+
+    # --- bridges to cmdoret/mtg_ontology (the plan's semantic foundation) ---
+    for ty in sorted(ctypes):
+        if ty in TYPE_EQUIV:
+            iri(MTG + ty.replace(" ", ""), OWL + "equivalentClass", MTGO + ty)
+    for col in sorted(colors):
+        if col in COLOR_FANDOM:
+            n = B + "color/" + col
+            iri(n, RDFS + "seeAlso", FANDOM + COLOR_FANDOM[col]); iri(n, TYPE, MTGO + "Color")
+    for kw in sorted(keywords):
+        key = slugify(kw).replace("-", "_")
+        if key in EVERGREEN:
+            n = B + "keyword/" + slugify(kw)
+            iri(n, RDFS + "seeAlso", FANDOM + key); iri(n, TYPE, MTGO + "AbilityKeyword")
 
     out.close()
     print(f"cards: {n_cards:,} | colors {len(colors)}, types {len(ctypes)}, subtypes {len(subtypes)}, "
