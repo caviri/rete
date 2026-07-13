@@ -174,6 +174,8 @@ const G2 = [
   ["check_settings_mobile", "phone-viewport Settings (no overflow, storage, session)", 120000],
   ["check_copy", "clipboard: parse-error Copy-log + share button", 90000],
   ["check_clear", "Clear everything empties 4 stores + Cache API", 90000],
+  ["check_worker_init", "broken engine wasm surfaces an error (no infinite hang)", 90000],
+  ["check_refresh_session", "Settings ↻ Refresh actually reloads the document", 90000],
 ];
 async function g2() {
   for (const [name, label, timeout] of G2) {

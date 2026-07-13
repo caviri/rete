@@ -159,7 +159,14 @@
       self.__fetchSrc = m.fetchSrc;   // parallel fetch-worker source (pool)
       self.__poolSize = m.poolSize;   // ?workers=N, or null = auto
       ready = wasm_bindgen(m.bytes);
-      ready.then(function () { self.postMessage({ type: "ready" }); });
+      // A wasm instantiate failure (CompileError, or OOM allocating the module's
+      // memory on a low-RAM device) MUST be reported — otherwise no "ready" is
+      // ever posted and the main thread awaits readiness forever ("querying…", no
+      // rows, no error). Post an initError so it can reject + surface.
+      ready.then(
+        function () { self.postMessage({ type: "ready" }); },
+        function (err) { self.postMessage({ type: "initError", error: (err && err.stack) || String((err && err.message) || err) }); }
+      );
       return;
     }
     if (m.type === "query") {
@@ -410,7 +417,7 @@ self.onmessage = function (e) {
       RANGE_CACHE_SHIM + "\n";
   }
 
-  let remoteWorker = null, remoteReady = null, remoteResolveReady = null, remoteSeq = 0;
+  let remoteWorker = null, remoteReady = null, remoteResolveReady = null, remoteRejectReady = null, remoteSeq = 0;
   let remoteOnProgress = null;
   const remotePending = new Map();
 
@@ -418,7 +425,7 @@ self.onmessage = function (e) {
   // interrupted cooperatively, so we terminate the worker (it rebuilds on the
   // next query) and reject anything in flight.
   function cancelRemote() {
-    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; }
+    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; remoteRejectReady = null; }
     remotePending.forEach((p) => p.reject(new Error("cancelled")));
     remotePending.clear();
     remoteOnProgress = null;
@@ -429,7 +436,7 @@ self.onmessage = function (e) {
   // error. A trapped wasm instance is poisoned and can't be reused, so the next
   // query must rebuild a fresh worker.
   function resetRemoteWorker() {
-    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; }
+    if (remoteWorker) { remoteWorker.terminate(); remoteWorker = null; remoteReady = null; remoteResolveReady = null; remoteRejectReady = null; }
     remoteOnProgress = null;
   }
 
@@ -477,9 +484,21 @@ self.onmessage = function (e) {
       const flag = asyncOn ? "self.__RETE_ASYNC=true;\n" : "";
       const blob = new Blob([flag + rcPrelude() + glue + REMOTE_HARNESS + COALESCE_JS], { type: "text/javascript" });
       remoteWorker = new Worker(URL.createObjectURL(blob));
+      const w = remoteWorker; // capture THIS generation (a reset nulls remoteWorker)
+      // Reject readiness AND every in-flight query, so nothing hangs waiting on a
+      // worker that failed to start or died. Guards on `w === remoteWorker` so a
+      // stale/terminated worker's late error can't nuke a freshly-rebuilt one.
+      const failWorker = (err) => {
+        if (w !== remoteWorker) return;
+        clearTimeout(watchdog);
+        if (remoteRejectReady) { remoteRejectReady(err); remoteRejectReady = null; }
+        remotePending.forEach((p) => p.reject(err));
+        remotePending.clear();
+      };
       remoteWorker.onmessage = (e) => {
         const m = e.data;
-        if (m.type === "ready") { if (remoteResolveReady) remoteResolveReady(); return; }
+        if (m.type === "ready") { clearTimeout(watchdog); if (remoteResolveReady) remoteResolveReady(); return; }
+        if (m.type === "initError") { failWorker(new Error("The engine couldn't start in your browser: " + m.error)); return; }
         if (m.type === "progress") { if (remoteOnProgress) remoteOnProgress(m); return; }
         if (m.type === "result") {
           const p = remotePending.get(m.id);
@@ -489,7 +508,14 @@ self.onmessage = function (e) {
           else { const err = new Error(m.error); err.log = m.log || []; p.reject(err); }
         }
       };
-      const rp = new Promise((res) => { remoteResolveReady = res; });
+      // A worker that throws during init, or a runtime error inside it, would
+      // otherwise leave `rp` pending forever (infinite "querying…").
+      remoteWorker.onerror = (ev) => { try { ev.preventDefault(); } catch (e) { /* ignore */ } failWorker(new Error("engine worker error: " + ((ev && (ev.message || ev.filename)) || "unknown"))); };
+      remoteWorker.onmessageerror = () => failWorker(new Error("engine worker message error"));
+      const rp = new Promise((res, rej) => { remoteResolveReady = res; remoteRejectReady = rej; });
+      // Watchdog: a wedged instantiate (no "ready", no error event) must not hang
+      // the UI forever — time out and reject so the query surfaces a real error.
+      const watchdog = setTimeout(() => failWorker(new Error("the engine didn't start in time — please try again")), 30000);
       remoteWorker.postMessage({
         type: "init", bytes: asyncOn ? asyncWasmBytes : b64ToBytes(RETE_WASM_B64),
         fetchSrc: FETCH_WORKER_SRC, poolSize: parallelWorkerCount()
@@ -2425,9 +2451,16 @@ self.onmessage = function (e) {
   function refreshSession() {
     try { cancelRemote(); } catch (_e) { /* ignore */ }
     const ds = state.dataset;
-    const u = new URL(location.href);
-    u.search = ""; u.hash = ds ? "dataset=" + ds : "";
-    location.assign(u.toString());
+    closeSettings();
+    // A fragment-only location change does NOT reload the document (the app is
+    // hash-routed, so location.search is usually already empty) — the old
+    // location.assign did nothing visible. Set the target URL, then FORCE a real
+    // reload: if only the fragment changed the href assignment won't navigate, so
+    // location.reload() does it; if the search changed (e.g. ?parallel=1 dropped)
+    // the assignment already navigates.
+    const base = location.origin + location.pathname;
+    location.href = base + (ds ? "#dataset=" + ds : "");
+    location.reload();
   }
   function openSettings() {
     rcPrevTotal = -1; rcPrevCount = -1; rcLastGrowAt = 0;
@@ -6336,20 +6369,32 @@ self.onmessage = function (e) {
         if (msg === "cancelled") {
           $("qmeta").textContent = "cancelled";
           $("out").innerHTML = `<div class="note">Query cancelled — the worker was stopped. Run again to retry.</div>`;
+        } else if (IS_IOS && state.asyncReadsOn && (/maximum call stack/i.test(msg) || isEngineTrap(msg))) {
+          // On iOS/iPadOS the concurrent-reads (asyncify) wasm variant trips
+          // Safari's small WebAssembly stack on some ordinary queries — the real
+          // cause here, NOT memory or query size. Self-heal: switch this device to
+          // the reliable SYNC reader (the same engine cached datasets use fine),
+          // which also rescues anyone stranded on a stale asyncReadsOn="1" from an
+          // older build, and invite a re-run.
+          setAsyncReads(false); // persists the choice + rebuilds on the sync variant
+          $("qmeta").textContent = "switched readers";
+          $("out").innerHTML =
+            `<div class="note"><b>Your device's browser tripped on the fast concurrent reader.</b> ` +
+            `We've switched this device to the <b>reliable reader</b> — the same engine your cached datasets use — so this shouldn't happen again. ` +
+            `Just <b>run the query again</b>.</div>` +
+            techDetailsHtml(msg, e && e.stack);
         } else if (/maximum call stack/i.test(msg)) {
-          // We DID run the query — it reached this browser's WebAssembly
-          // call-stack limit partway. iOS / iPad Safari (JavaScriptCore) sets
-          // that limit far lower than desktop Chrome/Firefox, so a large or
-          // structurally involved query can trip it on a phone while running
-          // fine on a computer. Reset the (now-poisoned) instance and explain
-          // plainly — no blaming the query's shape (an expensive but perfectly
-          // ordinary query lands here too).
+          // We DID run the query — it reached this browser's WebAssembly call-stack
+          // limit partway (a large or structurally involved query). Reset the
+          // (now-poisoned) instance and explain plainly — no blaming the query's
+          // shape (an expensive but perfectly ordinary query lands here too).
           resetRemoteWorker();
           $("qmeta").textContent = "reached this browser's limit";
+          const dev = IS_IOS ? "iPhone / iPad Safari" : "this browser";
           $("out").innerHTML =
-            `<div class="note"><b>We ran this, but it reached what iPhone / iPad Safari can handle.</b> ` +
-            `The query hit Safari's WebAssembly limit partway through — a limit on this device, not a problem with the query (it runs on a desktop browser).<br><br>` +
-            `To fit it on a phone: a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), or the <b>Progressive</b> strategy for overviews — or open this dataset on a desktop browser. ` +
+            `<div class="note"><b>We ran this, but it reached what ${dev} can handle.</b> ` +
+            `The query hit ${IS_IOS ? "Safari's" : "the browser's"} WebAssembly stack limit partway through — a limit on this device, not a problem with the query.<br><br>` +
+            `To fit it: a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), or the <b>Progressive</b> strategy for overviews${IS_IOS ? " — or open this dataset on a desktop browser" : ""}. ` +
             `The engine has been reset — run another query any time.</div>` +
             techDetailsHtml(msg, e && e.stack);
         } else if (isEngineTrap(msg)) {
@@ -6362,10 +6407,11 @@ self.onmessage = function (e) {
           // raw error so it isn't hidden behind a misleading message.
           if (fileBytes >= 150e6) {
             $("qmeta").textContent = "reached this browser's limit";
+            const dev = IS_IOS ? "iPhone / iPad Safari's" : "this browser's";
             $("out").innerHTML =
-              `<div class="note"><b>We ran this, but it reached iPhone / iPad Safari's memory limit for a dataset this big${meta.size ? ` (${esc(meta.size)})` : ""}.</b> ` +
-              `It's not the bytes downloaded — it's the working memory to <em>unpack</em> this remote graph's index/dictionary while answering (a phone caps a tab well below a desktop, so the same query runs on a computer).<br><br>` +
-              `Try a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), the <b>Progressive</b> strategy for overviews, or open this dataset on a desktop browser. ` +
+              `<div class="note"><b>We ran this, but it reached ${dev} memory limit for a dataset this big${meta.size ? ` (${esc(meta.size)})` : ""}.</b> ` +
+              `It's not the bytes downloaded — it's the working memory to <em>unpack</em> this remote graph's index/dictionary while answering (a browser tab caps well below the full machine).<br><br>` +
+              `Try a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), the <b>Progressive</b> strategy for overviews${IS_IOS ? ", or open this dataset on a desktop browser" : ""}. ` +
               `The engine has been reset — run another query any time.</div>` +
               techDetailsHtml(msg, e && e.stack);
           } else {
