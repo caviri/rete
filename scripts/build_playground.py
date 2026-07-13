@@ -80,17 +80,28 @@ ASYNC_ENV_JS = """
         }
         async function __reteDoLen(urlPtr, urlLen, outPtr) {
           const url = __reteStr(urlPtr, urlLen);
-          // HEAD first: Content-Length is the full size and CORS-safelisted, so it is
-          // readable even when the host hides Content-Range (e.g. Zenodo). Fall back to a
-          // bytes=0-0 GET's Content-Range for hosts that reject HEAD (HF signed storage).
+          // The FIRST cross-origin request to a cold object can transiently come back
+          // with no readable length (CORS preflight, CDN cold-start) — which is why a
+          // fresh load fails once ("could not determine length") then works on retry.
+          // The sync reader already retries; do the same here (the asyncify path used
+          // to give up after one attempt). HEAD first: Content-Length is the full size
+          // and CORS-safelisted, so it is readable even when the host hides
+          // Content-Range (e.g. Zenodo); fall back to a bytes=0-0 GET's Content-Range
+          // for hosts that reject HEAD (HF signed storage). `!(total > 0)` also treats
+          // a NaN (e.g. Content-Range "bytes 0-0/*") as "keep trying".
           let total = 0;
-          try { const h = await fetch(url, { method: 'HEAD' }); if (h.ok) total = Number(h.headers.get('content-length') || 0); } catch (e) { /* fall back */ }
-          if (!total) {
-            const r = await fetch(url, { headers: { Range: 'bytes=0-0' } });
-            const cr = r.headers.get('content-range');
-            total = cr ? Number(cr.split('/')[1]) : Number(r.headers.get('content-length') || 0);
+          for (let attempt = 0; attempt < 4 && !(total > 0); attempt++) {
+            if (attempt) await new Promise((r) => setTimeout(r, 150 * attempt)); // 150, 300, 450 ms
+            try { const h = await fetch(url, { method: 'HEAD' }); if (h.ok) total = Number(h.headers.get('content-length') || 0); } catch (e) { /* fall back */ }
+            if (!(total > 0)) {
+              try {
+                const r = await fetch(url, { headers: { Range: 'bytes=0-0' } });
+                const cr = r.headers.get('content-range');
+                total = cr ? Number(cr.split('/')[1]) : Number(r.headers.get('content-length') || 0);
+              } catch (e) { /* retry the whole probe */ }
+            }
           }
-          new DataView(wasm.memory.buffer).setBigUint64(outPtr, BigInt(total || 0), true);
+          new DataView(wasm.memory.buffer).setBigUint64(outPtr, BigInt(total > 0 ? total : 0), true);
           return total > 0 ? 1 : 0;
         }
         function __reteSuspend(makePromise) {

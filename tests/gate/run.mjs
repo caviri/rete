@@ -103,6 +103,13 @@ async function g1() {
   const rows = (r.out.match(/rows=(\d+)/) || [])[1];
   record("G1", "async wasm + Asyncify driver (lazy, 4×OPTIONAL + ORDER BY cast)", r.code === 0 && Number(rows) > 0,
     r.code === 0 ? `${rows} rows` : r.out.split("\n").filter(Boolean).slice(-2).join(" | ").slice(0, 160));
+
+  // Length probe must retry a cold first request (the "could not determine length"
+  // first-load bug), tested against the real shipped __reteDoLen.
+  const lp = await runChild("node", [`${ROOT}/tests/gate/checks/check_lenprobe.mjs`], { GLUE: `${ROOT}/docs/rete_wasm_async.js` }, 20000, ROOT);
+  const lj = lastJson(lp.out);
+  record("G1", "async length probe retries a cold first request", lp.code === 0 && lj && lj.verdict === "PASS",
+    lp.code === 0 ? "" : (lj ? JSON.stringify(lj.checks || lj).slice(0, 160) : lp.out.slice(-160)));
 }
 
 // ---------- G2 browser matrix ----------
