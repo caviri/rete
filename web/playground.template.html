@@ -871,6 +871,10 @@ __PLAYGROUND_CSS__
       <details class="rc-adv">
         <summary>Advanced — reads &amp; caches</summary>
         <section class="rc-section">
+          <label class="rc-toggle"><input type="checkbox" id="asyncReadsToggle" /> <span>Concurrent reads</span> <span class="rc-exp">faster</span></label>
+          <p class="microcopy" id="asyncReadsInfo"></p>
+        </section>
+        <section class="rc-section">
           <label class="rc-toggle"><input type="checkbox" id="parallelToggle" /> <span>Parallel range reads</span> <span class="rc-exp">faster · experimental</span></label>
           <p class="microcopy" id="parallelInfo"></p>
           <div class="rc-line">

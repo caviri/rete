@@ -2,6 +2,20 @@
   "use strict";
 
   const CATALOG = window.RETE_PLAYGROUND_CATALOG;
+  // iOS / iPadOS run WebKit's JavaScriptCore for ALL browsers (even "Chrome" on
+  // iOS). JSC has a much smaller WebAssembly stack than V8, and the asyncify
+  // (concurrent-reads) wasm variant — with Asyncify's heavier per-frame cost and
+  // its suspend/rewind of a deep eval stack — traps there on some ordinary
+  // queries (deep OPTIONALs, GROUP BY) while the plain sync wasm handles them
+  // fine (it's the same one cached datasets already use on the phone). So we
+  // default iOS to the sync reader. Detects iPhone/iPod, classic iPad, and
+  // iPadOS-13+ (which reports as "Macintosh" but has a touch screen).
+  const IS_IOS = (() => {
+    try {
+      const ua = navigator.userAgent || "";
+      return /iP(hone|od|ad)/.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+    } catch (e) { return false; }
+  })();
   const state = {
     bytes: null,
     dataset: CATALOG.defaultDataset,
@@ -35,10 +49,19 @@
     rangeCacheOn: (() => { try { return localStorage.getItem("rangeCacheOn") === "1"; } catch (e) { return false; } })(),
     // Asyncify concurrent reads: the asyncified wasm variant fetches each remote
     // query's byte ranges in parallel (Promise.all of fetch), no cross-origin
-    // isolation. ON by default and no longer user-exposed — the only opt-out is a
-    // console `localStorage.setItem("asyncReadsOn","0")` escape hatch. Costs the
-    // ~8 MB async wasm only when a REMOTE query first runs (embedded stays sync).
-    asyncReadsOn: (() => { try { return localStorage.getItem("asyncReadsOn") !== "0"; } catch (e) { return true; } })(),
+    // isolation — much faster, but it TRAPS on iOS/iPadOS JSC (see IS_IOS above).
+    // So: an explicit localStorage choice wins ("1"/"0"); otherwise default OFF on
+    // iOS (use the reliable sync reader) and ON everywhere else. The Settings
+    // "Concurrent reads" toggle sets the localStorage override. The async wasm
+    // (~8 MB) is fetched only when a REMOTE query runs with this ON.
+    asyncReadsOn: (() => {
+      try {
+        const v = localStorage.getItem("asyncReadsOn");
+        if (v === "1") return true;
+        if (v === "0") return false;
+        return !IS_IOS;
+      } catch (e) { return !IS_IOS; }
+    })(),
     // Map view: which slippy-tile basemap sits behind the geometry ("none" =
     // the offline equirectangular vectors). localStorage-backed so it persists.
     mapBasemap: (() => { try { return localStorage.getItem("mapBasemap") || "none"; } catch (e) { return "none"; } })(),
@@ -1886,8 +1909,24 @@ self.onmessage = function (e) {
     freeExploreEngines();
     cancelRemote();
   }
-  // Asyncify concurrent reads are always on now (see state.asyncReadsOn above) and
-  // no longer have a Settings toggle — ensureRemoteWorker() reads the flag directly.
+  // Concurrent (asyncify) vs sequential (sync) remote reads. Persist the explicit
+  // choice, flip state, and drop the remote worker so the next query rebuilds it
+  // on the chosen wasm variant. Default is iOS-aware (see state.asyncReadsOn).
+  function setAsyncReads(on) {
+    state.asyncReadsOn = !!on;
+    try { localStorage.setItem("asyncReadsOn", on ? "1" : "0"); } catch (e) { /* private mode */ }
+    resetRemoteWorker();  // rebuild on the other variant at the next remote query
+  }
+  function renderAsyncReads() {
+    const t = $("asyncReadsToggle"); if (t) t.checked = !!state.asyncReadsOn;
+    const info = $("asyncReadsInfo");
+    if (!info) return;
+    info.innerHTML = state.asyncReadsOn
+      ? "<b>On</b> — each remote query fetches its byte ranges concurrently (the asyncify wasm). Faster on the big/lazy datasets." +
+        (IS_IOS ? " <b>On iPhone/iPad this can crash a query</b> (Safari's WebAssembly engine); if a remote query fails, turn this off." : "")
+      : "<b>Off</b> — remote reads are sequential on the plain wasm (the same engine cached datasets use)." +
+        (IS_IOS ? " Recommended on iPhone/iPad — it avoids the Safari WebAssembly crash the concurrent reader can hit." : " Turn on for faster reads on a desktop browser.");
+  }
 
   // ── SPARQL assistant: an in-browser WebGPU LLM (Transformers.js) ───────────
   // "✨ Ask AI" opens a chat that runs a small instruction model ENTIRELY in the
@@ -2393,7 +2432,7 @@ self.onmessage = function (e) {
   function openSettings() {
     rcPrevTotal = -1; rcPrevCount = -1; rcLastGrowAt = 0;
     renderStorage(); renderSession();
-    renderRangeCache(); renderParallel(); renderCacheList();
+    renderRangeCache(); renderParallel(); renderAsyncReads(); renderCacheList();
     $("settingsModal").classList.remove("hidden");
     // Poll while open so the cache size/bars tick up live as a running query caches.
     if (rcLiveTimer) clearInterval(rcLiveTimer);
@@ -8012,6 +8051,7 @@ self.onmessage = function (e) {
       renderSession(); updateHistCount();
       if (typeof renderHistory === "function") renderHistory();
     };
+    { const a = $("asyncReadsToggle"); if (a) a.onchange = (e) => { setAsyncReads(e.target.checked); renderAsyncReads(); }; }
     $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };
     $("clearRangeCacheBtn").onclick = async () => { await clearRangeCache(); renderRangeCache(); };
     { const ai = $("aiModelId"); if (ai) { ai.value = (() => { try { return localStorage.getItem("aiModelId") || ""; } catch (e) { return ""; } })();
