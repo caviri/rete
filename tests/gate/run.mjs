@@ -178,6 +178,7 @@ const G2 = [
   ["check_refresh_session", "Settings ↻ Refresh actually reloads the document", 90000],
   ["check_async_fallback", "async assets 404 → degrades to sync reader, still runs", 120000],
   ["check_query_shapes", "property paths + CONSTRUCT→graph + reasoning (embedded)", 90000],
+  ["check_boe_reason", "BOE OWL 2 QL reasoning over live R2 (0 → N with 🧠 Reason)", 150000],
 ];
 async function g2() {
   for (const [name, label, timeout] of G2) {

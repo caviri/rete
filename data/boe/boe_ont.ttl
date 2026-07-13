@@ -1,0 +1,99 @@
+@prefix eli:  <http://data.europa.eu/eli/ontology#> .
+@prefix bx:   <https://w3id.org/rete/boe#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+
+<https://w3id.org/rete/boe> a owl:Ontology ;
+  rdfs:label "BOE / ELI extension vocabulary"@en ;
+  rdfs:comment "Extension terms for the Spanish consolidated-legislation knowledge graph. Norms use their canonical ELI IRIs and the ELI ontology; these bx: terms cover BOE-specific classes and relations not in ELI. The rango classes form a two-tier taxonomy (force-of-law vs regulatory) under eli:LegalResource; the norm-to-norm relations carry domain/range and inverses so the citation/derogation network is navigable in both directions under OWL 2 QL reasoning. Derived from BOE open data (Ley 37/2007)."@en .
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Class hierarchy — the rango taxonomy, now two levels deep
+# ═══════════════════════════════════════════════════════════════════════════
+eli:LegalResource a owl:Class ; rdfs:label "Recurso legal"@es , "Legal resource"@en .
+
+# Two doctrinal tiers of Spanish norms, both subordinate to a legal resource.
+# In Spanish law a norm either has the FORCE OF LAW (rango de ley — enacted by or
+# with the authority of Parliament) or is REGULATORY (below the law, issued by the
+# executive). The two are mutually exclusive.
+bx:NormaConRangoDeLey a owl:Class ; rdfs:subClassOf eli:LegalResource ;
+  rdfs:label "Norma con rango de ley"@es , "Norm with force of law"@en ;
+  rdfs:comment "Norms with the force of law: leyes (orgánicas / ordinarias / forales), decretos legislativos and decretos-leyes."@en .
+bx:NormaReglamentaria a owl:Class ; rdfs:subClassOf eli:LegalResource ;
+  rdfs:label "Norma reglamentaria"@es , "Regulatory norm"@en ;
+  rdfs:comment "Norms below the rank of law, issued by the executive: reales decretos, órdenes, reglamentos, circulares, instrucciones, resoluciones."@en .
+bx:NormaConRangoDeLey owl:disjointWith bx:NormaReglamentaria .
+
+# ── force-of-law rango classes ──
+bx:Ley                    a owl:Class ; rdfs:subClassOf bx:NormaConRangoDeLey ; rdfs:label "Ley"@es , "Act"@en .
+bx:LeyOrganica            a owl:Class ; rdfs:subClassOf bx:NormaConRangoDeLey ; rdfs:label "Ley Orgánica"@es , "Organic Act"@en .
+bx:LeyForal               a owl:Class ; rdfs:subClassOf bx:NormaConRangoDeLey ; rdfs:label "Ley Foral"@es .
+bx:DecretoLegislativo     a owl:Class ; rdfs:subClassOf bx:NormaConRangoDeLey ; rdfs:label "Decreto Legislativo"@es .
+bx:RealDecretoLegislativo a owl:Class ; rdfs:subClassOf bx:NormaConRangoDeLey ; rdfs:label "Real Decreto Legislativo"@es .
+bx:DecretoLey             a owl:Class ; rdfs:subClassOf bx:NormaConRangoDeLey ; rdfs:label "Decreto-ley"@es .
+bx:RealDecretoLey         a owl:Class ; rdfs:subClassOf bx:NormaConRangoDeLey ; rdfs:label "Real Decreto-ley"@es .
+bx:DecretoLeyForal        a owl:Class ; rdfs:subClassOf bx:NormaConRangoDeLey ; rdfs:label "Decreto-ley Foral"@es .
+bx:DecretoForalLegislativo a owl:Class ; rdfs:subClassOf bx:NormaConRangoDeLey ; rdfs:label "Decreto Foral Legislativo"@es .
+
+# ── regulatory rango classes ──
+bx:RealDecreto  a owl:Class ; rdfs:subClassOf bx:NormaReglamentaria ; rdfs:label "Real Decreto"@es , "Royal Decree"@en .
+bx:Decreto      a owl:Class ; rdfs:subClassOf bx:NormaReglamentaria ; rdfs:label "Decreto"@es .
+bx:Orden        a owl:Class ; rdfs:subClassOf bx:NormaReglamentaria ; rdfs:label "Orden"@es , "Order"@en .
+bx:Reglamento   a owl:Class ; rdfs:subClassOf bx:NormaReglamentaria ; rdfs:label "Reglamento"@es , "Regulation"@en .
+bx:Circular     a owl:Class ; rdfs:subClassOf bx:NormaReglamentaria ; rdfs:label "Circular"@es .
+bx:Instruccion  a owl:Class ; rdfs:subClassOf bx:NormaReglamentaria ; rdfs:label "Instrucción"@es .
+bx:Resolucion   a owl:Class ; rdfs:subClassOf bx:NormaReglamentaria ; rdfs:label "Resolución"@es .
+
+# ── sui generis: the Constitution is supra-legal; treaties/agreements sit apart ──
+bx:Constitucion         a owl:Class ; rdfs:subClassOf eli:LegalResource ; rdfs:label "Constitución"@es , "Constitution"@en .
+bx:AcuerdoInternacional a owl:Class ; rdfs:subClassOf eli:LegalResource ; rdfs:label "Acuerdo Internacional"@es , "International Agreement"@en .
+bx:Acuerdo              a owl:Class ; rdfs:subClassOf eli:LegalResource ; rdfs:label "Acuerdo"@es , "Agreement"@en .
+
+# A norm has exactly ONE rango — the leaf classes are mutually exclusive, so a norm
+# typed as two of them is a modelling error the coherence checker (rete reason) flags.
+[] a owl:AllDisjointClasses ; owl:members (
+  bx:Ley bx:LeyOrganica bx:LeyForal bx:DecretoLegislativo bx:RealDecretoLegislativo
+  bx:DecretoLey bx:RealDecretoLey bx:DecretoLeyForal bx:DecretoForalLegislativo
+  bx:RealDecreto bx:Decreto bx:Orden bx:Reglamento bx:Circular bx:Instruccion
+  bx:Resolucion bx:Constitucion bx:AcuerdoInternacional bx:Acuerdo ) .
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Object properties — the norm-to-norm citation / derogation network
+#  Every relation goes LegalResource → LegalResource (domain + range), and each of
+#  the main ones has an inverse so you can ask "what repealed X?" as well as
+#  "what does X repeal?" with 🧠 Reason on, without the reverse edges being stored.
+# ═══════════════════════════════════════════════════════════════════════════
+eli:repeals    a owl:ObjectProperty ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "deroga"@es , "repeals"@en .
+eli:amends     a owl:ObjectProperty ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "modifica"@es , "amends"@en .
+eli:cites      a owl:ObjectProperty ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "cita"@es , "cites"@en .
+eli:corrects   a owl:ObjectProperty ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "corrige"@es , "corrects"@en .
+eli:transposes a owl:ObjectProperty ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "transpone"@es , "transposes"@en .
+eli:based_on   a owl:ObjectProperty ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "dictada en virtud de"@es , "based on"@en .
+eli:changes    a owl:ObjectProperty ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "altera"@es , "changes"@en .
+eli:related_to a owl:ObjectProperty ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "en relación con"@es , "related to"@en .
+
+# Inverses — navigate the network the other way (entailed, not stored).
+bx:repealedBy     a owl:ObjectProperty ; owl:inverseOf eli:repeals    ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "derogada por"@es , "repealed by"@en .
+bx:amendedBy      a owl:ObjectProperty ; owl:inverseOf eli:amends     ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "modificada por"@es , "amended by"@en .
+bx:citedBy        a owl:ObjectProperty ; owl:inverseOf eli:cites      ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "citada por"@es , "cited by"@en .
+bx:correctedBy    a owl:ObjectProperty ; owl:inverseOf eli:corrects   ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "corregida por"@es , "corrected by"@en .
+bx:transposedInto a owl:ObjectProperty ; owl:inverseOf eli:transposes ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "transpuesta por"@es , "transposed by"@en .
+
+# BOE-specific relations, all refinements of eli:related_to (LegalResource → LegalResource).
+bx:accepts    a owl:ObjectProperty ; rdfs:subPropertyOf eli:related_to ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "acepta"@es , "accepts"@en .
+bx:approves   a owl:ObjectProperty ; rdfs:subPropertyOf eli:related_to ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "aprueba"@es , "approves"@en .
+bx:authorizes a owl:ObjectProperty ; rdfs:subPropertyOf eli:related_to ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "autoriza"@es , "authorizes"@en .
+bx:challenges a owl:ObjectProperty ; rdfs:subPropertyOf eli:related_to ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "recurre / cuestiona"@es , "challenges"@en .
+bx:declares   a owl:ObjectProperty ; rdfs:subPropertyOf eli:related_to ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "declara"@es , "declares"@en .
+bx:interprets a owl:ObjectProperty ; rdfs:subPropertyOf eli:related_to ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "interpreta"@es , "interprets"@en .
+bx:publishes  a owl:ObjectProperty ; rdfs:subPropertyOf eli:related_to ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "publica"@es , "publishes"@en .
+bx:ratifies   a owl:ObjectProperty ; rdfs:subPropertyOf eli:related_to ; rdfs:domain eli:LegalResource ; rdfs:range eli:LegalResource ; rdfs:label "ratifica"@es , "ratifies"@en .
+
+# Attributes (kept from the original vocabulary).
+bx:consolidationStatus a owl:ObjectProperty ; rdfs:domain eli:LegalResource ; rdfs:label "estado de consolidación"@es .
+bx:htmlVersion a owl:ObjectProperty ; rdfs:domain eli:LegalResource ; rdfs:label "versión consolidada (HTML)"@es .
+bx:eliUri a owl:ObjectProperty ; rdfs:label "ELI URI"@es .
+bx:gazetteNumber a owl:DatatypeProperty ; rdfs:domain eli:LegalResource ; rdfs:label "número de diario"@es .
+bx:spentValidity a owl:DatatypeProperty ; rdfs:domain eli:LegalResource ; rdfs:label "vigencia agotada"@es .

@@ -1835,6 +1835,10 @@ self.onmessage = function (e) {
     setEd("q", ex.q);
     setView(ex.view || "table");
     setStrategy(ex.strategy || "whole");
+    // An example can request OWL 2 QL reasoning (the 🧠 Reason toggle) — e.g. the
+    // BOE entailment demos, where the answer only appears with reasoning on. When
+    // the example doesn't mention it, leave the toggle as the user set it.
+    { const r = $("owlReason"); if (r && typeof ex.reason === "boolean") { r.checked = ex.reason; } }
     setMode("sparql");
     clearResults();
     // An example may declare federation partners (catalog keys) — a one-click
