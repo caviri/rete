@@ -272,6 +272,7 @@ __PLAYGROUND_CSS__
               <span class="switch" aria-hidden="true"></span>
               <span class="switch-txt">🧠 Reason</span>
             </label>
+            <button id="reasonHelp" type="button" class="help-button" title="What does Reason do?" aria-label="Explain OWL 2 QL reasoning">?</button>
             <label id="roundWrap" class="hidden">
               <span>Round</span>
               <input id="round" type="number" min="0" placeholder="auto" />
@@ -726,6 +727,49 @@ __PLAYGROUND_CSS__
           In this single-threaded page it illustrates the decomposition; natively the same
           partials are the seam for parallel evaluation. Refused only when nothing in the query
           can split (e.g. a pure property path).
+        </dd>
+      </dl>
+    </div>
+  </div>
+
+  <div id="reasonModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="reasonModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="reasonModalTitle">🧠 Reasoning (OWL 2 QL)</h3>
+        <button id="reasonModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy" style="margin:0 0 10px">
+        With <b>Reason</b> on, the query is rewritten so it also returns the answers your
+        ontology <em>entails</em> — nothing is precomputed or stored; it's derived from the
+        raw data at query time. Opt-in: off means exact match.
+      </p>
+      <dl class="strategy-list">
+        <dt>What it adds</dt>
+        <dd>
+          <code>rdfs:subClassOf</code> / <code>subPropertyOf</code>, <code>domain</code> /
+          <code>range</code>, and <code>owl:inverseOf</code> entailments. Example: with it on,
+          <code>?x a :Aves</code> matches every bird occurrence <em>through the taxonomy</em>;
+          with it off it matches only rows typed <code>:Aves</code> directly (often none).
+        </dd>
+        <dt>How it works — and why it stays fast</dt>
+        <dd>
+          A class atom <code>?x a C</code> is rewritten into a <code>subClassOf*</code> path
+          traversal — <strong>not</strong> a <code>UNION</code> of every subclass — so a deep
+          taxonomy never blows up combinatorially. The path is goal-directed, so over a
+          remote-lazy dataset it only range-fetches the hierarchy edges it actually walks.
+        </dd>
+        <dt>What it costs</dt>
+        <dd>
+          <strong>Effectively nothing</strong> when a query doesn't touch a hierarchy — the
+          rewrite is a no-op. When it does, it costs about the same as writing the equivalent
+          property-path query by hand. It changes the <em>answer</em> (asserted → entailed),
+          which is exactly why it's a deliberate toggle rather than always-on.
+        </dd>
+        <dt>Scope</dt>
+        <dd>
+          The OWL 2 QL / DL-Lite<sub>R</sub> profile — a documented subset, not full OWL DL.
+          For a one-shot logical-coherence check (disjointness, functional-property and
+          <code>sameAs</code> clashes), see <code>rete reason</code> in the CLI.
         </dd>
       </dl>
     </div>

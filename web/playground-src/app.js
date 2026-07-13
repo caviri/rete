@@ -8064,6 +8064,9 @@ self.onmessage = function (e) {
     $("outputModal").addEventListener("click", (e) => {
       if (e.target === $("outputModal")) $("outputModal").classList.add("hidden");
     });
+    { const rh = $("reasonHelp"); if (rh) rh.onclick = () => $("reasonModal").classList.remove("hidden"); }
+    { const rc = $("reasonModalClose"); if (rc) rc.onclick = () => $("reasonModal").classList.add("hidden"); }
+    { const rm = $("reasonModal"); if (rm) rm.addEventListener("click", (e) => { if (e.target === rm) rm.classList.add("hidden"); }); }
     $("layoutCell").onchange = renderLayout;
     $("dsButton").onclick = openSource;
     $("sourceModalClose").onclick = closeSource;
@@ -8143,6 +8146,7 @@ self.onmessage = function (e) {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
         $("outputModal").classList.add("hidden");
+        { const rm = $("reasonModal"); if (rm) rm.classList.add("hidden"); }
         $("cardsFieldsModal").classList.add("hidden");
         $("querySettingsModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");

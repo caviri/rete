@@ -72,16 +72,30 @@ const main = async () => {
     });
   }
 
+  // 4) The "?" help next to 🧠 Reason opens the reasoning help modal (matching
+  //    the Output / Strategy help pattern).
+  const help = await page.evaluate(() => {
+    const btn = document.getElementById("reasonHelp");
+    if (!btn) return { has: false };
+    btn.click();
+    const modal = document.getElementById("reasonModal");
+    const shown = modal && !modal.classList.contains("hidden");
+    const body = (modal && modal.textContent) || "";
+    return { has: true, shown, mentionsQL: /OWL 2 QL/i.test(body), mentionsCost: /costs|no-op|nothing/i.test(body) };
+  });
+
   const pass =
     pathRes.rows > 0 && !pathRes.err &&
     graphRes.hasSvg && graphRes.nodes > 0 && !graphRes.err &&
     (reasonRes.skipped || (reasonRes.rows > 0 && !reasonRes.err)) &&
+    help.has && help.shown && help.mentionsQL &&
     errs.length === 0;
   console.log(JSON.stringify({
     verdict: pass ? "PASS" : "FAIL",
     propertyPathRows: pathRes.rows,
     constructGraphSvg: graphRes.hasSvg, graphNodes: graphRes.nodes,
     reasoningRows: reasonRes.rows, reasoningSkipped: reasonRes.skipped,
+    reasonHelpOpens: help.shown, reasonHelpHasContent: help.mentionsQL,
     errs: errs.slice(0, 3),
   }, null, 2));
   await browser.close();
