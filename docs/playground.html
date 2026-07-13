@@ -686,6 +686,12 @@ section,
 .console-shell.lib-collapsed { grid-template-columns: auto auto minmax(0, 1fr); }
 .console-shell.lib-collapsed .library-panel { display: none; }
 .console-shell.lib-collapsed .lib-expand { display: grid; place-items: center; }
+/* The details drawer's dimming backdrop is a PHONE-only modal element (the
+   ≤tablet media query positions + reveals it under `.lib-open`). On desktop it
+   must be out of the grid entirely — left visible it becomes a static grid item
+   that steals the workbench's `1fr` column, wrapping the workbench onto the
+   sticky rail (a full-width overlap of the whole console). */
+.lib-backdrop { display: none; }
 
 .library-panel section {
   min-width: 0;
@@ -3131,8 +3137,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 675ce0f · 2026-07-13 06:56 UTC</span>
-    <script>window.RETE_BUILD = "675ce0f · 2026-07-13 06:56 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 737c9db · 2026-07-13 07:52 UTC</span>
+    <script>window.RETE_BUILD = "737c9db · 2026-07-13 07:52 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
