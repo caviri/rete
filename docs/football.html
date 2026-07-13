@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Reasoning & coherence · rete docs</title>
+  <title>Football — match replays · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -204,7 +204,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
         <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
+        <li class="nav-group"><details open><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html" class="active">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li><a href="subtitles.html">Subtitle timeline</a></li>
         <li><a href="explore-100mb.html">Wikidata lazy explorer (100MB / 1GB)</a></li>
         <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
@@ -213,7 +213,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="reasoning.html" class="active">Reasoning & coherence</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="compatibility.html">Compatibility & Cypher</a></li>
@@ -238,268 +238,19 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Reasoning &amp; coherence checking</h1>
-<p>rete reasons over an ontology <strong>two complementary ways</strong>:</p>
+<h1>Football — match replays from a graph</h1>
+<p>Two interactive demos that replay real football from a <strong>spatiotemporal <code>.rete</code> graph</strong> — every player's position, the ball, and the match events are triples, range-fetched as the clock advances. No video: what you see is the knowledge graph rendering itself.</p>
 <ul>
-<li><strong>Query rewriting — OWL 2 QL</strong> (<a href="#reasoning-by-query-rewriting-owl-2-ql">jump</a>):
-rewrite the <em>query</em> so its answer includes the entailed solutions, computed over
-the <strong>raw data with no materialization</strong>. Opt-in, lazy — it works over a remote
-file with no rebuild and fetches only the bytes the rewritten query touches — and
-the natural fit for ontology-mediated <strong>query answering</strong>.</li>
-<li><strong>Materialization — OWL RL / RDFS</strong> (the rest of this page): forward-chain the
-entailed <em>triples</em> to a fixpoint, to either <strong>bake</strong> them into the file
-(<code>rete build --materialize</code>) or <strong>coherence-check</strong> it (<code>rete reason</code>).</li>
+<li><strong><a href="pitch.html">Pick any match →</a></strong> — a canvas pitch replaying player + ball positions at 5 fps, with occupancy heatmaps for any player, team, or the ball. Data: StatsBomb open positional feeds, one <code>.rete</code> per match.</li>
+<li><strong><a href="wcfinal.html">The 2022 World Cup final →</a></strong> — Argentina 3–3 France replayed from StatsBomb 360 freeze-frames: every player's place at every recorded moment, a live scoreboard, and jump-to-goal navigation.</li>
 </ul>
-<p>Rule of thumb: reach for <strong>query rewriting</strong> to <em>answer queries</em> under an ontology
-without touching the data; reach for <strong>materialization</strong> to <em>persist</em> inferences
-or <em>detect contradictions</em>.</p>
-<hr />
-<p><code>rete reason</code> runs a <strong>prototype forward-chaining OWL RL / RDFS reasoner</strong> over a
-file's default graph: it materializes the obvious RDFS/OWL entailments to a
-fixpoint, then scans the closed graph for <strong>incoherent points</strong> — logical
-contradictions such as an individual that belongs to two disjoint classes.</p>
-<blockquote>
-<p><strong>OWL RL in one paragraph.</strong> OWL (the Web Ontology Language) lets you state
-<em>schema</em> axioms about your data — class hierarchies, property characteristics,
-disjointness, identity. A <em>reasoner</em> draws the logical consequences (e.g. "if
-<code>:a causes :b</code> and causation is transitive, then <code>:a causes :c</code>") and detects
-contradictions. OWL RL is the rule-based profile of OWL designed exactly for
-forward-chaining materialization over triples, which is what this implements.</p>
-</blockquote>
-<blockquote>
-<p><strong>Loading an OWL ontology.</strong> An OWL ontology is just RDF triples. <code>rete build</code>
-ingests the two common RDF serializations directly — <strong>Turtle</strong> (<code>.ttl</code>) and
-<strong>RDF/XML</strong> (<code>.rdf</code> / <code>.owl</code>) — so <code>rete build my-ontology.owl -o onto.rete &amp;&amp; rete reason onto.rete</code> works with no conversion step. (OWL/XML and Functional
-Syntax are <em>not</em> RDF; convert them to RDF/XML first — see
-<a href="compatibility.html">Compatibility</a>.)</p>
-</blockquote>
-<blockquote>
-<p><strong>Scope — this is a prototype subset, NOT full OWL DL.</strong> It covers the rules in
-the tables below by exact-string matching on canonical N-Triples tokens. It does
-not do equality reasoning beyond the checks listed, class expressions
-(<code>owl:Restriction</code>, intersections/unions), cardinality, datatype reasoning, or
-open-world consistency in the OWL DL sense. Use it as a lightweight coherence
-gate, not a certified entailment regime.</p>
-</blockquote>
-<figure class="fig-right">
-  <img src="img/reasoning.svg" alt="Asserted triples plus a subClassOf+type rule produce an inferred type triple (dashed); a disjointWith axiom plus conflicting types produce a red 'incoherent' flag.">
-  <figcaption>Forward-chaining materializes entailed triples (dashed); disjointness and domain clashes surface as <strong>incoherent points</strong>.</figcaption>
-</figure>
-<h2>Usage</h2>
-<pre><code class="language-sh">rete reason data.rete                       # report entailment count + incoherent points
-rete reason data.rete --materialize          # also print base + inferred graph (N-Quads)
-rete reason data.rete --materialize --format ttl
-rete reason --url https://host/data.rete     # check a REMOTE file over HTTP range reads
-rete reason data.rete --check                # terse one-line verdict (CI gate)
-rete reason data.rete --verify-card          # re-check a build-time coherence stamp
-</code></pre>
-<p><code>rete reason</code> <strong>exits non-zero when any inconsistency is found</strong>, and zero when
-the graph is coherent — so it drops straight into CI as a coherence check. <code>--url</code>
-reads a remote <code>.rete</code> lazily over HTTP ranges (like <code>rete sparql-url</code>), refusing an
-incomplete result if a range fetch fails. <code>--check</code> prints a single verdict line for
-scripts.</p>
-<h2>Build-time materialization</h2>
-<p><code>rete reason --materialize</code> <em>prints</em> the closed graph but doesn't change the file.
-To <strong>persist</strong> the entailments — so they ship in the <code>.rete</code> and need no
-query-time reasoning — materialize at build time:</p>
-<pre><code class="language-sh">rete build data.nt -o data.rete --materialize
-</code></pre>
-<p>This runs the same reasoner over the default graph during the build and stores the
-inferred triples alongside the asserted ones (the index deduplicates any overlap).
-After that, a plain triple/SPARQL query sees the entailed triples directly — e.g.
-with <code>Class subClassOf Super</code> and <code>x a Class</code> asserted, <code>x a Super</code> is queryable
-with no reasoner in the loop. The build <strong>aborts</strong> (non-zero) if the graph is
-logically incoherent, so it never bakes a contradiction into a published file.</p>
-<p>Trade-off: a materialized file is larger and fixes the entailments at build time
-(re-build to re-materialize after the ontology changes); an un-materialized file
-stays compact and you run <code>rete reason</code> on demand.</p>
-<h2>Build-time coherence stamp</h2>
-<p><code>rete build --reason</code> runs the reasoner once at build time and <strong>stamps the verdict
-into the Dataset Card</strong> — so a remote reader learns the graph's coherence from the
-index-free card (<code>rete card-url</code>, ~2 ranges) with <strong>zero compute</strong>, never fetching
-the graph:</p>
-<pre><code class="language-sh">rete build data.nt -o data.rete --reason
-rete card data.rete            # …includes a `coherence:` block
-#   coherence:
-#       verdict    : coherent
-#       scope      : default · rules owl-rl-subset/v1 · not materialized
-</code></pre>
-<p>Unlike <code>--materialize</code>, <code>--reason</code> does <strong>not</strong> abort an incoherent graph — it
-records <code>coherent: false</code> (with a <code>by_kind</code> histogram) honestly, so a known-bad
-dataset can still publish its status. Combine <code>--reason --materialize</code> to both bake
-the entailments and stamp the verdict.</p>
-<p>The stamp is deterministic (sorted histogram, no free-text detail) so it folds into
-the file's content hash without destabilizing it — two <code>--reason</code> builds of the same
-input are byte-identical, and a build <em>without</em> <code>--reason</code> is byte-identical to
-before the feature existed. To keep the stamp honest it carries a <code>rules</code> tag
-(<code>rete_core::REASON_RULESET</code>); <code>rete reason --verify-card</code> recomputes the verdict and
-<strong>fails</strong> if it drifted from the data or the rule set changed:</p>
-<pre><code class="language-sh">rete reason data.rete --verify-card
-#   coherence card verified: coherent (0 inconsistency(ies), rules owl-rl-subset/v1)
-</code></pre>
-<p>So a CI pipeline can stamp coherence at build time and assert it never silently goes
-stale — and a consumer can trust the card's verdict because it is cheap to re-verify.</p>
-<h2>Entailment rules (materialized to a fixpoint)</h2>
-<table><thead><tr><th>Rule</th><th>If the graph contains…</th><th>…then entail</th></tr></thead><tbody>
-<tr><td>subClassOf transitivity</td><td><code>c rdfs:subClassOf d</code> · <code>d rdfs:subClassOf e</code></td><td><code>c rdfs:subClassOf e</code></td></tr>
-<tr><td>type propagation</td><td><code>x a c</code> · <code>c rdfs:subClassOf d</code></td><td><code>x a d</code></td></tr>
-<tr><td>subPropertyOf</td><td><code>p rdfs:subPropertyOf q</code> · <code>x p y</code></td><td><code>x q y</code></td></tr>
-<tr><td>subPropertyOf transitivity</td><td><code>p rdfs:subPropertyOf q</code> · <code>q rdfs:subPropertyOf r</code></td><td><code>p rdfs:subPropertyOf r</code></td></tr>
-<tr><td>domain</td><td><code>p rdfs:domain c</code> · <code>x p y</code></td><td><code>x a c</code></td></tr>
-<tr><td>range</td><td><code>p rdfs:range c</code> · <code>x p y</code></td><td><code>y a c</code></td></tr>
-<tr><td>inverseOf</td><td><code>p owl:inverseOf q</code> · <code>x p y</code></td><td><code>y q x</code> (and the reverse direction)</td></tr>
-<tr><td>SymmetricProperty</td><td><code>p a owl:SymmetricProperty</code> · <code>x p y</code></td><td><code>y p x</code></td></tr>
-<tr><td>TransitiveProperty</td><td><code>p a owl:TransitiveProperty</code> · <code>x p y</code> · <code>y p z</code></td><td><code>x p z</code></td></tr>
-</tbody></table>
-<h2>Inconsistency rules (the incoherent points)</h2>
-<p>Detection runs <strong>after</strong> materialization, so entailed types count — a
-disjointness violation that only shows up once <code>rdfs:subClassOf</code> has propagated is
-still caught.</p>
-<table><thead><tr><th><code>kind</code></th><th>Triggered by</th></tr></thead><tbody>
-<tr><td><code>disjoint-classes</code></td><td><code>x a c</code> · <code>x a d</code> · <code>c owl:disjointWith d</code> (either direction)</td></tr>
-<tr><td><code>sameas-differentfrom</code></td><td><code>x owl:sameAs y</code> · <code>x owl:differentFrom y</code> (either direction)</td></tr>
-<tr><td><code>functional-property</code></td><td><code>p a owl:FunctionalProperty</code> · <code>x p y</code> · <code>x p z</code> · <code>y ≠ z</code> (and not <code>y owl:sameAs z</code>)</td></tr>
-<tr><td><code>owl-nothing</code></td><td><code>x a owl:Nothing</code></td></tr>
-</tbody></table>
-<h2>Worked example: a causal model</h2>
-<p><code>examples/causal.nt</code> is a small causal graph. It carries (1) a causal <strong>cycle</strong>
-<code>a → b → c → a</code>, and (2) an <strong>incoherent point</strong>: a patient <code>:p</code> typed as both
-<code>HealthyState</code> and <code>DiseaseState</code>, which are declared <code>owl:disjointWith</code>.</p>
-<p>The two kinds of problem are found by two complementary tools:</p>
-<p><strong>A causal cycle</strong> is a <em>structural</em> fact about the data — find it with a SPARQL
-property path:</p>
-<pre><code class="language-sh">rete sparql causal.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?x WHERE { ?x e:causes+ ?x }"
-#  ?x=&lt;http://ex/a&gt;
-#  ?x=&lt;http://ex/b&gt;
-#  ?x=&lt;http://ex/c&gt;
-</code></pre>
-<p><strong>A disjointness (or functional-property) violation</strong> is a <em>logical</em>
-contradiction — find it with <code>rete reason</code>:</p>
-<pre><code class="language-sh">rete build examples/causal.nt -o causal.rete
-rete reason causal.rete
-#  inferred 9 new triple(s)
-#  1 inconsistency(ies) found:
-#    [disjoint-classes] &lt;http://ex/p&gt; is typed as both &lt;http://ex/DiseaseState&gt; and &lt;http://ex/HealthyState&gt;, which are owl:disjointWith
-#  Error: 1 inconsistency(ies) — graph is incoherent   (exit code 1)
-</code></pre>
-<p>The entailment count (9) reflects the materialized <code>subClassOf</code> chain
-(<code>Disease ⊑ Condition ⊑ Factor</code>) and the transitive <code>:causes</code> closure
-(<code>a causes c</code>, etc.). Because the graph is incoherent, the command exits non-zero.</p>
-<h2>Remote / in-browser coherence</h2>
-<p>The same coherence checks run <strong>in the browser against a remote <code>.rete</code> over HTTP
-range reads</strong> — drop a file on any range-serving host (S3, GitHub Pages, a CORS
-proxy), hand the client a URL, and check coherence with no server and no full
-download. The WASM build exposes three entry points, tiered by how much of the
-file they touch. They mirror the SHACL family (<code>shacl_url</code> / <code>shacl_construct_url</code>)
-and are <strong>worker-only</strong> (the engine is synchronous and uses blocking XHR, which
-browsers permit only off the main thread). Each returns a JSON envelope with a
-<code>remote: { fileLength, bytes, requests }</code> block so the UI can show exactly how
-little of the file was pulled; a failed range fetch mid-check is an <strong>error</strong>,
-never a silently-incomplete (and so possibly false-"coherent") result.</p>
-<table><thead><tr><th>Tier</th><th>Function</th><th>Reads</th><th>Finds</th></tr></thead><tbody>
-<tr><td><strong>0 — schema</strong></td><td><code>check_schema_url(url)</code></td><td>header + the schema block only (2 ranges, <strong>~1–8 KB at any graph size</strong>, never the index, dictionary, or community summary)</td><td>subClassOf cycles; <strong>unsatisfiable classes</strong> (a class that is a subclass of two <code>owl:disjointWith</code> classes)</td></tr>
-<tr><td><strong>1 — selective</strong></td><td><code>reason_construct_url(url, construct)</code></td><td>only the tiles the CONSTRUCT's constant-predicate patterns touch (one warm cache)</td><td>every contradiction visible from <code>rdf:type</code> + the class/equality T-Box (disjoint-class clashes, <code>sameAs</code>/<code>differentFrom</code>)</td></tr>
-<tr><td><strong>2 — full</strong></td><td><code>reason_url(url[, graph])</code></td><td>materializes the whole graph (≈ the entire file)</td><td>every incoherent point the CLI <code>rete reason</code> finds</td></tr>
-</tbody></table>
-<p><strong>Tier 0</strong> answers <em>"is the <strong>ontology</strong> coherent?"</em> — the <code>subClassOf</code> DAG plus the
-<code>owl:disjointWith</code> / <code>owl:equivalentClass</code> axioms travel in the schema pyramid, which
-decodes <strong>without the dictionary or the index</strong>. The header records the schema block's
-byte length, so the check fetches just the header and that block (2 ranges) — a flat
-<strong>~1–8 KB at any graph size</strong> (8.1 KB of a 48.8 MB file; see
-<a href="BENCHMARK.html#coherence-checking-tier-costs">Coherence tier costs</a>). It cannot see
-instance-level clashes (a node typed into disjoint classes, functional-property
-clashes) — those need the A-Box (Tier 1/2). One soundness caveat: the shipped hierarchy
-is truncated, so on a very large ontology a pruned ancestor can hide an unsatisfiable
-class (a false <em>coherent</em>, never a false <em>incoherent</em>).</p>
-<p><strong>Tier 1</strong> is the selective sweet spot. The default slice is a <code>UNION</code> of
-constant-predicate <code>CONSTRUCT</code> branches so each routes to a single predicate's
-tiles:</p>
-<pre><code class="language-sparql">CONSTRUCT { ?x rdf:type ?c . ?sub rdfs:subClassOf ?sup .
-            ?c1 owl:disjointWith ?c2 . ?s1 owl:sameAs ?s2 . ?f1 owl:differentFrom ?f2 }
-WHERE { { ?x rdf:type ?c } UNION { ?sub rdfs:subClassOf ?sup }
-        UNION { ?c1 owl:disjointWith ?c2 } UNION { ?s1 owl:sameAs ?s2 }
-        UNION { ?f1 owl:differentFrom ?f2 } }
-</code></pre>
-<blockquote>
-<p><strong>Slice-correctness invariant.</strong> A Tier-1 CONSTRUCT <strong>must</strong> pull the T-Box
-predicates (<code>rdfs:subClassOf</code>, <code>owl:disjointWith</code>, <code>owl:sameAs</code>) into the slice,
-not just <code>rdf:type</code>. The reasoner detects a disjoint-class clash only <em>after</em>
-<code>subClassOf</code> type-propagation, so a slice missing <code>subClassOf</code> would silently
-miss a propagation-dependent contradiction.</p>
-</blockquote>
-<h3>Try it</h3>
-<p>The <a href="explore-100mb.html">100 MB explorer</a> has a <strong>Coherence</strong> task with all three
-tiers. Because the wikidata graph carries no OWL axioms, the tasks run against a
-tiny same-origin causal ontology (<code>examples/causal.rete</code>) with both kinds of
-defect planted: Tier 0 reports <code>:Relapsed</code> <strong>unsatisfiable</strong> (a subclass of the
-disjoint <code>HealthyState</code> and <code>DiseaseState</code>) from ~2–3 ranges; Tier 1/2 report the
-<strong>instance</strong> clash (<code>:p</code> is both). The live counter shows how few bytes each tier
-fetches.</p>
-<h2>Reasoning by query rewriting (OWL 2 QL)</h2>
-<p>Everything above <strong>materializes</strong>: it computes entailed triples and (optionally)
-stores them. That fixes the inferences at build time and grows the file — the
-opposite of rete's cloud-native, range-queried design, where the ABox may be
-hundreds of millions of triples on a remote host.</p>
-<p>The <strong>OWL 2 QL</strong> profile exists for exactly this case — a large ABox, a small
-TBox, and queries that are <em>first-order rewritable</em>. Instead of baking inferences
-into the data, rete rewrites the <strong>query</strong> so that evaluating it over the <strong>raw</strong>
-data yields the certain (entailed) answers. A remote <code>.rete</code> becomes
-ontology-aware with <strong>no rebuild</strong>, and only the bytes the rewritten query touches
-are fetched.</p>
-<p>Reasoning is <strong>opt-in</strong> — a plain query is never changed:</p>
-<pre><code class="language-sh">rete sparql     data.rete "SELECT ?o WHERE { ?o a :Aves }" --entail
-rete sparql-url https://host/data.rete "…" --entail        # lazy, over HTTP range
-</code></pre>
-<p>In the browser, the <a href="playground-guide.html">playground</a>'s <strong>🧠 Reason</strong> toggle
-(beside the Labels switch) runs the active query with entailment on; the WASM API
-is <code>Graph.query_reasoned</code> / <code>RemoteGraph.query_reasoned</code>.</p>
-<h3>What is entailed</h3>
-<table><thead><tr><th>Axiom</th><th>A query for … also returns …</th></tr></thead><tbody>
-<tr><td><code>rdfs:subClassOf</code></td><td><code>?x a C</code> → instances of every subclass of <code>C</code> (transitively)</td></tr>
-<tr><td><code>rdfs:subPropertyOf</code></td><td><code>?x P ?y</code> → pairs related by any subproperty of <code>P</code></td></tr>
-<tr><td><code>rdfs:domain</code> / <code>range</code></td><td><code>?x a C</code> → subjects/objects of a property whose domain/range is <code>⊑ C</code> (composing through <code>subPropertyOf</code>)</td></tr>
-<tr><td><code>owl:inverseOf</code></td><td><code>?x P ?y</code> → pairs <code>?y Q ?x</code> for any <code>Q</code> inverse to <code>P</code></td></tr>
-<tr><td><code>owl:someValuesFrom</code> (<code>A ⊑ ∃P</code>, <code>A ⊑ ∃P⁻</code>)</td><td><code>?x P ?_</code> (or <code>?_ P ?x</code>) with an existential end → every <code>?x</code> that is (transitively) such an <code>A</code></td></tr>
-</tbody></table>
-<pre><code class="language-sparql"># gbif-birds: occurrences are typed to their SPECIES, and each species carries a
-# subClassOf chain up to :Aves. WITHOUT reasoning this matches nothing directly;
-# WITH --entail it returns real occurrences via the taxonomy — no hand-written path.
-SELECT ?o WHERE { ?o a &lt;https://w3id.org/rete/gbif/taxon/class/Aves&gt; } LIMIT 20
-</code></pre>
-<h3>How it works</h3>
-<p>The rewrite is a <strong>post-lowering pass on the query plan</strong> — the hot triple matcher
-and every non-reasoned query are byte-identical.</p>
+<h2>The same data, queryable</h2>
+<p>The graphs behind these demos are regular playground datasets — open them and ask questions with SPARQL instead of watching:</p>
 <ul>
-<li><strong>Hierarchy</strong> (<code>subClassOf</code> / <code>subPropertyOf</code>) is exactly what rete's
-goal-directed <a href="sparql.html#property-paths">property paths</a> already do, so a
-hierarchy atom becomes a path over the raw data — <code>?x a C</code> → <code>?x a ?c . ?c rdfs:subClassOf* C</code> (reflexive, so a direct type still matches). No <code>UNION</code>
-enumeration, so it does <strong>not</strong> blow up on deep taxonomies (gbif's ~1,200 classes
-stay one path, not 1,200 query branches).</li>
-<li><strong>Domain / range / inverseOf / existentials</strong> add <code>UNION</code> branches. A tiny TBox
-read (the objects of the hierarchy predicates, plus whether the graph declares
-domain/range/inverse/<code>someValuesFrom</code> axioms at all) <strong>gates</strong> the rewrite, so an
-atom whose class/property has no relevant axioms — and a graph with no ontology —
-is left untouched, making reasoning <strong>zero-overhead where it can add nothing</strong>.</li>
+<li><a href="playground.html#dataset=worldcup&amp;load=lazy"><code>worldcup</code></a> — the whole 2022 tournament: stats, player careers, full squads, multi-source predictions.</li>
+<li><a href="playground.html#dataset=worldcup2026&amp;load=lazy"><code>worldcup2026</code></a> — a live, in-progress snapshot of the current cup, cross-checked against live sources.</li>
 </ul>
-<h3>Existential soundness</h3>
-<p>The existential rewrite (<code>?x P ?y</code> answered from <code>A ⊑ ∃P</code>) is <strong>sound by
-construction</strong>: it fires only when the existential end (<code>?y</code>, or the subject for
-<code>∃P⁻</code>) is <em>purely existential</em> — it occurs exactly once in the whole query and is
-not returned — because an anonymous <code>∃P</code> successor can neither be projected nor
-joined. <code>reason_rewrite</code> counts every variable occurrence across the plan
-(patterns, paths, filter/bind expressions, sub-queries) and consults the <code>SELECT</code>
-list; where the end is bound, shared, or projected, the branch is skipped.</p>
-<h3>Boundary</h3>
-<p>Every DL-Lite_R axiom <strong>type</strong> is covered. The one remaining case is the PerfectRef
-<strong>reduction</strong> step — existential <em>chaining</em>, where a shared join constraint is
-itself entailed by an existential (a query joins <code>?x P ?y</code> with <code>?y a C</code>, and
-<code>∃P⁻ ⊑ C</code> makes the <code>?y a C</code> atom redundant so <code>?y</code> becomes existential). That
-query shape is rare, and reasoning is <strong>never unsound</strong> regardless: with it off you
-get exact matches; with it on you get the entailed answers for the supported cases
-— it can only ever be <em>incomplete</em> for that one chaining shape, never wrong.</p>
-<p>This query-rewriting reasoner and the materializing one above are independent: use
-<code>--entail</code> to answer queries under the ontology lazily; use <code>--materialize</code> /
-<code>rete reason</code> to bake inferences or check coherence.</p>
+<p>A replay and a query are the same range reads over the same file — the demos just fetch the positions for the current second, exactly like a <code>LIMIT</code>ed SPARQL query would.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -507,7 +258,7 @@ get exact matches; with it on you get the entailed answers for the supported cas
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/reasoning.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/football.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {
