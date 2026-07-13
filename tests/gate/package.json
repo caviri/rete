@@ -1,0 +1,8 @@
+{
+  "name": "rete-gate",
+  "private": true,
+  "description": "Regression gate deps (browsers come from the Playwright Docker image)",
+  "dependencies": {
+    "playwright": "1.49.0"
+  }
+}

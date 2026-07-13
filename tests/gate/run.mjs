@@ -1,0 +1,160 @@
+// The regression gate runner — executes inside the Playwright Docker image.
+// Usage (from gate.sh):  node run.mjs [fast] [--only=<substr>] [--deployed]
+//
+// Tiers:
+//   G0 static   — app.js/catalog.js parse, built page inline-scripts parse,
+//                 catalog examples use only declared prefixes.
+//   G1 node     — the PRODUCTION async wasm + Asyncify driver runs a real lazy
+//                 query against a local range server (no browser).
+//   G2 browser  — the load-mode × wasm-variant × device matrix in Chromium.
+//   (--deployed adds a live GitHub Pages lazy check — informational, it can lag
+//    a push by a minute; it does not flip the exit code.)
+import { spawn, execSync } from "node:child_process";
+import fs from "node:fs";
+import vm from "node:vm";
+
+const ROOT = "/work";
+const args = process.argv.slice(2);
+const FAST = args.includes("fast");
+const only = (args.find((a) => a.startsWith("--only=")) || "").slice(7);
+const DEPLOYED = args.includes("--deployed");
+const results = [];
+const t0 = Date.now();
+
+function record(tier, name, ok, note = "") {
+  results.push({ tier, name, ok, note });
+  console.log(`${ok ? "  ✓" : "  ✗ FAIL"} [${tier}] ${name}${note ? " — " + note : ""}`);
+}
+
+// ---------- G0 static ----------
+function g0() {
+  for (const f of ["web/playground-src/app.js", "web/playground-src/catalog.js"]) {
+    try { execSync(`node --check ${ROOT}/${f}`, { stdio: "pipe" }); record("G0", `parse ${f}`, true); }
+    catch (e) { record("G0", `parse ${f}`, false, String(e.stderr || e).slice(0, 120)); }
+  }
+  try {
+    const html = fs.readFileSync(`${ROOT}/docs/playground.html`, "utf8");
+    const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g;
+    let m, n = 0, bad = 0, msg = "";
+    while ((m = re.exec(html))) { n++; if (!m[1].trim()) continue; try { new vm.Script(m[1]); } catch (e) { bad++; msg = e.message; } }
+    record("G0", `playground.html inline scripts (${n})`, bad === 0, bad ? msg.slice(0, 120) : "");
+  } catch (e) { record("G0", "playground.html inline scripts", false, String(e).slice(0, 120)); }
+  // Catalog example queries: every prefixed name must be PREFIX-declared.
+  try {
+    const src = fs.readFileSync(`${ROOT}/web/playground-src/catalog.js`, "utf8");
+    const w = {}; new Function("window", src)(w);
+    const ex = (w.RETE_PLAYGROUND_CATALOG || {}).examples || {};
+    let checked = 0; const bad = [];
+    for (const ds of Object.keys(ex)) (ex[ds] || []).forEach((e, i) => {
+      if (!e || !e.q) return; checked++;
+      let s = e.q.replace(/<[^>]*>/g, " ").replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+      const declared = new Set(); let m2; const pre = /PREFIX\s+([A-Za-z][\w.\-]*)?:/gi;
+      while ((m2 = pre.exec(s))) declared.add((m2[1] || "").toLowerCase());
+      const used = new Set(); const u = /(?:^|[\s(^,;.|\/*!])([A-Za-z][\w.\-]*):[A-Za-z0-9_%]/g;
+      while ((m2 = u.exec(s))) used.add(m2[1].toLowerCase());
+      const missing = [...used].filter((p) => !declared.has(p));
+      if (missing.length) bad.push(`${ds}#${i}:${missing.join(",")}`);
+    });
+    record("G0", `catalog examples declared prefixes (${checked})`, bad.length === 0, bad.slice(0, 3).join(" "));
+  } catch (e) { record("G0", "catalog examples declared prefixes", false, String(e).slice(0, 120)); }
+}
+
+// ---------- servers ----------
+function serve(dir, port) {
+  const p = spawn("node", [`${ROOT}/tests/gate/serve.mjs`, dir, String(port)], { stdio: "ignore" });
+  return p;
+}
+
+// ---------- child runner ----------
+// cwd matters: browser checks run from tests/gate so ESM resolves the locally
+// installed `playwright`; the node harness runs from ROOT (it reads docs/… paths).
+function runChild(cmd, argv, env, timeoutMs, cwd = `${ROOT}/tests/gate`) {
+  return new Promise((res) => {
+    const p = spawn(cmd, argv, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    p.stdout.on("data", (d) => { out += d; });
+    p.stderr.on("data", (d) => { out += d; });
+    const t = setTimeout(() => { p.kill("SIGKILL"); res({ code: 124, out: out + "\n[TIMEOUT]" }); }, timeoutMs);
+    p.on("exit", (code) => { clearTimeout(t); res({ code, out }); });
+  });
+}
+const lastJson = (out) => { const m = out.match(/\{[\s\S]*\}/g); if (!m) return null; try { return JSON.parse(m[m.length - 1]); } catch (e) { return null; } };
+
+// ---------- G1 node async harness ----------
+async function g1() {
+  const fixture = `${ROOT}/tests/gate/.cache/worldcup2026.rete`;
+  if (!fs.existsSync(fixture)) { record("G1", "async wasm harness", false, "fixture missing (gate.sh downloads it)"); return; }
+  const q = [
+    "PREFIX wc: <https://w3id.org/rete/worldcup#>",
+    "PREFIX sc: <http://schema.org/>",
+    "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>",
+    "PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>",
+    "SELECT ?num ?pos ?player ?club ?dob WHERE {",
+    "  <https://w3id.org/rete/worldcup/2026/team/Argentina> wc:squadPlayer ?p .",
+    "  ?p sc:name ?player .",
+    "  OPTIONAL { ?p wc:shirtNumber ?num }",
+    "  OPTIONAL { ?p wc:position ?pos }",
+    "  OPTIONAL { ?p sc:birthDate ?dob }",
+    "  OPTIONAL { ?p wc:clubAtTournament ?c . ?c rdfs:label ?club }",
+    "} ORDER BY xsd:integer(?num)",
+  ].join("\n");
+  const r = await runChild("node", [`${ROOT}/tests/gate/asyncify_e2e.cjs`],
+    { RETE_URL: "http://localhost:8092/worldcup2026.rete", RETE_Q: q }, 60000, ROOT);
+  const rows = (r.out.match(/rows=(\d+)/) || [])[1];
+  record("G1", "async wasm + Asyncify driver (lazy, 4×OPTIONAL + ORDER BY cast)", r.code === 0 && Number(rows) > 0,
+    r.code === 0 ? `${rows} rows` : r.out.split("\n").filter(Boolean).slice(-2).join(" | ").slice(0, 160));
+}
+
+// ---------- G2 browser matrix ----------
+const G2 = [
+  ["check_diag", "embedded + error diagnostics block", 90000],
+  ["check_worldcup", "desktop lazy DEFAULT (async) · worldcup ex=0 · live R2", 120000],
+  ["check_lazy_async", "desktop lazy async-forced · mtg GROUP BY · live R2", 240000],
+  ["check_sync_read", "desktop lazy SYNC-forced · worldcup squad · live R2", 120000],
+  ["check_ios_default", "iPhone UA → auto sync routing + query runs", 120000],
+  ["check_settings_mobile", "phone-viewport Settings (no overflow, storage, session)", 120000],
+  ["check_copy", "clipboard: parse-error Copy-log + share button", 90000],
+  ["check_clear", "Clear everything empties 4 stores + Cache API", 90000],
+];
+async function g2() {
+  for (const [name, label, timeout] of G2) {
+    if (only && !name.includes(only)) continue;
+    const r = await runChild("node", [`${ROOT}/tests/gate/checks/${name}.mjs`], { PGPORT: "8090" }, timeout);
+    const j = lastJson(r.out);
+    const ok = r.code === 0 && j && j.verdict === "PASS";
+    record("G2", `${name} — ${label}`, ok, ok ? "" : (j ? JSON.stringify(j).slice(0, 160) : r.out.split("\n").filter(Boolean).slice(-2).join(" | ").slice(0, 160)));
+  }
+}
+
+// ---------- optional: deployed page (informational) ----------
+async function deployed() {
+  const r = await runChild("node", [`${ROOT}/tests/gate/checks/check_deployed.mjs`], {}, 150000);
+  const j = lastJson(r.out);
+  const ok = r.code === 0 && j && j.verdict === "PASS";
+  console.log(`  ${ok ? "✓" : "⚠"} [live] deployed GitHub Pages lazy query ${ok ? "" : "— " + (j ? JSON.stringify(j).slice(0, 200) : r.out.slice(-200))}`);
+}
+
+// ---------- main ----------
+const servers = [];
+try {
+  console.log("── G0 static ──");
+  g0();
+  if (!only) {
+    servers.push(serve(`${ROOT}/tests/gate/.cache`, 8092));
+    await new Promise((r) => setTimeout(r, 700));
+    console.log("── G1 engine-in-node ──");
+    await g1();
+  }
+  if (!FAST) {
+    servers.push(serve(`${ROOT}/docs`, 8090));
+    await new Promise((r) => setTimeout(r, 700));
+    console.log("── G2 browser matrix ──");
+    await g2();
+    if (DEPLOYED) { console.log("── live (informational) ──"); await deployed(); }
+  }
+} finally { servers.forEach((s) => { try { s.kill(); } catch (e) { /* ignore */ } }); }
+
+const fails = results.filter((r) => !r.ok);
+console.log(`\n${"─".repeat(60)}\nGATE ${fails.length ? "RED" : "GREEN"} — ${results.length - fails.length}/${results.length} passed · ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+if (fails.length) { console.log("Failing:"); fails.forEach((f) => console.log(`  ✗ [${f.tier}] ${f.name}${f.note ? " — " + f.note : ""}`)); }
+process.exit(fails.length ? 1 : 0);

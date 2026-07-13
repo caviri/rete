@@ -81,3 +81,6 @@ __pycache__/
 target-star/
 target-std/
 target-wasm/
+tests/gate/.cache/
+tests/gate/node_modules/
+tests/gate/package-lock.json
