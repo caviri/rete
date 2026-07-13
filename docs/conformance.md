@@ -88,8 +88,7 @@ The conformance run opens each file **locally (in memory)**. rete's three read
 modes — local, **remote-lazy** (HTTP range reads via `sparql_url` /
 `sparql-url`), and **remote-cached** (download once, query in memory) — share the
 *identical* evaluator; only the byte source differs. So they return identical
-results, which the [Wikidata explorer](explore-100mb.html) demonstrates on a real
-~12 M-triple graph: the same query yields the same rows whether served locally,
+results — demonstrated on a real ~12 M-triple graph: the same query yields the same rows whether served locally,
 lazily from a CDN, or federated across shards. The tiny conformance fixtures make
 per-mode *timing* meaningless — that comparison lives in
 [BENCHMARK](BENCHMARK.html), on a graph large enough for it to matter.

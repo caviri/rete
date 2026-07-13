@@ -68,7 +68,6 @@ rete schema  social.rete    # semantic (by rdf:type)
 - **[Subtitle timeline](subtitles.html)** — one film subtitled in 20 languages; scrub the timeline and watch a line of dialogue appear in every language at once. [Launch it →](subtitles.html)
 - **[World Cup 2022 final](wcfinal.html)** — Argentina 3–3 France replayed from real StatsBomb positional freeze-frames: every player's place at every moment, with a live scoreboard and goal jumps. [Launch it →](wcfinal.html)
 - **[Ask the graph](ask-the-graph.md)** — graphRAG search over a `.rete`, entirely in the browser.
-- **[Wikidata lazy explorer](explore-100mb.html)** — range-read a 100 MB / 1 GB Wikidata file in place.
 - **[Graph-map, topic-map & 3D (experimental)](graph-map.md)** — the community pyramid as a slippy map.
 
 ### Guides

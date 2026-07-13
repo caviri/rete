@@ -206,7 +206,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li><a href="subtitles.html">Subtitle timeline</a></li>
-        <li><a href="explore-100mb.html">Wikidata lazy explorer (100MB / 1GB)</a></li>
         <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
@@ -316,8 +315,7 @@ taking the else-branch.</p>
 modes — local, <strong>remote-lazy</strong> (HTTP range reads via <code>sparql_url</code> /
 <code>sparql-url</code>), and <strong>remote-cached</strong> (download once, query in memory) — share the
 <em>identical</em> evaluator; only the byte source differs. So they return identical
-results, which the <a href="explore-100mb.html">Wikidata explorer</a> demonstrates on a real
-~12 M-triple graph: the same query yields the same rows whether served locally,
+results — demonstrated on a real ~12 M-triple graph: the same query yields the same rows whether served locally,
 lazily from a CDN, or federated across shards. The tiny conformance fixtures make
 per-mode <em>timing</em> meaningless — that comparison lives in
 <a href="BENCHMARK.html">BENCHMARK</a>, on a graph large enough for it to matter.</p>

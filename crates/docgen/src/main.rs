@@ -37,7 +37,6 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
             ("football.md", "Football — match replays"),
             ("subtitles.html", "Subtitle timeline"),
-            ("explore-100mb.html", "Wikidata lazy explorer (100MB / 1GB)"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
         ],
     ),

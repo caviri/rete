@@ -206,7 +206,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li><a href="subtitles.html">Subtitle timeline</a></li>
-        <li><a href="explore-100mb.html">Wikidata lazy explorer (100MB / 1GB)</a></li>
         <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
@@ -385,10 +384,9 @@ works. What does <strong>not</strong> work is Hugging Face's <code>buckets/.../r
 it returns <code>405</code> to a cross-origin browser <code>GET</code> even though it serves the
 <code>rete</code> CLI fine (the CLI sends no <code>Origin</code>). The bytes themselves are reachable
 — the resolved signed CDN URL answers <code>206</code> to the browser — but the <code>resolve</code>
-hop refuses browser requests, so the lazy backends can't follow it. The
-<a href="explore-100mb.html">Wikidata lazy explorer</a> runtime-probes its data URL on load
-and shows a banner when the host isn't browser-reachable; point it at a
-CORS-enabled direct host to light up the remote backends.</p>
+hop refuses browser requests, so the lazy backends can't follow it. A client should probe its data URL on load and surface a clear banner when the
+host isn't browser-reachable; point at a CORS-enabled direct host to light up
+the remote backends.</p>
 <p><strong>Parallel range reads (opt-in).</strong> Sequential synchronous XHR serialises a
 query's round trips. With cross-origin isolation the explorer can read the
 faulted ranges in parallel: a pool of fetch workers pulls them (each a

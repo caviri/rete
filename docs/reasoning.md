@@ -232,9 +232,9 @@ WHERE { { ?x rdf:type ?c } UNION { ?sub rdfs:subClassOf ?sup }
 
 ### Try it
 
-The [100 MB explorer](explore-100mb.html) has a **Coherence** task with all three
-tiers. Because the wikidata graph carries no OWL axioms, the tasks run against a
-tiny same-origin causal ontology (`examples/causal.rete`) with both kinds of
+The [playground](playground.html#dataset=causal)'s **Coherence** tab runs all three
+tiers in the browser. The demo checks run against a
+tiny causal ontology (`examples/causal.rete`) with both kinds of
 defect planted: Tier 0 reports `:Relapsed` **unsatisfiable** (a subclass of the
 disjoint `HealthyState` and `DiseaseState`) from ~2–3 ranges; Tier 1/2 report the
 **instance** clash (`:p` is both). The live counter shows how few bytes each tier
