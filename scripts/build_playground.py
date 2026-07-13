@@ -54,13 +54,28 @@ ASYNC_ENV_JS = """
           const dv = new DataView(wasm.memory.buffer);
           const ranges = [];
           for (let i = 0; i < n; i++) ranges.push([Number(dv.getBigUint64(offsPtr + i*8, true)), dv.getUint32(lensPtr + i*4, true)]);
+          // cache:'no-store' is REQUIRED on iOS/iPad Safari: WebKit caches/coalesces
+          // concurrent same-URL Range requests (this Promise.all fires many at once)
+          // and can hand back a wrong-length or empty body for some of them. That
+          // corrupts the tiles the engine then decodes → a bare wasm trap. Forcing a
+          // fresh network fetch per range sidesteps the coalescing. (Desktop Chromium
+          // is unaffected; the sync-XHR variant fetches sequentially so never hit it.)
           const bufs = await Promise.all(ranges.map(([o,l]) =>
-            fetch(url, { headers: { Range: 'bytes=' + o + '-' + (o+l-1) } })
+            fetch(url, { headers: { Range: 'bytes=' + o + '-' + (o+l-1) }, cache: 'no-store' })
               .then((r) => { if (r.status !== 206) throw new Error('Range status ' + r.status + ' (host must support HTTP range)'); return r.arrayBuffer(); })
               .then((b) => new Uint8Array(b))));
           const mem = new Uint8Array(wasm.memory.buffer);
           let pos = dstPtr, total = 0;
-          for (const b of bufs) { mem.set(b, pos); pos += b.length; total += b.length; }
+          // Each range MUST land at its fixed slot (cumulative REQUESTED length), and
+          // its body MUST be exactly the requested length. A short/over response (the
+          // symptom of the WebKit caching bug above) would otherwise misalign every
+          // later range and crash the decoder with an inscrutable wasm trap — fail
+          // loudly with a diagnosable error instead.
+          for (let i = 0; i < bufs.length; i++) {
+            const b = bufs[i], want = ranges[i][1];
+            if (b.length !== want) throw new Error('Range length mismatch: got ' + b.length + ' of ' + want + ' bytes at offset ' + ranges[i][0] + ' (browser mishandled a concurrent HTTP Range request)');
+            mem.set(b, pos); pos += want; total += want;
+          }
           return total;
         }
         async function __reteDoLen(urlPtr, urlLen, outPtr) {
