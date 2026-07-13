@@ -36,6 +36,13 @@ and network (the lazy checks read the live R2 datasets).
 | `check_settings_mobile` | embedded | — | **390px phone** |
 | `check_copy` | embedded | — | clipboard read-back |
 | `check_clear` | — | — | IndexedDB + Cache API |
+| `check_worker_init` | remote-lazy | async (corrupted) | broken wasm → error, no hang |
+| `check_refresh_session` | embedded | — | ↻ Refresh really reloads |
+| `check_async_fallback` | remote-lazy | async 404 → sync | degrade, don't hard-fail |
+| `check_query_shapes` | embedded | — | property paths + CONSTRUCT→graph + reasoning |
+
+Live-R2 checks retry any no-rows outcome (`_util.runWithRetry`) so a transient CDN
+blip doesn't red the gate; a real regression fails every retry and still goes red.
 
 ## After an engine (crates/) change — checklist
 
@@ -53,9 +60,28 @@ and network (the lazy checks read the live R2 datasets).
 2. `bash tests/gate/gate.sh` (or `fast` + `--only=<check>` while iterating,
    full gate before the commit).
 
+## Known coverage gaps (not yet gated)
+
+Honest list of playground surfaces with no runtime check — add one when you touch
+them or when a bug lands there:
+
+- **Map / geo view** (PMTiles basemaps, GeoSPARQL) — needs canvas/WebGL assertions.
+- **Federation / SPARQL `SERVICE`** — a *working* federation run (check_diag only
+  triggers a SERVICE *error* for the diagnostics block); needs a live endpoint, so
+  inherently flaky.
+- **Ask AI (WebGPU LLM)** and **Semantic / RAG** tabs — model download + WebGPU are
+  impractical headless; at most a tab-opens-without-crashing smoke could be added.
+- **In-browser dataset builder** (build-a-.rete flow).
+- **`cache` load mode** (download-whole-file-once) — only `lazy` + `embedded` run.
+- **Coverage breadth**: only ~2 datasets are exercised live (worldcup2026, mtg) and
+  one embedded (scholar); the other datasets' example queries are *statically*
+  prefix-scanned (G0) but not executed. A broken example on another dataset ships
+  green until someone runs it.
+
 ## Device-specific bugs the gate can't catch
 
 Real iOS Safari (JSC) differs from anything runnable here (headless WebKit
-included). When a user reports a phone-only failure: get the **📋 Copy full log**
-report from the error box — it carries the wasm variant, load mode, device and
-the full stack. Add the failing shape to this gate once diagnosed.
+included) — e.g. the asyncify-variant wasm trap only reproduces on a real iPhone.
+When a user reports a phone-only failure: get the **📋 Copy full log** report from
+the error box — it carries the wasm variant, load mode, device and the full stack.
+Add the failing shape to this gate once diagnosed.
