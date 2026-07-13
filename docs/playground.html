@@ -1273,10 +1273,13 @@ textarea {
 .cardfocus-track::before, .cardfocus-track::after { content: ""; flex: 0 0 8%; }
 .cardfocus-slide {
   flex: 0 0 84%; width: 84%; scroll-snap-align: center; cursor: auto;
-  /* The slide fills the track's height and scrolls its OWN overflow, so a tall
-     card shows all its fields on a vertical drag instead of being clipped. */
-  align-self: stretch; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-  touch-action: pan-y;
+  /* UNIFORM size: every slide is the same viewport-relative height regardless
+     of content - short cards get air, tall ones scroll inside on a vertical drag. */
+  height: 70vh; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  /* BOTH axes: vertical drag scrolls the card; a horizontal drag pans the TRACK
+     (the slide has no x-overflow so the browser routes it up) - swipe works
+     starting anywhere on the card, not just the peek borders. */
+  touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
   display: block; margin: 0;
   transition: transform .2s ease, opacity .2s ease;
@@ -3162,6 +3165,11 @@ td.lit { color: var(--ink); }
 .build-valid { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .build-valid.valid { color: var(--accent-dark); }
 .build-valid.invalid { color: var(--bad); }
+/* Focus carousel: tap a section (field) to zoom it for reading; tap again to reset. */
+.cardfocus-slide .cf { border-radius: 8px; }
+.cardfocus-slide .cf.cf-zoom { background: var(--side); padding: 8px; }
+.cardfocus-slide .cf.cf-zoom .cf-v { font-size: 17px; line-height: 1.55; }
+.cardfocus-slide .cf.cf-zoom .cf-v .cell-thumb { max-height: none; }
   </style>
 </head>
 <body>
@@ -3170,8 +3178,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 329689b · 2026-07-13 15:15 UTC</span>
-    <script>window.RETE_BUILD = "329689b · 2026-07-13 15:15 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 5be84e3 · 2026-07-13 18:04 UTC</span>
+    <script>window.RETE_BUILD = "5be84e3 · 2026-07-13 18:04 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -18826,6 +18834,13 @@ self.onmessage = function (e) {
     $("cardFocusPrev").onclick = () => stepCardFocus(-1);
     $("cardFocusNext").onclick = () => stepCardFocus(1);
     $("cardFocusClose").onclick = closeCardFocus;
+    // Tap a section of the focused card to zoom it for reading (tap again to
+    // reset) - links/media keep their own behavior.
+    $("cardFocusTrack").addEventListener("click", (e) => {
+      if (e.target.closest("a, button, input, select, model-viewer, audio, video, .iiif-frame")) return;
+      const cf = e.target.closest(".cf");
+      if (cf) cf.classList.toggle("cf-zoom");
+    });
     $("cardFocusModal").addEventListener("click", (e) => {
       if (e.target === $("cardFocusModal")) closeCardFocus();
     });

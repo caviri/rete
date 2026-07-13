@@ -1233,10 +1233,13 @@ textarea {
 .cardfocus-track::before, .cardfocus-track::after { content: ""; flex: 0 0 8%; }
 .cardfocus-slide {
   flex: 0 0 84%; width: 84%; scroll-snap-align: center; cursor: auto;
-  /* The slide fills the track's height and scrolls its OWN overflow, so a tall
-     card shows all its fields on a vertical drag instead of being clipped. */
-  align-self: stretch; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-  touch-action: pan-y;
+  /* UNIFORM size: every slide is the same viewport-relative height regardless
+     of content - short cards get air, tall ones scroll inside on a vertical drag. */
+  height: 70vh; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  /* BOTH axes: vertical drag scrolls the card; a horizontal drag pans the TRACK
+     (the slide has no x-overflow so the browser routes it up) - swipe works
+     starting anywhere on the card, not just the peek borders. */
+  touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
   display: block; margin: 0;
   transition: transform .2s ease, opacity .2s ease;
@@ -3122,3 +3125,8 @@ td.lit { color: var(--ink); }
 .build-valid { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .build-valid.valid { color: var(--accent-dark); }
 .build-valid.invalid { color: var(--bad); }
+/* Focus carousel: tap a section (field) to zoom it for reading; tap again to reset. */
+.cardfocus-slide .cf { border-radius: 8px; }
+.cardfocus-slide .cf.cf-zoom { background: var(--side); padding: 8px; }
+.cardfocus-slide .cf.cf-zoom .cf-v { font-size: 17px; line-height: 1.55; }
+.cardfocus-slide .cf.cf-zoom .cf-v .cell-thumb { max-height: none; }

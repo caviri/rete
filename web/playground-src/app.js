@@ -8234,6 +8234,13 @@ self.onmessage = function (e) {
     $("cardFocusPrev").onclick = () => stepCardFocus(-1);
     $("cardFocusNext").onclick = () => stepCardFocus(1);
     $("cardFocusClose").onclick = closeCardFocus;
+    // Tap a section of the focused card to zoom it for reading (tap again to
+    // reset) - links/media keep their own behavior.
+    $("cardFocusTrack").addEventListener("click", (e) => {
+      if (e.target.closest("a, button, input, select, model-viewer, audio, video, .iiif-frame")) return;
+      const cf = e.target.closest(".cf");
+      if (cf) cf.classList.toggle("cf-zoom");
+    });
     $("cardFocusModal").addEventListener("click", (e) => {
       if (e.target === $("cardFocusModal")) closeCardFocus();
     });
