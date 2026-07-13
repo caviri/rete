@@ -159,7 +159,7 @@
           self.postMessage({ type: "result", id: m.id, ok: true, json: JSON.stringify(res), log: fetchLog });
         });
       }).catch(function (err) {
-        self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
+        self.postMessage({ type: "result", id: m.id, ok: false, error: ((err && err.stack) || String((err && err.message) || err)), log: fetchLog });
       });
     }
     // Generic call to any *_url wasm export (schema_url, check_schema_url, …).
@@ -172,7 +172,7 @@
       }).then(function (json) {
         self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
       }).catch(function (err) {
-        self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
+        self.postMessage({ type: "result", id: m.id, ok: false, error: ((err && err.stack) || String((err && err.message) || err)), log: fetchLog });
       });
     }
     // Label-prefix entity search over the resident remote session: faults only
@@ -184,7 +184,7 @@
       }).then(function (json) {
         self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
       }).catch(function (err) {
-        self.postMessage({ type: "result", id: m.id, ok: false, error: String(err), log: fetchLog });
+        self.postMessage({ type: "result", id: m.id, ok: false, error: ((err && err.stack) || String((err && err.message) || err)), log: fetchLog });
       });
     }
   };
@@ -6201,7 +6201,8 @@ self.onmessage = function (e) {
             `<div class="note"><b>We ran this, but it reached what iPhone / iPad Safari can handle.</b> ` +
             `The query hit Safari's WebAssembly limit partway through — a limit on this device, not a problem with the query (it runs on a desktop browser).<br><br>` +
             `To fit it on a phone: a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), or the <b>Progressive</b> strategy for overviews — or open this dataset on a desktop browser. ` +
-            `The engine has been reset — run another query any time.</div>`;
+            `The engine has been reset — run another query any time.</div>` +
+            techDetailsHtml(msg, e && e.stack);
         } else if (isEngineTrap(msg)) {
           // A wasm trap poisons the instance — rebuild a fresh worker either way.
           resetRemoteWorker();
@@ -6216,7 +6217,8 @@ self.onmessage = function (e) {
               `<div class="note"><b>We ran this, but it reached iPhone / iPad Safari's memory limit for a dataset this big${meta.size ? ` (${esc(meta.size)})` : ""}.</b> ` +
               `It's not the bytes downloaded — it's the working memory to <em>unpack</em> this remote graph's index/dictionary while answering (a phone caps a tab well below a desktop, so the same query runs on a computer).<br><br>` +
               `Try a smaller <code>LIMIT</code>, a more selective pattern (a rarer value, or a country / year / type filter), the <b>Progressive</b> strategy for overviews, or open this dataset on a desktop browser. ` +
-              `The engine has been reset — run another query any time.</div>`;
+              `The engine has been reset — run another query any time.</div>` +
+              techDetailsHtml(msg, e && e.stack);
           } else {
             $("qmeta").textContent = "";
             showError("out", "Query failed (engine reset — run again to retry): " + msg, e && e.stack);
@@ -7339,15 +7341,48 @@ self.onmessage = function (e) {
   // environment. This is what the user hands the developer.
   function errorReport(message, tech) {
     const L = [];
+    const push = (k, v) => { try { if (v !== undefined && v !== null && v !== "") L.push(k + ": " + v); } catch (_e) { /* ignore */ } };
     L.push("rete playground — error report");
-    if (window.RETE_BUILD) L.push("build: " + window.RETE_BUILD);
+    push("build", window.RETE_BUILD);
     try { L.push("time: " + new Date().toISOString()); } catch (_e) { /* ignore */ }
-    L.push("error: " + String(message || ""));
+    // The FULL error — the worker now sends the wasm/JS stack, not just the message.
+    L.push("error:\n  " + String(message || "").replace(/\n/g, "\n  "));
     const t = tech && String(tech);
-    if (t && t !== String(message)) L.push("detail: " + t);
+    if (t && t !== String(message)) L.push("detail:\n  " + t.replace(/\n/g, "\n  "));
+    // Dataset + how it is loaded + its size (a remote-lazy failure vs an in-memory
+    // one is the key split; size rules memory in/out).
+    const meta = (typeof CATALOG !== "undefined" && CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
     L.push("dataset: " + (state.dataset || "?") + " · load: " + (state.activeSource || "?"));
+    push("size", meta.size); push("triples", meta.triples);
     if (state.remote && state.remote.url) L.push("source: " + state.remote.url);
     L.push("mode: " + (state.mode || "?") + " · strategy: " + (($("strategy") && $("strategy").value) || "?"));
+    // Engine variant + toggles — THE crux of a lazy failure. `async-reads` on means
+    // the asyncify (fetch) wasm; off means the sync-XHR wasm — different binaries.
+    push("remote-lazy", state.remote ? "yes" : "no (in-memory)");
+    push("async-reads (asyncify fetch variant)", state.remote ? !!state.asyncReadsOn : "n/a");
+    push("range-cache", !!state.rangeCacheOn);
+    try { push("reason (OWL QL)", !!($("owlReason") && $("owlReason").checked)); } catch (_e) { /* ignore */ }
+    // What the last remote query actually fetched (requests / bytes).
+    try {
+      const lg = state.lastRemoteLog || [];
+      if (lg.length) L.push("last-remote-fetch: " + lg.length + " request(s), " + formatBytes(lg.reduce((a, x) => a + (x.bytes || 0), 0)));
+    } catch (_e) { /* ignore */ }
+    // Device / browser — mobile detection + memory hints.
+    try {
+      const d = [];
+      if ("deviceMemory" in navigator) d.push("deviceMemory=" + navigator.deviceMemory + "GB");
+      if ("hardwareConcurrency" in navigator) d.push("cores=" + navigator.hardwareConcurrency);
+      if ("maxTouchPoints" in navigator) d.push("touch=" + navigator.maxTouchPoints);
+      d.push("phoneView=" + isPhoneView());
+      d.push("viewport=" + window.innerWidth + "x" + window.innerHeight + "@" + (window.devicePixelRatio || 1));
+      L.push("device: " + d.join(" · "));
+    } catch (_e) { /* ignore */ }
+    // JS heap — Chromium exposes it; its ABSENCE flags Safari/Firefox (itself a clue).
+    try {
+      const pm = performance && performance.memory;
+      L.push(pm ? "jsHeap: used=" + formatBytes(pm.usedJSHeapSize) + " limit=" + formatBytes(pm.jsHeapSizeLimit)
+        : "jsHeap: (not exposed — Safari/Firefox)");
+    } catch (_e) { /* ignore */ }
     const q = state.mode === "sparql" && $("q") ? ($("q").value || "").trim() : "";
     if (q) L.push("query:\n  " + q.replace(/\n/g, "\n  "));
     L.push("page: " + location.href);
@@ -7355,13 +7390,19 @@ self.onmessage = function (e) {
     return L.join("\n");
   }
 
+  // The collapsible full-diagnostics block with a one-tap copy button — SHARED by
+  // showError and the specific OOM / call-stack notices (which build their own
+  // HTML and otherwise had no way to copy). Open by default so the button shows.
+  function techDetailsHtml(message, tech) {
+    return `<details class="err-tech" open><summary>🔎 Diagnostics — tap Copy, paste it back ` +
+      `<button class="err-copy" type="button">📋 Copy full log</button></summary>` +
+      `<pre class="err-tech-body">${esc(errorReport(message, tech))}</pre>` +
+      `<div class="err-tech-hint">Captures your browser, the dataset, the load mode, the engine variant and the exact error + stack — the fastest way to fix a device-specific bug.</div></details>`;
+  }
+
   function showError(targetId, message, tech) {
     const c = classifyError(message);
-    const tech_html = c.tone === "user" ? "" :
-      `<details class="err-tech"><summary>Technical details for the developer ` +
-      `<button class="err-copy" type="button">Copy</button></summary>` +
-      `<pre class="err-tech-body">${esc(errorReport(message, tech))}</pre>` +
-      `<div class="err-tech-hint">How to reproduce: open this dataset, paste the query above, and run it.</div></details>`;
+    const tech_html = c.tone === "user" ? "" : techDetailsHtml(message, tech);
     $(targetId).innerHTML =
       `<div class="error-box err-${c.tone}">` +
       `<div class="err-headline"><span class="err-emoji">${c.emoji}</span>${esc(c.headline)}</div>` +
@@ -7500,10 +7541,25 @@ self.onmessage = function (e) {
       const det = btn.closest(".err-tech");
       const pre = det && det.querySelector(".err-tech-body");
       const text = pre ? pre.textContent : "";
-      const done = (ok) => { const o = btn.textContent; btn.textContent = ok ? "Copied ✓" : "Copy failed"; setTimeout(() => { btn.textContent = o; }, 1500); };
+      const done = (ok) => { const o = btn.textContent; btn.textContent = ok ? "Copied ✓" : "Selected — long-press → Copy"; setTimeout(() => { btn.textContent = o; }, 2500); };
+      // iOS Safari's async clipboard can reject silently; fall back to an
+      // execCommand copy, and if that fails too, SELECT the report so a manual
+      // long-press → Copy still works. A phone must always be able to copy this.
+      const fallback = () => {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text; ta.style.position = "fixed"; ta.style.left = "-9999px";
+          document.body.appendChild(ta); ta.focus(); ta.select();
+          const ok = document.execCommand && document.execCommand("copy");
+          document.body.removeChild(ta);
+          if (ok) { done(true); return; }
+        } catch (_e) { /* ignore */ }
+        try { if (pre) { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } } catch (_e) { /* ignore */ }
+        done(false);
+      };
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(() => done(true)).catch(() => done(false));
-      } else { done(false); }
+        navigator.clipboard.writeText(text).then(() => done(true)).catch(fallback);
+      } else { fallback(); }
     });
     $("strategy").onchange = () => setStrategy($("strategy").value);
     // Switching the Output type re-renders the last result in the new view
