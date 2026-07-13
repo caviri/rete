@@ -458,7 +458,10 @@ self.onmessage = function (e) {
   // next use (a remote re-query re-fetches; the range cache, if on, makes that
   // cheap). No-op'd engines/graphs are skipped.
   function freeMobileMemory() {
-    cancelRemote();        // the remote worker caches a RemoteGraph per URL — the big accumulator
+    // Don't kill a query the user is waiting on — only tear the remote worker down
+    // when nothing is in flight (the reclaim runs on an 8 s hidden-tab timer, and
+    // iOS's slower sync reads widen the window where a query is still running).
+    if (remotePending.size === 0) cancelRemote(); // the worker caches a RemoteGraph per URL — the big accumulator
     freeExploreEngines();  // DuckDB / SQLite WASM backends
     // The in-browser LLM (Ask AI) holds a large WebGPU/wasm model — drop it when
     // idle; the next Ask AI reloads it (weights come from the browser HTTP cache).
@@ -2387,11 +2390,23 @@ self.onmessage = function (e) {
   // with a per-category breakdown. The AI model weights (biggest, in the Cache
   // API) show up here as the residual of the browser estimate minus the caches we
   // can measure directly — so the user finally SEES the GB the model took.
+  // A history/session-log entry is replayable if its dataset can be (re)loaded:
+  // an embedded dataset, a user-built one, OR any catalog dataset (remote-lazy
+  // included — loadDataset opens it over HTTP range). Used by the session log +
+  // the History modal so replaying a REMOTE run switches to the right dataset.
+  function datasetLoadable(key) {
+    return !!(RETE_DATASETS_B64[key] || (typeof userBytes !== "undefined" && userBytes.has(key)) || (CATALOG.datasets || []).some((d) => d.key === key));
+  }
   async function renderStorage() {
-    const [est, ranges, files] = await Promise.all([storageEstimate(), rangeCacheBreakdown(), idbListMeta()]);
+    const [est, ranges, files, uds] = await Promise.all([storageEstimate(), rangeCacheBreakdown(), idbListMeta(), udbAll().catch(() => [])]);
     const rangeBytes = ranges.reduce((a, m) => a + Math.min(m.bytes || 0, m.total || (m.bytes || 0)), 0);
     const fileBytes = files.reduce((a, m) => a + (m.size || 0), 0);
-    const models = est.usage != null ? Math.max(0, est.usage - rangeBytes - fileBytes) : null;
+    // User-built datasets live in a SEPARATE DB (playgroundDatasets); count them so
+    // they don't inflate the "AI models" residual (a 500 MB built dataset used to
+    // read as "AI models & app data: 500 MB"). They're the user's work — "Clear
+    // everything" deliberately keeps them, so show them as their own line.
+    const dsBytes = uds.reduce((a, r) => a + ((r && r.bytes && (r.bytes.byteLength || r.bytes.length)) || 0), 0);
+    const models = est.usage != null ? Math.max(0, est.usage - rangeBytes - fileBytes - dsBytes) : null;
     const bar = $("storageBar");
     if (bar && bar.firstElementChild) {
       const pct = est.usage != null && est.quota ? Math.min(100, (est.usage / est.quota) * 100) : 0;
@@ -2406,6 +2421,7 @@ self.onmessage = function (e) {
       models != null ? { label: "AI models & app data", sub: "downloaded model weights + misc", bytes: models } : null,
       { label: "Cached data ranges", sub: ranges.length + " file(s) · lazy reads", bytes: rangeBytes },
       { label: "Whole cached files", sub: files.length + " file(s) · Explore backends", bytes: fileBytes },
+      uds.length ? { label: "Your saved datasets", sub: uds.length + " dataset(s) · your work, kept on Clear", bytes: dsBytes } : null,
     ].filter(Boolean);
     const bd = $("storageBreakdown");
     if (bd) bd.innerHTML = rows.map((r) =>
@@ -2449,7 +2465,7 @@ self.onmessage = function (e) {
       setEd("q", h.query || "");
       setView(h.format || "table");
       setStrategy(h.strategy || "whole");
-      if (h.dataset && h.dataset !== state.dataset && (RETE_DATASETS_B64[h.dataset] || userBytes.has(h.dataset))) loadDataset(h.dataset);
+      if (h.dataset && h.dataset !== state.dataset && datasetLoadable(h.dataset)) loadDataset(h.dataset);
       setMode("sparql");
       closeSettings();
     });
@@ -6369,7 +6385,7 @@ self.onmessage = function (e) {
           : (r.sessionBytes != null ? ` · ${formatBytes(r.sessionBytes)} cached this session` : "");
         $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
           `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} fetched${cacheNote} · ${dt.toFixed(0)} ms`;
-        saveHistory({ query: q, format: fmt, strategy: "remote", dataset: "(remote)", ts: Date.now(), resultSummary: summary });
+        saveHistory({ query: q, format: fmt, strategy: "remote", dataset: state.dataset || "(remote)", ts: Date.now(), resultSummary: summary });
       }).catch((e) => {
         cleanup();
         if (e && e.log) state.lastRemoteLog = e.log;
@@ -7637,8 +7653,8 @@ self.onmessage = function (e) {
   // The collapsible full-diagnostics block with a one-tap copy button — SHARED by
   // showError and the specific OOM / call-stack notices (which build their own
   // HTML and otherwise had no way to copy). Open by default so the button shows.
-  function techDetailsHtml(message, tech) {
-    return `<details class="err-tech" open><summary>🔎 Diagnostics — tap Copy, paste it back ` +
+  function techDetailsHtml(message, tech, open) {
+    return `<details class="err-tech"${open === false ? "" : " open"}><summary>🔎 Diagnostics — tap Copy, paste it back ` +
       `<button class="err-copy" type="button">📋 Copy full log</button></summary>` +
       `<pre class="err-tech-body">${esc(errorReport(message, tech))}</pre>` +
       `<div class="err-tech-hint">Captures your browser, the dataset, the load mode, the engine variant and the exact error + stack — the fastest way to fix a device-specific bug.</div></details>`;
@@ -7647,8 +7663,10 @@ self.onmessage = function (e) {
   function showError(targetId, message, tech) {
     const c = classifyError(message);
     // Show the copy-log block unless the classifier marks it non-copyable (the
-    // trivial "pick a dataset" prompt). Parse/syntax errors ARE copyable now.
-    const tech_html = c.copyable === false ? "" : techDetailsHtml(message, tech);
+    // trivial "pick a dataset" prompt). Parse/syntax errors ARE copyable now. Keep
+    // it COLLAPSED for a transient "just retry" hiccup (the full stack dump reads
+    // as alarming for a momentary blip); expanded for genuine bugs.
+    const tech_html = c.copyable === false ? "" : techDetailsHtml(message, tech, c.tone !== "transient");
     $(targetId).innerHTML =
       `<div class="error-box err-${c.tone}">` +
       `<div class="err-headline"><span class="err-emoji">${c.emoji}</span>${esc(c.headline)}</div>` +
@@ -7706,7 +7724,7 @@ self.onmessage = function (e) {
         setEd("q", h.query || "");
         setView(h.format || "table");
         setStrategy(h.strategy || "whole");
-        if (h.dataset && h.dataset !== state.dataset && (RETE_DATASETS_B64[h.dataset] || userBytes.has(h.dataset))) loadDataset(h.dataset);
+        if (h.dataset && h.dataset !== state.dataset && datasetLoadable(h.dataset)) loadDataset(h.dataset);
         setMode("sparql");
         closeHistory();
       };

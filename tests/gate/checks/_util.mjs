@@ -23,13 +23,12 @@ export async function pollOut(page, { steps = 45, stepMs = 1000 } = {}) {
   return out;
 }
 
-// Transient = network / host hiccup (mirrors the app's own classifyError transient
-// bucket). A wasm trap, parse error, wrong rows, etc. are NOT transient.
-export const isTransient = (t) =>
-  /hiccup|could not determine length|short range|failed to fetch|networkerror|network error|load failed|status\s*0\b|status\s*5\d\d|timeout|connection|err_|range req|ignored Range/i.test(String(t || ""));
-
-// Click Run and poll; on a TRANSIENT error (or an empty no-result) wait and retry
-// up to `tries` times. A non-transient error box returns immediately (real bug).
+// Click Run and poll; retry on ANY no-rows outcome (error box OR empty) up to
+// `tries` times. Rationale: classifying "is this error transient?" from the UI
+// text is unreliable (a live-R2 range blip can surface as several different
+// messages), so instead we lean on determinism — a REAL regression fails on every
+// retry and the check still goes red; only a transient recovers. All callers here
+// assert rows>0, so retrying a genuinely-empty result just costs a little time.
 export async function runWithRetry(page, opts = {}) {
   const tries = opts.tries || 3;
   let out = { rows: 0, errBlock: false, errText: "", qmeta: "" };
@@ -37,8 +36,7 @@ export async function runWithRetry(page, opts = {}) {
     await page.evaluate(() => document.getElementById("run").click());
     out = await pollOut(page, opts);
     if (out.rows > 0) return { ...out, tries: k + 1 };
-    if (out.errBlock && !isTransient(out.errText)) return { ...out, tries: k + 1 }; // real error — stop
-    await page.waitForTimeout(1500); // transient / empty — back off and retry
+    await page.waitForTimeout(1500); // no rows (error or empty) — back off and retry
   }
   return { ...out, tries };
 }
