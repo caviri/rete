@@ -8253,11 +8253,10 @@ self.onmessage = function (e) {
         lb.querySelector(".img-lb-close").onclick = close;
         lb.addEventListener("click", (ev) => { if (ev.target === lb || ev.target.classList.contains("img-lb-body")) close(); });
         document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") close(); });
-        lb.querySelector(".img-lb-body img").onclick = function () { this.classList.toggle("img-lb-zoom"); };
       }
       const big = lb.querySelector(".img-lb-body img");
-      big.classList.remove("img-lb-zoom");
-      big.src = a.href;
+      // show the image we KNOW loads (the rendered one); the top bar still links the original
+      big.src = img.currentSrc || img.src;
       lb.querySelector(".img-lb-open").href = a.href;
       lb.classList.remove("hidden");
     }, true);

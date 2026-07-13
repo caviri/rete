@@ -3152,5 +3152,4 @@ td.lit { color: var(--ink); }
 .img-lb-bar a { color: #fff; font-size: 13px; text-decoration: underline; }
 .img-lb-bar .img-lb-close { color: #fff; font-size: 26px; background: none; border: 0; cursor: pointer; }
 .img-lb-body { flex: 1 1 auto; overflow: auto; display: grid; place-items: center; touch-action: pinch-zoom pan-x pan-y; }
-.img-lb-body img { max-width: 96vw; max-height: 88vh; cursor: zoom-in; }
-.img-lb-body img.img-lb-zoom { max-width: none; max-height: none; width: 190vw; cursor: zoom-out; }
+.img-lb-body img { max-width: 96vw; max-height: 88vh; }
