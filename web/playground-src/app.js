@@ -478,8 +478,14 @@ self.onmessage = function (e) {
 
   function ensureRemoteWorker() {
     if (remoteReady) return remoteReady; // built, or building (avoid a double-build race)
-    const asyncOn = !!state.asyncReadsOn;
-    remoteReady = (asyncOn ? loadAsyncAssets() : Promise.resolve()).then(() => {
+    const wantAsync = !!state.asyncReadsOn;
+    // If the async assets can't be fetched (a deploy without the ~8 MB variant, or a
+    // network blip), DON'T hard-fail the query — degrade to the always-present sync
+    // wasm. asyncOn reflects what actually loaded.
+    remoteReady = (wantAsync
+      ? loadAsyncAssets().then(() => true).catch((e) => { console.warn("async reader assets failed; using the sync reader:", e); state.asyncReadsOn = false; return false; })
+      : Promise.resolve(false)
+    ).then((asyncOn) => {
       const glue = asyncOn ? asyncGlueText : document.getElementById("reteGlue").textContent;
       const flag = asyncOn ? "self.__RETE_ASYNC=true;\n" : "";
       const blob = new Blob([flag + rcPrelude() + glue + REMOTE_HARNESS + COALESCE_JS], { type: "text/javascript" });
@@ -1941,7 +1947,10 @@ self.onmessage = function (e) {
   function setAsyncReads(on) {
     state.asyncReadsOn = !!on;
     try { localStorage.setItem("asyncReadsOn", on ? "1" : "0"); } catch (e) { /* private mode */ }
-    resetRemoteWorker();  // rebuild on the other variant at the next remote query
+    // cancelRemote (not resetRemoteWorker) so an in-flight query is REJECTED, not
+    // orphaned — flipping this mid-query otherwise left the spinner hanging. The
+    // worker rebuilds on the chosen variant at the next query.
+    cancelRemote();
   }
   function renderAsyncReads() {
     const t = $("asyncReadsToggle"); if (t) t.checked = !!state.asyncReadsOn;

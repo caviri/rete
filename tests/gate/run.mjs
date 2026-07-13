@@ -176,6 +176,7 @@ const G2 = [
   ["check_clear", "Clear everything empties 4 stores + Cache API", 90000],
   ["check_worker_init", "broken engine wasm surfaces an error (no infinite hang)", 90000],
   ["check_refresh_session", "Settings ↻ Refresh actually reloads the document", 90000],
+  ["check_async_fallback", "async assets 404 → degrades to sync reader, still runs", 120000],
 ];
 async function g2() {
   for (const [name, label, timeout] of G2) {

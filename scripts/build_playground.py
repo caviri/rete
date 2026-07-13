@@ -49,19 +49,21 @@ ASYNC_ENV_JS = """
           }
         }
         function __reteStr(ptr, len) { return new TextDecoder().decode(new Uint8Array(wasm.memory.buffer).slice(ptr, ptr + len)); }
+        // cache:'no-store' is REQUIRED on WebKit (desktop Safari, and iOS when a user
+        // forces concurrent reads): WebKit caches/coalesces concurrent same-URL Range
+        // requests (this Promise.all fires many at once) and can hand back a
+        // wrong-length or empty body → the engine decodes corrupt tiles → a wasm trap.
+        // But no-store defeats the HTTP cache on EVERY read, so it needlessly taxes
+        // Chromium/Firefox (the async default there) with cross-reload re-fetches —
+        // and they handle concurrent ranges fine. So gate it to WebKit only.
+        var __reteNoStore = (function () { try { var ua = (navigator.userAgent || "").toLowerCase(); return ua.indexOf("safari") >= 0 && ua.indexOf("chrome") < 0 && ua.indexOf("chromium") < 0 && ua.indexOf("android") < 0 && ua.indexOf("edg/") < 0; } catch (e) { return false; } })();
         async function __reteDoFetch(urlPtr, urlLen, offsPtr, lensPtr, n, dstPtr) {
           const url = __reteStr(urlPtr, urlLen);
           const dv = new DataView(wasm.memory.buffer);
           const ranges = [];
           for (let i = 0; i < n; i++) ranges.push([Number(dv.getBigUint64(offsPtr + i*8, true)), dv.getUint32(lensPtr + i*4, true)]);
-          // cache:'no-store' is REQUIRED on iOS/iPad Safari: WebKit caches/coalesces
-          // concurrent same-URL Range requests (this Promise.all fires many at once)
-          // and can hand back a wrong-length or empty body for some of them. That
-          // corrupts the tiles the engine then decodes → a bare wasm trap. Forcing a
-          // fresh network fetch per range sidesteps the coalescing. (Desktop Chromium
-          // is unaffected; the sync-XHR variant fetches sequentially so never hit it.)
           const bufs = await Promise.all(ranges.map(([o,l]) =>
-            fetch(url, { headers: { Range: 'bytes=' + o + '-' + (o+l-1) }, cache: 'no-store' })
+            fetch(url, { headers: { Range: 'bytes=' + o + '-' + (o+l-1) }, cache: __reteNoStore ? 'no-store' : 'default' })
               .then((r) => { if (r.status !== 206) throw new Error('Range status ' + r.status + ' (host must support HTTP range)'); return r.arrayBuffer(); })
               .then((b) => new Uint8Array(b))));
           const mem = new Uint8Array(wasm.memory.buffer);
