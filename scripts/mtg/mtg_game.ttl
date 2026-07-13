@@ -1,0 +1,194 @@
+# Magic: The Gathering — a game as OWL + SPARQL (no engine).
+#
+# The DECLARATIVE half of the semantic-MTG-engine plan: a small runtime ontology,
+# a few cards modelled with their real structured abilities (cost / condition /
+# effect / action, the way cmdoret/mtg_ontology intends), and one concrete game
+# state with a spell on the stack — everything is data + OWL axioms, answerable in
+# SPARQL (Describe / Validate / Legality). Card concepts reuse the catalog IRIs
+# (w3id.org/rete/mtg/card/…) so this graph and the 34k-card `mtg` catalog share
+# identities. Vocabulary builds on cmdoret/mtg_ontology (mtgo:, mtg wiki actions).
+
+@prefix mtgg:   <https://w3id.org/rete/mtg/game#> .
+@prefix :       <https://w3id.org/rete/mtg/game/> .
+@prefix mtg:    <https://w3id.org/rete/mtg#> .
+@prefix card:   <https://w3id.org/rete/mtg/card/> .
+@prefix mtgo:   <https://cmdoret.net/mtg_ontology/> .
+@prefix act:    <https://mtg.fandom.com/wiki/> .
+@prefix schema: <http://schema.org/> .
+@prefix dct:    <http://purl.org/dc/terms/> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+
+########################################################################
+# 1. Runtime ontology (OWL classes + properties)
+########################################################################
+
+mtgg:Match        a owl:Class ; rdfs:label "Match" .
+mtgg:GameState    a owl:Class ; rdfs:label "Game state" ;
+    rdfs:comment "An immutable snapshot of a game; successors link back via previousState." .
+mtgg:Player       a owl:Class ; rdfs:label "Player" ; rdfs:subClassOf mtgo:Player .
+mtgg:Zone         a owl:Class ; rdfs:label "Zone" .
+mtgg:Library      a owl:Class ; rdfs:subClassOf mtgg:Zone ; rdfs:label "Library" .
+mtgg:Hand         a owl:Class ; rdfs:subClassOf mtgg:Zone ; rdfs:label "Hand" .
+mtgg:Battlefield  a owl:Class ; rdfs:subClassOf mtgg:Zone ; rdfs:label "Battlefield" .
+mtgg:Graveyard    a owl:Class ; rdfs:subClassOf mtgg:Zone ; rdfs:label "Graveyard" .
+mtgg:Stack        a owl:Class ; rdfs:subClassOf mtgg:Zone ; rdfs:label "Stack" .
+mtgg:ZoneMembership a owl:Class ; rdfs:label "Zone membership" ;
+    rdfs:comment "State-scoped: object X is in zone Z in state S (and optionally tapped)." .
+mtgg:LifeTotal    a owl:Class ; rdfs:label "Life total" ; rdfs:comment "State-scoped life of a player." .
+mtgg:CardInstance a owl:Class ; rdfs:label "Card instance" ; rdfs:subClassOf mtgo:Card ;
+    rdfs:comment "A runtime copy of a card — distinct from the card concept it is ofCard." .
+mtgg:SpellInstance a owl:Class ; rdfs:label "Spell instance" ;
+    rdfs:comment "An object on the stack created by casting a card instance." .
+mtgg:Ability      a owl:Class ; rdfs:subClassOf mtgo:Ability ; rdfs:label "Ability" .
+mtgg:ActivatedAbility a owl:Class ; rdfs:subClassOf mtgg:Ability, mtgo:ActivatedAbility ; rdfs:label "Activated ability" .
+mtgg:SpellEffect  a owl:Class ; rdfs:subClassOf mtgg:Ability ; rdfs:label "Spell effect" ;
+    rdfs:comment "The one-shot effect of an instant or sorcery." .
+mtgg:Cost         a owl:Class ; rdfs:subClassOf mtgo:Cost ; rdfs:label "Cost" .
+mtgg:Effect       a owl:Class ; rdfs:label "Effect" .
+
+mtgg:previousState a owl:ObjectProperty ; rdfs:label "previous state" .
+mtgg:activePlayer  a owl:ObjectProperty ; rdfs:label "active player" .
+mtgg:priorityPlayer a owl:ObjectProperty ; rdfs:label "player with priority" .
+mtgg:currentPhase  a owl:ObjectProperty ; rdfs:label "current phase" .
+mtgg:inState   a owl:ObjectProperty ; rdfs:label "in state" .
+mtgg:object    a owl:ObjectProperty ; rdfs:label "object" .
+mtgg:zone      a owl:ObjectProperty ; rdfs:label "zone" .
+mtgg:ofCard    a owl:ObjectProperty ; rdfs:label "of card" ; rdfs:comment "instance → its card concept" .
+mtgg:controller a owl:ObjectProperty ; rdfs:label "controller" .
+mtgg:owner     a owl:ObjectProperty ; rdfs:label "owner" .
+mtgg:target    a owl:ObjectProperty ; rdfs:label "target" .
+mtgg:sourceInstance a owl:ObjectProperty ; rdfs:label "source instance" .
+mtgg:ability   a owl:ObjectProperty ; rdfs:label "ability" .
+mtgg:cost      a owl:ObjectProperty ; rdfs:label "cost" .
+mtgg:condition a owl:ObjectProperty ; rdfs:label "condition" .
+mtgg:effect    a owl:ObjectProperty ; rdfs:label "effect" .
+mtgg:action    a owl:ObjectProperty ; rdfs:label "action" .
+mtgg:producesMana a owl:ObjectProperty ; rdfs:label "produces mana" .
+mtgg:tapped    a owl:DatatypeProperty ; rdfs:label "tapped" .
+mtgg:life      a owl:DatatypeProperty ; rdfs:label "life" .
+mtgg:player    a owl:ObjectProperty ; rdfs:label "player" .
+mtgg:turnNumber a owl:DatatypeProperty ; rdfs:label "turn number" .
+mtgg:amount    a owl:DatatypeProperty ; rdfs:label "amount" .
+
+mtgg:FirstMain a mtgo:main_phase ; rdfs:label "precombat main phase" .
+
+########################################################################
+# 2. Card concepts (reuse catalog IRIs) + their structured abilities
+########################################################################
+
+card:lightning-bolt a mtg:Card, mtgo:Instant ; schema:name "Lightning Bolt" ;
+    mtg:manaCost "{R}" ; mtg:manaValue 1 ;
+    mtgg:ability :ab-bolt .
+:ab-bolt a mtgg:SpellEffect ; rdfs:label "deal 3 damage to any target" ;
+    mtgg:effect [ a mtgg:Effect ; mtgg:action mtgg:DealDamage ; mtgg:amount 3 ;
+                  rdfs:comment "to any target" ] .
+mtgg:DealDamage a owl:Class ; rdfs:label "deal damage" .
+
+card:grizzly-bears a mtg:Card, mtgo:Creature ; schema:name "Grizzly Bears" ;
+    mtg:manaCost "{1}{G}" ; mtg:manaValue 2 ; mtg:power "2" ; mtg:toughness "2" .
+
+card:llanowar-elves a mtg:Card, mtgo:Creature ; schema:name "Llanowar Elves" ;
+    mtg:manaCost "{G}" ; mtg:manaValue 1 ; mtg:power "1" ; mtg:toughness "1" ;
+    mtgg:ability :ab-elves-tap .
+:ab-elves-tap a mtgg:ActivatedAbility ; rdfs:label "{T}: Add {G}" ;
+    mtgg:cost :cost-tap ;
+    mtgg:effect [ a mtgg:Effect ; mtgg:action act:add_mana ; mtgg:producesMana card:color-G ] .
+
+# Cyril's canonical example — Bonders' Enclave
+card:bonders-enclave a mtg:Card, mtgo:Land ; schema:name "Bonders' Enclave" ;
+    mtgg:ability :ab-enclave-mana , :ab-enclave-draw .
+:ab-enclave-mana a mtgg:ActivatedAbility ; rdfs:label "{T}: Add {C}" ;
+    mtgg:cost :cost-tap ;
+    mtgg:effect [ a mtgg:Effect ; mtgg:action act:add_mana ; mtgg:producesMana card:color-C ] .
+:ab-enclave-draw a mtgg:ActivatedAbility ; rdfs:label "{3}, {T}: Draw a card. Activate only if you control a creature with power 4 or greater." ;
+    mtgg:cost :cost-3generic , :cost-tap ;
+    mtgg:condition :cond-control-power4 ;
+    mtgg:effect [ a mtgg:Effect ; mtgg:action act:draw ; mtgg:amount 1 ] .
+:cond-control-power4 a mtgo:ActionConstraint ; rdfs:label "control a creature with power 4 or greater" .
+
+card:serra-angel a mtg:Card, mtgo:Creature ; schema:name "Serra Angel" ;
+    mtg:manaCost "{3}{W}{W}" ; mtg:manaValue 5 ; mtg:power "4" ; mtg:toughness "4" ;
+    mtg:keyword <https://w3id.org/rete/mtg/keyword/flying> ,
+                <https://w3id.org/rete/mtg/keyword/vigilance> .
+
+card:mountain a mtg:Card, mtgo:Land ; schema:name "Mountain" ;
+    mtgg:producesMana card:color-R ;
+    mtgg:ability [ a mtgg:ActivatedAbility ; rdfs:label "{T}: Add {R}" ; mtgg:cost :cost-tap ;
+                   mtgg:effect [ a mtgg:Effect ; mtgg:action act:add_mana ; mtgg:producesMana card:color-R ] ] .
+
+card:forest a mtg:Card, mtgo:Land ; schema:name "Forest" ; mtgg:producesMana card:color-G .
+
+card:color-R a mtgo:Color ; rdfs:label "Red" .
+card:color-G a mtgo:Color ; rdfs:label "Green" .
+card:color-C a mtgo:Color ; rdfs:label "Colorless" .
+
+:cost-tap a mtgg:Cost ; rdfs:label "{T}" ; mtgg:action act:tap .
+:cost-3generic a mtgg:Cost, mtgo:ManaCost ; rdfs:label "{3}" ; mtgg:amount 3 .
+:cost-R a mtgg:Cost, mtgo:ManaCost ; rdfs:label "{R}" ; mtgg:producesMana card:color-R .
+
+########################################################################
+# 3. A concrete match: Alice vs Bob
+########################################################################
+
+:match1 a mtgg:Match ; rdfs:label "Alice vs Bob" ; schema:name "Demo match" .
+:alice a mtgg:Player ; rdfs:label "Alice" .
+:bob   a mtgg:Player ; rdfs:label "Bob" .
+
+# shared battlefield + stack; per-player hands/libraries/graveyards
+:battlefield a mtgg:Battlefield ; rdfs:label "battlefield" .
+:stack       a mtgg:Stack ; rdfs:label "the stack" .
+:aliceHand a mtgg:Hand ; rdfs:label "Alice's hand" ; mtgg:player :alice .
+:bobHand   a mtgg:Hand ; rdfs:label "Bob's hand" ; mtgg:player :bob .
+
+# runtime card instances (copies)
+:bolt17    a mtgg:CardInstance ; mtgg:ofCard card:lightning-bolt ; mtgg:owner :alice ; mtgg:controller :alice .
+:mountainA a mtgg:CardInstance ; mtgg:ofCard card:mountain ; mtgg:owner :alice ; mtgg:controller :alice .
+:mountainB a mtgg:CardInstance ; mtgg:ofCard card:mountain ; mtgg:owner :alice ; mtgg:controller :alice .
+:elvesA    a mtgg:CardInstance ; mtgg:ofCard card:llanowar-elves ; mtgg:owner :alice ; mtgg:controller :alice .
+:bears4    a mtgg:CardInstance ; mtgg:ofCard card:grizzly-bears ; mtgg:owner :bob ; mtgg:controller :bob .
+:serraB    a mtgg:CardInstance ; mtgg:ofCard card:serra-angel ; mtgg:owner :bob ; mtgg:controller :bob .
+
+########################################################################
+# 4. State S1 — Alice's turn 3, precombat main, Alice has priority
+########################################################################
+
+:s1 a mtgg:GameState ; rdfs:label "state 1" ; schema:isPartOf :match1 ;
+    mtgg:activePlayer :alice ; mtgg:priorityPlayer :alice ;
+    mtgg:currentPhase mtgg:FirstMain ; mtgg:turnNumber 3 .
+
+[ a mtgg:LifeTotal ; mtgg:inState :s1 ; mtgg:player :alice ; mtgg:life 18 ] .
+[ a mtgg:LifeTotal ; mtgg:inState :s1 ; mtgg:player :bob   ; mtgg:life 20 ] .
+
+[ a mtgg:ZoneMembership ; mtgg:inState :s1 ; mtgg:object :bolt17    ; mtgg:zone :aliceHand ] .
+[ a mtgg:ZoneMembership ; mtgg:inState :s1 ; mtgg:object :mountainA ; mtgg:zone :battlefield ; mtgg:tapped false ] .
+[ a mtgg:ZoneMembership ; mtgg:inState :s1 ; mtgg:object :mountainB ; mtgg:zone :battlefield ; mtgg:tapped false ] .
+[ a mtgg:ZoneMembership ; mtgg:inState :s1 ; mtgg:object :elvesA    ; mtgg:zone :battlefield ; mtgg:tapped false ] .
+[ a mtgg:ZoneMembership ; mtgg:inState :s1 ; mtgg:object :bears4    ; mtgg:zone :battlefield ; mtgg:tapped false ] .
+[ a mtgg:ZoneMembership ; mtgg:inState :s1 ; mtgg:object :serraB    ; mtgg:zone :battlefield ; mtgg:tapped false ] .
+
+########################################################################
+# 5. State S2 — Alice cast Lightning Bolt at Bob's Grizzly Bears
+#    (a successor snapshot: the spell is on the stack, a Mountain is tapped)
+########################################################################
+
+:s2 a mtgg:GameState ; rdfs:label "state 2" ; schema:isPartOf :match1 ;
+    mtgg:previousState :s1 ;
+    mtgg:activePlayer :alice ; mtgg:priorityPlayer :alice ;
+    mtgg:currentPhase mtgg:FirstMain ; mtgg:turnNumber 3 .
+
+:boltSpell a mtgg:SpellInstance ; rdfs:label "Lightning Bolt (on the stack)" ;
+    mtgg:ofCard card:lightning-bolt ; mtgg:sourceInstance :bolt17 ;
+    mtgg:controller :alice ; mtgg:target :bears4 .
+
+[ a mtgg:LifeTotal ; mtgg:inState :s2 ; mtgg:player :alice ; mtgg:life 18 ] .
+[ a mtgg:LifeTotal ; mtgg:inState :s2 ; mtgg:player :bob   ; mtgg:life 20 ] .
+
+[ a mtgg:ZoneMembership ; mtgg:inState :s2 ; mtgg:object :boltSpell ; mtgg:zone :stack ] .
+[ a mtgg:ZoneMembership ; mtgg:inState :s2 ; mtgg:object :mountainA ; mtgg:zone :battlefield ; mtgg:tapped true  ] .
+[ a mtgg:ZoneMembership ; mtgg:inState :s2 ; mtgg:object :mountainB ; mtgg:zone :battlefield ; mtgg:tapped false ] .
+[ a mtgg:ZoneMembership ; mtgg:inState :s2 ; mtgg:object :elvesA    ; mtgg:zone :battlefield ; mtgg:tapped false ] .
+[ a mtgg:ZoneMembership ; mtgg:inState :s2 ; mtgg:object :bears4    ; mtgg:zone :battlefield ; mtgg:tapped false ] .
+[ a mtgg:ZoneMembership ; mtgg:inState :s2 ; mtgg:object :serraB    ; mtgg:zone :battlefield ; mtgg:tapped false ] .
