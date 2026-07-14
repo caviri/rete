@@ -1156,6 +1156,20 @@ textarea {
 /* Digitised-PDF buttons get a distinct document-red accent. */
 .pdf-btn { background: #b23b3b; border-color: #b23b3b; }
 .pdf-btn:hover { background: #8f2f2f; border-color: #8f2f2f; }
+/* Inline page-by-page PDF viewer cell. */
+.pdfview-cell { padding: 4px 8px; }
+.pdfview { display: inline-flex; flex-direction: column; gap: 4px; max-width: 100%; }
+.pdfview-stage { position: relative; min-width: 120px; min-height: 60px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 5px; background: #fff; overflow: hidden; }
+.pdfview-stage canvas { display: block; max-width: 100%; height: auto; }
+.pdfview-msg { position: absolute; font-size: 12px; color: var(--muted); }
+.pdfview-bar { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.pdfview-bar button { border: 1px solid var(--line); background: var(--side); color: var(--fg); border-radius: 5px;
+  width: 22px; height: 20px; line-height: 1; cursor: pointer; padding: 0; font-size: 11px; }
+.pdfview-bar button:disabled { opacity: 0.4; cursor: default; }
+.pdfview-bar button:not(:disabled):hover { background: var(--line); }
+.pdfview-pg { font-variant-numeric: tabular-nums; min-width: 44px; text-align: center; }
+.pdfview-open { margin-left: auto; text-decoration: none; color: var(--accent); font-weight: 600; }
 /* Image cells (e.g. wdt:P18) rendered as clickable thumbnails. */
 .thumb-cell { padding: 4px 8px; }
 .cell-thumb {

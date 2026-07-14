@@ -1832,6 +1832,7 @@ self.onmessage = function (e) {
     if (!ex) return;
     state.selectedExample = index;
     state.colLabels = ex.cols || null;   // per-example friendly column headers
+    state.colTypes = ex.colTypes || null; // optional per-example forced render types (e.g. a column as the inline PDF viewer)
     setEd("q", ex.q);
     setView(ex.view || "table");
     setStrategy(ex.strategy || "whole");
@@ -4003,6 +4004,67 @@ self.onmessage = function (e) {
     return `<td class="iri"><a class="cell-btn pdf-btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
       `title="${esc(t.value)}" data-url="${esc(t.value)}">📄 PDF ↗</a></td>`;
   }
+  // Inline page-by-page PDF viewer (the "PDF" column render type). Lazily loads
+  // pdf.js from a CDN the first time one appears, renders page 1 into a canvas, and
+  // wires ◀ ▶ page navigation — for CORS-open PDFs (Patrinum, Lausanne, Barcelona…).
+  // A ↗ button always opens the native viewer, so it degrades gracefully if pdf.js
+  // can't load. Range-capable servers stream; others download the whole file once.
+  let pdfjsLoading = null;
+  function ensurePdfjs() {
+    if (pdfjsLoading) return pdfjsLoading;
+    pdfjsLoading = (async () => {
+      const V = "4.7.76";
+      const lib = await import(/* @vite-ignore */ `https://cdn.jsdelivr.net/npm/pdfjs-dist@${V}/build/pdf.min.mjs`);
+      lib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${V}/build/pdf.worker.min.mjs`;
+      return lib;
+    })().catch(() => null);
+    return pdfjsLoading;
+  }
+  function pdfViewerCell(t) {
+    const url = httpsUpgrade(t.value);
+    return `<td class="iri pdfview-cell"><div class="pdfview" data-pdf="${esc(url)}">` +
+      `<div class="pdfview-stage"><canvas></canvas><div class="pdfview-msg">📄 loading…</div></div>` +
+      `<div class="pdfview-bar"><button class="pdfview-prev" type="button" disabled aria-label="previous page">◀</button>` +
+      `<span class="pdfview-pg">·</span>` +
+      `<button class="pdfview-next" type="button" disabled aria-label="next page">▶</button>` +
+      `<a class="pdfview-open" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Open the full PDF">↗</a>` +
+      `</div></div></td>`;
+  }
+  function hydratePdfViewers(scope) {
+    const cells = [...(scope || document).querySelectorAll(".pdfview[data-pdf]")];
+    if (!cells.length) return;
+    ensurePdfjs().then((pdfjs) => {
+      cells.forEach((el) => {
+        const url = el.getAttribute("data-pdf"); el.removeAttribute("data-pdf");
+        const canvas = el.querySelector("canvas"), msg = el.querySelector(".pdfview-msg");
+        const pg = el.querySelector(".pdfview-pg");
+        const prev = el.querySelector(".pdfview-prev"), next = el.querySelector(".pdfview-next");
+        if (!pdfjs) { msg.textContent = "📄 open ↗"; return; }
+        let doc = null, cur = 1, busy = false;
+        const draw = (n) => {
+          if (!doc || busy) return; busy = true;
+          doc.getPage(n).then((page) => {
+            const dpr = window.devicePixelRatio || 1;
+            const v0 = page.getViewport({ scale: 1 });
+            const scale = Math.min(300 / v0.width, 380 / v0.height);
+            const vp = page.getViewport({ scale: scale * dpr });
+            canvas.width = vp.width; canvas.height = vp.height;
+            canvas.style.width = Math.round(vp.width / dpr) + "px";
+            canvas.style.height = Math.round(vp.height / dpr) + "px";
+            return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+          }).then(() => {
+            pg.textContent = n + " / " + doc.numPages;
+            prev.disabled = n <= 1; next.disabled = n >= doc.numPages; busy = false;
+          }).catch(() => { busy = false; });
+        };
+        pdfjs.getDocument({ url, disableAutoFetch: true }).promise.then((d) => {
+          doc = d; msg.style.display = "none"; draw(1);
+          prev.addEventListener("click", () => { if (cur > 1) { cur--; draw(cur); } });
+          next.addEventListener("click", () => { if (cur < doc.numPages) { cur++; draw(cur); } });
+        }).catch(() => { msg.textContent = "📄 open ↗"; });
+      });
+    });
+  }
   // ---- IIIF cells -----------------------------------------------------------
   // A IIIF *manifest* URL (e.g. biblissima prop:P196 → digi.vatlib.it/…/manifest.json)
   // is not itself an image, but it points at one. Render a placeholder link, then
@@ -4775,7 +4837,7 @@ self.onmessage = function (e) {
       case "spin": return spinCell(t);
       case "link": return linkCell(t);
       case "button": return buttonCell(t);
-      case "pdf": return pdfCell(t);
+      case "pdf": return pdfViewerCell(t);
       case "number": {
         const n = Number(t.value);
         return `<td class="lit num" title="${esc(raw)}">${esc(isFinite(n) ? String(n) : t.value)}</td>`;
@@ -4790,7 +4852,7 @@ self.onmessage = function (e) {
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"], ["button", "Button"],
-    ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
+    ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF viewer"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
@@ -4840,7 +4902,7 @@ self.onmessage = function (e) {
   // A collapsed table whose columns carry a type-override dropdown.
   function statefulTable(vars, rows, note) {
     const tid = "t" + ++tableSeq;
-    const st = { tid, vars: vars || [], rows: rows || [], types: {}, cap: 500, note: note || "", labels: state.colLabels || null };
+    const st = { tid, vars: vars || [], rows: rows || [], types: state.colTypes ? { ...state.colTypes } : {}, cap: 500, note: note || "", labels: state.colLabels || null };
     tableStates.set(tid, st);
     // Bound the registry — only the few visible tables need their data kept.
     while (tableStates.size > 12) tableStates.delete(tableStates.keys().next().value);
@@ -4909,7 +4971,7 @@ self.onmessage = function (e) {
   function renderCards(vars, rows, note) {
     if (!(rows || []).length) return emptyState("rows");
     const tid = "t" + ++tableSeq;
-    const st = { tid, kind: "cards", vars: vars || [], rows: rows || [], types: {}, cap: 500,
+    const st = { tid, kind: "cards", vars: vars || [], rows: rows || [], types: state.colTypes ? { ...state.colTypes } : {}, cap: 500,
       note: note || ((rows || []).length > 500 ? `<p class="microcopy">Showing first 500 of ${rows.length} rows.</p>` : ""),
       labels: state.colLabels || null };
     tableStates.set(tid, st);
@@ -4965,7 +5027,7 @@ self.onmessage = function (e) {
     cardFocus.io = new IntersectionObserver((ents) => {
       ents.forEach((en) => {
         if (!en.isIntersecting) return;
-        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target);
+        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target); hydratePdfViewers(en.target);
         en.target.querySelectorAll("img.cell-thumb[loading='lazy']").forEach((im) => { im.loading = "eager"; });
         cardFocus.io.unobserve(en.target);
       });
@@ -8335,7 +8397,7 @@ self.onmessage = function (e) {
       const obs = new MutationObserver(() => {
         if (pending) return;
         pending = true;
-        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); }, 60);
+        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); hydratePdfViewers(host); }, 60);
       });
       obs.observe(host, { childList: true, subtree: true });
       // Delegated: the ⛶ on an inline 3D cell (or a 🧊 3D button) opens the full viewer.

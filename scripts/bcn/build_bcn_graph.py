@@ -37,7 +37,7 @@ def main():
     def iri(s, p, o): out.write(f"<{s}> <{p}> <{o}> .\n")
     def lit(s, p, v, dt=None): out.write(f'<{s}> <{p}> "{esc(v)}"' + (f"^^<{dt}>" if dt else "") + " .\n")
 
-    archives, n, ndig, nfile = {}, 0, 0, 0
+    archives, n, ndig, nfile, nimg = {}, 0, 0, 0, 0
     seen_media = set()
     seen = set()
     for line in SRC.open(encoding="utf-8"):
@@ -74,20 +74,26 @@ def main():
         lit(u, BCN + "digitized", "true" if r.get("digitized") else "false", XSD + "boolean")
         if r.get("digitized"): ndig += 1
         for f in (r.get("files") or []):
-            u2 = f.get("url")
-            if not u2: continue
-            # the API's real content URL (/api/v2/nodes/<id>/content for images, /v1 for PDFs).
-            # It's session-gated on the source viewer, so we model it as a media reference with
-            # its format + byte size, not schema:image — the human-viewable path is schema:url
-            # (the /detail/<id> record page, which opens the OpenSeadragon viewer).
-            furl = SITE + u2 if u2.startswith("/") else u2
-            iri(u, SCHEMA + "associatedMedia", furl)
+            fid = f.get("id")
+            if not fid: continue
+            mime = (f.get("mime") or "").lower()
+            nm = re.sub(r"\s*\([^)]*\)\s*$", "", f.get("name") or "").strip()
+            # /file/download/<rec>/<file>/<name>.<ext> is PUBLIC + CORS-open (the /detail viewer's
+            # own file endpoint) — unlike the session-gated /api/nodes content URL. The server only
+            # validates the EXTENSION (must match the original), so <fid>.<ext> works and needs no
+            # encoding. Ending in .jpg/.pdf, the playground renders it inline (image) / as a link.
+            ext = (nm.rsplit(".", 1)[-1].lower() if "." in nm else {"image/jpeg": "jpg", "image/png": "png",
+                    "image/tiff": "tif", "application/pdf": "pdf"}.get(mime, "bin"))
+            furl = f"{SITE}/file/download/{safe(rid)}/{safe(fid)}/{safe(fid)}.{ext}"
+            pred = SCHEMA + "image" if mime.startswith("image/") else SCHEMA + "associatedMedia"
+            iri(u, pred, furl)
             nfile += 1
+            if mime.startswith("image/"):
+                nimg += 1
             if furl not in seen_media:
                 seen_media.add(furl)
                 iri(furl, RDF, SCHEMA + "MediaObject")
                 if f.get("mime"): lit(furl, SCHEMA + "encodingFormat", f["mime"])
-                nm = re.sub(r"\s*\([^)]*\)\s*$", "", f.get("name") or "").strip()
                 if nm: lit(furl, SCHEMA + "name", nm)
                 b = to_bytes(f.get("size"))
                 if b: lit(furl, SCHEMA + "contentSize", str(b), XSD + "integer")
@@ -98,7 +104,7 @@ def main():
         iri(a, RDF, SCHEMA + "ArchiveOrganization")
         lit(a, SCHEMA + "name", name)
     out.close()
-    print(f"units: {n:,} · digitised: {ndig:,} · file-links: {nfile:,} · archives: {len(archives)} -> {OUT}")
+    print(f"units: {n:,} · digitised: {ndig:,} · file-links: {nfile:,} (images: {nimg:,}) · archives: {len(archives)} -> {OUT}")
 
 if __name__ == "__main__":
     main()

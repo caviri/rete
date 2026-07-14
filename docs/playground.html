@@ -1196,6 +1196,20 @@ textarea {
 /* Digitised-PDF buttons get a distinct document-red accent. */
 .pdf-btn { background: #b23b3b; border-color: #b23b3b; }
 .pdf-btn:hover { background: #8f2f2f; border-color: #8f2f2f; }
+/* Inline page-by-page PDF viewer cell. */
+.pdfview-cell { padding: 4px 8px; }
+.pdfview { display: inline-flex; flex-direction: column; gap: 4px; max-width: 100%; }
+.pdfview-stage { position: relative; min-width: 120px; min-height: 60px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 5px; background: #fff; overflow: hidden; }
+.pdfview-stage canvas { display: block; max-width: 100%; height: auto; }
+.pdfview-msg { position: absolute; font-size: 12px; color: var(--muted); }
+.pdfview-bar { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.pdfview-bar button { border: 1px solid var(--line); background: var(--side); color: var(--fg); border-radius: 5px;
+  width: 22px; height: 20px; line-height: 1; cursor: pointer; padding: 0; font-size: 11px; }
+.pdfview-bar button:disabled { opacity: 0.4; cursor: default; }
+.pdfview-bar button:not(:disabled):hover { background: var(--line); }
+.pdfview-pg { font-variant-numeric: tabular-nums; min-width: 44px; text-align: center; }
+.pdfview-open { margin-left: auto; text-decoration: none; color: var(--accent); font-weight: 600; }
 /* Image cells (e.g. wdt:P18) rendered as clickable thumbnails. */
 .thumb-cell { padding: 4px 8px; }
 .cell-thumb {
@@ -3204,8 +3218,8 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 07b160a · 2026-07-14 19:20 UTC</span>
-    <script>window.RETE_BUILD = "07b160a · 2026-07-14 19:20 UTC";</script>
+    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 4587506 · 2026-07-14 21:47 UTC</span>
+    <script>window.RETE_BUILD = "4587506 · 2026-07-14 21:47 UTC";</script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -7279,9 +7293,9 @@ window.RETE_PLAYGROUND_CATALOG = {
     ],
     "bcn": [
       {"family": "Aggregate", "label": "🏙 The 12 archives — how much of each is digitised", "view": "table", "cols": {"archive": "Archive", "dig": "Digitised records"}, "tip": "The Arxiu Municipal de Barcelona is a network: the photo archive (AFB), the historic city archive (AHCB), the contemporary archive (AMCB) and the ten district archives — 529,614 records in all. This ranks how many are digitised in each (214,115 total).\nFlip bcn:digitized to false to see what's described but not yet scanned.", "q": "PREFIX schema: <http://schema.org/>\nPREFIX bcn: <https://w3id.org/rete/bcn#>\nSELECT ?archive (COUNT(?u) AS ?dig) WHERE {\n  ?u bcn:digitized true ;\n     schema:holdingArchive ?a .\n  ?a schema:name ?archive .\n} GROUP BY ?archive ORDER BY DESC(?dig)"},
-      {"family": "Select", "label": "🔎 Full-text search — the vanished Somorrostro beach", "view": "cards", "cols": {"title": "Record", "summary": "Description", "archive": "Archive", "url": "Open ↗"}, "tip": "The whole 529k-record catalogue is full-text indexed over titles and scope summaries. This finds records mentioning the Somorrostro, the shanty-beach cleared for the 1992 Olympics — change the CONTAINS term to search anything (a street, a person, an event).\n?url opens the record's /detail page on the archive's own deep-zoom viewer.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?title ?summary ?archive ?url WHERE {\n  ?u schema:name ?title ;\n     schema:description ?summary ;\n     schema:holdingArchive ?a ;\n     schema:url ?url .\n  ?a schema:name ?archive .\n  FILTER(CONTAINS(?summary, \"Somorrostro\"))\n} LIMIT 40"},
-      {"family": "Select", "label": "🗂 Biggest digital objects, by exact byte size", "view": "table", "cols": {"file": "File", "fmt": "Format", "bytes": "Bytes", "rec": "In record"}, "tip": "597,138 digital objects — mostly scanned photographs (image/jpeg), plus PDFs — each carry their format and exact byte size (schema:contentSize). Biggest first.\nThe object itself opens on the source viewer via the record's /detail page (see the search example); here we rank the raw media.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?file ?fmt ?bytes ?rec WHERE {\n  ?u schema:associatedMedia ?m ; schema:name ?rec .\n  ?m schema:name ?file ; schema:encodingFormat ?fmt ; schema:contentSize ?bytes .\n} ORDER BY DESC(?bytes) LIMIT 50"},
-      {"family": "Select", "label": "📷 Digitised photographs (Arxiu Fotogràfic) — open on the viewer", "view": "table", "cols": {"title": "Photograph", "fmt": "Format", "url": "Open ↗"}, "tip": "Records from the Arxiu Fotogràfic de Barcelona (AFB) that are digitised, each with its image object's format and its /detail page on the archive's OpenSeadragon deep-zoom viewer.\nThe images live behind that viewer (session-gated), so the graph links the record page rather than embedding the pixels.", "q": "PREFIX schema: <http://schema.org/>\nPREFIX bcn: <https://w3id.org/rete/bcn#>\nSELECT ?title ?fmt ?url WHERE {\n  ?u bcn:digitized true ;\n     schema:holdingArchive <https://w3id.org/rete/bcn/archive/AFB> ;\n     schema:name ?title ;\n     schema:url ?url ;\n     schema:associatedMedia ?m .\n  ?m schema:encodingFormat ?fmt .\n} LIMIT 40"}
+      {"family": "Select", "label": "📷 Photo gallery — the visual memory of Barcelona", "view": "cards", "cols": {"photo": "Photo", "title": "Title", "description": "Description", "date": "Date", "archive": "Archive", "open": "Record ↗"}, "tip": "A gallery of digitised photographs served straight from the Arxiu Municipal de Barcelona's own image endpoint (public + CORS): ?photo renders each image inline, alongside its title, scope description, date and holding archive. ?open opens the full record and its deep-zoom viewer.\nThese are real historical photos — add a CONTAINS filter (next example) to hunt for a place or event.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?photo ?title ?description ?date ?archive ?open WHERE {\n  ?u schema:image ?photo ;\n     schema:name ?title ;\n     schema:holdingArchive ?a ;\n     schema:url ?open .\n  ?a schema:name ?archive .\n  OPTIONAL { ?u schema:description ?description }\n  OPTIONAL { ?u schema:temporalCoverage ?date }\n} LIMIT 40"},
+      {"family": "Select", "label": "🔎 Search the photo archive — the Somorrostro beach", "view": "cards", "cols": {"photo": "Photo", "title": "Title", "description": "Description", "open": "Record ↗"}, "tip": "Full-text search (TEXT_INDEX) over the 529k-record catalogue, showing the photographs that match. This surfaces images whose description mentions the Somorrostro, the shanty-beach cleared for the 1992 Olympics — change the CONTAINS term to any place, person or event.\n?photo renders inline from Barcelona's own server; ?open opens the deep-zoom record.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?photo ?title ?description ?open WHERE {\n  ?u schema:description ?description ;\n     schema:image ?photo ;\n     schema:name ?title ;\n     schema:url ?open .\n  FILTER(CONTAINS(?description, \"Somorrostro\"))\n} LIMIT 30"},
+      {"family": "Select", "label": "📄 Read the digitised documents — inline, page by page", "view": "table", "cols": {"pdf": "Document", "title": "Title", "archive": "Archive", "open": "Record ↗"}, "colTypes": {"pdf": "pdf"}, "tip": "125,014 records have a PDF digital object. ?pdf renders an inline page-by-page viewer (pdf.js, loaded on demand) reading straight from the archive's server — flip through with ◀ ▶, or ↗ for the full document.\nAny .pdf column can become this viewer: pick 'PDF viewer' from a column header's ▾ menu.", "q": "PREFIX schema: <http://schema.org/>\nSELECT ?pdf ?title ?archive ?open WHERE {\n  ?u schema:associatedMedia ?pdf ;\n     schema:name ?title ;\n     schema:holdingArchive ?a ;\n     schema:url ?open .\n  ?a schema:name ?archive .\n  FILTER(STRENDS(STR(?pdf), \".pdf\"))\n} LIMIT 25"}
     ],
     "vidy": [
       {"family": "Select", "label": "📄 Digitised documents — open the scanned PDF, with its size", "view": "table", "cols": {"title": "Document", "ref": "Cote", "bytes": "PDF bytes", "pdf": "Read"}, "tip": "The 2,586 digitised records of the Ville de Lausanne archive: ?pdf opens the scanned master PDF (schema:associatedMedia) in your browser's viewer, and its exact byte size (schema:contentSize) is shown — these are whole archival boxes, so the largest are 100–200 MB. Biggest first (e.g. the 1933 Registre des commerçants).\nThe PDFs stay on the archive's own lausanne.ch server — the graph carries the link + size, not the 102 GB of files.", "q": "PREFIX schema: <http://schema.org/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?title ?ref ?bytes ?pdf WHERE {\n  ?u schema:associatedMedia ?pdf ;\n     schema:name ?title .\n  OPTIONAL { ?u dct:identifier ?ref }\n  ?pdf schema:contentSize ?bytes .\n} ORDER BY DESC(?bytes) LIMIT 60"},
@@ -12540,6 +12554,7 @@ self.onmessage = function (e) {
     if (!ex) return;
     state.selectedExample = index;
     state.colLabels = ex.cols || null;   // per-example friendly column headers
+    state.colTypes = ex.colTypes || null; // optional per-example forced render types (e.g. a column as the inline PDF viewer)
     setEd("q", ex.q);
     setView(ex.view || "table");
     setStrategy(ex.strategy || "whole");
@@ -14711,6 +14726,67 @@ self.onmessage = function (e) {
     return `<td class="iri"><a class="cell-btn pdf-btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
       `title="${esc(t.value)}" data-url="${esc(t.value)}">📄 PDF ↗</a></td>`;
   }
+  // Inline page-by-page PDF viewer (the "PDF" column render type). Lazily loads
+  // pdf.js from a CDN the first time one appears, renders page 1 into a canvas, and
+  // wires ◀ ▶ page navigation — for CORS-open PDFs (Patrinum, Lausanne, Barcelona…).
+  // A ↗ button always opens the native viewer, so it degrades gracefully if pdf.js
+  // can't load. Range-capable servers stream; others download the whole file once.
+  let pdfjsLoading = null;
+  function ensurePdfjs() {
+    if (pdfjsLoading) return pdfjsLoading;
+    pdfjsLoading = (async () => {
+      const V = "4.7.76";
+      const lib = await import(/* @vite-ignore */ `https://cdn.jsdelivr.net/npm/pdfjs-dist@${V}/build/pdf.min.mjs`);
+      lib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${V}/build/pdf.worker.min.mjs`;
+      return lib;
+    })().catch(() => null);
+    return pdfjsLoading;
+  }
+  function pdfViewerCell(t) {
+    const url = httpsUpgrade(t.value);
+    return `<td class="iri pdfview-cell"><div class="pdfview" data-pdf="${esc(url)}">` +
+      `<div class="pdfview-stage"><canvas></canvas><div class="pdfview-msg">📄 loading…</div></div>` +
+      `<div class="pdfview-bar"><button class="pdfview-prev" type="button" disabled aria-label="previous page">◀</button>` +
+      `<span class="pdfview-pg">·</span>` +
+      `<button class="pdfview-next" type="button" disabled aria-label="next page">▶</button>` +
+      `<a class="pdfview-open" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Open the full PDF">↗</a>` +
+      `</div></div></td>`;
+  }
+  function hydratePdfViewers(scope) {
+    const cells = [...(scope || document).querySelectorAll(".pdfview[data-pdf]")];
+    if (!cells.length) return;
+    ensurePdfjs().then((pdfjs) => {
+      cells.forEach((el) => {
+        const url = el.getAttribute("data-pdf"); el.removeAttribute("data-pdf");
+        const canvas = el.querySelector("canvas"), msg = el.querySelector(".pdfview-msg");
+        const pg = el.querySelector(".pdfview-pg");
+        const prev = el.querySelector(".pdfview-prev"), next = el.querySelector(".pdfview-next");
+        if (!pdfjs) { msg.textContent = "📄 open ↗"; return; }
+        let doc = null, cur = 1, busy = false;
+        const draw = (n) => {
+          if (!doc || busy) return; busy = true;
+          doc.getPage(n).then((page) => {
+            const dpr = window.devicePixelRatio || 1;
+            const v0 = page.getViewport({ scale: 1 });
+            const scale = Math.min(300 / v0.width, 380 / v0.height);
+            const vp = page.getViewport({ scale: scale * dpr });
+            canvas.width = vp.width; canvas.height = vp.height;
+            canvas.style.width = Math.round(vp.width / dpr) + "px";
+            canvas.style.height = Math.round(vp.height / dpr) + "px";
+            return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+          }).then(() => {
+            pg.textContent = n + " / " + doc.numPages;
+            prev.disabled = n <= 1; next.disabled = n >= doc.numPages; busy = false;
+          }).catch(() => { busy = false; });
+        };
+        pdfjs.getDocument({ url, disableAutoFetch: true }).promise.then((d) => {
+          doc = d; msg.style.display = "none"; draw(1);
+          prev.addEventListener("click", () => { if (cur > 1) { cur--; draw(cur); } });
+          next.addEventListener("click", () => { if (cur < doc.numPages) { cur++; draw(cur); } });
+        }).catch(() => { msg.textContent = "📄 open ↗"; });
+      });
+    });
+  }
   // ---- IIIF cells -----------------------------------------------------------
   // A IIIF *manifest* URL (e.g. biblissima prop:P196 → digi.vatlib.it/…/manifest.json)
   // is not itself an image, but it points at one. Render a placeholder link, then
@@ -15483,7 +15559,7 @@ self.onmessage = function (e) {
       case "spin": return spinCell(t);
       case "link": return linkCell(t);
       case "button": return buttonCell(t);
-      case "pdf": return pdfCell(t);
+      case "pdf": return pdfViewerCell(t);
       case "number": {
         const n = Number(t.value);
         return `<td class="lit num" title="${esc(raw)}">${esc(isFinite(n) ? String(n) : t.value)}</td>`;
@@ -15498,7 +15574,7 @@ self.onmessage = function (e) {
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"], ["button", "Button"],
-    ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
+    ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF viewer"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
@@ -15548,7 +15624,7 @@ self.onmessage = function (e) {
   // A collapsed table whose columns carry a type-override dropdown.
   function statefulTable(vars, rows, note) {
     const tid = "t" + ++tableSeq;
-    const st = { tid, vars: vars || [], rows: rows || [], types: {}, cap: 500, note: note || "", labels: state.colLabels || null };
+    const st = { tid, vars: vars || [], rows: rows || [], types: state.colTypes ? { ...state.colTypes } : {}, cap: 500, note: note || "", labels: state.colLabels || null };
     tableStates.set(tid, st);
     // Bound the registry — only the few visible tables need their data kept.
     while (tableStates.size > 12) tableStates.delete(tableStates.keys().next().value);
@@ -15617,7 +15693,7 @@ self.onmessage = function (e) {
   function renderCards(vars, rows, note) {
     if (!(rows || []).length) return emptyState("rows");
     const tid = "t" + ++tableSeq;
-    const st = { tid, kind: "cards", vars: vars || [], rows: rows || [], types: {}, cap: 500,
+    const st = { tid, kind: "cards", vars: vars || [], rows: rows || [], types: state.colTypes ? { ...state.colTypes } : {}, cap: 500,
       note: note || ((rows || []).length > 500 ? `<p class="microcopy">Showing first 500 of ${rows.length} rows.</p>` : ""),
       labels: state.colLabels || null };
     tableStates.set(tid, st);
@@ -15673,7 +15749,7 @@ self.onmessage = function (e) {
     cardFocus.io = new IntersectionObserver((ents) => {
       ents.forEach((en) => {
         if (!en.isIntersecting) return;
-        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target);
+        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target); hydratePdfViewers(en.target);
         en.target.querySelectorAll("img.cell-thumb[loading='lazy']").forEach((im) => { im.loading = "eager"; });
         cardFocus.io.unobserve(en.target);
       });
@@ -19043,7 +19119,7 @@ self.onmessage = function (e) {
       const obs = new MutationObserver(() => {
         if (pending) return;
         pending = true;
-        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); }, 60);
+        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); hydratePdfViewers(host); }, 60);
       });
       obs.observe(host, { childList: true, subtree: true });
       // Delegated: the ⛶ on an inline 3D cell (or a 🧊 3D button) opens the full viewer.
