@@ -5,6 +5,11 @@
 use std::io::Read as _;
 use std::process::{Child, Command};
 
+// `free_port` necessarily releases its probe socket before the child binds it.
+// Serialize these two real-server tests so parallel test threads cannot both
+// select the same just-released port and then talk to the wrong server.
+static SERVER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn temp_path(name: &str, ext: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "rete_serve_cli_{}_{}.{}",
@@ -114,6 +119,7 @@ fn build_fixture(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn serve_query_update_snapshot_and_journal_replay() {
+    let _server_test_guard = SERVER_TEST_LOCK.lock().unwrap();
     let file = build_fixture("replay");
     let port = free_port();
     let server = spawn_server(&file, port, &[]);
@@ -191,6 +197,7 @@ fn serve_query_update_snapshot_and_journal_replay() {
 
 #[test]
 fn serve_update_token_guards_writes_not_reads() {
+    let _server_test_guard = SERVER_TEST_LOCK.lock().unwrap();
     let file = build_fixture("guarded");
     // Use a dedicated journal so the two tests never share state.
     let journal = temp_path("guarded", "changes");
