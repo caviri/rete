@@ -260,6 +260,33 @@ the release.</p>
 <a href="https://crates.io/crates/rete-wasm"><code>rete-wasm</code></a>. The first RC uses the audited
 bootstrap procedure; subsequent releases use crates.io trusted publishing with
 GitHub OIDC.</p>
+<h2>Crates.io publication runbook</h2>
+<p>The one-time <code>1.0.0-rc.1</code> bootstrap runs only after the signed tag is checked
+out in a clean worktree. Enter the ephemeral token inside the running
+devcontainer; do not use <code>cargo login</code>:</p>
+<pre><code class="language-sh">read -r -s -p "crates.io bootstrap token: " CARGO_REGISTRY_TOKEN
+printf '\n'
+export CARGO_REGISTRY_TOKEN
+bash scripts/publish_crates.sh --bootstrap 1.0.0-rc.1
+unset CARGO_REGISTRY_TOKEN
+</code></pre>
+<p>The script packages and publishes <code>rete-core</code>, waits for registry and sparse
+index visibility, then repeats for <code>rete-cli</code> and <code>rete-wasm</code>. Reruns skip an
+existing package only when its registry checksum matches the locally packaged
+archive. It then downloads all three registry archives, tests fresh native and
+WASM consumers, and writes the non-secret
+<code>target/release/crates-io-receipt.json</code>. Revoke the bootstrap token immediately
+after attaching that receipt to the prerelease and verifying the crates and
+docs.rs pages.</p>
+<p>After bootstrap, configure trusted publishers for all three crates with owner
+<code>caviri</code>, repository <code>rete</code>, workflow <code>release.yml</code>, and environment
+<code>crates-io</code>. Configure that GitHub environment with required approval and only
+protected <code>v*</code> tags; it must contain no crates.io secret. Run the release
+workflow manually against the <code>v1.0.0-rc.1</code> tag with
+<code>verify_crates_io_auth=true</code>. This requests and automatically revokes a
+short-lived OIDC token, validates the tag and package preflight, and makes no
+publish call. Later release tags publish in dependency order through the same
+protected job.</p>
 <h2>Compatibility statement</h2>
 <p>Pre-1.0 <code>.rete</code> bytes were explicitly unstable. Rebuild every dataset from its
 source RDF with the 1.0 toolchain; do not rename an older file and assume it is

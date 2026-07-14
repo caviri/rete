@@ -24,6 +24,39 @@ The crates are intended to appear as
 bootstrap procedure; subsequent releases use crates.io trusted publishing with
 GitHub OIDC.
 
+## Crates.io publication runbook
+
+The one-time `1.0.0-rc.1` bootstrap runs only after the signed tag is checked
+out in a clean worktree. Enter the ephemeral token inside the running
+devcontainer; do not use `cargo login`:
+
+```sh
+read -r -s -p "crates.io bootstrap token: " CARGO_REGISTRY_TOKEN
+printf '\n'
+export CARGO_REGISTRY_TOKEN
+bash scripts/publish_crates.sh --bootstrap 1.0.0-rc.1
+unset CARGO_REGISTRY_TOKEN
+```
+
+The script packages and publishes `rete-core`, waits for registry and sparse
+index visibility, then repeats for `rete-cli` and `rete-wasm`. Reruns skip an
+existing package only when its registry checksum matches the locally packaged
+archive. It then downloads all three registry archives, tests fresh native and
+WASM consumers, and writes the non-secret
+`target/release/crates-io-receipt.json`. Revoke the bootstrap token immediately
+after attaching that receipt to the prerelease and verifying the crates and
+docs.rs pages.
+
+After bootstrap, configure trusted publishers for all three crates with owner
+`caviri`, repository `rete`, workflow `release.yml`, and environment
+`crates-io`. Configure that GitHub environment with required approval and only
+protected `v*` tags; it must contain no crates.io secret. Run the release
+workflow manually against the `v1.0.0-rc.1` tag with
+`verify_crates_io_auth=true`. This requests and automatically revokes a
+short-lived OIDC token, validates the tag and package preflight, and makes no
+publish call. Later release tags publish in dependency order through the same
+protected job.
+
 ## Compatibility statement
 
 Pre-1.0 `.rete` bytes were explicitly unstable. Rebuild every dataset from its
