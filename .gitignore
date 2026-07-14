@@ -16,10 +16,6 @@ __pycache__/
 /web/explore-100mb.html
 /web/atlas-app.html
 
-# The Hugging Face Space (FastAPI Range+CORS file server) is deployed straight
-# to HF, not tracked here.
-/hf-space/
-
 # Built graph files are artifacts of the .nt/.nq sources in examples/ — rebuild
 # with `rete build` (see README). The sources, not the binaries, are tracked.
 *.rete
@@ -27,13 +23,6 @@ __pycache__/
 # Vector-tile basemaps (tippecanoe) paired with a dataset live only in the bucket.
 *.pmtiles
 *.mbtiles
-# Exception: a pyramid-less ~74 MB build is committed so the explorer's
-# same-origin "GitHub Pages" source has a real file to range-query (see the
-# Source modal). Regenerate with: rete build <data>.nq -o … --no-pyramid
-!/docs/wikidata-100MB/wikidata.rete
-# …and the numbered shards behind the explorer's "GitHub (3 shards)" federated
-# source (manifest.json links them). Regenerate with dev/make_shards.sh.
-!/docs/wikidata-100MB/shards/*.rete
 # …and the tiny causal ontology the explorer's Coherence tasks check, same-origin
 # (it carries OWL axioms the wikidata graph lacks). Rebuild with:
 #   rete build examples/causal.nt -o docs/examples/causal.rete

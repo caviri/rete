@@ -9,8 +9,8 @@ Two consumers:
 
 | Consumer | Page | How datasets reach it |
 |---|---|---|
-| **Historical Atlas** (`docs/atlas-app.html`) | a SPARQL+GIS map with a timeline | overlays fetched **remote-lazy** from the HF bucket, queried in-browser by the WASM engine, filtered to the scrub year |
-| **Playground** (`docs/playground.html`) | a SPARQL playground | datasets **embedded** (base64 in the page) or **remote-lazy** from the bucket |
+| **Historical Atlas** (`docs/atlas-app.html`) | a SPARQL+GIS map with a timeline | overlays fetched **remote-lazy** from R2, queried in-browser by the WASM engine, filtered to the scrub year |
+| **Playground** (`docs/playground.html`) | a SPARQL playground | datasets **embedded** (base64 in the page) or **remote-lazy** from R2 |
 
 ## Pipeline
 
@@ -18,13 +18,14 @@ Two consumers:
 source (SPARQL CONSTRUCT | REST/WFS | dump | generator)
    └─ scripts/fetch_*.sh / *_to_nt.py / *_gen.py  ──▶  data/**/<key>.{nt,ttl}   (atlas GeoSPARQL shape or a plain graph)
         └─ rete build <file> -o <key>.rete         (run in Docker: rust:1.92-bookworm, target/release/rete is a Linux ELF)
-             ├─ atlas overlay  ──▶  hf buckets cp … hf://buckets/katospiegel/knowledge-graphs/atlas/themes/<key>.rete
-             │                       served at https://katospiegel-rete.hf.space/data/atlas/themes/<key>.rete?token=<demo>
+             ├─ atlas overlay  ──▶  skills/rete-publish/scripts/upload_bucket.sh <file> <key>/<key>.rete
+             │                       served at https://data.graphplaza.com/<key>/<key>.rete
              └─ playground      ──▶  embed: copy to web/<key>.rete + register in scripts/build_playground.py + catalog.js
-                                      lazy:  hf buckets cp … /playground/<key>.rete  (>~2 MB)
+                                      lazy:  upload_bucket.sh … <key>/<key>.rete  (>~2 MB)
 ```
 
-- **Upload is `hf buckets cp`** to the HF *bucket* (`katospiegel/knowledge-graphs`), **not** `hf upload` to the Space repo — the Space serves the bucket mounted at `/data`. The Space requires the demo token (`?token=sfdbgf1094by21hd128ru39802`; 401 without).
+- **Upload uses the tracked R2 uploader** in `skills/rete-publish/scripts/` and the
+  gitignored `.env`. Public reads use direct, token-free R2 URLs.
 - **Build is Dockerised** (`MSYS_NO_PATHCONV=1 docker run --rm -v D:/pro/rete:/work -w /work rust:1.92-bookworm bash -c 'target/release/rete build …'`).
 
 ### Atlas GeoSPARQL shape
@@ -246,8 +247,8 @@ WHERE m.label IS NOT NULL AND o.label IS NOT NULL LIMIT 20;
 ```
 
 > **Publishing (not done here — outward-facing).** The 77 MB `.rete` is remote-lazy tier.
-> To serve it in the playground/atlas, upload to the HF bucket
-> (`hf buckets cp data/mmm/mmm-full.rete hf://buckets/katospiegel/knowledge-graphs/playground/mmm-full.rete`)
+> To serve it in the playground/atlas, upload it to R2
+> (`skills/rete-publish/scripts/upload_bucket.sh data/mmm/mmm-full.rete mmm-full/mmm-full.rete`)
 > and register it in `web/playground-src/catalog.js` as a remote-lazy dataset.
 
 ---

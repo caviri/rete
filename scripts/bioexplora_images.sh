@@ -5,16 +5,13 @@
 # download the portraitMedia, resize + WebP via ImageMagick (~10x smaller), upload,
 # and write a uid -> preview-url TSV that bioexplora_to_nt.py emits as prop:preview.
 # Download+convert run in the rete-dev container (curl + ImageMagick); upload uses
-# the host hf CLI. Resumable (skips an existing .webp).
+# the tracked R2 uploader. Resumable (skips an existing .webp).
 #   sh scripts/bioexplora_images.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
 NIDS=data/bioexplora/img_nids.txt
 WEBP=data/bioexplora/img_webp
-HF="/c/Users/Kato/AppData/Local/Programs/Python/Python312/Scripts/hf"
-DSTDIR="hf://buckets/katospiegel/knowledge-graphs/playground/bioexplora-img"
-BASE="https://katospiegel-rete.hf.space/data/playground/bioexplora-img"
-TOK="token=sfdbgf1094by21hd128ru39802"
+BASE="https://data.graphplaza.com/bioexplora-img"
 mkdir -p "$WEBP"
 echo "N-ids to mirror: $(wc -l < "$NIDS")"
 
@@ -37,14 +34,14 @@ done < data/bioexplora/img_nids.txt
 echo "webp total: $(ls data/bioexplora/img_webp/*.webp 2>/dev/null | wc -l)"
 '
 
-# 2. upload the WebP dir to the bucket (host hf CLI).
-MSYS_NO_PATHCONV=1 "$HF" buckets sync "$WEBP" "$DSTDIR" --format quiet 2>&1 | tail -2
+# 2. upload the WebP directory to R2.
+skills/rete-publish/scripts/upload_bucket.sh "$WEBP" bioexplora-img
 
 # 3. write the uid -> preview-url TSV (prop:preview).
 : > data/bioexplora/images.tsv
 for f in "$WEBP"/*.webp; do
   [ -s "$f" ] || continue
   u=$(basename "$f" .webp)
-  printf '%s\t%s/%s.webp?%s\n' "$u" "$BASE" "$u" "$TOK" >> data/bioexplora/images.tsv
+  printf '%s\t%s/%s.webp\n' "$u" "$BASE" "$u" >> data/bioexplora/images.tsv
 done
 echo "mapped: $(wc -l < data/bioexplora/images.tsv) previews"

@@ -3,7 +3,7 @@
 # = Museu de Ciencies Naturals de Barcelona, the "Atles osteologic" skull/bone scans)
 # to the bucket so they stream inline: download each .glb via the Sketchfab Data API,
 # Draco+webp compress it (~40x), upload to the bucket, and write a uid->mesh-url TSV.
-# Needs: SKETCHFAB_TOKEN (in .env), docker (rete-gltf image), the hf CLI.
+# Needs: SKETCHFAB_TOKEN (in .env), docker (rete-gltf image), and R2 credentials.
 #   sh scripts/bioexplora_sketchfab.sh [LIMIT]
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -11,10 +11,7 @@ set -a; . ./.env 2>/dev/null; set +a
 : "${SKETCHFAB_TOKEN:?need SKETCHFAB_TOKEN in .env}"
 RAW=data/bioexplora/sk_raw; GLB=data/bioexplora/sk_glb
 mkdir -p "$RAW" "$GLB"
-HF="/c/Users/Kato/AppData/Local/Programs/Python/Python312/Scripts/hf"
-DSTDIR="hf://buckets/katospiegel/knowledge-graphs/playground/bioexplora-3d"
-BASE="https://katospiegel-rete.hf.space/data/playground/bioexplora-3d"
-TOK="token=sfdbgf1094by21hd128ru39802"
+BASE="https://data.graphplaza.com/bioexplora-3d"
 LIMIT="${1:-0}"
 
 python - <<'PY' > /tmp/uids.txt
@@ -72,13 +69,12 @@ for f in data/bioexplora/sk_raw/*.glb; do
 done
 echo "compressed: $(ls data/bioexplora/sk_glb/*.glb 2>/dev/null | wc -l)"'
 
-# --- 3. upload to the bucket + 4. write the uid -> mesh-url map -------------------
+# --- 3. upload to R2 + 4. write the uid -> mesh-url map ---------------------------
+skills/rete-publish/scripts/upload_bucket.sh "$GLB" bioexplora-3d
 : > data/bioexplora/meshes.tsv
 for f in "$GLB"/*.glb; do
   [ -s "$f" ] || continue
   u=$(basename "$f" .glb)
-  if "$HF" buckets cp "$f" "$DSTDIR/$u.glb" >/dev/null 2>&1; then
-    printf '%s\t%s/%s.glb?%s\n' "$u" "$BASE" "$u" "$TOK" >> data/bioexplora/meshes.tsv
-  fi
+  printf '%s\t%s/%s.glb\n' "$u" "$BASE" "$u" >> data/bioexplora/meshes.tsv
 done
 echo "uploaded + mapped: $(wc -l < data/bioexplora/meshes.tsv) meshes"

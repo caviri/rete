@@ -125,15 +125,14 @@ const FALLBACK = `
 <http://ex/p9> <http://ex/cites> <http://ex/p8> .
 `;
 
-const SPACE = "https://katospiegel-rete.hf.space/data";
-const TOK = "?token=sfdbgf1094by21hd128ru39802";
+const R2 = "https://data.graphplaza.com/lance-rag";
 const WD_EXAMPLES = ["country in europe", "a river", "capital city", "football player",
   "writer or scientist", "village in poland", "island", "film or album"];
 const DATASETS = {
   demo: { label: "demo · 9 papers (in-browser embed)", kind: "nt", nt: DATA_URL ? null : FALLBACK, url: DATA_URL,
     examples: ["neural networks for images", "database query speed", "cancer and DNA"] },
-  "wikidata-100MB": { label: "Wikidata · 100MB", kind: "bundle", base: `${SPACE}/wikidata-100MB/wikidata-100MB.rag`, examples: WD_EXAMPLES },
-  "wikidata-1GB": { label: "Wikidata · 1GB", kind: "bundle", base: `${SPACE}/wikidata-1GB/wikidata-1GB.rag`, examples: WD_EXAMPLES },
+  "wikidata-100MB": { label: "Wikidata · 100MB", kind: "bundle", base: `${R2}/wikidata-100MB.rag`, examples: WD_EXAMPLES },
+  "wikidata-1GB": { label: "Wikidata · 1GB", kind: "bundle", base: `${R2}/wikidata-1GB.rag`, examples: WD_EXAMPLES },
 };
 
 const COLORS = ["#147d69", "#c84f2f", "#3b7dd8", "#b5890b", "#7a4fb5", "#0e8a8a", "#a8478f", "#6b8e23"];
@@ -208,10 +207,10 @@ async function loadDataset(key) {
     const out = await extractor(ents.map((e) => (e.label + ". " + e._t.join(" ")).slice(0, 400)), { pooling: "mean", normalize: true });
     const a = out.tolist(); dim = a[0].length; flat = new Float32Array(ents.length * dim); a.forEach((v, i) => flat.set(v, i * dim));
   } else {
-    $("status").innerHTML = `fetching the ${ds.label} graph + vectors from the HF Space…`;
-    const meta = await (await fetch(ds.base + ".json" + TOK)).json();
+    $("status").innerHTML = `fetching the ${ds.label} graph + vectors from Cloudflare R2…`;
+    const meta = await (await fetch(ds.base + ".json")).json();
     ents = meta.entities; edges = meta.edges; dim = meta.dim;
-    flat = new Float32Array(await (await fetch(ds.base + ".f32" + TOK)).arrayBuffer());
+    flat = new Float32Array(await (await fetch(ds.base + ".f32")).arrayBuffer());
   }
   const adj = buildAdj(ents.length, edges);
   G = { ents, edges, dim, flat, adj, comp: components(ents.length, adj) };

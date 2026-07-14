@@ -2,8 +2,8 @@
   "title": "rete plaza",
   "tagline": "a gathering place for self-describing semantic datasets",
   "_about": "Each dataset's facts (counts, predicates, classes, vocabularies, signals, starter queries, license) are read at runtime straight from the .rete file's embedded Dataset Card — this manifest only adds what the card can't carry: visual identity (icon/tags), companion table downloads (Parquet/DuckDB/SQLite), and outbound links. Companion URLs marked \"verified\": false follow the bucket naming convention and should be confirmed before publishing.",
-  "remoteBase": "https://katospiegel-rete.hf.space/data",
-  "remoteToken": "sfdbgf1094by21hd128ru39802",
+  "remoteBase": "https://data.graphplaza.com",
+  "remoteToken": "",
   "datasets": [
     {
       "key": "scholar",
@@ -167,7 +167,7 @@
     {
       "key": "getty-ulan",
       "title": "getty-ulan — artist mentorship lineage (remote, lazy)",
-      "rete": "https://katospiegel-rete.hf.space/data/playground/getty-ulan.rete?token=sfdbgf1094by21hd128ru39802",
+      "rete": "https://data.graphplaza.com/getty-ulan/getty-ulan.rete",
       "kind": "remote-lazy",
       "icon": "🎨",
       "tags": [
@@ -186,7 +186,7 @@
     {
       "key": "wikidata-100mb",
       "title": "wikidata-100MB — a real 100 MB Wikidata slice (remote, lazy)",
-      "rete": "https://katospiegel-rete.hf.space/data/wikidata-100MB/wikidata.rete?token=sfdbgf1094by21hd128ru39802",
+      "rete": "https://data.graphplaza.com/wikidata-100MB/wikidata.rete",
       "kind": "remote-lazy",
       "typePredicate": "<http://www.wikidata.org/prop/direct/P31>",
       "icon": "🌐",
@@ -215,7 +215,7 @@
     {
       "key": "ohm-full",
       "title": "ohm-full — all of OpenHistoricalMap (remote, lazy)",
-      "rete": "https://katospiegel-rete.hf.space/data/playground/ohm-full.rete?token=sfdbgf1094by21hd128ru39802",
+      "rete": "https://data.graphplaza.com/ohm-full/ohm-full.rete",
       "kind": "remote-lazy",
       "icon": "🗺️",
       "tags": [
@@ -234,7 +234,7 @@
     {
       "key": "chemotion",
       "title": "chemotion — chemistry ELN knowledge graph (remote, lazy)",
-      "rete": "https://katospiegel-rete.hf.space/data/playground/chemotion.rete?token=sfdbgf1094by21hd128ru39802",
+      "rete": "https://data.graphplaza.com/chemotion/chemotion.rete",
       "kind": "remote-lazy",
       "icon": "🧪",
       "tags": [
@@ -268,7 +268,7 @@
         "ChEBI"
       ],
       "title": "chebi-full — the complete ChEBI ontology (remote, lazy)",
-      "rete": "https://katospiegel-rete.hf.space/data/playground/chebi-full.rete?token=sfdbgf1094by21hd128ru39802",
+      "rete": "https://data.graphplaza.com/chebi-full/chebi-full.rete",
       "kind": "remote-lazy",
       "icon": "⚗️",
       "tags": [
@@ -283,18 +283,18 @@
         {
           "kind": "parquet",
           "label": "per-class chemical tables",
-          "url": "https://katospiegel-rete.hf.space/data/playground/chebi-full-tables/",
+          "url": "https://data.graphplaza.com/chebi-full/chebi-full-tables/",
           "note": "directory of <Class>.parquet + _manifest.parquet (scripts/rdf_to_entity_tables.py)"
         },
         {
           "kind": "duckdb",
           "label": "chebi-full.duckdb",
-          "url": "https://katospiegel-rete.hf.space/data/playground/chebi-full.duckdb"
+          "url": "https://data.graphplaza.com/chebi-full/chebi-full.duckdb"
         },
         {
           "kind": "sqlite",
           "label": "chebi-full.sqlite",
-          "url": "https://katospiegel-rete.hf.space/data/playground/chebi-full.sqlite"
+          "url": "https://data.graphplaza.com/chebi-full/chebi-full.sqlite"
         }
       ],
       "connections": [

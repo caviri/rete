@@ -57,14 +57,13 @@
 <div id="mini-x"></div>
 <script>
 const params = new URLSearchParams(location.search);
-// served locally -> local tiles; hosted anywhere else -> the HF Space (bucket
-// via CORS+Range). Override either with ?pmtiles=… / ?meta=…
-const SPACE = "https://katospiegel-rete.hf.space/data/graph-map";
-const TOKEN = "sfdbgf1094by21hd128ru39802";   // demo Space token (public soft gate)
+// served locally -> local tiles; hosted anywhere else -> direct R2 objects.
+// Override either with ?pmtiles=… / ?meta=…
+const R2 = "https://data.graphplaza.com/graph-map";
 const LOCAL = location.protocol === "file:" || /^(localhost|127|0\.0\.0\.0)/.test(location.hostname);
-const BASE = LOCAL ? "out" : SPACE, TOK = LOCAL ? "" : `?token=${TOKEN}`;
-const PM = params.get("pmtiles") || `${BASE}/graphmap.pmtiles${TOK}`;
-const META = params.get("meta") || `${BASE}/graphmap.json${TOK}`;
+const BASE = LOCAL ? "out" : R2;
+const PM = params.get("pmtiles") || `${BASE}/graphmap.pmtiles`;
+const META = params.get("meta") || `${BASE}/graphmap.json`;
 
 const protocol = new pmtiles.Protocol();
 maplibregl.addProtocol("pmtiles", protocol.tile);

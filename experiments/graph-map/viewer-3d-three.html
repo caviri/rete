@@ -57,10 +57,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 const params = new URLSearchParams(location.search);
-const SPACE = "https://katospiegel-rete.hf.space/data/graph-map";
-const TOKEN = "sfdbgf1094by21hd128ru39802";   // demo Space token (public soft gate)
+const R2 = "https://data.graphplaza.com/graph-map";
 const LOCAL = location.protocol === "file:" || /^(localhost|127|0\.0\.0\.0)/.test(location.hostname);
-const SRC = params.get("data") || (LOCAL ? "out/graphmap-3d.json" : `${SPACE}/graphmap-3d.json?token=${TOKEN}`);
+const SRC = params.get("data") || (LOCAL ? "out/graphmap-3d.json" : `${R2}/graphmap-3d.json`);
 const PAL = [[230,25,75],[245,130,49],[255,225,25],[60,180,75],[67,99,216],[145,30,180]];
 const D = await (await fetch(SRC)).json();
 const MAXLEVEL = D.levels - 1;

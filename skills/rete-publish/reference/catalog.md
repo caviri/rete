@@ -1,87 +1,84 @@
 # Playground catalog reference (`web/playground-src/catalog.js`)
 
-Everything is keyed by the dataset **key** (kebab/lowercase, e.g. `foo`,
-`geoadmin-tiles`). Add an entry in each relevant section. Top-level config you'll
-reference: `remoteBase` (bucket data URL), `remoteToken` (the read token), the
-`families` list (example families).
+Everything is keyed by a lowercase, kebab-case dataset key such as `foo` or
+`geoadmin-tiles`. Top-level configuration uses `remoteBase` and
+`companionBase` for the public R2 origin. `remoteToken` is empty.
 
-## 1. `datasets` — the catalog entry
+## 1. `datasets`
 
 ```js
-// remote-lazy (served from the bucket, range-queried):
+// Remote-lazy: served directly from R2 and range-queried.
 {"key": "foo", "kind": "remote-lazy",
- "url": "https://<space>/data/playground/foo.rete?token=<read-token>",
- "label": "foo.rete - one-line what-it-is (remote, lazy)",
- "description": "A full paragraph: what the graph is, its classes/edges, scale, license, how it was built, and what makes it interesting to query. This shows in the dataset browser."},
+ "url": "https://data.graphplaza.com/foo/foo.rete",
+ "label": "foo.rete - one-line description (remote, lazy)",
+ "description": "Explain the graph, classes and edges, scale, license, build recipe, and why it is interesting."},
 ```
-For an **embedded** dataset omit `kind`/`url` — it's discovered from the inlined
-bytes; the URL is derived as `remoteBase/playground/<key>.rete`.
 
-## 2. `datasetMeta` — the metadata table
+For embedded data, omit `kind` and `url`; it is discovered from the inlined
+bytes. Its remote mirror derives as `remoteBase/<key>/<key>.rete`.
+
+## 2. `datasetMeta`
 
 ```js
 "foo": { triples: "1.2 M", size: "23 MB", license: "CC0-1.0",
          source: "https://example.org",
-         provenance: "How it was built: source → converter (scripts/foo_to_nt.py) → rete build --pyramid-algo types --card. Note any simplification/sharding/gotchas." },
+         provenance: "source -> scripts/foo_to_nt.py -> rete build --pyramid-algo types --card" },
 ```
-`triples` may be a number or a human string; `size` is the `.rete` size.
 
-## 3. `datasetExtra` — icon + tags
+## 3. `datasetExtra`
 
 ```js
-"foo": { icon: "📚", tags: ["domain", "GeoSPARQL", "federation", "CC0"] },
+"foo": { icon: "book", tags: ["domain", "GeoSPARQL", "federation", "CC0"] },
 ```
-The icon shows in the dataset list and example chips; tags are searchable.
 
-## 4. `examples` — 2–5 example queries
+Use the established icon style in neighboring catalog entries.
+
+## 4. `examples`
 
 ```js
 "foo": [
   {"family": "Select", "label": "Short human label", "view": "table",
-   "cols": {"s": "Subject", "label": "Name"},          // optional custom column headers
-   "tip": "≥2 lines. Say what this shows AND name the human label for any ID in the query (e.g. \"Q5 = human\"). Shown inline under the query chips, not just on hover.",
-   "q": "PREFIX ex: <https://foo/>\nSELECT ?s ?label WHERE {\n  ?s a ex:Thing ; rdfs:label ?label .\n} LIMIT 50"},
-  // view ∈ table | graph | map | tiles | time. family ∈ the CATALOG.families list.
-  // map → needs a geo:asWKT column; tiles → needs a CATALOG.pmtiles[key]; graph → 3-col or CONSTRUCT.
+   "cols": {"s": "Subject", "label": "Name"},
+   "tip": "Use at least two lines. Explain what the query shows and name any opaque IDs.",
+   "q": "PREFIX ex: <https://foo/>\nSELECT ?s ?label WHERE {\n  ?s a ex:Thing ; rdfs:label ?label .\n} LIMIT 50"}
 ]
 ```
-Tips rules (learned): **≥2 lines**, shown inline (the always-visible strip under the
-quick chips), and **name the human label for any opaque ID**. Optional `fed: ["other-key"]`
-on an example one-click-adds a federation partner.
 
-SHACL shapes (optional) go in a parallel `shacl` map:
-```js
-shacl: { "foo": [ {"label": "Each Thing has a label", "tip": "...", "shape": "<TTL shapes>"} ] }
-```
+`view` is `table`, `graph`, `map`, `tiles`, or `time`. `family` must be in
+`CATALOG.families`. Map results need a `geo:asWKT` column. Tile results need a
+`CATALOG.pmtiles[key]` entry. `fed: ["other-key"]` can preload a federation
+partner. SHACL examples live in the parallel `shacl` map.
 
-## 5. `pmtiles` — a vector-tile basemap for the Tiles view (geo datasets)
+## 5. `pmtiles`
 
 ```js
-// (B) a separate .pmtiles next to the .rete:
-"foo": { url: "https://<space>/data/playground/foo.pmtiles?token=<tok>",
+// Separate object next to the graph.
+"foo": { url: "https://data.graphplaza.com/foo/foo.pmtiles",
          label: "foo basemap", size: "113 MB",
-         layers: { countries: "shapeName", regions: "shapeName" } },   // layer → name property
-// (C) tiles EMBEDDED inside the .rete (one file = graph + tiles): url is the .rete,
-//     add embedded:true so the Tiles view parses the header for the tile section offset.
-"foo-tiles": { url: "https://<space>/data/playground/foo-tiles.rete?token=<tok>",
-               embedded: true, label: "embedded in foo-tiles.rete", size: "113 MB section",
+         layers: { countries: "shapeName" } },
+
+// PMTiles section embedded inside the .rete file.
+"foo-tiles": { url: "https://data.graphplaza.com/foo-tiles/foo-tiles.rete",
+               embedded: true, label: "embedded basemap",
                layers: { countries: "shapeName" } },
 ```
-Build the PMTiles with tippecanoe (`scripts/geoadmin_pmtiles.sh`); embed into a .rete
-with `scripts/embed_tiles.py`.
 
-## 6. `companions` — DuckDB / Parquet / SQLite Explore backends (optional)
+Build PMTiles with the relevant converter and `tippecanoe`; use
+`scripts/embed_tiles.py` for an embedded section.
+
+## 6. `companions`
 
 ```js
-companions: { "foo": { duckdb: "foo.duckdb", parquet: "foo-tables/", sqlite: "foo.sqlite" } },
+companions: {
+  "foo": { duckdb: "foo.duckdb", parquet: "parquet/", sqlite: "foo.sqlite" }
+},
 ```
-Paths are bucket-relative (`playground/<...>`). Only datasets with an entry show the
-backend switch in the Explore tab.
 
----
+Paths are relative to the dataset folder under `companionBase`. Only datasets
+with a companion entry show the backend switch.
 
 ## After editing
 
-`python scripts/build_playground.py` rebuilds `docs/playground.html` (inlines
-catalog.js + app.js + styles + WASM + embedded datasets). Verify in a browser /
-the Playwright harness — CodeMirror and the map renderers don't run in jsdom.
+Run `uv run python scripts/build_playground.py`, then the Playwright browser
+gate. Finally run `uv run python scripts/check_dataset_catalog.py --all` to
+verify the public R2 Range/CORS contract and `web/datasets.lock.json`.

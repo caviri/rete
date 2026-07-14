@@ -1,94 +1,95 @@
 ---
 name: rete-publish
-description: Publish a built `.rete` dataset to the rete playground — generate Parquet/DuckDB/SQLite companions, upload the file to the HF bucket, and register it in the playground catalog (dataset entry, metadata, icon/tags, SPARQL/SHACL examples, optional geo/PMTiles basemap). Use after the rete-from-graph skill has produced and verified a `.rete`, whenever the task is "make this dataset show up / be explorable in the playground".
+description: Publish a built `.rete` dataset to the rete playground: generate optional Parquet/DuckDB/SQLite companions, upload files to Cloudflare R2, register the dataset in the catalog, and verify the public Range/CORS contract. Use after rete-from-graph has produced and verified a `.rete` whenever the task is to make a dataset explorable in the playground.
 ---
 
-# Publish a `.rete` to the playground
+# Publish a `.rete` dataset to the playground
 
-After **rete-from-graph** produced and verified `web/foo.rete`, this makes it
-appear in the browser playground. Pipeline:
+After **rete-from-graph** produces and verifies `web/foo.rete`, this workflow
+makes it available in the browser playground:
 
+```text
+build companions -> upload to R2 -> register catalog -> rebuild -> verify
 ```
-build companions ──▶ upload to bucket ──▶ register in catalog.js ──▶ rebuild playground ──▶ verify
-   (§1, optional)        (§2)                  (§3)                      (§4)               (§5)
-```
 
-## 0. Embedded vs remote-lazy — pick the load mode
+## 0. Pick the load mode
 
-- **Embedded** (small, ≲ a few MB): base64-inlined into `docs/playground.html` by
-  `scripts/build_playground.py`. Instant, fully offline. The file must be in `web/`.
-- **Remote-lazy** (anything bigger): served from the HF bucket and HTTP-range-queried;
-  only the bytes each query touches are fetched. Use for ≳ a few MB up to multi-GB.
+- **Embedded** (small, no more than a few MB): base64-inline it into
+  `docs/playground.html` with `scripts/build_playground.py`. The file must be
+  staged in `web/`.
+- **Remote-lazy** (larger): serve it directly from Cloudflare R2. The browser
+  fetches only the ranges each query touches.
 
-Both are *also* mirrored in the bucket, so any dataset can be cached/lazy-loaded.
-Register remote-lazy datasets with their `url`; embedded ones are picked up from
-`RETE_DATASETS_B64` at build.
+Both modes are mirrored in R2 so users can cache or lazy-load the graph.
 
-## 1. Companions (optional — enables the Explore SQL backends)
+## 1. Build optional SQL companions
 
-The playground's Explore tab can compare the rete engine against DuckDB/SQLite over
-the same data. Generate a relational companion from the N-Triples:
+The Explore tab can compare rete with DuckDB and SQLite over the same data:
 
 ```bash
-# generic flat triples table → Parquet (+ optional DuckDB / SQLite):
 python skills/rete-publish/scripts/make_companions.py data/foo/foo.nt -o data/foo/foo \
   --parquet --duckdb --sqlite
 ```
 
-For a richer, class-partitioned layout (Wikidata-style property/entity tables) model
-`scripts/rdf_to_entity_tables.py` / `scripts/rdf_to_property_tables.py` instead.
-Upload the companions next to the `.rete` (see §2). Datasets without a
-`CATALOG.companions[key]` entry simply don't show the backend switch — companions
-are optional.
+For class-partitioned Wikidata-style layouts, model
+`scripts/rdf_to_entity_tables.py` or `scripts/rdf_to_property_tables.py`.
+Companions are optional.
 
-## 2. Upload to the bucket
+## 2. Upload to Cloudflare R2
 
 ```bash
-# single file:
-skills/rete-publish/scripts/upload_bucket.sh web/foo.rete            # → playground/foo.rete
-# a directory of companions:
-skills/rete-publish/scripts/upload_bucket.sh data/foo/foo-tables/ foo-tables
+# Defaults to foo/foo.rete.
+skills/rete-publish/scripts/upload_bucket.sh web/foo.rete
+
+# Explicit object key and recursive companion prefix.
+skills/rete-publish/scripts/upload_bucket.sh web/foo.rete foo/foo.rete
+skills/rete-publish/scripts/upload_bucket.sh data/foo/foo-tables/ foo
 ```
 
-Served at `https://<space>/data/playground/<name>?token=<read-token>` with CORS +
-HTTP Range. Writes use your `hf` CLI auth (not the read token). The bucket repo
-defaults to the project's; override with `RETE_BUCKET`.
+The uploader reads `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, and
+`S3_API_ENDPOINT` from the environment or the repository's gitignored `.env`.
+Objects are public at `https://data.graphplaza.com/<key>` without a redirect or
+token. The bucket defaults to `rete`; override it with `RETE_BUCKET`.
 
-## 3. Register in the catalog
+## 3. Register the dataset
 
-Edit `web/playground-src/catalog.js` — full field reference + copy-paste templates in
-**[reference/catalog.md](reference/catalog.md)**. You add (keyed by the dataset key):
+Edit `web/playground-src/catalog.js`. The full field reference and copy-paste
+templates are in **[reference/catalog.md](reference/catalog.md)**. Add:
 
-1. **`datasets`** — `{key, kind:"remote-lazy", url, label, description}` (omit `url`
-   for embedded; the URL derives from `remoteBase/playground/<key>.rete`).
-2. **`datasetMeta`** — `{triples, size, license, source, provenance}`.
-3. **`datasetExtra`** — `{icon, tags}`.
-4. **`examples`** — 2–5 example queries `{family, label, view, cols, tip, q}`. Tips
-   must be ≥2 lines, name the human label for any ID, and the `view` picks the output
-   (table/map/tiles/graph/time). Add SHACL shapes under `shacl` if relevant.
-5. (geo) **`pmtiles`** — a paired/embedded PMTiles vector basemap for the Tiles view.
-6. (optional) **`companions`** — the DuckDB/Parquet/SQLite backends from §1.
+1. `datasets`: `{key, kind:"remote-lazy", url, label, description}`. Omit `url`
+   for embedded data; remote URLs derive from
+   `remoteBase/<key>/<key>.rete`.
+2. `datasetMeta`: `{triples, size, license, source, provenance}`.
+3. `datasetExtra`: `{icon, tags}`.
+4. Two to five `examples` with family, label, view, columns, a useful tip, and
+   the SPARQL query. Add SHACL shapes where relevant.
+5. Optional `pmtiles` metadata for a geographic dataset.
+6. Optional `companions` metadata for DuckDB, Parquet, or SQLite.
 
-## 4. Rebuild the playground
+## 4. Rebuild
 
 ```bash
-python scripts/build_playground.py     # inlines app.js/catalog.js/styles + wasm + embedded datasets
+uv run python scripts/build_playground.py
 ```
-This regenerates `docs/playground.html`. **Git-clean gotcha**: if an embedded dataset
-disappears, check it's actually in `web/` and not gitignored away before the build read it.
 
-## 5. Verify (browser-only features need a real browser)
+This regenerates `docs/playground.html`. If an embedded dataset disappears,
+check that its gitignored source file is staged under `web/` before rebuilding.
 
-- Headless E2E with the repo's Playwright harness (`dev/playwright/serve.mjs` +
-  a probe in the `mcr.microsoft.com/playwright` image) — load the dataset, run an
-  example, assert rows/cells/no-console-errors. CodeMirror, WebGL/Canvas maps, and
-  IIIF can't render in jsdom; use the browser.
-- Remote sanity from the CLI: `rete card-url <url>` and `rete sparql-url <url> "<q>"`
-  exercise the same HTTP-range path the playground uses.
+## 5. Verify
+
+- Run the repo's Playwright browser gate: load the dataset, execute at least
+  one example, and assert rows plus no console errors.
+- Run `rete card-url <url>` and `rete sparql-url <url> "<query>"` for CLI-level
+  range-read checks.
+- Run `uv run python scripts/check_dataset_catalog.py --all`. It checks exact
+  URLs (no redirects), `206`, Range/CORS response headers, stable format byte,
+  file size, content hash, and `web/datasets.lock.json`.
+- Verify R2 CORS in a browser. `Content-Range` must be in
+  `Access-Control-Expose-Headers`; curl alone cannot prove that contract.
 
 ## Commit
 
-Commit `catalog.js` + the rebuilt `docs/playground.html` (and any new converter/
-companion scripts). The `web/*.rete` and `data/` stay gitignored — the file lives in
-the bucket, the *recipe* lives in the repo. In this repo, commit **without** the
-Claude co-author trailer.
+Commit `catalog.js`, `web/datasets.lock.json`, the rebuilt
+`docs/playground.html`, and any converter or companion scripts. Dataset files
+and raw `data/` remain gitignored; R2 holds the published bytes while the repo
+holds their recipes. Commit without a co-author trailer.

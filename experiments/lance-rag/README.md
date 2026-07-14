@@ -138,7 +138,7 @@ papers correctly return **no path** (different citation cluster).
 ### Datasets — the real Wikidata graphs
 
 A **dataset switcher** (`?ds=demo|wikidata-100MB|wikidata-1GB`) loads precomputed
-**RAG bundles** range-read from the HF Space — the demo is parsed+embedded
+**RAG bundles** range-read directly from Cloudflare R2 — the demo is parsed+embedded
 in-browser; the Wikidata tiers load a bundle and only the *question* is embedded:
 
 ```

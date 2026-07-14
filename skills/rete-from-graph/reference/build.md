@@ -1,7 +1,8 @@
 # `rete build` reference
 
-`.rete` is format **v0.4**: immutable, content-hashed, a 1 KB typed section directory
-(dictionary, 6-permutation index, schema/community pyramid, optional text index,
+`.rete` stable format generation **1** (header byte `0x05`) is immutable and
+content-hashed, with a 1 KB typed section directory (dictionary, 6-permutation index,
+schema/community pyramid, optional text index,
 embedded Dataset Card), all HTTP-range-readable.
 
 ## The Docker-only build

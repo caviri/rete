@@ -9,20 +9,19 @@ writes data/wikidata-xxl/manifest.json (upload alongside the shards if you want 
 machine-readable list in the bucket).
 
   python scripts/wikidata_xxl_manifest.py
-Env: RETE_BUCKET_URL (default the project Space), RETE_TOKEN (read token).
+Env: RETE_BUCKET_URL (default the public R2 dataset folder).
 """
 import glob
 import json
 import os
 import sys
 
-BUCKET = os.environ.get("RETE_BUCKET_URL", "https://katospiegel-rete.hf.space/data/playground")
-TOKEN = os.environ.get("RETE_TOKEN", "sfdbgf1094by21hd128ru39802")
+BUCKET = os.environ.get("RETE_BUCKET_URL", "https://data.graphplaza.com/wikidata-xxl")
 
 shards = sorted(glob.glob("data/wikidata-xxl/shard_*.rete"))
 if not shards:
     sys.exit("no data/wikidata-xxl/shard_*.rete found — build some first")
-urls = [f"{BUCKET}/wikidata-xxl/{os.path.basename(s)}?token={TOKEN}" for s in shards]
+urls = [f"{BUCKET}/{os.path.basename(s)}" for s in shards]
 total = sum(os.path.getsize(s) for s in shards)
 sys.stderr.write(f"{len(urls)} shards, total {total / 1e9:.1f} GB\n")
 

@@ -2,7 +2,7 @@
 """Build a compact, browser-loadable RAG bundle from a .rete graph.
 
 The standalone `ask-browser.html` page can't parse a 12M/120M-triple graph in JS,
-so we precompute — server-side — a small bundle it range-reads from the HF Space:
+so we precompute — server-side — a small bundle it range-reads from Cloudflare R2:
 
   <name>.rag.json  : {dim, dataset, entities:[{id,label}], edges:[[si,ti,pred]]}
   <name>.rag.f32   : N×dim float32 (L2-normalised) embeddings, entity-aligned

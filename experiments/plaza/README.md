@@ -64,8 +64,8 @@ python -m http.server 8000          # from D:\pro\rete
 #   http://localhost:8000/experiments/plaza/
 ```
 
-Remote datasets (Wikidata, ChEBI, Chemotion, …) are read straight from the
-Hugging Face bucket over HTTP range — the same CORS-enabled host the playground
+Remote datasets (Wikidata, ChEBI, Chemotion, …) are read straight from
+Cloudflare R2 over HTTP range — the same CORS-enabled origin the playground
 uses — so the live cards for the `--card` builds (chemotion, chebi-full) render
 without anything local.
 

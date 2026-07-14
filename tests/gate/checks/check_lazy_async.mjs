@@ -35,7 +35,10 @@ const main = async () => {
   // check could pass while silently falling back or logging engine errors.
   const asyncRan = asyncWasmReqs.length > 0;
   const pass = out.rows > 0 && !out.errBlock && errs.length === 0 && asyncRan;
-  console.log(JSON.stringify({ verdict: pass ? "PASS" : "FAIL", rows: out.rows, qmeta: out.qmeta, tries: out.tries, asyncVariantRan: asyncRan, asyncWasmFetched: asyncWasmReqs, errBlock: out.errBlock, errSample: out.errText.slice(0, 200), consoleErrs: errs.slice(0, 4) }, null, 2));
+  const diagnostic = await page.evaluate(() =>
+    (document.querySelector("#out .err-tech-body") || {}).textContent || "",
+  );
+  console.log(JSON.stringify({ verdict: pass ? "PASS" : "FAIL", rows: out.rows, qmeta: out.qmeta, tries: out.tries, asyncVariantRan: asyncRan, asyncWasmFetched: asyncWasmReqs, errBlock: out.errBlock, errSample: out.errText.slice(0, 200), diagnostic: diagnostic.slice(0, 1600), consoleErrs: errs.slice(0, 4) }, null, 2));
   await browser.close();
   process.exit(pass ? 0 : 1);
 };

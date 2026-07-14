@@ -11,7 +11,7 @@ static site into `docs/plaza/` and rewrites the paths to be self-contained:
   ../../../web/pkg-nomodules/  ->  ../pkg-nomodules/   (in plaza-worker.js)
   ../../docs/<x>.html  ->  ../<x>.html          (links back into the docs site)
 
-Remote (`https://…hf.space/…`) dataset URLs are left untouched — those cards are
+Remote (`https://data.graphplaza.com/…`) dataset URLs are left untouched — those cards are
 read live over HTTP range from the bucket. Run after `build_playground.py` (it
 needs the WASM build in `web/pkg-nomodules`):
 
@@ -99,7 +99,7 @@ def main() -> None:
     for p in OUT.rglob("*"):
         if p.suffix in (".html", ".js", ".json") and p.is_file():
             for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines():
-                if "../../" in ln and "hf.space" not in ln and "github.com" not in ln:
+                if "../../" in ln and "data.graphplaza.com" not in ln and "github.com" not in ln:
                     residual.append(f"{p.relative_to(OUT)}: {ln.strip()[:90]}")
     if residual:
         print("  note: residual ../../ references (review if a feature 404s):")

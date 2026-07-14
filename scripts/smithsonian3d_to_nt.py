@@ -25,8 +25,7 @@ C = BASE + "class/"
 # we attach them to the matching model so the playground can play a lightweight spin
 # preview (webm/gif) without loading the full GLB. Only emitted for uuids we rendered.
 SPIN_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "smithsonian3d", "turntables")
-SPIN_BASE = "https://katospiegel-rete.hf.space/data/playground/smithsonian3d-spin"
-SPIN_TOK = "token=sfdbgf1094by21hd128ru39802"
+SPIN_BASE = "https://data.graphplaza.com/smithsonian3d-spin"
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 LBL = "http://www.w3.org/2000/01/rdf-schema#label"
 LIMIT = int(sys.argv[1]) if len(sys.argv) > 1 else 0
@@ -139,8 +138,8 @@ def main():
         mesh = f"{S3}/3d/{r['uuid']}/{r['glb']}"
         t(s, P + "mesh", iri(mesh))                       # streamable .glb -> inline 3D cell
         if r["uuid"] in have_spin:                        # lightweight spin preview (no WebGL)
-            t(s, P + "spinVideo", iri(f"{SPIN_BASE}/{r['uuid']}.webm?{SPIN_TOK}"))
-            t(s, P + "spinGif", iri(f"{SPIN_BASE}/{r['uuid']}.gif?{SPIN_TOK}"))
+            t(s, P + "spinVideo", iri(f"{SPIN_BASE}/{r['uuid']}.webm"))
+            t(s, P + "spinGif", iri(f"{SPIN_BASE}/{r['uuid']}.gif"))
         if r["edan"]:
             t(s, P + "edanId", lit(r["edan"]))
             t(s, P + "record", iri("https://www.si.edu/object/" + urllib.parse.quote(r["edan"], safe=":")))

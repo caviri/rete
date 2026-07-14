@@ -202,7 +202,7 @@ def render(report: dict) -> str:
             "  star/snowflake's trailing `?x rdf:type C` checks cost a few lookups,",
             "  not a full-extent scan), and never seeds a join from a class",
             "  enumeration — together cutting the LUBM snowflakes Q4 ~14x and Q7",
-            "  ~12x. The index stores all six permutations (format v0.4), so any",
+            "  ~12x. The index stores all six permutations (stable generation 1), so any",
             "  join key can be streamed pre-sorted for a sort-merge join; at these",
             "  sizes the hash/probe joins already win, so the merge path is neutral",
             "  here — it pays off at much larger scale, for ~2x the index payload.",

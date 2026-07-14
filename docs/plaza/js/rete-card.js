@@ -56,7 +56,7 @@ export function parseHeader(buf) {
 
 /**
  * Fetch [start, end] (inclusive) of a URL via an HTTP Range request. Falls back
- * to slicing a full 200 response if the server ignores Range (the HF bucket the
+ * to slicing a full 200 response if the server ignores Range (the R2 origin the
  * remote datasets live on honours ranges, as the playground relies on).
  */
 export async function rangeFetch(url, start, end) {

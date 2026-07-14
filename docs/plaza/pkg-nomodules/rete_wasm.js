@@ -202,6 +202,35 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
+         * As [`query`], with OWL 2 QL entailment on (`rdfs:subClassOf` /
+         * `subPropertyOf` / `domain` / `range` reasoning by query rewriting).
+         * @param {string} query
+         * @param {string} format
+         * @returns {string}
+         */
+        query_reasoned(query, format) {
+            let deferred4_0;
+            let deferred4_1;
+            try {
+                const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ret = wasm.graph_query_reasoned(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+                var ptr3 = ret[0];
+                var len3 = ret[1];
+                if (ret[3]) {
+                    ptr3 = 0; len3 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred4_0 = ptr3;
+                deferred4_1 = len3;
+                return getStringFromWasm0(ptr3, len3);
+            } finally {
+                wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
          * See [`query_triples`].
          * @param {string | null} [subject]
          * @param {string | null} [predicate]
@@ -513,6 +542,35 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
+         * As [`query`], with OWL 2 QL entailment on (reason over the ontology while
+         * reading only the bytes the rewritten query touches).
+         * @param {string} query
+         * @param {string} format
+         * @returns {string}
+         */
+        query_reasoned(query, format) {
+            let deferred4_0;
+            let deferred4_1;
+            try {
+                const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ret = wasm.remotegraph_query_reasoned(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+                var ptr3 = ret[0];
+                var len3 = ret[1];
+                if (ret[3]) {
+                    ptr3 = 0; len3 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred4_0 = ptr3;
+                deferred4_1 = len3;
+                return getStringFromWasm0(ptr3, len3);
+            } finally {
+                wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
          * `{ fileLength, bytes, requests }` — CUMULATIVE physical fetches since this
          * session opened. The worker diffs successive calls to report a single
          * query's traffic (a fully cached re-run adds ~0).
@@ -564,6 +622,19 @@ let wasm_bindgen = (function(exports) {
     }
     if (Symbol.dispose) RemoteGraph.prototype[Symbol.dispose] = RemoteGraph.prototype.free;
     exports.RemoteGraph = RemoteGraph;
+
+    /**
+     * Module init: route Rust panics to `console.error` with their message and
+     * location. In release wasm a panic otherwise aborts as a bare
+     * `RuntimeError: unreachable` with no clue where — this turns that into a
+     * `rete-wasm panic: panicked at '…', src/…:line` line in the devtools console,
+     * so an intermittent first-query crash (e.g. a parser tripping on a flaky
+     * range read) can actually be diagnosed.
+     */
+    function __start() {
+        wasm.__start();
+    }
+    exports.__start = __start;
 
     /**
      * Build a complete `.rete` file image from RDF text, entirely in the browser.
@@ -747,11 +818,11 @@ let wasm_bindgen = (function(exports) {
     exports.graph_names = graph_names;
 
     /**
-     * Parse just the 128-byte header and report the byte ranges a *progressive*
+     * Parse the fixed-size header and report the byte ranges a *progressive*
      * client needs for the overview — the dictionary and the pyramid summary — plus
      * the (large) index range it can skip. JSON:
      * `{ "dictOffset","dictLen","pyramidOffset","pyramidLen","indexOffset","indexLen" }`.
-     * The browser fetches bytes 0..128, calls this, then range-fetches only the
+     * The browser fetches bytes `0..HEADER_LEN`, calls this, then range-fetches only the
      * dict + pyramid — never the index.
      * @param {Uint8Array} head
      * @returns {string}
@@ -1145,7 +1216,7 @@ let wasm_bindgen = (function(exports) {
      * inferred-triple count plus any incoherent points (logical contradictions).
      * `graph` selects a named graph; the default graph is used when omitted. This is
      * the complete (Tier-2) check — it materializes the whole graph. Returns the
-     * [`reasoning_json`] envelope (no `remote` block).
+     * `reasoning_json` envelope (no `remote` block).
      * @param {Uint8Array} bytes
      * @param {string | null} [graph]
      * @returns {string}
@@ -1694,6 +1765,13 @@ let wasm_bindgen = (function(exports) {
                 const ret = arg0.crypto;
                 return ret;
             },
+            __wbg_encodeURIComponent_9ff907ad9d03c7bb: function(arg0, arg1) {
+                const ret = encodeURIComponent(getStringFromWasm0(arg0, arg1));
+                return ret;
+            },
+            __wbg_error_78ff5b3a29b770e0: function(arg0) {
+                console.error(arg0);
+            },
             __wbg_getRandomValues_c44a50d8cfdaebeb: function() { return handleError(function (arg0, arg1) {
                 arg0.getRandomValues(arg1);
             }, arguments); },
@@ -1720,6 +1798,10 @@ let wasm_bindgen = (function(exports) {
                 const ret = new XMLHttpRequest();
                 return ret;
             }, arguments); },
+            __wbg_new_50bb5ebeecef71a8: function(arg0, arg1) {
+                const ret = new Error(getStringFromWasm0(arg0, arg1));
+                return ret;
+            },
             __wbg_new_578aeef4b6b94378: function(arg0) {
                 const ret = new Uint8Array(arg0);
                 return ret;
@@ -1753,9 +1835,19 @@ let wasm_bindgen = (function(exports) {
                 const ret = module.require;
                 return ret;
             }, arguments); },
+            __wbg_responseText_266ec252b6be1e56: function() { return handleError(function (arg0, arg1) {
+                const ret = arg1.responseText;
+                var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                var len1 = WASM_VECTOR_LEN;
+                getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+                getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+            }, arguments); },
             __wbg_response_8ec82c168e320475: function() { return handleError(function (arg0) {
                 const ret = arg0.response;
                 return ret;
+            }, arguments); },
+            __wbg_send_4e22a258e556a44c: function() { return handleError(function (arg0, arg1, arg2) {
+                arg0.send(arg1 === 0 ? undefined : getStringFromWasm0(arg1, arg2));
             }, arguments); },
             __wbg_send_dce79f146638dfda: function() { return handleError(function (arg0) {
                 arg0.send();

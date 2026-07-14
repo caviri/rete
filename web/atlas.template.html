@@ -658,7 +658,7 @@ __GLUE_JS__
 <script>
   const RETE_WASM_B64 = "__WASM_B64__";
   const HISTORY_B64 = "__RETE_B64__";
-  const REMOTE_URL = "https://katospiegel-rete.hf.space/data/atlas/history.rete?token=sfdbgf1094by21hd128ru39802";
+  const REMOTE_URL = "https://data.graphplaza.com/history/history.rete";
 </script>
 <script>
 // Dymaxion / Fuller (Airocean) projection — ported from d3-geo-polygon's geoAirocean
@@ -898,7 +898,11 @@ __GLUE_JS__
   // timeline snapshot-preview filmstrip
   let previewsOn = false; const miniCache = new Map();
   // ---- data-layer overlays: extra datasets dotted over the borders, filtered by year ----
-  const REMOTE_DIR = "https://katospiegel-rete.hf.space/data/atlas/", REMOTE_TOK = "?token=sfdbgf1094by21hd128ru39802";
+  const REMOTE_BASE = "https://data.graphplaza.com";
+  const remoteLayerUrl = (file) => {
+    const key = file.split("/").pop().replace(/\.rete$/, "");
+    return `${REMOTE_BASE}/${key}/${key}.rete`;
+  };
   // Themes modelled as a lifespan [startYear,endYear] (founded → demolished/dissolved/closed,
   // else "present") rather than a single point-in-time year. Events stay instant.
   const INTERVAL_THEMES = new Set([
@@ -1688,7 +1692,7 @@ __GLUE_JS__
     if (dsFetching.has(file)) return dsFetching.get(file);
     const p = (async () => {
       startSpin("Loading layer <code>" + escapeHtml(file) + "</code>", "Fetching the dataset's .rete from the bucket (downloaded once, then queried locally).");
-      try { const r = await fetch(REMOTE_DIR + file + REMOTE_TOK); if (!r.ok) throw new Error("HTTP " + r.status); const b = new Uint8Array(await r.arrayBuffer()); dsBytes.set(file, b); return b; }
+      try { const r = await fetch(remoteLayerUrl(file)); if (!r.ok) throw new Error("HTTP " + r.status); const b = new Uint8Array(await r.arrayBuffer()); dsBytes.set(file, b); return b; }
       finally { dsFetching.delete(file); stopSpin(); }
     })();
     dsFetching.set(file, p); return p;

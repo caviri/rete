@@ -156,13 +156,13 @@
     <a id="ds-1g" href="?dataset=wikidata-1GB">1GB</a></span>
   <label class="parctl" title="Parallel range reads via SharedArrayBuffer (reloads to toggle cross-origin isolation; Graph backend only — disables Tables/DuckDB/SQLite)"><input type="checkbox" id="parToggle" /> parallel reads</label>
   <label class="parctl" title="Fetch-worker pool size for parallel reads (1–32; blank = auto from CPU cores). Reloads to apply."><input type="number" id="workCount" min="1" max="32" placeholder="auto" style="width:3.4em" /> workers</label>
-  <a href="https://huggingface.co/datasets/katospiegel/knowledge-graphs/tree/main/wikidata-100MB" target="_blank" rel="noopener">data on Hugging Face &#8599;</a>
-  <button id="srcBtn" class="srcbtn">Source: HF Space (CORS)</button>
+  <a href="https://www.wikidata.org/" target="_blank" rel="noopener">Wikidata source &#8599;</a>
+  <button id="srcBtn" class="srcbtn">Source: Cloudflare R2</button>
 </header>
 <div id="srcModal" class="modal hidden">
   <div class="modal-box">
     <h3 style="margin:0 0 6px">Data source</h3>
-    <p class="microcopy" style="margin:0 0 12px">The same 100 MB bundle, served three ways. Switch to compare how each host's CORS / Range support behaves in <em>this</em> browser — the lazy backends fetch from whichever you pick. (The rete CLI is unaffected.)</p>
+    <p class="microcopy" style="margin:0 0 12px">The graph and its SQL companions are served directly from Cloudflare R2 with browser-visible HTTP Range and CORS headers. No proxy, redirect, or token is involved.</p>
     <div id="srcList"></div>
     <div style="text-align:right; margin-top:14px"><button id="srcClose" class="ex">Close</button></div>
   </div>
@@ -170,7 +170,7 @@
 <div class="shell">
   <aside class="side">
     <div class="about">
-      The same Wikidata slice in four lossless encodings on Hugging Face. Every query below fetches
+      The same Wikidata slice in four lossless encodings on Cloudflare R2. Every query below fetches
       <b>only the bytes it touches</b> - nothing is downloaded whole. Pick a backend; the example
       buttons load the <b>analogous</b> query for it. Type tables are named by Q-id
       (<code>Q5</code>=human, <code>Q16521</code>=taxon).
@@ -253,11 +253,11 @@
     <p class="desc" id="workDesc">Lazy SPARQL over the .rete graph.</p>
     <div class="notice hidden" id="remoteWarn">
       <b>Remote data isn't reachable from this browser</b> for the current source
-      (<span id="warnSrc">HF Bucket</span>) — a range fetch returned an error/405, so the lazy
+      (<span id="warnSrc">Cloudflare R2</span>) — a range fetch returned an error, so the lazy
       <b>Graph</b>, <b>Tables</b> and <b>SQLite</b> backends can't fetch it here. (The
       <code>rete</code> CLI works fine: it isn't subject to CORS.) Try another host with the
-      <b>Source</b> button (top-right) — HF Datasets or same-origin GitHub Pages — or cache a
-      copy locally. You can still browse the example queries below.
+      <b>Source</b> details (top-right), check connectivity, or cache a copy locally.
+      You can still browse the example queries below.
     </div>
     <div class="examples" id="exBar"></div>
     <p class="microcopy" id="exNote"></p>
@@ -283,12 +283,8 @@
 import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
 
 const $ = (id) => document.getElementById(id);
-// The same 100 MB bundle served three ways. Switch with the "Source" button to
-// compare how each host's CORS / Range support behaves in this browser. (The
-// rete CLI is unaffected — it sends no Origin; this is purely the fetch story.)
-// Dataset tier, selectable via ?dataset= — the HF Space serves both
-// wikidata-100MB and wikidata-1GB from /data (the GitHub sources only host the
-// 100MB demo, so they stay pinned to it).
+// Dataset tier, selectable via ?dataset=. Both graphs and SQL companions are
+// direct R2 objects with HTTP Range + CORS and no redirect or token.
 const DATASET = (new URLSearchParams(location.search).get("dataset") || "wikidata-100MB")
   .replace(/[^a-zA-Z0-9_-]/g, "");
 // fetch-worker pool size for parallel reads (?workers=N, 1..32); null = auto
@@ -331,35 +327,14 @@ const WORKERS = (() => { const w = parseInt(new URLSearchParams(location.search)
   }
 }
 const SOURCES = {
-  hfspace: { label: "HF Space (CORS)", base: `https://katospiegel-rete.hf.space/data/${DATASET}`, dl: "",
-    info: "A tiny <b>FastAPI Space</b> in front of the bucket that adds <b>CORS + Range</b> (which HF's own resolve endpoint won't give a browser). Serves the whole bundle — <code>.rete</code>, parquet, <code>.duckdb</code>, <code>.sqlite</code> — so <b>every backend works in the browser</b> here. This is the recommended source." },
-  bucket: { label: "HF Bucket", base: "https://huggingface.co/buckets/katospiegel/knowledge-graphs/resolve/wikidata-100MB", dl: "?download=true",
-    info: "Hugging Face <b>bucket</b> (resolve). The rete CLI reads it fine, but its resolve endpoint returns <code>405</code> to a cross-origin browser GET — so the browser backends can't fetch it here." },
-  datasets: { label: "HF Datasets", base: "https://huggingface.co/datasets/katospiegel/knowledge-graphs/resolve/main/wikidata-100MB", dl: "?download=true",
-    info: "Hugging Face <b>dataset</b> repo (resolve/main), public — the standard browser-fetchable HF path. Whether it answers a cross-origin browser <em>range</em> GET from this origin is exactly what this switch lets you test." },
-  sharded: { label: "GitHub (3 shards)", base: "wikidata-100MB/shards", dl: "", manifest: "manifest.json",
-    info: "Same-origin GitHub Pages, but the dataset is <b>split into 3 numbered pyramid-less <code>.rete</code> shards</b> (by subject hash) with a <code>manifest.json</code> that links them. The Graph backend <b>federates</b>: it runs the SPARQL on every shard (lazily, in parallel-ish) and <b>term-merges</b> the results (union). Cross-shard joins aren't resolved, and LIMIT/COUNT are per-shard — but single-entity and star queries are exact. (Graph/SPARQL only.)" },
-  github: { label: "GitHub Pages", base: "wikidata-100MB", dl: "",
-    info: "<b>Same-origin</b> on GitHub Pages (no CORS; Pages serves <code>206</code> Range). A pyramid-less <b>~74 MB</b> build of <code>wikidata.rete</code> is committed here under <code>wikidata-100MB/</code> (GitHub blocks &gt;100 MiB; dropping the unused community pyramid fits it under the cap), so the <b>Graph</b> backend works directly — verified end-to-end. Tables / DuckDB / SQLite aren't hosted here (too big), so use an HF source for those." },
+  r2: { label: "Cloudflare R2", base: `https://data.graphplaza.com/${DATASET}`, dl: "",
+    info: "Direct <b>Cloudflare R2</b> objects with <b>CORS + HTTP Range</b>, no proxy, redirect, or token. The <code>.rete</code>, Parquet, <code>.duckdb</code>, and <code>.sqlite</code> companions share this base." },
 };
-let SRC = "hfspace", RETE_URL, DUCKDB_URL, SQLITE_URL;
-// If the HF Space is JWT-protected, the token is entered at runtime (never
-// committed) and appended as ?token=… to every request — query-param so there's
-// no CORS preflight and the DuckDB/SQLite range reads carry it too.
-// Prefilled with the demo Space's token so the example works out of the box.
-// NOTE: this ships publicly, so it's a soft/demo gate, not real protection —
-// rotate the JWT_TOKEN secret (and clear this) if the Space holds anything
-// sensitive. A user can still override it in the Source modal (localStorage).
-const HFSPACE_DEMO_TOKEN = "sfdbgf1094by21hd128ru39802";
-let hfToken = (typeof localStorage !== "undefined" && localStorage.getItem("hfspaceToken")) || HFSPACE_DEMO_TOKEN;
+let SRC = "r2", RETE_URL, DUCKDB_URL, SQLITE_URL;
 function srcQuery(name) {
-  let q = SOURCES[name].dl || "";
-  if (name === "hfspace" && hfToken) q += (q ? "&" : "?") + "token=" + encodeURIComponent(hfToken);
-  return q;
+  return SOURCES[name].dl || "";
 }
-// Always absolute: the rete worker resolves URLs against its blob: base, so a
-// relative GitHub-Pages path (resolved against the page here) must be absolute
-// before it reaches the worker's XHR.
+// Always absolute: the rete worker resolves URLs against its blob: base.
 const fileUrl = (name) => new URL(`${SOURCES[SRC].base}/${name}${srcQuery(SRC)}`, location.href).href;
 const PARQUET = (f) => fileUrl("parquet/" + f);
 function applySource() {
@@ -1013,7 +988,7 @@ setCacheBtn("cacheSqliteBtn", false, cacheSqlite, removeSqlite);
   if (s) { window.__sqliteBytes = new Uint8Array(s); enableCachedOpt("sqliteSrc", "statSqlite", (s.byteLength / 1048576).toFixed(0), "cacheSqliteBtn", cacheSqlite, removeSqlite); }
 })();
 
-/* ---- source switch (HF Bucket / HF Datasets / GitHub) + modal ---- */
+/* ---- R2 source details modal ---- */
 function switchSource(name) {
   if (!SOURCES[name] || name === SRC) return;
   SRC = name; applySource();
@@ -1025,28 +1000,11 @@ function switchSource(name) {
   probeRemote();
 }
 function renderSrcList() {
-  const tokenField = (k) => k === "hfspace"
-    ? `<input id="hfTokenInput" type="password" placeholder="access token — only if the Space is JWT-protected" ` +
-      `value="${hfToken.replace(/"/g, "&quot;")}" style="width:100%; margin-top:6px; padding:5px 8px; ` +
-      `border:1px solid var(--line-strong); border-radius:6px; font-size:12px">`
-    : "";
   $("srcList").innerHTML = Object.entries(SOURCES).map(([k, s]) =>
     `<label class="src-opt"><input type="radio" name="src" value="${k}" ${k === SRC ? "checked" : ""}>` +
     `<span><b>${s.label}</b> <span class="src-badge wait" id="badge-${k}">checking…</span><br>` +
-    `<span class="microcopy">${s.info}</span>${tokenField(k)}</span></label>`).join("");
+    `<span class="microcopy">${s.info}</span></span></label>`).join("");
   $("srcList").querySelectorAll("input[name=src]").forEach((r) => r.onchange = () => { switchSource(r.value); });
-  const ti = $("hfTokenInput");
-  if (ti) {
-    // Clicking the field shouldn't toggle the radio; typing saves + re-probes.
-    ti.onclick = (e) => e.preventDefault();
-    ti.oninput = () => {
-      hfToken = ti.value.trim();
-      try { localStorage.setItem("hfspaceToken", hfToken); } catch (_) {}
-      applySource();
-      clearTimeout(ti._t); ti._t = setTimeout(() => probeOne("hfspace"), 400);
-      if (SRC === "hfspace") probeRemote();
-    };
-  }
   Object.keys(SOURCES).forEach(probeOne);
 }
 async function probeOne(k) {

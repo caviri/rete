@@ -449,6 +449,14 @@ self.onmessage = function (e) {
     return /unreachable|out of memory|memory access out of bounds/i.test(String(msg || ""));
   }
 
+  // Asyncify-specific table/call traps are transport failures too, but they are
+  // not evidence of OOM. Keep this broader predicate separate so the user-facing
+  // memory diagnosis below stays conservative.
+  function isAsyncReaderTrap(msg) {
+    return isEngineTrap(msg) ||
+      /null function|function signature mismatch|table\.grow|runtimeerror/i.test(String(msg || ""));
+  }
+
   // Viewport-based "small device" check, for the memory-reclamation paths below.
   function isPhoneView() { return !!(window.matchMedia && window.matchMedia("(max-width: 560px)").matches); }
 
@@ -2909,9 +2917,9 @@ self.onmessage = function (e) {
   function currentCompanion() {
     return (CATALOG.companions && CATALOG.companions[state.dataset]) || null;
   }
-  // SQL Explore companions (parquet/duckdb/sqlite) still live on the HF Space at their
-  // original playground/<...> paths — they are NOT migrated to R2 (huge, secondary), so
-  // they use their own base/token, independent of the graph CDN (remoteBase = R2).
+  // SQL Explore companions (parquet/duckdb/sqlite) share the public R2 origin.
+  // They keep a separate configurable base because graph and companion hosting
+  // can evolve independently without changing the Explore backend contract.
   function companionUrl(path) {
     const base = CATALOG.companionBase || CATALOG.remoteBase;
     const t = CATALOG.companionToken != null ? CATALOG.companionToken : CATALOG.remoteToken;
@@ -6372,7 +6380,30 @@ self.onmessage = function (e) {
       // TTL / JSON-LD ask the worker to serialize (a CONSTRUCT carries res.text);
       // every other view wants table rows (graph/map/time derive from them).
       const remoteFmt = (fmt === "ttl" || fmt === "jsonld") ? fmt : "table";
-      remoteSparql(state.remote.url, q, remoteFmt, reason).then((out) => {
+      let readerNote = "";
+      // The Asyncify transport is safe for ordinary queries, but its suspend /
+      // rewind transform is not reliable across the reasoner's longer-lived
+      // materialization call. Select the plain worker before starting instead of
+      // risking a plausible-looking empty result.
+      if (reason && state.asyncReadsOn) {
+        readerNote = "reliable reader (reasoning)";
+        setAsyncReads(false);
+        renderAsyncReads();
+      }
+      const invokeRemote = () => remoteSparql(state.remote.url, q, remoteFmt, reason);
+      invokeRemote().catch((e) => {
+        const msg = String((e && e.message) || e);
+        // Asyncify can also trap on particular valid query shapes in desktop
+        // engines. A trap poisons that instance, so terminate it, persist the
+        // reliable reader choice, and retry exactly once on the plain WASM.
+        if (state.asyncReadsOn && isAsyncReaderTrap(msg)) {
+          readerNote = "reliable reader fallback";
+          setAsyncReads(false);
+          renderAsyncReads();
+          return invokeRemote();
+        }
+        throw e;
+      }).then((out) => {
         cleanup();
         state.lastRemoteLog = out.log || [];
         const res = JSON.parse(out.json);
@@ -6389,7 +6420,8 @@ self.onmessage = function (e) {
           ? " — served from cache, 0 new bytes"
           : (r.sessionBytes != null ? ` · ${formatBytes(r.sessionBytes)} cached this session` : "");
         $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
-          `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} fetched${cacheNote} · ${dt.toFixed(0)} ms`;
+          `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} fetched${cacheNote} · ${dt.toFixed(0)} ms` +
+          (readerNote ? ` · ${readerNote}` : "");
         saveHistory({ query: q, format: fmt, strategy: "remote", dataset: state.dataset || "(remote)", ts: Date.now(), resultSummary: summary });
       }).catch((e) => {
         cleanup();
@@ -6789,10 +6821,10 @@ self.onmessage = function (e) {
     $("schemaSummary").innerHTML =
       `<div class="metric-grid">${metric("classes", classes.length)}${metric("relations", relations.length)}</div>` +
       `<div>${classes.slice(0, 5).map((c) => `<span class="chip">${esc(shorten(c[0], 38))} (${esc(c[1])})</span>`).join(" ")}</div>`;
-    $("classes").innerHTML = `<div class="chip-list">` + classes.slice(0, 80)
+    $("schemaClasses").innerHTML = `<div class="chip-list">` + classes.slice(0, 80)
       .map((c) => `<span class="chip">${esc(shorten(c[0], 50))} <strong>${esc(c[1])}</strong></span>`)
       .join("") + `</div>`;
-    $("relations").innerHTML = renderTable(["subjectClass", "predicate", "objectClass", "count"],
+    $("schemaRelations").innerHTML = renderTable(["subjectClass", "predicate", "objectClass", "count"],
       relations.slice(0, 120).map((r) => ({
         subjectClass: r[0],
         predicate: r[1],

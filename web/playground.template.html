@@ -449,11 +449,11 @@ __PLAYGROUND_CSS__
         <div class="schema-columns">
           <div>
             <h3>Classes</h3>
-            <div id="classes"></div>
+            <div id="schemaClasses"></div>
           </div>
           <div>
             <h3>Relations</h3>
-            <div id="relations"></div>
+            <div id="schemaRelations"></div>
           </div>
         </div>
       </div>
@@ -666,13 +666,13 @@ __PLAYGROUND_CSS__
           <h4>Remote <code>.rete</code> by URL (lazy, over HTTP range)</h4>
           <p class="microcopy">Connect to any <code>.rete</code> URL and query it <strong>without
             downloading it</strong> — the host must allow CORS and honor <code>Range</code> (S3,
-            GitHub, Hugging Face all do). Compare the
+            R2, S3, and direct CDNs can do). Compare the
             <a href="explore-100mb.html?dataset=wikidata-100MB">100&nbsp;MB</a> /
             <a href="explore-100mb.html?dataset=wikidata-1GB">1&nbsp;GB</a> tiers in the lazy explorer.</p>
           <div class="url-loader">
             <input id="remoteUrl" type="text" spellcheck="false"
               placeholder="https://…/graph.rete"
-              value="https://katospiegel-rete.hf.space/data/wikidata-1GB/wikidata.rete" />
+              value="https://data.graphplaza.com/wikidata-1GB/wikidata.rete" />
             <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
               <button id="remoteConnect" type="button">Connect (lazy)</button>
               <button id="urlLoad" type="button" class="secondary" title="Download the whole file into memory instead">Download fully</button>

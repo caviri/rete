@@ -11,6 +11,9 @@ const main = async () => {
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));
+  if (process.env.RETE_FORCE_SYNC === "1") {
+    await page.addInitScript(() => localStorage.setItem("asyncReadsOn", "0"));
+  }
   const PORT = process.env.PGPORT || "8090";
   await page.goto(`http://localhost:${PORT}/playground.html#dataset=boe&load=lazy&mode=sparql&ex=0`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.PlaygroundEditor && document.getElementById("run"), { timeout: 60000 });
@@ -50,6 +53,8 @@ const main = async () => {
     verdict: pass ? "PASS" : "FAIL",
     reasonToggleAutoOn: setup.reasonOn,
     rowsWithReason: withReason.rows, rowsWithoutReason: off.rows,
+    withReasonMeta: withReason.qmeta, withReasonError: withReason.errText,
+    withoutReasonMeta: off.qmeta, forceSync: process.env.RETE_FORCE_SYNC === "1",
     tries: withReason.tries, errs: errs.slice(0, 3),
   }, null, 2));
   await browser.close();
