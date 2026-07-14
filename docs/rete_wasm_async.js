@@ -818,11 +818,11 @@ let wasm_bindgen = (function(exports) {
     exports.graph_names = graph_names;
 
     /**
-     * Parse just the 128-byte header and report the byte ranges a *progressive*
+     * Parse the fixed-size header and report the byte ranges a *progressive*
      * client needs for the overview — the dictionary and the pyramid summary — plus
      * the (large) index range it can skip. JSON:
      * `{ "dictOffset","dictLen","pyramidOffset","pyramidLen","indexOffset","indexLen" }`.
-     * The browser fetches bytes 0..128, calls this, then range-fetches only the
+     * The browser fetches bytes `0..HEADER_LEN`, calls this, then range-fetches only the
      * dict + pyramid — never the index.
      * @param {Uint8Array} head
      * @returns {string}
@@ -1216,7 +1216,7 @@ let wasm_bindgen = (function(exports) {
      * inferred-triple count plus any incoherent points (logical contradictions).
      * `graph` selects a named graph; the default graph is used when omitted. This is
      * the complete (Tier-2) check — it materializes the whole graph. Returns the
-     * [`reasoning_json`] envelope (no `remote` block).
+     * `reasoning_json` envelope (no `remote` block).
      * @param {Uint8Array} bytes
      * @param {string | null} [graph]
      * @returns {string}
@@ -1885,6 +1885,10 @@ let wasm_bindgen = (function(exports) {
                 const ret = new XMLHttpRequest();
                 return addHeapObject(ret);
             }, arguments); },
+            __wbg_new_50bb5ebeecef71a8: function(arg0, arg1) {
+                const ret = new Error(getStringFromWasm0(arg0, arg1));
+                return addHeapObject(ret);
+            },
             __wbg_new_with_length_36a4998e27b014c5: function(arg0) {
                 const ret = new Uint8Array(arg0 >>> 0);
                 return addHeapObject(ret);
