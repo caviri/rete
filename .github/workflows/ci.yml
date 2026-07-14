@@ -15,22 +15,26 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RETE_DEV_IMAGE: rete-dev:${{ hashFiles('.devcontainer/Dockerfile') }}
-  RETE_DEV_ARTIFACT: rete-dev-${{ hashFiles('.devcontainer/Dockerfile') }}
+  RETE_DEV_ARTIFACT: rete-dev-image
 
 jobs:
   image:
     name: pinned development image
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
+      - name: Derive the immutable image tag
+        id: identity
+        run: echo "tag=rete-dev:$(sha256sum .devcontainer/Dockerfile | cut -c1-16)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
       - name: Build the pinned image once
         uses: docker/build-push-action@v7
         with:
           context: .
           file: .devcontainer/Dockerfile
-          tags: ${{ env.RETE_DEV_IMAGE }}
+          tags: ${{ steps.identity.outputs.tag }}
           outputs: type=docker,dest=/tmp/rete-dev.tar
           cache-from: type=gha,scope=rete-dev
           cache-to: type=gha,mode=max,scope=rete-dev
@@ -59,7 +63,7 @@ jobs:
           docker run --rm --user root \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -e CARGO_TARGET_DIR=/work/target \
-            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh quality'
 
   msrv:
@@ -91,7 +95,7 @@ jobs:
         run: |
           docker run --rm --user root \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
-            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh security'
 
   wasm:
@@ -112,7 +116,7 @@ jobs:
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -e CARGO_TARGET_DIR=/work/target -e GITHUB_SHA="$GITHUB_SHA" \
             -e RETE_BUILD_STAMP=1.0.0-rc.1 \
-            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/build_wasm.sh'
       - name: Verify provenance and generated browser files
         run: |
@@ -144,7 +148,7 @@ jobs:
           docker run --rm --user root \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -e CARGO_TARGET_DIR=/work/target \
-            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh scripts/coverage.sh
 
   browser:
@@ -165,7 +169,7 @@ jobs:
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -e CARGO_TARGET_DIR=/work/target -e GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
             -e PLAYWRIGHT_BROWSERS_PATH=/work/tests/gate/.playwright \
-            -v "$PWD:/work" -w /work/tests/gate "$RETE_DEV_IMAGE" \
+            -v "$PWD:/work" -w /work/tests/gate "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work; npm ci --no-audit --no-fund; npx playwright install chromium; mkdir -p .cache; cargo run -q --release -p rete-cli --manifest-path /work/Cargo.toml -- build fixtures/worldcup2026.nt -o .cache/worldcup2026.rete; if [ "$GITHUB_EVENT_NAME" = pull_request ]; then node run.mjs --local; else node run.mjs; fi'
 
   package:
@@ -180,13 +184,13 @@ jobs:
           name: ${{ env.RETE_DEV_ARTIFACT }}
           path: /tmp
       - run: docker load --input /tmp/rete-dev.tar
-      - name: Build publishable crate archives
+      - name: Build core archive and validate dependent package manifests
         run: |
           docker run --rm --user root \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -e CARGO_TARGET_DIR=/work/target \
-            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
-            sh -lc 'git config --global --add safe.directory /work && cargo package --locked -p rete-core && cargo package --locked -p rete-cli --no-verify && cargo package --locked -p rete-wasm --no-verify'
+            -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
+            sh -lc 'set -eu; git config --global --add safe.directory /work; cargo package --locked -p rete-core; for crate in rete-cli rete-wasm; do cargo package --locked -p "$crate" --list > "/tmp/$crate.list"; grep -Fx Cargo.toml "/tmp/$crate.list"; grep -Fx README.md "/tmp/$crate.list"; grep -Fx LICENSE "/tmp/$crate.list"; done'
 
   docs:
     name: docs
@@ -205,5 +209,5 @@ jobs:
           docker run --rm --user root \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -e CARGO_TARGET_DIR=/work/target \
-            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh docs'

@@ -60,7 +60,7 @@ Before publishing `1.0.0-rc.1`:
 1. The release worktree is clean and checked out at the signed `v1.0.0-rc.1` tag.
 2. The tag commit has passed every required release check.
 3. `cargo publish --dry-run -p rete-core` passes in the devcontainer.
-4. `cargo package -p rete-cli --no-verify` and `cargo package -p rete-wasm --no-verify` pass; full dependent verification waits for the core crate to become registry-visible.
+4. Before bootstrap, `cargo package --list` validates the `rete-cli` and `rete-wasm` include sets. Current Cargo refuses to create either dependent archive until `rete-core` is registry-visible, even with `--no-verify`; after core visibility, both full `cargo package` commands must pass.
 5. `rete-core`, `rete-cli`, and `rete-wasm` remain unclaimed on crates.io.
 6. The publisher's crates.io account has a verified email and is authenticated through the intended GitHub identity.
 7. A crates.io API token is created with permission to publish new crates, the shortest available expiry not exceeding 24 hours, and no unrelated crate scope.
