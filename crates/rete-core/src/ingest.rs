@@ -773,6 +773,35 @@ mod tests {
         ));
     }
 
+    /// Regression coverage for RUSTSEC-2026-0195: namespace declarations from
+    /// an untrusted RDF/XML document must not make parsing panic or exhaust the
+    /// bounded test process.
+    #[test]
+    fn rdfxml_namespace_fanout_is_bounded() {
+        let declarations = (0..2_000)
+            .map(|i| format!(r#" xmlns:p{i}="http://example.test/{i}/""#))
+            .collect::<String>();
+        let xml = format!(
+            r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"{declarations}/>"#
+        );
+        let result = parse_statements(&xml, "rdfxml");
+        assert!(result.is_ok() || result.unwrap_err().to_string().contains("namespace"));
+    }
+
+    /// Regression coverage for RUSTSEC-2026-0194: duplicate-name checking must
+    /// complete for a large valid start tag without panicking or exhausting the
+    /// bounded test process.
+    #[test]
+    fn rdfxml_attribute_fanout_completes() {
+        let attributes = (0..2_000)
+            .map(|i| format!(r#" p:a{i}="{i}""#))
+            .collect::<String>();
+        let xml = format!(
+            r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:p="http://example.test/"><rdf:Description rdf:about="http://example.test/s"{attributes}/></rdf:RDF>"#
+        );
+        assert!(parse_statements(&xml, "rdfxml").is_ok());
+    }
+
     /// Text in, queryable file image out — the whole in-memory build path the
     /// wasm `build()` binding uses, including a named graph.
     #[test]
