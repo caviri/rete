@@ -2,6 +2,10 @@
   "name": "rete-gate",
   "private": true,
   "description": "Regression gate deps (browsers come from the Playwright Docker image)",
+  "scripts": {
+    "gate": "node run.mjs",
+    "gate:fast": "node run.mjs fast"
+  },
   "dependencies": {
     "playwright": "1.49.0"
   }

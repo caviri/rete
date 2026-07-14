@@ -14,6 +14,8 @@ bash tests/gate/gate.sh --deployed   # + probe the live GitHub Pages site
 
 Requires Docker (uses the `mcr.microsoft.com/playwright:v1.49.0-jammy` image)
 and network (the lazy checks read the live R2 datasets).
+The gate's local Range servers bind OS-assigned ports, so gates from separate
+worktrees can run concurrently without one suite reading another checkout.
 
 ## Tiers
 
@@ -40,6 +42,12 @@ and network (the lazy checks read the live R2 datasets).
 | `check_refresh_session` | embedded | — | ↻ Refresh really reloads |
 | `check_async_fallback` | remote-lazy | async 404 → sync | degrade, don't hard-fail |
 | `check_query_shapes` | embedded | — | property paths + CONSTRUCT→graph + reasoning |
+| `check_boe_reason` | remote-lazy (live R2) | reliable sync | OWL 2 QL: 0 rows off → rows on |
+| `check_map_geo` | embedded + local PMTiles | local renderer boundary | GeoSPARQL → Tiles canvas, layer, bounds |
+| `check_service_success` | embedded + local endpoint | sync | successful `SERVICE` local/remote join |
+| `check_builder` | in-browser build | sync | N-Quads → `.rete` → named-graph Alice query |
+| `check_cache_mode` | remote-cache (local host) | sync | one full download, then reload with zero reads |
+| `check_optional_tabs` | embedded + local stubs | no WebGPU/model downloads | Ask AI + Semantic/RAG controls and copy |
 
 Live-R2 checks retry any no-rows outcome (`_util.runWithRetry`) so a transient CDN
 blip doesn't red the gate; a real regression fails every retry and still goes red.
@@ -65,18 +73,14 @@ blip doesn't red the gate; a real regression fails every retry and still goes re
 Honest list of playground surfaces with no runtime check — add one when you touch
 them or when a bug lands there:
 
-- **Map / geo view** (PMTiles basemaps, GeoSPARQL) — needs canvas/WebGL assertions.
-- **Federation / SPARQL `SERVICE`** — a *working* federation run (check_diag only
-  triggers a SERVICE *error* for the diagnostics block); needs a live endpoint, so
-  inherently flaky.
-- **Ask AI (WebGPU LLM)** and **Semantic / RAG** tabs — model download + WebGPU are
-  impractical headless; at most a tab-opens-without-crashing smoke could be added.
-- **In-browser dataset builder** (build-a-.rete flow).
-- **`cache` load mode** (download-whole-file-once) — only `lazy` + `embedded` run.
 - **Coverage breadth**: only ~2 datasets are exercised live (worldcup2026, mtg) and
   one embedded (scholar); the other datasets' example queries are *statically*
   prefix-scanned (G0) but not executed. A broken example on another dataset ships
   green until someone runs it.
+
+The optional AI gate deliberately stops at initialization and deterministic local
+worker stubs. Real WebGPU inference and multi-hundred-megabyte model downloads stay
+outside the release gate; they require a separate manual/device smoke test.
 
 ## Device-specific bugs the gate can't catch
 

@@ -13,7 +13,7 @@ const MIME = {
   ".rete": "application/octet-stream", ".parquet": "application/octet-stream",
 };
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   let fh;
   try {
     let p = decodeURIComponent(new URL(req.url, "http://x").pathname);
@@ -45,4 +45,8 @@ createServer(async (req, res) => {
   } finally {
     if (fh) await fh.close();
   }
-}).listen(PORT, () => console.log(`serving ${ROOT} on http://localhost:${PORT} (Range-capable)`));
+});
+server.listen(PORT, "127.0.0.1", () => {
+  const address = server.address();
+  console.log(`serving ${ROOT} on http://127.0.0.1:${address.port} (Range-capable)`);
+});

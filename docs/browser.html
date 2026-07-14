@@ -388,6 +388,13 @@ cache survives browser sessions until cleared. Settings shows a <strong>per-file
 breakdown</strong> — each cached <code>.rete</code> with how much of it is held (e.g. <em>16 MB /
 1.04 GB · 1.6%</em>) and a fill bar — plus per-file and global <strong>Clear</strong>. It is off
 by default, so the default read path is byte-identical with the shim absent.</li>
+<li><strong>Whole-file cache mode — one download, then local.</strong> Choosing <strong>Cache</strong> for a
+catalog dataset downloads that complete <code>.rete</code> once and stores it in the
+playground's IndexedDB whole-file store. Queries open those bytes in memory;
+reloads and later browser sessions reuse the stored file with zero network
+reads. The entry appears under <strong>Settings → Whole-file caches</strong>, where it can be
+removed. If IndexedDB is unavailable or quota is exhausted, the current page
+still uses its in-memory copy, but a later reload must download it again.</li>
 </ul>
 <p><strong>Host CORS, in practice.</strong> Range-querying from the browser needs a host that
 serves the bytes <em>directly</em> to a cross-origin browser request. A plain static

@@ -260,6 +260,11 @@ dataset with that example loaded, ready to share.</p>
 <p>A dataset can also be <strong>sharded</strong>: one logical graph served as several files
 (a "⛓ N shards" chip appears). Every query fans out across the shards and the
 rows merge — you just query it as one dataset.</p>
+<p>For a catalog dataset, the picker offers three load choices when applicable:
+<strong>Embedded</strong> uses bytes already inside the page, <strong>Lazy</strong> range-reads only what
+each query touches, and <strong>Cache</strong> downloads the complete <code>.rete</code> once. Cache mode
+stores the file in IndexedDB, so a reload or later browser session opens it
+locally with zero network reads; remove it under <strong>Settings → Whole-file caches</strong>.</p>
 <p>Not in the catalog? <strong>+ Add source → Connect (lazy)</strong> opens any <code>.rete</code> URL
 whose host serves ranges + CORS (see <a href="hosting.html">Hosting your .rete</a>), and the
 <strong>Build</strong> mode (below) turns your own RDF into a queryable file without leaving
@@ -395,6 +400,8 @@ cross-origin isolation needed). <strong>Settings</strong> adds further opt-in ex
 <ul>
 <li><strong>Persist fetched ranges across reloads</strong> — mirrors fetched blocks into
 IndexedDB (per-file usage bars + Clear), so tomorrow's session starts warm.</li>
+<li><strong>Whole-file caches</strong> — files downloaded through a dataset's <strong>Cache</strong> load
+mode survive reloads in IndexedDB and answer subsequent queries locally.</li>
 <li><strong>Parallel range reads</strong> — a cross-origin-isolated worker pool fetches
 ranges concurrently (reloads once to enable isolation; disables the
 CDN-loaded DuckDB/SQLite backends while on).</li>

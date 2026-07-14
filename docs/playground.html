@@ -12011,9 +12011,12 @@ self.onmessage = function (e) {
     return !!(d && !d.custom);
   }
 
-  // Downloaded-remote cache: fetch the whole .rete once, keep the bytes, then
-  // query it in memory on later loads (the "cache" mode of the source switch).
+  // Downloaded-remote cache: fetch the whole .rete once, persist it in the same
+  // IndexedDB whole-file store as companion files, then query it in memory. The
+  // Map avoids a second IDB read in this page; IndexedDB makes cache mode survive
+  // reloads and browser sessions.
   const remoteCache = new Map();
+  const remoteCacheKey = (key) => `${key}::rete`;
   // Stream a fetch so we can report download progress (bytes received vs the
   // Content-Length, when the server provides it).
   async function fetchWithProgress(url, onProgress) {
@@ -12100,10 +12103,25 @@ self.onmessage = function (e) {
     try {
       let bytes = remoteCache.get(key);
       if (!bytes) {
+        const stored = await idbGetFile(remoteCacheKey(key));
+        if (stored) {
+          bytes = stored instanceof Uint8Array ? stored : new Uint8Array(stored);
+          remoteCache.set(key, bytes);
+        }
+      }
+      if (!bytes) {
         setStatus("downloading " + key + " …");
         openCacheModal(key);
         bytes = await fetchWithProgress(remoteUrlFor(key), updateCacheProgress);
         remoteCache.set(key, bytes);
+        try {
+          await idbPutFile(remoteCacheKey(key), bytes, {
+            size: bytes.byteLength,
+            label: dsShortLabel(key) + " (.rete)",
+            dataset: key,
+            backend: "rete",
+          });
+        } catch (_e) { /* private mode / quota: keep the in-memory cache */ }
       } else {
         openCacheModal(key);
       }

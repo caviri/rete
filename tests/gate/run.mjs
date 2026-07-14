@@ -108,9 +108,27 @@ function g0() {
 }
 
 // ---------- servers ----------
-function serve(dir, port) {
-  const p = spawn("node", [`${ROOT}/tests/gate/serve.mjs`, dir, String(port)], { stdio: "ignore" });
-  return p;
+function serve(dir) {
+  return new Promise((resolve, reject) => {
+    const p = spawn("node", [`${ROOT}/tests/gate/serve.mjs`, dir, "0"], { stdio: ["ignore", "pipe", "pipe"] });
+    let output = "", settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true; p.kill("SIGKILL"); reject(new Error(`gate server did not start: ${output.slice(-200)}`));
+    }, 10000);
+    const onData = (data) => {
+      output += data;
+      const match = /http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
+      if (!settled && match) {
+        settled = true; clearTimeout(timeout); resolve({ process: p, port: Number(match[1]) });
+      }
+    };
+    p.stdout.on("data", onData); p.stderr.on("data", onData);
+    p.on("exit", (code) => {
+      if (settled) return;
+      settled = true; clearTimeout(timeout); reject(new Error(`gate server exited ${code}: ${output.slice(-200)}`));
+    });
+  });
 }
 
 // ---------- child runner ----------
@@ -152,7 +170,7 @@ function lastJson(out) {
 }
 
 // ---------- G1 node async harness ----------
-async function g1() {
+async function g1(port) {
   const fixture = `${ROOT}/tests/gate/.cache/worldcup2026.rete`;
   if (!fs.existsSync(fixture)) { record("G1", "async wasm harness", false, "fixture missing (gate.sh downloads it)"); return; }
   const q = [
@@ -170,7 +188,7 @@ async function g1() {
     "} ORDER BY xsd:integer(?num)",
   ].join("\n");
   const r = await runChild("node", [`${ROOT}/tests/gate/asyncify_e2e.cjs`],
-    { RETE_URL: "http://localhost:8092/worldcup2026.rete", RETE_Q: q }, 60000, ROOT);
+    { RETE_URL: `http://127.0.0.1:${port}/worldcup2026.rete`, RETE_Q: q }, 60000, ROOT);
   const rows = (r.out.match(/rows=(\d+)/) || [])[1];
   record("G1", "async wasm + Asyncify driver (lazy, 4×OPTIONAL + ORDER BY cast)", r.code === 0 && Number(rows) > 0,
     r.code === 0 ? `${rows} rows` : r.out.split("\n").filter(Boolean).slice(-2).join(" | ").slice(0, 160));
@@ -198,11 +216,16 @@ const G2 = [
   ["check_async_fallback", "async assets 404 → degrades to sync reader, still runs", 120000],
   ["check_query_shapes", "property paths + CONSTRUCT→graph + reasoning (embedded)", 90000],
   ["check_boe_reason", "BOE OWL 2 QL reasoning over live R2 (0 → N with 🧠 Reason)", 150000],
+  ["check_map_geo", "embedded GeoSPARQL → Tiles · local PMTiles fixture", 90000],
+  ["check_service_success", "successful SERVICE join · local SPARQL JSON endpoint", 90000],
+  ["check_builder", "in-browser N-Quads build → open bytes → query Alice", 90000],
+  ["check_cache_mode", "whole-file cache persists across reload · zero second read", 120000],
+  ["check_optional_tabs", "Ask AI + Semantic/RAG initialize without model downloads", 90000],
 ];
-async function g2() {
+async function g2(port) {
   for (const [name, label, timeout] of G2) {
     if (only && !name.includes(only)) continue;
-    const r = await runChild("node", [`${ROOT}/tests/gate/checks/${name}.mjs`], { PGPORT: "8090" }, timeout);
+    const r = await runChild("node", [`${ROOT}/tests/gate/checks/${name}.mjs`], { PGPORT: String(port) }, timeout);
     const j = lastJson(r.out);
     const ok = r.code === 0 && j && j.verdict === "PASS";
     record("G2", `${name} — ${label}`, ok, ok ? "" : (j ? JSON.stringify(j).slice(0, 160) : r.out.split("\n").filter(Boolean).slice(-2).join(" | ").slice(0, 160)));
@@ -223,16 +246,16 @@ try {
   console.log("── G0 static ──");
   g0();
   if (!only) {
-    servers.push(serve(`${ROOT}/tests/gate/.cache`, 8092));
-    await new Promise((r) => setTimeout(r, 700));
+    const nodeServer = await serve(`${ROOT}/tests/gate/.cache`);
+    servers.push(nodeServer.process);
     console.log("── G1 engine-in-node ──");
-    await g1();
+    await g1(nodeServer.port);
   }
   if (!FAST) {
-    servers.push(serve(`${ROOT}/docs`, 8090));
-    await new Promise((r) => setTimeout(r, 700));
+    const browserServer = await serve(`${ROOT}/docs`);
+    servers.push(browserServer.process);
     console.log("── G2 browser matrix ──");
-    await g2();
+    await g2(browserServer.port);
     if (DEPLOYED) { console.log("── live (informational) ──"); await deployed(); }
   }
 } finally { servers.forEach((s) => { try { s.kill(); } catch (e) { /* ignore */ } }); }
