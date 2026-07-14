@@ -1,29 +1,19 @@
 name: Docs (GitHub Pages)
 
-# Publishes the docs/ folder — the rendered HTML site (index, guides, SPEC,
-# benchmarks) plus the self-contained WASM playground (docs/playground.html) — to
-# GitHub Pages. The HTML is committed and kept in sync with its Markdown source by
-# the CI "Docs HTML in sync" check, so this job just uploads the static files
-# (nothing builds — no toolchain, no container needed).
-#
-# One-time repo setup: Settings → Pages → Build and deployment → Source =
-# "GitHub Actions".
-
 on:
   push:
     branches: [main]
     paths:
       - "docs/**"
+      - "tests/gate/checks/check_deployed.mjs"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
-# Allow the deploy job to publish to Pages via OIDC.
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# One concurrent Pages deploy; cancel an in-progress run if a newer one arrives.
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -35,19 +25,44 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - name: Stage docs with the exact deployed revision
+        run: |
+          mkdir _site
+          cp -a docs/. _site/
+          EXPECTED_SHA="$(git rev-parse --short=12 HEAD)" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
 
-      # Serve files verbatim (don't let Jekyll drop/transform anything).
-      - name: Disable Jekyll
-        run: touch docs/.nojekyll
-
+          page = Path("_site/playground.html")
+          source = page.read_text(encoding="utf-8")
+          source, count = re.subn(
+              r'window\.RETE_BUILD = "[^"]*";',
+              f'window.RETE_BUILD = "{os.environ["EXPECTED_SHA"]}";',
+              source,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit("playground build stamp was not found exactly once")
+          page.write_text(source, encoding="utf-8")
+          PY
+          touch _site/.nojekyll
       - uses: actions/configure-pages@v5
-
-      - name: Upload docs/ as the Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload staged site
+        uses: actions/upload-pages-artifact@v4
         with:
-          path: docs
-
+          path: _site
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Install deployed-site browser check
+        working-directory: tests/gate
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Verify the exact deployed commit and live lazy query
+        working-directory: tests/gate
+        env:
+          DEPLOYED_URL: ${{ steps.deployment.outputs.page_url }}
+        run: EXPECTED_SHA="$(git rev-parse --short=12 HEAD)" node checks/check_deployed.mjs

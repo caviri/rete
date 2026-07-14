@@ -28,7 +28,7 @@ if [[ -z "${RETE_SOURCE_REVISION:-}" ]]; then
   fi
 fi
 export RETE_SOURCE_REVISION
-export RETE_BUILD_STAMP="$RETE_SOURCE_REVISION"
+export RETE_BUILD_STAMP="${RETE_BUILD_STAMP:-$RETE_SOURCE_REVISION}"
 
 # Binaryen v108 is intentionally retained for the reference-types-disabled
 # Asyncify pass. It corrupts modern wasm-bindgen externref tables, so regular

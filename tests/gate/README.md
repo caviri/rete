@@ -10,6 +10,7 @@ bash tests/gate/gate.sh              # full gate (~4 min)
 bash tests/gate/gate.sh fast         # static + node engine harness (~15 s)
 bash tests/gate/gate.sh --only=worldcup   # one browser check while iterating
 bash tests/gate/gate.sh --deployed   # + probe the live GitHub Pages site
+bash tests/gate/gate.sh --local      # no live R2 reads (the pull-request CI mode)
 ```
 
 Requires Docker (uses the `mcr.microsoft.com/playwright:v1.49.0-jammy` image)
@@ -51,6 +52,9 @@ worktrees can run concurrently without one suite reading another checkout.
 
 Live-R2 checks retry any no-rows outcome (`_util.runWithRetry`) so a transient CDN
 blip doesn't red the gate; a real regression fails every retry and still goes red.
+Pull requests use `--local`, which still runs G0, the local ranged G1 fixture, and
+all embedded/local G2 checks. Pushes to `main` and `release-*` run the complete
+live-R2 matrix.
 
 ## After an engine (crates/) change — checklist
 

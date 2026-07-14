@@ -1,0 +1,40 @@
+name: Dataset catalog
+
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the pinned development image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: .devcontainer/Dockerfile
+          tags: rete-dev:catalog
+          load: true
+          cache-from: type=gha,scope=rete-dev
+          cache-to: type=gha,mode=max,scope=rete-dev
+      - name: Probe every registered R2 object
+        run: |
+          mkdir -p target/catalog
+          docker run --rm --user root \
+            -v "$PWD:/work" -w /work rete-dev:catalog \
+            python3 scripts/check_dataset_catalog.py --all --report target/catalog/report.json
+      - name: Upload the complete catalog report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rete-dataset-catalog-${{ github.run_id }}
+          path: target/catalog/report.json
+          if-no-files-found: warn
+          retention-days: 30

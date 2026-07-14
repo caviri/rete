@@ -1,5 +1,5 @@
 // The regression gate runner — executes inside the Playwright Docker image.
-// Usage (from gate.sh):  node run.mjs [fast] [--only=<substr>] [--deployed]
+// Usage (from gate.sh):  node run.mjs [fast] [--local] [--only=<substr>] [--deployed]
 //
 // Tiers:
 //   G0 static   — app.js/catalog.js parse, built page inline-scripts parse,
@@ -16,6 +16,7 @@ import vm from "node:vm";
 const ROOT = "/work";
 const args = process.argv.slice(2);
 const FAST = args.includes("fast");
+const LOCAL_ONLY = args.includes("--local");
 const only = (args.find((a) => a.startsWith("--only=")) || "").slice(7);
 const DEPLOYED = args.includes("--deployed");
 const results = [];
@@ -203,28 +204,29 @@ async function g1(port) {
 
 // ---------- G2 browser matrix ----------
 const G2 = [
-  ["check_diag", "embedded + error diagnostics block", 90000],
-  ["check_worldcup", "desktop lazy DEFAULT (async) · worldcup ex=0 · live R2", 120000],
-  ["check_lazy_async", "desktop lazy async-forced · mtg GROUP BY · live R2", 240000],
-  ["check_sync_read", "desktop lazy SYNC-forced · worldcup squad · live R2", 120000],
-  ["check_ios_default", "iPhone UA → auto sync routing + query runs", 120000],
-  ["check_settings_mobile", "phone-viewport Settings (no overflow, storage, session)", 120000],
-  ["check_copy", "clipboard: parse-error Copy-log + share button", 90000],
-  ["check_clear", "Clear everything empties 4 stores + Cache API", 90000],
-  ["check_worker_init", "broken engine wasm surfaces an error (no infinite hang)", 90000],
-  ["check_refresh_session", "Settings ↻ Refresh actually reloads the document", 90000],
-  ["check_async_fallback", "async assets 404 → degrades to sync reader, still runs", 120000],
-  ["check_query_shapes", "property paths + CONSTRUCT→graph + reasoning (embedded)", 90000],
-  ["check_boe_reason", "BOE OWL 2 QL reasoning over live R2 (0 → N with 🧠 Reason)", 150000],
-  ["check_map_geo", "embedded GeoSPARQL → Tiles · local PMTiles fixture", 90000],
-  ["check_service_success", "successful SERVICE join · local SPARQL JSON endpoint", 90000],
-  ["check_builder", "in-browser N-Quads build → open bytes → query Alice", 90000],
-  ["check_cache_mode", "whole-file cache persists across reload · zero second read", 120000],
-  ["check_optional_tabs", "Ask AI + Semantic/RAG initialize without model downloads", 90000],
+  ["check_diag", "embedded + error diagnostics block", 90000, false],
+  ["check_worldcup", "desktop lazy DEFAULT (async) · worldcup ex=0 · live R2", 120000, true],
+  ["check_lazy_async", "desktop lazy async-forced · mtg GROUP BY · live R2", 240000, true],
+  ["check_sync_read", "desktop lazy SYNC-forced · worldcup squad · live R2", 120000, true],
+  ["check_ios_default", "iPhone UA → auto sync routing + query runs", 120000, true],
+  ["check_settings_mobile", "phone-viewport Settings (no overflow, storage, session)", 120000, false],
+  ["check_copy", "clipboard: parse-error Copy-log + share button", 90000, false],
+  ["check_clear", "Clear everything empties 4 stores + Cache API", 90000, false],
+  ["check_worker_init", "broken engine wasm surfaces an error (no infinite hang)", 90000, true],
+  ["check_refresh_session", "Settings ↻ Refresh actually reloads the document", 90000, false],
+  ["check_async_fallback", "async assets 404 → degrades to sync reader, still runs", 120000, true],
+  ["check_query_shapes", "property paths + CONSTRUCT→graph + reasoning (embedded)", 90000, false],
+  ["check_boe_reason", "BOE OWL 2 QL reasoning over live R2 (0 → N with 🧠 Reason)", 150000, true],
+  ["check_map_geo", "embedded GeoSPARQL → Tiles · local PMTiles fixture", 90000, false],
+  ["check_service_success", "successful SERVICE join · local SPARQL JSON endpoint", 90000, false],
+  ["check_builder", "in-browser N-Quads build → open bytes → query Alice", 90000, false],
+  ["check_cache_mode", "whole-file cache persists across reload · zero second read", 120000, false],
+  ["check_optional_tabs", "Ask AI + Semantic/RAG initialize without model downloads", 90000, false],
 ];
 async function g2(port) {
-  for (const [name, label, timeout] of G2) {
+  for (const [name, label, timeout, requiresLiveR2] of G2) {
     if (only && !name.includes(only)) continue;
+    if (LOCAL_ONLY && requiresLiveR2) continue;
     const r = await runChild("node", [`${ROOT}/tests/gate/checks/${name}.mjs`], { PGPORT: String(port) }, timeout);
     const j = lastJson(r.out);
     const ok = r.code === 0 && j && j.verdict === "PASS";

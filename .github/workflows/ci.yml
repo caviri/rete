@@ -1,98 +1,209 @@
 name: CI
 
-# Everything runs inside the same `rust:1.92-bookworm` image the dev container
-# uses — the project's rule is that nothing builds on the host, and a GitHub
-# Actions `container:` job is exactly that: every step executes in Docker.
-
 on:
   push:
-    branches: [main]
+    branches: [main, "release-*"]
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
+  RETE_DEV_IMAGE: rete-dev:${{ hashFiles('.devcontainer/Dockerfile') }}
+  RETE_DEV_ARTIFACT: rete-dev-${{ hashFiles('.devcontainer/Dockerfile') }}
 
 jobs:
-  test:
-    name: fmt · clippy · test matrix
+  image:
+    name: pinned development image
     runs-on: ubuntu-latest
-    container:
-      image: rust:1.92-bookworm
     steps:
-      - uses: actions/checkout@v4
-
-      # The C zstd encoder (default `compression` feature) needs the dev headers.
-      - name: Install system deps
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libzstd-dev python3
-          rustup component add rustfmt clippy
-
-      - name: Cache cargo registry & target
-        uses: actions/cache@v4
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the pinned image once
+        uses: docker/build-push-action@v7
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-
+          context: .
+          file: .devcontainer/Dockerfile
+          tags: ${{ env.RETE_DEV_IMAGE }}
+          outputs: type=docker,dest=/tmp/rete-dev.tar
+          cache-from: type=gha,scope=rete-dev
+          cache-to: type=gha,mode=max,scope=rete-dev
+      - name: Share the image with release-gate jobs
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp/rete-dev.tar
+          compression-level: 0
+          retention-days: 1
 
-      - name: Format check
-        run: cargo fmt --all -- --check
-
-      # `rete-bench` is a dev-only benchmark that pulls in Oxigraph (a heavy dep
-      # tree); it is excluded from the hot CI steps to keep them fast. It still
-      # builds locally via `cargo build -p rete-bench` (see docs/BENCHMARK.md).
-      - name: Clippy (warnings = errors)
-        run: cargo clippy --workspace --exclude rete-bench --all-targets -- -D warnings
-
-      - name: Test (default features)
-        run: cargo test --workspace --exclude rete-bench
-
-      # The exact configuration the wasm crate consumes `rete-core` under
-      # (no C zstd encoder; pure-Rust ruzstd decoder only).
-      - name: Test (--no-default-features)
-        run: cargo test -p rete-core --no-default-features
-
-      - name: Build (--all-features)
-        run: cargo build -p rete-core --all-features
-
-      # rete-bench pulls Oxigraph (a heavy dep tree) so it's kept out of the hot
-      # clippy/test steps — but build it here so the benchmark can't bit-rot.
-      - name: Build rete-bench (smoke)
-        run: cargo build -p rete-bench
-
-      # End-to-end acceptance test of every CLI subcommand + the HTTP range path.
-      - name: CLI smoke test
-        run: bash scripts/smoke.sh
-
-      # Engine regression tripwire: the self-contained query benchmark asserts
-      # every query's row count and (with --check) generous per-query time
-      # ceilings — a lost fast path or an accidental quadratic join fails CI,
-      # ordinary runner noise does not (see CEILING_MS in qbench.rs).
-      - name: Query engine regression check (qbench --check)
-        run: cargo run --release -p rete-core --example qbench -- --check
-
-      # The rendered HTML docs must match their Markdown source.
-      - name: Docs HTML in sync
+  quality:
+    name: quality
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: Format, lint, tests, feature matrix, smoke, and qbench
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          cargo run -q -p docgen
-          git diff --exit-code docs/ \
-            || { echo "docs/*.html is stale — run 'cargo run -p docgen' and commit"; exit 1; }
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -e CARGO_TARGET_DIR=/work/target \
+            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh quality'
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check the declared Rust 1.87 minimum
+        run: |
+          docker run --rm --user root \
+            -e RUSTUP_TOOLCHAIN=1.87.0 -e CARGO_TARGET_DIR=/work/target-msrv \
+            -v "$PWD:/work" -w /work rust:1.87.0-bookworm \
+            sh -lc 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libzstd-dev && cargo check --locked --workspace --exclude rete-bench'
+
+  security:
+    name: security
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: Audit advisories, licenses, bans, and sources
+        run: |
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh security'
 
   wasm:
-    name: wasm build
+    name: wasm
+    needs: image
     runs-on: ubuntu-latest
-    container:
-      image: rust:1.92-bookworm
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - name: Add wasm target + wasm-pack
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: Rebuild every browser artifact from this commit
         run: |
-          rustup target add wasm32-unknown-unknown
-          curl -sSfL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
-      - name: Build browser bindings
-        run: wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -e CARGO_TARGET_DIR=/work/target -e GITHUB_SHA="$GITHUB_SHA" \
+            -e RETE_BUILD_STAMP=1.0.0-rc.1 \
+            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            sh -lc 'git config --global --add safe.directory /work && bash scripts/build_wasm.sh'
+      - name: Verify provenance and generated browser files
+        run: |
+          test "$(python3 -c 'import json; print(json.load(open("docs/wasm-build.json"))["gitCommit"])')" = "$GITHUB_SHA"
+          git diff --exit-code -- \
+            web/pkg web/pkg-nomodules web/pkg-nomodules-async \
+            docs/playground.html docs/rete_wasm.js docs/rete_wasm_bg.wasm \
+            docs/rete_wasm_async.js docs/rete_wasm_async.wasm
+      - name: Preserve exact build provenance
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-build-${{ github.sha }}
+          path: docs/wasm-build.json
+
+  coverage:
+    name: coverage
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: Enforce core and CLI coverage floors
+        run: |
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -e CARGO_TARGET_DIR=/work/target \
+            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            sh scripts/coverage.sh
+
+  browser:
+    name: browser
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: Run local fixtures on PRs and the live R2 matrix on pushes
+        run: |
+          docker run --rm --user root --network host \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -e CARGO_TARGET_DIR=/work/target -e GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+            -e PLAYWRIGHT_BROWSERS_PATH=/work/tests/gate/.playwright \
+            -v "$PWD:/work" -w /work/tests/gate "$RETE_DEV_IMAGE" \
+            sh -lc 'git config --global --add safe.directory /work; npm ci --no-audit --no-fund; npx playwright install chromium; mkdir -p .cache; cargo run -q --release -p rete-cli --manifest-path /work/Cargo.toml -- build fixtures/worldcup2026.nt -o .cache/worldcup2026.rete; if [ "$GITHUB_EVENT_NAME" = pull_request ]; then node run.mjs --local; else node run.mjs; fi'
+
+  package:
+    name: package
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: Build publishable crate archives
+        run: |
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -e CARGO_TARGET_DIR=/work/target \
+            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            sh -lc 'git config --global --add safe.directory /work && cargo package --locked -p rete-core && cargo package --locked -p rete-cli --no-verify && cargo package --locked -p rete-wasm --no-verify'
+
+  docs:
+    name: docs
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: Rustdoc, rendered docs, and links
+        run: |
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -e CARGO_TARGET_DIR=/work/target \
+            -v "$PWD:/work" -w /work "$RETE_DEV_IMAGE" \
+            sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh docs'
