@@ -396,9 +396,18 @@ works. What does <strong>not</strong> work is Hugging Face's <code>buckets/.../r
 it returns <code>405</code> to a cross-origin browser <code>GET</code> even though it serves the
 <code>rete</code> CLI fine (the CLI sends no <code>Origin</code>). The bytes themselves are reachable
 — the resolved signed CDN URL answers <code>206</code> to the browser — but the <code>resolve</code>
-hop refuses browser requests, so the lazy backends can't follow it. A client should probe its data URL on load and surface a clear banner when the
+hop refuses browser requests, so the lazy backends can't follow it. A client
+should probe its data URL on load and surface a clear banner when the
 host isn't browser-reachable; point at a CORS-enabled direct host to light up
 the remote backends.</p>
+<p><strong>Production catalog contract.</strong> Playground datasets are served directly from
+<code>https://data.graphplaza.com</code> (Cloudflare R2), one folder per dataset, without a
+redirect or token. Every published <code>.rete</code> must use stable format generation 1
+(header byte <code>0x05</code>) and expose <code>Content-Range</code>, <code>Content-Length</code>,
+<code>Accept-Ranges</code>, and <code>ETag</code> to CORS callers. <code>web/datasets.lock.json</code> pins each
+catalog object's size, content hash, and format byte. Run
+<code>uv run python scripts/check_dataset_catalog.py --all</code> before a release to probe
+all URLs with a browser-style Range request and verify the lock.</p>
 <p><strong>Parallel range reads (opt-in).</strong> Sequential synchronous XHR serialises a
 query's round trips. With cross-origin isolation the explorer can read the
 faulted ranges in parallel: a pool of fetch workers pulls them (each a

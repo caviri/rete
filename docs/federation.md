@@ -167,12 +167,12 @@ rete federate data/opencitations/cites-2017.rete data/opencitations/cites-2024.r
 
 ### URL sources
 
-Sources may be `http(s)://` URLs of `.rete` files hosted on S3, GitHub, or any
-CDN that honors HTTP **Range** requests — mix them with local paths freely:
+Sources may be `http(s)://` URLs of `.rete` files hosted on R2, S3, or any
+direct origin that honors HTTP **Range** requests — mix them with local paths freely:
 
 ```sh
 rete federate \
-  https://example.org/cites-2021.rete \
+  https://data.graphplaza.com/worldcup2026/worldcup2026.rete \
   data/opencitations/cites-2024.rete \
   --query 'SELECT ?citing WHERE { ?citing <http://purl.org/spar/cito/cites>
                                           <https://doi.org/10.1038/s41586-021-03819-2> }'
@@ -180,6 +180,9 @@ rete federate \
 
 Each URL is opened with range reads (header → dictionary → index → pyramid),
 never a full download both routing and evaluation fetch only the bytes they need.
+The release catalog pins its public R2 objects in `web/datasets.lock.json`; the
+catalog audit also verifies that every shard is stable format generation 1 and
+exposes `Content-Range` to browser CORS callers.
 
 ## In the playground
 

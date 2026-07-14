@@ -371,16 +371,19 @@ which is the common federation case.</p>
 # → true   (at least one shard has a citation)
 </code></pre>
 <h3>URL sources</h3>
-<p>Sources may be <code>http(s)://</code> URLs of <code>.rete</code> files hosted on S3, GitHub, or any
-CDN that honors HTTP <strong>Range</strong> requests — mix them with local paths freely:</p>
+<p>Sources may be <code>http(s)://</code> URLs of <code>.rete</code> files hosted on R2, S3, or any
+direct origin that honors HTTP <strong>Range</strong> requests — mix them with local paths freely:</p>
 <pre><code class="language-sh">rete federate \
-  https://example.org/cites-2021.rete \
+  https://data.graphplaza.com/worldcup2026/worldcup2026.rete \
   data/opencitations/cites-2024.rete \
   --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
                                           &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; }'
 </code></pre>
 <p>Each URL is opened with range reads (header → dictionary → index → pyramid),
-never a full download both routing and evaluation fetch only the bytes they need.</p>
+never a full download both routing and evaluation fetch only the bytes they need.
+The release catalog pins its public R2 objects in <code>web/datasets.lock.json</code>; the
+catalog audit also verifies that every shard is stable format generation 1 and
+exposes <code>Content-Range</code> to browser CORS callers.</p>
 <h2>In the playground</h2>
 <p>The <a href="playground.html">playground</a> brings the same federation to the browser:
 <strong>federation is a kind of SPARQL</strong>, so it lives in the SPARQL console rather than

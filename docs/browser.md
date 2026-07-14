@@ -179,9 +179,19 @@ works. What does **not** work is Hugging Face's `buckets/.../resolve` endpoint:
 it returns `405` to a cross-origin browser `GET` even though it serves the
 `rete` CLI fine (the CLI sends no `Origin`). The bytes themselves are reachable
 — the resolved signed CDN URL answers `206` to the browser — but the `resolve`
-hop refuses browser requests, so the lazy backends can't follow it. A client should probe its data URL on load and surface a clear banner when the
+hop refuses browser requests, so the lazy backends can't follow it. A client
+should probe its data URL on load and surface a clear banner when the
 host isn't browser-reachable; point at a CORS-enabled direct host to light up
 the remote backends.
+
+**Production catalog contract.** Playground datasets are served directly from
+`https://data.graphplaza.com` (Cloudflare R2), one folder per dataset, without a
+redirect or token. Every published `.rete` must use stable format generation 1
+(header byte `0x05`) and expose `Content-Range`, `Content-Length`,
+`Accept-Ranges`, and `ETag` to CORS callers. `web/datasets.lock.json` pins each
+catalog object's size, content hash, and format byte. Run
+`uv run python scripts/check_dataset_catalog.py --all` before a release to probe
+all URLs with a browser-style Range request and verify the lock.
 
 **Parallel range reads (opt-in).** Sequential synchronous XHR serialises a
 query's round trips. With cross-origin isolation the explorer can read the

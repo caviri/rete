@@ -242,7 +242,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 <p>A worked end-to-end example: publish a software <strong>dependency graph</strong> (an
 SBOM-style slice) as a single <code>.rete</code> file, then answer <em>"what is impacted by this
 CVE?"</em> — over HTTP, fetching only the bytes the query needs, with no database.</p>
-<p>The data (<a href="../examples/deps.nt"><code>examples/deps.nt</code></a>) models packages, their kind
+<p>The data (<a href="https://github.com/caviri/rete/blob/main/examples/deps.nt"><code>examples/deps.nt</code></a>) models packages, their kind
 (<code>rdf:type Application</code>/<code>Library</code>), <code>dependsOn</code> edges, and a vulnerable package:</p>
 <pre><code>&lt;http://ex/app&gt;     dependsOn  &lt;http://ex/web&gt;, &lt;http://ex/auth&gt;
 &lt;http://ex/web&gt;     dependsOn  &lt;http://ex/logging&gt;

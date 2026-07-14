@@ -4,7 +4,7 @@ A worked end-to-end example: publish a software **dependency graph** (an
 SBOM-style slice) as a single `.rete` file, then answer *"what is impacted by this
 CVE?"* — over HTTP, fetching only the bytes the query needs, with no database.
 
-The data ([`examples/deps.nt`](../examples/deps.nt)) models packages, their kind
+The data ([`examples/deps.nt`](https://github.com/caviri/rete/blob/main/examples/deps.nt)) models packages, their kind
 (`rdf:type Application`/`Library`), `dependsOn` edges, and a vulnerable package:
 
 ```

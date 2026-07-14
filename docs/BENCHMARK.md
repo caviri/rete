@@ -15,7 +15,7 @@ Synthetic social graph, **139,093 triples** (20k people in ~200 communities,
 | **`.rete`** (zstd + pyramid summary) | 1,302,792 | **6.4×** |
 
 `.rete` is ~2.3× the size of `gzip` while being *queryable in place and over HTTP
-ranges* (gzip answers no query without a full download + scan). As of format v0.4
+ranges* (gzip answers no query without a full download + scan). Stable format generation 1
 it stores all **six** permutation indexes (SPO/POS/OSP/SOP/PSO/OPS) — each triple
 stored 6× — plus the dictionary and the small pyramid summary; that is what roughly
 doubled the file versus the earlier three-permutation v0.3 (715,959 bytes), and the
@@ -92,7 +92,7 @@ bounded WASM heap the 670 MiB peak was an OOM risk for big results.
 ## Query latency (end-to-end: open + decompress + evaluate)
 
 5-run averages of the compiled binary in the dev container (includes process
-startup each run; format v0.4, six permutations).
+startup each run; stable format generation 1, six permutations).
 
 | Query | Time |
 |---|--:|
@@ -301,7 +301,7 @@ Reading the times honestly:
   star/snowflake's trailing `?x rdf:type C` checks cost a few lookups,
   not a full-extent scan), and never seeds a join from a class
   enumeration — together cutting the LUBM snowflakes Q4 ~14x and Q7
-  ~12x. The index stores all six permutations (format v0.4), so any
+  ~12x. The index stores all six permutations (stable format generation 1), so any
   join key can be streamed pre-sorted for a sort-merge join; at these
   sizes the hash/probe joins already win, so the merge path is neutral
   here — it pays off at much larger scale, for ~2x the index payload.

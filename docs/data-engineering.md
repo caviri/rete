@@ -103,9 +103,10 @@ SPARQL view over a columnar source**.
 And rete's companions are already **VKG-ready**: the `_manifest.parquet` beside
 each one records the column → predicate map (and class IRI → table) — *exactly the
 R2RML mapping a VKG needs, generated for free*. So because the companions are
-range-readable HF objects, a VKG can `ATTACH` them in place: a single Ontop/DuckDB
-endpoint over *every* Parquet in the HF bucket — driven by the manifests — is a
-"knowledge graph over all of HF" with no download and no `.rete`: the federated,
+range-readable R2 objects, a VKG can `ATTACH` them in place: a single Ontop/DuckDB
+endpoint over *every* Parquet in the R2 collection — driven by the manifests — is a
+virtual knowledge graph over all published companions with no full download and
+no `.rete`: the federated,
 virtual mirror of rete's materialized file. (Materializing the same thing is also
 mechanical: the entity tables are lossless, so reconstruct each → merge, or build
 per-dataset `.rete` and `rete federate` across them.)

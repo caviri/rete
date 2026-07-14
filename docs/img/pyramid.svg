@@ -42,8 +42,8 @@
       <circle cx="475" cy="360" r="5"/><circle cx="220" cy="345" r="5"/><circle cx="270" cy="400" r="5"/>
     </g>
   </g>
-  <text x="552" y="318" font-size="13" font-weight="700" fill="#1b1f24">Level 0 — full triples</text>
-  <text x="552" y="336" font-size="12" fill="#5b6570">every node &amp; edge, the whole graph</text>
+  <text x="500" y="318" font-size="13" font-weight="700" fill="#1b1f24">Level 0 — full triples</text>
+  <text x="500" y="336" font-size="12" fill="#5b6570">every node &amp; edge, the whole graph</text>
 
   <!-- Right arrow: overview first -> drill down -->
   <defs>

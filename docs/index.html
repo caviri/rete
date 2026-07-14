@@ -240,7 +240,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
       <article class="content">
 <h1>rete</h1>
 <p><strong>A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server.</strong></p>
-<p><a href="https://github.com/caviri/rete"><code>github.com/caviri/rete</code></a> · crate <strong>v0.1.0</strong> · on-disk format <strong>v0.4</strong> (clean break — rebuild older files)</p>
+<p><a href="https://github.com/caviri/rete"><code>github.com/caviri/rete</code></a> · crates <strong>v1.0.0-rc.1</strong> · stable file-format generation <strong>1</strong> (<code>0x05</code>)</p>
 <p><code>rete</code> packs an RDF graph (or a full dataset of named graphs) into one immutable
 <code>.rete</code> file with its own dictionary, permutation indexes, and a pyramidal
 community summary. Drop the file on S3, GitHub, or any HTTP host that honors
@@ -334,9 +334,12 @@ rete schema  social.rete    # semantic (by rdf:type)
 </ul>
 <h2>Version &amp; status</h2>
 <p>Developed in the open at <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>.
-The crates are <strong>v0.1.0</strong> (experimental); the on-disk format is <strong>v0.4</strong>, and each
-version step is a clean break (readers accept only the current version), so rebuild
-older files. The format is not yet stable across versions.
+The crates are <strong>v1.0.0-rc.1</strong>. Stable file-format generation 1 (header byte
+<code>0x05</code>) is the compatibility baseline for Rete 1.x. Stable readers keep reading
+it; a future incompatible layout must retain generation-1 read support and ship
+a documented migration path. Pre-1.0 experimental files must be rebuilt from
+RDF source. The public Rust, CLI, and WASM APIs remain release candidates until
+1.0.0 final.
 Everything is built and tested in Docker — see
 <a href="getting-started.html">Getting started</a>.</p>
 

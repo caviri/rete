@@ -251,7 +251,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 <tr><td><strong><code>.rete</code></strong> (zstd + pyramid summary)</td><td style="text-align: right">1,302,792</td><td style="text-align: right"><strong>6.4×</strong></td></tr>
 </tbody></table>
 <p><code>.rete</code> is ~2.3× the size of <code>gzip</code> while being <em>queryable in place and over HTTP
-ranges</em> (gzip answers no query without a full download + scan). As of format v0.4
+ranges</em> (gzip answers no query without a full download + scan). Stable format generation 1
 it stores all <strong>six</strong> permutation indexes (SPO/POS/OSP/SOP/PSO/OPS) — each triple
 stored 6× — plus the dictionary and the small pyramid summary; that is what roughly
 doubled the file versus the earlier three-permutation v0.3 (715,959 bytes), and the
@@ -310,7 +310,7 @@ escaping to <code>serde_json</code>). For reference the query itself (<code>eval
 bounded WASM heap the 670 MiB peak was an OOM risk for big results.</p>
 <h2>Query latency (end-to-end: open + decompress + evaluate)</h2>
 <p>5-run averages of the compiled binary in the dev container (includes process
-startup each run; format v0.4, six permutations).</p>
+startup each run; stable format generation 1, six permutations).</p>
 <table><thead><tr><th>Query</th><th style="text-align: right">Time</th></tr></thead><tbody>
 <tr><td>triple pattern (<code>?s knows p100</code>)</td><td style="text-align: right">33 ms</td></tr>
 <tr><td>2-hop BGP join (<code>p0 knows ?y . ?y knows ?z</code>)</td><td style="text-align: right">39 ms</td></tr>
@@ -488,7 +488,7 @@ probes mid-join once the running intermediate is small (so a
 star/snowflake's trailing <code>?x rdf:type C</code> checks cost a few lookups,
 not a full-extent scan), and never seeds a join from a class
 enumeration — together cutting the LUBM snowflakes Q4 ~14x and Q7
-~12x. The index stores all six permutations (format v0.4), so any
+~12x. The index stores all six permutations (stable format generation 1), so any
 join key can be streamed pre-sorted for a sort-merge join; at these
 sizes the hash/probe joins already win, so the merge path is neutral
 here — it pays off at much larger scale, for ~2x the index payload.</li>

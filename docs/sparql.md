@@ -35,7 +35,12 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 | **RDF-star** | Quoted triples `<< s p o >>` in subject/object position — ingest (N-Triples-star & Turtle-star), storage, and SPARQL-star: quoted-triple patterns (incl. inner variables `<< ?s :p ?o >>`) and the `isTRIPLE` / `TRIPLE` / `SUBJECT` / `PREDICATE` / `OBJECT` built-ins. See [below](#rdf-star). |
 | **Reasoning (OWL 2 QL)** | Opt-in ontology-mediated answering by **query rewriting** — no materialization: `rdfs:subClassOf` / `subPropertyOf` hierarchy + `rdfs:domain` / `range` type inference, computed over the raw data. `rete sparql … --entail`, or the playground **🧠 Reason** toggle. See [below](#reasoning-owl-2-ql). |
 
-### Property-path zero-length semantics
+## Property paths
+
+Property paths are evaluated goal-directed from a bound endpoint and support
+`p+`, `p*`, `p?`, reverse `^p`, sequence `a/b`, and alternative `a|b`.
+
+### Zero-length semantics
 
 `*` and `?` include the zero-length path (a node reaches itself); `+` does not.
 This holds in every binding direction:

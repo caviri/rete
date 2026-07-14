@@ -3,7 +3,7 @@
 ## Everything runs in Docker
 
 `rete` is developed and built **entirely inside a container** — nothing runs on
-the host. The dev container ([`.devcontainer/`](../.devcontainer)) carries the
+the host. The dev container ([`.devcontainer/`](https://github.com/caviri/rete/tree/main/.devcontainer)) carries the
 Rust 1.92 toolchain, rustfmt, clippy, Python, the `wasm32-unknown-unknown`
 target, and `wasm-pack`.
 

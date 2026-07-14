@@ -239,7 +239,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1>Rete — a cloud-native, range-queryable RDF graph file</h1>
-<p><strong>Status:</strong> Format <strong>v0.4</strong>, implemented (draft — each version step is a clean break; readers accept only the current version) · <strong>File extension:</strong> <code>.rete</code> · <strong>Magic:</strong> <code>RETE\x01</code></p>
+<p><strong>Status:</strong> Stable format generation <strong>1</strong>, implemented (header byte <code>0x05</code>; Rete 1.x compatibility baseline) · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
 <blockquote>
 <p>One file. Put it on S3, GitHub, or any HTTP server that honors <code>Range</code>.
 Give a client the URL. Run SPARQL. No database server.</p>
@@ -297,7 +297,8 @@ aggregated edges). Each deeper level expands supernodes into their members.</li>
 </ol>
 <hr />
 <h2>4. File layout</h2>
-<p>The v0.4 on-disk layout (what <code>write_file</code>/<code>write_dataset</code> actually emit). The
+<p>The stable generation-1 on-disk layout (what <code>write_file</code>/<code>write_dataset</code>
+actually emit). The
 header is the directory: it carries the absolute offset+length of every section, so a
 client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.</p>

@@ -30,7 +30,8 @@ inputs and outputs rather than reimplement engine logic.
    IDs instead of repeated strings.
 3. Build six permutation indexes over the default graph: SPO, POS, OSP, SOP,
    PSO, and OPS. Three suffice to match any pattern shape; the full six let any
-   join key be streamed pre-sorted, enabling sort-merge joins (format v0.4).
+   join key be streamed pre-sorted, enabling sort-merge joins (stable format
+   generation 1).
 4. Compute the pyramid summary: community hierarchy, super-edges, predicate
    totals, class/type summaries, and named-graph metadata.
 5. Optionally attach dataset-card metadata into the reserved metadata section.
@@ -70,8 +71,9 @@ permutations and the dictionary/permutation sorts already use all cores via
 The header is a fixed 1 KB block: a small core (magic, version, content hash,
 counts, codecs) plus a **typed section directory** of `(kind, offset, length)`
 entries that point at every other section. New top-level sections are added as new
-directory entries, so the format has headroom without a layout break (format
-`v0.4`; readers accept only `v0.4`). Readers validate the header, then decide how
+directory entries, so the format has headroom without a layout break (stable
+generation 1, header byte `0x05`). Stable Rete 1.x readers accept this generation;
+pre-1.0 experimental files must be rebuilt. Readers validate the header, then decide how
 much of the file to load:
 
 | Section | Purpose |

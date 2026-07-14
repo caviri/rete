@@ -1,6 +1,6 @@
 # Rete — a cloud-native, range-queryable RDF graph file
 
-**Status:** Format **v0.4**, implemented (draft — each version step is a clean break; readers accept only the current version) · **File extension:** `.rete` · **Magic:** `RETE\x01`
+**Status:** Stable format generation **1**, implemented (header byte `0x05`; Rete 1.x compatibility baseline) · **File extension:** `.rete` · **Header magic:** `RETE`
 
 > One file. Put it on S3, GitHub, or any HTTP server that honors `Range`.
 > Give a client the URL. Run SPARQL. No database server.
@@ -67,7 +67,8 @@ Three transformations make it range-queryable:
 
 ## 4. File layout
 
-The v0.4 on-disk layout (what `write_file`/`write_dataset` actually emit). The
+The stable generation-1 on-disk layout (what `write_file`/`write_dataset`
+actually emit). The
 header is the directory: it carries the absolute offset+length of every section, so a
 client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.
