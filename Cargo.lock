@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "docgen"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "pulldown-cmark",
 ]
@@ -1116,7 +1116,7 @@ dependencies = [
 
 [[package]]
 name = "rete-cli"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1132,7 +1132,7 @@ dependencies = [
 
 [[package]]
 name = "rete-core"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "blake3",
  "getrandom 0.2.17",
@@ -1154,7 +1154,7 @@ dependencies = [
 
 [[package]]
 name = "rete-wasm"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "js-sys",
  "rete-core",

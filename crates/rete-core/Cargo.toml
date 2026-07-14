@@ -3,8 +3,16 @@ name = "rete-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 rust-version.workspace = true
 description = "Core format types for the Rete cloud-native RDF graph file."
+documentation = "https://docs.rs/rete-core"
+readme = "README.md"
+keywords = ["rdf", "sparql", "graph", "database", "range-queries"]
+categories = ["database", "data-structures", "web-programming"]
+publish = ["crates-io"]
+include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
 thiserror.workspace = true

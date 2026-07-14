@@ -12,11 +12,13 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0-rc.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/caviri/rete"
-rust-version = "1.86"
+homepage = "https://caviri.github.io/rete/"
+readme = "README.md"
+rust-version = "1.87"
 
 [workspace.dependencies]
 # RDF model + SPARQL, reused rather than reinvented (see docs/SPEC.md §2).
