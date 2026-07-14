@@ -30,8 +30,8 @@
       "key": "bcul",
       "url": "https://data.graphplaza.com/bcul/bcul.rete",
       "formatVersion": 5,
-      "contentHash": "d16f9347324f3a7f9630e4c997bd4dee",
-      "size": 1984729973,
+      "contentHash": "542d1eb050524dca2fa2e7a256ee910b",
+      "size": 1984739965,
       "cardUrl": "https://data.graphplaza.com/bcul/bcul.rete"
     },
     {
@@ -417,6 +417,14 @@
       "contentHash": "c0875a9d1081d5fa6102613bf2e9b6f7",
       "size": 1182588,
       "cardUrl": "https://data.graphplaza.com/ustc/ustc.rete"
+    },
+    {
+      "key": "vidy",
+      "url": "https://data.graphplaza.com/vidy/vidy.rete",
+      "formatVersion": 5,
+      "contentHash": "db58b09ebe189f06b86781cd80282003",
+      "size": 4493894,
+      "cardUrl": "https://data.graphplaza.com/vidy/vidy.rete"
     },
     {
       "key": "wikidata",
