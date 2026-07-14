@@ -32,6 +32,7 @@ macro_rules! sh {
 type Triple = (String, String, String);
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ShaclError {
     #[error("failed to parse SHACL shapes Turtle: {0}")]
     Parse(String),
@@ -359,6 +360,7 @@ impl ShaclShapes {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Severity {
     Info,
     Warning,
@@ -398,6 +400,7 @@ pub struct ValidationResult {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[must_use]
 pub struct ValidationReport {
     pub conforms: bool,
     pub results: Vec<ValidationResult>,

@@ -25,7 +25,7 @@ pub(crate) fn progressive(source: &str, query: &str, json: bool) -> anyhow::Resu
     let Some(view) = SummaryView::open_ranged(&reader)? else {
         anyhow::bail!("file has no pyramid summary");
     };
-    let result = summary_result(&view, &shape);
+    let result = summary_result(&view, &shape)?;
 
     if json {
         let mut body = query_output_json(&result);
@@ -33,7 +33,7 @@ pub(crate) fn progressive(source: &str, query: &str, json: bool) -> anyhow::Resu
             .expect("SPARQL result JSON root is an object")
             .insert(
                 "progressive".into(),
-                progressive_meta(&shape, &view, &reader, total),
+                progressive_meta(&shape, &view, &reader, total)?,
             );
         println!("{}", serde_json::to_string_pretty(&body)?);
     } else {
@@ -49,8 +49,8 @@ pub(crate) fn progressive(source: &str, query: &str, json: bool) -> anyhow::Resu
     Ok(())
 }
 
-fn summary_result(view: &SummaryView, shape: &SummaryQueryShape) -> QueryOutput {
-    match shape {
+fn summary_result(view: &SummaryView, shape: &SummaryQueryShape) -> anyhow::Result<QueryOutput> {
+    Ok(match shape {
         SummaryQueryShape::PredicateCount {
             predicate,
             variable,
@@ -116,7 +116,8 @@ fn summary_result(view: &SummaryView, shape: &SummaryQueryShape) -> QueryOutput 
         SummaryQueryShape::PredicateExists { predicate } => {
             QueryOutput::Ask(view.predicate_total(predicate) > 0)
         }
-    }
+        _ => anyhow::bail!("summary query shape is not supported by this CLI build"),
+    })
 }
 
 fn progressive_meta(
@@ -124,8 +125,8 @@ fn progressive_meta(
     view: &SummaryView,
     reader: &CountingReader<RangedSourceReader>,
     file_bytes: u64,
-) -> serde_json::Value {
-    match shape {
+) -> anyhow::Result<serde_json::Value> {
+    Ok(match shape {
         SummaryQueryShape::PredicateCount { predicate, .. } => serde_json::json!({
             "stage": "summary",
             "exact": true,
@@ -198,7 +199,8 @@ fn progressive_meta(
             "requests": reader.requests(),
             "file_bytes": file_bytes,
         }),
-    }
+        _ => anyhow::bail!("summary query shape is not supported by this CLI build"),
+    })
 }
 
 fn summary_total(view: &SummaryView) -> u32 {

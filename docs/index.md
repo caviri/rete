@@ -96,6 +96,7 @@ rete schema  social.rete    # semantic (by rdf:type)
 
 - **[Architecture](architecture.md)** — workspace map, build/read/query pipelines, range model, and extension points.
 - **[Format specification](SPEC.md)** — the on-disk byte layout, for implementers.
+- **[Rust API](rust-api.md)** — the stable `rete-core` facade modules and embedding examples.
 - **[WASM & JavaScript API](browser.md)** — the browser bindings: query, remote reads, caching.
 - **[Parallel in the browser (experimental)](parallel-browser.md)** — Web Worker reachability + shared-memory threads.
 - **[Tables, VKG & big builds](data-engineering.md)** — entity/property tables, virtual knowledge graphs, large ingestions.

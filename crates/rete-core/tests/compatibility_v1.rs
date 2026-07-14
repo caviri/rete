@@ -1,4 +1,4 @@
-use rete_core::{Header, Rete, CURRENT_FORMAT_VERSION, HEADER_LEN};
+use rete_core::format::{Header, Rete, CURRENT_FORMAT_VERSION, HEADER_LEN};
 
 const V1: &[u8] = include_bytes!("fixtures/v1/minimal.rete");
 

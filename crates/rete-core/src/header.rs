@@ -114,6 +114,7 @@ pub struct Section {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum HeaderError {
     #[error("buffer too small: need {HEADER_LEN} bytes, got {0}")]
     TooSmall(usize),

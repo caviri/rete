@@ -2,7 +2,7 @@
 //!
 //! This module is intentionally *not* feature-gated: it has no thread or rayon
 //! dependency, so it compiles to native, `--no-default-features`, and `wasm32`
-//! alike. The optional data-parallel batch variant lives in [`crate::parallel`]
+//! alike. The optional data-parallel batch variant lives in `crate::parallel`
 //! (feature `parallel`) and reuses the shared BFS here, so serial and parallel
 //! results are bit-identical by construction.
 //!
@@ -54,7 +54,7 @@ pub fn reach_one(adj: &HashMap<NodeId, Vec<NodeId>>, seed: NodeId) -> BTreeSet<N
 }
 
 /// Per-seed transitive reach, serial loop (reference). Results are returned in
-/// seed order. The parallel sibling [`crate::parallel::batch_reach_parallel`]
+/// seed order. The parallel sibling `crate::parallel::batch_reach_parallel`
 /// produces an identical result.
 pub fn batch_reach_serial(
     adj: &HashMap<NodeId, Vec<NodeId>>,

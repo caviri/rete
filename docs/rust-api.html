@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Graph data 101 · rete docs</title>
+  <title>Rust API · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -196,7 +196,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
-        <li><a href="intro.html" class="active">Graph data 101</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li class="nav-h">Explore in the browser</li>
@@ -226,7 +226,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Development</li>
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html">Format specification</a></li>
-        <li><a href="rust-api.html">Rust API</a></li>
+        <li><a href="rust-api.html" class="active">Rust API</a></li>
         <li><a href="browser.html">WASM & JavaScript API</a></li>
         <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
         <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
@@ -238,152 +238,102 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Graph data, for dummies</h1>
-<p>A gentle, practical tour of graph/network data formats and standards — with one
-question running through every section: <strong>what kinds of questions does this let
-me ask?</strong> If you've never touched RDF, SPARQL, or Neo4j, start here. By the end
-you'll know the landscape and exactly what you can ask a <code>.rete</code> file.</p>
-<h2>What is a graph (a.k.a. a network)?</h2>
-<figure class="fig-right">
-  <img src="img/graph-vs-table.svg" alt="The same facts shown as a relational table of rows on the left and as a node-link graph on the right, joined by a 'same facts' arrow.">
-  <figcaption>The same facts as rows vs. as a graph. A graph stores the relationships directly, so "who is connected to whom" is a traversal, not a join.</figcaption>
-</figure>
-<p>A graph is just two ingredients:</p>
-<ul>
-<li><strong>Nodes</strong> — the <em>things</em> (a person, a software package, a disease, a web page).</li>
-<li><strong>Edges</strong> — the <em>relationships</em> between things (Alice <em>knows</em> Bob; <code>web</code>
-<em>dependsOn</em> <code>logging</code>; smoking <em>causes</em> cancer).</li>
-</ul>
-<p>That's it. A social network, a software dependency tree, a knowledge base
-(Wikipedia-as-data), an org chart, a causal model — all the same shape: dots and
-lines. The reason this shape is worth a whole family of tools is the <em>kind of
-question it answers naturally</em>, the kind that's painful in a spreadsheet or a
-table:</p>
-<ul>
-<li><strong>Connection:</strong> "Who/what is directly connected to X?" (Alice's friends; the
-direct dependencies of <code>app</code>.)</li>
-<li><strong>Reachability / paths:</strong> "Is there <em>any</em> path from A to B, however long?"
-(Does <code>app</code> transitively depend on the vulnerable <code>log4x</code>?)</li>
-<li><strong>Structure / clusters:</strong> "What groups or communities exist? What's the big
-picture before I zoom in?"</li>
-</ul>
-<p>Tables are great at "all rows where age &gt; 30". Graphs are great at "everything
-reachable from here by following relationships." Hold onto that distinction — it
-explains everything below.</p>
-<h2>Two big families: RDF vs. Labeled Property Graphs</h2>
-<p>There are two dominant ways to <em>write down</em> a graph. They model the same dots and
-lines, but differently.</p>
-<figure class="fig-right">
-  <img src="img/triple.svg" alt="An RDF triple drawn as a node-link: a subject node connected by a labeled predicate arrow to an object node, with a second example pointing to a literal value.">
-  <figcaption>One triple = one fact: <code>subject —predicate→ object</code>. Resources are rounded nodes; literals are boxes. A graph is many triples sharing nodes.</figcaption>
-</figure>
-<p><strong>RDF (Resource Description Framework)</strong> breaks the world into <strong>triples</strong> —
-short statements of the form <code>(subject, predicate, object)</code>:</p>
-<pre><code>&lt;Alice&gt;  &lt;knows&gt;  &lt;Bob&gt;
-&lt;Alice&gt;  &lt;age&gt;    "30"
-</code></pre>
-<p>Everything — including the relationship name (<code>knows</code>) — is a first-class
-<em>resource</em> with a global identifier (an IRI, essentially a URL). It's the W3C web
-standard for sharing data between systems.</p>
-<p><strong>Labeled Property Graphs (LPG)</strong>, the Neo4j model, instead give nodes and edges
-<strong>labels</strong> and bags of <strong>key/value properties</strong>:</p>
-<pre><code>(:Person {name:"Alice", age:30}) -[:KNOWS {since:2019}]-&gt; (:Person {name:"Bob"})
-</code></pre>
-<p>Note that the <em>edge itself</em> carries a property (<code>since:2019</code>) — that's the LPG
-superpower and the main thing plain RDF can't do without extra modeling.</p>
-<table><thead><tr><th></th><th>RDF (triples)</th><th>Labeled Property Graph</th></tr></thead><tbody>
-<tr><td>Atom of data</td><td>A statement <code>(s, p, o)</code></td><td>A node or edge with properties</td></tr>
-<tr><td>Identity</td><td>Global IRIs (web-wide)</td><td>Local node/edge ids</td></tr>
-<tr><td>Edges carry data?</td><td>Not directly (needs reification / RDF-star)</td><td>Yes — properties on edges</td></tr>
-<tr><td>Schema &amp; meaning</td><td>RDFS/OWL (formal, inferable)</td><td>Conventions, mostly app-defined</td></tr>
-<tr><td>Query language</td><td>SPARQL (a W3C standard)</td><td>Cypher / GQL</td></tr>
-<tr><td>Best at</td><td>Sharing, merging, inference across sources</td><td>Rich edges, app-local traversal</td></tr>
+<h1>Rust API</h1>
+<p><code>rete-core</code> is the embeddable Rust implementation of the <code>.rete</code> format. Starting
+with <code>1.0.0-rc.1</code>, its supported SemVer surface is organized into five facade
+modules:</p>
+<table><thead><tr><th>Module</th><th>Supported purpose</th></tr></thead><tbody>
+<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/format/"><code>format</code></a></td><td>Parse RDF, build or open a <code>.rete</code>, inspect its header, and verify the container</td></tr>
+<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/query/"><code>query</code></a></td><td>Evaluate SPARQL and graph patterns, format results, and configure federation</td></tr>
+<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/range/"><code>range</code></a></td><td>Implement byte-range readers and open summary data without loading the full file</td></tr>
+<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/validation/"><code>validation</code></a></td><td>Validate an eager graph or a <code>.rete</code> index with SHACL</td></tr>
+<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/reasoning/"><code>reasoning</code></a></td><td>Run the supported RDFS/OWL rules and inspect schema coherence</td></tr>
 </tbody></table>
-<p><strong><code>rete</code> is RDF.</strong> It is a storage + query format <em>for</em> RDF — not a new model.
-It can also translate a small, read-only <strong>subset of Cypher</strong> into SPARQL so LPG
-folks can ask familiar <code>MATCH … RETURN</code> questions; see
-<a href="compatibility.html">Compatibility &amp; interop</a>.</p>
-<h2>The standards, plainly</h2>
-<p>The RDF world is a stack of standards, each answering a different <em>kind</em> of
-question. Here's the whole map on one page — and what <code>rete</code> does with each.</p>
-<table><thead><tr><th>Standard</th><th>What it's for</th><th>A question it helps answer</th><th>In <code>rete</code>?</th></tr></thead><tbody>
-<tr><td><strong>RDF</strong></td><td>The data model: triples/quads</td><td>"What facts do I have?"</td><td>✅ core — it's RDF</td></tr>
-<tr><td><strong>RDFS</strong></td><td>Lightweight schema: class/property hierarchies</td><td>"If <code>Dog</code> is a <code>subClassOf Animal</code>, is Rex an Animal?"</td><td>✅ via <a href="reasoning.html"><code>rete reason</code></a></td></tr>
-<tr><td><strong>OWL</strong></td><td>Rich schema + meaning: disjointness, identity, transitivity</td><td>"Are these two facts logically <em>contradictory</em>?"</td><td>⚠️ prototype OWL <strong>RL</strong> subset, not full OWL DL — <a href="reasoning.html">reasoning</a></td></tr>
-<tr><td><strong>SPARQL</strong></td><td>The query language for RDF</td><td>"Find everyone Alice transitively knows."</td><td>✅ <a href="sparql.html">SPARQL support</a></td></tr>
-<tr><td><strong>SHACL / ShEx</strong></td><td>Shapes/validation: does data match a required shape?</td><td>"Does every <code>Person</code> have exactly one email?"</td><td>✅ SHACL Core via <a href="shacl.html"><code>rete shacl</code></a>; ShEx not implemented</td></tr>
-<tr><td><strong>N-Triples / N-Quads</strong></td><td>Plainest serialization (one statement per line)</td><td>"How do I hand my triples to a tool, losslessly?"</td><td>✅ build input + N-Quads export</td></tr>
-<tr><td><strong>Turtle</strong></td><td>Human-friendly RDF text format</td><td>"Can I read/write this by hand?"</td><td>✅ build input + export (default graph)</td></tr>
-<tr><td><strong>JSON-LD</strong></td><td>RDF as JSON, for web APIs</td><td>"Can I consume this in a JS app?"</td><td>✅ expanded JSON-LD export (default graph)</td></tr>
-<tr><td><strong>Cypher / GQL</strong></td><td>The property-graph query language(s)</td><td>"<code>MATCH (a)-[:KNOWS]-&gt;(b) RETURN b</code>"</td><td>⚠️ read-only Cypher <em>subset</em>, translated to SPARQL — <a href="compatibility.html">compatibility</a></td></tr>
-</tbody></table>
-<p>Two honest caveats up front: SHACL support targets <strong>SHACL Core</strong> rather than
-SHACL-SPARQL, SHACL-AF, or ShEx, and the reasoner is a <strong>documented OWL RL
-subset</strong>, not a full OWL DL engine. A <code>.rete</code> file itself is immutable by design
-— there is no in-place SPARQL Update; for a <em>living</em> graph, <a href="cli.html"><code>rete serve</code></a>
-runs a small live endpoint that accepts SPARQL Update into a journal while the
-base file stays untouched.</p>
-<h2>What kinds of questions can you actually ask <code>rete</code>?</h2>
-<p>This is the heart of it. Below: a plain-English question → the kind of query it
-is → the concrete <code>rete</code> command. (Examples use the bundled dependency graph,
-<code>examples/deps.nt</code>; build it once with <code>rete build examples/deps.nt -o deps.rete</code>.)</p>
-<table><thead><tr><th>You want to ask…</th><th>Kind of query</th><th>Command</th></tr></thead><tbody>
-<tr><td>"What facts have this predicate?" (a point lookup)</td><td>Triple pattern</td><td><code>rete query</code></td></tr>
-<tr><td>"Find a 2-hop chain / a join across edges"</td><td>Basic Graph Pattern (BGP)</td><td><code>rete bgp</code></td></tr>
-<tr><td>"What transitively depends on / reaches X?"</td><td>Property path (<code>+</code>/<code>*</code>)</td><td><code>rete sparql</code></td></tr>
-<tr><td>"How many edges per node? Top-N by count?"</td><td>Aggregation (<code>GROUP BY</code>)</td><td><code>rete sparql</code></td></tr>
-<tr><td>"What <em>kinds</em> of things exist and how do they relate?"</td><td>Schema / class summary</td><td><code>rete schema</code></td></tr>
-<tr><td>"Give me the big picture first, cheaply"</td><td>Pyramid overview</td><td><code>rete summary</code></td></tr>
-<tr><td>"Is my data logically <em>coherent</em>?"</td><td>Reasoning / coherence</td><td><code>rete reason</code></td></tr>
-</tbody></table>
-<p>A few of these spelled out:</p>
-<p><strong>Fact lookup</strong> — match a single triple pattern; omitted positions are wildcards:</p>
-<pre><code class="language-sh">rete query deps.rete --predicate '&lt;http://ex/hasVulnerability&gt;'
+<p>Use those module paths in application code. The crate retains some hidden root
+exports and implementation namespaces for the other workspace crates, but they
+are not part of the 1.x compatibility contract and may change without a major
+release.</p>
+<h2>Add the release candidate</h2>
+<p>Until the final release, pin the release candidate explicitly:</p>
+<pre><code class="language-toml">[dependencies]
+rete-core = "=1.0.0-rc.1"
 </code></pre>
-<p><strong>Join (BGP)</strong> — chain triple patterns sharing a variable (here, a 2-hop path):</p>
-<pre><code class="language-sh">rete bgp deps.rete "?x &lt;http://ex/dependsOn&gt; ?y . ?y &lt;http://ex/dependsOn&gt; ?z"
+<p>The default feature set supports compressed <code>.rete</code> files. Optional parallel or
+browser-thread features remain experimental; they do not change the five facade
+module names.</p>
+<h2>Build, open, and query</h2>
+<p>The in-memory path is useful for applications that already have RDF text or a
+complete file image:</p>
+<pre><code class="language-rust">use rete_core::format::{assemble_dataset, parse_statements, Rete};
+use rete_core::query::{eval_query, QueryOutput};
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let rdf = "&lt;urn:alice&gt; &lt;urn:knows&gt; &lt;urn:bob&gt; .";
+    let quads = parse_statements(rdf, "nt")?;
+    let (bytes, stats) = assemble_dataset(quads, br#"{"source":"example"}"#);
+    assert_eq!(stats.statements, 1);
+
+    let graph = Rete::open(&amp;bytes)?;
+    match eval_query(&amp;graph, "SELECT ?o WHERE { &lt;urn:alice&gt; &lt;urn:knows&gt; ?o }")? {
+        QueryOutput::Select(vars, rows) =&gt; {
+            assert_eq!(vars, ["o"]);
+            assert_eq!(rows.len(), 1);
+        }
+        _ =&gt; unreachable!("the query is SELECT"),
+    }
+    Ok(())
+}
 </code></pre>
-<p><strong>Reachability / transitive</strong> — the question tables can't answer. The <code>+</code> is a
-<em>property path</em>: follow <code>dependsOn</code> one-or-more times.</p>
-<pre><code class="language-sh">rete sparql deps.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
+<p><code>QueryOutput</code>, public error enums, and other result-shape enums are
+non-exhaustive. Always keep a wildcard arm when matching them; new variants can
+then be added in a compatible 1.x release.</p>
+<h2>Read by byte range</h2>
+<p>Implement <code>RangeReader</code> for a local file, object-store client, or HTTP client.
+Every range must either return exactly the requested bytes or an error; offsets
+from an untrusted remote file must not be used as unchecked slice indexes.</p>
+<pre><code class="language-rust">use rete_core::range::{RangeReader, SliceReader, SummaryView};
+
+fn inspect_summary(bytes: &amp;[u8]) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let reader = SliceReader::new(bytes);
+    let _file_len = reader.len();
+    if let Some(summary) = SummaryView::open_ranged(&amp;reader)? {
+        println!("{} communities", summary.community_count());
+    }
+    Ok(())
+}
 </code></pre>
-<p><strong>Aggregation / counting</strong> — group and count, e.g. each package's out-degree:</p>
-<pre><code class="language-sh">rete sparql deps.rete \
-  "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?d) AS ?deps) WHERE { ?p e:dependsOn ?d } GROUP BY ?p ORDER BY DESC(?deps)"
+<p>Remote readers should preserve HTTP <code>Range</code> semantics. See <a href="hosting.html">Hosting your
+<code>.rete</code></a> for required CORS response headers and <a href="browser.html">WASM &amp; JavaScript
+API</a> for the browser-specific reader.</p>
+<h2>Validate and reason</h2>
+<p>SHACL can operate directly against a <code>.rete</code> index, so a lazy remote graph only
+fetches ranges used by the shapes:</p>
+<pre><code class="language-rust">use rete_core::format::Rete;
+use rete_core::validation::{validate_shacl, ReteGraph, ShaclShapes};
+
+fn validate(bytes: &amp;[u8], shapes_turtle: &amp;str) -&gt; Result&lt;bool, Box&lt;dyn std::error::Error&gt;&gt; {
+    let rete = Rete::open(bytes)?;
+    let shapes = ShaclShapes::parse_turtle(shapes_turtle)?;
+    let report = validate_shacl(&amp;ReteGraph::new(&amp;rete), &amp;shapes);
+    Ok(report.conforms)
+}
 </code></pre>
-<p><strong>"What kinds of things, and how do they relate?"</strong> — the dataset's effective
-schema (classes by <code>rdf:type</code>, plus the class→predicate→class relations), without
-reading the triple index:</p>
-<pre><code class="language-sh">rete schema deps.rete
-</code></pre>
-<p><strong>"Give me the big picture first."</strong> <code>rete</code> stores a <strong>pyramid</strong>: a coarse
-community summary at the top, drilling down to full triples at the base. You read
-the overview first (a few small byte ranges) and zoom in only where a query needs
-it — overview-first, like map tiles for graphs.</p>
-<img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
-<pre><code class="language-sh">rete summary deps.rete   # structural overview (Louvain community quotient graph)
-</code></pre>
-<p><strong>"Is my data coherent?"</strong> — not "is it well-formed" but "does it logically
-contradict itself?" The prototype OWL RL / RDFS reasoner materializes entailments
-(e.g. subclass and transitive-property closures) and flags <strong>incoherent points</strong>
-like an individual typed as two <code>owl:disjointWith</code> classes. It exits non-zero on
-incoherence, so it doubles as a CI gate.</p>
-<pre><code class="language-sh">rete reason deps.rete
-</code></pre>
-<p>(Want plain "is this file valid RDF / not corrupt?" instead? That's <code>rete validate</code> on the source and <code>rete verify</code> on the built file — see
-<a href="compatibility.html">compatibility</a>.)</p>
-<h2>Where <code>rete</code> fits</h2>
-<p><code>rete</code> is a <strong>format + query</strong> layer for RDF that you can drop on a plain URL: no
-database server, no query endpoint. Publish one immutable <code>.rete</code> file to S3, a
-CDN, or a GitHub raw URL, and clients answer the questions above by fetching only
-the byte ranges each query needs — overview (the pyramid) first, detail on
-demand. The model is standard RDF; the queries are standard SPARQL.</p>
-<p>Ready to ask your own questions?</p>
+<p>The reasoning facade exposes the documented ruleset and both eager reasoning
+and reasoned query entry points. It is deliberately a bounded RDFS/OWL profile,
+not a complete OWL reasoner; see <a href="reasoning.html">Reasoning &amp; coherence</a> for the
+supported entailments and inconsistency checks.</p>
+<h2>Compatibility policy</h2>
 <ul>
-<li><strong><a href="getting-started.html">Getting started</a></strong> — install, build a file, run a query.</li>
-<li><strong><a href="scenario.html">Real-world scenario</a></strong> — publish a queryable SBOM to a URL and
-answer "what does this CVE impact?" over plain HTTP.</li>
+<li><code>.rete</code> format compatibility and Rust API compatibility are versioned
+independently. The format byte and read window live in <code>format</code>.</li>
+<li>The five facade modules follow SemVer from <code>1.0.0-rc.1</code> onward. Hidden modules
+and experimental feature-gated APIs do not.</li>
+<li>Public errors and result shapes are non-exhaustive. Treat unfamiliar variants
+as unsupported input or output rather than panicking.</li>
+<li>Rustdoc is built with warnings denied, and release CI compares the facade with
+the previous release using <code>cargo-semver-checks</code>.</li>
 </ul>
+<p>For the byte-level contract, read the <a href="SPEC.html">format specification</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -391,7 +341,7 @@ answer "what does this CVE impact?" over plain HTTP.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/intro.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/rust-api.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

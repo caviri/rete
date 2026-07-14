@@ -325,6 +325,14 @@ fn summary_answer_json(
                 "reads_index": false,
             })
         }
+        (Some(_), Some(_)) => {
+            serde_json::json!({
+                "available": false,
+                "kind": "unknown_summary_shape",
+                "reason": "summary query shape is not supported by this CLI build",
+                "reads_index": false,
+            })
+        }
         (None, Some(shape)) => {
             serde_json::json!({
                 "available": false,
@@ -487,6 +495,7 @@ fn shape_kind(shape: &SummaryQueryShape) -> &'static str {
         SummaryQueryShape::PredicateDistinctCount { .. } => "predicate_distinct_count",
         SummaryQueryShape::TripleExists => "triple_exists",
         SummaryQueryShape::PredicateExists { .. } => "predicate_exists",
+        _ => "unknown_summary_shape",
     }
 }
 

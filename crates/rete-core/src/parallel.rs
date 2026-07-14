@@ -8,8 +8,8 @@
 //! Two honest, correctness-checkable workloads (see `docs/BENCHMARK.md`):
 //!
 //! 1. **Intra-query split across communities + harmonize.** The graph's triples
-//!    are partitioned into per-community [`Tile`]s ([`tile_by_community`] at the
-//!    [`choose_round_for_budget`] round). A decomposable aggregation runs per
+//!    are partitioned into per-community [`Tile`]s (`tile_by_community` at the
+//!    `choose_round_for_budget` round). A decomposable aggregation runs per
 //!    tile in parallel and the partials are *harmonized* (summed / merged):
 //!    - [`count_predicate_serial`] / [`count_predicate_parallel`] — per-tile
 //!      predicate count, summed.

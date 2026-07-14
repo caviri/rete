@@ -73,6 +73,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("architecture.md", "Architecture"),
             ("SPEC.md", "Format specification"),
+            ("rust-api.md", "Rust API"),
             ("browser.md", "WASM & JavaScript API"),
             ("parallel-browser.md", "Parallel in browser (exp.)"),
             ("data-engineering.md", "Tables, VKG & big builds"),

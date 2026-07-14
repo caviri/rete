@@ -592,6 +592,12 @@ pub(crate) fn serve(
                         }
                         respond(req, 200, "application/n-triples", body.into_bytes())
                     }
+                    Ok(_) => respond(
+                        req,
+                        501,
+                        "text/plain",
+                        b"query result kind is not supported by this server build\n".to_vec(),
+                    ),
                     Err(e) => respond(req, 400, "text/plain", format!("{e}\n").into_bytes()),
                 },
                 Err(e) => respond(req, 500, "text/plain", format!("{e}\n").into_bytes()),

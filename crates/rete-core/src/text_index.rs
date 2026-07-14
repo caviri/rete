@@ -29,7 +29,7 @@ use crate::varint::{read_uvarint, write_uvarint};
 const MIN_TOKEN_LEN: usize = 2;
 
 /// Split text into index/query tokens: Unicode-alphanumeric runs, lowercased,
-/// length ≥ [`MIN_TOKEN_LEN`]. The build and query sides MUST use this same
+/// length ≥ `MIN_TOKEN_LEN`. The build and query sides MUST use this same
 /// function so a query word matches how it was indexed.
 pub fn tokenize(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !c.is_alphanumeric())

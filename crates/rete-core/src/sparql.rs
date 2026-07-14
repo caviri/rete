@@ -29,6 +29,7 @@ pub use lower::{parse_select, query_predicates};
 pub(crate) use eval::eval_plan_in;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum SparqlError {
     #[error("parse error: {0}")]
     Parse(String),
@@ -130,6 +131,7 @@ pub enum Agg {
 
 /// A SPARQL graph-pattern evaluation plan (the supported algebra subset).
 #[derive(Debug, Clone)]
+#[must_use]
 pub enum Plan {
     /// Basic graph pattern: triple patterns joined on shared variables.
     Bgp(Vec<TriplePattern>),
@@ -462,6 +464,8 @@ fn compare(op: Op, a: &str, b: &str) -> bool {
 
 /// The result of evaluating any SPARQL query form.
 #[derive(Debug, Clone)]
+#[must_use]
+#[non_exhaustive]
 pub enum QueryOutput {
     /// SELECT: projected variables and their solution rows.
     Select(Vec<String>, Vec<Binding>),
@@ -471,9 +475,11 @@ pub enum QueryOutput {
     Construct(Vec<(String, String, String)>),
 }
 
-/// Query shapes that can be answered exactly from [`SummaryView`] predicate
+/// Query shapes that can be answered exactly from [`crate::range::SummaryView`] predicate
 /// totals, without opening the triple index.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+#[non_exhaustive]
 pub enum SummaryQueryShape {
     /// `SELECT (COUNT(*) AS ?n) WHERE { ?s <p> ?o }`
     PredicateCount { predicate: String, variable: String },
@@ -777,7 +783,7 @@ pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> 
 }
 
 /// Like [`eval_query`], but with **OWL 2 QL entailment** on: the lowered plan is
-/// rewritten (see [`ql`]) so the answer includes ontology-entailed solutions
+/// rewritten by the internal QL lowering pass so the answer includes ontology-entailed solutions
 /// (Stage 1a: `rdfs:subClassOf`), computed over the raw data with no
 /// materialization. Opt-in — a plain [`eval_query`] is byte-identical to before.
 pub fn eval_query_reasoned(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> {

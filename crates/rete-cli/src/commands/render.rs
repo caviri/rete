@@ -34,6 +34,7 @@ pub(crate) fn print_query_output(result: &QueryOutput, json: bool) {
             }
             eprintln!("{} solution(s)", solutions.len());
         }
+        _ => eprintln!("query result kind is not supported by this CLI build"),
     }
 }
 
@@ -79,6 +80,7 @@ pub(crate) fn query_output_json(result: &QueryOutput) -> serde_json::Value {
             let arr: Vec<Value> = triples.iter().map(|(s, p, o)| json!([s, p, o])).collect();
             json!({ "triples": arr })
         }
+        _ => json!({ "error": "query result kind is not supported by this CLI build" }),
     }
 }
 

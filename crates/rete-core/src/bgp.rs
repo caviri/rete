@@ -10,7 +10,7 @@
 //! difference between sub-second and minutes once a pattern binds tens of
 //! thousands of rows. Correctness does not depend on pattern order.
 //!
-//! Solutions are slot [`Row`]s of tagged dictionary ids (see `crate::row`):
+//! Solutions are slot `Row`s of tagged dictionary ids (see `crate::row`):
 //! joins hash and compare integers, and terms are resolved to strings only at
 //! the engine's projection boundary, never per intermediate row.
 

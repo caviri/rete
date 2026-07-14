@@ -335,6 +335,7 @@ pub const CODEC_ZSTD: u8 = 1;
 const ZSTD_LEVEL: i32 = 9;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum FileError {
     #[error("header: {0}")]
     Header(#[from] crate::header::HeaderError),
@@ -2661,6 +2662,7 @@ fn resolve_query_pattern(
 /// just enough dictionary to label predicates. Fetched via ranges *without*
 /// touching the (large) triple index â€” the "load the coarse graph first" path
 /// from SPEC.md Â§7.2.
+#[must_use]
 pub struct SummaryView {
     pub round: u32,
     pub summary: Vec<SuperEdge>,
@@ -4300,7 +4302,7 @@ mod tests {
         let idx_ms = t.elapsed().as_secs_f64() * 1000.0 / reps as f64;
         let t = Instant::now();
         for _ in 0..reps {
-            std::hint::black_box(crate::eval_query(&rete, q).unwrap());
+            let _ = std::hint::black_box(crate::eval_query(&rete, q).unwrap());
         }
         let scan_ms = t.elapsed().as_secs_f64() * 1000.0 / reps as f64;
         println!(
@@ -4366,7 +4368,7 @@ mod tests {
         let idx_ms = t.elapsed().as_secs_f64() * 1000.0 / reps as f64;
         let t = Instant::now();
         for _ in 0..reps {
-            std::hint::black_box(crate::eval_query(&rete, q).unwrap());
+            let _ = std::hint::black_box(crate::eval_query(&rete, q).unwrap());
         }
         let scan_ms = t.elapsed().as_secs_f64() * 1000.0 / reps as f64;
         println!(

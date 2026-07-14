@@ -122,6 +122,7 @@ pub(crate) fn federate(
             QueryOutput::Select(_, rows) => rows.len(),
             QueryOutput::Ask(_) => 1,
             QueryOutput::Construct(ts) => ts.len(),
+            _ => 0,
         }
     );
     if !skipped.is_empty() {
@@ -185,6 +186,10 @@ impl MergeAcc {
                     }
                 }
                 self.construct.len() - before
+            }
+            _ => {
+                eprintln!("warning: query result kind is not supported by this CLI build");
+                0
             }
         }
     }

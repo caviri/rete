@@ -348,7 +348,7 @@ enum Command {
     Bgp {
         /// Path to the `.rete` file.
         file: String,
-        /// The BGP, e.g. "?x <p> ?y . ?y <p> ?z".
+        /// The BGP, e.g. `?x <p> ?y . ?y <p> ?z`.
         query: String,
     },
     /// Run a prototype OWL RL / RDFS reasoner: materialize entailments and flag

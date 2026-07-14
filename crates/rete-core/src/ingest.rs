@@ -25,6 +25,7 @@ pub type RawTriple = (String, String, String);
 pub type RawQuad = (String, String, String, Option<String>);
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum IngestError {
     #[error("line {0}: {1}")]
     Line(usize, &'static str),

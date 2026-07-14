@@ -579,7 +579,7 @@ impl GraphIndex {
             .sum()
     }
 
-    /// The tiles of each permutation section (in [`ALL_PERMS`] order), for the
+    /// The tiles of each permutation section (in `ALL_PERMS` order), for the
     /// file writer.
     pub fn tile_sections(&self) -> [&[Tile]; NUM_PERMS] {
         [

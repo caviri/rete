@@ -61,6 +61,7 @@ pub struct Inconsistency {
 
 /// The result of reasoning over a base graph.
 #[derive(Debug, Clone, Default)]
+#[must_use]
 pub struct Reasoning {
     /// Newly entailed triples (those not already present in the base graph).
     pub inferred: Vec<(String, String, String)>,

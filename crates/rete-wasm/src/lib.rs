@@ -601,6 +601,7 @@ pub fn progressive_query_json(bytes: &[u8], query: &str) -> Result<String, Strin
                 ),
             })
         }
+        _ => return Err("summary query shape is not supported by this WASM build".to_string()),
     };
 
     serde_json::to_string(&value).map_err(|e| e.to_string())
@@ -1627,7 +1628,7 @@ fn reasoning_json(r: &rete_core::Reasoning, remote: Option<(u64, u64, u64)>) -> 
 /// inferred-triple count plus any incoherent points (logical contradictions).
 /// `graph` selects a named graph; the default graph is used when omitted. This is
 /// the complete (Tier-2) check — it materializes the whole graph. Returns the
-/// [`reasoning_json`] envelope (no `remote` block).
+/// `reasoning_json` envelope (no `remote` block).
 #[wasm_bindgen]
 pub fn reason(bytes: &[u8], graph: Option<String>) -> Result<String, JsValue> {
     let rete = open(bytes)?;

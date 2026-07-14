@@ -172,7 +172,7 @@ fn rows(rete: &Rete, q: &str) -> usize {
         Ok(QueryOutput::Select(_, r)) => r.len(),
         Ok(QueryOutput::Ask(b)) => b as usize,
         Ok(QueryOutput::Construct(t)) => t.len(),
-        Err(_) => usize::MAX,
+        Err(_) | Ok(_) => usize::MAX,
     }
 }
 
