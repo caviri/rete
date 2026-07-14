@@ -4017,6 +4017,18 @@ self.onmessage = function (e) {
     return `<td class="iri"><a class="cell-btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
       `title="${esc(t.value)}" data-url="${esc(t.value)}">${esc(label)}</a></td>`;
   }
+  // ---- PDF cells ------------------------------------------------------------
+  // A digitised PDF (e.g. Patrinum's ?v=pdf full document) → a button that opens
+  // the document in the browser's native PDF viewer in a new tab. These PDFs are
+  // CORS-open + HTTP-range, so the browser streams only the pages actually viewed.
+  function looksPdfUrl(v) {
+    return /^https?:\/\//i.test(v) && /\.pdf(\?|#|$)/i.test(String(v).split("#")[0]);
+  }
+  function pdfCell(t) {
+    const url = httpsUpgrade(t.value);
+    return `<td class="iri"><a class="cell-btn pdf-btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
+      `title="${esc(t.value)}" data-url="${esc(t.value)}">📄 PDF ↗</a></td>`;
+  }
   // ---- IIIF cells -----------------------------------------------------------
   // A IIIF *manifest* URL (e.g. biblissima prop:P196 → digi.vatlib.it/…/manifest.json)
   // is not itself an image, but it points at one. Render a placeholder link, then
@@ -4761,6 +4773,7 @@ self.onmessage = function (e) {
       if (looksAudioUrl(t.value)) return audioCell(t);  // a media file → inline player
       if (looksSpinUrl(t.value)) return spinCell(t);    // a pre-rendered turntable → looping spin
       if (looksVideoUrl(t.value)) return videoCell(t);
+      if (looksPdfUrl(t.value)) return pdfCell(t);      // a digitised PDF → native viewer in a new tab
       if (looksWebUrl(t.value)) return linkCell(t);     // a dereferenceable web URL
       return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
     }
@@ -4788,6 +4801,7 @@ self.onmessage = function (e) {
       case "spin": return spinCell(t);
       case "link": return linkCell(t);
       case "button": return buttonCell(t);
+      case "pdf": return pdfCell(t);
       case "number": {
         const n = Number(t.value);
         return `<td class="lit num" title="${esc(raw)}">${esc(isFinite(n) ? String(n) : t.value)}</td>`;
@@ -4802,7 +4816,7 @@ self.onmessage = function (e) {
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"], ["button", "Button"],
-    ["image", "Image"], ["iiif", "IIIF"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
+    ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
