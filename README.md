@@ -115,13 +115,13 @@ Full guide: **[Semantic zoom (schema pyramid)](https://caviri.github.io/rete/sem
 
 ## Quick start
 
-Everything runs **in Docker** (nothing builds on your host):
+Everything runs through the checked-in **Docker Compose/devcontainer** toolchain
+(nothing builds on your host):
 
 ```sh
-# Build the repo dev image once, then build the CLI inside it:
-docker build -t rete-dev -f .devcontainer/Dockerfile .
-docker run --rm -it -v "${PWD}:/work" -w /work rete-dev \
-  cargo build --release -p rete-cli       # binary at target/release/rete
+# Build the canonical image, then build the CLI in the shared target volume:
+docker compose build dev
+docker compose run --rm dev cargo build --release -p rete-cli
 ```
 
 ```sh
@@ -238,11 +238,16 @@ SPARQL 1.1 `SERVICE` calls external endpoints from inside a query.
 ## Develop (Docker only)
 
 ```sh
-cargo test --workspace --exclude rete-bench   # round-trip, robustness, range access, SPARQL
-cargo run -p rete-cli -- info some.rete
-bash scripts/smoke.sh                          # end-to-end test of every CLI subcommand
-uv run python scripts/build_playground.py      # rebuild the offline playground page
+docker compose run --rm dev cargo test --workspace --exclude rete-bench
+docker compose run --rm dev cargo run -p rete-cli -- info some.rete
+docker compose run --rm dev bash scripts/smoke.sh
+docker compose run --rm dev uv run python scripts/build_playground.py
+docker compose run --rm gate                   # full Playwright regression gate
 ```
+
+Open the repository in its devcontainer for an interactive shell backed by the
+same `dev` service. `check`, `wasm`, `wasm-async`, `docs`, and `gate` are named
+Compose services used by local development and release verification.
 
 CI runs fmt, clippy, the test matrix, the CLI smoke test, a query-engine
 regression check (`qbench --check`: per-query row counts + time ceilings), and

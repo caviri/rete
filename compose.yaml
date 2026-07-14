@@ -1,0 +1,73 @@
+name: rete
+
+x-rete-dev: &rete-dev
+  build:
+    context: .
+    dockerfile: .devcontainer/Dockerfile
+  working_dir: /work
+  environment:
+    CARGO_TARGET_DIR: /target
+    CARGO_TERM_COLOR: always
+  volumes:
+    - .:/work
+    - cargo-registry:/usr/local/cargo/registry
+    - cargo-target:/target
+
+services:
+  volume-init:
+    <<: *rete-dev
+    user: root
+    command: ["sh", "-lc", "chown -R 1000:1000 /usr/local/cargo/registry /target"]
+
+  dev:
+    <<: *rete-dev
+    user: vscode
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    command: ["sleep", "infinity"]
+
+  check:
+    <<: *rete-dev
+    user: vscode
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    command: ["bash", "scripts/release_check.sh"]
+
+  docs:
+    <<: *rete-dev
+    user: vscode
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    command: ["python3", "-m", "http.server", "8000", "--directory", "docs"]
+    ports: ["8000:8000"]
+
+  wasm:
+    <<: *rete-dev
+    user: vscode
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    command: ["bash", "scripts/build_wasm.sh"]
+
+  wasm-async:
+    <<: *rete-dev
+    user: vscode
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    command: ["bash", "scripts/build_playground_async.sh"]
+
+  gate:
+    image: mcr.microsoft.com/playwright:v1.49.0-jammy
+    working_dir: /work/tests/gate
+    network_mode: host
+    volumes:
+      - .:/work
+    command: ["bash", "-lc", "npm ci --no-audit --no-fund && node run.mjs"]
+
+volumes:
+  cargo-registry:
+  cargo-target:

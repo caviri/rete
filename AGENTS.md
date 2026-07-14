@@ -33,29 +33,29 @@ static documentation site.
 
 The project is intentionally developed inside the Docker/devcontainer toolchain.
 Do not assume the host machine has a compatible Rust, wasm, zstd, or Python
-setup. Build the repo dev image with `docker build -t rete-dev -f
-.devcontainer/Dockerfile .`, or open the folder in the devcontainer. The base
+setup. Build the repo dev image with `docker compose build dev`, run commands
+with `docker compose run --rm dev ...`, or open the folder in the devcontainer. The base
 `rust:1.92-bookworm` image is not enough on its own because the repo also needs
 the wasm target, `wasm-pack`, rustfmt, clippy, Python, and `uv`.
 
 Useful checks from the repository root:
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --exclude rete-bench --all-targets -- -D warnings
-cargo test --workspace --exclude rete-bench
-cargo test -p rete-core --no-default-features
-cargo build -p rete-core --all-features
-cargo build -p rete-bench
-bash scripts/smoke.sh
+docker compose run --rm dev cargo fmt --all -- --check
+docker compose run --rm dev cargo clippy --workspace --exclude rete-bench --all-targets -- -D warnings
+docker compose run --rm dev cargo test --workspace --exclude rete-bench
+docker compose run --rm dev cargo test -p rete-core --no-default-features
+docker compose run --rm dev cargo build -p rete-core --all-features
+docker compose run --rm dev cargo build -p rete-bench
+docker compose run --rm dev bash scripts/smoke.sh
 ```
 
 For browser bindings:
 
 ```sh
-wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
-wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
-uv run python scripts/build_playground.py
+docker compose run --rm wasm wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
+docker compose run --rm wasm wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
+docker compose run --rm dev uv run python scripts/build_playground.py
 ```
 
 ## Documentation

@@ -25,14 +25,23 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# nightly + rust-src for build-std (the image's default toolchain is stable)
-if ! rustup run nightly true 2>/dev/null; then
-  rustup toolchain install nightly --profile minimal -c rust-src
-  rustup target add wasm32-unknown-unknown --toolchain nightly
-fi
+# Pinned in .devcontainer/Dockerfile. Generation must never install or float a
+# toolchain at runtime: that would make a release depend on the build date.
+ASYNCIFY_TOOLCHAIN="${ASYNCIFY_TOOLCHAIN:-nightly-2026-07-01}"
+command -v node >/dev/null || { echo "node is required (use the devcontainer image)" >&2; exit 1; }
+command -v wasm-opt >/dev/null || { echo "wasm-opt is required (use the devcontainer image)" >&2; exit 1; }
+rustup run "$ASYNCIFY_TOOLCHAIN" rustc --version >/dev/null 2>&1 || {
+  echo "$ASYNCIFY_TOOLCHAIN is required (rebuild the devcontainer image)" >&2
+  exit 1
+}
+rustup target list --toolchain "$ASYNCIFY_TOOLCHAIN" --installed \
+  | grep -qx wasm32-unknown-unknown || {
+    echo "wasm32-unknown-unknown is missing for $ASYNCIFY_TOOLCHAIN" >&2
+    exit 1
+  }
 
 export RUSTFLAGS="-Ctarget-feature=-reference-types"   # NOT -multivalue (see above)
-rustup run nightly wasm-pack build crates/rete-wasm \
+rustup run "$ASYNCIFY_TOOLCHAIN" wasm-pack build crates/rete-wasm \
   --target no-modules --out-dir ../../web/pkg-nomodules-async \
   -- --features asyncify -Z build-std=panic_abort,std
 
