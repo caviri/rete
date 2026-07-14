@@ -282,6 +282,21 @@ impl DatasetCard {
     }
 }
 
+/// The versioned JSON envelope used by the local and remote `card --json`
+/// commands. Embedded metadata remains backward-readable; the CLI contract adds
+/// its schema version at presentation time.
+pub(crate) fn card_json(card: &DatasetCard) -> serde_json::Value {
+    let mut value = serde_json::to_value(card).expect("DatasetCard serializes");
+    value
+        .as_object_mut()
+        .expect("DatasetCard JSON is an object")
+        .insert(
+            "schemaVersion".into(),
+            serde_json::json!(crate::JSON_SCHEMA_VERSION),
+        );
+    value
+}
+
 /// Resolve the curated fields: load `--card-file` (if any), then let explicit
 /// flags override individual fields.
 pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
@@ -1078,7 +1093,7 @@ pub(crate) fn card_cmd(file: &str, json: bool) -> anyhow::Result<()> {
         None => println!("(no dataset card)"),
         Some(card) => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&card)?);
+                println!("{}", serde_json::to_string_pretty(&card_json(&card))?);
             } else {
                 println!("{}", format_card(&card, &hex16(&header.content_hash)));
             }

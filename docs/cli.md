@@ -4,6 +4,11 @@ The `rete` binary (crate `rete-cli`). Run `rete <command> --help` for the
 authoritative flags. Terms are written as canonical N-Triples tokens —
 `<http://ex/Alice>` for an IRI, `"30"` or `"30"^^<…#integer>` for a literal.
 
+Rete-specific `--json` responses carry `"schemaVersion": 1`. This covers
+Dataset Cards, provenance, search, communities, cost, progressive metadata, and
+SHACL reports. Standard SPARQL Results JSON and JSON-LD keep their standard
+shapes and do not add that field.
+
 ## Building
 
 ### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|rdfxml]`
@@ -87,8 +92,9 @@ Recompute the blake3 content hash and compare to the header. Exits non-zero with
 Two modes.
 
 **Label prefix** (default) — the subjects whose label starts with `prefix`
-(case-insensitive), printed as `label<TAB><iri>` (or `[{"label":…,"subject":…}]`
-with `--json`). An empty prefix returns the first `--limit` labels (default 20).
+(case-insensitive), printed as `label<TAB><iri>` (or
+`{"schemaVersion":1,"matches":[{"label":…,"subject":…}]}` with `--json`).
+An empty prefix returns the first `--limit` labels (default 20).
 Answered from a bounded, label-sorted block in the pyramid-meta by binary search
 — **no literal scan** — so it is the fast path for autocomplete (~22× a
 `FILTER(STRSTARTS(LCASE(?l), …))` scan at 6k labels; the gap widens with size).
@@ -99,7 +105,8 @@ is additive — rebuild to add it).
 
 **Full-text** (`--contains <word>…`) — the subjects whose literals contain
 **every** given word (whole-word, case-insensitive — AND), printed one IRI per
-line (or `[{"subject":…}]` with `--json`). `--contains-prefix einst` additionally
+line (or the same versioned `matches` envelope with `{subject}` entries under
+`--json`). `--contains-prefix einst` additionally
 requires a literal word starting with `einst`. Answered from the opt-in
 **TEXT_INDEX** section (`rete build --text-index`); on a remote file only the
 queried words' posting lists are fetched, not the whole index. A file built
@@ -115,8 +122,8 @@ rete search data.rete --contains-prefix einst    # a word starting with "einst�
 ### `rete card <file> [--json]`
 Print the embedded [Dataset Card](dataset-cards.md) — curated metadata
 (title/license/source/…) plus the derived profile (counts, top predicates and
-classes, vocabularies) and the content-hash checksum. `--json` emits the raw
-card. Prints `(no dataset card)` for a file built without one. `rete info` shows
+classes, vocabularies) and the content-hash checksum. `--json` emits the card
+object plus `schemaVersion: 1`. Prints `(no dataset card)` for a file built without one. `rete info` shows
 the same catalog beneath the header when a card is present.
 
 ### `rete graphs <file>`
@@ -149,7 +156,7 @@ Explain the provenance of each triple-pattern result. The command reports the
 matched terms, dictionary IDs, graph scope, the chosen permutation (one of the
 six), and the file byte ranges for the dictionary, full index container, selected
 permutation payload, and pyramid metadata. With `--json`, the same data is
-emitted as stable machine-readable JSON.
+emitted as stable machine-readable JSON with `schemaVersion: 1`.
 
 ```sh
 rete why data.rete --predicate '<http://ex/knows>'
@@ -282,7 +289,7 @@ the triple index:
 rete progressive data.rete "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
 ```
 
-The JSON output is SPARQL Results JSON with an added `progressive` object
+The JSON output is SPARQL Results JSON with `schemaVersion: 1` and an added `progressive` object
 describing the summary stage, exactness, predicate when one is fixed, bytes
 fetched, request count, and `reads_index: false`. Other query shapes fail
 clearly; use `rete sparql` for full-index evaluation or `rete cost --explain` to
@@ -387,8 +394,9 @@ corpus for downstream topic modeling. `--profile` adds a no-ML "topic" profile
 per community (top literal words, `rdf:type` classes, and predicates).
 `--predicate <iri>` detects communities using **only** that relation's edges — a
 criterion-specific partition (see [multi-criteria splitting](multi-criteria.md)).
-`--json` emits `[{community, size, members:[<iri>…], text:[lexical…]}]` (plus a
-`profile` object when `--profile` is set); `--round N` cuts the dendrogram at a
+`--json` emits `{schemaVersion:1, communities:[{community, size,
+members:[<iri>…], text:[lexical…]}]}` (plus a `profile` object on each record
+when `--profile` is set); `--round N` cuts the dendrogram at a
 specific round (default: the round chosen for the tile budget); `--min-size N`
 drops communities with fewer than `N` members. See the
 [topic modeling tutorial](topic-modeling.md).
@@ -490,5 +498,9 @@ rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.r
 
 ## Exit codes
 
-`0` on success; non-zero with a message on error (bad input, missing file,
-corrupt file, a host that ignores `Range`, or an unsupported query construct).
+- `0` — success.
+- `1` — runtime, data, or network failure: malformed RDF, a missing/corrupt or
+  unsupported `.rete`, HTTP failure, ignored `Range`, or unsupported query input.
+- `2` — command-line usage error reported by Clap.
+- `3` — the command completed its requested check, but the graph failed it:
+  SHACL non-conformance or reasoning incoherence.

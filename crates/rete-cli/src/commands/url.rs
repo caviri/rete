@@ -25,7 +25,10 @@ pub(crate) fn card_url(url: &str, json: bool) -> anyhow::Result<()> {
         None => println!("(no dataset card)"),
         Some(dataset_card) => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&dataset_card)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&card::card_json(&dataset_card))?
+                );
             } else {
                 // The content hash is carried in the header we already fetched.
                 let head = reader.read_at(0, HEADER_LEN as u64)?;

@@ -37,5 +37,13 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 # `rete serve` — the minimal synchronous HTTP server behind the SPARQL endpoint
 # (no async runtime; the engine is synchronous anyway).
 tiny_http = "0.12"
+# Graceful Ctrl-C shutdown for `rete serve` (also flushes coverage/profiling data).
+ctrlc = "3"
 # SPARQL *Update* parsing for `rete serve` (queries go through rete-core).
 spargebra.workspace = true
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.20"
+serde_json.workspace = true

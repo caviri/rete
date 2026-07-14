@@ -192,7 +192,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.1.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v1.0.0-rc.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -242,6 +242,10 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 <p>The <code>rete</code> binary (crate <code>rete-cli</code>). Run <code>rete &lt;command&gt; --help</code> for the
 authoritative flags. Terms are written as canonical N-Triples tokens —
 <code>&lt;http://ex/Alice&gt;</code> for an IRI, <code>"30"</code> or <code>"30"^^&lt;…#integer&gt;</code> for a literal.</p>
+<p>Rete-specific <code>--json</code> responses carry <code>"schemaVersion": 1</code>. This covers
+Dataset Cards, provenance, search, communities, cost, progressive metadata, and
+SHACL reports. Standard SPARQL Results JSON and JSON-LD keep their standard
+shapes and do not add that field.</p>
 <h2>Building</h2>
 <h3><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|rdfxml]</code></h3>
 <p>Build a file from one or more RDF inputs, merged under one shared dictionary.
@@ -306,8 +310,9 @@ named-graph count, pyramid levels, and top predicates. Notes the label-index and
 <h3><code>rete search &lt;file&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
 <p>Two modes.</p>
 <p><strong>Label prefix</strong> (default) — the subjects whose label starts with <code>prefix</code>
-(case-insensitive), printed as <code>label&lt;TAB&gt;&lt;iri&gt;</code> (or <code>[{"label":…,"subject":…}]</code>
-with <code>--json</code>). An empty prefix returns the first <code>--limit</code> labels (default 20).
+(case-insensitive), printed as <code>label&lt;TAB&gt;&lt;iri&gt;</code> (or
+<code>{"schemaVersion":1,"matches":[{"label":…,"subject":…}]}</code> with <code>--json</code>).
+An empty prefix returns the first <code>--limit</code> labels (default 20).
 Answered from a bounded, label-sorted block in the pyramid-meta by binary search
 — <strong>no literal scan</strong> — so it is the fast path for autocomplete (~22× a
 <code>FILTER(STRSTARTS(LCASE(?l), …))</code> scan at 6k labels; the gap widens with size).
@@ -317,7 +322,8 @@ labeled subjects. Files built before this feature carry no label index (the bloc
 is additive — rebuild to add it).</p>
 <p><strong>Full-text</strong> (<code>--contains &lt;word&gt;…</code>) — the subjects whose literals contain
 <strong>every</strong> given word (whole-word, case-insensitive — AND), printed one IRI per
-line (or <code>[{"subject":…}]</code> with <code>--json</code>). <code>--contains-prefix einst</code> additionally
+line (or the same versioned <code>matches</code> envelope with <code>{subject}</code> entries under
+<code>--json</code>). <code>--contains-prefix einst</code> additionally
 requires a literal word starting with <code>einst</code>. Answered from the opt-in
 <strong>TEXT_INDEX</strong> section (<code>rete build --text-index</code>); on a remote file only the
 queried words' posting lists are fetched, not the whole index. A file built
@@ -330,8 +336,8 @@ rete search data.rete --contains-prefix einst    # a word starting with "einst�
 <h3><code>rete card &lt;file&gt; [--json]</code></h3>
 <p>Print the embedded <a href="dataset-cards.html">Dataset Card</a> — curated metadata
 (title/license/source/…) plus the derived profile (counts, top predicates and
-classes, vocabularies) and the content-hash checksum. <code>--json</code> emits the raw
-card. Prints <code>(no dataset card)</code> for a file built without one. <code>rete info</code> shows
+classes, vocabularies) and the content-hash checksum. <code>--json</code> emits the card
+object plus <code>schemaVersion: 1</code>. Prints <code>(no dataset card)</code> for a file built without one. <code>rete info</code> shows
 the same catalog beneath the header when a card is present.</p>
 <h3><code>rete graphs &lt;file&gt;</code></h3>
 <p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
@@ -355,7 +361,7 @@ rete export data.rete --format jsonld # expanded JSON-LD
 matched terms, dictionary IDs, graph scope, the chosen permutation (one of the
 six), and the file byte ranges for the dictionary, full index container, selected
 permutation payload, and pyramid metadata. With <code>--json</code>, the same data is
-emitted as stable machine-readable JSON.</p>
+emitted as stable machine-readable JSON with <code>schemaVersion: 1</code>.</p>
 <pre><code class="language-sh">rete why data.rete --predicate '&lt;http://ex/knows&gt;'
 rete why data.rete --subject '&lt;http://ex/Alice&gt;' --json
 </code></pre>
@@ -465,7 +471,7 @@ the triple index:</p>
 </ul>
 <pre><code class="language-sh">rete progressive data.rete "PREFIX e: &lt;http://ex/&gt; SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
 </code></pre>
-<p>The JSON output is SPARQL Results JSON with an added <code>progressive</code> object
+<p>The JSON output is SPARQL Results JSON with <code>schemaVersion: 1</code> and an added <code>progressive</code> object
 describing the summary stage, exactness, predicate when one is fixed, bytes
 fetched, request count, and <code>reads_index: false</code>. Other query shapes fail
 clearly; use <code>rete sparql</code> for full-index evaluation or <code>rete cost --explain</code> to
@@ -550,8 +556,8 @@ corpus for downstream topic modeling. <code>--profile</code> adds a no-ML "topic
 per community (top literal words, <code>rdf:type</code> classes, and predicates).
 <code>--predicate &lt;iri&gt;</code> detects communities using <strong>only</strong> that relation's edges — a
 criterion-specific partition (see <a href="multi-criteria.html">multi-criteria splitting</a>).
-<code>--json</code> emits <code>[{community, size, members:[&lt;iri&gt;…], text:[lexical…]}]</code> (plus a
-<code>profile</code> object when <code>--profile</code> is set); <code>--round N</code> cuts the dendrogram at a
+<code>--json</code> emits <code>{schemaVersion:1, communities:[{community, size, members:[&lt;iri&gt;…], text:[lexical…]}]}</code> (plus a <code>profile</code> object on each record
+when <code>--profile</code> is set); <code>--round N</code> cuts the dendrogram at a
 specific round (default: the round chosen for the tile budget); <code>--min-size N</code>
 drops communities with fewer than <code>N</code> members. See the
 <a href="topic-modeling.html">topic modeling tutorial</a>.</p>
@@ -627,8 +633,14 @@ OpenCitations multi-shard example.</p>
                                           &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'
 </code></pre>
 <h2>Exit codes</h2>
-<p><code>0</code> on success; non-zero with a message on error (bad input, missing file,
-corrupt file, a host that ignores <code>Range</code>, or an unsupported query construct).</p>
+<ul>
+<li><code>0</code> — success.</li>
+<li><code>1</code> — runtime, data, or network failure: malformed RDF, a missing/corrupt or
+unsupported <code>.rete</code>, HTTP failure, ignored <code>Range</code>, or unsupported query input.</li>
+<li><code>2</code> — command-line usage error reported by Clap.</li>
+<li><code>3</code> — the command completed its requested check, but the graph failed it:
+SHACL non-conformance or reasoning incoherence.</li>
+</ul>
 
       </article>
       <aside class="rail" aria-label="On this page">

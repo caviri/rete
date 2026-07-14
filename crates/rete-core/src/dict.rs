@@ -307,7 +307,7 @@ fn chunk_run_offsets(data: &[u8], restart_interval: usize) -> Vec<usize> {
         };
         count += 1;
         pos = next;
-        if pos < data.len() && count % restart_interval == 0 {
+        if pos < data.len() && count.is_multiple_of(restart_interval) {
             offs.push(pos);
         }
     }

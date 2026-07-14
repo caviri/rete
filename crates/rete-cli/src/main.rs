@@ -5,6 +5,9 @@ mod cypher;
 mod http;
 
 use clap::{Parser, Subcommand};
+use std::process::ExitCode;
+
+pub(crate) const JSON_SCHEMA_VERSION: u8 = 1;
 
 #[derive(Parser)]
 #[command(name = "rete", version, about = "Cloud-native RDF graph files")]
@@ -151,8 +154,8 @@ enum Command {
         /// Maximum number of matches to print.
         #[arg(long, default_value_t = 20)]
         limit: usize,
-        /// Emit JSON: prefix mode `[{"label":…,"subject":…}]`; full-text
-        /// `[{"subject":…}]`.
+        /// Emit `{schemaVersion:1,matches:[…]}` JSON. Prefix matches contain
+        /// `label` + `subject`; full-text matches contain `subject`.
         #[arg(long)]
         json: bool,
     },
@@ -279,8 +282,9 @@ enum Command {
     /// subjects and the literal text of its triples — the per-community text
     /// corpus for downstream topic modeling (see `docs/topic-modeling.md`).
     ///
-    /// `--json` emits `[{community, size, members:[<iri>…], text:[lexical…]}]`,
-    /// the corpus an LDA script consumes (`scripts/lda_topics.py`).
+    /// `--json` emits `{schemaVersion:1,communities:[{community, size,
+    /// members:[<iri>…], text:[lexical…]}]}`, the corpus consumed by
+    /// `scripts/lda_topics.py`.
     Communities {
         /// Path to the `.rete` file.
         file: String,
@@ -580,8 +584,55 @@ enum Command {
     },
 }
 
-fn main() -> anyhow::Result<()> {
-    match Cli::parse().command {
+#[derive(Debug)]
+enum CliError {
+    Usage(clap::Error),
+    Runtime(anyhow::Error),
+    NonConformance(anyhow::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(crate) struct NonConformance(String);
+
+impl NonConformance {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(code) => code,
+        Err(CliError::Usage(error)) => {
+            let code = error.exit_code();
+            let _ = error.print();
+            ExitCode::from(code as u8)
+        }
+        Err(CliError::Runtime(error)) => {
+            eprintln!("Error: {error:#}");
+            ExitCode::from(1)
+        }
+        Err(CliError::NonConformance(error)) => {
+            eprintln!("Error: {error:#}");
+            ExitCode::from(3)
+        }
+    }
+}
+
+fn run() -> Result<ExitCode, CliError> {
+    let cli = Cli::try_parse().map_err(CliError::Usage)?;
+    match dispatch(cli.command) {
+        Ok(()) => Ok(ExitCode::SUCCESS),
+        Err(error) if error.downcast_ref::<NonConformance>().is_some() => {
+            Err(CliError::NonConformance(error))
+        }
+        Err(error) => Err(CliError::Runtime(error)),
+    }
+}
+
+fn dispatch(command: Command) -> anyhow::Result<()> {
+    match command {
         Command::Build {
             inputs,
             output,

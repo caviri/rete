@@ -162,9 +162,13 @@ pub(crate) fn communities(
                 obj
             })
             .collect();
+        let body = json!({
+            "schemaVersion": crate::JSON_SCHEMA_VERSION,
+            "communities": Value::Array(arr),
+        });
         println!(
             "{}",
-            serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_default()
+            serde_json::to_string_pretty(&body).unwrap_or_default()
         );
         return Ok(());
     }

@@ -32,6 +32,12 @@ pub(crate) fn progressive(source: &str, query: &str, json: bool) -> anyhow::Resu
         body.as_object_mut()
             .expect("SPARQL result JSON root is an object")
             .insert(
+                "schemaVersion".into(),
+                serde_json::json!(crate::JSON_SCHEMA_VERSION),
+            );
+        body.as_object_mut()
+            .expect("SPARQL result JSON root is an object")
+            .insert(
                 "progressive".into(),
                 progressive_meta(&shape, &view, &reader, total)?,
             );

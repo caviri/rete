@@ -192,7 +192,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.1.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v1.0.0-rc.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -306,10 +306,12 @@ clusters.</p>
 <h2>Step 2 — extract per-community membership + text</h2>
 <pre><code class="language-sh">rete communities papers.rete --json &gt; communities.json
 </code></pre>
-<p>Each element is one community: its <code>members</code> (subject IRIs) and <code>text</code> (the
-lexical values of all literal objects — the topic corpus):</p>
-<pre><code class="language-json">[
-  {
+<p>The versioned envelope contains one record per community: its <code>members</code> (subject
+IRIs) and <code>text</code> (the lexical values of all literal objects — the topic corpus):</p>
+<pre><code class="language-json">{
+  "schemaVersion": 1,
+  "communities": [
+    {
     "community": 0,
     "size": 3,
     "members": ["&lt;http://ex/p1&gt;", "&lt;http://ex/p2&gt;", "&lt;http://ex/p3&gt;"],
@@ -319,9 +321,10 @@ lexical values of all literal objects — the topic corpus):</p>
       "A reinforcement learning agent learns a policy by maximizing reward...",
       ...
     ]
-  },
-  ...
-]
+    },
+    ...
+  ]
+}
 </code></pre>
 <p><code>--round N</code> cuts the dendrogram at a specific round (default: the round chosen
 for the tile budget); <code>--min-size N</code> drops tiny communities. Without <code>--json</code>

@@ -78,10 +78,11 @@ fn emit(report: &ValidationReport, format: &str) {
 
 fn fail_if_nonconforming(report: &ValidationReport) -> anyhow::Result<()> {
     if !report.conforms {
-        anyhow::bail!(
+        return Err(crate::NonConformance::new(format!(
             "SHACL validation failed with {} result(s)",
             report.results.len()
-        );
+        ))
+        .into());
     }
     Ok(())
 }

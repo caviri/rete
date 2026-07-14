@@ -40,10 +40,11 @@ pub(crate) fn reason_cmd(
         for inc in &result.inconsistencies {
             println!("  [{}] {}", inc.kind, inc.detail);
         }
-        anyhow::bail!(
+        return Err(crate::NonConformance::new(format!(
             "{} inconsistency(ies) — graph is incoherent",
             result.inconsistencies.len()
-        );
+        ))
+        .into());
     }
 
     println!("inferred {} new triple(s)", result.inferred.len());
@@ -70,10 +71,11 @@ pub(crate) fn reason_cmd(
     }
 
     if !result.inconsistencies.is_empty() {
-        anyhow::bail!(
+        return Err(crate::NonConformance::new(format!(
             "{} inconsistency(ies) — graph is incoherent",
             result.inconsistencies.len()
-        );
+        ))
+        .into());
     }
     Ok(())
 }

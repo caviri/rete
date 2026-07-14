@@ -51,6 +51,21 @@ fn spawn_server(file: &std::path::Path, port: u16, extra: &[&str]) -> Child {
     panic!("server did not come up on port {port}");
 }
 
+fn stop_server(mut child: Child) {
+    #[cfg(unix)]
+    {
+        let status = Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status()
+            .expect("send SIGINT to rete serve");
+        assert!(status.success());
+    }
+    #[cfg(not(unix))]
+    child.kill().expect("stop rete serve");
+    let status = child.wait().expect("wait for rete serve");
+    assert!(status.success(), "rete serve did not shut down cleanly");
+}
+
 fn select_rows(port: u16, query: &str) -> Vec<rete_core::Binding> {
     let body = ureq::post(&format!("http://127.0.0.1:{port}/sparql"))
         .send_form(&[("query", query)])
@@ -101,7 +116,7 @@ fn build_fixture(name: &str) -> std::path::PathBuf {
 fn serve_query_update_snapshot_and_journal_replay() {
     let file = build_fixture("replay");
     let port = free_port();
-    let mut server = spawn_server(&file, port, &[]);
+    let server = spawn_server(&file, port, &[]);
 
     let all = "SELECT ?s ?n WHERE { ?s <http://ex/name> ?n } ORDER BY ?n";
     assert_eq!(select_rows(port, all).len(), 2);
@@ -162,16 +177,14 @@ fn serve_query_update_snapshot_and_journal_replay() {
     );
 
     // Restart: the journal replays and the updated state survives.
-    server.kill().unwrap();
-    let _ = server.wait();
+    stop_server(server);
     let port2 = free_port();
-    let mut server2 = spawn_server(&file, port2, &[]);
+    let server2 = spawn_server(&file, port2, &[]);
     let rows = select_rows(port2, all);
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().any(|b| b["n"] == "\"Robert\""));
     assert!(!rows.iter().any(|b| b["n"] == "\"Alice\""));
-    server2.kill().unwrap();
-    let _ = server2.wait();
+    stop_server(server2);
 
     let _ = std::fs::remove_file(format!("{}.changes", file.display()));
 }
@@ -183,7 +196,7 @@ fn serve_update_token_guards_writes_not_reads() {
     let journal = temp_path("guarded", "changes");
     let _ = std::fs::remove_file(&journal);
     let port = free_port();
-    let mut server = spawn_server(
+    let server = spawn_server(
         &file,
         port,
         &["--token", "s3cret", "--journal", journal.to_str().unwrap()],
@@ -212,7 +225,6 @@ fn serve_update_token_guards_writes_not_reads() {
     assert_eq!(status, 204);
     assert_eq!(select_rows(port, all).len(), 3);
 
-    server.kill().unwrap();
-    let _ = server.wait();
+    stop_server(server);
     let _ = std::fs::remove_file(&journal);
 }

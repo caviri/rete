@@ -49,6 +49,7 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
 
     if json {
         let mut body = serde_json::json!({
+            "schemaVersion": crate::JSON_SCHEMA_VERSION,
             "source": source,
             "source_kind": source_kind,
             "file_bytes": full.file_bytes,

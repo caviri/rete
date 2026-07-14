@@ -540,7 +540,17 @@ pub(crate) fn serve(
         journal_path.display(),
     );
 
-    for mut req in server.incoming_requests() {
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let signal_running = running.clone();
+    ctrlc::set_handler(move || {
+        signal_running.store(false, std::sync::atomic::Ordering::SeqCst);
+    })
+    .map_err(|error| anyhow::anyhow!("installing Ctrl-C handler: {error}"))?;
+
+    while running.load(std::sync::atomic::Ordering::SeqCst) {
+        let Some(mut req) = server.recv_timeout(std::time::Duration::from_millis(100))? else {
+            continue;
+        };
         let action = match classify(&mut req) {
             Ok(a) => a,
             Err(e) => {

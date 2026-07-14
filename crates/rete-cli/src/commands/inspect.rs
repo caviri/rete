@@ -148,8 +148,8 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
 
 /// Prefix-search the label index: print the subjects whose label starts with
 /// `prefix` (case-insensitive), as `label  <iri>`. Reads the bounded label-index
-/// block in the pyramid-meta — no literal scan. `--json` emits an array of
-/// `{label, subject}`.
+/// block in the pyramid-meta — no literal scan. `--json` emits a versioned
+/// `{schemaVersion, matches:[{label, subject}]}` envelope.
 pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyhow::Result<()> {
     let bytes = std::fs::read(file)?;
     let rete = Rete::open(&bytes)?;
@@ -165,7 +165,11 @@ pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyh
                 )
             })
             .collect();
-        println!("[{}]", items.join(","));
+        println!(
+            "{{\"schemaVersion\":{},\"matches\":[{}]}}",
+            crate::JSON_SCHEMA_VERSION,
+            items.join(",")
+        );
         return Ok(());
     }
     if hits.is_empty() {
@@ -196,7 +200,10 @@ pub(crate) fn search_contains(
     let rete = Rete::open(&bytes)?;
     if !rete.has_text_index() {
         if json {
-            println!("[]");
+            println!(
+                "{{\"schemaVersion\":{},\"matches\":[]}}",
+                crate::JSON_SCHEMA_VERSION
+            );
         } else {
             eprintln!("(this file has no text index — rebuild with `rete build --text-index`)");
         }
@@ -209,7 +216,11 @@ pub(crate) fn search_contains(
             .iter()
             .map(|iri| format!("{{\"subject\":{}}}", json_str(iri)))
             .collect();
-        println!("[{}]", items.join(","));
+        println!(
+            "{{\"schemaVersion\":{},\"matches\":[{}]}}",
+            crate::JSON_SCHEMA_VERSION,
+            items.join(",")
+        );
         return Ok(());
     }
     if hits.is_empty() {

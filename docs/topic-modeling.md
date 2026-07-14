@@ -88,12 +88,14 @@ clusters.
 rete communities papers.rete --json > communities.json
 ```
 
-Each element is one community: its `members` (subject IRIs) and `text` (the
-lexical values of all literal objects — the topic corpus):
+The versioned envelope contains one record per community: its `members` (subject
+IRIs) and `text` (the lexical values of all literal objects — the topic corpus):
 
 ```json
-[
-  {
+{
+  "schemaVersion": 1,
+  "communities": [
+    {
     "community": 0,
     "size": 3,
     "members": ["<http://ex/p1>", "<http://ex/p2>", "<http://ex/p3>"],
@@ -103,9 +105,10 @@ lexical values of all literal objects — the topic corpus):
       "A reinforcement learning agent learns a policy by maximizing reward...",
       ...
     ]
-  },
-  ...
-]
+    },
+    ...
+  ]
+}
 ```
 
 `--round N` cuts the dendrogram at a specific round (default: the round chosen

@@ -425,6 +425,7 @@ impl ValidationReport {
             })
             .collect();
         serde_json::to_string_pretty(&json!({
+            "schemaVersion": 1,
             "conforms": self.conforms,
             "results": results,
         }))

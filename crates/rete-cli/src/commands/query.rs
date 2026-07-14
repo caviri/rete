@@ -108,6 +108,7 @@ pub(crate) fn print_provenance(
 ) -> anyhow::Result<()> {
     if as_json {
         let out = json!({
+            "schemaVersion": crate::JSON_SCHEMA_VERSION,
             "pattern": { "subject": s, "predicate": p, "object": o },
             "result_count": results.len(),
             "results": results.iter().map(provenance_json).collect::<Vec<_>>(),

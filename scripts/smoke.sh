@@ -26,6 +26,20 @@ check() {
   fi
 }
 
+# check_code NAME EXPECTED_CODE EXPECTED_REGEX -- COMMAND...
+check_code() {
+  local name="$1" expected="$2" pat="$3"; shift 3; [ "$1" = "--" ] && shift
+  local out code; out="$("$@" 2>&1)"; code=$?
+  if [ "$code" -eq "$expected" ] && echo "$out" | grep -qE "$pat"; then
+    echo "  ok   $name (exit $code)"
+  else
+    echo "  FAIL $name"
+    echo "       expected exit $expected and /$pat/, got exit $code:"
+    echo "$out" | sed 's/^/         /' | head -5
+    fails=$((fails + 1))
+  fi
+}
+
 # --- fixtures -------------------------------------------------------------
 cat > "$T/g.nt" <<EOF
 <http://ex/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> .
@@ -222,7 +236,7 @@ $B build "$ROOT/examples/papers.nt" -o "$T/papers.rete" >/dev/null
 check "communities human" "community [0-9]+: [0-9]+ members" -- $B communities "$T/papers.rete"
 check "communities json"  '"text"'                          -- $B communities "$T/papers.rete" --json
 # JSON is well-formed and has the documented shape (community/size/members/text).
-check "communities shape" "shape ok" -- bash -c "$B communities '$T/papers.rete' --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert isinstance(d,list) and len(d)>=2; r=d[0]; assert {\"community\",\"size\",\"members\",\"text\"}<=set(r); assert isinstance(r[\"members\"],list) and isinstance(r[\"text\"],list); print(\"shape ok\")'"
+check "communities shape" "shape ok" -- bash -c "$B communities '$T/papers.rete' --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"schemaVersion\"]==1; rows=d[\"communities\"]; assert isinstance(rows,list) and len(rows)>=2; r=rows[0]; assert {\"community\",\"size\",\"members\",\"text\"}<=set(r); assert isinstance(r[\"members\"],list) and isinstance(r[\"text\"],list); print(\"shape ok\")'"
 # Structural topic profile (no ML): each community gets top words/classes/predicates.
 check "communities profile" "topic words" -- $B communities "$T/papers.rete" --profile
 check "communities profile json" '"profile"' -- $B communities "$T/papers.rete" --json --profile
@@ -254,6 +268,12 @@ check "verify tamper"  "FAILED|mismatch"       -- bash -c "$B verify '$T/bad.ret
 # A truncated file must also be rejected without panicking.
 check "verify trunc"   "FAILED|mismatch|Error|malformed" -- bash -c "head -c 80 '$T/g.rete' > '$T/trunc.rete'; $B verify '$T/trunc.rete'; true"
 check "missing file"   "rror|not found|No such"  -- bash -c "$B info '$T/nope.rete'; true"
+
+echo "== exit-code contract =="
+check_code "runtime malformed RDF" 1 "Error|parse|line" -- $B validate "$T/bad.nt"
+check_code "Clap usage"            2 "Usage:"           -- $B build
+check_code "SHACL non-conformance" 3 "conforms.*false|validation failed" -- $B shacl "$T/g.rete" --shapes "$T/person-bad.ttl" --format json
+check_code "reasoning incoherence" 3 "incoherent|disjoint" -- $B reason "$T/causal.rete" --check
 
 echo
 if [ "$fails" -eq 0 ]; then echo "SMOKE OK — all CLI commands behaved"; else echo "SMOKE FAILED: $fails check(s)"; fi

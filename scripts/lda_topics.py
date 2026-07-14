@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """LDA topic modeling over rete-discovered communities.
 
-Consumes the JSON emitted by `rete communities <file> --json`: a list of
-communities, each with a `text` list of literal lexical values. Each community
+Consumes the JSON emitted by `rete communities <file> --json`: a versioned
+object with a `communities` list, each with a `text` list of literal lexical values. Each community
 is treated as ONE document (its text joined). We build a document-term matrix
 (English stopwords) and fit Latent Dirichlet Allocation, then print, per topic,
 its top words; and per community, its dominant topic + a short label.
@@ -29,8 +29,12 @@ def load_communities(path):
     else:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
+    # 1.0 wraps Rete-specific JSON in a versioned envelope. Keep accepting the
+    # pre-1.0 array so saved analysis files remain usable.
+    if isinstance(data, dict) and data.get("schemaVersion") == 1:
+        data = data.get("communities")
     if not isinstance(data, list):
-        sys.exit("error: expected a JSON array of communities")
+        sys.exit("error: expected a communities JSON envelope or legacy array")
     return data
 
 
