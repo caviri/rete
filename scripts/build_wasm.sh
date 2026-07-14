@@ -36,6 +36,7 @@ export RETE_BUILD_STAMP="${RETE_BUILD_STAMP:-$RETE_SOURCE_REVISION}"
 wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg --no-opt
 wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
 bash scripts/build_playground_async.sh
+uv run python scripts/stage_playground_datasets.py
 uv run python scripts/build_playground.py
 mkdir -p tests/gate/.cache
 cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt -o tests/gate/.cache/worldcup2026.rete

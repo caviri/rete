@@ -125,11 +125,22 @@ jobs:
             web/pkg web/pkg-nomodules web/pkg-nomodules-async \
             docs/playground.html docs/rete_wasm.js docs/rete_wasm_bg.wasm \
             docs/rete_wasm_async.js docs/rete_wasm_async.wasm
-      - name: Preserve exact build provenance
+      - name: Preserve exact browser build
         uses: actions/upload-artifact@v7
         with:
           name: wasm-build-${{ github.sha }}
-          path: docs/wasm-build.json
+          path: |
+            web/pkg
+            web/pkg-nomodules
+            web/pkg-nomodules-async
+            docs/playground.html
+            docs/rete_wasm.js
+            docs/rete_wasm_bg.wasm
+            docs/rete_wasm_async.js
+            docs/rete_wasm_async.wasm
+            docs/wasm-build.json
+          if-no-files-found: error
+          retention-days: 1
 
   coverage:
     name: coverage
@@ -153,7 +164,7 @@ jobs:
 
   browser:
     name: browser
-    needs: image
+    needs: [image, wasm]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -162,6 +173,11 @@ jobs:
         with:
           name: ${{ env.RETE_DEV_ARTIFACT }}
           path: /tmp
+      - name: Restore the exact WASM job output
+        uses: actions/download-artifact@v7
+        with:
+          name: wasm-build-${{ github.sha }}
+          path: .
       - run: docker load --input /tmp/rete-dev.tar
       - name: Run local fixtures on PRs and the live R2 matrix on pushes
         run: |
