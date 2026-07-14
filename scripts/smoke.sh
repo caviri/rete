@@ -90,6 +90,22 @@ check "validate bad"   "rror|parse"     -- bash -c "printf 'garbage <<<\n' > '$T
 check "shacl ok"       '"conforms": true' -- $B shacl "$T/g.rete" --shapes "$T/person-ok.ttl" --format json
 check "shacl bad"      "MinCountConstraintComponent" -- bash -c "$B shacl '$T/g.rete' --shapes '$T/person-bad.ttl' --format json; true"
 
+echo "== release support =="
+if $B generate --output "$T/release-docs"; then
+  echo "  ok   generate release docs"
+else
+  echo "  FAIL generate release docs"
+  fails=$((fails + 1))
+fi
+for artifact in rete.bash _rete rete.fish rete.ps1 rete.1; do
+  if [ -s "$T/release-docs/$artifact" ]; then
+    echo "  ok   generated $artifact"
+  else
+    echo "  FAIL generated $artifact"
+    fails=$((fails + 1))
+  fi
+done
+
 echo "== inspect =="
 check "info"       "magic|version|pyramid"        -- $B info "$T/g.rete"
 check "stats"      "triples|terms|predicate"      -- $B stats "$T/g.rete"
