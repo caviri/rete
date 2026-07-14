@@ -76,6 +76,7 @@ fn serialize_via_value(out: &QueryOutput) -> String {
             let arr: Vec<Value> = triples.iter().map(|(s, p, o)| json!([s, p, o])).collect();
             json!({ "kind": "construct", "triples": arr })
         }
+        _ => json!({ "error": "unsupported query result kind" }),
     };
     serde_json::to_string(&v).unwrap()
 }
@@ -94,6 +95,7 @@ pub fn run(path: &str, query: &str) -> Result<()> {
         QueryOutput::Select(_, rows) => format!("SELECT — {} rows", rows.len()),
         QueryOutput::Ask(b) => format!("ASK — {b}"),
         QueryOutput::Construct(t) => format!("CONSTRUCT — {} triples", t.len()),
+        _ => "unsupported query result kind".to_owned(),
     };
     // Confirm the two serializers agree as JSON (key order may differ; compare the
     // parsed values so a refactor can't silently change the payload).

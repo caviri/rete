@@ -193,6 +193,7 @@ fn rete_try(rete: &Rete, q: &str) -> Result<usize, String> {
         Ok(QueryOutput::Select(_, rows)) => Ok(rows.len()),
         Ok(QueryOutput::Ask(b)) => Ok(b as usize),
         Ok(QueryOutput::Construct(t)) => Ok(t.len()),
+        Ok(_) => Err("unsupported query result kind".to_owned()),
         Err(e) => Err(format!("{e}")),
     }
 }
