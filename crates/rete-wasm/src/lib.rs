@@ -12,6 +12,9 @@ use rete_core::{
 };
 use wasm_bindgen::prelude::*;
 
+/// Version of Rete-owned JSON object envelopes exposed by the browser API.
+pub const JSON_SCHEMA_VERSION: u8 = 1;
+
 /// Module init: route Rust panics to `console.error` with their message and
 /// location. In release wasm a panic otherwise aborts as a bare
 /// `RuntimeError: unreachable` with no clue where — this turns that into a
@@ -31,7 +34,7 @@ pub fn info(bytes: &[u8]) -> Result<String, JsValue> {
     let rete = open(bytes)?;
     let h = rete.header();
     Ok(format!(
-        r#"{{"quads":{},"terms":{},"pyramidLevels":{},"namedGraphs":{}}}"#,
+        r#"{{"schemaVersion":1,"quads":{},"terms":{},"pyramidLevels":{},"namedGraphs":{}}}"#,
         h.quad_count,
         h.term_count,
         h.pyramid_levels,
@@ -56,10 +59,9 @@ pub fn graph_names(bytes: &[u8]) -> Result<String, JsValue> {
 /// accepts it; rebuild with `rete build` for a compressed file.
 #[wasm_bindgen]
 pub fn build(text: &str, format: &str) -> Result<Vec<u8>, JsValue> {
-    let quads = rete_core::ingest::parse_statements(text, format)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let quads = rete_core::ingest::parse_statements(text, format).map_err(err)?;
     if quads.is_empty() {
-        return Err(JsValue::from_str(
+        return Err(js_error(
             "no statements parsed (empty input or only comments)",
         ));
     }
@@ -99,7 +101,7 @@ pub fn why_triples(
         predicate.as_deref(),
         object.as_deref(),
     )
-    .map_err(|e| JsValue::from_str(&e))
+    .map_err(js_error)
 }
 
 /// Native-testable implementation for [`why_triples`].
@@ -114,6 +116,7 @@ pub fn why_triples_json(
     let rete = Rete::open(bytes).map_err(|e| e.to_string())?;
     let results = rete.query_with_provenance(subject, predicate, object);
     let out = json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
         "pattern": {
             "subject": subject,
             "predicate": predicate,
@@ -144,6 +147,7 @@ pub fn schema(bytes: &[u8]) -> Result<String, JsValue> {
     let classes = schema_classes(&rete);
     let relations = schema_summary(&rete);
     serde_json::to_string(&serde_json::json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
         "classes": classes,
         "relations": relations,
     }))
@@ -161,13 +165,18 @@ pub fn schema_packed(bytes: &[u8]) -> Result<String, JsValue> {
     use serde_json::json;
     let (classes, relations) = rete_core::read_schema_summary_ranged(&SliceReader::new(bytes))
         .map_err(err)?
-        .ok_or_else(|| JsValue::from_str("file has no schema pyramid"))?;
+        .ok_or_else(|| js_error("file has no schema pyramid"))?;
     let classes: Vec<serde_json::Value> = classes.iter().map(|(c, n)| json!([c, n])).collect();
     let relations: Vec<serde_json::Value> = relations
         .iter()
         .map(|(s, p, o, n)| json!([s, p, o, n]))
         .collect();
-    Ok(json!({ "classes": classes, "relations": relations }).to_string())
+    Ok(json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
+        "classes": classes,
+        "relations": relations,
+    })
+    .to_string())
 }
 
 /// A `.rete` opened **once** and kept resident, so a client (the playground's
@@ -198,7 +207,7 @@ impl Graph {
     pub fn info(&self) -> String {
         let h = self.rete.header();
         format!(
-            r#"{{"quads":{},"terms":{},"pyramidLevels":{},"namedGraphs":{}}}"#,
+            r#"{{"schemaVersion":1,"quads":{},"terms":{},"pyramidLevels":{},"namedGraphs":{}}}"#,
             h.quad_count,
             h.term_count,
             h.pyramid_levels,
@@ -264,6 +273,7 @@ impl Graph {
             object.as_deref(),
         );
         let out = json!({
+            "schemaVersion": JSON_SCHEMA_VERSION,
             "pattern": { "subject": subject, "predicate": predicate, "object": object },
             "resultCount": results.len(),
             "results": results.iter().map(provenance_json).collect::<Vec<_>>(),
@@ -275,6 +285,7 @@ impl Graph {
     /// the file carries a pyramid.
     pub fn schema(&self) -> Result<String, JsValue> {
         serde_json::to_string(&serde_json::json!({
+            "schemaVersion": JSON_SCHEMA_VERSION,
             "classes": schema_classes(&self.rete),
             "relations": schema_summary(&self.rete),
         }))
@@ -321,8 +332,12 @@ impl Graph {
             .iter()
             .map(|s| json!({ "kind": s.kind, "label": s.label, "offset": s.offset, "len": s.len }))
             .collect();
-        serde_json::to_string(&json!({ "fileLength": self.file_len, "segments": segments }))
-            .map_err(err)
+        serde_json::to_string(&json!({
+            "schemaVersion": JSON_SCHEMA_VERSION,
+            "fileLength": self.file_len,
+            "segments": segments,
+        }))
+        .map_err(err)
     }
 }
 
@@ -357,7 +372,7 @@ impl RemoteGraph {
     /// query's traffic (a fully cached re-run adds ~0).
     pub fn stats(&self) -> String {
         format!(
-            r#"{{"fileLength":{},"bytes":{},"requests":{}}}"#,
+            r#"{{"schemaVersion":1,"fileLength":{},"bytes":{},"requests":{}}}"#,
             self.reader.len(),
             self.reader.bytes_read(),
             self.reader.requests()
@@ -440,17 +455,17 @@ fn text_search_json(
     serde_json::to_string(&hits).map_err(err)
 }
 
-/// Parse just the 128-byte header and report the byte ranges a *progressive*
+/// Parse the fixed-size header and report the byte ranges a *progressive*
 /// client needs for the overview — the dictionary and the pyramid summary — plus
 /// the (large) index range it can skip. JSON:
 /// `{ "dictOffset","dictLen","pyramidOffset","pyramidLen","indexOffset","indexLen" }`.
-/// The browser fetches bytes 0..128, calls this, then range-fetches only the
+/// The browser fetches bytes `0..HEADER_LEN`, calls this, then range-fetches only the
 /// dict + pyramid — never the index.
 #[wasm_bindgen]
 pub fn header_ranges(head: &[u8]) -> Result<String, JsValue> {
     let h = Header::from_bytes(head).map_err(err)?;
     Ok(format!(
-        r#"{{"dictOffset":{},"dictLen":{},"pyramidOffset":{},"pyramidLen":{},"indexOffset":{},"indexLen":{}}}"#,
+        r#"{{"schemaVersion":1,"dictOffset":{},"dictLen":{},"pyramidOffset":{},"pyramidLen":{},"indexOffset":{},"indexLen":{}}}"#,
         h.dictionary_offset,
         h.dictionary_len,
         h.pyramid_meta_offset,
@@ -470,8 +485,9 @@ pub fn header_ranges(head: &[u8]) -> Result<String, JsValue> {
 pub fn summary_overview(bytes: &[u8]) -> Result<String, JsValue> {
     let view = SummaryView::open_ranged(&SliceReader::new(bytes))
         .map_err(err)?
-        .ok_or_else(|| JsValue::from_str("file has no pyramid summary"))?;
+        .ok_or_else(|| js_error("file has no pyramid summary"))?;
     serde_json::to_string(&serde_json::json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
         "round": view.round,
         "communities": view.community_count(),
         "predicateTotals": view.predicate_totals(),
@@ -484,7 +500,7 @@ pub fn summary_overview(bytes: &[u8]) -> Result<String, JsValue> {
 /// instead of silently falling back to a full scan.
 #[wasm_bindgen]
 pub fn progressive_query(bytes: &[u8], query: &str) -> Result<String, JsValue> {
-    progressive_query_json(bytes, query).map_err(|e| JsValue::from_str(&e))
+    progressive_query_json(bytes, query).map_err(js_error)
 }
 
 /// Native-testable implementation for [`progressive_query`].
@@ -576,6 +592,7 @@ pub fn progressive_query_json(bytes: &[u8], query: &str) -> Result<String, Strin
         SummaryQueryShape::TripleExists => {
             let exists = summary_total(&view) > 0;
             json!({
+                "schemaVersion": JSON_SCHEMA_VERSION,
                 "kind": "ask",
                 "boolean": exists,
                 "progressive": progressive_meta(
@@ -590,6 +607,7 @@ pub fn progressive_query_json(bytes: &[u8], query: &str) -> Result<String, Strin
         SummaryQueryShape::PredicateExists { predicate } => {
             let exists = view.predicate_total(&predicate) > 0;
             json!({
+                "schemaVersion": JSON_SCHEMA_VERSION,
                 "kind": "ask",
                 "boolean": exists,
                 "progressive": progressive_meta(
@@ -698,6 +716,8 @@ fn query_json_opt(
 /// writer); a `CONSTRUCT` requested as Turtle / JSON-LD wraps the rendered text
 /// (those serializers live here).
 fn write_query_json(out: &QueryOutput, format: &str, extra: &str) -> String {
+    let mut versioned_extra = format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}"#);
+    versioned_extra.push_str(extra);
     if let QueryOutput::Construct(triples) = out {
         let text = match format {
             "ttl" => Some(("ttl", to_turtle(triples))),
@@ -709,12 +729,12 @@ fn write_query_json(out: &QueryOutput, format: &str, extra: &str) -> String {
             s.push_str(fmt);
             s.push_str(r#"","text":"#);
             rete_core::push_json_string(&mut s, &text);
-            s.push_str(extra);
+            s.push_str(&versioned_extra);
             s.push('}');
             return s;
         }
     }
-    rete_core::results_envelope_json(out, extra)
+    rete_core::results_envelope_json(out, &versioned_extra)
 }
 
 /// HTTP `Range` reader over **synchronous** XMLHttpRequest — the bridge that
@@ -751,18 +771,119 @@ extern "C" {
     fn rete_file_len(url_ptr: *const u8, url_len: usize, out_ptr: *mut u64) -> usize;
 }
 
+fn checked_async_layout(ranges: &[(u64, u64)]) -> std::io::Result<(Vec<u64>, Vec<u32>, usize)> {
+    let offs: Vec<u64> = ranges.iter().map(|&(offset, _)| offset).collect();
+    let lens: Vec<u32> = ranges
+        .iter()
+        .map(|&(_, len)| {
+            u32::try_from(len).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("range length {len} exceeds the wasm32 u32 length type"),
+                )
+            })
+        })
+        .collect::<std::io::Result<_>>()?;
+    let total = lens.iter().try_fold(0usize, |sum, &len| {
+        sum.checked_add(len as usize).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "range length sum overflow",
+            )
+        })
+    })?;
+    let _total_u32 = u32::try_from(total).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "range response exceeds the wasm32 address space",
+        )
+    })?;
+    Ok((offs, lens, total))
+}
+
+fn split_range_response(
+    ranges: &[(u64, u64)],
+    dst: Vec<u8>,
+    got: usize,
+    source: &str,
+) -> std::io::Result<Vec<Vec<u8>>> {
+    let (_, lens, total) = checked_async_layout(ranges)?;
+    if dst.len() != total {
+        return Err(std::io::Error::other(format!(
+            "async fetch destination has {} bytes, expected {total} for {source}",
+            dst.len()
+        )));
+    }
+    if got != total {
+        return Err(std::io::Error::other(format!(
+            "async fetch returned {got} of {total} bytes for {source}"
+        )));
+    }
+
+    let mut out = Vec::with_capacity(ranges.len());
+    let mut pos = 0usize;
+    for len in lens {
+        let end = pos + len as usize;
+        out.push(dst[pos..end].to_vec());
+        pos = end;
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod async_range_tests {
+    use super::{checked_async_layout, split_range_response};
+
+    #[test]
+    fn rejects_a_range_larger_than_the_wasm32_length_type() {
+        let error = checked_async_layout(&[(0, u64::from(u32::MAX) + 1)]).unwrap_err();
+        assert!(error.to_string().contains("u32"));
+    }
+
+    #[test]
+    fn rejects_a_total_larger_than_the_wasm32_address_space() {
+        let error = checked_async_layout(&[(0, u64::from(u32::MAX)), (0, 1)]).unwrap_err();
+        assert!(error.to_string().contains("address space"));
+    }
+
+    #[test]
+    fn accepts_no_ranges_and_preserves_zero_length_ranges() {
+        let (offs, lens, total) = checked_async_layout(&[]).unwrap();
+        assert!(offs.is_empty());
+        assert!(lens.is_empty());
+        assert_eq!(total, 0);
+
+        let (_, lens, total) = checked_async_layout(&[(7, 0), (9, 0)]).unwrap();
+        assert_eq!(lens, vec![0, 0]);
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn rejects_a_short_javascript_response() {
+        let error = split_range_response(&[(0, 4)], vec![1, 2, 3, 4], 3, "fixture").unwrap_err();
+        assert!(error.to_string().contains("returned 3 of 4 bytes"));
+    }
+}
+
 #[cfg(feature = "asyncify")]
 impl XhrRangeReader {
     /// Fetch all `ranges` through the async import in one suspend/resume, then
     /// split the concatenated bytes back into per-range buffers.
     fn read_ranges_async(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
-        let total: usize = ranges.iter().map(|&(_, l)| l as usize).sum();
+        let (offs, lens, total) = checked_async_layout(ranges)?;
         if total == 0 {
             return Ok(ranges.iter().map(|_| Vec::new()).collect());
         }
-        let offs: Vec<u64> = ranges.iter().map(|&(o, _)| o).collect();
-        let lens: Vec<u32> = ranges.iter().map(|&(_, l)| l as u32).collect();
         let mut dst = vec![0u8; total];
+        if offs.len() != ranges.len() || lens.len() != ranges.len() || dst.len() != total {
+            return Err(std::io::Error::other(
+                "async range layout does not match its allocated buffers",
+            ));
+        }
+        // SAFETY: self.url, offs, and lens own their pointer/length pairs for
+        // this call; dst owns exactly total writable bytes. The imported
+        // function contract writes at most that concatenated length and returns
+        // before any of these allocations leave scope.
         let got = unsafe {
             rete_fetch_ranges(
                 self.url.as_ptr(),
@@ -773,20 +894,8 @@ impl XhrRangeReader {
                 dst.as_mut_ptr(),
             )
         };
-        if got != total {
-            return Err(std::io::Error::other(format!(
-                "async fetch returned {got} of {total} bytes for {}",
-                self.url
-            )));
-        }
+        let out = split_range_response(ranges, dst, got, &self.url)?;
         report_progress(total);
-        let mut out = Vec::with_capacity(ranges.len());
-        let mut pos = 0usize;
-        for &(_, l) in ranges {
-            let end = pos + l as usize;
-            out.push(dst[pos..end].to_vec());
-            pos = end;
-        }
         Ok(out)
     }
 }
@@ -801,16 +910,17 @@ impl XhrRangeReader {
         #[cfg(feature = "asyncify")]
         {
             let mut len: u64 = 0;
+            // SAFETY: url owns url.as_ptr() for exactly url.len() bytes and len
+            // owns one writable u64. The import writes only that value and
+            // returns before either borrowed allocation leaves scope.
             let ok = unsafe { rete_file_len(url.as_ptr(), url.len(), &mut len as *mut u64) };
             if ok == 0 || len == 0 {
-                return Err(JsValue::from_str(&format!(
-                    "could not determine length of {url}"
-                )));
+                return Err(js_error(format!("could not determine length of {url}")));
             }
-            return Ok(Self {
+            Ok(Self {
                 url: url.to_string(),
                 len,
-            });
+            })
         }
         #[cfg(not(feature = "asyncify"))]
         {
@@ -842,7 +952,7 @@ impl XhrRangeReader {
                     Err(e) => last = e,
                 }
             }
-            Err(JsValue::from_str(&last))
+            Err(js_error(last))
         }
     }
 
@@ -914,11 +1024,11 @@ impl RangeReader for XhrRangeReader {
         // Asyncify build: a single read is a 1-range async fetch (suspends).
         #[cfg(feature = "asyncify")]
         {
-            return Ok(self
+            Ok(self
                 .read_ranges_async(&[(offset, len)])?
                 .into_iter()
                 .next()
-                .unwrap());
+                .unwrap())
         }
         #[cfg(not(feature = "asyncify"))]
         {
@@ -926,7 +1036,9 @@ impl RangeReader for XhrRangeReader {
             let xhr = web_sys::XmlHttpRequest::new().map_err(js)?;
             xhr.open_with_async("GET", &self.url, false).map_err(js)?;
             xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
-            let end = offset + len - 1; // HTTP ranges are inclusive
+            let end = offset
+                .checked_add(len - 1)
+                .ok_or_else(|| std::io::Error::other("HTTP range end overflow"))?;
             xhr.set_request_header("Range", &format!("bytes={offset}-{end}"))
                 .map_err(js)?;
             xhr.send().map_err(js)?;
@@ -950,7 +1062,9 @@ impl RangeReader for XhrRangeReader {
                     self.url
                 )));
             }
-            buf.truncate(len as usize);
+            let requested = usize::try_from(len)
+                .map_err(|_| std::io::Error::other("range exceeds wasm32 memory"))?;
+            buf.truncate(requested);
             // Report this fetch to an optional progress hook so a worker can stream
             // live "N requests · M bytes" updates to the UI *during* the otherwise
             // opaque synchronous query (postMessage works mid-sync-call).
@@ -971,22 +1085,15 @@ impl RangeReader for XhrRangeReader {
         // Asyncify build: fetch the whole batch concurrently in one suspend.
         #[cfg(feature = "asyncify")]
         {
-            return self.read_ranges_async(ranges);
+            self.read_ranges_async(ranges)
         }
         #[cfg(not(feature = "asyncify"))]
         {
+            let (_, _, total) = checked_async_layout(ranges)?;
             if ranges.len() > 1 {
                 if let Some(buf) = self.read_many_via_pool(ranges) {
-                    let total: u64 = ranges.iter().map(|&(_, l)| l).sum();
-                    if buf.len() as u64 == total {
-                        let mut out = Vec::with_capacity(ranges.len());
-                        let mut pos = 0usize;
-                        for &(_, l) in ranges {
-                            let end = pos + l as usize;
-                            out.push(buf[pos..end].to_vec());
-                            pos = end;
-                        }
-                        return Ok(out);
+                    if buf.len() == total {
+                        return split_range_response(ranges, buf, total, "globalThis.reteReadMany");
                     }
                 }
             }
@@ -1018,11 +1125,18 @@ impl XhrRangeReader {
             return None;
         }
         let hook = hook.dyn_into::<js_sys::Function>().ok()?;
-        let offs = js_sys::Float64Array::new_with_length(ranges.len() as u32);
-        let lens = js_sys::Float64Array::new_with_length(ranges.len() as u32);
-        for (i, &(o, l)) in ranges.iter().enumerate() {
-            offs.set_index(i as u32, o as f64);
-            lens.set_index(i as u32, l as f64);
+        let (_, checked_lens, _) = checked_async_layout(ranges).ok()?;
+        let count = u32::try_from(ranges.len()).ok()?;
+        let offs = js_sys::Float64Array::new_with_length(count);
+        let lens = js_sys::Float64Array::new_with_length(count);
+        const MAX_SAFE_JS_INTEGER: u64 = (1_u64 << 53) - 1;
+        for (i, (&(offset, _), &len)) in ranges.iter().zip(&checked_lens).enumerate() {
+            if offset > MAX_SAFE_JS_INTEGER {
+                return None;
+            }
+            let index = u32::try_from(i).ok()?;
+            offs.set_index(index, offset as f64);
+            lens.set_index(index, f64::from(len));
         }
         let res = hook
             .call3(&JsValue::NULL, &JsValue::from_str(&self.url), &offs, &lens)
@@ -1126,7 +1240,7 @@ fn open_url(url: &str) -> Result<(std::sync::Arc<CountingReader<XhrRangeReader>>
 /// return a result computed over silently-incomplete data.
 fn incomplete_guard(rete: &Rete, what: &str) -> Result<(), JsValue> {
     if rete.index_incomplete() {
-        return Err(JsValue::from_str(&format!(
+        return Err(js_error(format!(
             "a range fetch failed mid-{what}; refusing to return incomplete results"
         )));
     }
@@ -1149,7 +1263,7 @@ pub fn why_url(
         predicate.as_deref(),
         object.as_deref(),
     )
-    .map_err(|e| JsValue::from_str(&e))?;
+    .map_err(js_error)?;
     incomplete_guard(&rete, "query")?;
     let _ = reader;
     Ok(out)
@@ -1166,6 +1280,7 @@ fn why_triples_rete(
     use serde_json::json;
     let results = rete.query_with_provenance(subject, predicate, object);
     let out = json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
         "pattern": { "subject": subject, "predicate": predicate, "object": object },
         "resultCount": results.len(),
         "results": results.iter().map(provenance_json).collect::<Vec<_>>(),
@@ -1183,7 +1298,7 @@ pub fn sparql_url(url: &str, query: &str, format: &str) -> Result<String, JsValu
     // Evaluate first (this is what faults tiles), then refuse incomplete results.
     let out = eval_query(&rete, query).map_err(err)?;
     if rete.index_incomplete() {
-        return Err(JsValue::from_str(
+        return Err(js_error(
             "a range fetch failed mid-query; refusing to return incomplete results",
         ));
     }
@@ -1252,9 +1367,13 @@ fn query_communities_value(
         .iter()
         .map(|p| json!({ "community": p.community, "subjects": p.subjects, "rows": p.rows }))
         .collect();
-    serde_json::to_string(
-        &json!({ "kind": "select", "vars": vars, "rows": rows, "communities": communities }),
-    )
+    serde_json::to_string(&json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
+        "kind": "select",
+        "vars": vars,
+        "rows": rows,
+        "communities": communities,
+    }))
     .map_err(err)
 }
 
@@ -1270,7 +1389,12 @@ pub fn file_layout(bytes: &[u8]) -> Result<String, JsValue> {
         .iter()
         .map(|s| json!({ "kind": s.kind, "label": s.label, "offset": s.offset, "len": s.len }))
         .collect();
-    serde_json::to_string(&json!({ "fileLength": bytes.len(), "segments": segments })).map_err(err)
+    serde_json::to_string(&json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
+        "fileLength": bytes.len(),
+        "segments": segments,
+    }))
+    .map_err(err)
 }
 
 /// The full community pyramid as a tree — the "cluster of clusters" view.
@@ -1294,7 +1418,12 @@ fn pyramid_tree_value(rete: &Rete) -> Result<String, JsValue> {
     let dend = build_dendrogram(&g);
     let rounds = dend.rounds();
     if rounds == 0 {
-        return serde_json::to_string(&json!({ "rounds": 0, "levels": [] })).map_err(err);
+        return serde_json::to_string(&json!({
+            "schemaVersion": JSON_SCHEMA_VERSION,
+            "rounds": 0,
+            "levels": [],
+        }))
+        .map_err(err);
     }
     let n = g.node_count();
     let mut levels = Vec::with_capacity(rounds);
@@ -1329,7 +1458,12 @@ fn pyramid_tree_value(rete: &Rete) -> Result<String, JsValue> {
             .collect();
         levels.push(level);
     }
-    serde_json::to_string(&json!({ "rounds": rounds, "levels": levels })).map_err(err)
+    serde_json::to_string(&json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
+        "rounds": rounds,
+        "levels": levels,
+    }))
+    .map_err(err)
 }
 
 /// Recompute the Louvain community decomposition and report, per community, its
@@ -1547,7 +1681,7 @@ pub fn shacl_construct_url(
     let triples = match eval_query(&rete, construct).map_err(err)? {
         QueryOutput::Construct(t) => t,
         _ => {
-            return Err(JsValue::from_str(
+            return Err(js_error(
                 "the subset query must be a CONSTRUCT — it builds the subgraph SHACL validates",
             ))
         }
@@ -1610,6 +1744,7 @@ fn reasoning_json(r: &rete_core::Reasoning, remote: Option<(u64, u64, u64)>) -> 
         .map(|i| json!({ "kind": i.kind, "detail": i.detail }))
         .collect();
     let mut v = json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
         "kind": "reasoning",
         "coherent": r.inconsistencies.is_empty(),
         "inferredCount": r.inferred.len(),
@@ -1669,7 +1804,7 @@ pub fn reason_construct_url(url: &str, construct: &str) -> Result<String, JsValu
     let triples =
         match eval_query(&rete, construct).map_err(err)? {
             QueryOutput::Construct(t) => t,
-            _ => return Err(JsValue::from_str(
+            _ => return Err(js_error(
                 "the subset query must be a CONSTRUCT — it builds the subgraph the reasoner checks",
             )),
         };
@@ -1695,6 +1830,7 @@ fn schema_coherence_json(
         .map(|i| json!({ "kind": i.kind, "detail": i.detail }))
         .collect();
     let mut v = json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
         "kind": "schemaCoherence",
         "coherent": points.is_empty(),
         "schemaPoints": schema_points,
@@ -1718,7 +1854,7 @@ fn schema_coherence_json(
 pub fn check_schema(bytes: &[u8]) -> Result<String, JsValue> {
     let points = rete_core::read_schema_coherence_ranged(&SliceReader::new(bytes))
         .map_err(err)?
-        .ok_or_else(|| JsValue::from_str("file has no schema pyramid"))?;
+        .ok_or_else(|| js_error("file has no schema pyramid"))?;
     Ok(schema_coherence_json(&points, None))
 }
 
@@ -1734,7 +1870,7 @@ pub fn check_schema_url(url: &str) -> Result<String, JsValue> {
     let reader = CountingReader::new(XhrRangeReader::open(url)?);
     let points = rete_core::read_schema_coherence_ranged(&reader)
         .map_err(err)?
-        .ok_or_else(|| JsValue::from_str("file has no schema pyramid"))?;
+        .ok_or_else(|| js_error("file has no schema pyramid"))?;
     Ok(schema_coherence_json(
         &points,
         Some((reader.len(), reader.bytes_read(), reader.requests())),
@@ -1751,13 +1887,14 @@ pub fn schema_url(url: &str) -> Result<String, JsValue> {
     let reader = CountingReader::new(XhrRangeReader::open(url)?);
     let (classes, relations) = rete_core::read_schema_summary_ranged(&reader)
         .map_err(err)?
-        .ok_or_else(|| JsValue::from_str("file has no schema pyramid"))?;
+        .ok_or_else(|| js_error("file has no schema pyramid"))?;
     let classes: Vec<serde_json::Value> = classes.iter().map(|(c, n)| json!([c, n])).collect();
     let relations: Vec<serde_json::Value> = relations
         .iter()
         .map(|(s, p, o, n)| json!([s, p, o, n]))
         .collect();
     Ok(json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
         "kind": "schema",
         "classes": classes,
         "relations": relations,
@@ -1916,6 +2053,7 @@ fn select_count_response(
     let mut row = Map::new();
     row.insert(variable.to_string(), Value::String(integer_literal(count)));
     json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
         "kind": "select",
         "vars": [variable],
         "rows": [Value::Object(row)],
@@ -1940,6 +2078,7 @@ fn select_predicate_list_response(
         .collect();
 
     json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
         "kind": "select",
         "vars": [variable],
         "rows": rows,
@@ -1972,6 +2111,7 @@ fn select_predicate_totals_response(
         .collect();
 
     json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
         "kind": "select",
         "vars": [predicate_variable, count_variable],
         "rows": rows,
@@ -2182,5 +2322,9 @@ fn open(bytes: &[u8]) -> Result<Rete, JsValue> {
 }
 
 fn err<E: std::fmt::Display>(e: E) -> JsValue {
-    JsValue::from_str(&e.to_string())
+    js_error(e.to_string())
+}
+
+fn js_error(message: impl AsRef<str>) -> JsValue {
+    js_sys::Error::new(message.as_ref()).into()
 }

@@ -47,3 +47,6 @@ web-sys = { version = "0.3", features = ["XmlHttpRequest", "XmlHttpRequestRespon
 # Threaded variant only (feature = "threads"). 1.3 targets wasm-bindgen 0.2.x,
 # matching the 0.2.122 already pinned in Cargo.lock.
 wasm-bindgen-rayon = { version = "1.3", optional = true }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

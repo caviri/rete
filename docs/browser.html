@@ -243,29 +243,39 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 SPARQL, zstd decode) to WebAssembly, so a web page queries a <code>.rete</code> file
 client-side with no server. <code>web/index.html</code> is a working serverless explorer.</p>
 <h2>Build</h2>
-<pre><code class="language-sh">wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
-wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
-rete build examples/typed.nt -o web/typed.rete   # ontology demo (People &amp; Orgs)
-rete build examples/deps.nt  -o web/deps.rete    # CVE-impact demo (dependsOn+)
-uv run python scripts/build_playground.py
-python3 scripts/range_server.py 8000 web          # open http://localhost:8000
+<pre><code class="language-sh">docker compose build wasm
+docker compose run --rm wasm
 </code></pre>
-<blockquote>
-<p><strong>Build the regular (<code>web</code> / <code>no-modules</code>) wasm in the <code>rete-dev</code> image, NOT
-<code>rete-asyncify</code>.</strong> rete-asyncify ships an old <code>wasm-opt</code> (binaryen v108) that
-rewrites the <code>__wbindgen_externrefs</code> table export onto the wrong table, so the
-page dies at boot with <code>RangeError: WebAssembly.Table.grow(): failed to grow table by 4</code> in <code>__wbindgen_init_externref_table</code>. rete-dev has no <code>wasm-opt</code> on
-PATH, so wasm-pack fetches its own (newer) one and the export stays correct.
-rete-asyncify is only for the asyncify variant (<code>build_playground_async.sh</code>),
-which disables reference-types and so has no externref table to corrupt.</p>
-</blockquote>
+<p>This runs <code>scripts/build_wasm.sh</code>: it builds <code>web/pkg</code>, <code>web/pkg-nomodules</code>, and
+<code>web/pkg-nomodules-async</code> from one checkout, regenerates the playground, and
+writes <a href="wasm-build.json">wasm-build.json</a> with the source revision, pinned tool
+versions, sizes, and SHA-256 digests. The gitignored embedded <code>.rete</code> datasets
+listed in <code>scripts/build_playground.py</code> must already be staged under <code>web/</code>.</p>
+<p>When the checkout is a Windows Git worktree mounted into Linux, pass the
+revision because the worktree's host <code>.git</code> indirection is not visible:</p>
+<pre><code class="language-sh">docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm
+</code></pre>
+<p>The image carries Binaryen v108 for the Asyncify transform. That version
+corrupts modern wasm-bindgen extern-reference tables, so regular <code>web</code> and
+<code>no-modules</code> builds deliberately use <code>wasm-pack --no-opt</code>; Rust's release
+profile still optimizes them. The Asyncify build disables reference types
+before its explicit, pinned Binaryen transform.</p>
 <p>zstd's C encoder isn't used on wasm; decoding uses the pure-Rust <code>ruzstd</code>, so the
 browser reads compressed files fine. <code>rete-wasm</code> depends on <code>rete-core</code> with
 <code>--no-default-features</code>.</p>
-<h2>JS API</h2>
-<p>All functions take the file bytes (<code>Uint8Array</code>) and return JSON strings.</p>
+<h2>Stable JS API</h2>
+<p>The 1.0 stable surface is <code>Graph</code>, <code>RemoteGraph</code>, <code>build</code>, <code>query</code>,
+<code>query_sparql</code>, <code>header_ranges</code>, <code>summary_overview</code>, and the validation and
+reasoning functions documented below. <code>reach_parallel</code> and the <code>threads</code>
+feature are experimental; the Asyncify artifact is an alternative transport,
+not a different graph/query API.</p>
+<p>Functions take file bytes as <code>Uint8Array</code> and return JSON strings. Every
+Rete-owned JSON <strong>object</strong> envelope includes <code>"schemaVersion": 1</code>; compatibility
+functions that return a bare array (<code>graph_names</code>, <code>query_triples</code>,
+<code>query_sparql</code>, searches, communities, and reachability) remain arrays.
+Binding failures throw JavaScript <code>Error</code> objects rather than strings.</p>
 <table><thead><tr><th>Function</th><th>Returns</th></tr></thead><tbody>
-<tr><td><code>info(bytes)</code></td><td><code>{ quads, terms, pyramidLevels, namedGraphs }</code></td></tr>
+<tr><td><code>info(bytes)</code></td><td><code>{ schemaVersion, quads, terms, pyramidLevels, namedGraphs }</code></td></tr>
 <tr><td><code>graph_names(bytes)</code></td><td>array of named-graph IRIs</td></tr>
 <tr><td><code>query_triples(bytes, s?, p?, o?)</code></td><td><code>[[s,p,o], …]</code> (omit a position for a wildcard)</td></tr>
 <tr><td><code>why_triples(bytes, s?, p?, o?)</code></td><td><code>{ pattern, resultCount, results:[{ terms, ids, provenance }] }</code> for triple-pattern provenance</td></tr>
@@ -275,8 +285,8 @@ browser reads compressed files fine. <code>rete-wasm</code> depends on <code>ret
 <tr><td><code>schema(bytes)</code></td><td><code>{ classes: [["&lt;iri&gt;",count]], relations: [["s","p","o",count]] }</code></td></tr>
 <tr><td><code>shacl(bytes, shapes, graph?, format?)</code></td><td>SHACL Core validation against Turtle <code>shapes</code>; report as text/json/ttl per <code>format</code></td></tr>
 <tr><td><code>file_layout(bytes)</code></td><td>the physical section map (offsets/lengths of header, dictionary, index, pyramid, …) behind the playground's layout view</td></tr>
-<tr><td><code>header_ranges(headerBytes)</code></td><td><code>{ dictOffset, dictLen, pyramidOffset, pyramidLen, indexOffset, indexLen }</code></td></tr>
-<tr><td><code>summary_overview(bytes)</code></td><td><code>{ round, communities, predicateTotals: [["&lt;iri&gt;",count]] }</code></td></tr>
+<tr><td><code>header_ranges(headerBytes)</code></td><td><code>{ schemaVersion, dictOffset, dictLen, pyramidOffset, pyramidLen, indexOffset, indexLen }</code></td></tr>
+<tr><td><code>summary_overview(bytes)</code></td><td><code>{ schemaVersion, round, communities, predicateTotals: [["&lt;iri&gt;",count]] }</code></td></tr>
 <tr><td><code>progressive_query(bytes, query)</code></td><td>SELECT/ASK envelope for summary-safe COUNT/ASK shapes, plus <code>progressive</code> metadata</td></tr>
 <tr><td><code>query(bytes, query, format)</code></td><td>any SPARQL form, tagged by <code>kind</code> (see below)</td></tr>
 <tr><td><code>communities(bytes, round?)</code></td><td><code>[{ community, size, triples }, …]</code> (Louvain decomposition)</td></tr>
@@ -301,10 +311,11 @@ browser reads compressed files fine. <code>rete-wasm</code> depends on <code>ret
 <p><code>query</code> runs SELECT / ASK / CONSTRUCT / DESCRIBE via <code>eval_query</code> and returns a
 single JSON envelope with a <code>kind</code> field:</p>
 <ul>
-<li>SELECT → <code>{ "kind":"select", "vars":[…], "rows":[ {var:value,…} ] }</code></li>
-<li>ASK → <code>{ "kind":"ask", "boolean": true|false }</code></li>
-<li>CONSTRUCT/DESCRIBE → <code>{ "kind":"construct", "format":"ttl"|"jsonld", "text":"…" }</code>
-when <code>format</code> is <code>"ttl"</code>/<code>"jsonld"</code>, else <code>{ "kind":"construct", "triples":[[s,p,o],…] }</code>.</li>
+<li>SELECT → <code>{ "schemaVersion":1, "kind":"select", "vars":[…], "rows":[ {var:value,…} ] }</code></li>
+<li>ASK → <code>{ "schemaVersion":1, "kind":"ask", "boolean": true|false }</code></li>
+<li>CONSTRUCT/DESCRIBE → <code>{ "schemaVersion":1, "kind":"construct", "format":"ttl"|"jsonld", "text":"…" }</code>
+when <code>format</code> is <code>"ttl"</code>/<code>"jsonld"</code>, else
+<code>{ "schemaVersion":1, "kind":"construct", "triples":[[s,p,o],…] }</code>.</li>
 </ul>
 <p><code>communities</code> recomputes the Louvain community decomposition (optionally at a
 given dendrogram <code>round</code>) and returns per-community member and triple counts —
@@ -365,8 +376,8 @@ result line shows <em>"served from cache, 0 new bytes."</em> (The free <code>spa
 opens a fresh file each call, so it gets only the within-query block cache —
 use <code>RemoteGraph</code> for cross-query reuse.)</li>
 </ul>
-<p><code>RemoteGraph.stats()</code> returns the session's cumulative <code>{ fileLength, bytes, requests }</code>; the worker diffs successive calls to report one query's physical
-traffic versus the running session total.</p>
+<p><code>RemoteGraph.stats()</code> returns the session's cumulative <code>{ schemaVersion, fileLength, bytes, requests }</code>; the worker diffs successive calls to report one
+query's physical traffic versus the running session total.</p>
 <ul>
 <li><strong>Across reloads and sessions — an opt-in persistent range cache.</strong> The
 playground's <strong>Settings → Persist fetched ranges across reloads</strong> toggle installs
@@ -457,6 +468,7 @@ of these shapes:</p>
 <p>Successful responses reuse the normal <code>query</code> envelopes and add
 <code>progressive</code>, for example:</p>
 <pre><code class="language-json">{
+  "schemaVersion": 1,
   "kind": "select",
   "vars": ["n"],
   "rows": [{ "n": "\"42\"^^&lt;http://www.w3.org/2001/XMLSchema#integer&gt;" }],

@@ -67,3 +67,12 @@ RUN chown -R $USERNAME:$USERNAME /usr/local/cargo /usr/local/rustup
 
 USER $USERNAME
 ENV CARGO_TERM_COLOR=always
+
+# Browser-target wasm-bindgen tests run in the same pinned release image. Keep
+# Chromium in its own layer so adding/updating browser test support does not
+# invalidate the expensive Rust tooling layers above.
+USER root
+RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+    && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/*
+USER $USERNAME

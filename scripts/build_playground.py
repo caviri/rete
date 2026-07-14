@@ -22,6 +22,7 @@ Run (deterministic):
 import base64
 import datetime
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -162,9 +163,13 @@ WASM = NOMOD / "rete_wasm_bg.wasm"
 
 
 def build_version():
-    """A human build stamp: short git commit (HEAD at build time — i.e. the
-    *previous* commit, since the build is committed next) + the UTC build time.
-    Surfaced in the topbar and every error report so a stale cache is obvious."""
+    """A human build stamp surfaced in the topbar and error reports.
+
+    Release builds provide ``RETE_BUILD_STAMP`` for deterministic output.
+    Ad-hoc builds retain the convenient short-commit + UTC timestamp.
+    """
+    if stamp := os.environ.get("RETE_BUILD_STAMP"):
+        return stamp
     try:
         commit = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],

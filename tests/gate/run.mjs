@@ -28,6 +28,25 @@ function record(tier, name, ok, note = "") {
 
 // ---------- G0 static ----------
 function g0() {
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_wasm_api.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "generated WASM API contract",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS" ? "" : out.slice(-160),
+    );
+  } catch (e) {
+    record(
+      "G0",
+      "generated WASM API contract",
+      false,
+      String(e.stderr || e.stdout || e).slice(-160),
+    );
+  }
   for (const f of ["web/playground-src/app.js", "web/playground-src/catalog.js"]) {
     try { execSync(`node --check ${ROOT}/${f}`, { stdio: "pipe" }); record("G0", `parse ${f}`, true); }
     catch (e) { record("G0", `parse ${f}`, false, String(e.stderr || e).slice(0, 120)); }

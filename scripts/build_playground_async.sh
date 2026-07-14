@@ -43,7 +43,7 @@ rustup target list --toolchain "$ASYNCIFY_TOOLCHAIN" --installed \
 export RUSTFLAGS="-Ctarget-feature=-reference-types"   # NOT -multivalue (see above)
 rustup run "$ASYNCIFY_TOOLCHAIN" wasm-pack build crates/rete-wasm \
   --target no-modules --out-dir ../../web/pkg-nomodules-async \
-  -- --features asyncify -Z build-std=panic_abort,std
+  --no-opt -- --features asyncify -Z build-std=panic_abort,std
 
 RAW=web/pkg-nomodules-async/rete_wasm_bg.wasm
 node -e "const m=new WebAssembly.Module(require('fs').readFileSync('$RAW'));if(WebAssembly.Module.imports(m).some(i=>/externref/.test(i.name)))throw new Error('externref still present — asyncify will fail');console.log('externref gone, env.rete_fetch_ranges import present')"

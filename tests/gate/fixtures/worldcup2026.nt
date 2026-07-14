@@ -1,0 +1,7 @@
+<https://w3id.org/rete/worldcup/2026/team/Argentina> <https://w3id.org/rete/worldcup#squadPlayer> <https://w3id.org/rete/worldcup/2026/player/fixture-10> .
+<https://w3id.org/rete/worldcup/2026/player/fixture-10> <http://schema.org/name> "Release Fixture" .
+<https://w3id.org/rete/worldcup/2026/player/fixture-10> <https://w3id.org/rete/worldcup#shirtNumber> "10"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<https://w3id.org/rete/worldcup/2026/player/fixture-10> <https://w3id.org/rete/worldcup#position> "Forward" .
+<https://w3id.org/rete/worldcup/2026/player/fixture-10> <http://schema.org/birthDate> "2000-01-01"^^<http://www.w3.org/2001/XMLSchema#date> .
+<https://w3id.org/rete/worldcup/2026/player/fixture-10> <https://w3id.org/rete/worldcup#clubAtTournament> <https://w3id.org/rete/worldcup/2026/club/fixture> .
+<https://w3id.org/rete/worldcup/2026/club/fixture> <http://www.w3.org/2000/01/rdf-schema#label> "Fixture FC" .
