@@ -1,0 +1,3 @@
+<http://example.test/alice> <http://example.test/knows> <http://example.test/bob> .
+<http://example.test/bob> <http://example.test/name> "Bob"@en .
+<http://example.test/alice> <http://example.test/name> "Alice"@en <http://example.test/people> .

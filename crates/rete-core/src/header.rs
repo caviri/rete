@@ -17,14 +17,18 @@ use std::convert::TryInto;
 /// Magic bytes at offset 0: ASCII `RETE`.
 pub const MAGIC: [u8; 4] = *b"RETE";
 
-/// Current format version (written by this crate): six index permutations
-/// (SPO/POS/OSP/SOP/PSO/OPS — `0x04`, up from three in `0x03`), enabling sort-merge
-/// joins. The 1 KB section-directory header (added in `0x03`) is unchanged.
-pub const VERSION: u8 = 0x04;
+/// Current format generation written by this crate.
+///
+/// `0x05` is stable format generation 1, introduced by Rete 1.0.0. It retains
+/// the six index permutations and 1 KiB section-directory layout finalized in
+/// the last experimental generation.
+pub const CURRENT_FORMAT_VERSION: u8 = 0x05;
 
-/// Oldest format version this crate reads. Each format step is a clean break
-/// (experimental format) — v0.1/v0.2/v0.3 files are **not** readable; rebuild them.
-pub const MIN_READ_VERSION: u8 = 0x04;
+/// Oldest stable format generation accepted by this reader.
+///
+/// Files written before Rete 1.0.0 used experimental generations `0x01` through
+/// `0x04` and must be rebuilt from their RDF source.
+pub const MIN_STABLE_READ_VERSION: u8 = 0x05;
 
 /// Fixed header size in bytes.
 pub const HEADER_LEN: usize = 1024;
@@ -115,8 +119,10 @@ pub enum HeaderError {
     TooSmall(usize),
     #[error("bad magic: expected RETE")]
     BadMagic,
-    #[error("unsupported version: {0:#x}")]
-    BadVersion(u8),
+    #[error(
+        "unsupported .rete format {found:#04x}; this Rete build reads {min:#04x}..={max:#04x}. Pre-1.0 files must be rebuilt from RDF source with `rete build`"
+    )]
+    UnsupportedVersion { found: u8, min: u8, max: u8 },
     #[error("section count {0} overruns the header frame")]
     BadSectionCount(usize),
 }
@@ -126,7 +132,8 @@ pub enum HeaderError {
 /// (populated from it on parse, emitted back to it on serialize).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
-    /// Format version of the parsed file (must equal [`VERSION`]).
+    /// Format version of the parsed file (currently
+    /// [`MIN_STABLE_READ_VERSION`] through [`CURRENT_FORMAT_VERSION`]).
     pub version: u8,
     pub flags: u8,
     pub metadata_offset: u64,
@@ -246,8 +253,12 @@ impl Header {
         if b[0..4] != MAGIC {
             return Err(HeaderError::BadMagic);
         }
-        if !(MIN_READ_VERSION..=VERSION).contains(&b[4]) {
-            return Err(HeaderError::BadVersion(b[4]));
+        if !(MIN_STABLE_READ_VERSION..=CURRENT_FORMAT_VERSION).contains(&b[4]) {
+            return Err(HeaderError::UnsupportedVersion {
+                found: b[4],
+                min: MIN_STABLE_READ_VERSION,
+                max: CURRENT_FORMAT_VERSION,
+            });
         }
         let u16_at = |o: usize| u16::from_le_bytes(b[o..o + 2].try_into().unwrap());
         let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
@@ -406,7 +417,7 @@ mod tests {
 
     fn sample() -> Header {
         Header {
-            version: VERSION,
+            version: CURRENT_FORMAT_VERSION,
             flags: FLAG_HAS_QUADS,
             metadata_offset: 1024,
             metadata_len: 42,
@@ -465,7 +476,7 @@ mod tests {
 
         // core
         assert_eq!(&b[0..4], b"RETE");
-        assert_eq!(b[4], VERSION);
+        assert_eq!(b[4], CURRENT_FORMAT_VERSION);
         assert_eq!(b[5], FLAG_HAS_QUADS);
         assert_eq!(u16_at(6), HEADER_LEN as u16);
         assert_eq!(&b[8..24], &[0xCC; 16]); // content hash
@@ -490,7 +501,7 @@ mod tests {
     #[test]
     fn rejects_bad_magic() {
         let mut bytes = [0u8; HEADER_LEN];
-        bytes[4] = VERSION;
+        bytes[4] = CURRENT_FORMAT_VERSION;
         assert!(matches!(
             Header::from_bytes(&bytes),
             Err(HeaderError::BadMagic)
@@ -498,16 +509,39 @@ mod tests {
     }
 
     #[test]
-    fn accepts_only_current_version() {
-        let back = Header::from_bytes(&sample().to_bytes()).unwrap();
-        assert_eq!(back.version, VERSION);
-        for bad_ver in [0x00, 0x01, 0x02, 0x03, 0x05, 0xFF] {
-            let mut bad = sample().to_bytes();
-            bad[4] = bad_ver;
-            assert!(
-                matches!(Header::from_bytes(&bad), Err(HeaderError::BadVersion(_))),
-                "version {bad_ver:#x} must be rejected"
-            );
+    fn stable_reader_accepts_v1_baseline_and_rejects_pre_v1() {
+        let current = sample().to_bytes();
+        assert_eq!(current[4], 0x05);
+        assert_eq!(Header::from_bytes(&current).unwrap().version, 0x05);
+
+        for old in 0x01..=0x04 {
+            let mut bytes = current;
+            bytes[4] = old;
+            let error = Header::from_bytes(&bytes).unwrap_err();
+            assert!(matches!(
+                &error,
+                HeaderError::UnsupportedVersion {
+                    found,
+                    min: 0x05,
+                    max: 0x05
+                } if *found == old
+            ));
+            assert!(error
+                .to_string()
+                .contains("Pre-1.0 files must be rebuilt from RDF source with `rete build`"));
+        }
+
+        for unsupported in [0x00, 0x06, 0xff] {
+            let mut bytes = current;
+            bytes[4] = unsupported;
+            assert!(matches!(
+                Header::from_bytes(&bytes),
+                Err(HeaderError::UnsupportedVersion {
+                    found,
+                    min: 0x05,
+                    max: 0x05
+                }) if found == unsupported
+            ));
         }
     }
 

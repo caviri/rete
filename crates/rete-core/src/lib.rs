@@ -43,7 +43,10 @@ pub use file::{
     LayoutSegment, Rete, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD,
     DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
-pub use header::{Header, HeaderError, Section, SectionKind, HEADER_LEN, MAGIC, VERSION};
+pub use header::{
+    Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN, MAGIC,
+    MIN_STABLE_READ_VERSION,
+};
 pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern};
 pub use meta::{
     CharSet, ClassNode, ClassRelation, CommunityDescriptor, LabelEntry, LevelLinks, LevelRollup,

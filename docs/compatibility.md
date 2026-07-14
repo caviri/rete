@@ -1,5 +1,15 @@
 # Compatibility, validation & interop
 
+## Stable `.rete` file compatibility
+
+Format byte `0x05` is stable format generation 1, introduced by Rete 1.0.0.
+Files produced before Rete 1.0.0 are experimental artifacts and must be rebuilt.
+Every stable Rete reader from 1.0.0 onward reads format `0x05`. Newer readers may
+add optional sections and flags that preserve `0x05` semantics. A required layout
+change uses a new format byte, retains `0x05` read support, and ships with a
+documented rebuild or migration path. Older readers may reject a newer format
+cleanly; silent misinterpretation is never permitted.
+
 ## Is it compatible with RDF?
 
 **Yes — `rete` is RDF.** It is not a new graph model; it's a storage + query

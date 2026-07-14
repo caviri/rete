@@ -1435,7 +1435,7 @@ pub(crate) fn write_dataset_from_parts(
     let schema_meta_len = crate::meta::schema_block_len(pyramid_meta);
 
     let header = Header {
-        version: crate::header::VERSION,
+        version: crate::header::CURRENT_FORMAT_VERSION,
         flags: FLAG_TILE_SYNOPSIS
             | if has_quads { FLAG_HAS_QUADS } else { 0 }
             | if has_quoted_triples {
@@ -3102,7 +3102,7 @@ mod tests {
         let bytes = write_file(&dict, &index, false, &[], 0);
 
         let rete = Rete::open(&bytes).unwrap();
-        assert_eq!(rete.header().version, crate::header::VERSION);
+        assert_eq!(rete.header().version, crate::header::CURRENT_FORMAT_VERSION);
         assert_eq!(rete.query(None, None, None).len(), 200);
         assert_eq!(rete.query(Some("<http://ex/s/7>"), None, None).len(), 1);
         assert_eq!(

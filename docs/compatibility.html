@@ -238,6 +238,14 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1>Compatibility, validation &amp; interop</h1>
+<h2>Stable <code>.rete</code> file compatibility</h2>
+<p>Format byte <code>0x05</code> is stable format generation 1, introduced by Rete 1.0.0.
+Files produced before Rete 1.0.0 are experimental artifacts and must be rebuilt.
+Every stable Rete reader from 1.0.0 onward reads format <code>0x05</code>. Newer readers may
+add optional sections and flags that preserve <code>0x05</code> semantics. A required layout
+change uses a new format byte, retains <code>0x05</code> read support, and ships with a
+documented rebuild or migration path. Older readers may reject a newer format
+cleanly; silent misinterpretation is never permitted.</p>
 <h2>Is it compatible with RDF?</h2>
 <p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
 format <em>for</em> RDF, built on the standard Rust RDF stack

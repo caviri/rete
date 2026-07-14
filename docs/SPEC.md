@@ -115,16 +115,17 @@ the fuller design and remain future work (see `docs/BENCHMARK.md`).
 The header is a fixed **64-byte core** followed by a **typed section directory** —
 up to 40 entries of 24 bytes each `(kind, flags, offset, length)` — zero-padded to
 1024. A new top-level section is added as a new directory entry, so the header has
-room to grow without a layout reshape. Format version `0x04` (six index
-permutations); this crate reads **only** `0x04` (each step — the 128-byte v0.1/v0.2
-headers, the three-permutation `0x03` — is a clean break, so rebuild old files).
+room to grow without a layout reshape. Format byte `0x05` is **stable format
+generation 1**, introduced by Rete 1.0.0. It uses six index permutations and this
+1024-byte section-directory header. Experimental formats `0x01` through `0x04`
+are not readable and must be rebuilt from RDF source.
 
 **Core (bytes 0..64):**
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | magic `RETE` |
-| 4 | 1 | format version (`0x04`) |
+| 4 | 1 | format version (`0x05`, stable generation 1) |
 | 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples) |
 | 6 | 2 | header length (= 1024) |
 | 8 | 16 | content hash (blake3, first 16 bytes) — also an ETag-like id |
@@ -231,7 +232,8 @@ fetches just the run(s) covering the IDs/terms a query touches.
 ## 6. Triples / quads
 
 - Stored as integer triples in all **six permutations**: **SPO, POS, OSP, SOP,
-  PSO, OPS** (format `0x04`; `0x03` stored only the first three). Three suffice to
+  PSO, OPS** (stable format `0x05`; experimental `0x03` stored only the first three).
+  Three suffice to
   *match* any of the eight triple-pattern shapes; the full six additionally sort
   the triples on **every** prefix of columns, so for any bound prefix and any free
   column there is a permutation that routes on the prefix **and** streams sorted on
@@ -363,11 +365,12 @@ posting, `prefix(word)` the contiguous run of postings whose tokens share the
 prefix. Multiple query words **AND** by intersecting their sorted posting lists.
 SPARQL never touches this section, so a query open neither fetches nor pays for it.
 
-**Compatibility:** the format is experimental and makes **no** cross-version
-stability promise. The current version is `0x04` (six index permutations, §6); this
-crate reads only `0x04`. The earlier `0x01` (single-block), `0x02` (128-byte header,
-tiled), and `0x03` (1024-byte section-directory header, three permutations) layouts
-are a clean break — old files must be rebuilt.
+**Compatibility:** `0x05` is stable format generation 1 and the compatibility
+baseline for Rete 1.x. Every stable reader from Rete 1.0.0 onward reads `0x05`.
+Optional sections and flags may extend it without changing its required semantics.
+A required layout change uses a new format byte, keeps `0x05` read support, and
+ships with a documented rebuild or migration path. Experimental formats `0x01`
+through `0x04` are a clean break and must be rebuilt from RDF source.
 
 ---
 

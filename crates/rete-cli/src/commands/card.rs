@@ -651,7 +651,7 @@ fn derive_card_from(
         // (or `--materialize`) ran; derive_card itself must not run the reasoner.
         coherence: Coherence::default(),
         truncated,
-        format_version: rete_core::VERSION,
+        format_version: rete_core::CURRENT_FORMAT_VERSION,
     };
     // The tiered starter-query library, instantiated from the profile above.
     card.queries = super::queries::generate(&card);

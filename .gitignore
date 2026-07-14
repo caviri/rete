@@ -23,6 +23,7 @@ __pycache__/
 # Built graph files are artifacts of the .nt/.nq sources in examples/ — rebuild
 # with `rete build` (see README). The sources, not the binaries, are tracked.
 *.rete
+!crates/rete-core/tests/fixtures/**/*.rete
 # Vector-tile basemaps (tippecanoe) paired with a dataset live only in the bucket.
 *.pmtiles
 *.mbtiles
