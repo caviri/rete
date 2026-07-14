@@ -1153,6 +1153,9 @@ textarea {
 }
 .cell-btn:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 .rcard .cf-v .cell-btn { font-size: 13px; }
+/* Digitised-PDF buttons get a distinct document-red accent. */
+.pdf-btn { background: #b23b3b; border-color: #b23b3b; }
+.pdf-btn:hover { background: #8f2f2f; border-color: #8f2f2f; }
 /* Image cells (e.g. wdt:P18) rendered as clickable thumbnails. */
 .thumb-cell { padding: 4px 8px; }
 .cell-thumb {
