@@ -293,3 +293,261 @@ pub(super) fn eval_path(
     out.dedup();
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dictionary::DictionaryBuilder;
+    use crate::file::{write_file, Rete};
+    use crate::index::GraphIndexBuilder;
+    use crate::row::Slots;
+
+    fn fixture() -> Rete {
+        let triples = [
+            ("<A>", "<p>", "<B>"),
+            ("<B>", "<p>", "<C>"),
+            ("<C>", "<p>", "<A>"),
+            ("<A>", "<q>", "<C>"),
+            ("<D>", "<r>", "<A>"),
+            ("<A>", "<p>", "<object-only>"),
+        ];
+        let mut builder = DictionaryBuilder::new();
+        for (s, p, o) in triples {
+            builder.observe(s, p, o);
+        }
+        let dict = builder.build();
+        let mut index = GraphIndexBuilder::new();
+        for (s, p, o) in triples {
+            index.push(dict.encode(s, p, o).unwrap());
+        }
+        Rete::open(&write_file(&dict, &index.build(), false, &[], 0)).unwrap()
+    }
+
+    fn context(rete: &Rete) -> Ctx<'_> {
+        let mut slots = Slots::new();
+        slots.add("x");
+        slots.add("y");
+        Ctx::new(rete, slots)
+    }
+
+    fn pred(name: &str) -> PathAst {
+        PathAst::Pred(name.to_string(), false)
+    }
+
+    #[test]
+    fn reach_handles_predicate_reverse_negation_composition_and_repetition() {
+        let rete = fixture();
+        let ctx = context(&rete);
+        let index = rete.default_index();
+        let a = rete.dictionary().node_of_term("<A>").unwrap();
+        let b = rete.dictionary().node_of_term("<B>").unwrap();
+        let c = rete.dictionary().node_of_term("<C>").unwrap();
+        let object_only = rete.dictionary().node_of_term("<object-only>").unwrap();
+        let mut cache = AdjCache::new();
+
+        let first = successors(&ctx, index, &mut cache, "<p>", false, a);
+        assert!(first.contains(&b) && first.contains(&object_only));
+        assert_eq!(successors(&ctx, index, &mut cache, "<p>", false, a), first);
+        assert!(successors(&ctx, index, &mut cache, "<missing>", false, a).is_empty());
+        assert!(successors(&ctx, index, &mut cache, "<p>", false, object_only).is_empty());
+        assert!(successors(&ctx, index, &mut cache, "<p>", true, a).contains(&c));
+        assert_eq!(successors(&ctx, index, &mut cache, "<p>", true, b), vec![a]);
+
+        let not_p = negated_successors(&ctx, index, &mut cache, &["<p>".into()], false, a);
+        assert_eq!(not_p, vec![c]);
+        assert_eq!(
+            negated_successors(&ctx, index, &mut cache, &["<p>".into()], false, a),
+            not_p
+        );
+        assert!(
+            negated_successors(&ctx, index, &mut cache, &["<p>".into()], true, a)
+                .iter()
+                .any(|n| *n == rete.dictionary().node_of_term("<D>").unwrap())
+        );
+        assert!(negated_successors(&ctx, index, &mut cache, &[], false, object_only).is_empty());
+
+        assert!(reach_from(
+            &ctx,
+            index,
+            &PathAst::Pred("<p>".into(), false),
+            a,
+            &mut cache
+        )
+        .contains(&b));
+        assert!(reach_from(
+            &ctx,
+            index,
+            &PathAst::NegatedSet(vec!["<p>".into()], false),
+            a,
+            &mut cache
+        )
+        .contains(&c));
+        assert!(reach_from(
+            &ctx,
+            index,
+            &PathAst::Alt(Box::new(pred("<p>")), Box::new(pred("<q>"))),
+            a,
+            &mut cache
+        )
+        .contains(&c));
+        assert!(reach_from(
+            &ctx,
+            index,
+            &PathAst::Seq(Box::new(pred("<q>")), Box::new(pred("<p>"))),
+            a,
+            &mut cache
+        )
+        .contains(&a));
+        assert!(reach_from(
+            &ctx,
+            index,
+            &PathAst::Rep(Box::new(pred("<p>")), Rep::One),
+            a,
+            &mut cache
+        )
+        .contains(&b));
+        assert!(reach_from(
+            &ctx,
+            index,
+            &PathAst::Rep(Box::new(pred("<p>")), Rep::ZeroOrOne),
+            a,
+            &mut cache
+        )
+        .contains(&a));
+        let plus = reach_from(
+            &ctx,
+            index,
+            &PathAst::Rep(Box::new(pred("<p>")), Rep::OneOrMore),
+            a,
+            &mut cache,
+        );
+        assert!(plus.contains(&a) && plus.contains(&b) && plus.contains(&c));
+        let star = reach_from(
+            &ctx,
+            index,
+            &PathAst::Rep(Box::new(pred("<missing>")), Rep::ZeroOrMore),
+            a,
+            &mut cache,
+        );
+        assert_eq!(star.into_iter().collect::<Vec<_>>(), vec![a]);
+    }
+
+    #[test]
+    fn binding_and_zero_length_rules_cover_repeated_and_absent_terms() {
+        let rete = fixture();
+        let ctx = context(&rete);
+        let a = rete.dictionary().node_of_term("<A>").unwrap();
+        let b = rete.dictionary().node_of_term("<B>").unwrap();
+        let x = PatternTerm::Var("x".into());
+        let y = PatternTerm::Var("y".into());
+        assert!(bind_pair(&ctx, &x, &y, a, b).is_some());
+        assert!(bind_pair(&ctx, &x, &x, a, b).is_none());
+        assert!(bind_pair(&ctx, &PatternTerm::Var("missing".into()), &y, a, b).is_none());
+        assert!(bind_pair(
+            &ctx,
+            &PatternTerm::Const("<A>".into()),
+            &PatternTerm::Const("<B>".into()),
+            a,
+            b
+        )
+        .is_some());
+
+        assert!(matches_zero_length(&PathAst::Rep(
+            Box::new(pred("<p>")),
+            Rep::ZeroOrMore
+        )));
+        assert!(matches_zero_length(&PathAst::Rep(
+            Box::new(pred("<p>")),
+            Rep::ZeroOrOne
+        )));
+        assert!(!matches_zero_length(&PathAst::Rep(
+            Box::new(pred("<p>")),
+            Rep::OneOrMore
+        )));
+        assert!(matches_zero_length(&PathAst::Rep(
+            Box::new(PathAst::Rep(Box::new(pred("<p>")), Rep::ZeroOrOne)),
+            Rep::One
+        )));
+        assert!(matches_zero_length(&PathAst::Seq(
+            Box::new(PathAst::Rep(Box::new(pred("<p>")), Rep::ZeroOrOne)),
+            Box::new(PathAst::Rep(Box::new(pred("<q>")), Rep::ZeroOrMore))
+        )));
+        assert!(matches_zero_length(&PathAst::Alt(
+            Box::new(pred("<p>")),
+            Box::new(PathAst::Rep(Box::new(pred("<q>")), Rep::ZeroOrMore))
+        )));
+        assert!(!matches_zero_length(&pred("<p>")));
+        assert!(!matches_zero_length(&PathAst::NegatedSet(vec![], false)));
+
+        assert!(
+            bind_self_const(&ctx, &PatternTerm::Const("<absent>".into()), &x, "<absent>").is_some()
+        );
+        assert!(bind_self_const(&ctx, &x, &x, "<absent>").is_some());
+        assert!(
+            bind_self_const(&ctx, &PatternTerm::Const("<other>".into()), &x, "<absent>").is_none()
+        );
+        assert!(
+            bind_self_const(&ctx, &PatternTerm::Var("missing".into()), &x, "<absent>").is_none()
+        );
+    }
+
+    #[test]
+    fn eval_path_covers_bound_unbound_reverse_and_absent_endpoint_cases() {
+        let rete = fixture();
+        let ctx = context(&rete);
+        let index = rete.default_index();
+        let x = PatternTerm::Var("x".into());
+        let y = PatternTerm::Var("y".into());
+        let p = pred("<p>");
+
+        let forward = eval_path(&ctx, index, &PatternTerm::Const("<A>".into()), &p, &y);
+        assert_eq!(forward.len(), 2);
+        let exact = eval_path(
+            &ctx,
+            index,
+            &PatternTerm::Const("<A>".into()),
+            &p,
+            &PatternTerm::Const("<B>".into()),
+        );
+        assert_eq!(exact.len(), 1);
+        let no_exact = eval_path(
+            &ctx,
+            index,
+            &PatternTerm::Const("<A>".into()),
+            &p,
+            &PatternTerm::Const("<D>".into()),
+        );
+        assert!(no_exact.is_empty());
+        assert_eq!(
+            eval_path(&ctx, index, &x, &p, &PatternTerm::Const("<B>".into())).len(),
+            1
+        );
+        assert!(!eval_path(&ctx, index, &x, &p, &y).is_empty());
+        assert!(eval_path(&ctx, index, &x, &p, &PatternTerm::Const("<absent>".into())).is_empty());
+
+        let zero = PathAst::Rep(Box::new(p.clone()), Rep::ZeroOrMore);
+        assert_eq!(
+            eval_path(
+                &ctx,
+                index,
+                &PatternTerm::Const("<absent>".into()),
+                &zero,
+                &y
+            )
+            .len(),
+            1
+        );
+        assert_eq!(
+            eval_path(
+                &ctx,
+                index,
+                &x,
+                &zero,
+                &PatternTerm::Const("<absent>".into())
+            )
+            .len(),
+            1
+        );
+        assert!(eval_path(&ctx, index, &PatternTerm::Const("<absent>".into()), &p, &y).is_empty());
+    }
+}

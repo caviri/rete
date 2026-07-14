@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use libfuzzer_sys::fuzz_target;
-use rete_core::{eval_sparql, RangeReader, Rete};
+use rete_core::{eval_sparql, schema_classes, schema_summary, RangeReader, Rete};
 
 /// Owned bytes as a `RangeReader` (the lazy open needs `Send + Sync + 'static`).
 struct VecReader(Vec<u8>);
@@ -28,6 +28,11 @@ impl RangeReader for VecReader {
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(rete) = Rete::open_ranged_lazy(Arc::new(VecReader(data.to_vec()))) {
+        let _ = rete.header();
+        let _ = rete.file_layout();
+        let _ = rete.query(None, None, None);
+        let _ = schema_classes(&rete);
+        let _ = schema_summary(&rete);
         let _ = eval_sparql(&rete, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5");
     }
 });

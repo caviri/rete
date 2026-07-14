@@ -165,3 +165,207 @@ fn compute_agg(ctx: &Ctx, agg: &Agg, members: &[Row]) -> Option<String> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dictionary::DictionaryBuilder;
+    use crate::file::{write_file, Rete};
+    use crate::index::GraphIndexBuilder;
+    use crate::row::{Slots, Val};
+    use crate::sparql::{ArithOp, FExpr};
+
+    fn fixture() -> Rete {
+        let triples = [("<s>", "<p>", "\"dictionary value\"")];
+        let mut builder = DictionaryBuilder::new();
+        for (s, p, o) in triples {
+            builder.observe(s, p, o);
+        }
+        let dict = builder.build();
+        let mut index = GraphIndexBuilder::new();
+        for (s, p, o) in triples {
+            index.push(dict.encode(s, p, o).unwrap());
+        }
+        Rete::open(&write_file(&dict, &index.build(), false, &[], 0)).unwrap()
+    }
+
+    fn val(s: &str) -> Option<Val> {
+        Some(Val::Str(Rc::from(s)))
+    }
+
+    fn context(rete: &Rete) -> Ctx<'_> {
+        let mut slots = Slots::new();
+        for name in ["g", "v", "text", "pre", "result"] {
+            slots.add(name);
+        }
+        Ctx::new(rete, slots)
+    }
+
+    fn row(ctx: &Ctx, group: &str, number: Option<&str>, text: Option<&str>) -> Row {
+        let mut row = ctx.slots.empty_row();
+        row[ctx.slots.slot("g").unwrap()] = val(group);
+        row[ctx.slots.slot("v").unwrap()] = number.and_then(val);
+        row[ctx.slots.slot("text").unwrap()] = text.and_then(val);
+        row
+    }
+
+    #[test]
+    fn aggregate_functions_cover_empty_distinct_numeric_and_error_semantics() {
+        let rete = fixture();
+        let ctx = context(&rete);
+        let rows = vec![
+            row(&ctx, "\"a\"", Some("1"), Some("\"z\"")),
+            row(&ctx, "\"a\"", Some("2"), Some("\"a\"")),
+            row(&ctx, "\"a\"", Some("2"), Some("\"a\"")),
+            row(&ctx, "\"a\"", None, None),
+        ];
+
+        assert_eq!(
+            compute_agg(&ctx, &Agg::CountStar { distinct: false }, &rows),
+            Some(fmt_num_typed(4.0))
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Count("v".into(), false), &rows),
+            Some(fmt_num_typed(3.0))
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Count("v".into(), true), &rows),
+            Some(fmt_num_typed(2.0))
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Count("missing".into(), true), &rows),
+            Some(fmt_num_typed(0.0))
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Sum("v".into()), &rows),
+            Some(fmt_num_typed(5.0))
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Sum("missing".into()), &rows),
+            Some(fmt_num_typed(0.0))
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Avg("v".into()), &rows),
+            Some(fmt_num_typed(5.0 / 3.0))
+        );
+        assert_eq!(compute_agg(&ctx, &Agg::Avg("missing".into()), &rows), None);
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Sample("text".into()), &rows),
+            Some("\"z\"".into())
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Sample("missing".into()), &rows),
+            None
+        );
+        assert_eq!(
+            compute_agg(
+                &ctx,
+                &Agg::GroupConcat("text".into(), "|".into(), false),
+                &rows
+            ),
+            Some("\"z|a|a\"".into())
+        );
+        assert_eq!(
+            compute_agg(
+                &ctx,
+                &Agg::GroupConcat("text".into(), "|".into(), true),
+                &rows
+            ),
+            Some("\"z|a\"".into())
+        );
+        assert_eq!(
+            compute_agg(
+                &ctx,
+                &Agg::GroupConcat("missing".into(), "|".into(), true),
+                &rows
+            ),
+            Some("\"\"".into())
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Min("v".into()), &rows),
+            Some("1".into())
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Max("v".into()), &rows),
+            Some("2".into())
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Min("text".into()), &rows),
+            Some("\"a\"".into())
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Max("text".into()), &rows),
+            Some("\"z\"".into())
+        );
+        assert_eq!(compute_agg(&ctx, &Agg::Min("missing".into()), &rows), None);
+
+        let empty_bound = vec![row(&ctx, "\"a\"", None, None)];
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Avg("v".into()), &empty_bound),
+            Some(fmt_num_typed(0.0))
+        );
+        let invalid = vec![row(&ctx, "\"a\"", Some("\"oops\""), None)];
+        assert_eq!(compute_agg(&ctx, &Agg::Avg("v".into()), &invalid), None);
+    }
+
+    #[test]
+    fn grouping_preserves_keys_materializes_pre_expressions_and_emits_empty_group() {
+        let rete = fixture();
+        let ctx = context(&rete);
+        let rows = vec![
+            row(&ctx, "\"b\"", Some("2"), None),
+            row(&ctx, "\"a\"", Some("1"), None),
+            row(&ctx, "\"a\"", Some("3"), None),
+        ];
+        let spec = GroupSpec {
+            by: vec!["g".into()],
+            aggs: vec![("result".into(), Agg::Sum("pre".into()))],
+            pre: vec![(
+                "pre".into(),
+                FExpr::Arith(
+                    ArithOp::Mul,
+                    Box::new(FExpr::Var("v".into())),
+                    Box::new(FExpr::Const("2".into())),
+                ),
+            )],
+        };
+        let grouped = aggregate(&ctx, rows, &spec);
+        assert_eq!(grouped.len(), 2);
+        let g = ctx.slots.slot("g").unwrap();
+        let result = ctx.slots.slot("result").unwrap();
+        assert_eq!(
+            &*ctx
+                .resolver
+                .str_of(grouped[0][g].as_ref().unwrap())
+                .unwrap(),
+            "\"a\""
+        );
+        assert_eq!(
+            ctx.resolver.num(grouped[0][result].as_ref().unwrap()),
+            Some(8.0)
+        );
+        assert_eq!(
+            &*ctx
+                .resolver
+                .str_of(grouped[1][g].as_ref().unwrap())
+                .unwrap(),
+            "\"b\""
+        );
+        assert_eq!(
+            ctx.resolver.num(grouped[1][result].as_ref().unwrap()),
+            Some(4.0)
+        );
+
+        let empty = GroupSpec {
+            by: vec![],
+            aggs: vec![("result".into(), Agg::CountStar { distinct: true })],
+            pre: vec![],
+        };
+        let grouped = aggregate(&ctx, Vec::new(), &empty);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(
+            ctx.resolver.num(grouped[0][result].as_ref().unwrap()),
+            Some(0.0)
+        );
+    }
+}

@@ -877,3 +877,380 @@ impl SortKey {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dictionary::DictionaryBuilder;
+    use crate::file::{write_file, Rete};
+    use crate::index::GraphIndexBuilder;
+    use crate::row::{Ctx, Slots, Val};
+
+    const XSD: &str = "http://www.w3.org/2001/XMLSchema#";
+    const GEO: &str = "http://www.opengis.net/ont/geosparql#";
+
+    fn lit(value: &str, datatype: &str) -> String {
+        format!("\"{value}\"^^<{datatype}>")
+    }
+
+    fn fixture() -> Rete {
+        let triples = [("<s>", "<p>", "\"value\"")];
+        let mut builder = DictionaryBuilder::new();
+        for (s, p, o) in triples {
+            builder.observe(s, p, o);
+        }
+        let dict = builder.build();
+        let mut index = GraphIndexBuilder::new();
+        for (s, p, o) in triples {
+            index.push(dict.encode(s, p, o).unwrap());
+        }
+        Rete::open(&write_file(&dict, &index.build(), false, &[], 0)).unwrap()
+    }
+
+    fn call(ctx: &Ctx, builtin: Builtin, args: &[&str]) -> Option<String> {
+        let args = args
+            .iter()
+            .map(|v| FExpr::Const((*v).to_string()))
+            .collect::<Vec<_>>();
+        func_value(builtin, &args, ctx, &ctx.slots.empty_row()).map(|v| v.to_string())
+    }
+
+    #[test]
+    fn expression_values_boolean_errors_and_sort_keys() {
+        let rete = fixture();
+        let mut slots = Slots::new();
+        let x = slots.add("x");
+        slots.add("unset");
+        let ctx = Ctx::new(&rete, slots);
+        let mut row = ctx.slots.empty_row();
+        row[x] = Some(Val::Str(Rc::from(lit("2", &format!("{XSD}integer")))));
+
+        let var = FExpr::Var("x".into());
+        assert!(var.value(&ctx, &row).unwrap().contains("2"));
+        assert_eq!(FExpr::Var("missing".into()).value(&ctx, &row), None);
+        for (op, expected) in [
+            (ArithOp::Add, 5.0),
+            (ArithOp::Sub, -1.0),
+            (ArithOp::Mul, 6.0),
+            (ArithOp::Div, 2.0 / 3.0),
+        ] {
+            let expr = FExpr::Arith(
+                op,
+                Box::new(var.clone()),
+                Box::new(FExpr::Const(lit("3", &format!("{XSD}integer")))),
+            );
+            let actual = as_number(&expr.value(&ctx, &row).unwrap()).unwrap();
+            assert!((actual - expected).abs() < 1e-12);
+        }
+        assert_eq!(
+            FExpr::Arith(
+                ArithOp::Div,
+                Box::new(var.clone()),
+                Box::new(FExpr::Const("0".into()))
+            )
+            .value(&ctx, &row),
+            None
+        );
+        assert_eq!(
+            FExpr::Coalesce(vec![
+                FExpr::Var("missing".into()),
+                FExpr::Const("ok".into())
+            ])
+            .value(&ctx, &row)
+            .as_deref(),
+            Some("ok")
+        );
+
+        let yes = FExpr::Const(lit("true", &format!("{XSD}boolean")));
+        let no = FExpr::Const(lit("false", &format!("{XSD}boolean")));
+        assert_eq!(
+            FExpr::If(
+                Box::new(yes.clone()),
+                Box::new(FExpr::Const("then".into())),
+                Box::new(FExpr::Const("else".into()))
+            )
+            .value(&ctx, &row)
+            .as_deref(),
+            Some("then")
+        );
+        assert_eq!(
+            FExpr::If(
+                Box::new(FExpr::Const("<iri-has-no-ebv>".into())),
+                Box::new(FExpr::Const("then".into())),
+                Box::new(FExpr::Const("else".into()))
+            )
+            .value(&ctx, &row),
+            None
+        );
+        assert!(FExpr::Bound("x".into()).ebv(&ctx, &row));
+        assert!(!FExpr::Bound("unset".into()).ebv(&ctx, &row));
+        assert!(FExpr::Not(Box::new(no.clone())).ebv(&ctx, &row));
+        assert!(FExpr::And(Box::new(yes.clone()), Box::new(yes.clone())).ebv(&ctx, &row));
+        assert!(FExpr::Or(Box::new(no.clone()), Box::new(yes.clone())).ebv(&ctx, &row));
+        assert!(FExpr::Compare(
+            Op::Lt,
+            Box::new(FExpr::Const("2".into())),
+            Box::new(FExpr::Const("3".into()))
+        )
+        .ebv(&ctx, &row));
+        assert!(FExpr::In(
+            Box::new(FExpr::Const("2".into())),
+            vec![FExpr::Const("1".into()), FExpr::Const("2".into())]
+        )
+        .ebv(&ctx, &row));
+        assert!(FExpr::SameTerm(
+            Box::new(FExpr::Const("\"x\"".into())),
+            Box::new(FExpr::Const("\"x\"".into()))
+        )
+        .ebv(&ctx, &row));
+        assert!(FExpr::If(
+            Box::new(no),
+            Box::new(FExpr::Const("0".into())),
+            Box::new(yes)
+        )
+        .ebv(&ctx, &row));
+
+        let unbound = SortKey::of(None);
+        let one = SortKey::of(Some(Rc::from("1")));
+        let two = SortKey::of(Some(Rc::from("2")));
+        let text = SortKey::of(Some(Rc::from("z")));
+        assert_eq!(unbound.cmp(&unbound), std::cmp::Ordering::Equal);
+        assert_eq!(unbound.cmp(&one), std::cmp::Ordering::Less);
+        assert_eq!(one.cmp(&unbound), std::cmp::Ordering::Greater);
+        assert_eq!(one.cmp(&two), std::cmp::Ordering::Less);
+        assert_eq!(text.cmp(&two), std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn value_builtins_cover_strings_dates_hashes_casts_and_rdf_star() {
+        let rete = fixture();
+        let ctx = Ctx::new(&rete, Slots::new());
+        let string = lit("Straße", &format!("{XSD}string"));
+        let lang = "\"Hello World\"@en";
+        let int = lit("-3", &format!("{XSD}integer"));
+        let decimal = lit("2.4", &format!("{XSD}decimal"));
+
+        for (builtin, args) in [
+            (Builtin::Str, vec!["<http://ex/a>"]),
+            (Builtin::StrLen, vec![string.as_str()]),
+            (Builtin::UCase, vec![lang]),
+            (Builtin::LCase, vec![lang]),
+            (Builtin::Abs, vec![int.as_str()]),
+            (Builtin::Ceil, vec![decimal.as_str()]),
+            (Builtin::Floor, vec![decimal.as_str()]),
+            (Builtin::Round, vec![decimal.as_str()]),
+            (Builtin::Concat, vec!["\"a\"@en", "\"b\"@en"]),
+            (Builtin::SubStr, vec![lang, "2", "3"]),
+            (Builtin::StrBefore, vec![lang, "\" World\""]),
+            (Builtin::StrAfter, vec![lang, "\"Hello \""]),
+            (Builtin::StrDt, vec!["\"7\"", "<http://ex/type>"]),
+            (Builtin::StrLang, vec!["\"hello\"", "\"de\""]),
+            (Builtin::Iri, vec!["\"http://ex/a\""]),
+            (Builtin::EncodeForUri, vec!["\"a b/ä\""]),
+            (
+                Builtin::Replace,
+                vec!["\"Abba\"", "\"b+\"", "\"X\"", "\"i\""],
+            ),
+            (Builtin::Md5, vec!["\"abc\""]),
+            (Builtin::Sha1, vec!["\"abc\""]),
+            (Builtin::Sha256, vec!["\"abc\""]),
+            (Builtin::Sha384, vec!["\"abc\""]),
+            (Builtin::Sha512, vec!["\"abc\""]),
+        ] {
+            assert!(call(&ctx, builtin, &args).is_some(), "{builtin:?}");
+        }
+        assert!(call(&ctx, Builtin::StrBefore, &[lang, "\"missing\""])
+            .unwrap()
+            .starts_with("\"\""));
+        assert!(call(&ctx, Builtin::StrAfter, &[lang, "\"\""])
+            .unwrap()
+            .contains("Hello World"));
+        assert_eq!(call(&ctx, Builtin::StrLen, &["<iri>"]), None);
+        assert_eq!(call(&ctx, Builtin::Concat, &["\"ok\"", "<iri>"]), None);
+        assert_eq!(
+            call(&ctx, Builtin::Replace, &["\"x\"", "\"[\"", "\"y\""]),
+            None
+        );
+
+        let dt = lit("-2024-07-14T12:34:56.5-08:30", &format!("{XSD}dateTime"));
+        for builtin in [
+            Builtin::Year,
+            Builtin::Month,
+            Builtin::Day,
+            Builtin::Hours,
+            Builtin::Minutes,
+            Builtin::Seconds,
+            Builtin::Timezone,
+            Builtin::Tz,
+        ] {
+            assert!(call(&ctx, builtin, &[&dt]).is_some(), "{builtin:?}");
+        }
+        assert!(call(
+            &ctx,
+            Builtin::Timezone,
+            &[&lit("2024-01-01T00:00:00Z", &format!("{XSD}dateTime"))]
+        )
+        .is_some());
+        assert_eq!(
+            call(
+                &ctx,
+                Builtin::Timezone,
+                &[&lit("2024-01-01T00:00:00", &format!("{XSD}dateTime"))]
+            ),
+            None
+        );
+
+        let string_true = lit("true", &format!("{XSD}string"));
+        let bool_true = lit("true", &format!("{XSD}boolean"));
+        for builtin in [
+            Builtin::CastInteger,
+            Builtin::CastDecimal,
+            Builtin::CastFloat,
+            Builtin::CastDouble,
+            Builtin::CastBoolean,
+            Builtin::CastString,
+        ] {
+            let source = if builtin == Builtin::CastBoolean {
+                &string_true
+            } else {
+                &bool_true
+            };
+            assert!(call(&ctx, builtin, &[source]).is_some(), "{builtin:?}");
+        }
+        assert_eq!(
+            call(
+                &ctx,
+                Builtin::CastInteger,
+                &[&lit("1.2", &format!("{XSD}string"))]
+            ),
+            None
+        );
+        assert!(call(&ctx, Builtin::Rand, &[]).is_some());
+        assert!(call(&ctx, Builtin::Uuid, &[])
+            .unwrap()
+            .starts_with("<urn:uuid:"));
+        assert!(call(&ctx, Builtin::StrUuid, &[]).is_some());
+        assert!(call(&ctx, Builtin::BNode, &["\"stable\""])
+            .unwrap()
+            .starts_with("_:b"));
+        assert!(call(&ctx, Builtin::BNode, &[]).unwrap().starts_with("_:b"));
+        assert_eq!(
+            call(&ctx, Builtin::Datatype, &[lang]).unwrap(),
+            "<http://www.w3.org/1999/02/22-rdf-syntax-ns#langString>"
+        );
+        assert_eq!(call(&ctx, Builtin::Lang, &[lang]).unwrap(), "\"en\"");
+        assert_eq!(call(&ctx, Builtin::Datatype, &["<iri>"]), None);
+
+        let triple = "<<<s> <p> \"o\">>";
+        assert_eq!(
+            call(&ctx, Builtin::Subject, &[triple]).as_deref(),
+            Some("<s>")
+        );
+        assert_eq!(
+            call(&ctx, Builtin::Predicate, &[triple]).as_deref(),
+            Some("<p>")
+        );
+        assert_eq!(
+            call(&ctx, Builtin::Object, &[triple]).as_deref(),
+            Some("\"o\"")
+        );
+        assert_eq!(call(&ctx, Builtin::Subject, &["<s>"]), None);
+        assert_eq!(
+            call(&ctx, Builtin::TripleTerm, &["<s>", "<p>", "\"o\""]).as_deref(),
+            Some(triple)
+        );
+    }
+
+    #[test]
+    fn boolean_and_geo_builtins_cover_success_and_type_errors() {
+        let rete = fixture();
+        let ctx = Ctx::new(&rete, Slots::new());
+        let row = ctx.slots.empty_row();
+        let boolean = |builtin, args: &[&str]| {
+            func_bool(
+                builtin,
+                &args
+                    .iter()
+                    .map(|v| FExpr::Const((*v).to_string()))
+                    .collect::<Vec<_>>(),
+                &ctx,
+                &row,
+            )
+        };
+        assert!(boolean(Builtin::IsIri, &["<iri>"]));
+        assert!(boolean(Builtin::IsBlank, &["_:b"]));
+        assert!(boolean(Builtin::IsLiteral, &["\"x\""]));
+        assert!(boolean(Builtin::IsNumeric, &["42"]));
+        assert!(boolean(Builtin::IsTriple, &["<<<s> <p> <o>>>"]));
+        assert!(boolean(Builtin::Contains, &["\"abc\"", "\"b\""]));
+        assert!(boolean(Builtin::StrStarts, &["\"abc\"", "\"a\""]));
+        assert!(boolean(Builtin::StrEnds, &["\"abc\"", "\"c\""]));
+        assert!(!boolean(Builtin::Contains, &["<iri>", "\"i\""]));
+        assert!(boolean(Builtin::Regex, &["\"Abc\"", "\"^a\"", "\"i\""]));
+        assert!(!boolean(Builtin::Regex, &["<iri>", "\"i\""]));
+        assert!(boolean(Builtin::LangMatches, &["\"en-GB\"", "\"EN\""]));
+        assert!(boolean(Builtin::LangMatches, &["\"de\"", "\"*\""]));
+        assert!(!boolean(Builtin::LangMatches, &["\"\"", "\"*\""]));
+
+        let wkt = |s: &str| lit(s, &format!("{GEO}wktLiteral"));
+        let point = wkt("POINT(1 1)");
+        let same = wkt("POINT(1 1)");
+        let far = wkt("POINT(5 5)");
+        assert!(boolean(Builtin::GeoSfEquals, &[&point, &same]));
+        assert!(boolean(Builtin::GeoSfDisjoint, &[&point, &far]));
+        assert!(!boolean(Builtin::GeoSfWithin, &["<iri>", &point]));
+        assert!(call(&ctx, Builtin::GeoSfEquals, &[&point, &same]).is_some());
+        assert!(call(
+            &ctx,
+            Builtin::GeoDistance,
+            &[
+                &point,
+                &far,
+                "<http://www.opengis.net/def/uom/OGC/1.0/metre>"
+            ]
+        )
+        .is_some());
+        assert!(call(&ctx, Builtin::GeoEnvelope, &[&point]).is_some());
+        assert_eq!(call(&ctx, Builtin::GeoEnvelope, &["<iri>"]), None);
+        assert_eq!(
+            call(&ctx, Builtin::GeoDistance, &[&point, &far, "<bad-unit>"]),
+            None
+        );
+    }
+
+    #[test]
+    fn lexical_numeric_cast_datetime_and_comparison_helpers_reject_bad_inputs() {
+        assert_eq!(arith_number("\"2\""), None);
+        assert_eq!(arith_number("2"), Some(2.0));
+        assert!(is_numeric_dt(Some(&format!("{XSD}double"))));
+        assert!(!is_numeric_dt(Some(&format!("{XSD}string"))));
+        assert!(is_int_lexical("-12"));
+        assert!(!is_int_lexical("+"));
+        assert!(is_decimal_lexical(".5"));
+        assert!(!is_decimal_lexical("1.2.3"));
+        assert_eq!(parse_xsd_double("INF"), Some(f64::INFINITY));
+        assert_eq!(parse_xsd_double("-INF"), Some(f64::NEG_INFINITY));
+        assert!(parse_xsd_double("NaN").unwrap().is_nan());
+        assert_eq!(parse_xsd_double("inf"), None);
+        assert_eq!(parse_xsd_double("nope"), None);
+        assert_eq!(fmt_plain(2.0), "2");
+        assert_eq!(fmt_plain(2.5), "2.5");
+        assert_eq!(bool_literal(true), lit("true", &format!("{XSD}boolean")));
+        assert_eq!(encode_for_uri("a b/ä"), "a%20b%2F%C3%A4");
+        assert_eq!(hash_hex(Builtin::Md5, "abc").len(), 32);
+        assert_eq!(parse_datetime("invalid"), None);
+        assert_eq!(tz_to_duration(""), None);
+        assert_eq!(tz_to_duration("+00:00").as_deref(), Some("PT0S"));
+        assert_eq!(tz_to_duration("+01:30").as_deref(), Some("PT1H30M"));
+        assert_eq!(term_ebv(&lit("true", &format!("{XSD}boolean"))), Some(true));
+        assert_eq!(term_ebv(&lit("0", &format!("{XSD}integer"))), Some(false));
+        assert_eq!(term_ebv("<iri>"), None);
+        assert!(compare(Op::Eq, "2", "2.0"));
+        assert!(compare(Op::Ne, "a", "b"));
+        assert!(compare(Op::Le, "a", "b"));
+        assert!(compare(Op::Gt, "3", "2"));
+        assert!(compare(Op::Ge, "3", "3"));
+        assert!(lang_matches("en-US", "en"));
+        assert!(!lang_matches("english", "en"));
+    }
+}

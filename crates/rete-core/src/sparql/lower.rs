@@ -1002,3 +1002,250 @@ fn named_to_pattern(n: &NamedNodePattern) -> PatternTerm {
         NamedNodePattern::Variable(v) => PatternTerm::Var(v.as_str().to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_parsing_select_only_and_uniform_errors() {
+        let q = "  # leading\n VERSION \"1.2\" SELECT * WHERE {}";
+        assert!(strip_version(q).trim_start().starts_with("SELECT"));
+        assert!(parse_select(q).is_ok());
+        assert_eq!(strip_version("# comment only"), "# comment only");
+        assert_eq!(
+            strip_version("VERSION invalid SELECT * WHERE {}"),
+            "VERSION invalid SELECT * WHERE {}"
+        );
+        assert!(matches!(
+            parse_select("ASK {}"),
+            Err(SparqlError::Unsupported(_))
+        ));
+        assert!(matches!(
+            parse_select("not sparql"),
+            Err(SparqlError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn lowers_every_graph_operator_dataset_modifier_and_subquery() {
+        let query = r#"
+            SELECT DISTINCT ?s ?x
+            FROM <http://ex/default>
+            FROM NAMED <http://ex/named>
+            WHERE {
+              { ?s <http://ex/p> ?o .
+                OPTIONAL { ?s <http://ex/q> ?q FILTER(?q > 1) }
+              }
+              UNION { GRAPH ?g { ?s <http://ex/r> ?o } }
+              MINUS { ?s <http://ex/bad> ?o }
+              VALUES (?v ?u) { (1 UNDEF) (2 "two") }
+              BIND(?v + 1 AS ?x)
+              FILTER(BOUND(?x) && (?x IN (1, 2)))
+            }
+            ORDER BY ASC(?s) DESC(?x)
+            OFFSET 1 LIMIT 2
+        "#;
+        let select = parse_select(query).unwrap();
+        assert!(select.distinct);
+        assert_eq!(select.project, ["s", "x"]);
+        assert_eq!(select.offset, 1);
+        assert_eq!(select.limit, Some(2));
+        assert_eq!(select.order.len(), 2);
+        assert_eq!(select.from, ["<http://ex/default>"]);
+        assert_eq!(select.from_named.unwrap(), ["<http://ex/named>"]);
+
+        let subquery = parse_select(
+            "SELECT ?s WHERE { ?s <http://ex/p> ?o . { SELECT REDUCED ?s WHERE { ?s <http://ex/q> ?v } LIMIT 1 } }",
+        )
+        .unwrap();
+        assert!(matches!(subquery.plan, Plan::Join(..)));
+
+        let fixed_service = parse_select(
+            "SELECT * WHERE { SERVICE SILENT <http://example.test/sparql> { ?s <http://ex/p> ?o OPTIONAL { ?s <http://ex/q> ?q } } }",
+        )
+        .unwrap();
+        assert!(matches!(
+            fixed_service.plan,
+            Plan::Service { silent: true, .. }
+        ));
+        assert!(matches!(
+            parse_select("SELECT * WHERE { SERVICE ?endpoint { ?s ?p ?o } }"),
+            Err(SparqlError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn lowers_aggregates_having_preexpressions_and_all_property_path_shapes() {
+        let grouped = parse_select(
+            r#"
+            SELECT ?g
+                   (COUNT(*) AS ?all)
+                   (COUNT(DISTINCT ?v) AS ?count)
+                   (SUM(?v * 2) AS ?sum)
+                   (AVG(?v) AS ?avg)
+                   (MIN(?v) AS ?min)
+                   (MAX(?v) AS ?max)
+                   (SAMPLE(?v) AS ?sample)
+                   (GROUP_CONCAT(DISTINCT ?label; SEPARATOR="|") AS ?labels)
+            WHERE { ?s <http://ex/g> ?g ; <http://ex/v> ?v ; <http://ex/label> ?label }
+            GROUP BY ?g
+            HAVING (SUM(?v) > 0)
+            ORDER BY DESC(?sum)
+            "#,
+        )
+        .unwrap();
+        let group = grouped.group.unwrap();
+        assert_eq!(group.by, ["g"]);
+        assert_eq!(group.aggs.len(), 9);
+        assert_eq!(group.pre.len(), 1);
+        assert_eq!(grouped.having.len(), 1);
+
+        for path in [
+            "<http://ex/p>",
+            "^<http://ex/p>",
+            "<http://ex/p>+",
+            "<http://ex/p>*",
+            "<http://ex/p>?",
+            "<http://ex/p>/<http://ex/q>",
+            "<http://ex/p>|<http://ex/q>",
+            "!(<http://ex/p>|<http://ex/q>)",
+        ] {
+            let q = format!("SELECT * WHERE {{ ?s {path} ?o }}");
+            assert!(parse_select(&q).is_ok(), "{path}");
+        }
+    }
+
+    #[test]
+    fn lowers_expression_and_builtin_matrix_in_projection_aliases() {
+        for expression in [
+            "?v = 1",
+            "?v > 1",
+            "?v >= 1",
+            "?v < 1",
+            "?v <= 1",
+            "(?v = 1) || (?v = 2)",
+            "!(?v = 1)",
+            "+?v",
+            "-?v",
+            "?v - 1",
+            "?v * 2",
+            "?v / 2",
+            "COALESCE(?missing, ?v)",
+            "IF(BOUND(?v), ?v, 0)",
+            "sameTerm(?v, 1)",
+            "EXISTS { ?s <http://ex/inside> ?v BIND(STR(?v) AS ?text) }",
+            "STR(?v)",
+            "CONCAT(\"a\", \"b\")",
+            "SUBSTR(\"abc\", 2)",
+            "STRBEFORE(\"abc\", \"b\")",
+            "STRAFTER(\"abc\", \"b\")",
+            "STRLEN(\"abc\")",
+            "UCASE(\"abc\")",
+            "LCASE(\"ABC\")",
+            "ABS(-2)",
+            "CEIL(1.2)",
+            "FLOOR(1.2)",
+            "ROUND(1.5)",
+            "CONTAINS(\"abc\", \"b\")",
+            "STRSTARTS(\"abc\", \"a\")",
+            "STRENDS(\"abc\", \"c\")",
+            "isIRI(<http://ex/a>)",
+            "isBLANK(?v)",
+            "isLITERAL(\"x\")",
+            "isNUMERIC(1)",
+            "DATATYPE(\"x\")",
+            "LANG(\"x\"@en)",
+            "REGEX(\"abc\", \"a\")",
+            "LANGMATCHES(\"en-GB\", \"en\")",
+            "STRDT(\"x\", <http://ex/type>)",
+            "STRLANG(\"x\", \"en\")",
+            "IRI(\"http://ex/a\")",
+            "ENCODE_FOR_URI(\"a b\")",
+            "REPLACE(\"abc\", \"b\", \"x\")",
+            "MD5(\"abc\")",
+            "SHA1(\"abc\")",
+            "SHA256(\"abc\")",
+            "SHA384(\"abc\")",
+            "SHA512(\"abc\")",
+            "YEAR(\"2024-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
+            "MONTH(\"2024-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
+            "DAY(\"2024-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
+            "HOURS(\"2024-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
+            "MINUTES(\"2024-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
+            "SECONDS(\"2024-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
+            "TIMEZONE(\"2024-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
+            "TZ(\"2024-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
+            "RAND()",
+            "UUID()",
+            "STRUUID()",
+            "BNODE(\"x\")",
+            "<http://www.w3.org/2001/XMLSchema#integer>(\"1\")",
+            "<http://www.w3.org/2001/XMLSchema#decimal>(\"1.2\")",
+            "<http://www.w3.org/2001/XMLSchema#float>(\"1\")",
+            "<http://www.w3.org/2001/XMLSchema#double>(\"1\")",
+            "<http://www.w3.org/2001/XMLSchema#boolean>(\"true\")",
+            "<http://www.w3.org/2001/XMLSchema#string>(1)",
+            "<http://www.opengis.net/def/function/geosparql/sfContains>(?a, ?b)",
+            "<http://www.opengis.net/def/function/geosparql/sfWithin>(?a, ?b)",
+            "<http://www.opengis.net/def/function/geosparql/sfIntersects>(?a, ?b)",
+            "<http://www.opengis.net/def/function/geosparql/sfDisjoint>(?a, ?b)",
+            "<http://www.opengis.net/def/function/geosparql/sfEquals>(?a, ?b)",
+            "<http://www.opengis.net/def/function/geosparql/distance>(?a, ?b, <http://www.opengis.net/def/uom/OGC/1.0/metre>)",
+            "<http://www.opengis.net/def/function/geosparql/envelope>(?a)",
+        ] {
+            let q = format!("SELECT ({expression} AS ?result) WHERE {{ VALUES ?v {{ 1 }} }}");
+            assert!(parse_select(&q).is_ok(), "{expression}");
+        }
+        assert!(matches!(
+            parse_select("SELECT (<http://ex/unsupported>(1) AS ?x) WHERE {}"),
+            Err(SparqlError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn predicate_collection_walks_query_forms_wrappers_and_complex_paths() {
+        let select = query_predicates(
+            "SELECT * WHERE { { ?s (<http://ex/p>|^<http://ex/q>)/<http://ex/r>* ?o } UNION { GRAPH <http://ex/g> { ?s <http://ex/s> ?o } } OPTIONAL { ?s ?variable ?o } MINUS { ?s <http://ex/t> ?o } }",
+        )
+        .unwrap();
+        for p in ["p", "q", "r", "s", "t"] {
+            assert!(select.contains(&format!("<http://ex/{p}>")));
+        }
+        assert_eq!(
+            query_predicates("ASK { ?s <http://ex/ask> ?o }")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            query_predicates("CONSTRUCT { ?s <http://ex/out> ?o } WHERE { ?s <http://ex/in> ?o }")
+                .unwrap(),
+            ["<http://ex/in>".to_string()].into_iter().collect()
+        );
+        assert_eq!(
+            query_predicates("DESCRIBE ?s WHERE { ?s <http://ex/describe> ?o }")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            query_predicates("SELECT * WHERE { ?s !(<http://ex/p>|<http://ex/q>) ?o }")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn rdf_star_lowering_handles_ground_variables_reuse_and_nested_terms() {
+        for query in [
+            "SELECT * WHERE { << <http://ex/s> <http://ex/p> \"o\" >> <http://ex/a> ?v }",
+            "SELECT * WHERE { << ?s <http://ex/p> ?o >> <http://ex/a> ?v . << ?s <http://ex/p> ?o >> <http://ex/b> ?w }",
+            "SELECT * WHERE { ?s <http://ex/p> ?o . << ?s ?pred ?o >> <http://ex/a> ?v }",
+            "SELECT * WHERE { << << ?s <http://ex/p> ?o >> <http://ex/q> ?inner >> <http://ex/a> ?v }",
+        ] {
+            let lowered = parse_select(query).unwrap();
+            assert!(lowered.star_counter > 0 || matches!(lowered.plan, Plan::Bgp(_)), "{query}");
+        }
+    }
+}

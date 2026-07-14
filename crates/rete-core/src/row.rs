@@ -364,3 +364,143 @@ pub(crate) fn bound_mask(rows: &[Row], nslots: usize) -> Vec<bool> {
     }
     mask
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dictionary::DictionaryBuilder;
+    use crate::file::{write_file, Rete};
+    use crate::index::GraphIndexBuilder;
+
+    fn fixture() -> Rete {
+        let triples = [
+            ("<s>", "<shared>", "<shared>"),
+            (
+                "<s>",
+                "<pred-only>",
+                "\"42\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            ),
+            ("<other>", "<shared>", "\"not-a-number\""),
+        ];
+        let mut builder = DictionaryBuilder::new();
+        for (s, p, o) in triples {
+            builder.observe(s, p, o);
+        }
+        let dict = builder.build();
+        let mut index = GraphIndexBuilder::new();
+        for (s, p, o) in triples {
+            index.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &index.build(), false, &[], 0);
+        Rete::open(&bytes).unwrap()
+    }
+
+    #[test]
+    fn slots_rows_merge_and_masks_cover_boundaries() {
+        let mut slots = Slots::new();
+        assert_eq!(slots.add("x"), 0);
+        assert_eq!(slots.add("y"), 1);
+        assert_eq!(slots.add("x"), 0);
+        assert_eq!(slots.slot("missing"), None);
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots.name(1), "y");
+        assert_eq!(slots.empty_row(), vec![None, None]);
+
+        let one = Val::Str(Rc::from("one"));
+        let two = Val::Str(Rc::from("two"));
+        let a = vec![Some(one.clone()), None];
+        let b = vec![Some(one.clone()), Some(two.clone())];
+        let conflict = vec![Some(two.clone()), None];
+        assert!(compatible_rows(&a, &b));
+        assert!(!compatible_rows(&a, &conflict));
+        assert_eq!(merge_rows(&a, &b), Some(b.clone()));
+        assert_eq!(merge_rows(&a, &conflict), None);
+        assert_eq!(bound_mask(&[a, b], 3), vec![true, true, false]);
+        assert_eq!(bound_mask(&[], 0), Vec::<bool>::new());
+    }
+
+    #[test]
+    fn matcher_fast_paths_regex_flags_and_invalid_patterns() {
+        assert!(Matcher::compile("Needle", "").is_match("a Needle here"));
+        assert!(!Matcher::compile("Needle", "").is_match("needle"));
+        assert!(Matcher::compile("Needle", "i").is_match("a nEeDlE here"));
+        assert!(Matcher::compile("Ä", "i").is_match("ärger"));
+        assert!(Matcher::compile("", "i").is_match("anything"));
+        assert!(Matcher::compile("^a.+z$", "is").is_match("A\nZ"));
+        assert!(!Matcher::compile("[", "").is_match("anything"));
+        assert!(ascii_ci_contains(b"ABCdef", b"cde"));
+        assert!(!ascii_ci_contains(b"abc", b"abcd"));
+    }
+
+    #[test]
+    fn resolver_canonicalizes_decodes_and_memoizes_all_value_kinds() {
+        let rete = fixture();
+        let dict = rete.dictionary();
+        let resolver = Resolver::new(dict);
+        let shared_node = dict.node_of_term("<shared>").unwrap() as i64;
+        let shared_pred = -(dict.predicate_id("<shared>").unwrap() as i64) - 1;
+        let pred_only = -(dict.predicate_id("<pred-only>").unwrap() as i64) - 1;
+        let number = dict
+            .node_of_term("\"42\"^^<http://www.w3.org/2001/XMLSchema#integer>")
+            .unwrap() as i64;
+
+        resolver.prefetch(
+            [
+                Val::Id(shared_node),
+                Val::Id(shared_pred),
+                Val::Str(Rc::from("owned")),
+            ]
+            .iter(),
+        );
+        assert_eq!(&*resolver.term(shared_node).unwrap(), "<shared>");
+        assert_eq!(&*resolver.term(shared_node).unwrap(), "<shared>");
+        assert_eq!(resolver.term(999_999), None);
+        assert_eq!(resolver.term(-999_999), None);
+        assert_eq!(
+            &*resolver.str_of(&Val::Id(shared_pred)).unwrap(),
+            "<shared>"
+        );
+        assert_eq!(
+            &*resolver.str_of(&Val::Str(Rc::from("raw"))).unwrap(),
+            "raw"
+        );
+        assert_eq!(
+            resolver.str_once(&Val::Id(shared_node)).as_deref(),
+            Some("<shared>")
+        );
+        assert_eq!(
+            resolver.str_once(&Val::Id(pred_only)).as_deref(),
+            Some("<pred-only>")
+        );
+        assert_eq!(
+            resolver.str_once(&Val::Str(Rc::from("raw"))).as_deref(),
+            Some("raw")
+        );
+
+        assert_eq!(resolver.canon_id(shared_node), shared_node);
+        assert_eq!(resolver.canon_id(shared_pred), shared_node);
+        assert_eq!(resolver.canon_id(shared_pred), shared_node);
+        assert_eq!(resolver.canon_id(pred_only), pred_only);
+        assert_eq!(resolver.canon_term("<shared>"), Val::Id(shared_node));
+        assert_eq!(resolver.canon_term("<pred-only>"), Val::Id(pred_only));
+        assert_eq!(
+            resolver.canon_term("<unknown>"),
+            Val::Str(Rc::from("<unknown>"))
+        );
+
+        assert_eq!(resolver.num(&Val::Id(number)), Some(42.0));
+        assert_eq!(resolver.num(&Val::Id(number)), Some(42.0));
+        let bad = resolver.canon_term("\"not-a-number\"");
+        assert_eq!(resolver.num(&bad), None);
+        assert_eq!(resolver.num(&bad), None);
+
+        assert!(resolver.regex_match("shared", "i", "SHARED value"));
+        assert!(resolver.regex_match("shared", "i", "shared again"));
+        assert!(!resolver.regex_match("[", "", "shared"));
+        assert_eq!(
+            resolver.regex_replace("(a+)", "i", "Aa bb", "<$1>"),
+            Some("<Aa> bb".to_string())
+        );
+        assert_eq!(resolver.regex_replace("[", "", "x", "y"), None);
+    }
+}

@@ -1439,3 +1439,284 @@ fn escape_string(s: &str) -> String {
 fn unescape_nt(s: &str) -> String {
     crate::terms::unescape_literal(s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn graph(triples: &[(&str, &str, &str)]) -> DataGraph {
+        DataGraph::from_triples(
+            triples
+                .iter()
+                .map(|(s, p, o)| (s.to_string(), p.to_string(), o.to_string()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn graph_view_covers_subclasses_instances_and_all_lookup_shapes() {
+        let data = graph(&[
+            ("<alice>", RDF_TYPE, "<Child>"),
+            ("<Child>", RDFS_SUBCLASS_OF, "<Parent>"),
+            ("<Parent>", RDFS_SUBCLASS_OF, "<Ancestor>"),
+            ("<Ancestor>", RDFS_SUBCLASS_OF, "<Child>"),
+            ("<alice>", "<p>", "<bob>"),
+            ("<alice>", "<q>", "\"value\""),
+            ("<bob>", "<p>", "<carol>"),
+        ]);
+        assert!(data.has("<alice>", "<p>", "<bob>"));
+        assert!(!data.has("<bob>", "<q>", "<alice>"));
+        assert_eq!(data.objects("<alice>", "<p>"), ["<bob>"]);
+        assert_eq!(data.subjects_with("<p>", "<bob>"), ["<alice>"]);
+        assert_eq!(data.subjects_of("<p>"), ["<alice>", "<bob>"]);
+        assert_eq!(data.objects_of("<p>"), ["<bob>", "<carol>"]);
+        assert_eq!(data.predicates_for_subject("<bob>"), ["<p>"]);
+        assert!(data.all_nodes().contains(&"<alice>".to_string()));
+        assert!(data.is_subclass_of("<Child>", "<Child>"));
+        assert!(data.is_subclass_of("<Child>", "<Ancestor>"));
+        assert!(!data.is_subclass_of("<Unrelated>", "<Ancestor>"));
+        assert!(data.subclasses_of("<Parent>").contains("<Child>"));
+        assert_eq!(data.instances_of("<Ancestor>"), ["<alice>"]);
+        assert!(data.is_instance_of("<alice>", "<Parent>"));
+        assert!(!data.is_instance_of("<bob>", "<Parent>"));
+    }
+
+    #[test]
+    fn shapes_lists_targets_severity_and_parse_errors_are_explicit() {
+        assert!(matches!(
+            ShaclShapes::parse_turtle("@prefix sh: <http://www.w3.org/ns/shacl#> . ["),
+            Err(ShaclError::Parse(_))
+        ));
+        let shapes = ShaclShapes {
+            graph: graph(&[
+                ("<shape-node>", sh!("targetNode"), "<alice>"),
+                ("<shape-class>", sh!("targetClass"), "<Person>"),
+                ("<shape-subjects>", sh!("targetSubjectsOf"), "<p>"),
+                ("<shape-objects>", sh!("targetObjectsOf"), "<q>"),
+                ("<shape-type>", RDF_TYPE, sh!("NodeShape")),
+                ("<shape-property>", RDF_TYPE, sh!("PropertyShape")),
+                ("<shape-rdfs>", RDF_TYPE, RDFS_CLASS),
+                ("<shape-owl>", RDF_TYPE, OWL_CLASS),
+                ("_:one", RDF_FIRST, "\"a\""),
+                ("_:one", RDF_REST, "_:two"),
+                ("_:two", RDF_FIRST, "\"b\""),
+                ("_:two", RDF_REST, RDF_NIL),
+            ]),
+        };
+        assert_eq!(
+            shapes.objects("<shape-node>", sh!("targetNode")),
+            ["<alice>"]
+        );
+        assert_eq!(
+            shapes.subjects(sh!("targetNode"), "<alice>"),
+            ["<shape-node>"]
+        );
+        assert!(shapes.has("<shape-type>", RDF_TYPE, sh!("NodeShape")));
+        assert_eq!(shapes.list(RDF_NIL).unwrap(), Vec::<String>::new());
+        assert_eq!(shapes.list("_:one").unwrap(), ["\"a\"", "\"b\""]);
+        assert_eq!(shapes.target_shapes().len(), 8);
+
+        let missing = ShaclShapes {
+            graph: graph(&[("_:bad", RDF_FIRST, "\"a\"")]),
+        };
+        assert!(matches!(
+            missing.list("_:bad"),
+            Err(ShaclError::MalformedList(_))
+        ));
+        let cyclic = ShaclShapes {
+            graph: graph(&[
+                ("_:cycle", RDF_FIRST, "\"a\""),
+                ("_:cycle", RDF_REST, "_:cycle"),
+            ]),
+        };
+        assert!(matches!(
+            cyclic.list("_:cycle"),
+            Err(ShaclError::MalformedList(_))
+        ));
+
+        for (token, expected) in [
+            (Some(sh!("Info").to_string()), Severity::Info),
+            (Some(sh!("Warning").to_string()), Severity::Warning),
+            (Some(sh!("Violation").to_string()), Severity::Violation),
+            (None, Severity::Violation),
+            (
+                Some("<http://ex/custom>".to_string()),
+                Severity::Other("http://ex/custom".into()),
+            ),
+        ] {
+            assert_eq!(Severity::from_token(token), expected);
+        }
+        assert_eq!(Severity::Info.iri(), format!("{SH}Info"));
+        assert_eq!(
+            Severity::Other("http://ex/custom".into()).iri(),
+            "http://ex/custom"
+        );
+    }
+
+    #[test]
+    fn reports_serialize_empty_and_detailed_results() {
+        let empty = ValidationReport {
+            conforms: true,
+            results: vec![],
+        };
+        assert!(empty.to_json().contains("\"schemaVersion\": 1"));
+        assert!(empty.to_turtle().contains("conforms> true ."));
+
+        let report = ValidationReport {
+            conforms: false,
+            results: vec![ValidationResult {
+                focus_node: "<http://ex/alice>".into(),
+                value_node: Some("\"bad\"".into()),
+                result_path: Some("<http://ex/p>\"quoted".into()),
+                source_shape: "_:shape".into(),
+                source_constraint_component: component("PatternConstraintComponent"),
+                severity: Severity::Warning,
+                messages: vec!["line \\\"quoted\\\"".into(), "second".into()],
+            }],
+        };
+        let json = report.to_json();
+        assert!(json.contains("http://ex/alice"));
+        assert!(json.contains("PatternConstraintComponent"));
+        let turtle = report.to_turtle();
+        assert!(turtle.contains("ValidationResult"));
+        assert!(turtle.contains("resultPath"));
+        assert!(turtle.contains("resultMessage"));
+        assert!(turtle.contains("Warning"));
+    }
+
+    #[test]
+    fn path_display_parse_and_evaluation_cover_every_path_form() {
+        let data = graph(&[
+            ("<A>", "<p>", "<B>"),
+            ("<B>", "<p>", "<C>"),
+            ("<C>", "<p>", "<A>"),
+            ("<A>", "<q>", "<C>"),
+        ]);
+        let shapes = ShaclShapes::parse_turtle(
+            r#"
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix ex: <http://ex/> .
+            ex:inverse sh:path [ sh:inversePath <http://data/p> ] .
+            ex:alternative sh:path [ sh:alternativePath ( <http://data/p> <http://data/q> ) ] .
+            ex:zeroMore sh:path [ sh:zeroOrMorePath <http://data/p> ] .
+            ex:oneMore sh:path [ sh:oneOrMorePath <http://data/p> ] .
+            ex:zeroOne sh:path [ sh:zeroOrOnePath <http://data/p> ] .
+            ex:sequence sh:path ( <http://data/p> <http://data/q> ) .
+            "#,
+        )
+        .unwrap();
+        let validator = Validator {
+            data: &data,
+            shapes: &shapes,
+        };
+        for id in [
+            "inverse",
+            "alternative",
+            "zeroMore",
+            "oneMore",
+            "zeroOne",
+            "sequence",
+        ] {
+            let shape = format!("<http://ex/{id}>");
+            let node = shapes.objects(&shape, sh!("path")).remove(0);
+            assert!(!validator.parse_path(&node).unwrap().display().is_empty());
+        }
+
+        let p = Path::Predicate("<p>".into());
+        let q = Path::Predicate("<q>".into());
+        assert_eq!(p.display(), "<p>");
+        assert_eq!(Path::Inverse(Box::new(p.clone())).display(), "^<p>");
+        assert_eq!(
+            Path::Sequence(vec![p.clone(), q.clone()]).display(),
+            "(<p> <q>)"
+        );
+        assert_eq!(
+            Path::Alternative(vec![p.clone(), q.clone()]).display(),
+            "(<p>|<q>)"
+        );
+        assert_eq!(Path::ZeroOrMore(Box::new(p.clone())).display(), "<p>*");
+        assert_eq!(Path::OneOrMore(Box::new(p.clone())).display(), "<p>+");
+        assert_eq!(Path::ZeroOrOne(Box::new(p.clone())).display(), "<p>?");
+
+        assert_eq!(validator.eval_path(&p, "<A>"), ["<B>"]);
+        assert_eq!(
+            validator.eval_path(&Path::Inverse(Box::new(p.clone())), "<B>"),
+            ["<A>"]
+        );
+        assert!(validator
+            .eval_path(
+                &Path::Inverse(Box::new(Path::Sequence(vec![p.clone(), p.clone()]))),
+                "<C>"
+            )
+            .contains(&"<A>".to_string()));
+        assert_eq!(
+            validator.eval_path(&Path::Sequence(vec![p.clone(), p.clone()]), "<A>"),
+            ["<C>"]
+        );
+        assert_eq!(
+            validator.eval_path(&Path::Alternative(vec![p.clone(), q]), "<A>"),
+            ["<B>", "<C>"]
+        );
+        assert!(validator
+            .eval_path(&Path::ZeroOrOne(Box::new(p.clone())), "<A>")
+            .contains(&"<A>".into()));
+        assert!(validator
+            .eval_path(&Path::ZeroOrMore(Box::new(p.clone())), "<A>")
+            .contains(&"<C>".into()));
+        assert!(validator
+            .eval_path(&Path::OneOrMore(Box::new(p)), "<A>")
+            .contains(&"<B>".into()));
+    }
+
+    #[test]
+    fn term_helpers_cover_literals_node_kinds_ordering_and_escaping() {
+        assert!(bool_param(Some(
+            &"\"true\"^^<http://www.w3.org/2001/XMLSchema#boolean>".into()
+        )));
+        assert!(bool_param(Some(&"\"1\"".into())));
+        assert!(!bool_param(Some(&"<iri>".into())));
+        assert_eq!(int_literal("\"-12\""), Some(-12));
+        assert_eq!(int_literal("\"nope\""), None);
+        assert!(literal_lexical("<iri>").is_none());
+        let escaped = literal_lexical("\"a\\\"b\\n\"@EN").unwrap();
+        assert_eq!(escaped.value, "a\"b\n");
+        assert_eq!(escaped.lang.as_deref(), Some("EN"));
+        assert_eq!(
+            literal_datatype("\"x\"@en").as_deref(),
+            Some(RDF_LANG_STRING)
+        );
+        assert_eq!(literal_datatype("\"x\"").as_deref(), Some(XSD_STRING));
+        assert!(datatype_matches("\"x\"", XSD_STRING));
+        assert!(!datatype_matches("<iri>", XSD_STRING));
+
+        for (kind, value, expected) in [
+            (sh!("IRI"), "<iri>", true),
+            (sh!("BlankNode"), "_:b", true),
+            (sh!("Literal"), "\"x\"", true),
+            (sh!("BlankNodeOrIRI"), "<iri>", true),
+            (sh!("BlankNodeOrLiteral"), "\"x\"", true),
+            (sh!("IRIOrLiteral"), "\"x\"", true),
+            ("<unknown-kind>", "anything", true),
+            (sh!("IRI"), "\"x\"", false),
+        ] {
+            assert_eq!(node_kind(value, kind), expected);
+        }
+        assert_eq!(string_value("\"hello\"@en"), "hello");
+        assert_eq!(string_value("<http://ex/a>"), "http://ex/a");
+        assert_eq!(string_value("_:b"), "_:b");
+        assert_eq!(
+            compare_terms("\"2\"", "\"10\""),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert_eq!(
+            compare_terms("\"z\"", "\"a\""),
+            Some(std::cmp::Ordering::Greater)
+        );
+        assert_eq!(term_json_string("<http://ex/a>"), "http://ex/a");
+        assert_eq!(term_json_string("_:b"), "_:b");
+        assert_eq!(escape_string("a\\\"b"), "a\\\\\\\"b");
+        assert_eq!(unescape_nt("a\\tb"), "a\tb");
+        assert_eq!(set(&["b".into(), "a".into(), "b".into()]).len(), 2);
+        assert_eq!(unique(vec!["b".into(), "a".into(), "b".into()]), ["a", "b"]);
+    }
+}

@@ -1,0 +1,49 @@
+name: Weekly fuzz
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  untrusted-files:
+    name: eager and ranged file readers
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the pinned development image
+        run: docker build -t rete-dev -f .devcontainer/Dockerfile .
+
+      - name: Fuzz eager open and query paths for 10 minutes
+        run: |
+          mkdir -p fuzz/artifacts/open
+          docker run --rm --user root \
+            -v "$PWD:/work" -w /work rete-dev \
+            cargo +nightly-2026-07-01 fuzz run open -- \
+              -max_total_time=600 \
+              -rss_limit_mb=2048
+
+      - name: Fuzz ranged-lazy open and query paths for 10 minutes
+        run: |
+          mkdir -p fuzz/artifacts/open_lazy
+          docker run --rm --user root \
+            -v "$PWD:/work" -w /work rete-dev \
+            cargo +nightly-2026-07-01 fuzz run open_lazy -- \
+              -max_total_time=600 \
+              -rss_limit_mb=2048
+
+      - name: Upload crashes and minimized corpus
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rete-fuzz-${{ github.run_id }}
+          path: |
+            fuzz/artifacts
+            fuzz/corpus
+          if-no-files-found: warn
+          retention-days: 14
