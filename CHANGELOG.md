@@ -1,16 +1,43 @@
 # Changelog
 
-Notable changes to the **rete** crates. The crate version is tracked separately
-from the on-disk **format** version (currently `v0.4`; each format step is a
-clean break — readers accept only the current version, so rebuild older
-files); the format version lives in the header and is documented in
-[`docs/SPEC.md`](docs/SPEC.md).
+All notable user-facing changes are recorded here. Rete follows semantic
+versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
-The project is experimental: the format is not yet stable across versions.
+## [1.0.0-rc.1] - 2026-07-14
 
-## Unreleased
+First release candidate for the stable Rete format and toolchain.
+
+### Added
+
+- Stable format version 1 with compatibility fixtures and defensive ranged-file readers.
+- Publishable `rete-core`, `rete-cli`, and `rete-wasm` crates with Rust 1.87 MSRV.
+- Native CLI builds for Linux, macOS, and Windows on x86-64 and ARM64.
+- Browser WASM APIs for eager bytes, synchronous range reads, and asynchronous range reads.
+- RDF/XML ingestion, named-graph N-Quads, SPARQL, SHACL, reasoning, federation, GeoSPARQL, and Dataset Cards.
+- Reproducible playground generation, R2 catalog validation, coverage floors, fuzz targets, and release-gate browser tests.
+
+### Compatibility
+
+- Pre-1.0 `.rete` files are not guaranteed to open. Rebuild source RDF with the matching 1.0 CLI.
+- Files produced by an RC may still require rebuilding before final 1.0.0. The compatibility promise begins with the final release.
+
+### Known limitations
+
+- Browser bindings are single-threaded by default; threaded WASM remains opt-in and requires cross-origin isolation.
+- SPARQL results are evaluated eagerly after lazy range reads.
+- File federation unions per-file results; it does not perform arbitrary cross-file joins.
+- The current upstream RDF/XML dependency still resolves `quick-xml 0.37.5`; registry publication is blocked on resolving its two active RustSec advisories.
+
+[1.0.0-rc.1]: https://github.com/caviri/rete/releases/tag/v1.0.0-rc.1
+
+## Pre-1.0 development history
+
+The crate version and the experimental on-disk format version evolved
+independently before 1.0. Each format step was a clean break, so those files
+must be rebuilt with the 1.0 toolchain.
 
 ### Format & storage
+
 - **Format `v0.4`: six permutation indexes** (SPO/POS/OSP + SOP/PSO/OPS, #57) —
   every triple-pattern shape gets a prefix-routed, co-sorted permutation, the
   precondition for sort-merge joins. Roughly doubles the index payload vs the
@@ -24,6 +51,7 @@ The project is experimental: the format is not yet stable across versions.
   index in place, straight from the existing `.rete` (no export/build round-trip).
 
 ### Query & serve
+
 - **SPARQL 1.1 `SERVICE` federation**: a `SERVICE <endpoint> { … }` block is
   shipped to the remote endpoint and joined on shared variables (SILENT
   honored; transport injected by the host — ureq in the CLI, sync XHR in wasm).
@@ -42,6 +70,7 @@ The project is experimental: the format is not yet stable across versions.
   benchmark operators.
 
 ### Ecosystem
+
 - Datasets are served **directly from Cloudflare R2 / any range+CORS host**
   (Zenodo DOIs included — the length probe tries `HEAD` first); the docs grew
   a [hosting guide](docs/hosting.md).
@@ -57,6 +86,7 @@ First tagged minor release. Highlights of the capabilities and the most recent
 work; PR numbers reference [github.com/caviri/rete](https://github.com/caviri/rete).
 
 ### Format & storage
+
 - Single-file, immutable `.rete` image — dictionary, SPO/POS/OSP permutation
   indexes, and a pyramidal community summary — queryable in place over HTTP
   `Range` requests, no server.
@@ -70,6 +100,7 @@ work; PR numbers reference [github.com/caviri/rete](https://github.com/caviri/re
   `query_stats`, characteristic sets / entity shapes, and a bounded label index.
 
 ### Query
+
 - SPARQL SELECT / ASK / CONSTRUCT / DESCRIBE with BGPs, OPTIONAL, UNION, MINUS,
   FILTER, BIND, property paths, aggregation, and solution modifiers.
 - Cost-based BGP join ordering from the pyramid summary and measured
@@ -79,11 +110,13 @@ work; PR numbers reference [github.com/caviri/rete](https://github.com/caviri/re
 - Progressive / summary-only answers and a range-read cost preview.
 
 ### Reasoning, validation, federation
+
 - Prototype OWL RL / RDFS reasoner (coherence checking + optional materialization).
 - SHACL Core validation.
 - Federated SPARQL across several `.rete` sources (union + dedup, predicate routing).
 
 ### Performance
+
 - Build peak RAM cut ~39% on a 3 M-triple build (stream-parse + drop the raw
   string statements before the pyramid) (#49).
 - Louvain community-pyramid build ~2.7× faster (dense-scratch local moving,
@@ -93,6 +126,7 @@ work; PR numbers reference [github.com/caviri/rete](https://github.com/caviri/re
 - Parallel index/dictionary builds and batch reachability (rayon).
 
 ### Tooling
+
 - `rete` CLI (build, inspect, query, reason, shacl, federate, search, …).
 - WASM browser client + the static playground.
 - Playground **Find a term** picker: browse a graph's classes/predicates (from

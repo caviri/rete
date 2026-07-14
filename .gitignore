@@ -1,5 +1,6 @@
 # Build output
 /target
+/dist/
 /web/pkg*
 # Local skill activation: junctions/symlinks pointing at the committed skills/ dir.
 # The skills themselves live (tracked) under /skills; these are a per-machine
@@ -71,5 +72,7 @@ __pycache__/
 target-star/
 target-std/
 target-wasm/
+/target-msrv/
 tests/gate/.cache/
+tests/gate/.playwright/
 tests/gate/node_modules/

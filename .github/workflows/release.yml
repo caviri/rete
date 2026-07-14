@@ -1,58 +1,180 @@
 name: Release
 
-# On a version tag (e.g. `v0.1.0`), build the `rete` CLI in the same
-# `rust:1.92-bookworm` image the dev container uses (nothing builds on the host),
-# package it as a tarball with a checksum, and publish a GitHub Release with it.
-#
-# `workflow_dispatch` runs the build + package as a dry run (no publish) so you
-# can sanity-check the release artifact off a branch.
-
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 
 permissions:
-  contents: write # create the GitHub Release and upload assets
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: build · package · publish
+  meta:
+    name: release identity
     runs-on: ubuntu-latest
-    container:
-      image: rust:1.92-bookworm
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-
-      # The C zstd encoder (default `compression` feature) needs the dev headers.
-      - name: Install system deps
+      - uses: actions/checkout@v6
+      - id: meta
+        name: Match the tag to the workspace version
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libzstd-dev
+          version=$(awk '/^\[workspace.package\]/{found=1; next} found && /^version = /{gsub(/[" ]/, "", $3); print $3; exit}' Cargo.toml)
+          test -n "$version"
+          tag="v$version"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "$GITHUB_REF_NAME" = "$tag" || { echo "tag $GITHUB_REF_NAME does not match $tag" >&2; exit 1; }
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Build release binary
-        run: cargo build --release -p rete-cli
-
-      - name: Package tarball + checksum
+  native:
+    name: ${{ matrix.target }}
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            family: linux
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            family: linux
+            target: aarch64-unknown-linux-gnu
+          - os: macos-15-intel
+            family: native
+            target: x86_64-apple-darwin
+          - os: macos-15
+            family: native
+            target: aarch64-apple-darwin
+          - os: windows-2025
+            family: native
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            family: native
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build and package in the pinned development image
+        if: matrix.family == 'linux'
+        shell: bash
         run: |
-          ver="${GITHUB_REF_NAME}"
-          name="rete-${ver}-x86_64-unknown-linux-gnu"
-          mkdir -p "dist/${name}"
-          cp target/release/rete "dist/${name}/"
-          cp README.md LICENSE "dist/${name}/"
-          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
-          (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
-          ls -l dist
+          docker build -t rete-dev-release -f .devcontainer/Dockerfile .
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -e CARGO_TARGET_DIR=/work/target \
+            -v "$PWD:/work" -w /work rete-dev-release \
+            sh -lc 'git config --global --add safe.directory /work && bash scripts/package_release.sh "${{ needs.meta.outputs.tag }}" "${{ matrix.target }}"'
+      - name: Install the pinned native Rust toolchain
+        if: matrix.family == 'native'
+        shell: bash
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+      - name: Build and package on the native runner
+        if: matrix.family == 'native'
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: target
+        run: bash scripts/package_release.sh "${{ needs.meta.outputs.tag }}" "${{ matrix.target }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rete-${{ matrix.target }}
+          path: dist/rete-${{ needs.meta.outputs.version }}-${{ matrix.target }}.*
+          if-no-files-found: error
 
-      - name: Publish GitHub Release
-        # Only publish for real version tags; workflow_dispatch is a dry run.
+  wasm:
+    name: browser WASM bundle
+    needs: meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build every browser variant in the pinned image
+        run: |
+          docker build -t rete-dev-release -f .devcontainer/Dockerfile .
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -e CARGO_TARGET_DIR=/work/target \
+            -e RETE_SOURCE_REVISION="$GITHUB_SHA" \
+            -e RETE_BUILD_STAMP="${{ needs.meta.outputs.version }}" \
+            -v "$PWD:/work" -w /work rete-dev-release \
+            sh -lc 'git config --global --add safe.directory /work && bash scripts/build_wasm.sh'
+      - name: Package browser artifacts
+        run: |
+          name="rete-wasm-${{ needs.meta.outputs.version }}"
+          mkdir -p "dist/$name/web" "dist/$name/docs"
+          cp -a web/pkg web/pkg-nomodules web/pkg-nomodules-async "dist/$name/web/"
+          cp docs/rete_wasm.js docs/rete_wasm_bg.wasm \
+            docs/rete_wasm_async.js docs/rete_wasm_async.wasm \
+            docs/wasm-build.json "dist/$name/docs/"
+          cp crates/rete-wasm/README.md LICENSE CHANGELOG.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rete-wasm
+          path: dist/rete-wasm-${{ needs.meta.outputs.version }}.tar.gz
+          if-no-files-found: error
+
+  assemble:
+    name: checksums, SBOM, attestations, and GitHub release
+    needs: [meta, native, wasm]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          pattern: rete-*
+          merge-multiple: true
+      - name: Create SHA-256 checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz *.zip > SHA256SUMS
+      - name: Generate the locked CycloneDX dependency graph
+        run: |
+          docker build -t rete-dev-release -f .devcontainer/Dockerfile .
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -v "$PWD:/work" -w /work rete-dev-release \
+            cargo cyclonedx --manifest-path crates/rete-cli/Cargo.toml \
+              --format json --all --target all --spec-version 1.5 \
+              --override-filename rete-${{ needs.meta.outputs.version }}.cdx
+          mv crates/rete-cli/rete-${{ needs.meta.outputs.version }}.cdx.json dist/
+      - name: Attest every archive and checksum
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+      - name: Bind the CycloneDX SBOM to every release archive
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+          sbom-path: dist/rete-${{ needs.meta.outputs.version }}.cdx.json
+      - name: Preserve the complete dry-run release set
+        uses: actions/upload-artifact@v7
+        with:
+          name: rete-release-${{ needs.meta.outputs.version }}
+          path: dist/*
+      - name: Publish the prerelease
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/*.tar.gz
-            dist/*.tar.gz.sha256
-          generate_release_notes: true
+          name: Rete ${{ needs.meta.outputs.version }}
+          body_path: docs/release.md
+          prerelease: ${{ contains(needs.meta.outputs.version, '-rc.') }}
+          files: dist/*

@@ -9,6 +9,11 @@ Dataset Cards, provenance, search, communities, cost, progressive metadata, and
 SHACL reports. Standard SPARQL Results JSON and JSON-LD keep their standard
 shapes and do not add that field.
 
+Release archives also contain Bash, Zsh, Fish, and PowerShell completions plus
+the `rete(1)` man page. Maintainers generate these from the exact binary with the
+hidden `rete generate --output <directory>` packaging command; they are never
+maintained as hand-written copies of the CLI definition.
+
 ## Building
 
 ### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|rdfxml]`

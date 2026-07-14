@@ -24,6 +24,8 @@ path = "src/main.rs"
 rete-core = { version = "=1.0.0-rc.1", path = "../rete-core", features = ["parallel"] }
 anyhow.workspace = true
 clap.workspace = true
+clap_complete = "4"
+clap_mangen = "0.2"
 thiserror.workspace = true
 # Turtle parsing for `rete build *.ttl`.
 oxttl.workspace = true

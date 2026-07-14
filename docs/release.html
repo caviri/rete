@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Parallel in browser (exp.) · rete docs</title>
+  <title>1.0 release candidate · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -220,7 +220,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
         <li><a href="media-companions.html">Media & SQL companions</a></li>
-        <li><a href="release.html">1.0 release candidate</a></li>
+        <li><a href="release.html" class="active">1.0 release candidate</a></li>
         <li class="nav-h">Graph analysis</li>
         <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
         <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
@@ -229,7 +229,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="SPEC.html">Format specification</a></li>
         <li><a href="rust-api.html">Rust API</a></li>
         <li><a href="browser.html">WASM & JavaScript API</a></li>
-        <li><a href="parallel-browser.html" class="active">Parallel in browser (exp.)</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
         <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
         <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
@@ -239,75 +239,59 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Parallelism in the browser (experimental)</h1>
-<p>The default offline playground runs <strong>single-threaded</strong> — it is a single
-self-contained <code>file://</code>-able page. This page explains the options and documents
-the <strong>experimental threaded playground</strong> that actually runs the engine on
-multiple browser threads, plus the shared-memory path that is scaffolded but
-version-fragile.</p>
-<h2>The three options</h2>
-<table><thead><tr><th>Approach</th><th>What it is</th><th>For rete</th><th>Catch</th></tr></thead><tbody>
-<tr><td><strong>Web Workers (message passing)</strong> ✅</td><td>Spawn N workers, each a full wasm instance + a copy of the data; partition the seeds, run serial <code>reach</code> per slice, merge results</td><td>Fits batch reachability (embarrassingly parallel); <strong>works on any plain static server — no special headers</strong></td><td>Copies the graph per worker</td></tr>
-<tr><td><strong><code>wasm-bindgen-rayon</code></strong> (WASM threads)</td><td><code>rayon</code> on a pool of Web Workers over <code>SharedArrayBuffer</code> + atomics</td><td>Would run the existing <code>batch_reach_parallel</code> multicore with minimal code change</td><td>Needs <strong>nightly + <code>-Z build-std</code></strong> to build, and the page must be served <strong>cross-origin isolated</strong> (COOP/COEP); also version-fragile (see below)</td></tr>
-<tr><td><strong>WebGPU</strong></td><td>GPU compute shaders (WGSL)</td><td>Could do batch reach as sparse-matrix frontier expansion</td><td>Specialized kernels only; the dictionary/triple model isn't GPU-native; uneven browser support. A research-grade backend.</td></tr>
-</tbody></table>
-<p>The <strong>working</strong> in-browser-parallel demo is the <strong>Web Worker pool</strong>: it needs no
-special serving setup, so it is the recommended approach. <strong>WebGPU</strong> is a future,
-workload-specific backend, not a general "make it parallel" switch.</p>
-<h2>The working demo: a Web Worker pool (message passing)</h2>
-<p>The experimental threaded playground uses a <strong>Web Worker pool with message
-passing</strong> — no <code>SharedArrayBuffer</code>, no cross-origin isolation:</p>
+<h1>Rete 1.0.0-rc.1 release candidate</h1>
+<p>This candidate freezes the intended 1.0 file-format contract, Rust API, CLI,
+browser/WASM API, and crates.io package layout for final review. It is a
+pre-release: report compatibility problems before 1.0.0 is tagged.</p>
+<h2>Install and artifacts</h2>
+<p>The release provides native archives for:</p>
 <ul>
-<li><strong><code>web/playground-threads.html</code></strong> — the page; it spawns
-<code>navigator.hardwareConcurrency</code> workers, splits the seed list across them,
-and merges the results.</li>
-<li><strong><code>web/reach-worker.js</code></strong> — each worker is its own WASM instance running
-serial <code>reach</code> over its slice of seeds.</li>
+<li>Linux GNU: x86-64 and ARM64</li>
+<li>macOS: Intel x86-64 and Apple Silicon ARM64</li>
+<li>Windows MSVC: x86-64 and ARM64</li>
 </ul>
-<p>Because it is plain message passing, <strong>it runs on any static server</strong> — no
-<code>Cross-Origin-Opener-Policy</code> / <code>Cross-Origin-Embedder-Policy</code> headers required.</p>
-<pre><code class="language-sh"># 1. Stage a big graph to make parallelism matter:
-cp data/opencitations/enriched-all.rete web/        # ~590k triples
-
-# 2. Serve web/ with ANY static server (the bundled one works, but COOP/COEP
-#    is NOT required — any plain static host is fine):
-python3 scripts/serve_coi.py 8080 web
-
-# 3. Open the experimental page (NOT file://, because workers need http(s)):
-#    http://localhost:8080/playground-threads.html
+<p>Each archive includes <code>rete</code>, Bash/Zsh/Fish/PowerShell completions, <code>rete(1)</code>,
+README, license, and changelog. <code>SHA256SUMS</code> covers every archive and the WASM
+bundle. A CycloneDX JSON SBOM and GitHub artifact attestations are published with
+the release.</p>
+<p>The crates are intended to appear as
+<a href="https://crates.io/crates/rete-core"><code>rete-core</code></a>,
+<a href="https://crates.io/crates/rete-cli"><code>rete-cli</code></a>, and
+<a href="https://crates.io/crates/rete-wasm"><code>rete-wasm</code></a>. The first RC uses the audited
+bootstrap procedure; subsequent releases use crates.io trusted publishing with
+GitHub OIDC.</p>
+<h2>Compatibility statement</h2>
+<p>Pre-1.0 <code>.rete</code> bytes were explicitly unstable. Rebuild every dataset from its
+source RDF with the 1.0 toolchain; do not rename an older file and assume it is
+compatible. RC-produced files may also need one final rebuild if review changes
+the format before 1.0.0. The durable compatibility promise starts at final
+1.0.0.</p>
+<p>The Rust crates declare Rust 1.87 as their minimum supported version. Public
+Rust, CLI, and WASM surfaces follow semantic versioning after final 1.0.0.</p>
+<h2>Verify a download</h2>
+<pre><code class="language-sh">sha256sum -c SHA256SUMS
+gh attestation verify rete-1.0.0-rc.1-x86_64-unknown-linux-gnu.tar.gz \
+  --repo caviri/rete
+./rete-1.0.0-rc.1-x86_64-unknown-linux-gnu/rete --version
 </code></pre>
-<p>The page benchmarks <strong>serial <code>reach</code> vs the Web-Worker pool</strong> over many seeds,
-shows the wall-time of each, the speedup, and the worker count, and asserts the
-two result sets are identical before trusting the timing.</p>
-<h2>The scaffolded (but fragile) shared-memory path</h2>
-<p>The <code>wasm-bindgen-rayon</code> / <code>SharedArrayBuffer</code> shared-memory path is also
-scaffolded, but it is <strong>version-fragile</strong>: it hit a
-<code>DataCloneError: # could not be cloned</code> from a wasm-bindgen ↔ wasm-bindgen-rayon
-version mismatch. The Web-Worker approach above is the recommended one. The
-shared-memory scaffolding:</p>
+<p>Then build and query a source graph:</p>
+<pre><code class="language-sh">rete build source.nq -o graph.rete --pyramid-algo types --card
+rete verify graph.rete
+rete sparql graph.rete 'SELECT * WHERE { ?s ?p ?o } LIMIT 1'
+</code></pre>
+<h2>Known limitations</h2>
 <ul>
-<li><strong><code>rete-wasm</code> <code>threads</code> feature</strong> → <code>wasm-bindgen-rayon</code> + <code>rete-core/parallel</code>;
-exports <code>init_thread_pool</code> and <code>reach_parallel</code> (the threaded twin of <code>reach</code>).
-Off by default — the normal build is unchanged and stays <code>file://</code>-able.</li>
-<li><strong><code>scripts/build_playground_threads.sh</code></strong> — the nightly/<code>build-std</code>/atomics build.</li>
-<li><strong><code>scripts/serve_coi.py</code></strong> — a Range-capable static server that <em>can</em> add the
-COOP/COEP headers (needed only for this shared-memory path; the Web-Worker
-demo doesn't require them).</li>
+<li>Browser execution is single-threaded by default. Threads are experimental and
+require cross-origin isolation.</li>
+<li>Range reads are lazy; query result materialization is currently eager.</li>
+<li>Federation unions results from independent files and does not resolve general
+joins spanning files.</li>
+<li>The RDF/XML parser is temporarily pinned through upstream Oxigraph crates to
+<code>quick-xml 0.37.5</code>. The two active RustSec findings are visible in development
+CI, and crates.io publication remains blocked until the release preflight is
+explicitly clean.</li>
 </ul>
-<h3>Why cross-origin isolation (for the shared-memory path only)</h3>
-<p><code>SharedArrayBuffer</code> (which a shared-memory worker pool needs) is only exposed
-when the page sends:</p>
-<pre><code>Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-</code></pre>
-<p>A <code>file://</code> page can't be isolated, and GitHub Pages doesn't send these by
-default — which is part of why the <strong>stable</strong> playground stays single-threaded and
-self-contained, and why the working parallel demo uses message-passing Web
-Workers instead.</p>
-<p>This page is <strong>experimental</strong> and exists to explore real in-browser multicore.
-The stable path remains the native <code>parallel</code> feature (<code>rete reach --parallel</code>,
-the <a href="BENCHMARK.html">Benchmarks</a>) and the offline single-threaded
-<a href="playground.html">playground</a>.</p>
+<p>Full changes are in the <a href="https://github.com/caviri/rete/blob/release-1.0.0-rc1/CHANGELOG.html">changelog</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -315,7 +299,7 @@ the <a href="BENCHMARK.html">Benchmarks</a>) and the offline single-threaded
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/parallel-browser.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/release.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

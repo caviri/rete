@@ -4,7 +4,8 @@ mod commands;
 mod cypher;
 mod http;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 pub(crate) const JSON_SCHEMA_VERSION: u8 = 1;
@@ -18,6 +19,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Generate shell completions and a man page for release archives.
+    #[command(hide = true)]
+    Generate {
+        /// Directory that receives rete.bash, _rete, rete.fish, rete.ps1, and rete.1.
+        #[arg(long, value_name = "DIR")]
+        output: PathBuf,
+    },
     /// Build a `.rete` file from one or more RDF inputs (merged into one file).
     ///
     /// Format is by extension: `.nt`/`.nq`/`.ttl`, plus `.rdf`/`.owl`/`.rdfxml`
@@ -633,6 +641,7 @@ fn run() -> Result<ExitCode, CliError> {
 
 fn dispatch(command: Command) -> anyhow::Result<()> {
     match command {
+        Command::Generate { output } => generate_release_artifacts(&output),
         Command::Build {
             inputs,
             output,
@@ -854,6 +863,27 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             no_route,
         } => commands::federate::federate(&sources, &query, json, !no_route),
     }
+}
+
+fn generate_release_artifacts(output: &Path) -> anyhow::Result<()> {
+    use clap_complete::Shell;
+    use std::fs::File;
+
+    std::fs::create_dir_all(output)?;
+    for (shell, name) in [
+        (Shell::Bash, "rete.bash"),
+        (Shell::Zsh, "_rete"),
+        (Shell::Fish, "rete.fish"),
+        (Shell::PowerShell, "rete.ps1"),
+    ] {
+        let mut command = Cli::command();
+        let mut file = File::create(output.join(name))?;
+        clap_complete::generate(shell, &mut command, "rete", &mut file);
+    }
+
+    let mut man = File::create(output.join("rete.1"))?;
+    clap_mangen::Man::new(Cli::command()).render(&mut man)?;
+    Ok(())
 }
 
 #[cfg(test)]

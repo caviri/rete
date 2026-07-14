@@ -59,6 +59,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("dataset-cards.md", "Dataset Cards"),
             ("hosting.md", "Hosting your .rete"),
             ("media-companions.md", "Media & SQL companions"),
+            ("release.md", "1.0 release candidate"),
         ],
     ),
     (

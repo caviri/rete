@@ -77,7 +77,7 @@ jobs:
           docker run --rm --user root \
             -e RUSTUP_TOOLCHAIN=1.87.0 -e CARGO_TARGET_DIR=/work/target-msrv \
             -v "$PWD:/work" -w /work rust:1.87.0-bookworm \
-            sh -lc 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libzstd-dev && cargo check --locked --workspace --exclude rete-bench'
+            sh -c 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libzstd-dev && cargo check --locked --workspace --exclude rete-bench'
 
   security:
     name: security
