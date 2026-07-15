@@ -4182,11 +4182,103 @@ self.onmessage = function (e) {
   function pdfViewerCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri pdfview-cell"><div class="pdfview" data-pdf="${esc(url)}">` +
-      `<div class="pdfview-stage"><canvas></canvas><div class="pdfview-msg">📄 loading…</div></div>` +
+      `<div class="pdfview-stage" role="button" tabindex="0" aria-label="Enlarge PDF page"><canvas></canvas><div class="pdfview-msg">📄 loading…</div></div>` +
       `<div class="pdfview-bar"><button class="pdfview-prev" type="button" disabled aria-label="previous page">◀</button>` +
       `<span class="pdfview-pg">·</span>` +
       `<button class="pdfview-next" type="button" disabled aria-label="next page">▶</button>` +
       `</div>${mediaSourceLink(url, "pdf")}</div></td>`;
+  }
+  function renderPdfCanvas(doc, pageNumber, canvas, maxWidth, maxHeight) {
+    return doc.getPage(pageNumber).then((page) => {
+      const dpr = window.devicePixelRatio || 1;
+      const v0 = page.getViewport({ scale: 1 });
+      const scale = Math.max(.1, Math.min(maxWidth / v0.width, maxHeight / v0.height));
+      const vp = page.getViewport({ scale: scale * dpr });
+      canvas.width = Math.max(1, Math.round(vp.width));
+      canvas.height = Math.max(1, Math.round(vp.height));
+      canvas.style.width = Math.round(vp.width / dpr) + "px";
+      canvas.style.height = Math.round(vp.height / dpr) + "px";
+      return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    });
+  }
+
+  // One enlarged page viewer is shared by all PDF cells. It receives the
+  // document already opened by the inline renderer, so opening the modal never
+  // starts a second fetch or defeats PDF.js range loading.
+  let pdfModalEl = null, pdfModalState = null;
+  function closePdfModal() {
+    if (pdfModalEl) pdfModalEl.classList.add("hidden");
+    pdfModalState = null;
+  }
+  function ensurePdfModal() {
+    if (pdfModalEl) return pdfModalEl;
+    const el = document.createElement("div");
+    el.className = "pdf-modal hidden";
+    el.innerHTML =
+      '<div class="pdf-modal-backdrop"></div>' +
+      '<div class="pdf-modal-box" role="dialog" aria-modal="true" aria-label="PDF page viewer">' +
+        '<button class="pdf-modal-close" type="button" aria-label="Close PDF viewer">×</button>' +
+        '<div class="pdf-modal-stage"><canvas></canvas><div class="pdf-modal-msg"></div></div>' +
+        '<div class="pdf-modal-bar">' +
+          '<button class="pdf-modal-prev" type="button" aria-label="Previous PDF page">‹</button>' +
+          '<span class="pdf-modal-page" aria-live="polite"></span>' +
+          '<button class="pdf-modal-next" type="button" aria-label="Next PDF page">›</button>' +
+          '<a class="pdf-modal-source media-source" target="_blank" rel="noopener noreferrer">Open PDF ↗</a>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(el);
+    el.querySelector(".pdf-modal-close").addEventListener("click", closePdfModal);
+    el.querySelector(".pdf-modal-backdrop").addEventListener("click", closePdfModal);
+    el.querySelector(".pdf-modal-prev").addEventListener("click", () => pdfModalGo(-1));
+    el.querySelector(".pdf-modal-next").addEventListener("click", () => pdfModalGo(1));
+    document.addEventListener("keydown", (e) => {
+      if (el.classList.contains("hidden")) return;
+      if (e.key === "Escape") closePdfModal();
+      else if (e.key === "ArrowLeft") pdfModalGo(-1);
+      else if (e.key === "ArrowRight") pdfModalGo(1);
+    });
+    window.addEventListener("resize", () => {
+      if (!el.classList.contains("hidden") && pdfModalState) renderPdfModal();
+    });
+    pdfModalEl = el;
+    return el;
+  }
+  function renderPdfModal() {
+    const el = pdfModalEl, st = pdfModalState;
+    if (!el || !st) return;
+    const prev = el.querySelector(".pdf-modal-prev"), next = el.querySelector(".pdf-modal-next");
+    el.querySelector(".pdf-modal-page").textContent = `${st.page} / ${st.doc.numPages}`;
+    prev.disabled = st.page <= 1; next.disabled = st.page >= st.doc.numPages;
+    if (st.busy) { st.pending = true; return; }
+    st.busy = true; st.pending = false;
+    const requested = st.page;
+    const msg = el.querySelector(".pdf-modal-msg");
+    msg.textContent = "Loading page…";
+    const maxWidth = Math.max(240, Math.min(980, window.innerWidth - 96));
+    const maxHeight = Math.max(260, Math.min(760, window.innerHeight - 190));
+    renderPdfCanvas(st.doc, requested, el.querySelector("canvas"), maxWidth, maxHeight)
+      .then(() => { if (pdfModalState === st && st.page === requested) msg.textContent = ""; })
+      .catch(() => { if (pdfModalState === st) msg.textContent = "Couldn’t render this page."; })
+      .finally(() => {
+        if (pdfModalState !== st) return;
+        st.busy = false;
+        if (st.pending || st.page !== requested) renderPdfModal();
+      });
+  }
+  function pdfModalGo(delta) {
+    if (!pdfModalState) return;
+    const next = Math.max(1, Math.min(pdfModalState.doc.numPages, pdfModalState.page + delta));
+    if (next === pdfModalState.page) return;
+    pdfModalState.page = next;
+    renderPdfModal();
+  }
+  function openPdfModal(doc, url, page) {
+    const el = ensurePdfModal();
+    pdfModalState = { doc, url, page: Math.max(1, Math.min(doc.numPages, page || 1)), busy: false, pending: false };
+    const source = el.querySelector(".pdf-modal-source");
+    source.href = httpsUpgrade(url); source.title = url;
+    el.classList.remove("hidden");
+    renderPdfModal();
   }
   function hydratePdfViewers(scope) {
     const cells = [...(scope || document).querySelectorAll(".pdfview[data-pdf]")];
@@ -4195,30 +4287,26 @@ self.onmessage = function (e) {
       cells.forEach((el) => {
         const url = el.getAttribute("data-pdf"); el.removeAttribute("data-pdf");
         const canvas = el.querySelector("canvas"), msg = el.querySelector(".pdfview-msg");
+        const stage = el.querySelector(".pdfview-stage");
         const pg = el.querySelector(".pdfview-pg");
         const prev = el.querySelector(".pdfview-prev"), next = el.querySelector(".pdfview-next");
         if (!pdfjs) { msg.textContent = "📄 open ↗"; return; }
         let doc = null, cur = 1, busy = false;
         const draw = (n) => {
           if (!doc || busy) return; busy = true;
-          doc.getPage(n).then((page) => {
-            const dpr = window.devicePixelRatio || 1;
-            const v0 = page.getViewport({ scale: 1 });
-            const scale = Math.min(300 / v0.width, 380 / v0.height);
-            const vp = page.getViewport({ scale: scale * dpr });
-            canvas.width = vp.width; canvas.height = vp.height;
-            canvas.style.width = Math.round(vp.width / dpr) + "px";
-            canvas.style.height = Math.round(vp.height / dpr) + "px";
-            return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
-          }).then(() => {
+          renderPdfCanvas(doc, n, canvas, 300, 380).then(() => {
             pg.textContent = n + " / " + doc.numPages;
             prev.disabled = n <= 1; next.disabled = n >= doc.numPages; busy = false;
           }).catch(() => { busy = false; });
         };
         pdfjs.getDocument({ url, disableAutoFetch: true }).promise.then((d) => {
-          doc = d; msg.style.display = "none"; draw(1);
+          doc = d; msg.style.display = "none"; stage.classList.add("is-ready"); draw(1);
           prev.addEventListener("click", () => { if (cur > 1) { cur--; draw(cur); } });
           next.addEventListener("click", () => { if (cur < doc.numPages) { cur++; draw(cur); } });
+          stage.addEventListener("click", () => openPdfModal(doc, url, cur));
+          stage.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPdfModal(doc, url, cur); }
+          });
         }).catch(() => { msg.textContent = "📄 open ↗"; });
       });
     });

@@ -149,8 +149,8 @@ async function setType(page, column, type) {
 
 async function checkRenderers(page) {
   const forced = {
-    image: "image", pdf: "pdf", audio: "audio", video: "video", spin: "spin",
-    model: "model3d", iiif: "iiif", page: "page", markdown: "markdown",
+    image: "image", audio: "audio", video: "video", spin: "spin",
+    model: "model3d", iiif: "iiif", page: "page", markdown: "markdown", pdf: "pdf",
   };
   for (const [column, type] of Object.entries(forced)) await setType(page, column, type);
 
@@ -190,7 +190,7 @@ async function checkRenderers(page) {
   await page.click(".pdf-modal-next");
   await page.waitForFunction(() => /2\s*\/\s*3/.test(document.querySelector(".pdf-modal-page")?.textContent || ""));
   await page.keyboard.press("Escape");
-  await page.waitForSelector(".pdf-modal.hidden");
+  await page.waitForSelector(".pdf-modal.hidden", { state: "attached" });
   assert.equal(await page.evaluate(() => window.__pdfOpenCount), 1);
 }
 
