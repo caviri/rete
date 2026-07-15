@@ -58,10 +58,9 @@ Each preview is immutable at an exact head SHA while it is active:
 
 ```text
 https://preview.graphplaza.com/pr-<number>/<40-char-head-sha>/playground.html
-https://preview.graphplaza.com/pr-<number>/<40-char-head-sha>/rete_wasm.js
-https://preview.graphplaza.com/pr-<number>/<40-char-head-sha>/rete_wasm_bg.wasm
 https://preview.graphplaza.com/pr-<number>/<40-char-head-sha>/rete_wasm_async.js
 https://preview.graphplaza.com/pr-<number>/<40-char-head-sha>/rete_wasm_async.wasm
+https://preview.graphplaza.com/pr-<number>/<40-char-head-sha>/coi-serviceworker.js
 https://preview.graphplaza.com/pr-<number>/<40-char-head-sha>/wasm-build.json
 ```
 
