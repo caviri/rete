@@ -66,7 +66,7 @@ function g0() {
       String(e.stderr || e.stdout || e).slice(-160),
     );
   }
-  for (const f of ["web/playground-src/app.js", "web/playground-src/catalog.js"]) {
+  for (const f of ["web/playground-src/app.js", "web/playground-src/catalog.js", "web/playground-src/versions.js"]) {
     try { execSync(`node --check ${ROOT}/${f}`, { stdio: "pipe" }); record("G0", `parse ${f}`, true); }
     catch (e) { record("G0", `parse ${f}`, false, String(e.stderr || e).slice(0, 120)); }
   }
@@ -222,6 +222,8 @@ async function g1(port) {
 
 // ---------- G2 browser matrix ----------
 const G2 = [
+  ["check_rich_media_cells", "rich media renderers + desktop card carousel", 120000, false],
+  ["check_version_picker", "production + automatic PR preview selector", 90000, false],
   ["check_diag", "embedded + error diagnostics block", 90000, false],
   ["check_worldcup", "desktop lazy DEFAULT (async) · worldcup ex=0 · live R2", 120000, true],
   ["check_lazy_async", "desktop lazy async-forced · mtg GROUP BY · live R2", 240000, true],

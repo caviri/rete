@@ -35,6 +35,7 @@ URL pattern → renderer (the detector functions, in `autoCell`'s order):
 | `.mp3 .wav .ogg .oga .flac .m4a .aac .opus` | `looksAudioUrl` → `audioCell` | inline `<audio controls preload=metadata>` |
 | a bucket `…-spin/<id>.webm` (or `.mp4`) | `looksSpinUrl` → `spinCell` | autoplaying, muted, looping clip (a pre-rendered turntable preview — no WebGL) |
 | `.mp4 .webm .ogv .m4v .mov` | `looksVideoUrl` → `videoCell` | inline `<video controls preload=metadata>` |
+| `.pdf` | `looksPdfUrl` → `pdfCell` | a PDF launch button in Auto; force **PDF viewer** for an inline page canvas with paging and an enlarged modal |
 | a WKT literal (`POINT`/`POLYGON`/`LINESTRING`/… — `looksWktGeo`) | `geoCell` | a small locator mini-map (a point sits on a cached world basemap tile; a shape fits its own bbox). With many geo rows, **Output → Map** plots the whole result set |
 
 Notes:
@@ -44,12 +45,28 @@ Notes:
   best-effort `HEAD` request; dimensions/duration/3D real-size come from the
   loaded element (`updateScaleBar` drives the lightbox scale bar from the live
   camera).
-- The column dropdown options (`COL_TYPES`) are **Auto / Text / Link / Image /
-  IIIF / Map / 3D / Audio / Video / Spin / Number**.
+- The column dropdown options (`COL_TYPES`) are **Auto / Text / Link / Button /
+  Image / IIIF / PDF viewer / Page preview / Markdown / Map / 3D / Audio /
+  Video / Spin / Number**. **Page preview** is opt-in and lazily places a
+  sandboxed, scaled desktop iframe in the cell; **Markdown** is opt-in for RDF
+  literals and escapes raw HTML while allowing only `http:`, `https:`, and
+  `mailto:` links.
+- Every rich-media cell retains a contextual **Open … ↗** source link below its
+  preview, including images, PDF, IIIF, audio/video/spin, 3D, and Page preview.
+- **PDF page modal.** For a forced PDF viewer, clicking the inline canvas opens
+  the current page in a larger paged modal. It reuses the same PDF.js document,
+  so the modal does not start a second file request. Linearized PDFs give the
+  quickest first page when the server supports byte ranges; non-linear PDFs are
+  still valid, but PDF.js may request the tail first or download the whole file.
 - **Image hover-zoom.** Hovering an image thumbnail (`imageCell`/IIIF) pops a larger
-  preview in a floating box anchored beside the cell and clamped to the viewport (never
-  clipped by the table's scroll). A Commons `?width=200` thumb is re-requested at
+  preview on fine-pointer desktops, anchored beside the cell and clamped to the
+  viewport (never clipped by the table's scroll). It is disabled inside focused
+  cards and lightboxes. A Commons `?width=200` thumb is re-requested at
   `width=900` so the zoom is sharp. Click still opens the full image / lightbox.
+- **Focused cards.** The desktop dialog is wide enough to show neighboring cards
+  and exposes its horizontal scrollbar. Prev/Next, Left/Right, horizontal
+  trackpad input, Shift+wheel, and mouse drag from a non-interactive card area
+  all move the native scroll-snap carousel; touch swipe remains unchanged.
 - **Geo cell → full map, multi-LOD.** Clicking a mini-map opens a pannable/zoomable
   Leaflet map. For a dataset that ships a finer level of detail (e.g. `geoadmin`'s
   `g:geomFine` alongside the coarse `geo:asWKT`), the modal range-fetches **just that
@@ -65,12 +82,15 @@ Notes:
   range-reads tiles from the same URL) — one file = graph + map tiles.
 - The page is served over HTTPS, so an `http://` media URL is upgraded to
   `https://` for the fetch (`httpsUpgrade`); the original IRI is still shown.
-- **CORS is a hard requirement.** Every inline-rendered media URL is fetched
-  cross-origin by the browser, so the host **must** send
-  `access-control-allow-origin`. If it doesn't, the image/IIIF/3D/audio/video
-  fails to load (a IIIF manifest blocked by CORS degrades to a `⚠ IIIF blocked`
-  link). The project's own storage is CORS-open; so are Wikimedia Commons, most
-  IIIF servers, and `iiif.coeli.cat`.
+- **CORS is a hard requirement for media fetched by JavaScript.** A PDF/IIIF/3D
+  URL used inline must send `access-control-allow-origin`; range-streamed PDFs
+  must also support byte ranges and expose the headers PDF.js reads. Native
+  image/audio/video elements have their own browser rules. Page-preview iframes
+  do not use CORS, but the remote site's `X-Frame-Options` or CSP
+  `frame-ancestors` can refuse embedding. Every failure retains its direct source
+  link (a blocked IIIF manifest also degrades to `⚠ IIIF blocked`). The project's
+  own storage is CORS-open; so are Wikimedia Commons, most IIIF servers, and
+  `iiif.coeli.cat`.
 
 ## Preparing media for a dataset
 

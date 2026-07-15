@@ -43,12 +43,22 @@ __PLAYGROUND_CSS__
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="index.html" aria-label="rete documentation">
+    <a class="brand" href="https://caviri.github.io/rete/" aria-label="rete documentation">
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build __BUILD_VERSION__</span>
-    <script>window.RETE_BUILD = "__BUILD_VERSION__";</script>
+    <span class="build-ver" id="buildVer" title="Exact playground build. If this looks old after a deploy, hard-refresh or clear site data.">build __BUILD_VERSION__</span>
+    <label class="version-picker" for="versionSelect">
+      <span>Version</span>
+      <select id="versionSelect" aria-label="Playground version">
+        <option value="https://caviri.github.io/rete/playground.html">Production</option>
+      </select>
+    </label>
+    <span id="previewBadge" class="preview-badge hidden">PR preview</span>
+    <script>
+      window.RETE_BUILD = "__BUILD_VERSION__";
+      window.RETE_PREVIEW = null;
+    </script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -60,7 +70,7 @@ __PLAYGROUND_CSS__
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
       </button>
-      <a class="docs-link" href="browser.html">Browser API</a>
+      <a class="docs-link" href="https://caviri.github.io/rete/browser.html">Browser API</a>
     </div>
   </header>
 
@@ -786,7 +796,7 @@ __PLAYGROUND_CSS__
         <dt>Table</dt>
         <dd>Any <code>SELECT</code>, <code>ASK</code>, or <code>CONSTRUCT</code> — the default.</dd>
         <dt>Cards</dt>
-        <dd>The same rows as Table, but <strong>one card per row</strong> with the fields stacked — media renders full-width, so it reads well on a phone. Cards flow as a <strong>masonry</strong> on a wide screen. The <strong>⚙ Fields</strong> button picks how each field renders (Auto / Text / Link / Image / IIIF / Map / 3D / Audio / Video / Spin / Number) — the same choices as a table column's header dropdown.</dd>
+        <dd>The same rows as Table, but <strong>one card per row</strong> with the fields stacked — media renders full-width, so it reads well on a phone. Cards flow as a <strong>masonry</strong> on a wide screen. The <strong>⚙ Fields</strong> button picks how each field renders (including Image, IIIF, PDF viewer, Page preview, Markdown, Map, 3D, Audio, Video and Spin) — the same choices as a table column's header dropdown.</dd>
         <dt>Graph</dt>
         <dd>A <code>CONSTRUCT { ?a ?p ?b } …</code>, or a <code>SELECT</code> with <strong>≥&nbsp;2 variables</strong>: 2 vars draw <code>v1&nbsp;→&nbsp;v2</code> ("related") edges; <strong>3 vars</strong> are read as (subject, predicate, object). A one-variable select has nothing to connect.</dd>
         <dt>Map <span class="ds-cap on">geometry</span></dt>
@@ -813,7 +823,7 @@ __PLAYGROUND_CSS__
         <h3 id="cardsFieldsTitle">Card fields — render each as…</h3>
         <button id="cardsFieldsClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
-      <p class="microcopy">Pick how each field renders on the cards. <b>Auto</b> detects images, IIIF manifests, 3D meshes, audio/video and WKT geometry from the value — force a type when a URL doesn't give itself away (or to stop a long IRI from rendering). Changes apply live.</p>
+      <p class="microcopy">Pick how each field renders on the cards. <b>Auto</b> detects images, IIIF manifests, PDFs, 3D meshes, audio/video and WKT geometry from the value. Force <b>Page preview</b> for a sandboxed page thumbnail or <b>Markdown</b> for a formatted literal. Changes apply live.</p>
       <div id="cardsFieldsBody" class="cfm-list"></div>
     </div>
   </div>
@@ -829,7 +839,7 @@ __PLAYGROUND_CSS__
       <div id="cardFocusTrack" class="cardfocus-track"></div>
       <div class="cardfocus-nav">
         <button id="cardFocusPrev" class="secondary" type="button" aria-label="Previous card">‹ Prev</button>
-        <span class="cardfocus-hint microcopy">swipe ← / →</span>
+        <span class="cardfocus-hint microcopy">scroll, drag, or use ← →</span>
         <button id="cardFocusNext" class="secondary" type="button" aria-label="Next card">Next ›</button>
       </div>
     </div>
@@ -989,6 +999,9 @@ __PLAYGROUND_EDITOR_JS__
   </script>
   <script>
 __PLAYGROUND_RDFCONV_JS__
+  </script>
+  <script>
+__PLAYGROUND_VERSIONS_JS__
   </script>
   <script>
 __PLAYGROUND_APP_JS__

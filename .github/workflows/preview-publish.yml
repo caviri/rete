@@ -1,0 +1,165 @@
+name: Publish playground PR preview
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  resolve:
+    name: validate current same-repository PR
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      eligible: ${{ steps.pr.outputs.eligible }}
+      number: ${{ steps.pr.outputs.number }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+      title: ${{ steps.pr.outputs.title }}
+    steps:
+      - name: Resolve and revalidate the PR associated with this CI run
+        id: pr
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const runHead = context.payload.workflow_run.head_sha || "";
+            const { data: pulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: runHead,
+            });
+            const canonical = `${context.repo.owner}/${context.repo.repo}`;
+            const candidates = pulls.filter((pr) => pr.state === "open"
+              && pr.head.repo && pr.head.repo.full_name === canonical
+              && /^[0-9a-f]{40}$/.test(runHead)
+              && pr.head.sha === runHead
+              && /^[0-9a-f]{40}$/.test(pr.base.sha || ""));
+            if (candidates.length !== 1) {
+              core.notice(`Found ${candidates.length} current canonical PRs for this CI head; skipping preview`);
+              core.setOutput("eligible", "false");
+              return;
+            }
+            const pr = candidates[0];
+            core.setOutput("eligible", "true");
+            core.setOutput("number", String(pr.number));
+            core.setOutput("head_sha", runHead);
+            core.setOutput("base_sha", pr.base.sha);
+            core.setOutput("title", pr.title || "");
+
+  publish:
+    name: validate and upload immutable preview
+    needs: resolve
+    if: needs.resolve.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    environment: playground-preview
+    concurrency:
+      group: playground-preview-pr-${{ needs.resolve.outputs.number }}
+      cancel-in-progress: false
+    outputs:
+      active: ${{ steps.current.outputs.active }}
+      base_url: ${{ steps.upload.outputs.base_url }}
+    steps:
+      - name: Recheck PR state while holding the per-PR deployment lock
+        id: current
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number("${{ needs.resolve.outputs.number }}"),
+            });
+            const canonical = `${context.repo.owner}/${context.repo.repo}`;
+            const active = pr.state === "open"
+              && pr.head.repo && pr.head.repo.full_name === canonical
+              && pr.head.sha === "${{ needs.resolve.outputs.head_sha }}";
+            core.setOutput("active", active ? "true" : "false");
+            if (!active) core.notice("PR closed or advanced before publication; skipping stale artifact");
+      - name: Check out trusted default-branch deployment code
+        if: steps.current.outputs.active == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Download the exact artifact from the completed CI run
+        if: steps.current.outputs.active == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: playground-preview-${{ needs.resolve.outputs.head_sha }}
+          path: ${{ runner.temp }}/playground-preview
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Install the R2 client
+        if: steps.current.outputs.active == 'true'
+        run: python3 -m pip install --disable-pip-version-check boto3
+      - name: Validate provenance and publish static files
+        if: steps.current.outputs.active == 'true'
+        id: upload
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          BASE_SHA: ${{ needs.resolve.outputs.base_sha }}
+          PR_TITLE: ${{ needs.resolve.outputs.title }}
+          PREVIEW_S3_API_ENDPOINT: ${{ secrets.PREVIEW_S3_API_ENDPOINT }}
+          PREVIEW_ACCESS_KEY_ID: ${{ secrets.PREVIEW_ACCESS_KEY_ID }}
+          PREVIEW_SECRET_ACCESS_KEY: ${{ secrets.PREVIEW_SECRET_ACCESS_KEY }}
+          PREVIEW_BUCKET: ${{ secrets.PREVIEW_BUCKET }}
+        run: |
+          URL="$(python3 scripts/preview_store.py upload \
+            --root "$RUNNER_TEMP/playground-preview" \
+            --pr "$PR_NUMBER" --head-sha "$HEAD_SHA" --base-sha "$BASE_SHA" \
+            --title "$PR_TITLE")"
+          echo "base_url=${URL%playground.html}" >> "$GITHUB_OUTPUT"
+
+  smoke:
+    name: browser smoke test without deployment credentials
+    needs: [resolve, publish]
+    if: needs.publish.outputs.active == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted default-branch verification code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Install the hosted browser check
+        working-directory: tests/gate
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Verify the exact preview in an unprivileged runner
+        working-directory: tests/gate
+        env:
+          DEPLOYED_URL: ${{ needs.publish.outputs.base_url }}
+          EXPECTED_SHA: ${{ needs.resolve.outputs.head_sha }}
+        run: |
+          EXPECTED_SHA="${EXPECTED_SHA:0:12}" node checks/check_deployed.mjs
+
+  prune:
+    name: remove superseded preview revisions
+    needs: [resolve, publish, smoke]
+    if: needs.publish.outputs.active == 'true'
+    runs-on: ubuntu-latest
+    environment: playground-preview
+    concurrency:
+      group: playground-preview-pr-${{ needs.resolve.outputs.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out trusted default-branch cleanup code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - run: python3 -m pip install --disable-pip-version-check boto3
+      - name: Keep only the successfully tested head SHA
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          PREVIEW_S3_API_ENDPOINT: ${{ secrets.PREVIEW_S3_API_ENDPOINT }}
+          PREVIEW_ACCESS_KEY_ID: ${{ secrets.PREVIEW_ACCESS_KEY_ID }}
+          PREVIEW_SECRET_ACCESS_KEY: ${{ secrets.PREVIEW_SECRET_ACCESS_KEY }}
+          PREVIEW_BUCKET: ${{ secrets.PREVIEW_BUCKET }}
+        run: python3 scripts/preview_store.py cleanup --pr "$PR_NUMBER" --keep-sha "$HEAD_SHA"

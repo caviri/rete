@@ -29,9 +29,14 @@ const main = async () => {
   const withReason = await runWithRetry(page, { steps: 50 });
 
   // Now turn reasoning OFF and re-run: expect 0 rows (the demo contrast).
+  // Only trust a COMPLETED qmeta ("N row(s)…" / "no result") that differs from
+  // the with-reason one — while the run is in flight qmeta shows "⏳ querying…"
+  // and the previous result's table/qmeta are still live, so breaking on any
+  // non-empty text misreads an in-progress or stale state as the final count.
   await page.evaluate(() => { const r = document.getElementById("owlReason"); if (r) { r.checked = false; r.dispatchEvent(new Event("change")); } });
+  const staleQmeta = await page.evaluate(() => (document.getElementById("qmeta") || {}).textContent || "");
   await page.evaluate(() => document.getElementById("run").click());
-  let off = { rows: 1 };
+  let off = { rows: 1, errBlock: false, qmeta: "" };
   for (let i = 0; i < 40; i++) {
     await page.waitForTimeout(1000);
     off = await page.evaluate(() => {
@@ -39,7 +44,8 @@ const main = async () => {
       const m = qm.match(/(\d+)\s+row/);
       return { rows: document.querySelectorAll("#out table tbody tr, #out .cards .card").length || (m ? Number(m[1]) : (/0 row|no result/i.test(qm) ? 0 : 1)), errBlock: !!document.querySelector("#out .error-box"), qmeta: qm };
     });
-    if (off.qmeta) break;
+    if (off.errBlock) break;
+    if (off.qmeta && off.qmeta !== staleQmeta && !off.qmeta.startsWith("⏳") && /\d+\s+row|no result/i.test(off.qmeta)) break;
   }
 
   // The meaningful assertions: the example auto-enabled reasoning, reasoning

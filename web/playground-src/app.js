@@ -1073,9 +1073,9 @@ self.onmessage = function (e) {
     if (!tzEl) return;
     const r = img.getBoundingClientRect();
     const zw = tzEl.offsetWidth || 320, zh = tzEl.offsetHeight || 280;
-    const m = 12, vw = window.innerWidth, vh = window.innerHeight;
-    let left = r.right + m;                              // prefer to the right of the thumb
-    if (left + zw + m > vw) left = r.left - m - zw;      // no room → to the left
+    const m = 8, gap = 12, vw = window.innerWidth, vh = window.innerHeight;
+    const rightSpace = vw - r.right - gap, leftSpace = r.left - gap;
+    let left = rightSpace >= leftSpace ? r.right + gap : r.left - gap - zw;
     left = Math.max(m, Math.min(vw - zw - m, left));     // clamp horizontally
     let top = r.top + r.height / 2 - zh / 2;             // centre on the thumb
     top = Math.max(m, Math.min(vh - zh - m, top));       // clamp vertically
@@ -1083,6 +1083,8 @@ self.onmessage = function (e) {
     tzEl.style.top = top + "px";
   }
   function showThumbZoom(img) {
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+    if (img.closest("#cardFocusModal, .modal, .img-lb, .iiif-modal, .model3d-modal, .pdf-modal")) return;
     const src0 = img.currentSrc || img.src;
     if (!src0) return;
     const src = src0.replace(/([?&]width=)200\b/, (m, g1) => g1 + "900"); // sharper for Commons thumbs
@@ -1096,7 +1098,8 @@ self.onmessage = function (e) {
   function bindThumbZoom() {
     document.body.addEventListener("mouseover", (e) => {
       const img = e.target.closest && e.target.closest(".cell-thumb");
-      if (!img) return;
+      if (!img || !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+      if (img.closest("#cardFocusModal, .modal, .img-lb, .iiif-modal, .model3d-modal, .pdf-modal")) { hideThumbZoom(); return; }
       clearTimeout(tzShowTimer);
       tzShowTimer = setTimeout(() => showThumbZoom(img), 200);
     });
@@ -3994,6 +3997,17 @@ self.onmessage = function (e) {
   // them blank until scrolled to. `onerror` marks a genuinely-missing image so
   // it shows a placeholder rather than an unexplained blank box.
   let mediaEager = false;
+  const MEDIA_SOURCE_LABEL = {
+    image: "Open image ↗", pdf: "Open PDF ↗", audio: "Open audio ↗",
+    video: "Open video ↗", model3d: "Open 3D ↗", viewer3d: "Open viewer ↗",
+    iiif: "Open manifest ↗", page: "Open page ↗",
+  };
+  function mediaSourceLink(url, kind) {
+    const up = httpsUpgrade(url);
+    return `<div class="media-footer"><a class="media-source media-source-${esc(kind)}" ` +
+      `href="${esc(up)}" target="_blank" rel="noopener noreferrer">` +
+      `${esc(MEDIA_SOURCE_LABEL[kind] || "Open source ↗")}</a></div>`;
+  }
   function imageCell(t) {
     const url = httpsUpgrade(t.value);
     const loading = mediaEager ? "eager" : "lazy";
@@ -4001,7 +4015,8 @@ self.onmessage = function (e) {
       `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="${loading}" decoding="async" alt="" ` +
       `onload="this.closest('a').classList.add('img-done')" ` +
       `onerror="this.classList.add('cell-thumb-broken');this.alt='image unavailable';this.closest('a').classList.add('img-done')" /></a>` +
-      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="image"></div></td>`;
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="image"></div>` +
+      `${mediaSourceLink(url, "image")}</td>`;
   }
   function linkCell(t) {
     const url = httpsUpgrade(t.value);
@@ -4018,6 +4033,126 @@ self.onmessage = function (e) {
     return `<td class="iri"><a class="cell-btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
       `title="${esc(t.value)}" data-url="${esc(t.value)}">${esc(label)}</a></td>`;
   }
+
+  // ---- Markdown + embedded page-preview cells ------------------------------
+  // Markdown is deliberately small and dependency-free. Raw HTML is escaped,
+  // code/link fragments are tokenised before emphasis, and only explicit safe
+  // URL schemes become anchors.
+  function safeMarkdownHref(raw) {
+    try {
+      const u = new URL(raw);
+      return /^(https?:|mailto:)$/.test(u.protocol) ? raw : "";
+    } catch (_e) { return ""; }
+  }
+  function markdownInline(value) {
+    const tokens = [];
+    const token = (html) => { const key = `\u0000${tokens.length}\u0000`; tokens.push(html); return key; };
+    let s = String(value == null ? "" : value);
+    s = s.replace(/`([^`\n]+)`/g, (_m, code) => token(`<code>${esc(code)}</code>`));
+    s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_m, label, href) => {
+      const safe = safeMarkdownHref(href);
+      return token(safe
+        ? `<a href="${esc(safe)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`
+        : `${esc(label)} (${esc(href)})`);
+    });
+    s = esc(s)
+      .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+    return s.replace(/\u0000(\d+)\u0000/g, (_m, i) => tokens[Number(i)] || "");
+  }
+  function markdownBlocks(value) {
+    const lines = String(value == null ? "" : value).replace(/\r\n?/g, "\n").split("\n");
+    const out = [];
+    const startsBlock = (line) => /^\s*$|^\s*```|^\s{0,3}#{1,6}\s+|^\s*>\s?|^\s*[-+*]\s+|^\s*\d+[.)]\s+/.test(line);
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) { i++; continue; }
+      const fence = /^\s*```([^\s`]*)\s*$/.exec(line);
+      if (fence) {
+        const code = []; i++;
+        while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) code.push(lines[i++]);
+        if (i < lines.length) i++;
+        const cls = fence[1] ? ` class="language-${esc(fence[1])}"` : "";
+        out.push(`<pre><code${cls}>${esc(code.join("\n"))}</code></pre>`);
+        continue;
+      }
+      const heading = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+      if (heading) { const n = heading[1].length; out.push(`<h${n}>${markdownInline(heading[2])}</h${n}>`); i++; continue; }
+      if (/^\s*[-+*]\s+/.test(line)) {
+        const items = [];
+        while (i < lines.length) {
+          const m = /^\s*[-+*]\s+(.+)$/.exec(lines[i]); if (!m) break;
+          items.push(`<li>${markdownInline(m[1])}</li>`); i++;
+        }
+        out.push(`<ul>${items.join("")}</ul>`); continue;
+      }
+      if (/^\s*\d+[.)]\s+/.test(line)) {
+        const items = [];
+        while (i < lines.length) {
+          const m = /^\s*\d+[.)]\s+(.+)$/.exec(lines[i]); if (!m) break;
+          items.push(`<li>${markdownInline(m[1])}</li>`); i++;
+        }
+        out.push(`<ol>${items.join("")}</ol>`); continue;
+      }
+      if (/^\s*>\s?/.test(line)) {
+        const quote = [];
+        while (i < lines.length) {
+          const m = /^\s*>\s?(.*)$/.exec(lines[i]); if (!m) break;
+          quote.push(m[1]); i++;
+        }
+        out.push(`<blockquote>${markdownInline(quote.join(" "))}</blockquote>`); continue;
+      }
+      const para = [line.trim()]; i++;
+      while (i < lines.length && !startsBlock(lines[i])) { para.push(lines[i].trim()); i++; }
+      out.push(`<p>${markdownInline(para.join(" "))}</p>`);
+    }
+    return out.join("");
+  }
+  function markdownCell(t, raw) {
+    const lang = t.lang ? ` <span class="t-lang">@${esc(t.lang)}</span>` : "";
+    return `<td class="lit markdown-cell" title="${esc(raw)}"><div class="markdown-body">` +
+      `${markdownBlocks(t.value)}</div>${lang}</td>`;
+  }
+  function pagePreviewCell(t) {
+    const url = httpsUpgrade(t.value);
+    let host = t.value;
+    try { host = new URL(url).host.replace(/^www\./, ""); } catch (_e) {}
+    return `<td class="iri page-preview-cell" data-page-url="${esc(url)}">` +
+      `<div class="page-preview-host">${esc(host)}</div>` +
+      `<div class="page-preview-frame"><div class="page-preview-loading"><span class="spindle"></span></div></div>` +
+      `<div class="page-preview-note">Some sites block embedding.</div>` +
+      `${mediaSourceLink(url, "page")}</td>`;
+  }
+  let pagePreviewObserver = null;
+  function loadPagePreview(cell) {
+    const url = cell.getAttribute("data-page-url");
+    if (!url) return;
+    cell.removeAttribute("data-page-url");
+    const frame = cell.querySelector(".page-preview-frame");
+    if (!frame) return;
+    const iframe = document.createElement("iframe");
+    iframe.className = "page-preview-iframe";
+    iframe.title = "Page preview";
+    iframe.loading = "lazy";
+    iframe.sandbox = "allow-scripts";
+    iframe.referrerPolicy = "no-referrer";
+    iframe.src = url;
+    frame.replaceChildren(iframe);
+  }
+  function hydratePagePreviews(scope) {
+    const cells = [...(scope || document).querySelectorAll(".page-preview-cell[data-page-url]")];
+    if (!cells.length) return;
+    if (!("IntersectionObserver" in window)) { cells.forEach(loadPagePreview); return; }
+    if (!pagePreviewObserver) {
+      pagePreviewObserver = new IntersectionObserver((entries) => entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        pagePreviewObserver.unobserve(entry.target);
+        loadPagePreview(entry.target);
+      }), { rootMargin: "240px" });
+    }
+    cells.forEach((cell) => pagePreviewObserver.observe(cell));
+  }
   // ---- PDF cells ------------------------------------------------------------
   // A digitised PDF (e.g. Patrinum's ?v=pdf full document) → a button that opens
   // the document in the browser's native PDF viewer in a new tab. These PDFs are
@@ -4028,7 +4163,8 @@ self.onmessage = function (e) {
   function pdfCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri"><a class="cell-btn pdf-btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
-      `title="${esc(t.value)}" data-url="${esc(t.value)}">📄 PDF ↗</a></td>`;
+      `title="${esc(t.value)}" data-url="${esc(t.value)}">📄 PDF ↗</a>` +
+      `${mediaSourceLink(url, "pdf")}</td>`;
   }
   // Inline page-by-page PDF viewer (the "PDF" column render type). Lazily loads
   // pdf.js from a CDN the first time one appears, renders page 1 into a canvas, and
@@ -4049,12 +4185,103 @@ self.onmessage = function (e) {
   function pdfViewerCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri pdfview-cell"><div class="pdfview" data-pdf="${esc(url)}">` +
-      `<div class="pdfview-stage"><canvas></canvas><div class="pdfview-msg">📄 loading…</div></div>` +
+      `<div class="pdfview-stage" role="button" tabindex="0" aria-label="Enlarge PDF page"><canvas></canvas><div class="pdfview-msg">📄 loading…</div></div>` +
       `<div class="pdfview-bar"><button class="pdfview-prev" type="button" disabled aria-label="previous page">◀</button>` +
       `<span class="pdfview-pg">·</span>` +
       `<button class="pdfview-next" type="button" disabled aria-label="next page">▶</button>` +
-      `<a class="pdfview-open" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Open the full PDF">↗</a>` +
-      `</div></div></td>`;
+      `</div>${mediaSourceLink(url, "pdf")}</div></td>`;
+  }
+  function renderPdfCanvas(doc, pageNumber, canvas, maxWidth, maxHeight) {
+    return doc.getPage(pageNumber).then((page) => {
+      const dpr = window.devicePixelRatio || 1;
+      const v0 = page.getViewport({ scale: 1 });
+      const scale = Math.max(.1, Math.min(maxWidth / v0.width, maxHeight / v0.height));
+      const vp = page.getViewport({ scale: scale * dpr });
+      canvas.width = Math.max(1, Math.round(vp.width));
+      canvas.height = Math.max(1, Math.round(vp.height));
+      canvas.style.width = Math.round(vp.width / dpr) + "px";
+      canvas.style.height = Math.round(vp.height / dpr) + "px";
+      return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    });
+  }
+
+  // One enlarged page viewer is shared by all PDF cells. It receives the
+  // document already opened by the inline renderer, so opening the modal never
+  // starts a second fetch or defeats PDF.js range loading.
+  let pdfModalEl = null, pdfModalState = null;
+  function closePdfModal() {
+    if (pdfModalEl) pdfModalEl.classList.add("hidden");
+    pdfModalState = null;
+  }
+  function ensurePdfModal() {
+    if (pdfModalEl) return pdfModalEl;
+    const el = document.createElement("div");
+    el.className = "pdf-modal hidden";
+    el.innerHTML =
+      '<div class="pdf-modal-backdrop"></div>' +
+      '<div class="pdf-modal-box" role="dialog" aria-modal="true" aria-label="PDF page viewer">' +
+        '<button class="pdf-modal-close" type="button" aria-label="Close PDF viewer">×</button>' +
+        '<div class="pdf-modal-stage"><canvas></canvas><div class="pdf-modal-msg"></div></div>' +
+        '<div class="pdf-modal-bar">' +
+          '<button class="pdf-modal-prev" type="button" aria-label="Previous PDF page">‹</button>' +
+          '<span class="pdf-modal-page" aria-live="polite"></span>' +
+          '<button class="pdf-modal-next" type="button" aria-label="Next PDF page">›</button>' +
+          '<a class="pdf-modal-source media-source" target="_blank" rel="noopener noreferrer">Open PDF ↗</a>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(el);
+    el.querySelector(".pdf-modal-close").addEventListener("click", closePdfModal);
+    el.querySelector(".pdf-modal-backdrop").addEventListener("click", closePdfModal);
+    el.querySelector(".pdf-modal-prev").addEventListener("click", () => pdfModalGo(-1));
+    el.querySelector(".pdf-modal-next").addEventListener("click", () => pdfModalGo(1));
+    document.addEventListener("keydown", (e) => {
+      if (el.classList.contains("hidden")) return;
+      if (e.key === "Escape") closePdfModal();
+      else if (e.key === "ArrowLeft") pdfModalGo(-1);
+      else if (e.key === "ArrowRight") pdfModalGo(1);
+    });
+    window.addEventListener("resize", () => {
+      if (!el.classList.contains("hidden") && pdfModalState) renderPdfModal();
+    });
+    pdfModalEl = el;
+    return el;
+  }
+  function renderPdfModal() {
+    const el = pdfModalEl, st = pdfModalState;
+    if (!el || !st) return;
+    const prev = el.querySelector(".pdf-modal-prev"), next = el.querySelector(".pdf-modal-next");
+    el.querySelector(".pdf-modal-page").textContent = `${st.page} / ${st.doc.numPages}`;
+    prev.disabled = st.page <= 1; next.disabled = st.page >= st.doc.numPages;
+    if (st.busy) { st.pending = true; return; }
+    st.busy = true; st.pending = false;
+    const requested = st.page;
+    const msg = el.querySelector(".pdf-modal-msg");
+    msg.textContent = "Loading page…";
+    const maxWidth = Math.max(240, Math.min(980, window.innerWidth - 96));
+    const maxHeight = Math.max(260, Math.min(760, window.innerHeight - 190));
+    renderPdfCanvas(st.doc, requested, el.querySelector("canvas"), maxWidth, maxHeight)
+      .then(() => { if (pdfModalState === st && st.page === requested) msg.textContent = ""; })
+      .catch(() => { if (pdfModalState === st) msg.textContent = "Couldn’t render this page."; })
+      .finally(() => {
+        if (pdfModalState !== st) return;
+        st.busy = false;
+        if (st.pending || st.page !== requested) renderPdfModal();
+      });
+  }
+  function pdfModalGo(delta) {
+    if (!pdfModalState) return;
+    const next = Math.max(1, Math.min(pdfModalState.doc.numPages, pdfModalState.page + delta));
+    if (next === pdfModalState.page) return;
+    pdfModalState.page = next;
+    renderPdfModal();
+  }
+  function openPdfModal(doc, url, page) {
+    const el = ensurePdfModal();
+    pdfModalState = { doc, url, page: Math.max(1, Math.min(doc.numPages, page || 1)), busy: false, pending: false };
+    const source = el.querySelector(".pdf-modal-source");
+    source.href = httpsUpgrade(url); source.title = url;
+    el.classList.remove("hidden");
+    renderPdfModal();
   }
   function hydratePdfViewers(scope) {
     const cells = [...(scope || document).querySelectorAll(".pdfview[data-pdf]")];
@@ -4063,30 +4290,26 @@ self.onmessage = function (e) {
       cells.forEach((el) => {
         const url = el.getAttribute("data-pdf"); el.removeAttribute("data-pdf");
         const canvas = el.querySelector("canvas"), msg = el.querySelector(".pdfview-msg");
+        const stage = el.querySelector(".pdfview-stage");
         const pg = el.querySelector(".pdfview-pg");
         const prev = el.querySelector(".pdfview-prev"), next = el.querySelector(".pdfview-next");
         if (!pdfjs) { msg.textContent = "📄 open ↗"; return; }
         let doc = null, cur = 1, busy = false;
         const draw = (n) => {
           if (!doc || busy) return; busy = true;
-          doc.getPage(n).then((page) => {
-            const dpr = window.devicePixelRatio || 1;
-            const v0 = page.getViewport({ scale: 1 });
-            const scale = Math.min(300 / v0.width, 380 / v0.height);
-            const vp = page.getViewport({ scale: scale * dpr });
-            canvas.width = vp.width; canvas.height = vp.height;
-            canvas.style.width = Math.round(vp.width / dpr) + "px";
-            canvas.style.height = Math.round(vp.height / dpr) + "px";
-            return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
-          }).then(() => {
+          renderPdfCanvas(doc, n, canvas, 300, 380).then(() => {
             pg.textContent = n + " / " + doc.numPages;
             prev.disabled = n <= 1; next.disabled = n >= doc.numPages; busy = false;
           }).catch(() => { busy = false; });
         };
         pdfjs.getDocument({ url, disableAutoFetch: true }).promise.then((d) => {
-          doc = d; msg.style.display = "none"; draw(1);
+          doc = d; msg.style.display = "none"; stage.classList.add("is-ready"); draw(1);
           prev.addEventListener("click", () => { if (cur > 1) { cur--; draw(cur); } });
           next.addEventListener("click", () => { if (cur < doc.numPages) { cur++; draw(cur); } });
+          stage.addEventListener("click", () => openPdfModal(doc, url, cur));
+          stage.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPdfModal(doc, url, cur); }
+          });
         }).catch(() => { msg.textContent = "📄 open ↗"; });
       });
     });
@@ -4184,7 +4407,8 @@ self.onmessage = function (e) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri iiif-cell thumb-cell" data-iiif="${esc(t.value)}">` +
       `<a class="iri-link iiif-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
-      `title="IIIF manifest — ${esc(t.value)}"><span class="spindle"></span> IIIF</a></td>`;
+      `title="IIIF manifest — ${esc(t.value)}"><span class="spindle"></span> IIIF</a>` +
+      `${mediaSourceLink(url, "iiif")}</td>`;
   }
 
   // ---- IIIF lightbox modal (click a cell → enlarged page + paging + metadata) ----
@@ -4265,7 +4489,8 @@ self.onmessage = function (e) {
       `<button type="button" class="iiif-frame" title="click to enlarge"><img class="cell-thumb iiif-img" loading="lazy" alt="" /></button>` +
       `<div class="iiif-nav${cs.length <= 1 ? " single" : ""}"><button type="button" class="iiif-prev" aria-label="previous page">‹</button>` +
       `<input class="iiif-page" type="text" inputmode="numeric" aria-label="page number" /><span class="iiif-total">/ ${cs.length}</span>` +
-      `<button type="button" class="iiif-next" aria-label="next page">›</button></div></div>`;
+      `<button type="button" class="iiif-next" aria-label="next page">›</button></div></div>` +
+      `${mediaSourceLink(url, "iiif")}`;
     const img = td.querySelector(".iiif-img"), page = td.querySelector(".iiif-page"), frame = td.querySelector(".iiif-frame");
     const show = (n) => { i = ((n % cs.length) + cs.length) % cs.length; img.src = httpsUpgrade(cs[i].thumb); page.value = String(i + 1); };
     const jump = () => { const v = parseInt(page.value, 10); if (isFinite(v)) show(v - 1); else page.value = String(i + 1); };
@@ -4285,7 +4510,7 @@ self.onmessage = function (e) {
     td.classList.add("iiif-blocked");
     td.innerHTML = `<a class="iri-link iiif-fail" href="${esc(up)}" target="_blank" rel="noopener noreferrer" ` +
       `title="Couldn't load this IIIF manifest — the server likely blocks cross-origin (CORS) requests. Click to open it directly: ${esc(url)}">` +
-      `⚠ IIIF blocked</a>`;
+      `⚠ IIIF blocked</a>${mediaSourceLink(url, "iiif")}`;
   }
   function hydrateIiif(scope) {
     // Class-based (not td-scoped): IIIF cells render inside table cells AND card
@@ -4611,12 +4836,14 @@ self.onmessage = function (e) {
       `shadow-intensity="0.6" alt="3D model"></model-viewer>` +
       `<button type="button" class="model3d-expand" data-mesh="${esc(url)}" ` +
       `title="Enlarge — ${esc(t.value)}" aria-label="Enlarge 3D model">⛶</button>` +
-      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="mesh"></div></td>`;
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="mesh"></div>` +
+      `${mediaSourceLink(url, "model3d")}</td>`;
   }
   function viewer3dCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri model3d-cell"><a class="model3d-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
-      `title="Open the 3D viewer — ${esc(t.value)}">🧊 3D ↗</a></td>`;
+      `title="Open the 3D viewer — ${esc(t.value)}">🧊 3D ↗</a>` +
+      `${mediaSourceLink(url, "viewer3d")}</td>`;
   }
   function model3dCell(t) { return looksMeshUrl(t.value) ? mesh3dCell(t) : viewer3dCell(t); }
 
@@ -4744,13 +4971,14 @@ self.onmessage = function (e) {
   function audioCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri media-cell"><audio class="cell-audio" controls preload="metadata" src="${esc(url)}"></audio>` +
-      `<a class="media-src" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(t.value)}">↗</a>` +
-      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="audio"></div></td>`;
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="audio"></div>` +
+      `${mediaSourceLink(url, "audio")}</td>`;
   }
   function videoCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri media-cell"><video class="cell-video" controls preload="metadata" playsinline src="${esc(url)}"></video>` +
-      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div></td>`;
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div>` +
+      `${mediaSourceLink(url, "video")}</td>`;
   }
   // A pre-rendered turntable spin (bucket `*-spin/<id>.webm`): a tiny looping clip
   // that auto-plays muted like a GIF — a lightweight preview that needs no WebGL.
@@ -4760,7 +4988,8 @@ self.onmessage = function (e) {
   function spinCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri media-cell"><video class="cell-video cell-spin" autoplay muted loop playsinline preload="metadata" src="${esc(url)}"></video>` +
-      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div></td>`;
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div>` +
+      `${mediaSourceLink(url, "video")}</td>`;
   }
 
   // ---- media metadata captions + 3D scale bar -------------------------------
@@ -4864,6 +5093,8 @@ self.onmessage = function (e) {
       case "link": return linkCell(t);
       case "button": return buttonCell(t);
       case "pdf": return pdfViewerCell(t);
+      case "page": return pagePreviewCell(t);
+      case "markdown": return markdownCell(t, raw);
       case "number": {
         const n = Number(t.value);
         return `<td class="lit num" title="${esc(raw)}">${esc(isFinite(n) ? String(n) : t.value)}</td>`;
@@ -4878,7 +5109,8 @@ self.onmessage = function (e) {
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"], ["button", "Button"],
-    ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF viewer"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
+    ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF viewer"], ["page", "Page preview"], ["markdown", "Markdown"],
+    ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
@@ -5037,7 +5269,64 @@ self.onmessage = function (e) {
   // the current one centred with its neighbours peeking on the sides. Swiping
   // (native horizontal scroll-snap — momentum + snap for free) or ‹ ›/← → moves
   // between them. Media hydrates lazily per slide so a big result stays cheap.
-  let cardFocus = null; // { tid, n, io } while open, null when closed
+  let cardFocus = null; // { tid, n, io, cleanupInput } while open, null when closed
+  let focusDragSuppressClick = false;
+  const FOCUS_DRAG_EXCLUDE = "a, button, input, select, textarea, code, pre, model-viewer, audio, video, iframe, .iiif-frame, .pdfview-stage, .pdfview-bar, .page-preview-frame";
+  function bindCardFocusDesktopInput(track) {
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return () => {};
+    let drag = null;
+    const wheel = (e) => {
+      if (!e.shiftKey) return; // native horizontal trackpad deltaX remains native
+      const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      if (!delta) return;
+      e.preventDefault();
+      track.scrollLeft += delta;
+    };
+    const down = (e) => {
+      if (e.pointerType !== "mouse" || e.button !== 0) return;
+      if (e.target.closest && e.target.closest(FOCUS_DRAG_EXCLUDE)) return;
+      drag = { id: e.pointerId, x: e.clientX, scroll: track.scrollLeft, moved: false };
+      track.setPointerCapture(e.pointerId);
+    };
+    const move = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = drag.x - e.clientX;
+      if (!drag.moved && Math.abs(dx) < 6) return;
+      drag.moved = true;
+      track.classList.add("is-dragging");
+      track.style.scrollSnapType = "none";
+      track.scrollLeft = drag.scroll + dx;
+      e.preventDefault();
+    };
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const moved = drag.moved;
+      try { track.releasePointerCapture(e.pointerId); } catch (_e) {}
+      drag = null;
+      track.classList.remove("is-dragging");
+      track.style.scrollSnapType = "";
+      if (moved) {
+        focusDragSuppressClick = true;
+        e.preventDefault();
+        requestAnimationFrame(() => { if (cardFocus) centerFocusSlide(focusIndex(), "instant"); });
+        setTimeout(() => { focusDragSuppressClick = false; }, 100);
+      }
+    };
+    track.addEventListener("wheel", wheel, { passive: false });
+    track.addEventListener("pointerdown", down);
+    track.addEventListener("pointermove", move);
+    track.addEventListener("pointerup", end);
+    track.addEventListener("pointercancel", end);
+    return () => {
+      track.removeEventListener("wheel", wheel);
+      track.removeEventListener("pointerdown", down);
+      track.removeEventListener("pointermove", move);
+      track.removeEventListener("pointerup", end);
+      track.removeEventListener("pointercancel", end);
+      track.classList.remove("is-dragging");
+      track.style.scrollSnapType = "";
+    };
+  }
   function openCardFocus(tid, i) {
     const st = tableStates.get(tid);
     if (!st || !st.rows.length) return;
@@ -5048,19 +5337,21 @@ self.onmessage = function (e) {
       // hydrated by the observer below only as a slide nears the viewport.
       `<article class="rcard cardfocus-slide" data-ci="${k}">${cardFieldsHtml(st, row, false)}</article>`
     ).join("");
-    cardFocus = { tid, n: rows.length, io: null };
+    cardFocus = { tid, n: rows.length, io: null, cleanupInput: null };
     // Hydrate a slide's IIIF/3D/media the moment it (or a neighbour) scrolls near.
     cardFocus.io = new IntersectionObserver((ents) => {
       ents.forEach((en) => {
         if (!en.isIntersecting) return;
-        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target); hydratePdfViewers(en.target);
+        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target); hydratePdfViewers(en.target); hydratePagePreviews(en.target);
         en.target.querySelectorAll("img.cell-thumb[loading='lazy']").forEach((im) => { im.loading = "eager"; });
         cardFocus.io.unobserve(en.target);
       });
     }, { root: track, rootMargin: "0px 150% 0px 150%" });
     $("cardFocusModal").classList.remove("hidden");
     document.body.classList.add("cardfocus-open");
+    hideThumbZoom();
     track.onscroll = onFocusScroll;
+    cardFocus.cleanupInput = bindCardFocusDesktopInput(track);
     centerFocusSlide(i, "instant"); // open on the tapped card
     // Observe + re-centre once the now-visible modal has laid out (slide widths
     // and offsets are only real after the modal stops being display:none).
@@ -5121,6 +5412,7 @@ self.onmessage = function (e) {
     $("cardFocusModal").classList.add("hidden");
     document.body.classList.remove("cardfocus-open");
     if (cardFocus && cardFocus.io) cardFocus.io.disconnect();
+    if (cardFocus && cardFocus.cleanupInput) cardFocus.cleanupInput();
     const track = $("cardFocusTrack");
     track.onscroll = null;
     track.innerHTML = ""; // release the slides' media
@@ -8355,7 +8647,7 @@ self.onmessage = function (e) {
       // in the focus modal (swipeable single-card view).
       const card = e.target.closest && e.target.closest(".rcard");
       if (card && card.dataset.ci != null &&
-          !(e.target.closest && e.target.closest("a, button, input, select, label, model-viewer, audio, video, .iiif-frame, .coltype"))) {
+          !(e.target.closest && e.target.closest("a, button, input, select, label, model-viewer, audio, video, iframe, .iiif-frame, .pdfview-stage, .coltype"))) {
         const wrap = card.closest(".cards");
         if (wrap) openCardFocus(wrap.dataset.tid, +card.dataset.ci);
       }
@@ -8398,7 +8690,12 @@ self.onmessage = function (e) {
     // Tap a section of the focused card to zoom it for reading (tap again to
     // reset) - links/media keep their own behavior.
     $("cardFocusTrack").addEventListener("click", (e) => {
-      if (e.target.closest("a, button, input, select, model-viewer, audio, video, .iiif-frame")) return;
+      if (focusDragSuppressClick) {
+        focusDragSuppressClick = false;
+        e.preventDefault(); e.stopPropagation();
+        return;
+      }
+      if (e.target.closest(FOCUS_DRAG_EXCLUDE)) return;
       const cf = e.target.closest(".cf");
       if (cf) cf.classList.toggle("cf-zoom");
     });
@@ -8436,6 +8733,15 @@ self.onmessage = function (e) {
   }
 
   async function boot() {
+    try {
+      const versions = window.RETE_PLAYGROUND_VERSIONS;
+      if (versions) {
+        Promise.resolve(versions.initVersionPicker())
+          .catch((e) => console.warn("preview discovery", e));
+      }
+    } catch (e) {
+      console.warn("preview discovery", e);
+    }
     renderDatasetOptions();
     wireEvents();
     renderHistory();
@@ -8447,7 +8753,7 @@ self.onmessage = function (e) {
       const obs = new MutationObserver(() => {
         if (pending) return;
         pending = true;
-        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); hydratePdfViewers(host); }, 60);
+        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); hydratePdfViewers(host); hydratePagePreviews(host); }, 60);
       });
       obs.observe(host, { childList: true, subtree: true });
       // Delegated: the ⛶ on an inline 3D cell (or a 🧊 3D button) opens the full viewer.

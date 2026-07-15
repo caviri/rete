@@ -27,6 +27,14 @@
       "cardUrl": "https://data.graphplaza.com/arxiu/arxiu.rete"
     },
     {
+      "key": "bcn",
+      "url": "https://data.graphplaza.com/bcn/bcn.rete",
+      "formatVersion": 5,
+      "contentHash": "3cf1eca3c0b3a87d0579bae70a3bd767",
+      "size": 134613753,
+      "cardUrl": "https://data.graphplaza.com/bcn/bcn.rete"
+    },
+    {
       "key": "bcul",
       "url": "https://data.graphplaza.com/bcul/bcul.rete",
       "formatVersion": 5,

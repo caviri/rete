@@ -185,6 +185,7 @@ CM6_JS = SRC / "cm6.bundle.js"  # bundled CodeMirror 6 (see cm6/README / package
 EDITOR_JS = SRC / "editor.js"
 RDFCONV_JS = SRC / "rdfconv.js"  # in-browser JSON-LD / RDF-XML -> N-Triples converters
 APP_JS = SRC / "app.js"
+VERSIONS_JS = SRC / "versions.js"
 
 # Datasets to embed: (playground key, built .rete file under web/).
 # The scholar datasets come from scripts/synth_graph.py; regenerate with:
@@ -230,7 +231,7 @@ def b64(path: pathlib.Path) -> str:
 
 
 def main() -> None:
-    for p in (TEMPLATE, CSS, CATALOG_JS, CM6_JS, EDITOR_JS, RDFCONV_JS, APP_JS, GLUE_JS, WASM):
+    for p in (TEMPLATE, CSS, CATALOG_JS, CM6_JS, EDITOR_JS, RDFCONV_JS, VERSIONS_JS, APP_JS, GLUE_JS, WASM):
         if not p.exists():
             die(f"missing required input: {p} (build the no-modules wasm first)")
 
@@ -285,6 +286,10 @@ def main() -> None:
             "__PLAYGROUND_RDFCONV_JS__",
             RDFCONV_JS.read_text(encoding="utf-8").rstrip(),
         )
+        .replace(
+            "__PLAYGROUND_VERSIONS_JS__",
+            VERSIONS_JS.read_text(encoding="utf-8").rstrip(),
+        )
         .replace("__PLAYGROUND_APP_JS__", APP_JS.read_text(encoding="utf-8").rstrip())
         .replace("__BUILD_VERSION__", build_version())
     )
@@ -297,6 +302,7 @@ def main() -> None:
         "__PLAYGROUND_CM6_JS__",
         "__PLAYGROUND_EDITOR_JS__",
         "__PLAYGROUND_RDFCONV_JS__",
+        "__PLAYGROUND_VERSIONS_JS__",
         "__PLAYGROUND_APP_JS__",
     )
     missing = [p for p in placeholders if p in html]

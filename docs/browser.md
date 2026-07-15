@@ -316,6 +316,39 @@ tiles cross the wire), caches those reads across queries (above), and federates 
 query across **several** sources via the SPARQL console's **+ Add source** button
 — see [Federated queries](federation.md#in-the-playground).
 
+### Rich result cells and focused cards
+
+Every Table column and Card field has the same explicit render-type menu. In
+addition to Auto, Text, Link, Button, Image, IIIF, PDF viewer, Map, 3D, Audio,
+Video, Spin, and Number, two opt-in types handle values that Auto deliberately
+does not guess:
+
+- **Page preview** lazily embeds a desktop-shaped thumbnail as the cell nears
+  the viewport. The iframe uses `sandbox="allow-scripts"` and
+  `referrerpolicy="no-referrer"`; it cannot gain same-origin access or navigate
+  the parent. A site's `X-Frame-Options` or CSP `frame-ancestors` policy can
+  still block it, so the cell always retains an **Open page ↗** link.
+- **Markdown** renders an RDF literal as headings, paragraphs, lists,
+  blockquotes, emphasis, links, and inline/fenced code. Raw HTML remains escaped,
+  and only `http:`, `https:`, and `mailto:` links become anchors. The RDF
+  language badge is preserved.
+
+Every media cell keeps a contextual source link below the preview—**Open image,
+PDF, audio, video, 3D, viewer, manifest,** or **page**—even when its inline
+preview fails. Clicking an inline PDF page opens a larger paged modal without
+opening the document a second time; the modal reuses the same PDF.js document
+and current page. A linearized (Fast Web View) PDF on a server with byte-range
+support gives the quickest first page. Ordinary PDFs remain compatible: PDF.js
+may first fetch the file tail or fall back to downloading the complete file.
+Cross-origin range streaming also requires suitable CORS response headers.
+
+On a fine-pointer desktop, image hover previews grow up to the available
+viewport but are disabled inside the focused-card dialog. The focused Card view
+is wider and leaves neighboring cards visible. Navigate it with Prev/Next,
+Left/Right, native horizontal trackpad scrolling, Shift+wheel, dragging a
+non-interactive card area, or the visible horizontal scrollbar. Touch devices
+retain native swipe and vertical scrolling inside long cards.
+
 ### Find a term
 
 The console's **🔎 Find a term** button opens a picker so you don't have to know
