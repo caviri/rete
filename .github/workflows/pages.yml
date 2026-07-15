@@ -56,6 +56,8 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verify every remote dataset has stable bytes, Range, and browser CORS
+        run: python3 scripts/check_dataset_catalog.py --all
       - name: Install deployed-site browser check
         working-directory: tests/gate
         run: |

@@ -85,5 +85,22 @@ class CleanupPolicyTests(unittest.TestCase):
         self.assertNotIn("actions/download-artifact", cleanup)
 
 
+class HostedVerificationPolicyTests(unittest.TestCase):
+    def test_deployed_check_uses_shared_retry_after_initialization_settle(self):
+        deployed = read("tests/gate/checks/check_deployed.mjs")
+        self.assertIn('import { runWithRetry } from "./_util.mjs";', deployed)
+        self.assertIn("await page.waitForTimeout(4000)", deployed)
+        self.assertIn(
+            "runWithRetry(page, { tries: 3, steps: 60, stepMs: 1000 })", deployed
+        )
+        self.assertIn("tries: out.tries", deployed)
+
+    def test_pages_probes_the_full_live_dataset_catalog_after_deploy(self):
+        pages = read(".github/workflows/pages.yml")
+        deployment = pages.index("uses: actions/deploy-pages@v4")
+        catalog = pages.index("python3 scripts/check_dataset_catalog.py --all")
+        self.assertGreater(catalog, deployment)
+
+
 if __name__ == "__main__":
     unittest.main()

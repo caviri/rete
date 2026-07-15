@@ -1,6 +1,7 @@
 // Required Pages post-deploy check. It verifies the exact staged commit and a
 // real lazy R2 query, and treats browser console/page errors as deployment bugs.
 import { launchBrowser } from "./_browser.mjs";
+import { runWithRetry } from "./_util.mjs";
 
 const base = process.env.DEPLOYED_URL || "https://caviri.github.io/rete/";
 const expected = process.env.EXPECTED_SHA || "";
@@ -34,25 +35,18 @@ const main = async () => {
     await page.waitForTimeout(5000);
   }
 
-  await page.evaluate(() => document.getElementById("run").click());
-  let out = { rows: 0, errBlock: false, qmeta: "", errText: "" };
-  for (let i = 0; i < 60; i++) {
-    await page.waitForTimeout(1000);
-    out = await page.evaluate(() => {
-      const qmeta = (document.getElementById("qmeta") || {}).textContent || "";
-      const match = qmeta.match(/(\d+)\s+row/);
-      return {
-        rows:
-          document.querySelectorAll("#out table tbody tr, #out .cards .card").length ||
-          (match ? Number(match[1]) : 0),
-        errBlock: Boolean(document.querySelector("#out .error-box")),
-        qmeta,
-        errText:
-          (document.querySelector("#out .err-tech-body") || {}).textContent?.slice(0, 200) || "",
-      };
-    });
-    if (out.rows > 0 || out.errBlock) break;
-  }
+  await page.waitForFunction(
+    () => {
+      const run = document.getElementById("run");
+      const query = window.PlaygroundEditor?.getText
+        ? window.PlaygroundEditor.getText("q")
+        : (document.getElementById("q") || {}).value;
+      return run && !run.disabled && query && query.trim().length > 0;
+    },
+    { timeout: 60000 },
+  );
+  await page.waitForTimeout(4000); // remote dataset open + selected example load
+  const out = await runWithRetry(page, { tries: 3, steps: 60, stepMs: 1000 });
 
   const exactBuild = !expected || build === expected;
   const pass = exactBuild && out.rows > 0 && !out.errBlock && errs.length === 0;
@@ -65,6 +59,7 @@ const main = async () => {
         deployedBuild: build,
         exactBuild,
         ...out,
+        tries: out.tries,
         errs: errs.slice(0, 5),
       },
       null,
