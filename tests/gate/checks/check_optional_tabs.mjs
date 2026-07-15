@@ -1,10 +1,10 @@
 // Non-downloading initialization smoke for Ask AI + Semantic/RAG. WebGPU is
 // unavailable by design; model and embedding work is replaced by deterministic
 // local stubs so controls and failure copy can be release-gated without inference.
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   const externalModelRequests = [];

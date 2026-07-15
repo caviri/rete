@@ -1,6 +1,6 @@
 // Verify the SYNC read path (asyncReadsOn=0 → sync wasm + sync-XHR in the worker)
 // runs a remote query correctly — the path we want iOS to use. Usage: node check_sync_read.mjs
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 import { runWithRetry } from "./_util.mjs";
 
 const Q = `PREFIX wc: <https://w3id.org/rete/worldcup#>
@@ -17,7 +17,7 @@ SELECT ?num ?pos ?player ?club ?dob WHERE {
 } ORDER BY xsd:integer(?num)`;
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   const asyncWasmReqs = [];

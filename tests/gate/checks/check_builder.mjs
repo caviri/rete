@@ -1,6 +1,6 @@
 // Build the immutable v1 N-Quads compatibility fixture in-browser, open the
 // produced bytes, and query the named graph for Alice. No network is involved.
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const FIXTURE = `<http://example.test/alice> <http://example.test/knows> <http://example.test/bob> .
 <http://example.test/bob> <http://example.test/name> "Bob"@en .
@@ -13,7 +13,7 @@ const QUERY = `SELECT ?person ?name WHERE {
 }`;
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 240)));

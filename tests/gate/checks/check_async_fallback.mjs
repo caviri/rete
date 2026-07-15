@@ -2,7 +2,7 @@
 // build / network), the remote query must DEGRADE to the always-present sync wasm
 // and still return rows — not hard-fail. We 404 the async wasm with asyncReadsOn
 // forced on, then assert rows + no error. Usage: node check_async_fallback.mjs
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 import { runWithRetry } from "./_util.mjs";
 
 const Q = `PREFIX wc: <https://w3id.org/rete/worldcup#>
@@ -15,7 +15,7 @@ SELECT ?num ?player WHERE {
 } ORDER BY xsd:integer(?num)`;
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));

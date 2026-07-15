@@ -1,10 +1,10 @@
 // Phone-viewport check of the reworked Settings modal: no horizontal overflow,
 // the model input fits, and the Storage + Session sections render. Runs a query
 // first so the session log has a row. Usage: node check_settings_mobile.mjs
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
   const errs = [];
   page.on("pageerror", (e) => errs.push("page: " + String(e).slice(0, 200)));

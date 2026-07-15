@@ -2,10 +2,10 @@
 // document (the old fragment-only navigation did nothing). We stamp a marker on
 // window, click Refresh, and assert the marker is gone (a real reload wiped the JS
 // context) while the dataset is preserved in the hash. Usage: node check_refresh_session.mjs
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));

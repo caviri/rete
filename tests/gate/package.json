@@ -4,7 +4,9 @@
   "description": "Regression gate deps (browsers come from the Playwright Docker image)",
   "scripts": {
     "gate": "node run.mjs",
-    "gate:fast": "node run.mjs fast"
+    "gate:fast": "node run.mjs fast",
+    "gate:catalog": "node run.mjs --catalog=embedded",
+    "gate:catalog:all": "node run.mjs --catalog=all"
   },
   "dependencies": {
     "playwright": "1.49.0"

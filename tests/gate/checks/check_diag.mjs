@@ -1,10 +1,10 @@
 // Verify the error "Copy full log" diagnostics block renders with the key fields.
 // Triggers a non-user engine error (SERVICE ?var, which rete rejects) on the
 // embedded default dataset — no network. Usage: node check_diag.mjs
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e).slice(0, 160)));

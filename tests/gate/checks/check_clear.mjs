@@ -1,10 +1,10 @@
 // Prove "Clear everything" actually frees storage: seed the Cache API (where AI
 // model weights live — the thing that was NEVER cleared) AND all four rete
 // IndexedDB stores, click Clear everything, then assert everything is gone.
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));

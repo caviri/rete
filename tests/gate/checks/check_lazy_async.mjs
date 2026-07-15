@@ -1,7 +1,7 @@
 // Verify the ASYNC (asyncify fetch) lazy path still works after the cache:'no-store'
 // + range-length-validation fix — runs the exact mtg GROUP BY the user hit, lazily,
 // against the live R2 file. Asserts rows come back and no console/page errors.
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 import { runWithRetry } from "./_util.mjs";
 
 const Q = `PREFIX mtg: <https://w3id.org/rete/mtg#>
@@ -12,7 +12,7 @@ SELECT ?type (COUNT(?c) AS ?cards) WHERE {
 } GROUP BY ?type ORDER BY DESC(?cards)`;
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   const asyncWasmReqs = [];

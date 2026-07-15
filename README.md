@@ -246,11 +246,14 @@ docker compose run --rm dev cargo run -p rete-cli -- info some.rete
 docker compose run --rm dev bash scripts/smoke.sh
 docker compose run --rm dev uv run python scripts/build_playground.py
 docker compose run --rm gate                   # full Playwright regression gate
+docker compose run --rm gate-catalog           # all 73 embedded catalog queries
+docker compose run --rm gate-catalog-live      # all 431 catalog queries (slow, live R2)
+docker compose run --rm gate-firefox           # regular gate in Firefox
 ```
 
 Open the repository in its devcontainer for an interactive shell backed by the
-same `dev` service. `check`, `wasm`, `wasm-async`, `docs`, and `gate` are named
-Compose services used by local development and release verification.
+same `dev` service. `check`, `wasm`, `wasm-async`, `docs`, and the `gate*` services
+are named Compose services used by local development and release verification.
 
 CI runs fmt, clippy, the test matrix, the CLI smoke test, a query-engine
 regression check (`qbench --check`: per-query row counts + time ceilings), and

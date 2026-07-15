@@ -1,7 +1,7 @@
 // Successful SPARQL SERVICE federation against a deterministic local endpoint.
 // The existing diagnostics check owns the failure/error contract separately.
 import { createServer } from "node:http";
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const listen = (server) => new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
 
@@ -36,7 +36,7 @@ const main = async () => {
     SERVICE <${serviceUrl}> { ?remote <urn:gate:predicate> <urn:gate:object> }
   } LIMIT 1`;
 
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 240)));

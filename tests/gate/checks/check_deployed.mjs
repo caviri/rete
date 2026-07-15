@@ -1,6 +1,6 @@
 // Required Pages post-deploy check. It verifies the exact staged commit and a
 // real lazy R2 query, and treats browser console/page errors as deployment bugs.
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const base = process.env.DEPLOYED_URL || "https://caviri.github.io/rete/";
 const expected = process.env.EXPECTED_SHA || "";
@@ -10,7 +10,7 @@ const target = new URL(
 );
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (error) => errs.push(`page: ${String(error).slice(0, 200)}`));

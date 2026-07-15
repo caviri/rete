@@ -1,12 +1,14 @@
 // The regression gate runner — executes inside the Playwright Docker image.
-// Usage (from gate.sh):  node run.mjs [fast] [--local] [--only=<substr>] [--deployed]
+// Usage: node run.mjs [fast] [--local] [--only=<substr>] [--deployed]
+//        node run.mjs --catalog=embedded|all [--catalog-dataset=<substr>]
 //
 // Tiers:
 //   G0 static   — app.js/catalog.js parse, built page inline-scripts parse,
 //                 catalog examples use only declared prefixes.
 //   G1 node     — the PRODUCTION async wasm + Asyncify driver runs a real lazy
 //                 query against a local range server (no browser).
-//   G2 browser  — the load-mode × wasm-variant × device matrix in Chromium.
+//   G2 browser  — the load-mode × wasm-variant × device matrix in the selected
+//                 Playwright browser (Chromium by default).
 //   (--deployed adds a live GitHub Pages lazy check — informational, it can lag
 //    a push by a minute; it does not flip the exit code.)
 import { spawn, execSync } from "node:child_process";
@@ -19,6 +21,8 @@ const FAST = args.includes("fast");
 const LOCAL_ONLY = args.includes("--local");
 const only = (args.find((a) => a.startsWith("--only=")) || "").slice(7);
 const DEPLOYED = args.includes("--deployed");
+const CATALOG_SCOPE = (args.find((a) => a.startsWith("--catalog=")) || "").slice(10);
+const CATALOG_DATASET = (args.find((a) => a.startsWith("--catalog-dataset=")) || "").slice(18);
 const results = [];
 const t0 = Date.now();
 
@@ -29,6 +33,20 @@ function record(tier, name, ok, note = "") {
 
 // ---------- G0 static ----------
 function g0() {
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/test_catalog_matrix.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "catalog exhaustive matrix (431 queries)",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS" ? "" : out.slice(-160),
+    );
+  } catch (e) {
+    record("G0", "catalog exhaustive matrix", false, String(e.stderr || e.stdout || e).slice(-160));
+  }
   try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/check_wasm_api.mjs`, {
       encoding: "utf8",
@@ -135,12 +153,12 @@ function serve(dir) {
 // ---------- child runner ----------
 // cwd matters: browser checks run from tests/gate so ESM resolves the locally
 // installed `playwright`; the node harness runs from ROOT (it reads docs/… paths).
-function runChild(cmd, argv, env, timeoutMs, cwd = `${ROOT}/tests/gate`) {
+function runChild(cmd, argv, env, timeoutMs, cwd = `${ROOT}/tests/gate`, stream = false) {
   return new Promise((res) => {
     const p = spawn(cmd, argv, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
-    p.stdout.on("data", (d) => { out += d; });
-    p.stderr.on("data", (d) => { out += d; });
+    p.stdout.on("data", (d) => { out += d; if (stream) process.stdout.write(d); });
+    p.stderr.on("data", (d) => { out += d; if (stream) process.stderr.write(d); });
     const t = setTimeout(() => { p.kill("SIGKILL"); res({ code: 124, out: out + "\n[TIMEOUT]" }); }, timeoutMs);
     p.on("exit", (code) => { clearTimeout(t); res({ code, out }); });
   });
@@ -234,6 +252,33 @@ async function g2(port) {
   }
 }
 
+// ---------- optional: every catalog query in the real playground ----------
+async function catalogSweep(port) {
+  const scope = CATALOG_SCOPE || "embedded";
+  const timeout = scope === "all" ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000;
+  const r = await runChild(
+    "node",
+    [`${ROOT}/tests/gate/checks/check_catalog_examples.mjs`],
+    {
+      PGPORT: String(port),
+      RETE_CATALOG_SCOPE: scope,
+      RETE_CATALOG_DATASET: CATALOG_DATASET,
+    },
+    timeout,
+    `${ROOT}/tests/gate`,
+    true,
+  );
+  const j = lastJson(r.out);
+  const ok = r.code === 0 && j && j.verdict === "PASS";
+  const firstFailure = j && j.failures && j.failures[0];
+  const note = ok
+    ? `${j.queries} queries across ${j.datasets} datasets in ${j.browser}; ${j.reportPath}`
+    : (firstFailure
+        ? `${j.failures.length} failed; first ${firstFailure.id}: ${firstFailure.error || firstFailure.qmeta}; ${j.reportPath}`
+        : r.out.slice(-240));
+  record("G2-catalog", `${scope} catalog examples`, ok, note);
+}
+
 // ---------- optional: deployed page (informational) ----------
 async function deployed() {
   const r = await runChild("node", [`${ROOT}/tests/gate/checks/check_deployed.mjs`], {}, 150000);
@@ -256,8 +301,11 @@ try {
   if (!FAST) {
     const browserServer = await serve(`${ROOT}/docs`);
     servers.push(browserServer.process);
-    console.log("── G2 browser matrix ──");
-    await g2(browserServer.port);
+    console.log(CATALOG_SCOPE
+      ? "── G2 exhaustive catalog browser matrix ──"
+      : "── G2 browser matrix ──");
+    if (CATALOG_SCOPE) await catalogSweep(browserServer.port);
+    else await g2(browserServer.port);
     if (DEPLOYED) { console.log("── live (informational) ──"); await deployed(); }
   }
 } finally { servers.forEach((s) => { try { s.kill(); } catch (e) { /* ignore */ } }); }

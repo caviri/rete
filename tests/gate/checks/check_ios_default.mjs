@@ -1,7 +1,7 @@
 // With an iPhone UA and NO override, the playground must default to the sync
 // reader: it should NOT fetch the async wasm, the remote query must still run,
 // and the Settings toggle must reflect "off" with iPhone-specific advice.
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 import { runWithRetry } from "./_util.mjs";
 
 const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1";
@@ -15,7 +15,7 @@ SELECT ?num ?player WHERE {
 } ORDER BY xsd:integer(?num)`;
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const ctx = await browser.newContext({ userAgent: IPHONE_UA, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await ctx.newPage();
   const asyncWasmReqs = [];

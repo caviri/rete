@@ -1,10 +1,10 @@
 // Verify the worldcup2026 ex=0 squad query now runs (parse error fixed) against
 // the live remote dataset. Usage: node check_worldcup.mjs
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 import { runWithRetry } from "./_util.mjs";
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));

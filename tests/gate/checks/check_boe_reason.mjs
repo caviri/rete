@@ -3,11 +3,11 @@
 // so loading it auto-enables 🧠 Reason. With reasoning the query returns the
 // force-of-law norms via the subClassOf tiers; with reasoning OFF it returns 0
 // (no norm is directly typed the intermediate class). Usage: node check_boe_reason.mjs
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 import { runWithRetry } from "./_util.mjs";
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));

@@ -3,7 +3,7 @@
 // never talks to a public tile server, while still proving source selection,
 // layer wiring, result bounds, and non-empty canvas rendering.
 import { createServer } from "node:http";
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const listen = (server) => new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
 
@@ -36,7 +36,7 @@ const main = async () => {
   const fixturePort = await listen(server);
   const fixtureUrl = `http://127.0.0.1:${fixturePort}/fixture.pmtiles`;
 
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 240)));

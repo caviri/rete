@@ -2,10 +2,10 @@
 // must SURFACE AN ERROR — not hang forever ("querying…", no rows, no error). We
 // corrupt the async wasm response so wasm_bindgen rejects on init, then assert an
 // error box appears within the watchdog window. Usage: node check_worker_init.mjs
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const PORT = process.env.PGPORT || "8090";
   // Serve garbage for the async wasm → CompileError in the worker's wasm_bindgen.

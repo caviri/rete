@@ -1,7 +1,7 @@
 // Coverage for query surfaces the gate didn't touch: property paths, CONSTRUCT →
 // graph view, and the reasoning (query_reasoned) path. All on the EMBEDDED scholar
 // dataset, so it's deterministic (no live R2). Usage: node check_query_shapes.mjs
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const PATH_Q = `PREFIX cito: <http://purl.org/spar/cito/>
 SELECT DISTINCT ?reached WHERE { <http://ex/paper/245> cito:cites+ ?reached }`;
@@ -20,7 +20,7 @@ const poll = async (page, fn, steps = 20) => {
 };
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));

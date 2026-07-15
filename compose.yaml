@@ -13,6 +13,13 @@ x-rete-dev: &rete-dev
     - cargo-registry:/usr/local/cargo/registry
     - cargo-target:/target
 
+x-rete-gate: &rete-gate
+  image: mcr.microsoft.com/playwright:v1.49.0-jammy
+  working_dir: /work/tests/gate
+  network_mode: host
+  volumes:
+    - .:/work
+
 services:
   volume-init:
     <<: *rete-dev
@@ -61,12 +68,31 @@ services:
     command: ["bash", "scripts/build_playground_async.sh"]
 
   gate:
-    image: mcr.microsoft.com/playwright:v1.49.0-jammy
-    working_dir: /work/tests/gate
-    network_mode: host
-    volumes:
-      - .:/work
+    <<: *rete-gate
+    environment:
+      RETE_BROWSER: chromium
     command: ["bash", "-lc", "npm ci --no-audit --no-fund && node run.mjs"]
+
+  gate-firefox:
+    <<: *rete-gate
+    profiles: ["extended-tests"]
+    environment:
+      RETE_BROWSER: firefox
+    command: ["bash", "-lc", "npm ci --no-audit --no-fund && node run.mjs"]
+
+  gate-catalog:
+    <<: *rete-gate
+    profiles: ["extended-tests"]
+    environment:
+      RETE_BROWSER: chromium
+    command: ["bash", "-lc", "npm ci --no-audit --no-fund && node run.mjs --catalog=embedded"]
+
+  gate-catalog-live:
+    <<: *rete-gate
+    profiles: ["extended-tests"]
+    environment:
+      RETE_BROWSER: chromium
+    command: ["bash", "-lc", "npm ci --no-audit --no-fund && node run.mjs --catalog=all"]
 
 volumes:
   cargo-registry:

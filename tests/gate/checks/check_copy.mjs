@@ -1,10 +1,10 @@
 // Verify (1) a parse/syntax error now shows the Copy-log button, and (2) the copy
 // buttons ACTUALLY put text on the clipboard (the iOS-safe execCommand-first path).
 // Reads the clipboard back to confirm. Usage: node check_copy.mjs
-import { chromium } from "playwright";
+import { launchBrowser } from "./_browser.mjs";
 
 const main = async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   const ctx = await browser.newContext();
   const PORT = process.env.PGPORT || "8090";
   await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: `http://localhost:${PORT}` });
