@@ -222,6 +222,7 @@ async function g1(port) {
 
 // ---------- G2 browser matrix ----------
 const G2 = [
+  ["check_rich_media_cells", "rich media renderers + desktop card carousel", 120000, false],
   ["check_version_picker", "production + automatic PR preview selector", 90000, false],
   ["check_diag", "embedded + error diagnostics block", 90000, false],
   ["check_worldcup", "desktop lazy DEFAULT (async) · worldcup ex=0 · live R2", 120000, true],
