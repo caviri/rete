@@ -17,7 +17,7 @@ The optional Compose services add broader, slower coverage:
 
 ```sh
 docker compose run --rm gate-catalog       # Chromium: 73 queries, 11 embedded datasets
-docker compose run --rm gate-catalog-live  # Chromium: all 431 queries, 59 datasets + live R2
+docker compose run --rm gate-catalog-live  # Chromium: all 435 queries, 60 datasets + live R2
 docker compose run --rm gate-firefox       # the regular browser matrix in Firefox
 
 # The exhaustive live sweep can use Firefox too, or target one dataset while iterating.

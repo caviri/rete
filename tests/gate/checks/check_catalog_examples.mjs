@@ -1,6 +1,6 @@
 // Execute the catalog's actual example-library flow in a real browser. This is
-// deliberately an optional, slow tier: the complete matrix is 431 queries over
-// 59 datasets, many of them live HTTP-range sources.
+// deliberately an optional, slow tier: the complete matrix is 435 queries over
+// 60 datasets, many of them live HTTP-range sources.
 import fs from "node:fs";
 import { launchBrowser, selectedBrowserName } from "./_browser.mjs";
 import {
