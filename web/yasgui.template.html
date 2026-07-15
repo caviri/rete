@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>yasgui-wasm — SPARQL over .rete files, entirely in your browser</title>
+<meta name="description" content="A Yasgui-style SPARQL IDE where the endpoint is a .rete file: paste a URL (read lazily over HTTP range) or drop a local file — the query engine is WebAssembly inside the page. No server.">
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="%23147d69"/><path d="M9.5 7.5v9l7.5-4.5z" fill="white"/></svg>'>
+<style>
+  :root {
+    --accent: #147d69;
+    --accent-dark: #0d5a4b;
+    --ink: #1b1f23;
+    --muted: #5b6660;
+    --faint: #9aa5a0;
+    --line: #d7ddda;
+    --line-soft: #e3e7e5;
+    --bg: #f4f6f5;
+    --tint: #eef4f2;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink); background: var(--bg);
+  }
+  a { color: var(--accent-dark); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 18px; }
+
+  /* ---- header ---- */
+  header.top { padding: 16px 0 10px; }
+  .brand { font-size: 21px; font-weight: 800; letter-spacing: -.02em; }
+  .brand .x { color: var(--accent); font-weight: 800; }
+  .brand .wasm { color: var(--faint); font-weight: 600; font-size: 15px; margin-left: 2px; }
+  .tagline { color: var(--muted); font-size: 13px; margin-top: 2px; max-width: 72em; }
+  header.top nav { float: right; font-size: 13px; margin-top: 6px; }
+  header.top nav a { margin-left: 14px; text-decoration: none; }
+  header.top nav a:hover { text-decoration: underline; }
+
+  /* ---- tabs ---- */
+  .tabsbar { display: flex; align-items: flex-end; gap: 4px; margin-top: 14px; border-bottom: 1px solid var(--line); }
+  #tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tab {
+    display: flex; align-items: center; gap: 6px;
+    background: #e9edeb; border: 1px solid var(--line); border-bottom: none;
+    border-radius: 6px 6px 0 0; padding: 7px 8px 7px 14px;
+    font-size: 13px; cursor: pointer; color: var(--muted); user-select: none;
+    border-top: 3px solid transparent; margin-bottom: -1px;
+  }
+  .tab:hover { background: #f1f4f3; }
+  .tab.active { background: #fff; color: var(--ink); border-top-color: var(--accent); font-weight: 600; }
+  .tabclose {
+    border: none; background: none; color: var(--faint); font-size: 15px;
+    cursor: pointer; padding: 0 3px; border-radius: 4px; line-height: 1;
+  }
+  .tabclose:hover { color: #b3423a; background: rgba(179,66,58,.1); }
+  .tabrename { font: inherit; border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; width: 9em; }
+  #addTab {
+    border: 1px solid var(--line); border-bottom: none; background: #e9edeb;
+    border-radius: 6px 6px 0 0; font-size: 16px; padding: 5px 12px; cursor: pointer;
+    color: var(--muted); margin-bottom: -1px;
+  }
+  #addTab:hover { background: #fff; color: var(--accent-dark); }
+
+  /* ---- work area ---- */
+  main { background: #fff; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px; padding: 14px 14px 18px; }
+
+  .endpointbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; position: relative; }
+  .eplabel {
+    font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+    font-size: 12px; color: var(--accent-dark); background: var(--tint);
+    border: 1px solid var(--line-soft); padding: 6px 9px; border-radius: 6px; font-weight: 700;
+  }
+  #endpoint {
+    flex: 1; min-width: 240px; font: 13px "Cascadia Mono", Consolas, ui-monospace, monospace;
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink);
+    background: #fff;
+  }
+  #endpoint:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(20,125,105,.12); }
+  #endpoint.isfile { background: var(--tint); color: var(--accent-dark); }
+  .epbtn {
+    font-size: 13px; padding: 8px 12px; border: 1px solid var(--line); background: #fff;
+    border-radius: 6px; cursor: pointer; color: var(--ink); white-space: nowrap;
+  }
+  .epbtn:hover { border-color: var(--accent); color: var(--accent-dark); }
+  .chip {
+    font-size: 12px; color: var(--accent-dark); background: var(--tint);
+    border: 1px solid var(--line-soft); border-radius: 999px; padding: 3px 10px;
+  }
+  .reason { font-size: 12.5px; color: var(--muted); white-space: nowrap; cursor: pointer; user-select: none; }
+  .reason input { vertical-align: -2px; accent-color: var(--accent); }
+
+  .pop {
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+    width: min(560px, 92vw); max-height: 420px; overflow: auto;
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(27,31,35,.16); padding: 6px;
+  }
+  .catitem { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+  .catitem:hover { background: var(--tint); }
+  .cathead { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; }
+  .catsize { color: var(--faint); font-size: 12px; white-space: nowrap; }
+  .catblurb { color: var(--muted); font-size: 12.5px; }
+
+  /* ---- editor + run ---- */
+  .editorwrap { position: relative; margin-top: 12px; }
+  #editor { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+  #runBtn {
+    position: absolute; right: 16px; bottom: -21px; z-index: 30;
+    width: 46px; height: 46px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 12px rgba(13,90,75,.35);
+    transition: background .15s, transform .1s;
+  }
+  #runBtn:hover { background: var(--accent-dark); transform: scale(1.05); }
+  #runBtn.running { background: #b3423a; }
+  #runBtn svg { margin-left: 2px; }
+  #runBtn.running svg { margin-left: 0; }
+
+  /* ---- results (YASR) ---- */
+  .yasr { margin-top: 30px; }
+  .yasrbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--line-soft); padding-bottom: 8px;
+  }
+  .rtab {
+    border: none; background: none; font: 600 13.5px system-ui, sans-serif; color: var(--muted);
+    padding: 6px 2px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -9px;
+  }
+  .rtab.active { color: var(--accent-dark); border-bottom-color: var(--accent); }
+  .stats { font-size: 12.5px; color: var(--muted); margin-left: 8px; }
+  .stats b { color: var(--ink); }
+  .spacer { flex: 1; }
+  #filterBox {
+    font-size: 12.5px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; width: 165px;
+  }
+  #filterBox:focus { outline: none; border-color: var(--accent); }
+  .miniBtn {
+    font-size: 12px; padding: 5px 10px; border: 1px solid var(--line); background: #fff;
+    border-radius: 6px; cursor: pointer; color: var(--muted);
+  }
+  .miniBtn:hover { border-color: var(--accent); color: var(--accent-dark); }
+
+  #resultsBody { margin-top: 4px; }
+  .placeholder { color: var(--faint); padding: 26px 8px; font-size: 13.5px; }
+  .tablewrap { overflow-x: auto; }
+  table.rs { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.rs th {
+    text-align: left; font: 700 12.5px "Cascadia Mono", Consolas, ui-monospace, monospace;
+    color: var(--accent-dark); background: #fafbfa; border-bottom: 2px solid var(--line-soft);
+    padding: 8px 10px; cursor: pointer; white-space: nowrap; position: sticky; top: 0;
+  }
+  table.rs th.rownum { cursor: default; }
+  .sortmark { color: var(--faint); }
+  table.rs td { border-bottom: 1px solid #f0f2f1; padding: 6px 10px; vertical-align: top; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.rs tr:hover td { background: #f7faf9; }
+  td.rownum, th.rownum { color: var(--faint); font-size: 11.5px; width: 1%; text-align: right; }
+  a.iri { text-decoration: none; color: #0f4d8f; }
+  a.iri:hover { text-decoration: underline; }
+  .bnode { color: #8250df; font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 12.5px; }
+  .lit { color: var(--ink); }
+  .ttag { color: var(--faint); font-size: 11px; margin-left: 3px; }
+  .nullcell { color: var(--faint); }
+  pre.rawjson {
+    font: 12.5px "Cascadia Mono", Consolas, ui-monospace, monospace;
+    background: #fafbfa; border: 1px solid var(--line-soft); border-radius: 8px;
+    padding: 12px; overflow: auto; max-height: 60vh; white-space: pre-wrap; word-break: break-word;
+  }
+  .askbox {
+    display: inline-block; margin: 18px 6px; padding: 14px 34px; border-radius: 10px;
+    font: 800 26px system-ui, sans-serif; letter-spacing: .02em;
+  }
+  .askbox.yes { background: #e5f3ee; color: #0d5a4b; border: 1px solid #b9ded2; }
+  .askbox.no { background: #fbeae8; color: #94382f; border: 1px solid #eecac5; }
+  .errbox {
+    background: #fbeae8; border: 1px solid #eecac5; color: #6d2a23;
+    border-radius: 8px; padding: 12px 14px; margin-top: 10px; font-size: 13px;
+  }
+  .errbox pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; font-size: 12.5px; }
+  .hint { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  .hint code { background: #f0f2f1; padding: 1px 4px; border-radius: 4px; }
+
+  .pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 2px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+  .pbtns { display: flex; align-items: center; gap: 6px; }
+  .pbtn { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 3px 12px; cursor: pointer; font-size: 13px; }
+  .pbtn:disabled { opacity: .4; cursor: default; }
+  .pcur { color: var(--faint); }
+
+  footer { color: var(--faint); font-size: 12px; padding: 18px 0 30px; max-width: 72em; }
+  footer a { color: var(--muted); }
+
+  .spin {
+    display: inline-block; width: 11px; height: 11px; border-radius: 50%;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    animation: spin .7s linear infinite; vertical-align: -1px; margin-right: 4px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 60;
+    background: var(--ink); color: #fff; font-size: 13px; padding: 9px 16px;
+    border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.25); max-width: 90vw;
+  }
+  #dropOverlay[hidden], #toast[hidden], .pop[hidden], .chip[hidden], #pager[hidden] { display: none !important; }
+  #dropOverlay {
+    position: fixed; inset: 0; z-index: 50; background: rgba(20,125,105,.12);
+    border: 4px dashed var(--accent); display: flex; align-items: center; justify-content: center;
+    font: 700 22px system-ui, sans-serif; color: var(--accent-dark); pointer-events: none;
+  }
+  @media (max-width: 720px) {
+    header.top nav { float: none; margin: 4px 0 0; }
+    .stats { order: 10; width: 100%; margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <nav>
+      <a href="./" title="rete documentation">rete docs</a>
+      <a href="playground.html" title="the full rete playground">playground</a>
+      <a href="https://github.com/TriplyDB/Yasgui" title="the original Yasgui by Triply" rel="noopener" target="_blank">Yasgui↗</a>
+    </nav>
+    <div class="brand">yasgui<span class="x">·</span><span class="wasm">wasm</span></div>
+    <div class="tagline">
+      A <a href="https://yasgui.triply.cc/" rel="noopener" target="_blank">Yasgui</a>-style SPARQL IDE where the
+      endpoint is a <b>.rete file</b>: paste a link (queried lazily over HTTP range — only the bytes your query
+      touches are fetched) or drop a local file. The engine is WebAssembly inside this page — no server, no upload.
+    </div>
+  </header>
+
+  <div class="tabsbar">
+    <div id="tabs"></div>
+    <button id="addTab" title="New tab">+</button>
+  </div>
+
+  <main>
+    <div class="endpointbar">
+      <span class="eplabel">.rete</span>
+      <input id="endpoint" spellcheck="false" autocomplete="off"
+             placeholder="https://… URL of a .rete file (needs CORS + HTTP Range) — or open a local file">
+      <button class="epbtn" id="catalogBtn" title="Pick one of the published datasets">datasets ▾</button>
+      <button class="epbtn" id="uploadBtn" title="Query a .rete on your disk — it never leaves this browser">⬆ open file</button>
+      <input type="file" id="fileInput" accept=".rete" hidden>
+      <label class="reason" title="OWL 2 QL entailment: rewrite the query against the file's ontology"><input type="checkbox" id="reasonToggle"> 🧠 reason</label>
+      <span id="dsChip" class="chip" hidden></span>
+      <div id="catalogPop" class="pop" hidden></div>
+    </div>
+
+    <section class="editorwrap">
+      <div id="editor"></div>
+      <button id="runBtn" title="Run (Ctrl+Enter)"></button>
+    </section>
+
+    <section class="yasr">
+      <div class="yasrbar">
+        <button class="rtab active" data-view="table">Table</button>
+        <button class="rtab" data-view="response">Response</button>
+        <span id="resultStats" class="stats"></span>
+        <span class="spacer"></span>
+        <input id="filterBox" placeholder="Filter query results" spellcheck="false">
+        <button class="miniBtn" id="dlCsv" title="Download the (filtered) result set as CSV">CSV</button>
+        <button class="miniBtn" id="dlJson" title="Download the raw response as JSON">JSON</button>
+        <button class="miniBtn" id="shareBtn" title="Copy a link that opens this query + endpoint">🔗 share</button>
+      </div>
+      <div id="resultsBody"></div>
+      <div id="pager" class="pager" hidden></div>
+    </section>
+  </main>
+
+  <footer>
+    UI after <a href="https://github.com/TriplyDB/Yasgui" rel="noopener" target="_blank">Yasgui</a> (Triply) —
+    engine: <a href="https://github.com/caviri/rete" rel="noopener" target="_blank">rete</a>, a cloud-native
+    range-queryable RDF file format, compiled to WebAssembly and inlined into this single HTML file. Everything runs
+    client-side: your queries never leave the machine — for remote files the network sees only HTTP range requests
+    for raw bytes. Uploaded files are read in memory and never sent anywhere. <span id="buildStamp"></span>
+  </footer>
+</div>
+
+<div id="toast" hidden></div>
+<div id="dropOverlay" hidden>drop a .rete file to query it</div>
+
+<!-- CodeMirror 6 bundle (window.CM) — same build the playground inlines -->
+<script id="cm6js">
+__CM6_JS__
+</script>
+<!-- rete wasm-bindgen no-modules glue (global wasm_bindgen). Also reused as the
+     first half of the worker source: the app reads this tag's textContent. -->
+<script id="reteGlue">
+__GLUE_JS__
+</script>
+<!-- worker body (never executed on the main thread; Blob-spawned) -->
+<script type="text/plain" id="workerSrc">
+__WORKER_JS__
+</script>
+<script>
+const RETE_WASM_B64 = "__WASM_B64__";
+const CATALOG = __CATALOG_JSON__;
+const BUILD_STAMP = "__BUILD_STAMP__";
+</script>
+<script>
+__APP_JS__
+</script>
+</body>
+</html>
