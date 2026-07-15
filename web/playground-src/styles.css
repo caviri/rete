@@ -1369,6 +1369,16 @@ body.cardfocus-open { overflow: hidden; }
 .cardfocus-nav .secondary { min-width: 88px; flex: 0 0 auto; }
 .cardfocus-nav .secondary[disabled] { opacity: .4; pointer-events: none; }
 .cardfocus-hint { flex: 1 1 auto; text-align: center; }
+@media (min-width: 900px) and (hover: hover) and (pointer: fine) {
+  #cardFocusModal .modal-card.cardfocus-card { width: min(1180px, 96vw); }
+  .cardfocus-track { gap: 18px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; cursor: grab; }
+  .cardfocus-track.is-dragging { cursor: grabbing; user-select: none; }
+  .cardfocus-track::-webkit-scrollbar { display: block; height: 8px; }
+  .cardfocus-track::-webkit-scrollbar-track { background: transparent; }
+  .cardfocus-track::-webkit-scrollbar-thumb { background: var(--line-strong); border: 2px solid transparent; border-radius: 999px; background-clip: padding-box; }
+  .cardfocus-track::before, .cardfocus-track::after { flex-basis: 13%; }
+  .cardfocus-slide { flex-basis: 74%; width: 74%; }
+}
 @media (prefers-reduced-motion: reduce) { .cardfocus-slide { transition: none; } }
 /* Phone sticky Run bar — hidden everywhere; the ≤560px block shows it when
    app.js flags it `.on` (Run button off-screen, SPARQL mode). */
@@ -1383,7 +1393,9 @@ body.cardfocus-open { overflow: hidden; }
 /* Floating hover-zoom of a table image — anchored beside the thumb, clamped to the
    viewport (positioned in JS), so a scan/photo reads without opening the lightbox. */
 .thumb-zoom {
-  position: fixed; z-index: 95; max-width: 360px; max-height: 340px;
+  position: fixed; z-index: 95;
+  max-width: min(560px, calc(100vw - 16px));
+  max-height: min(72vh, calc(100vh - 16px));
   border-radius: 10px; border: 1px solid var(--line-strong, #cfd9d5);
   background: var(--surface, #fff); padding: 4px; object-fit: contain;
   box-shadow: 0 16px 44px -12px rgba(0, 0, 0, .45);

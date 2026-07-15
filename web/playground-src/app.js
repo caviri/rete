@@ -1073,9 +1073,9 @@ self.onmessage = function (e) {
     if (!tzEl) return;
     const r = img.getBoundingClientRect();
     const zw = tzEl.offsetWidth || 320, zh = tzEl.offsetHeight || 280;
-    const m = 12, vw = window.innerWidth, vh = window.innerHeight;
-    let left = r.right + m;                              // prefer to the right of the thumb
-    if (left + zw + m > vw) left = r.left - m - zw;      // no room → to the left
+    const m = 8, gap = 12, vw = window.innerWidth, vh = window.innerHeight;
+    const rightSpace = vw - r.right - gap, leftSpace = r.left - gap;
+    let left = rightSpace >= leftSpace ? r.right + gap : r.left - gap - zw;
     left = Math.max(m, Math.min(vw - zw - m, left));     // clamp horizontally
     let top = r.top + r.height / 2 - zh / 2;             // centre on the thumb
     top = Math.max(m, Math.min(vh - zh - m, top));       // clamp vertically
@@ -1083,6 +1083,8 @@ self.onmessage = function (e) {
     tzEl.style.top = top + "px";
   }
   function showThumbZoom(img) {
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+    if (img.closest("#cardFocusModal, .modal, .img-lb, .iiif-modal, .model3d-modal, .pdf-modal")) return;
     const src0 = img.currentSrc || img.src;
     if (!src0) return;
     const src = src0.replace(/([?&]width=)200\b/, (m, g1) => g1 + "900"); // sharper for Commons thumbs
@@ -1096,7 +1098,8 @@ self.onmessage = function (e) {
   function bindThumbZoom() {
     document.body.addEventListener("mouseover", (e) => {
       const img = e.target.closest && e.target.closest(".cell-thumb");
-      if (!img) return;
+      if (!img || !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+      if (img.closest("#cardFocusModal, .modal, .img-lb, .iiif-modal, .model3d-modal, .pdf-modal")) { hideThumbZoom(); return; }
       clearTimeout(tzShowTimer);
       tzShowTimer = setTimeout(() => showThumbZoom(img), 200);
     });
@@ -5266,7 +5269,64 @@ self.onmessage = function (e) {
   // the current one centred with its neighbours peeking on the sides. Swiping
   // (native horizontal scroll-snap — momentum + snap for free) or ‹ ›/← → moves
   // between them. Media hydrates lazily per slide so a big result stays cheap.
-  let cardFocus = null; // { tid, n, io } while open, null when closed
+  let cardFocus = null; // { tid, n, io, cleanupInput } while open, null when closed
+  let focusDragSuppressClick = false;
+  const FOCUS_DRAG_EXCLUDE = "a, button, input, select, textarea, code, pre, model-viewer, audio, video, iframe, .iiif-frame, .pdfview-stage, .pdfview-bar, .page-preview-frame";
+  function bindCardFocusDesktopInput(track) {
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return () => {};
+    let drag = null;
+    const wheel = (e) => {
+      if (!e.shiftKey) return; // native horizontal trackpad deltaX remains native
+      const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      if (!delta) return;
+      e.preventDefault();
+      track.scrollLeft += delta;
+    };
+    const down = (e) => {
+      if (e.pointerType !== "mouse" || e.button !== 0) return;
+      if (e.target.closest && e.target.closest(FOCUS_DRAG_EXCLUDE)) return;
+      drag = { id: e.pointerId, x: e.clientX, scroll: track.scrollLeft, moved: false };
+      track.setPointerCapture(e.pointerId);
+    };
+    const move = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = drag.x - e.clientX;
+      if (!drag.moved && Math.abs(dx) < 6) return;
+      drag.moved = true;
+      track.classList.add("is-dragging");
+      track.style.scrollSnapType = "none";
+      track.scrollLeft = drag.scroll + dx;
+      e.preventDefault();
+    };
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const moved = drag.moved;
+      try { track.releasePointerCapture(e.pointerId); } catch (_e) {}
+      drag = null;
+      track.classList.remove("is-dragging");
+      track.style.scrollSnapType = "";
+      if (moved) {
+        focusDragSuppressClick = true;
+        e.preventDefault();
+        requestAnimationFrame(() => { if (cardFocus) centerFocusSlide(focusIndex(), "instant"); });
+        setTimeout(() => { focusDragSuppressClick = false; }, 100);
+      }
+    };
+    track.addEventListener("wheel", wheel, { passive: false });
+    track.addEventListener("pointerdown", down);
+    track.addEventListener("pointermove", move);
+    track.addEventListener("pointerup", end);
+    track.addEventListener("pointercancel", end);
+    return () => {
+      track.removeEventListener("wheel", wheel);
+      track.removeEventListener("pointerdown", down);
+      track.removeEventListener("pointermove", move);
+      track.removeEventListener("pointerup", end);
+      track.removeEventListener("pointercancel", end);
+      track.classList.remove("is-dragging");
+      track.style.scrollSnapType = "";
+    };
+  }
   function openCardFocus(tid, i) {
     const st = tableStates.get(tid);
     if (!st || !st.rows.length) return;
@@ -5277,7 +5337,7 @@ self.onmessage = function (e) {
       // hydrated by the observer below only as a slide nears the viewport.
       `<article class="rcard cardfocus-slide" data-ci="${k}">${cardFieldsHtml(st, row, false)}</article>`
     ).join("");
-    cardFocus = { tid, n: rows.length, io: null };
+    cardFocus = { tid, n: rows.length, io: null, cleanupInput: null };
     // Hydrate a slide's IIIF/3D/media the moment it (or a neighbour) scrolls near.
     cardFocus.io = new IntersectionObserver((ents) => {
       ents.forEach((en) => {
@@ -5289,7 +5349,9 @@ self.onmessage = function (e) {
     }, { root: track, rootMargin: "0px 150% 0px 150%" });
     $("cardFocusModal").classList.remove("hidden");
     document.body.classList.add("cardfocus-open");
+    hideThumbZoom();
     track.onscroll = onFocusScroll;
+    cardFocus.cleanupInput = bindCardFocusDesktopInput(track);
     centerFocusSlide(i, "instant"); // open on the tapped card
     // Observe + re-centre once the now-visible modal has laid out (slide widths
     // and offsets are only real after the modal stops being display:none).
@@ -5350,6 +5412,7 @@ self.onmessage = function (e) {
     $("cardFocusModal").classList.add("hidden");
     document.body.classList.remove("cardfocus-open");
     if (cardFocus && cardFocus.io) cardFocus.io.disconnect();
+    if (cardFocus && cardFocus.cleanupInput) cardFocus.cleanupInput();
     const track = $("cardFocusTrack");
     track.onscroll = null;
     track.innerHTML = ""; // release the slides' media
@@ -8584,7 +8647,7 @@ self.onmessage = function (e) {
       // in the focus modal (swipeable single-card view).
       const card = e.target.closest && e.target.closest(".rcard");
       if (card && card.dataset.ci != null &&
-          !(e.target.closest && e.target.closest("a, button, input, select, label, model-viewer, audio, video, .iiif-frame, .coltype"))) {
+          !(e.target.closest && e.target.closest("a, button, input, select, label, model-viewer, audio, video, iframe, .iiif-frame, .pdfview-stage, .coltype"))) {
         const wrap = card.closest(".cards");
         if (wrap) openCardFocus(wrap.dataset.tid, +card.dataset.ci);
       }
@@ -8627,7 +8690,12 @@ self.onmessage = function (e) {
     // Tap a section of the focused card to zoom it for reading (tap again to
     // reset) - links/media keep their own behavior.
     $("cardFocusTrack").addEventListener("click", (e) => {
-      if (e.target.closest("a, button, input, select, model-viewer, audio, video, .iiif-frame")) return;
+      if (focusDragSuppressClick) {
+        focusDragSuppressClick = false;
+        e.preventDefault(); e.stopPropagation();
+        return;
+      }
+      if (e.target.closest(FOCUS_DRAG_EXCLUDE)) return;
       const cf = e.target.closest(".cf");
       if (cf) cf.classList.toggle("cf-zoom");
     });

@@ -238,11 +238,12 @@ async function checkCards(page) {
   await page.keyboard.up("Shift");
   await page.waitForFunction(() => /^2\s*\//.test(document.getElementById("cardFocusCount")?.textContent || ""));
 
-  const box = await track.boundingBox();
+  const box = await page.locator(".cardfocus-slide.is-current").boundingBox();
   assert.ok(box);
-  await page.mouse.move(box.x + box.width * 0.72, box.y + box.height * 0.45);
+  const dragY = box.y + box.height - 14; // blank card area, not its image/link
+  await page.mouse.move(box.x + box.width * 0.7, dragY);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 0.22, box.y + box.height * 0.45, { steps: 8 });
+  await page.mouse.move(box.x + box.width * 0.1, dragY, { steps: 8 });
   await page.mouse.up();
   await page.waitForFunction(() => /^3\s*\//.test(document.getElementById("cardFocusCount")?.textContent || ""));
 }
