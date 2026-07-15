@@ -796,7 +796,7 @@ __PLAYGROUND_CSS__
         <dt>Table</dt>
         <dd>Any <code>SELECT</code>, <code>ASK</code>, or <code>CONSTRUCT</code> — the default.</dd>
         <dt>Cards</dt>
-        <dd>The same rows as Table, but <strong>one card per row</strong> with the fields stacked — media renders full-width, so it reads well on a phone. Cards flow as a <strong>masonry</strong> on a wide screen. The <strong>⚙ Fields</strong> button picks how each field renders (Auto / Text / Link / Image / IIIF / Map / 3D / Audio / Video / Spin / Number) — the same choices as a table column's header dropdown.</dd>
+        <dd>The same rows as Table, but <strong>one card per row</strong> with the fields stacked — media renders full-width, so it reads well on a phone. Cards flow as a <strong>masonry</strong> on a wide screen. The <strong>⚙ Fields</strong> button picks how each field renders (including Image, IIIF, PDF viewer, Page preview, Markdown, Map, 3D, Audio, Video and Spin) — the same choices as a table column's header dropdown.</dd>
         <dt>Graph</dt>
         <dd>A <code>CONSTRUCT { ?a ?p ?b } …</code>, or a <code>SELECT</code> with <strong>≥&nbsp;2 variables</strong>: 2 vars draw <code>v1&nbsp;→&nbsp;v2</code> ("related") edges; <strong>3 vars</strong> are read as (subject, predicate, object). A one-variable select has nothing to connect.</dd>
         <dt>Map <span class="ds-cap on">geometry</span></dt>
@@ -823,7 +823,7 @@ __PLAYGROUND_CSS__
         <h3 id="cardsFieldsTitle">Card fields — render each as…</h3>
         <button id="cardsFieldsClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
-      <p class="microcopy">Pick how each field renders on the cards. <b>Auto</b> detects images, IIIF manifests, 3D meshes, audio/video and WKT geometry from the value — force a type when a URL doesn't give itself away (or to stop a long IRI from rendering). Changes apply live.</p>
+      <p class="microcopy">Pick how each field renders on the cards. <b>Auto</b> detects images, IIIF manifests, PDFs, 3D meshes, audio/video and WKT geometry from the value. Force <b>Page preview</b> for a sandboxed page thumbnail or <b>Markdown</b> for a formatted literal. Changes apply live.</p>
       <div id="cardsFieldsBody" class="cfm-list"></div>
     </div>
   </div>

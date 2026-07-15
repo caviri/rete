@@ -269,6 +269,7 @@ column from rendering.</p>
 <tr><td><code>.mp3 .wav .ogg .oga .flac .m4a .aac .opus</code></td><td><code>looksAudioUrl</code> → <code>audioCell</code></td><td>inline <code>&lt;audio controls preload=metadata&gt;</code></td></tr>
 <tr><td>a bucket <code>…-spin/&lt;id&gt;.webm</code> (or <code>.mp4</code>)</td><td><code>looksSpinUrl</code> → <code>spinCell</code></td><td>autoplaying, muted, looping clip (a pre-rendered turntable preview — no WebGL)</td></tr>
 <tr><td><code>.mp4 .webm .ogv .m4v .mov</code></td><td><code>looksVideoUrl</code> → <code>videoCell</code></td><td>inline <code>&lt;video controls preload=metadata&gt;</code></td></tr>
+<tr><td><code>.pdf</code></td><td><code>looksPdfUrl</code> → <code>pdfCell</code></td><td>a PDF launch button in Auto; force <strong>PDF viewer</strong> for an inline page canvas with paging and an enlarged modal</td></tr>
 <tr><td>a WKT literal (<code>POINT</code>/<code>POLYGON</code>/<code>LINESTRING</code>/… — <code>looksWktGeo</code>)</td><td><code>geoCell</code></td><td>a small locator mini-map (a point sits on a cached world basemap tile; a shape fits its own bbox). With many geo rows, <strong>Output → Map</strong> plots the whole result set</td></tr>
 </tbody></table>
 <p>Notes:</p>
@@ -277,12 +278,28 @@ column from rendering.</p>
 best-effort <code>HEAD</code> request; dimensions/duration/3D real-size come from the
 loaded element (<code>updateScaleBar</code> drives the lightbox scale bar from the live
 camera).</li>
-<li>The column dropdown options (<code>COL_TYPES</code>) are <strong>Auto / Text / Link / Image /
-IIIF / Map / 3D / Audio / Video / Spin / Number</strong>.</li>
+<li>The column dropdown options (<code>COL_TYPES</code>) are <strong>Auto / Text / Link / Button /
+Image / IIIF / PDF viewer / Page preview / Markdown / Map / 3D / Audio /
+Video / Spin / Number</strong>. <strong>Page preview</strong> is opt-in and lazily places a
+sandboxed, scaled desktop iframe in the cell; <strong>Markdown</strong> is opt-in for RDF
+literals and escapes raw HTML while allowing only <code>http:</code>, <code>https:</code>, and
+<code>mailto:</code> links.</li>
+<li>Every rich-media cell retains a contextual <strong>Open … ↗</strong> source link below its
+preview, including images, PDF, IIIF, audio/video/spin, 3D, and Page preview.</li>
+<li><strong>PDF page modal.</strong> For a forced PDF viewer, clicking the inline canvas opens
+the current page in a larger paged modal. It reuses the same PDF.js document,
+so the modal does not start a second file request. Linearized PDFs give the
+quickest first page when the server supports byte ranges; non-linear PDFs are
+still valid, but PDF.js may request the tail first or download the whole file.</li>
 <li><strong>Image hover-zoom.</strong> Hovering an image thumbnail (<code>imageCell</code>/IIIF) pops a larger
-preview in a floating box anchored beside the cell and clamped to the viewport (never
-clipped by the table's scroll). A Commons <code>?width=200</code> thumb is re-requested at
+preview on fine-pointer desktops, anchored beside the cell and clamped to the
+viewport (never clipped by the table's scroll). It is disabled inside focused
+cards and lightboxes. A Commons <code>?width=200</code> thumb is re-requested at
 <code>width=900</code> so the zoom is sharp. Click still opens the full image / lightbox.</li>
+<li><strong>Focused cards.</strong> The desktop dialog is wide enough to show neighboring cards
+and exposes its horizontal scrollbar. Prev/Next, Left/Right, horizontal
+trackpad input, Shift+wheel, and mouse drag from a non-interactive card area
+all move the native scroll-snap carousel; touch swipe remains unchanged.</li>
 <li><strong>Geo cell → full map, multi-LOD.</strong> Clicking a mini-map opens a pannable/zoomable
 Leaflet map. For a dataset that ships a finer level of detail (e.g. <code>geoadmin</code>'s
 <code>g:geomFine</code> alongside the coarse <code>geo:asWKT</code>), the modal range-fetches <strong>just that
@@ -298,12 +315,15 @@ section (<code>embedded: true</code>; the reader parses the header for the secti
 range-reads tiles from the same URL) — one file = graph + map tiles.</li>
 <li>The page is served over HTTPS, so an <code>http://</code> media URL is upgraded to
 <code>https://</code> for the fetch (<code>httpsUpgrade</code>); the original IRI is still shown.</li>
-<li><strong>CORS is a hard requirement.</strong> Every inline-rendered media URL is fetched
-cross-origin by the browser, so the host <strong>must</strong> send
-<code>access-control-allow-origin</code>. If it doesn't, the image/IIIF/3D/audio/video
-fails to load (a IIIF manifest blocked by CORS degrades to a <code>⚠ IIIF blocked</code>
-link). The project's own storage is CORS-open; so are Wikimedia Commons, most
-IIIF servers, and <code>iiif.coeli.cat</code>.</li>
+<li><strong>CORS is a hard requirement for media fetched by JavaScript.</strong> A PDF/IIIF/3D
+URL used inline must send <code>access-control-allow-origin</code>; range-streamed PDFs
+must also support byte ranges and expose the headers PDF.js reads. Native
+image/audio/video elements have their own browser rules. Page-preview iframes
+do not use CORS, but the remote site's <code>X-Frame-Options</code> or CSP
+<code>frame-ancestors</code> can refuse embedding. Every failure retains its direct source
+link (a blocked IIIF manifest also degrades to <code>⚠ IIIF blocked</code>). The project's
+own storage is CORS-open; so are Wikimedia Commons, most IIIF servers, and
+<code>iiif.coeli.cat</code>.</li>
 </ul>
 <h2>Preparing media for a dataset</h2>
 <p>To make a cell render inline, emit a triple whose object is a CORS-open URL (or,
