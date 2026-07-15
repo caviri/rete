@@ -227,3 +227,41 @@ jobs:
             -e CARGO_TARGET_DIR=/work/target \
             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh docs'
+
+  preview:
+    name: playground preview artifact
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == 'caviri/rete'
+    permissions:
+      contents: read
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exact PR head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: Build and stage the immutable static preview
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          BUILD_STAMP="${HEAD_SHA:0:12}"
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -e CARGO_TARGET_DIR=/work/target \
+            -e GITHUB_SHA="$HEAD_SHA" -e RETE_SOURCE_REVISION="$HEAD_SHA" \
+            -e RETE_BUILD_STAMP="$BUILD_STAMP" \
+            -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
+            sh -lc 'set -eu; git config --global --add safe.directory /work; bash scripts/build_wasm.sh; rm -rf target/playground-preview; install -d target/playground-preview; install -m 0644 docs/playground.html docs/rete_wasm_async.js docs/rete_wasm_async.wasm docs/coi-serviceworker.js docs/wasm-build.json target/playground-preview/'
+      - name: Upload only the static preview allowlist
+        uses: actions/upload-artifact@v7
+        with:
+          name: playground-preview-${{ github.event.pull_request.head.sha }}
+          path: target/playground-preview
+          if-no-files-found: error
+          retention-days: 1
