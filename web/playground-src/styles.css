@@ -100,6 +100,46 @@ a {
   padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px;
 }
 
+.version-picker {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.version-picker select {
+  width: min(300px, 24vw);
+  min-width: 150px;
+  min-height: 30px;
+  padding: 3px 26px 3px 8px;
+  border-color: var(--line-strong);
+  background-color: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  text-overflow: ellipsis;
+}
+
+.preview-badge {
+  padding: 3px 8px;
+  border: 1px solid #d8a23b;
+  border-radius: 999px;
+  background: #fff4d6;
+  color: #754d00;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .status-cluster {
   display: flex;
   min-width: 0;
@@ -2357,6 +2397,7 @@ th .coltype.coltype-on {
     flex-wrap: wrap;
     gap: 6px;
   }
+  .version-picker select { width: min(280px, 42vw); }
 
   .dataset-picker {
     min-width: 100%;
@@ -2460,10 +2501,13 @@ th .coltype.coltype-on {
   .topbar { padding: 8px 12px; }
   .brand-sub { display: none; }
   .brand-mark { font-size: 20px; }
+  .version-picker { order: 3; width: 100%; }
+  .version-picker select { flex: 1 1 auto; width: auto; min-width: 0; }
+  .preview-badge { order: 2; }
   /* Dataset chip + Build + ↗ share on ONE row: the actions bar takes the full
      width (its own row under the brand) and does NOT wrap — the dataset chip
      flexes/truncates so Build and ↗ keep their natural size beside it. */
-  .top-actions { width: 100%; flex-wrap: nowrap; gap: 8px; }
+  .top-actions { order: 4; width: 100%; flex-wrap: nowrap; gap: 8px; }
   .dataset-button { flex: 1 1 auto; min-width: 0; }
   #buildBtn, #shareBtn { flex: 0 0 auto; }
   .dataset-button #dsName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

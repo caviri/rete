@@ -140,6 +140,46 @@ a {
   padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px;
 }
 
+.version-picker {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.version-picker select {
+  width: min(300px, 24vw);
+  min-width: 150px;
+  min-height: 30px;
+  padding: 3px 26px 3px 8px;
+  border-color: var(--line-strong);
+  background-color: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  text-overflow: ellipsis;
+}
+
+.preview-badge {
+  padding: 3px 8px;
+  border: 1px solid #d8a23b;
+  border-radius: 999px;
+  background: #fff4d6;
+  color: #754d00;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .status-cluster {
   display: flex;
   min-width: 0;
@@ -2397,6 +2437,7 @@ th .coltype.coltype-on {
     flex-wrap: wrap;
     gap: 6px;
   }
+  .version-picker select { width: min(280px, 42vw); }
 
   .dataset-picker {
     min-width: 100%;
@@ -2500,10 +2541,13 @@ th .coltype.coltype-on {
   .topbar { padding: 8px 12px; }
   .brand-sub { display: none; }
   .brand-mark { font-size: 20px; }
+  .version-picker { order: 3; width: 100%; }
+  .version-picker select { flex: 1 1 auto; width: auto; min-width: 0; }
+  .preview-badge { order: 2; }
   /* Dataset chip + Build + ↗ share on ONE row: the actions bar takes the full
      width (its own row under the brand) and does NOT wrap — the dataset chip
      flexes/truncates so Build and ↗ keep their natural size beside it. */
-  .top-actions { width: 100%; flex-wrap: nowrap; gap: 8px; }
+  .top-actions { order: 4; width: 100%; flex-wrap: nowrap; gap: 8px; }
   .dataset-button { flex: 1 1 auto; min-width: 0; }
   #buildBtn, #shareBtn { flex: 0 0 auto; }
   .dataset-button #dsName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3214,12 +3258,22 @@ td.lit { color: var(--ink); }
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="index.html" aria-label="rete documentation">
+    <a class="brand" href="https://caviri.github.io/rete/" aria-label="rete documentation">
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Playground build (commit · UTC time). If this looks old after a deploy, the page is cached — hard-refresh, or Clear site data to drop a stale service worker.">build 1.0.0-rc.1</span>
-    <script>window.RETE_BUILD = "1.0.0-rc.1";</script>
+    <span class="build-ver" id="buildVer" title="Exact playground build. If this looks old after a deploy, hard-refresh or clear site data.">build 1.0.0-rc.1</span>
+    <label class="version-picker" for="versionSelect">
+      <span>Version</span>
+      <select id="versionSelect" aria-label="Playground version">
+        <option value="https://caviri.github.io/rete/playground.html">Production</option>
+      </select>
+    </label>
+    <span id="previewBadge" class="preview-badge hidden">PR preview</span>
+    <script>
+      window.RETE_BUILD = "1.0.0-rc.1";
+      window.RETE_PREVIEW = null;
+    </script>
 
     <div class="top-actions">
       <button id="dsButton" class="dataset-button" type="button" title="Change the loaded dataset — browse the catalog">
@@ -3231,7 +3285,7 @@ td.lit { color: var(--ink); }
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
       </button>
-      <a class="docs-link" href="browser.html">Browser API</a>
+      <a class="docs-link" href="https://caviri.github.io/rete/browser.html">Browser API</a>
     </div>
   </header>
 
@@ -10721,6 +10775,154 @@ theo:PeopleGroupShape a sh:NodeShape ;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof global !== "undefined") global.RDFConvert = api;
 })(typeof globalThis !== "undefined" ? globalThis : (typeof window !== "undefined" ? window : this));
+  </script>
+  <script>
+(function (root) {
+  "use strict";
+
+  const REPO = "caviri/rete";
+  const API = `https://api.github.com/repos/${REPO}/pulls?state=open&per_page=100`;
+  const PREVIEW = "https://preview.graphplaza.com";
+  const PRODUCTION = "https://caviri.github.io/rete/playground.html";
+  const CACHE_KEY = "retePreviewVersionsV1";
+  const CACHE_MS = 5 * 60 * 1000;
+  const SHA_RE = /^[0-9a-f]{40}$/i;
+
+  function eligiblePull(pr) {
+    return Boolean(
+      pr && Number.isInteger(pr.number) && pr.number > 0
+      && pr.head && SHA_RE.test(pr.head.sha || "")
+      && pr.head.repo && pr.head.repo.full_name === REPO,
+    );
+  }
+
+  function previewUrl(pr) {
+    if (!eligiblePull(pr)) throw new Error("preview requires a same-repository PR with a full SHA");
+    return `${PREVIEW}/pr-${pr.number}/${pr.head.sha}/playground.html`;
+  }
+
+  function versionHref(url, hash) {
+    return `${url}${hash || ""}`;
+  }
+
+  function cachedPreviews(storage, now) {
+    if (!storage) return null;
+    const cached = JSON.parse(storage.getItem(CACHE_KEY) || "null");
+    return cached && cached.expires > now && Array.isArray(cached.previews)
+      ? cached.previews
+      : null;
+  }
+
+  async function discoverPreviews(options = {}) {
+    const fetcher = options.fetch || (root.fetch && root.fetch.bind(root));
+    const storage = options.storage === undefined ? root.sessionStorage : options.storage;
+    const now = options.now ? options.now() : Date.now();
+    if (!fetcher) return [];
+
+    try {
+      const cached = cachedPreviews(storage, now);
+      if (cached) return cached;
+
+      const response = await fetcher(API, {
+        headers: { Accept: "application/vnd.github+json" },
+      });
+      if (!response.ok) return [];
+      const pulls = await response.json();
+      if (!Array.isArray(pulls)) return [];
+
+      const previews = (await Promise.all(pulls.filter(eligiblePull).map(async (pr) => {
+        const url = previewUrl(pr);
+        try {
+          const probe = await fetcher(url, { method: "HEAD", cache: "no-store" });
+          if (!probe.ok) return null;
+          return {
+            number: pr.number,
+            title: String(pr.title || ""),
+            sha: pr.head.sha,
+            url,
+          };
+        } catch (_error) {
+          return null;
+        }
+      }))).filter(Boolean);
+
+      if (storage) {
+        storage.setItem(CACHE_KEY, JSON.stringify({
+          expires: now + CACHE_MS,
+          previews,
+        }));
+      }
+      return previews;
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  function currentPreview() {
+    const value = root.RETE_PREVIEW;
+    if (!value || !Number.isInteger(value.number) || !SHA_RE.test(value.headSha || "")) {
+      return null;
+    }
+    const pull = {
+      number: value.number,
+      title: String(value.title || ""),
+      head: { sha: value.headSha, repo: { full_name: REPO } },
+    };
+    return {
+      number: pull.number,
+      title: pull.title,
+      sha: pull.head.sha,
+      url: previewUrl(pull),
+    };
+  }
+
+  function addOption(doc, select, preview) {
+    const option = doc.createElement("option");
+    option.value = preview.url;
+    option.textContent = `PR #${preview.number} · ${preview.title} · ${preview.sha.slice(0, 7)}`;
+    select.appendChild(option);
+  }
+
+  async function initVersionPicker(options = {}) {
+    const doc = options.document || root.document;
+    const location = options.location || root.location;
+    const select = doc && doc.getElementById("versionSelect");
+    if (!select || !location) return [];
+
+    const metadata = root.RETE_PREVIEW;
+    const productionBuild = metadata && metadata.baseSha
+      ? metadata.baseSha
+      : root.RETE_BUILD;
+    select.options[0].value = PRODUCTION;
+    select.options[0].textContent = `Production${productionBuild ? ` · ${String(productionBuild).slice(0, 7)}` : ""}`;
+
+    const current = currentPreview();
+    if (current) addOption(doc, select, current);
+
+    const discovered = await discoverPreviews(options);
+    const seen = new Set(current ? [current.url] : []);
+    for (const preview of discovered) {
+      if (seen.has(preview.url)) continue;
+      seen.add(preview.url);
+      addOption(doc, select, preview);
+    }
+
+    if (current) select.value = current.url;
+    select.onchange = () => location.assign(versionHref(select.value, location.hash));
+
+    const badge = doc.getElementById("previewBadge");
+    if (badge && current) badge.classList.remove("hidden");
+    return discovered;
+  }
+
+  root.RETE_PLAYGROUND_VERSIONS = {
+    eligiblePull,
+    previewUrl,
+    versionHref,
+    discoverPreviews,
+    initVersionPicker,
+  };
+})(window);
   </script>
   <script>
 (function () {
@@ -19161,6 +19363,15 @@ self.onmessage = function (e) {
   }
 
   async function boot() {
+    try {
+      const versions = window.RETE_PLAYGROUND_VERSIONS;
+      if (versions) {
+        Promise.resolve(versions.initVersionPicker())
+          .catch((e) => console.warn("preview discovery", e));
+      }
+    } catch (e) {
+      console.warn("preview discovery", e);
+    }
     renderDatasetOptions();
     wireEvents();
     renderHistory();

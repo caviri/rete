@@ -8436,6 +8436,15 @@ self.onmessage = function (e) {
   }
 
   async function boot() {
+    try {
+      const versions = window.RETE_PLAYGROUND_VERSIONS;
+      if (versions) {
+        Promise.resolve(versions.initVersionPicker())
+          .catch((e) => console.warn("preview discovery", e));
+      }
+    } catch (e) {
+      console.warn("preview discovery", e);
+    }
     renderDatasetOptions();
     wireEvents();
     renderHistory();
