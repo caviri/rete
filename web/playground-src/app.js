@@ -3994,6 +3994,17 @@ self.onmessage = function (e) {
   // them blank until scrolled to. `onerror` marks a genuinely-missing image so
   // it shows a placeholder rather than an unexplained blank box.
   let mediaEager = false;
+  const MEDIA_SOURCE_LABEL = {
+    image: "Open image ↗", pdf: "Open PDF ↗", audio: "Open audio ↗",
+    video: "Open video ↗", model3d: "Open 3D ↗", viewer3d: "Open viewer ↗",
+    iiif: "Open manifest ↗", page: "Open page ↗",
+  };
+  function mediaSourceLink(url, kind) {
+    const up = httpsUpgrade(url);
+    return `<div class="media-footer"><a class="media-source media-source-${esc(kind)}" ` +
+      `href="${esc(up)}" target="_blank" rel="noopener noreferrer">` +
+      `${esc(MEDIA_SOURCE_LABEL[kind] || "Open source ↗")}</a></div>`;
+  }
   function imageCell(t) {
     const url = httpsUpgrade(t.value);
     const loading = mediaEager ? "eager" : "lazy";
@@ -4001,7 +4012,8 @@ self.onmessage = function (e) {
       `title="${esc(t.value)}"><img class="cell-thumb" src="${esc(thumbUrl(t.value))}" loading="${loading}" decoding="async" alt="" ` +
       `onload="this.closest('a').classList.add('img-done')" ` +
       `onerror="this.classList.add('cell-thumb-broken');this.alt='image unavailable';this.closest('a').classList.add('img-done')" /></a>` +
-      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="image"></div></td>`;
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="image"></div>` +
+      `${mediaSourceLink(url, "image")}</td>`;
   }
   function linkCell(t) {
     const url = httpsUpgrade(t.value);
@@ -4018,6 +4030,126 @@ self.onmessage = function (e) {
     return `<td class="iri"><a class="cell-btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
       `title="${esc(t.value)}" data-url="${esc(t.value)}">${esc(label)}</a></td>`;
   }
+
+  // ---- Markdown + embedded page-preview cells ------------------------------
+  // Markdown is deliberately small and dependency-free. Raw HTML is escaped,
+  // code/link fragments are tokenised before emphasis, and only explicit safe
+  // URL schemes become anchors.
+  function safeMarkdownHref(raw) {
+    try {
+      const u = new URL(raw);
+      return /^(https?:|mailto:)$/.test(u.protocol) ? raw : "";
+    } catch (_e) { return ""; }
+  }
+  function markdownInline(value) {
+    const tokens = [];
+    const token = (html) => { const key = `\u0000${tokens.length}\u0000`; tokens.push(html); return key; };
+    let s = String(value == null ? "" : value);
+    s = s.replace(/`([^`\n]+)`/g, (_m, code) => token(`<code>${esc(code)}</code>`));
+    s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_m, label, href) => {
+      const safe = safeMarkdownHref(href);
+      return token(safe
+        ? `<a href="${esc(safe)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`
+        : `${esc(label)} (${esc(href)})`);
+    });
+    s = esc(s)
+      .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+    return s.replace(/\u0000(\d+)\u0000/g, (_m, i) => tokens[Number(i)] || "");
+  }
+  function markdownBlocks(value) {
+    const lines = String(value == null ? "" : value).replace(/\r\n?/g, "\n").split("\n");
+    const out = [];
+    const startsBlock = (line) => /^\s*$|^\s*```|^\s{0,3}#{1,6}\s+|^\s*>\s?|^\s*[-+*]\s+|^\s*\d+[.)]\s+/.test(line);
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) { i++; continue; }
+      const fence = /^\s*```([^\s`]*)\s*$/.exec(line);
+      if (fence) {
+        const code = []; i++;
+        while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) code.push(lines[i++]);
+        if (i < lines.length) i++;
+        const cls = fence[1] ? ` class="language-${esc(fence[1])}"` : "";
+        out.push(`<pre><code${cls}>${esc(code.join("\n"))}</code></pre>`);
+        continue;
+      }
+      const heading = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+      if (heading) { const n = heading[1].length; out.push(`<h${n}>${markdownInline(heading[2])}</h${n}>`); i++; continue; }
+      if (/^\s*[-+*]\s+/.test(line)) {
+        const items = [];
+        while (i < lines.length) {
+          const m = /^\s*[-+*]\s+(.+)$/.exec(lines[i]); if (!m) break;
+          items.push(`<li>${markdownInline(m[1])}</li>`); i++;
+        }
+        out.push(`<ul>${items.join("")}</ul>`); continue;
+      }
+      if (/^\s*\d+[.)]\s+/.test(line)) {
+        const items = [];
+        while (i < lines.length) {
+          const m = /^\s*\d+[.)]\s+(.+)$/.exec(lines[i]); if (!m) break;
+          items.push(`<li>${markdownInline(m[1])}</li>`); i++;
+        }
+        out.push(`<ol>${items.join("")}</ol>`); continue;
+      }
+      if (/^\s*>\s?/.test(line)) {
+        const quote = [];
+        while (i < lines.length) {
+          const m = /^\s*>\s?(.*)$/.exec(lines[i]); if (!m) break;
+          quote.push(m[1]); i++;
+        }
+        out.push(`<blockquote>${markdownInline(quote.join(" "))}</blockquote>`); continue;
+      }
+      const para = [line.trim()]; i++;
+      while (i < lines.length && !startsBlock(lines[i])) { para.push(lines[i].trim()); i++; }
+      out.push(`<p>${markdownInline(para.join(" "))}</p>`);
+    }
+    return out.join("");
+  }
+  function markdownCell(t, raw) {
+    const lang = t.lang ? ` <span class="t-lang">@${esc(t.lang)}</span>` : "";
+    return `<td class="lit markdown-cell" title="${esc(raw)}"><div class="markdown-body">` +
+      `${markdownBlocks(t.value)}</div>${lang}</td>`;
+  }
+  function pagePreviewCell(t) {
+    const url = httpsUpgrade(t.value);
+    let host = t.value;
+    try { host = new URL(url).host.replace(/^www\./, ""); } catch (_e) {}
+    return `<td class="iri page-preview-cell" data-page-url="${esc(url)}">` +
+      `<div class="page-preview-host">${esc(host)}</div>` +
+      `<div class="page-preview-frame"><div class="page-preview-loading"><span class="spindle"></span></div></div>` +
+      `<div class="page-preview-note">Some sites block embedding.</div>` +
+      `${mediaSourceLink(url, "page")}</td>`;
+  }
+  let pagePreviewObserver = null;
+  function loadPagePreview(cell) {
+    const url = cell.getAttribute("data-page-url");
+    if (!url) return;
+    cell.removeAttribute("data-page-url");
+    const frame = cell.querySelector(".page-preview-frame");
+    if (!frame) return;
+    const iframe = document.createElement("iframe");
+    iframe.className = "page-preview-iframe";
+    iframe.title = "Page preview";
+    iframe.loading = "lazy";
+    iframe.sandbox = "allow-scripts";
+    iframe.referrerPolicy = "no-referrer";
+    iframe.src = url;
+    frame.replaceChildren(iframe);
+  }
+  function hydratePagePreviews(scope) {
+    const cells = [...(scope || document).querySelectorAll(".page-preview-cell[data-page-url]")];
+    if (!cells.length) return;
+    if (!("IntersectionObserver" in window)) { cells.forEach(loadPagePreview); return; }
+    if (!pagePreviewObserver) {
+      pagePreviewObserver = new IntersectionObserver((entries) => entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        pagePreviewObserver.unobserve(entry.target);
+        loadPagePreview(entry.target);
+      }), { rootMargin: "240px" });
+    }
+    cells.forEach((cell) => pagePreviewObserver.observe(cell));
+  }
   // ---- PDF cells ------------------------------------------------------------
   // A digitised PDF (e.g. Patrinum's ?v=pdf full document) → a button that opens
   // the document in the browser's native PDF viewer in a new tab. These PDFs are
@@ -4028,7 +4160,8 @@ self.onmessage = function (e) {
   function pdfCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri"><a class="cell-btn pdf-btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
-      `title="${esc(t.value)}" data-url="${esc(t.value)}">📄 PDF ↗</a></td>`;
+      `title="${esc(t.value)}" data-url="${esc(t.value)}">📄 PDF ↗</a>` +
+      `${mediaSourceLink(url, "pdf")}</td>`;
   }
   // Inline page-by-page PDF viewer (the "PDF" column render type). Lazily loads
   // pdf.js from a CDN the first time one appears, renders page 1 into a canvas, and
@@ -4053,8 +4186,7 @@ self.onmessage = function (e) {
       `<div class="pdfview-bar"><button class="pdfview-prev" type="button" disabled aria-label="previous page">◀</button>` +
       `<span class="pdfview-pg">·</span>` +
       `<button class="pdfview-next" type="button" disabled aria-label="next page">▶</button>` +
-      `<a class="pdfview-open" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Open the full PDF">↗</a>` +
-      `</div></div></td>`;
+      `</div>${mediaSourceLink(url, "pdf")}</div></td>`;
   }
   function hydratePdfViewers(scope) {
     const cells = [...(scope || document).querySelectorAll(".pdfview[data-pdf]")];
@@ -4184,7 +4316,8 @@ self.onmessage = function (e) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri iiif-cell thumb-cell" data-iiif="${esc(t.value)}">` +
       `<a class="iri-link iiif-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
-      `title="IIIF manifest — ${esc(t.value)}"><span class="spindle"></span> IIIF</a></td>`;
+      `title="IIIF manifest — ${esc(t.value)}"><span class="spindle"></span> IIIF</a>` +
+      `${mediaSourceLink(url, "iiif")}</td>`;
   }
 
   // ---- IIIF lightbox modal (click a cell → enlarged page + paging + metadata) ----
@@ -4265,7 +4398,8 @@ self.onmessage = function (e) {
       `<button type="button" class="iiif-frame" title="click to enlarge"><img class="cell-thumb iiif-img" loading="lazy" alt="" /></button>` +
       `<div class="iiif-nav${cs.length <= 1 ? " single" : ""}"><button type="button" class="iiif-prev" aria-label="previous page">‹</button>` +
       `<input class="iiif-page" type="text" inputmode="numeric" aria-label="page number" /><span class="iiif-total">/ ${cs.length}</span>` +
-      `<button type="button" class="iiif-next" aria-label="next page">›</button></div></div>`;
+      `<button type="button" class="iiif-next" aria-label="next page">›</button></div></div>` +
+      `${mediaSourceLink(url, "iiif")}`;
     const img = td.querySelector(".iiif-img"), page = td.querySelector(".iiif-page"), frame = td.querySelector(".iiif-frame");
     const show = (n) => { i = ((n % cs.length) + cs.length) % cs.length; img.src = httpsUpgrade(cs[i].thumb); page.value = String(i + 1); };
     const jump = () => { const v = parseInt(page.value, 10); if (isFinite(v)) show(v - 1); else page.value = String(i + 1); };
@@ -4285,7 +4419,7 @@ self.onmessage = function (e) {
     td.classList.add("iiif-blocked");
     td.innerHTML = `<a class="iri-link iiif-fail" href="${esc(up)}" target="_blank" rel="noopener noreferrer" ` +
       `title="Couldn't load this IIIF manifest — the server likely blocks cross-origin (CORS) requests. Click to open it directly: ${esc(url)}">` +
-      `⚠ IIIF blocked</a>`;
+      `⚠ IIIF blocked</a>${mediaSourceLink(url, "iiif")}`;
   }
   function hydrateIiif(scope) {
     // Class-based (not td-scoped): IIIF cells render inside table cells AND card
@@ -4611,12 +4745,14 @@ self.onmessage = function (e) {
       `shadow-intensity="0.6" alt="3D model"></model-viewer>` +
       `<button type="button" class="model3d-expand" data-mesh="${esc(url)}" ` +
       `title="Enlarge — ${esc(t.value)}" aria-label="Enlarge 3D model">⛶</button>` +
-      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="mesh"></div></td>`;
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="mesh"></div>` +
+      `${mediaSourceLink(url, "model3d")}</td>`;
   }
   function viewer3dCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri model3d-cell"><a class="model3d-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" ` +
-      `title="Open the 3D viewer — ${esc(t.value)}">🧊 3D ↗</a></td>`;
+      `title="Open the 3D viewer — ${esc(t.value)}">🧊 3D ↗</a>` +
+      `${mediaSourceLink(url, "viewer3d")}</td>`;
   }
   function model3dCell(t) { return looksMeshUrl(t.value) ? mesh3dCell(t) : viewer3dCell(t); }
 
@@ -4744,13 +4880,14 @@ self.onmessage = function (e) {
   function audioCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri media-cell"><audio class="cell-audio" controls preload="metadata" src="${esc(url)}"></audio>` +
-      `<a class="media-src" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(t.value)}">↗</a>` +
-      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="audio"></div></td>`;
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="audio"></div>` +
+      `${mediaSourceLink(url, "audio")}</td>`;
   }
   function videoCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri media-cell"><video class="cell-video" controls preload="metadata" playsinline src="${esc(url)}"></video>` +
-      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div></td>`;
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div>` +
+      `${mediaSourceLink(url, "video")}</td>`;
   }
   // A pre-rendered turntable spin (bucket `*-spin/<id>.webm`): a tiny looping clip
   // that auto-plays muted like a GIF — a lightweight preview that needs no WebGL.
@@ -4760,7 +4897,8 @@ self.onmessage = function (e) {
   function spinCell(t) {
     const url = httpsUpgrade(t.value);
     return `<td class="iri media-cell"><video class="cell-video cell-spin" autoplay muted loop playsinline preload="metadata" src="${esc(url)}"></video>` +
-      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div></td>`;
+      `<div class="media-meta" data-murl="${esc(url)}" data-mkind="video"></div>` +
+      `${mediaSourceLink(url, "video")}</td>`;
   }
 
   // ---- media metadata captions + 3D scale bar -------------------------------
@@ -4864,6 +5002,8 @@ self.onmessage = function (e) {
       case "link": return linkCell(t);
       case "button": return buttonCell(t);
       case "pdf": return pdfViewerCell(t);
+      case "page": return pagePreviewCell(t);
+      case "markdown": return markdownCell(t, raw);
       case "number": {
         const n = Number(t.value);
         return `<td class="lit num" title="${esc(raw)}">${esc(isFinite(n) ? String(n) : t.value)}</td>`;
@@ -4878,7 +5018,8 @@ self.onmessage = function (e) {
   // handler (see wireEvents) re-renders just that table in place.
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"], ["button", "Button"],
-    ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF viewer"], ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
+    ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF viewer"], ["page", "Page preview"], ["markdown", "Markdown"],
+    ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
@@ -5053,7 +5194,7 @@ self.onmessage = function (e) {
     cardFocus.io = new IntersectionObserver((ents) => {
       ents.forEach((en) => {
         if (!en.isIntersecting) return;
-        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target); hydratePdfViewers(en.target);
+        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target); hydratePdfViewers(en.target); hydratePagePreviews(en.target);
         en.target.querySelectorAll("img.cell-thumb[loading='lazy']").forEach((im) => { im.loading = "eager"; });
         cardFocus.io.unobserve(en.target);
       });
@@ -8456,7 +8597,7 @@ self.onmessage = function (e) {
       const obs = new MutationObserver(() => {
         if (pending) return;
         pending = true;
-        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); hydratePdfViewers(host); }, 60);
+        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); hydratePdfViewers(host); hydratePagePreviews(host); }, 60);
       });
       obs.observe(host, { childList: true, subtree: true });
       // Delegated: the ⛶ on an inline 3D cell (or a 🧊 3D button) opens the full viewer.
