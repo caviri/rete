@@ -1,289 +1,10 @@
-//! Render the Markdown files in `/docs` into a static HTML site.
-//!
-//! Pure Rust (pulldown-cmark) so it runs in the dev container with no Node /
-//! mkdocs toolchain. Each `docs/<name>.md` becomes `docs/<name>.html`, wrapped in
-//! a shared template with a sidebar; inter-doc `.md` links are rewritten to
-//! `.html`. Run: `cargo run -p docgen` (from the repo root, or pass the docs dir).
-
-use std::fs;
-use std::path::PathBuf;
-
-use pulldown_cmark::{html, Options, Parser};
-
-/// Crate version, shown in the sidebar next to the repository link.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const REPO_URL: &str = "https://github.com/caviri/rete";
-
-/// Sectioned nav: (section title, [(file, sidebar title)]). Markdown entries are
-/// rendered to the sibling `.html`; entries already ending in `.html` are
-/// pre-built pages (e.g. the WASM playground from `scripts/build_playground.py`)
-/// and are linked as-is, never rendered.
-const SECTIONS: &[(&str, &[(&str, &str)])] = &[
-    (
-        "Start here",
-        &[
-            ("index.md", "Overview"),
-            ("intro.md", "Graph data 101"),
-            ("getting-started.md", "Getting started"),
-            ("scenario.md", "Real-world scenario"),
-        ],
-    ),
-    (
-        "Explore in the browser",
-        &[
-            ("playground-guide.md", "Playground"),
-            ("plaza/index.html", "Plaza — dataset gallery"),
-            ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
-            ("atlas.md", "Historical atlas — SPARQL + GIS"),
-            ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
-            ("football.md", "Football — match replays"),
-            ("subtitles.html", "Subtitle timeline"),
-            ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
-        ],
-    ),
-    (
-        "Guides",
-        &[
-            ("cli.md", "CLI reference"),
-            ("sparql.md", "SPARQL support"),
-            ("geosparql.md", "GeoSPARQL (geometry + time)"),
-            ("shacl.md", "SHACL validation"),
-            ("reasoning.md", "Reasoning & coherence"),
-            ("federation.md", "Federated queries"),
-            ("semantic-zoom.md", "Semantic zoom (schema pyramid)"),
-            ("compatibility.md", "Compatibility & Cypher"),
-        ],
-    ),
-    (
-        "Publish & share",
-        &[
-            ("dataset-cards.md", "Dataset Cards"),
-            ("hosting.md", "Hosting your .rete"),
-            ("media-companions.md", "Media & SQL companions"),
-            ("release.md", "1.0 release candidate"),
-        ],
-    ),
-    (
-        "Graph analysis",
-        &[
-            ("topic-modeling.md", "Topic modeling (LDA)"),
-            ("multi-criteria.md", "Multi-criteria communities"),
-        ],
-    ),
-    (
-        "Development",
-        &[
-            ("architecture.md", "Architecture"),
-            ("SPEC.md", "Format specification"),
-            ("rust-api.md", "Rust API"),
-            ("browser.md", "WASM & JavaScript API"),
-            ("python.md", "Python API"),
-            ("python-build-tutorial.md", "Python: build a .rete"),
-            ("parallel-browser.md", "Parallel in browser (exp.)"),
-            ("data-engineering.md", "Tables, VKG & big builds"),
-            ("BENCHMARK.md", "Benchmarks"),
-            ("conformance.md", "SPARQL 1.1 conformance"),
-        ],
-    ),
-];
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Docs dir: first CLI arg, else ./docs.
-    let docs_dir: PathBuf = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("docs"));
-    if !docs_dir.is_dir() {
-        return Err(format!("docs dir not found: {}", docs_dir.display()).into());
-    }
-
-    let mut rendered = 0;
-    for (_, pages) in SECTIONS {
-        for (md, title) in *pages {
-            if !md.ends_with(".md") {
-                continue; // pre-built page (playground); linked, never rendered
-            }
-            let src = docs_dir.join(md);
-            if !src.exists() {
-                eprintln!(
-                    "warning: {} listed in nav but missing — skipping",
-                    src.display()
-                );
-                continue;
-            }
-            let markdown = fs::read_to_string(&src)?;
-            let body = render_markdown(&markdown);
-            let html_name = md.replace(".md", ".html");
-            let page = template(title, &body, md);
-            let out = docs_dir.join(&html_name);
-            fs::write(&out, page)?;
-            println!("  {md:<22} -> {html_name}");
-            rendered += 1;
-        }
-    }
-    println!(
-        "docgen: wrote {rendered} HTML page(s) to {}",
-        docs_dir.display()
-    );
-    Ok(())
-}
-
-/// Markdown → HTML body, with GitHub-flavored extensions (tables, etc.) and
-/// inter-doc `.md` links rewritten to `.html`.
-fn render_markdown(md: &str) -> String {
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TABLES);
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TASKLISTS);
-    opts.insert(Options::ENABLE_FOOTNOTES);
-    opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
-
-    let parser = Parser::new_ext(md, opts);
-    let mut out = String::new();
-    html::push_html(&mut out, parser);
-    rewrite_links(&out)
-}
-
-/// Make links between docs work in the rendered site: a `docs/`-prefixed or bare
-/// `*.md` href becomes the sibling `*.html`. Only touches `href="..."` targets,
-/// not code or text.
-fn rewrite_links(html: &str) -> String {
-    html.replace("href=\"docs/", "href=\"")
-        .replace(".md\"", ".html\"")
-        .replace(".md#", ".html#")
-}
-
-/// Overview `.md` pages that head a collapsible nav group of full-screen
-/// interactive apps. The **first** sub is the rendered overview (stays in-page);
-/// the rest are pre-built apps that open in a new tab.
-fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
-    match md {
-        "playground-guide.md" => Some(&[
-            ("playground-guide.html", "overview"),
-            ("playground.html", "launch the playground →"),
-        ]),
-        "graph-map.md" => Some(&[
-            ("graph-map.html", "overview"),
-            ("graph-map/viewer.html", "structural map"),
-            ("graph-map/viewer-topics.html", "topic map (LDA)"),
-            ("graph-map/viewer-3d.html", "3D — deck.gl"),
-            ("graph-map/viewer-3d-three.html", "3D — three.js + fog"),
-        ]),
-        "yasgui-guide.md" => Some(&[
-            ("yasgui-guide.html", "overview"),
-            ("yasgui.html", "launch the IDE →"),
-        ]),
-        "atlas.md" => Some(&[
-            ("atlas.html", "overview"),
-            ("atlas-app.html", "launch the atlas →"),
-        ]),
-        "ask-the-graph.md" => Some(&[
-            ("ask-the-graph.html", "overview"),
-            ("ask-browser.html", "launch ask the graph →"),
-        ]),
-        "football.md" => Some(&[
-            ("football.html", "overview"),
-            ("pitch.html", "pick any match →"),
-            ("wcfinal.html", "the 2022 final →"),
-        ]),
-        _ => None,
-    }
-}
-
-fn template(title: &str, body: &str, current_md: &str) -> String {
-    let mut nav_items: Vec<String> = Vec::new();
-    for (section, pages) in SECTIONS {
-        nav_items.push(format!("<li class=\"nav-h\">{section}</li>"));
-        for (md, t) in *pages {
-            // An overview `.md` that owns a set of full-screen interactive pages
-            // renders as a collapsible group: the first sub is the rendered
-            // overview (in-page), the rest are the apps (each in a new tab).
-            if let Some(subs) = nav_group_subs(md) {
-                let open = if *md == current_md { " open" } else { "" };
-                let overview = subs[0].0;
-                let mut sub = String::new();
-                for (i, (h, l)) in subs.iter().enumerate() {
-                    let a = if i == 0 && *h == overview && *md == current_md {
-                        " class=\"active\""
-                    } else {
-                        ""
-                    };
-                    let tgt = if i == 0 {
-                        "" // the overview stays in-page
-                    } else {
-                        " target=\"_blank\" rel=\"noopener\""
-                    };
-                    sub.push_str(&format!("<li><a href=\"{h}\"{a}{tgt}>{l}</a></li>"));
-                }
-                nav_items.push(format!(
-                    "<li class=\"nav-group\"><details{open}><summary>{t}</summary><ul class=\"nav-sub\">{sub}</ul></details></li>"
-                ));
-                continue;
-            }
-            let href = md.replace(".md", ".html");
-            let class = if *md == current_md {
-                " class=\"active\""
-            } else {
-                ""
-            };
-            nav_items.push(format!("<li><a href=\"{href}\"{class}>{t}</a></li>"));
-        }
-    }
-    let nav = nav_items.join("\n        ");
-
-    format!(
-        r##"<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{title} · rete docs</title>
-  <style>{css}</style>
-</head>
-<body>
-  <nav class="sidebar">
-    <a class="brand" href="index.html">rete</a>
-    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v{version}</span> <a href="{repo}">caviri/rete</a></p>
-    <ul>
-        {nav}
-    </ul>
-    <p class="foot"><a href="{repo}">github.com/caviri/rete</a></p>
-  </nav>
-  <main>
-    <div class="page">
-      <article class="content">
-{body}
-      </article>
-      <aside class="rail" aria-label="On this page">
-        <nav class="toc" id="toc"></nav>
-        <div class="keyterms" id="keyterms"></div>
-      </aside>
-    </div>
-    <footer>Generated from <code>docs/{current_md}</code> by <code>cargo run -p docgen</code>.</footer>
-  </main>
-  <script>{script}</script>
-  <script>{lightbox}</script>
-  <script>{glossary}</script>
-  <script>{toc}</script>
-</body>
-</html>
-"##,
-        title = title,
-        css = CSS,
-        nav = nav,
-        body = body,
-        current_md = current_md,
-        version = VERSION,
-        repo = REPO_URL,
-        script = HIGHLIGHTER,
-        lightbox = LIGHTBOX,
-        glossary = GLOSSARY_JS,
-        toc = TOC_JS,
-    )
-}
-
-const CSS: &str = r#"
+  <title>Python API · rete docs</title>
+  <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
   --side:#eef4ef; --side-fg:#25342e; --accent:#147d69; --accent-2:#c84f2f;
@@ -465,13 +186,235 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   .content table { display:block; overflow-x:auto; }
   .content .term .tip { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; width:auto; max-width:none; }
 }
-"#;
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <p class="meta"><span class="ver">v1.0.0-rc.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <ul>
+        <li class="nav-h">Start here</li>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li class="nav-h">Explore in the browser</li>
+        <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
+        <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
+        <li class="nav-group"><details><summary>SPARQL IDE — yasgui·wasm</summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
+        <li><a href="subtitles.html">Subtitle timeline</a></li>
+        <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-h">Guides</li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
+        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
+        <li class="nav-h">Publish & share</li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="hosting.html">Hosting your .rete</a></li>
+        <li><a href="media-companions.html">Media & SQL companions</a></li>
+        <li><a href="release.html">1.0 release candidate</a></li>
+        <li class="nav-h">Graph analysis</li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li class="nav-h">Development</li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="rust-api.html">Rust API</a></li>
+        <li><a href="browser.html">WASM & JavaScript API</a></li>
+        <li><a href="python.html" class="active">Python API</a></li>
+        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
+  </nav>
+  <main>
+    <div class="page">
+      <article class="content">
+<h1>Python API</h1>
+<p><code>rete-graph</code> is the Python client for <code>.rete</code> files: native bindings (PyO3) to
+the same Rust engine behind the <a href="cli.html">CLI</a> and the
+<a href="playground-guide.html">browser playground</a>. It opens a graph from a <strong>local
+path, an HTTP(S) URL, in-memory bytes, or a custom reader object</strong> and queries
+it with SPARQL — remote files are read lazily over HTTP <code>Range</code> requests, so a
+selective query over a multi-GB file fetches kilobytes, never the file.</p>
+<pre><code class="language-sh">uv pip install rete-graph          # or: pip install rete-graph
+</code></pre>
+<p>Wheels are abi3: one wheel per platform covers every CPython ≥ 3.9. The source
+lives in the repository under <code>clients/python/</code>; a runnable
+<a href="https://github.com/caviri/rete/blob/main/clients/python/examples/tutorial.ipynb">Jupyter notebook tour</a>
+covers everything below with captured outputs.</p>
+<h2>Open a graph</h2>
+<pre><code class="language-python">import rete_graph as rete
 
-/// A tiny dependency-free syntax highlighter, embedded in every page. It runs on
-/// `DOMContentLoaded`, tokenizes each `<pre><code class="language-…">` block with
-/// a per-language rule list, and wraps tokens in `<span class="tok-…">` that the
-/// CSS theme above colors. No CDN, no build step — works offline / from file://.
-const HIGHLIGHTER: &str = r#"
+g = rete.open("https://data.graphplaza.com/boe/boe.rete")     # remote, lazy
+g = rete.open("data/example.rete")                            # local file, lazy too
+g = rete.open(file_bytes)                                     # bytes image, eager
+g = rete.open(url, headers={"Authorization": "Bearer ..."})   # authed hosts
+</code></pre>
+<p>All four paths return the same <code>Graph</code>. Remote and local opens are <strong>lazy</strong>:
+the header, dictionary directory, and index tile directories load up front;
+tile payloads fault in per query and stay cached on the handle, so repeated
+queries get faster. The host serving a remote file must answer <code>Range</code>
+requests with <code>206 Partial Content</code> (any S3/R2/CDN/GitHub URL does — see
+<a href="hosting.html">Hosting your .rete</a>); anything else is a loud error, never a
+silently wrong slice.</p>
+<p><code>g.stats()</code> reports the physical traffic since open —
+<code>{"fileLength": ..., "bytes": ..., "requests": ...}</code> — the number that makes
+the lazy story visible: a <code>LIMIT 3</code> scan of a 6.9 MB remote file fetches
+~24% of it in ~13 requests; a cache-hit re-run adds ~0.</p>
+<h3>Custom readers (fsspec, S3, anything)</h3>
+<p>Any object with <code>read_at(offset, length) -&gt; bytes</code> and a length (a <code>len()</code>
+method or <code>__len__</code>) can back a graph — so fsspec reaches authenticated
+S3/GCS/Azure with no rete-specific code:</p>
+<pre><code class="language-python">import fsspec, rete_graph as rete
+
+class FsspecReader:
+    def __init__(self, url, **kw):
+        self.f = fsspec.open(url, "rb", **kw).open()
+        self.size = self.f.size
+    def len(self):
+        return self.size
+    def read_at(self, offset, length):
+        self.f.seek(offset)
+        return self.f.read(length)
+
+g = rete.open(reader=FsspecReader("s3://my-bucket/data.rete"))
+</code></pre>
+<h2>Query</h2>
+<pre><code class="language-python">rows = g.query("""
+    SELECT ?s ?label WHERE {
+        ?s &lt;http://www.w3.org/2000/01/rdf-schema#label&gt; ?label
+    } LIMIT 10
+""")
+for row in rows:                       # SELECT -&gt; list of {var: Term}
+    print(row["s"].value, row["label"].to_python())
+
+g.query("ASK { ?s ?p ?o }")            # -&gt; bool
+g.query("CONSTRUCT { ... } WHERE { ... }")   # -&gt; list of (s, p, o) Term triples
+</code></pre>
+<p>Every value is a <code>Term</code> with <code>.kind</code> (<code>"iri"</code> / <code>"literal"</code> / <code>"bnode"</code> /
+<code>"triple"</code> for RDF-star), <code>.value</code>, <code>.datatype</code>, <code>.lang</code>, plus:</p>
+<ul>
+<li><code>.to_python()</code> — int/float/bool for the common XSD datatypes, else the string</li>
+<li><code>.n3</code> — the term back in N-Triples surface form</li>
+</ul>
+<p><code>g.query_raw(q)</code> returns the engine's JSON envelope unparsed (the same shape
+the playground uses), and <code>g.query_df(q)</code> returns a pandas DataFrame
+(<code>pip install rete-graph[pandas]</code>).</p>
+<h3>Reasoning</h3>
+<p><code>g.query(q, reason=True)</code> turns on OWL 2 QL entailment — <code>rdfs:subClassOf</code>,
+<code>subPropertyOf</code>, <code>domain</code>/<code>range</code> and friends, computed by <strong>query rewriting</strong>
+over the file's ontology, so it works over lazy remote files without
+materializing anything. See <a href="reasoning.html">Reasoning &amp; coherence</a>.</p>
+<h3>Federation</h3>
+<p>SPARQL 1.1 <code>SERVICE</code> works out of the box: join a <code>.rete</code> file against any
+public SPARQL endpoint (Wikidata, DBpedia, …) in one query. See
+<a href="federation.html">Federated queries</a>.</p>
+<h2>Build <code>.rete</code> files from Python</h2>
+<p><code>rete.build()</code> produces a complete file image, ready to <code>open()</code>, save, or
+upload:</p>
+<pre><code class="language-python">data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl")
+pathlib.Path("out.rete").write_bytes(data)
+</code></pre>
+<p>It also accepts a <strong>graph object from another RDF library</strong> — anything with a
+<code>.serialize(format=...)</code> method (duck-typed; rdflib is not a dependency). An
+rdflib <code>Graph</code> round-trips as N-Triples; a context-aware <code>Dataset</code> /
+<code>ConjunctiveGraph</code> as N-Quads, so named graphs survive:</p>
+<pre><code class="language-python">import rdflib, rete_graph as rete
+
+g = rdflib.Graph()
+g.parse("mydata.ttl")
+
+rg = rete.open(rete.build(g))                # rdflib -&gt; .rete -&gt; SPARQL
+</code></pre>
+<p>For step-by-step preparation — an embedded Dataset Card, pyramid options, the
+full-text index — use the <strong>lazy <code>Builder</code></strong>: configure, then <code>run()</code> and
+<code>export()</code>:</p>
+<pre><code class="language-python">builder = (
+    rete.Builder()
+    .add_file("people.ttl")
+    .card(title="People", license="CC0-1.0")
+    .pyramid(algo="louvain")        # or "types", or .pyramid(False)
+    .text_index()
+)
+builder.run()                        # bytes; stats in builder.stats
+builder.export("people.rete")
+</code></pre>
+<p>The full walkthrough (every card field, pyramid trade-offs, verification) is
+in <a href="python-build-tutorial.html">Python: build a .rete</a>. In-memory builds suit
+tests and small-to-medium graphs (say, up to a few million triples). For big
+datasets use the <a href="cli.html"><code>rete build</code> CLI</a>, which streams from disk,
+compresses harder, and derives the enriched card profile — see
+<a href="data-engineering.html">Tables, VKG &amp; big builds</a>.</p>
+<h2>Search and overview</h2>
+<pre><code class="language-python">g.schema()                    # {"classes": [(iri, count)], "relations": [(s, p, o, count)]}
+g.prefix_search("Berl")       # label autocomplete -&gt; [(label, subject_iri)]
+g.text_search("volcano")      # full-text; needs a file built with --text-index
+g.info()                      # {"quads": ..., "terms": ..., "pyramidLevels": ...}
+g.quads, g.terms              # header counts, as properties
+g.graph_names()               # named graphs in a dataset
+g.content_hash()              # blake3-16 hex — a stable cache key
+</code></pre>
+<h2>Guarantees and threading</h2>
+<ul>
+<li><strong>No silent partial results</strong>: if a range fetch fails mid-query on a lazy
+handle, the query raises instead of returning fewer rows.</li>
+<li><strong>The GIL is released</strong> around every engine call, and remote range reads fan
+out over an internal thread pool (16-way, like the CLI and the playground) —
+other Python threads keep running during long queries.</li>
+<li>Errors surface as ordinary exceptions: <code>ValueError</code> for bad SPARQL or RDF
+input, <code>RuntimeError</code> for I/O and format problems.</li>
+</ul>
+<h2>Feature matrix</h2>
+<table><thead><tr><th>Capability</th><th>Python</th><th>Notes</th></tr></thead><tbody>
+<tr><td>SPARQL SELECT / ASK / CONSTRUCT / DESCRIBE</td><td>✅</td><td><code>query()</code></td></tr>
+<tr><td>Lazy remote open (HTTP Range)</td><td>✅</td><td><code>open(url)</code>, custom <code>headers</code></td></tr>
+<tr><td>Lazy local open</td><td>✅</td><td>positional reads, no whole-file load</td></tr>
+<tr><td>Custom reader objects</td><td>✅</td><td><code>open(reader=...)</code> — fsspec/S3</td></tr>
+<tr><td>OWL 2 QL reasoned queries</td><td>✅</td><td><code>query(..., reason=True)</code></td></tr>
+<tr><td><code>SERVICE</code> federation</td><td>✅</td><td>host-injected HTTP client</td></tr>
+<tr><td>Build from RDF text / rdflib objects</td><td>✅</td><td><code>build()</code>, <code>Builder</code></td></tr>
+<tr><td>Dataset Card: embed + read back</td><td>✅</td><td><code>Builder.card()</code>, <code>Graph.card()</code> (ranged on remote)</td></tr>
+<tr><td>Build options: pyramid algo, text index</td><td>✅</td><td><code>Builder.pyramid()/text_index()/type_predicate()</code></td></tr>
+<tr><td>Schema profile, prefix &amp; text search</td><td>✅</td><td><code>schema()</code>, <code>prefix_search()</code>, <code>text_search()</code></td></tr>
+<tr><td>pandas DataFrames</td><td>✅</td><td><code>query_df()</code>, <code>[pandas]</code> extra</td></tr>
+<tr><td>SHACL validation</td><td>⏳</td><td>use the <a href="cli.html">CLI</a> meanwhile</td></tr>
+<tr><td>Reachability / communities / provenance (<code>why</code>)</td><td>⏳</td><td>planned bindings</td></tr>
+<tr><td>Multi-shard federated open</td><td>⏳</td><td>planned</td></tr>
+<tr><td>Writes / SPARQL UPDATE</td><td>—</td><td><code>.rete</code> is immutable; use <a href="cli.html"><code>rete serve</code></a></td></tr>
+</tbody></table>
+<h2>Development</h2>
+<p>The package is a maturin project at <code>clients/python/</code> (excluded from the cargo
+workspace). Build and test without a host toolchain:</p>
+<pre><code class="language-sh">docker run --rm -v "$PWD":/io ghcr.io/pyo3/maturin build \
+    --release -m clients/python/Cargo.toml --out clients/python/dist
+uv pip install clients/python/dist/*.whl pytest &amp;&amp; pytest clients/python/tests
+</code></pre>
+<p>CI: <code>python-test.yml</code> runs lint + wheel + pytest whenever <code>clients/python/</code> or
+<code>rete-core</code> changes; a <code>py-v*</code> tag runs <code>python.yml</code>, which builds the full
+wheel matrix and publishes to PyPI.</p>
+
+      </article>
+      <aside class="rail" aria-label="On this page">
+        <nav class="toc" id="toc"></nav>
+        <div class="keyterms" id="keyterms"></div>
+      </aside>
+    </div>
+    <footer>Generated from <code>docs/python.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+  <script>
 (function () {
   function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
   // Shared token regexes (sticky: must match at the cursor).
@@ -525,12 +468,8 @@ const HIGHLIGHTER: &str = r#"
     });
   });
 })();
-"#;
-
-/// Click-to-zoom lightbox for content images. On `DOMContentLoaded` it builds a
-/// single fullscreen overlay and opens it with the clicked image's source;
-/// clicking the overlay (or pressing Escape) closes it. No dependencies.
-const LIGHTBOX: &str = r#"
+</script>
+  <script>
 (function () {
   document.addEventListener("DOMContentLoaded", function () {
     var imgs = document.querySelectorAll(".content img");
@@ -566,16 +505,8 @@ const LIGHTBOX: &str = r#"
     });
   });
 })();
-"#;
-
-/// Glossary tooltips + per-section "reminder" boxes. On `DOMContentLoaded`:
-///  1. for each `<h2>` section, a small right-margin box recaps the glossary
-///     terms that appear in it (a quick reminder of what each one means);
-///  2. the first occurrence of each glossary term in the prose is wrapped in a
-///     `.term` span whose hover/focus tooltip shows the definition (acronyms
-///     included). Code blocks, links, headings, the boxes, and the TOC are
-///     skipped. No dependencies.
-const GLOSSARY_JS: &str = r#"
+</script>
+  <script>
 (function () {
   var GLOSSARY = {
     "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
@@ -671,12 +602,8 @@ const GLOSSARY_JS: &str = r#"
     terms.forEach(function (t) { wrapFirst(content, t, GLOSSARY[t]); });
   });
 })();
-"#;
-
-/// "On this page" table of contents, built client-side from the `<h2>`/`<h3>`
-/// headings and shown sticky at the top-right (collapses on narrow screens). It
-/// gives each heading a slug id, links to it, and highlights the section in view.
-const TOC_JS: &str = r##"
+</script>
+  <script>
 (function () {
   document.addEventListener("DOMContentLoaded", function () {
     var toc = document.getElementById("toc");
@@ -725,4 +652,6 @@ const TOC_JS: &str = r##"
     spy();
   });
 })();
-"##;
+</script>
+</body>
+</html>

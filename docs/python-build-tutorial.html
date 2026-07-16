@@ -1,289 +1,10 @@
-//! Render the Markdown files in `/docs` into a static HTML site.
-//!
-//! Pure Rust (pulldown-cmark) so it runs in the dev container with no Node /
-//! mkdocs toolchain. Each `docs/<name>.md` becomes `docs/<name>.html`, wrapped in
-//! a shared template with a sidebar; inter-doc `.md` links are rewritten to
-//! `.html`. Run: `cargo run -p docgen` (from the repo root, or pass the docs dir).
-
-use std::fs;
-use std::path::PathBuf;
-
-use pulldown_cmark::{html, Options, Parser};
-
-/// Crate version, shown in the sidebar next to the repository link.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const REPO_URL: &str = "https://github.com/caviri/rete";
-
-/// Sectioned nav: (section title, [(file, sidebar title)]). Markdown entries are
-/// rendered to the sibling `.html`; entries already ending in `.html` are
-/// pre-built pages (e.g. the WASM playground from `scripts/build_playground.py`)
-/// and are linked as-is, never rendered.
-const SECTIONS: &[(&str, &[(&str, &str)])] = &[
-    (
-        "Start here",
-        &[
-            ("index.md", "Overview"),
-            ("intro.md", "Graph data 101"),
-            ("getting-started.md", "Getting started"),
-            ("scenario.md", "Real-world scenario"),
-        ],
-    ),
-    (
-        "Explore in the browser",
-        &[
-            ("playground-guide.md", "Playground"),
-            ("plaza/index.html", "Plaza — dataset gallery"),
-            ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
-            ("atlas.md", "Historical atlas — SPARQL + GIS"),
-            ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
-            ("football.md", "Football — match replays"),
-            ("subtitles.html", "Subtitle timeline"),
-            ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
-        ],
-    ),
-    (
-        "Guides",
-        &[
-            ("cli.md", "CLI reference"),
-            ("sparql.md", "SPARQL support"),
-            ("geosparql.md", "GeoSPARQL (geometry + time)"),
-            ("shacl.md", "SHACL validation"),
-            ("reasoning.md", "Reasoning & coherence"),
-            ("federation.md", "Federated queries"),
-            ("semantic-zoom.md", "Semantic zoom (schema pyramid)"),
-            ("compatibility.md", "Compatibility & Cypher"),
-        ],
-    ),
-    (
-        "Publish & share",
-        &[
-            ("dataset-cards.md", "Dataset Cards"),
-            ("hosting.md", "Hosting your .rete"),
-            ("media-companions.md", "Media & SQL companions"),
-            ("release.md", "1.0 release candidate"),
-        ],
-    ),
-    (
-        "Graph analysis",
-        &[
-            ("topic-modeling.md", "Topic modeling (LDA)"),
-            ("multi-criteria.md", "Multi-criteria communities"),
-        ],
-    ),
-    (
-        "Development",
-        &[
-            ("architecture.md", "Architecture"),
-            ("SPEC.md", "Format specification"),
-            ("rust-api.md", "Rust API"),
-            ("browser.md", "WASM & JavaScript API"),
-            ("python.md", "Python API"),
-            ("python-build-tutorial.md", "Python: build a .rete"),
-            ("parallel-browser.md", "Parallel in browser (exp.)"),
-            ("data-engineering.md", "Tables, VKG & big builds"),
-            ("BENCHMARK.md", "Benchmarks"),
-            ("conformance.md", "SPARQL 1.1 conformance"),
-        ],
-    ),
-];
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Docs dir: first CLI arg, else ./docs.
-    let docs_dir: PathBuf = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("docs"));
-    if !docs_dir.is_dir() {
-        return Err(format!("docs dir not found: {}", docs_dir.display()).into());
-    }
-
-    let mut rendered = 0;
-    for (_, pages) in SECTIONS {
-        for (md, title) in *pages {
-            if !md.ends_with(".md") {
-                continue; // pre-built page (playground); linked, never rendered
-            }
-            let src = docs_dir.join(md);
-            if !src.exists() {
-                eprintln!(
-                    "warning: {} listed in nav but missing — skipping",
-                    src.display()
-                );
-                continue;
-            }
-            let markdown = fs::read_to_string(&src)?;
-            let body = render_markdown(&markdown);
-            let html_name = md.replace(".md", ".html");
-            let page = template(title, &body, md);
-            let out = docs_dir.join(&html_name);
-            fs::write(&out, page)?;
-            println!("  {md:<22} -> {html_name}");
-            rendered += 1;
-        }
-    }
-    println!(
-        "docgen: wrote {rendered} HTML page(s) to {}",
-        docs_dir.display()
-    );
-    Ok(())
-}
-
-/// Markdown → HTML body, with GitHub-flavored extensions (tables, etc.) and
-/// inter-doc `.md` links rewritten to `.html`.
-fn render_markdown(md: &str) -> String {
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TABLES);
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TASKLISTS);
-    opts.insert(Options::ENABLE_FOOTNOTES);
-    opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
-
-    let parser = Parser::new_ext(md, opts);
-    let mut out = String::new();
-    html::push_html(&mut out, parser);
-    rewrite_links(&out)
-}
-
-/// Make links between docs work in the rendered site: a `docs/`-prefixed or bare
-/// `*.md` href becomes the sibling `*.html`. Only touches `href="..."` targets,
-/// not code or text.
-fn rewrite_links(html: &str) -> String {
-    html.replace("href=\"docs/", "href=\"")
-        .replace(".md\"", ".html\"")
-        .replace(".md#", ".html#")
-}
-
-/// Overview `.md` pages that head a collapsible nav group of full-screen
-/// interactive apps. The **first** sub is the rendered overview (stays in-page);
-/// the rest are pre-built apps that open in a new tab.
-fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
-    match md {
-        "playground-guide.md" => Some(&[
-            ("playground-guide.html", "overview"),
-            ("playground.html", "launch the playground →"),
-        ]),
-        "graph-map.md" => Some(&[
-            ("graph-map.html", "overview"),
-            ("graph-map/viewer.html", "structural map"),
-            ("graph-map/viewer-topics.html", "topic map (LDA)"),
-            ("graph-map/viewer-3d.html", "3D — deck.gl"),
-            ("graph-map/viewer-3d-three.html", "3D — three.js + fog"),
-        ]),
-        "yasgui-guide.md" => Some(&[
-            ("yasgui-guide.html", "overview"),
-            ("yasgui.html", "launch the IDE →"),
-        ]),
-        "atlas.md" => Some(&[
-            ("atlas.html", "overview"),
-            ("atlas-app.html", "launch the atlas →"),
-        ]),
-        "ask-the-graph.md" => Some(&[
-            ("ask-the-graph.html", "overview"),
-            ("ask-browser.html", "launch ask the graph →"),
-        ]),
-        "football.md" => Some(&[
-            ("football.html", "overview"),
-            ("pitch.html", "pick any match →"),
-            ("wcfinal.html", "the 2022 final →"),
-        ]),
-        _ => None,
-    }
-}
-
-fn template(title: &str, body: &str, current_md: &str) -> String {
-    let mut nav_items: Vec<String> = Vec::new();
-    for (section, pages) in SECTIONS {
-        nav_items.push(format!("<li class=\"nav-h\">{section}</li>"));
-        for (md, t) in *pages {
-            // An overview `.md` that owns a set of full-screen interactive pages
-            // renders as a collapsible group: the first sub is the rendered
-            // overview (in-page), the rest are the apps (each in a new tab).
-            if let Some(subs) = nav_group_subs(md) {
-                let open = if *md == current_md { " open" } else { "" };
-                let overview = subs[0].0;
-                let mut sub = String::new();
-                for (i, (h, l)) in subs.iter().enumerate() {
-                    let a = if i == 0 && *h == overview && *md == current_md {
-                        " class=\"active\""
-                    } else {
-                        ""
-                    };
-                    let tgt = if i == 0 {
-                        "" // the overview stays in-page
-                    } else {
-                        " target=\"_blank\" rel=\"noopener\""
-                    };
-                    sub.push_str(&format!("<li><a href=\"{h}\"{a}{tgt}>{l}</a></li>"));
-                }
-                nav_items.push(format!(
-                    "<li class=\"nav-group\"><details{open}><summary>{t}</summary><ul class=\"nav-sub\">{sub}</ul></details></li>"
-                ));
-                continue;
-            }
-            let href = md.replace(".md", ".html");
-            let class = if *md == current_md {
-                " class=\"active\""
-            } else {
-                ""
-            };
-            nav_items.push(format!("<li><a href=\"{href}\"{class}>{t}</a></li>"));
-        }
-    }
-    let nav = nav_items.join("\n        ");
-
-    format!(
-        r##"<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{title} · rete docs</title>
-  <style>{css}</style>
-</head>
-<body>
-  <nav class="sidebar">
-    <a class="brand" href="index.html">rete</a>
-    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v{version}</span> <a href="{repo}">caviri/rete</a></p>
-    <ul>
-        {nav}
-    </ul>
-    <p class="foot"><a href="{repo}">github.com/caviri/rete</a></p>
-  </nav>
-  <main>
-    <div class="page">
-      <article class="content">
-{body}
-      </article>
-      <aside class="rail" aria-label="On this page">
-        <nav class="toc" id="toc"></nav>
-        <div class="keyterms" id="keyterms"></div>
-      </aside>
-    </div>
-    <footer>Generated from <code>docs/{current_md}</code> by <code>cargo run -p docgen</code>.</footer>
-  </main>
-  <script>{script}</script>
-  <script>{lightbox}</script>
-  <script>{glossary}</script>
-  <script>{toc}</script>
-</body>
-</html>
-"##,
-        title = title,
-        css = CSS,
-        nav = nav,
-        body = body,
-        current_md = current_md,
-        version = VERSION,
-        repo = REPO_URL,
-        script = HIGHLIGHTER,
-        lightbox = LIGHTBOX,
-        glossary = GLOSSARY_JS,
-        toc = TOC_JS,
-    )
-}
-
-const CSS: &str = r#"
+  <title>Python: build a .rete · rete docs</title>
+  <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
   --side:#eef4ef; --side-fg:#25342e; --accent:#147d69; --accent-2:#c84f2f;
@@ -465,13 +186,266 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   .content table { display:block; overflow-x:auto; }
   .content .term .tip { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; width:auto; max-width:none; }
 }
-"#;
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <p class="meta"><span class="ver">v1.0.0-rc.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <ul>
+        <li class="nav-h">Start here</li>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li class="nav-h">Explore in the browser</li>
+        <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
+        <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
+        <li class="nav-group"><details><summary>SPARQL IDE — yasgui·wasm</summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
+        <li><a href="subtitles.html">Subtitle timeline</a></li>
+        <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-h">Guides</li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
+        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
+        <li class="nav-h">Publish & share</li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="hosting.html">Hosting your .rete</a></li>
+        <li><a href="media-companions.html">Media & SQL companions</a></li>
+        <li><a href="release.html">1.0 release candidate</a></li>
+        <li class="nav-h">Graph analysis</li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li class="nav-h">Development</li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="rust-api.html">Rust API</a></li>
+        <li><a href="browser.html">WASM & JavaScript API</a></li>
+        <li><a href="python.html">Python API</a></li>
+        <li><a href="python-build-tutorial.html" class="active">Python: build a .rete</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
+  </nav>
+  <main>
+    <div class="page">
+      <article class="content">
+<h1>Python: build a <code>.rete</code>, step by step</h1>
+<p>This tutorial walks through preparing a <code>.rete</code> file from Python with the
+<code>rete_graph.Builder</code> — a <strong>lazy</strong> builder: every step just records
+configuration and returns the builder, so calls chain freely; nothing parses
+or builds until you say <code>run()</code>. You'll configure the sources, the embedded
+Dataset Card, the community pyramid, and the full-text index, then run the
+build, verify the result, and export the file.</p>
+<pre><code class="language-sh">uv pip install rete-graph        # rdflib optional: uv pip install rete-graph[rdflib]
+</code></pre>
+<p>The whole flow, before we take it apart:</p>
+<pre><code class="language-python">import rete_graph as rete
 
-/// A tiny dependency-free syntax highlighter, embedded in every page. It runs on
-/// `DOMContentLoaded`, tokenizes each `<pre><code class="language-…">` block with
-/// a per-language rule list, and wraps tokens in `<span class="tok-…">` that the
-/// CSS theme above colors. No CDN, no build step — works offline / from file://.
-const HIGHLIGHTER: &str = r#"
+builder = (
+    rete.Builder()
+    .add_file("people.ttl")                      # 1. sources
+    .card(title="People", license="CC0-1.0")     # 2. dataset card
+    .pyramid(algo="louvain")                     # 3. pyramid
+    .text_index()                                # 4. full-text index
+)
+data = builder.run()                             # 5. build
+builder.export("people.rete")                    # 6. ship
+</code></pre>
+<h2>1. Start a builder and add sources</h2>
+<p>A <code>Builder</code> starts empty. <code>add()</code> queues RDF <strong>text</strong> (<code>"nt"</code>, <code>"nq"</code>,
+<code>"ttl"</code>, <code>"rdfxml"</code>), <code>add_file()</code> queues a file (format inferred from the
+suffix), and either accepts a <strong>graph object from another RDF library</strong> —
+anything with a <code>.serialize()</code> method, e.g. an rdflib <code>Graph</code> or <code>Dataset</code>:</p>
+<pre><code class="language-python">import rdflib
+import rete_graph as rete
+
+people = rdflib.Graph()
+people.parse("people.ttl")
+
+builder = (
+    rete.Builder()
+    .add(people)                                       # rdflib object
+    .add_file("places.nt")                             # file, format inferred
+    .add("&lt;urn:a&gt; &lt;urn:knows&gt; &lt;urn:b&gt; .")              # inline N-Triples
+)
+</code></pre>
+<p>All sources merge into one graph. N-Quads sources keep their named graphs
+(they become a dataset; rdflib <code>Dataset</code> objects round-trip the same way).
+Nothing has been parsed yet — the builder only holds text and settings.</p>
+<h2>2. The Dataset Card</h2>
+<p>A <code>.rete</code> file can embed a <a href="dataset-cards.html">Dataset Card</a> — a data-catalog
+record living in the file's metadata section, so the data travels with its own
+documentation. <code>card()</code> sets the <strong>curated</strong> fields; repeat calls merge:</p>
+<pre><code class="language-python">builder.card(
+    title="People &amp; places",                     # short display name
+    description="Who knows whom, and where they lived (demo).",
+    license="CC0-1.0",                           # SPDX id or a URL
+    source="https://example.org/source-dump",    # where the data came from
+    created="2026-07-16",                        # ISO date of this snapshot
+    example_queries=[                            # starter SPARQL, shown by tools
+        "SELECT ?s ?o WHERE { ?s &lt;urn:knows&gt; ?o } LIMIT 10",
+    ],
+)
+</code></pre>
+<p>Field by field:</p>
+<table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>title</code></td><td>Human name of the dataset</td></tr>
+<tr><td><code>description</code></td><td>A paragraph of context — what, where from, caveats</td></tr>
+<tr><td><code>license</code></td><td>The data license (SPDX identifier or URL)</td></tr>
+<tr><td><code>source</code></td><td>Provenance: the upstream dump/API this was built from</td></tr>
+<tr><td><code>created</code></td><td>Snapshot date (ISO 8601 string)</td></tr>
+<tr><td><code>example_queries</code></td><td>Runnable SPARQL strings for a newcomer's first click</td></tr>
+</tbody></table>
+<p>The <strong>statistics</strong> — <code>triple_count</code>, <code>quad_count</code>, <code>named_graph_count</code>,
+<code>term_count</code>, plus the <code>format_version</code> — are stamped <strong>automatically</strong> at
+build time; you never write them. The card is readable from every client:
+<code>Graph.card()</code> here (on a <em>remote</em> file it fetches only the metadata
+section's byte range), <code>rete card</code> / <code>rete info</code> in the CLI, and the
+playground's catalog view.</p>
+<p>One honest limit: the CLI's <code>rete build</code> additionally derives an <strong>enriched
+profile</strong> (top predicates and classes, vocabularies, hubs, datatype/language
+histograms, a tiered starter-query library, an optional coherence verdict).
+The Python builder embeds the curated fields + counts only — if you want the
+full auto-profile, rebuild the exported data with the CLI.</p>
+<h2>3. The pyramid</h2>
+<p>The <a href="semantic-zoom.html">community pyramid</a> is the file's "zoom-out" structure:
+communities summarized level by level, powering the playground's overview,
+progressive rendering, and label prefix search.</p>
+<pre><code class="language-python">builder.pyramid(algo="louvain")     # default: topological communities
+builder.pyramid(algo="types")       # one community per rdf:type class
+builder.pyramid(False)              # skip it entirely
+</code></pre>
+<ul>
+<li><strong><code>louvain</code></strong> (default) clusters by graph structure — "what hangs together
+densely?". Deterministic, byte-identical across runs.</li>
+<li><strong><code>types</code></strong> partitions by <code>rdf:type</code> class — communities are self-naming,
+and the summary becomes the class→class relation graph. It falls back to
+Louvain when the graph carries no usable typing. If your data types
+entities with something other than <code>rdf:type</code>, force it:</li>
+</ul>
+<pre><code class="language-python">builder.type_predicate("http://www.wikidata.org/prop/direct/P31")
+</code></pre>
+<ul>
+<li><strong><code>pyramid(False)</code></strong> writes no pyramid section at all. SPARQL, SHACL, and
+reachability are unaffected — the file stays fully queryable and gets
+markedly smaller — but summary/progressive views and <code>prefix_search</code> are
+gone. Good for pure query workloads.</li>
+</ul>
+<h2>4. The full-text index</h2>
+<p>Opt-in, because it costs file size: a word index over literals that powers
+<code>Graph.text_search()</code> and fast <code>CONTAINS</code> filters (~39× a raw scan):</p>
+<pre><code class="language-python">builder.text_index()
+</code></pre>
+<h2>5. Run</h2>
+<p><code>run()</code> executes the whole configuration — parse every source, build the
+dictionary, the triple indexes, the pyramid, the text index, embed the card —
+and returns the complete file image as <code>bytes</code>:</p>
+<pre><code class="language-python">data = builder.run()
+print(builder.stats)
+# {'statements': 6, 'defaultTriples': 6, 'namedGraphs': 0,
+#  'terms': 10, 'pyramidLevels': 1}
+</code></pre>
+<p>The result is cached: <code>run()</code> twice returns the same bytes without
+rebuilding, and <code>export()</code>/<code>graph()</code> reuse it. Changing <strong>any</strong> setting
+(another <code>add</code>, a card edit, a pyramid flag) invalidates the cache, and the
+next <code>run()</code> rebuilds.</p>
+<h2>6. Verify before shipping</h2>
+<p>The image opens like any other graph — check it holds what you meant:</p>
+<pre><code class="language-python">g = builder.graph()                  # == rete.open(builder.run())
+
+assert g.quads == builder.stats["statements"]
+g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
+g.schema()                           # classes + relations profile
+g.card()                             # the embedded card, counts included
+g.text_search("alice")               # the index built in step 4
+g.content_hash()                     # blake3-16 — cite it when publishing
+</code></pre>
+<h2>7. Export</h2>
+<pre><code class="language-python">path = builder.export("people.rete")
+</code></pre>
+<p>The exported file is <strong>complete and immutable</strong> — build-once, read-many.
+Reopen it from disk (lazily, like a remote file) or verify it with the CLI:</p>
+<pre><code class="language-python">g = rete.open("people.rete")
+g.card()["title"]                    # ranged metadata read — a few KB
+</code></pre>
+<pre><code class="language-sh">rete card people.rete                # the same card, rendered as a catalog
+rete info people.rete
+</code></pre>
+<p>Host it on anything that serves HTTP <code>Range</code> (S3, R2, GitHub, any CDN — see
+<a href="hosting.html">Hosting your .rete</a>) and it is queryable in place from Python,
+the CLI, and the browser playground, with no server.</p>
+<h2>Scaling up, and the CLI equivalents</h2>
+<p>In-memory builds comfortably handle test and small-to-medium graphs (up to a
+few million triples). Past that, switch to the streaming CLI — every builder
+step has a flag twin:</p>
+<table><thead><tr><th>Python builder</th><th><code>rete build</code> flag</th></tr></thead><tbody>
+<tr><td><code>.add_file("x.nt")</code></td><td>positional input files</td></tr>
+<tr><td><code>.card(title=..., ...)</code></td><td><code>--card-file card.json</code> / <code>--title</code> …</td></tr>
+<tr><td><code>.pyramid(algo="types")</code></td><td><code>--pyramid-algo types</code></td></tr>
+<tr><td><code>.pyramid(False)</code></td><td><code>--no-pyramid</code></td></tr>
+<tr><td><code>.text_index()</code></td><td><code>--text-index</code></td></tr>
+<tr><td><code>.type_predicate(iri)</code></td><td><code>--type-predicate &lt;iri&gt;</code></td></tr>
+<tr><td><code>.export("out.rete")</code></td><td><code>-o out.rete</code></td></tr>
+</tbody></table>
+<p>The CLI also compresses sections with zstd at higher levels, streams input
+twice instead of holding it, and derives the enriched card profile. See the
+<a href="cli.html">CLI reference</a> and <a href="data-engineering.html">Tables, VKG &amp; big builds</a>.</p>
+<h2>The complete script</h2>
+<pre><code class="language-python">"""people.ttl (+ an rdflib graph) -&gt; people.rete, with card + pyramid + text index."""
+import rdflib
+import rete_graph as rete
+
+enrichment = rdflib.Graph()
+enrichment.parse("extra-labels.ttl")
+
+builder = (
+    rete.Builder()
+    .add_file("people.ttl")
+    .add(enrichment)
+    .card(
+        title="People &amp; places",
+        description="Who knows whom, and where they lived (demo).",
+        license="CC0-1.0",
+        source="https://example.org/source-dump",
+        created="2026-07-16",
+        example_queries=["SELECT ?s ?o WHERE { ?s &lt;urn:knows&gt; ?o } LIMIT 10"],
+    )
+    .pyramid(algo="louvain")
+    .text_index()
+)
+
+builder.run()
+print("built:", builder.stats)
+
+g = builder.graph()
+assert g.card()["title"] == "People &amp; places"
+
+print("exported:", builder.export("people.rete"))
+print("content hash:", g.content_hash())
+</code></pre>
+
+      </article>
+      <aside class="rail" aria-label="On this page">
+        <nav class="toc" id="toc"></nav>
+        <div class="keyterms" id="keyterms"></div>
+      </aside>
+    </div>
+    <footer>Generated from <code>docs/python-build-tutorial.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+  <script>
 (function () {
   function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
   // Shared token regexes (sticky: must match at the cursor).
@@ -525,12 +499,8 @@ const HIGHLIGHTER: &str = r#"
     });
   });
 })();
-"#;
-
-/// Click-to-zoom lightbox for content images. On `DOMContentLoaded` it builds a
-/// single fullscreen overlay and opens it with the clicked image's source;
-/// clicking the overlay (or pressing Escape) closes it. No dependencies.
-const LIGHTBOX: &str = r#"
+</script>
+  <script>
 (function () {
   document.addEventListener("DOMContentLoaded", function () {
     var imgs = document.querySelectorAll(".content img");
@@ -566,16 +536,8 @@ const LIGHTBOX: &str = r#"
     });
   });
 })();
-"#;
-
-/// Glossary tooltips + per-section "reminder" boxes. On `DOMContentLoaded`:
-///  1. for each `<h2>` section, a small right-margin box recaps the glossary
-///     terms that appear in it (a quick reminder of what each one means);
-///  2. the first occurrence of each glossary term in the prose is wrapped in a
-///     `.term` span whose hover/focus tooltip shows the definition (acronyms
-///     included). Code blocks, links, headings, the boxes, and the TOC are
-///     skipped. No dependencies.
-const GLOSSARY_JS: &str = r#"
+</script>
+  <script>
 (function () {
   var GLOSSARY = {
     "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
@@ -671,12 +633,8 @@ const GLOSSARY_JS: &str = r#"
     terms.forEach(function (t) { wrapFirst(content, t, GLOSSARY[t]); });
   });
 })();
-"#;
-
-/// "On this page" table of contents, built client-side from the `<h2>`/`<h3>`
-/// headings and shown sticky at the top-right (collapses on narrow screens). It
-/// gives each heading a slug id, links to it, and highlights the section in view.
-const TOC_JS: &str = r##"
+</script>
+  <script>
 (function () {
   document.addEventListener("DOMContentLoaded", function () {
     var toc = document.getElementById("toc");
@@ -725,4 +683,6 @@ const TOC_JS: &str = r##"
     spy();
   });
 })();
-"##;
+</script>
+</body>
+</html>

@@ -56,5 +56,5 @@ uses synchronous XHR, which browsers only allow off the main thread. The end-to-
 at `tests/gate/checks/check_yasgui.mjs` (run it manually after touching the sources; it is not part
 of the gate matrix).
 
-UI after [Yasgui](https://yasgui.triply.cc/) by Triply — the tab model, the round query button, the
+UI after [Yasgui](https://yasgui.triply.cc/) by Triply — the tab model, the triangle query button, the
 YASR view plugins and the autocompleters are all loving imitations.
