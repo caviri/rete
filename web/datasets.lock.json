@@ -521,6 +521,14 @@
       "contentHash": "a234bda39a5310f7f2a263b603cd274a",
       "size": 277300,
       "cardUrl": "https://data.graphplaza.com/worldcup2026/worldcup2026.rete"
+    },
+    {
+      "key": "open-pulse",
+      "url": "https://data.graphplaza.com/open-pulse/open-pulse.rete",
+      "formatVersion": 5,
+      "contentHash": "7d2acf9de69b5667de9d928ba39299fc",
+      "size": 51027600,
+      "cardUrl": "https://data.graphplaza.com/open-pulse/open-pulse.rete"
     }
   ]
 }
