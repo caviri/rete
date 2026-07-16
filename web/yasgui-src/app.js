@@ -244,7 +244,11 @@ const engine = {
 /* ------------------------------------------------------------- tab state */
 
 const STORE_KEY = "rete.yasgui.v1";
-const DEFAULT_QUERY = "SELECT * WHERE {\n  ?sub ?pred ?obj .\n} LIMIT 10\n";
+// Yasgui's own default query, verbatim.
+const DEFAULT_QUERY =
+  "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n" +
+  "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n" +
+  "SELECT * WHERE {\n  ?sub ?pred ?obj .\n} LIMIT 10";
 
 let tabs = [];
 let activeId = null;
@@ -446,7 +450,7 @@ function editorExtensions() {
     "&.cm-focused": { outline: "none" },
     ".cm-scroller": {
       fontFamily: "Consolas, Menlo, 'Cascadia Mono', ui-monospace, monospace",
-      lineHeight: "1.55", minHeight: "215px", maxHeight: "44vh",
+      lineHeight: "1.55", minHeight: "300px", maxHeight: "48vh",
     },
     ".cm-content": { padding: "8px 2px", caretColor: "#333" },
     ".cm-gutters": { background: "#f7f7f7", color: "#999", border: "none", borderRight: "1px solid #ddd" },
@@ -599,9 +603,10 @@ function setRunning(on) {
   const btn = $("runBtn");
   btn.classList.toggle("running", on);
   btn.title = on ? "Stop" : "Run (Ctrl+Enter)";
+  // Yasgui's query button is a plain triangle, no enclosure.
   btn.innerHTML = on
-    ? `<svg viewBox="0 0 40 40"><circle class="btnCircle" cx="20" cy="20" r="18"/><rect class="btnGlyph" x="14" y="14" width="12" height="12" rx="1.5"/></svg>`
-    : `<svg viewBox="0 0 40 40"><circle class="btnCircle" cx="20" cy="20" r="18"/><path class="btnGlyph" d="M16 12.5v15l12-7.5z"/></svg>`;
+    ? `<svg viewBox="0 0 40 40"><rect x="8" y="8" width="24" height="24"/></svg>`
+    : `<svg viewBox="0 0 40 40"><path d="M9 5v30l26-15z"/></svg>`;
 }
 
 function statsLine(t) {
@@ -632,6 +637,14 @@ function viewsFor(env) {
   return ["table", "pivot", "response"];
 }
 const VIEW_LABELS = { table: "Table", pivot: "Pivot", turtle: "Turtle", boolean: "Boolean", response: "Response" };
+// Small plugin icons, like Yasgui's .plugin_icon (15px, fill follows state).
+const VIEW_ICONS = {
+  table: `<svg viewBox="0 0 16 16"><path d="M1 2h14v3H1zm0 4h4v3H1zm5 0h4v3H6zm5 0h4v3h-4zM1 10h4v3H1zm5 0h4v3H6zm5 0h4v3h-4z"/></svg>`,
+  pivot: `<svg viewBox="0 0 16 16"><path d="M1 1h14v3H1zm0 4h3v10H1zm5 2h3v3H6zm5 0h3v3h-3zm-5 4h3v3H6zm5 0h3v3h-3z"/></svg>`,
+  turtle: `<svg viewBox="0 0 16 16"><path d="M5 2C3 2 3 4 3 5s0 2-2 2v2c2 0 2 1 2 2s0 3 2 3h1v-2H5c-1 0-1-.5-1-2 0-1-.3-1.7-1-2 .7-.3 1-1 1-2 0-1.5 0-2 1-2h1V2zm6 0h-1v2h1c1 0 1 .5 1 2 0 1 .3 1.7 1 2-.7.3-1 1-1 2 0 1.5 0 2-1 2h-1v2h1c2 0 2-2 2-3s0-2 2-2V7c-2 0-2-1-2-2s0-3-2-3z"/></svg>`,
+  boolean: `<svg viewBox="0 0 16 16"><path d="M6.5 12L2 7.5l1.4-1.4 3.1 3.1 6.1-6.1L14 4.5z"/></svg>`,
+  response: `<svg viewBox="0 0 16 16"><path d="M1 2h14v2H1zm0 4h10v2H1zm0 4h14v2H1zm0 4h7v2H1z"/></svg>`,
+};
 
 function tableRows(t) {
   const env = t.results.envelope;
@@ -675,7 +688,7 @@ function renderViewTabs(t) {
   const views = viewsFor(env);
   if (!views.includes(t.view)) t.view = views[0];
   $("viewTabs").innerHTML = views.map((v) =>
-    `<li><button class="rtab${v === t.view ? " active" : ""}" data-view="${v}">${VIEW_LABELS[v]}</button></li>`).join("");
+    `<li><button class="rtab${v === t.view ? " active" : ""}" data-view="${v}">${VIEW_ICONS[v]}${VIEW_LABELS[v]}</button></li>`).join("");
   $("viewTabs").querySelectorAll(".rtab").forEach((b) => {
     b.onclick = () => { t.view = b.dataset.view; renderResults(); };
   });

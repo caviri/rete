@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>yasgui-wasm — SPARQL over .rete files, entirely in your browser</title>
 <meta name="description" content="A Yasgui-style SPARQL IDE where the endpoint is a .rete file: paste a URL (read lazily over HTTP range) or drop a local file — the query engine is WebAssembly inside the page. No server.">
-<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="%23337ab7" stroke-width="2.5"/><path d="M9.5 7.5v9l7.5-4.5z" fill="%23337ab7"/></svg>'>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 4v16l14-8z" fill="%23505050"/></svg>'>
 <style>
-  /* Faithful to Yasgui's own palette (yasgui.min.css): accent #337ab7, grays
-     #f5f5f5/#d1d1d1/#ccc/#555/#333, underline tabs, 40px round query button
-     top-right of the editor, CodeMirror-default token colors. */
+  /* A close clone of Yasgui's own look (yasgui.min.css + yasgui.triply.cc):
+     full-width, edge-to-edge, sharp corners, #337ab7 accent, chunky 120px
+     underline tabs, 2px #ccc inputs, a plain dark-gray triangle as the query
+     button, icon'd YASR plugin buttons. Branding lives in a footer band. */
   :root {
     --accent: #337ab7;
     --accent-dark: #255681;
@@ -18,123 +19,117 @@
     --faint: #999;
     --line: #d1d1d1;
     --line-soft: #dcdcdc;
-    --bg: #f5f5f5;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
-    font: 14px/1.45 "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
-    color: var(--ink); background: var(--bg);
+    font: 14px/1.45 "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: var(--ink); background: #fff;
+    display: flex; flex-direction: column; min-height: 100vh;
   }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
+  main.ide { flex: 1; }
 
-  /* ---- header ---- */
-  header.top { padding: 14px 0 8px; }
-  .brand { font-size: 20px; font-weight: 700; letter-spacing: -.01em; color: #111; }
-  .brand .x { color: var(--accent); }
-  .brand .wasm { color: var(--faint); font-weight: 500; font-size: 14px; margin-left: 1px; }
-  .tagline { color: var(--muted); font-size: 12.5px; margin-top: 2px; max-width: 76em; }
-  header.top nav { float: right; font-size: 13px; margin-top: 5px; }
-  header.top nav a { margin-left: 14px; }
-
-  /* ---- the yasgui block ---- */
-  .yasgui { background: #fff; border: 1px solid var(--line); border-radius: 4px; margin-top: 10px; padding: 0 10px 14px; }
-
-  /* query tabs: Yasgui's underline style (.tabsList) */
-  .tabsList { display: flex; flex-wrap: wrap; align-items: center; border-bottom: 1px solid var(--line-soft); }
+  /* ---- query tabs: chunky Yasgui tabs, edge to edge ---- */
+  .tabsList { display: flex; flex-wrap: wrap; align-items: stretch; border-bottom: 1px solid var(--line); }
+  #tabs { display: flex; flex-wrap: wrap; }
   .tab {
-    display: flex; align-items: center; min-height: 35px; padding: 0 6px 0 14px;
-    border-bottom: 2px solid transparent; margin-bottom: -1px;
-    cursor: pointer; color: #888; user-select: none; font-size: 13.5px;
+    position: relative; display: flex; align-items: center; justify-content: center;
+    min-width: 120px; min-height: 35px; padding: 0 8px 0 24px;
+    border-bottom: 3px solid transparent; margin-bottom: -1px;
+    cursor: pointer; user-select: none;
   }
-  .tab:hover { color: var(--muted); }
-  .tab.active { border-bottom-color: var(--accent); color: var(--muted); }
+  .tab .tabname { font-size: 15px; font-weight: 500; color: #888; white-space: nowrap; overflow: hidden; }
+  .tab:hover .tabname { color: var(--muted); }
+  .tab.active { border-bottom-color: var(--accent); }
+  .tab.active .tabname { color: var(--muted); }
   .tab.dragover { border-left: 2px solid var(--accent); }
   .tabclose {
     border: none; background: none; color: #bbb; font-size: 15px;
-    cursor: pointer; padding: 0 4px; margin-left: 4px; line-height: 1;
+    cursor: pointer; padding: 0 4px; margin-left: 8px; line-height: 1;
   }
   .tabclose:hover { color: #d9534f; }
-  .tabrename { font: inherit; border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; width: 9em; }
+  .tabrename { font: inherit; border: 1px solid var(--accent); padding: 0 4px; width: 9em; }
   .addTab {
     cursor: pointer; font-size: 120%; font-weight: 800; margin-left: 15px;
-    padding: 0 5px 2px; background: none; border: none; color: var(--accent);
+    padding: 0 8px 2px; background: none; border: none; color: var(--accent); align-self: center;
   }
   .addTab:hover { transform: scale(1.15); }
 
-  /* controlbar: endpoint row (Yasgui .controlbar) */
-  .controlbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; position: relative; padding: 10px 4px 10px; }
+  /* ---- controlbar: endpoint row ---- */
+  .controlbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; position: relative; padding: 2px 8px; }
   #endpoint {
-    flex: 1; min-width: 240px; font: 13px "Helvetica Neue", Helvetica, Arial, sans-serif;
-    padding: 7px 10px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink);
+    width: min(560px, 60vw); font: 13.5px "Helvetica Neue", Helvetica, Arial, sans-serif;
+    padding: 3px 6px; margin: 4px 0; border: 2px solid #ccc; color: var(--ink);
+    transition: border-color .2s ease-in;
   }
-  #endpoint:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(51,122,183,.18); }
+  #endpoint:focus { outline: none; border-color: var(--accent); }
   #endpoint.isfile { background: #eef4fa; color: var(--accent-dark); }
   .epbtn {
-    font-size: 13px; padding: 7px 11px; border: 1px solid var(--line); background: #fff;
-    border-radius: 3px; cursor: pointer; color: var(--muted); white-space: nowrap;
+    font-size: 12.5px; padding: 4px 9px; border: 1px solid #ccc; background: #fff;
+    cursor: pointer; color: var(--muted); white-space: nowrap;
   }
   .epbtn:hover { border-color: var(--accent); color: var(--accent); }
   .chip {
     font-size: 11.5px; color: var(--accent-dark); background: #eef4fa;
-    border: 1px solid #d4e3f1; border-radius: 999px; padding: 3px 10px;
+    border: 1px solid #d4e3f1; padding: 2px 9px;
   }
   .reason { font-size: 12.5px; color: var(--muted); white-space: nowrap; cursor: pointer; user-select: none; }
   .reason input { vertical-align: -2px; accent-color: var(--accent); }
 
   .pop {
-    position: absolute; top: calc(100% - 4px); right: 0; z-index: 40;
+    position: absolute; top: calc(100% - 2px); left: 8px; z-index: 40;
     width: min(560px, 92vw); max-height: 420px; overflow: auto;
-    background: #fff; border: 1px solid var(--line); border-radius: 4px;
-    box-shadow: 0 6px 18px rgba(0,0,0,.18); padding: 4px;
+    background: #fff; border: 1px solid #aaa; padding: 0;
   }
-  .catitem { padding: 7px 10px; border-radius: 3px; cursor: pointer; }
+  .catitem { padding: 6px 10px; cursor: pointer; }
   .catitem:hover { background: #eef4fa; }
   .cathead { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; color: var(--ink); }
   .cathead b { font-weight: 600; }
   .catsize { color: var(--faint); font-size: 12px; white-space: nowrap; }
   .catblurb { color: var(--muted); font-size: 12.5px; }
 
-  /* ---- YASQE: editor + 40px round query button top-right ---- */
+  /* ---- YASQE: editor, buttons top-right (share + plain triangle) ---- */
   .yasqe { position: relative; }
-  #editor { border: 1px solid var(--line); border-radius: 3px; overflow: hidden; background: #fff; }
-  .yasqe_buttons { position: absolute; top: 10px; right: 20px; z-index: 5; }
-  #runBtn { border: none; background: none; padding: 0; cursor: pointer; width: 40px; height: 40px; display: block; }
-  #runBtn svg { width: 40px; height: 40px; display: block; }
-  #runBtn .btnCircle { fill: #fff; stroke: #505050; stroke-width: 2.5; }
-  #runBtn .btnGlyph { fill: #505050; }
-  #runBtn:hover .btnCircle { stroke: var(--accent); }
-  #runBtn:hover .btnGlyph { fill: var(--accent); }
-  #runBtn.running .btnCircle { stroke: var(--accent); stroke-dasharray: 90; animation: dash 1.5s linear infinite; }
-  #runBtn.running .btnGlyph { fill: #d9534f; }
-  @keyframes dash { to { stroke-dashoffset: -226; } }
+  #editor { border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); background: #fff; }
+  .yasqe_buttons { position: absolute; top: 10px; right: 20px; z-index: 5; display: flex; align-items: center; gap: 14px; }
+  .yasqe_buttons button { border: none; background: none; padding: 0; cursor: pointer; display: block; }
+  .yasqe_buttons svg { display: block; fill: #505050; }
+  .yasqe_buttons button:hover svg { fill: #000; }
+  #runBtn svg { width: 38px; height: 38px; }
+  #runBtn.running svg { fill: #d9534f; }
+  #shareBtn svg { width: 20px; height: 20px; }
 
-  /* ---- YASR: flat view buttons (.yasr_btnGroup) + controls ---- */
-  .yasr { margin-top: 14px; }
-  .yasrHeader { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--line-soft); padding-bottom: 0; }
-  .yasr_btnGroup { display: flex; margin: 0; padding: 0; list-style: none; }
+  /* ---- YASR: icon'd plugin buttons + controls ---- */
+  .yasr { margin-top: 4px; }
+  .yasr_header { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--line-soft); padding: 0 4px; }
+  .yasr_btnGroup { display: flex; margin: 0; padding: 0; list-style: none; overflow-x: auto; }
   .rtab {
+    display: flex; align-items: center; gap: 5px;
     border: none; background: none; font: 13.5px "Helvetica Neue", Helvetica, Arial, sans-serif;
-    color: #888; padding: 7px 10px; cursor: pointer;
-    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    color: #666; padding: 9px 12px; cursor: pointer;
+    border-bottom: 3px solid transparent; margin-bottom: -1px; white-space: nowrap;
   }
-  .rtab:hover { color: var(--muted); }
-  .rtab.active { color: var(--muted); font-weight: 600; border-bottom-color: var(--accent); }
-  .stats { font-size: 12px; color: var(--muted); margin-left: 8px; }
-  .stats b { color: var(--ink); }
+  .rtab svg { width: 15px; height: 15px; fill: #8b8b8b; }
+  .rtab:hover { color: var(--ink); }
+  .rtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .rtab.active svg { fill: var(--accent); }
   .spacer { flex: 1; }
-  #filterBox { font-size: 12.5px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 3px; width: 160px; }
+  #filterBox { font-size: 12.5px; padding: 3px 6px; border: 2px solid #ccc; width: 160px; }
   #filterBox:focus { outline: none; border-color: var(--accent); }
   .miniBtn {
-    font-size: 12px; padding: 4px 9px; border: 1px solid var(--line); background: #fff;
-    border-radius: 3px; cursor: pointer; color: var(--muted);
+    font-size: 12px; padding: 4px 9px; border: 1px solid #ccc; background: #fff;
+    cursor: pointer; color: var(--muted);
   }
   .miniBtn:hover { border-color: var(--accent); color: var(--accent); }
 
-  #resultsBody { margin-top: 2px; }
-  .placeholder { color: var(--faint); padding: 24px 8px; font-size: 13.5px; }
+  .stats { font-size: 12.5px; color: var(--muted); padding: 6px 8px 0; }
+  .stats b { color: var(--ink); }
+  .stats:empty { display: none; }
+
+  #resultsBody { padding: 0 8px; }
+  .placeholder { color: var(--faint); padding: 22px 4px; font-size: 13.5px; }
   .tablewrap { overflow-x: auto; }
   table.rs { border-collapse: collapse; width: 100%; font-size: .9em; }
   table.rs th {
@@ -144,7 +139,7 @@
   }
   table.rs th.rownum { cursor: default; }
   .sortmark { color: var(--accent); font-size: 10px; }
-  table.rs td { border-bottom: 1px solid #eee; padding: 5px 7px; vertical-align: top; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.rs td { border-bottom: 1px solid #eee; padding: 5px 7px; vertical-align: top; max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   table.rs tr:hover td { background: #f5f9fc; }
   td.rownum, th.rownum { color: var(--faint); font-size: 11px; width: 1%; text-align: right; }
   a.iri { color: var(--accent); }
@@ -154,42 +149,51 @@
   .nullcell { color: var(--faint); }
   pre.rawjson, pre.turtle {
     font: 12.5px Consolas, Menlo, "Cascadia Mono", ui-monospace, monospace;
-    background: #fff; border: 1px solid var(--line-soft); border-radius: 3px;
-    padding: 12px; overflow: auto; max-height: 60vh; white-space: pre-wrap; word-break: break-word;
+    background: #fff; border: 1px solid var(--line-soft);
+    padding: 12px; overflow: auto; max-height: 62vh; white-space: pre-wrap; word-break: break-word;
     margin: 10px 0 0;
   }
   pre.turtle .tprefix { color: #708; }
   .askbox {
-    display: inline-block; margin: 16px 6px; padding: 12px 32px; border-radius: 4px;
+    display: inline-block; margin: 16px 2px; padding: 12px 32px;
     font: 700 24px "Helvetica Neue", Helvetica, Arial, sans-serif;
   }
   .askbox.yes { background: #dff0d8; color: #3c763d; border: 1px solid #d6e9c6; }
   .askbox.no { background: #f2dede; color: #a94442; border: 1px solid #ebccd1; }
   .errbox {
     background: #f2dede; border: 1px solid #ebccd1; color: #a94442;
-    border-radius: 4px; padding: 11px 14px; margin-top: 10px; font-size: 13px;
+    padding: 11px 14px; margin-top: 10px; font-size: 13px;
   }
   .errbox pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; font-size: 12.5px; }
   .hint { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
-  .hint code { background: #f5f5f5; padding: 1px 4px; border-radius: 3px; }
+  .hint code { background: #f5f5f5; padding: 1px 4px; }
 
   /* pivot view */
   .pivotBar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 2px; font-size: 12.5px; color: var(--muted); }
-  .pivotBar select { font: 12.5px inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--ink); }
+  .pivotBar select { font: 12.5px inherit; padding: 3px 6px; border: 1px solid #ccc; background: #fff; color: var(--ink); }
   table.pv { border-collapse: collapse; font-size: .85em; }
   table.pv th { background: #f5f5f5; border: 1px solid var(--line-soft); padding: 4px 8px; font-weight: 600; text-align: left; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   table.pv td { border: 1px solid #eee; padding: 4px 8px; text-align: right; }
   table.pv td.hot { background: #eef4fa; }
   table.pv td.zero { color: #ccc; }
 
-  .pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 2px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+  .pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 8px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
   .pbtns { display: flex; align-items: center; gap: 6px; }
-  .pbtn { border: 1px solid var(--line); background: #fff; border-radius: 3px; padding: 2px 11px; cursor: pointer; font-size: 13px; color: var(--muted); }
+  .pbtn { border: 1px solid #ccc; background: #fff; padding: 2px 11px; cursor: pointer; font-size: 13px; color: var(--muted); }
   .pbtn:disabled { opacity: .4; cursor: default; }
   .pcur { color: var(--faint); }
 
-  footer { color: var(--faint); font-size: 12px; padding: 16px 2px 28px; max-width: 78em; }
-  footer a { color: var(--muted); }
+  /* ---- footer band (branding lives here, like triply.cc) ---- */
+  footer.band {
+    margin-top: 30px; background: #21252b; color: #9aa3ad;
+    font-size: 12.5px; padding: 22px 16px 26px; line-height: 1.7;
+  }
+  footer.band .fbrand { color: #fff; font-size: 16px; font-weight: 700; }
+  footer.band .fbrand .x { color: #6ea8d8; }
+  footer.band a { color: #cfd6dd; }
+  footer.band nav { float: right; }
+  footer.band nav a { margin-left: 18px; }
+  footer.band .fnote { max-width: 78em; margin-top: 6px; }
 
   .spin {
     display: inline-block; width: 11px; height: 11px; border-radius: 50%;
@@ -202,7 +206,7 @@
   #toast {
     position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 60;
     background: #333; color: #fff; font-size: 13px; padding: 9px 16px;
-    border-radius: 4px; box-shadow: 0 6px 18px rgba(0,0,0,.3); max-width: 90vw;
+    box-shadow: 0 6px 18px rgba(0,0,0,.3); max-width: 90vw;
   }
   #dropOverlay {
     position: fixed; inset: 0; z-index: 50; background: rgba(51,122,183,.12);
@@ -210,75 +214,72 @@
     font: 700 22px "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--accent-dark); pointer-events: none;
   }
   @media (max-width: 720px) {
-    header.top nav { float: none; margin: 4px 0 0; }
-    .stats { order: 10; width: 100%; margin-left: 0; }
+    #endpoint { width: 100%; }
     .yasqe_buttons { right: 10px; }
+    footer.band nav { float: none; display: block; margin-bottom: 6px; }
+    footer.band nav a { margin: 0 18px 0 0; }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header class="top">
-    <nav>
-      <a href="./" title="rete documentation">rete docs</a>
-      <a href="playground.html" title="the full rete playground">playground</a>
-      <a href="https://github.com/TriplyDB/Yasgui" title="the original Yasgui by Triply" rel="noopener" target="_blank">Yasgui↗</a>
-    </nav>
-    <div class="brand">yasgui<span class="x">·</span><span class="wasm">wasm</span></div>
-    <div class="tagline">
-      A <a href="https://yasgui.triply.cc/" rel="noopener" target="_blank">Yasgui</a>-style SPARQL IDE where the
-      endpoint is a <b>.rete file</b>: paste a link (queried lazily over HTTP range — only the bytes your query
-      touches are fetched) or drop a local file. The engine is WebAssembly inside this page — no server, no upload.
-    </div>
-  </header>
-
-  <div class="yasgui">
-    <div class="tabsList">
-      <div id="tabs" style="display:flex;flex-wrap:wrap"></div>
-      <button id="addTab" class="addTab" title="New tab">+</button>
-    </div>
-
-    <div class="controlbar">
-      <input id="endpoint" spellcheck="false" autocomplete="off"
-             placeholder="https://… URL of a .rete file (needs CORS + HTTP Range) — or open a local file">
-      <button class="epbtn" id="catalogBtn" title="Pick one of the published datasets">datasets ▾</button>
-      <button class="epbtn" id="uploadBtn" title="Query a .rete on your disk — it never leaves this browser">⬆ open file</button>
-      <input type="file" id="fileInput" accept=".rete" hidden>
-      <label class="reason" title="OWL 2 QL entailment: rewrite the query against the file's ontology"><input type="checkbox" id="reasonToggle"> 🧠 reason</label>
-      <span id="dsChip" class="chip" hidden></span>
-      <div id="catalogPop" class="pop" hidden></div>
-    </div>
-
-    <section class="yasqe">
-      <div id="editor"></div>
-      <div class="yasqe_buttons"><button id="runBtn" title="Run (Ctrl+Enter)"></button></div>
-    </section>
-
-    <section class="yasr">
-      <div class="yasrHeader">
-        <ul class="yasr_btnGroup" id="viewTabs"></ul>
-        <span id="resultStats" class="stats"></span>
-        <span class="spacer"></span>
-        <input id="filterBox" placeholder="Filter query results" spellcheck="false">
-        <button class="miniBtn" id="dlCsv" title="Download the (filtered) result set as CSV">CSV</button>
-        <button class="miniBtn" id="dlJson" title="Download the raw response as JSON">JSON</button>
-        <button class="miniBtn" id="shareBtn" title="Copy a link that opens this query + endpoint">🔗 share</button>
-      </div>
-      <div id="resultsBody"></div>
-      <div id="pager" class="pager" hidden></div>
-    </section>
+<main class="ide">
+  <div class="tabsList">
+    <div id="tabs"></div>
+    <button id="addTab" class="addTab" title="New tab">+</button>
   </div>
 
-  <footer>
-    UI after <a href="https://github.com/TriplyDB/Yasgui" rel="noopener" target="_blank">Yasgui</a> (Triply) —
-    engine: <a href="https://github.com/caviri/rete" rel="noopener" target="_blank">rete</a>, a cloud-native
-    range-queryable RDF file format, compiled to WebAssembly and inlined into this single HTML file. Everything runs
-    client-side: your queries never leave the machine — for remote files the network sees only HTTP range requests
-    for raw bytes. Uploaded files are read in memory and never sent anywhere. Autocomplete prefixes come from your
-    query + <a href="https://prefix.cc" rel="noopener" target="_blank">prefix.cc</a>; entity suggestions come from the
-    dataset's own label index. <span id="buildStamp"></span>
-  </footer>
-</div>
+  <div class="controlbar">
+    <button class="epbtn" id="catalogBtn" title="Pick one of the published datasets">datasets ▾</button>
+    <input id="endpoint" spellcheck="false" autocomplete="off"
+           placeholder="https://… URL of a .rete file (CORS + HTTP Range) — or open a local file">
+    <button class="epbtn" id="uploadBtn" title="Query a .rete on your disk — it never leaves this browser">⬆ open file</button>
+    <input type="file" id="fileInput" accept=".rete" hidden>
+    <label class="reason" title="OWL 2 QL entailment: rewrite the query against the file's ontology"><input type="checkbox" id="reasonToggle"> 🧠 reason</label>
+    <span id="dsChip" class="chip" hidden></span>
+    <div id="catalogPop" class="pop" hidden></div>
+  </div>
+
+  <section class="yasqe">
+    <div id="editor"></div>
+    <div class="yasqe_buttons">
+      <button id="shareBtn" title="Copy a link that opens this query + endpoint"><svg viewBox="0 0 24 24"><path d="M18 16.1c-.8 0-1.5.3-2 .8l-7.1-4.2c.1-.2.1-.5.1-.7s0-.5-.1-.7L16 7.2c.5.5 1.2.8 2 .8 1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3c0 .2 0 .5.1.7L8 9.8C7.5 9.3 6.8 9 6 9c-1.7 0-3 1.3-3 3s1.3 3 3 3c.8 0 1.5-.3 2-.8l7.1 4.2c-.1.2-.1.4-.1.6 0 1.6 1.3 2.9 2.9 2.9s2.9-1.3 2.9-2.9-1.2-2.9-2.8-2.9z"/></svg></button>
+      <button id="runBtn" title="Run (Ctrl+Enter)"></button>
+    </div>
+  </section>
+
+  <section class="yasr">
+    <div class="yasr_header">
+      <ul class="yasr_btnGroup" id="viewTabs"></ul>
+      <span class="spacer"></span>
+      <input id="filterBox" placeholder="Filter query results" spellcheck="false">
+      <button class="miniBtn" id="dlCsv" title="Download the (filtered) result set as CSV">CSV</button>
+      <button class="miniBtn" id="dlJson" title="Download the raw response as JSON">JSON</button>
+    </div>
+    <div id="resultStats" class="stats"></div>
+    <div id="resultsBody"></div>
+    <div id="pager" class="pager" hidden></div>
+  </section>
+</main>
+
+<footer class="band">
+  <nav>
+    <a href="./">rete docs</a>
+    <a href="yasgui-guide.html">about this page</a>
+    <a href="playground.html">playground</a>
+    <a href="https://github.com/TriplyDB/Yasgui" rel="noopener" target="_blank">Yasgui↗</a>
+  </nav>
+  <div class="fbrand">yasgui<span class="x">·</span>wasm</div>
+  <div class="fnote">
+    A <a href="https://yasgui.triply.cc/" rel="noopener" target="_blank">Yasgui</a>-style SPARQL IDE where the
+    endpoint is a <b>.rete file</b>: paste a link (queried lazily over HTTP range — only the bytes your query
+    touches are fetched) or drop a local file anywhere on this page. The engine is
+    <a href="https://github.com/caviri/rete" rel="noopener" target="_blank">rete</a> compiled to WebAssembly and
+    inlined into this single HTML file — no server: your queries never leave the machine, remote files see only
+    range requests for raw bytes, uploaded files are read in memory and never sent anywhere. Autocomplete prefixes
+    come from your query + <a href="https://prefix.cc" rel="noopener" target="_blank">prefix.cc</a>; entity
+    suggestions come from the dataset's own label index. UI after Yasgui by Triply. <span id="buildStamp"></span>
+  </div>
+</footer>
 
 <div id="toast" hidden></div>
 <div id="dropOverlay" hidden>drop a .rete file to query it</div>
