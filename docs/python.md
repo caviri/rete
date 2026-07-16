@@ -87,6 +87,23 @@ Every value is a `Term` with `.kind` (`"iri"` / `"literal"` / `"bnode"` /
 the playground uses), and `g.query_df(q)` returns a pandas DataFrame
 (`pip install rete-graph[pandas]`).
 
+### Run the file's own example queries
+
+A `.rete` can carry **example SPARQL queries inside the file** (in its
+[Dataset Card](dataset-cards.md)); CLI-built datasets ship a whole tiered
+starter library. `g.examples()` reads them — on a remote file that costs one
+small ranged read:
+
+```python
+g = rete.open("https://data.graphplaza.com/boe/boe.rete")
+for ex in g.examples():                     # 20 entries on this dataset
+    print(ex["title"], "—", ex["question"])
+g.query(g.examples()[0]["sparql"])          # and they just run
+```
+
+Embed your own with `Builder.example()` (rich: title + question + SPARQL) or
+`Builder.card(example_queries=[...])` (plain strings).
+
 ### Reasoning
 
 `g.query(q, reason=True)` turns on OWL 2 QL entailment — `rdfs:subClassOf`,
@@ -181,6 +198,7 @@ g.content_hash()              # blake3-16 hex — a stable cache key
 | `SERVICE` federation | ✅ | host-injected HTTP client |
 | Build from RDF text / rdflib objects | ✅ | `build()`, `Builder` |
 | Dataset Card: embed + read back | ✅ | `Builder.card()`, `Graph.card()` (ranged on remote) |
+| Example queries in the file | ✅ | `Builder.example()`, `Graph.examples()` |
 | Build options: pyramid algo, text index | ✅ | `Builder.pyramid()/text_index()/type_predicate()` |
 | Schema profile, prefix & text search | ✅ | `schema()`, `prefix_search()`, `text_search()` |
 | pandas DataFrames | ✅ | `query_df()`, `[pandas]` extra |

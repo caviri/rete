@@ -1,0 +1,99 @@
+name: Python client release
+
+# Release pipeline only: wheels + sdist + PyPI publish on `py-v*` tags.
+# Day-to-day testing lives in python-test.yml, which is paths-filtered to
+# changes under clients/python/ (and the engine it binds).
+on:
+  push:
+    tags: ["py-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MANIFEST: clients/python/Cargo.toml
+
+jobs:
+  test:
+    name: build + pytest (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist -m ${{ env.MANIFEST }}
+          manylinux: auto
+      - uses: astral-sh/setup-uv@v5
+      - name: Install the wheel with uv and run the test suite
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python dist/*.whl pytest pandas rdflib
+          .venv/bin/python -m pytest clients/python/tests -q
+
+  wheels:
+    name: wheel ${{ matrix.platform.name }}
+    # Wheels are abi3-py39: one artifact per platform covers CPython >= 3.9.
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/py-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        platform:
+          - { name: linux-x86_64, runner: ubuntu-latest, target: x86_64 }
+          - { name: linux-aarch64, runner: ubuntu-latest, target: aarch64 }
+          - { name: windows-x64, runner: windows-latest, target: x64 }
+          - { name: macos-universal2, runner: macos-latest, target: universal2-apple-darwin }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist -m ${{ env.MANIFEST }}
+          manylinux: auto
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.platform.name }}
+          path: dist
+
+  sdist:
+    name: sdist
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/py-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist -m ${{ env.MANIFEST }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-sdist
+          path: dist
+
+  publish:
+    name: publish to PyPI
+    needs: [wheels, sdist]
+    if: startsWith(github.ref, 'refs/tags/py-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Trusted publishing (OIDC): configure this repo + workflow + environment
+    # as a "trusted publisher" for the rete-graph project on pypi.org — no
+    # API token secret needed.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: astral-sh/setup-uv@v5
+      - run: uv publish --trusted-publishing always dist/*

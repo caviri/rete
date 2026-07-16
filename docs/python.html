@@ -313,6 +313,18 @@ g.query("CONSTRUCT { ... } WHERE { ... }")   # -&gt; list of (s, p, o) Term trip
 <p><code>g.query_raw(q)</code> returns the engine's JSON envelope unparsed (the same shape
 the playground uses), and <code>g.query_df(q)</code> returns a pandas DataFrame
 (<code>pip install rete-graph[pandas]</code>).</p>
+<h3>Run the file's own example queries</h3>
+<p>A <code>.rete</code> can carry <strong>example SPARQL queries inside the file</strong> (in its
+<a href="dataset-cards.html">Dataset Card</a>); CLI-built datasets ship a whole tiered
+starter library. <code>g.examples()</code> reads them — on a remote file that costs one
+small ranged read:</p>
+<pre><code class="language-python">g = rete.open("https://data.graphplaza.com/boe/boe.rete")
+for ex in g.examples():                     # 20 entries on this dataset
+    print(ex["title"], "—", ex["question"])
+g.query(g.examples()[0]["sparql"])          # and they just run
+</code></pre>
+<p>Embed your own with <code>Builder.example()</code> (rich: title + question + SPARQL) or
+<code>Builder.card(example_queries=[...])</code> (plain strings).</p>
 <h3>Reasoning</h3>
 <p><code>g.query(q, reason=True)</code> turns on OWL 2 QL entailment — <code>rdfs:subClassOf</code>,
 <code>subPropertyOf</code>, <code>domain</code>/<code>range</code> and friends, computed by <strong>query rewriting</strong>
@@ -387,6 +399,7 @@ input, <code>RuntimeError</code> for I/O and format problems.</li>
 <tr><td><code>SERVICE</code> federation</td><td>✅</td><td>host-injected HTTP client</td></tr>
 <tr><td>Build from RDF text / rdflib objects</td><td>✅</td><td><code>build()</code>, <code>Builder</code></td></tr>
 <tr><td>Dataset Card: embed + read back</td><td>✅</td><td><code>Builder.card()</code>, <code>Graph.card()</code> (ranged on remote)</td></tr>
+<tr><td>Example queries in the file</td><td>✅</td><td><code>Builder.example()</code>, <code>Graph.examples()</code></td></tr>
 <tr><td>Build options: pyramid algo, text index</td><td>✅</td><td><code>Builder.pyramid()/text_index()/type_predicate()</code></td></tr>
 <tr><td>Schema profile, prefix &amp; text search</td><td>✅</td><td><code>schema()</code>, <code>prefix_search()</code>, <code>text_search()</code></td></tr>
 <tr><td>pandas DataFrames</td><td>✅</td><td><code>query_df()</code>, <code>[pandas]</code> extra</td></tr>

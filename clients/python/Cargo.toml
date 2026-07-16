@@ -1,0 +1,28 @@
+# The Python binding crate — deliberately OUTSIDE the cargo workspace (see the
+# root Cargo.toml `exclude`): it versions and locks independently, is built by
+# maturin (pyproject.toml), and is published to PyPI, never to crates.io.
+[package]
+name = "rete-python"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/caviri/rete"
+homepage = "https://caviri.github.io/rete/"
+rust-version = "1.87"
+description = "Python bindings for the rete cloud-native RDF graph file format."
+publish = false
+
+[lib]
+# Leading underscore: the compiled module is the private `rete_graph._rete`;
+# the public API is the pure-Python `rete_graph` package wrapping it.
+name = "_rete"
+crate-type = ["cdylib"]
+
+[dependencies]
+rete-core = { path = "../../crates/rete-core" }
+# abi3-py39: one wheel per platform covers every CPython >= 3.9.
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"] }
+# Blocking HTTP(S) range reads + SERVICE federation, mirroring rete-cli
+# (rustls via the `tls` feature — no system OpenSSL anywhere wheels land).
+ureq = { version = "2", default-features = false, features = ["tls"] }
+serde_json = "1"

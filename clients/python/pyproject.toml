@@ -1,0 +1,42 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "rete-graph"
+version = "0.1.0"
+description = "Query local and remote .rete graph files with SPARQL — Python bindings for the rete engine."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Carlos Vivar Rios" }]
+keywords = ["rdf", "sparql", "graph", "database", "linked-data", "range-requests"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Rust",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+[project.urls]
+Homepage = "https://caviri.github.io/rete/"
+Repository = "https://github.com/caviri/rete"
+Playground = "https://caviri.github.io/rete/playground.html"
+
+[project.optional-dependencies]
+pandas = ["pandas>=1.5"]
+# Only convenience pins — build() duck-types any object with .serialize().
+rdflib = ["rdflib>=6"]
+
+[tool.maturin]
+# The compiled extension lands inside the pure-Python package as
+# `rete_graph._rete`; the wrapper code lives under python/.
+module-name = "rete_graph._rete"
+python-source = "python"
+strip = true

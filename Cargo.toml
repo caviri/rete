@@ -9,7 +9,12 @@ members = [
 ]
 # The cargo-fuzz harness is its own (nightly, instrumented) build — never part of
 # the normal workspace build/test. See fuzz/Cargo.toml.
-exclude = ["fuzz"]
+# Language clients under clients/ likewise own their toolchains: the Python
+# package (PyO3 + maturin) builds and locks independently so the workspace
+# release gates (--locked checks, feature matrix, coverage floors) stay
+# untouched by binding-only changes. Future clients (R, Go) follow the same
+# pattern — clients/ consumes crates/, never the other way around.
+exclude = ["fuzz", "clients/python"]
 
 [workspace.package]
 version = "1.0.0-rc.1"

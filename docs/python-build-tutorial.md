@@ -90,6 +90,22 @@ build time; you never write them. The card is readable from every client:
 section's byte range), `rete card` / `rete info` in the CLI, and the
 playground's catalog view.
 
+Beyond plain strings, `example()` embeds a **rich** example — a short title
+and the plain-language question alongside the SPARQL — into the card's
+starter-query library, where the CLI and playground surface it:
+
+```python
+builder.example(
+    "SELECT ?o WHERE { <urn:alice> <urn:knows> ?o }",
+    title="Who does Alice know?",
+    question="Which people does Alice know?",
+)
+```
+
+After opening the built file (even remotely), `g.examples()` lists every
+embedded query, and each entry's `["sparql"]` runs as-is — the dataset ships
+its own documentation *and* its own first queries.
+
 One honest limit: the CLI's `rete build` additionally derives an **enriched
 profile** (top predicates and classes, vocabularies, hubs, datatype/language
 histograms, a tiered starter-query library, an optional coherence verdict).
