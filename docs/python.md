@@ -219,5 +219,5 @@ uv pip install clients/python/dist/*.whl pytest && pytest clients/python/tests
 ```
 
 CI: `python-test.yml` runs lint + wheel + pytest whenever `clients/python/` or
-`rete-core` changes; a `py-v*` tag runs `python.yml`, which builds the full
-wheel matrix and publishes to PyPI.
+`rete-core` changes; a `py-v*` tag runs `python-client-publish.yml`, which
+builds the full wheel matrix and publishes to PyPI.

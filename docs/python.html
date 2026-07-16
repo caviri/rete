@@ -416,8 +416,8 @@ workspace). Build and test without a host toolchain:</p>
 uv pip install clients/python/dist/*.whl pytest &amp;&amp; pytest clients/python/tests
 </code></pre>
 <p>CI: <code>python-test.yml</code> runs lint + wheel + pytest whenever <code>clients/python/</code> or
-<code>rete-core</code> changes; a <code>py-v*</code> tag runs <code>python.yml</code>, which builds the full
-wheel matrix and publishes to PyPI.</p>
+<code>rete-core</code> changes; a <code>py-v*</code> tag runs <code>python-client-publish.yml</code>, which
+builds the full wheel matrix and publishes to PyPI.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

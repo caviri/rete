@@ -1,8 +1,10 @@
-name: Python client release
+name: Python client publish
 
 # Release pipeline only: wheels + sdist + PyPI publish on `py-v*` tags.
-# Day-to-day testing lives in python-test.yml, which is paths-filtered to
-# changes under clients/python/ (and the engine it binds).
+# PyPI's trusted publisher for `rete-graph` points at THIS filename
+# (python-client-publish.yml) + the `pypi` environment — renaming the file
+# breaks publishing until the PyPI form is updated. Day-to-day testing lives
+# in python-test.yml, paths-filtered to clients/python/ and the engine.
 on:
   push:
     tags: ["py-v*"]
