@@ -1,7 +1,11 @@
 // yasgui-wasm — a Yasgui-style SPARQL IDE where the "endpoint" is a .rete file:
 // paste a URL (read lazily over HTTP range) or open a local file, and every
 // query runs in a WebAssembly engine inside this page. UI after Yasgui
-// (github.com/TriplyDB/Yasgui); engine and worker protocol are rete's.
+// (github.com/TriplyDB/Yasgui) — underline tabs, the 40px round query button,
+// YASR-style result views (Table / Pivot / Turtle / Response) — and YASQE-style
+// autocompletion: prefixes (curated + prefix.cc), auto-inserted PREFIX
+// declarations when you type `foaf:`, and entity suggestions from the open
+// dataset's own label index.
 //
 // Globals provided by the built page: CM (CodeMirror 6 bundle), wasm_bindgen
 // (no-modules glue, reused as worker source), RETE_WASM_B64, CATALOG,
@@ -41,9 +45,11 @@ function toast(msg) {
   toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
 }
 
-/* ------------------------------------------------------ prefix shortening */
+/* ------------------------------------------------------------- prefixes */
 
-const WELL_KNOWN_PREFIXES = {
+// Curated seed; merged with prefix.cc's popular list (fetched once, cached a
+// week) — the same source Yasgui's prefix autocompleter uses.
+const PREFIXES = {
   rdf: "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
   rdfs: "http://www.w3.org/2000/01/rdf-schema#",
   owl: "http://www.w3.org/2002/07/owl#",
@@ -69,7 +75,30 @@ const WELL_KNOWN_PREFIXES = {
   crm: "http://www.cidoc-crm.org/cidoc-crm/",
 };
 
-// PREFIX declarations in the current query win over the well-known table.
+const PREFIXCC_KEY = "rete.yasgui.prefixcc.v1";
+function loadPrefixCc() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(PREFIXCC_KEY) || "null");
+    if (cached && Date.now() - cached.at < 7 * 86400e3) {
+      mergePrefixes(cached.map);
+      return;
+    }
+  } catch (_) { /* refetch */ }
+  fetch("https://prefix.cc/popular/all.file.json")
+    .then((r) => r.json())
+    .then((map) => {
+      mergePrefixes(map);
+      try { localStorage.setItem(PREFIXCC_KEY, JSON.stringify({ at: Date.now(), map })); } catch (_) {}
+    })
+    .catch(() => { /* offline / blocked — curated table still works */ });
+}
+function mergePrefixes(map) {
+  for (const [p, ns] of Object.entries(map || {})) {
+    if (typeof ns === "string" && !(p in PREFIXES)) PREFIXES[p] = ns;
+  }
+}
+
+// PREFIX declarations in the current query win over the merged table.
 function prefixesFromQuery(q) {
   const out = {};
   const re = /PREFIX\s+([\w-]*):\s*<([^>]*)>/gi;
@@ -79,7 +108,7 @@ function prefixesFromQuery(q) {
 }
 
 function shortenIri(iri, queryPrefixes) {
-  const maps = [queryPrefixes || {}, WELL_KNOWN_PREFIXES];
+  const maps = [queryPrefixes || {}, PREFIXES];
   let best = null;
   for (const map of maps) {
     for (const [p, ns] of Object.entries(map)) {
@@ -128,10 +157,25 @@ function termHtml(s, queryPrefixes) {
   return esc(t.value);
 }
 
-// Plain lexical value for CSV / filtering / sorting.
+// Plain lexical value for CSV / filtering / sorting / pivot keys.
 function termText(s) {
   const t = parseTerm(s);
   return t ? t.value : "";
+}
+
+// One term in Turtle syntax, prefixed where possible.
+function termTurtle(s, queryPrefixes, used) {
+  const t = parseTerm(s);
+  if (!t) return "[]";
+  if (t.kind === "iri") {
+    const short = shortenIri(t.value, queryPrefixes);
+    if (short.includes(":") && !short.includes("//")) {
+      used.add(short.split(":")[0]);
+      return short;
+    }
+    return `<${t.value}>`;
+  }
+  return String(s); // bnodes and literals are already valid Turtle
 }
 
 /* ------------------------------------------------------------ the engine */
@@ -218,7 +262,7 @@ function newTab(opts = {}) {
     reason: !!opts.reason,
     // session-only:
     chip: null, results: null, view: "table",
-    filter: "", page: 1, sort: null, editorState: null,
+    filter: "", page: 1, sort: null, pivot: null, editorState: null,
   };
   tabs.push(t);
   return t;
@@ -296,61 +340,126 @@ const SPARQL_FUNCTIONS = (
   "COALESCE IF STRLANG STRDT sameTerm isIRI isURI isBLANK isLITERAL isNUMERIC"
 ).split(" ");
 
-function sparqlCompletions(context) {
-  const word = context.matchBefore(/[\w]*$/);
+// YASQE-style autocompletion, three sources merged:
+//   1. SPARQL keywords + functions + the query's own ?variables,
+//   2. PREFIX declarations (curated table + prefix.cc),
+//   3. entities from the OPEN dataset's label prefix-index (worker roundtrip).
+async function sparqlCompletions(context) {
   const line = context.state.doc.lineAt(context.pos);
   const before = line.text.slice(0, context.pos - line.from);
+
   // "PREFIX xx" → offer known namespace declarations
   if (/PREFIX\s+[\w-]*:?$/i.test(before)) {
     return {
       from: line.from + before.search(/[\w-]*:?$/),
-      options: Object.entries(WELL_KNOWN_PREFIXES).map(([p, ns]) => ({
+      options: Object.entries(PREFIXES).slice(0, 400).map(([p, ns]) => ({
         label: `${p}: <${ns}>`, type: "namespace",
       })),
     };
   }
+
+  const word = context.matchBefore(/[\w?]*$/);
   if (!word || (word.from === word.to && !context.explicit)) return null;
-  return {
-    from: word.from,
-    options: [
-      ...SPARQL_KEYWORDS.map((k) => ({ label: k, type: "keyword" })),
-      ...SPARQL_FUNCTIONS.map((k) => ({ label: k, type: "function" })),
-    ],
-  };
+  const typed = context.state.sliceDoc(word.from, word.to);
+
+  const options = [
+    ...SPARQL_KEYWORDS.map((k) => ({ label: k, type: "keyword" })),
+    ...SPARQL_FUNCTIONS.map((k) => ({ label: k, type: "function" })),
+  ];
+
+  // the query's own variables
+  const seen = new Set();
+  const text = context.state.doc.toString();
+  let vm;
+  const varRe = /\?[A-Za-z_][\w]*/g;
+  while ((vm = varRe.exec(text))) {
+    if (vm.index === word.from && vm[0].length === word.to - word.from) continue; // the word being typed
+    if (!seen.has(vm[0])) { seen.add(vm[0]); options.push({ label: vm[0], type: "variable" }); }
+  }
+
+  // entities from the dataset's label index (only when a graph is already
+  // open for this tab; the first remote call faults the pyramid once)
+  const plain = typed.replace(/^\?/, "");
+  const t = active();
+  if (plain.length >= 3 && t && t.endpoint && engine.openKeys.has(epKey(t.endpoint))) {
+    try {
+      const r = await engine.call({ type: "prefix", key: epKey(t.endpoint), prefix: plain, limit: 15 });
+      const qp = prefixesFromQuery(text);
+      for (const h of r.hits || []) {
+        const iri = /^[<_]/.test(h.subject) ? h.subject : `<${h.subject}>`;
+        options.push({
+          label: h.label,
+          detail: shortenIri(String(h.subject).replace(/^<|>$/g, ""), qp),
+          type: "constant",
+          apply: iri,
+          boost: 1,
+        });
+      }
+    } catch (_) { /* graph busy/closed — keyword options still apply */ }
+  }
+
+  return { from: word.from, options };
+}
+
+// YASQE's beloved trick: type `foaf:` in the query body and the PREFIX
+// declaration appears at the top by itself.
+function autoInsertPrefix(update) {
+  let typedColon = false;
+  update.changes.iterChanges((fa, ta, fb, tb, ins) => {
+    if (ins.toString().endsWith(":")) typedColon = true;
+  });
+  if (!typedColon) return;
+  const state = update.state;
+  const pos = state.selection.main.head;
+  const line = state.doc.lineAt(pos);
+  const before = line.text.slice(0, pos - line.from);
+  if (/^\s*(PREFIX|BASE)/i.test(line.text)) return;
+  const m = before.match(/(?:^|[\s({\[,;|/^])([A-Za-z][\w-]*):$/);
+  if (!m) return;
+  const p = m[1];
+  const ns = PREFIXES[p];
+  if (!ns) return;
+  if (new RegExp(`PREFIX\\s+${p}:`, "i").test(state.doc.toString())) return;
+  view.dispatch({
+    changes: { from: 0, to: 0, insert: `PREFIX ${p}: <${ns}>\n` },
+    userEvent: "input.autoprefix",
+  });
 }
 
 function editorExtensions() {
   const T = CM.tags;
+  // CodeMirror's classic default colors — what YASQE renders with.
   const highlight = CM.HighlightStyle.define([
-    { tag: T.keyword, color: "#0f4d8f", fontWeight: "700" },
-    { tag: T.operatorKeyword, color: "#0f4d8f", fontWeight: "700" },
-    { tag: T.string, color: "#14795f" },
-    { tag: T.comment, color: "#8b949e", fontStyle: "italic" },
-    { tag: T.number, color: "#a85424" },
-    { tag: T.bool, color: "#a85424" },
-    { tag: T.variableName, color: "#b75501" },
-    { tag: T.atom, color: "#2f6f8f" },
-    { tag: T.operator, color: "#66746e" },
-    { tag: [T.url, T.literal], color: "#2f6f8f" },
+    { tag: T.keyword, color: "#708" },
+    { tag: T.operatorKeyword, color: "#708" },
+    { tag: T.string, color: "#a11" },
+    { tag: T.comment, color: "#a50" },
+    { tag: T.number, color: "#164" },
+    { tag: T.bool, color: "#219" },
+    { tag: T.variableName, color: "#05a" },
+    { tag: T.atom, color: "#219" },
+    { tag: T.operator, color: "#555" },
+    { tag: [T.url, T.literal], color: "#219" },
   ]);
   const theme = CM.EditorView.theme({
     "&": { fontSize: "13.5px", background: "#fff", height: "100%" },
     "&.cm-focused": { outline: "none" },
     ".cm-scroller": {
-      fontFamily: "'Cascadia Mono','SF Mono',Consolas,ui-monospace,monospace",
-      lineHeight: "1.6", minHeight: "215px", maxHeight: "44vh",
+      fontFamily: "Consolas, Menlo, 'Cascadia Mono', ui-monospace, monospace",
+      lineHeight: "1.55", minHeight: "215px", maxHeight: "44vh",
     },
-    ".cm-content": { padding: "10px 2px", caretColor: "#1b1f23" },
-    ".cm-gutters": { background: "#f7f9f8", color: "#9aa5a0", border: "none", borderRight: "1px solid #e3e7e5" },
-    ".cm-activeLine": { background: "rgba(20,125,105,.05)" },
-    ".cm-activeLineGutter": { background: "rgba(20,125,105,.09)" },
-    ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { background: "rgba(20,125,105,.16)" },
-    ".cm-tooltip": { border: "1px solid #d7ddda", borderRadius: "7px", background: "#fff" },
+    ".cm-content": { padding: "8px 2px", caretColor: "#333" },
+    ".cm-gutters": { background: "#f7f7f7", color: "#999", border: "none", borderRight: "1px solid #ddd" },
+    ".cm-activeLine": { background: "rgba(51,122,183,.045)" },
+    ".cm-activeLineGutter": { background: "rgba(51,122,183,.09)" },
+    ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { background: "rgba(51,122,183,.18)" },
+    ".cm-tooltip": { border: "1px solid #d1d1d1", borderRadius: "3px", background: "#fff" },
     ".cm-tooltip-autocomplete > ul": {
-      fontFamily: "'Cascadia Mono','SF Mono',Consolas,ui-monospace,monospace",
+      fontFamily: "Consolas, Menlo, 'Cascadia Mono', ui-monospace, monospace",
       fontSize: "12.5px", maxHeight: "15em",
     },
-    ".cm-tooltip-autocomplete > ul > li[aria-selected]": { background: "#e3f0ec", color: "#0d5a4b" },
+    ".cm-tooltip-autocomplete > ul > li[aria-selected]": { background: "#eef4fa", color: "#255681" },
+    ".cm-completionDetail": { color: "#999", fontStyle: "normal", marginLeft: "1em" },
   });
   return [
     CM.lineNumbers(),
@@ -365,7 +474,7 @@ function editorExtensions() {
     CM.StreamLanguage.define(CM.sparql),
     CM.syntaxHighlighting(highlight),
     CM.autocompletion({ override: [sparqlCompletions] }),
-    CM.placeholder("Write a SPARQL query… (Ctrl+Enter runs it)"),
+    CM.placeholder("Write a SPARQL query… (Ctrl+Enter runs it, Ctrl+Space completes)"),
     theme,
     CM.keymap.of([
       { key: "Mod-Enter", run: () => { runQuery(); return true; } },
@@ -379,6 +488,7 @@ function editorExtensions() {
       if (u.docChanged) {
         const t = active();
         if (t) { t.query = u.state.doc.toString(); persistSoon(); }
+        if (!u.transactions.some((tr) => tr.isUserEvent("input.autoprefix"))) autoInsertPrefix(u);
       }
     }),
   ];
@@ -404,10 +514,11 @@ function switchEditorTo(tab) {
 function renderTabs() {
   const bar = $("tabs");
   bar.innerHTML = "";
-  for (const t of tabs) {
+  tabs.forEach((t, idx) => {
     const el = document.createElement("div");
     el.className = "tab" + (t.id === activeId ? " active" : "");
     el.title = epDisplay(t.endpoint);
+    el.draggable = true;
     const name = document.createElement("span");
     name.className = "tabname";
     name.textContent = t.name;
@@ -430,8 +541,20 @@ function renderTabs() {
       name.replaceWith(inp);
       inp.focus(); inp.select();
     };
+    // Yasgui tabs are sortable — plain HTML5 drag reorder.
+    el.ondragstart = (e) => { e.dataTransfer.setData("text/tab", String(idx)); e.dataTransfer.effectAllowed = "move"; };
+    el.ondragover = (e) => { if (e.dataTransfer.types.includes("text/tab")) { e.preventDefault(); el.classList.add("dragover"); } };
+    el.ondragleave = () => el.classList.remove("dragover");
+    el.ondrop = (e) => {
+      const from = +e.dataTransfer.getData("text/tab");
+      if (isNaN(from) || from === idx) return;
+      e.preventDefault(); e.stopPropagation();
+      const [moved] = tabs.splice(from, 1);
+      tabs.splice(idx, 0, moved);
+      renderTabs(); persistSoon();
+    };
     bar.appendChild(el);
-  }
+  });
 }
 
 function renderEndpoint() {
@@ -477,17 +600,16 @@ function setRunning(on) {
   btn.classList.toggle("running", on);
   btn.title = on ? "Stop" : "Run (Ctrl+Enter)";
   btn.innerHTML = on
-    ? `<svg viewBox="0 0 24 24" width="17" height="17"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="#fff"/></svg>`
-    : `<svg viewBox="0 0 24 24" width="19" height="19"><path d="M8 5.5v13l11-6.5z" fill="#fff"/></svg>`;
+    ? `<svg viewBox="0 0 40 40"><circle class="btnCircle" cx="20" cy="20" r="18"/><rect class="btnGlyph" x="14" y="14" width="12" height="12" rx="1.5"/></svg>`
+    : `<svg viewBox="0 0 40 40"><circle class="btnCircle" cx="20" cy="20" r="18"/><path class="btnGlyph" d="M16 12.5v15l12-7.5z"/></svg>`;
 }
 
 function statsLine(t) {
   const r = t.results;
-  if (!r) return "";
-  if (r.error) return "";
+  if (!r || r.error) return "";
   const env = r.envelope;
   const n = env.kind === "select" ? env.rows.length
-    : env.kind === "construct" ? env.triples.length : null;
+    : env.kind === "construct" ? (env.triples || []).length : null;
   let s = `<b>${n == null ? "" : fmtInt(n) + (env.kind === "construct" ? " triples" : " results")}</b>`;
   if (n == null) s = "";
   s += `${s ? " in " : "Took "}${fmtMs(r.ms)}`;
@@ -502,6 +624,15 @@ function statsLine(t) {
   return s;
 }
 
+// Which YASR views make sense for this result?
+function viewsFor(env) {
+  if (!env) return ["table"];
+  if (env.kind === "ask") return ["boolean", "response"];
+  if (env.kind === "construct") return ["table", "turtle", "response"];
+  return ["table", "pivot", "response"];
+}
+const VIEW_LABELS = { table: "Table", pivot: "Pivot", turtle: "Turtle", boolean: "Boolean", response: "Response" };
+
 function tableRows(t) {
   const env = t.results.envelope;
   const qp = prefixesFromQuery(t.query);
@@ -511,7 +642,7 @@ function tableRows(t) {
     rows = env.rows.map((r) => vars.map((v) => (v in r ? r[v] : null)));
   } else {
     vars = ["subject", "predicate", "object"];
-    rows = env.triples;
+    rows = env.triples || [];
   }
   // filter
   const f = t.filter.trim().toLowerCase();
@@ -539,19 +670,29 @@ function tableRows(t) {
 
 const PAGE_SIZE = 50;
 
+function renderViewTabs(t) {
+  const env = t.results && !t.results.error ? t.results.envelope : null;
+  const views = viewsFor(env);
+  if (!views.includes(t.view)) t.view = views[0];
+  $("viewTabs").innerHTML = views.map((v) =>
+    `<li><button class="rtab${v === t.view ? " active" : ""}" data-view="${v}">${VIEW_LABELS[v]}</button></li>`).join("");
+  $("viewTabs").querySelectorAll(".rtab").forEach((b) => {
+    b.onclick = () => { t.view = b.dataset.view; renderResults(); };
+  });
+}
+
 function renderResults() {
   const t = active();
   const body = $("resultsBody");
   const pager = $("pager");
   const stats = $("resultStats");
   $("filterBox").value = t.filter;
-  document.querySelectorAll(".rtab").forEach((b) =>
-    b.classList.toggle("active", b.dataset.view === t.view));
+  renderViewTabs(t);
   pager.hidden = true;
 
   if (!t.results) {
     stats.innerHTML = "";
-    body.innerHTML = `<div class="placeholder">No response yet — pick a dataset, write a query, press <b>▶</b>.</div>`;
+    body.innerHTML = `<div class="placeholder">No response yet — pick a dataset, write a query, press the round button (or Ctrl+Enter).</div>`;
     return;
   }
   const r = t.results;
@@ -564,30 +705,50 @@ function renderResults() {
     return;
   }
   stats.innerHTML = statsLine(t);
-
-  if (t.view === "response") {
-    let text = r.raw;
-    let note = "";
-    if (text.length > 2_000_000) {
-      text = text.slice(0, 2_000_000);
-      note = `<div class="hint">Response truncated for display (${fmtBytes(r.raw.length)} total) — use the JSON download for the full body.</div>`;
-    } else {
-      try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (_) { /* show as-is */ }
-    }
-    body.innerHTML = `${note}<pre class="rawjson">${esc(text)}</pre>`;
-    return;
-  }
-
   const env = r.envelope;
-  if (env.kind === "ask") {
+
+  if (t.view === "response") { renderResponse(t, body); return; }
+  if (t.view === "boolean" || env.kind === "ask") {
     body.innerHTML = `<div class="askbox ${env.boolean ? "yes" : "no"}">${env.boolean}</div>`;
     return;
   }
-  if (env.kind === "construct" && env.format && env.text != null) {
-    body.innerHTML = `<pre class="rawjson">${esc(env.text)}</pre>`;
+  if (t.view === "turtle") { renderTurtle(t, body); return; }
+  if (t.view === "pivot") { renderPivot(t, body); return; }
+  renderTable(t, body, pager);
+}
+
+function renderResponse(t, body) {
+  const r = t.results;
+  let text = r.raw;
+  let note = "";
+  if (text.length > 2_000_000) {
+    text = text.slice(0, 2_000_000);
+    note = `<div class="hint">Response truncated for display (${fmtBytes(r.raw.length)} total) — use the JSON download for the full body.</div>`;
+  } else {
+    try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (_) { /* show as-is */ }
+  }
+  body.innerHTML = `${note}<pre class="rawjson">${esc(text)}</pre>`;
+}
+
+function renderTurtle(t, body) {
+  const env = t.results.envelope;
+  if (env.format && env.text != null) { // engine-rendered ttl/jsonld
+    body.innerHTML = `<pre class="turtle">${esc(env.text)}</pre>`;
     return;
   }
+  const qp = prefixesFromQuery(t.query);
+  const used = new Set();
+  const lines = (env.triples || []).map(
+    ([s, p, o]) => `${termTurtle(s, qp, used)} ${termTurtle(p, qp, used)} ${termTurtle(o, qp, used)} .`);
+  const decls = [...used].sort().map((p) => {
+    const ns = qp[p] || PREFIXES[p];
+    return `<span class="tprefix">@prefix ${esc(p)}: &lt;${esc(ns)}&gt; .</span>`;
+  });
+  body.innerHTML = `<pre class="turtle">${decls.join("\n")}${decls.length ? "\n\n" : ""}${lines.map(esc).join("\n")}</pre>`;
+}
 
+function renderTable(t, body, pager) {
+  const env = t.results.envelope;
   const { vars, rows, filtered, qp } = tableRows(t);
   if (!rows.length) {
     body.innerHTML = `<div class="placeholder">Query ran fine — zero results.</div>`;
@@ -627,6 +788,73 @@ function renderResults() {
     pager.querySelectorAll(".pbtn").forEach((b) => {
       b.onclick = () => { t.page = +b.dataset.p; renderResults(); };
     });
+  }
+}
+
+// A dependency-free pivot table (old YASGUI shipped one as a YASR plugin):
+// pick a row variable, an optional column variable, count or sum a numeric var.
+const PIVOT_MAX = { rows: 200, cols: 40 };
+function renderPivot(t, body) {
+  const { vars, filtered } = tableRows(t);
+  if (!filtered.length) {
+    body.innerHTML = `<div class="placeholder">Nothing to pivot — zero results.</div>`;
+    return;
+  }
+  if (!t.pivot || !vars.includes(t.pivot.row)) {
+    t.pivot = { row: vars[0], col: "", val: "count" };
+  }
+  const pv = t.pivot;
+  const vi = Object.fromEntries(vars.map((v, i) => [v, i]));
+
+  const cellVal = (r) => {
+    if (pv.val === "count") return 1;
+    const x = parseFloat(termText(r[vi[pv.val]]));
+    return isNaN(x) ? 0 : x;
+  };
+  const rowKeys = new Map(), colKeys = new Map(); // key → running index (insertion order)
+  const agg = new Map(); // "ri|ci" → number
+  for (const r of filtered) {
+    const rk = termText(r[vi[pv.row]]) || "—";
+    const ck = pv.col ? (termText(r[vi[pv.col]]) || "—") : "";
+    if (!rowKeys.has(rk)) rowKeys.set(rk, rowKeys.size);
+    if (!colKeys.has(ck)) colKeys.set(ck, colKeys.size);
+    const k = `${rowKeys.get(rk)}|${colKeys.get(ck)}`;
+    agg.set(k, (agg.get(k) || 0) + cellVal(r));
+  }
+  const rks = [...rowKeys.keys()].slice(0, PIVOT_MAX.rows);
+  const cks = [...colKeys.keys()].slice(0, PIVOT_MAX.cols);
+  const truncated = rowKeys.size > rks.length || colKeys.size > cks.length;
+
+  const sel = (id, items, cur, allowNone) =>
+    `<select id="${id}">${allowNone ? `<option value="">(none)</option>` : ""}${items.map((v) =>
+      `<option value="${esc(v)}"${v === cur ? " selected" : ""}>?${esc(v)}</option>`).join("")}</select>`;
+  const valSel = `<select id="pvVal"><option value="count"${pv.val === "count" ? " selected" : ""}>count</option>${vars.map((v) =>
+    `<option value="${esc(v)}"${v === pv.val ? " selected" : ""}>sum ?${esc(v)}</option>`).join("")}</select>`;
+
+  const max = Math.max(...agg.values(), 1);
+  const header = pv.col
+    ? `<tr><th>?${esc(pv.row)} ↓ · ?${esc(pv.col)} →</th>${cks.map((c) => `<th title="${esc(c)}">${esc(c)}</th>`).join("")}<th>Σ</th></tr>`
+    : `<tr><th>?${esc(pv.row)}</th><th>${pv.val === "count" ? "count" : "Σ ?" + esc(pv.val)}</th></tr>`;
+  const rowsHtml = rks.map((rk) => {
+    const ri = rowKeys.get(rk);
+    let sum = 0;
+    const tds = cks.map((ck) => {
+      const v = agg.get(`${ri}|${colKeys.get(ck)}`) || 0;
+      sum += v;
+      return `<td class="${v === 0 ? "zero" : v >= max * 0.66 ? "hot" : ""}">${v ? fmtInt(v) : "·"}</td>`;
+    }).join("");
+    return pv.col
+      ? `<tr><th title="${esc(rk)}">${esc(rk)}</th>${tds}<td><b>${fmtInt(sum)}</b></td></tr>`
+      : `<tr><th title="${esc(rk)}">${esc(rk)}</th><td>${fmtInt(agg.get(`${ri}|0`) || 0)}</td></tr>`;
+  }).join("");
+
+  body.innerHTML =
+    `<div class="pivotBar">rows ${sel("pvRow", vars, pv.row, false)} columns ${sel("pvCol", vars, pv.col, true)} value ${valSel}${
+      truncated ? `<span class="hint">showing first ${rks.length}×${cks.length} of ${rowKeys.size}×${colKeys.size} groups</span>` : ""
+    }</div><div class="tablewrap"><table class="pv"><thead>${header}</thead><tbody>${rowsHtml}</tbody></table></div>`;
+
+  for (const [id, prop] of [["pvRow", "row"], ["pvCol", "col"], ["pvVal", "val"]]) {
+    $(id).onchange = (e) => { t.pivot[prop] = e.target.value; renderResults(); };
   }
 }
 
@@ -680,7 +908,7 @@ async function runQuery() {
       envelope, raw: reply.json, ms: reply.ms,
       traffic: reply.traffic, remote: reply.remote, reason: !!t.reason, error: null,
     };
-    t.page = 1; t.sort = null; t.filter = "";
+    t.page = 1; t.sort = null; t.filter = ""; t.pivot = null;
     if (envelope.kind === "construct" && !envelope.triples) envelope.triples = [];
   } catch (err) {
     if (String(err.message) === "stopped") {
@@ -836,9 +1064,6 @@ function wireUi() {
     } else runQuery();
   };
 
-  document.querySelectorAll(".rtab").forEach((b) => {
-    b.onclick = () => { active().view = b.dataset.view; renderResults(); };
-  });
   $("filterBox").addEventListener("input", () => {
     const t = active();
     t.filter = $("filterBox").value;
@@ -849,15 +1074,19 @@ function wireUi() {
   $("dlJson").onclick = downloadJson;
   $("shareBtn").onclick = shareLink;
 
-  // drag & drop a .rete anywhere
+  // drag & drop a .rete anywhere (but not tab drags)
   let dragDepth = 0;
-  window.addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; $("dropOverlay").hidden = false; });
+  window.addEventListener("dragenter", (e) => {
+    if (e.dataTransfer && e.dataTransfer.types.includes("text/tab")) return;
+    e.preventDefault(); dragDepth++; $("dropOverlay").hidden = false;
+  });
   window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("dropOverlay").hidden = true; } });
   window.addEventListener("dragover", (e) => e.preventDefault());
   window.addEventListener("drop", (e) => {
-    e.preventDefault();
     dragDepth = 0;
     $("dropOverlay").hidden = true;
+    if (e.dataTransfer && e.dataTransfer.types.includes("text/tab")) return;
+    e.preventDefault();
     const f = e.dataTransfer.files && e.dataTransfer.files[0];
     if (f) attachFile(f);
   });
@@ -882,6 +1111,7 @@ function init() {
   renderResults();
   wireUi();
   setRunning(false);
+  loadPrefixCc();
   engine.boot().catch((e) => {
     $("resultsBody").innerHTML = `<div class="errbox"><b>Engine failed to start</b><pre>${esc(String(e.message || e))}</pre></div>`;
   });

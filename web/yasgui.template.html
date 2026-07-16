@@ -5,212 +5,214 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>yasgui-wasm — SPARQL over .rete files, entirely in your browser</title>
 <meta name="description" content="A Yasgui-style SPARQL IDE where the endpoint is a .rete file: paste a URL (read lazily over HTTP range) or drop a local file — the query engine is WebAssembly inside the page. No server.">
-<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="%23147d69"/><path d="M9.5 7.5v9l7.5-4.5z" fill="white"/></svg>'>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="%23337ab7" stroke-width="2.5"/><path d="M9.5 7.5v9l7.5-4.5z" fill="%23337ab7"/></svg>'>
 <style>
+  /* Faithful to Yasgui's own palette (yasgui.min.css): accent #337ab7, grays
+     #f5f5f5/#d1d1d1/#ccc/#555/#333, underline tabs, 40px round query button
+     top-right of the editor, CodeMirror-default token colors. */
   :root {
-    --accent: #147d69;
-    --accent-dark: #0d5a4b;
-    --ink: #1b1f23;
-    --muted: #5b6660;
-    --faint: #9aa5a0;
-    --line: #d7ddda;
-    --line-soft: #e3e7e5;
-    --bg: #f4f6f5;
-    --tint: #eef4f2;
+    --accent: #337ab7;
+    --accent-dark: #255681;
+    --ink: #333;
+    --muted: #555;
+    --faint: #999;
+    --line: #d1d1d1;
+    --line-soft: #dcdcdc;
+    --bg: #f5f5f5;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
-    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font: 14px/1.45 "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
     color: var(--ink); background: var(--bg);
   }
-  a { color: var(--accent-dark); }
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 18px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
 
   /* ---- header ---- */
-  header.top { padding: 16px 0 10px; }
-  .brand { font-size: 21px; font-weight: 800; letter-spacing: -.02em; }
-  .brand .x { color: var(--accent); font-weight: 800; }
-  .brand .wasm { color: var(--faint); font-weight: 600; font-size: 15px; margin-left: 2px; }
-  .tagline { color: var(--muted); font-size: 13px; margin-top: 2px; max-width: 72em; }
-  header.top nav { float: right; font-size: 13px; margin-top: 6px; }
-  header.top nav a { margin-left: 14px; text-decoration: none; }
-  header.top nav a:hover { text-decoration: underline; }
+  header.top { padding: 14px 0 8px; }
+  .brand { font-size: 20px; font-weight: 700; letter-spacing: -.01em; color: #111; }
+  .brand .x { color: var(--accent); }
+  .brand .wasm { color: var(--faint); font-weight: 500; font-size: 14px; margin-left: 1px; }
+  .tagline { color: var(--muted); font-size: 12.5px; margin-top: 2px; max-width: 76em; }
+  header.top nav { float: right; font-size: 13px; margin-top: 5px; }
+  header.top nav a { margin-left: 14px; }
 
-  /* ---- tabs ---- */
-  .tabsbar { display: flex; align-items: flex-end; gap: 4px; margin-top: 14px; border-bottom: 1px solid var(--line); }
-  #tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  /* ---- the yasgui block ---- */
+  .yasgui { background: #fff; border: 1px solid var(--line); border-radius: 4px; margin-top: 10px; padding: 0 10px 14px; }
+
+  /* query tabs: Yasgui's underline style (.tabsList) */
+  .tabsList { display: flex; flex-wrap: wrap; align-items: center; border-bottom: 1px solid var(--line-soft); }
   .tab {
-    display: flex; align-items: center; gap: 6px;
-    background: #e9edeb; border: 1px solid var(--line); border-bottom: none;
-    border-radius: 6px 6px 0 0; padding: 7px 8px 7px 14px;
-    font-size: 13px; cursor: pointer; color: var(--muted); user-select: none;
-    border-top: 3px solid transparent; margin-bottom: -1px;
+    display: flex; align-items: center; min-height: 35px; padding: 0 6px 0 14px;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    cursor: pointer; color: #888; user-select: none; font-size: 13.5px;
   }
-  .tab:hover { background: #f1f4f3; }
-  .tab.active { background: #fff; color: var(--ink); border-top-color: var(--accent); font-weight: 600; }
+  .tab:hover { color: var(--muted); }
+  .tab.active { border-bottom-color: var(--accent); color: var(--muted); }
+  .tab.dragover { border-left: 2px solid var(--accent); }
   .tabclose {
-    border: none; background: none; color: var(--faint); font-size: 15px;
-    cursor: pointer; padding: 0 3px; border-radius: 4px; line-height: 1;
+    border: none; background: none; color: #bbb; font-size: 15px;
+    cursor: pointer; padding: 0 4px; margin-left: 4px; line-height: 1;
   }
-  .tabclose:hover { color: #b3423a; background: rgba(179,66,58,.1); }
-  .tabrename { font: inherit; border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; width: 9em; }
-  #addTab {
-    border: 1px solid var(--line); border-bottom: none; background: #e9edeb;
-    border-radius: 6px 6px 0 0; font-size: 16px; padding: 5px 12px; cursor: pointer;
-    color: var(--muted); margin-bottom: -1px;
+  .tabclose:hover { color: #d9534f; }
+  .tabrename { font: inherit; border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; width: 9em; }
+  .addTab {
+    cursor: pointer; font-size: 120%; font-weight: 800; margin-left: 15px;
+    padding: 0 5px 2px; background: none; border: none; color: var(--accent);
   }
-  #addTab:hover { background: #fff; color: var(--accent-dark); }
+  .addTab:hover { transform: scale(1.15); }
 
-  /* ---- work area ---- */
-  main { background: #fff; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px; padding: 14px 14px 18px; }
-
-  .endpointbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; position: relative; }
-  .eplabel {
-    font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
-    font-size: 12px; color: var(--accent-dark); background: var(--tint);
-    border: 1px solid var(--line-soft); padding: 6px 9px; border-radius: 6px; font-weight: 700;
-  }
+  /* controlbar: endpoint row (Yasgui .controlbar) */
+  .controlbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; position: relative; padding: 10px 4px 10px; }
   #endpoint {
-    flex: 1; min-width: 240px; font: 13px "Cascadia Mono", Consolas, ui-monospace, monospace;
-    padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink);
-    background: #fff;
+    flex: 1; min-width: 240px; font: 13px "Helvetica Neue", Helvetica, Arial, sans-serif;
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink);
   }
-  #endpoint:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(20,125,105,.12); }
-  #endpoint.isfile { background: var(--tint); color: var(--accent-dark); }
+  #endpoint:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(51,122,183,.18); }
+  #endpoint.isfile { background: #eef4fa; color: var(--accent-dark); }
   .epbtn {
-    font-size: 13px; padding: 8px 12px; border: 1px solid var(--line); background: #fff;
-    border-radius: 6px; cursor: pointer; color: var(--ink); white-space: nowrap;
+    font-size: 13px; padding: 7px 11px; border: 1px solid var(--line); background: #fff;
+    border-radius: 3px; cursor: pointer; color: var(--muted); white-space: nowrap;
   }
-  .epbtn:hover { border-color: var(--accent); color: var(--accent-dark); }
+  .epbtn:hover { border-color: var(--accent); color: var(--accent); }
   .chip {
-    font-size: 12px; color: var(--accent-dark); background: var(--tint);
-    border: 1px solid var(--line-soft); border-radius: 999px; padding: 3px 10px;
+    font-size: 11.5px; color: var(--accent-dark); background: #eef4fa;
+    border: 1px solid #d4e3f1; border-radius: 999px; padding: 3px 10px;
   }
   .reason { font-size: 12.5px; color: var(--muted); white-space: nowrap; cursor: pointer; user-select: none; }
   .reason input { vertical-align: -2px; accent-color: var(--accent); }
 
   .pop {
-    position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+    position: absolute; top: calc(100% - 4px); right: 0; z-index: 40;
     width: min(560px, 92vw); max-height: 420px; overflow: auto;
-    background: #fff; border: 1px solid var(--line); border-radius: 10px;
-    box-shadow: 0 12px 32px rgba(27,31,35,.16); padding: 6px;
+    background: #fff; border: 1px solid var(--line); border-radius: 4px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.18); padding: 4px;
   }
-  .catitem { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
-  .catitem:hover { background: var(--tint); }
-  .cathead { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; }
+  .catitem { padding: 7px 10px; border-radius: 3px; cursor: pointer; }
+  .catitem:hover { background: #eef4fa; }
+  .cathead { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; color: var(--ink); }
+  .cathead b { font-weight: 600; }
   .catsize { color: var(--faint); font-size: 12px; white-space: nowrap; }
   .catblurb { color: var(--muted); font-size: 12.5px; }
 
-  /* ---- editor + run ---- */
-  .editorwrap { position: relative; margin-top: 12px; }
-  #editor { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
-  #runBtn {
-    position: absolute; right: 16px; bottom: -21px; z-index: 30;
-    width: 46px; height: 46px; border-radius: 50%; border: none; cursor: pointer;
-    background: var(--accent); color: #fff;
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 4px 12px rgba(13,90,75,.35);
-    transition: background .15s, transform .1s;
-  }
-  #runBtn:hover { background: var(--accent-dark); transform: scale(1.05); }
-  #runBtn.running { background: #b3423a; }
-  #runBtn svg { margin-left: 2px; }
-  #runBtn.running svg { margin-left: 0; }
+  /* ---- YASQE: editor + 40px round query button top-right ---- */
+  .yasqe { position: relative; }
+  #editor { border: 1px solid var(--line); border-radius: 3px; overflow: hidden; background: #fff; }
+  .yasqe_buttons { position: absolute; top: 10px; right: 20px; z-index: 5; }
+  #runBtn { border: none; background: none; padding: 0; cursor: pointer; width: 40px; height: 40px; display: block; }
+  #runBtn svg { width: 40px; height: 40px; display: block; }
+  #runBtn .btnCircle { fill: #fff; stroke: #505050; stroke-width: 2.5; }
+  #runBtn .btnGlyph { fill: #505050; }
+  #runBtn:hover .btnCircle { stroke: var(--accent); }
+  #runBtn:hover .btnGlyph { fill: var(--accent); }
+  #runBtn.running .btnCircle { stroke: var(--accent); stroke-dasharray: 90; animation: dash 1.5s linear infinite; }
+  #runBtn.running .btnGlyph { fill: #d9534f; }
+  @keyframes dash { to { stroke-dashoffset: -226; } }
 
-  /* ---- results (YASR) ---- */
-  .yasr { margin-top: 30px; }
-  .yasrbar {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    border-bottom: 1px solid var(--line-soft); padding-bottom: 8px;
-  }
+  /* ---- YASR: flat view buttons (.yasr_btnGroup) + controls ---- */
+  .yasr { margin-top: 14px; }
+  .yasrHeader { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--line-soft); padding-bottom: 0; }
+  .yasr_btnGroup { display: flex; margin: 0; padding: 0; list-style: none; }
   .rtab {
-    border: none; background: none; font: 600 13.5px system-ui, sans-serif; color: var(--muted);
-    padding: 6px 2px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -9px;
+    border: none; background: none; font: 13.5px "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #888; padding: 7px 10px; cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
   }
-  .rtab.active { color: var(--accent-dark); border-bottom-color: var(--accent); }
-  .stats { font-size: 12.5px; color: var(--muted); margin-left: 8px; }
+  .rtab:hover { color: var(--muted); }
+  .rtab.active { color: var(--muted); font-weight: 600; border-bottom-color: var(--accent); }
+  .stats { font-size: 12px; color: var(--muted); margin-left: 8px; }
   .stats b { color: var(--ink); }
   .spacer { flex: 1; }
-  #filterBox {
-    font-size: 12.5px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; width: 165px;
-  }
+  #filterBox { font-size: 12.5px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 3px; width: 160px; }
   #filterBox:focus { outline: none; border-color: var(--accent); }
   .miniBtn {
-    font-size: 12px; padding: 5px 10px; border: 1px solid var(--line); background: #fff;
-    border-radius: 6px; cursor: pointer; color: var(--muted);
+    font-size: 12px; padding: 4px 9px; border: 1px solid var(--line); background: #fff;
+    border-radius: 3px; cursor: pointer; color: var(--muted);
   }
-  .miniBtn:hover { border-color: var(--accent); color: var(--accent-dark); }
+  .miniBtn:hover { border-color: var(--accent); color: var(--accent); }
 
-  #resultsBody { margin-top: 4px; }
-  .placeholder { color: var(--faint); padding: 26px 8px; font-size: 13.5px; }
+  #resultsBody { margin-top: 2px; }
+  .placeholder { color: var(--faint); padding: 24px 8px; font-size: 13.5px; }
   .tablewrap { overflow-x: auto; }
-  table.rs { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.rs { border-collapse: collapse; width: 100%; font-size: .9em; }
   table.rs th {
-    text-align: left; font: 700 12.5px "Cascadia Mono", Consolas, ui-monospace, monospace;
-    color: var(--accent-dark); background: #fafbfa; border-bottom: 2px solid var(--line-soft);
-    padding: 8px 10px; cursor: pointer; white-space: nowrap; position: sticky; top: 0;
+    text-align: left; font-weight: 700; color: var(--ink); background: #fff;
+    border-bottom: 2px solid #ccc; padding: 8px 7px; cursor: pointer; white-space: nowrap;
+    position: sticky; top: 0;
   }
   table.rs th.rownum { cursor: default; }
-  .sortmark { color: var(--faint); }
-  table.rs td { border-bottom: 1px solid #f0f2f1; padding: 6px 10px; vertical-align: top; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  table.rs tr:hover td { background: #f7faf9; }
-  td.rownum, th.rownum { color: var(--faint); font-size: 11.5px; width: 1%; text-align: right; }
-  a.iri { text-decoration: none; color: #0f4d8f; }
-  a.iri:hover { text-decoration: underline; }
-  .bnode { color: #8250df; font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 12.5px; }
+  .sortmark { color: var(--accent); font-size: 10px; }
+  table.rs td { border-bottom: 1px solid #eee; padding: 5px 7px; vertical-align: top; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.rs tr:hover td { background: #f5f9fc; }
+  td.rownum, th.rownum { color: var(--faint); font-size: 11px; width: 1%; text-align: right; }
+  a.iri { color: var(--accent); }
+  .bnode { color: #708; font-family: Consolas, Menlo, ui-monospace, monospace; font-size: 12px; }
   .lit { color: var(--ink); }
   .ttag { color: var(--faint); font-size: 11px; margin-left: 3px; }
   .nullcell { color: var(--faint); }
-  pre.rawjson {
-    font: 12.5px "Cascadia Mono", Consolas, ui-monospace, monospace;
-    background: #fafbfa; border: 1px solid var(--line-soft); border-radius: 8px;
+  pre.rawjson, pre.turtle {
+    font: 12.5px Consolas, Menlo, "Cascadia Mono", ui-monospace, monospace;
+    background: #fff; border: 1px solid var(--line-soft); border-radius: 3px;
     padding: 12px; overflow: auto; max-height: 60vh; white-space: pre-wrap; word-break: break-word;
+    margin: 10px 0 0;
   }
+  pre.turtle .tprefix { color: #708; }
   .askbox {
-    display: inline-block; margin: 18px 6px; padding: 14px 34px; border-radius: 10px;
-    font: 800 26px system-ui, sans-serif; letter-spacing: .02em;
+    display: inline-block; margin: 16px 6px; padding: 12px 32px; border-radius: 4px;
+    font: 700 24px "Helvetica Neue", Helvetica, Arial, sans-serif;
   }
-  .askbox.yes { background: #e5f3ee; color: #0d5a4b; border: 1px solid #b9ded2; }
-  .askbox.no { background: #fbeae8; color: #94382f; border: 1px solid #eecac5; }
+  .askbox.yes { background: #dff0d8; color: #3c763d; border: 1px solid #d6e9c6; }
+  .askbox.no { background: #f2dede; color: #a94442; border: 1px solid #ebccd1; }
   .errbox {
-    background: #fbeae8; border: 1px solid #eecac5; color: #6d2a23;
-    border-radius: 8px; padding: 12px 14px; margin-top: 10px; font-size: 13px;
+    background: #f2dede; border: 1px solid #ebccd1; color: #a94442;
+    border-radius: 4px; padding: 11px 14px; margin-top: 10px; font-size: 13px;
   }
   .errbox pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; font-size: 12.5px; }
   .hint { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
-  .hint code { background: #f0f2f1; padding: 1px 4px; border-radius: 4px; }
+  .hint code { background: #f5f5f5; padding: 1px 4px; border-radius: 3px; }
 
-  .pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 2px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+  /* pivot view */
+  .pivotBar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 2px; font-size: 12.5px; color: var(--muted); }
+  .pivotBar select { font: 12.5px inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--ink); }
+  table.pv { border-collapse: collapse; font-size: .85em; }
+  table.pv th { background: #f5f5f5; border: 1px solid var(--line-soft); padding: 4px 8px; font-weight: 600; text-align: left; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.pv td { border: 1px solid #eee; padding: 4px 8px; text-align: right; }
+  table.pv td.hot { background: #eef4fa; }
+  table.pv td.zero { color: #ccc; }
+
+  .pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 2px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
   .pbtns { display: flex; align-items: center; gap: 6px; }
-  .pbtn { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 3px 12px; cursor: pointer; font-size: 13px; }
+  .pbtn { border: 1px solid var(--line); background: #fff; border-radius: 3px; padding: 2px 11px; cursor: pointer; font-size: 13px; color: var(--muted); }
   .pbtn:disabled { opacity: .4; cursor: default; }
   .pcur { color: var(--faint); }
 
-  footer { color: var(--faint); font-size: 12px; padding: 18px 0 30px; max-width: 72em; }
+  footer { color: var(--faint); font-size: 12px; padding: 16px 2px 28px; max-width: 78em; }
   footer a { color: var(--muted); }
 
   .spin {
     display: inline-block; width: 11px; height: 11px; border-radius: 50%;
     border: 2px solid var(--line); border-top-color: var(--accent);
-    animation: spin .7s linear infinite; vertical-align: -1px; margin-right: 4px;
+    animation: spinrot .7s linear infinite; vertical-align: -1px; margin-right: 4px;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes spinrot { to { transform: rotate(360deg); } }
 
+  #dropOverlay[hidden], #toast[hidden], .pop[hidden], .chip[hidden], #pager[hidden] { display: none !important; }
   #toast {
     position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 60;
-    background: var(--ink); color: #fff; font-size: 13px; padding: 9px 16px;
-    border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.25); max-width: 90vw;
+    background: #333; color: #fff; font-size: 13px; padding: 9px 16px;
+    border-radius: 4px; box-shadow: 0 6px 18px rgba(0,0,0,.3); max-width: 90vw;
   }
-  #dropOverlay[hidden], #toast[hidden], .pop[hidden], .chip[hidden], #pager[hidden] { display: none !important; }
   #dropOverlay {
-    position: fixed; inset: 0; z-index: 50; background: rgba(20,125,105,.12);
+    position: fixed; inset: 0; z-index: 50; background: rgba(51,122,183,.12);
     border: 4px dashed var(--accent); display: flex; align-items: center; justify-content: center;
-    font: 700 22px system-ui, sans-serif; color: var(--accent-dark); pointer-events: none;
+    font: 700 22px "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--accent-dark); pointer-events: none;
   }
   @media (max-width: 720px) {
     header.top nav { float: none; margin: 4px 0 0; }
     .stats { order: 10; width: 100%; margin-left: 0; }
+    .yasqe_buttons { right: 10px; }
   }
 </style>
 </head>
@@ -230,14 +232,13 @@
     </div>
   </header>
 
-  <div class="tabsbar">
-    <div id="tabs"></div>
-    <button id="addTab" title="New tab">+</button>
-  </div>
+  <div class="yasgui">
+    <div class="tabsList">
+      <div id="tabs" style="display:flex;flex-wrap:wrap"></div>
+      <button id="addTab" class="addTab" title="New tab">+</button>
+    </div>
 
-  <main>
-    <div class="endpointbar">
-      <span class="eplabel">.rete</span>
+    <div class="controlbar">
       <input id="endpoint" spellcheck="false" autocomplete="off"
              placeholder="https://… URL of a .rete file (needs CORS + HTTP Range) — or open a local file">
       <button class="epbtn" id="catalogBtn" title="Pick one of the published datasets">datasets ▾</button>
@@ -248,15 +249,14 @@
       <div id="catalogPop" class="pop" hidden></div>
     </div>
 
-    <section class="editorwrap">
+    <section class="yasqe">
       <div id="editor"></div>
-      <button id="runBtn" title="Run (Ctrl+Enter)"></button>
+      <div class="yasqe_buttons"><button id="runBtn" title="Run (Ctrl+Enter)"></button></div>
     </section>
 
     <section class="yasr">
-      <div class="yasrbar">
-        <button class="rtab active" data-view="table">Table</button>
-        <button class="rtab" data-view="response">Response</button>
+      <div class="yasrHeader">
+        <ul class="yasr_btnGroup" id="viewTabs"></ul>
         <span id="resultStats" class="stats"></span>
         <span class="spacer"></span>
         <input id="filterBox" placeholder="Filter query results" spellcheck="false">
@@ -267,14 +267,16 @@
       <div id="resultsBody"></div>
       <div id="pager" class="pager" hidden></div>
     </section>
-  </main>
+  </div>
 
   <footer>
     UI after <a href="https://github.com/TriplyDB/Yasgui" rel="noopener" target="_blank">Yasgui</a> (Triply) —
     engine: <a href="https://github.com/caviri/rete" rel="noopener" target="_blank">rete</a>, a cloud-native
     range-queryable RDF file format, compiled to WebAssembly and inlined into this single HTML file. Everything runs
     client-side: your queries never leave the machine — for remote files the network sees only HTTP range requests
-    for raw bytes. Uploaded files are read in memory and never sent anywhere. <span id="buildStamp"></span>
+    for raw bytes. Uploaded files are read in memory and never sent anywhere. Autocomplete prefixes come from your
+    query + <a href="https://prefix.cc" rel="noopener" target="_blank">prefix.cc</a>; entity suggestions come from the
+    dataset's own label index. <span id="buildStamp"></span>
   </footer>
 </div>
 

@@ -82,6 +82,14 @@ self.onmessage = async (e) => {
       return;
     }
 
+    if (m.type === "prefix") {
+      const g = graphs.get(m.key);
+      if (!g) throw new Error("no dataset open");
+      const hits = JSON.parse(g.handle.prefix_search(m.prefix, m.limit || 20));
+      reply({ ok: true, hits });
+      return;
+    }
+
     if (m.type === "close") {
       graphs.delete(m.key);
       reply({ ok: true });
