@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Graph-map, topic-map & 3D (exp.) · rete docs</title>
+  <title>SPARQL IDE — yasgui·wasm · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -202,12 +202,12 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Explore in the browser</li>
         <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
         <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
-        <li class="nav-group"><details><summary>SPARQL IDE — yasgui·wasm</summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
+        <li class="nav-group"><details open><summary>SPARQL IDE — yasgui·wasm</summary><ul class="nav-sub"><li><a href="yasgui-guide.html" class="active">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li><a href="subtitles.html">Subtitle timeline</a></li>
-        <li class="nav-group"><details open><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html" class="active">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
@@ -240,176 +240,61 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Graph-map &amp; topic-map (experiment)</h1>
-<blockquote>
-<p><strong>Side experiment, not part of the core tool.</strong> Everything here only <em>reads</em> a
-<code>.rete</code> (and the community pyramid already inside it) and emits a standalone
-<a href="https://github.com/protomaps/PMTiles">PMTiles</a> archive + a static viewer. The
-format and CLI are untouched. Code: <a href="https://github.com/caviri/rete/tree/main/experiments/graph-map"><code>experiments/graph-map/</code></a>.</p>
-</blockquote>
-<p>A <code>.rete</code> file already carries a <strong>Louvain community pyramid</strong> — a multi-level
-clustering of the graph. This experiment turns that into a <strong>slippy map</strong>: pan
-and zoom a graph like a web map, where each zoom band is a coarser/finer level
-of the hierarchy. Two complementary lenses ship:</p>
-<table><thead><tr><th></th><th><strong>structural graph-map</strong></th><th><strong>semantic topic-map</strong></th></tr></thead><tbody>
-<tr><td>groups by</td><td><strong>link topology</strong> (community pyramid)</td><td><strong>text similarity</strong> (community literals)</td></tr>
-<tr><td>colour</td><td>level / connectivity</td><td><strong>LDA topic</strong></td></tr>
-<tr><td>label</td><td>size / connectivity</td><td><strong>top words</strong></td></tr>
-<tr><td>answers</td><td>"how is it wired?"</td><td>"what is it about?"</td></tr>
-</tbody></table>
-<p>Both deliver as a single HTTP <strong>range-readable</strong> <code>.pmtiles</code> rendered by MapLibre
-GL in the browser — the same publish-and-query-by-byte-range story as <code>.rete</code>
-itself: no server, no full download.</p>
-<blockquote>
-<p><strong>Open the live viewers</strong> (tiles range-read from the project's R2 storage):
-<a href="graph-map/viewer.html">structural map</a> ·
-<a href="graph-map/viewer-topics.html">topic map (pyramidal LDA)</a> ·
-<a href="graph-map/viewer-3d.html">3D side-elevation — deck.gl</a> ·
-<a href="graph-map/viewer-3d-three.html">3D — three.js + fog</a></p>
-<p>A different browser lens on the same graphs — <a href="ask-the-graph.html"><strong>ask the graph</strong></a>,
-a transformers.js graphRAG search — has its own page now.</p>
-</blockquote>
-<h2>Why a map at all</h2>
-<p>Force-directed pictures of a big graph collapse into a hairball. A map fixes
-that with <strong>levels of detail</strong>: zoomed out you see a handful of coarse regions
-(the "continents"); as you zoom in, finer structure resolves — exactly how a
-web map goes country → city → street. rete's pyramid <em>is</em> that level hierarchy,
-so the mapping is direct. (Prior art: GMap, <em>"Visualizing Graphs and Clusters
-as Maps"</em>.)</p>
-<hr />
-<h2>1. Structural graph-map — the community pyramid</h2>
-<p>Nodes are rete's pyramid communities; the most-connected hubs dominate when
-zoomed out. Each super-community is drawn as a translucent <strong>convex-hull
-boundary</strong>, with its finer child communities rendering <em>inside</em> it as you zoom.</p>
-<p><strong>Pipeline</strong> (<a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/build_map.py"><code>build_map.py</code></a>):</p>
-<pre><code>rete summary &lt;file&gt;            → weighted community graph (pyramid round 0)
-igraph multilevel Louvain      → coarser super-communities (extra zoom levels)
-igraph DRL layout              → 2D coords for the base communities
-size-weighted centroids upward → coords for every coarser level
-convex hulls + GeoJSON         → tippecanoe → graphmap.pmtiles
-</code></pre>
-<p>On the 12M-triple Wikidata slice that becomes 4 zoom bands — 38 → 103 → 2,198
-super-communities over 60,000 base communities (a 12 MB <code>.pmtiles</code>).</p>
-<p><img src="img/graphmap-zoomout.png" alt="Structural graph-map, zoomed out — coarse super-communities as hulls" />
-<em>Zoomed out: coarse super-communities as translucent hulls, sized by connectivity.</em></p>
-<p><img src="img/graphmap-detail.png" alt="Structural graph-map, zoomed in — finer communities inside the boundaries" />
-<em>Zoomed in: finer pyramid communities resolve inside their parent boundary.</em></p>
-<p><strong>In the viewer</strong> (<a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/viewer.html"><code>viewer.html</code></a>):
-zoom-out shows the whole graph as a small island; <strong>hover</strong> a node for level /
-size / sub-community count; <strong>click</strong> a node to highlight all its links, then a
-2nd/3rd to show only the links <em>among</em> the selected set. A <strong>round minimap</strong>
-(bottom-right) shows the whole graph with a viewport box; a <strong>clear</strong> button and
-<strong>layer toggles</strong> (boundaries / links / nodes / labels) control what's drawn.</p>
-<hr />
-<h2>2. Semantic topic-map — communities by LDA topic</h2>
-<p>The structural map says how the graph is <em>wired</em>; this says what each cluster is
-<em>about</em>. rete supplies the two hard parts — the Louvain partition <strong>and</strong> the
-per-community text — and LDA is the standard downstream step (see
-<a href="topic-modeling.html">Topic modeling</a>). Communities are laid out by <strong>text
-similarity</strong>, coloured by their dominant <strong>LDA topic</strong>, and labelled by top
-words; a <strong>legend</strong> maps each colour to its topic keywords.</p>
-<p><strong>Pipeline</strong> (<a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/build_topic_map.py"><code>build_topic_map.py</code></a>):</p>
-<pre><code>rete communities --json --profile        → communities w/ members, text, profile
-CountVectorizer + LatentDirichletAllocation (scikit-learn) → topic per community
-TruncatedSVD(2) over TF-IDF               → 2D text-similarity layout
-per-topic convex hulls + GeoJSON          → tippecanoe → topicmap.pmtiles
-</code></pre>
+<h1>SPARQL IDE — yasgui·wasm</h1>
+<p><strong><a href="yasgui.html">▸ Launch the IDE</a></strong> — one static HTML file, no server, no account.</p>
+<p>A <a href="https://github.com/TriplyDB/Yasgui">Yasgui</a>-style SPARQL IDE with one twist: the <em>endpoint</em> is a
+<strong><code>.rete</code> file</strong>. Where the original sends every query to a SPARQL server, here the engine is the rete
+WASM build inlined into the page — so the endpoint field takes:</p>
 <ul>
-<li><strong>z0</strong> — one translucent hull per LDA topic (the legend colours), labelled
-with that topic's keywords.</li>
-<li><strong>z1+</strong> — the communities inside, coloured by topic, labelled by top words.
-<strong>Hovering</strong> a community shows what it <em>is</em> — its dominant <code>rdf:type</code> and its
-characteristic <strong>properties</strong> (top predicates), both straight from
-<code>rete communities --profile</code>. A <strong>legend</strong> lists every topic's keywords;
-clicking a topic (or its region) isolates it, and <strong>layer toggles</strong> + a
-<strong>show-all</strong> button control the view.</li>
+<li><strong>a URL</strong> — any <code>.rete</code> served with CORS + HTTP Range. The file is opened <em>lazily</em>: the engine
+range-fetches only the bytes your query touches. The stats line shows exactly how much — the default
+example answers "who did Rembrandt teach?" over Getty ULAN by fetching <strong>~512 KB of a 4.1 MB file in
+3 range requests</strong>; running it again fetches 0 bytes (session cache).</li>
+<li><strong>a local file</strong> — the <strong>⬆ open file</strong> button or drag-and-drop. The file is read in browser memory
+and never uploaded anywhere.</li>
 </ul>
-<p>Run on the <strong>1 GB Wikidata bundle</strong> (120 M triples → 140 communities of ≥5
-members, 10 LDA topics), real themes separate cleanly — e.g. rivers
-(<em>river, abhainn, ruda</em>), villages (<em>india, gujarat, village, dorf</em>),
-settlements (<em>pierre, saint, selo, oleksandrivka</em>), people (<em>michael, richard,
-robert, actor</em>), British footballers (<em>brit, futbolista, britanski</em>), and
-Wikimedia disambiguation pages.</p>
-<p><img src="img/topicmap.png" alt="Semantic topic-map with LDA legend" />
-<em>Topic regions coloured by LDA topic; the legend lists each topic's keywords.
-Click a region or legend row to isolate one topic.</em></p>
-<blockquote>
-<p><strong>Data note.</strong> Topic modelling wants a <em>densely linked</em> graph with rich text.
-The Wikidata <em>truthy</em> slice is link-sparse, so most communities are small;
-the 1 GB tier still surfaces a handful of large, coherent ones. A citation
-network (dense links + abstracts) is the canonical fit — see
-<a href="topic-modeling.html">Topic modeling</a>.</p>
-</blockquote>
-<hr />
-<h2>3. 3D side-elevation — the pyramid as stacked strata</h2>
-<p>A button to <strong>rotate the map 90°</strong> and see it from the side: each zoom level
-becomes a <strong>horizontal plane</strong> stacked in 3D, and the lines between planes are
-the <strong>parent→child</strong> links of the community hierarchy. Built with
-<a href="https://deck.gl">deck.gl</a>'s orthographic <code>OrbitView</code> (MapLibre is 2D-only), so
-it's a true projection you can orbit by dragging.</p>
-<p><img src="img/graphmap-3d.png" alt="3D stacked-strata side elevation" />
-<em>Level 0 (coarse super-communities) on top down to the 60k base communities as
-the bottom plane; tan lines are parent→child links between strata.</em></p>
-<p><strong>In the viewer</strong> (<a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/viewer-3d.html"><code>viewer-3d.html</code></a>):</p>
+<p>The <strong>datasets ▾</strong> menu offers a curated slice of the <a href="playground-guide.html">published datasets</a>
+(Getty ULAN lineage, Spanish law, Herculaneum scrolls, Magic cards, a 100 MB Wikidata bite, …), each
+served straight from object storage.</p>
+<h2>What it does</h2>
+<p>Everything you'd expect from Yasgui, plus a few things a server endpoint can't offer:</p>
 <ul>
-<li><strong>Rotate 90°</strong> snaps between the top-down view and the orthographic side view.</li>
-<li>A <strong>view-depth slider</strong> controls how far <em>into</em> the stack you can see (a
-clipping plane sweeping along the depth axis) — peer at the front strata or
-reveal the whole volume.</li>
-<li><strong>Layer toggles</strong> for nodes / <strong>level-floor hulls</strong> / <strong>size labels</strong> /
-intra-level links / parent→child links / <strong>base→L3 links</strong> (the 60k base
-communities tethered to their level-3 parents), and a per-level legend.</li>
+<li><strong>Tabs</strong> — each with its own endpoint, query, and results; rename by double-click, reorder by drag,
+persisted in <code>localStorage</code> across visits.</li>
+<li><strong>Editor</strong> (CodeMirror 6, SPARQL mode, classic YASQE colors) — <code>Ctrl+Enter</code> runs, <code>Ctrl+Space</code>
+completes. Autocompletion merges three sources:
+<ol>
+<li>SPARQL keywords, functions, and the query's own <code>?variables</code>;</li>
+<li><strong>prefixes</strong> — a curated table merged with <a href="https://prefix.cc">prefix.cc</a>'s popular list, and,
+YASQE-style, typing <code>foaf:</code> in the body auto-inserts the <code>PREFIX</code> declaration at the top;</li>
+<li><strong>entities from the dataset itself</strong> — suggestions come from the open file's label prefix-index
+(type <code>Rembr</code>, get <em>Rembrandt van Rijn</em> with its IRI), served lazily over HTTP range like
+everything else.</li>
+</ol>
+</li>
+<li><strong>Result views</strong>, per result kind: <strong>Table | Pivot | Response</strong> for <code>SELECT</code> (the pivot is a
+row × column count/sum matrix), <strong>Table | Turtle | Response</strong> for <code>CONSTRUCT</code>, a boolean panel for
+<code>ASK</code>. The table filters, sorts, paginates; CSV/JSON download included.</li>
+<li><strong>Share links</strong> — 🔗 copies a URL that reopens your query + endpoint in a fresh tab, like Yasgui's.</li>
+<li><strong>🧠 reason</strong> — runs the query with <a href="reasoning.html">OWL 2 QL entailment</a> rewritten against the file's
+ontology; try it on the <code>boe</code> dataset.</li>
+<li><strong>A per-query traffic line</strong> — elapsed time plus bytes / range requests actually fetched, measured by
+the engine. In-memory files report <em>in-memory</em>; cached re-runs report <em>0 bytes fetched</em>.</li>
 </ul>
-<p>There are <strong>two implementations</strong> of the 3D view:</p>
-<ul>
-<li><a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/viewer-3d.html"><code>viewer-3d.html</code></a>
-— <strong>deck.gl</strong> orthographic <code>OrbitView</code>: data-layer abstractions + built-in
-picking/tooltips; the depth slider is an alpha cutoff along the depth axis.</li>
-<li><a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/viewer-3d-three.html"><code>viewer-3d-three.html</code></a>
-— a <strong>three.js</strong> prototype: glowing points, and the depth slider is
-<strong>real camera fog</strong> (<code>FogExp2</code>) so "how far you can see" is physically correct
-— pull it in to fade out the far strata, push it out to see the whole volume.</li>
-</ul>
-<p><img src="img/graphmap-3d-three.png" alt="three.js 3D side elevation" />
-<em>The three.js prototype: glowing stacked strata with camera-fog depth.</em></p>
-<hr />
-<h2>Run it</h2>
-<p>Both maps share a standalone toolchain image (tippecanoe + python-igraph +
-scikit-learn + pmtiles) and call the rete binary already built at
-<code>target/release/rete</code>.</p>
-<pre><code class="language-sh">docker build -t rete-graphmap -f experiments/graph-map/Dockerfile experiments/graph-map
-
-# structural map
-docker run --rm -v "${PWD}:/work" -w /work rete-graphmap \
-  data/wikidata-100MB/wikidata.rete -o experiments/graph-map/out
-
-# topic map (LDA)
-docker run --rm -v "${PWD}:/work" -w /work --entrypoint python rete-graphmap \
-  experiments/graph-map/build_topic_map.py data/wikidata-100MB/wikidata.rete \
-  --topics 12 -o experiments/graph-map/out
-</code></pre>
-<p>View with the Range-capable static server (PMTiles needs <code>206</code> responses):</p>
-<pre><code class="language-sh">python experiments/graph-map/serve.py 8000
-#  http://localhost:8000/viewer.html          (structural map + minimap)
-#  http://localhost:8000/viewer-topics.html   (LDA topics + legend)
-#  http://localhost:8000/viewer-3d.html        (3D stacked-strata side view, deck.gl)
-#  http://localhost:8000/viewer-3d-three.html   (3D prototype, three.js + camera fog)
-</code></pre>
-<p>The 3D viewer reads <code>graphmap-3d.json</code> (node positions per level + intra-level
-edges + parent→child links), which <code>build_map.py</code> emits alongside the
-<code>.pmtiles</code>.</p>
-<p>See <a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/README.html"><code>experiments/graph-map/README.md</code></a>
-for all flags (<code>--max-base</code>, <code>--footprint</code>, <code>--topics</code>, <code>--maxzoom</code>, …).</p>
-<h2>Caveats (it's an experiment)</h2>
-<ul>
-<li><strong>Layout is the cost, not the tiling.</strong> DRL handles ~100k base communities;
-past that, <code>--max-base</code> keeps the most-connected ones.</li>
-<li><strong>Coordinates are a layout, not a measurement</strong> — proximity ≈ relatedness,
-axes mean nothing.</li>
-<li><strong><code>rete communities</code> recomputes Louvain</strong>, so the topic map's partition is not
-byte-identical to the stored pyramid <code>summary</code> uses; the two maps are
-complementary views, not the same nodes.</li>
-</ul>
+<h2>Hosting your own</h2>
+<p>Point the endpoint field at any <code>.rete</code> you <a href="hosting.html">host yourself</a>: the server must send
+<code>Access-Control-Allow-Origin</code> and honor <code>Range</code> requests (status 206) — R2, S3-compatible stores,
+GitHub releases and Zenodo all qualify. Build the file with <a href="cli.html"><code>rete build</code></a>, from RDF or
+<a href="data-engineering.html">anything else</a>.</p>
+<h2>How it's built</h2>
+<p><code>scripts/build_yasgui.py</code> inlines the CodeMirror bundle, the wasm-bindgen no-modules glue and the
+base64-encoded engine into <code>docs/yasgui.html</code> from <code>web/yasgui.template.html</code> +
+<code>web/yasgui-src/{app,worker}.js</code>. Queries run in a Blob-spawned Web Worker — the lazy remote reader
+uses synchronous XHR, which browsers only allow off the main thread. The end-to-end regression lives
+at <code>tests/gate/checks/check_yasgui.mjs</code> (run it manually after touching the sources; it is not part
+of the gate matrix).</p>
+<p>UI after <a href="https://yasgui.triply.cc/">Yasgui</a> by Triply — the tab model, the round query button, the
+YASR view plugins and the autocompleters are all loving imitations.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -417,7 +302,7 @@ complementary views, not the same nodes.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/graph-map.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/yasgui-guide.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

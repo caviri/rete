@@ -33,6 +33,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("playground-guide.md", "Playground"),
             ("plaza/index.html", "Plaza — dataset gallery"),
+            ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
             ("atlas.md", "Historical atlas — SPARQL + GIS"),
             ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
             ("football.md", "Football — match replays"),
@@ -165,6 +166,10 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
             ("graph-map/viewer-topics.html", "topic map (LDA)"),
             ("graph-map/viewer-3d.html", "3D — deck.gl"),
             ("graph-map/viewer-3d-three.html", "3D — three.js + fog"),
+        ]),
+        "yasgui-guide.md" => Some(&[
+            ("yasgui-guide.html", "overview"),
+            ("yasgui.html", "launch the IDE →"),
         ]),
         "atlas.md" => Some(&[
             ("atlas.html", "overview"),

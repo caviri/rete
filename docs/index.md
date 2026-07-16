@@ -63,6 +63,7 @@ rete schema  social.rete    # semantic (by rdf:type)
 
 - **[Playground](playground-guide.md)** — the flagship demo: 40+ real datasets queried live over HTTP ranges, with SPARQL + SQL + semantic search, media viewers, and AI helpers. [Launch it →](playground.html)
 - **[Plaza — dataset gallery](plaza/index.html)** — browse published datasets as live cards.
+- **[SPARQL IDE — yasgui·wasm](yasgui-guide.md)** — a Yasgui-style IDE where the endpoint is a `.rete` file: paste a URL (read lazily over HTTP range) or drop a local file; tabs, autocomplete from the dataset's own labels, pivot/turtle views, share links. [Launch it →](yasgui.html)
 - **[Historical atlas](atlas.md)** — SPARQL + GIS: border polygons, timeline, five projections.
 - **[2D match replay](pitch.html)** — a football match replayed on a canvas pitch from a spatiotemporal `.rete` (player + ball positions, 5 fps; pick any match). [Launch it →](pitch.html)
 - **[Subtitle timeline](subtitles.html)** — one film subtitled in 20 languages; scrub the timeline and watch a line of dialogue appear in every language at once. [Launch it →](subtitles.html)
