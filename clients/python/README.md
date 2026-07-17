@@ -15,6 +15,11 @@ CLI and the [browser playground](https://caviri.github.io/rete/playground.html).
 uv pip install rete-graph        # or: pip install rete-graph
 ```
 
+Wheels cover Linux (x86_64/aarch64), macOS, Windows — and, from 0.2.0,
+**browser Python**: in JupyterLite or marimo's WASM playground,
+`%pip install rete-graph` resolves a Pyodide (PyEmscripten) wheel and remote
+graphs are queried over sync-XHR range requests, no server anywhere.
+
 A runnable tour with captured outputs lives in
 [`examples/tutorial.ipynb`](examples/tutorial.ipynb).
 
