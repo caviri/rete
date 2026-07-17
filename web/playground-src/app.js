@@ -516,7 +516,13 @@ self.onmessage = function (e) {
         const m = e.data;
         if (m.type === "ready") { clearTimeout(watchdog); if (remoteResolveReady) remoteResolveReady(); return; }
         if (m.type === "initError") { failWorker(new Error("The engine couldn't start in your browser: " + m.error)); return; }
-        if (m.type === "progress") { if (remoteOnProgress) remoteOnProgress(m); return; }
+        if (m.type === "progress") {
+          // Live counters survive a mid-query wasm trap — the error report uses
+          // them to say what was fetched BEFORE the failure.
+          state.liveRemoteFetch = { requests: m.requests || 0, bytes: m.bytes || 0, at: Date.now() };
+          if (remoteOnProgress) remoteOnProgress(m);
+          return;
+        }
         if (m.type === "result") {
           const p = remotePending.get(m.id);
           if (!p) return;
@@ -546,6 +552,8 @@ self.onmessage = function (e) {
   function remoteSparql(url, query, fmt, reason) {
     return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
       const id = ++remoteSeq;
+      state.remoteQueryStart = Date.now();
+      state.liveRemoteFetch = { requests: 0, bytes: 0, at: Date.now() };
       remotePending.set(id, { resolve, reject });
       remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table", reason: !!reason });
     }));
@@ -8008,10 +8016,24 @@ self.onmessage = function (e) {
     push("async-reads (asyncify fetch variant)", state.remote ? !!state.asyncReadsOn : "n/a");
     push("range-cache", !!state.rangeCacheOn);
     try { push("reason (OWL QL)", !!($("owlReason") && $("owlReason").checked)); } catch (_e) { /* ignore */ }
-    // What the last remote query actually fetched (requests / bytes).
+    // How long the failing query ran, and what it had fetched by then — the live
+    // progress counters survive a wasm trap that kills the worker mid-query.
+    try {
+      if (state.remoteQueryStart) {
+        const ms = Date.now() - state.remoteQueryStart;
+        L.push("elapsed: " + (ms >= 10000 ? (ms / 1000).toFixed(1) + " s" : ms + " ms") + " since the query started");
+      }
+      const live = state.liveRemoteFetch;
+      if (live && (live.requests || live.bytes)) {
+        L.push("fetched-before-error: " + live.requests + " request(s), " + formatBytes(live.bytes)
+          + (live.at ? " (last fetch at +" + Math.max(0, live.at - (state.remoteQueryStart || live.at)) + " ms)" : ""));
+      }
+    } catch (_e) { /* ignore */ }
+    // What the last COMPLETED remote query fetched (requests / bytes). The worker
+    // logs each fetch as {k, b} — sum `b` (with `bytes` kept for older logs).
     try {
       const lg = state.lastRemoteLog || [];
-      if (lg.length) L.push("last-remote-fetch: " + lg.length + " request(s), " + formatBytes(lg.reduce((a, x) => a + (x.bytes || 0), 0)));
+      if (lg.length) L.push("last-remote-fetch: " + lg.length + " request(s), " + formatBytes(lg.reduce((a, x) => a + (x.bytes || x.b || 0), 0)));
     } catch (_e) { /* ignore */ }
     // Device / browser — mobile detection + memory hints.
     try {

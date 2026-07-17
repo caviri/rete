@@ -1407,7 +1407,7 @@ PREFIX rete: <https://w3id.org/rete/>
 SELECT ?class ?name ?description ?instances WHERE {
   ?class wdt:P279 wd:Q41176 ;
          rdfs:label ?name . FILTER(lang(?name) = "en")
-  OPTIONAL { ?class schema:description ?description . FILTER(lang(?description) = "en") }
+  ?class schema:description ?description . FILTER(lang(?description) = "en")
   OPTIONAL { ?class rete:instanceCount ?instances }
 }
 ORDER BY DESC(?instances)
@@ -1437,13 +1437,13 @@ PREFIX rete: <https://w3id.org/rete/>
 SELECT ?ancestor ?name ?description ?instances WHERE {
   wd:Q23413 wdt:P279+ ?ancestor .
   ?ancestor rdfs:label ?name . FILTER(lang(?name) = "en")
-  OPTIONAL { ?ancestor schema:description ?description . FILTER(lang(?description) = "en") }
+  ?ancestor schema:description ?description . FILTER(lang(?description) = "en")
   OPTIONAL { ?ancestor rete:instanceCount ?instances }
 }
 LIMIT 60` },
       { family: "Geo", label: "🗺️ Classes anchored to a place", view: "map",
         cols: { class: "Class", name: "Name", instances: "Direct instances", wkt: "Location" },
-        tip: "Some classes are geographic one-offs: the Grand National (171 instances — the race is the class, its runnings are the instances) sits at Aintree, the US Open at Flushing Meadows, the Tribunal de commerce in Paris. wdt:P625 values are GeoSPARQL wktLiterals — switch Output → Map to see them.\nSTRSTARTS keeps plain Earth points: the dump also holds unknown-coordinate hashes and off-world geometries (lakes on Mars carry a <wd:Q111> CRS prefix — valid GeoSPARQL, but not for this basemap).",
+        tip: "Some classes are geographic one-offs — a recurring race, court or festival is the class, its editions are the instances, and the class itself sits at a place (the Grand National at Aintree, the US Open at Flushing Meadows). wdt:P625 values are GeoSPARQL wktLiterals — switch Output → Map to see them.\nSTRSTARTS keeps plain Earth points: the dump also holds unknown-coordinate hashes and off-world geometries (lakes on Mars carry a <wd:Q111> CRS prefix — valid GeoSPARQL, but not for this basemap). The query streams and stops at 50, so it stays fast over HTTP range reads.",
         q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX rete: <https://w3id.org/rete/>
@@ -1453,21 +1453,22 @@ SELECT ?class ?name ?instances ?wkt WHERE {
          rdfs:label ?name . FILTER(lang(?name) = "en")
   FILTER(STRSTARTS(STR(?wkt), "Point("))
 }
-ORDER BY DESC(?instances)
-LIMIT 200` },
-      { family: "Select", label: "🔭 Find classes by name (text-indexed)", view: "table",
-        cols: { class: "Class", name: "Name", parentName: "Superclass", instances: "Direct instances" },
-        tip: "CONTAINS over the 4.27M English labels rides the embedded full-text index: 'observatory' surfaces the meteorological and astronomical observatory families with their parents and censuses.\nFILTER(BOUND(?instances)) keeps only classes that actually have instances — drop it to see every match (Wikidata also has observatory-themed coins). Change the term to explore any concept.",
-        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+LIMIT 50` },
+      { family: "Path", label: "🔭 The observatory family tree (P279+ descendants)", view: "table",
+        cols: { sub: "Subclass", name: "Name", description: "Description", instances: "Direct instances" },
+        tip: "The mirror of the castle query: wd:Q1254933 is 'astronomical observatory', and wdt:P279+ with the BOUND endpoint as the object walks the subclass tree DOWNWARD — space observatory, airborne observatory, radio observatory… each with its description and census.\nSwap Q1254933 for any class IRI (find one via its rdfs:label) to unfold a different branch of the 5.1M-edge taxonomy.",
+        q: `PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
 PREFIX rete: <https://w3id.org/rete/>
-SELECT ?class ?name ?parentName ?instances WHERE {
-  ?class rdfs:label ?name . FILTER(lang(?name) = "en" && CONTAINS(LCASE(STR(?name)), "observatory"))
-  OPTIONAL { ?class rete:instanceCount ?instances }
-  OPTIONAL { ?class wdt:P279 ?parent . ?parent rdfs:label ?parentName . FILTER(lang(?parentName) = "en") }
-  FILTER(BOUND(?instances))
+SELECT ?sub ?name ?description ?instances WHERE {
+  ?sub wdt:P279+ wd:Q1254933 .
+  ?sub rdfs:label ?name . FILTER(lang(?name) = "en")
+  ?sub schema:description ?description . FILTER(lang(?description) = "en")
+  OPTIONAL { ?sub rete:instanceCount ?instances }
 }
-LIMIT 40` }
+LIMIT 60` }
     ],
     wikidata: [
       {
