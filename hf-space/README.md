@@ -48,7 +48,16 @@ dictionary chunks and index tiles in RAM.
 
 ## The SPARQL 1.1 Protocol plane
 
-Every non-sharded dataset is a spec-conformant endpoint:
+Every non-sharded dataset is a spec-conformant endpoint — and so is **any
+range-readable `.rete` URL on the internet**, published by anyone: put the
+full URL after `/sparql/`:
+
+```sh
+# A catalog dataset…
+https://<space>/sparql/boe
+# …or ANY .rete file, no registration needed:
+https://<space>/sparql/https://example.org/their-graph.rete
+```
 
 ```sh
 # GET form; result is application/sparql-results+json (W3C shape)

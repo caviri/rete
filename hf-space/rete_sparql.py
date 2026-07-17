@@ -3,7 +3,12 @@
 ``/sparql/{dataset}`` implements the W3C SPARQL 1.1 Protocol (query
 operation) so ANY standard client — rdflib/SPARQLWrapper, Jena, YASGUI, a
 federated ``SERVICE <…>`` clause in another engine — can talk to every
-dataset this gateway publishes:
+dataset this gateway publishes. ``{dataset}`` is either a catalog key
+(``/sparql/boe``) or a **full range-readable .rete URL** —
+``/sparql/https://example.org/any.rete`` — so the gateway is a SPARQL
+endpoint for ANY published .rete file, not only its own catalog (raw and
+percent-encoded URL forms both work; proxy-collapsed ``https:/`` is
+re-normalized):
 
   * ``GET  /sparql/{dataset}?query=…``
   * ``POST /sparql/{dataset}`` with ``application/x-www-form-urlencoded``
@@ -39,6 +44,21 @@ def _error(status: int, message: str) -> Response:
     return Response(content=message + "\n", status_code=status, media_type="text/plain")
 
 
+def _split_source(dataset: str) -> tuple:
+    """A path segment is either a catalog key or a full .rete URL.
+
+    Returns ``(dataset, url)`` for :func:`rete_service.run_query`. Proxies
+    and path normalization often collapse ``https://`` to ``https:/`` —
+    re-expand it (percent-encoded URLs arrive already decoded by Starlette).
+    """
+    if dataset.startswith(("http://", "https://")):
+        return None, dataset
+    if dataset.startswith(("http:/", "https:/")):
+        scheme, rest = dataset.split(":/", 1)
+        return None, f"{scheme}://{rest.lstrip('/')}"
+    return dataset, None
+
+
 def _service_description(request: Request, dataset: str) -> Response:
     endpoint = str(request.url).split("?")[0]
     ttl = f"""@prefix sd: <http://www.w3.org/ns/sparql-service-description#> .
@@ -55,8 +75,9 @@ def _service_description(request: Request, dataset: str) -> Response:
 
 
 def _respond(dataset: str, query: str, accept: str) -> Response:
+    key, url = _split_source(dataset)
     try:
-        doc = svc.run_query(dataset, None, query)
+        doc = svc.run_query(key, url, query)
     except ValueError as e:
         return _error(404 if "unknown dataset" in str(e) else 400, str(e))
     except TimeoutError as e:

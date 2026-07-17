@@ -45,8 +45,9 @@ Recommended workflow:
 
 Every result carries `stats` (bytes/requests actually fetched) — with lazy
 range reads a good query touches a tiny fraction of the file. Each dataset
-is also a standard SPARQL 1.1 Protocol endpoint at `/sparql/<key>` for any
-non-MCP client or federated SERVICE clause.
+is also a standard SPARQL 1.1 Protocol endpoint at `/sparql/<key>` — and
+`/sparql/<any-full-.rete-URL>` serves ANY published .rete file the same
+way — for non-MCP clients and federated SERVICE clauses.
 """
 
 mcp = FastMCP(name="rete-graphs", instructions=INSTRUCTIONS)
