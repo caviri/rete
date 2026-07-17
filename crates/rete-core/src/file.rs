@@ -2365,7 +2365,16 @@ impl Rete {
             let blobs = read_coalesced(reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
             blobs.iter().map(|b| decompress(codec, b).ok()).collect()
         });
-        let index = GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
+        let mut index =
+            GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
+        // Per-tile encoded lengths (from the directory) feed the join planner's
+        // fatness gates — free here, unavailable later without a fetch.
+        index.set_tile_lens(std::array::from_fn(|si| {
+            tile_ranges[si]
+                .iter()
+                .map(|&(_, _, r)| r.len.min(u32::MAX as u64) as u32)
+                .collect()
+        }));
 
         Ok(Self {
             header,

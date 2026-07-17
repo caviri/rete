@@ -1083,3 +1083,88 @@ fn datatype_and_lang_builtins() {
         vec!["<http://ex/label>"]
     );
 }
+
+/// The forced correlated probe for a FAT OPTIONAL right side (the remote-OOM
+/// fix): a `desc` predicate spanning many index tiles must not be materialized
+/// by the left join, and the probe must preserve OPTIONAL semantics — matched
+/// rows merge, a right side emptied by the OPTIONAL's own FILTER keeps the
+/// left row unbound, and a subject with no `desc` at all survives too. The
+/// query carries no LIMIT, so only the fat-right tile-span gate (not the
+/// demand bound) can select the probe; the assertions hold on either path.
+#[test]
+fn optional_fat_right_side_stays_correlated() {
+    let mut triples: Vec<(String, String, String)> = Vec::new();
+    for i in 0..100_000u32 {
+        let s = format!("<http://ex/e{i}>");
+        triples.push((s.clone(), iri("desc"), format!("\"d{i}en\"@en")));
+        triples.push((s, iri("desc"), format!("\"d{i}fr\"@fr")));
+    }
+    for m in ["m0", "m1", "m2"] {
+        triples.push((iri(m), iri("kind"), iri("Marked")));
+    }
+    triples.push((iri("m0"), iri("desc"), "\"m0en\"@en".to_string()));
+    triples.push((iri("m0"), iri("desc"), "\"m0fr\"@fr".to_string()));
+    triples.push((iri("m1"), iri("desc"), "\"m1fr\"@fr".to_string())); // fr only
+    let refs: Vec<(&str, &str, &str)> = triples
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let image = build(&refs);
+    let rete = Rete::open(&image).unwrap();
+
+    let q = "SELECT ?s ?d WHERE { ?s ex:kind ex:Marked . \
+             OPTIONAL { ?s ex:desc ?d . FILTER(lang(?d) = \"en\") } }";
+    let (_, sols) = eval_sparql(&rete, &format!("{PREFIX}{q}")).unwrap();
+    let mut got: Vec<(String, Option<String>)> = sols
+        .iter()
+        .map(|b| (b.get("s").cloned().unwrap(), b.get("d").cloned()))
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            (
+                "<http://ex/m0>".to_string(),
+                Some("\"m0en\"@en".to_string())
+            ),
+            ("<http://ex/m1>".to_string(), None),
+            ("<http://ex/m2>".to_string(), None),
+        ]
+    );
+}
+
+/// The merge-join asymmetry gate: a pinpoint pattern (bound predicate+object)
+/// joined with a fat predicate must not take the materializing merge seed —
+/// and whichever path runs, the join's answers are identical.
+#[test]
+fn merge_seed_skips_pinpoint_times_fat() {
+    let mut triples: Vec<(String, String, String)> = Vec::new();
+    for i in 0..100_000u32 {
+        let s = format!("<http://ex/e{i}>");
+        triples.push((s.clone(), iri("desc"), format!("\"d{i}\"")));
+    }
+    for m in ["m0", "m1"] {
+        triples.push((iri(m), iri("kind"), iri("Marked")));
+        triples.push((iri(m), iri("desc"), format!("\"{m}desc\"")));
+    }
+    let refs: Vec<(&str, &str, &str)> = triples
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let image = build(&refs);
+    let rete = Rete::open(&image).unwrap();
+    let q = "SELECT ?s ?d WHERE { ?s ex:kind ex:Marked . ?s ex:desc ?d }";
+    let (_, sols) = eval_sparql(&rete, &format!("{PREFIX}{q}")).unwrap();
+    let mut got: Vec<(String, String)> = sols
+        .iter()
+        .map(|b| (b.get("s").cloned().unwrap(), b.get("d").cloned().unwrap()))
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            ("<http://ex/m0>".to_string(), "\"m0desc\"".to_string()),
+            ("<http://ex/m1>".to_string(), "\"m1desc\"".to_string()),
+        ]
+    );
+}

@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::file::Rete;
-use crate::index::{GraphIndex, Pattern};
+use crate::index::{GraphIndex, Pattern, Tile};
 use crate::row::{Ctx, Row, Slots, Val};
 
 /// A term in a pattern: a named variable or a constant term token.
@@ -275,6 +275,22 @@ fn try_merge_join(
     if ca != cb {
         return None; // cross-role: the two role id-spaces aren't co-sorted
     }
+    // A merge MATERIALIZES both sides in full (`collect` below builds a Vec per
+    // side). When one side is a pinpoint (a bound leading key routing to a few
+    // KB of tiles) and the other is fat (a broad predicate spanning megabytes),
+    // the linear merge costs building — and, on a remote index, FETCHING — the
+    // fat extent end-to-end: gigabytes over HTTP, and the 32-bit wasm OOM
+    // behind `?x wdt:P279 <C> . ?x rdfs:label ?l` on a 185M-triple remote
+    // graph. The hybrid loop handles that shape strictly better (scan the
+    // pinpoint side, probe the fat one per surviving row), so leave the merge
+    // seed to comparably-sized sides.
+    let (lo, hi) = {
+        let (a, b) = (pattern_scan_bytes(index, ta), pattern_scan_bytes(index, tb));
+        (a.min(b), a.max(b))
+    };
+    if hi >= FAT_SCAN_BYTES && hi / 4 >= lo {
+        return None;
+    }
     let lower = |t: &(SlotTerm, SlotTerm, SlotTerm)| -> Option<Pattern> {
         Some((
             const_subject(&t.0, dict)?,
@@ -530,6 +546,59 @@ fn pattern_estimates(
             .collect(),
     )
 }
+
+/// The minimum, over a BGP's patterns, of [`pattern_scan_bytes`] — the
+/// cheapest single-pattern scan the hash-join path would at least perform to
+/// materialize this BGP. `None` = a constant term is unknown to the
+/// dictionary (the BGP is unsatisfiable; the caller short-circuits anyway).
+/// Unlike [`pattern_estimates`], this needs no pyramid summary, so it works on
+/// remote-lazy files — exactly where the answer matters most.
+pub(crate) fn bgp_min_scan_bytes(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    patterns: &[TriplePattern],
+) -> Option<u64> {
+    let lowered = lower(patterns, ctx)?;
+    lowered.iter().map(|t| pattern_scan_bytes(index, t)).min()
+}
+
+/// One pattern's cheapest scan extent in BYTES: for each permutation, sum the
+/// encoded lengths of the tiles a scan of this pattern would route to (all
+/// tiles covering the bound leading key, or the whole section when the leading
+/// key is unbound), and take the minimum. Tile *counts* are useless here — a
+/// broad predicate can sit inside one giant tile — but the directory's byte
+/// lengths expose it. Reads only resident metadata, never tile data.
+fn pattern_scan_bytes(index: &GraphIndex, t: &(SlotTerm, SlotTerm, SlotTerm)) -> u64 {
+    let sections = index.tile_sections();
+    let comp = |role: usize| match role {
+        0 => &t.0,
+        1 => &t.1,
+        _ => &t.2,
+    };
+    let mut best = u64::MAX;
+    for perm in crate::index::ALL_PERMS {
+        let tiles = sections[perm.section_index()];
+        best = best.min(match comp(perm.roles()[0]) {
+            SlotTerm::Node(id) | SlotTerm::Pred(id) => tiles
+                .iter()
+                .filter(|tile| {
+                    let (lo, hi) = tile.leading_range();
+                    lo <= *id && *id <= hi
+                })
+                .map(Tile::encoded_len)
+                .sum(),
+            SlotTerm::Var(_) => tiles.iter().map(Tile::encoded_len).sum(),
+        });
+    }
+    best
+}
+
+/// Scan extent above which a join side counts as "fat": materializing (or, on
+/// a remote index, fetching) ≥2 MiB of encoded tiles to build a hash/merge
+/// side is past the point where probing it per surviving row wins. Shared by
+/// the merge-seed asymmetry gate here and the left-join force-probe gate in
+/// `sparql::eval`.
+pub(crate) const FAT_SCAN_BYTES: u64 = 2 << 20;
 
 /// Order pattern indices for a left-deep join: cheapest (smallest estimated
 /// cardinality) first, always preferring a pattern that shares a variable with

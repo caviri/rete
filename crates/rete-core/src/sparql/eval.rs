@@ -37,6 +37,20 @@ fn inlj_hint(ctx: &Ctx) -> Option<usize> {
     ctx.limit_hint.get().filter(|&h| h <= INLJ_MAX_HINT)
 }
 
+/// Does the left plan certainly bind at least one variable that occurs in the
+/// right BGP's patterns? Without a shared certain binding, per-row probing
+/// degenerates to re-evaluating the whole BGP for every left row — strictly
+/// worse than the hash join.
+fn shares_certain_var(ctx: &Ctx, patterns: &[TriplePattern], lcert: &[bool]) -> bool {
+    patterns
+        .iter()
+        .flat_map(|p| [&p.s, &p.p, &p.o])
+        .any(|t| match t {
+            PatternTerm::Var(v) => ctx.slots.slot(v).is_some_and(|s| lcert[s]),
+            PatternTerm::Const(_) => false,
+        })
+}
+
 /// Build the per-query evaluation context: walk the whole query (plan,
 /// EXISTS sub-plans, BIND targets, aggregates, projection) once and assign
 /// every variable a slot.
@@ -1479,13 +1493,25 @@ fn join_iter<'q>(
     optional: bool,
     cond: Option<&'q FExpr>,
 ) -> RowIter<'q> {
-    // Under a small demand bound with a BGP right side, skip materializing it:
-    // stream the left and probe the right's patterns per row through the index
-    // (correlated pushdown). Same multiset as the hash join.
-    if inlj_hint(ctx).is_some() {
-        if let Plan::Bgp(patterns) = r {
-            if !patterns.is_empty() {
-                let lcert = certain_bound(ctx, l, ctx.slots.len());
+    // With a BGP right side, skip materializing it and instead stream the left
+    // and probe the right's patterns per row through the index (correlated
+    // pushdown). Same multiset as the hash join. Taken in two cases:
+    //  1. under a small demand bound (a LIMIT-driven query wants few rows, so
+    //     per-row probes beat one-pass scans), or
+    //  2. when the right BGP would materialize a FAT scan (its cheapest pattern
+    //     spans many index tiles) while the left side certainly binds one of
+    //     its variables. The hash join would build the whole fat predicate in
+    //     memory — on a big remote graph that is the 32-bit wasm OOM behind
+    //     `OPTIONAL { ?x schema:description ?d }` over 185M triples — whereas
+    //     the probe faults only the rows the left side actually asks about.
+    if let Plan::Bgp(patterns) = r {
+        if !patterns.is_empty() {
+            let lcert = certain_bound(ctx, l, ctx.slots.len());
+            let probe = inlj_hint(ctx).is_some()
+                || (shares_certain_var(ctx, patterns, &lcert)
+                    && crate::bgp::bgp_min_scan_bytes(ctx, index, patterns)
+                        .map_or(true, |n| n >= crate::bgp::FAT_SCAN_BYTES));
+            if probe {
                 return match ProbePlan::new(ctx, patterns, &lcert) {
                     Some(plan) => Box::new(ProbedJoin {
                         ctx,
