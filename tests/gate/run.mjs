@@ -40,7 +40,7 @@ function g0() {
     const verdict = lastJson(out);
     record(
       "G0",
-      "catalog exhaustive matrix (445 queries)",
+      "catalog exhaustive matrix (450 queries)",
       verdict && verdict.verdict === "PASS",
       verdict && verdict.verdict === "PASS" ? "" : out.slice(-160),
     );

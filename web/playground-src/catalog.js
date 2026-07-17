@@ -117,6 +117,14 @@ window.RETE_PLAYGROUND_CATALOG = {
       description: "The same ~1.49 GB Wikidata graph deposited as the citable Zenodo record 21168821 (DOI 10.5281/zenodo.21168821), served here as its stable-format R2 twin for browser range queries. The deposited pre-1.0 artifact remains the provenance record; this release copy carries stable format generation 1 and browser-visible Content-Range. A selective query faults ~27 MB rather than downloading the whole file. CC0 (Wikidata)."
     },
     {
+      key: "wikidata-ontology",
+      kind: "remote-lazy",
+      url: "https://data.graphplaza.com/wikidata-ontology/wikidata-ontology.rete",
+      typePredicate: "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      label: "wikidata-ontology.rete — every Wikidata class: the ontology without the instances (remote, lazy)",
+      description: "The complete class ontology of Wikidata, extracted from the full truthy dump — the file Wikidata itself never publishes. All 4,420,121 classes (every item that is a wdt:P279 subject or object, or the target of any of the 120.8M wdt:P31 statements) with their FULL multilingual stars — labels, aliases and descriptions in every language (4.27M carry English labels) plus every other truthy statement whose subject is a class — the 5,144,945-edge subclass hierarchy, and all ~13k property entities. wdt:P279 is dual-emitted as rdfs:subClassOf and wdt:P31 as rdf:type, so the types pyramid, plain SPARQL tooling and reasoning work out of the box alongside Wikidata-native wdt: queries. Each of the 109,558 instantiated classes carries rete:instanceCount — its direct-instance census in the full ~8B-statement dump (scholarly article 45.2M, human 12.7M, taxon 3.8M, star 3.3M…), so you can weigh any branch of the taxonomy without touching a single instance. GeoSPARQL on board: place-anchored classes carry wdt:P625 geo:wktLiteral points (off-world geometries — lakes on Mars — carry a <wd:Q111> CRS prefix, which is valid GeoSPARQL). A full-text index covers all labels. 185.5M triples / 53.7M terms in 2.18 GB, remote-lazy over HTTP range on Cloudflare R2, with the whole metadata bundle beside it: wikidata-taxonomy.ttl (a 13.9M-statement compact Turtle — class + English label + subClassOf + census — for Protégé/reasoners), croissant.json (MLCommons Croissant 1.0), JSON Schemas, and the classes / class_counts / p279 Parquet side-tables. Built by scripts/wikidata_ontology_to_nt.py (two DuckDB passes over the piebro/wikidata-extraction Parquet of the official truthy dump, authoritative property datatypes) → rete build --pyramid-algo types --card --text-index. CC0 (Wikidata)."
+    },
+    {
       key: "scholar-noisy",
       label: "scholar-noisy.rete - same world, 25% noise",
       description: "The same generator at --noise 0.25: rewired citations (incl. temporal violations), missing ORCIDs and ISSNs, and whitespace-mangled titles - for SHACL and data-quality demos."
@@ -243,6 +251,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "wikidata":              { triples: null,      size: "1.04 GB", license: "CC0",                  source: "https://www.wikidata.org",                                 provenance: "A ~1 GB cross-section of the Wikidata truthy dump read from Parquet via DuckDB by scripts/wikidata_parquet_to_nt.py (datatypes recovered) to N-Triples, built with rete build (remote-lazy)." },
     "wikidata-zenodo":       { triples: null,      size: "1.49 GB", license: "CC0",                  source: "https://zenodo.org/records/21168821",                      provenance: "The same Wikidata cross-section as wikidata-1GB (scripts/wikidata_parquet_to_nt.py → rete build), deposited as Zenodo record 21168821 / DOI 10.5281/zenodo.21168821. The playground serves a stable-generation R2 twin because the deposited pre-1.0 artifact predates the stable format and Zenodo does not expose Content-Range to browser JavaScript." },
     "wikidata-100mb":        { triples: null,      size: "104 MB",  license: "CC0",                  source: "https://www.wikidata.org",                                 provenance: "A ~100 MB slice of the Wikidata truthy dump read from Parquet via DuckDB by scripts/wikidata_parquet_to_nt.py (datatypes recovered) to N-Triples, built with rete build (remote-lazy)." },
+    "wikidata-ontology":     { triples: "185.5 M", size: "2.18 GB", license: "CC0",                  source: "https://www.wikidata.org",                                 provenance: "The class ontology of the full Wikidata truthy dump (all 81 piebro/wikidata-extraction Parquet partitions, 63.9 GB local). scripts/wikidata_ontology_to_nt.py: Pass A derives the class set (wdt:P279 subjects/objects ∪ wdt:P31 targets = 4,420,121 classes; 5,144,945 subclass edges; per-class direct-instance counts over 120.8M P31 rows) and saves classes/class_counts/p279.parquet; Pass B emits every class's and property entity's full multilingual truthy star, dual-emitting wdt:P279→rdfs:subClassOf and wdt:P31→rdf:type, plus w3id.org/rete/instanceCount annotations (authoritative property datatypes from the cached WDQS map). rete build --pyramid-algo types --card --text-index (stable format, rete 1.0.0-rc.1). Companions on R2: wikidata-taxonomy.ttl (13.9M statements, rete-validate green), croissant.json, JSON Schemas, side-table Parquets." },
     "wikidata-xxl":          { triples: "600 M",   size: "5.4 GB (6 shards)", license: "CC0",         source: "https://www.wikidata.org",                                 provenance: "600M triples of the Wikidata truthy dump (piebro/wikidata-extraction Parquet) as 6 INDEPENDENT --no-pyramid .rete shards (100M / ~906 MB each), one per ~900 MB Parquet partition. Streamed + built shard-by-shard with bounded RAM/disk by scripts/build_wikidata_xxl.sh (--part-index streaming → rete build --no-pyramid → drop the ~10.7 GB N-Triples → next; ~16 min/shard). The playground auto-federates the shards (catalog `shards: [...]` → every query UNIONs across all 6). The sharded-rete model that scales past a single file toward full Wikidata (~80 shards). Heuristic datatypes (WDQS rate-limited the property map). CC0 (Wikidata)." },
     "chemotion":             { triples: "1.53 M",  size: "4.8 MB",   license: "CC BY 4.0",            source: "https://chemotion.net",                                    provenance: "The FIZ-Karlsruhe Chemotion-KG (github.com/ISE-FIZKarlsruhe/chemotion-kg, a 239 MB Git-LFS TTL; BFO/NFDICore/ChEBI-aligned, 87.7k instances) merged with CHMO + RXNO (purl.obolibrary.org/obo/*.owl, RDF/XML converted to N-Triples via rdflib), assembled with rete build --card (remote-lazy)." },
     "chebi-full":            { triples: "8.83 M",  size: "120 MB",   license: "CC BY 4.0",            source: "https://www.ebi.ac.uk/chebi/",                              provenance: "The complete ChEBI ontology (chebi.owl, EMBL-EBI) converted from RDF/XML to N-Triples with rapper (raptor2), assembled with rete build --card (remote-lazy). Lossless Parquet/DuckDB/SQLite per-class table companions generated with scripts/rdf_to_entity_tables.py --nt --type-predicate rdf:type and uploaded alongside it." },
@@ -761,6 +770,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "wikidata":              { icon: "🌐", tags: ["Wikidata", "people", "places"] },
     "wikidata-zenodo":       { icon: "🏛️", tags: ["Wikidata", "Zenodo", "DOI", "citable-data", "HTTP-range", "people", "places"] },
     "wikidata-100mb":        { icon: "🌐", tags: ["Wikidata", "people", "occupations"] },
+    "wikidata-ontology":     { icon: "🌳", tags: ["Wikidata", "ontology", "taxonomy", "classes", "subClassOf", "instance-counts", "GeoSPARQL", "text-index", "Croissant", "CC0"] },
     "wikidata-xxl":          { icon: "⛓", tags: ["Wikidata", "sharded", "federation", "XXL", "600M", "CC0"] },
     "chemotion":             { icon: "🧪", tags: ["chemistry", "ELN", "ontology", "ChEBI", "CHMO"] },
     "chebi-full":            { icon: "⚗️", tags: ["chemistry", "ontology", "ChEBI", "OBO", "federation"] },
@@ -1341,6 +1351,80 @@ SELECT ?occ (COUNT(?p) AS ?n) WHERE {
 GROUP BY ?occ
 ORDER BY DESC(?n)
 LIMIT 15` }
+    ],
+    "wikidata-ontology": [
+      { family: "Select", label: "🏛️ Subclasses of building, weighed by census", view: "table",
+        cols: { class: "Class", name: "Name", description: "Description", instances: "Direct instances" },
+        tip: "wd:Q41176 is 'building' — these are its direct subclasses ranked by how many instances each has in the FULL ~8B-statement dump (rete:instanceCount, precomputed from all 120.8M wdt:P31 rows): Shinto shrine (30,332) beats residential building (27,497) and palace (16,357).\nSwap Q41176 for any class IRI to weigh a different branch of the taxonomy without ever touching an instance.",
+        q: `PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
+PREFIX rete: <https://w3id.org/rete/>
+SELECT ?class ?name ?description ?instances WHERE {
+  ?class wdt:P279 wd:Q41176 ;
+         rdfs:label ?name . FILTER(lang(?name) = "en")
+  OPTIONAL { ?class schema:description ?description . FILTER(lang(?description) = "en") }
+  OPTIONAL { ?class rete:instanceCount ?instances }
+}
+ORDER BY DESC(?instances)
+LIMIT 40` },
+      { family: "Select", label: "📊 The census of Wikidata: biggest classes and their parents", view: "table",
+        cols: { class: "Class", name: "Name", instances: "Direct instances", parentName: "Superclass" },
+        tip: "Every instantiated class ranked by its direct-instance count in full Wikidata: scholarly article (45.2M) dwarfs human (12.7M), taxon (3.8M) and star (3.3M).\nA class repeats once per parent — scholarly article genuinely has four superclasses (magazine article, research, scientific literature, scientific publication); that is honest multi-inheritance, not duplication.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX rete: <https://w3id.org/rete/>
+SELECT ?class ?name ?instances ?parentName WHERE {
+  ?class rete:instanceCount ?instances ;
+         rdfs:label ?name ;
+         wdt:P279 ?parent . FILTER(lang(?name) = "en")
+  ?parent rdfs:label ?parentName . FILTER(lang(?parentName) = "en")
+}
+ORDER BY DESC(?instances)
+LIMIT 30` },
+      { family: "Path", label: "🏰 Everything a castle is (P279+ ancestors)", view: "table",
+        cols: { ancestor: "Ancestor class", name: "Name", description: "Description", instances: "Direct instances" },
+        tip: "wdt:P279+ walks the subclass hierarchy transitively upward from castle (wd:Q23413): fortification, military installation, venue, building… all the way to abstract roots — each ancestor with its English description and census.\nThe transitive path runs entirely in the browser over HTTP range reads; only the tiles along the chain are fetched.",
+        q: `PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
+PREFIX rete: <https://w3id.org/rete/>
+SELECT ?ancestor ?name ?description ?instances WHERE {
+  wd:Q23413 wdt:P279+ ?ancestor .
+  ?ancestor rdfs:label ?name . FILTER(lang(?name) = "en")
+  OPTIONAL { ?ancestor schema:description ?description . FILTER(lang(?description) = "en") }
+  OPTIONAL { ?ancestor rete:instanceCount ?instances }
+}
+LIMIT 60` },
+      { family: "Geo", label: "🗺️ Classes anchored to a place", view: "map",
+        cols: { class: "Class", name: "Name", instances: "Direct instances", wkt: "Location" },
+        tip: "Some classes are geographic one-offs: the Grand National (171 instances — the race is the class, its runnings are the instances) sits at Aintree, the US Open at Flushing Meadows, the Tribunal de commerce in Paris. wdt:P625 values are GeoSPARQL wktLiterals — switch Output → Map to see them.\nSTRSTARTS keeps plain Earth points: the dump also holds unknown-coordinate hashes and off-world geometries (lakes on Mars carry a <wd:Q111> CRS prefix — valid GeoSPARQL, but not for this basemap).",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX rete: <https://w3id.org/rete/>
+SELECT ?class ?name ?instances ?wkt WHERE {
+  ?class wdt:P625 ?wkt ;
+         rete:instanceCount ?instances ;
+         rdfs:label ?name . FILTER(lang(?name) = "en")
+  FILTER(STRSTARTS(STR(?wkt), "Point("))
+}
+ORDER BY DESC(?instances)
+LIMIT 200` },
+      { family: "Select", label: "🔭 Find classes by name (text-indexed)", view: "table",
+        cols: { class: "Class", name: "Name", parentName: "Superclass", instances: "Direct instances" },
+        tip: "CONTAINS over the 4.27M English labels rides the embedded full-text index: 'observatory' surfaces the meteorological and astronomical observatory families with their parents and censuses.\nFILTER(BOUND(?instances)) keeps only classes that actually have instances — drop it to see every match (Wikidata also has observatory-themed coins). Change the term to explore any concept.",
+        q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX rete: <https://w3id.org/rete/>
+SELECT ?class ?name ?parentName ?instances WHERE {
+  ?class rdfs:label ?name . FILTER(lang(?name) = "en" && CONTAINS(LCASE(STR(?name)), "observatory"))
+  OPTIONAL { ?class rete:instanceCount ?instances }
+  OPTIONAL { ?class wdt:P279 ?parent . ?parent rdfs:label ?parentName . FILTER(lang(?parentName) = "en") }
+  FILTER(BOUND(?instances))
+}
+LIMIT 40` }
     ],
     wikidata: [
       {
