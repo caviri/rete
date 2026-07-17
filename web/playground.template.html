@@ -3,7 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
   <title>.rete playground - browser-based graph exploration</title>
+  <script>
+  /* Theme, applied BEFORE first paint so there is no flash: an explicit choice
+     (localStorage "theme" = "light"/"dark", shared with the docs site) pins
+     data-theme; anything else follows the OS via prefers-color-scheme. */
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) { /* private mode */ }
+  })();
+  </script>
   <script>
   /* Cross-origin isolation (COOP+COEP) unlocks SharedArrayBuffer → parallel range
      reads. On a static host the COI service worker adds the headers, but a worker
@@ -885,6 +897,18 @@ __PLAYGROUND_CSS__
         <h3 id="settingsModalTitle">Settings</h3>
         <button id="settingsModalClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
+
+      <section class="rc-section">
+        <div class="set-h">Appearance</div>
+        <label class="rc-toggle" for="themeSelect"><span>Theme</span>
+          <select id="themeSelect" aria-label="Color theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <p class="microcopy">“System” follows your OS preference. The choice is shared with the documentation site.</p>
+      </section>
 
       <!-- Storage: the honest total of everything this site holds on the device
            (IndexedDB + the Cache API where the AI model weights live), with a

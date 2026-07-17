@@ -180,22 +180,24 @@
       ignoreEvent() { return true; }
     };
     const T = CM.tags;
+    // Colors resolve through CSS variables (--cm-*, styles.css) so the editor
+    // follows the light/dark theme without rebuilding the highlight style.
     highlightStyle = CM.HighlightStyle.define([
-      { tag: T.keyword, color: "#8a3d5a", fontWeight: "700" },
-      { tag: T.operatorKeyword, color: "#8a3d5a", fontWeight: "700" },
-      { tag: T.string, color: "#0b745f" },
-      { tag: T.comment, color: "#78877f", fontStyle: "italic" },
-      { tag: T.number, color: "#a85424" },
-      { tag: T.bool, color: "#a85424" },
-      { tag: T.variableName, color: "#a85424" },
-      { tag: T.atom, color: "#0b6f5e" },
-      { tag: T.operator, color: "#66746e" },
-      { tag: T.punctuation, color: "#66746e" },
-      { tag: T.propertyName, color: "#0b6f5e" },
-      { tag: T.typeName, color: "#0b6f5e" },
-      { tag: T.namespace, color: "#0b6f5e" },
-      { tag: T.labelName, color: "#0b6f5e" },
-      { tag: [T.url, T.literal], color: "#0b6f5e" }
+      { tag: T.keyword, color: "var(--cm-kw)", fontWeight: "700" },
+      { tag: T.operatorKeyword, color: "var(--cm-kw)", fontWeight: "700" },
+      { tag: T.string, color: "var(--cm-str)" },
+      { tag: T.comment, color: "var(--cm-comment)", fontStyle: "italic" },
+      { tag: T.number, color: "var(--cm-num)" },
+      { tag: T.bool, color: "var(--cm-num)" },
+      { tag: T.variableName, color: "var(--cm-num)" },
+      { tag: T.atom, color: "var(--cm-iri)" },
+      { tag: T.operator, color: "var(--muted)" },
+      { tag: T.punctuation, color: "var(--muted)" },
+      { tag: T.propertyName, color: "var(--cm-iri)" },
+      { tag: T.typeName, color: "var(--cm-iri)" },
+      { tag: T.namespace, color: "var(--cm-iri)" },
+      { tag: T.labelName, color: "var(--cm-iri)" },
+      { tag: [T.url, T.literal], color: "var(--cm-iri)" }
     ]);
     baseTheme = CM.EditorView.theme({
       "&": { fontSize: "13px", border: "1px solid var(--code-border)", borderRadius: "8px",
@@ -204,7 +206,7 @@
       ".cm-scroller": { fontFamily: "'Cascadia Mono','SF Mono',Consolas,ui-monospace,monospace",
         lineHeight: "1.55", minHeight: "240px" },
       ".cm-content": { padding: "10px 4px", caretColor: "var(--ink)" },
-      ".cm-gutters": { background: "rgba(20,125,105,.05)", color: "#8ba197",
+      ".cm-gutters": { background: "rgba(20,125,105,.05)", color: "var(--muted)",
         border: "none", borderRight: "1px solid var(--code-border)" },
       ".cm-activeLine": { background: "rgba(20,125,105,.045)" },
       ".cm-activeLineGutter": { background: "rgba(20,125,105,.09)" },
@@ -212,7 +214,7 @@
       ".cm-cursor": { borderLeftColor: "var(--ink)" },
       ".cm-tooltip": { border: "1px solid var(--line-strong)", borderRadius: "7px", background: "var(--surface)", boxShadow: "var(--shadow)" },
       ".cm-tooltip-autocomplete > ul": { fontFamily: "'Cascadia Mono','SF Mono',Consolas,ui-monospace,monospace", fontSize: "12.5px", maxHeight: "16em" },
-      ".cm-tooltip-autocomplete > ul > li[aria-selected]": { background: "#e3f0ec", color: "var(--accent-dark)" },
+      ".cm-tooltip-autocomplete > ul > li[aria-selected]": { background: "var(--tint-strong)", color: "var(--accent-dark)" },
       ".cm-completionDetail": { color: "var(--muted)", fontStyle: "normal", marginLeft: "1em" }
     });
     return true;

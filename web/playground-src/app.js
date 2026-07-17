@@ -8589,6 +8589,18 @@ self.onmessage = function (e) {
       renderSession(); updateHistCount();
       if (typeof renderHistory === "function") renderHistory();
     };
+    // Theme: "system" clears the pin (prefers-color-scheme decides); an
+    // explicit light/dark pins data-theme and persists under the SAME
+    // localStorage key the docs site reads, so the choice follows the reader.
+    { const th = $("themeSelect"); if (th) {
+      th.value = (() => { try { const v = localStorage.getItem("theme"); return v === "light" || v === "dark" ? v : "system"; } catch (e) { return "system"; } })();
+      th.onchange = () => {
+        const v = th.value;
+        try { v === "system" ? localStorage.removeItem("theme") : localStorage.setItem("theme", v); } catch (e) { /* private mode */ }
+        if (v === "light" || v === "dark") document.documentElement.dataset.theme = v;
+        else delete document.documentElement.dataset.theme;
+      };
+    } }
     { const a = $("asyncReadsToggle"); if (a) a.onchange = (e) => { setAsyncReads(e.target.checked); renderAsyncReads(); }; }
     $("rangeCacheToggle").onchange = (e) => { setRangeCache(e.target.checked); renderRangeCache(); };
     $("clearRangeCacheBtn").onclick = async () => { await clearRangeCache(); renderRangeCache(); };
