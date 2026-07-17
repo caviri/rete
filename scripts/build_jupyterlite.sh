@@ -22,6 +22,7 @@ EOF
 
 mkdir -p /tmp/contents
 cp /io/clients/python/examples/jupyterlite-demo.ipynb /tmp/contents/rete-graph.ipynb
+cp /io/clients/python/examples/jupyterlite-build-tutorial.ipynb /tmp/contents/build-a-rete.ipynb
 rm -rf /io/docs/jupyterlite
 cd /tmp
 jupyter lite build --apps lab --no-sourcemaps --contents /tmp/contents --output-dir /io/docs/jupyterlite 2>&1 | tail -5

@@ -187,7 +187,11 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
             ("jupyterlite-guide.html", "overview"),
             (
                 "jupyterlite/lab/index.html?path=rete-graph.ipynb",
-                "launch the notebook →",
+                "tour: query graphs →",
+            ),
+            (
+                "jupyterlite/lab/index.html?path=build-a-rete.ipynb",
+                "build: anatomy of a .rete →",
             ),
         ]),
         "atlas.md" => Some(&[
