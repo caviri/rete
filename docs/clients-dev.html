@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SPARQL support · rete docs</title>
+  <title>Client development & releases · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -210,7 +210,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
-        <li><a href="sparql.html" class="active">SPARQL support</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
@@ -233,7 +233,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="SPEC.html">Format specification</a></li>
         <li><a href="rust-api.html">Rust API</a></li>
         <li><a href="browser.html">WASM & JavaScript API</a></li>
-        <li><a href="clients-dev.html">Client development & releases</a></li>
+        <li><a href="clients-dev.html" class="active">Client development & releases</a></li>
         <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
         <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
@@ -244,246 +244,127 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>SPARQL support</h1>
-<p>The engine lives in <code>rete-core::sparql</code>. Queries are parsed with
-<a href="https://crates.io/crates/spargebra"><code>spargebra</code></a> and lowered to a small plan
-algebra (<code>Bgp</code>/<code>Join</code>/<code>Union</code>/<code>Minus</code>/<code>LeftJoin</code>/<code>Filter</code>/<code>Path</code>/<code>Values</code>/
-<code>Graph</code>), evaluated in the unified integer node space and resolved back to terms
-only for final bindings.</p>
-<p>Run via the CLI (<code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json]</code>) or in the browser
-(<code>query</code> in <code>rete-wasm</code> for any query form; <code>query_sparql</code> is the older
-SELECT-only wrapper).</p>
-<p>Spatial queries over <code>geo:wktLiteral</code> geometry — point-in-polygon, intersection,
-distance — are covered by a focused set of GeoSPARQL functions; see
-<a href="geosparql.html">GeoSPARQL (geometry + time)</a>.</p>
-<figure class="fig-right">
-  <img src="img/bgp-join.svg" alt="Two triple patterns sharing the variable ?f are joined on it, producing a binding table with columns for the bound variables.">
-  <figcaption>A basic graph pattern is a join on shared variables: patterns that share <code>?f</code> are intersected via the permutation indexes.</figcaption>
-</figure>
-<h2>Supported</h2>
-<table><thead><tr><th>Area</th><th>Details</th></tr></thead><tbody>
-<tr><td><strong>Query forms</strong></td><td><code>SELECT</code>, <code>ASK</code>, <code>CONSTRUCT</code>, <code>DESCRIBE</code></td></tr>
-<tr><td><strong>Patterns</strong></td><td>Triple patterns and BGPs evaluated as integer-space hash joins on shared variables; blank nodes as non-distinguished variables</td></tr>
-<tr><td><strong>Algebra</strong></td><td><code>OPTIONAL</code> (left join), <code>UNION</code>, <code>MINUS</code>, <code>FILTER EXISTS</code> / <code>NOT EXISTS</code>, nested <code>SELECT</code> <strong>subqueries</strong> (evaluated independently, then joined on shared projected variables)</td></tr>
-<tr><td><strong>Filters</strong></td><td>Comparisons, <code>&amp;&amp;</code>/<code>||</code>/<code>!</code>, arithmetic, <code>BOUND</code>, <code>COALESCE</code>; built-ins incl. <code>CONTAINS</code>, <code>STRLEN</code>, <code>SUBSTR</code>, <code>CONCAT</code>, <code>STR</code>, <code>isIRI</code>/<code>isLiteral</code>/<code>isBlank</code>, <code>DATATYPE</code>, <code>LANG</code>, <code>REGEX</code></td></tr>
-<tr><td><strong>Property paths</strong></td><td><code>p+</code>, <code>p*</code>, <code>p?</code> (zero-length included for <code>*</code>/<code>?</code>), reverse <code>^p</code>, sequence <code>a/b</code>, alternative <code>a|b</code> — evaluated goal-directed from a bound endpoint</td></tr>
-<tr><td><strong>Solution modifiers</strong></td><td><code>DISTINCT</code>, <code>ORDER BY</code> (ASC/DESC), <code>LIMIT</code>, <code>OFFSET</code>, <code>VALUES</code>, <code>BIND</code></td></tr>
-<tr><td><strong>Aggregation</strong></td><td><code>GROUP BY</code>, <code>HAVING</code>, <code>COUNT</code>/<code>SUM</code>/<code>AVG</code>/<code>MIN</code>/<code>MAX</code> (incl. <code>COUNT(DISTINCT …)</code>)</td></tr>
-<tr><td><strong>Datasets</strong></td><td><code>GRAPH &lt;iri&gt;</code> / <code>GRAPH ?g</code>, <code>FROM</code> (RDF-merge default graph), <code>FROM NAMED</code> (scope which graphs <code>GRAPH</code> sees); <code>EXISTS</code> honors the active graph</td></tr>
-<tr><td><strong>Output</strong></td><td>SPARQL Results JSON (<code>--json</code>), with correct <code>uri</code>/<code>literal</code>/<code>bnode</code> typing, datatype, and <code>xml:lang</code>; literal values are properly unescaped</td></tr>
-<tr><td><strong>RDF-star</strong></td><td>Quoted triples <code>&lt;&lt; s p o &gt;&gt;</code> in subject/object position — ingest (N-Triples-star &amp; Turtle-star), storage, and SPARQL-star: quoted-triple patterns (incl. inner variables <code>&lt;&lt; ?s :p ?o &gt;&gt;</code>) and the <code>isTRIPLE</code> / <code>TRIPLE</code> / <code>SUBJECT</code> / <code>PREDICATE</code> / <code>OBJECT</code> built-ins. See <a href="#rdf-star">below</a>.</td></tr>
-<tr><td><strong>Reasoning (OWL 2 QL)</strong></td><td>Opt-in ontology-mediated answering by <strong>query rewriting</strong> — no materialization: <code>rdfs:subClassOf</code> / <code>subPropertyOf</code> hierarchy + <code>rdfs:domain</code> / <code>range</code> type inference, computed over the raw data. <code>rete sparql … --entail</code>, or the playground <strong>🧠 Reason</strong> toggle. See <a href="#reasoning-owl-2-ql">below</a>.</td></tr>
-</tbody></table>
-<h2>Property paths</h2>
-<p>Property paths are evaluated goal-directed from a bound endpoint and support
-<code>p+</code>, <code>p*</code>, <code>p?</code>, reverse <code>^p</code>, sequence <code>a/b</code>, and alternative <code>a|b</code>.</p>
-<h3>Zero-length semantics</h3>
-<p><code>*</code> and <code>?</code> include the zero-length path (a node reaches itself); <code>+</code> does not.
-This holds in every binding direction:</p>
-<pre><code class="language-sparql"># Alice plus everyone she transitively knows (includes Alice herself):
-SELECT ?y WHERE { ex:Alice ex:knows* ?y }
-# Everyone who reaches Carol in ≤1 hop (includes Carol):
-SELECT ?x WHERE { ?x ex:knows? ex:Carol }
+<h1>Client development &amp; releases</h1>
+<p>Maintainer documentation for the language clients under <code>clients/</code> — how they
+are laid out, built, tested, and released. <strong>Users</strong> should read the pages in
+the <em>Clients</em> nav section instead (e.g. <a href="python.html">Python — rete-graph</a>).</p>
+<h2>Monorepo layout</h2>
+<p>One directory per language client, each owning its toolchain:</p>
+<pre><code>clients/
+  python/        # PyO3 + maturin -&gt; PyPI `rete-graph`
+  r/             # (future)
+  go/            # (future)
 </code></pre>
-<h3>Index-free aggregates</h3>
-<p>Exact per-predicate totals come straight from the pyramid summary's superedge
-counts, without reading the triple index:</p>
-<pre><code class="language-sh">rete predicates data.rete            # CLI
+<p>Clients consume <code>crates/rete-core</code> — never the other way around. The Python
+crate is <strong>excluded from the cargo workspace</strong> (root <code>Cargo.toml</code>, like
+<code>fuzz/</code>): it versions and locks independently (<code>clients/python/Cargo.lock</code>),
+so the workspace release gates (<code>--locked</code> checks, feature matrix, coverage
+floors, MSRV) never see binding-only changes.</p>
+<h2>The Python client</h2>
+<pre><code>clients/python/
+  Cargo.toml               # cdylib `_rete`; pyo3 abi3-py39, rete-core, ureq
+  pyproject.toml           # maturin backend; the PyPI version lives HERE
+  src/lib.rs               # bindings, mirroring the wasm Graph/RemoteGraph
+  src/readers.rs           # Local (pread) / Http (Range) / Py (callback) readers
+  python/rete_graph/       # pure-Python layer: Term parsing, open(), Builder
+  tests/                   # pytest; Range-capable local HTTP fixture
+  examples/tutorial.ipynb  # executed notebook (re-run it when the API changes)
 </code></pre>
-<p>The same per-predicate totals back the playground's index-free aggregate path.</p>
-<h3>Evaluation model</h3>
-<p>The algebra evaluates as a lazy pull pipeline over integer slot rows: joins,
-<code>MINUS</code>, <code>DISTINCT</code>, filters, and <code>GRAPH</code> stream, so <code>LIMIT</code> and <code>ASK</code> stop the
-underlying index scans early, and under a small known demand joins switch to
-index-nested-loop probes. Aggregation, <code>ORDER BY</code> (a bounded top-k when <code>LIMIT</code>
-is present), and hash-join build sides are the only blocking points; terms are
-resolved to strings only at projection. It is still not a <em>cost-based</em> planner —
-join order is a selectivity heuristic — and the benchmark page separates
-correctness coverage from latency and calls out the shapes where Oxigraph still
-wins.</p>
-<h3>Community-split evaluation</h3>
-<p>The engine can also evaluate a SELECT with a <strong>split-where-sound,
-global-where-not</strong> strategy that always returns exactly the whole-graph
-answer. The one place the pyramid partition genuinely applies is a <em>subject
-star</em> — a group of triple patterns sharing one variable subject — because
-tiles partition triples by their subject's community, so a star's solutions
-partition cleanly by community. Each BGP is decomposed into its stars; each
-star is evaluated per community (the community's subjects pushed in as a
-<code>VALUES</code> binding, which the engine turns into index probes); and the stars
-are recombined with <strong>global hash joins</strong>, so multi-hop joins work and
-solutions that cross communities survive. <code>FILTER</code> / <code>UNION</code> / <code>OPTIONAL</code> /
-<code>MINUS</code> recurse through the same machinery; property paths, inline <code>VALUES</code>,
-and <code>GRAPH</code> blocks evaluate globally inside the split (exact by definition);
-and <code>GROUP BY</code> / <code>ORDER BY</code> / <code>LIMIT</code> / <code>DISTINCT</code> run once on the merged
-rows. A query is refused only when nothing in it can split (no BGP with a
-variable subject — the strategy would add nothing) or under <code>FROM</code> / <code>FROM NAMED</code>. The playground's "Split by community" strategy uses this; natively
-the per-star, per-community partials are the seam for parallel evaluation.</p>
-<h2>Output views &amp; query shapes</h2>
-<p>The playground renders one result several ways — Table, Graph, Map, Time,
-TTL/JSON-LD — and each view expects a particular query shape (a geometry column
-for Map, a year/date column for Time, …). That matrix lives with the rest of the
-playground documentation: see
-<a href="playground-guide.html#output-views">Playground — output views</a>.</p>
-<h2>Federation: <code>SERVICE</code></h2>
-<p>SPARQL 1.1 federated query is supported: a <code>SERVICE &lt;endpoint&gt; { … }</code> block is
-shipped (as written) to the remote SPARQL endpoint at evaluation time and its
-solutions join the surrounding pattern on shared variables — so one query can
-span a <code>.rete</code> file <em>and</em> a live endpoint (Wikidata, DBpedia, …):</p>
-<pre><code class="language-sparql"># Local entities enriched with live DBpedia labels, in one query.
-SELECT ?book ?label WHERE {
-  ?book &lt;http://ex/about&gt; ?ent .
-  SERVICE &lt;https://dbpedia.org/sparql&gt; {
-    VALUES ?ent { &lt;http://dbpedia.org/resource/Douglas_Adams&gt; }
-    ?ent rdfs:label ?label . FILTER(lang(?label) = "en")
-  }
-}
-</code></pre>
-<p>Notes:</p>
+<p>Design invariants worth keeping:</p>
 <ul>
-<li>rete can also <strong>be</strong> the endpoint: <code>rete serve &lt;file&gt;</code> (see <a href="cli.html">cli</a>)
-exposes a <code>.rete</code> over the SPARQL Protocol — queries <em>and</em> SPARQL Update —
-so one rete file can <code>SERVICE</code> against another rete served live.</li>
-<li><code>SERVICE SILENT</code> follows the spec: a failed call degrades to one empty
-solution instead of failing the query.</li>
-<li>The block is sent <strong>as written</strong> (no bound-join injection yet), so keep it
-selective — an unconstrained pattern asks the remote endpoint for everything
-it knows. Put <code>VALUES</code>/constants inside the block, as above.</li>
-<li>The engine performs no I/O itself: the CLI and the browser client attach the
-HTTP transport (<code>ServiceClient</code>); in the browser the endpoint must allow
-CORS (the big public ones do).</li>
-<li><code>SERVICE ?endpoint { … }</code> (a variable endpoint) is not supported.</li>
+<li>The method surface <strong>mirrors the wasm client</strong> (<code>crates/rete-wasm</code>) — same
+JSON envelopes, same lazy-open pipeline (counting reader → block cache →
+<code>open_ranged_lazy</code>), same incomplete-fetch-is-an-error contract.</li>
+<li>Every engine call runs inside <code>Python::allow_threads</code>; the HTTP reader's
+16-way <code>read_many</code> matches the CLI and the browser fetch pool.</li>
+<li>The engine emits N-Triples tokens (<code>&lt;iri&gt;</code>); the pure-Python layer converts
+them to clean values everywhere (<code>Term</code>, <code>schema()</code>, <code>graph_names()</code>,
+searches). Keep new bindings consistent with that.</li>
+<li>Dataset Card entries written from Python must be <strong>complete</strong> — the CLI's
+card schema has required fields (counts, <code>format_version</code>, every field of a
+rich example query); a partial entry makes <code>rete card</code> reject the card.</li>
 </ul>
-<h2>RDF-star</h2>
-<p>rete supports <strong>RDF-star</strong>: a <em>quoted triple</em> <code>&lt;&lt; s p o &gt;&gt;</code> may stand in the
-subject or object position of another triple, so you can make statements <strong>about
-statements</strong> — the natural home for provenance and annotation (who recorded a
-fact, when, with what confidence).</p>
-<pre><code class="language-turtle">:occ1 a :BarnSwallow .
-# annotate the statement above:
-&lt;&lt; :occ1 a :BarnSwallow &gt;&gt; :recordedBy :jsmith ;
-                           :individualCount 5 ;
-                           :observedOn "2023-05-01"^^xsd:date .
-</code></pre>
-<p><strong>Ingest &amp; storage.</strong> Quoted triples parse from both <strong>N-Triples-star</strong> and
-<strong>Turtle-star</strong> (<code>rete build data.ttls</code>, <code>rete validate</code>) and are stored as
-ordinary dictionary terms — no format change, no version bump, and an old reader
-stays forward-compatible. A file that contains any quoted triple sets a header
-flag (<code>FLAG_HAS_QUOTED_TRIPLES</code>), so a plain-RDF consumer can tell from the header
-alone, without scanning; <code>rete info</code> shows it. Quoted triples round-trip
-losslessly through <code>rete export</code>, and <code>rete verify</code> covers them.</p>
-<p><strong>Query — SPARQL-star.</strong> A quoted triple can appear in a query pattern, with
-constants or inner variables:</p>
-<pre><code class="language-sparql"># Who recorded that occ1 is a Barn Swallow?  (concrete quoted triple)
-SELECT ?who WHERE { &lt;&lt; :occ1 a :BarnSwallow &gt;&gt; :recordedBy ?who }
+<h3>Build and test (Docker-only, nothing on the host)</h3>
+<pre><code class="language-sh"># wheel
+docker run --rm -v "$PWD":/io ghcr.io/pyo3/maturin build \
+    --release -m clients/python/Cargo.toml --out clients/python/dist
 
-# Every recorded identification, with the sighting and species bound from the
-# quoted triple (inner variables):
-SELECT ?occ ?species ?who WHERE {
-  &lt;&lt; ?occ a ?species &gt;&gt; :recordedBy ?who
-}
+# fmt + clippy (the image's entrypoint is maturin; override it)
+docker run --rm --entrypoint sh -v "$PWD":/io -w /io/clients/python \
+    ghcr.io/pyo3/maturin -c "cargo fmt --check &amp;&amp; cargo clippy --all-targets -- -D warnings"
 
-# A quoted variable that is also bound by a regular pattern joins on it:
-SELECT ?who WHERE {
-  ?occ :place ?p .
-  &lt;&lt; ?occ a ?species &gt;&gt; :recordedBy ?who     # ?occ unifies across both
-}
+# tests, installing the wheel with uv in a clean container
+docker run --rm -v "$PWD":/io -w /io/clients/python python:3.12-slim bash -c \
+    "pip install -q uv; uv venv /tmp/v &amp;&amp; uv pip install --python /tmp/v/bin/python \
+     dist/*.whl pytest pandas rdflib &amp;&amp; /tmp/v/bin/python -m pytest tests -q"
 </code></pre>
-<p><strong>Built-in functions</strong> inspect and construct quoted triples:</p>
-<table><thead><tr><th>Function</th><th>Result</th></tr></thead><tbody>
-<tr><td><code>isTRIPLE(t)</code></td><td>whether <code>t</code> is a quoted triple</td></tr>
-<tr><td><code>SUBJECT(t)</code> / <code>PREDICATE(t)</code> / <code>OBJECT(t)</code></td><td>the component of a quoted triple</td></tr>
-<tr><td><code>TRIPLE(s, p, o)</code></td><td>build a quoted triple from three terms</td></tr>
+<h2>CI: two workflows, deliberately separate</h2>
+<table><thead><tr><th>Workflow</th><th>Trigger</th><th>Does</th></tr></thead><tbody>
+<tr><td><code>python-test.yml</code></td><td>PR / push touching <code>clients/python/**</code> or <code>crates/rete-core/**</code></td><td>fmt + clippy, build wheel, pytest (incl. the live R2 remote smoke) — <strong>never publishes</strong></td></tr>
+<tr><td><code>python-client-publish.yml</code></td><td>pushing a <code>py-v*</code> tag only</td><td>full wheel matrix + sdist, then PyPI upload</td></tr>
 </tbody></table>
-<pre><code class="language-sparql"># Equivalent to the inner-variable pattern above, spelled with the built-ins:
-SELECT ?occ ?who WHERE {
-  ?qt :recordedBy ?who
-  FILTER(isTRIPLE(?qt))
-  BIND(SUBJECT(?qt) AS ?occ)
-}
-</code></pre>
-<p><code>CONSTRUCT</code> (and <code>rete serve</code>'s SPARQL Update) may build quoted triples in their
-templates. Nested quoting (<code>&lt;&lt; &lt;&lt; … &gt;&gt; :p ?o &gt;&gt;</code>) works. rete follows the
-RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.</p>
-<p><strong>RDF 1.2 interop.</strong> Ingest also accepts the ratified RDF 1.2 object triple-term
-syntax <code>&lt;&lt;( s p o )&gt;&gt;</code>, mapped to the <em>same</em> canonical token as <code>&lt;&lt; s p o &gt;&gt;</code> — so
-an RDF 1.2 N-Triples file and an RDF-star file are interchangeable. RDF 1.2
-<strong>base-direction strings</strong> (<code>"…"@lang--dir</code>) are modelled: <code>DATATYPE</code> reports
-<code>rdf:dirLangString</code> and <code>LANG</code> returns the language subtag; a leading SPARQL 1.2
-<code>VERSION "1.2"</code> declaration is accepted. RDF 1.2 reification (<code>rdf:reifies</code>) and
-the new SPARQL 1.2 direction functions are not yet supported — see
-<a href="compatibility.html#is-it-compatible-with-rdf">Compatibility</a>.</p>
-<h2>Reasoning (OWL 2 QL)</h2>
-<p>rete answers ontology-mediated queries by <strong>rewriting the query</strong>, not by
-materializing entailments. That is the OWL 2 QL idea, and it is the profile that
-fits a cloud-native, range-queried file: the TBox is small, the ABox is huge and
-maybe remote, so instead of baking inferences into the data (bloating the file,
-forcing a rebuild — what <code>rete build --materialize</code> does) the <em>query</em> is expanded
-so that evaluating it over the <strong>raw</strong> data yields the entailed answers. A remote
-<code>.rete</code> becomes ontology-aware with no rebuild, and only the bytes the rewritten
-query touches are fetched.</p>
-<p>Reasoning is <strong>opt-in</strong> — <code>rete sparql|sparql-url … --entail</code>, or the playground's
-<strong>🧠 Reason</strong> toggle. A plain query is never changed.</p>
-<p><strong>What is entailed</strong> (the RDFS-plus core of OWL 2 QL):</p>
-<table><thead><tr><th>Axiom</th><th>A query for … also returns …</th></tr></thead><tbody>
-<tr><td><code>rdfs:subClassOf</code></td><td><code>?x a C</code> → instances of every subclass of <code>C</code> (transitively)</td></tr>
-<tr><td><code>rdfs:subPropertyOf</code></td><td><code>?x P ?y</code> → pairs related by any subproperty of <code>P</code></td></tr>
-<tr><td><code>rdfs:domain</code></td><td><code>?x a C</code> → subjects of a property whose domain is <code>⊑ C</code></td></tr>
-<tr><td><code>rdfs:range</code></td><td><code>?x a C</code> → objects of a property whose range is <code>⊑ C</code></td></tr>
-<tr><td><code>owl:inverseOf</code></td><td><code>?x P ?y</code> → pairs <code>?y Q ?x</code> for any <code>Q</code> inverse to <code>P</code></td></tr>
-<tr><td><code>owl:someValuesFrom</code> (<code>A ⊑ ∃P</code>)</td><td><code>?x P ?_</code> (existential object) → every <code>?x</code> that is (transitively) an <code>A</code></td></tr>
-<tr><td>existential inverse (<code>A ⊑ ∃P⁻</code>)</td><td><code>?_ P ?x</code> (existential subject) → every such <code>?x</code>, via <code>P</code>'s inverse</td></tr>
-<tr><td><code>domain</code>/<code>range</code> ∘ <code>subPropertyOf</code></td><td>type inferred through a <em>subproperty</em> of a domain/range-declared property</td></tr>
-</tbody></table>
-<pre><code class="language-sparql"># Over gbif-birds (occurrences are typed to their SPECIES, and each species has a
-# subClassOf chain up to :Aves). WITHOUT reasoning this matches nothing directly;
-# WITH --entail it returns real occurrences via the taxonomy — no hand-written path.
-SELECT ?o WHERE { ?o a &lt;https://w3id.org/rete/gbif/taxon/class/Aves&gt; } LIMIT 20
-</code></pre>
-<p><strong>How</strong> — a hierarchy atom is lowered to the property path that already walks the
-hierarchy: <code>?x a C</code> becomes <code>?x a ?c . ?c rdfs:subClassOf* C</code> (reflexive, so a
-direct type still matches), and likewise <code>subPropertyOf*</code> for roles; <code>domain</code> /
-<code>range</code> add <code>UNION</code> branches. A small TBox read gates the rewrite, so an atom
-whose class/property has no sub-terms — and every non-reasoned query — is
-untouched. The reasoning reaches nested patterns (<code>UNION</code> / <code>OPTIONAL</code> /
-subqueries).</p>
-<p>The existential rewrite is <strong>sound by construction</strong>: it fires only when the
-object variable is purely existential — it occurs exactly once in the whole query
-and is not returned — because an anonymous <code>∃P</code> successor can neither be projected
-nor joined. Where the object is bound, shared, or in the <code>SELECT</code>, the rewrite is
-skipped.</p>
-<p><strong>Boundary.</strong> Every DL-Lite_R axiom <em>type</em> is covered. The one remaining gap is
-the PerfectRef <em>reduction</em> step — existential <strong>chaining</strong>, where a shared join
-constraint is itself entailed by an existential (e.g. a query joins <code>?x P ?y</code>
-with <code>?y a C</code> and <code>∃P⁻ ⊑ C</code> makes the <code>?y a C</code> atom redundant). That query shape
-is rare, and reasoning is never <em>unsound</em> regardless: with it off you get exact
-matches; with it on you get the entailed answers for the supported cases — it can
-only ever be <em>incomplete</em> for that one chaining shape. The whole-graph RL reasoner
-(<code>rete reason</code> / the Coherence tab) is a separate, materializing tool for
-coherence checking.</p>
-<h2>Not supported</h2>
-<p>These are <strong>rejected with a clear error</strong> — never silently mis-evaluated:</p>
+<p>Merging to main can never publish; releasing is always the deliberate tag.</p>
+<h2>Releasing to PyPI</h2>
+<p>Publishing uses <strong>trusted publishing</strong> (OIDC) — no tokens, no secrets. The
+registered publisher on PyPI: project <code>rete-graph</code>, owner <code>caviri</code>, repo
+<code>rete</code>, workflow <code>python-client-publish.yml</code>, environment <code>pypi</code>. Renaming
+that workflow file breaks publishing until the PyPI form is updated.</p>
+<p>Release procedure:</p>
+<ol>
+<li>Bump <code>version</code> in <code>clients/python/pyproject.toml</code> (PyPI refuses to
+re-upload an existing version, so a forgotten bump just fails cleanly).</li>
+<li>Commit, push, then <code>git tag py-vX.Y.Z &amp;&amp; git push origin py-vX.Y.Z</code>.</li>
+<li>Watch the <em>Python client publish</em> run: test → 4 wheels + sdist → publish.</li>
+</ol>
+<p>Hard-won build-matrix facts (already encoded in the workflow — keep them):</p>
 <ul>
-<li><strong><code>SERVICE ?var</code></strong> — federation to a variable-bound endpoint.</li>
-<li>Complex <code>ORDER BY</code> <strong>key expressions</strong> beyond a bare variable/constant are not
-yet evaluated for ordering.</li>
+<li>The <strong>aarch64 wheel must build on <code>manylinux: 2_28</code></strong>: <code>ring</code>'s pregenerated
+ARM assembly rejects manylinux2014's old cross-assembler
+(<code>ARM assembler must define __ARM_ARCH</code>).</li>
+<li><code>fail-fast: false</code> on the wheel matrix, so one platform's failure cannot
+cancel the other wheels.</li>
+<li>Wheels are abi3 (<code>abi3-py39</code>): one wheel per platform covers every
+CPython ≥ 3.9 — no per-Python-version matrix.</li>
 </ul>
-<h2>Examples</h2>
-<pre><code class="language-sparql"># 2-hop join
-PREFIX ex: &lt;http://ex/&gt;
-SELECT ?z WHERE { ex:Alice ex:knows ?y . ?y ex:knows ?z }
-
-# FILTER + OPTIONAL
-SELECT ?p WHERE { ?p ex:name ?n . OPTIONAL { ?p ex:age ?a } . FILTER(BOUND(?a)) }
-
-# GROUP BY with aggregate
-SELECT ?p (COUNT(?f) AS ?degree) WHERE { ?p ex:knows ?f } GROUP BY ?p ORDER BY DESC(?degree)
-
-# Named graph
-SELECT ?g ?s WHERE { GRAPH ?g { ?s ex:knows ?o } }
-
-# Transitive impact (reverse property path)
-SELECT DISTINCT ?d WHERE { ?d ex:dependsOn+ ex:log4x }
+<p>Optionally add required reviewers to the <code>pypi</code> GitHub environment to make
+every release pause for a manual approval.</p>
+<h2>Runtime compatibility</h2>
+<p>The wheels are <strong>native</strong> CPython extensions: anything running real CPython
+works out of the box — scripts, Jupyter, <strong>marimo (desktop/server)</strong>, Colab,
+uv/pip/poetry/conda environments, Linux (x86_64/aarch64, glibc 2.17+/2.28+),
+macOS (Intel + Apple Silicon), Windows x64.</p>
+<p><strong>Browser Pythons are not covered yet</strong>: JupyterLite and marimo's WASM
+playground run on Pyodide, which only loads pure-Python or
+<code>emscripten-wasm32</code> wheels. Supporting them needs (a) a maturin build against
+the exact Pyodide/emscripten toolchain, (b) a no-threads <code>read_many</code> path
+(wasm has no <code>std::thread</code>), and (c) remote reads routed through the existing
+<code>open(reader=...)</code> callback backed by synchronous XHR (available there, since
+Pyodide runs in a worker). Until then, the in-browser story is the
+<a href="playground-guide.html">playground</a> / <a href="browser.html">WASM API</a>, which is purpose-built
+for it.</p>
+<h2>Adding a new language client (R, Go, …)</h2>
+<p>The checklist that made Python work:</p>
+<ol>
+<li><code>clients/&lt;lang&gt;/</code> with its own toolchain and lockfile; bind <code>rete-core</code>
+natively (R: extendr; Go: cgo over a small C ABI crate).</li>
+<li>Mirror the wasm <code>Graph</code>/<code>RemoteGraph</code> surface and the reader contract:
+HTTP Range with a hard 206 requirement, short reads are errors, batched
+<code>read_many</code> fetched concurrently, block cache on top, and the
+incomplete-fetch guard before returning results.</li>
+<li>Parse the shared JSON envelopes; present clean IRIs/values, not <code>&lt;tokens&gt;</code>.</li>
+<li>Two workflows: <code>&lt;lang&gt;-test.yml</code> paths-filtered to the client + rete-core,
+and <code>&lt;lang&gt;-client-publish.yml</code> gated on <code>&lt;lang&gt;-v*</code> tags with the
+registry's trusted-publishing equivalent.</li>
+<li>A user page in the <em>Clients</em> nav section, dev notes in this page, and a
+runnable example (notebook or equivalent) executed in CI or Docker.</li>
+</ol>
+<h2>Docs maintenance</h2>
+<p>Client pages are Markdown under <code>docs/</code>; the nav lives in
+<code>crates/docgen/src/main.rs</code> (<code>SECTIONS</code>). After editing either:</p>
+<pre><code class="language-sh">docker run --rm -v "$PWD":/work -w /work rust:1.92-bookworm cargo run -q -p docgen
+python scripts/check_docs_links.py
 </code></pre>
+<p>CI re-renders and diff-checks <code>docs/</code>, so commit the regenerated HTML.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -491,7 +372,7 @@ SELECT DISTINCT ?d WHERE { ?d ex:dependsOn+ ex:log4x }
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/sparql.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/clients-dev.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

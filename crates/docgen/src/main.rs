@@ -54,6 +54,15 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("compatibility.md", "Compatibility & Cypher"),
         ],
     ),
+    // User-facing docs for the language clients (clients/<lang> in the repo).
+    // Maintainer docs live apart in Development → clients-dev.md.
+    (
+        "Clients",
+        &[
+            ("python.md", "Python — rete-graph"),
+            ("python-build-tutorial.md", "Python: build a .rete"),
+        ],
+    ),
     (
         "Publish & share",
         &[
@@ -77,8 +86,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("SPEC.md", "Format specification"),
             ("rust-api.md", "Rust API"),
             ("browser.md", "WASM & JavaScript API"),
-            ("python.md", "Python API"),
-            ("python-build-tutorial.md", "Python: build a .rete"),
+            ("clients-dev.md", "Client development & releases"),
             ("parallel-browser.md", "Parallel in browser (exp.)"),
             ("data-engineering.md", "Tables, VKG & big builds"),
             ("BENCHMARK.md", "Benchmarks"),

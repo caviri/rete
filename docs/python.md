@@ -11,8 +11,11 @@ selective query over a multi-GB file fetches kilobytes, never the file.
 uv pip install rete-graph          # or: pip install rete-graph
 ```
 
-Wheels are abi3: one wheel per platform covers every CPython ≥ 3.9. The source
-lives in the repository under `clients/python/`; a runnable
+Works anywhere real CPython ≥ 3.9 runs: scripts, Jupyter, **marimo**
+(desktop/server), Colab, uv/pip/conda environments, on Linux, macOS, and
+Windows. (Browser Pythons — JupyterLite, marimo's WASM playground — run on
+Pyodide and can't load native wheels yet; in the browser, use the
+[playground](playground-guide.md) instead.) A runnable
 [Jupyter notebook tour](https://github.com/caviri/rete/blob/main/clients/python/examples/tutorial.ipynb)
 covers everything below with captured outputs.
 
@@ -207,17 +210,8 @@ g.content_hash()              # blake3-16 hex — a stable cache key
 | Multi-shard federated open | ⏳ | planned |
 | Writes / SPARQL UPDATE | — | `.rete` is immutable; use [`rete serve`](cli.md) |
 
-## Development
+## For contributors
 
-The package is a maturin project at `clients/python/` (excluded from the cargo
-workspace). Build and test without a host toolchain:
-
-```sh
-docker run --rm -v "$PWD":/io ghcr.io/pyo3/maturin build \
-    --release -m clients/python/Cargo.toml --out clients/python/dist
-uv pip install clients/python/dist/*.whl pytest && pytest clients/python/tests
-```
-
-CI: `python-test.yml` runs lint + wheel + pytest whenever `clients/python/` or
-`rete-core` changes; a `py-v*` tag runs `python-client-publish.yml`, which
-builds the full wheel matrix and publishes to PyPI.
+This page is for *using* the package. Building from source, the CI layout,
+the release/publishing procedure, and the checklist for adding new language
+clients live in [Client development & releases](clients-dev.md).

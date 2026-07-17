@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Python API · rete docs</title>
+  <title>Python — rete-graph · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -217,6 +217,9 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="federation.html">Federated queries</a></li>
         <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="compatibility.html">Compatibility & Cypher</a></li>
+        <li class="nav-h">Clients</li>
+        <li><a href="python.html" class="active">Python — rete-graph</a></li>
+        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -230,8 +233,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="SPEC.html">Format specification</a></li>
         <li><a href="rust-api.html">Rust API</a></li>
         <li><a href="browser.html">WASM & JavaScript API</a></li>
-        <li><a href="python.html" class="active">Python API</a></li>
-        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
+        <li><a href="clients-dev.html">Client development & releases</a></li>
         <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
         <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
@@ -251,8 +253,11 @@ it with SPARQL — remote files are read lazily over HTTP <code>Range</code> req
 selective query over a multi-GB file fetches kilobytes, never the file.</p>
 <pre><code class="language-sh">uv pip install rete-graph          # or: pip install rete-graph
 </code></pre>
-<p>Wheels are abi3: one wheel per platform covers every CPython ≥ 3.9. The source
-lives in the repository under <code>clients/python/</code>; a runnable
+<p>Works anywhere real CPython ≥ 3.9 runs: scripts, Jupyter, <strong>marimo</strong>
+(desktop/server), Colab, uv/pip/conda environments, on Linux, macOS, and
+Windows. (Browser Pythons — JupyterLite, marimo's WASM playground — run on
+Pyodide and can't load native wheels yet; in the browser, use the
+<a href="playground-guide.html">playground</a> instead.) A runnable
 <a href="https://github.com/caviri/rete/blob/main/clients/python/examples/tutorial.ipynb">Jupyter notebook tour</a>
 covers everything below with captured outputs.</p>
 <h2>Open a graph</h2>
@@ -408,16 +413,10 @@ input, <code>RuntimeError</code> for I/O and format problems.</li>
 <tr><td>Multi-shard federated open</td><td>⏳</td><td>planned</td></tr>
 <tr><td>Writes / SPARQL UPDATE</td><td>—</td><td><code>.rete</code> is immutable; use <a href="cli.html"><code>rete serve</code></a></td></tr>
 </tbody></table>
-<h2>Development</h2>
-<p>The package is a maturin project at <code>clients/python/</code> (excluded from the cargo
-workspace). Build and test without a host toolchain:</p>
-<pre><code class="language-sh">docker run --rm -v "$PWD":/io ghcr.io/pyo3/maturin build \
-    --release -m clients/python/Cargo.toml --out clients/python/dist
-uv pip install clients/python/dist/*.whl pytest &amp;&amp; pytest clients/python/tests
-</code></pre>
-<p>CI: <code>python-test.yml</code> runs lint + wheel + pytest whenever <code>clients/python/</code> or
-<code>rete-core</code> changes; a <code>py-v*</code> tag runs <code>python-client-publish.yml</code>, which
-builds the full wheel matrix and publishes to PyPI.</p>
+<h2>For contributors</h2>
+<p>This page is for <em>using</em> the package. Building from source, the CI layout,
+the release/publishing procedure, and the checklist for adding new language
+clients live in <a href="clients-dev.html">Client development &amp; releases</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
