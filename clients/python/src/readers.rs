@@ -5,15 +5,20 @@
 //! without any auth code on this side.
 
 use std::fs::File;
-use std::io::{self, Read};
+use std::io;
+#[cfg(not(target_os = "emscripten"))]
+use std::io::Read;
 
 use pyo3::prelude::*;
 use rete_core::RangeReader;
 
 /// The one reader type the open path stores: dispatch instead of generics so
-/// [`crate::Graph`] stays a single non-generic pyclass.
+/// [`crate::Graph`] stays a single non-generic pyclass. The HTTP variant is
+/// native-only — on emscripten (Pyodide) remote reads come in as a
+/// [`PyRangeReader`] over the pure-Python sync-XHR reader.
 pub enum AnyReader {
     Local(LocalRangeReader),
+    #[cfg(not(target_os = "emscripten"))]
     Http(HttpRangeReader),
     Py(PyRangeReader),
 }
@@ -22,6 +27,7 @@ impl RangeReader for AnyReader {
     fn len(&self) -> u64 {
         match self {
             Self::Local(r) => r.len(),
+            #[cfg(not(target_os = "emscripten"))]
             Self::Http(r) => r.len(),
             Self::Py(r) => r.len(),
         }
@@ -30,6 +36,7 @@ impl RangeReader for AnyReader {
     fn read_at(&self, offset: u64, len: u64) -> io::Result<Vec<u8>> {
         match self {
             Self::Local(r) => r.read_at(offset, len),
+            #[cfg(not(target_os = "emscripten"))]
             Self::Http(r) => r.read_at(offset, len),
             Self::Py(r) => r.read_at(offset, len),
         }
@@ -38,6 +45,7 @@ impl RangeReader for AnyReader {
     fn read_many(&self, ranges: &[(u64, u64)]) -> io::Result<Vec<Vec<u8>>> {
         match self {
             Self::Local(r) => r.read_many(ranges),
+            #[cfg(not(target_os = "emscripten"))]
             Self::Http(r) => r.read_many(ranges),
             Self::Py(r) => r.read_many(ranges),
         }
@@ -109,6 +117,8 @@ fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result
 /// HTTP(S) `Range` reader — the same contract as the CLI's: the server MUST
 /// answer 206, and short bodies are hard errors, never silent truncation.
 /// Extra request headers (auth tokens, custom UA) ride on every request.
+/// Native-only: browsers have no sockets (see [`AnyReader`]).
+#[cfg(not(target_os = "emscripten"))]
 pub struct HttpRangeReader {
     agent: ureq::Agent,
     url: String,
@@ -116,6 +126,7 @@ pub struct HttpRangeReader {
     headers: Vec<(String, String)>,
 }
 
+#[cfg(not(target_os = "emscripten"))]
 impl HttpRangeReader {
     pub fn open(url: &str, headers: Vec<(String, String)>) -> io::Result<Self> {
         let agent = ureq::builder()
@@ -159,6 +170,7 @@ impl HttpRangeReader {
     }
 }
 
+#[cfg(not(target_os = "emscripten"))]
 impl RangeReader for HttpRangeReader {
     fn len(&self) -> u64 {
         self.len

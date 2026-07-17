@@ -1,5 +1,6 @@
 target/
 dist/
+dist-pyodide/
 .venv/
 __pycache__/
 *.egg-info/

@@ -21,6 +21,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
@@ -299,6 +300,66 @@ class Graph:
         return f"<rete_graph.Graph source={self.source!r} quads={self.quads}>"
 
 
+class _XhrRangeReader:
+    """HTTP `Range` reader for Pyodide (JupyterLite, marimo WASM): synchronous
+    ``XMLHttpRequest`` with a binary response, which browsers allow only in
+    web workers — where those tools run their kernels. Same contract as the
+    native reader: the server must answer 206, short bodies are errors."""
+
+    def __init__(self, url: str, headers: Optional[Mapping[str, str]] = None):
+        from js import XMLHttpRequest  # only importable under Pyodide
+
+        self._xhr_cls = XMLHttpRequest
+        self._url = url
+        self._headers = dict(headers or {})
+        probe = self._request("HEAD", None)
+        length = probe.getResponseHeader("Content-Length")
+        if length:
+            self._len = int(length)
+        else:
+            # Some hosts omit Content-Length on HEAD; a 1-byte ranged GET's
+            # `Content-Range: bytes 0-0/TOTAL` carries the total instead.
+            probe = self._request("GET", (0, 0))
+            content_range = probe.getResponseHeader("Content-Range") or ""
+            if "/" not in content_range:
+                raise IOError(f"could not determine the file length of {url}")
+            self._len = int(content_range.rsplit("/", 1)[-1])
+
+    def _request(self, method: str, byte_range: Optional[Tuple[int, int]]):
+        xhr = self._xhr_cls.new()
+        xhr.open(method, self._url, False)  # False = synchronous
+        if method == "GET":
+            xhr.responseType = "arraybuffer"
+        for key, value in self._headers.items():
+            xhr.setRequestHeader(key, value)
+        if byte_range is not None:
+            xhr.setRequestHeader("Range", f"bytes={byte_range[0]}-{byte_range[1]}")
+        xhr.send()
+        return xhr
+
+    def len(self) -> int:
+        return self._len
+
+    def read_at(self, offset: int, length: int) -> bytes:
+        if length == 0:
+            return b""
+        xhr = self._request("GET", (offset, offset + length - 1))
+        if xhr.status != 206:
+            raise IOError(
+                f"server ignored Range (status {xhr.status}, expected 206) for "
+                f"{self._url}; the host must support HTTP range requests"
+            )
+        import js
+
+        data = bytes(js.Uint8Array.new(xhr.response).to_py())
+        if len(data) != length:
+            raise IOError(
+                f"short range response: got {len(data)} of {length} bytes "
+                f"at offset {offset} from {self._url}"
+            )
+        return data
+
+
 def open(
     source: Union[str, bytes, bytearray, memoryview, "os.PathLike[str]", None] = None,
     *,
@@ -325,6 +386,10 @@ def open(
         return Graph(_rete.open_bytes(bytes(source)), "<bytes>")
     path = os.fspath(source)
     if isinstance(path, str) and path.startswith(("http://", "https://")):
+        if sys.platform == "emscripten":
+            # Pyodide: no sockets, so the native HTTP reader is compiled out;
+            # remote reads go through the sync-XHR reader instead.
+            return Graph(_rete.open_reader(_XhrRangeReader(path, headers)), path)
         return Graph(_rete.open_url(path, dict(headers) if headers else None), path)
     if headers:
         raise TypeError("headers= only applies to http(s) sources")

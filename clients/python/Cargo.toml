@@ -3,7 +3,9 @@
 # maturin (pyproject.toml), and is published to PyPI, never to crates.io.
 [package]
 name = "rete-python"
-version = "0.1.0"
+# Keep in lockstep with pyproject.toml's [project] version — __version__
+# comes from here (CARGO_PKG_VERSION), the wheel metadata from pyproject.
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/caviri/rete"
@@ -19,10 +21,19 @@ name = "_rete"
 crate-type = ["cdylib"]
 
 [dependencies]
-rete-core = { path = "../../crates/rete-core" }
-# abi3-py39: one wheel per platform covers every CPython >= 3.9.
+# Base dep is feature-less so the emscripten (Pyodide) build gets no C zstd
+# encoder; reads of compressed files always work via the pure-Rust decoder.
+rete-core = { path = "../../crates/rete-core", default-features = false }
+# abi3-py39: one wheel per platform covers every CPython >= 3.9. (On
+# emscripten pyo3 ignores abi3 — Pyodide wheels are per-ABI-year anyway.)
 pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"] }
+serde_json = "1"
+
+# Native-only: browsers have no sockets, so the blocking HTTP reader and the
+# SERVICE client are compiled out on emscripten — there, remote reads route
+# through the Python-object reader (sync XHR in the pure-Python layer).
+[target.'cfg(not(target_os = "emscripten"))'.dependencies]
+rete-core = { path = "../../crates/rete-core", features = ["compression"] }
 # Blocking HTTP(S) range reads + SERVICE federation, mirroring rete-cli
 # (rustls via the `tls` feature — no system OpenSSL anywhere wheels land).
 ureq = { version = "2", default-features = false, features = ["tls"] }
-serde_json = "1"

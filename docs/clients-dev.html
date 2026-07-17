@@ -329,19 +329,72 @@ CPython ≥ 3.9 — no per-Python-version matrix.</li>
 <p>Optionally add required reviewers to the <code>pypi</code> GitHub environment to make
 every release pause for a manual approval.</p>
 <h2>Runtime compatibility</h2>
-<p>The wheels are <strong>native</strong> CPython extensions: anything running real CPython
-works out of the box — scripts, Jupyter, <strong>marimo (desktop/server)</strong>, Colab,
-uv/pip/poetry/conda environments, Linux (x86_64/aarch64, glibc 2.17+/2.28+),
-macOS (Intel + Apple Silicon), Windows x64.</p>
-<p><strong>Browser Pythons are not covered yet</strong>: JupyterLite and marimo's WASM
-playground run on Pyodide, which only loads pure-Python or
-<code>emscripten-wasm32</code> wheels. Supporting them needs (a) a maturin build against
-the exact Pyodide/emscripten toolchain, (b) a no-threads <code>read_many</code> path
-(wasm has no <code>std::thread</code>), and (c) remote reads routed through the existing
-<code>open(reader=...)</code> callback backed by synchronous XHR (available there, since
-Pyodide runs in a worker). Until then, the in-browser story is the
-<a href="playground-guide.html">playground</a> / <a href="browser.html">WASM API</a>, which is purpose-built
-for it.</p>
+<p>The main wheels are <strong>native</strong> CPython extensions: anything running real
+CPython works out of the box — scripts, Jupyter, <strong>marimo (desktop/server)</strong>,
+Colab, uv/pip/poetry/conda environments, Linux (x86_64/aarch64, glibc
+2.17+/2.28+), macOS (Intel + Apple Silicon), Windows x64.</p>
+<h3>The Pyodide (browser Python) build</h3>
+<p>From 0.2.0 the release also ships <strong>PyEmscripten wheels</strong> (PEP 783,
+<code>pyemscripten_*_wasm32</code> tags — accepted by PyPI) for Pyodide runtimes:
+JupyterLite, marimo WASM. How it works, all behind
+<code>cfg(target_os = "emscripten")</code> so native builds are untouched:</p>
+<ul>
+<li><strong>No sockets in browsers</strong> → <code>ureq</code>, <code>HttpRangeReader</code>, and the SERVICE
+client are compiled out (this also drops <code>ring</code>/rustls, the one dependency
+that genuinely hurts on emscripten). Remote opens route through the
+pure-Python <code>_XhrRangeReader</code> — synchronous <code>XMLHttpRequest</code> with binary
+responses, which browsers allow <strong>only in web workers</strong>; JupyterLite and
+marimo run their kernels there. The engine stays fully synchronous: no
+Asyncify anywhere.</li>
+<li><strong>No threads in wasm</strong> → with the HTTP reader gone, nothing spawns threads;
+the Python-callback reader uses the default sequential <code>read_many</code>.</li>
+<li><strong>No C zstd encoder</strong> → rete-core builds without the <code>compression</code> feature;
+reads of compressed files still work (pure-Rust decoder), in-browser
+<code>build()</code> writes codec NONE like the playground's Build tab.</li>
+<li><strong>Toolchain — three hard-won pins</strong> (all encoded in the <code>wheel-pyodide</code>
+job; change them together or not at all):
+<ol>
+<li><strong>A dated nightly</strong> (<code>nightly-2025-06-01</code>): pyodide-build drives cargo
+with <code>-Z</code> emscripten flags — nightly-only, and <em>newer</em> nightlies dropped
+<code>-Z emscripten-wasm-eh</code> once it became the default. The window is
+≥ 1.87 (the workspace MSRV) and pre-removal. Set it via
+<code>RUSTUP_TOOLCHAIN</code> — the repo's <code>rust-toolchain.toml</code> stable pin
+silently overrides <code>rustup default</code> otherwise.</li>
+<li><strong><code>build-std</code></strong> (<code>CARGO_UNSTABLE_BUILD_STD=std,panic_abort,panic_unwind</code>
+<ul>
+<li>the <code>rust-src</code> component): Rust's <em>prebuilt</em> emscripten std is
+compiled <strong>without</strong> wasm-EH; linking it emits JS-EH <code>invoke_*</code> imports
+that Pyodide's runtime refuses at import time
+(<code>cannot resolve symbol invoke_vii</code>). Recompiling std with the same
+flags fixes the ABI mismatch.</li>
+</ul>
+</li>
+<li><strong>cibuildwheel</strong> (<code>--platform pyodide</code>) provisions the pinned emsdk +
+xbuildenv and emits one wheel per Pyodide ABI year.
+Revisit all three when pyodide-build supports stable Rust — upstream main
+already pins <code>1.93.0</code> + Emscripten 5, at which point the nightly and
+build-std steps disappear.</li>
+</ol>
+</li>
+</ul>
+<p>Local build (Docker, like everything else):</p>
+<pre><code class="language-sh">docker run --rm -v "$PWD":/io -w /io/clients/python python:3.13-bookworm bash -c '
+  curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+  export PATH=/root/.cargo/bin:$PATH
+  rustup toolchain install nightly-2025-06-01 --profile minimal
+  rustup target add --toolchain nightly-2025-06-01 wasm32-unknown-emscripten
+  rustup component add --toolchain nightly-2025-06-01 rust-src
+  export RUSTUP_TOOLCHAIN=nightly-2025-06-01
+  export CARGO_UNSTABLE_BUILD_STD=std,panic_abort,panic_unwind
+  pip install cibuildwheel &amp;&amp; cibuildwheel --platform pyodide --output-dir dist-pyodide .'
+</code></pre>
+<p>Smoke-test the wheel in a node-backed Pyodide venv (<code>pip install pyodide-build &amp;&amp; pyodide venv /tmp/pyenv</code>, then install the wheel with its
+pip and import) — it must print <code>sys.platform == "emscripten"</code> and answer a
+query. Remote/XHR paths need a real browser (worker), so keep a manual
+JupyterLite check for releases that touch the reader.</p>
+<p><strong>wasm64 (tracked future work)</strong>: wasm32 caps memory at 4 GiB. Browsers ship
+memory64 now, but Pyodide/emscripten don't build for it yet — when Pyodide
+gains a wasm64 ABI, add its wheel here; nothing in our code assumes 32-bit.</p>
 <h2>Adding a new language client (R, Go, …)</h2>
 <p>The checklist that made Python work:</p>
 <ol>

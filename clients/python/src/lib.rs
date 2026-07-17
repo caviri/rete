@@ -9,6 +9,7 @@
 
 mod readers;
 
+#[cfg(not(target_os = "emscripten"))]
 use std::io::Read;
 use std::sync::Arc;
 
@@ -16,23 +17,30 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use rete_core::{
-    eval_query, eval_query_reasoned, parse_sparql_json_results, results_envelope_json,
-    schema_classes, schema_summary, Binding, BlockCacheReader, CountingReader, RangeReader, Rete,
-    ServiceClient, DEFAULT_BLOCK,
+    eval_query, eval_query_reasoned, results_envelope_json, schema_classes, schema_summary,
+    BlockCacheReader, CountingReader, RangeReader, Rete, DEFAULT_BLOCK,
 };
+#[cfg(not(target_os = "emscripten"))]
+use rete_core::{parse_sparql_json_results, Binding, ServiceClient};
 
-use readers::{AnyReader, HttpRangeReader, LocalRangeReader, PyRangeReader};
+#[cfg(not(target_os = "emscripten"))]
+use readers::HttpRangeReader;
+use readers::{AnyReader, LocalRangeReader, PyRangeReader};
 
 /// Version of the JSON envelopes (mirrors rete-wasm's `JSON_SCHEMA_VERSION`).
 const JSON_SCHEMA_VERSION: u8 = 1;
 
 /// Cap on a SERVICE response body — a runaway endpoint must not exhaust RAM.
+#[cfg(not(target_os = "emscripten"))]
 const MAX_SERVICE_RESPONSE: u64 = 256 * 1024 * 1024;
 
 /// `SERVICE <endpoint> { … }` transport: SPARQL Protocol over blocking HTTP,
-/// the native twin of the CLI's `HttpServiceClient`.
+/// the native twin of the CLI's `HttpServiceClient`. Native-only — a SERVICE
+/// block on the Pyodide build reports the engine's no-client error.
+#[cfg(not(target_os = "emscripten"))]
 struct HttpServiceClient;
 
+#[cfg(not(target_os = "emscripten"))]
 impl ServiceClient for HttpServiceClient {
     fn query(&self, endpoint: &str, query: &str) -> Result<Vec<Binding>, String> {
         let agent = ureq::builder()
@@ -86,7 +94,9 @@ fn open_lazy(reader: AnyReader) -> PyResult<Graph> {
         counting.clone(),
         auto_block(file_len),
     ));
+    #[allow(unused_mut)]
     let mut rete = Rete::open_ranged_lazy(cached).map_err(runtime_err)?;
+    #[cfg(not(target_os = "emscripten"))]
     rete.set_service_client(Box::new(HttpServiceClient));
     Ok(Graph {
         rete,
@@ -269,7 +279,9 @@ fn open_path(py: Python<'_>, path: String) -> PyResult<Graph> {
 }
 
 /// Open a remote `.rete` over HTTP range requests, lazily. `headers` ride on
-/// every request (auth tokens, custom User-Agent).
+/// every request (auth tokens, custom User-Agent). Native-only: the Pyodide
+/// build's `open()` routes URLs through the sync-XHR Python reader instead.
+#[cfg(not(target_os = "emscripten"))]
 #[pyfunction]
 #[pyo3(signature = (url, headers=None))]
 fn open_url(
@@ -289,7 +301,9 @@ fn open_url(
 #[pyfunction]
 fn open_bytes(py: Python<'_>, data: Vec<u8>) -> PyResult<Graph> {
     py.allow_threads(|| {
+        #[allow(unused_mut)]
         let mut rete = Rete::open(&data).map_err(runtime_err)?;
+        #[cfg(not(target_os = "emscripten"))]
         rete.set_service_client(Box::new(HttpServiceClient));
         Ok(Graph {
             rete,
@@ -420,6 +434,7 @@ fn build_dataset(
 fn _rete(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Graph>()?;
     m.add_function(wrap_pyfunction!(open_path, m)?)?;
+    #[cfg(not(target_os = "emscripten"))]
     m.add_function(wrap_pyfunction!(open_url, m)?)?;
     m.add_function(wrap_pyfunction!(open_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(open_reader, m)?)?;

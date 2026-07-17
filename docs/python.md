@@ -13,9 +13,9 @@ uv pip install rete-graph          # or: pip install rete-graph
 
 Works anywhere real CPython ≥ 3.9 runs: scripts, Jupyter, **marimo**
 (desktop/server), Colab, uv/pip/conda environments, on Linux, macOS, and
-Windows. (Browser Pythons — JupyterLite, marimo's WASM playground — run on
-Pyodide and can't load native wheels yet; in the browser, use the
-[playground](playground-guide.md) instead.) A runnable
+Windows. From **0.2.0** there are also Pyodide wheels for browser Pythons —
+see [JupyterLite & marimo WASM](#browser-python-jupyterlite--marimo-wasm)
+below. A runnable
 [Jupyter notebook tour](https://github.com/caviri/rete/blob/main/clients/python/examples/tutorial.ipynb)
 covers everything below with captured outputs.
 
@@ -179,6 +179,41 @@ g.graph_names()               # named graphs in a dataset
 g.content_hash()              # blake3-16 hex — a stable cache key
 ```
 
+## Browser Python: JupyterLite & marimo WASM {#browser-python-jupyterlite--marimo-wasm}
+
+From version 0.2.0 the release also ships **PyEmscripten (Pyodide) wheels**,
+so the client runs inside browser Pythons — a JupyterLite site, marimo's WASM
+playground — with no server anywhere:
+
+```python
+# JupyterLite / Pyodide
+%pip install rete-graph            # piplite/micropip resolve the pyodide wheel
+
+import rete_graph as rete
+g = rete.open("https://data.graphplaza.com/boe/boe.rete")
+g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
+```
+
+Under the hood, remote reads use synchronous `XMLHttpRequest` range requests —
+allowed only in **web workers**, which is where JupyterLite and marimo run
+their kernels, so it just works there. The file's host must send CORS headers
+and honor `Range`, the same contract as the [playground](playground-guide.md).
+
+Differences from the native wheels, by browser necessity:
+
+- Range fetches are sequential (no threads in wasm) — fine in practice, since
+  the block cache already coalesces reads.
+- `SERVICE` federation is unavailable.
+- In-browser `build()` writes uncompressed sections (like the playground's
+  Build tab); every reader accepts them.
+- wasm32 means a 4 GiB memory ceiling — lazy *remote* querying is the
+  intended use, not giant in-memory builds. (A wasm64 build lifts this, and
+  is tracked as future work pending Pyodide support.)
+
+Pyodide wheels are per-ABI-year (not abi3): current Pyodide releases are
+covered; if yours isn't, `micropip.install("<url of the .whl>")` works from
+any CORS-enabled host.
+
 ## Guarantees and threading
 
 - **No silent partial results**: if a range fetch fails mid-query on a lazy
@@ -205,6 +240,7 @@ g.content_hash()              # blake3-16 hex — a stable cache key
 | Build options: pyramid algo, text index | ✅ | `Builder.pyramid()/text_index()/type_predicate()` |
 | Schema profile, prefix & text search | ✅ | `schema()`, `prefix_search()`, `text_search()` |
 | pandas DataFrames | ✅ | `query_df()`, `[pandas]` extra |
+| Browser Python (Pyodide) | ✅ 0.2.0 | JupyterLite / marimo WASM; no SERVICE, sequential fetches |
 | SHACL validation | ⏳ | use the [CLI](cli.md) meanwhile |
 | Reachability / communities / provenance (`why`) | ⏳ | planned bindings |
 | Multi-shard federated open | ⏳ | planned |

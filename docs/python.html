@@ -255,9 +255,9 @@ selective query over a multi-GB file fetches kilobytes, never the file.</p>
 </code></pre>
 <p>Works anywhere real CPython ≥ 3.9 runs: scripts, Jupyter, <strong>marimo</strong>
 (desktop/server), Colab, uv/pip/conda environments, on Linux, macOS, and
-Windows. (Browser Pythons — JupyterLite, marimo's WASM playground — run on
-Pyodide and can't load native wheels yet; in the browser, use the
-<a href="playground-guide.html">playground</a> instead.) A runnable
+Windows. From <strong>0.2.0</strong> there are also Pyodide wheels for browser Pythons —
+see <a href="#browser-python-jupyterlite--marimo-wasm">JupyterLite &amp; marimo WASM</a>
+below. A runnable
 <a href="https://github.com/caviri/rete/blob/main/clients/python/examples/tutorial.ipynb">Jupyter notebook tour</a>
 covers everything below with captured outputs.</p>
 <h2>Open a graph</h2>
@@ -384,6 +384,35 @@ g.quads, g.terms              # header counts, as properties
 g.graph_names()               # named graphs in a dataset
 g.content_hash()              # blake3-16 hex — a stable cache key
 </code></pre>
+<h2 id="browser-python-jupyterlite--marimo-wasm">Browser Python: JupyterLite &amp; marimo WASM</h2>
+<p>From version 0.2.0 the release also ships <strong>PyEmscripten (Pyodide) wheels</strong>,
+so the client runs inside browser Pythons — a JupyterLite site, marimo's WASM
+playground — with no server anywhere:</p>
+<pre><code class="language-python"># JupyterLite / Pyodide
+%pip install rete-graph            # piplite/micropip resolve the pyodide wheel
+
+import rete_graph as rete
+g = rete.open("https://data.graphplaza.com/boe/boe.rete")
+g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
+</code></pre>
+<p>Under the hood, remote reads use synchronous <code>XMLHttpRequest</code> range requests —
+allowed only in <strong>web workers</strong>, which is where JupyterLite and marimo run
+their kernels, so it just works there. The file's host must send CORS headers
+and honor <code>Range</code>, the same contract as the <a href="playground-guide.html">playground</a>.</p>
+<p>Differences from the native wheels, by browser necessity:</p>
+<ul>
+<li>Range fetches are sequential (no threads in wasm) — fine in practice, since
+the block cache already coalesces reads.</li>
+<li><code>SERVICE</code> federation is unavailable.</li>
+<li>In-browser <code>build()</code> writes uncompressed sections (like the playground's
+Build tab); every reader accepts them.</li>
+<li>wasm32 means a 4 GiB memory ceiling — lazy <em>remote</em> querying is the
+intended use, not giant in-memory builds. (A wasm64 build lifts this, and
+is tracked as future work pending Pyodide support.)</li>
+</ul>
+<p>Pyodide wheels are per-ABI-year (not abi3): current Pyodide releases are
+covered; if yours isn't, <code>micropip.install("&lt;url of the .whl&gt;")</code> works from
+any CORS-enabled host.</p>
 <h2>Guarantees and threading</h2>
 <ul>
 <li><strong>No silent partial results</strong>: if a range fetch fails mid-query on a lazy
@@ -408,6 +437,7 @@ input, <code>RuntimeError</code> for I/O and format problems.</li>
 <tr><td>Build options: pyramid algo, text index</td><td>✅</td><td><code>Builder.pyramid()/text_index()/type_predicate()</code></td></tr>
 <tr><td>Schema profile, prefix &amp; text search</td><td>✅</td><td><code>schema()</code>, <code>prefix_search()</code>, <code>text_search()</code></td></tr>
 <tr><td>pandas DataFrames</td><td>✅</td><td><code>query_df()</code>, <code>[pandas]</code> extra</td></tr>
+<tr><td>Browser Python (Pyodide)</td><td>✅ 0.2.0</td><td>JupyterLite / marimo WASM; no SERVICE, sequential fetches</td></tr>
 <tr><td>SHACL validation</td><td>⏳</td><td>use the <a href="cli.html">CLI</a> meanwhile</td></tr>
 <tr><td>Reachability / communities / provenance (<code>why</code>)</td><td>⏳</td><td>planned bindings</td></tr>
 <tr><td>Multi-shard federated open</td><td>⏳</td><td>planned</td></tr>

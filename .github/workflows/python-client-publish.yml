@@ -68,6 +68,46 @@ jobs:
           name: wheel-${{ matrix.platform.name }}
           path: dist
 
+  wheel-pyodide:
+    name: wheel pyodide (browser Python)
+    # PyEmscripten wheel (PEP 783) for Pyodide runtimes — JupyterLite, marimo
+    # WASM. Not abi3: one wheel per Pyodide ABI year, built by cibuildwheel
+    # against the pinned emsdk. PyPI accepts the pyemscripten_* tags.
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/py-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      # pyodide-build 0.35 drives cargo with -Z emscripten flags: needs a
+      # nightly in a specific window — >=1.87 (workspace MSRV) but old enough
+      # to still carry `-Z emscripten-wasm-eh` (newer toolchains made it the
+      # default and dropped the flag). RUSTUP_TOOLCHAIN must also override the
+      # repo's rust-toolchain.toml stable pin. Revisit when pyodide-build
+      # supports stable Rust (upstream main already pins 1.93).
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-06-01
+          targets: wasm32-unknown-emscripten
+          components: rust-src
+      - name: Build the PyEmscripten (Pyodide) wheel
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2025-06-01
+          # Rust's prebuilt emscripten std lacks wasm-EH; recompile it with
+          # the same flags (rust-src above) or the module imports JS-EH
+          # invoke_* stubs that Pyodide's runtime refuses to link.
+          CARGO_UNSTABLE_BUILD_STD: std,panic_abort,panic_unwind
+        run: |
+          pip install cibuildwheel
+          cibuildwheel --platform pyodide --output-dir dist clients/python
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-pyodide
+          path: dist
+
   sdist:
     name: sdist
     needs: test
@@ -87,7 +127,7 @@ jobs:
 
   publish:
     name: publish to PyPI
-    needs: [wheels, sdist]
+    needs: [wheels, wheel-pyodide, sdist]
     if: startsWith(github.ref, 'refs/tags/py-v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
