@@ -2187,6 +2187,9 @@ impl Rete {
         let head = reader.read_at(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
         let reader = std::sync::Arc::new(reader);
+        // Captured before the loader closures take the Arc: the reader's
+        // concurrent-range fan-out, stamped onto the index for the planner.
+        let read_concurrency = reader.concurrency();
 
         // Lazily-chunked dictionary: locate the four sections, fetch each
         // section's header + restart table + chunk directory (small), and
@@ -2375,6 +2378,10 @@ impl Rete {
                 .map(|&(_, _, r)| r.len.min(u32::MAX as u64) as u32)
                 .collect()
         }));
+        // The reader's fan-out widens the planner's remote probe budget: a
+        // desktop/CLI reader overlapping 16 range reads probes far more cheaply
+        // than a phone's serial sync-XHR path.
+        index.set_read_concurrency(read_concurrency);
 
         Ok(Self {
             header,

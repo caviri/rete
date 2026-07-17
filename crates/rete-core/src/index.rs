@@ -440,6 +440,9 @@ pub struct GraphIndex {
     /// Set when the loader failed for some tile: results may be incomplete and
     /// the caller must surface an error rather than the partial answer.
     load_failed: std::sync::atomic::AtomicBool,
+    /// The reader's concurrent-range fan-out (1 = strictly sequential) — see
+    /// [`set_read_concurrency`](Self::set_read_concurrency).
+    read_concurrency: usize,
 }
 
 impl GraphIndex {
@@ -449,6 +452,7 @@ impl GraphIndex {
             loader: None,
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
+            read_concurrency: 1,
         }
     }
 
@@ -484,6 +488,7 @@ impl GraphIndex {
             loader: Some(loader),
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
+            read_concurrency: 1,
         }
     }
 
@@ -503,6 +508,19 @@ impl GraphIndex {
                 tile.len = l;
             }
         }
+    }
+
+    /// Record the reader's concurrent-range fan-out (see
+    /// [`RangeReader::concurrency`](crate::reader::RangeReader::concurrency)) —
+    /// the join planner widens its remote probe budget when round trips
+    /// overlap instead of serializing.
+    pub(crate) fn set_read_concurrency(&mut self, c: usize) {
+        self.read_concurrency = c.max(1);
+    }
+
+    /// The reader's concurrent-range fan-out (1 = strictly sequential).
+    pub(crate) fn read_concurrency(&self) -> usize {
+        self.read_concurrency
     }
 
     /// Did any tile fetch fail since this index was opened? (Sticky.)

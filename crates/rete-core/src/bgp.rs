@@ -189,7 +189,7 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
             && shares_bound
             && !rows.is_empty()
             && if index.is_remote() {
-                rows.len() <= REMOTE_PROBE_MAX
+                rows.len() <= remote_probe_max(index)
                     && (rows.len() <= REMOTE_PROBE_MIN || !pattern_is_selective(&t))
             } else {
                 rows.len() <= BGP_PROBE_THRESHOLD
@@ -381,6 +381,87 @@ const BGP_PROBE_THRESHOLD: usize = 512;
 /// loss remotely, so it is capped.
 const REMOTE_PROBE_MIN: usize = 8;
 const REMOTE_PROBE_MAX: usize = 1024;
+
+/// The remote probe budget, widened by the reader's concurrency: a serial
+/// sync-XHR reader (a phone without the COI pool) pays one full round trip per
+/// probe, so its budget stays at [`REMOTE_PROBE_MAX`]; a reader overlapping
+/// 16 range reads (the CLI's thread pool, the asyncified fetch variant, the
+/// COI fetch-worker pool) amortizes ~16 probes per round trip and gets a
+/// proportionally larger budget before the one-pass scan wins again.
+fn remote_probe_max(index: &GraphIndex) -> usize {
+    REMOTE_PROBE_MAX * index.read_concurrency().clamp(1, 16)
+}
+
+/// Batch-fault the tiles that a [`ProbePlan`]'s FIRST pattern will route to
+/// across a batch of seed rows — one coalesced read per section instead of a
+/// blocking round trip per row. Only the first pattern is prefetchable (later
+/// ones bind from earlier probe results), and only rows whose seed binds the
+/// pattern's subject or object are included: a predicate-only pattern routes
+/// to the predicate's WHOLE span, which for the fat sides this path serves
+/// would prefetch the very extent the probe strategy exists to avoid.
+pub(crate) fn prefetch_plan_probes(ctx: &Ctx, index: &GraphIndex, plan: &ProbePlan, rows: &[Row]) {
+    if !index.is_remote() {
+        return;
+    }
+    let Some(t) = plan.pats.first() else {
+        return;
+    };
+    let mut pats: Vec<Pattern> = Vec::new();
+    for base in rows {
+        if let (Some(s), Some(p), Some(o)) = (
+            probe_subject(ctx, &t.0, base),
+            probe_predicate(ctx, &t.1, base),
+            probe_object(ctx, &t.2, base),
+        ) {
+            if s.is_some() || o.is_some() {
+                pats.push((s, p, o));
+            }
+        }
+    }
+    index.prefetch_probe_tiles(&pats);
+}
+
+/// Batch-fault the tiles that probing `patterns` from `subject_ids` (each
+/// bound onto the subject variable `sv`) will route to — one coalesced read
+/// per section instead of one round trip per candidate. Purely a cache
+/// warmer: correctness is untouched, and a local index is a no-op. Used by
+/// the FILTER-CONTAINS pushdown before it probes its candidate subjects.
+pub(crate) fn prefetch_subject_probes(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    patterns: &[TriplePattern],
+    sv: &str,
+    subject_ids: &[u32],
+) {
+    if !index.is_remote() {
+        return;
+    }
+    let Some(lowered) = lower(patterns, ctx) else {
+        return;
+    };
+    let Some(slot) = ctx.slots.slot(sv) else {
+        return;
+    };
+    let dict = ctx.rete.dictionary();
+    let mut pats: Vec<Pattern> = Vec::new();
+    for &sid in subject_ids {
+        let mut base = ctx.slots.empty_row();
+        base[slot] = Some(Val::Id(dict.subject_node(sid) as i64));
+        for t in &lowered {
+            if !matches!(t.0, SlotTerm::Var(i) if i == slot) {
+                continue;
+            }
+            if let (Some(s), Some(p), Some(o)) = (
+                probe_subject(ctx, &t.0, &base),
+                probe_predicate(ctx, &t.1, &base),
+                probe_object(ctx, &t.2, &base),
+            ) {
+                pats.push((s, p, o));
+            }
+        }
+    }
+    index.prefetch_probe_tiles(&pats);
+}
 
 /// A pattern whose own constant terms (a bound subject or object) already route
 /// it to a narrow index range — a few coalesced range reads to scan in full.

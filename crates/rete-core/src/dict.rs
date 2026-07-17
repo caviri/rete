@@ -494,6 +494,15 @@ impl ChunkedSection {
     }
 
     /// Resolve `id` (1-based) to its term. One chunk fault at most.
+    /// Chunk index holding term `id` — [`term`](Self::term)'s routing without
+    /// faulting the chunk. `None` for an absent/out-of-range id.
+    pub(crate) fn chunk_of_term(&self, id: u32) -> Option<usize> {
+        if id == ABSENT || id > self.meta.term_count {
+            return None;
+        }
+        self.chunk_of_run((id - 1) as usize / self.meta.restart_interval as usize)
+    }
+
     pub fn term(&self, id: u32) -> Option<String> {
         if id == ABSENT || id > self.meta.term_count {
             return None;

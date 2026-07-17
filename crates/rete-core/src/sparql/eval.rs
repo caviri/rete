@@ -1383,18 +1383,58 @@ fn text_contains_pushdown(
         return None;
     }
     let dict = ctx.rete.dictionary();
+    let ids: Vec<u32> = cands.iter().copied().collect();
+    // Three batched warm-ups turn the otherwise per-candidate blocking round
+    // trips into a few coalesced reads: the candidates' own terms (the VALUES
+    // seed), the tiles their probes will route to, and — after the id-rows
+    // land — every term the filter/projection is about to decode.
+    dict.prefetch_subject_terms(&ids);
     let rows: Vec<Vec<Option<String>>> = cands
         .iter()
         .filter_map(|&id| dict.subject_term(id))
         .map(|t| vec![Some(t)])
         .collect();
+    if let Some(target) = find_seed_bgp(inner, &sv) {
+        crate::bgp::prefetch_subject_probes(ctx, index, target, &sv, &ids);
+    }
     let values = Plan::Values(vec![sv.clone()], rows);
     let seeded = inject_contains_seed(inner, &sv, &values)?;
+    let id_rows: Vec<Row> = eval_plan_iter(ctx, index, nf, &seeded).collect();
+    let nodes: Vec<u32> = {
+        let mut set = BTreeSet::new();
+        for row in &id_rows {
+            for v in row.iter().flatten() {
+                if let Val::Id(x) = v {
+                    if *x >= 0 {
+                        set.insert(*x as u32);
+                    }
+                }
+            }
+        }
+        set.into_iter().collect()
+    };
+    dict.prefetch_node_terms(&nodes);
     let mut cache = ExistsCache::new();
-    let out: Vec<Row> = eval_plan_iter(ctx, index, nf, &seeded)
+    let out: Vec<Row> = id_rows
+        .into_iter()
         .filter(|b| expr.boolean(ctx, index, b, &mut cache))
         .collect();
     Some(out)
+}
+
+/// The required-spine `Bgp` that [`inject_contains_seed`] will wrap — same
+/// traversal, exposed so the pushdown can prefetch that BGP's probe tiles.
+fn find_seed_bgp<'p>(plan: &'p Plan, sv: &str) -> Option<&'p [TriplePattern]> {
+    match plan {
+        Plan::Bgp(patterns) => patterns
+            .iter()
+            .any(|p| matches!(&p.s, PatternTerm::Var(s) if s == sv))
+            .then_some(patterns.as_slice()),
+        Plan::Join(l, r) => find_seed_bgp(l, sv).or_else(|| find_seed_bgp(r, sv)),
+        Plan::LeftJoin(l, _, _) => find_seed_bgp(l, sv),
+        Plan::Filter(_, inner) => find_seed_bgp(inner, sv),
+        _ => None,
+    }
 }
 
 /// The subject variable of a pattern binding `cv` as its object, searched over
@@ -1690,16 +1730,31 @@ fn join_iter<'q>(
                         .map_or(true, |n| n >= crate::bgp::FAT_SCAN_BYTES));
             if probe {
                 return match ProbePlan::new(ctx, patterns, &lcert) {
-                    Some(plan) => Box::new(ProbedJoin {
-                        ctx,
-                        index,
-                        left: eval_plan_iter(ctx, index, nf, l),
-                        plan,
-                        optional,
-                        cond,
-                        cache: ExistsCache::new(),
-                        cur: None,
-                    }),
+                    Some(plan) => {
+                        // Fat-gate path (no small demand bound): the left side
+                        // is the small one by construction — materialize it and
+                        // batch-fault every tile its probes will touch in a few
+                        // coalesced reads instead of one blocking round trip
+                        // per row. The demand-bound path stays fully lazy
+                        // (materializing would defeat its early exit).
+                        let left: RowIter<'q> = if inlj_hint(ctx).is_none() {
+                            let rows: Vec<Row> = eval_plan_iter(ctx, index, nf, l).collect();
+                            crate::bgp::prefetch_plan_probes(ctx, index, &plan, &rows);
+                            Box::new(rows.into_iter())
+                        } else {
+                            eval_plan_iter(ctx, index, nf, l)
+                        };
+                        Box::new(ProbedJoin {
+                            ctx,
+                            index,
+                            left,
+                            plan,
+                            optional,
+                            cond,
+                            cache: ExistsCache::new(),
+                            cur: None,
+                        })
+                    }
                     // An unknown constant empties the right side for every row.
                     None if optional => eval_plan_iter(ctx, index, nf, l),
                     None => Box::new(std::iter::empty()),
