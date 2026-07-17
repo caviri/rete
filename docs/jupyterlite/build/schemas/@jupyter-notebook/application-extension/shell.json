@@ -25,10 +25,7 @@
           "type": "object",
           "properties": {
             "area": {
-              "oneOf": [
-                { "const": "left", "title": "Left" },
-                { "const": "right", "title": "Right" }
-              ]
+              "enum": ["left", "right"]
             }
           },
           "additionalProperties": false

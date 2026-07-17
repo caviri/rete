@@ -62,10 +62,8 @@
         },
         "type": {
           "title": "Item type",
-          "oneOf": [
-            { "const": "command", "title": "Command" },
-            { "const": "spacer", "title": "Spacer" }
-          ]
+          "type": "string",
+          "enum": ["command", "spacer"]
         },
         "rank": {
           "title": "Item rank",

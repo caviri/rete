@@ -142,10 +142,7 @@
       "title": "Interaction mode",
       "description": "Whether the console interaction mimics the notebook\nor terminal keyboard shortcuts.",
       "type": "string",
-      "oneOf": [
-        { "const": "notebook", "title": "Notebook" },
-        { "const": "terminal", "title": "Terminal" }
-      ],
+      "enum": ["notebook", "terminal"],
       "default": "notebook"
     },
     "showAllKernelActivity": {
@@ -232,10 +229,7 @@
         "type": {
           "title": "Item type",
           "type": "string",
-          "oneOf": [
-            { "const": "command", "title": "Command" },
-            { "const": "spacer", "title": "Spacer" }
-          ]
+          "enum": ["command", "spacer"]
         },
         "rank": {
           "title": "Item rank",

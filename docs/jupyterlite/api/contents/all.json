@@ -2,11 +2,11 @@
   "content": [
     {
       "content": null,
-      "created": "2026-07-17T12:32:26.148591Z",
+      "created": "2026-07-17T12:51:39.503397Z",
       "format": null,
       "hash": null,
       "hash_algorithm": null,
-      "last_modified": "2026-07-17T12:32:17Z",
+      "last_modified": "2026-07-17T12:51:29Z",
       "mimetype": null,
       "name": "rete-graph.ipynb",
       "path": "rete-graph.ipynb",
@@ -15,11 +15,11 @@
       "writable": true
     }
   ],
-  "created": "2026-07-17T12:32:26.145590Z",
+  "created": "2026-07-17T12:51:39.499397Z",
   "format": "json",
   "hash": null,
   "hash_algorithm": null,
-  "last_modified": "2026-07-17T12:32:26.145590Z",
+  "last_modified": "2026-07-17T12:51:39.499397Z",
   "mimetype": null,
   "name": "",
   "path": "",

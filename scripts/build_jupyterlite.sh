@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
-pip install -q jupyterlite-core jupyterlite-pyodide-kernel jupyter-server
+# Kernel PINNED to the 0.7 line: it ships Pyodide 0.29.x (Python 3.13), the
+# runtime our pyemscripten_2025_0 wheel is built and smoke-tested against.
+# The 0.8 kernel ships Pyodide 314 (Python 3.14), whose toolchain is stable
+# Rust + Emscripten 5 — our cp314 wheel needs a per-target build before this
+# pin can move (symptom otherwise: "cannot resolve symbol invoke_i" at
+# import). See docs/clients-dev.md.
+pip install -q "jupyterlite-core==0.7.*" "jupyterlite-pyodide-kernel==0.7.2" jupyter-server
 pip show jupyterlite-core jupyterlite-pyodide-kernel | grep -E "^(Name|Version)"
 python - <<'EOF'
 import json, pathlib, jupyterlite_pyodide_kernel as k

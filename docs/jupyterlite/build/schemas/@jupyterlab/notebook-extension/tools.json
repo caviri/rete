@@ -28,21 +28,6 @@
               }
             ]
           },
-          "/deletable": {
-            "title": "Deletable",
-            "type": "boolean",
-            "default": true,
-            "oneOf": [
-              {
-                "const": true,
-                "title": "Deletable"
-              },
-              {
-                "const": false,
-                "title": "Not deletable"
-              }
-            ]
-          },
           "/slideshow/slide_type": {
             "title": "Slide Type",
             "type": "string",
@@ -113,9 +98,6 @@
       },
       "uiSchema": {
         "/editable": {
-          "ui:widget": "select"
-        },
-        "/deletable": {
           "ui:widget": "select"
         }
       },

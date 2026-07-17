@@ -100,6 +100,12 @@ jobs:
           # the same flags (rust-src above) or the module imports JS-EH
           # invoke_* stubs that Pyodide's runtime refuses to link.
           CARGO_UNSTABLE_BUILD_STD: std,panic_abort,panic_unwind
+          # cp313 / Pyodide 0.29 only: these pins are WRONG for cp314 /
+          # Pyodide 314, whose toolchain is stable Rust 1.93 + Emscripten 5 —
+          # a cp314 wheel built here crashes at import ("cannot resolve
+          # symbol invoke_i"). Re-enable with a per-target toolchain once
+          # pyodide-build supports stable Rust.
+          CIBW_SKIP: cp314-*
         run: |
           pip install cibuildwheel
           cibuildwheel --platform pyodide --output-dir dist clients/python

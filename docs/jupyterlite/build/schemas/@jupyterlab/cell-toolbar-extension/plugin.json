@@ -19,7 +19,7 @@
         "command": "notebook:insert-cell-below"
       },
       {
-        "command": "cell-toolbar:delete",
+        "command": "notebook:delete-cell",
         "icon": "ui-components:delete",
         "name": "delete-cell"
       }
@@ -30,12 +30,6 @@
     "showToolbar": {
       "title": "Show cell toolbar",
       "description": "Show a toolbar inside the active cell, if there is enough room for one",
-      "type": "boolean",
-      "default": true
-    },
-    "askCellDeleteConfirmation": {
-      "title": "Delete confirmation",
-      "description": "Whether to ask for confirmation when deleting a cell via the toolbar.",
       "type": "boolean",
       "default": true
     },
@@ -90,10 +84,7 @@
         "type": {
           "title": "Item type",
           "type": "string",
-          "oneOf": [
-            { "const": "command", "title": "Command" },
-            { "const": "spacer", "title": "Spacer" }
-          ]
+          "enum": ["command", "spacer"]
         },
         "rank": {
           "title": "Item rank",
