@@ -9,12 +9,28 @@ the same build any web page can `<script src>`), and draws the result with
 
 **[Launch the lab →](jslab.html)**
 
-The default program renders the **Linked Jazz collaboration network** — who
-played, toured, and sat in bands with whom among 20th-century jazz musicians
-(a 176 KB `.rete` on plain object storage) — as a draggable, zoomable force
-layout, edges colored by relationship. A second preset turns a SPARQL
-`GROUP BY` into a bar chart of the best-connected musicians. Both end by
-logging `stats()`: how few bytes the queries actually fetched.
+Five presets, over two datasets, each ending with `stats()` — how few bytes
+the queries actually fetched:
+
+- **network** — the **Linked Jazz collaboration graph** (who played, toured,
+  and sat in bands with whom, a 176 KB `.rete`) as a draggable, zoomable
+  force layout; hover a musician to isolate their circle.
+- **chord** — the same collaborations as a circos-style chord diagram of the
+  top 16 musicians.
+- **stacked** — each musician's connections broken down by relationship type
+  (a validated 4-color categorical stack).
+- **top 20** — a SPARQL `GROUP BY` as a clean ranked bar chart.
+- **timeline ▶** — a *different* dataset with real temporal data:
+  **Heroic-Age Antarctic expeditions** (Wikidata, CC0). Time runs down the
+  y-axis; a year-cursor sweeps 1896→1918, expeditions grow as it passes,
+  crews pop out of them, and the four people who sailed more than once
+  become orange threads connecting expeditions. Run again to replay.
+
+Two more buttons in the header: **⿻ hide code** collapses the editor for a
+presentation view, and **⬇ standalone** downloads the *current program* as a
+single self-contained HTML file — D3 and the rete-graph engine embedded, no
+CDN, no editor — that runs anywhere and credits its sources (only the data's
+own network is needed). That exported file is yours to host or share.
 
 ## How it works
 

@@ -255,12 +255,28 @@ the <a href="javascript.html"><code>rete-graph</code> npm client</a> (loaded str
 the same build any web page can <code>&lt;script src&gt;</code>), and draws the result with
 <a href="https://d3js.org">D3</a> on the right. Edit, hit <code>Ctrl+Enter</code>, watch it redraw.</p>
 <p><strong><a href="jslab.html">Launch the lab →</a></strong></p>
-<p>The default program renders the <strong>Linked Jazz collaboration network</strong> — who
-played, toured, and sat in bands with whom among 20th-century jazz musicians
-(a 176 KB <code>.rete</code> on plain object storage) — as a draggable, zoomable force
-layout, edges colored by relationship. A second preset turns a SPARQL
-<code>GROUP BY</code> into a bar chart of the best-connected musicians. Both end by
-logging <code>stats()</code>: how few bytes the queries actually fetched.</p>
+<p>Five presets, over two datasets, each ending with <code>stats()</code> — how few bytes
+the queries actually fetched:</p>
+<ul>
+<li><strong>network</strong> — the <strong>Linked Jazz collaboration graph</strong> (who played, toured,
+and sat in bands with whom, a 176 KB <code>.rete</code>) as a draggable, zoomable
+force layout; hover a musician to isolate their circle.</li>
+<li><strong>chord</strong> — the same collaborations as a circos-style chord diagram of the
+top 16 musicians.</li>
+<li><strong>stacked</strong> — each musician's connections broken down by relationship type
+(a validated 4-color categorical stack).</li>
+<li><strong>top 20</strong> — a SPARQL <code>GROUP BY</code> as a clean ranked bar chart.</li>
+<li><strong>timeline ▶</strong> — a <em>different</em> dataset with real temporal data:
+<strong>Heroic-Age Antarctic expeditions</strong> (Wikidata, CC0). Time runs down the
+y-axis; a year-cursor sweeps 1896→1918, expeditions grow as it passes,
+crews pop out of them, and the four people who sailed more than once
+become orange threads connecting expeditions. Run again to replay.</li>
+</ul>
+<p>Two more buttons in the header: <strong>⿻ hide code</strong> collapses the editor for a
+presentation view, and <strong>⬇ standalone</strong> downloads the <em>current program</em> as a
+single self-contained HTML file — D3 and the rete-graph engine embedded, no
+CDN, no editor — that runs anywhere and credits its sources (only the data's
+own network is needed). That exported file is yours to host or share.</p>
 <h2>How it works</h2>
 <ul>
 <li>The rete engine's remote reader uses <strong>synchronous XHR range requests</strong>,

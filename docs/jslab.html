@@ -9,62 +9,202 @@
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/javascript/javascript.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
 <style>
-  :root { --border: #d7d7dc; --accent: #1a6baf; --bad: #b3372c; }
+  :root {
+    color-scheme: light;
+    --page:        #f9f9f7;
+    --surface:     #fcfcfb;
+    --ink:         #0b0b0b;
+    --ink-2:       #52514e;
+    --muted:       #898781;
+    --grid:        #e1e0d9;
+    --border:      rgba(11, 11, 11, 0.10);
+    --accent:      #2a78d6;
+    --accent-deep: #1c5cab;
+    --critical:    #d03b3b;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; color: #17181c; background: #fff; }
-  header, footer { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
-  footer { border-bottom: 0; border-top: 1px solid var(--border); font-size: 13px; color: #555; }
-  header h1 { font-size: 17px; margin: 0; }
-  header .sub { color: #666; font-size: 13px; }
-  button { font: inherit; padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px; background: #f6f6f8; cursor: pointer; }
-  button.run { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-  #status { font-size: 13px; color: #666; margin-left: auto; }
-  main { display: grid; grid-template-columns: minmax(380px, 44%) 1fr; height: calc(100vh - 96px); }
-  #left { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
-  .CodeMirror { flex: 1; height: auto; font-size: 13px; }
-  #right { display: flex; flex-direction: column; min-width: 0; }
-  #viz { flex: 1; overflow: auto; position: relative; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; flex-direction: column;
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--ink); background: var(--page);
+  }
+
+  /* ---- header ---- */
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 18px; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .wordmark { display: flex; align-items: baseline; gap: 8px; }
+  .wordmark b { font-size: 15px; letter-spacing: -0.01em; }
+  .wordmark span { color: var(--muted); font-size: 12.5px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button {
+    font: inherit; font-size: 12.5px; padding: 5px 12px; border: 0; cursor: pointer;
+    background: transparent; color: var(--ink-2);
+  }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.on { background: var(--ink); color: #fff; }
+  #run {
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    padding: 6px 16px; border: 0; border-radius: 8px;
+    background: var(--accent); color: #fff;
+  }
+  #run:hover { background: var(--accent-deep); }
+  .hint { color: var(--muted); font-size: 12px; }
+  button.ghost {
+    font: inherit; font-size: 12.5px; cursor: pointer; color: var(--ink-2);
+    padding: 5px 12px; border: 1px solid var(--border); border-radius: 8px; background: transparent;
+  }
+  button.ghost:hover { background: var(--page); }
+  body.no-code main { grid-template-columns: 1fr; }
+  body.no-code #left { display: none; }
+  #status {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12.5px; color: var(--ink-2);
+    padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--page);
+  }
+  #status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  #status.running .dot { background: var(--accent); animation: pulse 1s infinite; }
+  #status.done .dot { background: #0ca30c; }
+  #status.error .dot { background: var(--critical); }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+
+  /* ---- panes ---- */
+  main {
+    flex: 1; min-height: 0; display: grid; gap: 12px; padding: 12px 14px;
+    grid-template-columns: minmax(400px, 43%) 1fr;
+  }
+  .pane {
+    display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden;
+  }
+  .pane-title {
+    padding: 8px 14px 7px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 10px;
+  }
+  .pane-title .note { font-weight: 400; letter-spacing: 0; text-transform: none; font-size: 12px; }
+
+  /* editor */
+  #left .CodeMirror {
+    flex: 1; height: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+    background: var(--surface); color: var(--ink);
+  }
+  .CodeMirror-gutters { background: var(--surface); border-right: 1px solid var(--border); }
+  .CodeMirror-linenumber { color: #c3c2b7; }
+  .CodeMirror-selected { background: #e4eefb !important; }
+  .CodeMirror-cursor { border-left-color: var(--ink); }
+  .cm-s-default .cm-comment { color: var(--muted); font-style: italic; }
+  .cm-s-default .cm-string, .cm-s-default .cm-string-2 { color: #006300; }
+  .cm-s-default .cm-keyword { color: var(--accent-deep); }
+  .cm-s-default .cm-def { color: var(--ink); }
+  .cm-s-default .cm-variable-2, .cm-s-default .cm-property { color: var(--ink-2); }
+  .cm-s-default .cm-number { color: #4a3aa7; }
+  .cm-s-default .cm-atom { color: #4a3aa7; }
+  .cm-s-default .cm-operator { color: var(--ink-2); }
+
+  /* canvas + console */
+  #right { display: grid; grid-template-rows: 1fr auto; gap: 12px; min-width: 0; min-height: 0; }
+  #viz-pane { display: flex; flex-direction: column; min-height: 0; }
+  #viz { flex: 1; overflow: auto; position: relative; background: var(--surface); }
   #viz svg { display: block; }
-  #console { max-height: 26%; overflow: auto; border-top: 1px solid var(--border); font: 12px/1.5 ui-monospace, monospace; padding: 6px 10px; white-space: pre-wrap; }
-  #console .err { color: var(--bad); }
-  a { color: var(--accent); }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; height: auto; } .CodeMirror { min-height: 320px; } #viz { min-height: 420px; } }
+  #viz .empty {
+    position: absolute; inset: 0; display: grid; place-content: center; gap: 6px;
+    color: var(--muted); font-size: 13px; text-align: center;
+  }
+  #viz .empty kbd {
+    font: 11px var(--mono); border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 6px; background: var(--page);
+  }
+  .viz-legend {
+    position: absolute; top: 10px; left: 12px; display: flex; gap: 14px; flex-wrap: wrap;
+    font-size: 12px; color: var(--ink-2);
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    padding: 4px 8px; border-radius: 8px;
+  }
+  .viz-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+  .viz-tooltip {
+    position: absolute; pointer-events: none; z-index: 5; max-width: 240px;
+    background: var(--ink); color: #fff; font-size: 12px; line-height: 1.45;
+    padding: 6px 10px; border-radius: 8px; opacity: 0; transition: opacity 0.08s;
+  }
+  .viz-tooltip .t2 { color: #c3c2b7; }
+
+  #console-pane { max-height: 200px; }
+  #console { overflow: auto; font: 12px/1.7 var(--mono); padding: 8px 14px; color: var(--ink-2); }
+  #console .err { color: var(--critical); }
+  #console div + div { border-top: 1px dashed var(--grid); }
+
+  footer {
+    display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 18px;
+    font-size: 12px; color: var(--muted);
+    background: var(--surface); border-top: 1px solid var(--border);
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  footer .right { margin-left: auto; }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+    #left .CodeMirror { min-height: 340px; }
+    #viz { min-height: 440px; }
+  }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>JS lab</h1>
-  <span class="sub">edit JavaScript · query a remote <code>.rete</code> with the <a href="https://www.npmjs.com/package/rete-graph">rete-graph</a> npm client · draw it with D3</span>
-  <button id="preset-net-btn">⏺ network</button>
-  <button id="preset-top-btn">⏺ top 20</button>
-  <button id="run" class="run">▶ Run (Ctrl+Enter)</button>
-  <span id="status"></span>
+  <div class="wordmark"><b>rete · JS lab</b><span>SPARQL a remote <code>.rete</code>, draw it with D3 — all in this tab</span></div>
+  <div class="seg" id="presets">
+    <button data-preset="preset-network" class="on">network</button>
+    <button data-preset="preset-chord">chord</button>
+    <button data-preset="preset-stack">stacked</button>
+    <button data-preset="preset-top">top 20</button>
+    <button data-preset="preset-timeline">timeline ▶</button>
+  </div>
+  <button id="run">▶ Run</button>
+  <span class="hint">Ctrl+Enter</span>
+  <button id="toggle-code" class="ghost">⿻ hide code</button>
+  <button id="export" class="ghost" title="Download this program as a self-contained HTML page (libraries embedded)">⬇ standalone</button>
+  <span id="status"><span class="dot"></span><span id="status-text">ready</span></span>
 </header>
 
 <main>
-  <div id="left"><textarea id="code"></textarea></div>
+  <div class="pane" id="left">
+    <div class="pane-title">program <span class="note">bindings: <code>openGraph</code> · <code>d3</code> · <code>viz</code> · <code>log</code></span></div>
+    <textarea id="code"></textarea>
+  </div>
   <div id="right">
-    <div id="viz"></div>
-    <div id="console"></div>
+    <div class="pane" id="viz-pane">
+      <div class="pane-title">canvas <span class="note">Linked Jazz collaborations · Heroic-Age Antarctic expeditions — small .rete files on object storage</span></div>
+      <div id="viz"><div class="empty"><div>Press <kbd>▶ Run</kbd> (or <kbd>Ctrl+Enter</kbd>)</div><div>the graph opens lazily — only queried byte ranges are fetched</div></div></div>
+    </div>
+    <div class="pane" id="console-pane">
+      <div class="pane-title">console</div>
+      <div id="console"></div>
+    </div>
   </div>
 </main>
 
 <footer>
   <span><a href="jslab-guide.html">how this works</a></span>
-  <span>data: <a href="https://linkedjazz.org/">Linked Jazz</a> (CC BY-SA) via <code>data.graphplaza.com</code></span>
-  <span style="margin-left:auto">© 2026 Carlos Vivar Ríos · <a href="https://github.com/caviri/rete/blob/main/LICENSE">Apache-2.0</a> · <a href="https://github.com/caviri/rete">github.com/caviri/rete</a></span>
+  <span>data: <a href="https://linkedjazz.org/">Linked Jazz</a> (CC BY-SA) · Antarctic expeditions from <a href="https://www.wikidata.org/">Wikidata</a> (CC0)</span>
+  <span>client: <a href="https://www.npmjs.com/package/rete-graph">rete-graph</a> via jsDelivr</span>
+  <span class="right">© 2026 Carlos Vivar Ríos · <a href="https://github.com/caviri/rete/blob/main/LICENSE">Apache-2.0</a> · <a href="https://github.com/caviri/rete">github.com/caviri/rete</a></span>
 </footer>
 
 <!-- Preset programs live in inert script blocks so they can use backticks. -->
 <script type="text/plain" id="preset-network">
-// The Linked Jazz collaboration network — a remote 176 KB .rete file.
+// ── Linked Jazz: who played with whom ─────────────────────────────
 // openGraph() runs the rete engine in a Web Worker (its synchronous
-// range-reads are worker-only); you get back promise-based methods.
+// range reads are worker-only) and returns promise-based methods.
 const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
 
-// SPARQL over HTTP range requests. Result rows are {variable: term}
-// objects; every term has .kind and .value (plus .datatype/.lang).
 const rows = await graph.query(`
   PREFIX lj:   <http://linkedjazz.org/ontology/>
   PREFIX foaf: <http://xmlns.com/foaf/0.1/>
@@ -76,8 +216,8 @@ const rows = await graph.query(`
   }`);
 log(rows.length + " collaborations");
 
-// Shape into nodes + links for a force simulation.
-const nodes = new Map(), links = [], degree = new Map();
+// Shape rows into nodes + links; count each musician's connections.
+const nodes = new Map(), links = [], degree = new Map(), relOf = new Map();
 for (const r of rows) {
   nodes.set(r.a.value, { id: r.a.value, name: r.aName.value });
   nodes.set(r.b.value, { id: r.b.value, name: r.bName.value });
@@ -86,27 +226,55 @@ for (const r of rows) {
 }
 const nodeList = [...nodes.values()];
 
-// Draw: force layout, edge color by relationship, radius by degree.
-const W = viz.clientWidth || 800, H = viz.clientHeight || 600;
-const color = d3.scaleOrdinal(["playedTogether","inBandTogether","touredWith"], d3.schemeTableau10);
+// ── Draw: force layout ────────────────────────────────────────────
+// Link color = relationship (validated categorical trio); node size =
+// connections; hover isolates a musician's circle.
+const W = viz.clientWidth || 820, H = viz.clientHeight || 620;
+const REL_COLOR = { playedTogether: "#2a78d6", inBandTogether: "#008300", touredWith: "#e87ba4" };
+const r = d3.scaleSqrt([1, d3.max(degree.values())], [3, 13]);
+
 const svg = d3.create("svg").attr("width", W).attr("height", H);
 const zoomed = svg.append("g");
-
 const sim = d3.forceSimulation(nodeList)
-  .force("link", d3.forceLink(links).id(d => d.id).distance(38))
-  .force("charge", d3.forceManyBody().strength(-55))
+  .force("link", d3.forceLink(links).id(d => d.id).distance(42))
+  .force("charge", d3.forceManyBody().strength(-70))
+  .force("collide", d3.forceCollide(d => r(degree.get(d.id)) + 1.5))
   .force("center", d3.forceCenter(W / 2, H / 2));
 
-const link = zoomed.append("g").attr("stroke-opacity", 0.45)
-  .selectAll("line").data(links).join("line").attr("stroke", d => color(d.rel));
+const link = zoomed.append("g").attr("stroke-width", 1.25).attr("stroke-opacity", 0.5)
+  .selectAll("line").data(links).join("line").attr("stroke", d => REL_COLOR[d.rel]);
 const node = zoomed.append("g")
   .selectAll("circle").data(nodeList).join("circle")
-  .attr("r", d => 2.5 + Math.sqrt(degree.get(d.id)))
-  .attr("fill", "#334").call(drag(sim));
-node.append("title").text(d => `${d.name} — ${degree.get(d.id)} connections`);
+  .attr("r", d => r(degree.get(d.id)))
+  .attr("fill", "#52514e").attr("stroke", "#fcfcfb").attr("stroke-width", 2)
+  .call(drag(sim));
 const label = zoomed.append("g")
-  .selectAll("text").data(nodeList.filter(d => degree.get(d.id) >= 9)).join("text")
-  .text(d => d.name).attr("font-size", 10).attr("dx", 7).attr("dy", 3).attr("fill", "#333");
+  .selectAll("text").data(nodeList.filter(d => degree.get(d.id) >= 10)).join("text")
+  .text(d => d.name)
+  .attr("font-size", 11).attr("dx", 9).attr("dy", 4)
+  .attr("fill", "#0b0b0b").attr("stroke", "#fcfcfb")
+  .attr("stroke-width", 3).attr("paint-order", "stroke");
+
+// Hover: tooltip + fade everything outside the musician's circle.
+const tip = document.createElement("div");
+tip.className = "viz-tooltip"; viz.append(tip);
+node.on("mouseenter", (e, d) => {
+  const near = new Set([d.id]);
+  for (const l of links)
+    if (l.source.id === d.id || l.target.id === d.id) { near.add(l.source.id); near.add(l.target.id); }
+  node.attr("opacity", n => near.has(n.id) ? 1 : 0.12);
+  link.attr("stroke-opacity", l => (l.source.id === d.id || l.target.id === d.id) ? 0.9 : 0.06);
+  label.attr("opacity", n => near.has(n.id) ? 1 : 0.1);
+  tip.innerHTML = `<b>${d.name}</b><br><span class="t2">${degree.get(d.id)} connections</span>`;
+  tip.style.opacity = 1;
+}).on("mousemove", (e) => {
+  const box = viz.getBoundingClientRect();
+  tip.style.left = (e.clientX - box.left + 14) + "px";
+  tip.style.top  = (e.clientY - box.top  + 10) + "px";
+}).on("mouseleave", () => {
+  node.attr("opacity", 1); link.attr("stroke-opacity", 0.5); label.attr("opacity", 1);
+  tip.style.opacity = 0;
+});
 
 sim.on("tick", () => {
   link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
@@ -117,13 +285,12 @@ sim.on("tick", () => {
 svg.call(d3.zoom().scaleExtent([0.3, 6]).on("zoom", e => zoomed.attr("transform", e.transform)));
 viz.append(svg.node());
 
-// Legend.
-const legend = d3.create("svg").attr("width", W).attr("height", 22);
-["playedTogether","inBandTogether","touredWith"].forEach((rel, i) => {
-  legend.append("circle").attr("cx", 14 + i * 130).attr("cy", 11).attr("r", 5).attr("fill", color(rel));
-  legend.append("text").attr("x", 24 + i * 130).attr("y", 15).attr("font-size", 11).text(rel);
-});
-viz.append(legend.node());
+// Legend (HTML, so the labels stay crisp).
+const legend = document.createElement("div");
+legend.className = "viz-legend";
+legend.innerHTML = Object.entries(REL_COLOR)
+  .map(([rel, c]) => `<span><i style="background:${c}"></i>${rel}</span>`).join("");
+viz.append(legend);
 
 function drag(sim) {
   return d3.drag()
@@ -132,13 +299,16 @@ function drag(sim) {
     .on("end",   (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = d.fy = null; });
 }
 
-// How little crossed the wire (cumulative for this graph's worker session —
-// run again: the block cache makes the second query nearly free).
-log(await graph.stats());
+// How little crossed the wire. Run again — the worker keeps the graph
+// resident, so the second run reuses its block cache.
+const s = await graph.stats();
+log(`fetched ${s.bytes.toLocaleString()} of ${s.fileLength.toLocaleString()} bytes (${(100 * s.bytes / s.fileLength).toFixed(1)}%) in ${s.requests} range requests`);
 </script>
 
 <script type="text/plain" id="preset-top">
-// Top 20 best-connected musicians — SPARQL aggregation + a D3 bar chart.
+// ── Top 20 best-connected musicians ───────────────────────────────
+// A SPARQL aggregation rendered as a bar chart: one series, one hue,
+// bars rounded only at the value end, recessive grid, hover tooltip.
 const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
 
 const rows = await graph.query(`
@@ -150,29 +320,393 @@ const rows = await graph.query(`
     ?a foaf:name ?name .
   }
   GROUP BY ?name ORDER BY DESC(?n) LIMIT 20`);
-
 const data = rows.map(r => ({ name: r.name.value, n: +r.n.value }));
 
-const W = viz.clientWidth || 800, H = 30 * data.length + 50;
-const m = { top: 20, right: 40, bottom: 24, left: 170 };
+const W = Math.min(viz.clientWidth || 820, 860);
+const m = { top: 56, right: 46, bottom: 8, left: 168 };
+const H = m.top + 27 * data.length + m.bottom;
 const x = d3.scaleLinear([0, d3.max(data, d => d.n)], [m.left, W - m.right]);
-const y = d3.scaleBand(data.map(d => d.name), [m.top, H - m.bottom]).padding(0.18);
+const y = d3.scaleBand(data.map(d => d.name), [m.top, H - m.bottom]).padding(0.26);
 
-const svg = d3.create("svg").attr("width", W).attr("height", H);
-svg.append("g").selectAll("rect").data(data).join("rect")
-  .attr("x", x(0)).attr("y", d => y(d.name))
-  .attr("width", d => x(d.n) - x(0)).attr("height", y.bandwidth())
-  .attr("fill", "#1a6baf");
+const svg = d3.create("svg").attr("width", W).attr("height", H)
+  .attr("font-family", "system-ui, sans-serif");
+
+// Title block.
+svg.append("text").attr("x", m.left).attr("y", 22)
+  .attr("font-size", 15).attr("font-weight", 600).attr("fill", "#0b0b0b")
+  .text("Most connected musicians");
+svg.append("text").attr("x", m.left).attr("y", 40)
+  .attr("font-size", 12).attr("fill", "#52514e")
+  .text("played · toured · shared a band — Linked Jazz");
+
+// Recessive vertical hairlines instead of an axis line.
+const ticks = x.ticks(5);
+svg.append("g").selectAll("line").data(ticks).join("line")
+  .attr("x1", d => x(d)).attr("x2", d => x(d))
+  .attr("y1", m.top - 4).attr("y2", H - m.bottom)
+  .attr("stroke", d => d === 0 ? "#c3c2b7" : "#e1e0d9");
+svg.append("g").selectAll("text").data(ticks).join("text")
+  .attr("x", d => x(d)).attr("y", m.top - 10)
+  .attr("text-anchor", "middle").attr("font-size", 10.5).attr("fill", "#898781")
+  .text(d => d);
+
+// Bars: rounded at the value end only, flat at the baseline.
+const bar = (d) => {
+  const w = x(d.n) - x(0), h = y.bandwidth(), rr = Math.min(4, w);
+  return `M${x(0)},${y(d.name)} h${w - rr} a${rr},${rr} 0 0 1 ${rr},${rr}
+          v${h - 2 * rr} a${rr},${rr} 0 0 1 ${-rr},${rr} h${rr - w} z`;
+};
+svg.append("g").selectAll("path").data(data).join("path")
+  .attr("d", bar).attr("fill", "#2a78d6")
+  .append("title").text(d => `${d.name} — ${d.n} connections`);
+
+// Names (text ink) + values (secondary ink) — never the series color.
 svg.append("g").selectAll("text").data(data).join("text")
-  .attr("x", d => x(d.n) + 4).attr("y", d => y(d.name) + y.bandwidth() / 2)
-  .attr("dy", "0.35em").attr("font-size", 11).text(d => d.n);
-svg.append("g").attr("transform", `translate(${m.left},0)`)
-  .call(d3.axisLeft(y).tickSize(0)).select(".domain").remove();
-svg.append("g").attr("transform", `translate(0,${H - m.bottom})`)
-  .call(d3.axisBottom(x).ticks(5));
+  .attr("x", m.left - 10).attr("y", d => y(d.name) + y.bandwidth() / 2)
+  .attr("dy", "0.35em").attr("text-anchor", "end")
+  .attr("font-size", 12).attr("fill", "#0b0b0b")
+  .text(d => d.name);
+svg.append("g").selectAll("text").data(data).join("text")
+  .attr("x", d => x(d.n) + 6).attr("y", d => y(d.name) + y.bandwidth() / 2)
+  .attr("dy", "0.35em").attr("font-size", 11).attr("fill", "#52514e")
+  .style("font-variant-numeric", "tabular-nums")
+  .text(d => d.n);
+
 viz.append(svg.node());
 
-log(await graph.stats());
+const s = await graph.stats();
+log(`fetched ${s.bytes.toLocaleString()} of ${s.fileLength.toLocaleString()} bytes (${(100 * s.bytes / s.fileLength).toFixed(1)}%) in ${s.requests} range requests`);
+</script>
+
+<script type="text/plain" id="preset-timeline">
+// ── The Heroic Age, year by year (animated) ───────────────────────
+// A different dataset: Antarctic expeditions with REAL temporal data
+// (startYear/endYear from Wikidata). Time runs down the y-axis; a
+// year-cursor sweeps 1896→1918, expeditions grow as it passes, crews
+// pop out of their expedition — and the four people who sailed more
+// than once are threads connecting expeditions across the years.
+const graph = await openGraph("https://data.graphplaza.com/antarctic-expeditions/antarctic-expeditions.rete");
+
+const rows = await graph.query(`
+  PREFIX ex:   <http://ex/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?exp ?expLabel ?start ?end ?person ?personLabel WHERE {
+    ?exp a ex:Expedition ;
+         rdfs:label ?expLabel ;
+         ex:startYear ?start ;
+         ex:endYear ?end ;
+         ex:participant ?person .
+    ?person rdfs:label ?personLabel .
+  }`);
+
+// Shape: expeditions (sorted by start year) with their crews.
+const expMap = new Map();
+for (const r of rows) {
+  const e = expMap.get(r.exp.value) ||
+    { id: r.exp.value, label: r.expLabel.value.replace(/\s*\(.*\)$/, ""),
+      start: +r.start.value, end: +r.end.value, crew: [] };
+  e.crew.push({ id: r.person.value, name: r.personLabel.value });
+  expMap.set(r.exp.value, e);
+}
+const exps = [...expMap.values()].sort((a, b) => a.start - b.start);
+const sailedOn = new Map();
+for (const e of exps) for (const p of e.crew)
+  sailedOn.set(p.id, [...(sailedOn.get(p.id) || []), e]);
+
+// ── Layout: y = time, x = one column per expedition ───────────────
+const W = Math.min(viz.clientWidth || 860, 900), H = 660;
+const m = { top: 64, right: 20, bottom: 24, left: 56 };
+const [Y0, Y1] = [1896, 1918];
+const y = d3.scaleLinear([Y0, Y1], [m.top, H - m.bottom]);
+const x = d3.scaleBand(exps.map(e => e.id), [m.left, W - m.right]).padding(0.22);
+
+const svg = d3.create("svg").attr("width", W).attr("height", H)
+  .attr("font-family", "system-ui, sans-serif");
+svg.append("text").attr("x", m.left).attr("y", 24)
+  .attr("font-size", 15).attr("font-weight", 600).attr("fill", "#0b0b0b")
+  .text("Heroic-Age Antarctic expeditions");
+svg.append("text").attr("x", m.left).attr("y", 42)
+  .attr("font-size", 12).attr("fill", "#52514e")
+  .text("crews grow from each expedition — orange threads sailed more than once");
+
+// Year grid (recessive) + labels.
+const years = d3.range(Y0, Y1 + 1, 2);
+svg.append("g").selectAll("line").data(years).join("line")
+  .attr("x1", m.left - 6).attr("x2", W - m.right)
+  .attr("y1", d => y(d)).attr("y2", d => y(d)).attr("stroke", "#e1e0d9");
+svg.append("g").selectAll("text").data(years).join("text")
+  .attr("x", m.left - 10).attr("y", d => y(d)).attr("dy", "0.32em")
+  .attr("text-anchor", "end").attr("font-size", 10.5).attr("fill", "#898781")
+  .text(d => d);
+
+const DUR = 6500, delayAt = (yr) => DUR * (yr - Y0) / (Y1 - Y0);
+
+// Expedition bands grow downward as the cursor passes their start.
+const band = svg.append("g").selectAll("rect").data(exps).join("rect")
+  .attr("x", e => x(e.id)).attr("y", e => y(e.start))
+  .attr("width", x.bandwidth()).attr("rx", 6).attr("fill", "#cde2fb")
+  .attr("height", 0);
+band.transition().delay(e => delayAt(e.start)).duration(e => delayAt(e.end) - delayAt(e.start))
+  .ease(d3.easeLinear).attr("height", e => y(e.end) - y(e.start));
+
+// Expedition names above their start year.
+svg.append("g").selectAll("text").data(exps).join("text")
+  .attr("x", e => x(e.id) + x.bandwidth() / 2).attr("y", e => y(e.start) - 8)
+  .attr("text-anchor", "middle").attr("font-size", 11).attr("fill", "#0b0b0b")
+  .attr("opacity", 0)
+  .text(e => e.label.length > 24 ? e.label.slice(0, 23) + "…" : e.label)
+  .transition().delay(e => delayAt(e.start)).attr("opacity", 1);
+
+// Crew dots: a small grid inside each band, popping in over its years.
+const dots = [];
+for (const e of exps) {
+  const perRow = Math.max(3, Math.floor((x.bandwidth() - 14) / 12));
+  e.crew.forEach((p, i) => {
+    dots.push({ ...p, exp: e,
+      x: x(e.id) + 10 + (i % perRow) * 12,
+      y: y(e.start) + 14 + Math.floor(i / perRow) * 12,
+      when: e.start + (e.end - e.start) * (i / e.crew.length) });
+  });
+}
+const posOf = new Map(dots.map(d => [d.exp.id + d.id, d]));
+const dot = svg.append("g").selectAll("circle").data(dots).join("circle")
+  .attr("cx", d => d.x).attr("cy", d => d.y).attr("r", 0)
+  .attr("fill", d => sailedOn.get(d.id).length > 1 ? "#eb6834" : "#52514e")
+  .attr("stroke", "#fcfcfb").attr("stroke-width", 1.5);
+dot.transition().delay(d => delayAt(d.when)).duration(300)
+  .ease(d3.easeBackOut).attr("r", 4.25);
+
+// Threads: the multi-expedition people, connected across their columns.
+const threads = [];
+for (const [pid, list] of sailedOn) if (list.length > 1) {
+  const seq = [...list].sort((a, b) => a.start - b.start);
+  for (let i = 0; i + 1 < seq.length; i++)
+    threads.push({ a: posOf.get(seq[i].id + pid), b: posOf.get(seq[i + 1].id + pid) });
+}
+const curve = d3.link(d3.curveBumpY).x(d => d.x).y(d => d.y);
+svg.append("g").selectAll("path").data(threads).join("path")
+  .attr("d", t => curve({ source: t.a, target: t.b }))
+  .attr("fill", "none").attr("stroke", "#eb6834").attr("stroke-width", 1.5)
+  .attr("stroke-opacity", 0)
+  .transition().delay(t => delayAt(t.b.when) + 250).duration(500).attr("stroke-opacity", 0.55);
+
+// The sweeping year cursor.
+const cursor = svg.append("g");
+cursor.append("line").attr("x1", m.left - 6).attr("x2", W - m.right)
+  .attr("stroke", "#0b0b0b").attr("stroke-dasharray", "3 3");
+const yearText = cursor.append("text").attr("x", W - m.right).attr("text-anchor", "end")
+  .attr("dy", -6).attr("font-size", 12).attr("font-weight", 600).attr("fill", "#0b0b0b");
+cursor.attr("transform", `translate(0,${y(Y0)})`)
+  .transition().duration(DUR).ease(d3.easeLinear)
+  .attrTween("transform", () => t => `translate(0,${y(Y0 + t * (Y1 - Y0))})`)
+  .on("end", () => cursor.attr("opacity", 0));
+yearText.transition().duration(DUR).ease(d3.easeLinear)
+  .textTween(() => t => String(Math.round(Y0 + t * (Y1 - Y0))));
+
+// Tooltips: crew names; threads' people show their whole voyage list.
+const tip = document.createElement("div");
+tip.className = "viz-tooltip"; viz.append(tip);
+dot.on("mouseenter", (e, d) => {
+  const voyages = sailedOn.get(d.id).map(x2 => `${x2.label} (${x2.start}–${x2.end})`);
+  tip.innerHTML = `<b>${d.name}</b><br><span class="t2">${voyages.join("<br>")}</span>`;
+  tip.style.opacity = 1;
+}).on("mousemove", (e) => {
+  const box = viz.getBoundingClientRect();
+  tip.style.left = (e.clientX - box.left + 14) + "px";
+  tip.style.top  = (e.clientY - box.top  + 10) + "px";
+}).on("mouseleave", () => { tip.style.opacity = 0; });
+
+viz.append(svg.node());
+
+const legend = document.createElement("div");
+legend.className = "viz-legend";
+legend.style.top = "auto"; legend.style.bottom = "10px";
+legend.innerHTML =
+  `<span><i style="background:#cde2fb;height:8px"></i>expedition (start→end)</span>` +
+  `<span><i style="background:#52514e;height:8px;width:8px;border-radius:50%"></i>crew member</span>` +
+  `<span><i style="background:#eb6834;height:8px;width:8px;border-radius:50%"></i>sailed more than once</span>`;
+viz.append(legend);
+
+const s = await graph.stats();
+log(`fetched ${s.bytes.toLocaleString()} of ${s.fileLength.toLocaleString()} bytes (${(100 * s.bytes / s.fileLength).toFixed(1)}%) in ${s.requests} range requests`);
+log("tip: press ▶ Run again to replay the animation");
+</script>
+
+<script type="text/plain" id="preset-chord">
+// ── Chord diagram: collaboration flows between the top musicians ──
+// A circos-style plot: each arc is a musician (sized by connections),
+// each ribbon a collaboration bundle. Hover an arc to isolate.
+const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
+
+const rows = await graph.query(`
+  PREFIX lj:   <http://linkedjazz.org/ontology/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?aName ?bName WHERE {
+    VALUES ?rel { lj:playedTogether lj:inBandTogether lj:touredWith }
+    ?a ?rel ?b .
+    ?a foaf:name ?aName .
+    ?b foaf:name ?bName .
+  }`);
+
+// Top 16 musicians by number of collaborations → an NxN matrix.
+const count = new Map();
+for (const r of rows)
+  for (const n of [r.aName.value, r.bName.value])
+    count.set(n, (count.get(n) || 0) + 1);
+const names = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 16).map(d => d[0]);
+const index = new Map(names.map((n, i) => [n, i]));
+const matrix = names.map(() => new Array(names.length).fill(0));
+for (const r of rows) {
+  const i = index.get(r.aName.value), j = index.get(r.bName.value);
+  if (i !== undefined && j !== undefined) { matrix[i][j] += 1; matrix[j][i] += 1; }
+}
+
+// ── Draw ──────────────────────────────────────────────────────────
+const S = Math.min(viz.clientWidth || 820, viz.clientHeight || 640);
+const R = S / 2 - 92;
+const chord = d3.chord().padAngle(0.045).sortSubgroups(d3.descending)(matrix);
+
+const svg = d3.create("svg").attr("width", S).attr("height", S)
+  .attr("viewBox", [-S / 2, -S / 2, S, S])
+  .attr("font-family", "system-ui, sans-serif");
+
+const ribbons = svg.append("g").selectAll("path").data(chord).join("path")
+  .attr("d", d3.ribbon().radius(R - 3))
+  .attr("fill", "#2a78d6").attr("fill-opacity", 0.45)
+  .attr("stroke", "#fcfcfb").attr("stroke-width", 0.75);
+
+const group = svg.append("g").selectAll("g").data(chord.groups).join("g");
+group.append("path")
+  .attr("d", d3.arc().innerRadius(R).outerRadius(R + 9))
+  .attr("fill", "#86b6ef");
+group.append("text")
+  .each(d => { d.mid = (d.startAngle + d.endAngle) / 2; })
+  .attr("transform", d => `rotate(${(d.mid * 180) / Math.PI - 90}) translate(${R + 14},0)` +
+                          (d.mid > Math.PI ? " rotate(180)" : ""))
+  .attr("text-anchor", d => (d.mid > Math.PI ? "end" : null))
+  .attr("dy", "0.35em").attr("font-size", 11.5).attr("fill", "#0b0b0b")
+  .text(d => names[d.index]);
+
+// Hover: isolate one musician's ribbons; tooltip with the pair counts.
+const tip = document.createElement("div");
+tip.className = "viz-tooltip"; viz.append(tip);
+group.on("mouseenter", (e, d) => {
+  ribbons.attr("fill-opacity", r => (r.source.index === d.index || r.target.index === d.index) ? 0.8 : 0.05);
+  const total = matrix[d.index].reduce((a, b) => a + b, 0);
+  tip.innerHTML = `<b>${names[d.index]}</b><br><span class="t2">${total} collaborations in this circle</span>`;
+  tip.style.opacity = 1;
+}).on("mousemove", (e) => {
+  const box = viz.getBoundingClientRect();
+  tip.style.left = (e.clientX - box.left + 14) + "px";
+  tip.style.top  = (e.clientY - box.top  + 10) + "px";
+}).on("mouseleave", () => {
+  ribbons.attr("fill-opacity", 0.45);
+  tip.style.opacity = 0;
+});
+
+viz.append(svg.node());
+
+const s = await graph.stats();
+log(`fetched ${s.bytes.toLocaleString()} of ${s.fileLength.toLocaleString()} bytes (${(100 * s.bytes / s.fileLength).toFixed(1)}%) in ${s.requests} range requests`);
+</script>
+
+<script type="text/plain" id="preset-stack">
+// ── Stacked bars: how each musician's collaborations break down ───
+// One row per musician, segments = relationship types (a validated
+// 4-color categorical palette; 2px surface gaps separate segments).
+const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
+
+const rows = await graph.query(`
+  PREFIX lj:   <http://linkedjazz.org/ontology/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?name ?rel (COUNT(?b) AS ?n) WHERE {
+    VALUES ?rel { lj:playedTogether lj:inBandTogether lj:touredWith lj:bandmember }
+    ?a ?rel ?b .
+    ?a foaf:name ?name .
+  }
+  GROUP BY ?name ?rel`);
+
+const RELS = ["playedTogether", "inBandTogether", "touredWith", "bandmember"];
+const COLOR = { playedTogether: "#2a78d6", inBandTogether: "#008300",
+                touredWith: "#e87ba4", bandmember: "#eda100" };
+
+// Pivot to one object per musician; keep the 12 busiest.
+const byName = new Map();
+for (const r of rows) {
+  const rec = byName.get(r.name.value) || { name: r.name.value, playedTogether: 0, inBandTogether: 0, touredWith: 0, bandmember: 0 };
+  rec[r.rel.value.split("/").pop()] = +r.n.value;
+  byName.set(r.name.value, rec);
+}
+const data = [...byName.values()]
+  .map(d => ({ ...d, total: RELS.reduce((a, k) => a + d[k], 0) }))
+  .sort((a, b) => b.total - a.total).slice(0, 12);
+const series = d3.stack().keys(RELS)(data);
+
+// ── Draw ──────────────────────────────────────────────────────────
+const W = Math.min(viz.clientWidth || 820, 860);
+const m = { top: 56, right: 46, bottom: 8, left: 168 };
+const H = m.top + 30 * data.length + m.bottom;
+const x = d3.scaleLinear([0, d3.max(data, d => d.total)], [m.left, W - m.right]);
+const y = d3.scaleBand(data.map(d => d.name), [m.top, H - m.bottom]).padding(0.3);
+
+const svg = d3.create("svg").attr("width", W).attr("height", H)
+  .attr("font-family", "system-ui, sans-serif");
+svg.append("text").attr("x", m.left).attr("y", 22)
+  .attr("font-size", 15).attr("font-weight", 600).attr("fill", "#0b0b0b")
+  .text("How the busiest musicians collaborated");
+svg.append("text").attr("x", m.left).attr("y", 40)
+  .attr("font-size", 12).attr("fill", "#52514e")
+  .text("connections by relationship type — Linked Jazz");
+
+const ticks = x.ticks(5);
+svg.append("g").selectAll("line").data(ticks).join("line")
+  .attr("x1", d => x(d)).attr("x2", d => x(d))
+  .attr("y1", m.top - 4).attr("y2", H - m.bottom)
+  .attr("stroke", d => d === 0 ? "#c3c2b7" : "#e1e0d9");
+svg.append("g").selectAll("text").data(ticks).join("text")
+  .attr("x", d => x(d)).attr("y", m.top - 10)
+  .attr("text-anchor", "middle").attr("font-size", 10.5).attr("fill", "#898781")
+  .text(d => d);
+
+const tip = document.createElement("div");
+tip.className = "viz-tooltip"; viz.append(tip);
+svg.append("g").selectAll("g").data(series).join("g")
+  .attr("fill", s => COLOR[s.key])
+  .selectAll("rect").data(s => s.map(d => ({ ...d, key: s.key }))).join("rect")
+  .attr("x", d => x(d[0])).attr("y", d => y(d.data.name))
+  .attr("width", d => Math.max(0, x(d[1]) - x(d[0])))
+  .attr("height", y.bandwidth())
+  .attr("stroke", "#fcfcfb").attr("stroke-width", 2)   // the 2px surface gap
+  .on("mouseenter", (e, d) => {
+    tip.innerHTML = `<b>${d.data.name}</b><br><span class="t2">${d.key}: ${d[1] - d[0]} of ${d.data.total}</span>`;
+    tip.style.opacity = 1;
+  })
+  .on("mousemove", (e) => {
+    const box = viz.getBoundingClientRect();
+    tip.style.left = (e.clientX - box.left + 14) + "px";
+    tip.style.top  = (e.clientY - box.top  + 10) + "px";
+  })
+  .on("mouseleave", () => { tip.style.opacity = 0; });
+
+svg.append("g").selectAll("text").data(data).join("text")
+  .attr("x", m.left - 10).attr("y", d => y(d.name) + y.bandwidth() / 2)
+  .attr("dy", "0.35em").attr("text-anchor", "end")
+  .attr("font-size", 12).attr("fill", "#0b0b0b").text(d => d.name);
+svg.append("g").selectAll("text").data(data).join("text")
+  .attr("x", d => x(d.total) + 6).attr("y", d => y(d.name) + y.bandwidth() / 2)
+  .attr("dy", "0.35em").attr("font-size", 11).attr("fill", "#52514e")
+  .style("font-variant-numeric", "tabular-nums").text(d => d.total);
+
+viz.append(svg.node());
+
+// Legend (text labels are the relief for the light magenta/yellow).
+const legend = document.createElement("div");
+legend.className = "viz-legend";
+legend.innerHTML = RELS.map(k => `<span><i style="background:${COLOR[k]}"></i>${k}</span>`).join("");
+viz.append(legend);
+
+const s = await graph.stats();
+log(`fetched ${s.bytes.toLocaleString()} of ${s.fileLength.toLocaleString()} bytes (${(100 * s.bytes / s.fileLength).toFixed(1)}%) in ${s.requests} range requests`);
 </script>
 
 <script>
@@ -180,7 +714,7 @@ log(await graph.stats());
   "use strict";
   const RETE_CDN = "https://cdn.jsdelivr.net/npm/rete-graph@0.1.0/dist/rete-graph.min.js";
 
-  // ---- the worker: runs the wasm engine; sync XHR range reads live here ----
+  // ---- worker: the wasm engine lives here (sync XHR is worker-only) ----
   const WORKER_SRC = `
     importScripts("${RETE_CDN}");
     const graphs = new Map(); let next = 1;
@@ -227,8 +761,8 @@ log(await graph.stats());
     });
   }
 
-  // Graphs stay resident in the worker per URL, so re-runs reuse the block
-  // cache and the decoded dictionary — the second query is nearly free.
+  // Graphs stay resident in the worker per URL: re-runs reuse the block
+  // cache and decoded dictionary, so the second query is nearly free.
   const opened = new Map();
   async function openGraph(url) {
     if (!opened.has(url)) {
@@ -246,10 +780,14 @@ log(await graph.stats());
     };
   }
 
-  // ---- the lab UI ----
+  // ---- lab UI ----
   const vizEl = document.getElementById("viz");
   const consoleEl = document.getElementById("console");
   const statusEl = document.getElementById("status");
+  const statusText = document.getElementById("status-text");
+  const emptyHint = vizEl.querySelector(".empty");
+
+  function setStatus(state, text) { statusEl.className = state; statusText.textContent = text; }
   function log(...parts) {
     const line = document.createElement("div");
     line.textContent = parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" ");
@@ -267,25 +805,177 @@ log(await graph.stats());
   });
   const preset = (id) => document.getElementById(id).textContent.trim();
   editor.setValue(preset("preset-network"));
-  document.getElementById("preset-net-btn").onclick = () => editor.setValue(preset("preset-network"));
-  document.getElementById("preset-top-btn").onclick = () => editor.setValue(preset("preset-top"));
+  document.getElementById("presets").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-preset]");
+    if (!btn) return;
+    for (const b of document.querySelectorAll("#presets button")) b.classList.toggle("on", b === btn);
+    editor.setValue(preset(btn.dataset.preset));
+  });
   document.getElementById("run").onclick = run;
+
+  // ---- hide/show the code pane ----
+  const toggleBtn = document.getElementById("toggle-code");
+  toggleBtn.onclick = () => {
+    const hidden = document.body.classList.toggle("no-code");
+    toggleBtn.textContent = hidden ? "⿻ show code" : "⿻ hide code";
+    editor.refresh();
+  };
+
+  // ---- export a self-contained HTML page ----
+  // Embeds the CURRENT program plus full copies of D3 and the rete-graph
+  // bundle, so the file runs anywhere with no editor and no CDN scripts —
+  // it only needs the network the data itself lives on.
+  const D3_CDN = "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js";
+  const inline = (src) => src.replace(/<\/script>/gi, "<\\/script>");
+  document.getElementById("export").onclick = async () => {
+    setStatus("running", "packaging…");
+    try {
+      const [d3Src, reteSrc] = await Promise.all(
+        [D3_CDN, RETE_CDN].map((u) => fetch(u).then((r) => {
+          if (!r.ok) throw new Error(`fetch ${u}: ${r.status}`);
+          return r.text();
+        })),
+      );
+      const html = buildStandalone(editor.getValue(), d3Src, reteSrc);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+      a.download = "rete-visualization.html";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus("done", "standalone saved");
+    } catch (err) {
+      logError("export failed: " + ((err && err.message) || err));
+      setStatus("error", "export error");
+    }
+  };
+
+  function buildStandalone(code, d3Src, reteSrc) {
+    return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rete visualization</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; background: #fcfcfb;
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; }
+  #viz { flex: 1; overflow: auto; position: relative; }
+  #console { max-height: 20%; overflow: auto; border-top: 1px solid rgba(11,11,11,0.1);
+             font: 12px/1.7 ui-monospace, Menlo, Consolas, monospace; padding: 6px 14px; color: #52514e; }
+  #console .err { color: #d03b3b; }
+  footer { display: flex; gap: 16px; flex-wrap: wrap; padding: 7px 14px; font-size: 12px;
+           color: #898781; border-top: 1px solid rgba(11,11,11,0.1); }
+  footer a { color: #2a78d6; text-decoration: none; }
+  .viz-legend { position: absolute; top: 10px; left: 12px; display: flex; gap: 14px; flex-wrap: wrap;
+                font-size: 12px; color: #52514e; background: rgba(252,252,251,0.85);
+                padding: 4px 8px; border-radius: 8px; }
+  .viz-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px;
+                  vertical-align: middle; margin-right: 6px; }
+  .viz-tooltip { position: absolute; pointer-events: none; z-index: 5; max-width: 240px;
+                 background: #0b0b0b; color: #fff; font-size: 12px; line-height: 1.45;
+                 padding: 6px 10px; border-radius: 8px; opacity: 0; transition: opacity 0.08s; }
+  .viz-tooltip .t2 { color: #c3c2b7; }
+</style>
+<script>${inline(d3Src)}<\/script>
+</head>
+<body>
+<div id="viz"></div>
+<div id="console"></div>
+<footer>
+  <span>made with the <a href="https://caviri.github.io/rete/jslab.html">rete JS lab</a></span>
+  <span>client: <a href="https://www.npmjs.com/package/rete-graph">rete-graph on npm</a></span>
+  <span><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></span>
+</footer>
+<script type="text/plain" id="rete-src">${inline(reteSrc)}<\/script>
+<script type="text/plain" id="program">${inline(code)}<\/script>
+<script>
+(() => {
+  "use strict";
+  const engineSrc = document.getElementById("rete-src").textContent;
+  const WORKER_TAIL = \`
+    const graphs = new Map(); let next = 1;
+    onmessage = async (e) => {
+      const { id, op, args } = e.data;
+      try {
+        let result;
+        if (op === "open") { const g = await rete.open(args.url); graphs.set(next, g); result = { handle: next++ }; }
+        else {
+          const g = graphs.get(args.handle);
+          if (!g) throw new Error("stale graph handle");
+          if (op === "query") result = g.query(args.query, args.opts || {});
+          else if (op === "prefixSearch") result = g.prefixSearch(args.prefix, args.limit || 20);
+          else if (op === "textSearch") result = g.textSearch(args.words, args.opts || {});
+          else if (op === "stats") result = g.stats();
+          else if (op === "contentHash") result = g.contentHash();
+          else throw new Error("unknown op " + op);
+        }
+        postMessage({ id, ok: true, result });
+      } catch (err) { postMessage({ id, ok: false, error: String((err && err.message) || err) }); }
+    };\`;
+  const worker = new Worker(URL.createObjectURL(new Blob([engineSrc + "\\n" + WORKER_TAIL], { type: "text/javascript" })));
+  const pending = new Map(); let rpcId = 1;
+  worker.onmessage = (e) => {
+    const { id, ok, result, error } = e.data;
+    const p = pending.get(id); pending.delete(id);
+    if (p) (ok ? p.resolve(result) : p.reject(new Error(error)));
+  };
+  const rpc = (op, args) => new Promise((resolve, reject) => {
+    const id = rpcId++; pending.set(id, { resolve, reject }); worker.postMessage({ id, op, args });
+  });
+  const opened = new Map();
+  async function openGraph(url) {
+    if (!opened.has(url)) { const { handle } = await rpc("open", { url }); opened.set(url, handle); }
+    const handle = opened.get(url);
+    return { url,
+      query: (query, opts) => rpc("query", { handle, query, opts }),
+      prefixSearch: (prefix, limit) => rpc("prefixSearch", { handle, prefix, limit }),
+      textSearch: (words, opts) => rpc("textSearch", { handle, words, opts }),
+      stats: () => rpc("stats", { handle }),
+      contentHash: () => rpc("contentHash", { handle }) };
+  }
+  const viz = document.getElementById("viz");
+  const consoleEl = document.getElementById("console");
+  const log = (...parts) => {
+    const line = document.createElement("div");
+    line.textContent = parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" ");
+    consoleEl.append(line);
+  };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  (async () => {
+    try {
+      const program = new AsyncFunction("openGraph", "d3", "viz", "log", document.getElementById("program").textContent);
+      await program(openGraph, d3, viz, log);
+    } catch (err) {
+      const line = document.createElement("div");
+      line.className = "err"; line.textContent = "✗ " + ((err && err.message) || err);
+      consoleEl.append(line);
+    }
+  })();
+})();
+<\/script>
+</body>
+</html>`;
+  }
 
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   let running = false;
   async function run() {
     if (running) return;
     running = true;
+    emptyHint?.remove();
     vizEl.replaceChildren(); consoleEl.replaceChildren();
-    statusEl.textContent = "running…";
+    setStatus("running", "running…");
     const t0 = performance.now();
     try {
       const program = new AsyncFunction("openGraph", "d3", "viz", "log", editor.getValue());
       await program(openGraph, d3, vizEl, log);
-      statusEl.textContent = `done in ${((performance.now() - t0) / 1000).toFixed(1)}s`;
+      setStatus("done", `done · ${((performance.now() - t0) / 1000).toFixed(1)}s`);
     } catch (err) {
       logError((err && err.message) || String(err));
-      statusEl.textContent = "error";
+      setStatus("error", "error");
     } finally {
       running = false;
     }
