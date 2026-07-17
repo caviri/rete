@@ -134,6 +134,31 @@ def shacl_shapes(dataset: str) -> List[Dict[str, Any]]:
     return svc.shacl_shapes(dataset)
 
 
+@mcp.tool
+def embed_media(urls: List[str], max_dimension: int = 1024, webp_quality: int = 80) -> List[Dict[str, Any]]:
+    """Fetch a list of media URLs and return each as a base64 `data:` URI,
+    ready to inline into generated HTML (img src, download links…). Images
+    are recompressed to WebP and downscaled to max_dimension on the long
+    side — typically 3-10x smaller — other types pass through verbatim with
+    their MIME. Per-entry `ok`/`error` so one bad URL never fails the batch.
+    Use small max_dimension (e.g. 512) when embedding many images."""
+    import rete_media
+    return rete_media.embed_urls(urls, max_dimension, webp_quality)
+
+
+@mcp.tool
+def media_preview(url: str, max_dimension: int = 512, webp_quality: int = 80) -> Dict[str, Any]:
+    """One representative image (WebP data URI) for a media URL — perfect
+    for thumbnails in generated HTML. Understands: images (recompressed),
+    PDFs (first page rendered), videos (a frame, fetched lazily over HTTP
+    Range — the file is never downloaded whole), IIIF info.json and
+    Presentation manifests v2/v3, and HTML pages (og:image/twitter:image).
+    Media URLs typically come from query results — e.g. IIIF manifests,
+    scans, and PDFs in the datasets here."""
+    import rete_media
+    return rete_media.preview(url, max_dimension, webp_quality)
+
+
 # --------------------------------------------------------------------------- #
 # ChatGPT connector contract: search + fetch
 # --------------------------------------------------------------------------- #

@@ -183,6 +183,30 @@ def cache_state():
     return svc.cache_overview()
 
 
+class EmbedRequest(BaseModel):
+    urls: List[str] = Field(..., description="Media URLs to fetch (server-capped list length)")
+    max_dimension: int = Field(1024, ge=16, le=4096, description="Long-side cap for recompressed images")
+    webp_quality: int = Field(80, ge=1, le=100)
+
+
+@router.post("/media/embed")
+def media_embed(req: EmbedRequest):
+    """Fetch media URLs and return base64 data URIs — images recompressed to
+    WebP and downscaled, everything else passed through with its MIME.
+    Built for generating self-contained HTML."""
+    import rete_media
+    return _wrap(rete_media.embed_urls, req.urls, req.max_dimension, req.webp_quality)
+
+
+@router.get("/media/preview")
+def media_preview(url: str, max_dimension: int = 512, webp_quality: int = 80):
+    """A representative WebP image (data URI) for a media URL: image, PDF
+    first page, video frame (lazy over HTTP Range), IIIF info.json/manifest,
+    or an HTML page's og:image."""
+    import rete_media
+    return _wrap(rete_media.preview, url, min(max_dimension, 4096), webp_quality)
+
+
 class AskRequest(BaseModel):
     dataset: str
     question: str = Field(..., description="A natural-language question about the dataset")
