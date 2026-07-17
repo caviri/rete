@@ -1579,6 +1579,78 @@ mod tests {
         }
     }
 
+    /// **Operational resume harness** (ignored; run explicitly with env vars):
+    /// finish an external build whose process was killed after the dictionary
+    /// merge, from its surviving spill directory. Requires:
+    ///   RETE_RESUME_SPILL   the .rete-extbuild-* dir (g.*.sec + global.tri +
+    ///                       any completed <PERM>.tiles.sec)
+    ///   RETE_RESUME_OUT     output .rete path
+    ///   RETE_RESUME_TERMS   merged dictionary term count
+    ///   RETE_RESUME_QUADS   deduped triple count (statements when no dups)
+    ///   RETE_RESUME_CARD    optional JSON card file to embed
+    /// Missing permutation sections are rebuilt from global.tri; existing ones
+    /// are reused as-is.
+    #[test]
+    #[ignore = "operational tool, driven by RETE_RESUME_* env vars"]
+    fn resume_from_spill() {
+        let spill = PathBuf::from(std::env::var("RETE_RESUME_SPILL").expect("RETE_RESUME_SPILL"));
+        let out = PathBuf::from(std::env::var("RETE_RESUME_OUT").expect("RETE_RESUME_OUT"));
+        let term_count: u64 = std::env::var("RETE_RESUME_TERMS").unwrap().parse().unwrap();
+        let quad_count: u64 = std::env::var("RETE_RESUME_QUADS").unwrap().parse().unwrap();
+        let metadata: Vec<u8> = std::env::var("RETE_RESUME_CARD")
+            .ok()
+            .map(|p| std::fs::read(p).unwrap())
+            .unwrap_or_default();
+
+        let sec = |name: &str| -> SectionFile {
+            let path = spill.join(name);
+            let len = std::fs::metadata(&path).expect(name).len();
+            SectionFile { path, len }
+        };
+        let merged = MergedDict {
+            section_files: [
+                sec("g.shared.sec"),
+                sec("g.subj.sec"),
+                sec("g.obj.sec"),
+                sec("g.pred.sec"),
+            ],
+            term_count,
+            has_quoted: false,
+            remaps: Vec::new(),
+        };
+        let tmp = TmpDir { dir: spill.clone() };
+        let global_tri = spill.join("global.tri");
+        let codec = crate::file::writer_codec();
+        let run_len = ((16u64 << 30) / 2 / 24) as usize;
+
+        let mut sections = Vec::new();
+        for perm in crate::index::ALL_PERMS {
+            let done = spill.join(format!("{}.tiles.sec", perm.name()));
+            if done.exists() {
+                eprintln!("resume: reusing {}", perm.name());
+                let len = std::fs::metadata(&done).unwrap().len();
+                sections.push(SectionFile { path: done, len });
+                continue;
+            }
+            // clear partial leftovers of this permutation, then rebuild it
+            for entry in std::fs::read_dir(&spill).unwrap().flatten() {
+                let n = entry.file_name().to_string_lossy().into_owned();
+                if n.starts_with(&format!("{}.", perm.name())) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+            eprintln!("resume: rebuilding {}", perm.name());
+            let (s, n) =
+                build_permutation_section(&tmp, &global_tri, perm, run_len, codec).unwrap();
+            assert_eq!(n, quad_count, "permutation count must match");
+            eprintln!("resume: {} done", perm.name());
+            sections.push(s);
+        }
+        write_final_file(&out, &metadata, &merged, &sections, quad_count, codec).unwrap();
+        eprintln!("resume: wrote {}", out.display());
+        std::mem::forget(tmp); // keep the spill until the file is verified
+    }
+
     /// Named graphs are a clear v1 error, not silent data loss.
     #[test]
     fn named_graphs_are_rejected() {

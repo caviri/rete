@@ -310,12 +310,22 @@ pub(crate) fn build_external_cmd(
         .iter()
         .map(|i| (i.as_str(), input_format(i, format)))
         .collect();
+    // stdin IS allowed here — unlike the two-pass streaming assembler, the
+    // external build consumes its input exactly ONCE, so a non-rewindable pipe
+    // works. It must be the only input and carry an explicit --format.
+    let uses_stdin = inputs.iter().any(|i| i == "-");
+    if uses_stdin && (inputs.len() != 1 || format.is_none()) {
+        anyhow::bail!(
+            "--memory-budget-mb with stdin: `-` must be the only input and \
+             requires an explicit --format nt|nq"
+        );
+    }
     if let Some((bad, fmt)) = inputs_fmt
         .iter()
-        .find(|(i, f)| *i == "-" || !matches!(*f, "nt" | "nq"))
+        .find(|(i, f)| *i != "-" && !matches!(*f, "nt" | "nq"))
     {
         anyhow::bail!(
-            "--memory-budget-mb streams N-Triples/N-Quads files only ({bad} is {fmt}); \
+            "--memory-budget-mb streams N-Triples/N-Quads only ({bad} is {fmt}); \
              convert Turtle/RDF-XML inputs to .nt first"
         );
     }
@@ -329,19 +339,33 @@ pub(crate) fn build_external_cmd(
     let stats = rete_core::extbuild::build_external(
         |visit| {
             for (path, fmt) in &inputs_fmt {
-                let file = std::fs::File::open(path).map_err(|e| {
-                    rete_core::extbuild::ExtBuildError::Ingest(ingest::IngestError::Io(format!(
-                        "{path}: {e}"
-                    )))
-                })?;
                 let mut err: Option<rete_core::extbuild::ExtBuildError> = None;
-                let res = ingest::stream_reader(std::io::BufReader::new(file), fmt, &mut |q| {
+                let mut on_quad = |q: ingest::RawQuad| {
                     if err.is_none() {
                         if let Err(e) = visit(q) {
                             err = Some(e);
                         }
                     }
-                });
+                };
+                let res = if *path == "-" {
+                    let stdin = std::io::stdin();
+                    ingest::stream_reader(
+                        std::io::BufReader::with_capacity(1 << 20, stdin.lock()),
+                        fmt,
+                        &mut on_quad,
+                    )
+                } else {
+                    let file = std::fs::File::open(path).map_err(|e| {
+                        rete_core::extbuild::ExtBuildError::Ingest(ingest::IngestError::Io(
+                            format!("{path}: {e}"),
+                        ))
+                    })?;
+                    ingest::stream_reader(
+                        std::io::BufReader::with_capacity(1 << 20, file),
+                        fmt,
+                        &mut on_quad,
+                    )
+                };
                 if let Some(e) = err {
                     return Err(e);
                 }

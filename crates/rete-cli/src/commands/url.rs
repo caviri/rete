@@ -1,9 +1,12 @@
-//! The remote (HTTP range) group: read a `.rete` over `http(s)://` by fetching
-//! only the byte ranges each operation needs — the pyramid summary
-//! (`summary_url`), a triple pattern (`query_url`), or a full SPARQL query
-//! (`sparql_url`) — never a full download. Each wraps the transport in a
-//! `CountingReader` and reports bytes fetched + range-request count. The on-disk
-//! variants live in `commands::query` / `commands::inspect`.
+//! The ranged-read group: read a `.rete` by fetching only the byte ranges each
+//! operation needs — the pyramid summary (`summary_url`), a triple pattern
+//! (`query_url`), or a full SPARQL query (`sparql_url`) — never a full load.
+//! The source is an `http(s)://` URL or a local path: both go through the same
+//! lazy tile-faulting reads, so a file larger than RAM stays queryable in
+//! bounded memory (the local case is how the external build's output is
+//! validated). Each wraps the transport in a `CountingReader` and reports bytes
+//! fetched + range-request count. The load-it-all on-disk variants live in
+//! `commands::query` / `commands::inspect`.
 
 use rete_core::{
     auto_block, eval_query, BlockCacheReader, CountingReader, Header, RangeReader, Rete,
@@ -11,15 +14,15 @@ use rete_core::{
 };
 
 use crate::commands::card;
+use crate::commands::range_source::RangedSourceReader;
 use crate::commands::render::print_query_output;
-use crate::http::HttpRangeReader;
 
 /// Fetch just the embedded Dataset Card over HTTP — the index-free CARD tier.
 /// Reads only the 128-byte header and the metadata range (two small range
 /// requests), never the dictionary, index, or pyramid: the cold-start
 /// self-description a newcomer needs before they know what to query.
 pub(crate) fn card_url(url: &str, json: bool) -> anyhow::Result<()> {
-    let reader = CountingReader::new(HttpRangeReader::open(url)?);
+    let reader = CountingReader::new(RangedSourceReader::open(url)?);
     let total = reader.len();
     match card::load_card_ranged(&reader)? {
         None => println!("(no dataset card)"),
@@ -51,7 +54,7 @@ pub(crate) fn card_url(url: &str, json: bool) -> anyhow::Result<()> {
 /// Fetch just the pyramid summary (coarse graph) over HTTP — header, dictionary,
 /// and summary only, skipping the (large) triple index.
 pub(crate) fn summary_url(url: &str) -> anyhow::Result<()> {
-    let reader = CountingReader::new(HttpRangeReader::open(url)?);
+    let reader = CountingReader::new(RangedSourceReader::open(url)?);
     let total = reader.len();
     match SummaryView::open_ranged(&reader)? {
         Some(view) => {
@@ -98,7 +101,7 @@ pub(crate) fn query_url(
     p: Option<String>,
     o: Option<String>,
 ) -> anyhow::Result<()> {
-    let reader = CountingReader::new(HttpRangeReader::open(url)?);
+    let reader = CountingReader::new(RangedSourceReader::open(url)?);
     let total = reader.len();
     let results = Rete::query_ranged(&reader, s.as_deref(), p.as_deref(), o.as_deref())?;
     for (s, p, o) in &results {
@@ -125,7 +128,7 @@ pub(crate) fn sparql_url(url: &str, query: &str, json: bool, entail: bool) -> an
     // cache (client-side; works over any single-range backend incl. S3) sits
     // above it, so a query's scattered range reads coalesce into a few aligned
     // block fetches. `RETE_BLOCK_KB=0` disables it (one fetch per logical read).
-    let reader = std::sync::Arc::new(CountingReader::new(HttpRangeReader::open(url)?));
+    let reader = std::sync::Arc::new(CountingReader::new(RangedSourceReader::open(url)?));
     let total = reader.len();
     // Block size: an explicit `RETE_BLOCK_KB` wins (0 disables the cache); else
     // auto-tune from the file length, exactly like the wasm client — bigger files
@@ -182,7 +185,7 @@ pub(crate) fn why_url(
     object: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let reader = std::sync::Arc::new(CountingReader::new(HttpRangeReader::open(url)?));
+    let reader = std::sync::Arc::new(CountingReader::new(RangedSourceReader::open(url)?));
     let total = reader.len();
     // Block size: an explicit `RETE_BLOCK_KB` wins (0 disables the cache); else
     // auto-tune from the file length, exactly like the wasm client — bigger files
