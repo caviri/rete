@@ -1,0 +1,33 @@
+# The R binding crate — OUTSIDE the cargo workspace (see the root Cargo.toml
+# `exclude`), like clients/python: it versions and locks independently and is
+# built by R's Makevars via cargo, never published to crates.io.
+[package]
+name = 'rete'
+publish = false
+version = '0.1.0'
+edition = '2021'
+rust-version = '1.87'
+
+[lib]
+# staticlib is what R's Makevars links; rlib lets the `document` metadata bin
+# link against the same crate.
+crate-type = ['staticlib', 'rlib']
+name = 'rete'
+
+[[bin]]
+name = 'document'
+path = 'document.rs'
+
+[dependencies]
+# Pinned to the 0.8 line: rextendr 0.5's generated plumbing (entrypoint.c,
+# wrapper conventions) targets it; 0.9 changed the #[extendr] macro contract.
+extendr-api = '0.8'
+rete-core = { path = '../../../../crates/rete-core' }
+# Blocking HTTP(S) range reads, mirroring the Python client's vendored reader
+# (rustls via the `tls` feature — no system OpenSSL on any platform).
+ureq = { version = '2', default-features = false, features = ['tls'] }
+serde_json = '1'
+
+[profile.release]
+lto = true
+codegen-units = 1

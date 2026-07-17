@@ -1,0 +1,28 @@
+Package: rete
+Title: Query Local and Remote 'rete' RDF Graph Files with SPARQL
+Version: 0.1.0
+Authors@R:
+    person("Carlos", "Vivar Rios", , "carlos.vivarrios@epfl.ch", role = c("aut", "cre"))
+Description: Client for the 'rete' single-file RDF graph format: open a
+    local file or an http(s) URL and run SPARQL queries against it,
+    getting data frames back. Remote files are read lazily over HTTP
+    range requests, fetching only the byte ranges a query touches — a
+    multi-gigabyte graph on plain object storage stays interactive with
+    no database server. Files can carry their own dataset card and
+    example queries, and small graphs can be built directly from RDF
+    text. See <https://caviri.github.io/rete/> for the format.
+License: Apache License (>= 2)
+URL: https://github.com/caviri/rete, https://caviri.github.io/rete/
+BugReports: https://github.com/caviri/rete/issues
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+SystemRequirements: Cargo (Rust's package manager), rustc >= 1.87
+Depends:
+    R (>= 4.2)
+Imports:
+    jsonlite
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Config/rextendr/version: 0.5.0
+Config/roxygen2/version: 8.0.0

@@ -223,6 +223,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="python.html">Python — rete-graph</a></li>
         <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
         <li><a href="javascript.html">JavaScript — rete-graph</a></li>
+        <li><a href="r.html">R — rete</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -296,6 +297,7 @@ rete schema  social.rete    # semantic (by rdf:type)
 <table><thead><tr><th>Client</th><th>Get it</th><th>Runs on</th><th>Docs</th></tr></thead><tbody>
 <tr><td><strong>Python</strong> — <a href="https://pypi.org/project/rete-graph/"><code>rete-graph</code> on PyPI</a></td><td><code>pip install rete-graph</code></td><td>CPython ≥ 3.9 everywhere, plus <strong>Pyodide</strong> (JupyterLite, marimo WASM)</td><td><a href="python.html">Python API</a> · <a href="python-build-tutorial.html">build tutorial</a></td></tr>
 <tr><td><strong>JavaScript</strong> — <a href="https://www.npmjs.com/package/rete-graph"><code>rete-graph</code> on npm</a></td><td><code>npm install rete-graph</code>, or one <a href="javascript.html"><code>&lt;script&gt;</code> tag via CDN</a></td><td>Node ≥ 18, browsers (bundlers or script-tag)</td><td><a href="javascript.html">JavaScript API</a></td></tr>
+<tr><td><strong>R</strong> — <code>rete</code> (from this repo; CRAN/R-universe pending)</td><td><code>remotes::install_github("caviri/rete", subdir = "clients/r")</code></td><td>R ≥ 4.2 + Rust toolchain; results as data frames</td><td><a href="r.html">R API</a></td></tr>
 <tr><td><strong>Rust</strong> — <code>rete-core</code> / <code>rete-cli</code> (in this repo; crates.io release pending)</td><td><code>cargo add rete-core --git https://github.com/caviri/rete</code></td><td>anywhere Rust runs — native + wasm</td><td><a href="rust-api.html">Rust API</a> · <a href="cli.html">CLI</a></td></tr>
 <tr><td><strong>Browser, zero install</strong></td><td>—</td><td>any modern browser</td><td><a href="playground-guide.html">Playground</a> · <a href="yasgui-guide.html">SPARQL IDE</a></td></tr>
 </tbody></table>

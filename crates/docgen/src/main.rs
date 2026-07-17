@@ -64,6 +64,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("python.md", "Python — rete-graph"),
             ("python-build-tutorial.md", "Python: build a .rete"),
             ("javascript.md", "JavaScript — rete-graph"),
+            ("r.md", "R — rete"),
         ],
     ),
     (
