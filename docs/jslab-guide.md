@@ -15,8 +15,11 @@ the queries actually fetched:
 - **network** — the **Linked Jazz collaboration graph** (who played, toured,
   and sat in bands with whom, a 176 KB `.rete`) as a draggable, zoomable
   force layout; hover a musician to isolate their circle.
-- **chord** — the same collaborations as a circos-style chord diagram of the
-  top 16 musicians.
+- **chord** — a circos-style diagram of the top 16 musicians over the **full
+  relationship taxonomy** (eleven predicates: played/toured/band ties,
+  friendship/acquaintance/hasMet, influence/mentorship — the generic
+  `knowsOf` is deliberately excluded). Ribbons take the color of the pair's
+  dominant relationship group; hovering a ribbon shows the exact breakdown.
 - **stacked** — each musician's connections broken down by relationship type
   (a validated 4-color categorical stack).
 - **top 20** — a SPARQL `GROUP BY` as a clean ranked bar chart.
@@ -44,9 +47,13 @@ own network is needed). That exported file is yours to host or share.
 - Query rows arrive as `{variable: term}` objects; each term carries `.kind`
   (`iri`/`literal`/`bnode`) and `.value` (plus `.datatype`/`.lang`). Numbers
   from aggregates are literal terms — coerce with `+row.n.value`.
-- Your program runs with four bindings in scope: **`openGraph`**, **`d3`**,
-  **`viz`** (the output container element), and **`log(...)`** (the console
-  strip).
+- Your program runs with five bindings in scope: **`openGraph`**, **`d3`**,
+  **`viz`** (the output container element), **`log(...)`** (the console
+  strip), and **`theme`** — the active palette (surface, inks, grid, and
+  validated series colors), so charts repaint correctly when you flip the
+  **◐ theme** toggle between light and dark. Both palettes pass the
+  colorblind-safety validator against their own surfaces; the standalone
+  export bakes in whichever theme is active.
 
 Point `openGraph()` at any `.rete` URL whose host serves `Range` with CORS
 (see [Hosting](hosting.md)) — every dataset in the

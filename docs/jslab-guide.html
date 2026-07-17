@@ -261,8 +261,11 @@ the queries actually fetched:</p>
 <li><strong>network</strong> — the <strong>Linked Jazz collaboration graph</strong> (who played, toured,
 and sat in bands with whom, a 176 KB <code>.rete</code>) as a draggable, zoomable
 force layout; hover a musician to isolate their circle.</li>
-<li><strong>chord</strong> — the same collaborations as a circos-style chord diagram of the
-top 16 musicians.</li>
+<li><strong>chord</strong> — a circos-style diagram of the top 16 musicians over the <strong>full
+relationship taxonomy</strong> (eleven predicates: played/toured/band ties,
+friendship/acquaintance/hasMet, influence/mentorship — the generic
+<code>knowsOf</code> is deliberately excluded). Ribbons take the color of the pair's
+dominant relationship group; hovering a ribbon shows the exact breakdown.</li>
 <li><strong>stacked</strong> — each musician's connections broken down by relationship type
 (a validated 4-color categorical stack).</li>
 <li><strong>top 20</strong> — a SPARQL <code>GROUP BY</code> as a clean ranked bar chart.</li>
@@ -289,9 +292,13 @@ block cache and decoded dictionary — the second query is nearly free.</li>
 <li>Query rows arrive as <code>{variable: term}</code> objects; each term carries <code>.kind</code>
 (<code>iri</code>/<code>literal</code>/<code>bnode</code>) and <code>.value</code> (plus <code>.datatype</code>/<code>.lang</code>). Numbers
 from aggregates are literal terms — coerce with <code>+row.n.value</code>.</li>
-<li>Your program runs with four bindings in scope: <strong><code>openGraph</code></strong>, <strong><code>d3</code></strong>,
-<strong><code>viz</code></strong> (the output container element), and <strong><code>log(...)</code></strong> (the console
-strip).</li>
+<li>Your program runs with five bindings in scope: <strong><code>openGraph</code></strong>, <strong><code>d3</code></strong>,
+<strong><code>viz</code></strong> (the output container element), <strong><code>log(...)</code></strong> (the console
+strip), and <strong><code>theme</code></strong> — the active palette (surface, inks, grid, and
+validated series colors), so charts repaint correctly when you flip the
+<strong>◐ theme</strong> toggle between light and dark. Both palettes pass the
+colorblind-safety validator against their own surfaces; the standalone
+export bakes in whichever theme is active.</li>
 </ul>
 <p>Point <code>openGraph()</code> at any <code>.rete</code> URL whose host serves <code>Range</code> with CORS
 (see <a href="hosting.html">Hosting</a>) — every dataset in the
