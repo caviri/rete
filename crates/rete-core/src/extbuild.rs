@@ -1621,7 +1621,13 @@ mod tests {
         let tmp = TmpDir { dir: spill.clone() };
         let global_tri = spill.join("global.tri");
         let codec = crate::file::writer_codec();
-        let run_len = ((16u64 << 30) / 2 / 24) as usize;
+        // RETE_RESUME_BUDGET_MB (default 16384) sizes the sort runs — resume
+        // with a smaller budget when the machine is busier than the build was
+        let budget_mb: u64 = std::env::var("RETE_RESUME_BUDGET_MB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(16384);
+        let run_len = ((budget_mb << 20) / 2 / 24) as usize;
 
         let mut sections = Vec::new();
         for perm in crate::index::ALL_PERMS {
