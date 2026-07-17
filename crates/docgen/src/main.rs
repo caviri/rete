@@ -185,7 +185,10 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
         ]),
         "jupyterlite-guide.md" => Some(&[
             ("jupyterlite-guide.html", "overview"),
-            ("jupyterlite/lab/index.html?path=rete-graph.ipynb", "launch the notebook →"),
+            (
+                "jupyterlite/lab/index.html?path=rete-graph.ipynb",
+                "launch the notebook →",
+            ),
         ]),
         "atlas.md" => Some(&[
             ("atlas.html", "overview"),
