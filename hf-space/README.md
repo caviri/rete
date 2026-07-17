@@ -72,7 +72,11 @@ schema/examples, writes SPARQL, executes it, and returns
   (defaults: `DATA_DIR/.rete-cache`, 256 KiB, 4096 MB).
 - `RETE_MAX_HANDLES` / `RETE_ROW_CAP` / `RETE_QUERY_TIMEOUT_S` — query-plane
   guards (12 / 10 000 / 60 s).
-- `ASK_MODEL` — pydantic-ai model id enabling `/api/ask`.
+- `ASK_MODEL` — pydantic-ai model id enabling `/api/ask`. For an
+  OpenAI-compatible router (vLLM, HF, EPFL RCP) use the **`openai-chat:`**
+  prefix (`openai-chat:<model>` + `OPENAI_BASE_URL` + `OPENAI_API_KEY`) —
+  the plain `openai:` prefix targets the Responses API, which such routers
+  don't serve (it 404s).
 - `JWT_TOKEN`, `WEB_CONCURRENCY`, `THREADPOOL_TOKENS`, `BRANDING_FILE`,
   `EXTRA_CTYPES` — as in the byte gateway. Keep `WEB_CONCURRENCY=1` unless
   RAM allows duplicating resident graph handles per worker.
