@@ -378,6 +378,31 @@ pub(crate) trait CardTripleSource {
 /// in-memory build path. Statistics are over the **default graph** only
 /// (named-graph statistics are summarized by `quad_count`/`named_graph_count`),
 /// matching `rete stats`/`rete predicates`.
+/// A card holding curated fields + top-line counts only — for the external
+/// (memory-bounded) build, where deriving the profile lists (predicates/classes/
+/// hubs/links) would need unbounded RAM. Every derived list is left empty and
+/// `truncated` is unset (the lists are absent, not cut).
+pub(crate) fn curated_counts_card(
+    statements: u64,
+    term_count: u64,
+    curated: CardInput,
+) -> DatasetCard {
+    DatasetCard {
+        title: curated.title,
+        description: curated.description,
+        license: curated.license,
+        source: curated.source,
+        created: curated.created,
+        example_queries: curated.example_queries,
+        triple_count: statements,
+        quad_count: statements,
+        named_graph_count: 0,
+        term_count,
+        format_version: rete_core::format::CURRENT_FORMAT_VERSION,
+        ..DatasetCard::default()
+    }
+}
+
 pub(crate) fn derive_card(
     quads: &[(String, String, String, Option<String>)],
     term_count: u64,

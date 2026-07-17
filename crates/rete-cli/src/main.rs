@@ -110,6 +110,19 @@ enum Command {
         /// Card creation date, e.g. `2026-06-08` (implies `--card`).
         #[arg(long)]
         created: Option<String>,
+        /// **Memory-bounded external build**: assemble the file within roughly
+        /// this many MiB of RAM by cutting the input into disk-spilled chunks
+        /// and merging them (the budget decides the number of chunks and the
+        /// external-sort run sizes). For graphs too large for the in-RAM build.
+        /// Output is byte-identical to a standard `--no-pyramid` build.
+        /// v1 limits: N-Triples/N-Quads files only, default graph only, implies
+        /// `--no-pyramid`, and excludes `--text-index`/`--materialize`/`--reason`.
+        #[arg(long = "memory-budget-mb")]
+        memory_budget_mb: Option<u64>,
+        /// Directory for the external build's spill files (default: alongside
+        /// the output file). Needs free space on the order of the input size.
+        #[arg(long = "tmp-dir")]
+        tmp_dir: Option<String>,
     },
     /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle/
     /// RDF-XML, without building. Reports counts, or fails with a parse error.
@@ -659,17 +672,10 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             source,
             description,
             created,
-        } => commands::build::build(
-            &inputs,
-            &output,
-            format.as_deref(),
-            materialize,
-            no_pyramid,
-            reason,
-            rete_core::PyramidAlgo::from_cli(&pyramid_algo).unwrap_or_default(),
-            text_index,
-            type_predicate.as_deref(),
-            commands::card::CardArgs {
+            memory_budget_mb,
+            tmp_dir,
+        } => {
+            let card_args = commands::card::CardArgs {
                 enabled: card,
                 file: card_file,
                 title,
@@ -677,8 +683,34 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 source,
                 description,
                 created,
-            },
-        ),
+            };
+            if let Some(mb) = memory_budget_mb {
+                commands::build::build_external_cmd(
+                    &inputs,
+                    &output,
+                    format.as_deref(),
+                    mb,
+                    tmp_dir.as_deref(),
+                    materialize,
+                    reason,
+                    text_index,
+                    card_args,
+                )
+            } else {
+                commands::build::build(
+                    &inputs,
+                    &output,
+                    format.as_deref(),
+                    materialize,
+                    no_pyramid,
+                    reason,
+                    rete_core::PyramidAlgo::from_cli(&pyramid_algo).unwrap_or_default(),
+                    text_index,
+                    type_predicate.as_deref(),
+                    card_args,
+                )
+            }
+        }
         Command::Validate { inputs, format } => {
             commands::build::validate(&inputs, format.as_deref())
         }

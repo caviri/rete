@@ -276,6 +276,104 @@ pub(crate) fn build(
     Ok(())
 }
 
+/// `rete build --memory-budget-mb <N>`: the **memory-bounded external build** —
+/// chunk the input to disk, merge, and stream the final file, holding roughly the
+/// budget in RAM regardless of graph size (`rete_core::extbuild`). Output is
+/// byte-identical to a standard `--no-pyramid` build of the same input.
+///
+/// v1 constraints (explicit errors): N-Triples/N-Quads *files* only (the input
+/// is streamed once; stdin/Turtle can't be), default graph only, no pyramid, no
+/// text index, no reasoning. `--card` embeds curated fields + counts (the
+/// derived profile lists need unbounded RAM, so they are omitted here).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_external_cmd(
+    inputs: &[String],
+    output: &str,
+    format: Option<&str>,
+    memory_budget_mb: u64,
+    tmp_dir: Option<&str>,
+    materialize: bool,
+    reason: bool,
+    text_index: bool,
+    card_args: CardArgs,
+) -> anyhow::Result<()> {
+    if materialize || reason {
+        anyhow::bail!(
+            "--memory-budget-mb is incompatible with --materialize/--reason \
+             (they need the whole graph resident); run them via the standard build"
+        );
+    }
+    if text_index {
+        anyhow::bail!("--memory-budget-mb does not support --text-index yet");
+    }
+    let inputs_fmt: Vec<(&str, &'static str)> = inputs
+        .iter()
+        .map(|i| (i.as_str(), input_format(i, format)))
+        .collect();
+    if let Some((bad, fmt)) = inputs_fmt
+        .iter()
+        .find(|(i, f)| *i == "-" || !matches!(*f, "nt" | "nq"))
+    {
+        anyhow::bail!(
+            "--memory-budget-mb streams N-Triples/N-Quads files only ({bad} is {fmt}); \
+             convert Turtle/RDF-XML inputs to .nt first"
+        );
+    }
+
+    let curated = if card_args.requested() {
+        Some(card::load_curated(&card_args)?)
+    } else {
+        None
+    };
+    let out_path = std::path::Path::new(output).to_path_buf();
+    let stats = rete_core::extbuild::build_external(
+        |visit| {
+            for (path, fmt) in &inputs_fmt {
+                let file = std::fs::File::open(path).map_err(|e| {
+                    rete_core::extbuild::ExtBuildError::Ingest(ingest::IngestError::Io(format!(
+                        "{path}: {e}"
+                    )))
+                })?;
+                let mut err: Option<rete_core::extbuild::ExtBuildError> = None;
+                let res = ingest::stream_reader(std::io::BufReader::new(file), fmt, &mut |q| {
+                    if err.is_none() {
+                        if let Err(e) = visit(q) {
+                            err = Some(e);
+                        }
+                    }
+                });
+                if let Some(e) = err {
+                    return Err(e);
+                }
+                res.map_err(rete_core::extbuild::ExtBuildError::Ingest)?;
+            }
+            Ok(())
+        },
+        &out_path,
+        rete_core::extbuild::ExternalBuildOptions {
+            memory_budget: memory_budget_mb.saturating_mul(1 << 20),
+            tmp_dir: tmp_dir.map(std::path::PathBuf::from),
+            metadata: Box::new(move |stats| match curated {
+                Some(curated) => {
+                    let blob = card::curated_counts_card(
+                        stats.statements as u64,
+                        stats.terms as u64,
+                        curated,
+                    )
+                    .to_json_bytes();
+                    eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                    blob
+                }
+                None => Vec::new(),
+            }),
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let byte_len = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0) as usize;
+    print_build_summary(output, &stats, byte_len);
+    Ok(())
+}
+
 /// Print the `wrote …` summary for a finished build — quad form when the file has
 /// named graphs, triple form otherwise. Shared by the streaming and in-memory
 /// build paths.

@@ -35,6 +35,8 @@ binary is stale/missing.
 | `--card` | embed a Dataset Card (counts, top predicates/classes, vocabularies + curated fields). Always pass for a publishable dataset. |
 | `--title / --license / --source / --description / --created` | curated card fields (each implies `--card`). |
 | `--card-file <json>` | JSON of curated card fields (implies `--card`). |
+| `--memory-budget-mb <N>` | **Memory-bounded external build**: chunk the input to disk and merge, holding ~N MiB in RAM regardless of graph size; the budget decides the chunk count and sort-run sizes. Byte-identical to a standard `--no-pyramid` build. v1: .nt/.nq files only, default graph only, no pyramid/text-index/reasoning; card = curated + counts. Spill dir via `--tmp-dir` (needs input-sized free space). |
+| `--tmp-dir <dir>` | Where `--memory-budget-mb` puts its spill files (default: alongside the output). |
 | `--materialize` | bake RDFS/OWL-RL entailments into the file at build time (aborts if incoherent). |
 | `--reason` | run the reasoner and stamp the coherence verdict into the card (implies `--card`; does NOT abort on incoherence). Verify later with `rete reason --verify-card`. |
 

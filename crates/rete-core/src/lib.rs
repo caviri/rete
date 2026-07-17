@@ -24,6 +24,8 @@ pub mod header;
 #[doc(hidden)]
 pub mod index;
 #[doc(hidden)]
+pub mod extbuild;
+
 pub mod ingest;
 #[doc(hidden)]
 pub mod meta;
