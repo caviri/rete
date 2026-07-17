@@ -1,0 +1,29 @@
+{
+  "content": [
+    {
+      "content": null,
+      "created": "2026-07-17T12:32:26.148591Z",
+      "format": null,
+      "hash": null,
+      "hash_algorithm": null,
+      "last_modified": "2026-07-17T12:32:17Z",
+      "mimetype": null,
+      "name": "rete-graph.ipynb",
+      "path": "rete-graph.ipynb",
+      "size": 6578,
+      "type": "notebook",
+      "writable": true
+    }
+  ],
+  "created": "2026-07-17T12:32:26.145590Z",
+  "format": "json",
+  "hash": null,
+  "hash_algorithm": null,
+  "last_modified": "2026-07-17T12:32:26.145590Z",
+  "mimetype": null,
+  "name": "",
+  "path": "",
+  "size": null,
+  "type": "directory",
+  "writable": true
+}
