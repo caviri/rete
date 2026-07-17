@@ -90,6 +90,25 @@ Validation is **lazy**: only the shapes' targets are fetched (a broad
 `sh:targetClass` fetches many targets — scope shapes tightly). The report
 comes back as `{conforms, results}` (or Turtle with `"format": "ttl"`).
 
+## Media tools
+
+For generating self-contained HTML from query results:
+
+```sh
+# URLs -> base64 data: URIs; images recompressed to WebP + downscaled
+curl -s -X POST https://<space>/api/media/embed \
+  -H 'content-type: application/json' \
+  -d '{"urls": ["https://…/scan.jpg", "https://…/doc.pdf"], "max_dimension": 512}'
+
+# One representative WebP for any media URL:
+#   image | PDF first page | video frame (lazy HTTP Range — never the whole
+#   file) | IIIF info.json / manifest v2+v3 | HTML page og:image
+curl -s "https://<space>/api/media/preview?url=https://…/manifest.json"
+```
+
+Same capabilities as MCP tools `embed_media` / `media_preview` — an agent
+can query a graph, preview the PDFs/IIIF/videos it finds, and inline them.
+
 ## The MCP plane
 
 Point any MCP client at `https://<space>/mcp/` (streamable HTTP, stateless,
