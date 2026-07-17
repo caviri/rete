@@ -20,6 +20,9 @@ remotes::install_github("caviri/rete@main", subdir = "clients/r", build = FALSE)
 
 One command fetches the repository, compiles the bundled Rust engine
 (a few minutes the first time), and installs the package — no clone needed.
+After install, `vignette("rete")` opens an offline tour that mirrors this
+page, and `?rete_open`, `?rete_query`, `?rete_build` are the reference
+pages.
 `build = FALSE` matters: the package lives in a monorepo and its Rust crate
 references the engine at the repository root, so it must install from the
 full source tree rather than a pre-built subdir tarball (that also rules out

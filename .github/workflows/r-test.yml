@@ -39,6 +39,8 @@ jobs:
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
+      # R CMD build knits the vignette (rmarkdown -> pandoc).
+      - uses: r-lib/actions/setup-pandoc@v2
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           working-directory: clients/r
