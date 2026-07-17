@@ -1946,7 +1946,7 @@ impl Rete {
 
     /// The full-text index (TEXT_INDEX section), faulting it in on first access
     /// on the lazy remote path. `None` when the file carries no text index.
-    fn text_index(&self) -> Option<&crate::text_index::TextIndex> {
+    pub(crate) fn text_index(&self) -> Option<&crate::text_index::TextIndex> {
         match &self.text_index {
             TextIndexSlot::Resident(t) => t.as_ref(),
             TextIndexSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),

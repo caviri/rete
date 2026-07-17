@@ -1168,3 +1168,58 @@ fn merge_seed_skips_pinpoint_times_fat() {
         ]
     );
 }
+
+/// FILTER-CONTAINS pushdown through the TEXT_INDEX must be invisible in the
+/// results: the same graph built WITH and WITHOUT a text index answers every
+/// CONTAINS shape identically — case-sensitive needles (the index is folded,
+/// the filter re-verifies), needles spanning word boundaries, wrapper forms
+/// (LCASE/STR), a CONTAINS under OR (no pruning allowed), and a needle whose
+/// word lives on ANOTHER predicate of the same subject (over-approximation
+/// pruned by re-verification).
+#[test]
+fn contains_pushdown_matches_scan() {
+    use rete_core::ingest::{assemble_dataset_with_opts, parse};
+    let nt = r#"<http://ex/e1> <http://ex/label> "Royal Observatory Greenwich" .
+<http://ex/e1> <http://ex/kind> <http://ex/Place> .
+<http://ex/e2> <http://ex/label> "observatory dome" .
+<http://ex/e3> <http://ex/label> "Conservatory of Music" .
+<http://ex/e4> <http://ex/label> "plain building" .
+<http://ex/e4> <http://ex/note> "hidden observatory reference" .
+<http://ex/e5> <http://ex/label> "OBSERVATORY UPPER" .
+"#;
+    let quads: Vec<_> = parse(nt)
+        .unwrap()
+        .into_iter()
+        .map(|(s, p, o)| (s, p, o, None))
+        .collect();
+    let (plain, _) =
+        assemble_dataset_with_opts(quads.clone(), false, false, None, |_, _| Vec::new());
+    let (indexed, _) = assemble_dataset_with_opts(quads, false, true, None, |_, _| Vec::new());
+    let rete_plain = Rete::open(&plain).unwrap();
+    let rete_indexed = Rete::open(&indexed).unwrap();
+
+    let queries = [
+        // Case-sensitive: only e1 ("Royal Observatory…"); e5 is upper, e2 lower.
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(?l, \"Observatory\")) }",
+        // Case-folded via LCASE: e1, e2, e5 (via label) — e4's match is on ex:note,
+        // so the candidate over-approximation must be pruned back by the filter.
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(LCASE(?l), \"observatory\")) }",
+        // Needle crossing a word boundary.
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(?l, \"Observatory Greenwich\")) }",
+        // Substring of a longer word (Conservatory) + exact word (observatory).
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(LCASE(?l), \"servatory\")) }",
+        // Under OR: must NOT prune (e4's label has no 'observatory' but matches 'building').
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(?l, \"observatory\") || CONTAINS(?l, \"building\")) }",
+        // Conjunction with another required contains.
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(LCASE(?l), \"observatory\") && CONTAINS(LCASE(?l), \"dome\")) }",
+    ];
+    for q in queries {
+        let a = col(&rete_plain, q, "s");
+        let b = col(&rete_indexed, q, "s");
+        assert_eq!(a, b, "indexed vs plain diverged for {q}");
+        assert!(
+            !a.is_empty() || q.contains("dome"),
+            "unexpected empty for {q}"
+        );
+    }
+}

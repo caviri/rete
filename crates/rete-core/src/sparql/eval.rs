@@ -1110,6 +1110,12 @@ pub(crate) fn eval_plan_iter<'q>(
         Plan::Path(subj, spec, obj) => Box::new(eval_path(ctx, index, subj, spec, obj).into_iter()),
         Plan::Values(vars, rows) => Box::new(values_rows(ctx, vars, rows).into_iter()),
         Plan::Filter(expr, inner) => {
+            // A required CONTAINS over a text-indexed graph: bound the scan
+            // through the TEXT_INDEX instead of streaming every literal (the
+            // difference between seconds and never on a remote label scan).
+            if let Some(rows) = text_contains_pushdown(ctx, index, named_filter, expr, inner) {
+                return Box::new(rows.into_iter());
+            }
             let mut cache = ExistsCache::new();
             Box::new(
                 eval_plan_iter(ctx, index, named_filter, inner)
@@ -1269,6 +1275,177 @@ fn substitute_patterns(
 /// the BGP's scan instead of materializing the whole BGP and hash-joining.
 /// Returns `None` (use the hash join) when neither side is a pushable
 /// VALUES/BGP pair.
+/// Most text-index candidate subjects the CONTAINS pushdown will seed as a
+/// VALUES probe; past this, the plain scan is the safer bet (each candidate
+/// probes the BGP once — a range round-trip on the remote path).
+const TEXT_PUSHDOWN_MAX_CANDIDATES: usize = 8192;
+
+/// The variable inside a CONTAINS haystack argument, looking through the
+/// value-preserving wrappers `STR` / `LCASE` / `UCASE` (they change case or
+/// strip the tag — the index is case-folded anyway, and the original filter
+/// re-verifies exactly).
+fn contains_var(e: &FExpr) -> Option<&str> {
+    match e {
+        FExpr::Var(v) => Some(v),
+        FExpr::Func(Builtin::Str | Builtin::LCase | Builtin::UCase, args) if args.len() == 1 => {
+            contains_var(&args[0])
+        }
+        _ => None,
+    }
+}
+
+/// Collect `(variable, needle)` from the REQUIRED conjuncts of a filter: walk
+/// `And` nodes only (a CONTAINS under OR / NOT / IF is not a necessary
+/// condition and must not prune), taking `CONTAINS(<var-ish>, "literal")`.
+fn required_contains(e: &FExpr, out: &mut Vec<(String, String)>) {
+    match e {
+        FExpr::And(a, b) => {
+            required_contains(a, out);
+            required_contains(b, out);
+        }
+        FExpr::Func(Builtin::Contains, args) if args.len() == 2 => {
+            if let (Some(v), FExpr::Const(c)) = (contains_var(&args[0]), &args[1]) {
+                if let Some(needle) = crate::terms::literal_lexical(c) {
+                    out.push((v.to_string(), needle));
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// FILTER-CONTAINS pushdown through the TEXT_INDEX (`word → subjects`).
+///
+/// For a filter whose required conjuncts include `CONTAINS(?v, "needle")`
+/// over a BGP binding `?v` as the OBJECT of a pattern with a variable
+/// SUBJECT, the subjects able to satisfy the filter are bounded by the index:
+/// any literal containing the needle must, for each separator-free piece of
+/// the needle, hold that piece inside one of its words — and the index maps
+/// words to the subjects carrying them. The candidate set (case-folded,
+/// any-predicate — a strict OVER-approximation) is substituted as a VALUES
+/// seed so the BGP probes those subjects instead of scanning the predicate,
+/// and the ORIGINAL filter then re-verifies every row, keeping semantics
+/// exact (case-sensitivity, cross-word needles, wrappers — all decided by the
+/// real expression, never the index).
+///
+/// `None` = not applicable — no index, no usable conjunct, an unselective
+/// needle (`substring` declined), or more candidates than probing is worth —
+/// and the caller keeps the plain streaming scan.
+fn text_contains_pushdown(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    nf: Option<&[String]>,
+    expr: &FExpr,
+    inner: &Plan,
+) -> Option<Vec<Row>> {
+    use std::collections::BTreeSet;
+    let ti = ctx.rete.text_index()?;
+    let mut needles: Vec<(String, String)> = Vec::new();
+    required_contains(expr, &mut needles);
+
+    // Intersect candidate subjects across every usable needle on one subject
+    // variable (the first that qualifies keeps this simple and sound: further
+    // constraints only ever come back through the re-verifying filter).
+    let mut seed: Option<(String, BTreeSet<u32>)> = None;
+    for (cv, needle) in &needles {
+        let Some(sv) = contains_subject_var(inner, cv) else {
+            continue;
+        };
+        let pieces: Vec<String> = crate::text_index::tokenize(needle).collect();
+        if pieces.is_empty() {
+            continue; // nothing indexable in the needle — no pruning power
+        }
+        let mut cands: Option<BTreeSet<u32>> = None;
+        let mut usable = true;
+        for piece in &pieces {
+            let Some(subs) = ti.substring(piece) else {
+                usable = false; // too many matching words — not selective
+                break;
+            };
+            let set: BTreeSet<u32> = subs.into_iter().collect();
+            cands = Some(match cands {
+                None => set,
+                Some(acc) => acc.intersection(&set).copied().collect(),
+            });
+        }
+        if !usable {
+            continue;
+        }
+        let cands = cands.unwrap_or_default();
+        match &mut seed {
+            None => seed = Some((sv, cands)),
+            Some((v, acc)) if *v == sv => *acc = acc.intersection(&cands).copied().collect(),
+            Some(_) => {}
+        }
+    }
+    let (sv, cands) = seed?;
+    if cands.len() > TEXT_PUSHDOWN_MAX_CANDIDATES {
+        return None;
+    }
+    let dict = ctx.rete.dictionary();
+    let rows: Vec<Vec<Option<String>>> = cands
+        .iter()
+        .filter_map(|&id| dict.subject_term(id))
+        .map(|t| vec![Some(t)])
+        .collect();
+    let values = Plan::Values(vec![sv.clone()], rows);
+    let seeded = inject_contains_seed(inner, &sv, &values)?;
+    let mut cache = ExistsCache::new();
+    let out: Vec<Row> = eval_plan_iter(ctx, index, nf, &seeded)
+        .filter(|b| expr.boolean(ctx, index, b, &mut cache))
+        .collect();
+    Some(out)
+}
+
+/// The subject variable of a pattern binding `cv` as its object, searched over
+/// the plan's REQUIRED spine only: both `Join` sides, a `LeftJoin`'s left, a
+/// nested `Filter`'s inner, and `Bgp` leaves. (A pattern inside an OPTIONAL's
+/// right side never *requires* the binding, so seeding there is left alone.)
+fn contains_subject_var(plan: &Plan, cv: &str) -> Option<String> {
+    match plan {
+        Plan::Bgp(patterns) => patterns.iter().find_map(|p| match (&p.s, &p.o) {
+            (PatternTerm::Var(s), PatternTerm::Var(o)) if o == cv => Some(s.clone()),
+            _ => None,
+        }),
+        Plan::Join(l, r) => contains_subject_var(l, cv).or_else(|| contains_subject_var(r, cv)),
+        Plan::LeftJoin(l, _, _) => contains_subject_var(l, cv),
+        Plan::Filter(_, inner) => contains_subject_var(inner, cv),
+        _ => None,
+    }
+}
+
+/// Rebuild `plan` with the first required-spine `Bgp` that binds a pattern
+/// `(?sv, _, ?_)`-with-subject-`sv` wrapped as `Join(values, bgp)` — the seed
+/// lands exactly where the candidate subjects constrain the scan. Mirrors
+/// [`contains_subject_var`]'s traversal so the two always agree on the target.
+fn inject_contains_seed(plan: &Plan, sv: &str, values: &Plan) -> Option<Plan> {
+    match plan {
+        Plan::Bgp(patterns) => {
+            if patterns
+                .iter()
+                .any(|p| matches!(&p.s, PatternTerm::Var(s) if s == sv))
+            {
+                Some(Plan::Join(Box::new(values.clone()), Box::new(plan.clone())))
+            } else {
+                None
+            }
+        }
+        Plan::Join(l, r) => {
+            if let Some(nl) = inject_contains_seed(l, sv, values) {
+                Some(Plan::Join(Box::new(nl), r.clone()))
+            } else {
+                inject_contains_seed(r, sv, values).map(|nr| Plan::Join(l.clone(), Box::new(nr)))
+            }
+        }
+        Plan::LeftJoin(l, r, c) => inject_contains_seed(l, sv, values)
+            .map(|nl| Plan::LeftJoin(Box::new(nl), r.clone(), c.clone())),
+        Plan::Filter(e, inner) => {
+            inject_contains_seed(inner, sv, values).map(|ni| Plan::Filter(e.clone(), Box::new(ni)))
+        }
+        _ => None,
+    }
+}
+
 fn values_pushdown(ctx: &Ctx, index: &GraphIndex, l: &Plan, r: &Plan) -> Option<Vec<Row>> {
     let (vals, patterns) = match (l, r) {
         (Plan::Values(v, rows), Plan::Bgp(p)) | (Plan::Bgp(p), Plan::Values(v, rows)) => {

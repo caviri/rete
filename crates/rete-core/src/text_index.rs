@@ -28,6 +28,10 @@ use crate::varint::{read_uvarint, write_uvarint};
 /// Minimum token length kept (1-char words are low-value and bloat the index).
 const MIN_TOKEN_LEN: usize = 2;
 
+/// Most table tokens a [`TextIndex::substring`] piece may match before the
+/// lookup declines (each match is a posting read — a range fetch remotely).
+const SUBSTRING_TOKEN_CAP: usize = 512;
+
 /// Split text into index/query tokens: Unicode-alphanumeric runs, lowercased,
 /// length ≥ `MIN_TOKEN_LEN`. The build and query sides MUST use this same
 /// function so a query word matches how it was indexed.
@@ -195,6 +199,30 @@ impl TextIndex {
                 .unwrap_or_default(),
             _ => Vec::new(),
         }
+    }
+
+    /// Subjects whose literals contain a word that CONTAINS `piece` as a
+    /// substring — the union over every matching table token. The token table
+    /// is always resident so the scan is in-memory; each matching token costs
+    /// one posting read (a range fetch on the remote path), so an unselective
+    /// piece matching more than [`SUBSTRING_TOKEN_CAP`] tokens returns `None`
+    /// and the caller falls back to its non-indexed path.
+    pub fn substring(&self, piece: &str) -> Option<Vec<u32>> {
+        let matching: Vec<&(String, u64, u64)> = self
+            .tokens
+            .iter()
+            .filter(|(t, _, _)| t.contains(piece))
+            .collect();
+        if matching.len() > SUBSTRING_TOKEN_CAP {
+            return None;
+        }
+        let mut out = BTreeSet::new();
+        for (_, off, len) in matching {
+            if let Some(b) = self.posting_for(*off, *len) {
+                out.extend(decode_postings(&b));
+            }
+        }
+        Some(out.into_iter().collect())
     }
 
     /// Subjects whose literals contain a word **starting with** `prefix` — the
