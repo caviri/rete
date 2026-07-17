@@ -12,19 +12,20 @@ the file.
 ```r
 # Straight from GitHub — needs Rust ≥ 1.87 on PATH (https://rustup.rs):
 install.packages("remotes")
-remotes::install_github("caviri/rete", subdir = "clients/r")
-
-# The same via pak (its "user/repo/subdir" shorthand):
-pak::pak("caviri/rete/clients/r")
+remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)
 
 # A specific branch, tag, or commit:
-remotes::install_github("caviri/rete@main", subdir = "clients/r")
+remotes::install_github("caviri/rete@main", subdir = "clients/r", build = FALSE)
 ```
 
-Both commands fetch the repository, compile the bundled Rust engine
-(a few minutes the first time), and install the package — no clone needed.
-Binary installs via R-universe/CRAN (no Rust required) are planned; GitHub
-is the install path today.
+One command fetches the repository, compiles the bundled Rust engine
+(a few minutes the first time), and installs the package — no clone needed.
+`build = FALSE` matters: the package lives in a monorepo and its Rust crate
+references the engine at the repository root, so it must install from the
+full source tree rather than a pre-built subdir tarball (that also rules out
+`pak::pak("caviri/rete/clients/r")` for now). Binary installs via
+R-universe/CRAN (no Rust required) are planned; GitHub is the install path
+today.
 
 ## Open a graph and query it
 

@@ -259,18 +259,19 @@ requests, so a selective query over a multi-GB file fetches kilobytes, never
 the file.</p>
 <pre><code class="language-r"># Straight from GitHub — needs Rust ≥ 1.87 on PATH (https://rustup.rs):
 install.packages("remotes")
-remotes::install_github("caviri/rete", subdir = "clients/r")
-
-# The same via pak (its "user/repo/subdir" shorthand):
-pak::pak("caviri/rete/clients/r")
+remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)
 
 # A specific branch, tag, or commit:
-remotes::install_github("caviri/rete@main", subdir = "clients/r")
+remotes::install_github("caviri/rete@main", subdir = "clients/r", build = FALSE)
 </code></pre>
-<p>Both commands fetch the repository, compile the bundled Rust engine
-(a few minutes the first time), and install the package — no clone needed.
-Binary installs via R-universe/CRAN (no Rust required) are planned; GitHub
-is the install path today.</p>
+<p>One command fetches the repository, compiles the bundled Rust engine
+(a few minutes the first time), and installs the package — no clone needed.
+<code>build = FALSE</code> matters: the package lives in a monorepo and its Rust crate
+references the engine at the repository root, so it must install from the
+full source tree rather than a pre-built subdir tarball (that also rules out
+<code>pak::pak("caviri/rete/clients/r")</code> for now). Binary installs via
+R-universe/CRAN (no Rust required) are planned; GitHub is the install path
+today.</p>
 <h2>Open a graph and query it</h2>
 <pre><code class="language-r">library(rete)
 

@@ -243,6 +243,20 @@ wrappers, fails if the committed copy is stale, runs testthat, then
 `R CMD check --no-manual` as a CRAN preflight. See the *Releasing to CRAN*
 notes at the end of this section.
 
+Two install-path facts, both verified in clean containers:
+
+- Direct installs need `remotes::install_github(..., subdir = "clients/r",
+  build = FALSE)` — the default first builds a tarball of the subdir alone,
+  where the `../../../../crates/rete-core` path dependency cannot resolve;
+  `build = FALSE` installs from the extracted repo tree. `pak`'s
+  `user/repo/subdir` shorthand has no such switch and fails — pak support
+  arrives with R-universe/CRAN hosting.
+- The executable bits on `configure`/`cleanup` matter: committed from
+  Windows they become mode 644, and `R CMD INSTALL` on Unix rejects a
+  non-executable `configure` (`R CMD build` silently corrects it, hiding
+  the problem from tarball-based checks). Fixed via
+  `git update-index --chmod=+x`; keep it when regenerating the scaffold.
+
 ### Releasing to CRAN (and the pragmatic path first)
 
 CRAN has a [Rust policy](https://cran.r-project.org/web/packages/using_rust.html):

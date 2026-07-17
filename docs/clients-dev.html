@@ -464,6 +464,19 @@ R types, <code>rete_query_raw()</code> keeps full fidelity.</li>
 wrappers, fails if the committed copy is stale, runs testthat, then
 <code>R CMD check --no-manual</code> as a CRAN preflight. See the <em>Releasing to CRAN</em>
 notes at the end of this section.</p>
+<p>Two install-path facts, both verified in clean containers:</p>
+<ul>
+<li>Direct installs need <code>remotes::install_github(..., subdir = "clients/r", build = FALSE)</code> — the default first builds a tarball of the subdir alone,
+where the <code>../../../../crates/rete-core</code> path dependency cannot resolve;
+<code>build = FALSE</code> installs from the extracted repo tree. <code>pak</code>'s
+<code>user/repo/subdir</code> shorthand has no such switch and fails — pak support
+arrives with R-universe/CRAN hosting.</li>
+<li>The executable bits on <code>configure</code>/<code>cleanup</code> matter: committed from
+Windows they become mode 644, and <code>R CMD INSTALL</code> on Unix rejects a
+non-executable <code>configure</code> (<code>R CMD build</code> silently corrects it, hiding
+the problem from tarball-based checks). Fixed via
+<code>git update-index --chmod=+x</code>; keep it when regenerating the scaffold.</li>
+</ul>
 <h3>Releasing to CRAN (and the pragmatic path first)</h3>
 <p>CRAN has a <a href="https://cran.r-project.org/web/packages/using_rust.html">Rust policy</a>:
 builds must not download the network, so every crate must be <strong>vendored</strong>
