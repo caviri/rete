@@ -64,18 +64,24 @@ pub struct Tile {
     /// older file, or a locally-built/opened tile) — then nothing is pruned early
     /// and the in-tile zone map prunes after the tile is in hand, as before.
     syn: Option<(u32, u32, u32, u32)>,
+    /// Encoded byte length of this tile (compressed on-disk size for a remote
+    /// tile, in-memory image size for a local one; 0 = unknown). Feeds the join
+    /// planner's fatness gates without faulting any data.
+    len: u32,
     data: OnceLock<Vec<u8>>,
     dir: OnceLock<GroupDirectory>,
 }
 
 impl Tile {
     fn local(min_a: u32, max_a: u32, bytes: Vec<u8>) -> Self {
+        let len = bytes.len().min(u32::MAX as usize) as u32;
         let data = OnceLock::new();
         let _ = data.set(bytes);
         Tile {
             min_a,
             max_a,
             syn: None,
+            len,
             data,
             dir: OnceLock::new(),
         }
@@ -86,8 +92,19 @@ impl Tile {
             min_a,
             max_a,
             syn,
+            len: 0,
             data: OnceLock::new(),
             dir: OnceLock::new(),
+        }
+    }
+
+    /// Encoded byte length (see the field doc); falls back to the loaded image
+    /// size when the directory didn't provide one.
+    pub(crate) fn encoded_len(&self) -> u64 {
+        if self.len > 0 {
+            self.len as u64
+        } else {
+            self.data.get().map_or(0, |d| d.len() as u64)
         }
     }
 
@@ -179,7 +196,7 @@ impl IndexPermutation {
     /// The canonical `(s, p, o)` roles in this permutation's `(a, b, c)` slots,
     /// as indices (0=s, 1=p, 2=o). The single source of truth for `forward` /
     /// `back` / `order_pattern`.
-    const fn roles(self) -> [usize; 3] {
+    pub(crate) const fn roles(self) -> [usize; 3] {
         match self {
             IndexPermutation::Spo => [0, 1, 2],
             IndexPermutation::Sop => [0, 2, 1],
@@ -423,6 +440,9 @@ pub struct GraphIndex {
     /// Set when the loader failed for some tile: results may be incomplete and
     /// the caller must surface an error rather than the partial answer.
     load_failed: std::sync::atomic::AtomicBool,
+    /// The reader's concurrent-range fan-out (1 = strictly sequential) — see
+    /// [`set_read_concurrency`](Self::set_read_concurrency).
+    read_concurrency: usize,
 }
 
 impl GraphIndex {
@@ -432,6 +452,7 @@ impl GraphIndex {
             loader: None,
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
+            read_concurrency: 1,
         }
     }
 
@@ -467,6 +488,7 @@ impl GraphIndex {
             loader: Some(loader),
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
+            read_concurrency: 1,
         }
     }
 
@@ -475,6 +497,30 @@ impl GraphIndex {
     pub fn with_bulk_loader(mut self, bulk: TileBulkLoader) -> Self {
         self.bulk = Some(bulk);
         self
+    }
+
+    /// Record each remote tile's encoded (on-disk) byte length, per section —
+    /// known to the ranged opener from the tile directory. Powers the join
+    /// planner's fatness gates; never triggers a fetch.
+    pub(crate) fn set_tile_lens(&mut self, lens: [Vec<u32>; NUM_PERMS]) {
+        for (section, ls) in self.sections.iter_mut().zip(lens) {
+            for (tile, l) in section.iter_mut().zip(ls) {
+                tile.len = l;
+            }
+        }
+    }
+
+    /// Record the reader's concurrent-range fan-out (see
+    /// [`RangeReader::concurrency`](crate::reader::RangeReader::concurrency)) —
+    /// the join planner widens its remote probe budget when round trips
+    /// overlap instead of serializing.
+    pub(crate) fn set_read_concurrency(&mut self, c: usize) {
+        self.read_concurrency = c.max(1);
+    }
+
+    /// The reader's concurrent-range fan-out (1 = strictly sequential).
+    pub(crate) fn read_concurrency(&self) -> usize {
+        self.read_concurrency
     }
 
     /// Did any tile fetch fail since this index was opened? (Sticky.)

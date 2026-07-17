@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::file::Rete;
-use crate::index::{GraphIndex, Pattern};
+use crate::index::{GraphIndex, Pattern, Tile};
 use crate::row::{Ctx, Row, Slots, Val};
 
 /// A term in a pattern: a named variable or a constant term token.
@@ -189,7 +189,7 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
             && shares_bound
             && !rows.is_empty()
             && if index.is_remote() {
-                rows.len() <= REMOTE_PROBE_MAX
+                rows.len() <= remote_probe_max(index)
                     && (rows.len() <= REMOTE_PROBE_MIN || !pattern_is_selective(&t))
             } else {
                 rows.len() <= BGP_PROBE_THRESHOLD
@@ -274,6 +274,22 @@ fn try_merge_join(
     let cb = col_of(tb)?;
     if ca != cb {
         return None; // cross-role: the two role id-spaces aren't co-sorted
+    }
+    // A merge MATERIALIZES both sides in full (`collect` below builds a Vec per
+    // side). When one side is a pinpoint (a bound leading key routing to a few
+    // KB of tiles) and the other is fat (a broad predicate spanning megabytes),
+    // the linear merge costs building — and, on a remote index, FETCHING — the
+    // fat extent end-to-end: gigabytes over HTTP, and the 32-bit wasm OOM
+    // behind `?x wdt:P279 <C> . ?x rdfs:label ?l` on a 185M-triple remote
+    // graph. The hybrid loop handles that shape strictly better (scan the
+    // pinpoint side, probe the fat one per surviving row), so leave the merge
+    // seed to comparably-sized sides.
+    let (lo, hi) = {
+        let (a, b) = (pattern_scan_bytes(index, ta), pattern_scan_bytes(index, tb));
+        (a.min(b), a.max(b))
+    };
+    if hi >= FAT_SCAN_BYTES && hi / 4 >= lo {
+        return None;
     }
     let lower = |t: &(SlotTerm, SlotTerm, SlotTerm)| -> Option<Pattern> {
         Some((
@@ -365,6 +381,87 @@ const BGP_PROBE_THRESHOLD: usize = 512;
 /// loss remotely, so it is capped.
 const REMOTE_PROBE_MIN: usize = 8;
 const REMOTE_PROBE_MAX: usize = 1024;
+
+/// The remote probe budget, widened by the reader's concurrency: a serial
+/// sync-XHR reader (a phone without the COI pool) pays one full round trip per
+/// probe, so its budget stays at [`REMOTE_PROBE_MAX`]; a reader overlapping
+/// 16 range reads (the CLI's thread pool, the asyncified fetch variant, the
+/// COI fetch-worker pool) amortizes ~16 probes per round trip and gets a
+/// proportionally larger budget before the one-pass scan wins again.
+fn remote_probe_max(index: &GraphIndex) -> usize {
+    REMOTE_PROBE_MAX * index.read_concurrency().clamp(1, 16)
+}
+
+/// Batch-fault the tiles that a [`ProbePlan`]'s FIRST pattern will route to
+/// across a batch of seed rows — one coalesced read per section instead of a
+/// blocking round trip per row. Only the first pattern is prefetchable (later
+/// ones bind from earlier probe results), and only rows whose seed binds the
+/// pattern's subject or object are included: a predicate-only pattern routes
+/// to the predicate's WHOLE span, which for the fat sides this path serves
+/// would prefetch the very extent the probe strategy exists to avoid.
+pub(crate) fn prefetch_plan_probes(ctx: &Ctx, index: &GraphIndex, plan: &ProbePlan, rows: &[Row]) {
+    if !index.is_remote() {
+        return;
+    }
+    let Some(t) = plan.pats.first() else {
+        return;
+    };
+    let mut pats: Vec<Pattern> = Vec::new();
+    for base in rows {
+        if let (Some(s), Some(p), Some(o)) = (
+            probe_subject(ctx, &t.0, base),
+            probe_predicate(ctx, &t.1, base),
+            probe_object(ctx, &t.2, base),
+        ) {
+            if s.is_some() || o.is_some() {
+                pats.push((s, p, o));
+            }
+        }
+    }
+    index.prefetch_probe_tiles(&pats);
+}
+
+/// Batch-fault the tiles that probing `patterns` from `subject_ids` (each
+/// bound onto the subject variable `sv`) will route to — one coalesced read
+/// per section instead of one round trip per candidate. Purely a cache
+/// warmer: correctness is untouched, and a local index is a no-op. Used by
+/// the FILTER-CONTAINS pushdown before it probes its candidate subjects.
+pub(crate) fn prefetch_subject_probes(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    patterns: &[TriplePattern],
+    sv: &str,
+    subject_ids: &[u32],
+) {
+    if !index.is_remote() {
+        return;
+    }
+    let Some(lowered) = lower(patterns, ctx) else {
+        return;
+    };
+    let Some(slot) = ctx.slots.slot(sv) else {
+        return;
+    };
+    let dict = ctx.rete.dictionary();
+    let mut pats: Vec<Pattern> = Vec::new();
+    for &sid in subject_ids {
+        let mut base = ctx.slots.empty_row();
+        base[slot] = Some(Val::Id(dict.subject_node(sid) as i64));
+        for t in &lowered {
+            if !matches!(t.0, SlotTerm::Var(i) if i == slot) {
+                continue;
+            }
+            if let (Some(s), Some(p), Some(o)) = (
+                probe_subject(ctx, &t.0, &base),
+                probe_predicate(ctx, &t.1, &base),
+                probe_object(ctx, &t.2, &base),
+            ) {
+                pats.push((s, p, o));
+            }
+        }
+    }
+    index.prefetch_probe_tiles(&pats);
+}
 
 /// A pattern whose own constant terms (a bound subject or object) already route
 /// it to a narrow index range — a few coalesced range reads to scan in full.
@@ -530,6 +627,59 @@ fn pattern_estimates(
             .collect(),
     )
 }
+
+/// The minimum, over a BGP's patterns, of [`pattern_scan_bytes`] — the
+/// cheapest single-pattern scan the hash-join path would at least perform to
+/// materialize this BGP. `None` = a constant term is unknown to the
+/// dictionary (the BGP is unsatisfiable; the caller short-circuits anyway).
+/// Unlike [`pattern_estimates`], this needs no pyramid summary, so it works on
+/// remote-lazy files — exactly where the answer matters most.
+pub(crate) fn bgp_min_scan_bytes(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    patterns: &[TriplePattern],
+) -> Option<u64> {
+    let lowered = lower(patterns, ctx)?;
+    lowered.iter().map(|t| pattern_scan_bytes(index, t)).min()
+}
+
+/// One pattern's cheapest scan extent in BYTES: for each permutation, sum the
+/// encoded lengths of the tiles a scan of this pattern would route to (all
+/// tiles covering the bound leading key, or the whole section when the leading
+/// key is unbound), and take the minimum. Tile *counts* are useless here — a
+/// broad predicate can sit inside one giant tile — but the directory's byte
+/// lengths expose it. Reads only resident metadata, never tile data.
+fn pattern_scan_bytes(index: &GraphIndex, t: &(SlotTerm, SlotTerm, SlotTerm)) -> u64 {
+    let sections = index.tile_sections();
+    let comp = |role: usize| match role {
+        0 => &t.0,
+        1 => &t.1,
+        _ => &t.2,
+    };
+    let mut best = u64::MAX;
+    for perm in crate::index::ALL_PERMS {
+        let tiles = sections[perm.section_index()];
+        best = best.min(match comp(perm.roles()[0]) {
+            SlotTerm::Node(id) | SlotTerm::Pred(id) => tiles
+                .iter()
+                .filter(|tile| {
+                    let (lo, hi) = tile.leading_range();
+                    lo <= *id && *id <= hi
+                })
+                .map(Tile::encoded_len)
+                .sum(),
+            SlotTerm::Var(_) => tiles.iter().map(Tile::encoded_len).sum(),
+        });
+    }
+    best
+}
+
+/// Scan extent above which a join side counts as "fat": materializing (or, on
+/// a remote index, fetching) ≥2 MiB of encoded tiles to build a hash/merge
+/// side is past the point where probing it per surviving row wins. Shared by
+/// the merge-seed asymmetry gate here and the left-join force-probe gate in
+/// `sparql::eval`.
+pub(crate) const FAT_SCAN_BYTES: u64 = 2 << 20;
 
 /// Order pattern indices for a left-deep join: cheapest (smallest estimated
 /// cardinality) first, always preferring a pattern that shares a variable with

@@ -273,6 +273,62 @@ impl Dictionary {
         }
     }
 
+    /// Batch-fault the dictionary chunks that decoding these subject-role ids
+    /// will touch — one coalesced read per section instead of a blocking round
+    /// trip per id. Purely a cache warmer (resident sections no-op).
+    pub fn prefetch_subject_terms(&self, ids: &[SubjectId]) {
+        let mut per_section: [Vec<usize>; 2] = Default::default();
+        for &id in ids {
+            let (si, local) = if id <= self.shared_len {
+                (0usize, id)
+            } else {
+                (1, id - self.shared_len)
+            };
+            if let Some(ci) = self.sections[si].chunk_of_term(local) {
+                per_section[si].push(ci);
+            }
+        }
+        for (si, cis) in per_section.iter_mut().enumerate() {
+            cis.sort_unstable();
+            cis.dedup();
+            self.sections[si].prefetch_chunks(cis);
+        }
+    }
+
+    /// [`prefetch_subject_terms`](Self::prefetch_subject_terms) for unified
+    /// node ids — the id space solution rows carry. Warms every chunk a batch
+    /// of row decodes (a FILTER's string ops, the projection) is about to
+    /// fault, using [`node_term`](Self::node_term)'s exact routing.
+    pub fn prefetch_node_terms(&self, nodes: &[NodeId]) {
+        let su = self.subject_only_count();
+        let mut per_section: [Vec<usize>; 3] = Default::default();
+        for &node in nodes {
+            let (si, local) = if node < self.shared_len + su {
+                let sid = node + 1;
+                if sid <= self.shared_len {
+                    (0usize, sid)
+                } else {
+                    (1, sid - self.shared_len)
+                }
+            } else {
+                let oid = node + 1 - su;
+                if oid <= self.shared_len {
+                    (0, oid)
+                } else {
+                    (2, oid - self.shared_len)
+                }
+            };
+            if let Some(ci) = self.sections[si].chunk_of_term(local) {
+                per_section[si].push(ci);
+            }
+        }
+        for (si, cis) in per_section.iter_mut().enumerate() {
+            cis.sort_unstable();
+            cis.dedup();
+            self.sections[si].prefetch_chunks(cis);
+        }
+    }
+
     /// Unified node ID for a term, resolving via subject role then object role.
     pub fn node_of_term(&self, term: &str) -> Option<NodeId> {
         if let Some(sid) = self.subject_id(term) {

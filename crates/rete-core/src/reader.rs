@@ -33,6 +33,15 @@ pub trait RangeReader {
             .map(|&(offset, len)| self.read_at(offset, len))
             .collect()
     }
+
+    /// How many ranges this reader can usefully have in flight at once — the
+    /// planner's hint for probe-vs-scan and batch-size decisions (a phone's
+    /// serial sync-XHR reader reports 1; the CLI's threaded HTTP client and the
+    /// browser's concurrent-fetch variants report their fan-out). Purely
+    /// advisory: correctness never depends on it. Defaults to 1 (sequential).
+    fn concurrency(&self) -> usize {
+        1
+    }
 }
 
 /// Sharing a reader (e.g. keeping a counting handle while a lazily-faulting
@@ -48,6 +57,10 @@ impl<R: RangeReader + ?Sized> RangeReader for std::sync::Arc<R> {
 
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
         (**self).read_many(ranges)
+    }
+
+    fn concurrency(&self) -> usize {
+        (**self).concurrency()
     }
 }
 
@@ -130,6 +143,10 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
         self.bytes
             .fetch_add(out.iter().map(|b| b.len() as u64).sum(), Ordering::Relaxed);
         Ok(out)
+    }
+
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
     }
 }
 

@@ -1,0 +1,140 @@
+---
+title: "Querying .rete graphs from R"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Querying .rete graphs from R}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+A `.rete` file is a single, immutable RDF graph image designed to be queried
+**in place**: locally with positional reads, or straight off any HTTP host
+that honors `Range` requests — S3, R2, GitHub releases, a plain web server.
+Only the byte ranges a query touches are fetched, so multi-gigabyte graphs
+on static storage stay interactive with no database server.
+
+This vignette is self-contained: it builds a small graph in memory and
+queries it. The remote examples at the end are shown as-is (they need the
+network) — they behave identically.
+
+## Build a graph, query it
+
+`rete_build()` assembles a complete `.rete` file image — dictionary, triple
+indexes, community pyramid, and optionally an embedded Dataset Card — from
+RDF text:
+
+```{r}
+library(rete)
+
+nt <- paste(
+  '<urn:x:alice> <urn:rdf:type> <urn:x:Person> .',
+  '<urn:x:alice> <urn:x:name> "Alice" .',
+  '<urn:x:alice> <urn:x:age> "42"^^<http://www.w3.org/2001/XMLSchema#integer> .',
+  '<urn:x:bob> <urn:rdf:type> <urn:x:Person> .',
+  '<urn:x:bob> <urn:x:name> "Bob" .',
+  '<urn:x:bob> <urn:x:knows> <urn:x:alice> .',
+  sep = "\n"
+)
+
+img <- rete_build(nt, card = list(
+  title = "Tiny people graph",
+  description = "Six triples, for the vignette",
+  license = "CC0-1.0"
+))
+g <- rete_open(img)
+g
+```
+
+`rete_query()` returns what an R user expects — SELECT gives a `data.frame`
+with one column per variable, IRI brackets stripped and typed literals
+coerced (integers, doubles, logicals):
+
+```{r}
+rete_query(g, "SELECT ?name ?age WHERE {
+  ?p <urn:x:name> ?name .
+  OPTIONAL { ?p <urn:x:age> ?age }
+} ORDER BY ?name")
+```
+
+ASK returns a logical scalar; CONSTRUCT and DESCRIBE return a
+subject/predicate/object frame:
+
+```{r}
+rete_query(g, "ASK { ?s <urn:x:knows> ?o }")
+rete_query(g, "CONSTRUCT { ?o <urn:x:knownBy> ?s } WHERE { ?s <urn:x:knows> ?o }")
+```
+
+`rete_query_raw()` keeps full N-Triples token fidelity when the coercions
+are too helpful.
+
+## Files describe themselves
+
+A `.rete` can carry its own Dataset Card — title, license, provenance, and
+runnable example queries — so a file you have never seen explains itself:
+
+```{r}
+card <- rete_card(g)
+card$title
+card$quad_count
+
+rete_schema(g)$classes
+```
+
+Write the image to disk with `writeBin(img, "people.rete")`; local files
+open lazily too:
+
+```{r}
+path <- tempfile(fileext = ".rete")
+writeBin(as.vector(img), path)
+rete_info(rete_open(path))
+```
+
+## Remote graphs, lazily
+
+The same calls work against a URL — the host only needs to answer `Range`
+requests with `206 Partial Content`, which any object store or CDN does:
+
+```{r, eval = FALSE}
+g <- rete_open("https://data.graphplaza.com/boe/boe.rete")
+rete_query(g, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 3")
+
+rete_stats(g)
+#> $fileLength
+#> [1] 6958628
+#> $bytes
+#> [1] 1703936      # ~24% of the file, cached for the next query
+#> $requests
+#> [1] 13
+```
+
+`rete_stats()` is the honesty meter: it reports the bytes physically
+fetched since open. Repeated queries reuse the decoded dictionary and index
+tiles on the handle, so they get faster and cheaper.
+
+Files that embed example queries hand you a starting point:
+
+```{r, eval = FALSE}
+ex <- rete_examples(g)
+ex[, c("title", "question")]
+rete_query(g, ex$sparql[[1]])
+```
+
+And files whose ontology supports it answer with OWL 2 QL entailment,
+computed by query rewriting — no materialization, works remotely:
+
+```{r, eval = FALSE}
+rete_query(g, query, reason = TRUE)
+```
+
+## Where to go next
+
+- The [R API guide](https://caviri.github.io/rete/r.html) covers every
+  function; `?rete_open` and friends are the reference pages.
+- The [format documentation](https://caviri.github.io/rete/) explains what
+  a `.rete` is, how to build big ones with the CLI, and how to host them.
+- The [browser playground](https://caviri.github.io/rete/playground.html)
+  queries the same files with zero install — handy for sharing results.

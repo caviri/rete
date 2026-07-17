@@ -82,27 +82,38 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      # pyodide-build 0.35 drives cargo with -Z emscripten flags: needs a
-      # nightly in a specific window — >=1.87 (workspace MSRV) but old enough
-      # to still carry `-Z emscripten-wasm-eh` (newer toolchains made it the
-      # default and dropped the flag). RUSTUP_TOOLCHAIN must also override the
-      # repo's rust-toolchain.toml stable pin. Revisit when pyodide-build
-      # supports stable Rust (upstream main already pins 1.93).
+      # PER-TARGET toolchains — the two Pyodide generations were built with
+      # different exception-handling ABIs, and a wheel built with the wrong
+      # one crashes at import ("cannot resolve symbol invoke_*"):
+      #   cp313 / Pyodide 0.29: nightly (pyodide-build passes -Z emscripten
+      #     flags; nightly must be >= 1.87 for the workspace MSRV yet old
+      #     enough to still carry -Z emscripten-wasm-eh) + build-std, because
+      #     that nightly's PREBUILT emscripten std lacks wasm-EH.
+      #   cp314 / Pyodide 314: stable 1.93 — wasm-EH is the default there,
+      #     prebuilt std included; no flags, no build-std.
+      # RUSTUP_TOOLCHAIN env overrides the repo's rust-toolchain.toml pin.
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2025-06-01
           targets: wasm32-unknown-emscripten
           components: rust-src
-      - name: Build the PyEmscripten (Pyodide) wheel
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+          targets: wasm32-unknown-emscripten
+      - name: Build the cp313 (Pyodide 0.29) wheel — nightly + build-std
         env:
           RUSTUP_TOOLCHAIN: nightly-2025-06-01
-          # Rust's prebuilt emscripten std lacks wasm-EH; recompile it with
-          # the same flags (rust-src above) or the module imports JS-EH
-          # invoke_* stubs that Pyodide's runtime refuses to link.
           CARGO_UNSTABLE_BUILD_STD: std,panic_abort,panic_unwind
+          CIBW_BUILD: cp313-*
         run: |
           pip install cibuildwheel
           cibuildwheel --platform pyodide --output-dir dist clients/python
+      - name: Build the cp314 (Pyodide 314) wheel — stable
+        env:
+          RUSTUP_TOOLCHAIN: 1.93.0
+          CIBW_BUILD: cp314-*
+        run: cibuildwheel --platform pyodide --output-dir dist clients/python
       - uses: actions/upload-artifact@v7
         with:
           name: wheel-pyodide

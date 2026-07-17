@@ -1017,6 +1017,31 @@ impl RangeReader for XhrRangeReader {
         self.len
     }
 
+    /// The asyncify build fires its batched ranges as one concurrent
+    /// `Promise.all` of fetches; the sync build is serial XHR unless the
+    /// opt-in COI fetch-worker pool (`globalThis.reteReadMany`) is installed.
+    /// 16 matches the pool size and the CLI's thread fan-out.
+    fn concurrency(&self) -> usize {
+        #[cfg(feature = "asyncify")]
+        {
+            16
+        }
+        #[cfg(not(feature = "asyncify"))]
+        {
+            let has_pool = js_sys::Reflect::get(
+                &js_sys::global(),
+                &JsValue::from_str("reteReadMany"),
+            )
+            .map(|h| h.is_function())
+            .unwrap_or(false);
+            if has_pool {
+                16
+            } else {
+                1
+            }
+        }
+    }
+
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         if len == 0 {
             return Ok(Vec::new());

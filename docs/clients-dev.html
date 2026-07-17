@@ -203,7 +203,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
         <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
         <li class="nav-group"><details><summary>SPARQL IDE — yasgui·wasm</summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary>JupyterLite — Python in the tab</summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">launch the notebook →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>JupyterLite — Python in the tab</summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>JS lab — rete × D3</summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
@@ -222,6 +223,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="python.html">Python — rete-graph</a></li>
         <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
         <li><a href="javascript.html">JavaScript — rete-graph</a></li>
+        <li><a href="r.html">R — rete</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -254,7 +256,7 @@ the <em>Clients</em> nav section instead (e.g. <a href="python.html">Python — 
 <p>One directory per language client, each owning its toolchain:</p>
 <pre><code>clients/
   python/        # PyO3 + maturin -&gt; PyPI `rete-graph`
-  r/             # (future)
+  r/             # extendr + rextendr -&gt; CRAN/R-universe `rete`
   go/            # (future)
 </code></pre>
 <p>Clients consume <code>crates/rete-core</code> — never the other way around. The Python
@@ -424,6 +426,92 @@ Trusted Publisher: repo <code>caviri/rete</code>, workflow <code>js-client-publi
 <code>card()</code> export in rete-wasm — an engine change, so the playground gate
 applies), custom headers, a Builder.</li>
 </ul>
+<h2>The R client</h2>
+<p><code>clients/r/</code> (package <code>rete</code>) binds <code>rete-core</code> with <strong>extendr</strong>, scaffolded
+by <code>rextendr::use_extendr()</code> in its CRAN-ready shape (<code>configure</code> +
+<code>tools/msrv.R</code> check for cargo, <code>src/Makevars.in</code> drives the cargo build
+during <code>R CMD INSTALL</code>). The crate at <code>clients/r/src/rust/</code> is excluded from
+the cargo workspace like the Python one.</p>
+<ul>
+<li><strong>extendr is pinned to the 0.8 line</strong> (<code>extendr-api = '0.8'</code>): rextendr
+0.5's generated plumbing (entrypoint.c, wrapper conventions) targets it,
+and 0.9 changed the <code>#[extendr]</code> macro contract.</li>
+<li>Two extendr 0.8 shapes that cost a debugging session — keep them:
+the struct needs its <strong>own</strong> <code>#[extendr]</code> attribute (it generates the
+<code>Robj</code> conversions; the impl-level macro alone leaves you with opaque
+<code>ToVectorValue</code>/<code>TryFrom</code> errors), and fallible functions don't return
+<code>Result</code> — they diverge via <code>throw_r_error</code> (the <code>fail()</code> helper), which
+surfaces as a regular R condition.</li>
+<li><code>R/extendr-wrappers.R</code> is <strong>generated</strong> by <code>rextendr::document()</code> (which
+recompiles the crate first — plain <code>devtools::document()</code> does not);
+regenerate and commit it whenever the Rust surface changes. CI diff-checks
+it.</li>
+<li>The R layer follows the same rule as Python: the engine emits N-Triples
+tokens, and <code>R/query.R</code> coerces them (<code>parse_term</code>/<code>coerce_terms</code>) into
+clean data-frame columns — IRIs unbracket, numeric/boolean literals become
+R types, <code>rete_query_raw()</code> keeps full fidelity.</li>
+</ul>
+<p>Build and test (Docker, nothing on the host):</p>
+<pre><code class="language-sh">docker run --rm -v "$PWD":/io -w /io/clients/r rocker/r2u:jammy bash -c '
+  apt-get update -qq &amp;&amp; apt-get install -y -qq curl build-essential &gt;/dev/null
+  curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+  export PATH=/root/.cargo/bin:$PATH
+  Rscript -e "install.packages(c(\"rextendr\", \"devtools\", \"jsonlite\", \"testthat\"))"
+  Rscript -e "rextendr::document()"
+  Rscript -e "devtools::test(stop_on_failure = TRUE)"'
+</code></pre>
+<p>CI: <code>r-test.yml</code> (paths-filtered: clients/r + rete-core) regenerates the
+wrappers, fails if the committed copy is stale, runs testthat, then
+<code>R CMD check --no-manual</code> as a CRAN preflight. See the <em>Releasing to CRAN</em>
+notes at the end of this section.</p>
+<p>Two install-path facts, both verified in clean containers:</p>
+<ul>
+<li>Direct installs need <code>remotes::install_github(..., subdir = "clients/r", build = FALSE)</code> — the default first builds a tarball of the subdir alone,
+where the <code>../../../../crates/rete-core</code> path dependency cannot resolve;
+<code>build = FALSE</code> installs from the extracted repo tree. <code>pak</code>'s
+<code>user/repo/subdir</code> shorthand has no such switch and fails — pak support
+arrives with R-universe/CRAN hosting.</li>
+<li>The executable bits on <code>configure</code>/<code>cleanup</code> matter: committed from
+Windows they become mode 644, and <code>R CMD INSTALL</code> on Unix rejects a
+non-executable <code>configure</code> (<code>R CMD build</code> silently corrects it, hiding
+the problem from tarball-based checks). Fixed via
+<code>git update-index --chmod=+x</code>; keep it when regenerating the scaffold.</li>
+</ul>
+<h3>Releasing to CRAN (and the pragmatic path first)</h3>
+<p>CRAN has a <a href="https://cran.r-project.org/web/packages/using_rust.html">Rust policy</a>:
+builds must not download the network, so every crate must be <strong>vendored</strong>
+into the source tarball:</p>
+<ol>
+<li><code>rextendr::vendor_pkgs()</code> — writes <code>src/rust/vendor.tar.xz</code> +
+<code>vendor-config.toml</code> and points the Makevars at the offline registry.
+Because <code>rete-core</code> is a <em>path</em> dependency it rides along automatically;
+re-vendor after any engine change.</li>
+<li><code>LICENSE.note</code> must list every vendored crate and its license
+(<code>rextendr::write_license_note()</code>).</li>
+<li>The DESCRIPTION already carries the required
+<code>SystemRequirements: Cargo (Rust's package manager), rustc &gt;= 1.87</code>; keep
+the version in sync with the workspace MSRV.</li>
+<li>Stage the standalone package first — <code>scripts/r_cran_prep.sh &lt;dir&gt; [--vendor]</code> embeds a self-contained <code>rete-core</code> via <code>cargo package</code>
+(the path dependency climbs out of the package, so an unstaged
+<code>R CMD build</code> tarball cannot compile) — then <code>R CMD build</code> +
+<code>R CMD check --as-cran</code> on the result must be clean (no ERROR/WARNING;
+justify any NOTE in the submission comment). Known NOTE: extendr-api 0.8
+itself calls the non-API <code>R_NamespaceRegistry</code>; CRAN's API-compliance
+push may question it on a <em>new</em> submission — the fix lands with the
+extendr 0.9 line, so consider timing the CRAN submission to a future
+rextendr/extendr upgrade and using R-universe meanwhile.
+Check the tarball stays under CRAN's 5 MB preference — the vendor archive
+is the risk; mention it in the submission comment if exceeded.</li>
+<li>Submit at <a href="https://cran.r-project.org/submit.html">https://cran.r-project.org/submit.html</a>; confirm the
+maintainer-address email. First submissions get a human review measured
+in days-to-weeks.</li>
+</ol>
+<p><strong>R-universe first</strong>: before (or instead of) CRAN, register the repo at
+<a href="https://github.com/r-universe-org">https://github.com/r-universe-org</a> (a <code>caviri.r-universe.dev</code> universe with
+a <code>packages.json</code> pointing at <code>caviri/rete</code>, <code>subdir: clients/r</code>). It builds
+binaries for all platforms on every push — users
+<code>install.packages("rete", repos = "https://caviri.r-universe.dev")</code> with no
+Rust toolchain — and it exercises the exact source layout CRAN will see.</p>
 <h2>Adding a new language client (R, Go, …)</h2>
 <p>The checklist that made Python work:</p>
 <ol>

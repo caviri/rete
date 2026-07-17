@@ -1,0 +1,15 @@
+{
+  "name": "rete",
+  "tagline": "// cloud-native rdf graph format",
+  "description": "A single immutable <code>.rete</code> file is a whole RDF graph plus its indexes, dictionary and a community pyramid. Host it anywhere that speaks <b>HTTP&nbsp;Range</b> — S3, GitHub, Hugging Face — and run <b>SPARQL, SHACL and GeoSPARQL</b> against gigabyte-scale graphs <b>in the browser</b>, faulting in only the bytes each query touches.",
+  "accent": "#147d69",
+  "accentDark": "#0b4f42",
+  "accent2": "#c84f2f",
+  "links": [
+    {"title": "SPARQL playground", "url": "https://caviri.github.io/rete/playground.html", "desc": "Query, validate, reason and explore example graphs — entirely offline in WASM."},
+    {"title": "Historical atlas", "url": "https://caviri.github.io/rete/atlas-app.html", "desc": "A GeoSPARQL map over time: borders, events and 80+ overlay layers."},
+    {"title": "Lazy explorer", "url": "https://caviri.github.io/rete/explore-100mb.html", "desc": "Browse a 100 MB / 1 GB Wikidata graph by HTTP Range — no full download."},
+    {"title": "Documentation", "url": "https://caviri.github.io/rete/", "desc": "The file format, query engine, range model and CLI — the full reference."},
+    {"title": "GitHub", "url": "https://github.com/caviri/rete", "desc": "Source, the Rust workspace, issues and the build/CI for the project."}
+  ]
+}

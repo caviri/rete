@@ -1946,7 +1946,7 @@ impl Rete {
 
     /// The full-text index (TEXT_INDEX section), faulting it in on first access
     /// on the lazy remote path. `None` when the file carries no text index.
-    fn text_index(&self) -> Option<&crate::text_index::TextIndex> {
+    pub(crate) fn text_index(&self) -> Option<&crate::text_index::TextIndex> {
         match &self.text_index {
             TextIndexSlot::Resident(t) => t.as_ref(),
             TextIndexSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),
@@ -2187,6 +2187,9 @@ impl Rete {
         let head = reader.read_at(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
         let reader = std::sync::Arc::new(reader);
+        // Captured before the loader closures take the Arc: the reader's
+        // concurrent-range fan-out, stamped onto the index for the planner.
+        let read_concurrency = reader.concurrency();
 
         // Lazily-chunked dictionary: locate the four sections, fetch each
         // section's header + restart table + chunk directory (small), and
@@ -2365,7 +2368,20 @@ impl Rete {
             let blobs = read_coalesced(reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
             blobs.iter().map(|b| decompress(codec, b).ok()).collect()
         });
-        let index = GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
+        let mut index =
+            GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
+        // Per-tile encoded lengths (from the directory) feed the join planner's
+        // fatness gates — free here, unavailable later without a fetch.
+        index.set_tile_lens(std::array::from_fn(|si| {
+            tile_ranges[si]
+                .iter()
+                .map(|&(_, _, r)| r.len.min(u32::MAX as u64) as u32)
+                .collect()
+        }));
+        // The reader's fan-out widens the planner's remote probe budget: a
+        // desktop/CLI reader overlapping 16 range reads probes far more cheaply
+        // than a phone's serial sync-XHR path.
+        index.set_read_concurrency(read_concurrency);
 
         Ok(Self {
             header,

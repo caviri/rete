@@ -8,12 +8,25 @@ PyPI as a PyEmscripten wheel; remote `.rete` graphs are queried over HTTP
 range requests from inside the tab. Nothing to install, no server anywhere in
 the stack — not even for Python itself.
 
-**[Launch the notebook →](jupyterlite/lab/index.html?path=rete-graph.ipynb)**
+Two notebooks are bundled:
 
-The bundled notebook, `rete-graph.ipynb`, walks through the whole client with
+- **[Tour: query graphs →](jupyterlite/lab/index.html?path=rete-graph.ipynb)**
+  — the client end to end: lazy remote graphs, SPARQL → pandas, embedded
+  starter queries.
+- **[Build: anatomy of a `.rete` →](jupyterlite/lab/index.html?path=build-a-rete.ipynb)**
+  — author a small KG **with an ontology in rdflib**, build a `.rete` from
+  it, and dissect every part of the file: the **dictionary** (terms stored
+  once, integer-id triples), the **triple indexes**, the **pyramid** (built
+  with the `types` algorithm, so the summary *is* the class structure), the
+  **Dataset Card**, and the **embedded example queries** — ending with OWL 2
+  QL reasoning inferring what was never asserted, and an exported file in the
+  notebook's file browser.
+
+The tour notebook, `rete-graph.ipynb`, walks through the whole client with
 explanations between the cells:
 
-1. `%pip install rete-graph pandas` — the wheel comes straight from PyPI;
+1. `%pip install rete-graph pandas` — the PyEmscripten wheel resolves
+   straight from PyPI;
 2. **open the BOE legal graph lazily** (447k triples, 6.9 MB on Cloudflare
    R2) and watch `stats()` count how few bytes the open actually fetched;
 3. **SPARQL → pandas** — `query_df()` renders results as real DataFrame

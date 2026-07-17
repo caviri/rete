@@ -35,6 +35,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("plaza/index.html", "Plaza — dataset gallery"),
             ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
             ("jupyterlite-guide.md", "JupyterLite — Python in the tab"),
+            ("jslab-guide.md", "JS lab — rete × D3"),
             ("atlas.md", "Historical atlas — SPARQL + GIS"),
             ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
             ("football.md", "Football — match replays"),
@@ -63,6 +64,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("python.md", "Python — rete-graph"),
             ("python-build-tutorial.md", "Python: build a .rete"),
             ("javascript.md", "JavaScript — rete-graph"),
+            ("r.md", "R — rete"),
         ],
     ),
     (
@@ -185,7 +187,18 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
         ]),
         "jupyterlite-guide.md" => Some(&[
             ("jupyterlite-guide.html", "overview"),
-            ("jupyterlite/lab/index.html?path=rete-graph.ipynb", "launch the notebook →"),
+            (
+                "jupyterlite/lab/index.html?path=rete-graph.ipynb",
+                "tour: query graphs →",
+            ),
+            (
+                "jupyterlite/lab/index.html?path=build-a-rete.ipynb",
+                "build: anatomy of a .rete →",
+            ),
+        ]),
+        "jslab-guide.md" => Some(&[
+            ("jslab-guide.html", "overview"),
+            ("jslab.html", "launch the lab →"),
         ]),
         "atlas.md" => Some(&[
             ("atlas.html", "overview"),

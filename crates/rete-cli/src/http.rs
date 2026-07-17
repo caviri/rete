@@ -74,6 +74,11 @@ impl RangeReader for HttpRangeReader {
     /// time; fetching them in parallel collapses N sequential round trips into
     /// ~N/P. `ureq`'s default agent pools connections and is safe to call from
     /// several threads at once.
+    /// Matches `read_many`'s thread fan-out — the planner's probe-vs-scan hint.
+    fn concurrency(&self) -> usize {
+        16
+    }
+
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
         /// Bounded so we never open a burst of sockets to a host for a big scan.
         /// 16 matches the wasm client's fetch-worker pool — a CDN/S3 serves this

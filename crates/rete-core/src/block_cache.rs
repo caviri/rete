@@ -256,6 +256,10 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
         self.len
     }
 
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
+    }
+
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         if len == 0 {
             return Ok(Vec::new());

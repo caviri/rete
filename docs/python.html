@@ -203,7 +203,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
         <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
         <li class="nav-group"><details><summary>SPARQL IDE — yasgui·wasm</summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary>JupyterLite — Python in the tab</summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">launch the notebook →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>JupyterLite — Python in the tab</summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>JS lab — rete × D3</summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
@@ -222,6 +223,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="python.html" class="active">Python — rete-graph</a></li>
         <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
         <li><a href="javascript.html">JavaScript — rete-graph</a></li>
+        <li><a href="r.html">R — rete</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -389,14 +391,18 @@ g.content_hash()              # blake3-16 hex — a stable cache key
 <h2 id="browser-python-jupyterlite--marimo-wasm">Browser Python: JupyterLite &amp; marimo WASM</h2>
 <p>From version 0.2.0 the release also ships <strong>PyEmscripten (Pyodide) wheels</strong>,
 so the client runs inside browser Pythons — a JupyterLite site, marimo's WASM
-playground — with no server anywhere:</p>
-<pre><code class="language-python"># JupyterLite / Pyodide
-%pip install rete-graph            # piplite/micropip resolve the pyodide wheel
+playground — with no server anywhere. <strong>Try it right now</strong> in the
+<a href="jupyterlite-guide.html">JupyterLite experiment</a> bundled with these docs.</p>
+<pre><code class="language-python"># JupyterLite / Pyodide 314 (Python 3.14) — needs rete-graph &gt;= 0.2.1
+%pip install rete-graph
 
 import rete_graph as rete
 g = rete.open("https://data.graphplaza.com/boe/boe.rete")
 g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
 </code></pre>
+<p>(On the older Pyodide 0.29, whose installer predates the PEP 783 wheel-tag
+spelling PyPI requires, install the byte-identical retagged wheel by URL
+instead: <code>%pip install https://data.graphplaza.com/wheels/rete_graph-0.2.0-cp39-abi3-pyodide_2025_0_wasm32.whl</code>.)</p>
 <p>Under the hood, remote reads use synchronous <code>XMLHttpRequest</code> range requests —
 allowed only in <strong>web workers</strong>, which is where JupyterLite and marimo run
 their kernels, so it just works there. The file's host must send CORS headers

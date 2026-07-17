@@ -11,7 +11,7 @@ One directory per language client, each owning its toolchain:
 ```
 clients/
   python/        # PyO3 + maturin -> PyPI `rete-graph`
-  r/             # (future)
+  r/             # extendr + rextendr -> CRAN/R-universe `rete`
   go/            # (future)
 ```
 
@@ -199,6 +199,101 @@ artifact rejects newer-format files with `header: unsupported version`).
 - Parity backlog vs Python: Dataset Card + embedded examples (needs a
   `card()` export in rete-wasm — an engine change, so the playground gate
   applies), custom headers, a Builder.
+
+## The R client
+
+`clients/r/` (package `rete`) binds `rete-core` with **extendr**, scaffolded
+by `rextendr::use_extendr()` in its CRAN-ready shape (`configure` +
+`tools/msrv.R` check for cargo, `src/Makevars.in` drives the cargo build
+during `R CMD INSTALL`). The crate at `clients/r/src/rust/` is excluded from
+the cargo workspace like the Python one.
+
+- **extendr is pinned to the 0.8 line** (`extendr-api = '0.8'`): rextendr
+  0.5's generated plumbing (entrypoint.c, wrapper conventions) targets it,
+  and 0.9 changed the `#[extendr]` macro contract.
+- Two extendr 0.8 shapes that cost a debugging session — keep them:
+  the struct needs its **own** `#[extendr]` attribute (it generates the
+  `Robj` conversions; the impl-level macro alone leaves you with opaque
+  `ToVectorValue`/`TryFrom` errors), and fallible functions don't return
+  `Result` — they diverge via `throw_r_error` (the `fail()` helper), which
+  surfaces as a regular R condition.
+- `R/extendr-wrappers.R` is **generated** by `rextendr::document()` (which
+  recompiles the crate first — plain `devtools::document()` does not);
+  regenerate and commit it whenever the Rust surface changes. CI diff-checks
+  it.
+- The R layer follows the same rule as Python: the engine emits N-Triples
+  tokens, and `R/query.R` coerces them (`parse_term`/`coerce_terms`) into
+  clean data-frame columns — IRIs unbracket, numeric/boolean literals become
+  R types, `rete_query_raw()` keeps full fidelity.
+
+Build and test (Docker, nothing on the host):
+
+```sh
+docker run --rm -v "$PWD":/io -w /io/clients/r rocker/r2u:jammy bash -c '
+  apt-get update -qq && apt-get install -y -qq curl build-essential >/dev/null
+  curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+  export PATH=/root/.cargo/bin:$PATH
+  Rscript -e "install.packages(c(\"rextendr\", \"devtools\", \"jsonlite\", \"testthat\"))"
+  Rscript -e "rextendr::document()"
+  Rscript -e "devtools::test(stop_on_failure = TRUE)"'
+```
+
+CI: `r-test.yml` (paths-filtered: clients/r + rete-core) regenerates the
+wrappers, fails if the committed copy is stale, runs testthat, then
+`R CMD check --no-manual` as a CRAN preflight. See the *Releasing to CRAN*
+notes at the end of this section.
+
+Two install-path facts, both verified in clean containers:
+
+- Direct installs need `remotes::install_github(..., subdir = "clients/r",
+  build = FALSE)` — the default first builds a tarball of the subdir alone,
+  where the `../../../../crates/rete-core` path dependency cannot resolve;
+  `build = FALSE` installs from the extracted repo tree. `pak`'s
+  `user/repo/subdir` shorthand has no such switch and fails — pak support
+  arrives with R-universe/CRAN hosting.
+- The executable bits on `configure`/`cleanup` matter: committed from
+  Windows they become mode 644, and `R CMD INSTALL` on Unix rejects a
+  non-executable `configure` (`R CMD build` silently corrects it, hiding
+  the problem from tarball-based checks). Fixed via
+  `git update-index --chmod=+x`; keep it when regenerating the scaffold.
+
+### Releasing to CRAN (and the pragmatic path first)
+
+CRAN has a [Rust policy](https://cran.r-project.org/web/packages/using_rust.html):
+builds must not download the network, so every crate must be **vendored**
+into the source tarball:
+
+1. `rextendr::vendor_pkgs()` — writes `src/rust/vendor.tar.xz` +
+   `vendor-config.toml` and points the Makevars at the offline registry.
+   Because `rete-core` is a *path* dependency it rides along automatically;
+   re-vendor after any engine change.
+2. `LICENSE.note` must list every vendored crate and its license
+   (`rextendr::write_license_note()`).
+3. The DESCRIPTION already carries the required
+   `SystemRequirements: Cargo (Rust's package manager), rustc >= 1.87`; keep
+   the version in sync with the workspace MSRV.
+4. Stage the standalone package first — `scripts/r_cran_prep.sh <dir>
+   [--vendor]` embeds a self-contained `rete-core` via `cargo package`
+   (the path dependency climbs out of the package, so an unstaged
+   `R CMD build` tarball cannot compile) — then `R CMD build` +
+   `R CMD check --as-cran` on the result must be clean (no ERROR/WARNING;
+   justify any NOTE in the submission comment). Known NOTE: extendr-api 0.8
+   itself calls the non-API `R_NamespaceRegistry`; CRAN's API-compliance
+   push may question it on a *new* submission — the fix lands with the
+   extendr 0.9 line, so consider timing the CRAN submission to a future
+   rextendr/extendr upgrade and using R-universe meanwhile.
+   Check the tarball stays under CRAN's 5 MB preference — the vendor archive
+   is the risk; mention it in the submission comment if exceeded.
+5. Submit at <https://cran.r-project.org/submit.html>; confirm the
+   maintainer-address email. First submissions get a human review measured
+   in days-to-weeks.
+
+**R-universe first**: before (or instead of) CRAN, register the repo at
+<https://github.com/r-universe-org> (a `caviri.r-universe.dev` universe with
+a `packages.json` pointing at `caviri/rete`, `subdir: clients/r`). It builds
+binaries for all platforms on every push — users
+`install.packages("rete", repos = "https://caviri.r-universe.dev")` with no
+Rust toolchain — and it exercises the exact source layout CRAN will see.
 
 ## Adding a new language client (R, Go, …)
 

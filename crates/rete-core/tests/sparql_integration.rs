@@ -1083,3 +1083,143 @@ fn datatype_and_lang_builtins() {
         vec!["<http://ex/label>"]
     );
 }
+
+/// The forced correlated probe for a FAT OPTIONAL right side (the remote-OOM
+/// fix): a `desc` predicate spanning many index tiles must not be materialized
+/// by the left join, and the probe must preserve OPTIONAL semantics — matched
+/// rows merge, a right side emptied by the OPTIONAL's own FILTER keeps the
+/// left row unbound, and a subject with no `desc` at all survives too. The
+/// query carries no LIMIT, so only the fat-right tile-span gate (not the
+/// demand bound) can select the probe; the assertions hold on either path.
+#[test]
+fn optional_fat_right_side_stays_correlated() {
+    let mut triples: Vec<(String, String, String)> = Vec::new();
+    for i in 0..100_000u32 {
+        let s = format!("<http://ex/e{i}>");
+        triples.push((s.clone(), iri("desc"), format!("\"d{i}en\"@en")));
+        triples.push((s, iri("desc"), format!("\"d{i}fr\"@fr")));
+    }
+    for m in ["m0", "m1", "m2"] {
+        triples.push((iri(m), iri("kind"), iri("Marked")));
+    }
+    triples.push((iri("m0"), iri("desc"), "\"m0en\"@en".to_string()));
+    triples.push((iri("m0"), iri("desc"), "\"m0fr\"@fr".to_string()));
+    triples.push((iri("m1"), iri("desc"), "\"m1fr\"@fr".to_string())); // fr only
+    let refs: Vec<(&str, &str, &str)> = triples
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let image = build(&refs);
+    let rete = Rete::open(&image).unwrap();
+
+    let q = "SELECT ?s ?d WHERE { ?s ex:kind ex:Marked . \
+             OPTIONAL { ?s ex:desc ?d . FILTER(lang(?d) = \"en\") } }";
+    let (_, sols) = eval_sparql(&rete, &format!("{PREFIX}{q}")).unwrap();
+    let mut got: Vec<(String, Option<String>)> = sols
+        .iter()
+        .map(|b| (b.get("s").cloned().unwrap(), b.get("d").cloned()))
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            (
+                "<http://ex/m0>".to_string(),
+                Some("\"m0en\"@en".to_string())
+            ),
+            ("<http://ex/m1>".to_string(), None),
+            ("<http://ex/m2>".to_string(), None),
+        ]
+    );
+}
+
+/// The merge-join asymmetry gate: a pinpoint pattern (bound predicate+object)
+/// joined with a fat predicate must not take the materializing merge seed —
+/// and whichever path runs, the join's answers are identical.
+#[test]
+fn merge_seed_skips_pinpoint_times_fat() {
+    let mut triples: Vec<(String, String, String)> = Vec::new();
+    for i in 0..100_000u32 {
+        let s = format!("<http://ex/e{i}>");
+        triples.push((s.clone(), iri("desc"), format!("\"d{i}\"")));
+    }
+    for m in ["m0", "m1"] {
+        triples.push((iri(m), iri("kind"), iri("Marked")));
+        triples.push((iri(m), iri("desc"), format!("\"{m}desc\"")));
+    }
+    let refs: Vec<(&str, &str, &str)> = triples
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let image = build(&refs);
+    let rete = Rete::open(&image).unwrap();
+    let q = "SELECT ?s ?d WHERE { ?s ex:kind ex:Marked . ?s ex:desc ?d }";
+    let (_, sols) = eval_sparql(&rete, &format!("{PREFIX}{q}")).unwrap();
+    let mut got: Vec<(String, String)> = sols
+        .iter()
+        .map(|b| (b.get("s").cloned().unwrap(), b.get("d").cloned().unwrap()))
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            ("<http://ex/m0>".to_string(), "\"m0desc\"".to_string()),
+            ("<http://ex/m1>".to_string(), "\"m1desc\"".to_string()),
+        ]
+    );
+}
+
+/// FILTER-CONTAINS pushdown through the TEXT_INDEX must be invisible in the
+/// results: the same graph built WITH and WITHOUT a text index answers every
+/// CONTAINS shape identically — case-sensitive needles (the index is folded,
+/// the filter re-verifies), needles spanning word boundaries, wrapper forms
+/// (LCASE/STR), a CONTAINS under OR (no pruning allowed), and a needle whose
+/// word lives on ANOTHER predicate of the same subject (over-approximation
+/// pruned by re-verification).
+#[test]
+fn contains_pushdown_matches_scan() {
+    use rete_core::ingest::{assemble_dataset_with_opts, parse};
+    let nt = r#"<http://ex/e1> <http://ex/label> "Royal Observatory Greenwich" .
+<http://ex/e1> <http://ex/kind> <http://ex/Place> .
+<http://ex/e2> <http://ex/label> "observatory dome" .
+<http://ex/e3> <http://ex/label> "Conservatory of Music" .
+<http://ex/e4> <http://ex/label> "plain building" .
+<http://ex/e4> <http://ex/note> "hidden observatory reference" .
+<http://ex/e5> <http://ex/label> "OBSERVATORY UPPER" .
+"#;
+    let quads: Vec<_> = parse(nt)
+        .unwrap()
+        .into_iter()
+        .map(|(s, p, o)| (s, p, o, None))
+        .collect();
+    let (plain, _) =
+        assemble_dataset_with_opts(quads.clone(), false, false, None, |_, _| Vec::new());
+    let (indexed, _) = assemble_dataset_with_opts(quads, false, true, None, |_, _| Vec::new());
+    let rete_plain = Rete::open(&plain).unwrap();
+    let rete_indexed = Rete::open(&indexed).unwrap();
+
+    let queries = [
+        // Case-sensitive: only e1 ("Royal Observatory…"); e5 is upper, e2 lower.
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(?l, \"Observatory\")) }",
+        // Case-folded via LCASE: e1, e2, e5 (via label) — e4's match is on ex:note,
+        // so the candidate over-approximation must be pruned back by the filter.
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(LCASE(?l), \"observatory\")) }",
+        // Needle crossing a word boundary.
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(?l, \"Observatory Greenwich\")) }",
+        // Substring of a longer word (Conservatory) + exact word (observatory).
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(LCASE(?l), \"servatory\")) }",
+        // Under OR: must NOT prune (e4's label has no 'observatory' but matches 'building').
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(?l, \"observatory\") || CONTAINS(?l, \"building\")) }",
+        // Conjunction with another required contains.
+        "SELECT ?s WHERE { ?s ex:label ?l . FILTER(CONTAINS(LCASE(?l), \"observatory\") && CONTAINS(LCASE(?l), \"dome\")) }",
+    ];
+    for q in queries {
+        let a = col(&rete_plain, q, "s");
+        let b = col(&rete_indexed, q, "s");
+        assert_eq!(a, b, "indexed vs plain diverged for {q}");
+        assert!(
+            !a.is_empty() || q.contains("dome"),
+            "unexpected empty for {q}"
+        );
+    }
+}

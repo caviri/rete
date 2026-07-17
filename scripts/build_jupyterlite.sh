@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
-pip install -q jupyterlite-core jupyterlite-pyodide-kernel jupyter-server
+# Kernel 0.8.x ships Pyodide 314 (Python 3.14): its installer understands the
+# PEP 783 pyemscripten wheel tags, so `%pip install rete-graph` resolves from
+# PyPI directly — requires rete-graph >= 0.2.1 (the 0.2.0 cp314 wheel had a
+# wrong-toolchain EH ABI: "cannot resolve symbol invoke_i" at import).
+# See docs/clients-dev.md for the per-generation toolchain story.
+pip install -q "jupyterlite-core==0.8.*" "jupyterlite-pyodide-kernel==0.8.2" jupyter-server
 pip show jupyterlite-core jupyterlite-pyodide-kernel | grep -E "^(Name|Version)"
 python - <<'EOF'
 import json, pathlib, jupyterlite_pyodide_kernel as k
@@ -17,6 +22,7 @@ EOF
 
 mkdir -p /tmp/contents
 cp /io/clients/python/examples/jupyterlite-demo.ipynb /tmp/contents/rete-graph.ipynb
+cp /io/clients/python/examples/jupyterlite-build-tutorial.ipynb /tmp/contents/build-a-rete.ipynb
 rm -rf /io/docs/jupyterlite
 cd /tmp
 jupyter lite build --apps lab --no-sourcemaps --contents /tmp/contents --output-dir /io/docs/jupyterlite 2>&1 | tail -5
