@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Rust API · rete docs</title>
+  <title>JS lab — rete × D3 · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -204,7 +204,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
         <li class="nav-group"><details><summary>SPARQL IDE — yasgui·wasm</summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>JupyterLite — Python in the tab</summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary>JS lab — rete × D3</summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
+        <li class="nav-group"><details open><summary>JS lab — rete × D3</summary><ul class="nav-sub"><li><a href="jslab-guide.html" class="active">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
@@ -234,7 +234,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Development</li>
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="SPEC.html">Format specification</a></li>
-        <li><a href="rust-api.html" class="active">Rust API</a></li>
+        <li><a href="rust-api.html">Rust API</a></li>
         <li><a href="browser.html">WASM & JavaScript API</a></li>
         <li><a href="clients-dev.html">Client development & releases</a></li>
         <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
@@ -247,102 +247,47 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Rust API</h1>
-<p><code>rete-core</code> is the embeddable Rust implementation of the <code>.rete</code> format. Starting
-with <code>1.0.0-rc.1</code>, its supported SemVer surface is organized into five facade
-modules:</p>
-<table><thead><tr><th>Module</th><th>Supported purpose</th></tr></thead><tbody>
-<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/format/"><code>format</code></a></td><td>Parse RDF, build or open a <code>.rete</code>, inspect its header, and verify the container</td></tr>
-<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/query/"><code>query</code></a></td><td>Evaluate SPARQL and graph patterns, format results, and configure federation</td></tr>
-<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/range/"><code>range</code></a></td><td>Implement byte-range readers and open summary data without loading the full file</td></tr>
-<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/validation/"><code>validation</code></a></td><td>Validate an eager graph or a <code>.rete</code> index with SHACL</td></tr>
-<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/reasoning/"><code>reasoning</code></a></td><td>Run the supported RDFS/OWL rules and inspect schema coherence</td></tr>
-</tbody></table>
-<p>Use those module paths in application code. The crate retains some hidden root
-exports and implementation namespaces for the other workspace crates, but they
-are not part of the 1.x compatibility contract and may change without a major
-release.</p>
-<h2>Add the release candidate</h2>
-<p>Until the final release, pin the release candidate explicitly:</p>
-<pre><code class="language-toml">[dependencies]
-rete-core = "=1.0.0-rc.1"
-</code></pre>
-<p>The default feature set supports compressed <code>.rete</code> files. Optional parallel or
-browser-thread features remain experimental; they do not change the five facade
-module names.</p>
-<h2>Build, open, and query</h2>
-<p>The in-memory path is useful for applications that already have RDF text or a
-complete file image:</p>
-<pre><code class="language-rust">use rete_core::format::{assemble_dataset, parse_statements, Rete};
-use rete_core::query::{eval_query, QueryOutput};
-
-fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
-    let rdf = "&lt;urn:alice&gt; &lt;urn:knows&gt; &lt;urn:bob&gt; .";
-    let quads = parse_statements(rdf, "nt")?;
-    let (bytes, stats) = assemble_dataset(quads, br#"{"source":"example"}"#);
-    assert_eq!(stats.statements, 1);
-
-    let graph = Rete::open(&amp;bytes)?;
-    match eval_query(&amp;graph, "SELECT ?o WHERE { &lt;urn:alice&gt; &lt;urn:knows&gt; ?o }")? {
-        QueryOutput::Select(vars, rows) =&gt; {
-            assert_eq!(vars, ["o"]);
-            assert_eq!(rows.len(), 1);
-        }
-        _ =&gt; unreachable!("the query is SELECT"),
-    }
-    Ok(())
-}
-</code></pre>
-<p><code>QueryOutput</code>, public error enums, and other result-shape enums are
-non-exhaustive. Always keep a wildcard arm when matching them; new variants can
-then be added in a compatible 1.x release.</p>
-<h2>Read by byte range</h2>
-<p>Implement <code>RangeReader</code> for a local file, object-store client, or HTTP client.
-Every range must either return exactly the requested bytes or an error; offsets
-from an untrusted remote file must not be used as unchecked slice indexes.</p>
-<pre><code class="language-rust">use rete_core::range::{RangeReader, SliceReader, SummaryView};
-
-fn inspect_summary(bytes: &amp;[u8]) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
-    let reader = SliceReader::new(bytes);
-    let _file_len = reader.len();
-    if let Some(summary) = SummaryView::open_ranged(&amp;reader)? {
-        println!("{} communities", summary.community_count());
-    }
-    Ok(())
-}
-</code></pre>
-<p>Remote readers should preserve HTTP <code>Range</code> semantics. See <a href="hosting.html">Hosting your
-<code>.rete</code></a> for required CORS response headers and <a href="browser.html">WASM &amp; JavaScript
-API</a> for the browser-specific reader.</p>
-<h2>Validate and reason</h2>
-<p>SHACL can operate directly against a <code>.rete</code> index, so a lazy remote graph only
-fetches ranges used by the shapes:</p>
-<pre><code class="language-rust">use rete_core::format::Rete;
-use rete_core::validation::{validate_shacl, ReteGraph, ShaclShapes};
-
-fn validate(bytes: &amp;[u8], shapes_turtle: &amp;str) -&gt; Result&lt;bool, Box&lt;dyn std::error::Error&gt;&gt; {
-    let rete = Rete::open(bytes)?;
-    let shapes = ShaclShapes::parse_turtle(shapes_turtle)?;
-    let report = validate_shacl(&amp;ReteGraph::new(&amp;rete), &amp;shapes);
-    Ok(report.conforms)
-}
-</code></pre>
-<p>The reasoning facade exposes the documented ruleset and both eager reasoning
-and reasoned query entry points. It is deliberately a bounded RDFS/OWL profile,
-not a complete OWL reasoner; see <a href="reasoning.html">Reasoning &amp; coherence</a> for the
-supported entailments and inconsistency checks.</p>
-<h2>Compatibility policy</h2>
+<h1>JS lab — rete × D3, Observable-style</h1>
+<p>An experiment in the spirit of <a href="https://observablehq.com">Observable</a> and the
+p5.js editor: <strong>an in-browser JavaScript editor next to a live
+visualization</strong>. The code on the left queries a remote <code>.rete</code> file through
+the <a href="javascript.html"><code>rete-graph</code> npm client</a> (loaded straight from the CDN —
+the same build any web page can <code>&lt;script src&gt;</code>), and draws the result with
+<a href="https://d3js.org">D3</a> on the right. Edit, hit <code>Ctrl+Enter</code>, watch it redraw.</p>
+<p><strong><a href="jslab.html">Launch the lab →</a></strong></p>
+<p>The default program renders the <strong>Linked Jazz collaboration network</strong> — who
+played, toured, and sat in bands with whom among 20th-century jazz musicians
+(a 176 KB <code>.rete</code> on plain object storage) — as a draggable, zoomable force
+layout, edges colored by relationship. A second preset turns a SPARQL
+<code>GROUP BY</code> into a bar chart of the best-connected musicians. Both end by
+logging <code>stats()</code>: how few bytes the queries actually fetched.</p>
+<h2>How it works</h2>
 <ul>
-<li><code>.rete</code> format compatibility and Rust API compatibility are versioned
-independently. The format byte and read window live in <code>format</code>.</li>
-<li>The five facade modules follow SemVer from <code>1.0.0-rc.1</code> onward. Hidden modules
-and experimental feature-gated APIs do not.</li>
-<li>Public errors and result shapes are non-exhaustive. Treat unfamiliar variants
-as unsupported input or output rather than panicking.</li>
-<li>Rustdoc is built with warnings denied, and release CI compares the facade with
-the previous release using <code>cargo-semver-checks</code>.</li>
+<li>The rete engine's remote reader uses <strong>synchronous XHR range requests</strong>,
+which browsers only allow in workers — so the page boots a tiny <strong>Web
+Worker</strong> that <code>importScripts</code> the CDN bundle and holds the opened graphs.
+Your code gets a promise-based façade: <code>openGraph(url)</code> →
+<code>{ query, prefixSearch, textSearch, stats, contentHash }</code>.</li>
+<li>Graphs stay <strong>resident in the worker</strong> between runs, so a re-run reuses the
+block cache and decoded dictionary — the second query is nearly free.</li>
+<li>Query rows arrive as <code>{variable: term}</code> objects; each term carries <code>.kind</code>
+(<code>iri</code>/<code>literal</code>/<code>bnode</code>) and <code>.value</code> (plus <code>.datatype</code>/<code>.lang</code>). Numbers
+from aggregates are literal terms — coerce with <code>+row.n.value</code>.</li>
+<li>Your program runs with four bindings in scope: <strong><code>openGraph</code></strong>, <strong><code>d3</code></strong>,
+<strong><code>viz</code></strong> (the output container element), and <strong><code>log(...)</code></strong> (the console
+strip).</li>
 </ul>
-<p>For the byte-level contract, read the <a href="SPEC.html">format specification</a>.</p>
+<p>Point <code>openGraph()</code> at any <code>.rete</code> URL whose host serves <code>Range</code> with CORS
+(see <a href="hosting.html">Hosting</a>) — every dataset in the
+<a href="playground-guide.html">playground</a> qualifies; find their URLs in its catalog.</p>
+<h2>Credits &amp; license</h2>
+<p>Data: the <a href="https://linkedjazz.org/">Linked Jazz Project</a> (CC BY-SA) — thank
+you for a wonderful graph. Libraries: <a href="https://d3js.org">D3</a> (ISC),
+<a href="https://codemirror.net">CodeMirror</a> (MIT), served by
+<a href="https://www.jsdelivr.com/">jsDelivr</a>.</p>
+<p>Source &amp; issues: <a href="https://github.com/caviri/rete">https://github.com/caviri/rete</a> · © 2026 Carlos Vivar Ríos,
+released under the
+<a href="https://github.com/caviri/rete/blob/main/LICENSE">Apache License 2.0</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -350,7 +295,7 @@ the previous release using <code>cargo-semver-checks</code>.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/rust-api.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/jslab-guide.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

@@ -35,6 +35,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("plaza/index.html", "Plaza — dataset gallery"),
             ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
             ("jupyterlite-guide.md", "JupyterLite — Python in the tab"),
+            ("jslab-guide.md", "JS lab — rete × D3"),
             ("atlas.md", "Historical atlas — SPARQL + GIS"),
             ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
             ("football.md", "Football — match replays"),
@@ -193,6 +194,10 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
                 "jupyterlite/lab/index.html?path=build-a-rete.ipynb",
                 "build: anatomy of a .rete →",
             ),
+        ]),
+        "jslab-guide.md" => Some(&[
+            ("jslab-guide.html", "overview"),
+            ("jslab.html", "launch the lab →"),
         ]),
         "atlas.md" => Some(&[
             ("atlas.html", "overview"),

@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JS lab — rete × D3</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/javascript/javascript.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<style>
+  :root { --border: #d7d7dc; --accent: #1a6baf; --bad: #b3372c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; color: #17181c; background: #fff; }
+  header, footer { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  footer { border-bottom: 0; border-top: 1px solid var(--border); font-size: 13px; color: #555; }
+  header h1 { font-size: 17px; margin: 0; }
+  header .sub { color: #666; font-size: 13px; }
+  button { font: inherit; padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px; background: #f6f6f8; cursor: pointer; }
+  button.run { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  #status { font-size: 13px; color: #666; margin-left: auto; }
+  main { display: grid; grid-template-columns: minmax(380px, 44%) 1fr; height: calc(100vh - 96px); }
+  #left { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
+  .CodeMirror { flex: 1; height: auto; font-size: 13px; }
+  #right { display: flex; flex-direction: column; min-width: 0; }
+  #viz { flex: 1; overflow: auto; position: relative; }
+  #viz svg { display: block; }
+  #console { max-height: 26%; overflow: auto; border-top: 1px solid var(--border); font: 12px/1.5 ui-monospace, monospace; padding: 6px 10px; white-space: pre-wrap; }
+  #console .err { color: var(--bad); }
+  a { color: var(--accent); }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; height: auto; } .CodeMirror { min-height: 320px; } #viz { min-height: 420px; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>JS lab</h1>
+  <span class="sub">edit JavaScript · query a remote <code>.rete</code> with the <a href="https://www.npmjs.com/package/rete-graph">rete-graph</a> npm client · draw it with D3</span>
+  <button id="preset-net-btn">⏺ network</button>
+  <button id="preset-top-btn">⏺ top 20</button>
+  <button id="run" class="run">▶ Run (Ctrl+Enter)</button>
+  <span id="status"></span>
+</header>
+
+<main>
+  <div id="left"><textarea id="code"></textarea></div>
+  <div id="right">
+    <div id="viz"></div>
+    <div id="console"></div>
+  </div>
+</main>
+
+<footer>
+  <span><a href="jslab-guide.html">how this works</a></span>
+  <span>data: <a href="https://linkedjazz.org/">Linked Jazz</a> (CC BY-SA) via <code>data.graphplaza.com</code></span>
+  <span style="margin-left:auto">© 2026 Carlos Vivar Ríos · <a href="https://github.com/caviri/rete/blob/main/LICENSE">Apache-2.0</a> · <a href="https://github.com/caviri/rete">github.com/caviri/rete</a></span>
+</footer>
+
+<!-- Preset programs live in inert script blocks so they can use backticks. -->
+<script type="text/plain" id="preset-network">
+// The Linked Jazz collaboration network — a remote 176 KB .rete file.
+// openGraph() runs the rete engine in a Web Worker (its synchronous
+// range-reads are worker-only); you get back promise-based methods.
+const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
+
+// SPARQL over HTTP range requests. Result rows are {variable: term}
+// objects; every term has .kind and .value (plus .datatype/.lang).
+const rows = await graph.query(`
+  PREFIX lj:   <http://linkedjazz.org/ontology/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?a ?aName ?b ?bName ?rel WHERE {
+    VALUES ?rel { lj:playedTogether lj:inBandTogether lj:touredWith }
+    ?a ?rel ?b .
+    ?a foaf:name ?aName .
+    ?b foaf:name ?bName .
+  }`);
+log(rows.length + " collaborations");
+
+// Shape into nodes + links for a force simulation.
+const nodes = new Map(), links = [], degree = new Map();
+for (const r of rows) {
+  nodes.set(r.a.value, { id: r.a.value, name: r.aName.value });
+  nodes.set(r.b.value, { id: r.b.value, name: r.bName.value });
+  links.push({ source: r.a.value, target: r.b.value, rel: r.rel.value.split("/").pop() });
+  for (const k of [r.a.value, r.b.value]) degree.set(k, (degree.get(k) || 0) + 1);
+}
+const nodeList = [...nodes.values()];
+
+// Draw: force layout, edge color by relationship, radius by degree.
+const W = viz.clientWidth || 800, H = viz.clientHeight || 600;
+const color = d3.scaleOrdinal(["playedTogether","inBandTogether","touredWith"], d3.schemeTableau10);
+const svg = d3.create("svg").attr("width", W).attr("height", H);
+const zoomed = svg.append("g");
+
+const sim = d3.forceSimulation(nodeList)
+  .force("link", d3.forceLink(links).id(d => d.id).distance(38))
+  .force("charge", d3.forceManyBody().strength(-55))
+  .force("center", d3.forceCenter(W / 2, H / 2));
+
+const link = zoomed.append("g").attr("stroke-opacity", 0.45)
+  .selectAll("line").data(links).join("line").attr("stroke", d => color(d.rel));
+const node = zoomed.append("g")
+  .selectAll("circle").data(nodeList).join("circle")
+  .attr("r", d => 2.5 + Math.sqrt(degree.get(d.id)))
+  .attr("fill", "#334").call(drag(sim));
+node.append("title").text(d => `${d.name} — ${degree.get(d.id)} connections`);
+const label = zoomed.append("g")
+  .selectAll("text").data(nodeList.filter(d => degree.get(d.id) >= 9)).join("text")
+  .text(d => d.name).attr("font-size", 10).attr("dx", 7).attr("dy", 3).attr("fill", "#333");
+
+sim.on("tick", () => {
+  link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+  node.attr("cx", d => d.x).attr("cy", d => d.y);
+  label.attr("x", d => d.x).attr("y", d => d.y);
+});
+svg.call(d3.zoom().scaleExtent([0.3, 6]).on("zoom", e => zoomed.attr("transform", e.transform)));
+viz.append(svg.node());
+
+// Legend.
+const legend = d3.create("svg").attr("width", W).attr("height", 22);
+["playedTogether","inBandTogether","touredWith"].forEach((rel, i) => {
+  legend.append("circle").attr("cx", 14 + i * 130).attr("cy", 11).attr("r", 5).attr("fill", color(rel));
+  legend.append("text").attr("x", 24 + i * 130).attr("y", 15).attr("font-size", 11).text(rel);
+});
+viz.append(legend.node());
+
+function drag(sim) {
+  return d3.drag()
+    .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+    .on("drag",  (e, d) => { d.fx = e.x; d.fy = e.y; })
+    .on("end",   (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = d.fy = null; });
+}
+
+// How little crossed the wire (cumulative for this graph's worker session —
+// run again: the block cache makes the second query nearly free).
+log(await graph.stats());
+</script>
+
+<script type="text/plain" id="preset-top">
+// Top 20 best-connected musicians — SPARQL aggregation + a D3 bar chart.
+const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
+
+const rows = await graph.query(`
+  PREFIX lj:   <http://linkedjazz.org/ontology/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?name (COUNT(?b) AS ?n) WHERE {
+    VALUES ?rel { lj:playedTogether lj:inBandTogether lj:touredWith lj:bandmember }
+    ?a ?rel ?b .
+    ?a foaf:name ?name .
+  }
+  GROUP BY ?name ORDER BY DESC(?n) LIMIT 20`);
+
+const data = rows.map(r => ({ name: r.name.value, n: +r.n.value }));
+
+const W = viz.clientWidth || 800, H = 30 * data.length + 50;
+const m = { top: 20, right: 40, bottom: 24, left: 170 };
+const x = d3.scaleLinear([0, d3.max(data, d => d.n)], [m.left, W - m.right]);
+const y = d3.scaleBand(data.map(d => d.name), [m.top, H - m.bottom]).padding(0.18);
+
+const svg = d3.create("svg").attr("width", W).attr("height", H);
+svg.append("g").selectAll("rect").data(data).join("rect")
+  .attr("x", x(0)).attr("y", d => y(d.name))
+  .attr("width", d => x(d.n) - x(0)).attr("height", y.bandwidth())
+  .attr("fill", "#1a6baf");
+svg.append("g").selectAll("text").data(data).join("text")
+  .attr("x", d => x(d.n) + 4).attr("y", d => y(d.name) + y.bandwidth() / 2)
+  .attr("dy", "0.35em").attr("font-size", 11).text(d => d.n);
+svg.append("g").attr("transform", `translate(${m.left},0)`)
+  .call(d3.axisLeft(y).tickSize(0)).select(".domain").remove();
+svg.append("g").attr("transform", `translate(0,${H - m.bottom})`)
+  .call(d3.axisBottom(x).ticks(5));
+viz.append(svg.node());
+
+log(await graph.stats());
+</script>
+
+<script>
+(() => {
+  "use strict";
+  const RETE_CDN = "https://cdn.jsdelivr.net/npm/rete-graph@0.1.0/dist/rete-graph.min.js";
+
+  // ---- the worker: runs the wasm engine; sync XHR range reads live here ----
+  const WORKER_SRC = `
+    importScripts("${RETE_CDN}");
+    const graphs = new Map(); let next = 1;
+    onmessage = async (e) => {
+      const { id, op, args } = e.data;
+      try {
+        let result;
+        if (op === "open") {
+          const g = await rete.open(args.url);
+          graphs.set(next, g); result = { handle: next++ };
+        } else {
+          const g = graphs.get(args.handle);
+          if (!g) throw new Error("stale graph handle");
+          if (op === "query") result = g.query(args.query, args.opts || {});
+          else if (op === "prefixSearch") result = g.prefixSearch(args.prefix, args.limit || 20);
+          else if (op === "textSearch") result = g.textSearch(args.words, args.opts || {});
+          else if (op === "stats") result = g.stats();
+          else if (op === "contentHash") result = g.contentHash();
+          else throw new Error("unknown op " + op);
+        }
+        postMessage({ id, ok: true, result });
+      } catch (err) {
+        postMessage({ id, ok: false, error: String((err && err.message) || err) });
+      }
+    };`;
+
+  let worker = null;
+  const pending = new Map(); let rpcId = 1;
+  function ensureWorker() {
+    if (worker) return worker;
+    worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
+    worker.onmessage = (e) => {
+      const { id, ok, result, error } = e.data;
+      const p = pending.get(id); pending.delete(id);
+      if (p) (ok ? p.resolve(result) : p.reject(new Error(error)));
+    };
+    return worker;
+  }
+  function rpc(op, args) {
+    return new Promise((resolve, reject) => {
+      const id = rpcId++;
+      pending.set(id, { resolve, reject });
+      ensureWorker().postMessage({ id, op, args });
+    });
+  }
+
+  // Graphs stay resident in the worker per URL, so re-runs reuse the block
+  // cache and the decoded dictionary — the second query is nearly free.
+  const opened = new Map();
+  async function openGraph(url) {
+    if (!opened.has(url)) {
+      const { handle } = await rpc("open", { url });
+      opened.set(url, handle);
+    }
+    const handle = opened.get(url);
+    return {
+      url,
+      query: (query, opts) => rpc("query", { handle, query, opts }),
+      prefixSearch: (prefix, limit) => rpc("prefixSearch", { handle, prefix, limit }),
+      textSearch: (words, opts) => rpc("textSearch", { handle, words, opts }),
+      stats: () => rpc("stats", { handle }),
+      contentHash: () => rpc("contentHash", { handle }),
+    };
+  }
+
+  // ---- the lab UI ----
+  const vizEl = document.getElementById("viz");
+  const consoleEl = document.getElementById("console");
+  const statusEl = document.getElementById("status");
+  function log(...parts) {
+    const line = document.createElement("div");
+    line.textContent = parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" ");
+    consoleEl.append(line); consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+  function logError(message) {
+    const line = document.createElement("div");
+    line.className = "err"; line.textContent = "✗ " + message;
+    consoleEl.append(line); consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+
+  const editor = CodeMirror.fromTextArea(document.getElementById("code"), {
+    mode: "javascript", lineNumbers: true, viewportMargin: Infinity,
+    extraKeys: { "Ctrl-Enter": run, "Cmd-Enter": run },
+  });
+  const preset = (id) => document.getElementById(id).textContent.trim();
+  editor.setValue(preset("preset-network"));
+  document.getElementById("preset-net-btn").onclick = () => editor.setValue(preset("preset-network"));
+  document.getElementById("preset-top-btn").onclick = () => editor.setValue(preset("preset-top"));
+  document.getElementById("run").onclick = run;
+
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  let running = false;
+  async function run() {
+    if (running) return;
+    running = true;
+    vizEl.replaceChildren(); consoleEl.replaceChildren();
+    statusEl.textContent = "running…";
+    const t0 = performance.now();
+    try {
+      const program = new AsyncFunction("openGraph", "d3", "viz", "log", editor.getValue());
+      await program(openGraph, d3, vizEl, log);
+      statusEl.textContent = `done in ${((performance.now() - t0) / 1000).toFixed(1)}s`;
+    } catch (err) {
+      logError((err && err.message) || String(err));
+      statusEl.textContent = "error";
+    } finally {
+      running = false;
+    }
+  }
+})();
+</script>
+</body>
+</html>
