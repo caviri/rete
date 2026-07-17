@@ -126,6 +126,10 @@ jobs:
             docs/playground.html docs/rete_wasm.js docs/rete_wasm_bg.wasm \
             docs/rete_wasm_async.js docs/rete_wasm_async.wasm
       - name: Preserve exact browser build
+        # always(): keep the rebuilt artifacts even when the parity diff
+        # fails, so a stale-artifact commit can be repaired from CI's own
+        # byte-exact output instead of a local rebuild.
+        if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: wasm-build-${{ github.sha }}
