@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Federated queries · rete docs</title>
+  <title>JavaScript — rete-graph · rete docs</title>
   <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
@@ -214,13 +214,13 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
-        <li><a href="federation.html" class="active">Federated queries</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
         <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="compatibility.html">Compatibility & Cypher</a></li>
         <li class="nav-h">Clients</li>
         <li><a href="python.html">Python — rete-graph</a></li>
         <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
-        <li><a href="javascript.html">JavaScript — rete-graph</a></li>
+        <li><a href="javascript.html" class="active">JavaScript — rete-graph</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -245,205 +245,79 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Federated queries across several <code>.rete</code> files</h1>
-<p><code>rete federate</code> runs <strong>one SPARQL query across many <code>.rete</code> sources</strong> — local
-file paths and/or <code>http(s)://</code> URLs, mixed freely — and merges the results. It is
-the answer to "my data is sharded into several files; query them as one."</p>
-<pre><code class="language-sh">rete federate &lt;source…&gt; --query "&lt;SPARQL&gt;" [--json] [--no-route]
+<h1>JavaScript API</h1>
+<p><code>rete-graph</code> on npm is the JavaScript client for <code>.rete</code> files: the same
+WebAssembly engine behind the <a href="playground-guide.html">playground</a>, packaged for
+<strong>browsers and Node</strong> with an idiomatic wrapper — parsed <code>Term</code> results,
+clean IRIs, the same API shape as the <a href="python.html">Python client</a>.</p>
+<pre><code class="language-sh">npm install rete-graph
 </code></pre>
-<p>This is an honest <strong>prototype</strong>: it does <em>union</em> federation, not distributed
-joins. Read <a href="#limitations">Limitations</a> before relying on it. (Federating with
-a <strong>live SPARQL endpoint</strong> from <em>inside</em> a query is a different feature — the
-SPARQL 1.1 <code>SERVICE</code> clause, covered in <a href="sparql.html">SPARQL support</a>.)</p>
-<p>The same union+routing federation is also available <strong>in the browser</strong> — the
-<a href="#in-the-playground">playground</a> turns the SPARQL console into a multi-source
-one with a "<strong>+ Add source</strong>" button, each source range-queried lazily.</p>
-<h2>Why federation works at the term level</h2>
-<figure class="fig-right">
-  <img src="img/federation.svg" alt="A SPARQL query goes to a router that does predicate routing, fans out to three .rete files each with its own dictionary, then results are merged at the term level into a row set.">
-  <figcaption>Each file keeps its own dictionary; the router sends each pattern only to files holding its predicate, then results merge at the term level.</figcaption>
-</figure>
-<p>Every <code>.rete</code> file carries its <strong>own dictionary</strong> — the integer IDs that encode
-terms are local to one file. ID <code>42</code> in <code>cites-2021.rete</code> and ID <code>42</code> in
-<code>cites-2024.rete</code> are unrelated. So you <strong>cannot</strong> merge files by combining their
-integer indexes.</p>
-<p>Federation therefore works at the <strong>term (string) level</strong>: the query is
-evaluated independently on each file with the existing single-file engine, and
-the <strong>term-level result rows are merged</strong>. This is exactly correct for
-<strong>sharded datasets where each file independently yields complete result rows</strong> —
-the citation data below, sharded by citing year, is precisely this shape: each
-<code>cites</code> edge (and its <code>date</code>/<code>type</code>) lives wholly within one year-shard, so each
-shard produces whole, self-contained answer rows.</p>
-<h2>Merge semantics</h2>
-<table><thead><tr><th>Query form</th><th>Merge across sources</th></tr></thead><tbody>
-<tr><td><code>SELECT</code></td><td><strong>Union</strong> of solution rows, <strong>deduped</strong> (identical rows collapse), stable order (source order, then within-source order).</td></tr>
-<tr><td><code>ASK</code></td><td><strong>Logical OR</strong> — true if any source matches.</td></tr>
-<tr><td><code>CONSTRUCT</code></td><td><strong>Union</strong> of constructed triples, <strong>deduped</strong>.</td></tr>
-</tbody></table>
-<p>Dedup is over the projected variables for <code>SELECT *</code> it is over all bound
-variables. A row that appears in two shards (e.g. a node that cites the target
-and shows up in two files) is reported once.</p>
-<h2>Routing / pruning (default on)</h2>
-<p>Before evaluating, <code>federate</code> reads each source's <strong>predicate set</strong> cheaply from
-its pyramid <strong>summary</strong> — the (large) triple <strong>index is never touched</strong> (the same
-"summary first" path used by <code>rete predicates</code> and <code>rete summary-url</code>). It also
-extracts the <strong>concrete predicate IRIs</strong> the query constrains on (from the parsed
-query's basic graph patterns and property paths). A source whose predicate set is
-<strong>disjoint</strong> from the query's predicates <strong>cannot contribute a row</strong> and is
-<strong>skipped</strong>.</p>
-<ul>
-<li><code>--no-route</code> disables pruning and queries <strong>every</strong> source.</li>
-<li>A query that pins <strong>no</strong> concrete predicate (every pattern uses a variable
-predicate, e.g. <code>?s ?p ?o</code>) cannot be routed — all sources are queried.</li>
-<li>A source with no summary cannot be inspected, so it is <strong>never</strong> pruned.</li>
-</ul>
-<p>For local files routing reads a few hundred bytes per source; for URLs it issues
-a handful of HTTP <strong>range</strong> requests (header + dictionary + summary) — never the
-whole file.</p>
-<p>Per-source diagnostics (rows contributed + time), the queried-vs-pruned tally,
-and the list of pruned sources are written to <strong>stderr</strong> the merged results go to
-stdout.</p>
-<h2>Limitations</h2>
-<p>This is a deliberately honest prototype — it is correct for sharded data and
-clear about what it does <strong>not</strong> do.</p>
-<ul>
-<li><strong>Union only, no cross-file joins.</strong> A solution that needs a triple from file A
-joined with a triple from file B (e.g. <code>?x</code> from one shard joined to <code>?y</code> from
-another) will <strong>not</strong> be found. Each shard is queried in isolation. Cross-file
-joins need a term-level federated BGP engine that ships intermediate bindings
-between sources — future work.</li>
-<li><strong>Aggregates and <code>LIMIT</code> are per source, then unioned.</strong> A federated
-<code>SELECT (COUNT(*) AS ?n)</code> returns <strong>one count per source</strong> (unioned), not a
-global sum and <code>LIMIT 5</code> over two shards can return up to <strong>10</strong> rows (5 from
-each). This keeps the prototype honest rather than silently wrong. Sum / cap
-client-side, or wait for a future <code>--reduce</code> that folds per-source aggregates.</li>
-<li><strong><code>GROUP BY</code></strong> is likewise evaluated per source then unioned, so the same group
-key can appear once per shard.</li>
-</ul>
-<h2>Real example — OpenCitations, sharded by citing year</h2>
-<p>The repo ships a real dataset: citations <strong>of the AlphaFold paper</strong>
-(<code>&lt;https://doi.org/10.1038/s41586-021-03819-2&gt;</code>), sharded by citing year into
-<code>data/opencitations/cites-&lt;year&gt;.rete</code>. Each shard uses
-<code>&lt;http://purl.org/spar/cito/cites&gt;</code>, <code>&lt;http://purl.org/dc/terms/date&gt;</code>, and
-<code>rdf:type</code>. (Regenerate with <code>python3 scripts/fetch_opencitations.py</code>, then
-<code>for f in data/opencitations/*.nt; do rete build "$f" -o "${f%.nt}.rete"; done</code>.)</p>
-<h3>Federated SELECT across two year-shards</h3>
-<pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE {
-             ?citing &lt;http://purl.org/spar/cito/cites&gt;
-                     &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'
-</code></pre>
-<pre><code>  data/opencitations/cites-2021.rete: 5 row(s) in 3.6ms
-  data/opencitations/cites-2024.rete: 5 row(s) in 15.6ms
-10 solution(s)
-federated 2 source(s): 2 queried, 0 pruned (routing on); 10 merged result(s)
-?citing=&lt;https://doi.org/10.1001/jama.2021.15728&gt;
-?citing=&lt;https://doi.org/10.1002/2211-5463.13301&gt;
-?citing=&lt;https://doi.org/10.1002/2211-5463.13316&gt;
-?citing=&lt;https://doi.org/10.1002/advs.202102592&gt;
-?citing=&lt;https://doi.org/10.1002/advs.202103807&gt;
-?citing=&lt;https://doi.org/10.1001/jamadermatol.2024.1126&gt;
-?citing=&lt;https://doi.org/10.1001/jamaophthalmol.2024.3829&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14811&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14823&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14836&gt;
-</code></pre>
-<p>Note the <strong>per-source <code>LIMIT</code></strong> caveat in action: <code>LIMIT 5</code> yielded 5 rows from
-<em>each</em> shard, so the union holds 10. The first five are 2021 citers, the last
-five 2024 citers.</p>
-<h3>Routing in action — a predicate-disjoint shard is pruned</h3>
-<p>Add a source that uses a different predicate (here a shard whose only predicate
-is <code>rdfs:label</code>, not <code>cito:cites</code>). The <code>cites</code> query prunes it without ever
-reading its index:</p>
-<pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete other-demo.rete data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE {
-             ?citing &lt;http://purl.org/spar/cito/cites&gt;
-                     &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 3'
-</code></pre>
-<pre><code>  data/opencitations/cites-2021.rete: 3 row(s) in 3.4ms
-  data/opencitations/cites-2024.rete: 3 row(s) in 15.8ms
-6 solution(s)
-federated 3 source(s): 2 queried, 1 pruned (routing on); 6 merged result(s)
-  pruned (predicate-disjoint): other-demo.rete
-…
-</code></pre>
-<p><code>--no-route</code> would instead query all three (the label-only shard contributing 0
-rows). For year-shards that all share <code>cito:cites</code>, routing keeps every shard —
-pruning helps when sources are <strong>heterogeneous</strong> (different predicates per file),
-which is the common federation case.</p>
-<h3>ASK federation (logical OR)</h3>
-<pre><code class="language-sh">rete federate data/opencitations/cites-2017.rete data/opencitations/cites-2024.rete \
-  --query 'ASK { ?x &lt;http://purl.org/spar/cito/cites&gt;
-                    &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; }'
-# → true   (at least one shard has a citation)
-</code></pre>
-<h3>URL sources</h3>
-<p>Sources may be <code>http(s)://</code> URLs of <code>.rete</code> files hosted on R2, S3, or any
-direct origin that honors HTTP <strong>Range</strong> requests — mix them with local paths freely:</p>
-<pre><code class="language-sh">rete federate \
-  https://data.graphplaza.com/worldcup2026/worldcup2026.rete \
-  data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
-                                          &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; }'
-</code></pre>
-<p>Each URL is opened with range reads (header → dictionary → index → pyramid),
-never a full download both routing and evaluation fetch only the bytes they need.
-The release catalog pins its public R2 objects in <code>web/datasets.lock.json</code>; the
-catalog audit also verifies that every shard is stable format generation 1 and
-exposes <code>Content-Range</code> to browser CORS callers.</p>
-<h2>In the playground</h2>
-<p>The <a href="playground.html">playground</a> brings the same federation to the browser:
-<strong>federation is a kind of SPARQL</strong>, so it lives in the SPARQL console rather than
-a separate mode. Under the query editor a <strong>Sources</strong> strip shows the current
-dataset; a <strong>+ Add source</strong> button federates with another source three ways:</p>
-<ul>
-<li><strong>From catalog</strong> — any registered dataset (a remote one is range-queried
-lazily; a bundled one is queried in memory);</li>
-<li><strong>.rete link</strong> — a pasted remote URL, range-queried lazily;</li>
-<li><strong>SPARQL endpoint</strong> — a live endpoint (<code>SELECT</code> / <code>ASK</code>) over the SPARQL
-protocol, subject to the endpoint's CORS policy.</li>
-</ul>
-<p>Running with <strong>two or more sources</strong> fans the same query out to each and merges
-with the exact CLI semantics above — <code>SELECT</code> union+dedup, <code>ASK</code> OR, <code>CONSTRUCT</code>
-triple-union — and a per-source banner reports the rows and bytes each source
-contributed. Each source keeps its own lazy reader, so two remote <code>.rete</code> files
-are read independently and lazily into one merge; it is orchestrated in the
-playground's JS over the existing single-source query paths, so no extra engine
-code runs. An example can pre-load its partner with one click. A <strong>live line ticks
-during the query</strong> — <code>N/M sources answered · range requests · MB · elapsed</code> — so a
-long multi-source fan-out isn't a silent spinner.</p>
-<h3>Beyond union — cross-source joins and sharded datasets</h3>
-<p>The playground goes past the CLI's union: it also does a <strong>term-level cross-source
-JOIN</strong> — one BGP split across sources and joined on the shared variables — so the
-"cross-file join is not found" limit above is a <em>CLI</em> limit, not a playground one.
-Each triple pattern is routed to a source by its predicate (and by where its
-subject was bound), each source answers its own sub-pattern with the join keys
-already narrowed down, and the partial rows are joined in the browser. Queries
-that can't be split this way (OPTIONAL / UNION / aggregates / property paths)
-fall back to the union path. So e.g. USTC editions ⋈ the Embassy books they
-cite, joined on the book IRI, returns real joined rows across the two files.</p>
-<p>A <strong>sharded dataset</strong> is registered as one logical graph with a <code>shards: [url0, url1, …]</code> list in the catalog; the playground treats <code>url0</code> as the primary and the rest as
-intrinsic federation partners, so <strong>every query auto-fans across all shards</strong> (union)
-and the rows merge — you query it like one dataset (a "⛓ N shards" chip shows in the
-Sources strip). This is how a graph too big to build as a single file — e.g. a 600 M-
-triple Wikidata split into six independent <code>--no-pyramid</code> shards — is served and queried
-as one. The path to a bigger graph is just more shards.</p>
-<p><strong>Worked example — resolve five terms across two ontologies.</strong> The bundled
-<code>chebi-full</code> (the complete ChEBI ontology, 8.83 M triples) and <code>chemotion</code> (a
-chemistry ELN graph merged with CHMO + RXNO) share <code>CHEBI_*</code> IRIs plus
-<code>rdfs:label</code>/<code>rdfs:subClassOf</code>, but neither resolves every label. Pick either
-dataset, open its <strong>Federation</strong> example (it adds the other as a second source),
-and run:</p>
-<pre><code class="language-sparql">PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
-PREFIX obo:  &lt;http://purl.obolibrary.org/obo/&gt;
-SELECT ?term ?label WHERE {
-  VALUES ?term { obo:CHEBI_15377 obo:CHEBI_27732 obo:CHMO_0000228 obo:BFO_0000015 obo:CHEBI_23367 }
-  ?term rdfs:label ?label
+<pre><code class="language-js">import { open, build } from "rete-graph";
+
+const g = await open("https://data.graphplaza.com/boe/boe.rete"); // Node / worker
+for (const row of g.query(`
+    SELECT ?s ?label WHERE {
+        ?s &lt;http://www.w3.org/2000/01/rdf-schema#label&gt; ?label
+    } LIMIT 5`)) {
+  console.log(row.s.value, "→", row.label.toJS());
 }
+console.log(g.stats()); // { fileLength, bytes, requests } — lazy, not a download
 </code></pre>
-<p><code>chebi-full</code> answers <code>water</code> / <code>caffeine</code> / <code>molecular entity</code>; <code>chemotion</code>
-answers <code>spectroscopy</code> / <code>process</code>; the union resolves all five. The result line
-shows the per-source split — no single file has all the answers.</p>
+<h2>Or a single <code>&lt;script&gt;</code> tag — no bundler, no install</h2>
+<p>p5.js-style: one self-contained file (engine embedded), full and minified,
+served by any npm CDN:</p>
+<pre><code class="language-html">&lt;script src="https://cdn.jsdelivr.net/npm/rete-graph@0.1.0/dist/rete-graph.min.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  (async () =&gt; {
+    const bytes = new Uint8Array(await (await fetch("mydata.rete")).arrayBuffer());
+    const g = await rete.open(bytes);
+    console.log(g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 3"));
+  })();
+&lt;/script&gt;
+</code></pre>
+<p><code>…/dist/rete-graph.js</code> is the readable twin; pin the version in the URL.</p>
+<h2>Where remote opens work</h2>
+<p>Remote graphs are read with synchronous XHR range requests (that's what lets
+the engine stay simple and synchronous):</p>
+<table><thead><tr><th>Environment</th><th><code>open(url)</code></th><th><code>open(bytes)</code></th></tr></thead><tbody>
+<tr><td>Node ≥ 18</td><td>✅ built-in sync-fetch bridge</td><td>✅</td></tr>
+<tr><td>Browser web worker</td><td>✅ native sync XHR</td><td>✅</td></tr>
+<tr><td>Browser main thread</td><td>❌ (browsers forbid sync binary XHR)</td><td>✅</td></tr>
+</tbody></table>
+<p>On a main thread, either fetch the bytes yourself (small files) or run the
+graph in a worker — the pattern the playground uses. Hosts must send CORS
+headers and honor <code>Range</code> (<a href="hosting.html">Hosting your .rete</a>).</p>
+<h2>Query results</h2>
+<p><code>query()</code> returns <code>{variable: Term}</code> rows for SELECT, a boolean for ASK, and
+<code>[s, p, o]</code> <code>Term</code> triples for CONSTRUCT/DESCRIBE. A <code>Term</code> has <code>.kind</code>
+(<code>"iri" | "literal" | "bnode" | "triple"</code>), <code>.value</code>, <code>.datatype</code>, <code>.lang</code>,
+plus <code>.toJS()</code> (number/boolean/BigInt for the common XSD types) and <code>.n3</code>.</p>
+<pre><code class="language-js">g.query(q, { reason: true });   // OWL 2 QL entailment by query rewriting
+g.queryRaw(q);                  // the engine's raw JSON envelope
+g.prefixSearch("Berl");         // label autocomplete → [{label, subject}]
+g.textSearch("volcano");        // full-text (files built with --text-index)
+g.schema();                     // { classes: [[iri, n]], relations: [[s,p,o,n]] }
+g.graphNames(); g.info(); g.quads;
+g.contentHash();                // remote graphs: blake3-16 cache key
+await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array)
+</code></pre>
+<h2>Feature matrix</h2>
+<table><thead><tr><th>Capability</th><th>JS</th><th>Notes</th></tr></thead><tbody>
+<tr><td>SPARQL SELECT / ASK / CONSTRUCT / DESCRIBE</td><td>✅</td><td><code>query()</code></td></tr>
+<tr><td>Lazy remote open (HTTP Range)</td><td>✅</td><td>Node + browser workers</td></tr>
+<tr><td>OWL 2 QL reasoned queries</td><td>✅</td><td><code>query(q, {reason: true})</code></td></tr>
+<tr><td>Schema profile, prefix &amp; text search</td><td>✅</td><td>clean IRIs everywhere</td></tr>
+<tr><td>Build from RDF text</td><td>✅</td><td><code>build()</code> — uncompressed, like the playground</td></tr>
+<tr><td>Script-tag single-file build</td><td>✅</td><td><code>dist/rete-graph(.min).js</code>, global <code>rete</code></td></tr>
+<tr><td>TypeScript types</td><td>✅</td><td>bundled <code>index.d.ts</code></td></tr>
+<tr><td><code>SERVICE</code> federation</td><td>✅*</td><td>via the engine; same worker/Node constraint</td></tr>
+<tr><td>Dataset Card / embedded examples</td><td>⏳</td><td>needs a wasm export — planned parity with Python</td></tr>
+<tr><td>Custom headers / custom readers</td><td>⏳</td><td>planned</td></tr>
+<tr><td>Builder (card, pyramid options)</td><td>⏳</td><td>use <code>build()</code> or the Python/CLI builders</td></tr>
+</tbody></table>
+<p>For contributors — how the package builds its engine from the crates, the
+sync-XHR bridge, and the release procedure:
+<a href="clients-dev.html">Client development &amp; releases</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -451,7 +325,7 @@ shows the per-source split — no single file has all the answers.</p>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/federation.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/javascript.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

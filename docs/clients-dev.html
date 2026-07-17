@@ -220,6 +220,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Clients</li>
         <li><a href="python.html">Python — rete-graph</a></li>
         <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
+        <li><a href="javascript.html">JavaScript — rete-graph</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -395,6 +396,33 @@ JupyterLite check for releases that touch the reader.</p>
 <p><strong>wasm64 (tracked future work)</strong>: wasm32 caps memory at 4 GiB. Browsers ship
 memory64 now, but Pyodide/emscripten don't build for it yet — when Pyodide
 gains a wasm64 ABI, add its wheel here; nothing in our code assumes 32-bit.</p>
+<h2>The JavaScript client</h2>
+<p><code>clients/js/</code> (npm <code>rete-graph</code>) wraps the <strong>wasm engine built fresh from the
+checked-out crates</strong> — <code>build-wasm.sh</code> runs <code>wasm-pack build crates/rete-wasm --target web</code> into <code>vendor/pkg</code> (gitignored). It deliberately does <em>not</em>
+vendor the committed <code>web/pkg</code> playground artifacts: those follow their own
+build pipeline and have been observed to lag the engine sources (a stale
+artifact rejects newer-format files with <code>header: unsupported version</code>).</p>
+<ul>
+<li><code>build.mjs</code> (esbuild) emits three shapes: <code>dist/index.js</code> (ESM, wasm as a
+lazy-loaded sibling file — bundlers, Node), and the p5.js-style script-tag
+singles <code>dist/rete-graph.js</code> / <code>.min.js</code> (wasm embedded via the <code>binary</code>
+loader, global <code>rete</code>). Node builtins stay <code>external: ["node:*"]</code> behind
+dynamic imports so browser bundles never resolve them.</li>
+<li><strong>Remote opens on Node</strong> go through <code>src/node-sync-xhr.js</code>: a minimal
+<code>XMLHttpRequest</code> implementing exactly the subset <code>web_sys</code> calls, backed by
+fetch in a worker thread + <code>Atomics.wait</code>. Two gotchas encoded in the
+tests: anything the blocked main thread must <em>itself</em> serve deadlocks — the
+test Range server runs in its own worker; and the IIFE's <code>var rete</code> only
+becomes a global under classic-script semantics, so the bundle test loads
+it via <code>vm.runInThisContext</code>, not <code>import</code>.</li>
+<li>CI: <code>js-test.yml</code> (paths-filtered: clients/js + rete-wasm + rete-core) and
+<code>js-client-publish.yml</code> (<code>js-v*</code> tags → npm publish via OIDC trusted
+publishing; configure the publisher on npmjs.com → package → Settings →
+Trusted Publisher: repo <code>caviri/rete</code>, workflow <code>js-client-publish.yml</code>).</li>
+<li>Parity backlog vs Python: Dataset Card + embedded examples (needs a
+<code>card()</code> export in rete-wasm — an engine change, so the playground gate
+applies), custom headers, a Builder.</li>
+</ul>
 <h2>Adding a new language client (R, Go, …)</h2>
 <p>The checklist that made Python work:</p>
 <ol>

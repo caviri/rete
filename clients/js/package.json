@@ -1,0 +1,33 @@
+{
+  "name": "rete-graph",
+  "version": "0.1.0",
+  "description": "Query local and remote .rete graph files with SPARQL — WebAssembly client for browsers and Node.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caviri/rete.git",
+    "directory": "clients/js"
+  },
+  "homepage": "https://caviri.github.io/rete/javascript.html",
+  "keywords": ["rdf", "sparql", "graph", "database", "wasm", "linked-data", "range-requests"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./bundle": "./dist/rete-graph.js",
+    "./bundle.min": "./dist/rete-graph.min.js"
+  },
+  "files": ["dist/", "index.d.ts", "README.md"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "npm run build && node --test --test-timeout=60000 ./test/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

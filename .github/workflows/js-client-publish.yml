@@ -1,0 +1,42 @@
+name: JS client publish
+
+# Release pipeline only: build + test + npm publish on `js-v*` tags.
+# npm's trusted publisher for `rete-graph` points at THIS filename — renaming
+# the file breaks publishing until the npmjs.com form is updated. Day-to-day
+# testing lives in js-test.yml.
+on:
+  push:
+    tags: ["js-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: build + test + publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # OIDC for npm trusted publishing (+ provenance)
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+      # Trusted publishing needs a recent npm CLI.
+      - run: npm install -g npm@latest
+      - name: Build the wasm engine from the checked-out crates
+        run: bash clients/js/build-wasm.sh
+      - name: Build, test, publish
+        working-directory: clients/js
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm publish

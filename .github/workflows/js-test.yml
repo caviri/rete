@@ -1,0 +1,51 @@
+name: JS client tests
+
+# Runs ONLY when the JS client or the wasm engine it vendors changes: build
+# the engine fresh from the crates, build the package, run the Node suite.
+on:
+  push:
+    branches: [main, "release-*"]
+    paths:
+      - "clients/js/**"
+      - "crates/rete-wasm/**"
+      - "crates/rete-core/**"
+      - ".github/workflows/js-test.yml"
+  pull_request:
+    paths:
+      - "clients/js/**"
+      - "crates/rete-wasm/**"
+      - "crates/rete-core/**"
+      - ".github/workflows/js-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: js-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: wasm + npm test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      # The repo's rust-toolchain.toml pins the toolchain + wasm target.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: clients/js/package-lock.json
+      - name: Build the wasm engine from the checked-out crates
+        run: bash clients/js/build-wasm.sh
+      - name: Build the package and run the test suite
+        working-directory: clients/js
+        run: |
+          npm ci --no-audit --no-fund
+          npm test

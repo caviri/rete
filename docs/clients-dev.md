@@ -171,6 +171,35 @@ JupyterLite check for releases that touch the reader.
 memory64 now, but Pyodide/emscripten don't build for it yet — when Pyodide
 gains a wasm64 ABI, add its wheel here; nothing in our code assumes 32-bit.
 
+## The JavaScript client
+
+`clients/js/` (npm `rete-graph`) wraps the **wasm engine built fresh from the
+checked-out crates** — `build-wasm.sh` runs `wasm-pack build crates/rete-wasm
+--target web` into `vendor/pkg` (gitignored). It deliberately does *not*
+vendor the committed `web/pkg` playground artifacts: those follow their own
+build pipeline and have been observed to lag the engine sources (a stale
+artifact rejects newer-format files with `header: unsupported version`).
+
+- `build.mjs` (esbuild) emits three shapes: `dist/index.js` (ESM, wasm as a
+  lazy-loaded sibling file — bundlers, Node), and the p5.js-style script-tag
+  singles `dist/rete-graph.js` / `.min.js` (wasm embedded via the `binary`
+  loader, global `rete`). Node builtins stay `external: ["node:*"]` behind
+  dynamic imports so browser bundles never resolve them.
+- **Remote opens on Node** go through `src/node-sync-xhr.js`: a minimal
+  `XMLHttpRequest` implementing exactly the subset `web_sys` calls, backed by
+  fetch in a worker thread + `Atomics.wait`. Two gotchas encoded in the
+  tests: anything the blocked main thread must *itself* serve deadlocks — the
+  test Range server runs in its own worker; and the IIFE's `var rete` only
+  becomes a global under classic-script semantics, so the bundle test loads
+  it via `vm.runInThisContext`, not `import`.
+- CI: `js-test.yml` (paths-filtered: clients/js + rete-wasm + rete-core) and
+  `js-client-publish.yml` (`js-v*` tags → npm publish via OIDC trusted
+  publishing; configure the publisher on npmjs.com → package → Settings →
+  Trusted Publisher: repo `caviri/rete`, workflow `js-client-publish.yml`).
+- Parity backlog vs Python: Dataset Card + embedded examples (needs a
+  `card()` export in rete-wasm — an engine change, so the playground gate
+  applies), custom headers, a Builder.
+
 ## Adding a new language client (R, Go, …)
 
 The checklist that made Python work:
