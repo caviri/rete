@@ -43,10 +43,16 @@ jobs:
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 45
     strategy:
+      # One platform failing must not cancel the others' wheels.
+      fail-fast: false
       matrix:
         platform:
-          - { name: linux-x86_64, runner: ubuntu-latest, target: x86_64 }
-          - { name: linux-aarch64, runner: ubuntu-latest, target: aarch64 }
+          - { name: linux-x86_64, runner: ubuntu-latest, target: x86_64, manylinux: auto }
+          # ring's pregenerated ARM assembly needs a newer cross-assembler
+          # than manylinux2014 ships (`#error "ARM assembler must define
+          # __ARM_ARCH"`); the 2_28 image's toolchain defines it. Floor is
+          # glibc 2.28 (Debian 10+ / Ubuntu 20.04+) — fine for aarch64.
+          - { name: linux-aarch64, runner: ubuntu-latest, target: aarch64, manylinux: 2_28 }
           - { name: windows-x64, runner: windows-latest, target: x64 }
           - { name: macos-universal2, runner: macos-latest, target: universal2-apple-darwin }
     steps:
@@ -56,7 +62,7 @@ jobs:
           command: build
           target: ${{ matrix.platform.target }}
           args: --release --out dist -m ${{ env.MANIFEST }}
-          manylinux: auto
+          manylinux: ${{ matrix.platform.manylinux || 'auto' }}
       - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.platform.name }}
