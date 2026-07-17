@@ -29,6 +29,7 @@ def main() -> int:
     meta = catalog.get("datasetMeta") or {}
     extra = catalog.get("datasetExtra") or {}
     examples = catalog.get("examples") or {}  # object keyed by dataset
+    shacl = catalog.get("shacl") or {}  # object keyed by dataset
 
     datasets = []
     for d in catalog.get("datasets", []):
@@ -49,6 +50,11 @@ def main() -> int:
                  "reason": e.get("reason"), "sparql": e.get("q")}
                 for e in (examples.get(key) or [])
                 if e.get("q")
+            ],
+            "shacl_shapes": [
+                {"title": s.get("label"), "tip": s.get("tip"), "shape": s.get("shape")}
+                for s in (shacl.get(key) or [])
+                if s.get("shape")
             ],
         }
         if d.get("shards"):

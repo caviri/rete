@@ -179,6 +179,30 @@ g.graph_names()               # named graphs in a dataset
 g.content_hash()              # blake3-16 hex — a stable cache key
 ```
 
+## SHACL validation
+
+From **0.2.2**, validate a graph against SHACL Core shapes written in
+Turtle — data-quality contracts checked in place:
+
+```python
+report = g.shacl("""
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+[] a sh:NodeShape ;
+  sh:targetClass <https://example.org/Person> ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] .
+""")
+report["conforms"]            # True / False
+report["results"]             # one entry per violation (focus node, path, message)
+g.shacl(shapes, format="ttl") # the same report as sh:ValidationReport Turtle
+```
+
+Validation is **lazy-aware**: on a remote graph only the shapes' targets
+are fetched — the index is consulted in place, never the whole file (a
+broad `sh:targetClass` fetches many targets, so scope shapes tightly).
+`graph="<iri>"` validates one named graph instead of the default graph.
+
 ## Browser Python: JupyterLite & marimo WASM {#browser-python-jupyterlite--marimo-wasm}
 
 From version 0.2.0 the release also ships **PyEmscripten (Pyodide) wheels**,
@@ -247,7 +271,7 @@ any CORS-enabled host.
 | Schema profile, prefix & text search | ✅ | `schema()`, `prefix_search()`, `text_search()` |
 | pandas DataFrames | ✅ | `query_df()`, `[pandas]` extra |
 | Browser Python (Pyodide) | ✅ 0.2.0 | JupyterLite / marimo WASM; no SERVICE, sequential fetches |
-| SHACL validation | ⏳ | use the [CLI](cli.md) meanwhile |
+| SHACL validation | ✅ 0.2.2 | `shacl()` — lazy over shape targets |
 | Reachability / communities / provenance (`why`) | ⏳ | planned bindings |
 | Multi-shard federated open | ⏳ | planned |
 | Writes / SPARQL UPDATE | — | `.rete` is immutable; use [`rete serve`](cli.md) |

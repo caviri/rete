@@ -388,6 +388,25 @@ g.quads, g.terms              # header counts, as properties
 g.graph_names()               # named graphs in a dataset
 g.content_hash()              # blake3-16 hex — a stable cache key
 </code></pre>
+<h2>SHACL validation</h2>
+<p>From <strong>0.2.2</strong>, validate a graph against SHACL Core shapes written in
+Turtle — data-quality contracts checked in place:</p>
+<pre><code class="language-python">report = g.shacl("""
+@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
+@prefix rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt; .
+
+[] a sh:NodeShape ;
+  sh:targetClass &lt;https://example.org/Person&gt; ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] .
+""")
+report["conforms"]            # True / False
+report["results"]             # one entry per violation (focus node, path, message)
+g.shacl(shapes, format="ttl") # the same report as sh:ValidationReport Turtle
+</code></pre>
+<p>Validation is <strong>lazy-aware</strong>: on a remote graph only the shapes' targets
+are fetched — the index is consulted in place, never the whole file (a
+broad <code>sh:targetClass</code> fetches many targets, so scope shapes tightly).
+<code>graph="&lt;iri&gt;"</code> validates one named graph instead of the default graph.</p>
 <h2 id="browser-python-jupyterlite--marimo-wasm">Browser Python: JupyterLite &amp; marimo WASM</h2>
 <p>From version 0.2.0 the release also ships <strong>PyEmscripten (Pyodide) wheels</strong>,
 so the client runs inside browser Pythons — a JupyterLite site, marimo's WASM
@@ -446,7 +465,7 @@ input, <code>RuntimeError</code> for I/O and format problems.</li>
 <tr><td>Schema profile, prefix &amp; text search</td><td>✅</td><td><code>schema()</code>, <code>prefix_search()</code>, <code>text_search()</code></td></tr>
 <tr><td>pandas DataFrames</td><td>✅</td><td><code>query_df()</code>, <code>[pandas]</code> extra</td></tr>
 <tr><td>Browser Python (Pyodide)</td><td>✅ 0.2.0</td><td>JupyterLite / marimo WASM; no SERVICE, sequential fetches</td></tr>
-<tr><td>SHACL validation</td><td>⏳</td><td>use the <a href="cli.html">CLI</a> meanwhile</td></tr>
+<tr><td>SHACL validation</td><td>✅ 0.2.2</td><td><code>shacl()</code> — lazy over shape targets</td></tr>
 <tr><td>Reachability / communities / provenance (<code>why</code>)</td><td>⏳</td><td>planned bindings</td></tr>
 <tr><td>Multi-shard federated open</td><td>⏳</td><td>planned</td></tr>
 <tr><td>Writes / SPARQL UPDATE</td><td>—</td><td><code>.rete</code> is immutable; use <a href="cli.html"><code>rete serve</code></a></td></tr>

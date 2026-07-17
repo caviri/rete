@@ -21,6 +21,7 @@ class DatasetSummary(BaseModel):
     label: Optional[str] = None
     description: Optional[str] = None
     url: Optional[str] = Field(None, description="Range-readable .rete URL (also usable in any rete client)")
+    sparql_endpoint: Optional[str] = Field(None, description="SPARQL 1.1 Protocol endpoint for this dataset (relative)")
     shards: Optional[List[str]] = Field(None, description="Sharded datasets: query one shard by url")
     triples: Optional[Any] = Field(None, description="Triple count (number or human-readable string)")
     size: Optional[Any] = None
@@ -80,9 +81,15 @@ def _wrap(fn, *args, **kwargs):
 @router.get("/datasets", response_model=List[DatasetSummary])
 def list_datasets():
     """All published .rete datasets (plus local files under /data), with the
-    direct range-readable URL each one is served from."""
-    return [DatasetSummary(**{k: v for k, v in d.items() if k in DatasetSummary.model_fields})
-            for d in svc.load_catalog()]
+    direct range-readable URL each one is served from and its standard
+    SPARQL 1.1 Protocol endpoint."""
+    out = []
+    for d in svc.load_catalog():
+        row = {k: v for k, v in d.items() if k in DatasetSummary.model_fields}
+        if not d.get("shards"):
+            row["sparql_endpoint"] = f"/sparql/{d['key']}"
+        out.append(DatasetSummary(**row))
+    return out
 
 
 @router.get("/datasets/{key:path}/card")
@@ -115,6 +122,29 @@ def search_entities(key: str, q: str, limit: int = 20):
     """Find entities by label prefix and (when the file carries a text index)
     full-text word search."""
     return _wrap(svc.entity_search, q, key, min(limit, 100))
+
+
+@router.get("/datasets/{key:path}/shapes")
+def get_shapes(key: str):
+    """Curated example SHACL shapes for a dataset (from the published
+    catalog) — each entry's `shape` validates as-is via POST /api/shacl."""
+    return _wrap(svc.shacl_shapes, key)
+
+
+class ShaclRequest(BaseModel):
+    dataset: Optional[str] = Field(None, description="Catalog key")
+    url: Optional[str] = Field(None, description="Any range-readable .rete URL (alternative to dataset)")
+    shapes: str = Field(..., description="SHACL Core shapes, Turtle")
+    graph: Optional[str] = Field(None, description="Validate one named graph instead of the default graph")
+    format: str = Field("json", description="'json' (report as object) or 'ttl' (report as Turtle)")
+
+
+@router.post("/shacl")
+def post_shacl(req: ShaclRequest):
+    """Validate a dataset against SHACL Core shapes. Lazy: over the default
+    graph only the shapes' targets are fetched — validation reads the index
+    in place, never the whole file."""
+    return _wrap(svc.shacl_validate, req.dataset, req.url, req.shapes, req.graph, req.format)
 
 
 @router.get("/datasets/{key:path}")

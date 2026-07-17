@@ -97,6 +97,43 @@ def test_open_custom_reader(rete_bytes):
     assert r.calls >= 1
 
 
+SHAPES_PREFIX = """\
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+"""
+
+
+def test_shacl_validation(rete_bytes, serve_bytes):
+    g = rete.open(rete_bytes)
+
+    labeled = SHAPES_PREFIX + """
+ex:PersonShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] .
+"""
+    report = g.shacl(labeled)
+    assert report["conforms"] is True
+    assert report["results"] == []
+
+    emailed = SHAPES_PREFIX + """
+ex:PersonShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:email ; sh:minCount 1 ] .
+"""
+    report = g.shacl(emailed)
+    assert report["conforms"] is False
+    assert len(report["results"]) == 2  # alice and bob both lack ex:email
+
+    ttl = g.shacl(emailed, format="ttl")
+    assert "ValidationReport" in ttl
+
+    # Lazy path: same verdicts over HTTP range reads.
+    remote = rete.open(serve_bytes(rete_bytes))
+    assert remote.shacl(labeled)["conforms"] is True
+    assert remote.shacl(emailed)["conforms"] is False
+
+
 def test_schema_and_search(rete_bytes):
     g = rete.open(rete_bytes)
     classes = dict(g.schema()["classes"])

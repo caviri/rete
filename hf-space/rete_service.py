@@ -402,6 +402,33 @@ def dataset_examples(dataset: str) -> List[Dict[str, Any]]:
     return entry.get("examples") or []
 
 
+def shacl_validate(dataset: Optional[str], url: Optional[str], shapes: str,
+                   graph: Optional[str] = None, format: str = "json") -> Dict[str, Any]:
+    """Validate a dataset against SHACL Core shapes (Turtle text).
+
+    Lazy-aware: over the default graph only the shapes' targets are fetched.
+    Returns ``{"report": …, "stats": …}`` — report is a dict for json,
+    a Turtle string for ttl.
+    """
+    source, entry = resolve_source(dataset, url)
+    handle = get_handle(source)
+    started = time.time()
+    with handle.lock:
+        out = handle.graph.shacl(shapes, graph=graph, format=format)
+    return {
+        "dataset": entry.get("key"),
+        "elapsed_seconds": round(time.time() - started, 3),
+        "report": out,
+        "stats": handle_stats(handle),
+    }
+
+
+def shacl_shapes(dataset: str) -> List[Dict[str, Any]]:
+    """Curated example shapes for a dataset (from the published catalog)."""
+    _, entry = resolve_source(dataset, None)
+    return entry.get("shacl_shapes") or []
+
+
 def entity_search(text: str, dataset: str, limit: int = 20) -> List[Dict[str, Any]]:
     """Label prefix search plus full-text (when the file has a text index)."""
     source, _ = resolve_source(dataset, None)

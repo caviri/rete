@@ -39,9 +39,14 @@ Recommended workflow:
    entailment on ontology-bearing datasets.
 6. `find_entities(dataset, text)` — resolve a name to entity IRIs first when
    a question mentions a specific thing.
+7. `validate_shacl(dataset, shapes)` — data-quality checks: validate SHACL
+   Core shapes (Turtle) against the graph; `shacl_shapes(dataset)` lists
+   curated example shapes that run as-is.
 
 Every result carries `stats` (bytes/requests actually fetched) — with lazy
-range reads a good query touches a tiny fraction of the file.
+range reads a good query touches a tiny fraction of the file. Each dataset
+is also a standard SPARQL 1.1 Protocol endpoint at `/sparql/<key>` for any
+non-MCP client or federated SERVICE clause.
 """
 
 mcp = FastMCP(name="rete-graphs", instructions=INSTRUCTIONS)
@@ -106,6 +111,26 @@ def describe_entity(dataset: str, iri: str) -> Dict[str, Any]:
     """Everything the graph says about one entity IRI (DESCRIBE): all triples
     with it as subject, in N-Triples token form."""
     return svc.describe_entity(dataset, iri)
+
+
+@mcp.tool
+def validate_shacl(dataset: Optional[str] = None, shapes: str = "",
+                   url: Optional[str] = None, graph: Optional[str] = None) -> Dict[str, Any]:
+    """Validate a dataset against SHACL Core shapes written in Turtle —
+    data-quality and integrity checks (cardinalities, datatypes, required
+    properties…). Lazy: only the shapes' targets are fetched. Returns the
+    W3C-style validation report ({conforms, results}) plus fetch stats.
+    Use shacl_shapes first for curated, known-good shapes."""
+    return svc.shacl_validate(dataset, url, shapes, graph, "json")
+
+
+@mcp.tool
+def shacl_shapes(dataset: str) -> List[Dict[str, Any]]:
+    """Curated example SHACL shapes for a dataset (title, tip, and the
+    Turtle `shape`). Each shape validates as-is via validate_shacl — the
+    fastest way to see what data-quality contracts a graph is meant to
+    uphold."""
+    return svc.shacl_shapes(dataset)
 
 
 # --------------------------------------------------------------------------- #

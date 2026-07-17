@@ -212,6 +212,22 @@ class Graph:
         }
         return pandas.DataFrame(data, columns=vars_)
 
+    # -- validation --------------------------------------------------------
+
+    def shacl(
+        self, shapes: str, *, graph: Optional[str] = None, format: str = "json"
+    ) -> Union[Dict[str, Any], str]:
+        """Validate the graph against SHACL Core shapes written in Turtle.
+
+        Returns the validation report as a dict (``format="json"``, default)
+        or as a Turtle string (``format="ttl"``). Lazy-aware: on a remote
+        graph only the shapes' targets are fetched — validation reads the
+        index in place, never the whole file. A named ``graph`` view
+        materializes that graph first.
+        """
+        out = self._g.shacl(shapes, graph=graph, format=format)
+        return json.loads(out) if format == "json" else out
+
     # -- search & overview -------------------------------------------------
 
     def prefix_search(self, prefix: str, limit: int = 20) -> List[Tuple[str, str]]:

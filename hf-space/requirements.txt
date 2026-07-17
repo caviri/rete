@@ -3,6 +3,6 @@ uvicorn[standard]
 anyio
 httpx
 pydantic>=2
-rete-graph>=0.2.1
+rete-graph>=0.2.2
 fastmcp>=2.3
 pydantic-ai-slim[openai,anthropic]

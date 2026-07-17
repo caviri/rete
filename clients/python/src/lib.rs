@@ -18,7 +18,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use rete_core::{
     eval_query, eval_query_reasoned, results_envelope_json, schema_classes, schema_summary,
-    BlockCacheReader, CountingReader, RangeReader, Rete, DEFAULT_BLOCK,
+    validate_shacl, BlockCacheReader, CountingReader, DataGraph, RangeReader, Rete, ReteGraph,
+    ShaclShapes, DEFAULT_BLOCK,
 };
 #[cfg(not(target_os = "emscripten"))]
 use rete_core::{parse_sparql_json_results, Binding, ServiceClient};
@@ -130,6 +131,38 @@ impl Graph {
 
 #[pymethods]
 impl Graph {
+    /// Validate the graph against SHACL Core shapes written in Turtle.
+    /// Lazy-aware: over the default graph only the shapes' targets are
+    /// fetched (the index is consulted in place); a named `graph` view
+    /// materializes that graph first. `format` is "json" (default) or "ttl".
+    #[pyo3(signature = (shapes_turtle, *, graph=None, format="json"))]
+    fn shacl(
+        &self,
+        py: Python<'_>,
+        shapes_turtle: &str,
+        graph: Option<&str>,
+        format: &str,
+    ) -> PyResult<String> {
+        let out = py
+            .allow_threads(|| -> Result<String, String> {
+                let shapes =
+                    ShaclShapes::parse_turtle(shapes_turtle).map_err(|e| e.to_string())?;
+                let report = match graph {
+                    None => validate_shacl(&ReteGraph::new(&self.rete), &shapes),
+                    Some(g) => {
+                        validate_shacl(&DataGraph::from_rete(&self.rete, Some(g)), &shapes)
+                    }
+                };
+                Ok(match format {
+                    "ttl" => report.to_turtle(),
+                    _ => report.to_json(),
+                })
+            })
+            .map_err(PyRuntimeError::new_err)?;
+        self.incomplete_guard()?;
+        Ok(out)
+    }
+
     /// Run a SPARQL query (SELECT / ASK / CONSTRUCT / DESCRIBE). Returns the
     /// JSON envelope `{"kind": "select", "vars": [...], "rows": [...]}` etc.;
     /// the Python wrapper parses it into values. `reason=True` turns on OWL 2

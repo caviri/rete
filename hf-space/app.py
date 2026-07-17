@@ -44,6 +44,7 @@ from starlette.responses import StreamingResponse
 
 from rete_api import router as api_router
 from rete_mcp import mcp as mcp_server
+from rete_sparql import router as sparql_router
 
 DATA_DIR = Path(os.environ.get("DATA_DIR") or ("/data" if Path("/data").is_dir() else "data")).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -254,6 +255,7 @@ app.add_middleware(
     max_age=86400,
 )
 app.include_router(api_router)
+app.include_router(sparql_router)
 app.mount("/mcp", _mcp_app)
 
 

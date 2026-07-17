@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "rete-graph"
-version = "0.2.1"
+version = "0.2.2"
 description = "Query local and remote .rete graph files with SPARQL — Python bindings for the rete engine."
 readme = "README.md"
 requires-python = ">=3.9"
