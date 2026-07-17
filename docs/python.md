@@ -187,19 +187,18 @@ playground — with no server anywhere. **Try it right now** in the
 [JupyterLite experiment](jupyterlite-guide.md) bundled with these docs.
 
 ```python
-# JupyterLite / Pyodide 0.29 (Python 3.13)
-%pip install https://data.graphplaza.com/wheels/rete_graph-0.2.0-cp39-abi3-pyodide_2025_0_wasm32.whl
+# JupyterLite / Pyodide 314 (Python 3.14) — needs rete-graph >= 0.2.1
+%pip install rete-graph
 
 import rete_graph as rete
 g = rete.open("https://data.graphplaza.com/boe/boe.rete")
 g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
 ```
 
-(The URL install is a transition-window workaround: PyPI requires the new
-PEP 783 wheel-tag spelling, which Pyodide 0.29's installer doesn't recognize
-yet — the hosted wheel is byte-identical to the PyPI one, just retagged. Once
-your runtime's installer understands `pyemscripten` tags, a plain
-`%pip install rete-graph` resolves from PyPI.)
+(On the older Pyodide 0.29, whose installer predates the PEP 783 wheel-tag
+spelling PyPI requires, install the byte-identical retagged wheel by URL
+instead: `%pip install
+https://data.graphplaza.com/wheels/rete_graph-0.2.0-cp39-abi3-pyodide_2025_0_wasm32.whl`.)
 
 Under the hood, remote reads use synchronous `XMLHttpRequest` range requests —
 allowed only in **web workers**, which is where JupyterLite and marimo run

@@ -391,18 +391,16 @@ g.content_hash()              # blake3-16 hex — a stable cache key
 so the client runs inside browser Pythons — a JupyterLite site, marimo's WASM
 playground — with no server anywhere. <strong>Try it right now</strong> in the
 <a href="jupyterlite-guide.html">JupyterLite experiment</a> bundled with these docs.</p>
-<pre><code class="language-python"># JupyterLite / Pyodide 0.29 (Python 3.13)
-%pip install https://data.graphplaza.com/wheels/rete_graph-0.2.0-cp39-abi3-pyodide_2025_0_wasm32.whl
+<pre><code class="language-python"># JupyterLite / Pyodide 314 (Python 3.14) — needs rete-graph &gt;= 0.2.1
+%pip install rete-graph
 
 import rete_graph as rete
 g = rete.open("https://data.graphplaza.com/boe/boe.rete")
 g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
 </code></pre>
-<p>(The URL install is a transition-window workaround: PyPI requires the new
-PEP 783 wheel-tag spelling, which Pyodide 0.29's installer doesn't recognize
-yet — the hosted wheel is byte-identical to the PyPI one, just retagged. Once
-your runtime's installer understands <code>pyemscripten</code> tags, a plain
-<code>%pip install rete-graph</code> resolves from PyPI.)</p>
+<p>(On the older Pyodide 0.29, whose installer predates the PEP 783 wheel-tag
+spelling PyPI requires, install the byte-identical retagged wheel by URL
+instead: <code>%pip install https://data.graphplaza.com/wheels/rete_graph-0.2.0-cp39-abi3-pyodide_2025_0_wasm32.whl</code>.)</p>
 <p>Under the hood, remote reads use synchronous <code>XMLHttpRequest</code> range requests —
 allowed only in <strong>web workers</strong>, which is where JupyterLite and marimo run
 their kernels, so it just works there. The file's host must send CORS headers

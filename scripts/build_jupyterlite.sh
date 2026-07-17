@@ -1,12 +1,11 @@
 #!/bin/bash
 set -euo pipefail
-# Kernel PINNED to the 0.7 line: it ships Pyodide 0.29.x (Python 3.13), the
-# runtime our pyemscripten_2025_0 wheel is built and smoke-tested against.
-# The 0.8 kernel ships Pyodide 314 (Python 3.14), whose toolchain is stable
-# Rust + Emscripten 5 — our cp314 wheel needs a per-target build before this
-# pin can move (symptom otherwise: "cannot resolve symbol invoke_i" at
-# import). See docs/clients-dev.md.
-pip install -q "jupyterlite-core==0.7.*" "jupyterlite-pyodide-kernel==0.7.2" jupyter-server
+# Kernel 0.8.x ships Pyodide 314 (Python 3.14): its installer understands the
+# PEP 783 pyemscripten wheel tags, so `%pip install rete-graph` resolves from
+# PyPI directly — requires rete-graph >= 0.2.1 (the 0.2.0 cp314 wheel had a
+# wrong-toolchain EH ABI: "cannot resolve symbol invoke_i" at import).
+# See docs/clients-dev.md for the per-generation toolchain story.
+pip install -q "jupyterlite-core==0.8.*" "jupyterlite-pyodide-kernel==0.8.2" jupyter-server
 pip show jupyterlite-core jupyterlite-pyodide-kernel | grep -E "^(Name|Version)"
 python - <<'EOF'
 import json, pathlib, jupyterlite_pyodide_kernel as k

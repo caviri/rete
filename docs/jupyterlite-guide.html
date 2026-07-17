@@ -258,9 +258,8 @@ the stack — not even for Python itself.</p>
 <p>The bundled notebook, <code>rete-graph.ipynb</code>, walks through the whole client with
 explanations between the cells:</p>
 <ol>
-<li>install the client — the same wheel published to PyPI, fetched from the
-project bucket while Pyodide's installer finishes its PEP 783 wheel-tag
-transition;</li>
+<li><code>%pip install rete-graph pandas</code> — the PyEmscripten wheel resolves
+straight from PyPI;</li>
 <li><strong>open the BOE legal graph lazily</strong> (447k triples, 6.9 MB on Cloudflare
 R2) and watch <code>stats()</code> count how few bytes the open actually fetched;</li>
 <li><strong>SPARQL → pandas</strong> — <code>query_df()</code> renders results as real DataFrame
