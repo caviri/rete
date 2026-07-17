@@ -49,3 +49,6 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm test
+      - name: Stage-publish (dry run) — validate the tarball without publishing
+        working-directory: clients/js
+        run: npm publish --dry-run
