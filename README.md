@@ -56,6 +56,18 @@ WebAssembly, so a **browser can query the file directly with no backend**.
   **[interactive playground](https://caviri.github.io/rete/playground.html)** is
   a single offline HTML page.
 
+## Clients
+
+One engine, three languages — every client opens local files *and* remote URLs
+(lazy HTTP range reads) and returns parsed SPARQL results:
+
+| Client | Get it | Notes |
+|---|---|---|
+| **Python** [![PyPI](https://img.shields.io/pypi/v/rete-graph?label=rete-graph)](https://pypi.org/project/rete-graph/) | `pip install rete-graph` | CPython ≥ 3.9 wheels for Linux/macOS/Windows **plus Pyodide** (JupyterLite, marimo WASM) · [docs](https://caviri.github.io/rete/python.html) · [tutorial](https://caviri.github.io/rete/python-build-tutorial.html) |
+| **JavaScript** [![npm](https://img.shields.io/npm/v/rete-graph?label=rete-graph)](https://www.npmjs.com/package/rete-graph) | `npm install rete-graph` — or one `<script>` tag: `cdn.jsdelivr.net/npm/rete-graph/dist/rete-graph.min.js` | Node ≥ 18 + browsers; TypeScript types included · [docs](https://caviri.github.io/rete/javascript.html) |
+| **Rust** | `rete-core` / `rete-cli` in this repo (crates.io release pending) | native + wasm · [Rust API](https://caviri.github.io/rete/rust-api.html) · [CLI reference](https://caviri.github.io/rete/cli.html) |
+| **Browser, zero install** | [playground](https://caviri.github.io/rete/playground.html) · [SPARQL IDE](https://caviri.github.io/rete/yasgui.html) | query any `.rete` URL with no install at all |
+
 ## Self-describing & semantic zoom
 
 Open a `.rete` you've never seen and the **cold-start problem** bites: which

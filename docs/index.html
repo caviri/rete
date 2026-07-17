@@ -288,6 +288,15 @@ rete query-url https://my-bucket.s3.amazonaws.com/social.rete --object '&lt;http
 rete summary social.rete    # structural (Louvain communities)
 rete schema  social.rete    # semantic (by rdf:type)
 </code></pre>
+<h2>Clients</h2>
+<p>The same engine, in your language of choice — every client opens local files
+<em>and</em> remote URLs (lazy HTTP range reads) and returns parsed SPARQL results:</p>
+<table><thead><tr><th>Client</th><th>Get it</th><th>Runs on</th><th>Docs</th></tr></thead><tbody>
+<tr><td><strong>Python</strong> — <a href="https://pypi.org/project/rete-graph/"><code>rete-graph</code> on PyPI</a></td><td><code>pip install rete-graph</code></td><td>CPython ≥ 3.9 everywhere, plus <strong>Pyodide</strong> (JupyterLite, marimo WASM)</td><td><a href="python.html">Python API</a> · <a href="python-build-tutorial.html">build tutorial</a></td></tr>
+<tr><td><strong>JavaScript</strong> — <a href="https://www.npmjs.com/package/rete-graph"><code>rete-graph</code> on npm</a></td><td><code>npm install rete-graph</code>, or one <a href="javascript.html"><code>&lt;script&gt;</code> tag via CDN</a></td><td>Node ≥ 18, browsers (bundlers or script-tag)</td><td><a href="javascript.html">JavaScript API</a></td></tr>
+<tr><td><strong>Rust</strong> — <code>rete-core</code> / <code>rete-cli</code> (in this repo; crates.io release pending)</td><td><code>cargo add rete-core --git https://github.com/caviri/rete</code></td><td>anywhere Rust runs — native + wasm</td><td><a href="rust-api.html">Rust API</a> · <a href="cli.html">CLI</a></td></tr>
+<tr><td><strong>Browser, zero install</strong></td><td>—</td><td>any modern browser</td><td><a href="playground-guide.html">Playground</a> · <a href="yasgui-guide.html">SPARQL IDE</a></td></tr>
+</tbody></table>
 <h2>Documentation</h2>
 <h3>Start here</h3>
 <ul>

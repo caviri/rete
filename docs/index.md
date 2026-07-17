@@ -51,6 +51,18 @@ rete summary social.rete    # structural (Louvain communities)
 rete schema  social.rete    # semantic (by rdf:type)
 ```
 
+## Clients
+
+The same engine, in your language of choice — every client opens local files
+*and* remote URLs (lazy HTTP range reads) and returns parsed SPARQL results:
+
+| Client | Get it | Runs on | Docs |
+|---|---|---|---|
+| **Python** — [`rete-graph` on PyPI](https://pypi.org/project/rete-graph/) | `pip install rete-graph` | CPython ≥ 3.9 everywhere, plus **Pyodide** (JupyterLite, marimo WASM) | [Python API](python.md) · [build tutorial](python-build-tutorial.md) |
+| **JavaScript** — [`rete-graph` on npm](https://www.npmjs.com/package/rete-graph) | `npm install rete-graph`, or one [`<script>` tag via CDN](javascript.md) | Node ≥ 18, browsers (bundlers or script-tag) | [JavaScript API](javascript.md) |
+| **Rust** — `rete-core` / `rete-cli` (in this repo; crates.io release pending) | `cargo add rete-core --git https://github.com/caviri/rete` | anywhere Rust runs — native + wasm | [Rust API](rust-api.md) · [CLI](cli.md) |
+| **Browser, zero install** | — | any modern browser | [Playground](playground-guide.md) · [SPARQL IDE](yasgui-guide.md) |
+
 ## Documentation
 
 ### Start here
