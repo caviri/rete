@@ -18,8 +18,69 @@ env:
   RETE_DEV_ARTIFACT: rete-dev-image
 
 jobs:
+  # Detect which modules a change touches, so pushes and PRs only pay for
+  # the jobs they can affect (workflow_dispatch still forces a full run).
+  # The clients have their own paths-filtered workflows; this covers the
+  # crates / browser-artifact / docs split inside the main CI.
+  changes:
+    name: detect affected modules
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      wasm: ${{ steps.filter.outputs.wasm }}
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'deny.toml'
+              - 'scripts/release_check.sh'
+              - 'scripts/coverage.sh'
+              - '.devcontainer/**'
+              - '.github/workflows/ci.yml'
+            wasm:
+              - 'crates/**'
+              - 'web/**'
+              - 'tests/gate/**'
+              - 'scripts/build_wasm.sh'
+              - 'scripts/build_playground.py'
+              - 'scripts/build_playground_async.sh'
+              - 'scripts/stage_playground_datasets.py'
+              - 'docs/playground.html'
+              - 'docs/explore-100mb.html'
+              - 'docs/rete_wasm.js'
+              - 'docs/rete_wasm_bg.wasm'
+              - 'docs/rete_wasm_async.js'
+              - 'docs/rete_wasm_async.wasm'
+              - 'docs/wasm-build.json'
+              - 'docs/coi-serviceworker.js'
+              - '.devcontainer/**'
+              - '.github/workflows/ci.yml'
+            docs:
+              - 'docs/**'
+              - 'scripts/check_docs_links.py'
+              - '.devcontainer/**'
+              - '.github/workflows/ci.yml'
+
   image:
     name: pinned development image
+    needs: changes
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.rust == 'true' ||
+      needs.changes.outputs.wasm == 'true' ||
+      needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
@@ -48,7 +109,8 @@ jobs:
 
   quality:
     name: quality
-    needs: image
+    needs: [changes, image]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -68,6 +130,8 @@ jobs:
 
   msrv:
     name: msrv
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -81,7 +145,8 @@ jobs:
 
   security:
     name: security
-    needs: image
+    needs: [changes, image]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -100,7 +165,8 @@ jobs:
 
   wasm:
     name: wasm
-    needs: image
+    needs: [changes, image]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.wasm == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -148,7 +214,8 @@ jobs:
 
   coverage:
     name: coverage
-    needs: image
+    needs: [changes, image]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -194,7 +261,8 @@ jobs:
 
   package:
     name: package
-    needs: image
+    needs: [changes, image]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -214,7 +282,12 @@ jobs:
 
   docs:
     name: docs
-    needs: image
+    # Rust changes matter here too: rustdoc + docgen live in crates/.
+    needs: [changes, image]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.docs == 'true' ||
+      needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -234,10 +307,13 @@ jobs:
 
   preview:
     name: playground preview artifact
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == 'caviri/rete'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == 'caviri/rete' &&
+      needs.changes.outputs.wasm == 'true'
     permissions:
       contents: read
-    needs: image
+    needs: [changes, image]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
