@@ -16,7 +16,8 @@ One FastAPI app (Hugging Face Space, Docker SDK), three planes:
 | Plane | Routes | What |
 |---|---|---|
 | **Bytes** | `/data/…`, `/files` | The original project-agnostic gateway: HTTP Range (`206`) + permissive CORS over everything under `/data`. |
-| **SPARQL** | `/api/…` (+ `/docs`) | On-demand queries over the published `.rete` catalog or any range-readable URL. Lazy by default; fetched blocks persist in a disk cache. |
+| **SPARQL (REST)** | `/api/…` (+ `/docs`) | On-demand queries over the published `.rete` catalog or any range-readable URL. Lazy by default; fetched blocks persist in a disk cache. |
+| **SPARQL 1.1 Protocol** | `/sparql/{dataset}` | One **standard W3C endpoint per dataset** — rdflib/SPARQLWrapper, Jena, YASGUI, or a federated `SERVICE <…>` clause talk to it unmodified. |
 | **MCP** | `/mcp` | FastMCP server (streamable HTTP) exposing the same surface as tools for LLM apps — Claude, ChatGPT (`search`/`fetch` follow the connector contract), anything MCP. |
 
 ## The SPARQL plane
@@ -45,12 +46,48 @@ restarted Space answers warm queries with **zero** network reads. Resident
 graph handles (an LRU of `RETE_MAX_HANDLES`) additionally keep decoded
 dictionary chunks and index tiles in RAM.
 
+## The SPARQL 1.1 Protocol plane
+
+Every non-sharded dataset is a spec-conformant endpoint:
+
+```sh
+# GET form; result is application/sparql-results+json (W3C shape)
+curl -s "https://<space>/sparql/boe?query=SELECT%20*%20WHERE%20%7B%3Fs%20%3Fp%20%3Fo%7D%20LIMIT%203"
+
+# Both POST forms work; CONSTRUCT/DESCRIBE answer N-Triples
+curl -s -X POST https://<space>/sparql/boe --data-urlencode "query=ASK { ?s ?p ?o }"
+
+# Without ?query=: the sd: service description (Turtle)
+curl -s https://<space>/sparql/boe
+```
+
+```python
+from SPARQLWrapper import SPARQLWrapper, JSON     # any standard client
+sw = SPARQLWrapper("https://<space>/sparql/boe")
+```
+
+Each entry in `/api/datasets` carries its `sparql_endpoint`.
+
+## SHACL validation
+
+```sh
+curl -s https://<space>/api/datasets/causenet/shapes   # curated shapes, run as-is
+curl -s -X POST https://<space>/api/shacl \
+  -H 'content-type: application/json' \
+  -d '{"dataset": "causenet", "shapes": "@prefix sh: <http://www.w3.org/ns/shacl#> . …"}'
+```
+
+Validation is **lazy**: only the shapes' targets are fetched (a broad
+`sh:targetClass` fetches many targets — scope shapes tightly). The report
+comes back as `{conforms, results}` (or Turtle with `"format": "ttl"`).
+
 ## The MCP plane
 
 Point any MCP client at `https://<space>/mcp/` (streamable HTTP, stateless,
 no auth). Tools: `list_datasets`, `dataset_card`, `dataset_schema`,
-`example_queries`, `sparql_query`, `find_entities`, `describe_entity`, plus
-`search`/`fetch` following the ChatGPT connector contract. The server
+`example_queries`, `sparql_query`, `find_entities`, `describe_entity`,
+`validate_shacl`, `shacl_shapes`, plus `search`/`fetch` following the
+ChatGPT connector contract. The server
 instructions teach the workflow (card → schema → examples → query), so an
 agent needs no out-of-band documentation — `.rete` files are self-describing.
 
