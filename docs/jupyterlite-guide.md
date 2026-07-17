@@ -13,7 +13,9 @@ the stack — not even for Python itself.
 The bundled notebook, `rete-graph.ipynb`, walks through the whole client with
 explanations between the cells:
 
-1. `%pip install rete-graph pandas` — the wheel comes straight from PyPI;
+1. install the client — the same wheel published to PyPI, fetched from the
+   project bucket while Pyodide's installer finishes its PEP 783 wheel-tag
+   transition;
 2. **open the BOE legal graph lazily** (447k triples, 6.9 MB on Cloudflare
    R2) and watch `stats()` count how few bytes the open actually fetched;
 3. **SPARQL → pandas** — `query_df()` renders results as real DataFrame
