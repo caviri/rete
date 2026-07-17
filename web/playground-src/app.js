@@ -16,6 +16,16 @@
       return /iP(hone|od|ad)/.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1);
     } catch (e) { return false; }
   })();
+  // Firefox/Gecko: the asyncified wasm traps mid-query on LARGE remote graphs
+  // (the deep suspend/rewind that big-graph evaluation drives — small files are
+  // fine, Chromium is fine, and the same queries pass on the sync reader).
+  // Diagnosed 2026-07-17 on gotriple / zenodo-records / wikidata-ontology.
+  const IS_GECKO = (() => {
+    try {
+      const ua = navigator.userAgent || "";
+      return /firefox\//i.test(ua) || (/gecko\/\d/i.test(ua) && !/like gecko/i.test(ua));
+    } catch (e) { return false; }
+  })();
   const state = {
     bytes: null,
     dataset: CATALOG.defaultDataset,
@@ -49,18 +59,20 @@
     rangeCacheOn: (() => { try { return localStorage.getItem("rangeCacheOn") === "1"; } catch (e) { return false; } })(),
     // Asyncify concurrent reads: the asyncified wasm variant fetches each remote
     // query's byte ranges in parallel (Promise.all of fetch), no cross-origin
-    // isolation — much faster, but it TRAPS on iOS/iPadOS JSC (see IS_IOS above).
-    // So: an explicit localStorage choice wins ("1"/"0"); otherwise default OFF on
-    // iOS (use the reliable sync reader) and ON everywhere else. The Settings
-    // "Concurrent reads" toggle sets the localStorage override. The async wasm
-    // (~8 MB) is fetched only when a REMOTE query runs with this ON.
+    // isolation — much faster, but it TRAPS on iOS/iPadOS JSC (see IS_IOS) and
+    // on Firefox/Gecko with large graphs (see IS_GECKO). So: an explicit
+    // localStorage choice wins ("1"/"0"); otherwise default OFF on iOS and
+    // Firefox (the reliable sync reader) and ON in Chromium-family browsers.
+    // The Settings "Concurrent reads" toggle sets the localStorage override.
+    // The async wasm (~8 MB) is fetched only when a REMOTE query runs with
+    // this ON.
     asyncReadsOn: (() => {
       try {
         const v = localStorage.getItem("asyncReadsOn");
         if (v === "1") return true;
         if (v === "0") return false;
-        return !IS_IOS;
-      } catch (e) { return !IS_IOS; }
+        return !IS_IOS && !IS_GECKO;
+      } catch (e) { return !(IS_IOS || IS_GECKO); }
     })(),
     // Map view: which slippy-tile basemap sits behind the geometry ("none" =
     // the offline equirectangular vectors). localStorage-backed so it persists.
@@ -2001,11 +2013,16 @@ self.onmessage = function (e) {
     const t = $("asyncReadsToggle"); if (t) t.checked = !!state.asyncReadsOn;
     const info = $("asyncReadsInfo");
     if (!info) return;
+    const fragileBrowser = IS_IOS
+      ? "iPhone/iPad (Safari's WebAssembly engine)"
+      : IS_GECKO
+        ? "Firefox (its WebAssembly engine traps on large graphs)"
+        : "";
     info.innerHTML = state.asyncReadsOn
       ? "<b>On</b> — each remote query fetches its byte ranges concurrently (the asyncify wasm). Faster on the big/lazy datasets." +
-        (IS_IOS ? " <b>On iPhone/iPad this can crash a query</b> (Safari's WebAssembly engine); if a remote query fails, turn this off." : "")
+        (fragileBrowser ? ` <b>On ${fragileBrowser} this can crash a query</b>; if a remote query fails, turn this off.` : "")
       : "<b>Off</b> — remote reads are sequential on the plain wasm (the same engine cached datasets use)." +
-        (IS_IOS ? " Recommended on iPhone/iPad — it avoids the Safari WebAssembly crash the concurrent reader can hit." : " Turn on for faster reads on a desktop browser.");
+        (fragileBrowser ? ` Recommended on ${fragileBrowser} — it avoids the crash the concurrent reader can hit.` : " Turn on for faster reads on a desktop browser.");
   }
 
   // ── SPARQL assistant: an in-browser WebGPU LLM (Transformers.js) ───────────
