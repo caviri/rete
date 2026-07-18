@@ -13,18 +13,58 @@ The tools involved: `suggest_vocabulary` → `check_ontology` → `build_rete`
 ## The scenario
 
 Someone sends a voice note of a budget debate. The host app (ChatGPT does
-this natively) transcribes it:
+this natively) transcribes it. This is the input to everything below — the
+same shape you would use in a fine-tuning dataset or hand to the agent
+directly:
 
-> **Bruno:** We should raise the maintenance budget: breakdowns grew 40%.
-> **Ana:** We can't trust Bruno with anything budget-related — he failed
-> economics twice.
-> **Ana:** I propose reviewing the support contracts before deciding.
-> **Bruno:** So Ana wants to freeze everything and let the factory fall
-> apart.
+```json
+{
+  "conversation_id": "budget-debate-2026-07-18",
+  "source": "voice note, auto-transcribed",
+  "participants": ["Bruno", "Ana"],
+  "messages": [
+    {
+      "turn": 1,
+      "speaker": "Bruno",
+      "text": "Look, I've gone through the incident reports from the last two quarters, and the picture is pretty clear to me: ever since we cut the maintenance budget in January, machine breakdowns have grown by roughly forty percent, and every one of those breakdowns translates directly into production downtime that we end up paying for twice over. We should raise the maintenance budget back to where it was, at the very least."
+    },
+    {
+      "turn": 2,
+      "speaker": "Ana",
+      "text": "Honestly, I don't think we can trust Bruno with anything budget-related in the first place — everyone in this room knows he failed economics twice at university, and now he wants to lecture us about cost structures and quarterly figures as if he were the finance director. I don't see why we should take the numbers he waves around at face value."
+    },
+    {
+      "turn": 3,
+      "speaker": "Bruno",
+      "text": "My academic record from fifteen years ago has nothing to do with what the incident reports say — the data comes straight from the plant's logging system, not from me. And I'll add one more thing: when we still ran preventive inspections every six weeks, breakdowns of this kind almost never happened, which is exactly why I think cutting that program was the real mistake."
+    },
+    {
+      "turn": 4,
+      "speaker": "Ana",
+      "text": "What I'm proposing is more modest and, I think, more responsible: before we commit to any budget increase, let's review the support contracts we already pay for, because if the vendors honored the response times they signed, a good part of that downtime would simply not exist, and we would be spending the new budget on a problem that a phone call could prevent."
+    },
+    {
+      "turn": 5,
+      "speaker": "Bruno",
+      "text": "So what Ana wants is to freeze every investment indefinitely, drown the team in paperwork about contracts, and let the factory literally fall apart around us while we wait for lawyers to finish reading the fine print. That's what her plan amounts to, and I don't think anyone here wants to explain that to the clients whose orders arrive late."
+    },
+    {
+      "turn": 6,
+      "speaker": "Ana",
+      "text": "That is not what I said and you know it — reviewing contracts takes two weeks, not an eternity. I'm happy to pair it with something concrete: let's bring back the preventive inspections on the critical line while the review runs, because inspections demonstrably prevent the breakdowns you're worried about, and then we decide the budget question with real information on the table."
+    }
+  ]
+}
+```
 
-Two fallacies hide in there: an *ad hominem* (Ana attacks Bruno, not his
-claim) and a *straw man* (Bruno refutes a distorted version of Ana's
-proposal). The goal: a queryable, validated graph of that structure.
+Two fallacies hide in there: an *ad hominem* in turn 2 (Ana attacks
+Bruno's old grades, not his incident data) and a *straw man* in turn 5
+(Bruno refutes a "freeze everything" plan Ana never proposed). The same
+transcript also carries the causal claims used in the
+[causal-diagram section](#causal-diagrams-from-the-same-conversation)
+below — budget cut → breakdowns → downtime, contract review and
+inspections as preventers. The goal: a queryable, validated graph of that
+structure.
 
 ## 1. Discover before minting
 
@@ -136,7 +176,7 @@ one it attacks":
 expected violations — the loop an agent uses to keep its own annotations
 honest.
 
-## Causal diagrams from the same conversation
+## Causal diagrams from the same conversation {#causal-diagrams-from-the-same-conversation}
 
 The `causal_diagram` tool runs the sibling flow for **cause-and-effect
 structure**: the agent extracts claims from the transcript —
