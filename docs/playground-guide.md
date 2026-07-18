@@ -174,9 +174,11 @@ graph: `INSERT DATA`, watch the next SELECT reflect it, download the snapshot.
 For a remote dataset the result line reports what the query physically did —
 `N range requests · M KB fetched · file is X MB` — and **⊞ requests** opens the
 actual byte-range log. Re-running a query reports *"served from cache, 0 new
-bytes"*: reads are cached per session and fetched **concurrently by default**
-(the engine overlaps each query's byte-range requests via Asyncify, no
-cross-origin isolation needed). **Settings** adds further opt-in extras:
+bytes"*: reads are cached per session and — on Chromium-family browsers —
+fetched **concurrently by default** (the engine overlaps each query's
+byte-range requests via Asyncify, no cross-origin isolation needed; see
+[Which browser?](#which-browser) for why other browsers read sequentially).
+**Settings** adds further opt-in extras:
 
 - **Persist fetched ranges across reloads** — mirrors fetched blocks into
   IndexedDB (per-file usage bars + Clear), so tomorrow's session starts warm.
@@ -185,6 +187,30 @@ cross-origin isolation needed). **Settings** adds further opt-in extras:
 - **Parallel range reads** — a cross-origin-isolated worker pool fetches
   ranges concurrently (reloads once to enable isolation; disables the
   CDN-loaded DuckDB/SQLite backends while on).
+
+## Which browser? {#which-browser}
+
+**We recommend a Chromium-family browser (Chrome, Edge, Brave, …) for the
+playground**, especially on the multi-gigabyte remote datasets. Everything
+works everywhere — the differences are speed and extras:
+
+- **Chromium** runs the *concurrent* reader by default: the asyncified engine
+  fires each query's byte-range fetches in parallel, which on a big remote
+  graph is the difference between seconds and minutes. It is the engine the
+  playground's regression gate exercises on every change. The **✨ SPARQL AI**
+  assistant and the **Semantic** search tab also need WebGPU, which today
+  means desktop Chrome/Edge.
+- **Firefox** answers every query correctly, but defaults to the reliable
+  *sequential* reader: its WebAssembly engine can trap inside the concurrent
+  reader's suspend/resume machinery once a graph is large enough (small
+  datasets are unaffected). Sequential reads fetch the same bytes one range
+  at a time, so large remote queries are noticeably slower. You can force
+  concurrent reads in **Settings → Concurrent reads** — at the risk of the
+  crash the default avoids.
+- **Safari / iOS** likewise defaults to sequential reads (JavaScriptCore's
+  smaller WebAssembly stack trips the same way), and on iPhone/iPad the
+  browser's memory ceiling can stop the very largest datasets regardless of
+  reader.
 
 ## Under the hood
 
