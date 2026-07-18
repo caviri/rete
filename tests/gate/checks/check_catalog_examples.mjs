@@ -12,8 +12,12 @@ import {
 const PORT = process.env.PGPORT || "8090";
 const SCOPE = normalizeCatalogScope(process.env.RETE_CATALOG_SCOPE || "embedded");
 const DATASET_FILTER = process.env.RETE_CATALOG_DATASET || "";
+// The playground itself has NO query timeout, so the remote tier must tolerate
+// slow-but-correct examples (an ORDER BY on a billion-triple file enumerates
+// every match before the LIMIT — minutes, not seconds, over live HTTP range).
+// Embedded stays tight: a local wasm query that needs 30 s IS a regression.
 const QUERY_TIMEOUT_MS = Number(
-  process.env.RETE_CATALOG_QUERY_TIMEOUT_MS || (SCOPE === "all" ? 60000 : 30000),
+  process.env.RETE_CATALOG_QUERY_TIMEOUT_MS || (SCOPE === "all" ? 300000 : 30000),
 );
 const REMOTE_TRIES = Number(process.env.RETE_CATALOG_RETRIES || 2);
 const browserName = selectedBrowserName();
@@ -75,7 +79,9 @@ async function openDataset(page, group) {
       && document.getElementById("run")
       && document.querySelectorAll("#examples [data-example]").length === count,
     group.cases.length,
-    { timeout: 60000 },
+    // Remote-lazy opens of multi-GB files fetch dictionary directories over
+    // live HTTP range — allow the slow-network case instead of flaking.
+    { timeout: 120000 },
   );
   // The embedded graph initialization is asynchronous. Remote datasets defer
   // opening until Run, but this small settle also lets their library render.
