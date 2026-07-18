@@ -1,0 +1,15 @@
+{
+  "name": "rete",
+  "owner": {
+    "name": "Carlos Vivar Rios",
+    "url": "https://github.com/caviri"
+  },
+  "description": "rete: cloud-native, range-queryable RDF graph files — build them from any source, publish them anywhere, query them from Claude.",
+  "plugins": [
+    {
+      "name": "rete-graph",
+      "source": "./",
+      "description": "Skills to build and publish .rete knowledge graphs, plus the rete MCP server: SPARQL + SHACL over 60+ public datasets (and any .rete URL), entity search, dataset cards, and media preview/embedding tools."
+    }
+  ]
+}

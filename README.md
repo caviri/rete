@@ -69,6 +69,22 @@ One engine, four languages — every client opens local files *and* remote URLs
 | **Rust** | `rete-core` / `rete-cli` in this repo (crates.io release pending) | native + wasm · [Rust API](https://caviri.github.io/rete/rust-api.html) · [CLI reference](https://caviri.github.io/rete/cli.html) |
 | **Browser, zero install** | [playground](https://caviri.github.io/rete/playground.html) · [SPARQL IDE](https://caviri.github.io/rete/yasgui.html) | query any `.rete` URL with no install at all |
 
+## Claude Code plugin
+
+This repo doubles as a Claude Code plugin marketplace. Two commands wire
+everything into Claude — the build/publish **skills** and the **rete MCP
+server** (SPARQL + SHACL over 60+ public knowledge graphs, entity search,
+dataset cards, media previews):
+
+```
+/plugin marketplace add caviri/rete
+/plugin install rete-graph@rete
+```
+
+After install: ask Claude to query any dataset ("how many Spanish laws cite
+the Constitution?"), validate shapes, preview IIIF/PDF media, or build a
+`.rete` from your own data with `/rete-graph:rete-from-graph`.
+
 ## Self-describing & semantic zoom
 
 Open a `.rete` you've never seen and the **cold-start problem** bites: which
