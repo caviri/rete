@@ -6801,13 +6801,29 @@ self.onmessage = function (e) {
         setAsyncReads(false);
         renderAsyncReads();
       }
+      // Datasets can opt out of the Asyncify transport (`syncReader: true` in
+      // the catalog). The 17.5 GB single-file orcid graph trips a live asyncify
+      // suspend/rewind bug — a stale-suspend length probe that fails the open in
+      // milliseconds, and null-function traps on suspending queries — that the
+      // plain reader simply doesn't have. Same self-heal shape as reasoning/iOS.
+      const dsRec = (CATALOG.datasets || []).find((d) => d.key === state.dataset);
+      if (dsRec && dsRec.syncReader && state.asyncReadsOn) {
+        readerNote = "reliable reader (this dataset)";
+        setAsyncReads(false);
+        renderAsyncReads();
+      }
       const invokeRemote = () => remoteSparql(state.remote.url, q, remoteFmt, reason);
       invokeRemote().catch((e) => {
         const msg = String((e && e.message) || e);
         // Asyncify can also trap on particular valid query shapes in desktop
         // engines. A trap poisons that instance, so terminate it, persist the
         // reliable reader choice, and retry exactly once on the plain WASM.
-        if (state.asyncReadsOn && isAsyncReaderTrap(msg)) {
+        // The "could not determine length" flavour is the same machinery
+        // misfiring at open time (a stale suspend answers the length probe with
+        // garbage in ~4 ms) — when the async reader is on, treat it as an
+        // async-reader casualty and retry on the plain WASM, not as a network
+        // blip to bounce back to the user.
+        if (state.asyncReadsOn && (isAsyncReaderTrap(msg) || /could not determine length/i.test(msg))) {
           readerNote = "reliable reader fallback";
           setAsyncReads(false);
           renderAsyncReads();
