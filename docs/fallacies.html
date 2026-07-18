@@ -404,6 +404,35 @@ one it attacks":</p>
 <code>fal:severity</code> the annotations don't carry) and it reports exactly the two
 expected violations — the loop an agent uses to keep its own annotations
 honest.</p>
+<h2>Causal diagrams from the same conversation</h2>
+<p>The <code>causal_diagram</code> tool runs the sibling flow for <strong>cause-and-effect
+structure</strong>: the agent extracts claims from the transcript —
+<code>{cause, effect, relation, quote, speaker, confidence}</code> — and one call
+returns three artifacts (this ran verbatim against the server):</p>
+<ul>
+<li><strong>Mermaid</strong> — rendered inline by chat UIs and these docs:</li>
+</ul>
+<pre><code class="language-mermaid">flowchart LR
+  maintenance-budget-cut["maintenance budget cut"]
+  machine-breakdowns["machine breakdowns"]
+  production-downtime["production downtime"]
+  support-contract-review["support contract review"]
+  preventive-inspections["preventive inspections"]
+  maintenance-budget-cut --&gt;|causes| machine-breakdowns
+  machine-breakdowns --&gt;|causes| production-downtime
+  support-contract-review -.-&gt;|prevents| maintenance-budget-cut
+  preventive-inspections -.-&gt;|prevents| machine-breakdowns
+</code></pre>
+<ul>
+<li>a <strong>Graphviz SVG</strong> (<code>svg_data_uri</code>, ~5 KB) for embedding anywhere, and</li>
+<li>a <strong>CauseNet-aligned <code>.rete</code></strong> (71 quads): every claim is a <code>cz:Claim ⊑ cn:CausalRelation</code> reusing <code>cn:cause</code>/<code>cn:effect</code>, with the quote and
+speaker as provenance. Reasoned queries see the conversation's claims AS
+CauseNet relations (<code>?x a cn:CausalRelation</code> → 4), and the file embeds a
+<strong>federated example</strong> that joins the conversation's factors against the
+11 M web-mined relations of the <a href="playground-guide.html"><code>causenet</code> dataset</a>
+via <code>SERVICE</code> — "does the web's causal knowledge agree with this
+meeting?".</li>
+</ul>
 <h2>Same tooling, other conversations</h2>
 <p>Nothing here is fallacy-specific — the pattern is <em>speech → ontology →
 instances → validated graph</em>:</p>

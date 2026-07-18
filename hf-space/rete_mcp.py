@@ -180,6 +180,22 @@ def build_rete(rdf: str, format: str = "ttl",
 
 
 @mcp.tool
+def causal_diagram(claims: List[Dict[str, Any]], title: str = "Causal diagram",
+                   render: str = "both", build: bool = True) -> Dict[str, Any]:
+    """Turn causal claims extracted from a conversation into a diagram AND a
+    queryable graph. YOU extract the claims from the transcript — each as
+    {cause, effect, relation (causes|prevents|enables|correlates), quote,
+    speaker, confidence} — and this tool returns: `mermaid` (render it in
+    your answer), `dot`, an `svg_data_uri` (Graphviz layout, embeddable),
+    and a served .rete aligned with CauseNet's cn:cause/cn:effect — so the
+    returned dataset key works in sparql_query at once, including the
+    embedded federated example that checks the conversation's claims
+    against CauseNet's 11M web-mined causal relations."""
+    import rete_author
+    return rete_author.causal_diagram(claims, title, render, build)
+
+
+@mcp.tool
 def embed_media(urls: List[str], max_dimension: int = 1024, webp_quality: int = 80) -> List[Dict[str, Any]]:
     """Fetch a list of media URLs and return each as a base64 `data:` URI,
     ready to inline into generated HTML (img src, download links…). Images

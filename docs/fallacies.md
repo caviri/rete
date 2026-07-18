@@ -136,6 +136,38 @@ one it attacks":
 expected violations — the loop an agent uses to keep its own annotations
 honest.
 
+## Causal diagrams from the same conversation
+
+The `causal_diagram` tool runs the sibling flow for **cause-and-effect
+structure**: the agent extracts claims from the transcript —
+`{cause, effect, relation, quote, speaker, confidence}` — and one call
+returns three artifacts (this ran verbatim against the server):
+
+- **Mermaid** — rendered inline by chat UIs and these docs:
+
+```mermaid
+flowchart LR
+  maintenance-budget-cut["maintenance budget cut"]
+  machine-breakdowns["machine breakdowns"]
+  production-downtime["production downtime"]
+  support-contract-review["support contract review"]
+  preventive-inspections["preventive inspections"]
+  maintenance-budget-cut -->|causes| machine-breakdowns
+  machine-breakdowns -->|causes| production-downtime
+  support-contract-review -.->|prevents| maintenance-budget-cut
+  preventive-inspections -.->|prevents| machine-breakdowns
+```
+
+- a **Graphviz SVG** (`svg_data_uri`, ~5 KB) for embedding anywhere, and
+- a **CauseNet-aligned `.rete`** (71 quads): every claim is a `cz:Claim
+  ⊑ cn:CausalRelation` reusing `cn:cause`/`cn:effect`, with the quote and
+  speaker as provenance. Reasoned queries see the conversation's claims AS
+  CauseNet relations (`?x a cn:CausalRelation` → 4), and the file embeds a
+  **federated example** that joins the conversation's factors against the
+  11 M web-mined relations of the [`causenet` dataset](playground-guide.md)
+  via `SERVICE` — "does the web's causal knowledge agree with this
+  meeting?".
+
 ## Same tooling, other conversations
 
 Nothing here is fallacy-specific — the pattern is *speech → ontology →

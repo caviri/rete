@@ -227,6 +227,163 @@ def build_rete(rdf_text: str, format: str = "ttl",
     return doc
 
 
+# --------------------------------------------------------------------------- #
+# Causal diagrams from conversations
+# --------------------------------------------------------------------------- #
+
+# Aligned with CauseNet (the 500M-claim causal KG in the catalog): our claim
+# class subclasses cn:CausalRelation and reuses cn:cause/cn:effect, so a
+# conversation's causal graph federates with the web's causal knowledge.
+CAUSAL_ONTOLOGY = """@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix cn:   <https://causenet.org/ontology#> .
+@prefix cz:   <https://w3id.org/rete/causal-conv#> .
+
+cn:CausalRelation a owl:Class ; rdfs:label "CauseNet causal relation" ;
+  rdfs:comment "Imported anchor: the CauseNet relation class." .
+cn:Concept a owl:Class ; rdfs:label "CauseNet concept" .
+
+cz:Factor a owl:Class ; rdfs:subClassOf cn:Concept ; rdfs:label "Factor" ;
+  rdfs:comment "A variable or phenomenon mentioned in the conversation." .
+cz:Claim a owl:Class ; rdfs:subClassOf cn:CausalRelation ; rdfs:label "Causal claim" ;
+  rdfs:comment "One cause-effect assertion made in the conversation." .
+
+cz:relation a owl:DatatypeProperty ; rdfs:domain cz:Claim ; rdfs:range xsd:string ;
+  rdfs:label "relation kind" ; rdfs:comment "causes | prevents | enables | correlates" .
+cz:polarity a owl:DatatypeProperty ; rdfs:domain cz:Claim ; rdfs:range xsd:string ;
+  rdfs:label "polarity" .
+cz:quote a owl:DatatypeProperty ; rdfs:domain cz:Claim ; rdfs:range xsd:string ;
+  rdfs:label "quote" ; rdfs:comment "The transcript fragment stating the claim." .
+cz:statedBy a owl:DatatypeProperty ; rdfs:domain cz:Claim ; rdfs:range xsd:string ;
+  rdfs:label "stated by" .
+cz:confidence a owl:DatatypeProperty ; rdfs:domain cz:Claim ; rdfs:range xsd:decimal ;
+  rdfs:label "confidence" .
+"""
+
+_RELATIONS = ("causes", "prevents", "enables", "correlates")
+
+
+def _slug(text: str) -> str:
+    out = "".join(ch if ch.isalnum() else "-" for ch in text.lower().strip())
+    return "-".join(p for p in out.split("-") if p)[:64] or "factor"
+
+
+def _ttl_escape(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def causal_diagram(claims: List[Dict[str, Any]], title: str = "Causal diagram",
+                   render: str = "both", build: bool = True) -> Dict[str, Any]:
+    """Turn extracted causal claims into a diagram + a queryable graph.
+
+    Each claim: ``{cause, effect, relation?, quote?, speaker?, confidence?}``
+    with relation in causes|prevents|enables|correlates. Returns Mermaid and
+    DOT sources always; ``render`` svg|both adds a Graphviz-rendered SVG
+    data URI; ``build`` also assembles a CauseNet-aligned `.rete` (served,
+    immediately queryable, federable with the `causenet` dataset).
+    """
+    if not claims:
+        raise ValueError("claims must be a non-empty list")
+    if len(claims) > 200:
+        raise ValueError("at most 200 claims per diagram")
+
+    factors: Dict[str, str] = {}
+    edges = []
+    for i, c in enumerate(claims):
+        cause, effect = str(c.get("cause", "")).strip(), str(c.get("effect", "")).strip()
+        if not cause or not effect:
+            raise ValueError(f"claim {i} needs both cause and effect")
+        relation = str(c.get("relation") or "causes").lower()
+        if relation not in _RELATIONS:
+            raise ValueError(f"claim {i}: relation must be one of {_RELATIONS}")
+        for label in (cause, effect):
+            factors.setdefault(_slug(label), label)
+        edges.append({"n": i + 1, "cause": _slug(cause), "effect": _slug(effect),
+                      "relation": relation, "quote": c.get("quote"),
+                      "speaker": c.get("speaker"), "confidence": c.get("confidence")})
+
+    # Mermaid (renders natively in chat UIs and the docs).
+    arrows = {"causes": "-->|causes|", "prevents": "-.->|prevents|",
+              "enables": "-->|enables|", "correlates": "---|correlates|"}
+    lines = ["flowchart LR"]
+    for slug, label in factors.items():
+        lines.append(f'  {slug}["{label}"]')
+    for e in edges:
+        lines.append(f"  {e['cause']} {arrows[e['relation']]} {e['effect']}")
+    mermaid = "\n".join(lines)
+
+    # DOT (Graphviz).
+    styles = {"causes": "", "prevents": ' color="firebrick" arrowhead=tee',
+              "enables": ' style=dashed', "correlates": ' dir=none style=dotted'}
+    dot_lines = ["digraph causal {", '  rankdir=LR; node [shape=box, style="rounded,filled", '
+                 'fillcolor="#eef3f1", fontname="Helvetica"]; edge [fontname="Helvetica", fontsize=11];']
+    for slug, label in factors.items():
+        dot_lines.append(f'  "{slug}" [label="{_ttl_escape(label)}"];')
+    for e in edges:
+        dot_lines.append(f'  "{e["cause"]}" -> "{e["effect"]}" [label="{e["relation"]}"{styles[e["relation"]]}];')
+    dot_lines.append("}")
+    dot = "\n".join(dot_lines)
+
+    doc: Dict[str, Any] = {"title": title, "factors": len(factors),
+                           "claims": len(edges), "mermaid": mermaid, "dot": dot}
+
+    if render in ("svg", "both"):
+        import subprocess
+        try:
+            svg = subprocess.run(["dot", "-Tsvg"], input=dot.encode(),
+                                 capture_output=True, check=True, timeout=30).stdout
+            doc["svg_data_uri"] = "data:image/svg+xml;base64," + base64.b64encode(svg).decode()
+        except Exception as e:
+            doc["svg_error"] = f"graphviz render failed: {e}"
+
+    if build:
+        ns = "urn:causal:" + _slug(title) + "#"
+        ttl = [f"@prefix cz: <https://w3id.org/rete/causal-conv#> .",
+               f"@prefix cn: <https://causenet.org/ontology#> .",
+               f"@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
+               f"@prefix xsd: <http://www.w3.org/2001/XMLSchema#> ."]
+        for slug, label in factors.items():
+            ttl.append(f'<{ns}{slug}> a cz:Factor ; rdfs:label "{_ttl_escape(label)}" .')
+        for e in edges:
+            parts = [f'<{ns}claim-{e["n"]}> a cz:Claim',
+                     f'cn:cause <{ns}{e["cause"]}>', f'cn:effect <{ns}{e["effect"]}>',
+                     f'cz:relation "{e["relation"]}"']
+            if e.get("quote"):
+                parts.append(f'cz:quote "{_ttl_escape(str(e["quote"]))}"')
+            if e.get("speaker"):
+                parts.append(f'cz:statedBy "{_ttl_escape(str(e["speaker"]))}"')
+            if e.get("confidence") is not None:
+                parts.append(f'cz:confidence "{float(e["confidence"])}"^^xsd:decimal')
+            ttl.append(" ; ".join(parts) + " .")
+        federated_example = (
+            "PREFIX cn: <https://causenet.org/ontology#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n"
+            "SELECT ?factor ?webCause WHERE {\n  ?f a <https://w3id.org/rete/causal-conv#Factor> ; rdfs:label ?factor .\n"
+            "  SERVICE <https://katospiegel-rete.hf.space/sparql/causenet> {\n"
+            "    ?rel cn:effect ?c . ?c rdfs:label ?factor .\n    ?rel cn:cause ?wc . ?wc rdfs:label ?webCause .\n  }\n} LIMIT 20"
+        )
+        built = build_rete(
+            CAUSAL_ONTOLOGY + "\n" + "\n".join(ttl),
+            card={"title": title,
+                  "description": "Causal claims extracted from a conversation, "
+                                 "CauseNet-aligned (cn:cause/cn:effect).",
+                  "license": "CC0-1.0"},
+            examples=[
+                {"title": "All causal claims",
+                 "question": "What causes what, according to the conversation?",
+                 "sparql": "PREFIX cn: <https://causenet.org/ontology#>\nPREFIX cz: <https://w3id.org/rete/causal-conv#>\n"
+                           "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n"
+                           "SELECT ?cause ?relation ?effect ?speaker WHERE {\n  ?cl a cz:Claim ; cn:cause ?c ; cn:effect ?e ; cz:relation ?relation .\n"
+                           "  ?c rdfs:label ?cause . ?e rdfs:label ?effect .\n  OPTIONAL { ?cl cz:statedBy ?speaker }\n}"},
+                {"title": "Does the web agree? (federated with CauseNet)",
+                 "question": "Which conversation factors have known causes in CauseNet?",
+                 "sparql": federated_example},
+            ],
+        )
+        doc.update({k: built[k] for k in ("dataset", "url", "bytes", "quads")})
+    return doc
+
+
 def generated_datasets() -> List[Dict[str, Any]]:
     """Catalog entries for the generated files (kind: generated)."""
     out = []

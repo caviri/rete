@@ -253,6 +253,32 @@ def author_build(req: BuildRequest):
                  req.examples, req.text_index, req.include_base64)
 
 
+class CausalClaim(BaseModel):
+    cause: str
+    effect: str
+    relation: str = Field("causes", description="causes | prevents | enables | correlates")
+    quote: Optional[str] = Field(None, description="Transcript fragment stating the claim")
+    speaker: Optional[str] = None
+    confidence: Optional[float] = Field(None, ge=0, le=1)
+
+
+class CausalRequest(BaseModel):
+    claims: List[CausalClaim]
+    title: str = "Causal diagram"
+    render: str = Field("both", description="mermaid | svg | both")
+    build: bool = Field(True, description="Also build a queryable CauseNet-aligned .rete")
+
+
+@router.post("/author/causal")
+def author_causal(req: CausalRequest):
+    """Causal claims (extracted from a conversation) → Mermaid + DOT + a
+    Graphviz SVG, and a served .rete aligned with CauseNet's vocabulary —
+    queryable and federable with the causenet dataset immediately."""
+    import rete_author
+    return _wrap(rete_author.causal_diagram,
+                 [c.model_dump() for c in req.claims], req.title, req.render, req.build)
+
+
 class AskRequest(BaseModel):
     dataset: str
     question: str = Field(..., description="A natural-language question about the dataset")
