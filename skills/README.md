@@ -1,14 +1,17 @@
-# rete skills — graph source → `.rete` → playground
+# rete skills — use, build, and publish `.rete` graphs
 
-Reusable, repo-aware skills that codify the workflow this project uses again and
-again: turn **any** graph-based data source into a queryable `.rete` file and (if
-you want) publish it to the browser playground. Each skill is a `SKILL.md` (the
-instructions Claude follows), reference docs, and **working utility scripts**.
+Reusable, repo-aware skills that codify this project's recurring workflows.
+Each skill is a `SKILL.md` (the instructions Claude follows), reference docs,
+and — where useful — **working utility scripts**. They ship with the repo's
+[Claude Code plugin](../.claude-plugin/plugin.json) (`/plugin marketplace add
+caviri/rete`).
 
-## The two skills
+## The skills
 
 | Skill | Use it when | Entry point |
 |---|---|---|
+| **[rete-catalog](rete-catalog/SKILL.md)** | "use an existing published dataset" | discover → card/schema/examples → open/download/federate |
+| **[rete-clients](rete-clients/SKILL.md)** | "wire rete into a new project" | Python / Pyodide / JS / script-tag / wasm / Rust setup + first query |
 | **[rete-from-graph](rete-from-graph/SKILL.md)** | "turn this dataset/graph/ontology/endpoint into a `.rete`" | source → N-Triples → `rete build` → verify |
 | **[rete-publish](rete-publish/SKILL.md)** | "make this `.rete` explorable in the playground" | companions → bucket → catalog → rebuild → verify |
 
@@ -45,10 +48,14 @@ Claude Code discovers skills under `.claude/skills/`. To make these invocable as
 ```bash
 mkdir -p .claude/skills
 # symlink (POSIX):
-ln -s ../../skills/rete-from-graph .claude/skills/rete-from-graph
-ln -s ../../skills/rete-publish    .claude/skills/rete-publish
-# …or just copy the two folders into .claude/skills/ on Windows.
+for s in rete-catalog rete-clients rete-from-graph rete-publish; do
+  ln -s "../../skills/$s" ".claude/skills/$s"
+done
+# …or just copy the folders into .claude/skills/ on Windows.
 ```
+
+Installed via the plugin they need no activation — they load namespaced as
+`/rete-graph:<skill>` in any project.
 
 They also work as plain documentation/playbooks if you'd rather read and run them
 by hand.
