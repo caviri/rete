@@ -207,6 +207,52 @@ def media_preview(url: str, max_dimension: int = 512, webp_quality: int = 80):
     return _wrap(rete_media.preview, url, min(max_dimension, 4096), webp_quality)
 
 
+class VocabQuery(BaseModel):
+    query: str = Field(..., description="Concept words to search for, e.g. 'argument fallacy premise'")
+    limit: int = Field(8, ge=1, le=20)
+
+
+@router.post("/author/vocabulary")
+def author_vocabulary(req: VocabQuery):
+    """Search Linked Open Vocabularies for existing terms — reuse or
+    subclass what exists before minting new IRIs."""
+    import rete_author
+    return _wrap(rete_author.suggest_vocabulary, req.query, req.limit)
+
+
+class OntologyCheck(BaseModel):
+    ontology: str = Field(..., description="The ontology draft (Turtle by default)")
+    format: str = Field("ttl", description="ttl | nt | rdfxml")
+
+
+@router.post("/author/check")
+def author_check(req: OntologyCheck):
+    """Validate an ontology draft: parse, profile, lint battery (undeclared
+    domains/ranges, dangling subclasses, missing labels, property-type
+    clashes, subclass cycles), and an OWL 2 QL rewriter smoke test."""
+    import rete_author
+    return _wrap(rete_author.check_ontology, req.ontology, req.format)
+
+
+class BuildRequest(BaseModel):
+    rdf: str = Field(..., description="RDF text: ontology and/or instances")
+    format: str = Field("ttl", description="ttl | nt | nq | rdfxml")
+    card: Optional[Dict[str, Any]] = Field(None, description="Dataset Card fields (title, description, license, …)")
+    examples: Optional[List[Dict[str, str]]] = Field(None, description="Runnable examples: {title, question, sparql}")
+    text_index: bool = False
+    include_base64: bool = Field(False, description="Also return the whole file as a data URI")
+
+
+@router.post("/author/build")
+def author_build(req: BuildRequest):
+    """Build a .rete from RDF text and serve it at an ephemeral /generated
+    URL — immediately queryable (dataset key or URL) and range-readable by
+    any rete client."""
+    import rete_author
+    return _wrap(rete_author.build_rete, req.rdf, req.format, req.card,
+                 req.examples, req.text_index, req.include_base64)
+
+
 class AskRequest(BaseModel):
     dataset: str
     question: str = Field(..., description="A natural-language question about the dataset")

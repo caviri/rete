@@ -42,6 +42,11 @@ Recommended workflow:
 7. `validate_shacl(dataset, shapes)` — data-quality checks: validate SHACL
    Core shapes (Turtle) against the graph; `shacl_shapes(dataset)` lists
    curated example shapes that run as-is.
+8. AUTHORING loop — create knowledge graphs, don't just read them:
+   `suggest_vocabulary` (find existing terms on LOV before minting IRIs) →
+   draft an ontology in Turtle → `check_ontology` until clean →
+   `build_rete` (ontology + instances + card + examples) → the returned
+   dataset key works immediately in sparql_query / validate_shacl.
 
 Every result carries `stats` (bytes/requests actually fetched) — with lazy
 range reads a good query touches a tiny fraction of the file. Each dataset
@@ -132,6 +137,46 @@ def shacl_shapes(dataset: str) -> List[Dict[str, Any]]:
     fastest way to see what data-quality contracts a graph is meant to
     uphold."""
     return svc.shacl_shapes(dataset)
+
+
+@mcp.tool
+def suggest_vocabulary(query: str, limit: int = 8) -> List[Dict[str, Any]]:
+    """Search Linked Open Vocabularies (lov.linkeddata.es) for EXISTING
+    ontology terms matching some concept words (e.g. 'argument fallacy
+    premise' finds AIF). Always check here before minting new IRIs — reuse
+    or rdfs:subClassOf what exists. Returns term IRIs with their vocabulary
+    prefix, type, and relevance score."""
+    import rete_author
+    return rete_author.suggest_vocabulary(query, limit)
+
+
+@mcp.tool
+def check_ontology(ontology: str, format: str = "ttl") -> Dict[str, Any]:
+    """Validate an ontology draft (Turtle). Runs: strict parse, a profile
+    (class/property counts), a lint battery — domains/ranges over
+    undeclared classes, dangling subClassOf targets, missing labels/
+    comments, properties typed both object+datatype, subclass cycles —
+    and an OWL 2 QL reasoner smoke test. Iterate until `ok` is true and
+    the warnings you care about are gone, THEN build with build_rete."""
+    import rete_author
+    return rete_author.check_ontology(ontology, format)
+
+
+@mcp.tool
+def build_rete(rdf: str, format: str = "ttl",
+               card: Optional[Dict[str, Any]] = None,
+               examples: Optional[List[Dict[str, str]]] = None,
+               text_index: bool = False,
+               include_base64: bool = False) -> Dict[str, Any]:
+    """Build a real .rete file from RDF text (ontology + instances) and
+    serve it at an ephemeral URL. Give it a `card` (title, description,
+    license) and runnable `examples` ({title, question, sparql}) so the
+    file is self-describing. The returned `dataset` key works immediately
+    in sparql_query / validate_shacl / dataset_card — query what you just
+    built, in this same conversation. Ephemeral until the next Space
+    restart: set include_base64=true to hand the user the file itself."""
+    import rete_author
+    return rete_author.build_rete(rdf, format, card, examples, text_index, include_base64)
 
 
 @mcp.tool

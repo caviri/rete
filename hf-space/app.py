@@ -259,6 +259,37 @@ app.include_router(sparql_router)
 app.mount("/mcp", _mcp_app)
 
 
+@app.head("/generated/{name}")
+@app.get("/generated/{name}")
+def serve_generated(name: str, request: Request):
+    """Agent-built .rete files (see rete_author) — ephemeral, range-readable.
+
+    Single-range + HEAD + full-body: exactly what the rete clients need.
+    These live on local disk (not the FUSE bucket), so reads are plain.
+    """
+    import rete_author
+    if "/" in name or name.startswith("."):
+        raise HTTPException(404, "not found")
+    p = rete_author.GENERATED_DIR / name
+    if not p.is_file():
+        raise HTTPException(404, "not found (generated files are ephemeral)")
+    size = p.stat().st_size
+    base = {"Accept-Ranges": "bytes", "Cache-Control": "no-store"}
+    rng = request.headers.get("range")
+    if rng:
+        ranges = _parse_ranges(rng, size)
+        if not ranges or len(ranges) != 1:
+            return Response(status_code=416, headers={**base, "Content-Range": f"bytes */{size}"})
+        start, end = ranges[0]
+        body = b"" if request.method == "HEAD" else p.read_bytes()[start:end + 1]
+        return Response(content=body, status_code=206, media_type="application/octet-stream",
+                        headers={**base, "Content-Range": f"bytes {start}-{end}/{size}",
+                                 "Content-Length": str(end - start + 1)})
+    body = b"" if request.method == "HEAD" else p.read_bytes()
+    return Response(content=body, media_type="application/octet-stream",
+                    headers={**base, "Content-Length": str(size)})
+
+
 def _is_hidden(rel: str) -> bool:
     """A request path that dips into a dot-prefixed component (e.g. the log dir)."""
     return any(part.startswith(".") for part in Path(rel).parts)

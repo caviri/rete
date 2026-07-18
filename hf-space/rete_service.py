@@ -70,14 +70,19 @@ def _local_datasets() -> List[Dict[str, Any]]:
 
 
 def load_catalog() -> List[Dict[str, Any]]:
-    """Published datasets + local files. Never raises — an unreadable
-    catalog.json degrades to the local listing."""
+    """Published datasets + local files + agent-generated files. Never
+    raises — an unreadable catalog.json degrades to the local listing."""
     published: List[Dict[str, Any]] = []
     try:
         published = json.loads(CATALOG_FILE.read_text(encoding="utf-8"))["datasets"]
     except Exception:
         pass
-    return published + _local_datasets()
+    try:
+        import rete_author
+        generated = rete_author.generated_datasets()
+    except Exception:
+        generated = []
+    return published + _local_datasets() + generated
 
 
 def find_dataset(key: str) -> Optional[Dict[str, Any]]:
