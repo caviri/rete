@@ -83,7 +83,10 @@ dataset cards, media previews):
 
 After install: ask Claude to query any dataset ("how many Spanish laws cite
 the Constitution?"), validate shapes, preview IIIF/PDF media, or build a
-`.rete` from your own data with `/rete-graph:rete-from-graph`.
+`.rete` from your own data with `/rete-graph:rete-from-graph`. The same MCP
+server also plugs into **ChatGPT** (developer mode or as a connector) and any
+other MCP client — see the
+[agentic interfaces guide](https://caviri.github.io/rete/agents.html).
 
 ## Self-describing & semantic zoom
 

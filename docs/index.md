@@ -63,6 +63,7 @@ The same engine, in your language of choice — every client opens local files
 | **R** — `rete` (from this repo; CRAN/R-universe pending) | `remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)` | R ≥ 4.2 + Rust toolchain; results as data frames | [R API](r.md) |
 | **Rust** — `rete-core` / `rete-cli` (in this repo; crates.io release pending) | `cargo add rete-core --git https://github.com/caviri/rete` | anywhere Rust runs — native + wasm | [Rust API](rust-api.md) · [CLI](cli.md) |
 | **Browser, zero install** | — | any modern browser | [Playground](playground-guide.md) · [SPARQL IDE](yasgui-guide.md) |
+| **Agents** — MCP server + Claude Code plugin | `/plugin marketplace add caviri/rete` — or point any MCP client at the [gateway](https://katospiegel-rete.hf.space/mcp/) | ChatGPT, Claude, pydantic-ai, any MCP host | [Agentic interfaces](agents.md) |
 
 ## Documentation
 

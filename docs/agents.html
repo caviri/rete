@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>Historical atlas — SPARQL + GIS · rete docs</title>
+  <title>Agents — MCP, plugin & skills · rete docs</title>
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -254,7 +254,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary>SPARQL IDE — yasgui·wasm</summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>JupyterLite — Python in the tab</summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>JS lab — rete × D3</summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
-        <li class="nav-group"><details open><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html" class="active">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li><a href="subtitles.html">Subtitle timeline</a></li>
@@ -273,7 +273,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
         <li><a href="javascript.html">JavaScript — rete-graph</a></li>
         <li><a href="r.html">R — rete</a></li>
-        <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
+        <li><a href="agents.html" class="active">Agents — MCP, plugin & skills</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -301,205 +301,140 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Historical Atlas — SPARQL + GIS over time</h1>
-<p><strong><a href="atlas-app.html">▸ Launch the atlas</a></strong> — a single, fully static HTML page. No
-server, no database, no map tiles, no build step: the whole thing runs in your
-browser over a <code>.rete</code> file through the WebAssembly engine — either the copy
-<strong>embedded in the page</strong> (offline) or the same file <strong>streamed from remote
-storage</strong> by HTTP range.</p>
-<p>It is <strong>half SPARQL, half GIS</strong>: a query editor on the left, a world map in the
-centre, and a <strong>temporal timeline</strong> along the bottom. Pick one of the bundled
-example queries, drag the timeline and the borders of the world <strong>cross-fade</strong> to
-that era, hit <strong>▶ Play</strong> to sweep through history, or click anywhere on the map
-and it names the territory under your cursor. The map is a dependency-free canvas
-— a curated palette, an ocean gradient, decluttered on-map labels, hover/selection
-highlighting, <strong>cursor-locked wheel zoom</strong> (to 64×, the world stays in view) with a
-<strong>HUD</strong> showing the zoom level, the viewport's corner coordinates and a live cursor
-read-out, an <strong>on-map legend</strong> of the active overlays, <strong>zoom-to-fit</strong> (and keyboard
-timeline nav) — drawn entirely from query results.</p>
-<figure class="fig-center">
-  <img src="img/atlas-1914.png" alt="The Historical Atlas at 1914 CE: a SPARQL example-query picker and editor on the left over a world map of the empires of 1914, with a temporal timeline at the bottom whose markers include an 'Outbreak of World War I · 1914 CE' event tooltip.">
-  <figcaption>The atlas at <b>1914 CE</b> — every border polygon comes from a GeoSPARQL query over the <code>history.rete</code>, drawn on a dependency-free canvas. Left: the example picker, the live query, the data-source selector, and the territory legend. Bottom: the era timeline, with historical-event markers (hover for a tooltip).</figcaption>
-</figure>
-<h2>What you're looking at</h2>
-<p>The dataset is <code>history.rete</code> — world territorial borders at <strong>eighteen snapshots
-from 2000 BCE to 2010 CE</strong> (<a href="https://github.com/aourednik/historical-basemaps">aourednik/historical-basemaps</a>,
-GPL-3.0). Each border is stored as a GeoSPARQL <code>geo:wktLiteral</code> polygon with an
-integer <code>ex:year</code>, so a snapshot is just <code>FILTER(?year = …)</code> and the geometry is
-whatever your query binds to <code>?wkt</code>.</p>
-<h2>How it works</h2>
-<ol>
-<li><strong>The map is driven by SPARQL.</strong> The editor holds a query; <em>every row it
-returns that binds <code>?wkt</code></em> is parsed (a tiny in-page WKT reader) and drawn —
-so you can swap in any query: a bbox <code>geof:sfIntersects</code>, a <code>geof:distance</code>
-ranking, a <code>geof:envelope</code>, a <code>FILTER</code> on the label, anything. The <strong>example
-picker</strong> ships ten ready-made queries, including several that ask <strong>time ×
-place</strong> questions: <em>Who ruled Paris? — every era</em> (one <code>geof:sfContains</code> point,
-no year filter, ordered through history), <em>Transcontinental — touches Europe
-AND Asia</em> (two <code>sfIntersects</code>), <em>Within 2500 km of Rome</em>, and <em>Territories per
-era</em> (a <code>GROUP BY ?year</code> count over all of time). Each example carries a
-plain-language description and a <strong>time / space tag</strong>, and the SPARQL header
-shows a live <strong>⏱ × 🗺 time + space</strong> badge whenever a result carries both a
-year-like column and a geometry — so you can see at a glance what a query
-<em>outputs</em>, not just what it says.</li>
-<li><strong>The timeline is the temporal control — and it adapts to the data.</strong> It runs
-year-by-year from 2000 BCE to 2010 CE; the <strong>eighteen <code>ex:year</code> snapshots</strong> and a
-row of <strong>labelled historical-event markers</strong> (death of Alexander, fall of
-Constantinople, 1789, 1914, the fall of the USSR…) sit on the track — hover for
-the full name, click to jump (arrow keys nudge ±1/±10 years; Space toggles play).
-Because the data is discrete, <strong>▶ Play steps era to era</strong> (each press visibly
-cross-fades to the next snapshot; the <strong>speed</strong> select is the dwell per era), and
-<strong>⏮ / ⏭</strong> jump one snapshot at a time with a <em>"→ next 1492 CE (+213 yr)"</em> readout.
-<strong>Zoom</strong> the axis with <code>＋</code>/<code>－</code>/<code>⤢</code>, with the mouse wheel (vertical = zoom,
-horizontal = pan), or by dragging the <strong>context strip</strong> beneath it — move the
-window to pan, drag its edges to zoom (the dense modern eras spread out as you
-zoom in). A <strong>🎞 previews</strong> toggle drops a <strong>filmstrip of mini-maps</strong> under the
-track — a thumbnail of the world's borders at each snapshot, decluttered so
-close eras collapse to the first until you zoom in.</li>
-<li><strong>Changes are highlighted as they happen.</strong> When the era changes, the map
-<strong>cross-fades</strong> and flags the difference: territories that <strong>appear</strong> glow
-green (and pulse briefly once they've settled), ones that <strong>disappear</strong> glow
-red as they fade out, and the status line tallies the delta (e.g. <code>+87 −125</code>).</li>
-<li><strong>Two views of every result.</strong> <strong>Map</strong> draws the polygons; <strong>Table</strong> shows the
-raw result rows — and any cell holding a <code>geo:wktLiteral</code> renders an inline
-<strong>geometry thumbnail</strong> (its kind, vertex count, lon/lat extent, and faint
-equator / prime-meridian guides) with <strong>view</strong> (the raw WKT in a panel) and
-<strong>copy</strong> buttons. So a <code>geof:distance</code> ranking reads as an ordered list and a
-borders query reads as a column of little shapes you can inspect.</li>
-<li><strong>Re-project and toggle layers.</strong> A projection dropdown re-draws the whole map
-in <strong>Equirectangular, Web Mercator, Mollweide, Sinusoidal, or the Dymaxion
-(Fuller) icosahedral net</strong> (the graticule curves and the land is clipped to the
-world's shape; click-to-identify keeps working through each projection's
-inverse — even Dymaxion's per-face gnomonic inverse). A <strong>Layers</strong> menu toggles
-the fill, labels, graticule, glow, and event markers.</li>
-<li><strong>Click to identify — with metadata.</strong> A click runs
-<a href="geosparql.html"><code>geof:sfContains</code></a> for the current era against every border
-polygon and opens a panel for the territory under the point — its name, year,
-and the rest of its properties (<code>partOf</code>, <code>subjectTo</code>, type…) straight from the
-graph. Clicking North Africa in 1000 CE returns <em>Fatimid Caliphate</em>; French West
-Africa in 1914 shows <em>partOf France · subjectTo France</em>.</li>
-<li><strong>Pin a reference era to compare.</strong> <strong>📌 Ref</strong> pins the current borders as a
-translucent amber overlay; navigate to any other era and the two are
-superimposed, so you can see directly how the map changed between them.</li>
-<li><strong>Pick where the data lives.</strong> The data-source selector runs the <em>same</em>
-queries three ways: <strong>embedded</strong> (the <code>.rete</code> baked into the page, fully
-offline), <strong>remote · lazy</strong> (the file stays on remote storage and each query
-faults in only the byte ranges it touches, over a Web Worker), or
-<strong>remote · cached</strong> (download the file once — with a progress bar — then query
-locally). It's the "simple file, remote; logic in the browser" story made
-switchable. Slow operations (a lazy query, the cached download) show a <strong>loader</strong>
-that explains what's happening; identical queries are <strong>cached</strong> (re-running is
-instant), and a <strong>⚙ Settings</strong> modal inspects/clears the query cache and the
-cached <code>.rete</code>.</li>
-<li><strong>Federate with Wikidata.</strong> This app predates engine-level <code>SERVICE</code> (now
-shipped — see <a href="sparql.html">sparql</a>), so its federation is done <strong>client-side</strong>: the identify panel's <strong>🔎 Wikidata</strong> button looks an entity
-up by name, and <strong>🔗 Wikidata</strong> runs a real federated SPARQL query — it feeds the
-era's territory names as <code>VALUES</code> into a query against
-<a href="https://query.wikidata.org">query.wikidata.org</a>, joins the matches back, and
-shows each territory's Wikidata entity + population (works best on modern eras;
-it's online-only and fuzzy on historical names).</li>
-<li><strong>Stack data-layer overlays — across many providers, with real lifespans.</strong>
-Beyond the borders, you can switch on <strong>83 extra datasets</strong> as <strong>overlays</strong>,
-including a five-layer <strong>Antarctica</strong> set — territorial-claim sectors as dated
-wedges (British 1908 → Argentine 1942), research stations (founded→present),
-people who died on the ice (Scott's party, 1912), Historic Sites &amp; Monuments
-(Amundsen's <em>Polheim</em> tent, Mawson's huts), and the ~20k-feature <strong>SCAR
-Composite Gazetteer</strong> (the authoritative Antarctic place-name map) — plus the
-other <strong>seven sources</strong>: <strong>Wikidata</strong> (CC0), <strong>DBpedia</strong> (conflicts and
-power plants — the same GeoSPARQL shape from a <em>second</em> SPARQL endpoint),
-<strong>OpenHistoricalMap</strong> (CC0; OSM features dated by their <code>start_date</code>/<code>end_date</code>
-tags, fetched via Overpass — and drawn as their <strong>real geometry</strong>: historical
-boundaries as polygons, routes as lines, places as dots), <strong>Nomisma.org</strong>
-(CC-BY; ~10k ancient coin <em>types</em> placed at their mints, deep into BCE),
-<strong>FactGrid</strong> (CC0; an <em>independent</em> historical Wikibase with its own property
-space), <strong>Theographic</strong> (CC-BY-SA; biblical events located and dated), and
-<strong>Samian ware</strong> (Roman terra-sigillata potters at their production centres).
-The base four are <strong>Battles</strong>, <strong>Archaeological sites</strong>, <strong>Historical states</strong>
-and <strong>Pleiades ancient places</strong>. Crucially, things that <em>persist</em> — buildings,
-institutions, polities, OHM features — are modelled as a <strong>lifespan
-<code>[startYear, endYear]</code></strong> (founded → demolished/dissolved/closed, or to "present"
-when still standing) and shown across that whole span, while point-in-time
-<strong>events</strong> keep a single year. The Wikidata themes (CC0) span <em>conflict</em>
-(military operations,
-sieges, massacres, terrorist attacks, coups, revolutions, assassinations,
-nuclear explosions), <em>disasters</em> (earthquakes, volcanic eruptions, tsunamis,
-floods, wildfires, explosions, aviation &amp; rail accidents, epidemics, meteorite
-falls, shipwrecks, landslides), <em>built heritage</em> (castles, forts,
-fortifications, palaces, cathedrals, churches, monasteries, abbeys, mosques,
-synagogues, temples, towers, lighthouses, city gates, bridges, dams, aqueducts,
-canals, windmills, amphitheatres, pyramids, megaliths, monuments, memorials),
-and <em>institutions &amp; industry</em> (universities, museums, libraries, hospitals,
-theatres, observatories, stadiums, prisons, mines, factories, power stations,
-breweries, shipyards, airports, railway stations, cemeteries, gardens,
-botanical gardens, World Heritage Sites), as well as treaties, expeditions and
-polities. Each is a separate <code>.rete</code> fetched once from the bucket, queried
-locally, and dotted on the map in its own colour, filtered to the scrub year
-(events within a window of the playhead; places active across their
-<code>[startYear,endYear]</code>). Each active layer gets a <strong>histogram track</strong> beneath the
-timeline — like a clip in a video editor — showing <em>when</em> its data is
-concentrated, with a playhead. Every theme is reproducible from one
-query/recipe each — see <code>scripts/fetch_wikidata_themes.sh</code> (Wikidata, instant
-<code>emit</code> + interval <code>emiti</code>), <code>scripts/fetch_dbpedia_themes.sh</code> (DBpedia),
-<code>scripts/fetch_ohm.sh</code> + <code>scripts/ohm_overpass_to_nt.py</code> (OpenHistoricalMap),
-<code>scripts/fetch_atlas_extra.sh</code> (Nomisma / FactGrid / Getty TGN SPARQL), and
-<code>scripts/fetch_dumps_extra.sh</code> + <code>scripts/{theographic,samian}_to_nt.py</code>
-(the GitHub-dump providers). Because a layer <em>is</em> a SPARQL query, the <strong>＋</strong>
-button lets you <strong>author your own</strong> — name it, pick a colour and instant/interval
-kind, point it at the embedded borders (offline) or any bucket <code>.rete</code>, and write
-the <code>SELECT … ?wkt</code>. The layer list is scrollable and <strong>drag-to-reorder</strong> (which
-sets draw order), and <strong>clicking any overlay feature</strong> opens an info card with its
-label, date/span, layer, coordinates and source IRI. Your scene — year,
-projection, active and custom layers, view — is <strong>remembered in <code>localStorage</code></strong>
-across reloads, and <strong>🔗 Share</strong> copies a link that encodes the whole view in the
-URL hash (<code>#s=…</code>), so a custom-layer setup is reproducible by anyone who opens it
-(the restore path hard-sanitises the incoming state). <strong>📑 Views</strong> saves, loads
-and deletes <strong>named scenes</strong>; <strong>Shorten link</strong> turns the (long) state link into a
-<code>da.gd</code> short URL (using <code>?s=</code> so the redirect keeps the state, since shorteners
-drop the <code>#</code> fragment); and <strong>Reset session</strong> (in ⚙ Settings) clears the saved
-state back to defaults while keeping your named views.</li>
-</ol>
-<figure class="fig-center">
-  <img src="img/atlas-wikidata.png" alt="The Wikidata federation modal at 2010 CE: a table joining each territory name to its matched Wikidata entity (linked) and population — Chile 19.4M, Canada 37M, United Kingdom 67.3M, Brazil 213M — with an 'open query' link to the Wikidata Query Service.">
-  <figcaption>Client-side federation: the era's territory names are fed as <code>VALUES</code> into a SPARQL query run against Wikidata's public endpoint, then joined back — each territory linked to its Wikidata entity with population. (This app does the join in the browser; the engine now also supports <code>SERVICE</code> directly.)</figcaption>
-</figure>
-<figure class="fig-center">
-  <img src="img/atlas-layers.png" alt="The Historical Atlas with data-layer overlays at 1815 CE: battles (red dots) and archaeological sites (purple dots) scattered over the borders, a 'Data layers' panel in the sidebar with per-layer counts, and two histogram tracks beneath the timeline showing each layer's temporal distribution with a playhead.">
-  <figcaption>Data-layer overlays — Battles (red) and Archaeological sites (purple) from separate <code>.rete</code> files dotted over the 1815 borders, each with a <b>histogram track</b> beneath the timeline (the "video-editor layer" view) showing when its events cluster. Toggle layers on/off; points follow the scrub year.</figcaption>
-</figure>
-<figure class="fig-center">
-  <img src="img/atlas-table.png" alt="The Historical Atlas in Table view at 1492 CE: a label column and a wkt column where each row renders a small teal geometry thumbnail of that territory's border polygon, captioned with its kind and vertex count (e.g. MULTIPOLYGON · 388 pts).">
-  <figcaption>The <b>Table</b> view of the borders query at 1492 CE — every <code>geo:wktLiteral</code> cell renders an inline <b>geometry thumbnail</b> (kind + vertex count + lon/lat extent) with view/copy buttons, so the result set reads as a column of little shapes, not opaque WKT strings.</figcaption>
-</figure>
-<figure class="fig-center">
-  <img src="img/atlas-mollweide.png" alt="The Historical Atlas re-projected to the Mollweide equal-area projection: the world is an ellipse with a curved graticule and the land clipped to the lens, the 1914 borders coloured by territory.">
-  <figcaption>The same map and queries re-projected to <b>Mollweide</b> (equal-area) — the projection dropdown also offers Web Mercator and Sinusoidal; the graticule curves and click-to-identify still works through each projection's inverse.</figcaption>
-</figure>
-<figure class="fig-center">
-  <img src="img/atlas-dymaxion.png" alt="The Historical Atlas in the Dymaxion (Fuller) projection at 1994 CE: the world's borders laid out across the unfolded icosahedral net of triangular faces, continents edge-to-edge with country outlines and labels.">
-  <figcaption>The <b>Dymaxion / Fuller</b> projection — an unfolded icosahedron (ported from d3-geo-polygon's <code>geoAirocean</code>). Each point is gnomonically projected onto its icosahedral face; territory edges are broken at the net's cut seams, and clicking still identifies the country via the exact per-face inverse.</figcaption>
-</figure>
-<figure class="fig-center">
-  <img src="img/atlas-filmstrip.png" alt="The Historical Atlas with the snapshot-preview filmstrip open: a row of small map thumbnails along the timeline, one per era from 2000 BCE to 2010 CE, each showing the world's coloured borders at that time with a year caption.">
-  <figcaption>The <b>🎞 preview filmstrip</b> — a thumbnail of the world at each snapshot along the timeline (each a tiny SPARQL query rendered to a mini-canvas), decluttered so close eras collapse until you zoom in.</figcaption>
-</figure>
-<p>Everything is computed by the same Rust engine that powers the CLI, compiled to
-WebAssembly — see <a href="geosparql.html">GeoSPARQL</a> for the spatial functions and
-<a href="browser.html">Browser / WASM</a> for how the engine runs client-side (including
-the lazy HTTP-range reader).</p>
-<h2>Build it yourself</h2>
-<p>The page is assembled by inlining the no-modules WASM engine and the embedded
-<code>.rete</code> into a template (the same offline-only pattern as the playground); the
-remote <code>lazy</code>/<code>cached</code> modes point at the same file served by HTTP range:</p>
-<pre><code class="language-sh"># 1. the embedded dataset (simplified to an in-browser-sized ~1.5 MB file)
-python3 scripts/geo_to_rete.py basemaps \
-  --years bc2000,bc500,bc323,500,1000,1279,1492,1600,1715,1815,1880,1900,1914,1938,1945,1960,1994,2010 \
-  --prec 3 --min-bbox 0.12 --max-per-year 130 -o dev/geo/history.nt
-rete build dev/geo/history.nt -o web/history.rete
-
-# 2. the browser engine, then the page
-wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
-python3 scripts/build_atlas.py            # → docs/atlas-app.html
+<h1>Agentic interfaces — MCP, plugin &amp; skills</h1>
+<p>rete has three agent-facing surfaces, all built on the same idea: a <code>.rete</code>
+file is <strong>self-describing</strong> (card, schema, example queries travel inside the
+file), so an agent can go from "what datasets exist?" to a correct SPARQL
+query — and to validated, media-rich answers — without any out-of-band
+documentation.</p>
+<table><thead><tr><th>Surface</th><th>What it is</th><th>For</th></tr></thead><tbody>
+<tr><td><strong>MCP server</strong></td><td><code>https://katospiegel-rete.hf.space/mcp/</code> — 13 tools over the published catalog and any <code>.rete</code> URL</td><td>ChatGPT, Claude, any MCP client</td></tr>
+<tr><td><strong>Claude Code plugin</strong></td><td>this repo, installable as a plugin + marketplace</td><td>Claude Code users: MCP + skills in two commands</td></tr>
+<tr><td><strong>Skills</strong></td><td>four repo-aware playbooks under <code>skills/</code></td><td>Claude Code; also readable as human docs</td></tr>
+</tbody></table>
+<h2>The MCP server</h2>
+<p>One streamable-HTTP endpoint, stateless, <strong>no authentication, no API key</strong>
+(the model lives in the client — the server only serves graphs):</p>
+<pre><code>https://katospiegel-rete.hf.space/mcp/
 </code></pre>
+<p>The tools, grouped by what an agent does with them:</p>
+<table><thead><tr><th>Group</th><th>Tools</th></tr></thead><tbody>
+<tr><td>Discover</td><td><code>list_datasets</code> · <code>dataset_card</code> · <code>dataset_schema</code> · <code>example_queries</code></td></tr>
+<tr><td>Query</td><td><code>sparql_query</code> (SELECT/ASK/CONSTRUCT/DESCRIBE, <code>reason=true</code> for OWL 2 QL, any catalog key <strong>or any <code>.rete</code> URL</strong>) · <code>find_entities</code> · <code>describe_entity</code></td></tr>
+<tr><td>Validate</td><td><code>validate_shacl</code> (lazy over shape targets) · <code>shacl_shapes</code> (curated shapes)</td></tr>
+<tr><td>Media</td><td><code>embed_media</code> (URLs → base64 data URIs, images recompressed to WebP) · <code>media_preview</code> (representative image of a PDF / video frame / IIIF / HTML page)</td></tr>
+<tr><td>ChatGPT connector contract</td><td><code>search</code> · <code>fetch</code></td></tr>
+</tbody></table>
+<p>Every answer carries <code>stats</code> — the bytes physically fetched — so laziness
+stays observable. The server instructions teach the intended workflow
+(card → schema → examples → query), and reads are disk-cached server-side.</p>
+<h3>Connect from ChatGPT</h3>
+<p>Two integration levels:</p>
+<ol>
+<li><strong>Developer mode (all 13 tools).</strong> Settings → <em>Apps &amp; Connectors</em> →
+enable <em>Developer mode</em> (under advanced settings) → <em>Create</em> a
+connector: any name, MCP server URL
+<code>https://katospiegel-rete.hf.space/mcp/</code>, authentication <strong>None</strong>.
+Enable it per-chat from the composer's tools menu.</li>
+<li><strong>As a regular connector (search + deep research).</strong> The server
+implements ChatGPT's <code>search</code>/<code>fetch</code> contract, so it also works as a
+plain connector: <code>search</code> matches datasets and entities, <code>fetch</code> returns
+the card/schema/examples or everything about one entity.</li>
+</ol>
+<p><strong>Gotcha (hard-won):</strong> ChatGPT snapshots the tool list when the connector
+is created and does not refresh it on its own. After the server gains
+tools, <em>refresh</em> the connector (or delete and re-add it) and start a new
+chat — otherwise you keep the old tool list.</p>
+<h3>Connect from Claude</h3>
+<ul>
+<li>
+<p><strong>Claude.ai (web/desktop):</strong> Settings → <em>Connectors</em> → <em>Add custom
+connector</em> → the <code>/mcp/</code> URL, no auth. Available on paid plans.</p>
+</li>
+<li>
+<p><strong>Claude Code — the plugin way (recommended):</strong> see below; installing
+the plugin wires the MCP automatically.</p>
+</li>
+<li>
+<p><strong>Claude Code — MCP only:</strong></p>
+<pre><code class="language-sh">claude mcp add --transport http rete-graphs https://katospiegel-rete.hf.space/mcp/
+</code></pre>
+</li>
+</ul>
+<h3>Connect from any other MCP client</h3>
+<p>Generic config (Cursor, Windsurf, custom hosts — field names vary
+slightly per client):</p>
+<pre><code class="language-json">{
+  "mcpServers": {
+    "rete-graphs": {
+      "type": "http",
+      "url": "https://katospiegel-rete.hf.space/mcp/"
+    }
+  }
+}
+</code></pre>
+<h3>Programmatic agents</h3>
+<p>Verified with <a href="https://ai.pydantic.dev">pydantic-ai</a> (2.x) — the full
+tool loop over this server:</p>
+<pre><code class="language-python">from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+
+agent = Agent("anthropic:claude-sonnet-5",
+              toolsets=[MCPToolset("https://katospiegel-rete.hf.space/mcp/")])
+async with agent:
+    result = await agent.run("Which datasets cover Spanish law? Query one of them.")
+</code></pre>
+<p>And with the <a href="https://gofastmcp.com">FastMCP</a> client for direct calls:</p>
+<pre><code class="language-python">from fastmcp import Client
+
+async with Client("https://katospiegel-rete.hf.space/mcp/") as c:
+    tools = await c.list_tools()
+    result = await c.call_tool("sparql_query", {
+        "dataset": "boe",
+        "query": "SELECT (COUNT(?s) AS ?n) WHERE { ?s a &lt;http://data.europa.eu/eli/ontology#LegalResource&gt; }",
+    })
+</code></pre>
+<p>No MCP at all? The same surface is plain REST (<code>/api/…</code>, OpenAPI at
+<a href="https://katospiegel-rete.hf.space/docs"><code>/docs</code></a>) and every dataset is a
+standard <a href="interop.html">SPARQL 1.1 Protocol endpoint</a>
+(<code>/sparql/&lt;key&gt;</code> or <code>/sparql/&lt;any-.rete-URL&gt;</code>).</p>
+<h2>The Claude Code plugin</h2>
+<p>The repo doubles as a plugin <strong>and</strong> its own marketplace:</p>
+<pre><code>/plugin marketplace add caviri/rete
+/plugin install rete-graph@rete
+</code></pre>
+<p>Installing wires up, in one step:</p>
+<ul>
+<li>the <strong>MCP server</strong> above (13 tools available in every session), and</li>
+<li>the four <strong>skills</strong>, namespaced as <code>/rete-graph:&lt;skill&gt;</code>.</li>
+</ul>
+<p>Versioning follows git — every push to <code>main</code> is a new plugin version, so
+updates arrive without manual bumps. To try it without installing:
+<code>claude --plugin-dir &lt;checkout&gt;</code>.</p>
+<h2>The skills</h2>
+<p>Four repo-aware playbooks (in <a href="https://github.com/caviri/rete/tree/main/skills"><code>skills/</code></a>,
+loaded automatically by the plugin):</p>
+<table><thead><tr><th>Skill</th><th>Use it when</th></tr></thead><tbody>
+<tr><td><code>rete-catalog</code></td><td>"use an existing published dataset" — discover, read card/schema/examples, open from any client, download-and-verify, federate</td></tr>
+<tr><td><code>rete-clients</code></td><td>"wire rete into a new project" — Python / Pyodide / JS / script-tag / wasm / Rust setup with verified first-query snippets</td></tr>
+<tr><td><code>rete-from-graph</code></td><td>"turn this dataset/graph/ontology/endpoint into a <code>.rete</code>" — source → N-Triples → <code>rete build</code> → verify, with tested converter utilities</td></tr>
+<tr><td><code>rete-publish</code></td><td>"make this <code>.rete</code> explorable in the playground" — companions → bucket → catalog → rebuild → verify</td></tr>
+</tbody></table>
+<p>Each is a <code>SKILL.md</code> with reference docs and working scripts — they read
+fine as human documentation too.</p>
+<h2>What an agent session looks like</h2>
+<p>A typical flow, entirely inside one chat, no rete-specific prompt
+engineering:</p>
+<ol>
+<li><code>list_datasets</code> → picks <code>boe</code> (Spanish consolidated legislation).</li>
+<li><code>dataset_schema("boe")</code> → copies the exact ELI IRIs.</li>
+<li><code>example_queries("boe")</code> → adapts the citation-network example.</li>
+<li><code>sparql_query</code> with <code>reason=true</code> → counts norms including subclass
+entailment.</li>
+<li><code>validate_shacl</code> → checks an integrity contract over the result set.</li>
+<li><code>media_preview</code> on a IIIF manifest or PDF the query surfaced →
+<code>embed_media</code> → a self-contained HTML report with the evidence inlined.</li>
+</ol>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -507,7 +442,7 @@ python3 scripts/build_atlas.py            # → docs/atlas-app.html
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/atlas.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/agents.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {
