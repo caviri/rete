@@ -10,7 +10,6 @@
   "repository": "https://github.com/caviri/rete",
   "license": "Apache-2.0",
   "keywords": ["rdf", "sparql", "knowledge-graph", "shacl", "linked-data", "mcp"],
-  "skills": ["./.claude/skills/"],
   "mcpServers": {
     "rete-graphs": {
       "type": "http",
