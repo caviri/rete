@@ -35,7 +35,7 @@ binary is stale/missing.
 | `--card` | embed a Dataset Card (counts, top predicates/classes, vocabularies + curated fields). Always pass for a publishable dataset. |
 | `--title / --license / --source / --description / --created` | curated card fields (each implies `--card`). |
 | `--card-file <json>` | JSON of curated card fields (implies `--card`). |
-| `--memory-budget-mb <N>` | **Memory-bounded external build**: chunk the input to disk and merge, holding ~N MiB in RAM regardless of graph size; the budget decides the chunk count and sort-run sizes. Byte-identical to a standard `--no-pyramid` build. v1: .nt/.nq files only, default graph only, no pyramid/text-index/reasoning; card = curated + counts. Spill dir via `--tmp-dir` (needs input-sized free space). |
+| `--memory-budget-mb <N>` | **Memory-bounded external build**: chunk the input to disk and merge, holding ~N MiB in RAM regardless of graph size; the budget decides the chunk count and sort-run sizes. Byte-identical to a standard `--no-pyramid` build. PROVEN at 1.3B triples: ORCID → ONE 17.5 GB .rete @ 16 GiB budget (37 chunks, ~2.5 h). v1: .nt/.nq only (files or stdin `-` with explicit `--format` — the single input pass makes pipes valid), default graph only, no pyramid/text-index/reasoning; card = curated + counts. Spill dir via `--tmp-dir`. |
 | `--tmp-dir <dir>` | Where `--memory-budget-mb` puts its spill files (default: alongside the output). |
 | `--materialize` | bake RDFS/OWL-RL entailments into the file at build time (aborts if incoherent). |
 | `--reason` | run the reasoner and stamp the coherence verdict into the card (implies `--card`; does NOT abort on incoherence). Verify later with `rete reason --verify-card`. |
@@ -57,12 +57,47 @@ section). Escalating levers:
 
 1. `--pyramid-algo types` (parallel) and/or `--no-pyramid`.
 2. The streaming/two-pass ingest path (lower peak RAM than in-memory).
-3. **Shard** when one file won't fit: split the N-Triples by subject into ~1–2 GB
-   shards, build each with `--no-pyramid` in parallel, and ship a folder + a JSON
-   manifest. Each shard builds with today's streaming ingest; the playground/CLI
-   federate across them. The dictionary law: cross-shard joins are term-level
-   (string) joins, so shard by **subject/entity** to keep star-queries inside one
-   shard. Model: `scripts/build_databnf_shards.sh`, `scripts/build_biblissima_shards.sh`.
+3. **`--memory-budget-mb` external build** — the default answer for a huge SINGLE
+   file now that it's proven at 1.3B triples / 397M terms (ORCID → one 17.5 GB
+   .rete inside a 16 GiB budget). One file beats shards for UX (one URL, one card,
+   real cross-entity BGP joins); shards still win when you need per-shard
+   parallel builds or per-part re-publishing.
+4. **Shard** when one file won't fit or v1 limits bite (named graphs, pyramid,
+   text index): split the N-Triples by subject into ~1–2 GB shards, build each
+   with `--no-pyramid` in parallel, and ship a folder + a JSON manifest. The
+   dictionary law: cross-shard joins are term-level (string) joins, so shard by
+   **subject/entity** to keep star-queries inside one shard. Model:
+   `scripts/build_databnf_shards.sh`, `scripts/build_biblissima_shards.sh`.
+
+### External-build playbook (billion-triple single file)
+
+Hard-won operational rules — model `scripts/orcid/build_single_rete.sh`:
+
+- **Two robust phases, never one host pipeline.** Emit the N-Triples to a file on
+  the spill drive first (~10× faster than piping into an attached container),
+  then run the build as a **DETACHED container** (`docker run -d --name x`): an
+  attached `--rm` container dies with its host process tree — one 4 h build was
+  lost to a bash bug in the pipeline that launched it. Add
+  `--oom-score-adj -500` so a busy Docker VM OOM-kills something else first.
+- **Spill sizing**: the spill (`--tmp-dir`) needs roughly ¼–½ of the input NT
+  size (id-encoded + zstd) *plus* the staged NT itself if you put it there;
+  ORCID's 198 GB NT spilled ~45 GB. It lives in a `.rete-extbuild-<pid>-<seq>`
+  SUBDIR of `--tmp-dir`.
+- **Crash resume**: the spill survives a kill. Completed `<PERM>.tiles.sec`
+  sections, the merged dictionary and `global.tri` are all reusable — the
+  `resume_from_spill` harness (`cargo test -p rete-core --release --lib
+  extbuild::tests::resume_from_spill -- --ignored`, driven by
+  `RETE_RESUME_SPILL/OUT/TERMS/QUADS/CARD[/BUDGET_MB]`) rebuilds only the missing
+  permutations and writes the final file (~19 min instead of ~5 h, twice proven).
+  Resume with a smaller `RETE_RESUME_BUDGET_MB` if the machine is busier now.
+- **Verify/query the output LAZILY**: `rete verify` and plain `rete sparql` read
+  the whole file into RAM (17.5 GB file OOM-killed a capped container) — use
+  `rete sparql-url <local path or URL>` / `card-url` / `query-url`, which accept
+  local paths and do the same lazy tile-faulting as HTTP (~30–60 MB per
+  selective query). Give `verify` an uncapped container.
+- **No pyramid in v1**: catalog examples and docs must steer to SELECTIVE
+  queries (one subject, one bound object); a whole-graph aggregate scans the
+  file. `rete repyramid` at this scale is untested — don't promise it.
 
 The full memory write-up is in the repo's dev notes (low-mem large build).
 

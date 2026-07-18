@@ -89,9 +89,18 @@ Flag che-sheet (full detail + memory/large-build guidance in
 
 A monolithic build holds the dictionary + index in RAM. If it OOMs:
 1. `--pyramid-algo types` + `--no-pyramid` first (pyramid is the biggest section).
-2. **Shard**: split by subject into ~1–2 GB N-Triples shards, build each with
-   `--no-pyramid`, and ship a folder + manifest (federation). See
-   `scripts/build_databnf_shards.sh` and **[reference/build.md](reference/build.md)**.
+2. **`--memory-budget-mb <N> --tmp-dir <spill>`** — the external build: chunks
+   the input to disk and merges in bounded RAM, producing ONE byte-identical
+   .rete of any size (proven: ORCID 1.3B triples → one 17.5 GB file @ 16 GiB).
+   For billion-scale runs follow the **external-build playbook** in
+   [reference/build.md](reference/build.md): emit NT to disk then build in a
+   DETACHED container, spill is resumable after a crash, and verify/query the
+   output with `sparql-url` (lazy), never plain `sparql`.
+3. **Shard** when v1 external-build limits bite (named graphs, pyramid, text
+   index) or you need parallel per-part builds: split by subject into ~1–2 GB
+   N-Triples shards, build each with `--no-pyramid`, and ship a folder +
+   manifest (federation). See `scripts/build_databnf_shards.sh` and
+   **[reference/build.md](reference/build.md)**.
 
 ## 5. Verify
 
