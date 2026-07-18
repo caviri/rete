@@ -34,6 +34,9 @@
   --tint-blue-fg: #1f5e85;
   --tint-green-fg: #0b6f4e;
   --tint-purple-fg: #5a3e86;
+  --heat-1: #d7efe2;
+  --heat-2: #9fdcbb;
+  --heat-3: #4fb98a;
   --float-bg: rgba(255, 255, 255, .88);
   --scrim: rgba(255, 255, 255, .55);
   /* CodeMirror syntax colors (editor.js reads these through var()). */
@@ -83,6 +86,9 @@
   --tint-blue-fg: #8fc3e8;
   --tint-green-fg: #6fd0ae;
   --tint-purple-fg: #c0a8f0;
+  --heat-1: #1d3a2c;
+  --heat-2: #2a5f45;
+  --heat-3: #379a71;
   --float-bg: rgba(23, 31, 27, .88);
   --scrim: rgba(15, 21, 18, .6);
   --cm-kw: #d98cab;
@@ -129,10 +135,19 @@
     --tint-blue-fg: #8fc3e8;
     --tint-green-fg: #6fd0ae;
     --tint-purple-fg: #c0a8f0;
+    --heat-1: #1d3a2c;
+    --heat-2: #2a5f45;
+    --heat-3: #379a71;
+  --heat-1: #1d3a2c;
+  --heat-2: #2a5f45;
+  --heat-3: #379a71;
   --tint-amber-fg: #e8c27a;
   --tint-blue-fg: #8fc3e8;
   --tint-green-fg: #6fd0ae;
   --tint-purple-fg: #c0a8f0;
+  --heat-1: #1d3a2c;
+  --heat-2: #2a5f45;
+  --heat-3: #379a71;
     --float-bg: rgba(23, 31, 27, .88);
     --scrim: rgba(15, 21, 18, .6);
     --cm-kw: #d98cab;
@@ -2504,8 +2519,8 @@ th .coltype.coltype-on {
   font-size: 9.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 5px;
 }
-.ds-prev-tag.sparql { color: var(--accent-dark); background: #e3f3ee; }
-.ds-prev-tag.shacl { color: var(--tint-amber-fg); background: #fbeede; }
+.ds-prev-tag.sparql { color: var(--tint-green-fg); background: var(--tint-green); }
+.ds-prev-tag.shacl { color: var(--tint-amber-fg); background: var(--tint-amber); }
 .ds-prev-fam {
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
   color: var(--muted); background: var(--side, var(--side));
@@ -3069,7 +3084,7 @@ th .coltype.coltype-on {
 .mapview svg.has-base .mgeo:hover, .mapview svg.has-base .mline:hover { stroke-width: 2.6; }
 /* per-cell geo mini-map (a WKT geometry rendered as a small locator) */
 .geo-cell { padding: 4px 6px; cursor: pointer; }
-.geo-cell svg { width: 108px; height: auto; display: block; background: #f3f7f5; border-radius: 6px; }
+.geo-cell svg { width: 108px; height: auto; display: block; background: var(--tint); border-radius: 6px; }
 .geo-cell:hover svg { outline: 2px solid var(--accent); outline-offset: -1px; }
 /* full pannable/zoomable map modal (Leaflet, lazy-loaded) */
 .geo-modal { position: fixed; inset: 0; z-index: 9000; background: rgba(15, 22, 20, .55);
@@ -3091,7 +3106,7 @@ th .coltype.coltype-on {
 .geo-lod.done { color: var(--accent); }
 .geo-modal-close { background: none; border: 0; color: var(--ink); font-size: 16px; cursor: pointer; padding: 2px 8px; min-height: 0; }
 .geo-modal-close:hover { background: var(--side); border-radius: 6px; }
-.geo-modal-map { width: 100%; height: 64vh; background: #eef2f0; touch-action: none; }
+.geo-modal-map { width: 100%; height: 64vh; background: var(--tint); touch-action: none; }
 /* "Explore full map" — a near-fullscreen interactive map (Leaflet handles the
    pinch/scroll zoom); the map pane grows to fill the taller box. */
 .geo-modal.geo-modal-full { padding: 10px; }
@@ -3231,9 +3246,9 @@ th .coltype.coltype-on {
 .tgrid { display: grid; gap: 3px; }
 .tcell { aspect-ratio: 1 / 1; min-height: 11px; border-radius: 2.5px; background: var(--side); border: 1px solid rgba(0, 0, 0, .05); cursor: default; }
 .tcell.l0 { background: var(--side); }
-.tcell.l1 { background: #d7efe2; }
-.tcell.l2 { background: #9fdcbb; }
-.tcell.l3 { background: #4fb98a; }
+.tcell.l1 { background: var(--heat-1); }
+.tcell.l2 { background: var(--heat-2); }
+.tcell.l3 { background: var(--heat-3); }
 .tcell.l4 { background: var(--accent); }
 .tcell:hover { outline: 1.5px solid var(--accent-dark); outline-offset: 1px; }
 .tlegend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 9px; font-size: 11px; color: var(--muted); }
