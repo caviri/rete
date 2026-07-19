@@ -306,6 +306,11 @@ pub enum Builtin {
     GeoSfEquals,
     GeoDistance,
     GeoEnvelope,
+    // geo3 — 3D extension of GeoSPARQL (AABB topology + distance). See crate::geo3.
+    Geo3Distance,
+    Geo3Contains,
+    Geo3Within,
+    Geo3Adjacent,
     // RDF-star / SPARQL-star: construct + inspect quoted triples (`<<s p o>>`).
     /// `TRIPLE(s, p, o)` → the quoted triple term.
     TripleTerm,

@@ -754,6 +754,11 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
                     "http://www.opengis.net/def/function/geosparql/envelope" => {
                         Builtin::GeoEnvelope
                     }
+                    // geo3: 3D extension of GeoSPARQL (see crate::geo3).
+                    "https://w3id.org/rete/geo3/function/distance3D" => Builtin::Geo3Distance,
+                    "https://w3id.org/rete/geo3/function/contains3D" => Builtin::Geo3Contains,
+                    "https://w3id.org/rete/geo3/function/within3D" => Builtin::Geo3Within,
+                    "https://w3id.org/rete/geo3/function/adjacent3D" => Builtin::Geo3Adjacent,
                     _ => return Err(SparqlError::Unsupported("built-in function")),
                 },
                 _ => return Err(SparqlError::Unsupported("built-in function")),
@@ -1193,6 +1198,11 @@ mod tests {
             "<http://www.opengis.net/def/function/geosparql/sfEquals>(?a, ?b)",
             "<http://www.opengis.net/def/function/geosparql/distance>(?a, ?b, <http://www.opengis.net/def/uom/OGC/1.0/metre>)",
             "<http://www.opengis.net/def/function/geosparql/envelope>(?a)",
+            "<https://w3id.org/rete/geo3/function/distance3D>(?a, ?b)",
+            "<https://w3id.org/rete/geo3/function/contains3D>(?a, ?b)",
+            "<https://w3id.org/rete/geo3/function/within3D>(?a, ?b)",
+            "<https://w3id.org/rete/geo3/function/adjacent3D>(?a, ?b)",
+            "<https://w3id.org/rete/geo3/function/adjacent3D>(?a, ?b, 5)",
         ] {
             let q = format!("SELECT ({expression} AS ?result) WHERE {{ VALUES ?v {{ 1 }} }}");
             assert!(parse_select(&q).is_ok(), "{expression}");

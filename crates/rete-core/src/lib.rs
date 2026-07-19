@@ -19,6 +19,7 @@ pub mod dictionary;
 pub mod file;
 #[doc(hidden)]
 pub mod geo;
+pub mod geo3;
 #[doc(hidden)]
 pub mod header;
 #[doc(hidden)]

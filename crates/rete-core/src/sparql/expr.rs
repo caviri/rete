@@ -400,6 +400,17 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
                 Some(crate::geo::GEO_WKT),
             )))
         }
+        // geo3 3D relations in value position → xsd:boolean.
+        Builtin::Geo3Contains | Builtin::Geo3Within | Builtin::Geo3Adjacent => {
+            let gap = args.get(2).and_then(|e| e.value(ctx, b));
+            let r = geo3_relation(f, &a0()?, &args.get(1)?.value(ctx, b)?, gap)?;
+            Some(Rc::from(bool_literal(r)))
+        }
+        // geo3:distance3D(g1, g2) → xsd:double (min AABB gap, literal's own unit).
+        Builtin::Geo3Distance => {
+            let d = crate::geo3::distance(&geo3_arg(&a0()?)?, &geo3_arg(&args.get(1)?.value(ctx, b)?)?);
+            Some(Rc::from(make_literal(&fmt_plain(d), None, Some(XSD_DOUBLE))))
+        }
         _ => None,
     }
 }
@@ -431,6 +442,35 @@ fn geo_relation(f: Builtin, t1: &str, t2: &str) -> Option<bool> {
         _ => return None,
     };
     crate::geo::relate(rel, &wkt_arg(t1)?, &wkt_arg(t2)?)
+}
+
+/// A 3D geometry literal (`geo3:wktLiteral3D` / `geo3:box3dLiteral`, leniently also
+/// `geo:wktLiteral` / plain string) → its AABB. `None` for any other term (type error).
+fn geo3_arg(token: &str) -> Option<crate::geo3::Aabb> {
+    if !token.starts_with('"') {
+        return None;
+    }
+    match datatype_iri(token).as_deref() {
+        Some(crate::geo3::WKT3)
+        | Some(crate::geo3::BOX3D)
+        | Some(crate::geo::GEO_WKT)
+        | Some(XSD_STRING)
+        | None => {}
+        Some(_) => return None,
+    }
+    crate::geo3::parse(&crate::terms::lexical(token))
+}
+
+/// Evaluate a geo3 relation builtin on two geometry terms (+ optional gap for adjacency).
+fn geo3_relation(f: Builtin, t1: &str, t2: &str, gap: Option<Rc<str>>) -> Option<bool> {
+    let rel = match f {
+        Builtin::Geo3Contains => crate::geo3::Rel3::Contains,
+        Builtin::Geo3Within => crate::geo3::Rel3::Within,
+        Builtin::Geo3Adjacent => crate::geo3::Rel3::Adjacent,
+        _ => return None,
+    };
+    let g = gap.and_then(|t| as_number(&t)).unwrap_or(0.0);
+    Some(crate::geo3::relate(rel, &geo3_arg(t1)?, &geo3_arg(t2)?, g))
 }
 
 /// A units IRI term (`<…/metre>` / `<…/degree>`) → [`crate::geo::Unit`].
@@ -834,6 +874,13 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
             (Some(a), Some(c)) => geo_relation(f, &a, &c).unwrap_or(false),
             _ => false,
         },
+        // geo3 3D relations in FILTER context (a type error drops the row → false).
+        Builtin::Geo3Contains | Builtin::Geo3Within | Builtin::Geo3Adjacent => {
+            match (val(0), val(1)) {
+                (Some(a), Some(c)) => geo3_relation(f, &a, &c, val(2)).unwrap_or(false),
+                _ => false,
+            }
+        }
         _ => false,
     }
 }
@@ -1216,6 +1263,27 @@ mod tests {
             call(&ctx, Builtin::GeoDistance, &[&point, &far, "<bad-unit>"]),
             None
         );
+
+        // geo3 (3D extension): AABB topology + distance over POINT Z / BOX3D.
+        let wkt3 = |s: &str| lit(s, "https://w3id.org/rete/geo3#wktLiteral3D");
+        let box3d = |s: &str| lit(s, "https://w3id.org/rete/geo3#box3dLiteral");
+        let big = box3d("BOX3D(0 0 0, 10 10 10)");
+        let inner = box3d("BOX3D(2 2 2, 4 4 4)");
+        let p000 = wkt3("POINT Z(0 0 0)");
+        let p_far = wkt3("POINT Z(3 4 12)"); // distance 13 from origin
+        assert!(boolean(Builtin::Geo3Contains, &[&big, &inner]));
+        assert!(!boolean(Builtin::Geo3Contains, &[&inner, &big]));
+        assert!(boolean(Builtin::Geo3Within, &[&inner, &big]));
+        // adjacency: two boxes 3 apart on Z — not touching, adjacent within gap 3
+        let a = box3d("BOX3D(0 0 0, 1 1 1)");
+        let b = box3d("BOX3D(0 0 3, 1 1 4)");
+        assert!(!boolean(Builtin::Geo3Adjacent, &[&a, &b]));
+        assert!(boolean(Builtin::Geo3Adjacent, &[&a, &b, "3"]));
+        assert!(!boolean(Builtin::Geo3Adjacent, &["<iri>", &b]));
+        // distance3D → xsd:double "13"
+        let d = call(&ctx, Builtin::Geo3Distance, &[&p000, &p_far]).unwrap();
+        assert!(d.contains("13"), "distance3D result: {d}");
+        assert_eq!(call(&ctx, Builtin::Geo3Distance, &[&p000, "<iri>"]), None);
     }
 
     #[test]

@@ -3,12 +3,12 @@
   "generatedFrom": "release-1.0.0-rc1",
   "datasets": [
     {
-      "key": "ror",
-      "url": "https://data.graphplaza.com/ror/ror.rete",
+      "key": "z-anatomy",
+      "url": "https://data.graphplaza.com/z-anatomy/z-anatomy.rete",
       "formatVersion": 5,
-      "contentHash": "399ce8cb6a2fa6de8a87b2c46a6cc692",
-      "size": 30052795,
-      "cardUrl": "https://data.graphplaza.com/ror/ror.rete"
+      "contentHash": "5b6e34d7aba344b451b71984bbbd0297",
+      "size": 4940286,
+      "cardUrl": "https://data.graphplaza.com/z-anatomy/z-anatomy.rete"
     }
   ]
 }
