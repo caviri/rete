@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Z-Anatomy 3D Explorer — spatial relations in the human body</title>
+<meta name="description" content="A 3D explorer for the z-anatomy knowledge graph: pick any structure and see its 3D spatial neighbours — surfaces in contact, same-tissue continuity and thermal coupling — plus the diseases and phenotypes located there.">
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121826; --panel2:#0e1420; --line:#1e2636; --ink:#e6ecf5;
+    --dim:#8b97ad; --accent:#5db0ff;
+    --c-target:#ffd54a; --c-adj:#ff9f43; --c-tis:#4ade80; --c-th:#ff5d6c;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  #app{display:grid;grid-template-columns:290px 1fr 320px;height:100%}
+  .col{height:100%;overflow-y:auto;background:var(--panel);border-right:1px solid var(--line)}
+  #right{border-right:none;border-left:1px solid var(--line)}
+  #stage{position:relative;background:radial-gradient(120% 120% at 50% 20%,#141c2b,#080b12)}
+  canvas{display:block}
+  h1{font-size:15px;margin:0;padding:14px 16px;border-bottom:1px solid var(--line);letter-spacing:.2px}
+  h1 small{display:block;color:var(--dim);font-weight:400;font-size:11px;margin-top:2px}
+  .sec{padding:12px 16px;border-bottom:1px solid var(--line)}
+  .sec h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:0 0 8px}
+  .sys{display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;font-size:13px}
+  .sys input{accent-color:var(--accent)}
+  .swatch{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+  #search{width:100%;padding:8px 10px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:8px;color:var(--ink);font-size:13px}
+  #list{list-style:none;margin:0;padding:0}
+  #list li{padding:6px 16px;cursor:pointer;border-bottom:1px solid #161d2b;font-size:13px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #list li:hover{background:#182034}
+  #list li .tt{color:var(--dim);font-size:11px;margin-left:6px}
+  .badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;background:#1b2334;color:var(--dim)}
+  .kv{margin:6px 0;font-size:13px}.kv b{color:var(--dim);font-weight:500}
+  .rel-tabs{display:flex;gap:6px;margin:10px 0 6px}
+  .rel-tabs button{flex:1;padding:6px 4px;background:var(--panel2);border:1px solid var(--line);
+    color:var(--ink);border-radius:7px;cursor:pointer;font-size:12px}
+  .rel-tabs button.on{border-color:currentColor}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  .nlist{list-style:none;margin:6px 0 0;padding:0;max-height:210px;overflow:auto}
+  .nlist li{padding:4px 6px;border-radius:6px;cursor:pointer;font-size:12.5px;display:flex;justify-content:space-between;gap:8px}
+  .nlist li:hover{background:#182034}
+  .nlist li .m{color:var(--dim);font-variant-numeric:tabular-nums}
+  .pill{font-size:11px;padding:2px 8px;border-radius:20px;margin:2px 3px 0 0;display:inline-block}
+  .pill.dis{background:#3a1720;color:#ff9db0} .pill.phe{background:#3a2a12;color:#ffc978}
+  .muted{color:var(--dim)}
+  #legend{position:absolute;left:14px;bottom:12px;background:rgba(12,17,28,.82);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:12px}
+  #legend .row{display:flex;align-items:center;gap:7px;padding:2px 0}
+  #hud{position:absolute;right:14px;top:12px;background:rgba(12,17,28,.82);border:1px solid var(--line);
+    border-radius:10px;padding:8px 12px;font-size:12px;color:var(--dim);max-width:260px}
+  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;
+    gap:12px;color:var(--dim);background:rgba(8,11,18,.7);z-index:5}
+  #bar{width:220px;height:5px;background:#1b2334;border-radius:4px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:7px;
+    padding:6px 10px;cursor:pointer;font-size:12px}
+  .btn:hover{border-color:var(--accent)}
+  .empty{color:var(--dim);font-size:12.5px;padding:8px 0}
+  code{background:#0e1420;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- LEFT -->
+  <div class="col" id="left">
+    <h1>🫀 Z-Anatomy 3D Explorer<small>spatial relations in the human body — a rete knowledge graph</small></h1>
+    <div class="sec">
+      <h2>Body systems</h2>
+      <div id="systems"></div>
+      <div style="margin-top:8px"><button class="btn" id="resetView">Reset view</button></div>
+    </div>
+    <div class="sec">
+      <h2>Find a structure <span id="count" class="muted"></span></h2>
+      <input id="search" placeholder="search 3,498 structures…" autocomplete="off">
+      <ul id="list"></ul>
+    </div>
+  </div>
+  <!-- CENTER -->
+  <div id="stage">
+    <div id="hud">Drag to orbit · scroll to zoom · click a structure to select it.</div>
+    <div id="legend">
+      <div class="row"><span class="dot" style="background:var(--c-target)"></span>selected</div>
+      <div class="row"><span class="dot" style="background:var(--c-adj)"></span>adjacent in 3D (touching)</div>
+      <div class="row"><span class="dot" style="background:var(--c-tis)"></span>same tissue (continuous)</div>
+      <div class="row"><span class="dot" style="background:var(--c-th)"></span>thermally coupled</div>
+    </div>
+    <div id="loading"><div>Loading the body…</div><div id="bar"><i></i></div><div id="lmsg" class="muted"></div></div>
+  </div>
+  <!-- RIGHT -->
+  <div class="col" id="right">
+    <div class="sec" id="info"><div class="empty">Pick a structure on the left, or click one in the scene.</div></div>
+  </div>
+</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {DRACOLoader} from 'three/addons/loaders/DRACOLoader.js';
+
+const DATA = 'https://data.graphplaza.com/z-anatomy/z-anatomy-viewer.json';
+const SYS_COLORS = ['#e05a6b','#c9a227','#7fd1c0','#d98b5f','#9b8cff','#888','#5a7fae','#cdd3dd','#6fae6f'];
+// Systems loaded by default (indices resolved after fetch, by name)
+const DEFAULT_ON = ['SkeletalSystem','CardioVascular','VisceralSystem'];
+const SKIP = new Set(['References']);            // reference axes — never load
+
+let graph, nodesByName = new Map(), meshByName = new Map();
+let scene, camera, renderer, controls, root;
+const loaded = new Set();                          // system indices with a loaded GLB
+let selected = null;
+
+const draco = new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+const gltfLoader = new GLTFLoader().setDRACOLoader(draco);
+
+init();
+
+async function init(){
+  setupThree();
+  graph = await (await fetch(DATA)).json();
+  buildSystemToggles();
+  graph.nodes.forEach((n,i)=>{ n.i=i; if(!nodesByName.has(n.n)) nodesByName.set(n.n,n); });
+  document.getElementById('count').textContent = `(${graph.nodes.length})`;
+  buildList('');
+  // load defaults
+  const want = graph.systems.map((s,i)=>i).filter(i=>DEFAULT_ON.includes(graph.systems[i]));
+  await loadSystems(want);
+  document.getElementById('loading').style.display='none';
+  frameAll();
+  animate();
+}
+
+function setupThree(){
+  const stage = document.getElementById('stage');
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(45, stage.clientWidth/stage.clientHeight, 0.01, 100);
+  camera.up.set(0,0,1);            // the Z-Anatomy model is Z-up (superior = +Z)
+  camera.position.set(0.4,1.4,0.6);
+  renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  stage.appendChild(renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xdfefff, 0x27303f, 1.15));
+  const key = new THREE.DirectionalLight(0xffffff,1.4); key.position.set(2,4,3); scene.add(key);
+  const fill = new THREE.DirectionalLight(0x9fbfff,.5); fill.position.set(-3,1,-2); scene.add(fill);
+  root = new THREE.Group(); scene.add(root);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.dampingFactor = .08;
+  addEventListener('resize', onResize);
+  renderer.domElement.addEventListener('pointerdown', onPick);
+  document.getElementById('resetView').onclick = ()=>{ clearSelection(); frameAll(); };
+  document.getElementById('search').addEventListener('input', e=>buildList(e.target.value.trim().toLowerCase()));
+}
+
+function buildSystemToggles(){
+  const box = document.getElementById('systems'); box.innerHTML='';
+  graph.systems.forEach((name,i)=>{
+    if(SKIP.has(name)) return;
+    const on = DEFAULT_ON.includes(name);
+    const el = document.createElement('label'); el.className='sys';
+    el.innerHTML = `<input type="checkbox" ${on?'checked':''}>
+      <span class="swatch" style="background:${SYS_COLORS[i]}"></span>${prettySys(name)}`;
+    el.querySelector('input').onchange = e=>{
+      if(e.target.checked) loadSystems([i]); else unloadSystem(i);
+    };
+    box.appendChild(el);
+  });
+}
+const prettySys = s => ({SkeletalSystem:'Skeleton',MuscularSystem:'Muscles',NervousSystem:'Nervous',
+  CardioVascular:'Cardiovascular',VisceralSystem:'Viscera',LymphoidOrgans:'Lymphoid',
+  Joints:'Joints','Regions of human body':'Body regions'}[s]||s);
+
+async function loadSystems(indices){
+  for(const i of indices){
+    if(loaded.has(i) || SKIP.has(graph.systems[i])) continue;
+    const url = graph.glb[i]; if(!url) continue;
+    showLoading(`loading ${prettySys(graph.systems[i])}…`);
+    const gltf = await gltfLoader.loadAsync(url);
+    gltf.scene.traverse(o=>{
+      if(o.isMesh){
+        o.material = new THREE.MeshStandardMaterial({color:new THREE.Color(SYS_COLORS[i]),
+          roughness:.85, metalness:.02});
+        o.userData.baseColor = new THREE.Color(SYS_COLORS[i]);
+        o.userData.sys = i;
+        if(!meshByName.has(o.name)) meshByName.set(o.name, o);
+      }
+    });
+    root.add(gltf.scene);
+    loaded.add(i);
+    hideLoading();
+  }
+  buildList(document.getElementById('search').value.trim().toLowerCase());
+  if(selected) applySelection(selected);   // re-highlight now that more may be loaded
+}
+function unloadSystem(i){
+  const kill=[];
+  root.children.forEach(c=>{ let owns=false; c.traverse(o=>{if(o.isMesh&&o.userData.sys===i)owns=true;}); if(owns)kill.push(c);});
+  kill.forEach(c=>{ c.traverse(o=>{if(o.isMesh){o.geometry.dispose();o.material.dispose();if(meshByName.get(o.name)===o)meshByName.delete(o.name);}}); root.remove(c); });
+  loaded.delete(i);
+  buildList(document.getElementById('search').value.trim().toLowerCase());
+}
+
+function buildList(q){
+  const ul=document.getElementById('list'); ul.innerHTML='';
+  let shown=0;
+  for(const n of graph.nodes){
+    if(!loaded.has(n.sy)) continue;
+    if(q && !n.l.toLowerCase().includes(q)) continue;
+    if(++shown>400){ const li=document.createElement('li'); li.className='muted'; li.textContent='… refine the search to see more'; ul.appendChild(li); break; }
+    const li=document.createElement('li');
+    li.innerHTML = `${n.l}${n.t?`<span class="tt">${n.t}${n.sd?' · '+n.sd:''}</span>`:''}`;
+    li.onclick=()=>select(n);
+    ul.appendChild(li);
+  }
+}
+
+function select(n){ selected=n; applySelection(n); frameMesh(n); renderInfo(n); }
+
+function styleMesh(mesh, {color, opacity, emissive}){
+  const m=mesh.material;
+  m.color.set(color); m.opacity=opacity; m.transparent = opacity<1;
+  m.emissive.set(emissive||0x000000);
+  m.emissiveIntensity = emissive?0.45:0; m.depthWrite = opacity>=0.5;
+  mesh.renderOrder = opacity>=1?1:0;
+}
+function resetStyles(){
+  meshByName.forEach(m=> styleMesh(m,{color:m.userData.baseColor,opacity:0.9}));
+}
+function applySelection(n){
+  // dim everything, then light up target + neighbours
+  meshByName.forEach(m=> styleMesh(m,{color:m.userData.baseColor,opacity:0.05}));
+  const paint=(idxs,color)=> idxs.forEach(i=>{
+    const nb=graph.nodes[i]; const m=meshByName.get(nb.n);
+    if(m) styleMesh(m,{color,opacity:0.96,emissive:color});
+  });
+  paint(n.adj, 0xff9f43);
+  paint(n.tis, 0x4ade80);
+  paint(n.th , 0xff5d6c);
+  const t=meshByName.get(n.n);
+  if(t) styleMesh(t,{color:0xffd54a,opacity:1,emissive:0xffd54a});
+}
+function clearSelection(){ selected=null; resetStyles(); renderInfo(null); }
+
+function frameMesh(n){
+  const m=meshByName.get(n.n); if(!m){ return; }
+  const box=new THREE.Box3().setFromObject(m); const c=box.getCenter(new THREE.Vector3());
+  const s=box.getSize(new THREE.Vector3()).length()||0.1;
+  const dist=Math.max(s*2.4,0.25);
+  const dir=new THREE.Vector3(0.4,0.9,0.35).normalize();   // front-right-above (Z-up)
+  animateCam(c.clone().add(dir.multiplyScalar(dist)), c);
+}
+function frameAll(){
+  const box=new THREE.Box3().setFromObject(root); if(box.isEmpty())return;
+  const c=box.getCenter(new THREE.Vector3()); const s=box.getSize(new THREE.Vector3()).length();
+  const dir=new THREE.Vector3(0.35,0.9,0.18).normalize();  // frontal, body upright (Z-up)
+  animateCam(c.clone().add(dir.multiplyScalar(s*0.62)), c);
+}
+let camAnim=null;
+function animateCam(pos,target){ camAnim={p0:camera.position.clone(),p1:pos,t0:controls.target.clone(),t1:target,s:performance.now(),d:600}; }
+
+function renderInfo(n){
+  const el=document.getElementById('info');
+  if(!n){ el.innerHTML='<div class="empty">Pick a structure on the left, or click one in the scene.</div>'; return; }
+  const sysName=prettySys(graph.systems[n.sy]);
+  const relList=(title,color,idxs)=>{
+    if(!idxs.length) return '';
+    const items=idxs.map(i=>{const nb=graph.nodes[i];const here=loaded.has(nb.sy);
+      return `<li data-i="${i}"><span>${nb.l}</span><span class="m">${prettySys(graph.systems[nb.sy])}${here?'':' ·◌'}</span></li>`;}).join('');
+    return `<div style="margin-top:12px"><span class="dot" style="background:${color}"></span><b class="muted">${title}</b> <span class="badge">${idxs.length}</span>
+      <ul class="nlist">${items}</ul></div>`;
+  };
+  el.innerHTML = `
+    <div style="font-size:16px;font-weight:600;margin-bottom:2px">${n.l}</div>
+    <div class="muted" style="margin-bottom:8px">${sysName}${n.t?' · '+n.t:''}${n.sd?' · '+n.sd:''}</div>
+    ${n.d?`<div class="kv">${n.d}${n.d.length>=590?'…':''}</div>`:''}
+    ${(n.dis.length||n.phe.length)?`<div class="sec" style="padding:10px 0;border:none;border-top:1px solid var(--line);margin-top:8px">
+        ${n.dis.length?`<div><b class="muted">Diseases located here (Disease Ontology)</b><div>${n.dis.slice(0,12).map(d=>`<span class="pill dis">${d}</span>`).join('')}</div></div>`:''}
+        ${n.phe.length?`<div style="margin-top:8px"><b class="muted">Phenotypes (HPO)</b><div>${n.phe.slice(0,12).map(d=>`<span class="pill phe">${d}</span>`).join('')}</div></div>`:''}
+      </div>`:''}
+    ${relList('Adjacent in 3D',  'var(--c-adj)', n.adj)}
+    ${relList('Same tissue',     'var(--c-tis)', n.tis)}
+    ${relList('Thermally coupled','var(--c-th)', n.th)}
+    <div style="margin-top:14px" class="muted" style="font-size:11px">◌ = in a body system not currently loaded — tick it on the left to see it in 3D.</div>`;
+  el.querySelectorAll('.nlist li').forEach(li=> li.onclick=()=>select(graph.nodes[+li.dataset.i]));
+}
+
+const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
+let downXY=null;
+function onPick(e){
+  downXY=[e.clientX,e.clientY];
+  const up=(ev)=>{
+    removeEventListener('pointerup',up);
+    if(!downXY||Math.hypot(ev.clientX-downXY[0],ev.clientY-downXY[1])>5) return; // was a drag
+    const r=renderer.domElement.getBoundingClientRect();
+    mouse.x=((ev.clientX-r.left)/r.width)*2-1; mouse.y=-((ev.clientY-r.top)/r.height)*2+1;
+    ray.setFromCamera(mouse,camera);
+    const hits=ray.intersectObjects(root.children,true).filter(h=>h.object.material.opacity>0.4);
+    if(hits.length){ const nm=hits[0].object.name; const n=nodesByName.get(nm); if(n) select(n); }
+  };
+  addEventListener('pointerup',up);
+}
+
+function onResize(){
+  const s=document.getElementById('stage');
+  camera.aspect=s.clientWidth/s.clientHeight; camera.updateProjectionMatrix();
+  renderer.setSize(s.clientWidth,s.clientHeight);
+}
+function animate(){
+  requestAnimationFrame(animate);
+  if(camAnim){ const k=Math.min(1,(performance.now()-camAnim.s)/camAnim.d); const e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+    camera.position.lerpVectors(camAnim.p0,camAnim.p1,e); controls.target.lerpVectors(camAnim.t0,camAnim.t1,e); if(k>=1)camAnim=null; }
+  controls.update(); renderer.render(scene,camera);
+}
+function showLoading(msg){ const l=document.getElementById('loading'); l.style.display='flex'; document.getElementById('lmsg').textContent=msg||''; }
+function hideLoading(){ /* kept visible until first frame in init */ }
+</script>
+</body>
+</html>
