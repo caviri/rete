@@ -6364,7 +6364,13 @@ self.onmessage = function (e) {
       const pats = groups.get(si);
       const gVars = [...new Set(pats.flatMap(fedPatVars))];
       const shared = gVars.filter((v) => bound.has(v));
-      let sub = parsed.prefixBlock + "\nSELECT DISTINCT " + gVars.map((v) => "?" + v).join(" ") + " WHERE {\n" +
+      // No DISTINCT for a remote source: it blocks the engine's stream-and-stop
+      // (a DISTINCT sub-query on the 1.3B orcid file materialized the whole
+      // group and died) — the merge below dedupes anyway. And ALWAYS bound the
+      // sub-query: each hop only contributes up to `cap` join keys, so rows
+      // beyond a small multiple of that can never survive the join.
+      const distinct = sources[si].kind === "remote" ? "" : "DISTINCT ";
+      let sub = parsed.prefixBlock + "\nSELECT " + distinct + gVars.map((v) => "?" + v).join(" ") + " WHERE {\n" +
         pats.map((p) => `  ${p.s} ${p.p} ${p.o} .`).join("\n") + "\n";
       parsed.filters.forEach((f) => { const fv = (f.match(/\?[A-Za-z0-9_]+/g) || []).map((x) => x.slice(1)); if (fv.every((v) => gVars.includes(v))) sub += "  " + f + "\n"; });
       if (shared.length) {
@@ -6373,7 +6379,13 @@ self.onmessage = function (e) {
         sub += "  VALUES (" + shared.map((v) => "?" + v).join(" ") + ") {\n" +
           tuples.map((t) => "    (" + t.join(" ") + ")").join("\n") + "\n  }\n";
       }
-      sub += "}";
+      // Seed group (no VALUES): its rows each cost remote probes, so size it by
+      // the USER's limit (2× headroom for join misses) — 1000 seed rows on the
+      // 1.3B file is minutes of HTTP probing for a LIMIT-50 answer. Bound hops
+      // are VALUES-capped and cheap; they keep the wide cap.
+      sub += "} LIMIT " + (shared.length
+        ? Math.max(cap * 4, parsed.limit || 0)
+        : (parsed.limit ? Math.max(parsed.limit * 2, 100) : cap * 4));
       const rows = await runOnSource(sources[si], sub);
       table = shared.length ? fedHashJoin(table, rows, shared)
         : (table.length === 1 && !Object.keys(table[0]).length) ? rows
@@ -6390,9 +6402,23 @@ self.onmessage = function (e) {
     return { vars: parsed.selVars === "*" ? [...new Set(res.flatMap((r) => Object.keys(r)))] : parsed.selVars, rows: res, groups: order.length, assign };
   }
   // Distinct-predicate set per source (cached). Endpoints are wildcards (null).
-  function fedSourcePreds(src) {
+  function fedSourcePreds(src, predIris) {
     if (src.kind === "endpoint") return Promise.resolve(null);
     if (src._preds) return Promise.resolve(src._preds);
+    // A full DISTINCT-?p enumeration is fine on an in-memory graph, but on a
+    // huge remote file it SCANS (orcid: 1.3B triples — minutes over HTTP, and
+    // its failure used to null the preds and quietly demote the join to a
+    // UNION). For remote sources probe ONLY the predicates this query mentions:
+    // a bound-predicate ASK is a single directory probe, milliseconds each.
+    if (src.kind === "remote") {
+      src._predCache = src._predCache || new Map();
+      const todo = (predIris || []).filter((p) => !src._predCache.has(p));
+      return Promise.all(todo.map((p) =>
+        querySource(src, "ASK { ?s <" + p + "> ?o }", "ask")
+          .then((r) => src._predCache.set(p, !!r.boolean))
+          .catch(() => src._predCache.set(p, true)))) // unknown → don't rule it out
+        .then(() => new Set((predIris || []).filter((p) => src._predCache.get(p))));
+    }
     return querySource(src, "SELECT DISTINCT ?p WHERE { ?s ?p ?o }", "select").then((r) => {
       const set = new Set();
       (r.rows || []).forEach((row) => { const p = row.p; if (p && p[0] === "<") set.add(p.slice(1, -1)); });
@@ -6409,17 +6435,26 @@ self.onmessage = function (e) {
     $("out").innerHTML = netSpinner("planning a cross-source join…");
     updateResultVisibility();
     const t0 = performance.now();
-    Promise.all(sources.map((s) => fedSourcePreds(s).then((preds) => Object.assign({}, s, { preds })).catch(() => Object.assign({}, s, { preds: null }))))
+    // The router only needs to know which of THIS query's predicates each
+    // source answers — pass them so remote sources can probe instead of scan.
+    const predIris = [...new Set(parsed.patterns
+      .map((pt) => (fedIsVar(pt.p) ? null : fedExpandIri(pt.p, parsed.prefixes)))
+      .filter(Boolean))];
+    Promise.all(sources.map((s) => fedSourcePreds(s, predIris).then((preds) => Object.assign({}, s, { preds })).catch(() => Object.assign({}, s, { preds: null }))))
       .then((withPreds) => {
         const assign = fedRoute(parsed, withPreds);
         if (new Set(assign).size < 2) return runFederatedUnion(q, fmt); // all one source → union
-        const run = (src, sub) => querySource(src, sub, "select").then((r) => r.rows || []);
+        const run = (src, sub) => querySource(src, sub, "select")
+          .then((r) => { console.debug("fedq[" + src.label + "] => " + (r.rows || []).length + " row(s)"); return r.rows || []; })
+          .catch((e) => { console.warn("fedq[" + src.label + "] FAILED: " + String(e && e.message || e).slice(0, 160)); throw e; });
         return fedJoinExec(parsed, withPreds, run).then((out) => {
           if (!out) return runFederatedUnion(q, fmt);
           fedRenderJoin(out, parsed, q, fmt, withPreds, performance.now() - t0);
         });
       })
-      .catch(() => runFederatedUnion(q, fmt));
+      // The union fallback is correct behaviour for unroutable queries, but a
+      // silent catch here once hid a broken join path for days — say why.
+      .catch((e) => { console.warn("cross-source join fell back to union:", e); return runFederatedUnion(q, fmt); });
   }
   function fedRenderJoin(out, parsed, q, fmt, sources, dt) {
     const merged = { kind: "select", vars: out.vars, rows: out.rows };
@@ -6566,11 +6601,11 @@ self.onmessage = function (e) {
           const pats = groups.get(si);
           const gVars = [...new Set(pats.flatMap(fedPatVars))];
           const shared = gVars.filter((v) => bound.has(v));
-          let sub = parsed.prefixBlock + "\nSELECT DISTINCT " + gVars.map((v) => "?" + v).join(" ") + " WHERE {\n" +
+          let sub = parsed.prefixBlock + "\nSELECT " + (withPreds[si].kind === "remote" ? "" : "DISTINCT ") + gVars.map((v) => "?" + v).join(" ") + " WHERE {\n" +
             pats.map((p) => `  ${p.s} ${p.p} ${p.o} .`).join("\n") + "\n";
           parsed.filters.forEach((f) => { const fv = (f.match(/\?[A-Za-z0-9_]+/g) || []).map((x) => x.slice(1)); if (fv.every((v) => gVars.includes(v))) sub += "  " + f + "\n"; });
           if (shared.length) sub += "  VALUES (" + shared.map((v) => "?" + v).join(" ") + ") {  …keys bound by earlier sources, ≤250  }\n";
-          sub += "}";
+          sub += "} LIMIT " + Math.max(1000, parsed.limit || 0);
           subs += `<div class="fed-plan-step"><div class="fed-plan-src">${esc(withPreds[si].label)}${shared.length ? " · joins on " + shared.map((v) => "?" + v).join(", ") : " · seed (runs first)"}</div><pre>${esc(sub)}</pre></div>`;
           gVars.forEach((v) => bound.add(v));
         }
@@ -6747,6 +6782,20 @@ self.onmessage = function (e) {
         "That's a SPARQL Update — the in-browser engine is read-only. Connect a live endpoint " +
         "(+ Add source → SPARQL endpoint → live mode; e.g. a local `rete serve data.rete`) to apply it.");
     }
+    // A dataset can opt out of the Asyncify transport (`syncReader: true` in the
+    // catalog): the 17.5 GB orcid graph trips a live asyncify suspend/rewind bug
+    // that the plain reader doesn't have. Checked HERE, before the dispatch, so
+    // BOTH the plain runner and the federated planner (where the opted-out graph
+    // may only be the JOIN PARTNER — and a per-source failure would surface as a
+    // clean-looking 0-row join) run on the reliable reader.
+    if (state.asyncReadsOn) {
+      const wantsSync = (key) => (CATALOG.datasets || []).some((d) => d.key === key && d.syncReader);
+      if (wantsSync(state.dataset) || state.fedSources.some((s) => wantsSync(s.key))) {
+        state.readerNote = "reliable reader (dataset opt-out)";
+        setAsyncReads(false);
+        renderAsyncReads();
+      }
+    }
     if (fedActive()) return runFederated(q, fmt);
     // Clear the previous message and show the network spinner. We deliberately
     // KEEP state.lastResult: the reuse guard already requires the query text,
@@ -6801,17 +6850,9 @@ self.onmessage = function (e) {
         setAsyncReads(false);
         renderAsyncReads();
       }
-      // Datasets can opt out of the Asyncify transport (`syncReader: true` in
-      // the catalog). The 17.5 GB single-file orcid graph trips a live asyncify
-      // suspend/rewind bug — a stale-suspend length probe that fails the open in
-      // milliseconds, and null-function traps on suspending queries — that the
-      // plain reader simply doesn't have. Same self-heal shape as reasoning/iOS.
-      const dsRec = (CATALOG.datasets || []).find((d) => d.key === state.dataset);
-      if (dsRec && dsRec.syncReader && state.asyncReadsOn) {
-        readerNote = "reliable reader (this dataset)";
-        setAsyncReads(false);
-        renderAsyncReads();
-      }
+      // The syncReader dataset opt-out is applied in runQuery (it must also
+      // cover the federated path); surface its note in this run's qmeta.
+      if (state.readerNote) { readerNote = state.readerNote; state.readerNote = ""; }
       const invokeRemote = () => remoteSparql(state.remote.url, q, remoteFmt, reason);
       invokeRemote().catch((e) => {
         const msg = String((e && e.message) || e);

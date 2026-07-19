@@ -42,6 +42,28 @@ ASYNC_ENV_JS = """
         let __reteAD = 0, __retePending = null, __reteSleeping = false, __reteRes = 0;
         function __reteStack() {
           if (!__reteAD) {
+            // While an unwind is in flight, a DRIVEN wasm-bindgen wrapper still
+            // runs its epilogue on whatever the raw export returned — garbage —
+            // and takeObject()/getStringFromWasm0()/__wbindgen_free() on garbage
+            // corrupt the object heap and the allocator. That is the
+            // "null function or function signature mismatch" family: every
+            // suspend is one roll of the corruption dice, which is why multi-GB
+            // files (dozens–hundreds of suspends per query) died where small
+            // ones survived. Guard every public raw export: when a call ends in
+            // the UNWINDING state, hand the wrapper a harmless [0,0,0,0] tuple
+            // instead (ptr 0 / len 0 / no error — the exact shape wbindgen's own
+            // throw path already frees safely); the drive loop discards that
+            // pass's value and calls again after the rewind. `instance.exports`
+            // is frozen, so rebind the closure's `wasm` to a patchable clone.
+            wasm = Object.assign(Object.create(null), wasm);
+            for (const k of Object.keys(wasm)) {
+              if (typeof wasm[k] !== "function" || k.indexOf("__") === 0 || k.indexOf("asyncify_") === 0) continue;
+              const orig = wasm[k];
+              wasm[k] = function () {
+                const r = orig.apply(null, arguments);
+                return wasm.asyncify_get_state() === 1 ? [0, 0, 0, 0] : r;
+              };
+            }
             const SIZE = 16 << 20; // 16 MiB Asyncify stack — the engine's recursive eval is deep
             __reteAD = wasm.__wbindgen_malloc(8 + SIZE, 8);
             const d = new DataView(wasm.memory.buffer);
@@ -124,8 +146,21 @@ ASYNC_ENV_JS = """
           }
           return r;
         }
-        exports.reteDrive = __reteDrive;
-        exports.reteOpenRemote = async function (url) {
+        // Asyncify allows exactly ONE suspended computation per instance: a
+        // second entry while the first sleeps shares __reteAD/__reteSleeping and
+        // both corrupt — the observed symptom was a fresh open whose length
+        // probe was "answered" by a stale suspend in ~4 ms ("could not
+        // determine length"). Serialize every driven entry through a promise
+        // chain: cheap, and correct by construction.
+        let __reteTurn = Promise.resolve();
+        function __reteSerial(fn) {
+          const run = __reteTurn.then(fn);
+          __reteTurn = run.then(function () {}, function () {});
+          return run;
+        }
+        exports.reteDrive = function (thunk) { return __reteSerial(function () { return __reteDrive(thunk); }); };
+        exports.reteOpenRemote = function (url) { return __reteSerial(function () { return __reteOpenRemote(url); }); };
+        async function __reteOpenRemote(url) {
           __reteStack();
           const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
           const len0 = WASM_VECTOR_LEN;
