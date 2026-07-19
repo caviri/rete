@@ -185,7 +185,11 @@
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
       Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
         var before = JSON.parse(g.stats());
-        return _drive(function () { return m.reason ? g.query_reasoned(m.query, m.format) : g.query(m.query, m.format); }).then(function (resStr) {
+        // ASYNC: drive the RAW export (reteQueryRemote) — driving the generated
+        // wrapper re-marshals/unpacks on every suspend pass and corrupts the
+        // asyncify session on big files (the null-function family).
+        return (ASYNC ? wasm_bindgen.reteQueryRemote(g, m.query, m.format, !!m.reason)
+                      : Promise.resolve(m.reason ? g.query_reasoned(m.query, m.format) : g.query(m.query, m.format))).then(function (resStr) {
           var res = JSON.parse(resStr);
           var after = JSON.parse(g.stats());
           // Per-query physical traffic is the delta (a cache hit adds ~0); carry
@@ -222,7 +226,8 @@
     if (m.type === "psearch") {
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
       Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
-        return _drive(function () { return g.prefix_search(m.prefix, m.limit || 12); });
+        return ASYNC ? wasm_bindgen.retePrefixSearchRemote(g, m.prefix, m.limit || 12)
+                     : Promise.resolve(g.prefix_search(m.prefix, m.limit || 12));
       }).then(function (json) {
         self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
       }).catch(function (err) {

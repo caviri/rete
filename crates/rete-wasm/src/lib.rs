@@ -23,6 +23,22 @@ pub const JSON_SCHEMA_VERSION: u8 = 1;
 /// range read) can actually be diagnosed.
 #[wasm_bindgen(start)]
 pub fn __start() {
+    // The asyncify build must NOT format in the panic hook: the fmt machinery
+    // is asyncify-instrumented (everything that can reach panic_fmt is), so a
+    // panic raised while the instance is unwinding/rewinding recurses through
+    // garbage-returning fmt calls forever (stack overflow / null-function).
+    // Report the raw location pointers through a LEAF import instead — no
+    // formatting, no instrumented calls — then let panic=abort trap cleanly.
+    #[cfg(feature = "asyncify")]
+    std::panic::set_hook(Box::new(|info| {
+        if let Some(loc) = info.location() {
+            let f = loc.file();
+            unsafe { rete_panic_report(f.as_ptr(), f.len(), loc.line()) };
+        } else {
+            unsafe { rete_panic_report(std::ptr::null(), 0, 0) };
+        }
+    }));
+    #[cfg(not(feature = "asyncify"))]
     std::panic::set_hook(Box::new(|info| {
         web_sys::console::error_1(&JsValue::from_str(&format!("rete-wasm panic: {info}")));
     }));
@@ -775,6 +791,10 @@ extern "C" {
     /// `Content-Range`). Writes the u64 length to `out_ptr`, returns 1 on
     /// success. Lets the asyncify build open a file with NO sync XHR at all.
     fn rete_file_len(url_ptr: *const u8, url_len: usize, out_ptr: *mut u64) -> usize;
+    /// LEAF panic reporter (deliberately NOT in asyncify-imports): the panic
+    /// hook passes the raw `Location` pointers so the host can log file:line
+    /// without any formatting — see `__start`.
+    fn rete_panic_report(file_ptr: *const u8, file_len: usize, line: u32);
 }
 
 fn checked_async_layout(ranges: &[(u64, u64)]) -> std::io::Result<(Vec<u64>, Vec<u32>, usize)> {

@@ -100,7 +100,7 @@ const ASYNC_ENV_JS = `
           RemoteGraphFinalization.register(g, g.__wbg_ptr, g);
           return g;
         };
-        const import1 = { rete_fetch_ranges: __reteFetchRanges, rete_file_len: __reteFileLen };
+        const import1 = { rete_fetch_ranges: __reteFetchRanges, rete_file_len: __reteFileLen, rete_panic_report: (p, l, line) => console.error("rete-wasm panic at " + (l ? __reteStr(p, l) : "?") + ":" + line) };
 `;
 
 const URL_ = process.env.RETE_URL;
@@ -142,12 +142,12 @@ const wb = m.exports;
   const s0 = JSON.parse(g.stats());
 
   const t1 = performance.now();
-  const out = await wb.reteDrive(() => g.query(q, 'table'));
+  const out = await (wb.reteQueryRemote ? wb.reteQueryRemote(g, q, 'table', false) : wb.reteDrive(() => g.query(q, 'table')));
   const q1ms = (performance.now() - t1).toFixed(0);
   const s1 = JSON.parse(g.stats());
 
   const t2 = performance.now();
-  await wb.reteDrive(() => g.query(q, 'table'));
+  await (wb.reteQueryRemote ? wb.reteQueryRemote(g, q, 'table', false) : wb.reteDrive(() => g.query(q, 'table')));
   const q2ms = (performance.now() - t2).toFixed(0);
   const s2 = JSON.parse(g.stats());
 

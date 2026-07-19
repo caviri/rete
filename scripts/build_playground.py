@@ -64,6 +64,24 @@ ASYNC_ENV_JS = """
                 return wasm.asyncify_get_state() === 1 ? [0, 0, 0, 0] : r;
               };
             }
+            // The allocator IS asyncify-instrumented (it can reach panic_fmt),
+            // so a wrapper re-marshaling its arguments while the instance is
+            // REWINDING (state 2) would make malloc's prologue consume the
+            // rewind buffer as if IT were being resumed. Pause the rewind
+            // around allocator calls — at state 0 they run normally.
+            for (const k of ["__wbindgen_malloc", "__wbindgen_realloc"]) {
+              const orig = wasm[k];
+              if (!orig) continue;
+              wasm[k] = function () {
+                if (wasm.asyncify_get_state() === 2) {
+                  wasm.asyncify_stop_rewind();
+                  const r = orig.apply(null, arguments);
+                  wasm.asyncify_start_rewind(__reteAD);
+                  return r;
+                }
+                return orig.apply(null, arguments);
+              };
+            }
             const SIZE = 16 << 20; // 16 MiB Asyncify stack — the engine's recursive eval is deep
             __reteAD = wasm.__wbindgen_malloc(8 + SIZE, 8);
             const d = new DataView(wasm.memory.buffer);
@@ -85,10 +103,19 @@ ASYNC_ENV_JS = """
           const dv = new DataView(wasm.memory.buffer);
           const ranges = [];
           for (let i = 0; i < n; i++) ranges.push([Number(dv.getBigUint64(offsPtr + i*8, true)), dv.getUint32(lensPtr + i*4, true)]);
-          const bufs = await Promise.all(ranges.map(([o,l]) =>
+          // Retry each range once after a short pause: this Promise.all fires a
+          // BURST of concurrent fetches, and a single transient miss ("Failed to
+          // fetch" on a flaky link, a 5xx blip) used to fail the whole query —
+          // the sync XHR reader already retries, so async matches it.
+          const one = ([o, l], attempt) =>
             fetch(url, { headers: { Range: 'bytes=' + o + '-' + (o+l-1) }, cache: __reteNoStore ? 'no-store' : 'default' })
               .then((r) => { if (r.status !== 206) throw new Error('Range status ' + r.status + ' (host must support HTTP range)'); return r.arrayBuffer(); })
-              .then((b) => new Uint8Array(b))));
+              .then((b) => new Uint8Array(b))
+              .catch((e) => {
+                if (attempt >= 1) throw e;
+                return new Promise((res) => setTimeout(res, 250)).then(() => one([o, l], attempt + 1));
+              });
+          const bufs = await Promise.all(ranges.map((r) => one(r, 0)));
           const mem = new Uint8Array(wasm.memory.buffer);
           let pos = dstPtr, total = 0;
           // Each range MUST land at its fixed slot (cumulative REQUESTED length), and
@@ -160,6 +187,45 @@ ASYNC_ENV_JS = """
         }
         exports.reteDrive = function (thunk) { return __reteSerial(function () { return __reteDrive(thunk); }); };
         exports.reteOpenRemote = function (url) { return __reteSerial(function () { return __reteOpenRemote(url); }); };
+        // RAW-driven resident calls — the ROOT FIX for the "null function /
+        // signature mismatch" family (proven in tests/gate/.cache/
+        // asyncify_probe3.cjs: the wrapper-driven query traps at its first
+        // suspend on a 17.5 GB file; the same query raw-driven completes in 12
+        // suspend/rewind passes). A generated wasm-bindgen wrapper marshals its
+        // arguments and unpacks its result tuple on EVERY drive pass; driving
+        // the raw export instead marshals ONCE and touches the result only
+        // after the rewind completes — exactly reteOpenRemote's shape.
+        async function __reteCallRaw(call, unpackString) {
+          __reteStack();
+          let ret = call();
+          while (wasm.asyncify_get_state() === 1) {
+            wasm.asyncify_stop_unwind();
+            __reteRes = await __retePending;
+            wasm.asyncify_start_rewind(__reteAD);
+            ret = call();
+          }
+          if (!unpackString) return ret;
+          if (ret[3]) throw takeObject(ret[2]);
+          try { return getStringFromWasm0(ret[0], ret[1]); }
+          finally { wasm.__wbindgen_free(ret[0], ret[1], 1); }
+        }
+        exports.reteQueryRemote = function (g, query, format, reasoned) {
+          return __reteSerial(function () {
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const raw = reasoned ? wasm.remotegraph_query_reasoned : wasm.remotegraph_query;
+            return __reteCallRaw(function () { return raw(g.__wbg_ptr, ptr0, len0, ptr1, len1); }, true);
+          });
+        };
+        exports.retePrefixSearchRemote = function (g, prefix, limit) {
+          return __reteSerial(function () {
+            const ptr0 = passStringToWasm0(prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            return __reteCallRaw(function () { return wasm.remotegraph_prefix_search(g.__wbg_ptr, ptr0, len0, limit); }, true);
+          });
+        };
         async function __reteOpenRemote(url) {
           __reteStack();
           const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -177,7 +243,14 @@ ASYNC_ENV_JS = """
           RemoteGraphFinalization.register(g, g.__wbg_ptr, g);
           return g;
         };
-        const import1 = { rete_fetch_ranges: __reteFetchRanges, rete_file_len: __reteFileLen };
+        const import1 = { rete_fetch_ranges: __reteFetchRanges, rete_file_len: __reteFileLen,
+          // LEAF panic reporter (never in asyncify-imports): the wasm-side hook
+          // passes the raw panic Location so a crash logs file:line without any
+          // fmt machinery (formatting is instrumented — a panic while the
+          // instance is unwinding/rewinding would recurse forever).
+          rete_panic_report: function (p, l, line) {
+            try { console.error("rete-wasm panic at " + (l ? __reteStr(p, l) : "(unknown)") + ":" + line); } catch (e) { /* ignore */ }
+          } };
 """
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
