@@ -61,7 +61,10 @@
 }
 .theme-toggle:hover { color:var(--fg); border-color:var(--accent); }
 * { box-sizing:border-box; }
-html { scroll-behavior:smooth; }
+/* text-size-adjust: without it, mobile browsers "boost" the font of wide
+   blocks — exactly our no-wrap code blocks, which render comically large
+   on phones. 100% = render at the authored size. */
+html { scroll-behavior:smooth; -webkit-text-size-adjust:100%; text-size-adjust:100%; }
 body {
   margin:0; color:var(--fg); background:linear-gradient(90deg,var(--side) 0 272px,var(--bg) 272px);
   display:flex; font:16px/1.68 "Aptos","Segoe UI",system-ui,sans-serif;
