@@ -40,6 +40,10 @@ export function catalogCases(scope = "embedded") {
         strategy: example.strategy || "whole",
         reason: example.reason,
         fed: example.fed || [],
+        // Opt-out for the rows>0 assertion: a curated example that legitimately
+        // returns an empty result (e.g. a SHACL "no violations" check) sets
+        // allowEmpty: true in the catalog.
+        allowEmpty: !!example.allowEmpty,
         remote,
       });
     }

@@ -20,6 +20,11 @@ const QUERY_TIMEOUT_MS = Number(
   process.env.RETE_CATALOG_QUERY_TIMEOUT_MS || (SCOPE === "all" ? 300000 : 30000),
 );
 const REMOTE_TRIES = Number(process.env.RETE_CATALOG_RETRIES || 2);
+// Which wasm reader the page runs under. "sync" (default) pins the reliable
+// reader so an example failure is attributable to the example; "async" leaves
+// the browser's real default (asyncify on Chromium) — the configuration users
+// actually hit, where the orcid 0-rows regression lived invisible to the gate.
+const READER = process.env.RETE_CATALOG_READER || "sync";
 const browserName = selectedBrowserName();
 
 let groups = catalogDatasetGroups(SCOPE);
@@ -107,14 +112,15 @@ async function selectAndRun(page, entry) {
 async function main() {
   const browser = await launchBrowser();
   const context = await browser.newContext();
-  // The normal gate separately tests Asyncify. The exhaustive sweep uses the
-  // reliable reader so a reader fallback cannot hide which example failed.
-  await context.addInitScript(() => {
+  // The normal gate separately tests Asyncify. The default sweep pins the
+  // reliable reader so a reader fallback cannot hide which example failed;
+  // RETE_CATALOG_READER=async runs the browser's real defaults instead.
+  await context.addInitScript((reader) => {
     try {
-      localStorage.setItem("asyncReadsOn", "0");
+      if (reader === "sync") localStorage.setItem("asyncReadsOn", "0");
       localStorage.setItem("mapBasemap", "none");
     } catch (_error) { /* private mode */ }
-  });
+  }, READER);
   const page = await context.newPage();
   const failures = [];
   let passed = 0;
@@ -138,12 +144,20 @@ async function main() {
           try {
             const result = await selectAndRun(page, entry);
             const limit = /cancelled|switched readers|browser's limit|browser limit/i.test(result.qmeta);
-            if (result.error || limit || pageErrors.length) {
+            // Catalog examples are CURATED — every one must produce data. A clean
+            // "0 row(s)" is a failure (the orcid async regression returned empty
+            // results with no error box and sailed through this gate as green).
+            // Only qmeta strings that state a count are judged; other views
+            // (e.g. serializations) keep the error-box-only contract.
+            const counted = result.qmeta.match(/^(\d[\d,]*)\s+(row|triple|solution)/i);
+            const empty = counted && Number(counted[1].replace(/,/g, "")) === 0 && !entry.allowEmpty;
+            if (result.error || limit || empty || pageErrors.length) {
               lastFailure = {
                 ...entry,
                 attempt,
                 qmeta: result.qmeta,
-                error: result.errorText.trim().slice(0, 500),
+                error: (empty ? "example returned 0 rows (curated examples must produce data)"
+                              : result.errorText.trim()).slice(0, 500),
                 pageErrors: [...pageErrors],
               };
             } else {
