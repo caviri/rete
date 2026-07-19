@@ -93,6 +93,12 @@ def slug(system, sid):
 # ---------------------------------------------------------------- load
 aux = json.load(open(os.path.join(DERIVED, "aux.json"), encoding="utf-8"))
 bridge = json.load(open(os.path.join(DERIVED, "bridge.json"), encoding="utf-8"))
+_codes_path = os.path.join(DERIVED, "codes.json")
+CODES = json.load(open(_codes_path, encoding="utf-8")) if os.path.exists(_codes_path) else {}
+# clinical crosswalk code systems on DOID terms -> anat: property local name + label
+CODE_PROPS = {"icd10": "ICD-10-CM code", "icd9": "ICD-9-CM code", "icd11": "ICD-11 code",
+              "icdo": "ICD-O code", "snomed": "SNOMED CT id", "mesh": "MeSH id",
+              "omim": "OMIM id", "umls": "UMLS CUI", "nci": "NCI Thesaurus code"}
 tr, desc, tissue, regions = aux["translations"], aux["descriptions"], aux["tissue"], aux["regions"]
 
 # Z-Anatomy muscle/bone attachment-marker suffixes (origin/insertion decals):
@@ -303,6 +309,11 @@ for pid, lab, com in [
     p = ANAT + pid
     t(p, RDF, iri(OWL + "DatatypeProperty")); tl(p, RDFS + "label", lab, lang="en")
     tl(p, RDFS + "comment", com, lang="en")
+# clinical crosswalk code properties on disease terms (from Disease Ontology xrefs)
+for pid, lab in CODE_PROPS.items():
+    p = ANAT + pid
+    t(p, RDF, iri(OWL + "DatatypeProperty")); tl(p, RDFS + "label", lab, lang="en")
+    tl(p, RDFS + "comment", f"{lab} cross-referenced by the Human Disease Ontology.", lang="en")
 for pid, lab, com in [
     ("asWKT3D", "3D WKT geometry", "Full 3D geometry serialization (POINT Z / MULTIPOINT Z) in mm."),
     ("box", "3D bounding box", "Axis-aligned bounding box BOX3D(minx miny minz, maxx maxy maxz) in mm."),
@@ -345,6 +356,11 @@ def emit_term(tid, meta):
     tl(ti, RDFS + "label", meta["name"], lang="en")
     if meta.get("def"):
         tl(ti, SKOS + "definition", meta["def"], lang="en")
+    # clinical crosswalk codes (ICD-10/9/11, ICD-O, SNOMED, MeSH, OMIM, UMLS, NCI)
+    for key, codelist in CODES.get(tid, {}).items():
+        if key in CODE_PROPS:
+            for code in codelist:
+                tl(ti, ANAT + key, code)
     return ti
 
 def fnum(v): return ("%.1f" % v)

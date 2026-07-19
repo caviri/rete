@@ -23,6 +23,7 @@ sys_label = {}
 adj, tis, th = {}, {}, {}
 disease, pheno = {}, {}
 term_label = {}
+icd10 = {}   # term IRI -> ICD-10-CM code
 
 def lit(o):
     m = re.match(r'^"(.*)"(?:@(\w+)|\^\^<.*>)?$', o)
@@ -70,6 +71,8 @@ for line in open(NT, encoding="utf-8"):
         disease.setdefault(s, []).append(o.strip("<>"))
     elif p == A + "relatedPhenotype":
         pheno.setdefault(s, []).append(o.strip("<>"))
+    elif p == A + "icd10":
+        icd10.setdefault(s, lit(o))
 
 # system labels
 for s, sysiri in system_of.items():
@@ -102,7 +105,8 @@ for iri in node_iris:
         "adj": neigh_idx(iri, adj),
         "tis": neigh_idx(iri, tis),
         "th": neigh_idx(iri, th),
-        "dis": sorted({term_label.get(t, "") for t in disease.get(iri, [])} - {""})[:40],
+        "dis": sorted({(term_label.get(t, "") + (" · " + icd10[t] if t in icd10 else ""))
+                       for t in disease.get(iri, []) if term_label.get(t)})[:40],
         "phe": sorted({term_label.get(t, "") for t in pheno.get(iri, [])} - {""})[:40],
         "d": desc.get(iri, ""),
     })

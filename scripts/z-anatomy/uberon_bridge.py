@@ -39,10 +39,21 @@ def singular(s):
             return s[:-len(a)]+b
     return s
 
+def despell(s):  # British<->American: oesophagus/esophagus, tumour/tumor, colour...
+    return s.replace("oe", "e").replace("ae", "e").replace("our", "or")
 
-# ---- UBERON id -> {label, synonyms} ----
-ub_label, ub_syn = {}, {}
+def keyset(s):   # all normalized lookup keys for a label
+    ks = {s, singular(s)}
+    ks |= {despell(k) for k in list(ks)}
+    return {k for k in ks if len(k) >= 4}
+
+
+# ---- UBERON id -> {label, synonyms}  +  part_of / is_a parent graphs ----
+ub_label, ub_syn, ub_partof, ub_isa = {}, {}, {}, {}
 cur = None
+def uref(tok):  # "UBERON:0000948 ! heart" -> IRI
+    m = re.match(r"(UBERON:\d+)", tok)
+    return OBO + m.group(1).replace(":", "_") if m else None
 for line in open(UBERON_OBO, encoding="utf-8", errors="replace"):
     line = line.rstrip("\n")
     if line == "[Term]":
@@ -58,7 +69,13 @@ for line in open(UBERON_OBO, encoding="utf-8", errors="replace"):
             m = re.match(r'synonym: "(.*?)"\s+(\w+)', line)
             if m and m.group(2) in ("EXACT", "NARROW"):
                 ub_syn.setdefault(cur["id"], []).append(m.group(1))
-print("UBERON terms:", len(ub_label))
+        elif line.startswith("is_a: ") and cur.get("id"):
+            p = uref(line[6:])
+            if p: ub_isa.setdefault(cur["id"], set()).add(p)
+        elif line.startswith("relationship: part_of ") and cur.get("id"):
+            p = uref(line[len("relationship: part_of "):])
+            if p: ub_partof.setdefault(cur["id"], set()).add(p)
+print("UBERON terms:", len(ub_label), "| part_of:", len(ub_partof), "| is_a:", len(ub_isa))
 
 # ---- z-anatomy labels: normalized -> display label ----
 import glob
@@ -66,8 +83,9 @@ aux = json.load(open(os.path.join(DERIVED, "aux.json"), encoding="utf-8"))
 disp_by_norm = {}
 def add_key(k, disp):
     if len(k) >= 4 and k not in STOP:
-        disp_by_norm.setdefault(k, disp)
-        disp_by_norm.setdefault(singular(k), disp)
+        for kk in keyset(k):
+            if kk not in STOP:
+                disp_by_norm.setdefault(kk, disp)
 def strip_side(n): return n[:-2] if n.endswith(".r") or n.endswith(".l") else n
 for jf in glob.glob(os.path.join(DERIVED, "*.jsonl")):
     for line in open(jf, encoding="utf-8"):
@@ -79,16 +97,49 @@ for en, tr in aux["translations"].items():
         if la: add_key(la, disp_by_norm[norm(en)])
 print("z-anatomy match keys:", len(disp_by_norm))
 
-# ---- UBERON id -> z-anatomy display label (label or synonym exact match) ----
+# ---- UBERON id -> z-anatomy display label (label or synonym match) ----
 ub2anat = {}
 for uid, lab in ub_label.items():
     cands = [norm(lab)] + [norm(s) for s in ub_syn.get(uid, [])]
     for c in cands:
-        if c in disp_by_norm:
-            ub2anat[uid] = disp_by_norm[c]; break
-        if singular(c) in disp_by_norm:
-            ub2anat[uid] = disp_by_norm[singular(c)]; break
-print("UBERON->z-anatomy resolved:", len(ub2anat))
+        hit = next((disp_by_norm[k] for k in keyset(c) if k in disp_by_norm), None)
+        if hit:
+            ub2anat[uid] = hit; break
+print("UBERON->z-anatomy resolved (direct):", len(ub2anat))
+
+# ---- roll-up: a UBERON part we can't mesh -> the nearest containing UBERON term
+# we CAN mesh (walk up part_of/is_a). Locates e.g. cardiac muscle -> Heart,
+# bronchiole -> Lung, renal glomerulus -> Kidney.
+def _walk(uid, graph, maxdepth):
+    seen = {uid}; frontier = [uid]
+    for _ in range(maxdepth):
+        nxt = [p for n in frontier for p in graph.get(n, ()) if p not in seen]
+        for p in nxt:
+            seen.add(p)
+        found = {ub2anat[p] for p in nxt if p in ub2anat}
+        if found:
+            return found
+        frontier = nxt
+        if not frontier:
+            break
+    return set()
+
+_roll = {}
+def rollup(uid, maxdepth=5):
+    """Nearest meshed organ for a UBERON term: itself if mapped, else the nearest
+    ancestor. part_of (part -> containing organ) is preferred over is_a (subtype ->
+    category), so a coronary artery lands on the Heart, not 'systemic arteries'."""
+    if uid in _roll:
+        return _roll[uid]
+    if uid in ub2anat:
+        _roll[uid] = {ub2anat[uid]}; return _roll[uid]
+    merged = {}
+    for m in (ub_partof, ub_isa):
+        for k, v in m.items():
+            merged.setdefault(k, set()).update(v)
+    res = _walk(uid, ub_partof, maxdepth) or _walk(uid, merged, maxdepth)
+    _roll[uid] = res
+    return res
 
 
 def collect_uberon(g, start):
@@ -111,25 +162,59 @@ def collect_uberon(g, start):
     return out
 
 
-def extract(owl_path, prefix, cap_note):
+def extract(owl_path, prefix, cap_note, inherit=False):
     g = Graph()
     print(f"parsing {os.path.basename(owl_path)} …")
     g.parse(owl_path)
     print(f"  {len(g)} triples")
-    links = {}   # anat display label -> {(termid, name)}
-    terms = {}
     pfx = OBO + prefix + "_"
     classes = [s for s in g.subjects(RDF.type, OWL.Class) if isinstance(s, URIRef) and str(s).startswith(pfx)]
+
+    # each class's OWN UBERON locations (from its someValuesFrom restrictions)
+    direct = {}
+    for c in classes:
+        us = collect_uberon(g, c)
+        if us:
+            direct[c] = us
+
+    # named is_a graph (this ontology only) — DOID axiomatises location at the
+    # general level ('heart disease' -> heart), so a leaf with no location of its
+    # own inherits from its nearest ancestor that has one.
+    dparent = {}
+    if inherit:
+        for s, o in g.subject_objects(RDFS.subClassOf):
+            if (isinstance(s, URIRef) and isinstance(o, URIRef)
+                    and str(s).startswith(pfx) and str(o).startswith(pfx)):
+                dparent.setdefault(s, set()).add(o)
+
+    def uberon_for(c, maxdepth=5):
+        if c in direct:
+            return direct[c]
+        if not inherit:
+            return set()
+        seen = {c}; frontier = [c]
+        for _ in range(maxdepth):
+            nxt = [p for n in frontier for p in dparent.get(n, ()) if p not in seen]
+            for p in nxt:
+                seen.add(p)
+            got = set()
+            for p in nxt:
+                got |= direct.get(p, set())
+            if got:
+                return got
+            frontier = nxt
+            if not frontier:
+                break
+        return set()
+
+    links, terms = {}, {}
     for c in classes:
         lab = g.value(c, RDFS.label)
-        if lab is None:
-            continue
-        if (c, OWL.deprecated, None) in g:
+        if lab is None or (c, OWL.deprecated, None) in g:
             continue
         anat_labels = set()
-        for u in collect_uberon(g, c):
-            if u in ub2anat:
-                anat_labels.add(ub2anat[u])
+        for u in uberon_for(c):
+            anat_labels |= rollup(u)     # UBERON part -> nearest meshed organ
         if not anat_labels:
             continue
         tid = prefix + ":" + str(c).split("_")[-1]
@@ -141,7 +226,7 @@ def extract(owl_path, prefix, cap_note):
     return links, terms
 
 
-dis_links, dis_terms = extract(DOWL, "DOID", "diseases via UBERON")
+dis_links, dis_terms = extract(DOWL, "DOID", "diseases via UBERON", inherit=True)
 phe_links, phe_terms = extract(HPOWL, "HP", "phenotypes via UBERON")
 
 # ---- merge into existing bridge.json ----
