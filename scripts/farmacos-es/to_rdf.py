@@ -209,6 +209,7 @@ def main():
 
     emitted_pa, emitted_lab, emitted_exc = set(), set(), set()
     emitted_via, emitted_ff, emitted_snomed = set(), set(), set()
+    cn_to_med = {}                                          # código nacional -> medicamento IRI
 
     # ---- ATC concept scheme (full hierarchy) ----
     for r in atc:
@@ -389,6 +390,7 @@ def main():
             if not cn:
                 continue
             pu = PRES + slug(cn)
+            cn_to_med[cn] = u
             w.iri(u, FMC + "presentacion", pu)
             w.iri(pu, A, FMC + "Presentacion")
             w.iri(pu, FMC + "medicamento", u)
@@ -573,6 +575,99 @@ def main():
         el.clear()
     print(f"  presentations {n_pres} | interactions {n_int} | triples {w.n}", flush=True)
 
+    # ---- pass 5: problemas de suministro (desabastecimientos) ----
+    print("pass 5: problemas de suministro ...", flush=True)
+    PSUM = B + "problema-suministro/"
+    TIPO = B + "tipo-problema-suministro/"
+    tipo_labels = {}          # tipo id -> representative observ (most frequent)
+    tipo_counts = {}
+    rows_psum = []
+    for f in sorted((RAW / "psuministro").glob("page_*.json")):
+        try:
+            data = json.loads(f.read_bytes())
+        except Exception:
+            continue
+        for r in data.get("resultados", []):
+            rows_psum.append(r)
+            t = r.get("tipoProblemaSuministro")
+            ob = clean(r.get("observ"))
+            if t is not None and ob:
+                tipo_counts.setdefault(t, {}).setdefault(ob, 0)
+                tipo_counts[t][ob] += 1
+    for t, obs in tipo_counts.items():
+        tipo_labels[t] = max(obs.items(), key=lambda kv: kv[1])[0]
+    for t, lbl in tipo_labels.items():
+        tu = TIPO + slug(str(t))
+        w.iri(tu, A, FMC + "TipoProblemaSuministro")
+        w.lit(tu, PREFLABEL, lbl)
+        w.lit(tu, LABEL, lbl)
+        w.lit(tu, NOTATION, str(t))
+    n_psum = 0
+    for r in rows_psum:
+        cn = str(r.get("cn") or "").strip()
+        if not cn:
+            continue
+        fini = r.get("fini")
+        pu = PRES + slug(cn)
+        su = PSUM + f"{slug(cn)}-{slug(str(fini))}"
+        w.iri(su, A, FMC + "ProblemaSuministro")
+        w.iri(pu, FMC + "problemaSuministro", su)
+        w.iri(su, FMC + "presentacion", pu)
+        w.lit(su, LABEL, r.get("nombre"))
+        w.lit(su, FMC + "codigoNacional", cn)
+        activo = bool(r.get("activo"))
+        w.lit(su, FMC + "activo", "true" if activo else "false", BOOL)
+        t = r.get("tipoProblemaSuministro")
+        if t is not None:
+            w.iri(su, FMC + "tipoProblema", TIPO + slug(str(t)))
+        w.lit(su, FMC + "observaciones", r.get("observ"))
+        di = epoch_to_date(fini)
+        df = epoch_to_date(r.get("ffin"))
+        if di:
+            w.lit(su, FMC + "fechaInicio", di, DATE)
+        if df:
+            w.lit(su, FMC + "fechaFin", df, DATE)
+        mu = cn_to_med.get(cn)
+        if mu:
+            w.iri(mu, FMC + "problemaSuministro", su)
+            if activo:
+                w.lit(mu, FMC + "tieneProblemaSuministroActivo", "true", BOOL)
+        n_psum += 1
+    print(f"  problemas de suministro: {n_psum} | tipos {len(tipo_labels)} | triples {w.n}", flush=True)
+
+    # ---- pass 6: materiales informativos (materiales de seguridad / educativos) ----
+    print("pass 6: materiales informativos ...", flush=True)
+    MAT = B + "material/"
+    n_mat = 0
+    for f in (RAW / "materiales").glob("*.json"):
+        nreg = f.stem
+        if nreg not in valid_nreg:
+            continue
+        try:
+            data = json.loads(f.read_bytes())
+        except Exception:
+            continue
+        mu = med_iri(nreg)
+        for lista, dirigido in [("listaDocsPaciente", "paciente"),
+                                ("listaDocsProfesional", "profesional")]:
+            for doc in (data.get(lista) or []):
+                url = doc.get("url")
+                if not url:
+                    continue
+                mmu = MAT + f"{slug(nreg)}-{slug(url.rsplit('/', 1)[-1])}"
+                w.iri(mu, FMC + "material", mmu)
+                w.iri(mmu, A, FMC + "MaterialInformativo")
+                w.iri(mmu, FMC + "medicamento", mu)
+                w.lit(mmu, DCT + "title", doc.get("nombre"))
+                w.lit(mmu, LABEL, doc.get("nombre"))
+                w.lit(mmu, FMC + "dirigidoA", dirigido)
+                w.iri(mmu, FMC + "url", url)
+                d = epoch_to_date(doc.get("fecha"))
+                if d:
+                    w.lit(mmu, DCT + "issued", d, DATE)
+                n_mat += 1
+    print(f"  materiales: {n_mat} docs | triples {w.n}", flush=True)
+
     nt.close()
     print(f"WROTE {OUT_NT}  ({w.n} triples)", flush=True)
     write_ontology()
@@ -612,6 +707,11 @@ fmc:Interaccion a owl:Class ; rdfs:label "Interacción farmacológica"@es ;
   rdfs:comment "Interacción a nivel ATC (efecto + recomendación) del Nomenclátor de la AEMPS."@es .
 fmc:NotaSeguridad a owl:Class ; rdfs:label "Nota de seguridad"@es ;
   rdfs:comment "Comunicación / alerta de seguridad de la AEMPS."@es .
+fmc:ProblemaSuministro a owl:Class ; rdfs:label "Problema de suministro"@es ;
+  rdfs:comment "Situación de desabastecimiento de una presentación (código nacional)."@es .
+fmc:TipoProblemaSuministro a owl:Class ; rdfs:subClassOf skos:Concept ; rdfs:label "Tipo de problema de suministro"@es .
+fmc:MaterialInformativo a owl:Class ; rdfs:label "Material informativo"@es ;
+  rdfs:comment "Material de seguridad / educativo (guía, tarjeta) dirigido a paciente o profesional."@es .
 fmc:SeccionDocumento a owl:Class ; rdfs:label "Sección de documento"@es .
 fmc:SeccionProspecto a owl:Class ; rdfs:subClassOf fmc:SeccionDocumento ; rdfs:label "Sección de prospecto"@es .
 fmc:SeccionFichaTecnica a owl:Class ; rdfs:subClassOf fmc:SeccionDocumento ; rdfs:label "Sección de ficha técnica"@es .
@@ -641,6 +741,9 @@ fmc:interaccion a owl:ObjectProperty ; rdfs:label "interacción"@es .
 fmc:atcObjetivo a owl:ObjectProperty ; rdfs:label "grupo ATC con el que interacciona"@es .
 fmc:gravedad a owl:ObjectProperty ; rdfs:label "gravedad de la interacción"@es .
 fmc:notaSeguridad a owl:ObjectProperty ; rdfs:label "nota de seguridad"@es .
+fmc:problemaSuministro a owl:ObjectProperty ; rdfs:label "problema de suministro"@es .
+fmc:tipoProblema a owl:ObjectProperty ; rdfs:label "tipo de problema de suministro"@es .
+fmc:material a owl:ObjectProperty ; rdfs:label "material informativo"@es .
 fmc:seccionProspecto a owl:ObjectProperty ; rdfs:label "sección de prospecto"@es .
 fmc:seccionFichaTecnica a owl:ObjectProperty ; rdfs:label "sección de ficha técnica"@es .
 fmc:mencionaFrecuencia a owl:ObjectProperty ; rdfs:label "menciona frecuencia de efecto"@es .
@@ -656,6 +759,12 @@ fmc:esBiosimilar a owl:DatatypeProperty ; rdfs:label "es biosimilar"@es ; rdfs:r
 fmc:trianguloNegro a owl:DatatypeProperty ; rdfs:label "triángulo negro (seguimiento adicional)"@es ; rdfs:range xsd:boolean .
 fmc:requiereReceta a owl:DatatypeProperty ; rdfs:label "requiere receta"@es ; rdfs:range xsd:boolean .
 fmc:comercializado a owl:DatatypeProperty ; rdfs:label "comercializado"@es ; rdfs:range xsd:boolean .
+fmc:activo a owl:DatatypeProperty ; rdfs:label "problema de suministro activo"@es ; rdfs:range xsd:boolean .
+fmc:tieneProblemaSuministroActivo a owl:DatatypeProperty ; rdfs:label "tiene problema de suministro activo"@es ; rdfs:range xsd:boolean .
+fmc:observaciones a owl:DatatypeProperty ; rdfs:label "observaciones"@es .
+fmc:fechaInicio a owl:DatatypeProperty ; rdfs:label "fecha de inicio"@es ; rdfs:range xsd:date .
+fmc:fechaFin a owl:DatatypeProperty ; rdfs:label "fecha de fin prevista"@es ; rdfs:range xsd:date .
+fmc:dirigidoA a owl:DatatypeProperty ; rdfs:label "dirigido a"@es .
 fmc:codigoNacional a owl:DatatypeProperty ; rdfs:label "código nacional (CN)"@es .
 fmc:efecto a owl:DatatypeProperty ; rdfs:label "efecto de la interacción"@es .
 fmc:recomendacion a owl:DatatypeProperty ; rdfs:label "recomendación ante la interacción"@es .
