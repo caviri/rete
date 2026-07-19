@@ -3,6 +3,14 @@
   "generatedFrom": "release-1.0.0-rc1",
   "datasets": [
     {
+      "key": "farmacos-es",
+      "url": "https://data.graphplaza.com/farmacos-es/farmacos-es.rete",
+      "formatVersion": 5,
+      "contentHash": "7bdf277fdf23a1db148a43b3eab95fad",
+      "size": 291269719,
+      "cardUrl": "https://data.graphplaza.com/farmacos-es/farmacos-es.rete"
+    },
+    {
       "key": "z-anatomy",
       "url": "https://data.graphplaza.com/z-anatomy/z-anatomy.rete",
       "formatVersion": 5,
