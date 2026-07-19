@@ -43,6 +43,10 @@ impl RecordingReader {
     fn fail_from_now(&self) {
         self.fail.store(true, Ordering::Relaxed);
     }
+    /// End the simulated outage — reads succeed again.
+    fn recover(&self) {
+        self.fail.store(false, Ordering::Relaxed);
+    }
 }
 
 impl RangeReader for RecordingReader {
@@ -569,6 +573,52 @@ fn lazy_sparql_open_surfaces_failed_tile_fetches() {
     assert!(
         rete.index_incomplete(),
         "a failed tile fetch must set the incomplete flag"
+    );
+}
+
+/// The incompleteness verdict is PER QUERY for a resident session: after the
+/// network recovers, `reset_load_failures` clears the sticky flag and the same
+/// query RE-FETCHES what failed (failed tiles/chunks are never cached as
+/// empty), returning the complete answer — one transient blip must not poison
+/// every later query on a long-lived handle (the browser worker's session).
+#[test]
+fn reset_load_failures_makes_failed_fetches_retryable() {
+    let image = multi_tile_image();
+    let expected = {
+        // The complete answer, computed over a healthy session.
+        let healthy = Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(
+            image.clone(),
+        )))
+        .unwrap();
+        let q = format!("SELECT ?o WHERE {{ {} <http://ex/knows> ?o }}", mt_node(7));
+        match eval_query(&healthy, &q).unwrap() {
+            QueryOutput::Select(_, rows) => rows.len(),
+            _ => unreachable!(),
+        }
+    };
+    assert!(expected > 0, "fixture must produce rows");
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    reader.fail_from_now();
+    let q = format!("SELECT ?o WHERE {{ {} <http://ex/knows> ?o }}", mt_node(7));
+    let _ = eval_query(&rete, &q).unwrap();
+    assert!(rete.index_incomplete(), "outage query must be flagged");
+
+    reader.recover();
+    rete.reset_load_failures();
+    assert!(!rete.index_incomplete(), "reset must clear the verdict");
+    let rows = match eval_query(&rete, &q).unwrap() {
+        QueryOutput::Select(_, rows) => rows.len(),
+        _ => unreachable!(),
+    };
+    assert!(
+        !rete.index_incomplete(),
+        "recovered query must not re-flag — its fetches succeeded"
+    );
+    assert_eq!(
+        rows, expected,
+        "the retried query must return the COMPLETE answer, not a poisoned empty tile"
     );
 }
 

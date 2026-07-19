@@ -154,9 +154,17 @@ impl Dictionary {
         self.has_quoted_triples
     }
 
-    /// Did any lazy chunk fetch fail since this dictionary was opened?
+    /// Did any lazy chunk fetch fail since this dictionary was opened — or
+    /// since the last [`reset_load_failure`](Self::reset_load_failure)?
     pub fn load_incomplete(&self) -> bool {
         self.sections.iter().any(|s| s.load_incomplete())
+    }
+
+    /// Forget recorded fetch failures across every section (see
+    /// `GraphIndex::reset_load_failure` — the per-query reset for resident
+    /// sessions). Failed chunks were never cached, so they simply retry.
+    pub fn reset_load_failure(&self) {
+        self.sections.iter().for_each(|s| s.reset_load_failure());
     }
 
     /// Batch-fault every unloaded chunk of every section (no-op for local

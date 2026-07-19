@@ -287,8 +287,16 @@ impl SectionChunk {
     /// The byte offset (into `data`) of each run in this chunk, computed once by
     /// scanning the decompressed body and cached. `data` must be this chunk's
     /// body. Offset 0 is the chunk's first run (chunks are run-aligned); every
-    /// `restart_interval` terms starts the next run.
+    /// `restart_interval` terms starts the next run. An EMPTY body (the
+    /// transient-fetch-failure sentinel — never a real chunk) is not cached, or
+    /// a failed chunk's empty offset table would outlive the retryable data.
     fn run_offsets(&self, data: &[u8], restart_interval: usize) -> &[usize] {
+        if let Some(r) = self.runs.get() {
+            return r;
+        }
+        if data.is_empty() {
+            return &[];
+        }
         self.runs
             .get_or_init(|| chunk_run_offsets(data, restart_interval))
     }
@@ -427,19 +435,37 @@ impl ChunkedSection {
         self.meta.term_count
     }
 
-    /// Did any chunk fetch fail since this section was opened? (Sticky.)
+    /// Did any chunk fetch fail since this section was opened — or since the
+    /// last [`reset_load_failure`](Self::reset_load_failure)?
     pub fn load_incomplete(&self) -> bool {
         self.failed.load(Ordering::Relaxed)
     }
 
+    /// Forget recorded fetch failures (see `GraphIndex::reset_load_failure` —
+    /// the per-query reset for resident sessions). Failed chunks were never
+    /// cached, so the next resolution retries them.
+    pub fn reset_load_failure(&self) {
+        self.failed.store(false, Ordering::Relaxed);
+    }
+
+    /// A FAILED fetch records the failure and returns an empty slice WITHOUT
+    /// caching it, so a later resolution retries the chunk — a transient
+    /// network error must not permanently poison a resident session.
     fn chunk_data(&self, ci: usize) -> &[u8] {
-        self.chunks[ci].data.get_or_init(|| match &self.loader {
-            Some(load) => load(ci).unwrap_or_else(|| {
-                self.failed.store(true, Ordering::Relaxed);
-                Vec::new()
-            }),
-            None => Vec::new(),
-        })
+        let cell = &self.chunks[ci].data;
+        if let Some(d) = cell.get() {
+            return d;
+        }
+        match &self.loader {
+            Some(load) => match load(ci) {
+                Some(bytes) => cell.get_or_init(|| bytes),
+                None => {
+                    self.failed.store(true, Ordering::Relaxed);
+                    &[]
+                }
+            },
+            None => cell.get_or_init(Vec::new),
+        }
     }
 
     /// The chunk holding `run` (chunks ascend by `first_run`; the first chunk

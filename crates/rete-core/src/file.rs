@@ -2408,6 +2408,21 @@ impl Rete {
             || self.named_graphs.iter().any(|(_, g)| g.load_incomplete())
     }
 
+    /// Forget recorded lazy-fetch failures — the start-of-evaluation reset for
+    /// a RESIDENT session (a browser worker holding one `Rete` across many
+    /// queries): it makes [`index_incomplete`](Self::index_incomplete) a
+    /// per-query verdict instead of a per-open one, so a single transient
+    /// network failure no longer fails every subsequent query on the session.
+    /// Sound because failed tiles/chunks are never cached — the next
+    /// evaluation simply retries the fetch.
+    pub fn reset_load_failures(&self) {
+        self.index.reset_load_failure();
+        self.dict.reset_load_failure();
+        for (_, g) in &self.named_graphs {
+            g.reset_load_failure();
+        }
+    }
+
     fn resolve_query_pattern(
         &self,
         s: Option<&str>,

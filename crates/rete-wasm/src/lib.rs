@@ -393,7 +393,12 @@ impl RemoteGraph {
     }
 
     /// See [`sparql_url`] — same query, but over the resident, cached handle.
+    /// The incompleteness verdict is PER QUERY: reset the sticky failure flags
+    /// first, so one transient fetch failure fails only the query it happened
+    /// in — not every later query on this session (failed tiles/chunks are
+    /// never cached, so they retry here).
     pub fn query(&self, query: &str, format: &str) -> Result<String, JsValue> {
+        self.rete.reset_load_failures();
         let s = query_json(&self.rete, query, format, "")?;
         incomplete_guard(&self.rete, "query")?;
         Ok(s)
@@ -402,6 +407,7 @@ impl RemoteGraph {
     /// As [`query`], with OWL 2 QL entailment on (reason over the ontology while
     /// reading only the bytes the rewritten query touches).
     pub fn query_reasoned(&self, query: &str, format: &str) -> Result<String, JsValue> {
+        self.rete.reset_load_failures();
         let s = query_json_reasoned(&self.rete, query, format, "")?;
         incomplete_guard(&self.rete, "query")?;
         Ok(s)

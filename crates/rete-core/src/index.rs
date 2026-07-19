@@ -523,9 +523,20 @@ impl GraphIndex {
         self.read_concurrency
     }
 
-    /// Did any tile fetch fail since this index was opened? (Sticky.)
+    /// Did any tile fetch fail since this index was opened — or since the last
+    /// [`reset_load_failure`](Self::reset_load_failure)?
     pub fn load_incomplete(&self) -> bool {
         self.load_failed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Forget recorded fetch failures — the start-of-evaluation reset for a
+    /// RESIDENT session, making the incompleteness verdict per-query instead of
+    /// per-open (one transient network blip used to fail every later query on
+    /// the session). Safe because failed tiles are never cached: the next scan
+    /// simply retries them.
+    pub fn reset_load_failure(&self) {
+        self.load_failed
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// True for a remote/lazy index (tiles fault in over a `RangeReader`). The
@@ -601,18 +612,27 @@ impl GraphIndex {
     }
 
     /// The tile's block image, faulting it in through the loader if remote.
+    /// A FAILED fetch records the failure and returns an empty slice WITHOUT
+    /// caching it, so a later evaluation retries the tile — a transient
+    /// network error must not permanently poison a long-lived (resident)
+    /// session with an empty tile masquerading as data.
     fn tile_data(&self, section: usize, tile: usize) -> &[u8] {
-        self.sections[section][tile].data.get_or_init(|| {
-            match &self.loader {
-                Some(load) => load(section, tile).unwrap_or_else(|| {
+        let cell = &self.sections[section][tile].data;
+        if let Some(d) = cell.get() {
+            return d;
+        }
+        match &self.loader {
+            Some(load) => match load(section, tile) {
+                Some(bytes) => cell.get_or_init(|| bytes),
+                None => {
                     self.load_failed
                         .store(true, std::sync::atomic::Ordering::Relaxed);
-                    Vec::new()
-                }),
-                // A local tile with no data was constructed empty on purpose.
-                None => Vec::new(),
-            }
-        })
+                    &[]
+                }
+            },
+            // A local tile with no data was constructed empty on purpose.
+            None => cell.get_or_init(Vec::new),
+        }
     }
 
     /// Total triple count (sum of the SPO tiles' zone counts). For a remote
