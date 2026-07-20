@@ -3977,8 +3977,21 @@ self.onmessage = function (e) {
   // A clear empty state beats a bare header row — especially for custom queries
   // on remote datasets, where "did it work?" and "matched nothing" look alike.
   function emptyState(what) {
+    let hint = "";
+    try {
+      const r = $("owlReason");
+      const q = ($("q") && $("q").value) || "";
+      // A class/type test (?x a :Class, rdf:type) silently misses instances typed
+      // with a SUBCLASS when reasoning is off — the #1 "why 0 rows?" surprise.
+      const byType = /(^|[\s;.\[])a\s|rdf:type/.test(q) && !/subClassOf|subPropertyOf/.test(q);
+      if (r && !r.checked && byType) {
+        hint = ` <span class="empty-reason-hint">Matching by <strong>type</strong> with <strong>🧠&nbsp;Reason</strong> off — ` +
+          `an instance typed with a <em>subclass</em> won't match its parent class. ` +
+          `Turn on Reason (or use <code>a/rdfs:subClassOf*</code>) and re-run.</span>`;
+      }
+    } catch (_e) { /* ignore */ }
     return `<div class="note">The query ran successfully but matched <strong>no ${esc(what)}</strong>. ` +
-      `Check bound IRIs and prefixes, or relax a FILTER — the graph just has nothing for this pattern.</div>`;
+      `Check bound IRIs and prefixes, or relax a FILTER — the graph just has nothing for this pattern.${hint}</div>`;
   }
 
   // Friendly table cell for an RDF term: strip the quotes + datatype IRI from a
