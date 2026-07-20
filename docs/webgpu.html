@@ -487,8 +487,9 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
       <div class="panel" style="margin-top:2px">
         <h4>Keep it</h4>
         <p class="hint" style="margin-bottom:9px">
-          Your text stays in this browser as you type, and the link below carries the whole
-          argument — settings included — so you can send it to whoever you were arguing with.
+          Your text is kept in this browser as you type. The button below builds a link with the
+          whole argument in it — settings included — so you can send it to whoever you were
+          arguing with.
         </p>
         <div class="row">
           <button class="ghost" id="copylink">Copy shareable link</button>
@@ -1492,14 +1493,16 @@ function applyState(s) {
 }
 
 let saveTimer = null;
+// Autosave touches localStorage ONLY. It must never write to the URL: this page
+// has section anchors, and stamping "#a=<argument>" over them on every keystroke
+// silently broke every deep link. The share URL is built on demand instead.
 function persistNow() {
   clearTimeout(saveTimer);
-  const s = currentState();
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {}
-  // replaceState, not a hash assignment: typing must not fill the back button.
-  try { history.replaceState(null, "", "#a=" + b64e(JSON.stringify(s))); } catch {}
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(currentState())); } catch {}
 }
 function persist() { clearTimeout(saveTimer); saveTimer = setTimeout(persistNow, 400); }
+const shareURL = () =>
+  location.origin + location.pathname + "#a=" + b64e(JSON.stringify(currentState()));
 
 function slug(s) { return s.replace(/[^A-Za-z0-9_-]/g, "_"); }
 function toTurtle(claims) {
@@ -2219,7 +2222,7 @@ async function runBenchmark() {
 // Restore in order of specificity: a shared link, then this browser's copy,
 // then the default example.
 (function restore() {
-  const h = location.hash.match(/^#a=(.+)$/);
+  const h = location.hash.match(/^#a=(.+)$/);   // a shared argument link
   if (h) { try { if (applyState(JSON.parse(b64d(h[1])))) return; } catch {} }
   try { const s = localStorage.getItem(STORE_KEY); if (s && applyState(JSON.parse(s))) return; } catch {}
   $("src").value = EXAMPLES.debate;
@@ -2317,8 +2320,14 @@ $("findings").addEventListener("click", ev => {
 
 $("copylink").addEventListener("click", async () => {
   persistNow();
-  try { await navigator.clipboard.writeText(location.href); flash("<b>Copied.</b> That link carries the whole argument."); }
-  catch { flash("Copy blocked by the browser — the address bar already holds the link."); }
+  const url = shareURL();
+  try { history.replaceState(null, "", url); } catch {}
+  try {
+    await navigator.clipboard.writeText(url);
+    flash("<b>Copied.</b> That link carries the whole argument.");
+  } catch {
+    flash("Copy blocked by the browser — the link is now in the address bar.");
+  }
 });
 $("dlttl").addEventListener("click", () => {
   const { claims } = parseClaims($("src").value);
