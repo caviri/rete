@@ -92,6 +92,47 @@
   .check h4{margin:0 0 5px;font-size:13px}
   .check p{margin:0;color:var(--mut);font-size:12.5px;max-width:none}
   .check .lat{color:var(--faint);font-style:italic;font-size:12px}
+  /* --- the staged algebra explainer -------------------------------------- */
+  .algbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:14px 0 10px}
+  .algbar .stagename{font-weight:700;font-size:13px}
+  .algbar .count{color:var(--faint);font-size:12px;font-variant-numeric:tabular-nums;margin-left:auto}
+  .dots{display:flex;gap:5px;align-items:center}
+  .dots i{width:7px;height:7px;border-radius:50%;background:#332f40;transition:background .3s,transform .3s}
+  .dots i.on{background:var(--gold);transform:scale(1.35)}
+  .dots i.done{background:#6b5a2e}
+  .algwrap{display:grid;grid-template-columns:1.25fr 1fr;gap:16px;align-items:center}
+  @media (max-width:820px){ .algwrap{grid-template-columns:1fr} }
+  .algcap{min-height:52px;margin:12px 0 0;color:var(--ink);font-size:14.5px;line-height:1.6;max-width:74ch}
+  .algcap b{color:var(--gold)}
+  .algmath{margin-top:10px;padding:11px 14px;background:var(--hot);border:1px solid var(--edge);
+    border-radius:9px;overflow-x:auto}
+  .algmath math{color:var(--ink);font-size:16px}
+  .algmath .lbl{color:var(--faint);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;
+    display:block;margin-bottom:5px}
+  /* graph */
+  .an circle{fill:#211f2c;stroke:var(--edge);stroke-width:1.5;transition:fill .45s,stroke .45s}
+  .an.lit circle{fill:#2c2718;stroke:var(--gold);stroke-width:2.5}
+  .an text.nm{fill:var(--ink);font-size:13px;font-weight:700;text-anchor:middle}
+  .an text.vl{fill:var(--gold);font-size:12px;font-weight:700;text-anchor:middle;opacity:0;
+    transition:opacity .35s;font-variant-numeric:tabular-nums}
+  .an.lit text.vl{opacity:1}
+  .ae{stroke:#3a3547;stroke-width:2;fill:none;transition:stroke .45s,stroke-width .45s,opacity .45s}
+  .ae.lit{stroke:var(--gold);stroke-width:3}
+  .ae.weak{stroke:var(--bad);stroke-width:3.5}
+  .ae.faded{opacity:.22}
+  .aw{fill:var(--mut);font-size:11px;text-anchor:middle;transition:fill .45s}
+  .aw.lit{fill:var(--gold);font-weight:700}
+  .aw.weak{fill:var(--bad);font-weight:700}
+  /* matrix */
+  .mc{fill:#191722;stroke:#2a2833;stroke-width:1;transition:fill .4s,stroke .4s}
+  .mc.has{fill:#211f2c}
+  .mc.row{fill:#2a2418}
+  .mc.pick{fill:#3a2f16;stroke:var(--gold);stroke-width:2}
+  .mc.all{fill:#24303f;stroke:#3987e5}
+  .mv{fill:var(--mut);font-size:11px;text-anchor:middle;font-variant-numeric:tabular-nums;
+    transition:fill .4s}
+  .mv.on{fill:var(--gold);font-weight:700}
+  .ml{fill:var(--faint);font-size:11px;text-anchor:middle;font-weight:600}
   /* A defined idea you can go read about. Dotted underline, not colour alone. */
   a.term{color:var(--gold);text-decoration:none;border-bottom:1px dotted rgba(244,201,93,.55)}
   a.term:hover{border-bottom-style:solid;text-decoration:none}
@@ -487,6 +528,49 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
     agent — see <a href="getting-started.html">getting started</a> and
     <a href="sparql.html">SPARQL support</a>. The toy in this page and the engine the rest of these
     docs describe are the same data model; only the scale changes.
+  </p>
+</section>
+
+<!-- ============================================== the algebra, animated === -->
+<section class="card" id="algebra">
+  <h2>The algebra, one step at a time</h2>
+  <p class="sub">
+    Everything on this page rests on one operation, repeated. Here it is slowly, first as a walk
+    through a graph, then as the matrix multiply it really is, and finally as the thing a GPU can do
+    to every row at once. Press play, or step through it yourself.
+  </p>
+
+  <div class="algbar">
+    <button class="ghost" id="alg-prev">◀ Back</button>
+    <button id="alg-play">▶ Play</button>
+    <button class="ghost" id="alg-next">Next ▶</button>
+    <span class="dots" id="alg-dots"></span>
+    <span class="stagename" id="alg-stage"></span>
+    <span class="count" id="alg-count"></span>
+  </div>
+
+  <div class="algwrap">
+    <svg id="alg-graph" viewBox="0 0 360 230" role="img"
+         aria-label="A small causal graph with belief travelling along its arrows"></svg>
+    <svg id="alg-matrix" viewBox="0 0 260 260" role="img"
+         aria-label="The same graph written as a matrix"></svg>
+  </div>
+
+  <p class="algcap" id="alg-cap"></p>
+  <div class="algmath" id="alg-math"></div>
+
+  <p class="sub" style="margin-top:16px">
+    <b>Why this is hand-drawn and not <a class="term"
+    href="https://www.manim.community/">Manim</a>.</b> Manim is Python: it wants FFmpeg, Cairo and
+    LaTeX, and it renders a video. There are real browser answers now — a
+    <a class="term" href="https://news.ycombinator.com/item?id=47155375">TypeScript port</a> and the
+    Manim-inspired <a class="term" href="https://motioncanvas.io/">Motion Canvas</a> — but each is
+    either a WebGL bundle or a build tool that emits a player. This page is a single hand-written
+    file with <em>no external scripts at all</em>, which is why it still works offline, cannot be
+    broken by someone else's CDN, and lets you step the animation rather than watch it. The equations
+    above are native <a class="term"
+    href="https://developer.mozilla.org/en-US/docs/Web/MathML">MathML</a> — real typesetting, no
+    library.
   </p>
 </section>
 
@@ -1384,6 +1468,216 @@ const flash = m => {
   flash.t = setTimeout(() => { $("savedmsg").innerHTML = "&nbsp;"; }, 4000);
 };
 
+/* ================================================ the algebra, animated ====
+   A staged walkthrough of max-min composition: first as a walk through a tiny
+   graph, then as the matrix multiply it is, then as the thing a GPU does to
+   every row at once. Persistent elements + class toggles, so CSS transitions
+   do the animating and there is no render loop to throttle.                 */
+
+const AG_NODES = { A:[35,120], B:[120,55], C:[230,55], D:[320,120], E:[175,182] };
+const AG_EDGES = [
+  { id:"AB", from:"A", to:"B", w:0.9 },
+  { id:"BC", from:"B", to:"C", w:0.5 },
+  { id:"CD", from:"C", to:"D", w:0.8 },
+  { id:"AE", from:"A", to:"E", w:0.7 },
+  { id:"ED", from:"E", to:"D", w:0.6 },
+];
+const AG_ORDER = ["A","B","C","D","E"];
+
+const M = (...kids) => `<math display="block">${kids.join("")}</math>`;
+const mi = s => `<mi>${s}</mi>`, mn = s => `<mn>${s}</mn>`, mo = s => `<mo>${s}</mo>`;
+const sub_ = (a,b) => `<msub>${a}${b}</msub>`;
+const under = (op,v) => `<munder><mo movablelimits="false">${op}</mo>${v}</munder>`;
+const row = (...k) => `<mrow>${k.join("")}</mrow>`;
+
+const AG_FRAMES = [
+  // ---- stage 1: the weakest link
+  { s:"A chain is worth its weakest link", mode:"graph",
+    cap:"Start by believing <b>A</b> completely — degree 1.0. Nothing else is known yet.",
+    lit:["A"], vals:{A:1}, math:M(row(sub_(mi("x"),mi("A")), mo("="), mn("1.0"))) },
+  { s:"A chain is worth its weakest link", mode:"graph",
+    cap:"Step across to <b>B</b>. The arrow carries 0.9, so the chain so far is worth the smaller of the two.",
+    lit:["A","B"], le:["AB"], vals:{A:1,B:0.9},
+    math:M(row(mo("min"),mo("("),mn("1.0"),mo(","),mn("0.9"),mo(")"),mo("="),mn("0.9"))) },
+  { s:"A chain is worth its weakest link", mode:"graph",
+    cap:"Now a <b>weak</b> arrow. min(0.9, 0.5) = 0.5 — the chain drops to the flimsiest edge it has crossed.",
+    lit:["A","B","C"], le:["AB","BC"], weak:["BC"], vals:{A:1,B:0.9,C:0.5},
+    math:M(row(mo("min"),mo("("),mn("0.9"),mo(","),mn("0.5"),mo(")"),mo("="),mn("0.5"))) },
+  { s:"A chain is worth its weakest link", mode:"graph",
+    cap:"A strong arrow afterwards cannot repair it: min(0.5, 0.8) is still 0.5. Once a chain has passed through a weak link, that link caps it forever.",
+    lit:["A","B","C","D"], le:["AB","BC","CD"], weak:["BC"], vals:{A:1,B:0.9,C:0.5,D:0.5},
+    math:M(row(mo("min"),mo("("),mn("0.5"),mo(","),mn("0.8"),mo(")"),mo("="),mn("0.5"))) },
+  { s:"A chain is worth its weakest link", mode:"graph",
+    cap:"That is the entire first rule. A route is worth the <b>minimum</b> along it — the bottleneck.",
+    lit:["A","B","C","D"], le:["AB","BC","CD"], weak:["BC"], vals:{A:1,B:0.9,C:0.5,D:0.5},
+    math:M(row(mi("strength"),mo("("),mi("path"),mo(")"),mo("="),
+      under("min", row(mi("e"),mo("∈"),mi("path"))), sub_(mi("w"),mi("e")))) },
+
+  // ---- stage 2: best of all routes
+  { s:"Then take the best route", mode:"graph",
+    cap:"There is another way to reach <b>D</b>: through <b>E</b>. Its weakest link is 0.6.",
+    lit:["A","E","D"], le:["AE","ED"], faded:["AB","BC","CD"], vals:{A:1,E:0.7,D:0.6},
+    math:M(row(mo("min"),mo("("),mn("1.0"),mo(","),mn("0.7"),mo(","),mn("0.6"),mo(")"),mo("="),mn("0.6"))) },
+  { s:"Then take the best route", mode:"graph",
+    cap:"Two routes arrive at D — one worth 0.5, one worth 0.6. We keep the <b>better</b> one.",
+    lit:["A","B","C","D","E"], le:["AB","BC","CD","AE","ED"], vals:{A:1,B:0.9,C:0.5,D:0.6,E:0.7},
+    math:M(row(mo("max"),mo("("),mn("0.5"),mo(","),mn("0.6"),mo(")"),mo("="),mn("0.6"))) },
+  { s:"Then take the best route", mode:"graph",
+    cap:"<b>Best of all routes, each worth its weakest link.</b> That pairing has a name outside fuzzy logic: it is the widest path, or bottleneck, problem.",
+    lit:["A","E","D"], le:["AE","ED"], faded:["AB","BC","CD"], vals:{A:1,E:0.7,D:0.6},
+    math:M(row(mi("μ"),mo("("),mi("A"),mo("⇒"),mi("D"),mo(")"),mo("="),
+      under("max",mi("paths")), under("min",mi("edges")), sub_(mi("w"),mi("e")))) },
+
+  // ---- stage 3: as a matrix
+  { s:"The same thing, as a matrix", mode:"both",
+    cap:"Write every arrow into a grid. A row says <b>where belief lands</b>; a column says <b>where it came from</b>. Most cells are empty — real argument graphs are mostly holes.",
+    lit:[], vals:{}, mshow:true,
+    math:M(row(sub_(mi("A"),row(mi("i"),mi("j"))),mo("="),mi("strength of the arrow"),mo(" "),mi("j"),mo("→"),mi("i"))) },
+  { s:"The same thing, as a matrix", mode:"both",
+    cap:"To update <b>D</b>, walk along D's row. Two cells have arrows in them: one from C, one from E.",
+    lit:["C","E"], vals:{C:0.5,E:0.7}, mshow:true, mrow:"D", mpick:[["D","C"],["D","E"]],
+    math:M(row(sub_(mi("A"),row(mi("D"),mi("C"))),mo("="),mn("0.8"),mo(","),mo(" "),
+      sub_(mi("A"),row(mi("D"),mi("E"))),mo("="),mn("0.6"))) },
+  { s:"The same thing, as a matrix", mode:"both",
+    cap:"Pair each cell with what that node currently believes, take the <b>min</b> of each pair, then the <b>max</b> across the row. One update, done.",
+    lit:["C","E","D"], vals:{C:0.5,E:0.7,D:0.6}, mshow:true, mrow:"D", mpick:[["D","C"],["D","E"]],
+    math:M(row(sub_(mi("y"),mi("i")),mo("="),under("max",mi("j")),
+      row(mo("min"),mo("("),sub_(mi("A"),row(mi("i"),mi("j"))),mo(","),sub_(mi("x"),mi("j")),mo(")")))) +
+      `<span class="lbl" style="margin-top:8px">for row D</span>` +
+      M(row(mo("max"),mo("("),mo("min"),mo("("),mn("0.8"),mo(","),mn("0.5"),mo(")"),mo(","),
+        mo("min"),mo("("),mn("0.6"),mo(","),mn("0.7"),mo(")"),mo(")"),mo("="),mn("0.6"))) },
+  { s:"The same thing, as a matrix", mode:"both",
+    cap:"Here is the trick worth taking away. An ordinary matrix multiply <b>sums products</b>. Swap (+, ×) for (max, min) and the identical loop answers a completely different question. That swap is what a <b>semiring</b> is — and it is why graph algorithms are linear algebra.",
+    lit:[], vals:{}, mshow:true,
+    math:`<span class="lbl">ordinary</span>` +
+      M(row(sub_(mi("y"),mi("i")),mo("="),under("∑",mi("j")),
+        sub_(mi("A"),row(mi("i"),mi("j"))),mo("⋅"),sub_(mi("x"),mi("j")))) +
+      `<span class="lbl" style="margin-top:8px">(max, min)</span>` +
+      M(row(sub_(mi("y"),mi("i")),mo("="),under("max",mi("j")),
+        row(mo("min"),mo("("),sub_(mi("A"),row(mi("i"),mi("j"))),mo(","),sub_(mi("x"),mi("j")),mo(")")))) },
+
+  // ---- stage 4: iterate
+  { s:"Do it again, and again", mode:"both",
+    cap:"Feed the answer back in as the new input and repeat. After <b>k</b> rounds, every node knows the best route reaching it in at most k arrows.",
+    lit:["A","B","C","D","E"], le:["AB","BC","CD","AE","ED"], vals:{A:1,B:0.9,C:0.5,D:0.6,E:0.7},
+    mshow:true,
+    math:M(row(sub_(mi("x"),row(mi("t"),mo("+"),mn("1"))),mo("="),mi("A"),mo("⊠"),sub_(mi("x"),mi("t")))) },
+  { s:"Do it again, and again", mode:"both",
+    cap:"That is the <b>k-hop transitive closure</b> — and it is exactly what the trace panel above showed, and what every chain-based check on this page reads.",
+    lit:["A","B","C","D","E"], le:["AB","BC","CD","AE","ED"], vals:{A:1,B:0.9,C:0.5,D:0.6,E:0.7},
+    mshow:true,
+    math:M(row(sub_(mi("x"),mi("k")),mo("="),msup_("A","k"),mo("⊠"),sub_(mi("x"),mn("0")))) },
+
+  // ---- stage 5: why a GPU
+  { s:"Why this suits a GPU", mode:"matrix",
+    cap:"A CPU takes the rows <b>one at a time</b>: n rows, k rounds, strictly one after another. That is the single core the benchmark races against.",
+    lit:[], vals:{}, mshow:true, mrow:"A",
+    math:M(row(mi("cost"),mo("≈"),mi("n"),mo("×"),mi("k"),mo(" "),mi("sequential row updates"))) },
+  { s:"Why this suits a GPU", mode:"matrix",
+    cap:"A GPU lights <b>every row at once</b> — one thread per row, all reading the same resident matrix. Identical arithmetic, k dispatches instead of n×k steps. That is where the 144× on this page comes from.",
+    lit:[], vals:{}, mshow:true, mall:true,
+    math:M(row(mi("cost"),mo("≈"),mi("k"),mo(" "),mi("dispatches"),mo(","),mo(" "),
+      mi("n"),mo(" "),mi("threads in parallel"))) },
+];
+
+function msup_(a, b) { return `<msup><mi>${a}</mi><mn>${b}</mn></msup>`; }
+
+let algIdx = 0, algTimer = null;
+
+function buildAlg() {
+  const g = $("alg-graph");
+  if (!g || g.dataset.built) return;
+  g.dataset.built = "1";
+  const P = AG_NODES;
+  for (const e of AG_EDGES) {
+    const [x1,y1] = P[e.from], [x2,y2] = P[e.to];
+    const dx = x2-x1, dy = y2-y1, L = Math.hypot(dx,dy);
+    const s = { x: x1 + dx/L*17, y: y1 + dy/L*17 }, t2 = { x: x2 - dx/L*19, y: y2 - dy/L*19 };
+    const line = el("line", { x1:s.x, y1:s.y, x2:t2.x, y2:t2.y, class:"ae", id:"ae-"+e.id,
+      "marker-end":"url(#agah)" });
+    g.appendChild(line);
+    g.appendChild(el("text", { x:(x1+x2)/2 + (dy/L)*13, y:(y1+y2)/2 - (dx/L)*13 + 4,
+      class:"aw", id:"aw-"+e.id }, e.w.toFixed(1)));
+  }
+  const defs = el("defs");
+  const mk = el("marker", { id:"agah", viewBox:"0 0 10 10", refX:9, refY:5,
+    markerWidth:5, markerHeight:5, orient:"auto-start-reverse" });
+  mk.appendChild(el("path", { d:"M 0 1 L 10 5 L 0 9 z", fill:"#6b6480" }));
+  defs.appendChild(mk);
+  g.insertBefore(defs, g.firstChild);
+  for (const k of AG_ORDER) {
+    const [x,y] = P[k];
+    const grp = el("g", { class:"an", id:"an-"+k });
+    grp.appendChild(el("circle", { cx:x, cy:y, r:16 }));
+    grp.appendChild(el("text", { x, y:y+4, class:"nm" }, k));
+    grp.appendChild(el("text", { x, y:y+31, class:"vl", id:"av-"+k }, ""));
+    g.appendChild(grp);
+  }
+
+  const m = $("alg-matrix");
+  const cell = 38, ox = 52, oy = 52;
+  AG_ORDER.forEach((c,j) => m.appendChild(el("text", { x:ox+j*cell+cell/2, y:oy-12, class:"ml" }, c)));
+  AG_ORDER.forEach((r,i) => m.appendChild(el("text", { x:ox-14, y:oy+i*cell+cell/2+4, class:"ml" }, r)));
+  m.appendChild(el("text", { x:ox-14, y:oy-12, class:"ml", "font-size":10 }, "i↓ j→"));
+  const wOf = (to, from) => (AG_EDGES.find(e => e.to===to && e.from===from) || {}).w;
+  AG_ORDER.forEach((r,i) => AG_ORDER.forEach((c,j) => {
+    const w = wOf(r,c);
+    m.appendChild(el("rect", { x:ox+j*cell, y:oy+i*cell, width:cell-3, height:cell-3, rx:4,
+      class:"mc" + (w ? " has" : ""), id:`mc-${r}-${c}` }));
+    m.appendChild(el("text", { x:ox+j*cell+(cell-3)/2, y:oy+i*cell+(cell-3)/2+4,
+      class:"mv", id:`mv-${r}-${c}` }, w ? w.toFixed(1) : "·"));
+  }));
+
+  $("alg-dots").innerHTML = AG_FRAMES.map((_,i) => `<i data-i="${i}"></i>`).join("");
+}
+
+function applyAlgFrame(i) {
+  const f = AG_FRAMES[i];
+  algIdx = i;
+  for (const k of AG_ORDER) {
+    const g = $("an-" + k);
+    g.classList.toggle("lit", (f.lit || []).includes(k));
+    $("av-" + k).textContent = f.vals && f.vals[k] != null ? f.vals[k].toFixed(2) : "";
+  }
+  for (const e of AG_EDGES) {
+    const l = $("ae-" + e.id), w = $("aw-" + e.id);
+    const lit = (f.le || []).includes(e.id), weak = (f.weak || []).includes(e.id);
+    const faded = (f.faded || []).includes(e.id);
+    l.classList.toggle("lit", lit && !weak);
+    l.classList.toggle("weak", weak);
+    l.classList.toggle("faded", faded);
+    w.classList.toggle("lit", lit && !weak);
+    w.classList.toggle("weak", weak);
+  }
+  AG_ORDER.forEach(r => AG_ORDER.forEach(c => {
+    const cel = $(`mc-${r}-${c}`), val = $(`mv-${r}-${c}`);
+    const has = cel.classList.contains("has");
+    const inRow = f.mrow === r, picked = (f.mpick || []).some(([a,b]) => a===r && b===c);
+    cel.classList.toggle("row", !!inRow && !picked && !f.mall);
+    cel.classList.toggle("pick", !!picked);
+    cel.classList.toggle("all", !!f.mall && has);
+    val.classList.toggle("on", !!picked || (!!f.mall && has));
+  }));
+  $("alg-graph").style.opacity = f.mode === "matrix" ? ".25" : "1";
+  $("alg-matrix").style.opacity = f.mode === "graph" ? ".25" : "1";
+  $("alg-cap").innerHTML = f.cap;
+  $("alg-math").innerHTML = f.math || "";
+  $("alg-stage").textContent = f.s;
+  $("alg-count").textContent = `${i + 1} / ${AG_FRAMES.length}`;
+  [...$("alg-dots").children].forEach((d, j) => {
+    d.classList.toggle("on", j === i);
+    d.classList.toggle("done", j < i);
+  });
+}
+
+function algStop() {
+  clearInterval(algTimer); algTimer = null;
+  $("alg-play").textContent = "▶ Play";
+}
+function algGo(i) {
+  applyAlgFrame((i + AG_FRAMES.length) % AG_FRAMES.length);
+}
+
 /* --------------------------------------------------------- chart: crossover */
 function drawCrossover() {
   const svg = $("chart1");
@@ -1876,6 +2170,23 @@ $("ex-circle").addEventListener("click", loadEx("circle", 4));
 $("ex-slope").addEventListener("click", loadEx("slope", 4));
 $("ex-witness").addEventListener("click", loadEx("witness", 3));
 $("ex-blank").addEventListener("click", loadEx("blank", 4));
+buildAlg();
+applyAlgFrame(0);
+$("alg-next").addEventListener("click", () => { algStop(); algGo(algIdx + 1); });
+$("alg-prev").addEventListener("click", () => { algStop(); algGo(algIdx - 1); });
+$("alg-play").addEventListener("click", () => {
+  if (algTimer) return algStop();
+  $("alg-play").textContent = "❚❚ Pause";
+  // setInterval, not rAF: a background tab must not freeze the walkthrough
+  algTimer = setInterval(() => {
+    if (algIdx >= AG_FRAMES.length - 1) { algStop(); return; }
+    algGo(algIdx + 1);
+  }, 3200);
+});
+$("alg-dots").addEventListener("click", ev => {
+  const d = ev.target.closest("i[data-i]");
+  if (d) { algStop(); algGo(+d.dataset.i); }
+});
 
 // Click a finding to light up exactly the arrows it is about.
 $("findings").addEventListener("click", ev => {
