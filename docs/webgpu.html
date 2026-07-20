@@ -78,8 +78,20 @@
   .finding .hd .deg{color:var(--bad);font-variant-numeric:tabular-nums}
   .finding .why{color:var(--mut);font-size:12.5px;line-height:1.65}
   .finding .why em{color:var(--ink);font-style:normal;font-weight:600}
+  .finding .lat{color:var(--faint);font-style:italic}
   .chain{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#cdc7d8}
   .arrow{color:var(--amber)}
+  .badge{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+    border-radius:999px;padding:2px 8px;margin-left:8px;vertical-align:1px}
+  .badge.a{background:rgba(57,135,229,.16);color:#9cc4f2;border:1px solid rgba(57,135,229,.4)}
+  .badge.b{background:rgba(201,133,0,.16);color:#e6b45c;border:1px solid rgba(201,133,0,.45)}
+  .who td.num{font-variant-numeric:tabular-nums}
+  .who .src{font-weight:700}
+  .checks{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:14px 0 6px}
+  .check{background:var(--hot);border:1px solid var(--edge);border-radius:10px;padding:12px 14px}
+  .check h4{margin:0 0 5px;font-size:13px}
+  .check p{margin:0;color:var(--mut);font-size:12.5px;max-width:none}
+  .check .lat{color:var(--faint);font-style:italic;font-size:12px}
 
   .figure{margin:6px 0 4px}
   .figcap{color:var(--mut);font-size:12.5px;margin:0 0 12px;max-width:70ch}
@@ -196,7 +208,7 @@
 src        [ <span class="n">0</span>,  <span class="n">1</span>,  <span class="n">2</span>  |  <span class="n">1</span>,  <span class="n">3</span>,  <span class="n">4</span> ]   <span class="c">u32  — dictionary ids, never strings</span>
 dst        [ <span class="n">1</span>,  <span class="n">2</span>,  <span class="n">3</span>  |  <span class="n">0</span>,  <span class="n">0</span>,  <span class="n">5</span> ]   <span class="c">u32</span>
 confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="n">.7</span> |  <span class="n">.8</span>, <span class="n">.75</span>, <span class="n">.2</span> ]  <span class="c">f32  — the degree of belief</span>
-             <span class="c">└── G1 ──┘    └─── G2 ───┘</span></pre>
+             <span class="c">└── Ana ─┘    └─── Ben ───┘</span></pre>
 
   <p class="sub" style="margin-top:14px">
     <b>Important honesty note.</b> The six statements above are hand-written so you can follow them.
@@ -209,63 +221,104 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
 
 <!-- ============================================== the question + sandbox == -->
 <section class="card">
-  <h2>The question we ask — and a place to change it</h2>
+  <h2>The logical questions you can ask</h2>
   <p class="sub">
-    Both contradictions from the story are really <b>the same question asked with a different number
-    of steps</b>:
-  </p>
-  <p style="background:var(--hot);border:1px solid var(--edge);border-radius:9px;padding:13px 15px;max-width:none">
-    G1 implies <b>u ⇒ v</b> at degree <b>d</b>, by following up to <b>k</b> arrows.<br>
-    G2 asserts <b>v → u</b> at degree <b>b</b>.<br>
-    They disagree about direction by <b>conflict = t-norm(d, b)</b> — reported when it reaches <b>τ</b>.
-  </p>
-  <p class="sub">
-    At <b>k = 1</b> that is the easy same-line contradiction. At <b>k &gt; 1</b> it is the hard chain
-    one. Two knobs decide what counts as a finding: <b>τ</b>, how strong a conflict must be before you
-    care, and the <b>t-norm</b>, which is just how fuzzy logic says "both at once" — either the
-    cautious <code>min(d,b)</code> (Gödel) or the harsher <code>d × b</code> (product).
-  </p>
-  <p class="sub">
-    A chain is only as strong as its weakest link, so following arrows uses <code>min</code> along the
-    path and keeps the <code>max</code> over all paths. That is the <b>max-min</b> rule, and it is
-    exactly what the GPU kernel computes — just on millions of edges instead of six.
+    Once every claim carries a source and a confidence, a surprising amount of <b>bad reasoning
+    becomes a shape in the graph</b> — findable by arithmetic, with no language model reading
+    anything. Four questions, and each one is either a same-line comparison or a walk along chains.
+    That is not a coincidence: those are precisely the two kernels benchmarked further down.
   </p>
 
-  <h3>Edit the notebooks and watch the answer change</h3>
+  <div class="checks">
+    <div class="check">
+      <h4>Do they disagree about direction? <span class="badge b">chain</span></h4>
+      <p>One source says the arrow runs this way, another implies the opposite — possibly only after
+        several steps. A two-step round trip is a plain disagreement; a longer one is a
+        <span class="lat">circulus in probando</span>, where a claim ends up supporting itself.</p>
+    </div>
+    <div class="check">
+      <h4>Does one cause it and another prevent it? <span class="badge a">same line</span></h4>
+      <p>The bluntest contradiction there is: the same pair of things, the same direction, opposite
+        sign. No chain-following needed — just compare two numbers on the same line.</p>
+    </div>
+    <div class="check">
+      <h4>Is the claim stronger than its support? <span class="badge b">chain</span></h4>
+      <p>Someone asserts a big direct effect, but the only route between the two runs through a
+        chain of weak steps. A chain is only as strong as its weakest link, so the confident
+        conclusion outruns its evidence — a <span class="lat">slippery slope</span>.</p>
+    </div>
+    <div class="check">
+      <h4>Is something else causing both? <span class="badge b">chain</span></h4>
+      <p>Two things move together and someone declares one caused the other — but a third thing
+        causes them both. The classic <span class="lat">cum hoc ergo propter hoc</span>: mistaking
+        a shared cause for a direct one.</p>
+    </div>
+  </div>
+
+  <p class="sub" style="margin-top:14px">
+    Following arrows uses <code>min</code> along the path (weakest link) and keeps the <code>max</code>
+    over all paths (best available route). That is the <b>max-min</b> rule, and it is exactly what the
+    GPU kernel computes — on millions of edges instead of a dozen. Three knobs decide what counts:
+    <b>τ</b>, how strong something must be before it is reported; <b>k</b>, how many arrows deep to
+    follow; and the <b>t-norm</b>, how fuzzy logic says "both at once" — cautious <code>min(a,b)</code>
+    or harsher <code>a × b</code>.
+  </p>
+
+  <h3>Try it on a real argument</h3>
   <p class="sub">
-    This runs the real algorithm on your text, live. Try lowering τ until the chain contradiction
-    appears, or setting <b>k = 1</b> so chains stop being followed at all.
+    The default text is the budget debate from
+    <a href="fallacies.html">the fallacy-annotation experiment</a>, rewritten as causal claims with
+    who-said-what attached. That page finds fallacies by having an agent <em>read the speech</em>;
+    this one finds them by <em>computing over the claims</em>. Edit anything below and every finding
+    recomputes live.
   </p>
 
   <div class="split">
     <div>
       <textarea id="src" spellcheck="false"></textarea>
       <div class="row" style="margin-top:9px">
-        <button class="ghost" id="reset">Reset example</button>
-        <button class="ghost" id="addloop">Add a longer chain</button>
+        <button class="ghost" id="ex-debate">Budget debate</button>
+        <button class="ghost" id="ex-circle">Vicious circle</button>
+        <button class="ghost" id="ex-slope">Slippery slope</button>
+        <button class="ghost" id="ex-witness">Three witnesses</button>
       </div>
+      <p class="sub" style="margin-top:10px">
+        One claim per line: <code>Who: thing causes thing 0.8</code>, or
+        <code>prevents</code> for the opposite. <code>-&gt;</code> and <code>-|</code> work too.
+      </p>
     </div>
     <div>
       <div class="ctrls">
         <div class="ctrl">
-          <label for="tau">τ — report at or above <span class="val" id="tauv">0.70</span></label>
-          <input type="range" id="tau" min="0.05" max="1" step="0.05" value="0.70">
+          <label for="tau">τ — report at or above <span class="val" id="tauv">0.60</span></label>
+          <input type="range" id="tau" min="0.05" max="1" step="0.05" value="0.60">
         </div>
         <div class="ctrl">
-          <label for="k">k — follow up to <span class="val" id="kv">3</span> arrows</label>
-          <input type="range" id="k" min="1" max="5" step="1" value="3">
+          <label for="k">k — follow up to <span class="val" id="kv">4</span> arrows</label>
+          <input type="range" id="k" min="1" max="6" step="1" value="4">
         </div>
         <div class="ctrl">
           <label for="tnorm">t-norm — "both at once"</label>
           <select id="tnorm">
-            <option value="min" selected>Gödel — min(d, b)</option>
-            <option value="prod">product — d × b</option>
+            <option value="min" selected>Gödel — min(a, b)</option>
+            <option value="prod">product — a × b</option>
           </select>
         </div>
       </div>
       <div id="findings"></div>
     </div>
   </div>
+
+  <h3>So who told the truth?</h3>
+  <p class="sub">
+    The honest answer is that <b>this table cannot tell you</b>, and it is worth being precise about
+    why. Being implicated in a contradiction does not make a source wrong — it can equally mean that
+    source was the only one willing to make a strong claim, and it is the <em>set</em> of claims that
+    is inconsistent, not any single one. What the numbers below actually measure is who keeps turning
+    up at the scene, and whose claims survive independently of them. Treat it as a place to start
+    reading, not a verdict.
+  </p>
+  <div class="scroll"><table class="who" id="who"></table></div>
 </section>
 
 <!-- ====================================================== the benchmark == -->
@@ -499,134 +552,295 @@ function showTip(evt, html) {
 const hideTip = () => { tip.style.opacity = "0"; };
 
 /* ==================================================== the teaching sandbox =
-   Runs the real algorithm — max-min chain composition, then a direction test
-   against the other graph — on a handful of labelled edges, and explains every
-   finding in words. Same rule as the GPU kernel, six edges instead of 32M.   */
+   Four logical checks over attributed, fuzzy causal claims. The arithmetic is
+   the same as the GPU kernels — max-min chain composition for the chain checks,
+   a same-line comparison for causes-vs-prevents — on a dozen claims not 32M. */
 
-const EXAMPLE = `# Ana's notebook — graph G1
-G1: stress     -> poor_sleep  0.9
-G1: poor_sleep -> low_focus   0.8
-G1: low_focus  -> mistakes    0.7
+const EXAMPLES = {
+  debate: `# The budget debate from fallacies.html, rewritten as causal claims.
+# One claim per line:   Who: thing causes thing 0.8      ("prevents" for the opposite)
 
-# Ben's notebook — graph G2
-G2: poor_sleep -> stress      0.8
-G2: mistakes   -> stress      0.75
-G2: alertness  -> coffee      0.2
-G2: coffee     -> alertness   0.85`;
+Bruno: budget_cut      causes   breakdowns    0.9
+Bruno: breakdowns      causes   downtime      0.85
+Bruno: inspections     prevents breakdowns    0.8
+Bruno: paperwork       causes   downtime      0.7
+Bruno: budget_cut      causes   morale_drop   0.7
 
-const LONGER = `# A longer chain — needs k = 4 before it is visible
-G1: deadline  -> stress      0.95
-G1: stress    -> poor_sleep  0.9
-G1: poor_sleep-> low_focus   0.8
-G1: low_focus -> mistakes    0.7
+Ana:   downtime        causes   budget_cut    0.65
+Ana:   vendor_delays   causes   downtime      0.75
+Ana:   contract_review prevents downtime      0.6
+Ana:   budget_increase causes   paperwork     0.5
+Ana:   budget_increase causes   downtime      0.9
 
-# Ben thinks the causation runs the other way round
-G2: mistakes  -> deadline    0.8`;
+Cara:  inspections     causes   breakdowns    0.65
+Cara:  breakdowns      causes   morale_drop   0.6`,
 
-function parseNotebooks(text) {
-  const edges = { G1: [], G2: [] }, bad = [];
+  circle: `# No single line is false. Together they argue in a circle:
+# every claim is ultimately propped up by itself.
+
+Ana:  layoffs      causes low_morale   0.85
+Ben:  low_morale   causes missed_sales 0.8
+Cara: missed_sales causes layoffs      0.75`,
+
+  slope: `# Each step is a "maybe". The conclusion is asserted as near-certainty.
+
+Ana: remote_work    causes fewer_meetings 0.5
+Ana: fewer_meetings causes weaker_bonds   0.45
+Ana: weaker_bonds   causes attrition      0.5
+
+# ...and then, in one confident leap:
+Ben: remote_work    causes attrition      0.95`,
+
+  witness: `# Two witnesses agree. The third reverses the arrow.
+# Nobody is caught lying — but one of them is the odd one out.
+
+Ana:  alarm      causes evacuation 0.9
+Ben:  alarm      causes evacuation 0.85
+Cara: evacuation causes alarm      0.8
+
+Ana:  evacuation causes headcount  0.8
+Ben:  evacuation causes headcount  0.75`,
+};
+
+const SLOPE_GAP = 0.25;   // how far a claim may outrun its supporting chain
+
+function parseClaims(text) {
+  const claims = [], bad = [];
   text.split("\n").forEach((raw, i) => {
     const line = raw.replace(/#.*$/, "").trim();
     if (!line) return;
-    const m = line.match(/^(G1|G2)\s*:\s*(\S+)\s*->\s*(\S+)\s+([0-9]*\.?[0-9]+)\s*$/i);
+    const m = line.match(/^([^:]+):\s*(\S+)\s+(causes|prevents|->|-\|)\s+(\S+)\s+([0-9]*\.?[0-9]+)\s*$/i);
     if (!m) { bad.push(`line ${i + 1}: ${raw.trim()}`); return; }
-    const d = parseFloat(m[4]);
+    const d = parseFloat(m[5]);
     if (!(d >= 0 && d <= 1)) { bad.push(`line ${i + 1}: confidence must be between 0 and 1`); return; }
-    edges[m[1].toUpperCase()].push({ from: m[2], to: m[3], d });
+    const op = m[3].toLowerCase();
+    claims.push({ src: m[1].trim(), from: m[2], to: m[4], d,
+                  kind: (op === "prevents" || op === "-|") ? "prevents" : "causes" });
   });
-  return { edges, bad };
+  return { claims, bad };
 }
 
-// Every simple path from `from` to `to` using at most k arrows; max-min scored.
-function bestChain(adj, from, to, k) {
+// Merge repeated assertions of the same claim: keep the strongest, remember
+// everyone who said it (that is what "echoed" in the reliability table means).
+function buildGraph(claims) {
+  const causes = new Map(), prevents = new Map();
+  for (const c of claims) {
+    const key = c.from + "|" + c.to;
+    const m = c.kind === "causes" ? causes : prevents;
+    const e = m.get(key) || { from: c.from, to: c.to, d: 0, srcs: new Set() };
+    e.d = Math.max(e.d, c.d); e.srcs.add(c.src);
+    m.set(key, e);
+  }
+  const adj = {};
+  for (const e of causes.values()) (adj[e.from] ||= []).push(e);
+  return { causes, prevents, adj };
+}
+
+const canon = cyc => {
+  const i = cyc.indexOf(cyc.reduce((a, b) => (a < b ? a : b)));
+  return [...cyc.slice(i), ...cyc.slice(0, i)].join(">");
+};
+
+// Every cycle of at most k arrows, scored by folding the t-norm along it.
+function findCycles(adj, k, fold) {
+  const found = new Map();
+  for (const start of Object.keys(adj)) {
+    const path = [start], edges = [];
+    (function walk(node) {
+      for (const e of adj[node] || []) {
+        if (e.to === start) {
+          const cyc = [...path], ed = [...edges, e];
+          const d = ed.map(x => x.d).reduce(fold);
+          const key = canon(cyc), prev = found.get(key);
+          if (!prev || d > prev.d) found.set(key, { nodes: cyc, edges: ed, d });
+        } else if (!path.includes(e.to) && path.length < k) {
+          path.push(e.to); edges.push(e); walk(e.to); edges.pop(); path.pop();
+        }
+      }
+    })(start);
+  }
+  return [...found.values()];
+}
+
+// Strongest route from → to within k arrows, optionally ignoring one edge.
+function bestChain(adj, from, to, k, fold, skipKey) {
   let best = null;
-  (function walk(node, path, weakest) {
-    if (path.length - 1 > k) return;
-    if (node === to && path.length > 1) {
-      if (!best || weakest > best.d) best = { d: weakest, path: [...path] };
-      return;
-    }
-    if (path.length - 1 === k) return;
+  (function walk(node, path, agg, edges) {
     for (const e of adj[node] || []) {
-      if (path.includes(e.to)) continue;               // simple paths only
-      path.push(e.to);
-      walk(e.to, path, Math.min(weakest, e.d));
-      path.pop();
+      if (skipKey && e.from + "|" + e.to === skipKey) continue;
+      const next = fold(agg, e.d);
+      if (e.to === to) {
+        if (!best || next > best.d) best = { d: next, path: [...path, e.to], edges: [...edges, e] };
+      } else if (!path.includes(e.to) && path.length < k) {
+        path.push(e.to); edges.push(e);
+        walk(e.to, path, next, edges);
+        edges.pop(); path.pop();
+      }
     }
-  })(from, [from], 1);
+  })(from, [from], 1, []);
   return best;
 }
 
+const srcList = set => [...set].join(" and ");
+// "Ana says" but "Ana and Ben say" — strip the third-person s when plural.
+const vb = (set, word) => (set.size > 1 ? word.replace(/s$/, "") : word);
+const chainHtml = path => path.map(esc).join(' <span class="arrow">→</span> ');
+
 function runSandbox() {
-  const text = $("src").value;
   const tau = parseFloat($("tau").value);
   const k = parseInt($("k").value, 10);
   const useMin = $("tnorm").value === "min";
-  const tnorm = (a, b) => useMin ? Math.min(a, b) : a * b;
-  const showTnorm = (a, b) => useMin ? `min(${fmt(a)}, ${fmt(b)})` : `${fmt(a)} × ${fmt(b)}`;
-
+  const fold = (a, b) => (useMin ? Math.min(a, b) : a * b);
+  const showT = (a, b) => (useMin ? `min(${fmt(a)}, ${fmt(b)})` : `${fmt(a)} × ${fmt(b)}`);
   $("tauv").textContent = tau.toFixed(2);
   $("kv").textContent = k;
 
-  const { edges, bad } = parseNotebooks(text);
-  const out = [];
+  const { claims, bad } = parseClaims($("src").value);
+  const { causes, prevents, adj } = buildGraph(claims);
+  const findings = [], below = [];
+  const push = f => (f.d >= tau ? findings : below).push(f);
 
-  if (bad.length) {
-    out.push(`<div class="finding"><div class="hd">Could not read ${bad.length} line(s)</div>
-      <div class="why">Expected <code>G1: a -&gt; b 0.9</code>.<br>${bad.map(esc).join("<br>")}</div></div>`);
+  /* 1 — cycles: direction disagreement (2) and circular reasoning (3+) */
+  for (const c of findCycles(adj, k, fold)) {
+    const srcs = new Set(); c.edges.forEach(e => e.srcs.forEach(s => srcs.add(s)));
+    const n = c.nodes.length;
+    const loop = [...c.nodes, c.nodes[0]];
+    const title = n === 1 ? `${esc(c.nodes[0])} causes itself`
+      : n === 2 ? `${esc(c.nodes[0])} ⇄ ${esc(c.nodes[1])} — they disagree about direction`
+      : `A circle of ${n} steps — ${esc(c.nodes[0])} ends up causing itself`;
+    const why = n === 2
+      ? `<b>${srcList(c.edges[0].srcs)}</b> ${vb(c.edges[0].srcs, "says")} ${esc(c.edges[0].from)} → ${esc(c.edges[0].to)}
+         at <em>${fmt(c.edges[0].d)}</em>, while <b>${srcList(c.edges[1].srcs)}</b> ${vb(c.edges[1].srcs, "says")} the reverse
+         at <em>${fmt(c.edges[1].d)}</em>. Both at once: ${showT(c.edges[0].d, c.edges[1].d)} =
+         <em>${fmt(c.d)}</em>.<br>
+         Worth remembering that real systems do contain feedback loops, so this is a flag, not a verdict.`
+      : `Follow the arrows and you come back where you started —
+         <span class="chain">${chainHtml(loop)}</span> — so every claim in the loop is ultimately
+         propped up by itself. The loop survives at strength <em>${fmt(c.d)}</em> (its weakest link),
+         and it is spread across <b>${srcList(srcs)}</b>, which is why no single speaker looks wrong.
+         <span class="lat">circulus in probando</span>.`;
+    push({ kind: "b", d: c.d, title, why, srcs: [...srcs] });
   }
 
-  const adj = {};
-  for (const e of edges.G1) (adj[e.from] ||= []).push(e);
+  /* 2 — same pair, same direction, opposite sign */
+  for (const [key, p] of prevents) {
+    const c = causes.get(key);
+    if (!c) continue;
+    const d = fold(c.d, p.d);
+    push({ kind: "a", d,
+      title: `${esc(p.from)} → ${esc(p.to)} — one says causes, the other says prevents`,
+      why: `<b>${srcList(c.srcs)}</b> ${vb(c.srcs, "claims")} ${esc(c.from)} <em>causes</em> ${esc(c.to)} at
+            <em>${fmt(c.d)}</em>. <b>${srcList(p.srcs)}</b> ${vb(p.srcs, "claims")} it <em>prevents</em> it at
+            <em>${fmt(p.d)}</em>. Same pair, same direction, opposite sign:
+            ${showT(c.d, p.d)} = <em>${fmt(d)}</em>. This one needs no chain-following at all — it is
+            a single comparison, which is exactly the shape of kernel A.`,
+      srcs: [...new Set([...c.srcs, ...p.srcs])] });
+  }
 
-  const findings = [];
-  for (const e of edges.G2) {
-    // G2 says e.from -> e.to. Does G1 imply the reverse, e.to => e.from ?
-    const chain = bestChain(adj, e.to, e.from, k);
-    if (!chain) continue;
-    const conflict = tnorm(chain.d, e.d);
-    if (conflict < tau) {
-      findings.push({ conflict, e, chain, below: true });
-    } else {
-      findings.push({ conflict, e, chain, below: false });
+  /* 3 — the claim outruns the chain that supports it */
+  for (const e of causes.values()) {
+    const alt = bestChain(adj, e.from, e.to, k, fold, e.from + "|" + e.to);
+    if (!alt || alt.edges.length < 2) continue;
+    const gap = e.d - alt.d;
+    if (gap < SLOPE_GAP) continue;
+    push({ kind: "b", d: e.d,
+      title: `${esc(e.from)} → ${esc(e.to)} — asserted far stronger than the road to it`,
+      why: `<b>${srcList(e.srcs)}</b> ${vb(e.srcs, "asserts")} this directly at <em>${fmt(e.d)}</em>. But the only
+            other route between them runs <span class="chain">${chainHtml(alt.path)}</span>, and a
+            chain is only as strong as its weakest link, so it carries just <em>${fmt(alt.d)}</em>.
+            The claim outruns its support by <em>${fmt(gap)}</em> —
+            <span class="lat">slippery slope</span>: each step a maybe, the conclusion a certainty.`,
+      srcs: [...e.srcs] });
+  }
+
+  /* 4 — a third thing causes both */
+  for (const e of causes.values()) {
+    if (e.d < tau) continue;
+    for (const w of Object.keys(adj)) {
+      if (w === e.from || w === e.to) continue;
+      const a = causes.get(w + "|" + e.from), b = causes.get(w + "|" + e.to);
+      if (!a || !b || a.d < tau || b.d < tau) continue;
+      push({ kind: "b", d: fold(a.d, b.d),
+        title: `${esc(e.from)} → ${esc(e.to)} — but ${esc(w)} causes both`,
+        why: `<b>${srcList(e.srcs)}</b> ${vb(e.srcs, "reads")} a link from ${esc(e.from)} to ${esc(e.to)}
+              (<em>${fmt(e.d)}</em>). Yet ${esc(w)} is already claimed to cause ${esc(e.from)}
+              (<em>${fmt(a.d)}</em>) <em>and</em> ${esc(e.to)} (<em>${fmt(b.d)}</em>), so the two may
+              simply be moving together because of ${esc(w)}.
+              <span class="lat">cum hoc ergo propter hoc</span> — a shared cause mistaken for a direct one.`,
+        srcs: [...e.srcs] });
+      break;   // one confounder per claim is enough to make the point
     }
   }
-  findings.sort((a, b) => b.conflict - a.conflict);
 
-  const hits = findings.filter(f => !f.below);
-  const near = findings.filter(f => f.below);
+  findings.sort((a, b) => b.d - a.d);
 
-  if (!hits.length) {
-    out.push(`<div class="finding none"><div class="hd">No contradictions at τ = ${tau.toFixed(2)}</div>
-      <div class="why">Either the two notebooks agree, or every disagreement is too weak to report.
-      ${near.length ? `${near.length} disagreement(s) fell below the threshold — lower τ to see them.` : ""}</div></div>`);
+  /* ---------------------------------------------------------------- render */
+  const out = [];
+  if (bad.length) out.push(`<div class="finding"><div class="hd">Could not read ${bad.length} line(s)</div>
+    <div class="why">Expected <code>Who: thing causes thing 0.8</code>.<br>${bad.map(esc).join("<br>")}</div></div>`);
+
+  if (!findings.length) {
+    out.push(`<div class="finding none"><div class="hd">Nothing reaches τ = ${tau.toFixed(2)}</div>
+      <div class="why">${claims.length ? `${claims.length} claim(s) read.` : "No claims yet."}
+      ${below.length ? ` ${below.length} weaker signal(s) were found — lower τ, or raise k to follow longer chains.`
+                     : " Try a longer chain (raise k) or one of the examples."}</div></div>`);
   }
 
-  for (const f of hits) {
-    const steps = f.chain.path.length - 1;
-    const chainStr = f.chain.path.map(esc).join(' <span class="arrow">→</span> ');
-    const how = steps === 1
-      ? `G1 states it directly at <em>${fmt(f.chain.d)}</em>.`
-      : `G1 never wrote this down. It follows from ${steps} arrows — <span class="chain">${chainStr}</span> —
-         and a chain is only as strong as its weakest link, so the implied strength is
-         <em>${fmt(f.chain.d)}</em>.`;
+  const CAP = 10;
+  for (const f of findings.slice(0, CAP)) {
     out.push(`<div class="finding">
-      <div class="hd">${esc(f.chain.path[0])} ⇄ ${esc(f.chain.path[f.chain.path.length - 1])}
-        · conflict <span class="deg">${fmt(f.conflict)}</span></div>
-      <div class="why">
-        <b>G1 implies ${esc(f.chain.path[0])} ⇒ ${esc(f.chain.path[f.chain.path.length - 1])}.</b> ${how}<br>
-        <b>G2 asserts the opposite direction</b> — ${esc(f.e.from)} → ${esc(f.e.to)} at <em>${fmt(f.e.d)}</em>.<br>
-        Both at once: ${showTnorm(f.chain.d, f.e.d)} = <em>${fmt(f.conflict)}</em>, which reaches τ ${tau.toFixed(2)}.
-      </div></div>`);
+      <div class="hd">${f.title} <span class="deg">${fmt(f.d)}</span>
+        <span class="badge ${f.kind}">${f.kind === "a" ? "same line" : "chain"}</span></div>
+      <div class="why">${f.why}</div></div>`);
   }
-
-  if (hits.length && near.length) {
-    out.push(`<div class="finding none"><div class="hd">${near.length} more below τ</div>
-      <div class="why">Strongest ignored: <em>${fmt(near[0].conflict)}</em>
-      (${esc(near[0].e.from)} → ${esc(near[0].e.to)}). Lower τ to include it.</div></div>`);
-  }
+  if (findings.length > CAP) out.push(`<div class="finding none"><div class="hd">
+    ${findings.length - CAP} further finding(s) not shown</div>
+    <div class="why">Raise τ to narrow this down to the strongest ones.</div></div>`);
+  if (findings.length && below.length) out.push(`<div class="finding none">
+    <div class="hd">${below.length} more below τ</div>
+    <div class="why">Strongest ignored measures ${fmt(Math.max(...below.map(b => b.d)))}. Lower τ to include it.</div></div>`);
 
   $("findings").innerHTML = out.join("");
+  renderWho(claims, causes, findings);
+}
+
+/* Who keeps turning up? Deliberately two plain counts rather than one score —
+   a single "trust number" would imply an authority this cannot have. */
+function renderWho(claims, causes, findings) {
+  const srcs = [...new Set(claims.map(c => c.src))];
+  if (!srcs.length) { $("who").innerHTML = ""; return; }
+  const rows = srcs.map(s => {
+    const mine = claims.filter(c => c.src === s);
+    const echoed = mine.filter(c => {
+      const e = c.kind === "causes" ? causes.get(c.from + "|" + c.to) : null;
+      return e && e.srcs.size > 1;
+    }).length;
+    const implicated = findings.filter(f => f.srcs.includes(s));
+    const weight = implicated.reduce((a, f) => a + f.d, 0);
+    return { s, claims: mine.length, echoed, implicated: implicated.length, weight };
+  }).sort((a, b) => (b.implicated > 0 && b.echoed === 0) - (a.implicated > 0 && a.echoed === 0)
+                 || b.weight - a.weight || b.implicated - a.implicated);
+
+  // The interesting row is the source nobody corroborates, not whoever sorts first.
+  const lonely = rows.filter(r => r.echoed === 0 && r.implicated > 0);
+  const anyEchoed = rows.some(r => r.echoed > 0);
+  let read = "";
+  if (!findings.length) read = "No findings, so nobody is implicated in anything.";
+  else if (lonely.length === 1 && anyEchoed)
+    read = `<b>${esc(lonely[0].s)}</b> is the only source here whose claims nobody else repeats, and
+            they turn up in ${lonely[0].implicated} of the ${findings.length} finding(s). That makes
+            them the place to look first — which is not the same as making them wrong.`;
+  else {
+    const worst = rows.reduce((a, b) => (b.weight > a.weight ? b : a));
+    read = `<b>${esc(worst.s)}</b> appears in the most findings (${worst.implicated} of
+            ${findings.length}). That may simply mean they made the boldest claims.`;
+  }
+
+  $("who").innerHTML = `<tr><th>source</th><th>claims</th><th>echoed by someone else</th>
+      <th>implicated in findings</th></tr>` +
+    rows.map(r => `<tr><td class="src">${esc(r.s)}</td><td class="num">${r.claims}</td>
+      <td class="num">${r.echoed}</td><td class="num">${r.implicated}</td></tr>`).join("") +
+    `<tr><td colspan="4" style="color:var(--mut);text-align:left;border-bottom:0;padding-top:11px">${read}</td></tr>`;
 }
 
 /* --------------------------------------------------------- chart: crossover */
@@ -1088,12 +1302,17 @@ async function runBenchmark() {
 }
 
 /* ------------------------------------------------------------------ boot -- */
-$("src").value = EXAMPLE;
+$("src").value = EXAMPLES.debate;
 runSandbox();
 for (const id of ["tau", "k", "tnorm", "src"]) $(id).addEventListener("input", runSandbox);
 $("tnorm").addEventListener("change", runSandbox);
-$("reset").addEventListener("click", () => { $("src").value = EXAMPLE; $("k").value = 3; runSandbox(); });
-$("addloop").addEventListener("click", () => { $("src").value = LONGER; $("k").value = 4; runSandbox(); });
+const loadEx = (name, k) => () => {
+  $("src").value = EXAMPLES[name]; $("k").value = k; runSandbox();
+};
+$("ex-debate").addEventListener("click", loadEx("debate", 4));
+$("ex-circle").addEventListener("click", loadEx("circle", 4));
+$("ex-slope").addEventListener("click", loadEx("slope", 4));
+$("ex-witness").addEventListener("click", loadEx("witness", 3));
 for (const [id, out, dp] of [["btau", "btauv", 2], ["bk", "bkv", 0], ["bdeg", "bdegv", 0]])
   $(id).addEventListener("input", () => { $(out).textContent = parseFloat($(id).value).toFixed(dp); });
 
