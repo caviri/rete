@@ -40,6 +40,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
             ("football.md", "Football — match replays"),
             ("subtitles.html", "Subtitle timeline"),
+            ("anatomy.html", "Z-Anatomy — 3D human body"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
         ],
     ),
