@@ -325,7 +325,7 @@ documentation.</p>
 <table><thead><tr><th>Group</th><th>Tools</th></tr></thead><tbody>
 <tr><td>Discover</td><td><code>list_datasets</code> · <code>dataset_card</code> · <code>dataset_schema</code> · <code>example_queries</code></td></tr>
 <tr><td>Query</td><td><code>sparql_query</code> (SELECT/ASK/CONSTRUCT/DESCRIBE, <code>reason=true</code> for OWL 2 QL, any catalog key <strong>or any <code>.rete</code> URL</strong>) · <code>find_entities</code> · <code>describe_entity</code></td></tr>
-<tr><td>Validate</td><td><code>validate_shacl</code> (lazy over shape targets) · <code>shacl_shapes</code> (curated shapes)</td></tr>
+<tr><td>Validate</td><td><code>validate_query</code> (deterministic SPARQL lint: parse, prefixes, features, vocabulary probes vs a dataset, ontology/subclass checks) · <code>validate_shacl</code> (lazy over shape targets) · <code>shacl_shapes</code> (curated shapes)</td></tr>
 <tr><td><strong>Author</strong></td><td><code>suggest_vocabulary</code> (search LOV before minting IRIs) · <code>check_ontology</code> (parse + lint battery + reasoner smoke) · <code>build_rete</code> (RDF text → a served, immediately-queryable <code>.rete</code>) · <code>causal_diagram</code> (extracted claims → Mermaid + Graphviz SVG + a CauseNet-aligned graph) — see the <a href="fallacies.html">conversation experiments</a></td></tr>
 <tr><td>Media</td><td><code>embed_media</code> (URLs → base64 data URIs, images recompressed to WebP) · <code>media_preview</code> (representative image of a PDF / video frame / IIIF / HTML page)</td></tr>
 <tr><td>ChatGPT connector contract</td><td><code>search</code> · <code>fetch</code></td></tr>

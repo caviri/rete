@@ -140,6 +140,23 @@ def shacl_shapes(dataset: str) -> List[Dict[str, Any]]:
 
 
 @mcp.tool
+def validate_query(query: str, dataset: Optional[str] = None,
+                   url: Optional[str] = None, ontology: Optional[str] = None) -> Dict[str, Any]:
+    """Validate a SPARQL query DETERMINISTICALLY before running it — no
+    guessing. Alone: engine parse check, form and variables, declared vs
+    undeclared prefixes, feature inventory, unsupported constructs
+    (SERVICE ?var, ORDER BY expressions), hygiene warnings. With a
+    `dataset` (or .rete `url`): every class/predicate IRI in the query is
+    probed against the graph's index with cheap ASKs — an IRI that matches
+    nothing means wrong namespace or typo, the classic silent-0-rows bug.
+    With an `ontology` (Turtle): declaration checks plus subclass counts
+    ("this class has N subclasses — reason=true would include them").
+    Fix errors/warnings, then run sparql_query."""
+    import rete_qlint
+    return rete_qlint.validate_query(query, dataset, url, ontology)
+
+
+@mcp.tool
 def suggest_vocabulary(query: str, limit: int = 8) -> List[Dict[str, Any]]:
     """Search Linked Open Vocabularies (lov.linkeddata.es) for EXISTING
     ontology terms matching some concept words (e.g. 'argument fallacy

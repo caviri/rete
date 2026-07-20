@@ -9,7 +9,7 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends graphvi
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py rete_service.py rete_api.py rete_mcp.py rete_sparql.py rete_media.py rete_author.py rete_ask.py catalog.json branding.json ./
+COPY app.py rete_service.py rete_api.py rete_mcp.py rete_sparql.py rete_media.py rete_author.py rete_qlint.py rete_ask.py catalog.json branding.json ./
 
 # HF persistent storage (and any mounted bucket) lives at /data.
 #   CACHE_MB     in-RAM block cache PER worker (total ≈ CACHE_MB × WEB_CONCURRENCY).

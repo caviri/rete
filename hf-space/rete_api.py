@@ -279,6 +279,22 @@ def author_causal(req: CausalRequest):
                  [c.model_dump() for c in req.claims], req.title, req.render, req.build)
 
 
+class QueryLintRequest(BaseModel):
+    query: str = Field(..., description="The SPARQL query to validate")
+    dataset: Optional[str] = Field(None, description="Catalog key to probe vocabulary against")
+    url: Optional[str] = Field(None, description="Any .rete URL (alternative to dataset)")
+    ontology: Optional[str] = Field(None, description="Ontology (Turtle) to check declarations against")
+
+
+@router.post("/query/validate")
+def validate_query(req: QueryLintRequest):
+    """Deterministic query validation: engine parse, prefix/feature/hygiene
+    analysis, optional vocabulary probes against a dataset (cheap lazy
+    ASKs), and optional ontology declaration + subclass checks."""
+    import rete_qlint
+    return _wrap(rete_qlint.validate_query, req.query, req.dataset, req.url, req.ontology)
+
+
 class AskRequest(BaseModel):
     dataset: str
     question: str = Field(..., description="A natural-language question about the dataset")
