@@ -41,6 +41,14 @@
       "contentHash": "8cd761c8f0c6086ad90bc89d5895480d",
       "size": 468296,
       "cardUrl": "https://data.graphplaza.com/c4dt/c4dt.rete"
+    },
+    {
+      "key": "enac-it4research",
+      "url": "https://data.graphplaza.com/enac-it4research/enac-it4research.rete",
+      "formatVersion": 5,
+      "contentHash": "6812e58d91f6a9e77122b4f3c21bca58",
+      "size": 336504,
+      "cardUrl": "https://data.graphplaza.com/enac-it4research/enac-it4research.rete"
     }
   ]
 }

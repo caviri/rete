@@ -237,6 +237,7 @@ const G2 = [
   ["check_async_fallback", "async assets 404 → degrades to sync reader, still runs", 120000, true],
   ["check_query_shapes", "property paths + CONSTRUCT→graph + reasoning (embedded)", 90000, false],
   ["check_boe_reason", "BOE OWL 2 QL reasoning over live R2 (0 → N with 🧠 Reason)", 150000, true],
+  ["check_enac", "EPFL ENAC repositories by lab over live R2", 150000, true],
   ["check_map_geo", "embedded GeoSPARQL → Tiles · local PMTiles fixture", 90000, false],
   ["check_service_success", "successful SERVICE join · local SPARQL JSON endpoint", 90000, false],
   ["check_builder", "in-browser N-Quads build → open bytes → query Alice", 90000, false],
