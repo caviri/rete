@@ -667,6 +667,9 @@ const el = (tag, attrs = {}, txt) => {
   return e;
 };
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+// Draw every figure in a viewBox the width of its own box, so 11px text renders
+// as 11px instead of being scaled to 3.7px on a phone.
+const vbw = svg => Math.max(340, Math.round(svg.getBoundingClientRect().width) || 900);
 const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 const tip = $("tip");
@@ -1012,13 +1015,21 @@ function renderGraph() {
   const legend = $("glegend");
   if (!edges.length) {
     legend.innerHTML = "";
-    svg.appendChild(el("text", { x: 450, y: 250, class: "gempty", "text-anchor": "middle" },
+    svg.appendChild(el("text", { x: vbw(svg) / 2, y: 120, class: "gempty", "text-anchor": "middle" },
       "Add a claim and it appears here."));
     return;
   }
 
   const nodes = [...new Set(edges.flatMap(e => [e.from, e.to]))].sort();
-  const N = nodes.length, cx = 450, cy = 258, R = Math.min(196, 58 + N * 15);
+  const N = nodes.length;
+  const W = vbw(svg), narrow = W < 620;
+  const H = narrow ? Math.max(380, W) : 520;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const cx = W / 2, cy = H / 2;
+  // leave room outside the ring for the labels, which sit on the outside
+  const room = narrow ? 58 : 100;
+  const R = Math.max(58, Math.min(Math.min(W, H) / 2 - room, 58 + N * 15));
+  const short = s => (narrow && s.length > 12 ? s.slice(0, 11) + "…" : s);
   const pos = {};
   nodes.forEach((n, i) => {
     const a = -Math.PI / 2 + (i * 2 * Math.PI) / N;
@@ -1075,7 +1086,12 @@ function renderGraph() {
     const c = Math.cos(p.a);
     const anchor = c > 0.15 ? "start" : c < -0.15 ? "end" : "middle";
     const lx = p.x + Math.cos(p.a) * 16, ly = p.y + Math.sin(p.a) * 16 + 4;
-    svg.appendChild(el("text", { x: lx, y: ly, class: "glabel", "text-anchor": anchor }, n));
+    const label = el("text", { x: lx, y: ly, class: "glabel", "text-anchor": anchor }, short(n));
+    if (short(n) !== n) {
+      label.addEventListener("mousemove", ev => showTip(ev, esc(n)));
+      label.addEventListener("mouseleave", hideTip);
+    }
+    svg.appendChild(label);
   }
 
   legend.innerHTML = SRC_ORDER.map(s =>
@@ -1197,7 +1213,12 @@ const flash = m => {
 function drawCrossover() {
   const svg = $("chart1");
   svg.textContent = "";
-  const W = 900, H = 400, m = { t: 18, r: 152, b: 46, l: 54 };
+  const W = vbw(svg), narrow = W < 620;
+  const H = narrow ? 330 : 400;
+  // left margin stays 54 even when narrow: the rotated y-axis title sits at x=14
+  // and the tick labels are right-anchored at l-9, so a tighter margin collides.
+  const m = { t: narrow ? 30 : 18, r: narrow ? 18 : 152, b: 46, l: 54 };
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
 
   const pts = { A: DATA.A.map(r => ({ x: r.n, y: r.cpu / r.total, r })),
@@ -1248,10 +1269,16 @@ function drawCrossover() {
       svg.appendChild(hit);
     }
     const last = p[p.length - 1];
-    svg.appendChild(el("text", { x: X(last.x) + 13, y: Y(last.y) - 2, class: "dlabel", fill: s.color }, s.name));
-    svg.appendChild(el("text", { x: X(last.x) + 13, y: Y(last.y) + 14, class: "tick" }, s.sub));
-    svg.appendChild(el("text", { x: X(last.x) + 13, y: Y(last.y) + 30, class: "dlabel", fill: s.color },
-      fmt(last.y, 1) + "×"));
+    if (narrow) {
+      // no room for a right-hand gutter: label the line above its own last point
+      svg.appendChild(el("text", { x: X(last.x), y: Y(last.y) - 12, class: "dlabel",
+        fill: s.color, "text-anchor": "end" }, `${s.name} · ${fmt(last.y, 1)}×`));
+    } else {
+      svg.appendChild(el("text", { x: X(last.x) + 13, y: Y(last.y) - 2, class: "dlabel", fill: s.color }, s.name));
+      svg.appendChild(el("text", { x: X(last.x) + 13, y: Y(last.y) + 14, class: "tick" }, s.sub));
+      svg.appendChild(el("text", { x: X(last.x) + 13, y: Y(last.y) + 30, class: "dlabel", fill: s.color },
+        fmt(last.y, 1) + "×"));
+    }
   }
 }
 
@@ -1259,11 +1286,13 @@ function drawCrossover() {
 function drawBreakdown() {
   const svg = $("chart2");
   svg.textContent = "";
+  const W = vbw(svg), narrow = W < 620;
   const rows = [
-    ...DATA.A.map(r => ({ ...r, name: `A · ${si(r.n)} statements` })),
-    ...DATA.B.map(r => ({ ...r, name: `B · ${si(r.edges)} arrows` })),
+    ...DATA.A.map(r => ({ ...r, name: narrow ? `A · ${si(r.n)}` : `A · ${si(r.n)} statements` })),
+    ...DATA.B.map(r => ({ ...r, name: narrow ? `B · ${si(r.edges)}` : `B · ${si(r.edges)} arrows` })),
   ];
-  const W = 900, m = { t: 26, r: 92, b: 30, l: 158 }, rowH = 34, gap = 10;
+  const m = { t: 26, r: narrow ? 54 : 92, b: 30, l: narrow ? 78 : 158 },
+        rowH = narrow ? 28 : 34, gap = 10;
   const H = m.t + rows.length * (rowH + gap) + m.b;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   const iw = W - m.l - m.r;
@@ -1707,7 +1736,7 @@ for (const [id, out, dp] of [["btau", "btauv", 2], ["bk", "bkv", 0], ["bdeg", "b
   $(id).addEventListener("input", () => { $(out).textContent = parseFloat($(id).value).toFixed(dp); });
 
 renderAll();
-addEventListener("resize", () => { drawCrossover(); drawBreakdown(); });
+addEventListener("resize", () => { drawCrossover(); drawBreakdown(); renderGraph(); });
 (async () => {
   try {
     await initGPU();
