@@ -30,9 +30,17 @@
       "key": "lombardi",
       "url": "https://data.graphplaza.com/lombardi/lombardi.rete",
       "formatVersion": 5,
-      "contentHash": "c465b5e35b668b6192c83f026d0af81f",
-      "size": 1032285,
+      "contentHash": "17a9146cba93ec266e7d4b36fdb23567",
+      "size": 1039323,
       "cardUrl": "https://data.graphplaza.com/lombardi/lombardi.rete"
+    },
+    {
+      "key": "c4dt",
+      "url": "https://data.graphplaza.com/c4dt/c4dt.rete",
+      "formatVersion": 5,
+      "contentHash": "8cd761c8f0c6086ad90bc89d5895480d",
+      "size": 468296,
+      "cardUrl": "https://data.graphplaza.com/c4dt/c4dt.rete"
     }
   ]
 }

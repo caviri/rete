@@ -31,6 +31,31 @@ for p in networks/the-networks networks/ontologies analyses/network-analyses; do
   curl -sL --max-time 60 -o "$out" "https://web.archive.org/web/2024/https://lombardinetworks.net/$p/"
 done
 
+echo "== MoMA open collection data (CC0) — the 20 Lombardis they hold"
+# Metadata only: MoMA is explicit that "images are not included and are not part
+# of the dataset". We keep the ImageURL as a LINK to their server and never mirror
+# a byte of it; the artwork is © The Estate of Mark Lombardi.
+# The CSV is Git-LFS, so it comes from media.githubusercontent.com on `main`.
+mkdir -p "$ROOT/data/lombardi/moma"
+curl -sL "https://media.githubusercontent.com/media/MuseumofModernArt/collection/main/Artworks.csv" \
+  -o "$ROOT/data/lombardi/moma/Artworks.csv"
+python - "$ROOT" <<'PY'
+import csv, json, sys, os
+root = sys.argv[1]
+csv.field_size_limit(10**7)
+src = os.path.join(root, "data", "lombardi", "moma", "Artworks.csv")
+keep = ("Title", "Date", "Medium", "Dimensions", "CreditLine",
+        "AccessionNumber", "ObjectID", "URL", "ImageURL")
+out = []
+with open(src, encoding="utf-8-sig") as f:
+    for r in csv.DictReader(f):
+        if (r.get("Artist") or "").strip() == "Mark Lombardi":
+            out.append({k: r.get(k, "") for k in keep})
+dst = os.path.join(root, "data", "lombardi", "moma", "lombardi_moma.json")
+json.dump(out, open(dst, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
+print("  %d works by Mark Lombardi at MoMA" % len(out))
+PY
+
 echo "== per-network data + page"
 ok=0
 for id in $IDS; do

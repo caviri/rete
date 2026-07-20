@@ -58,6 +58,45 @@ FOAF = "http://xmlns.com/foaf/0.1/"
 
 LOMBARDI_WD = "http://www.wikidata.org/entity/Q314444"
 TOLKSDORF = LO + "agent/tolksdorf"
+MOMA_WD = "http://www.wikidata.org/entity/Q188740"
+
+# Which of the 51 digitized drawings are the works MoMA holds. Curated by hand
+# against MoMA's own titles rather than fuzzy-matched, because the near-misses
+# are exactly the ones that matter: MoMA has the Gerry Bull *5th* version and the
+# World Finance Corporation *4th*, while lombardinetworks also carries a 4th and a
+# 6th of those — a similarity score happily maps them to the wrong sheet.
+# Two MoMA accessions are single two-part works (".a-b") that lombardinetworks
+# digitized as two separate drawings, so they appear twice on purpose.
+# MoMA's four "Untitled" Lombardis are deliberately left unmatched: nothing in
+# either record distinguishes them.
+MOMA_MAP = {
+    "1000": "2249.2005",      # Astra - Bmarc - Unwin, London
+    "1017": "2251.2005",      # Trafalgar House Cementation - Armscor
+    "1018": "2250.2005",      # Industries Carlos Cardoen (2nd Version)
+    "1019": "2246.2005",      # Phil Schwab, CB Financial and Eureka Federal
+    "1020": "2240.2005.a-b",  # Lincoln, Silverado — part I of the two-part work
+    "1030": "2240.2005.a-b",  # Lincoln, Silverado — part II
+    "1021": "2238.2005",      # Hernandez Cartaya
+    "1022": "2247.2005",      # World Finance Corporation, Miami (4th Version)
+    "1023": "2638.2001",      # Banco Nazionale del Lavoro … Arming of Iraq
+    "1025": "2248.2005",      # Gerry Bull, Space Research … (5th Version)
+    "1026": "2235.2005.a-b",  # First United, CB Fin
+    "1029": "2239.2005",      # IOS to mid 1970
+    "1031": "2236.2005.a-b",  # Flushing Fed, San Marino-FCA … — one part
+    "1032": "2236.2005.a-b",  # … and the other
+    "1043": "2241.2005.a-b",  # Lockheed
+    "1044": "2234.2005.a-b",  # Butchers, ESM
+    "1048": "2237.2005",      # Freeport
+}
+
+# The images stay at moma.org and are NOT part of this dataset's licence. Every
+# work that carries one also carries this statement, so nobody downstream mistakes
+# a CC BY-NC-SA graph for a licence over the artwork.
+IMAGE_RIGHTS = ("Artwork © The Estate of Mark Lombardi. Image hosted by and "
+                "courtesy of The Museum of Modern Art, New York; linked, not "
+                "redistributed. To license a reproduction contact Art Resource "
+                "(North America) or Scala Archives (elsewhere). NOT covered by "
+                "this dataset's CC BY-NC-SA licence.")
 
 # Node types that are actual actors in the story -- the rest (Year markers,
 # outcome annotations, the (*) terminals) are notation, not participants.
@@ -131,6 +170,14 @@ def main():
                  for p in glob.glob(os.path.join(RAW, "network", "*", "*.json")))
     if not ids:
         sys.exit("no networks found in %s -- run fetch_lombardi.sh first" % RAW)
+
+    # MoMA's open collection data (CC0) for the 20 Lombardis they hold, if it has
+    # been fetched. Optional: without it the graph simply carries no object records.
+    moma = {}
+    mp = os.path.join(RAW, "..", "moma", "lombardi_moma.json")
+    if os.path.exists(mp):
+        for rec in json.load(open(mp, encoding="utf-8")):
+            moma[rec["AccessionNumber"]] = rec
 
     os.makedirs(os.path.dirname(OUT_NT), exist_ok=True)
     t = Sink(OUT_NT)
@@ -221,6 +268,37 @@ def main():
         m = re.search(r"c\.\s*(\d{4})\s*[-–]\s*(\d{2,4})", title)
         if m:
             t(w, LO + "titleDateRange", lit(m.group(0)))
+
+        # ---- the physical object, when MoMA holds it (their open data is CC0)
+        rec = moma.get(MOMA_MAP.get(wid, ""))
+        if rec:
+            # MoMA's export carries stray tabs/newlines inside Medium and friends
+            rec = {k: re.sub(r"\s+", " ", v).strip() if isinstance(v, str) else v
+                   for k, v in rec.items()}
+            t(w, LO + "heldBy", MOMA_WD)
+            t(w, LO + "accession", lit(rec["AccessionNumber"]))
+            t(w, LO + "momaPage", rec["URL"])
+            t(w, SCHEMA + "sameAs", rec["URL"])
+            if rec.get("Date"):
+                t(w, SCHEMA + "dateCreated", lit(rec["Date"]))
+            if rec.get("Medium"):
+                t(w, SCHEMA + "artMedium", lit(rec["Medium"]))
+            if rec.get("Dimensions"):
+                # the real thing: BNL is 50 x 120 inches of paper
+                t(w, LO + "dimensions", lit(rec["Dimensions"]))
+                t(w, SCHEMA + "size", lit(rec["Dimensions"]))
+            if rec.get("CreditLine"):
+                t(w, LO + "creditLine", lit(rec["CreditLine"]))
+            if rec.get("ImageURL"):
+                t(w, SCHEMA + "image", rec["ImageURL"])
+                t(w, LO + "momaImage", rec["ImageURL"])
+                t(w, DCT + "rights", lit(IMAGE_RIGHTS))
+
+    if moma:
+        t(MOMA_WD, RDF + "type", SCHEMA + "Museum")
+        t(MOMA_WD, RDFS + "label", lit("The Museum of Modern Art, New York", lang="en"))
+        t(MOMA_WD, SCHEMA + "url", "https://www.moma.org/")
+        t(MOMA_WD, DCT + "source", "https://github.com/MuseumofModernArt/collection")
 
     # ---- actors ------------------------------------------------------------
     for nid, ty in sorted(node_type.items()):
@@ -313,6 +391,9 @@ def main():
         1 for nid, ty in node_type.items() if ty in ACTOR_TYPES and len(appears[nid]) > 1))
     print("overlap pairs   %d" % pairs)
     print("same-name links %d" % same)
+    print("moma records    %d matched to %d drawings" % (
+        len({MOMA_MAP[k] for k in MOMA_MAP if MOMA_MAP[k] in moma}),
+        sum(1 for k in MOMA_MAP if MOMA_MAP[k] in moma)))
     print("arc types       %s" % ", ".join(sorted(arc_types)))
     print("triples         %d -> %s" % (t.n, OUT_NT))
 
@@ -398,6 +479,16 @@ lo:narrationEnd a owl:DatatypeProperty ; rdfs:label "narration end"@en ; rdfs:ra
 lo:titleDateRange a owl:DatatypeProperty ; rdfs:label "date range in title"@en .
 lo:sharedActorCount a owl:DatatypeProperty ; rdfs:label "shared actor count"@en ; rdfs:range xsd:integer .
 lo:jaccard a owl:DatatypeProperty ; rdfs:label "Jaccard similarity"@en ; rdfs:range xsd:decimal .
+lo:heldBy a owl:ObjectProperty ; rdfs:label "held by"@en ; rdfs:domain lo:Drawing ;
+    rdfs:comment "The museum holding the physical drawing."@en .
+lo:momaPage a owl:DatatypeProperty ; rdfs:label "MoMA page"@en ;
+    rdfs:comment "The work's page in MoMA's online collection."@en .
+lo:momaImage a owl:DatatypeProperty ; rdfs:label "MoMA image"@en ;
+    rdfs:comment "A photograph of the original sheet, hosted by MoMA. Artwork (c) The Estate of Mark Lombardi; linked, never redistributed, and NOT covered by this dataset's licence."@en .
+lo:accession a owl:DatatypeProperty ; rdfs:label "accession number"@en .
+lo:dimensions a owl:DatatypeProperty ; rdfs:label "dimensions"@en ;
+    rdfs:comment "The size of the physical sheet, as catalogued."@en .
+lo:creditLine a owl:DatatypeProperty ; rdfs:label "credit line"@en .
 lo:imagePage a owl:DatatypeProperty ; rdfs:label "image page"@en ;
     rdfs:comment "A museum or gallery page showing the original drawing."@en .
 lo:dataFile a owl:DatatypeProperty ; rdfs:label "data file"@en ;

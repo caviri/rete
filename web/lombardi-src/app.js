@@ -17,6 +17,8 @@ const $ = (id) => document.getElementById(id);
 const PFX = `PREFIX lo: <https://w3id.org/rete/lombardi/>
 PREFIX lom: <http://www.lombardinetworks.net/lombardi.owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <https://schema.org/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
 `;
 
 function b64ToBytes(b64) {
@@ -154,6 +156,18 @@ const Q = {
   /* The notation table, fetched once: arc class → its name and the mark on the
    * paper. 21 rows, so the card never has to join it per click. */
   notation: `SELECT ?t ?label ?drawn WHERE { ?t rdfs:label ?label ; lo:drawnAs ?drawn }`,
+
+  /* The physical sheet, for the 17 drawings MoMA holds. Their collection data is
+   * CC0; the IMAGE is not — it stays on moma.org and the graph carries a rights
+   * statement next to it. */
+  object: (w) => `SELECT ?img ?page ?date ?medium ?dims ?credit ?accession ?rights WHERE {
+  <${w}> lo:momaImage ?img ; lo:momaPage ?page ; lo:accession ?accession .
+  OPTIONAL { <${w}> schema:dateCreated ?date }
+  OPTIONAL { <${w}> schema:artMedium ?medium }
+  OPTIONAL { <${w}> lo:dimensions ?dims }
+  OPTIONAL { <${w}> lo:creditLine ?credit }
+  OPTIONAL { <${w}> dcterms:rights ?rights }
+}`,
 
   alsoIn: (n) => `SELECT ?w ?title WHERE {
   <${n}> lo:appearsIn ?w . ?w rdfs:label ?title
@@ -581,6 +595,33 @@ async function selectNode(id) {
     el.addEventListener("click", () => openWork(el.dataset.work, d.id)));
 }
 
+/* --------------------------------------------------------- the original
+ * A photograph of the actual sheet, pinned beside the redrawing — for the 17
+ * works MoMA holds. The image is loaded straight from moma.org and never copied
+ * here; the caption carries the credit and the rights line from the graph. */
+async function paintOriginal(iri) {
+  const box = $("original");
+  box.hidden = true;
+  box.innerHTML = "";
+  let rows;
+  try {
+    rows = await engine.ask("the original object", Q.object(iri));
+  } catch (err) { return; }
+  if (!rows.length || state.work.w !== iri) return;
+  const r = rows[0];
+  const cap = [r.date, r.medium, r.dims].filter(Boolean).join(" · ");
+  box.innerHTML =
+    `<a href="${esc(r.page)}" target="_blank" rel="noopener" title="See this work at MoMA">` +
+    `<img src="${esc(r.img)}" alt="Photograph of the original drawing, courtesy MoMA"></a>` +
+    `<div class="cap"><b>The original sheet</b>${cap ? " — " + esc(cap) : ""}` +
+    (r.credit ? `<span class="cr">${esc(r.credit)}</span>` : "") +
+    `<span class="cr">MoMA ${esc(r.accession)} · artwork © The Estate of Mark Lombardi, ` +
+    `image courtesy MoMA — <a href="${esc(r.page)}" target="_blank" rel="noopener">see it there</a></span></div>`;
+  box.hidden = false;
+  // if MoMA ever stops serving it, take the plate away rather than leave a blank frame
+  box.querySelector("img").addEventListener("error", () => { box.hidden = true; });
+}
+
 /* ------------------------------------------------------------ the legend */
 
 function paintLegend() {
@@ -629,6 +670,7 @@ async function openWork(iri, focusNode) {
   paintLegend();
   $("note-l").textContent =
     `${state.nodes.length} names · ${state.edges.length} arcs · click any name`;
+  paintOriginal(iri);
   $("bar").firstElementChild.style.width = "100%";
   setTimeout(() => $("curtain").classList.add("gone"), 130);
   if (focusNode && state.byId.has(focusNode)) selectNode(focusNode);

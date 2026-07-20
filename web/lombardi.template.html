@@ -63,6 +63,17 @@
     border-radius:3px;font-size:14px;line-height:1;display:grid;place-items:center;padding:0}
   #zoom button:hover{border-color:var(--ink-faint)}
 
+  /* the photograph of the actual sheet, pinned to the corner of the drawing */
+  #original{position:absolute;right:14px;bottom:34px;width:266px;background:#fdfaf1;
+    border:1px solid var(--rule);padding:8px 8px 0;box-shadow:0 6px 20px rgba(74,60,32,.22);
+    transform:rotate(.5deg);z-index:4}
+  #original img{display:block;width:100%;height:auto;background:var(--paper)}
+  #original .cap{padding:7px 2px 9px;font-size:10.5px;line-height:1.5;color:var(--ink-soft)}
+  #original .cap b{font-size:11px;color:var(--ink)}
+  #original .cr{display:block;color:var(--ink-faint);font-size:9.5px;margin-top:3px;line-height:1.45}
+  @media (max-width:1180px){ #original{width:196px} }
+  @media (max-width:880px){ #original{position:static;width:auto;margin:10px;transform:none} }
+
   #curtain{position:absolute;inset:0;display:grid;place-items:center;background:var(--paper);
     z-index:6;transition:opacity .45s;text-align:center;padding:24px}
   #curtain.gone{opacity:0;pointer-events:none;visibility:hidden;transition:opacity .45s,visibility 0s .45s}
@@ -147,6 +158,7 @@
       <button id="zout" title="Zoom out">−</button>
       <button id="zfit" title="Fit the sheet">⤢</button>
     </div>
+    <figure id="original" hidden></figure>
     <div id="stagenote">
       <span id="note-l"></span>
       <span id="note-r"></span>
