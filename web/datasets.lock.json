@@ -25,6 +25,14 @@
       "contentHash": "381aed89c79c8cdfb4e6fca2cb7cd29a",
       "size": 531618,
       "cardUrl": "https://data.graphplaza.com/dance/dance.rete"
+    },
+    {
+      "key": "lombardi",
+      "url": "https://data.graphplaza.com/lombardi/lombardi.rete",
+      "formatVersion": 5,
+      "contentHash": "c465b5e35b668b6192c83f026d0af81f",
+      "size": 1032285,
+      "cardUrl": "https://data.graphplaza.com/lombardi/lombardi.rete"
     }
   ]
 }
