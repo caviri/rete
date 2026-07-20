@@ -92,6 +92,43 @@
   .check h4{margin:0 0 5px;font-size:13px}
   .check p{margin:0;color:var(--mut);font-size:12.5px;max-width:none}
   .check .lat{color:var(--faint);font-style:italic;font-size:12px}
+  /* --- argument diagram, trace and toolbar ------------------------------- */
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:16px 0 4px;
+    padding-top:14px;border-top:1px solid var(--edge)}
+  .toolbar .grow{margin-left:auto}
+  .saved{color:var(--faint);font-size:11.5px}
+  .saved b{color:var(--ok)}
+  .panel{background:var(--hot);border:1px solid var(--edge);border-radius:11px;padding:14px;margin:12px 0}
+  .panel h4{margin:0 0 4px;font-size:13px}
+  .panel .hint{color:var(--mut);font-size:12.5px;margin:0 0 10px;max-width:72ch}
+  .glegend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--mut);margin-bottom:8px}
+  .glegend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+  .glegend .dash{width:18px;height:0;border-top:2px dashed var(--mut);border-radius:0;margin-right:6px;
+    display:inline-block;vertical-align:3px}
+  .gnode{fill:#211f2c;stroke:var(--edge);stroke-width:1.5}
+  .gnode.hot{stroke:var(--gold);stroke-width:2.5}
+  .glabel{fill:var(--ink);font-size:12px;font-weight:600}
+  .gedge{fill:none;stroke-width:2;cursor:pointer}
+  .gedge.dim{opacity:.13}
+  .gedge.hot{stroke-width:3.5}
+  .gempty{fill:var(--faint);font-size:12.5px}
+  .findgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+  @media (max-width:860px){ .findgrid{grid-template-columns:1fr} }
+  .finding{cursor:pointer}
+  .finding.sel{border-color:var(--gold);background:#1d1a22}
+  .finding.none{cursor:default}
+  .trace{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+  .trow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .trow .it{color:var(--faint);font-size:11px;width:64px;flex:none;font-variant-numeric:tabular-nums}
+  .chip{border:1px solid var(--edge);border-radius:999px;padding:2px 9px;font-size:11.5px;
+    color:var(--mut);font-variant-numeric:tabular-nums;background:#191722}
+  .chip.new{border-color:var(--s2);color:var(--gold)}
+  .chip.seed{border-color:var(--gold);background:#231d12;color:var(--gold);font-weight:700}
+  .steps{counter-reset:s;padding-left:0;list-style:none;max-width:72ch}
+  .steps li{counter-increment:s;position:relative;padding-left:34px;margin:11px 0}
+  .steps li::before{content:counter(s);position:absolute;left:0;top:-1px;width:23px;height:23px;
+    border-radius:50%;background:var(--hot);border:1px solid var(--edge);color:var(--gold);
+    font-size:12px;font-weight:700;display:grid;place-items:center}
 
   .figure{margin:6px 0 4px}
   .figcap{color:var(--mut);font-size:12.5px;margin:0 0 12px;max-width:70ch}
@@ -281,6 +318,7 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
         <button class="ghost" id="ex-circle">Vicious circle</button>
         <button class="ghost" id="ex-slope">Slippery slope</button>
         <button class="ghost" id="ex-witness">Three witnesses</button>
+        <button class="ghost" id="ex-blank">Start your own</button>
       </div>
       <p class="sub" style="margin-top:10px">
         One claim per line: <code>Who: thing causes thing 0.8</code>, or
@@ -305,8 +343,48 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
           </select>
         </div>
       </div>
-      <div id="findings"></div>
+      <div class="panel" style="margin-top:2px">
+        <h4>Keep it</h4>
+        <p class="hint" style="margin-bottom:9px">
+          Your text stays in this browser as you type, and the link below carries the whole
+          argument — settings included — so you can send it to whoever you were arguing with.
+        </p>
+        <div class="row">
+          <button class="ghost" id="copylink">Copy shareable link</button>
+          <button class="ghost" id="dlttl">Download as RDF-star</button>
+          <button class="ghost" id="clearsaved">Forget it</button>
+        </div>
+        <p class="saved" id="savedmsg" style="margin:9px 0 0">&nbsp;</p>
+      </div>
     </div>
+  </div>
+
+  <div class="panel">
+    <h4>Your argument, drawn</h4>
+    <p class="hint">
+      Every claim as an arrow, coloured by who said it. Solid means <b>causes</b>, dashed with a
+      bar means <b>prevents</b>. Hover an arrow for the claim; click any finding below to light up
+      exactly the arrows involved in it.
+    </p>
+    <div class="glegend" id="glegend"></div>
+    <svg id="graph" viewBox="0 0 900 520" role="img" aria-label="Diagram of the claims and who made them"></svg>
+  </div>
+
+  <div id="findings" class="findgrid"></div>
+
+  <div class="panel">
+    <h4>Watch belief spread — this is literally the GPU kernel</h4>
+    <p class="hint">
+      Pick something to believe completely, then press the same button the shader presses: each
+      round, every node takes the best chain reaching it, one arrow longer than before. A chain is
+      only as strong as its weakest link, so values can only fall as they travel. The benchmark runs
+      exactly this loop <b>k</b> times over millions of arrows without the data ever leaving the card.
+    </p>
+    <div class="row" style="margin-bottom:4px">
+      <label for="tracestart" style="color:var(--mut);font-size:12.5px">Start from</label>
+      <select id="tracestart"></select>
+    </div>
+    <div class="trace" id="trace"></div>
   </div>
 
   <h3>So who told the truth?</h3>
@@ -319,6 +397,57 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
     reading, not a verdict.
   </p>
   <div class="scroll"><table class="who" id="who"></table></div>
+</section>
+
+<!-- ================================================ use it on your own ==== -->
+<section class="card teach">
+  <h2>Use this on an argument of your own</h2>
+  <p class="lede">
+    The point of writing a disagreement down like this is not to win it. It is that once the claims
+    are separated from the rhetoric, the structure becomes checkable — and quite often the thing
+    people were actually disagreeing about turns out to be a single arrow.
+  </p>
+
+  <ol class="steps">
+    <li><b>Write one claim per line, and name who made it.</b> Not who you agree with — who said it.
+      Attribution is what makes the last table possible, and what stops the exercise turning into
+      your own opinions wearing a graph costume.</li>
+    <li><b>Use nouns for the things, not sentences.</b> <code>budget_cut</code>, not
+      "the decision we took in January to reduce the maintenance budget". If you cannot name it in
+      one noun, it is probably two claims.</li>
+    <li><b>Pick <code>causes</code> or <code>prevents</code>.</b> If a claim is neither — "this is
+      unfair", "we cannot afford it" — it is a value or a constraint, not a causal claim, and it
+      belongs in the discussion rather than in the graph.</li>
+    <li><b>Put a number on how sure that person sounded.</b> This is the step people resist, and it
+      is the one that does the work. 0.9 is "they staked their credibility on it", 0.5 is "they
+      floated it". Being forced to write 0.5 next to something is often the whole insight.</li>
+    <li><b>Then move the knobs.</b> If a finding disappears the moment you nudge τ, it was never
+      solid. If a contradiction survives every setting you try, it is real and someone has to
+      give ground.</li>
+  </ol>
+
+  <p>
+    What comes back is not a verdict, and the page never pretends otherwise. It tells you
+    <em>where to look</em>: the loop nobody noticed they were arguing in, the leap that outran its
+    evidence, the third factor that explains both things at once. Those are the places a
+    conversation is actually stuck.
+  </p>
+
+  <h3>When it outgrows a text box</h3>
+  <p>
+    <b>Download as RDF-star</b> gives you the same claims as a real graph — each statement carrying
+    its confidence and its speaker as annotations on the triple itself:
+  </p>
+<pre><span class="c"># the download, abbreviated</span>
+:budget_cut :causes :breakdowns .
+&lt;&lt; :budget_cut :causes :breakdowns &gt;&gt; :confidence <span class="n">0.9</span> ; :statedBy :Bruno .</pre>
+  <p>
+    That file is ordinary Turtle, so <code>rete build argument.ttl -o argument.rete</code> turns it
+    into a queryable graph you can hit with SPARQL, federate against other sources, or hand to an
+    agent — see <a href="getting-started.html">getting started</a> and
+    <a href="sparql.html">SPARQL support</a>. The toy in this page and the engine the rest of these
+    docs describe are the same data model; only the scale changes.
+  </p>
 </section>
 
 <!-- ====================================================== the benchmark == -->
@@ -600,6 +729,12 @@ Cara: evacuation causes alarm      0.8
 
 Ana:  evacuation causes headcount  0.8
 Ben:  evacuation causes headcount  0.75`,
+
+  blank: `# Your turn — replace these two lines with something you actually argued about.
+# Name who said it, keep the things to short nouns, and be honest about the number.
+
+Alex: late_deploys   causes missed_targets 0.8
+Sam:  missed_targets causes late_deploys   0.7`,
 };
 
 const SLOPE_GAP = 0.25;   // how far a claim may outrun its supporting chain
@@ -696,7 +831,9 @@ function runSandbox() {
   $("kv").textContent = k;
 
   const { claims, bad } = parseClaims($("src").value);
+  SRC_ORDER = [...new Set(claims.map(c => c.src))];
   const { causes, prevents, adj } = buildGraph(claims);
+  GRAPH_CACHE = { causes, prevents };
   const findings = [], below = [];
   const push = f => (f.d >= tau ? findings : below).push(f);
 
@@ -719,7 +856,8 @@ function runSandbox() {
          propped up by itself. The loop survives at strength <em>${fmt(c.d)}</em> (its weakest link),
          and it is spread across <b>${srcList(srcs)}</b>, which is why no single speaker looks wrong.
          <span class="lat">circulus in probando</span>.`;
-    push({ kind: "b", d: c.d, title, why, srcs: [...srcs] });
+    push({ kind: "b", d: c.d, title, why, srcs: [...srcs],
+           edges: c.edges.map(e => ekey(e.from, e.to)) });
   }
 
   /* 2 — same pair, same direction, opposite sign */
@@ -734,7 +872,7 @@ function runSandbox() {
             <em>${fmt(p.d)}</em>. Same pair, same direction, opposite sign:
             ${showT(c.d, p.d)} = <em>${fmt(d)}</em>. This one needs no chain-following at all — it is
             a single comparison, which is exactly the shape of kernel A.`,
-      srcs: [...new Set([...c.srcs, ...p.srcs])] });
+      srcs: [...new Set([...c.srcs, ...p.srcs])], edges: [key] });
   }
 
   /* 3 — the claim outruns the chain that supports it */
@@ -750,7 +888,8 @@ function runSandbox() {
             chain is only as strong as its weakest link, so it carries just <em>${fmt(alt.d)}</em>.
             The claim outruns its support by <em>${fmt(gap)}</em> —
             <span class="lat">slippery slope</span>: each step a maybe, the conclusion a certainty.`,
-      srcs: [...e.srcs] });
+      srcs: [...e.srcs],
+      edges: [ekey(e.from, e.to), ...alt.edges.map(x => ekey(x.from, x.to))] });
   }
 
   /* 4 — a third thing causes both */
@@ -767,7 +906,8 @@ function runSandbox() {
               (<em>${fmt(a.d)}</em>) <em>and</em> ${esc(e.to)} (<em>${fmt(b.d)}</em>), so the two may
               simply be moving together because of ${esc(w)}.
               <span class="lat">cum hoc ergo propter hoc</span> — a shared cause mistaken for a direct one.`,
-        srcs: [...e.srcs] });
+        srcs: [...e.srcs],
+        edges: [ekey(e.from, e.to), ekey(w, e.from), ekey(w, e.to)] });
       break;   // one confounder per claim is enough to make the point
     }
   }
@@ -788,7 +928,7 @@ function runSandbox() {
 
   const CAP = 10;
   for (const f of findings.slice(0, CAP)) {
-    out.push(`<div class="finding">
+    out.push(`<div class="finding" data-e="${(f.edges || []).join(",")}">
       <div class="hd">${f.title} <span class="deg">${fmt(f.d)}</span>
         <span class="badge ${f.kind}">${f.kind === "a" ? "same line" : "chain"}</span></div>
       <div class="why">${f.why}</div></div>`);
@@ -802,6 +942,9 @@ function runSandbox() {
 
   $("findings").innerHTML = out.join("");
   renderWho(claims, causes, findings);
+  renderGraph();
+  renderTrace(causes, fold, k);
+  persist();
 }
 
 /* Who keeps turning up? Deliberately two plain counts rather than one score —
@@ -842,6 +985,213 @@ function renderWho(claims, causes, findings) {
       <td class="num">${r.echoed}</td><td class="num">${r.implicated}</td></tr>`).join("") +
     `<tr><td colspan="4" style="color:var(--mut);text-align:left;border-bottom:0;padding-top:11px">${read}</td></tr>`;
 }
+
+
+/* ------------------------------------------------- the argument, as a graph =
+   Four source colours, validated all-pairs against this panel surface. The
+   4-set lands in the CVD floor band, so identity is ALSO carried by the legend
+   text and a per-arrow tooltip — never by hue alone. A fifth source and beyond
+   share a neutral and rely on those labels entirely.                         */
+const SRC_COLORS = ["#3987e5", "#008300", "#d55181", "#c98500"];
+const SRC_NEUTRAL = "#8d86a0";
+let SRC_ORDER = [], HILITE = null;
+const colorFor = s => {
+  const i = SRC_ORDER.indexOf(s);
+  return i >= 0 && i < SRC_COLORS.length ? SRC_COLORS[i] : SRC_NEUTRAL;
+};
+const ekey = (a, b) => a + "|" + b;
+
+let GRAPH_CACHE = { causes: new Map(), prevents: new Map() };
+function renderGraph() {
+  const { causes, prevents } = GRAPH_CACHE;
+  const svg = $("graph");
+  svg.textContent = "";
+  const edges = [...causes.values()].map(e => ({ ...e, kind: "causes" }))
+    .concat([...prevents.values()].map(e => ({ ...e, kind: "prevents" })));
+
+  const legend = $("glegend");
+  if (!edges.length) {
+    legend.innerHTML = "";
+    svg.appendChild(el("text", { x: 450, y: 250, class: "gempty", "text-anchor": "middle" },
+      "Add a claim and it appears here."));
+    return;
+  }
+
+  const nodes = [...new Set(edges.flatMap(e => [e.from, e.to]))].sort();
+  const N = nodes.length, cx = 450, cy = 258, R = Math.min(196, 58 + N * 15);
+  const pos = {};
+  nodes.forEach((n, i) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / N;
+    pos[n] = { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), a };
+  });
+
+  // arrowheads, one per colour actually used (plus a bar head for "prevents")
+  const used = [...new Set(edges.map(e => colorFor([...e.srcs][0])))];
+  const defs = el("defs");
+  for (const c of used) {
+    const id = "ah" + c.replace("#", "");
+    const mk = el("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5,
+      markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
+    mk.appendChild(el("path", { d: "M 0 1 L 10 5 L 0 9 z", fill: c }));
+    defs.appendChild(mk);
+    const bid = "bar" + c.replace("#", "");
+    const bm = el("marker", { id: bid, viewBox: "0 0 10 10", refX: 6, refY: 5,
+      markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
+    bm.appendChild(el("path", { d: "M 5 0 L 5 10", stroke: c, "stroke-width": 2.4 }));
+    defs.appendChild(bm);
+  }
+  svg.appendChild(defs);
+
+  for (const e of edges) {
+    const p = pos[e.from], q = pos[e.to];
+    if (!p || !q) continue;
+    const dx = q.x - p.x, dy = q.y - p.y, L = Math.hypot(dx, dy) || 1;
+    const off = 0.17 * L;                       // bow it, so a→b and b→a separate
+    const ctrl = { x: (p.x + q.x) / 2 - (dy / L) * off, y: (p.y + q.y) / 2 + (dx / L) * off };
+    const trim = (from, toward, by) => {
+      const vx = toward.x - from.x, vy = toward.y - from.y, l = Math.hypot(vx, vy) || 1;
+      return { x: from.x + (vx / l) * by, y: from.y + (vy / l) * by };
+    };
+    const s = trim(p, ctrl, 11), t = trim(q, ctrl, 14);
+    const color = colorFor([...e.srcs][0]);
+    const key = ekey(e.from, e.to);
+    const path = el("path", {
+      d: `M ${s.x} ${s.y} Q ${ctrl.x} ${ctrl.y} ${t.x} ${t.y}`,
+      class: "gedge" + (HILITE ? (HILITE.has(key) ? " hot" : " dim") : ""),
+      stroke: color,
+      "marker-end": `url(#${e.kind === "prevents" ? "bar" : "ah"}${color.replace("#", "")})`,
+      ...(e.kind === "prevents" ? { "stroke-dasharray": "6 4" } : {}),
+    });
+    path.addEventListener("mousemove", ev => showTip(ev,
+      `<b>${esc([...e.srcs].join(" and "))}</b><br>${esc(e.from)} ${e.kind} ${esc(e.to)} · ${fmt(e.d)}`));
+    path.addEventListener("mouseleave", hideTip);
+    svg.appendChild(path);
+  }
+
+  for (const n of nodes) {
+    const p = pos[n];
+    const hot = HILITE && [...HILITE].some(k => k.split("|").includes(n));
+    svg.appendChild(el("circle", { cx: p.x, cy: p.y, r: 7, class: "gnode" + (hot ? " hot" : "") }));
+    const c = Math.cos(p.a);
+    const anchor = c > 0.15 ? "start" : c < -0.15 ? "end" : "middle";
+    const lx = p.x + Math.cos(p.a) * 16, ly = p.y + Math.sin(p.a) * 16 + 4;
+    svg.appendChild(el("text", { x: lx, y: ly, class: "glabel", "text-anchor": anchor }, n));
+  }
+
+  legend.innerHTML = SRC_ORDER.map(s =>
+      `<span><i style="background:${colorFor(s)}"></i>${esc(s)}</span>`).join("") +
+    `<span><i class="dash"></i>prevents (dashed)</span>` +
+    (SRC_ORDER.length > SRC_COLORS.length
+      ? `<span style="color:var(--faint)">sources past the fourth share one colour — hover an arrow for the name</span>`
+      : "");
+}
+
+/* --------------------------------------------- belief spreading, step by step
+   Identical in form to the shader: every node takes max(itself, best incoming
+   chain), once per round. Written here over incoming edges so it reads the way
+   causation does — a cause handing belief to its effects.                     */
+function renderTrace(causes, fold, k) {
+  const sel = $("tracestart"), box = $("trace");
+  const edges = [...causes.values()];
+  const nodes = [...new Set(edges.flatMap(e => [e.from, e.to]))].sort();
+  const prev = sel.value;
+  sel.innerHTML = nodes.map(n => `<option${n === prev ? " selected" : ""}>${esc(n)}</option>`).join("");
+  if (!nodes.length) { box.innerHTML = `<span class="gempty">Nothing to spread yet.</span>`; return; }
+  const start = nodes.includes(prev) ? prev : nodes[0];
+  sel.value = start;
+
+  const pred = {};
+  for (const e of edges) (pred[e.to] ||= []).push(e);
+
+  let x = Object.fromEntries(nodes.map(n => [n, n === start ? 1 : 0]));
+  const rows = [x];
+  for (let it = 0; it < k; it++) {
+    const y = { ...x };
+    for (const n of nodes)
+      for (const e of pred[n] || []) y[n] = Math.max(y[n], fold(e.d, x[e.from]));
+    rows.push(y);
+    x = y;
+  }
+
+  box.innerHTML = rows.map((r, i) => {
+    const chips = nodes.filter(n => r[n] > 0).map(n => {
+      const isNew = i > 0 && r[n] > rows[i - 1][n];
+      const cls = n === start ? "chip seed" : isNew ? "chip new" : "chip";
+      return `<span class="${cls}">${esc(n)} ${fmt(r[n])}</span>`;
+    }).join("");
+    const label = i === 0 ? "start" : `round ${i}`;
+    return `<div class="trow"><span class="it">${label}</span>${chips}</div>`;
+  }).join("") +
+  `<p class="hint" style="margin:10px 0 0">Gold = where you started. Highlighted chips are the
+   nodes that gained belief this round; everything else has already settled. Notice values never
+   climb back up — that is the weakest-link rule doing its work.</p>`;
+}
+
+/* ------------------------------------------------------- keep it and share it */
+const b64e = s => {
+  const b = new TextEncoder().encode(s);
+  let out = "";
+  for (const byte of b) out += String.fromCharCode(byte);
+  return btoa(out).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+const b64d = s => {
+  const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+  return new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
+};
+const STORE_KEY = "rete.webgpu.argument";
+const currentState = () => ({ t: $("src").value, tau: $("tau").value, k: $("k").value, tn: $("tnorm").value });
+
+function applyState(s) {
+  if (!s || typeof s.t !== "string") return false;
+  $("src").value = s.t;
+  if (s.tau) $("tau").value = s.tau;
+  if (s.k) $("k").value = s.k;
+  if (s.tn) $("tnorm").value = s.tn;
+  return true;
+}
+
+let saveTimer = null;
+function persistNow() {
+  clearTimeout(saveTimer);
+  const s = currentState();
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {}
+  // replaceState, not a hash assignment: typing must not fill the back button.
+  try { history.replaceState(null, "", "#a=" + b64e(JSON.stringify(s))); } catch {}
+}
+function persist() { clearTimeout(saveTimer); saveTimer = setTimeout(persistNow, 400); }
+
+function slug(s) { return s.replace(/[^A-Za-z0-9_-]/g, "_"); }
+function toTurtle(claims) {
+  const head = `@prefix : <https://w3id.org/rete/argument#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Written by the rete WebGPU coherence page. Each claim is a plain triple, with
+# its confidence and its speaker annotated onto the triple itself (RDF-star).
+# Build it:  rete build argument.ttl -o argument.rete
+`;
+  const seen = new Set(), base = [], notes = [];
+  for (const c of claims) {
+    const t = `:${slug(c.from)} :${c.kind} :${slug(c.to)} .`;
+    if (!seen.has(t)) { seen.add(t); base.push(t); }
+    notes.push(`<< :${slug(c.from)} :${c.kind} :${slug(c.to)} >> :confidence ` +
+               `"${c.d}"^^xsd:decimal ; :statedBy :${slug(c.src)} .`);
+  }
+  return head + "\n" + base.join("\n") + "\n\n" + notes.join("\n") + "\n";
+}
+
+function download(name, text, mime) {
+  const url = URL.createObjectURL(new Blob([text], { type: mime }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+const flash = m => {
+  $("savedmsg").innerHTML = m;
+  clearTimeout(flash.t);
+  flash.t = setTimeout(() => { $("savedmsg").innerHTML = "&nbsp;"; }, 4000);
+};
 
 /* --------------------------------------------------------- chart: crossover */
 function drawCrossover() {
@@ -1302,17 +1652,57 @@ async function runBenchmark() {
 }
 
 /* ------------------------------------------------------------------ boot -- */
-$("src").value = EXAMPLES.debate;
+// Restore in order of specificity: a shared link, then this browser's copy,
+// then the default example.
+(function restore() {
+  const h = location.hash.match(/^#a=(.+)$/);
+  if (h) { try { if (applyState(JSON.parse(b64d(h[1])))) return; } catch {} }
+  try { const s = localStorage.getItem(STORE_KEY); if (s && applyState(JSON.parse(s))) return; } catch {}
+  $("src").value = EXAMPLES.debate;
+})();
 runSandbox();
 for (const id of ["tau", "k", "tnorm", "src"]) $(id).addEventListener("input", runSandbox);
 $("tnorm").addEventListener("change", runSandbox);
+$("tracestart").addEventListener("change", runSandbox);
 const loadEx = (name, k) => () => {
-  $("src").value = EXAMPLES[name]; $("k").value = k; runSandbox();
+  $("src").value = EXAMPLES[name]; $("k").value = k; HILITE = null; runSandbox();
 };
 $("ex-debate").addEventListener("click", loadEx("debate", 4));
 $("ex-circle").addEventListener("click", loadEx("circle", 4));
 $("ex-slope").addEventListener("click", loadEx("slope", 4));
 $("ex-witness").addEventListener("click", loadEx("witness", 3));
+$("ex-blank").addEventListener("click", loadEx("blank", 4));
+
+// Click a finding to light up exactly the arrows it is about.
+$("findings").addEventListener("click", ev => {
+  const card = ev.target.closest(".finding[data-e]");
+  if (!card) return;
+  const keys = card.dataset.e ? card.dataset.e.split(",").filter(Boolean) : [];
+  const already = card.classList.contains("sel");
+  [...$("findings").children].forEach(c => c.classList.remove("sel"));
+  if (already || !keys.length) HILITE = null;
+  else { HILITE = new Set(keys); card.classList.add("sel"); }
+  renderGraph();
+});
+
+$("copylink").addEventListener("click", async () => {
+  persistNow();
+  try { await navigator.clipboard.writeText(location.href); flash("<b>Copied.</b> That link carries the whole argument."); }
+  catch { flash("Copy blocked by the browser — the address bar already holds the link."); }
+});
+$("dlttl").addEventListener("click", () => {
+  const { claims } = parseClaims($("src").value);
+  if (!claims.length) return flash("Nothing to export yet.");
+  download("argument.ttl", toTurtle(claims), "text/turtle");
+  flash(`<b>${claims.length} claim(s)</b> written to argument.ttl.`);
+});
+$("clearsaved").addEventListener("click", () => {
+  try { localStorage.removeItem(STORE_KEY); } catch {}
+  history.replaceState(null, "", location.pathname + location.search);
+  $("src").value = EXAMPLES.debate; $("tau").value = "0.6"; $("k").value = "4"; $("tnorm").value = "min";
+  HILITE = null; runSandbox();
+  flash("Cleared from this browser, and back to the example.");
+});
 for (const [id, out, dp] of [["btau", "btauv", 2], ["bk", "bkv", 0], ["bdeg", "bdegv", 0]])
   $(id).addEventListener("input", () => { $(out).textContent = parseFloat($(id).value).toFixed(dp); });
 
