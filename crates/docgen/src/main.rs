@@ -41,6 +41,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("football.md", "Football — match replays"),
             ("subtitles.html", "Subtitle timeline"),
             ("anatomy.html", "Z-Anatomy — 3D human body"),
+            ("lombardi.html", "Lombardi — network drawings in ink"),
             ("webgpu.html", "WebGPU coherence (exp.)"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
         ],

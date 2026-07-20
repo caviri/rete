@@ -1,0 +1,720 @@
+/* Redrawing Mark Lombardi — a reading of lombardi.rete, in ink.
+ *
+ * Everything on the sheet comes out of the .rete over HTTP range: the list of
+ * works, the nodes and arcs of the open drawing, and the card behind each name.
+ * Nothing is pre-baked. The engine runs in a worker because RemoteGraph reads
+ * through synchronous XHR, which browsers only allow off the main thread.
+ *
+ * The drawing itself is a reading, not a facsimile. The topology, the arc types
+ * and the year markers are Lombardi's; the placement is a force layout. Two
+ * things carry his hand across: arcs are drawn as CIRCULAR ARCS (never straight
+ * lines), and the year markers are pinned along the bottom in date order, the
+ * timeline he ruled across the foot of so many sheets.
+ */
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const PFX = `PREFIX lo: <https://w3id.org/rete/lombardi/>
+PREFIX lom: <http://www.lombardinetworks.net/lombardi.owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+`;
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u;
+}
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtBytes = (n) => n < 1024 ? `${n} B`
+  : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`;
+
+/* Terms arrive in the engine's lexical "table" form: <iri>, "lit", "lit"@en. */
+function plain(term) {
+  if (term == null) return null;
+  const s = String(term);
+  if (s.startsWith("<") && s.endsWith(">")) return s.slice(1, -1);
+  const m = s.match(/^"([\s\S]*)"(?:@[\w-]+|\^\^<.+>)?$/);
+  return m ? m[1] : s;
+}
+const localName = (iri) => String(iri || "").split(/[#/]/).filter(Boolean).pop();
+
+/* ------------------------------------------------------------------ engine */
+
+const engine = {
+  worker: null, seq: 0, pending: new Map(), bytes: 0, ready: null,
+
+  boot() {
+    const src = $("reteGlue").textContent + "\n" + $("workerSrc").textContent;
+    this.worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+    this.worker.onmessage = (e) => {
+      const m = e.data || {};
+      if (m.type === "progress") { this.bytes = m.bytes; paintTraffic(); return; }
+      const p = this.pending.get(m.reqId);
+      if (!p) return;
+      this.pending.delete(m.reqId);
+      m.ok ? p.resolve(m) : p.reject(new Error(m.error || "engine error"));
+    };
+    this.worker.onerror = (e) => {
+      for (const p of this.pending.values()) p.reject(new Error(e.message || "worker crashed"));
+      this.pending.clear();
+    };
+    const w = b64ToBytes(RETE_WASM_B64);
+    this.ready = this.call({ type: "init", wasm: w.buffer }, [w.buffer]);
+    return this.ready;
+  },
+
+  call(msg, transfer) {
+    return new Promise((resolve, reject) => {
+      msg.reqId = ++this.seq;
+      this.pending.set(msg.reqId, { resolve, reject });
+      this.worker.postMessage(msg, transfer || []);
+    });
+  },
+
+  async open() {
+    await this.ready;
+    return this.call({ type: "open", key: "lombardi", mode: "remote", url: RETE_URL });
+  },
+
+  /* Every query on this page goes through here, so each one lands in the log
+   * with what it actually cost in bytes off the wire. */
+  async ask(label, sparql) {
+    await this.ready;
+    const r = await this.call({ type: "query", key: "lombardi", sparql: PFX + sparql });
+    const env = JSON.parse(r.json);
+    const rows = (env.rows || []).map((row) => {
+      const o = {};
+      for (const k of env.vars || Object.keys(row)) o[k] = plain(row[k]);
+      return o;
+    });
+    logQuery(label, sparql, rows.length, r.ms, r.traffic);
+    return rows;
+  },
+};
+
+/* -------------------------------------------------------------- query log */
+
+function logQuery(label, sparql, rows, ms, traffic) {
+  const li = document.createElement("li");
+  const body = sparql.trim().split("\n").slice(0, 5).join("\n");
+  const cost = traffic && traffic.bytes
+    ? ` · ${fmtBytes(traffic.bytes)} in ${traffic.requests} range req`
+    : " · served from cache";
+  li.innerHTML = `<div class="q">${esc(body)}</div>` +
+    `<div class="r">${esc(label)} — ${rows} row${rows === 1 ? "" : "s"} · ${Math.round(ms)} ms${esc(cost)}</div>`;
+  const list = $("qlog");
+  list.insertBefore(li, list.firstChild);
+  while (list.children.length > 14) list.removeChild(list.lastChild);
+}
+
+function paintTraffic() {
+  $("note-r").textContent =
+    `${fmtBytes(engine.bytes)} read of 1.0 MB · only what the queries touched`;
+}
+
+/* ---------------------------------------------------------------- queries */
+
+const Q = {
+  works: `SELECT ?w ?title ?nodes ?arcs ?from ?to WHERE {
+  ?w a lo:Drawing ; rdfs:label ?title ; lo:nodeCount ?nodes ; lo:edgeCount ?arcs .
+  OPTIONAL { ?w lo:narrationStart ?from . ?w lo:narrationEnd ?to }
+} ORDER BY ?title`,
+
+  nodes: (w) => `SELECT ?n ?label ?type ?wc ?year WHERE {
+  <${w}> lo:depicts ?n .
+  ?n rdfs:label ?label ; a ?type ; lo:workCount ?wc .
+  OPTIONAL { ?n lo:year ?year }
+}`,
+
+  arcs: (w) => `SELECT ?s ?o ?type ?drawn ?amount WHERE {
+  ?e lo:inDrawing <${w}> ; lo:source ?s ; lo:target ?o ; lo:arcType ?t .
+  ?t rdfs:label ?type ; lo:drawnAs ?drawn .
+  OPTIONAL { ?e lo:amount ?amount }
+}`,
+
+  /* The two directions are asked SEPARATELY and on purpose. Written as one
+   * `{…} UNION {…}` query the planner stops pushing the bound endpoint into the
+   * branches and the same 17 rows take ~50 s instead of ~1 s — locally as well
+   * as over HTTP, so it is the plan and not the fetching. Two small queries in
+   * parallel are both faster and easier to read. */
+  arcsFrom: (n) => `SELECT ?other ?label ?t ?w ?amount WHERE {
+  ?e lo:source <${n}> ; lo:target ?other ; lo:arcType ?t ; lo:inDrawing ?w .
+  ?other rdfs:label ?label .
+  OPTIONAL { ?e lo:amount ?amount }
+}`,
+
+  arcsTo: (n) => `SELECT ?other ?label ?t ?w ?amount WHERE {
+  ?e lo:target <${n}> ; lo:source ?other ; lo:arcType ?t ; lo:inDrawing ?w .
+  ?other rdfs:label ?label .
+  OPTIONAL { ?e lo:amount ?amount }
+}`,
+
+  /* The notation table, fetched once: arc class → its name and the mark on the
+   * paper. 21 rows, so the card never has to join it per click. */
+  notation: `SELECT ?t ?label ?drawn WHERE { ?t rdfs:label ?label ; lo:drawnAs ?drawn }`,
+
+  alsoIn: (n) => `SELECT ?w ?title WHERE {
+  <${n}> lo:appearsIn ?w . ?w rdfs:label ?title
+} ORDER BY ?title`,
+};
+
+/* ------------------------------------------------------- Lombardi's marks
+ * In his notation the LINE STYLE is the meaning, so the renderer keys off the
+ * arc class rather than inventing a palette. dash: SVG dasharray. tip: what
+ * closes the arc — an arrowhead, the double bar he used for a blocked deal, or
+ * nothing at all for a plain association. */
+const MARKS = {
+  InfluenceControl:         { dash: null,    tip: "arrow",  red: false },
+  FinancialTransaction:     { dash: "5 3.5", tip: "arrow",  red: false },
+  FinancialConnection:      { dash: "5 3.5", tip: null,     red: false },
+  FinancialAssociation:     { dash: "5 3.5", tip: "both",   red: false },
+  Association:              { dash: null,    tip: "both",   red: false },
+  Connection:               { dash: null,    tip: null,     red: false },
+  BlockedFailed:            { dash: null,    tip: "bar",    red: false },
+  BlockedFailedTransaction: { dash: "5 3.5", tip: "bar",    red: false },
+  SaleTransfer:             { dash: "9 4",   tip: "arrow",  red: false },
+  SaleProperty:             { dash: "2 3",   tip: null,     red: false },
+  Final:                    { dash: null,    tip: "arrow",  red: true  },
+  YearArrow:                { dash: null,    tip: "arrow",  red: false },
+  YearLine:                 { dash: null,    tip: null,     red: false },
+  SingleNearby:             { dash: "1 4",   tip: null,     red: false },
+};
+const markOf = (t) => MARKS[t] || { dash: null, tip: "arrow", red: false };
+
+/* ------------------------------------------------------- deterministic RNG
+ * Same drawing every visit: a sheet of paper doesn't rearrange itself. */
+function rng(seed) {
+  let s = 0;
+  for (const ch of String(seed)) s = (s * 31 + ch.charCodeAt(0)) >>> 0;
+  return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+}
+
+/* --------------------------------------------------------------- layout
+ * Fruchterman-Reingold, with the year markers pinned along the foot of the
+ * sheet in date order — Lombardi's timeline. */
+let W = 1600, H = 1000;
+const PAD = 90;
+
+/* Roughly how much room a name takes once lettered, so the separation pass can
+ * treat each node as the BOX its text occupies rather than a point. Names are
+ * wide and short, which is why the drawings spread sideways. */
+function boxOf(d) {
+  if (d.year) return { hw: 15, hh: 15 };
+  const chars = Math.min(d.label.length, 30);
+  const size = d.kind === "FinalInfo" || d.kind === "Final" ? 8.6 : (d.wc > 1 ? 10.4 : 9.6);
+  return { hw: (chars * size * 0.56) / 2 + 9, hh: 11 };
+}
+
+function layout(nodes, edges, seed) {
+  const rand = rng(seed);
+  const n = nodes.length;
+  // a bigger cast needs a bigger sheet — he worked up to five feet wide
+  W = Math.round(Math.max(1500, Math.min(3000, 980 + n * 6.2)));
+  H = Math.round(W * 0.70);
+  const idx = new Map(nodes.map((d, i) => [d.id, i]));
+  const years = nodes.filter((d) => d.year).sort((a, b) => a.year - b.year || a.label.localeCompare(b.label));
+
+  nodes.forEach((d, i) => {
+    const a = (i / n) * Math.PI * 2;
+    d.x = W / 2 + Math.cos(a) * (W * 0.3) * (0.55 + rand() * 0.75);
+    d.y = H / 2 + Math.sin(a) * (H * 0.3) * (0.55 + rand() * 0.75);
+    d.pin = false;
+  });
+  // the timeline: evenly spaced along the bottom, ordered by year
+  years.forEach((d, i) => {
+    d.x = PAD + ((i + 0.5) / years.length) * (W - 2 * PAD);
+    d.y = H - 104;
+    d.pin = true;
+  });
+
+  const area = (W - 2 * PAD) * (H - 2 * PAD);
+  const k = Math.sqrt(area / Math.max(n, 1)) * 0.82;
+  const iters = n > 220 ? 260 : n > 90 ? 420 : 600;
+  let temp = W / 9;
+
+  const dispX = new Float64Array(n), dispY = new Float64Array(n);
+  for (let it = 0; it < iters; it++) {
+    dispX.fill(0); dispY.fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let dx = nodes[i].x - nodes[j].x, dy = nodes[i].y - nodes[j].y;
+        let d2 = dx * dx + dy * dy;
+        if (d2 < 0.01) { dx = (rand() - 0.5) * 0.6; dy = (rand() - 0.5) * 0.6; d2 = dx * dx + dy * dy + 0.01; }
+        const d = Math.sqrt(d2), f = (k * k) / d;
+        const ux = (dx / d) * f, uy = (dy / d) * f;
+        dispX[i] += ux; dispY[i] += uy; dispX[j] -= ux; dispY[j] -= uy;
+      }
+    }
+    for (const e of edges) {
+      const i = idx.get(e.s), j = idx.get(e.o);
+      if (i === undefined || j === undefined || i === j) continue;
+      const dx = nodes[i].x - nodes[j].x, dy = nodes[i].y - nodes[j].y;
+      const d = Math.hypot(dx, dy) || 0.01, f = (d * d) / k;
+      const ux = (dx / d) * f, uy = (dy / d) * f;
+      dispX[i] -= ux; dispY[i] -= uy; dispX[j] += ux; dispY[j] += uy;
+    }
+    for (let i = 0; i < n; i++) {
+      const d = nodes[i];
+      if (d.pin) continue;
+      // a whisper of gravity, so detached fragments don't drift off the sheet
+      dispX[i] += (W / 2 - d.x) * 0.012;
+      dispY[i] += (H / 2 - d.y) * 0.012;
+      const len = Math.hypot(dispX[i], dispY[i]) || 1;
+      const step = Math.min(len, temp);
+      d.x += (dispX[i] / len) * step;
+      d.y += (dispY[i] / len) * step;
+      d.x = Math.max(PAD, Math.min(W - PAD, d.x));
+      d.y = Math.max(PAD, Math.min(H - PAD * 1.35, d.y));
+    }
+    temp *= 0.975;
+  }
+
+  /* Second pass: pull the LETTERING apart. The force layout only knows points,
+   * so long names still sit on top of each other. Treat each node as the box its
+   * text occupies and push overlapping boxes apart along the shallower axis.
+   * This is what buys the drawing its air — Lombardi's sheets are mostly paper. */
+  for (const d of nodes) d.box = boxOf(d);
+  for (let it = 0; it < 240; it++) {
+    let moved = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const a = nodes[i], b = nodes[j];
+        if (a.pin && b.pin) continue;
+        const ox = (a.box.hw + b.box.hw + 7) - Math.abs(a.x - b.x);
+        const oy = (a.box.hh + b.box.hh + 5) - Math.abs(a.y - b.y);
+        if (ox <= 0 || oy <= 0) continue;         // boxes clear of each other
+        moved++;
+        // shove along whichever axis needs the smaller correction
+        if (ox / (a.box.hw + b.box.hw) < oy / (a.box.hh + b.box.hh)) {
+          const s = (a.x <= b.x ? -1 : 1) * ox * 0.5;
+          if (!a.pin) a.x += s; if (!b.pin) b.x -= s;
+        } else {
+          const s = (a.y <= b.y ? -1 : 1) * oy * 0.5;
+          if (!a.pin) a.y += s; if (!b.pin) b.y -= s;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+
+  // keep every name whole on the sheet, margins measured from its own box
+  for (const d of nodes) {
+    if (d.pin) continue;
+    d.x = Math.max(d.box.hw + 14, Math.min(W - d.box.hw - 14, d.x));
+    d.y = Math.max(d.box.hh + 20, Math.min(H - 168, d.y));
+  }
+  return nodes;
+}
+
+/* ---------------------------------------------------------------- drawing */
+
+/* A circular arc from (x1,y1) to (x2,y2) bulging by `bulge` of the chord.
+ * This one function is most of the Lombardi look: he never drew a straight
+ * line between two names. */
+function arcPath(x1, y1, x2, y2, bulge, sweep) {
+  const d = Math.hypot(x2 - x1, y2 - y1) || 1;
+  const h = Math.max(bulge * d, 4);
+  const r = (d * d / 4 + h * h) / (2 * h);
+  return `M${x1.toFixed(1)} ${y1.toFixed(1)} A${r.toFixed(1)} ${r.toFixed(1)} 0 0 ${sweep} ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const mk = (name, attrs) => {
+  const el = document.createElementNS(SVG_NS, name);
+  for (const k in attrs) if (attrs[k] != null) el.setAttribute(k, attrs[k]);
+  return el;
+};
+
+const DEFS = `
+<defs>
+  <!-- paper tooth -->
+  <filter id="grain" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" seed="7" result="n"/>
+    <feColorMatrix in="n" type="saturate" values="0"/>
+    <feComponentTransfer><feFuncA type="linear" slope="0.055"/></feComponentTransfer>
+  </filter>
+  <!-- the wobble of a hand holding a pencil: displace every stroke slightly -->
+  <filter id="ink" x="-12%" y="-12%" width="124%" height="124%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.017" numOctaves="3" seed="3" result="t"/>
+    <feDisplacementMap in="SourceGraphic" in2="t" scale="2.4" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+  <filter id="drop" x="-6%" y="-6%" width="112%" height="112%">
+    <feDropShadow dx="0" dy="5" stdDeviation="11" flood-color="#4a3c20" flood-opacity="0.24"/>
+  </filter>
+  <radialGradient id="vig" cx="50%" cy="46%" r="76%">
+    <stop offset="60%" stop-color="#000" stop-opacity="0"/>
+    <stop offset="100%" stop-color="#5b4a28" stop-opacity="0.13"/>
+  </radialGradient>
+  <marker id="ah" viewBox="0 0 10 10" refX="9.4" refY="5" markerWidth="7" markerHeight="7"
+          orient="auto-start-reverse" markerUnits="strokeWidth">
+    <path d="M1 1.6 L9.2 5 L1 8.4" fill="none" stroke="#2f2a22" stroke-width="1.25"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="ah-r" viewBox="0 0 10 10" refX="9.4" refY="5" markerWidth="7" markerHeight="7"
+          orient="auto-start-reverse" markerUnits="strokeWidth">
+    <path d="M1 1.6 L9.2 5 L1 8.4" fill="none" stroke="#a4302a" stroke-width="1.25"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <!-- the double bar he closed a blocked or failed deal with -->
+  <marker id="bar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7"
+          orient="auto-start-reverse" markerUnits="strokeWidth">
+    <path d="M5.4 1 L5.4 9 M8.2 1 L8.2 9" fill="none" stroke="#2f2a22" stroke-width="1.2" stroke-linecap="round"/>
+  </marker>
+</defs>`;
+
+const state = {
+  works: [], work: null, nodes: [], edges: [], byId: new Map(),
+  notation: new Map(),   // arc class IRI → {label, drawn}
+  sel: null, view: { x: 0, y: 0, w: W, h: H },
+};
+
+function drawSheet() {
+  const svg = $("sheet");
+  svg.innerHTML = DEFS;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  state.view = { x: 0, y: 0, w: W, h: H };
+
+  // A sheet of paper lying on a table. The table is drawn far outside the
+  // viewBox so that whichever way the stage letterboxes, the view stays warm.
+  const table = { x: -W, y: -H, width: W * 3, height: H * 3 };
+  svg.appendChild(mk("rect", Object.assign({ fill: "#d9cdae" }, table)));
+  svg.appendChild(mk("rect", Object.assign({ fill: "#7d6f4c", filter: "url(#grain)" }, table)));
+  svg.appendChild(mk("rect", { x: 0, y: 0, width: W, height: H, fill: "#ece3ce", filter: "url(#drop)" }));
+  svg.appendChild(mk("rect", { x: 0, y: 0, width: W, height: H, fill: "#8a7a52", filter: "url(#grain)" }));
+  svg.appendChild(mk("rect", { x: 0, y: 0, width: W, height: H, fill: "url(#vig)" }));
+
+  // everything drawn in pencil sits in one group, tipped a fraction of a degree
+  // the way a sheet lies on a table
+  const sheet = mk("g", { transform: `rotate(-0.28 ${W / 2} ${H / 2})` });
+  svg.appendChild(sheet);
+
+  const gArcs = mk("g", { filter: "url(#ink)", fill: "none", "stroke-linecap": "round" });
+  const gNodes = mk("g", {});
+  sheet.appendChild(gArcs);
+  sheet.appendChild(gNodes);
+
+  // ---- the timeline rule, if this drawing has year markers
+  const years = state.nodes.filter((d) => d.year);
+  if (years.length > 1) {
+    const y = Math.max(...years.map((d) => d.y));
+    const x1 = Math.min(...years.map((d) => d.x)), x2 = Math.max(...years.map((d) => d.x));
+    gArcs.appendChild(mk("path", {
+      d: `M${x1 - 34} ${y} L${x2 + 34} ${y}`,
+      stroke: "#2f2a22", "stroke-width": 0.7, "stroke-opacity": 0.36,
+    }));
+  }
+
+  // ---- arcs
+  const rand = rng(state.work.w + "|arcs");
+  state.edges.forEach((e, i) => {
+    const a = state.byId.get(e.s), b = state.byId.get(e.o);
+    if (!a || !b) return;
+    const m = markOf(e.type);
+    const sweep = rand() < 0.5 ? 0 : 1;
+    const bulge = 0.10 + rand() * 0.13;
+    const p = mk("path", {
+      d: arcPath(a.x, a.y, b.x, b.y, bulge, sweep),
+      stroke: m.red ? "#a4302a" : "#2f2a22",
+      // pencil pressure varies; nothing on his sheets is mechanically uniform
+      "stroke-width": (0.95 + rand() * 0.5).toFixed(2),
+      "stroke-opacity": (m.red ? 0.8 : 0.66 + rand() * 0.16).toFixed(2),
+      "stroke-dasharray": m.dash,
+    });
+    if (m.tip === "arrow") p.setAttribute("marker-end", m.red ? "url(#ah-r)" : "url(#ah)");
+    if (m.tip === "both") { p.setAttribute("marker-end", "url(#ah)"); p.setAttribute("marker-start", "url(#ah)"); }
+    if (m.tip === "bar") p.setAttribute("marker-end", "url(#bar)");
+    p.dataset.s = e.s; p.dataset.o = e.o;
+    p.appendChild(mk("title", {})).textContent = `${a.label} → ${b.label} · ${e.type} (${e.drawn})${e.amount ? " · " + e.amount : ""}`;
+    gArcs.appendChild(p);
+  });
+
+  // ---- names
+  for (const d of state.nodes) {
+    const g = mk("g", { class: "node", transform: `translate(${d.x.toFixed(1)},${d.y.toFixed(1)})` });
+    g.style.cursor = "pointer";
+    g.dataset.id = d.id;
+
+    if (d.year) {
+      // a two-digit year in a small circle, as he ringed them
+      g.appendChild(mk("circle", { r: 12.5, fill: "#ece3ce", stroke: "#2f2a22",
+        "stroke-width": 0.9, "stroke-opacity": 0.62, filter: "url(#ink)" }));
+      const t = mk("text", { "text-anchor": "middle", y: 3.6, "font-size": 10.5,
+        fill: "#2f2a22", "fill-opacity": 0.85,
+        "font-family": "ui-sans-serif, system-ui, sans-serif" });
+      t.textContent = String(d.year).slice(2);
+      g.appendChild(t);
+    } else {
+      const isFinal = d.kind === "FinalInfo" || d.kind === "Final";
+      const label = d.label.length > 30 ? d.label.slice(0, 29) + "…" : d.label;
+      const t = mk("text", {
+        "text-anchor": "middle", y: 4,
+        "font-size": isFinal ? 8.6 : (d.wc > 1 ? 10.4 : 9.6),
+        "font-family": "ui-sans-serif, 'Avenir Next', 'Segoe UI', system-ui, sans-serif",
+        "letter-spacing": ".055em",
+        "font-weight": d.kind === "Institution" ? 600 : 400,
+        "font-style": isFinal ? "italic" : null,
+        fill: isFinal ? "#a4302a" : "#2f2a22",
+        "fill-opacity": isFinal ? 0.86 : 0.92,
+        // the ink stops where the lettering is — he drew around his own words
+        stroke: "#ece3ce", "stroke-width": 3.2, "paint-order": "stroke",
+        "stroke-linejoin": "round",
+      });
+      t.textContent = isFinal ? label : label.toUpperCase();
+      g.appendChild(t);
+      // institutions carry a fine rule beneath the name
+      if (d.kind === "Institution") {
+        const w = label.length * (d.wc > 1 ? 6.0 : 5.6) * 0.5;
+        g.appendChild(mk("path", { d: `M${-w} 8.4 L${w} 8.4`, stroke: "#2f2a22",
+          "stroke-width": 0.6, "stroke-opacity": 0.4, filter: "url(#ink)" }));
+      }
+    }
+    g.appendChild(mk("title", {})).textContent =
+      `${d.label} — ${d.kind}${d.wc > 1 ? ` · appears in ${d.wc} drawings` : ""}`;
+    g.addEventListener("click", (ev) => { ev.stopPropagation(); selectNode(d.id); });
+    g.addEventListener("mouseenter", () => highlight(d.id));
+    g.addEventListener("mouseleave", () => highlight(state.sel));
+    gNodes.appendChild(g);
+  }
+
+  // ---- the title block, bottom left, the way he titled a sheet in pencil
+  const tb = mk("g", { transform: `translate(34, ${H - 34})`, filter: "url(#ink)" });
+  const title = mk("text", { "font-size": 15, "letter-spacing": ".13em", fill: "#2f2a22",
+    "fill-opacity": .82, "font-family": "ui-sans-serif, system-ui, sans-serif" });
+  title.textContent = state.work.title.toUpperCase();
+  tb.appendChild(title);
+  const sub = mk("text", { y: 15, "font-size": 9.4, "letter-spacing": ".07em", fill: "#2f2a22",
+    "fill-opacity": .5, "font-family": "ui-sans-serif, system-ui, sans-serif" });
+  sub.textContent = `AFTER MARK LOMBARDI · ${state.nodes.length} NODES · ${state.edges.length} ARCS` +
+    (state.work.from ? ` · NARRATES ${state.work.from}–${state.work.to}` : "");
+  tb.appendChild(sub);
+  sheet.appendChild(tb);
+
+  highlight(null);
+}
+
+/* Hovering or selecting a name lifts its own arcs out of the weave. */
+function highlight(id) {
+  const arcs = $("sheet").querySelectorAll("path[data-s]");
+  arcs.forEach((p) => {
+    if (!id) { p.style.opacity = ""; return; }
+    const on = p.dataset.s === id || p.dataset.o === id;
+    p.style.opacity = on ? "1" : "0.17";
+    if (on) p.style.strokeWidth = "1.8";
+    else p.style.strokeWidth = "";
+  });
+  $("sheet").querySelectorAll("g.node").forEach((g) => {
+    g.style.opacity = !id ? "" : (g.dataset.id === id ? "1" : "0.42");
+  });
+}
+
+/* --------------------------------------------------------------- the card */
+
+async function selectNode(id) {
+  state.sel = id;
+  highlight(id);
+  const d = state.byId.get(id);
+  if (!d) return;
+
+  $("card").innerHTML =
+    `<div id="cardbody"><p class="nm">${esc(d.label)}</p>` +
+    `<div class="kind">${esc(d.kind)}</div>` +
+    `<div class="card-empty" style="padding:12px 0">reading the graph…</div></div>`;
+
+  let out, inc, also;
+  try {
+    [out, inc, also] = await Promise.all([
+      engine.ask(`arcs out of · ${d.label}`, Q.arcsFrom(id)),
+      engine.ask(`arcs into · ${d.label}`, Q.arcsTo(id)),
+      d.wc > 1 ? engine.ask(`also drawn in · ${d.label}`, Q.alsoIn(id)) : Promise.resolve([]),
+    ]);
+  } catch (err) {
+    $("card").innerHTML = `<div class="card-empty">The card would not come out of the
+      graph: ${esc(err.message || err)}</div>`;
+    return;
+  }
+  if (state.sel !== id) return;   // a faster click overtook this one
+
+  const here = (r) => r.w === state.work.w;
+  const notate = (t) => state.notation.get(t) || { label: localName(t), drawn: "an arc" };
+
+  const relHtml = (list, arrow) => list.length ? `<ul class="rel">` + list.map((r) => {
+    const known = state.byId.has(r.other);
+    const n = notate(r.t);
+    return `<li>` +
+      `<span class="dirmark">${arrow}</span> ` +
+      `<span class="${known ? "who" : ""}"${known ? ` data-go="${esc(r.other)}"` : ""}>${esc(r.label)}</span>` +
+      (r.amount ? ` <span class="amt">${esc(r.amount)}</span>` : "") +
+      `<span class="how">${esc(n.label)} — ${esc(n.drawn)}</span></li>`;
+  }).join("") + `</ul>` : "";
+
+  const outHere = out.filter(here), incHere = inc.filter(here);
+  const elsewhere = [...out.filter((r) => !here(r)), ...inc.filter((r) => !here(r))];
+
+  $("card").innerHTML = `<div id="cardbody">
+    <p class="nm">${esc(d.label)}</p>
+    <div class="kind">${esc(d.kind)}${d.year ? " · " + d.year : ""}</div>
+    <div class="stat">
+      <div><b>${outHere.length}</b><i>reaches out</i></div>
+      <div><b>${incHere.length}</b><i>reached by</i></div>
+      <div><b>${d.wc}</b><i>drawing${d.wc === 1 ? "" : "s"}</i></div>
+    </div>
+    ${outHere.length ? `<h2 style="margin:15px 0 2px" class="kind">Reaches out to</h2>${relHtml(outHere, "→")}` : ""}
+    ${incHere.length ? `<h2 style="margin:15px 0 2px" class="kind">Reached by</h2>${relHtml(incHere, "←")}` : ""}
+    ${!outHere.length && !incHere.length
+      ? `<div class="card-empty" style="padding:8px 0">Drawn on this sheet with no arc of its own.</div>` : ""}
+    ${elsewhere.length ? `<h2 style="margin:16px 0 2px" class="kind">And on other sheets</h2>
+      ${relHtml(elsewhere, "·")}` : ""}
+    ${also.length > 1 ? `<h2 style="margin:16px 0 2px" class="kind">Also drawn in</h2>
+      <ul class="xref">${also.filter((a) => a.w !== state.work.w)
+        .map((a) => `<li data-work="${esc(a.w)}">${esc(a.title)}</li>`).join("")}</ul>
+      <div class="foot" style="padding:9px 0 0">Lombardi drew this same actor on
+      another sheet, and Tolksdorf gave it the same id — which is what makes the
+      51 drawings one graph rather than 51.</div>` : ""}
+  </div>`;
+
+  $("card").querySelectorAll("[data-go]").forEach((el) =>
+    el.addEventListener("click", () => selectNode(el.dataset.go)));
+  $("card").querySelectorAll("[data-work]").forEach((el) =>
+    el.addEventListener("click", () => openWork(el.dataset.work, d.id)));
+}
+
+/* ------------------------------------------------------------ the legend */
+
+function paintLegend() {
+  const present = [...new Set(state.edges.map((e) => e.type))];
+  const drawn = new Map(state.edges.map((e) => [e.type, e.drawn]));
+  $("legend").innerHTML = present.sort().map((t) => {
+    const m = markOf(t);
+    const stroke = m.red ? "#a4302a" : "#2f2a22";
+    const tip = m.tip === "arrow" ? ` marker-end="url(#lah)"` : "";
+    return `<li><svg width="46" height="14" viewBox="0 0 46 14">
+        <defs><marker id="lah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
+          orient="auto-start-reverse"><path d="M1 2 L9 5 L1 8" fill="none" stroke="${stroke}" stroke-width="1.4"/></marker></defs>
+        <path d="M2 11 Q23 -1 44 8" fill="none" stroke="${stroke}" stroke-width="1.2"
+          ${m.dash ? `stroke-dasharray="${m.dash}"` : ""}${tip}/>
+      </svg><span><b>${esc(t)}</b> — ${esc(drawn.get(t) || "")}</span></li>`;
+  }).join("");
+}
+
+/* ---------------------------------------------------------- open a drawing */
+
+async function openWork(iri, focusNode) {
+  const w = state.works.find((x) => x.w === iri);
+  if (!w) return;
+  state.work = w;
+  state.sel = null;
+  $("curtain").classList.remove("gone");
+  $("curtain-s").textContent = w.title;
+  $("bar").firstElementChild.style.width = "22%";
+  [...$("works").children].forEach((li) => li.classList.toggle("on", li.dataset.w === iri));
+
+  const [nodes, arcs] = await Promise.all([
+    engine.ask(`nodes · ${w.title.slice(0, 34)}`, Q.nodes(iri)),
+    engine.ask(`arcs · ${w.title.slice(0, 34)}`, Q.arcs(iri)),
+  ]);
+  $("bar").firstElementChild.style.width = "68%";
+
+  state.nodes = nodes.map((r) => ({
+    id: r.n, label: r.label, kind: localName(r.type),
+    wc: parseInt(r.wc, 10) || 1, year: r.year ? parseInt(r.year, 10) : null,
+  }));
+  state.byId = new Map(state.nodes.map((d) => [d.id, d]));
+  state.edges = arcs.map((r) => ({ s: r.s, o: r.o, type: r.type, drawn: r.drawn, amount: r.amount }));
+
+  layout(state.nodes, state.edges, iri);
+  drawSheet();
+  paintLegend();
+  $("note-l").textContent =
+    `${state.nodes.length} names · ${state.edges.length} arcs · click any name`;
+  $("bar").firstElementChild.style.width = "100%";
+  setTimeout(() => $("curtain").classList.add("gone"), 130);
+  if (focusNode && state.byId.has(focusNode)) selectNode(focusNode);
+}
+
+/* --------------------------------------------------------------- the list */
+
+function paintWorks(filter) {
+  const f = (filter || "").trim().toLowerCase();
+  const list = state.works.filter((w) => !f || w.title.toLowerCase().includes(f));
+  $("works").innerHTML = list.map((w) =>
+    `<li data-w="${esc(w.w)}"${state.work && w.w === state.work.w ? ' class="on"' : ""}>${esc(w.title)}
+      <span class="m">${w.nodes} nodes · ${w.arcs} arcs${w.from ? ` · ${w.from}–${w.to}` : ""}</span></li>`
+  ).join("") || `<li style="color:#8b8271">nothing matches</li>`;
+  [...$("works").children].forEach((li) =>
+    li.dataset.w && li.addEventListener("click", () => openWork(li.dataset.w)));
+}
+
+/* ------------------------------------------------------------- pan & zoom */
+
+function wireStage() {
+  const svg = $("sheet");
+  const apply = () => svg.setAttribute("viewBox",
+    `${state.view.x} ${state.view.y} ${state.view.w} ${state.view.h}`);
+  const zoom = (f, cx = state.view.x + state.view.w / 2, cy = state.view.y + state.view.h / 2) => {
+    const w = Math.max(W * 0.12, Math.min(W * 1.6, state.view.w * f));
+    const h = w * (H / W);
+    state.view.x = cx - (cx - state.view.x) * (w / state.view.w);
+    state.view.y = cy - (cy - state.view.y) * (h / state.view.h);
+    state.view.w = w; state.view.h = h;
+    apply();
+  };
+  $("zin").onclick = () => zoom(0.8);
+  $("zout").onclick = () => zoom(1.25);
+  $("zfit").onclick = () => { state.view = { x: 0, y: 0, w: W, h: H }; apply(); };
+
+  svg.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = svg.getBoundingClientRect();
+    const cx = state.view.x + ((e.clientX - r.left) / r.width) * state.view.w;
+    const cy = state.view.y + ((e.clientY - r.top) / r.height) * state.view.h;
+    zoom(e.deltaY > 0 ? 1.12 : 0.89, cx, cy);
+  }, { passive: false });
+
+  let drag = null;
+  svg.addEventListener("pointerdown", (e) => {
+    drag = { x: e.clientX, y: e.clientY, vx: state.view.x, vy: state.view.y };
+    svg.classList.add("drag"); svg.setPointerCapture(e.pointerId);
+  });
+  svg.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const r = svg.getBoundingClientRect();
+    state.view.x = drag.vx - ((e.clientX - drag.x) / r.width) * state.view.w;
+    state.view.y = drag.vy - ((e.clientY - drag.y) / r.height) * state.view.h;
+    apply();
+  });
+  const stop = () => { drag = null; svg.classList.remove("drag"); };
+  svg.addEventListener("pointerup", stop);
+  svg.addEventListener("pointercancel", stop);
+  svg.addEventListener("click", (e) => { if (e.target === svg) { state.sel = null; highlight(null); } });
+}
+
+/* ------------------------------------------------------------------- boot */
+
+(async function main() {
+  $("stamp").textContent = BUILD_STAMP;
+  wireStage();
+  $("search").addEventListener("input", (e) => paintWorks(e.target.value));
+
+  try {
+    await engine.boot();
+    $("bar").firstElementChild.style.width = "12%";
+    await engine.open();
+    for (const r of await engine.ask("the notation table", Q.notation)) {
+      state.notation.set(r.t, { label: r.label, drawn: r.drawn });
+    }
+    state.works = (await engine.ask("the 51 drawings", Q.works))
+      .map((r) => ({ w: r.w, title: r.title, nodes: +r.nodes, arcs: +r.arcs, from: r.from, to: r.to }));
+    paintWorks("");
+    // open on the Nugan Hand Bank: a CIA-tied merchant bank that collapsed in
+    // 1980, small enough to read whole and dense enough to show the notation
+    const first = state.works.find((w) => /Nugan Hand/i.test(w.title)) || state.works[0];
+    await openWork(first.w);
+  } catch (err) {
+    $("curtain").innerHTML =
+      `<div><div class="t">The sheet stayed blank.</div>
+       <div class="s">${esc(err.message || err)}</div></div>`;
+  }
+})();

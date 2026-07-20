@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redrawing Mark Lombardi — a .rete graph, in ink</title>
+<meta name="description" content="Mark Lombardi's network drawings redrawn as vectors from lombardi.rete, queried live over HTTP range. Click any node to pull its card straight out of the graph.">
+<style>
+  :root{
+    --paper:#e9dfc8; --paper-lo:#ded2b6; --paper-hi:#f3ecdb;
+    --ink:#2f2a22; --ink-soft:#5a5145; --ink-faint:#8b8271;
+    --red:#a4302a;            /* Lombardi's red pencil: failure, collapse */
+    --rule:#c3b795;
+    --ui:#f7f2e6;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--paper);color:var(--ink);
+    font:13px/1.55 ui-serif,Georgia,"Iowan Old Style","Palatino Linotype",serif;}
+  /* Draftsman's hand: letterspaced caps, the way he lettered names on the sheet. */
+  .lettering{font-family:ui-sans-serif,"Avenir Next","Segoe UI",system-ui,sans-serif;
+    letter-spacing:.09em;text-transform:uppercase;font-size:11px;font-weight:500}
+  a{color:var(--ink);text-underline-offset:2px}
+  a:hover{color:var(--red)}
+  button{font:inherit;color:var(--ink);cursor:pointer}
+
+  #app{display:grid;grid-template-columns:236px 1fr 316px;height:100%}
+
+  /* ---------------------------------------------------------------- panels */
+  .side{height:100%;overflow-y:auto;background:var(--ui);border-right:1px solid var(--rule)}
+  #right{border-right:none;border-left:1px solid var(--rule)}
+  .side::-webkit-scrollbar{width:9px}
+  .side::-webkit-scrollbar-thumb{background:#d8ceb4;border-radius:9px}
+  .phead{padding:13px 15px 10px;border-bottom:1px solid var(--rule);position:sticky;top:0;
+    background:var(--ui);z-index:2}
+  .phead h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.01em}
+  .phead p{margin:3px 0 0;font-size:11.5px;color:var(--ink-faint);line-height:1.45}
+  .sec{padding:11px 15px;border-bottom:1px solid var(--rule)}
+  .sec h2{margin:0 0 7px;font-size:10px;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--ink-faint);font-weight:600;font-family:ui-sans-serif,system-ui,sans-serif}
+
+  #search{width:100%;padding:6px 9px;background:#fffdf6;border:1px solid var(--rule);
+    border-radius:3px;color:var(--ink);font:12.5px/1.4 inherit}
+  #search:focus{outline:none;border-color:var(--ink-faint)}
+
+  #works{list-style:none;margin:0;padding:0}
+  #works li{padding:7px 15px;cursor:pointer;border-bottom:1px solid #ece4d0;font-size:12px;line-height:1.35}
+  #works li:hover{background:#f0e9d8}
+  #works li.on{background:#e7dcc0;box-shadow:inset 3px 0 0 var(--red)}
+  #works li .m{display:block;color:var(--ink-faint);font-size:10.5px;margin-top:2px;
+    font-family:ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em}
+
+  /* ------------------------------------------------------------- the sheet */
+  #stage{position:relative;overflow:hidden;background:var(--paper)}
+  #sheet{display:block;width:100%;height:100%;cursor:grab}
+  #sheet.drag{cursor:grabbing}
+  #stagenote{position:absolute;left:0;right:0;bottom:0;padding:9px 18px;
+    display:flex;justify-content:space-between;gap:14px;pointer-events:none;
+    font-size:10.5px;color:var(--ink-faint);font-family:ui-sans-serif,system-ui,sans-serif;
+    letter-spacing:.05em}
+  #stagenote span{pointer-events:auto}
+  #zoom{position:absolute;right:14px;top:12px;display:flex;gap:5px}
+  #zoom button{width:27px;height:27px;border:1px solid var(--rule);background:#fdfaf1;
+    border-radius:3px;font-size:14px;line-height:1;display:grid;place-items:center;padding:0}
+  #zoom button:hover{border-color:var(--ink-faint)}
+
+  #curtain{position:absolute;inset:0;display:grid;place-items:center;background:var(--paper);
+    z-index:6;transition:opacity .45s;text-align:center;padding:24px}
+  #curtain.gone{opacity:0;pointer-events:none;visibility:hidden;transition:opacity .45s,visibility 0s .45s}
+  #curtain .t{font-size:15px;letter-spacing:.03em}
+  #curtain .s{margin-top:7px;font-size:11.5px;color:var(--ink-faint);
+    font-family:ui-sans-serif,system-ui,sans-serif}
+  #bar{width:200px;height:2px;background:#d5c9a9;margin:15px auto 0;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:var(--ink-soft);transition:width .25s}
+
+  /* -------------------------------------------------------------- the card */
+  .card-empty{padding:15px;color:var(--ink-faint);font-size:12px;line-height:1.6}
+  #cardbody{padding:13px 15px}
+  #cardbody .nm{font-size:15.5px;line-height:1.3;margin:0 0 3px}
+  #cardbody .kind{font-size:10px;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--ink-faint);font-family:ui-sans-serif,system-ui,sans-serif}
+  .stat{display:flex;gap:8px;margin:11px 0 0;flex-wrap:wrap}
+  .stat b{display:block;font-size:17px;font-weight:600;line-height:1.1}
+  .stat div{flex:1;min-width:62px;padding:7px 9px;background:#fffdf6;border:1px solid var(--rule);border-radius:3px}
+  .stat i{font-style:normal;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);
+    font-family:ui-sans-serif,system-ui,sans-serif}
+  .rel{list-style:none;margin:6px 0 0;padding:0}
+  .rel li{padding:5px 0;border-bottom:1px dotted #d9cfb4;font-size:12.2px;line-height:1.4}
+  .rel li:last-child{border-bottom:none}
+  .rel .who{cursor:pointer;text-decoration:underline;text-decoration-style:dotted;
+    text-decoration-color:#c0b494;text-underline-offset:2px}
+  .rel .who:hover{color:var(--red)}
+  .rel .how{display:block;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);
+    font-family:ui-sans-serif,system-ui,sans-serif;margin-top:1px}
+  .rel .amt{color:var(--red);font-variant-numeric:tabular-nums}
+  .dirmark{color:var(--ink-faint);font-family:ui-sans-serif,system-ui,sans-serif}
+  .xref{margin:3px 0 0;padding:0;list-style:none}
+  .xref li{padding:4px 0;font-size:11.5px;border-bottom:1px dotted #d9cfb4;cursor:pointer;line-height:1.35}
+  .xref li:hover{color:var(--red)}
+  .xref li:last-child{border-bottom:none}
+
+  /* ------------------------------------------------------------- query log */
+  #qlog{margin:0;padding:0;list-style:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  #qlog li{border-bottom:1px solid var(--rule);padding:7px 15px}
+  #qlog .q{font-size:10.5px;color:var(--ink-soft);white-space:pre-wrap;word-break:break-word;
+    max-height:74px;overflow:hidden;line-height:1.45}
+  #qlog .r{font-size:10px;color:var(--ink-faint);margin-top:4px;letter-spacing:.03em}
+  .legend{list-style:none;margin:0;padding:0;font-size:11.5px}
+  .legend li{display:flex;align-items:center;gap:9px;padding:2.5px 0}
+  .legend svg{flex:0 0 46px}
+  .legend span{color:var(--ink-soft)}
+  .foot{padding:12px 15px 22px;font-size:10.8px;color:var(--ink-faint);line-height:1.6}
+  .foot a{color:var(--ink-soft)}
+
+  @media (max-width:1180px){
+    #app{grid-template-columns:200px 1fr 280px}
+  }
+  @media (max-width:880px){
+    html,body{overflow:auto}
+    #app{grid-template-columns:1fr;height:auto}
+    .side{height:auto;max-height:280px;border-right:none;border-bottom:1px solid var(--rule)}
+    #right{border-left:none}
+    #stage{height:70vh}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ------------------------------------------------------------- LEFT -->
+  <div class="side" id="left">
+    <div class="phead">
+      <h1>Redrawing Lombardi</h1>
+      <p>51 drawings, read live out of <code>lombardi.rete</code> over HTTP range.</p>
+    </div>
+    <div class="sec">
+      <h2>Find a drawing</h2>
+      <input id="search" placeholder="Harken, BCCI, Nugan Hand…" autocomplete="off">
+    </div>
+    <ul id="works"></ul>
+  </div>
+
+  <!-- ------------------------------------------------------------ SHEET -->
+  <div id="stage">
+    <svg id="sheet" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="zoom">
+      <button id="zin"  title="Zoom in">+</button>
+      <button id="zout" title="Zoom out">−</button>
+      <button id="zfit" title="Fit the sheet">⤢</button>
+    </div>
+    <div id="stagenote">
+      <span id="note-l"></span>
+      <span id="note-r"></span>
+    </div>
+    <div id="curtain">
+      <div>
+        <div class="t">Opening <i>lombardi.rete</i>…</div>
+        <div class="s" id="curtain-s">fetching only the bytes each query touches</div>
+        <div id="bar"><i></i></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------ RIGHT -->
+  <div class="side" id="right">
+    <div class="phead">
+      <h1>The card</h1>
+      <p>Click anyone on the sheet. Every field below is a live query.</p>
+    </div>
+    <div id="card">
+      <div class="card-empty">
+        Lombardi kept his research on index cards — <b>14,500</b> of them — before
+        any of it became a drawing. Click a name on the sheet to pull its card back
+        out of the graph.
+      </div>
+    </div>
+    <div class="sec">
+      <h2>The notation</h2>
+      <ul class="legend" id="legend"></ul>
+    </div>
+    <div class="sec" style="padding-bottom:4px">
+      <h2>Queries sent to the .rete</h2>
+    </div>
+    <ul id="qlog"></ul>
+    <div class="foot">
+      Drawings by <b>Mark Lombardi</b> (1951–2000). Digitized node by node and arc by
+      arc by <b>Robert Tolksdorf</b> (Freie Universität Berlin) and published at
+      <a href="https://lombardinetworks.net/" target="_blank" rel="noopener">lombardinetworks.net</a>
+      under <a href="http://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noopener">CC&nbsp;BY-NC-SA&nbsp;4.0</a>.
+      This page is a <i>reading</i> of that data, not a facsimile: the topology and the
+      arc types are his, the layout is the browser's.
+      <br><br>
+      <a href="playground.html?ds=lombardi">Query it yourself in the playground →</a><br>
+      <span id="stamp"></span>
+    </div>
+  </div>
+</div>
+
+<!-- rete wasm-bindgen no-modules glue (global wasm_bindgen). Also reused as the
+     first half of the worker source: the app reads this tag's textContent. -->
+<script id="reteGlue">
+__GLUE_JS__
+</script>
+<!-- worker body (never executed on the main thread; Blob-spawned). Shared verbatim
+     with the yasgui IDE — RemoteGraph reads over synchronous XHR, which browsers
+     permit only inside a worker. -->
+<script type="text/plain" id="workerSrc">
+__WORKER_JS__
+</script>
+<script>
+const RETE_WASM_B64 = "__WASM_B64__";
+const RETE_URL = "__RETE_URL__";
+const BUILD_STAMP = "__BUILD_STAMP__";
+</script>
+<script>
+__APP_JS__
+</script>
+</body>
+</html>
