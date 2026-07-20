@@ -127,6 +127,15 @@ impl Graph {
         }
         Ok(())
     }
+
+    /// The incompleteness verdict is PER CALL on this resident handle: reset
+    /// the sticky failure flags before evaluating, so one transient network
+    /// failure fails only the call it happened in — failed tiles/chunks are
+    /// never cached, so the next call simply retries them. (Same shape as the
+    /// browser engine's RemoteGraph entry points.)
+    fn fresh_verdict(&self) {
+        self.rete.reset_load_failures();
+    }
 }
 
 #[pymethods]
@@ -143,6 +152,7 @@ impl Graph {
         graph: Option<&str>,
         format: &str,
     ) -> PyResult<String> {
+        self.fresh_verdict();
         let out = py
             .allow_threads(|| -> Result<String, String> {
                 let shapes =
@@ -169,6 +179,7 @@ impl Graph {
     /// QL entailment by query rewriting.
     #[pyo3(signature = (query, *, reason=false))]
     fn query(&self, py: Python<'_>, query: &str, reason: bool) -> PyResult<String> {
+        self.fresh_verdict();
         let out = py
             .allow_threads(|| {
                 if reason {
