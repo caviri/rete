@@ -1154,9 +1154,25 @@ self.onmessage = function (e) {
     return s;
   }
 
-  function setDatasetHeader(title, tagline) {
+  function setDatasetHeader(title, tagline, key) {
     const t = $("dsTitle"); if (t) t.textContent = title || "—";
     const g = $("dsTagline"); if (g) g.textContent = tagline || "";
+    // Descriptive tag chips + license + capability chips under the tagline, so the
+    // loaded dataset's description carries the same at-a-glance chips as the picker.
+    const tagsEl = $("dsHeadTags");
+    if (tagsEl) {
+      let html = "";
+      if (key && CATALOG.datasetExtra) {
+        const ex = CATALOG.datasetExtra[key] || {};
+        const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
+        const sup = datasetSupports(key);
+        html = (ex.tags || []).map((tg) => `<span class="ds-tag">${esc(tg)}</span>`).join("") +
+          (m.license ? `<span class="ds-tag license">${esc(m.license)}</span>` : "") +
+          ["SPARQL", "SHACL", "Reasoning", "Reach", "Provenance", "Geo"]
+            .filter((c) => sup[c]).map((c) => `<span class="ds-cap on">${esc(c)}</span>`).join("");
+      }
+      tagsEl.innerHTML = html;
+    }
   }
 
   // Switch the Explore sub-tab (Entity tables / Community / File byte map / SQL).
@@ -1231,11 +1247,11 @@ self.onmessage = function (e) {
       ? mdLite(infoRow.description)
       : "Custom graph loaded into the same in-browser engine.";
     if (catalogSource && infoRow) {
-      setDatasetHeader(infoRow.label, firstSentence(infoRow.description));
+      setDatasetHeader(infoRow.label, firstSentence(infoRow.description), state.dataset);
     } else {
       const cn = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom graph";
       $("dsName").textContent = cn;
-      setDatasetHeader(cn, "Custom graph loaded into the same in-browser engine.");
+      setDatasetHeader(cn, "Custom graph loaded into the same in-browser engine.", null);
     }
   }
 
@@ -1302,7 +1318,8 @@ self.onmessage = function (e) {
     const info = datasetKey ? datasetInfo(datasetKey) : null;
     $("dsDesc").innerHTML = info ? mdLite(info.description) : "Remote graph, queried lazily over HTTP range: " + esc(url);
     setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
-      info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.");
+      info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.",
+      datasetKey);
     renderExamples();
     // Catalog-driven example panels are independent of the (lazy, unloaded)
     // bytes — refresh them here too, or the SHACL / Reach / Provenance tabs keep

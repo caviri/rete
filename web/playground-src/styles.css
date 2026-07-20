@@ -2453,6 +2453,8 @@ th .coltype.coltype-on {
 /* One row: descriptive tags (green) + capability chips (blue, a different
    property family) sitting next to them. */
 .ds-tags { display: flex; flex-wrap: wrap; gap: 7px; margin: 16px 0 6px; }
+.ds-head-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; align-items: center; }
+.ds-head-tags:empty { display: none; }
 .ds-tag {
   font-size: 11px; font-weight: 600; color: var(--accent-dark);
   background: var(--accent-weak, var(--tint)); border: 1px solid var(--line);
