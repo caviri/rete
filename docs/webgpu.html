@@ -18,11 +18,12 @@
     --ok:#0ca30c; --bad:#e66767;
   }
   *{box-sizing:border-box}
+  html{scroll-behavior:smooth;scroll-padding-top:18px}
   html,body{margin:0;min-height:100%;
     background:radial-gradient(1100px 560px at 50% -12%,#1a1722,#0b0b0f 60%);
     color:var(--ink);font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
   a{color:var(--gold);text-decoration:none} a:hover{text-decoration:underline}
-  .wrap{max-width:1080px;margin:0 auto;padding:20px 16px 64px}
+  .wrap{max-width:1260px;margin:0 auto;padding:20px 16px 64px}
   header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:22px}
   .brand{font-weight:800;letter-spacing:.5px;font-size:15px}
   .brand b{color:var(--gold)}
@@ -92,6 +93,33 @@
   .check h4{margin:0 0 5px;font-size:13px}
   .check p{margin:0;color:var(--mut);font-size:12.5px;max-width:none}
   .check .lat{color:var(--faint);font-style:italic;font-size:12px}
+  /* --- page spine: sidebar, reading paths, progress ---------------------- */
+  .progress{position:fixed;top:0;left:0;height:2px;width:0;background:var(--gold);z-index:60;
+    transition:width .1s linear}
+  .shell{display:grid;grid-template-columns:214px minmax(0,1fr);gap:32px;align-items:start}
+  /* minmax(0,1fr), not 1fr: a bare 1fr is minmax(auto,1fr) and a wide child
+     (a table, a pre) blows the track open past the viewport. */
+  @media (max-width:1040px){ .shell{grid-template-columns:minmax(0,1fr);gap:0} }
+  .toc{position:sticky;top:14px;max-height:calc(100vh - 28px);overflow-y:auto;
+    font-size:12.5px;padding-right:4px}
+  @media (max-width:1040px){ .toc{position:static;max-height:none;margin-bottom:18px} }
+  .toc-toggle{display:none;width:100%;text-align:left}
+  @media (max-width:1040px){ .toc-toggle{display:block} .toclist{display:none;margin-top:10px}
+    .toclist.open{display:block} }
+  .toc h5{margin:16px 0 5px;font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;
+    color:var(--faint);font-weight:700}
+  .toc h5:first-child{margin-top:0}
+  .toc a{display:block;color:var(--mut);padding:4px 9px;border-radius:6px;border-left:2px solid transparent;
+    line-height:1.4;transition:color .2s,background .2s,border-color .2s}
+  .toc a:hover{color:var(--ink);background:rgba(255,255,255,.04);text-decoration:none}
+  .toc a.here{color:var(--gold);border-left-color:var(--gold);background:rgba(244,201,93,.07)}
+  .paths{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 22px}
+  .paths a{display:inline-flex;flex-direction:column;gap:2px;padding:10px 15px;border-radius:10px;
+    border:1px solid var(--edge);background:var(--hot);color:var(--ink);min-width:170px;
+    transition:border-color .2s,transform .15s}
+  .paths a:hover{border-color:var(--amber);text-decoration:none;transform:translateY(-1px)}
+  .paths b{font-size:13.5px}
+  .paths span{color:var(--mut);font-size:12px}
   /* --- the staged algebra explainer -------------------------------------- */
   .algbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:14px 0 10px}
   .algbar .stagename{font-weight:700;font-size:13px}
@@ -226,6 +254,7 @@
 </style>
 </head>
 <body>
+<div class="progress" id="progress"></div>
 <div class="wrap">
 
 <header>
@@ -238,8 +267,42 @@
   </nav>
 </header>
 
+  <div class="paths">
+    <a href="#start"><b>Explain it to me</b><span>What is even going on here?</span></a>
+    <a href="#checks"><b>Let me try it</b><span>Paste an argument, find its cracks</span></a>
+    <a href="#benchmark"><b>Show me the numbers</b><span>Straight to the GPU benchmark</span></a>
+  </div>
+
+  <div class="shell">
+    <nav class="toc" aria-label="Contents">
+      <button class="ghost toc-toggle" id="toc-toggle" aria-expanded="false">☰ Contents</button>
+      <div class="toclist" id="toclist">
+        <h5>Understand</h5>
+        <a href="#start">What is this, really?</a>
+        <a href="#data">What the data looks like</a>
+        <h5>Try it</h5>
+        <a href="#checks">The logical questions</a>
+        <a href="#your-argument">Use it on your own argument</a>
+        <h5>The maths</h5>
+        <a href="#algebra">The algebra, step by step</a>
+        <h5>The benchmark</h5>
+        <a href="#benchmark">Run it on your GPU</a>
+        <a href="#hardware">Your hardware</a>
+        <a href="#crossover">The crossover</a>
+        <a href="#cost">Where the time goes</a>
+        <a href="#results">What actually happened</a>
+        <a href="#numbers">Every number</a>
+        <a href="#shader">The shader</a>
+        <h5>In context</h5>
+        <a href="#meaning">What it means for rete</a>
+        <a href="#caveats">Caveats</a>
+        <a href="#reading">Where the ideas come from</a>
+      </div>
+    </nav>
+    <main>
+
 <!-- ============================================================ ELI5 ==== -->
-<section class="card teach big">
+<section class="card teach big" id="start">
   <h2>Start here: what is this, really?</h2>
 
   <p>Imagine two friends each keep a notebook about <b>what causes what</b>.</p>
@@ -291,7 +354,7 @@
 </section>
 
 <!-- ==================================================== the actual data == -->
-<section class="card">
+<section class="card" id="data">
   <h2>What the data actually looks like</h2>
   <p class="sub">
     Nothing here is hand-waving about <a class="term" href="https://en.wikipedia.org/wiki/Knowledge_graph">graphs</a> in the
@@ -333,7 +396,7 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
 </section>
 
 <!-- ============================================== the question + sandbox == -->
-<section class="card">
+<section class="card" id="checks">
   <h2>The logical questions you can ask</h2>
   <p class="sub">
     Once every claim carries a source and a confidence, a surprising amount of <b>bad reasoning
@@ -481,7 +544,7 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
 </section>
 
 <!-- ================================================ use it on your own ==== -->
-<section class="card teach">
+<section class="card teach" id="your-argument">
   <h2>Use this on an argument of your own</h2>
   <p class="lede">
     The point of writing a disagreement down like this is not to win it. It is that once the claims
@@ -575,7 +638,7 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
 </section>
 
 <!-- ====================================================== the benchmark == -->
-<section class="card">
+<section class="card" id="benchmark">
   <h2>Now do it at scale — on your GPU</h2>
   <p class="lede">
     Six statements is a toy. The real question is what happens at millions of edges, where you would
@@ -626,13 +689,13 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
   </div>
 </section>
 
-<section class="card">
+<section class="card" id="hardware">
   <h2>Your hardware</h2>
   <p class="sub">Detected on load. The last two rows are the reason people ask about VRAM in the first place.</p>
   <dl class="kv" id="env"><dt>status</dt><dd>detecting…</dd></dl>
 </section>
 
-<section class="card">
+<section class="card" id="crossover">
   <h2>The crossover</h2>
   <p class="figcap">
     Speedup over a single CPU core, against problem size. Both axes are logarithmic. Below the dashed
@@ -648,7 +711,7 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
   <div class="figure"><svg id="chart1" viewBox="0 0 900 400" role="img" aria-label="Speedup versus problem size for both kernels"></svg></div>
 </section>
 
-<section class="card">
+<section class="card" id="cost">
   <h2>Where the time actually goes</h2>
   <p class="figcap">
     Each bar is one measurement, split into the three phases of a GPU round trip and normalised to
@@ -664,12 +727,12 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
 </section>
 
 <!-- ================================================== plain-words result == -->
-<section class="card teach">
+<section class="card teach" id="results">
   <h2>So what actually happened?</h2>
   <div class="plain" id="plain"></div>
 </section>
 
-<section class="card">
+<section class="card" id="numbers">
   <h2>Every number</h2>
   <p class="sub">
     Median of repeated runs. <b>agree</b> is the correctness gate: the GPU answer is compared against
@@ -682,7 +745,7 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
   <div class="scroll"><table id="tableB"></table></div>
 </section>
 
-<section class="card">
+<section class="card" id="shader">
   <h2>The shader, for the curious</h2>
   <p class="sub">
     One closure step — "let every node take the best chain reaching it, one arrow longer than last
@@ -707,7 +770,7 @@ fn main(@builtin(global_invocation_id) gid: vec3&lt;u32&gt;) {
 }</pre>
 </section>
 
-<section class="card">
+<section class="card" id="meaning">
   <h2>What this means for rete</h2>
   <ul>
     <li><b>Stage once, run many.</b> Upload measured ~2.2–2.4 GB/s and dominates every large
@@ -727,7 +790,7 @@ fn main(@builtin(global_invocation_id) gid: vec3&lt;u32&gt;) {
   </ul>
 </section>
 
-<section class="card">
+<section class="card" id="caveats">
   <h2>Caveats — do not over-read these numbers</h2>
   <div class="warn">
     <ul style="margin-top:6px">
@@ -876,6 +939,9 @@ fn main(@builtin(global_invocation_id) gid: vec3&lt;u32&gt;) {
     </div>
   </div>
 </section>
+
+</main>
+  </div>
 
 <footer>
   Source: <code>docs/webgpu.html</code> · benchmark harness in <code>experiments/webgpu-coherence/</code> ·
@@ -2170,6 +2236,55 @@ $("ex-circle").addEventListener("click", loadEx("circle", 4));
 $("ex-slope").addEventListener("click", loadEx("slope", 4));
 $("ex-witness").addEventListener("click", loadEx("witness", 3));
 $("ex-blank").addEventListener("click", loadEx("blank", 4));
+/* ------------------------------------------------------ page spine --------
+   Scroll-spy on a plain scroll listener rather than IntersectionObserver: the
+   sections are wildly different heights, and "the last heading you scrolled
+   past" is the answer a reader expects, which observers make awkward.       */
+(function spine() {
+  const links = [...document.querySelectorAll("#toclist a")];
+  const targets = links.map(a => document.getElementById(a.getAttribute("href").slice(1)))
+                       .filter(Boolean);
+  const bar = $("progress");
+  let ticking = false;
+
+  function update() {
+    ticking = false;
+    const de = document.documentElement;
+    const max = de.scrollHeight - innerHeight;
+    bar.style.width = (max > 0 ? Math.min(100, (scrollY / max) * 100) : 0) + "%";
+    let cur = 0;
+    for (let i = 0; i < targets.length; i++) {
+      if (targets[i].getBoundingClientRect().top <= 120) cur = i;
+    }
+    // at the very bottom the last section may never reach the line
+    if (max > 0 && scrollY >= max - 4) cur = targets.length - 1;
+    links.forEach((a, i) => a.classList.toggle("here", i === cur));
+  }
+  // Throttle on a timer, NOT requestAnimationFrame: rAF never fires in a
+  // background tab, so the in-flight flag would latch on forever and the
+  // spy would stay dead even after you came back to the tab.
+  function schedule() {
+    if (ticking) return;
+    ticking = true;
+    setTimeout(update, 60);
+  }
+  addEventListener("scroll", schedule, { passive: true });
+  addEventListener("resize", schedule);
+  update();
+
+  const list = $("toclist"), btn = $("toc-toggle");
+  btn.addEventListener("click", () => {
+    const open = list.classList.toggle("open");
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  // on a phone the list is a menu: close it once you have chosen
+  list.addEventListener("click", e => {
+    if (e.target.tagName === "A" && innerWidth <= 1040) {
+      list.classList.remove("open");
+      btn.setAttribute("aria-expanded", "false");
+    }
+  });
+})();
 buildAlg();
 applyAlgFrame(0);
 $("alg-next").addEventListener("click", () => { algStop(); algGo(algIdx + 1); });
