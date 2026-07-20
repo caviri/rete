@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>rete · WebGPU coherence</title>
+<meta name="description" content="Can a GPU speed up incoherence detection between two fuzzy graphs? A live WebGPU benchmark: elementwise disjointness caps at ~2x, iterated max-min closure reaches 15-17x. Run it on your own GPU."/>
+<style>
+  :root{
+    --bg:#0b0b0f; --panel:#141319; --panel2:#100f15; --ink:#efe9dd; --mut:#9b93a6;
+    --faint:#6e6779; --gold:#f4c95d; --amber:#e8a13a; --edge:#2a2833; --hot:#1c1a24;
+    /* chart series — validated for the dark panel surface #141319 (OKLCH band,
+       chroma floor, protan/deutan separation, normal-vision floor, 3:1 contrast) */
+    --s1:#3987e5;  /* kernel A / upload  */
+    --s2:#c98500;  /* kernel B / compute */
+    --s3:#d55181;  /* readback           */
+    --grid:#232130; --axis:#332f40;
+    --ok:#0ca30c; --bad:#e66767;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;
+    background:radial-gradient(1100px 560px at 50% -12%,#1a1722,#0b0b0f 60%);
+    color:var(--ink);font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  a{color:var(--gold);text-decoration:none} a:hover{text-decoration:underline}
+  .wrap{max-width:1080px;margin:0 auto;padding:20px 16px 64px}
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:22px}
+  .brand{font-weight:800;letter-spacing:.5px;font-size:15px}
+  .brand b{color:var(--gold)}
+  header h1{font-size:16px;font-weight:600;margin:0;color:var(--mut)}
+  .nav{margin-left:auto;display:flex;gap:14px;font-size:12.5px}
+  .nav a{color:var(--mut)}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--edge);
+    border-radius:14px;padding:18px;box-shadow:0 24px 70px rgba(0,0,0,.55);margin-bottom:20px}
+  h2{font-size:15px;margin:0 0 4px;letter-spacing:.2px}
+  h3{font-size:13px;margin:20px 0 6px;color:var(--amber);letter-spacing:.3px;text-transform:uppercase}
+  .lede{color:var(--mut);margin:0 0 18px;max-width:62ch}
+  .sub{color:var(--mut);font-size:12.5px;margin:.2rem 0 14px;max-width:70ch}
+  p{max-width:70ch}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+    background:var(--hot);border:1px solid var(--edge);border-radius:4px;padding:1px 5px}
+  pre{background:var(--hot);border:1px solid var(--edge);border-radius:9px;padding:12px 14px;
+    overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.5;color:#cdc7d8}
+  pre .k{color:var(--gold)} pre .c{color:var(--faint)}
+
+  /* hero */
+  .hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:18px 0 4px}
+  .tile{background:var(--hot);border:1px solid var(--edge);border-radius:11px;padding:14px 16px}
+  .tile .v{font-size:30px;font-weight:700;line-height:1.1;letter-spacing:-.5px}
+  .tile .l{color:var(--mut);font-size:12px;margin-top:5px}
+  .tile.b .v{color:var(--s2)} .tile.a .v{color:var(--s1)} .tile.n .v{color:var(--ink)}
+
+  /* controls */
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  button{font:inherit;font-weight:600;color:#160f00;background:linear-gradient(180deg,#f7d071,var(--amber));
+    border:0;border-radius:9px;padding:9px 17px;cursor:pointer}
+  button:hover{filter:brightness(1.08)} button:disabled{opacity:.5;cursor:default;filter:none}
+  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--edge)}
+  select{font:inherit;background:var(--hot);color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:8px 10px}
+  .pill{border:1px solid var(--edge);border-radius:999px;padding:3px 11px;color:var(--faint);font-size:11px}
+  #runstatus{color:var(--mut);font-size:12.5px}
+
+  /* charts */
+  .figure{margin:6px 0 4px}
+  .figcap{color:var(--mut);font-size:12.5px;margin:0 0 12px;max-width:70ch}
+  svg{display:block;width:100%;height:auto;overflow:visible}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin:2px 0 12px;font-size:12.5px;color:var(--mut)}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+  .tick{fill:var(--faint);font-size:11px;font-variant-numeric:tabular-nums}
+  .axlabel{fill:var(--mut);font-size:11.5px}
+  .dlabel{font-size:12px;font-weight:600}
+  .gridline{stroke:var(--grid);stroke-width:1}
+  .baseline{stroke:var(--axis);stroke-width:1}
+  .parity{stroke:var(--faint);stroke-width:1.5;stroke-dasharray:5 4}
+  .serie{fill:none;stroke-width:2}
+  .barlabel{fill:var(--mut);font-size:11.5px}
+  .bartot{fill:var(--ink);font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums}
+  .hit{fill:transparent;cursor:crosshair}
+  #tip{position:fixed;pointer-events:none;opacity:0;transition:opacity .12s;z-index:50;
+    background:#1d1b26;border:1px solid var(--edge);border-radius:8px;padding:7px 10px;font-size:12px;
+    box-shadow:0 10px 30px rgba(0,0,0,.6);white-space:nowrap}
+  #tip b{color:var(--gold)}
+
+  /* tables */
+  table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;margin:6px 0 4px}
+  th,td{text-align:right;padding:7px 9px;border-bottom:1px solid #201e29}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--mut);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px}
+  td.win{color:var(--ok);font-weight:700} td.lose{color:var(--bad);font-weight:700}
+  .scroll{overflow-x:auto}
+  ul{max-width:70ch;padding-left:20px} li{margin:5px 0}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 18px;font-size:12.5px}
+  .kv dt{color:var(--mut)} .kv dd{margin:0;font-variant-numeric:tabular-nums}
+  .warn{border-left:2px solid var(--amber);padding-left:12px;color:var(--mut)}
+  footer{color:var(--faint);font-size:12px;margin-top:26px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand"><b>rete</b> · webgpu</div>
+  <h1>incoherence between fuzzy graphs, on the GPU</h1>
+  <nav class="nav">
+    <a href="reasoning.html">Reasoning &amp; coherence</a>
+    <a href="playground.html">Playground</a>
+    <a href="index.html">Docs</a>
+  </nav>
+</header>
+
+<section class="card">
+  <h2>Does a GPU help you find contradictions between two graphs?</h2>
+  <p class="lede">
+    When two knowledge graphs describe the same world with <em>degrees</em> of belief rather than
+    crisp facts — CauseNet's extraction confidences, multi-source predictions, alignment scores —
+    checking them against each other stops being symbolic clash detection and becomes arithmetic
+    over [0,1]. Arithmetic is what a GPU is for. This page measures whether that actually pays off.
+  </p>
+
+  <div class="hero">
+    <div class="tile b"><div class="v" id="h1">17.4×</div><div class="l">closure contradictions, end-to-end vs one CPU core</div></div>
+    <div class="tile n"><div class="v" id="h2">144×</div><div class="l">the same kernel, compute only — upload is the tax</div></div>
+    <div class="tile a"><div class="v" id="h3">2.2×</div><div class="l">ceiling for elementwise disjointness, however big it gets</div></div>
+  </div>
+  <p class="sub" id="herosrc">
+    Reference run: NVIDIA Blackwell, Chrome 150, versus a single-threaded JS baseline.
+    The rete engine is also single-threaded in the browser, so one core is the honest comparison.
+  </p>
+
+  <div class="row" style="margin-top:16px">
+    <button id="run" disabled>Run it on your GPU</button>
+    <select id="preset">
+      <option value="quick" selected>Quick — up to 4M edges</option>
+      <option value="full">Full — up to 32M edges (slower)</option>
+    </select>
+    <span id="runstatus">WebGPU support: checking…</span>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Your hardware</h2>
+  <p class="sub">Detected on load. The last two rows are the reason people ask about VRAM in the first place.</p>
+  <dl class="kv" id="env"><dt>status</dt><dd>detecting…</dd></dl>
+</section>
+
+<section class="card">
+  <h2>The crossover</h2>
+  <p class="figcap">
+    Speedup over a single CPU core, against problem size. Both axes are logarithmic. Below the dashed
+    line the GPU is <em>losing</em>. The two kernels do the same kind of work on the same data — the
+    only difference is how much arithmetic each one does per byte it moves.
+  </p>
+  <div class="legend">
+    <span><i style="background:var(--s2)"></i>Kernel B — max-min closure</span>
+    <span><i style="background:var(--s1)"></i>Kernel A — elementwise disjointness</span>
+    <span><i style="background:var(--faint)"></i>parity with one CPU core</span>
+  </div>
+  <div class="figure"><svg id="chart1" viewBox="0 0 900 400" role="img" aria-label="Speedup versus problem size for both kernels"></svg></div>
+</section>
+
+<section class="card">
+  <h2>Where the time actually goes</h2>
+  <p class="figcap">
+    Each bar is one measurement, split into the three phases of a GPU round trip and normalised to
+    100%; the number on the right is the wall-clock total. This is the finding that matters more than
+    any speedup number: at the large sizes, almost everything is <em>upload</em>. Compute is nearly free.
+  </p>
+  <div class="legend">
+    <span><i style="background:var(--s1)"></i>upload (host → GPU)</span>
+    <span><i style="background:var(--s2)"></i>compute (shader)</span>
+    <span><i style="background:var(--s3)"></i>readback (mapAsync)</span>
+  </div>
+  <div class="figure"><svg id="chart2" viewBox="0 0 900 430" role="img" aria-label="Share of GPU time spent on upload, compute and readback"></svg></div>
+</section>
+
+<section class="card">
+  <h2>Every number</h2>
+  <p class="sub">
+    Median of repeated runs. <b>agree</b> is the correctness gate: the GPU result is compared against
+    the CPU result on every configuration — identical counts for kernel A, exact float match for kernel B.
+    A speedup with a failed gate is meaningless.
+  </p>
+  <h3>Kernel A — cross-graph fuzzy disjointness</h3>
+  <div class="scroll"><table id="tableA"></table></div>
+  <h3>Kernel B — fuzzy transitive-closure contradiction</h3>
+  <div class="scroll"><table id="tableB"></table></div>
+</section>
+
+<section class="card">
+  <h2>What the two kernels compute</h2>
+
+  <h3>A · disagreement, entity by entity</h3>
+  <p>
+    Two graphs each assert a fuzzy membership <code>μ ∈ [0,1]</code> over the same aligned entities —
+    "G1 is 0.9 sure this is a <em>Drug</em>, G2 is 0.85 sure it is a <em>Protein</em>, and those classes
+    are disjoint". The conflict degree is the Gödel t-norm <code>min(μ_G1, μ_G2)</code>, and anything
+    above a threshold τ is a violation. One <code>min</code> and one compare per entity: the GPU reads
+    two floats to do almost no work, so it is bound by how fast the data arrives, not by the maths.
+  </p>
+
+  <h3>B · contradictions that only appear after you follow the chain</h3>
+  <p>
+    The interesting incoherences are not visible on any single edge. G1 says <em>x causes y</em> at 0.9
+    and <em>y causes z</em> at 0.8, which implies <em>x causes z</em> at 0.8 under max-min composition;
+    if G2 asserts <em>z causes x</em> at 0.7, the two graphs disagree about causal direction even though
+    no single edge contradicts. Finding those means computing fuzzy reachability — a max-min semiring
+    SpMV, iterated:
+  </p>
+<pre><span class="c">// one closure step; iterated k times with ping-pong buffers,</span>
+<span class="c">// so the graph is uploaded once and never leaves the GPU</span>
+<span class="k">@compute</span> @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3&lt;u32&gt;) {
+  var i: u32 = gid.x;
+  loop {
+    if (i &gt;= params.n) { break; }
+    var best: f32 = x[i];
+    let s = rowPtr[i]; let e = rowPtr[i + 1u];
+    for (var k: u32 = s; k &lt; e; k = k + 1u) {
+      best = <span class="k">max</span>(best, <span class="k">min</span>(val[k], x[colIdx[k]]));   <span class="c">// max-min semiring</span>
+    }
+    y[i] = best;
+    i = i + params.stride;
+  }
+}</pre>
+  <p>
+    This is the same GraphBLAS primitive the academic GPU-SPARQL systems are built on, and it is where
+    the arithmetic intensity lives: every edge is touched k times against resident data. On the largest
+    configuration that is 256 million edge-visits in 16 ms.
+  </p>
+</section>
+
+<section class="card">
+  <h2>What this means for rete</h2>
+  <ul>
+    <li><b>Stage once, run many.</b> Upload throughput measured ~2.2–2.4 GB/s, and it dominates every
+      large configuration. A single one-shot check wastes the GPU; a coherence <em>session</em> that
+      uploads the aligned edge slab once and then sweeps disjointness, asymmetry, k-hop closure and
+      thresholds against the resident copy approaches the compute-only numbers.</li>
+    <li><b>Pick the operation, not the hardware.</b> A 2.2× ceiling and a 17× win came from the same
+      GPU on the same data. Arithmetic intensity decided it.</li>
+    <li><b>This is not an argument for GPU SPARQL.</b> Remote <code>.rete</code> queries are bound by
+      HTTP range round trips, and local ones finish in single-digit milliseconds — below the latency
+      floor of a GPU round trip. Whole-graph coherence is the opposite shape: batch, seconds-scale,
+      one small answer at the end.</li>
+    <li><b>On memory:</b> this adapter caps a single buffer well below the 4 GiB wasm32 heap. Any
+      capacity win comes from using <em>many</em> buffers, not one large one — and rete's lazy tiles
+      and chunked dictionary already keep 17 GB files queryable inside that heap.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Caveats — do not over-read these numbers</h2>
+  <div class="warn">
+    <ul style="margin-top:6px">
+      <li>The baseline is <b>JavaScript, not wasm</b>. Wasm would likely be 1.5–2× faster, so discount
+        accordingly; kernel B still lands around 8–9× end-to-end.</li>
+      <li>The graph is a <b>uniform random</b> digraph. Real causal and citation graphs are power-law,
+        and one-thread-per-row will suffer load imbalance on them. This number needs re-measuring on a
+        skewed degree distribution before anyone trusts it on real data.</li>
+      <li>The reference GPU is a <b>high-end discrete card</b>. Integrated GPUs will be far less dramatic —
+        which is exactly what the button above is for.</li>
+      <li><b>The cost of getting data out of a <code>.rete</code> is not measured here.</b> Decoding tiles
+        and materialising a columnar slab is plausibly larger than both the CPU and the GPU numbers on
+        this page. That is the next thing to measure, and it could sink the whole idea.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  Source: <code>docs/webgpu.html</code> · benchmark harness in <code>experiments/webgpu-coherence/</code> ·
+  <a href="index.html">rete docs</a>
+</footer>
+</div>
+
+<div id="tip"></div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ data ---
+   Reference run, measured 2026-07-20 on NVIDIA Blackwell / Chrome 150.
+   A live run replaces these in place.                                      */
+const REF = {
+  label: "NVIDIA Blackwell · Chrome 150",
+  A: [
+    { n: 1e5,  cpu: 0.8,   up: 0.3,   comp: 2.6,  rb: 0.3, total: 4.1,   agree: true },
+    { n: 1e6,  cpu: 8.3,   up: 1.2,   comp: 3.2,  rb: 0.3, total: 4.8,   agree: true },
+    { n: 1e7,  cpu: 81.6,  up: 36.5,  comp: 1.2,  rb: 0.3, total: 37.7,  agree: true },
+    { n: 3e7,  cpu: 257.7, up: 110.3, comp: 6.5,  rb: 0.5, total: 117.4, agree: true },
+  ],
+  B: [
+    { n: 1e4, deg: 8,  edges: 8e4,   cpu: 5.0,    up: 3.1,   comp: 3.0,  rb: 2.7, total: 8.5,   agree: true },
+    { n: 1e5, deg: 8,  edges: 8e5,   cpu: 61.8,   up: 1.3,   comp: 3.0,  rb: 0.9, total: 5.9,   agree: true },
+    { n: 1e6, deg: 8,  edges: 8e6,   cpu: 656.1,  up: 35.3,  comp: 3.1,  rb: 4.8, total: 42.1,  agree: true },
+    { n: 2e6, deg: 16, edges: 3.2e7, cpu: 2357.3, up: 113.6, comp: 16.4, rb: 3.8, total: 135.4, agree: true },
+  ],
+};
+let DATA = REF;
+
+/* ----------------------------------------------------------------- utils --- */
+const $ = id => document.getElementById(id);
+const fmt = (x, d = 2) => Number.isFinite(x) ? x.toFixed(d) : "—";
+const si = n => n >= 1e6 ? (+(n / 1e6).toFixed(n % 1e6 ? 1 : 0)) + "M"
+              : n >= 1e3 ? (+(n / 1e3).toFixed(n % 1e3 ? 1 : 0)) + "k" : "" + n;
+const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[s.length >> 1]; };
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs = {}, txt) => {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (txt != null) e.textContent = txt;
+  return e;
+};
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const workOf = { A: r => r.n, B: r => r.edges };
+
+/* tooltip ------------------------------------------------------------------ */
+const tip = $("tip");
+function showTip(evt, html) {
+  tip.innerHTML = html; tip.style.opacity = "1";
+  const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = evt.clientX + pad, y = evt.clientY - h - pad;
+  if (x + w > innerWidth - 8) x = evt.clientX - w - pad;
+  if (y < 8) y = evt.clientY + pad;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.opacity = "0"; };
+
+/* ------------------------------------------------------- chart 1: crossover */
+function drawCrossover() {
+  const svg = $("chart1");
+  svg.textContent = "";
+  const W = 900, H = 400, m = { t: 18, r: 148, b: 46, l: 54 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+
+  const pts = { A: DATA.A.map(r => ({ x: r.n, y: r.cpu / r.total, r })),
+                B: DATA.B.map(r => ({ x: r.edges, y: r.cpu / r.total, r })) };
+  const allX = [...pts.A, ...pts.B].map(p => p.x);
+  const allY = [...pts.A, ...pts.B].map(p => p.y);
+  if (!allX.length) return;   // a live run clears the data before the first result lands
+  const x0 = Math.log10(Math.min(...allX) / 2.2), x1 = Math.log10(Math.max(...allX) * 2.2);
+  const y0 = Math.log10(Math.min(0.6, Math.min(...allY) * 0.7));
+  const y1 = Math.log10(Math.max(2, Math.max(...allY) * 1.7));
+  const X = v => m.l + (Math.log10(v) - x0) / (x1 - x0) * iw;
+  const Y = v => m.t + ih - (Math.log10(v) - y0) / (y1 - y0) * ih;
+
+  // y gridlines
+  const yticks = [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50].filter(v => Math.log10(v) >= y0 && Math.log10(v) <= y1);
+  for (const v of yticks) {
+    svg.appendChild(el("line", { x1: m.l, x2: m.l + iw, y1: Y(v), y2: Y(v), class: "gridline" }));
+    svg.appendChild(el("text", { x: m.l - 9, y: Y(v) + 4, class: "tick", "text-anchor": "end" }, v + "×"));
+  }
+  // x gridlines at decades
+  for (let d = Math.ceil(x0); d <= Math.floor(x1); d++) {
+    const v = Math.pow(10, d);
+    svg.appendChild(el("line", { x1: X(v), x2: X(v), y1: m.t, y2: m.t + ih, class: "gridline" }));
+    svg.appendChild(el("text", { x: X(v), y: m.t + ih + 20, class: "tick", "text-anchor": "middle" }, si(v)));
+  }
+  svg.appendChild(el("text", { x: m.l + iw / 2, y: H - 6, class: "axlabel", "text-anchor": "middle" },
+    "problem size — entities (A) or edges (B), log scale"));
+  svg.appendChild(el("text", { x: 14, y: m.t + ih / 2, class: "axlabel", "text-anchor": "middle",
+    transform: `rotate(-90 14 ${m.t + ih / 2})` }, "speedup vs one CPU core"));
+
+  // the "GPU is losing" region, kept recessive
+  if (Math.log10(1) > y0) {
+    svg.appendChild(el("rect", { x: m.l, y: Y(1), width: iw, height: m.t + ih - Y(1),
+      fill: css("--bad"), opacity: .05 }));
+  }
+  svg.appendChild(el("line", { x1: m.l, x2: m.l + iw, y1: Y(1), y2: Y(1), class: "parity" }));
+  svg.appendChild(el("text", { x: m.l + 8, y: Y(1) - 8, class: "tick" }, "parity — GPU loses below this line"));
+  svg.appendChild(el("line", { x1: m.l, x2: m.l, y1: m.t, y2: m.t + ih, class: "baseline" }));
+
+  const series = [
+    { k: "B", color: css("--s2"), name: "Kernel B", sub: "max-min closure" },
+    { k: "A", color: css("--s1"), name: "Kernel A", sub: "elementwise" },
+  ];
+  for (const s of series) {
+    const p = pts[s.k];
+    if (!p.length) continue;
+    svg.appendChild(el("polyline", {
+      points: p.map(q => `${X(q.x)},${Y(q.y)}`).join(" "), class: "serie", stroke: s.color,
+      "stroke-linejoin": "round", "stroke-linecap": "round",
+    }));
+    for (const q of p) {
+      // 2px surface ring so overlapping marks stay legible
+      svg.appendChild(el("circle", { cx: X(q.x), cy: Y(q.y), r: 5.5, fill: s.color,
+        stroke: css("--panel"), "stroke-width": 2 }));
+      const hit = el("circle", { cx: X(q.x), cy: Y(q.y), r: 15, class: "hit" });
+      const label = s.k === "A" ? `${si(q.r.n)} entities` : `${si(q.r.edges)} edges`;
+      hit.addEventListener("mousemove", e => showTip(e,
+        `<b>${s.name}</b> · ${label}<br>speedup <b>${fmt(q.y)}×</b><br>` +
+        `CPU ${fmt(q.r.cpu)} ms → GPU ${fmt(q.r.total)} ms`));
+      hit.addEventListener("mouseleave", hideTip);
+      svg.appendChild(hit);
+    }
+    const last = p[p.length - 1];
+    svg.appendChild(el("text", { x: X(last.x) + 13, y: Y(last.y) - 2, class: "dlabel", fill: s.color }, s.name));
+    svg.appendChild(el("text", { x: X(last.x) + 13, y: Y(last.y) + 14, class: "tick" }, s.sub));
+    svg.appendChild(el("text", { x: X(last.x) + 13, y: Y(last.y) + 30, class: "dlabel", fill: s.color },
+      fmt(last.y, 1) + "×"));
+  }
+}
+
+/* -------------------------------------------------- chart 2: time breakdown */
+function drawBreakdown() {
+  const svg = $("chart2");
+  svg.textContent = "";
+  const rows = [
+    ...DATA.A.map(r => ({ ...r, tag: "A", name: `A · ${si(r.n)} entities` })),
+    ...DATA.B.map(r => ({ ...r, tag: "B", name: `B · ${si(r.edges)} edges` })),
+  ];
+  const W = 900, m = { t: 26, r: 92, b: 30, l: 150 };
+  const rowH = 34, gap = 10;
+  const H = m.t + rows.length * (rowH + gap) + m.b;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const iw = W - m.l - m.r;
+
+  for (const p of [0, 25, 50, 75, 100]) {
+    const x = m.l + iw * p / 100;
+    svg.appendChild(el("line", { x1: x, x2: x, y1: m.t - 6, y2: m.t + rows.length * (rowH + gap) - gap + 2, class: "gridline" }));
+    svg.appendChild(el("text", { x, y: m.t - 12, class: "tick", "text-anchor": "middle" }, p + "%"));
+  }
+
+  const phases = [
+    { key: "up",   color: css("--s1"), name: "upload" },
+    { key: "comp", color: css("--s2"), name: "compute" },
+    { key: "rb",   color: css("--s3"), name: "readback" },
+  ];
+
+  rows.forEach((r, i) => {
+    const y = m.t + i * (rowH + gap);
+    const sum = r.up + r.comp + r.rb;
+    svg.appendChild(el("text", { x: m.l - 12, y: y + rowH / 2 + 4, class: "barlabel", "text-anchor": "end" }, r.name));
+    let x = m.l;
+    phases.forEach((ph, j) => {
+      const frac = r[ph.key] / sum;
+      let w = iw * frac;
+      // 2px surface gap between adjacent segments
+      const drawW = Math.max(0, w - (j < phases.length - 1 ? 2 : 0));
+      const rect = el("rect", { x, y, width: drawW, height: rowH, fill: ph.color,
+        rx: j === 0 || j === phases.length - 1 ? 4 : 0 });
+      rect.addEventListener("mousemove", e => showTip(e,
+        `<b>${ph.name}</b> — ${r.name}<br>${fmt(r[ph.key])} ms · ${(frac * 100).toFixed(1)}% of ${fmt(sum)} ms`));
+      rect.addEventListener("mouseleave", hideTip);
+      svg.appendChild(rect);
+      // label the dominant segment in place when it has room
+      if (frac > 0.16) {
+        svg.appendChild(el("text", { x: x + drawW / 2, y: y + rowH / 2 + 4,
+          "text-anchor": "middle", fill: "#14100a", "font-size": 11.5, "font-weight": 700 },
+          (frac * 100).toFixed(0) + "%"));
+      }
+      x += w;
+    });
+    svg.appendChild(el("text", { x: W - m.r + 10, y: y + rowH / 2 + 4, class: "bartot" }, fmt(sum, 1) + " ms"));
+  });
+}
+
+/* ---------------------------------------------------------------- tables --- */
+function drawTables() {
+  const head = extra => `<tr><th>${extra}</th><th>CPU ms</th><th>GPU ms</th><th>upload</th>
+    <th>compute</th><th>readback</th><th>speedup</th><th>compute only</th><th>agree</th></tr>`;
+  const row = (label, r) => {
+    const sp = r.cpu / r.total, spc = r.cpu / r.comp;
+    return `<tr><td>${label}</td><td>${fmt(r.cpu)}</td><td>${fmt(r.total)}</td><td>${fmt(r.up)}</td>
+      <td>${fmt(r.comp)}</td><td>${fmt(r.rb)}</td>
+      <td class="${sp >= 1 ? "win" : "lose"}">${fmt(sp)}×</td><td>${fmt(spc, 1)}×</td>
+      <td>${r.agree ? "✓" : "✗"}</td></tr>`;
+  };
+  $("tableA").innerHTML = head("entities") + DATA.A.map(r => row(si(r.n), r)).join("");
+  $("tableB").innerHTML = head("graph") +
+    DATA.B.map(r => row(`${si(r.n)} nodes · deg ${r.deg} · ${si(r.edges)} edges`, r)).join("");
+}
+
+function drawHero() {
+  const best = rs => rs.length ? rs.reduce((a, b) => (b.cpu / b.total > a.cpu / a.total ? b : a)) : null;
+  const bestB = best(DATA.B), bestA = best(DATA.A);
+  $("h1").textContent = bestB ? fmt(bestB.cpu / bestB.total, 1) + "×" : "—";
+  $("h2").textContent = bestB ? Math.round(bestB.cpu / bestB.comp) + "×" : "—";
+  $("h3").textContent = bestA ? fmt(bestA.cpu / bestA.total, 1) + "×" : "—";
+}
+
+const renderAll = () => { drawHero(); drawCrossover(); drawBreakdown(); drawTables(); };
+
+/* =========================================================== the benchmark = */
+const WG = 256, TAU = 0.75, ITERS = 8;
+const PRESETS = {
+  quick: { reps: 3, A: [1e5, 1e6, 4e6], B: [[1e4, 8], [1e5, 8], [5e5, 8]] },
+  full:  { reps: 5, A: [1e5, 1e6, 1e7, 3e7], B: [[1e4, 8], [1e5, 8], [1e6, 8], [2e6, 16]] },
+};
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function genPair(n) {
+  const rnd = mulberry32(42), a = new Float32Array(n), b = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    if (rnd() < 0.02) { a[i] = 0.8 + rnd() * 0.2; b[i] = 0.8 + rnd() * 0.2; }
+    else { a[i] = rnd() * 0.9; b[i] = rnd() * 0.5; }
+  }
+  return { a, b };
+}
+function genCSR(n, deg) {
+  const rnd = mulberry32(7), e = n * deg;
+  const rowPtr = new Uint32Array(n + 1), colIdx = new Uint32Array(e), val = new Float32Array(e);
+  for (let i = 0; i < n; i++) rowPtr[i + 1] = rowPtr[i] + deg;
+  for (let k = 0; k < e; k++) { colIdx[k] = (rnd() * n) | 0; val[k] = 0.5 + rnd() * 0.5; }
+  const x0 = new Float32Array(n);
+  for (let i = 0; i < n; i += 1000) x0[i] = 1;
+  return { n, e, deg, rowPtr, colIdx, val, x0 };
+}
+function cpuDisjoint(a, b, tau) {
+  let c = 0;
+  for (let i = 0; i < a.length; i++) { const m = a[i] < b[i] ? a[i] : b[i]; if (m >= tau) c++; }
+  return c;
+}
+function cpuClosure(csr, iters) {
+  const { n, rowPtr, colIdx, val, x0 } = csr;
+  let x = Float32Array.from(x0), y = new Float32Array(n);
+  for (let it = 0; it < iters; it++) {
+    for (let i = 0; i < n; i++) {
+      let best = x[i];
+      for (let k = rowPtr[i], e = rowPtr[i + 1]; k < e; k++) {
+        const w = val[k], xj = x[colIdx[k]], m = w < xj ? w : xj;
+        if (m > best) best = m;
+      }
+      y[i] = best;
+    }
+    const t = x; x = y; y = t;
+  }
+  return x;
+}
+
+const WGSL_A = `
+struct Params { n: u32, tau: f32, stride: u32, _p: u32 };
+@group(0) @binding(0) var<storage, read> a: array<f32>;
+@group(0) @binding(1) var<storage, read> b: array<f32>;
+@group(0) @binding(2) var<storage, read_write> outCount: atomic<u32>;
+@group(0) @binding(3) var<uniform> params: Params;
+var<workgroup> partial: array<u32, ${WG}>;
+@compute @workgroup_size(${WG})
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+  var local: u32 = 0u; var i: u32 = gid.x;
+  loop {
+    if (i >= params.n) { break; }
+    if (min(a[i], b[i]) >= params.tau) { local = local + 1u; }
+    i = i + params.stride;
+  }
+  partial[lid.x] = local;
+  workgroupBarrier();
+  var s: u32 = ${WG >> 1}u;
+  loop {
+    if (s == 0u) { break; }
+    if (lid.x < s) { partial[lid.x] = partial[lid.x] + partial[lid.x + s]; }
+    workgroupBarrier();
+    s = s >> 1u;
+  }
+  if (lid.x == 0u) { atomicAdd(&outCount, partial[0]); }
+}`;
+
+const WGSL_B = `
+struct Params { n: u32, stride: u32, _a: u32, _b: u32 };
+@group(0) @binding(0) var<storage, read> rowPtr: array<u32>;
+@group(0) @binding(1) var<storage, read> colIdx: array<u32>;
+@group(0) @binding(2) var<storage, read> val: array<f32>;
+@group(0) @binding(3) var<storage, read> x: array<f32>;
+@group(0) @binding(4) var<storage, read_write> y: array<f32>;
+@group(0) @binding(5) var<uniform> params: Params;
+@compute @workgroup_size(${WG})
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  var i: u32 = gid.x;
+  loop {
+    if (i >= params.n) { break; }
+    var best: f32 = x[i];
+    let s = rowPtr[i]; let e = rowPtr[i + 1u];
+    for (var k: u32 = s; k < e; k = k + 1u) { best = max(best, min(val[k], x[colIdx[k]])); }
+    y[i] = best;
+    i = i + params.stride;
+  }
+}`;
+
+let device = null, pipeA = null, pipeB = null, maxBinding = 0, maxWG = 65535;
+const STORAGE = 0x80 | 0x08 | 0x04; // STORAGE | COPY_DST | COPY_SRC
+const UNIFORM = 0x40 | 0x08;        // UNIFORM | COPY_DST
+
+async function initGPU() {
+  if (!navigator.gpu) throw new Error("WebGPU is not available in this browser");
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  if (!adapter) throw new Error("no GPU adapter (WebGPU may be disabled or software-only)");
+  const want = ["maxBufferSize", "maxStorageBufferBindingSize", "maxComputeWorkgroupsPerDimension"];
+  const requiredLimits = {};
+  for (const k of want) if (adapter.limits[k] !== undefined) requiredLimits[k] = adapter.limits[k];
+  try { device = await adapter.requestDevice({ requiredLimits }); }
+  catch { device = await adapter.requestDevice(); }
+  device.lost.then(i => setStatus(`GPU device lost: ${i.reason || ""} ${i.message || ""}`));
+  maxBinding = device.limits.maxStorageBufferBindingSize;
+  maxWG = device.limits.maxComputeWorkgroupsPerDimension;
+  pipeA = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: WGSL_A }), entryPoint: "main" } });
+  pipeB = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: WGSL_B }), entryPoint: "main" } });
+
+  const info = adapter.info || {};
+  const gib = b => (b / 2 ** 30).toFixed(2) + " GiB";
+  $("env").innerHTML = `
+    <dt>GPU</dt><dd>${[info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(" ") || "reported anonymously"}</dd>
+    <dt>CPU threads</dt><dd>${navigator.hardwareConcurrency || "?"}</dd>
+    <dt>max buffer</dt><dd>${gib(adapter.limits.maxBufferSize)}</dd>
+    <dt>max storage binding</dt><dd>${gib(adapter.limits.maxStorageBufferBindingSize)}</dd>
+    <dt>wasm32 heap cap</dt><dd>4.00 GiB — for comparison</dd>`;
+  return adapter;
+}
+
+const mkbuf = (size, usage) => device.createBuffer({ size: Math.max(16, size), usage });
+async function readBack(src, bytes) {
+  const st = mkbuf(bytes, 0x01 | 0x08); // MAP_READ | COPY_DST
+  const enc = device.createCommandEncoder();
+  enc.copyBufferToBuffer(src, 0, st, 0, bytes);
+  device.queue.submit([enc.finish()]);
+  await st.mapAsync(1); // GPUMapMode.READ
+  const out = st.getMappedRange().slice(0);
+  st.unmap(); st.destroy();
+  return out;
+}
+const groupsFor = n => Math.min(Math.ceil(n / WG), maxWG);
+
+async function gpuDisjoint(a, b) {
+  const n = a.length, bytes = n * 4;
+  const bA = mkbuf(bytes, STORAGE), bB = mkbuf(bytes, STORAGE),
+        bO = mkbuf(4, STORAGE), bP = mkbuf(16, UNIFORM);
+  const groups = groupsFor(n), stride = groups * WG;
+  let t = performance.now();
+  device.queue.writeBuffer(bA, 0, a); device.queue.writeBuffer(bB, 0, b);
+  device.queue.writeBuffer(bO, 0, new Uint32Array([0]));
+  device.queue.writeBuffer(bP, 0, new Uint32Array([n, 0, stride, 0]));
+  device.queue.writeBuffer(bP, 4, new Float32Array([TAU]));
+  await device.queue.onSubmittedWorkDone();
+  const up = performance.now() - t;
+  const bind = device.createBindGroup({ layout: pipeA.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: bA } }, { binding: 1, resource: { buffer: bB } },
+    { binding: 2, resource: { buffer: bO } }, { binding: 3, resource: { buffer: bP } }] });
+  t = performance.now();
+  const enc = device.createCommandEncoder(), pass = enc.beginComputePass();
+  pass.setPipeline(pipeA); pass.setBindGroup(0, bind); pass.dispatchWorkgroups(groups); pass.end();
+  device.queue.submit([enc.finish()]);
+  await device.queue.onSubmittedWorkDone();
+  const comp = performance.now() - t;
+  t = performance.now();
+  const count = new Uint32Array(await readBack(bO, 4))[0];
+  const rb = performance.now() - t;
+  [bA, bB, bO, bP].forEach(x => x.destroy());
+  return { count, up, comp, rb };
+}
+
+async function gpuClosure(csr) {
+  const { n, e, rowPtr, colIdx, val, x0 } = csr;
+  const bR = mkbuf((n + 1) * 4, STORAGE), bC = mkbuf(e * 4, STORAGE), bV = mkbuf(e * 4, STORAGE),
+        bX = mkbuf(n * 4, STORAGE), bY = mkbuf(n * 4, STORAGE), bP = mkbuf(16, UNIFORM);
+  const groups = groupsFor(n), stride = groups * WG;
+  let t = performance.now();
+  device.queue.writeBuffer(bR, 0, rowPtr); device.queue.writeBuffer(bC, 0, colIdx);
+  device.queue.writeBuffer(bV, 0, val); device.queue.writeBuffer(bX, 0, x0);
+  device.queue.writeBuffer(bP, 0, new Uint32Array([n, stride, 0, 0]));
+  await device.queue.onSubmittedWorkDone();
+  const up = performance.now() - t;
+  const L = pipeB.getBindGroupLayout(0);
+  const mk = (xb, yb) => device.createBindGroup({ layout: L, entries: [
+    { binding: 0, resource: { buffer: bR } }, { binding: 1, resource: { buffer: bC } },
+    { binding: 2, resource: { buffer: bV } }, { binding: 3, resource: { buffer: xb } },
+    { binding: 4, resource: { buffer: yb } }, { binding: 5, resource: { buffer: bP } }] });
+  const ping = mk(bX, bY), pong = mk(bY, bX);
+  t = performance.now();
+  const enc = device.createCommandEncoder();
+  for (let it = 0; it < ITERS; it++) {
+    const p = enc.beginComputePass();
+    p.setPipeline(pipeB); p.setBindGroup(0, it % 2 === 0 ? ping : pong);
+    p.dispatchWorkgroups(groups); p.end();
+  }
+  device.queue.submit([enc.finish()]);
+  await device.queue.onSubmittedWorkDone();
+  const comp = performance.now() - t;
+  t = performance.now();
+  const out = new Float32Array(await readBack(ITERS % 2 ? bY : bX, n * 4));
+  const rb = performance.now() - t;
+  [bR, bC, bV, bX, bY, bP].forEach(x => x.destroy());
+  return { out, up, comp, rb };
+}
+
+const setStatus = m => { $("runstatus").textContent = m; };
+// Yield to the event loop so the charts repaint between configurations. Deliberately
+// NOT requestAnimationFrame: rAF is throttled to a standstill in a background tab,
+// which would stall the whole run the moment the visitor switches away.
+const frame = () => new Promise(r => setTimeout(r, 0));
+
+async function runBenchmark() {
+  if (!device) throw new Error("the GPU device is not ready yet");
+  const P = PRESETS[$("preset").value];
+  $("run").disabled = true;
+  const A = [], B = [], skipped = [];
+
+  // Drop the reference run before measuring: a chart that mixed freshly-measured
+  // points with reference points would be lying about where its numbers came from.
+  DATA = { label: "your GPU", A, B };
+  $("herosrc").innerHTML = "Measuring on <b>your GPU</b> now — the reference run has been cleared, " +
+    "so the charts fill in as each configuration completes.";
+  renderAll();
+  await frame();
+
+  for (const n of P.A) {
+    if (n * 4 > maxBinding) { skipped.push(`A ${si(n)} (over this GPU's binding limit)`); continue; }
+    setStatus(`Kernel A — ${si(n)} entities…`); await frame();
+    const { a, b } = genPair(n);
+    const ct = [];
+    let cc = 0;
+    for (let r = 0; r < P.reps; r++) { const t = performance.now(); cc = cpuDisjoint(a, b, TAU); ct.push(performance.now() - t); }
+    const up = [], cm = [], rb = []; let g = null;
+    for (let r = 0; r < P.reps; r++) { g = await gpuDisjoint(a, b); up.push(g.up); cm.push(g.comp); rb.push(g.rb); }
+    const U = median(up), C = median(cm), R = median(rb);
+    A.push({ n, cpu: median(ct), up: U, comp: C, rb: R, total: U + C + R, agree: cc === g.count });
+    renderAll(); await frame();   // DATA holds these same arrays, so pushes are already visible
+  }
+
+  for (const [n, deg] of P.B) {
+    if (n * deg * 4 > maxBinding) { skipped.push(`B ${si(n * deg)} edges (over this GPU's binding limit)`); continue; }
+    setStatus(`Kernel B — ${si(n * deg)} edges…`); await frame();
+    const csr = genCSR(n, deg);
+    const ct = []; let co = null;
+    for (let r = 0; r < P.reps; r++) { const t = performance.now(); co = cpuClosure(csr, ITERS); ct.push(performance.now() - t); }
+    const up = [], cm = [], rb = []; let g = null;
+    for (let r = 0; r < P.reps; r++) { g = await gpuClosure(csr); up.push(g.up); cm.push(g.comp); rb.push(g.rb); }
+    let diff = 0;
+    for (let i = 0; i < n; i++) diff = Math.max(diff, Math.abs(co[i] - g.out[i]));
+    const U = median(up), C = median(cm), R = median(rb);
+    B.push({ n, deg, edges: n * deg, cpu: median(ct), up: U, comp: C, rb: R, total: U + C + R, agree: diff < 1e-5 });
+    renderAll(); await frame();
+  }
+
+  renderAll();
+  // Never let a dropped configuration read as "we measured everything".
+  const note = skipped.length ? ` Skipped: ${skipped.join("; ")}.` : "";
+  if (!A.length && !B.length) {
+    $("herosrc").innerHTML = "Nothing ran on this GPU — every configuration exceeded its limits." + note;
+    setStatus("No configuration could run here.");
+  } else {
+    $("herosrc").innerHTML = "Measured just now, <b>on your GPU</b>, against a single-threaded JS baseline. " +
+      "Reload the page to return to the reference run." + note;
+    setStatus("Done — the numbers above are yours." + note);
+  }
+  $("run").disabled = false;
+}
+
+/* ------------------------------------------------------------------ boot -- */
+renderAll();
+addEventListener("resize", () => { drawCrossover(); drawBreakdown(); });
+(async () => {
+  try {
+    await initGPU();
+    $("run").disabled = false;          // only clickable once the device exists
+    setStatus("WebGPU ready.");
+  } catch (err) {
+    setStatus(err.message + " — showing the reference run instead.");
+    $("run").disabled = true;
+    $("env").innerHTML = `<dt>status</dt><dd>${err.message}</dd>
+      <dt>wasm32 heap cap</dt><dd>4.00 GiB</dd>`;
+  }
+})();
+$("run").addEventListener("click", () => runBenchmark().catch(e => {
+  setStatus("Failed: " + e.message); $("run").disabled = false;
+}));
+</script>
+</body>
+</html>

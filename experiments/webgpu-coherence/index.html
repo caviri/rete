@@ -1,0 +1,475 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebGPU fuzzy-coherence benchmark</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.55 ui-sans-serif, system-ui, sans-serif; margin: 2rem auto; max-width: 76rem; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; margin-bottom: .2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2rem; }
+  .sub { opacity: .7; margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; margin: .6rem 0 1.2rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: .35rem .55rem; border-bottom: 1px solid rgba(128,128,128,.3); }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-weight: 600; opacity: .8; }
+  .win { color: #12833b; font-weight: 600; }
+  .lose { color: #b3261e; font-weight: 600; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre { background: rgba(128,128,128,.12); padding: .7rem .9rem; border-radius: 6px; overflow-x: auto; font-size: 12px; }
+  #status { padding: .5rem .8rem; border-radius: 6px; background: rgba(128,128,128,.14); }
+  .note { opacity: .75; font-size: 13px; }
+</style>
+
+<h1>WebGPU fuzzy-coherence benchmark</h1>
+<p class="sub">Two cross-graph incoherence kernels, WebGPU compute vs single-threaded JS (proxy for the wasm engine).</p>
+
+<div id="status">Starting…</div>
+
+<h2>Environment</h2>
+<div id="env"></div>
+
+<h2>Kernel A — cross-graph fuzzy disjointness / disagreement</h2>
+<p class="note">
+  Two graphs each assert a fuzzy membership <code>&mu;</code> in [0,1] over the same N aligned entities.
+  Conflict degree = Gödel t-norm <code>min(&mu;<sub>G1</sub>, &mu;<sub>G2</sub>)</code>; we count entities whose
+  conflict exceeds &tau;. <b>Low arithmetic intensity</b> — one min + one compare per element, so this is the
+  shape where PCIe upload and readback overhead should dominate.
+</p>
+<div id="tableA"></div>
+
+<h2>Kernel B — fuzzy transitive-closure contradiction (max-min semiring)</h2>
+<p class="note">
+  Sparse max-min SpMV in CSR, iterated k times GPU-resident (ping-pong buffers, one upload, one readback):
+  <code>y<sub>i</sub> = max(x<sub>i</sub>, max<sub>j&isin;adj(i)</sub> min(w<sub>ij</sub>, x<sub>j</sub>))</code>.
+  This is the GraphBLAS primitive behind fuzzy reachability — "G1 says x&rArr;z at degree 0.8" — which you then
+  test against G2's reverse assertions. <b>High arithmetic intensity</b>, data stays resident across iterations.
+</p>
+<div id="tableB"></div>
+
+<h2>Raw results</h2>
+<pre id="raw">(running)</pre>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------- config
+const REPS = 5;                 // per config; median reported
+const TAU  = 0.75;              // conflict threshold for kernel A
+const ITERS = 8;                // closure iterations for kernel B
+const WG = 256;                 // workgroup size
+
+const SIZES_A = [1e5, 1e6, 1e7, 3e7].map(n => n | 0);
+// [nodes, avgDegree]
+const SIZES_B = [[1e4, 8], [1e5, 8], [1e6, 8], [2e6, 16]].map(([n, d]) => [n | 0, d]);
+
+const results = { env: {}, kernelA: [], kernelB: [] };
+
+// ---------------------------------------------------------------- helpers
+const $ = id => document.getElementById(id);
+const status = m => { $("status").textContent = m; console.log("STATUS " + m); };
+const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[s.length >> 1]; };
+const fmt = (x, d = 2) => Number.isFinite(x) ? x.toFixed(d) : "—";
+const si = n => n >= 1e6 ? (n / 1e6) + "M" : n >= 1e3 ? (n / 1e3) + "k" : "" + n;
+
+// deterministic PRNG so runs are reproducible
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ---------------------------------------------------------------- data gen
+// Two fuzzy membership vectors over aligned entities. ~1-2% genuinely conflict
+// above TAU, so the atomic path is exercised without pathological contention.
+function genPair(n, seed = 42) {
+  const rnd = mulberry32(seed);
+  const a = new Float32Array(n), b = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const conflicting = rnd() < 0.02;
+    if (conflicting) { a[i] = 0.8 + rnd() * 0.2; b[i] = 0.8 + rnd() * 0.2; }
+    else { a[i] = rnd() * 0.9; b[i] = rnd() * 0.5; }
+  }
+  return { a, b };
+}
+
+// Random sparse digraph in CSR with fuzzy edge weights, plus a seed vector.
+function genCSR(n, avgDeg, seed = 7) {
+  const rnd = mulberry32(seed);
+  const e = n * avgDeg;
+  const rowPtr = new Uint32Array(n + 1);
+  const colIdx = new Uint32Array(e);
+  const val = new Float32Array(e);
+  for (let i = 0; i < n; i++) rowPtr[i + 1] = rowPtr[i] + avgDeg;
+  for (let k = 0; k < e; k++) { colIdx[k] = (rnd() * n) | 0; val[k] = 0.5 + rnd() * 0.5; }
+  const x0 = new Float32Array(n);
+  for (let i = 0; i < n; i += 1000) x0[i] = 1.0;   // 0.1% seeds
+  return { n, e, rowPtr, colIdx, val, x0 };
+}
+
+// ---------------------------------------------------------------- CPU kernels
+function cpuDisjoint(a, b, tau) {
+  let count = 0;
+  for (let i = 0; i < a.length; i++) {
+    const c = a[i] < b[i] ? a[i] : b[i];
+    if (c >= tau) count++;
+  }
+  return count;
+}
+
+function cpuClosure(csr, iters) {
+  const { n, rowPtr, colIdx, val, x0 } = csr;
+  let x = Float32Array.from(x0), y = new Float32Array(n);
+  for (let it = 0; it < iters; it++) {
+    for (let i = 0; i < n; i++) {
+      let best = x[i];
+      const s = rowPtr[i], e = rowPtr[i + 1];
+      for (let k = s; k < e; k++) {
+        const w = val[k], xj = x[colIdx[k]];
+        const m = w < xj ? w : xj;
+        if (m > best) best = m;
+      }
+      y[i] = best;
+    }
+    const t = x; x = y; y = t;
+  }
+  return x;
+}
+
+// ---------------------------------------------------------------- WGSL
+const WGSL_A = `
+struct Params { n: u32, tau: f32, stride: u32, _pad: u32 };
+@group(0) @binding(0) var<storage, read> a: array<f32>;
+@group(0) @binding(1) var<storage, read> b: array<f32>;
+@group(0) @binding(2) var<storage, read_write> outCount: atomic<u32>;
+@group(0) @binding(3) var<uniform> params: Params;
+
+var<workgroup> partial: array<u32, ${WG}>;
+
+@compute @workgroup_size(${WG})
+fn main(@builtin(global_invocation_id) gid: vec3<u32>,
+        @builtin(local_invocation_id) lid: vec3<u32>) {
+  var local: u32 = 0u;
+  var i: u32 = gid.x;
+  loop {
+    if (i >= params.n) { break; }
+    let c = min(a[i], b[i]);
+    if (c >= params.tau) { local = local + 1u; }
+    i = i + params.stride;
+  }
+  partial[lid.x] = local;
+  workgroupBarrier();
+  var s: u32 = ${WG >> 1}u;
+  loop {
+    if (s == 0u) { break; }
+    if (lid.x < s) { partial[lid.x] = partial[lid.x] + partial[lid.x + s]; }
+    workgroupBarrier();
+    s = s >> 1u;
+  }
+  if (lid.x == 0u) { atomicAdd(&outCount, partial[0]); }
+}`;
+
+const WGSL_B = `
+struct Params { n: u32, stride: u32, _p0: u32, _p1: u32 };
+@group(0) @binding(0) var<storage, read> rowPtr: array<u32>;
+@group(0) @binding(1) var<storage, read> colIdx: array<u32>;
+@group(0) @binding(2) var<storage, read> val: array<f32>;
+@group(0) @binding(3) var<storage, read> x: array<f32>;
+@group(0) @binding(4) var<storage, read_write> y: array<f32>;
+@group(0) @binding(5) var<uniform> params: Params;
+
+@compute @workgroup_size(${WG})
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  var i: u32 = gid.x;
+  loop {
+    if (i >= params.n) { break; }
+    var best: f32 = x[i];
+    let s = rowPtr[i];
+    let e = rowPtr[i + 1u];
+    for (var k: u32 = s; k < e; k = k + 1u) {
+      let m = min(val[k], x[colIdx[k]]);
+      best = max(best, m);
+    }
+    y[i] = best;
+    i = i + params.stride;
+  }
+}`;
+
+// ---------------------------------------------------------------- GPU utils
+let device = null, maxBinding = 0, maxWGPerDim = 65535;
+
+async function initGPU() {
+  if (!navigator.gpu) throw new Error("navigator.gpu missing — WebGPU unavailable");
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  if (!adapter) throw new Error("requestAdapter returned null");
+
+  // Ask for the adapter's maximums — this is also the live answer to
+  // "how much can a page actually allocate?"
+  const want = ["maxBufferSize", "maxStorageBufferBindingSize", "maxComputeWorkgroupsPerDimension",
+                "maxComputeInvocationsPerWorkgroup", "maxStorageBuffersPerShaderStage"];
+  const requiredLimits = {};
+  for (const k of want) if (adapter.limits[k] !== undefined) requiredLimits[k] = adapter.limits[k];
+  try { device = await adapter.requestDevice({ requiredLimits }); }
+  catch (e) { console.warn("limit request failed, falling back to defaults", e); device = await adapter.requestDevice(); }
+
+  device.lost.then(info => console.error("DEVICE LOST " + JSON.stringify({ reason: info.reason, msg: info.message })));
+  device.addEventListener?.("uncapturederror", e => console.error("GPU ERROR " + e.error.message));
+
+  maxBinding = device.limits.maxStorageBufferBindingSize;
+  maxWGPerDim = device.limits.maxComputeWorkgroupsPerDimension;
+
+  let info = {};
+  try { info = await adapter.requestAdapterInfo?.() ?? {}; } catch {}
+  const env = {
+    vendor: info.vendor || adapter.info?.vendor || "?",
+    architecture: info.architecture || adapter.info?.architecture || "?",
+    device: info.device || adapter.info?.device || "?",
+    description: info.description || adapter.info?.description || "",
+    adapterMaxBufferSize: adapter.limits.maxBufferSize,
+    adapterMaxStorageBinding: adapter.limits.maxStorageBufferBindingSize,
+    grantedMaxBufferSize: device.limits.maxBufferSize,
+    grantedMaxStorageBinding: device.limits.maxStorageBufferBindingSize,
+    maxComputeWorkgroupsPerDimension: maxWGPerDim,
+    userAgent: navigator.userAgent,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+  };
+  results.env = env;
+
+  $("env").innerHTML = `<table>
+    <tr><th>GPU</th><td>${env.vendor} ${env.architecture} ${env.device} ${env.description}</td></tr>
+    <tr><th>adapter maxBufferSize</th><td>${(env.adapterMaxBufferSize / 2 ** 30).toFixed(2)} GiB</td></tr>
+    <tr><th>adapter maxStorageBufferBindingSize</th><td>${(env.adapterMaxStorageBinding / 2 ** 30).toFixed(2)} GiB</td></tr>
+    <tr><th>granted maxBufferSize</th><td>${(env.grantedMaxBufferSize / 2 ** 30).toFixed(2)} GiB</td></tr>
+    <tr><th>granted maxStorageBufferBindingSize</th><td>${(env.grantedMaxStorageBinding / 2 ** 30).toFixed(2)} GiB</td></tr>
+    <tr><th>wasm32 heap cap, for comparison</th><td>4.00 GiB</td></tr>
+    <tr><th>CPU threads</th><td>${env.hardwareConcurrency}</td></tr>
+  </table>`;
+  console.log("ENV " + JSON.stringify(env));
+}
+
+const buf = (size, usage) => device.createBuffer({ size: Math.max(16, size), usage });
+const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+const UNIFORM = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
+
+async function readBack(src, bytes) {
+  const staging = buf(bytes, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+  const enc = device.createCommandEncoder();
+  enc.copyBufferToBuffer(src, 0, staging, 0, bytes);
+  device.queue.submit([enc.finish()]);
+  await staging.mapAsync(GPUMapMode.READ);
+  const out = staging.getMappedRange().slice(0);
+  staging.unmap(); staging.destroy();
+  return out;
+}
+
+const dispatchCount = n => Math.min(Math.ceil(n / WG), maxWGPerDim);
+
+// ---------------------------------------------------------------- GPU kernel A
+async function gpuDisjoint(a, b, tau, pipeline) {
+  const n = a.length, bytes = n * 4;
+  const bufA = buf(bytes, STORAGE), bufB = buf(bytes, STORAGE);
+  const bufOut = buf(4, STORAGE), bufP = buf(16, UNIFORM);
+
+  const groups = dispatchCount(n);
+  const stride = groups * WG;
+
+  // --- upload
+  let t0 = performance.now();
+  device.queue.writeBuffer(bufA, 0, a);
+  device.queue.writeBuffer(bufB, 0, b);
+  device.queue.writeBuffer(bufOut, 0, new Uint32Array([0]));
+  device.queue.writeBuffer(bufP, 0, new Uint32Array([n, 0, stride, 0]));
+  device.queue.writeBuffer(bufP, 4, new Float32Array([tau]));
+  await device.queue.onSubmittedWorkDone();
+  const upload = performance.now() - t0;
+
+  const bind = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: bufA } }, { binding: 1, resource: { buffer: bufB } },
+      { binding: 2, resource: { buffer: bufOut } }, { binding: 3, resource: { buffer: bufP } },
+    ],
+  });
+
+  // --- compute
+  t0 = performance.now();
+  const enc = device.createCommandEncoder();
+  const pass = enc.beginComputePass();
+  pass.setPipeline(pipeline); pass.setBindGroup(0, bind);
+  pass.dispatchWorkgroups(groups);
+  pass.end();
+  device.queue.submit([enc.finish()]);
+  await device.queue.onSubmittedWorkDone();
+  const compute = performance.now() - t0;
+
+  // --- readback
+  t0 = performance.now();
+  const count = new Uint32Array(await readBack(bufOut, 4))[0];
+  const readback = performance.now() - t0;
+
+  for (const x of [bufA, bufB, bufOut, bufP]) x.destroy();
+  return { count, upload, compute, readback, total: upload + compute + readback };
+}
+
+// ---------------------------------------------------------------- GPU kernel B
+async function gpuClosure(csr, iters, pipeline) {
+  const { n, e, rowPtr, colIdx, val, x0 } = csr;
+  const bRow = buf((n + 1) * 4, STORAGE), bCol = buf(e * 4, STORAGE), bVal = buf(e * 4, STORAGE);
+  const bX = buf(n * 4, STORAGE), bY = buf(n * 4, STORAGE), bP = buf(16, UNIFORM);
+
+  const groups = dispatchCount(n);
+  const stride = groups * WG;
+
+  // --- upload (once — the whole point: stage, then iterate resident)
+  let t0 = performance.now();
+  device.queue.writeBuffer(bRow, 0, rowPtr);
+  device.queue.writeBuffer(bCol, 0, colIdx);
+  device.queue.writeBuffer(bVal, 0, val);
+  device.queue.writeBuffer(bX, 0, x0);
+  device.queue.writeBuffer(bP, 0, new Uint32Array([n, stride, 0, 0]));
+  await device.queue.onSubmittedWorkDone();
+  const upload = performance.now() - t0;
+
+  const layout = pipeline.getBindGroupLayout(0);
+  const mk = (xb, yb) => device.createBindGroup({
+    layout, entries: [
+      { binding: 0, resource: { buffer: bRow } }, { binding: 1, resource: { buffer: bCol } },
+      { binding: 2, resource: { buffer: bVal } }, { binding: 3, resource: { buffer: xb } },
+      { binding: 4, resource: { buffer: yb } }, { binding: 5, resource: { buffer: bP } },
+    ],
+  });
+  const ping = mk(bX, bY), pong = mk(bY, bX);
+
+  // --- compute: k iterations, ping-pong, no intermediate readback
+  t0 = performance.now();
+  const enc = device.createCommandEncoder();
+  for (let it = 0; it < iters; it++) {
+    const pass = enc.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, it % 2 === 0 ? ping : pong);
+    pass.dispatchWorkgroups(groups);
+    pass.end();
+  }
+  device.queue.submit([enc.finish()]);
+  await device.queue.onSubmittedWorkDone();
+  const compute = performance.now() - t0;
+
+  // --- readback (result vector lands in bY if iters is odd, bX if even)
+  t0 = performance.now();
+  const out = new Float32Array(await readBack(iters % 2 === 1 ? bY : bX, n * 4));
+  const readback = performance.now() - t0;
+
+  for (const x of [bRow, bCol, bVal, bX, bY, bP]) x.destroy();
+  return { out, upload, compute, readback, total: upload + compute + readback };
+}
+
+// ---------------------------------------------------------------- reporting
+function renderTable(rows, el, workLabel) {
+  const head = `<tr><th>${workLabel}</th><th>CPU ms</th><th>GPU total ms</th>
+    <th>upload</th><th>compute</th><th>readback</th><th>speedup (total)</th><th>speedup (compute only)</th><th>agree</th></tr>`;
+  const body = rows.map(r => {
+    const cls = r.speedupTotal >= 1 ? "win" : "lose";
+    return `<tr><td>${r.label}</td><td>${fmt(r.cpuMs)}</td><td>${fmt(r.gpuTotalMs)}</td>
+      <td>${fmt(r.uploadMs)}</td><td>${fmt(r.computeMs)}</td><td>${fmt(r.readbackMs)}</td>
+      <td class="${cls}">${fmt(r.speedupTotal)}×</td><td>${fmt(r.speedupCompute)}×</td>
+      <td>${r.agree ? "✓" : "✗ MISMATCH"}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<table>${head}${body}</table>`;
+}
+
+// ---------------------------------------------------------------- main
+(async function main() {
+  try {
+    status("Initialising WebGPU…");
+    await initGPU();
+
+    const pipeA = device.createComputePipeline({
+      layout: "auto", compute: { module: device.createShaderModule({ code: WGSL_A }), entryPoint: "main" },
+    });
+    const pipeB = device.createComputePipeline({
+      layout: "auto", compute: { module: device.createShaderModule({ code: WGSL_B }), entryPoint: "main" },
+    });
+
+    // ---------------- Kernel A
+    for (const n of SIZES_A) {
+      if (n * 4 > maxBinding) { console.log(`SKIP A n=${n} (exceeds binding limit)`); continue; }
+      status(`Kernel A — n=${si(n)} …`);
+      const { a, b } = genPair(n);
+
+      const cpuTimes = [];
+      let cpuCount = 0;
+      for (let r = 0; r < REPS; r++) {
+        const t = performance.now();
+        cpuCount = cpuDisjoint(a, b, TAU);
+        cpuTimes.push(performance.now() - t);
+      }
+
+      let g = null; const tot = [], up = [], cm = [], rb = [];
+      for (let r = 0; r < REPS; r++) {
+        g = await gpuDisjoint(a, b, TAU, pipeA);
+        tot.push(g.total); up.push(g.upload); cm.push(g.compute); rb.push(g.readback);
+      }
+
+      const row = {
+        label: `n = ${si(n)}`, n,
+        cpuMs: median(cpuTimes), gpuTotalMs: median(tot),
+        uploadMs: median(up), computeMs: median(cm), readbackMs: median(rb),
+        cpuResult: cpuCount, gpuResult: g.count, agree: cpuCount === g.count,
+      };
+      row.speedupTotal = row.cpuMs / row.gpuTotalMs;
+      row.speedupCompute = row.cpuMs / row.computeMs;
+      results.kernelA.push(row);
+      console.log("RESULT_A " + JSON.stringify(row));
+      renderTable(results.kernelA, $("tableA"), "size");
+    }
+
+    // ---------------- Kernel B
+    for (const [n, deg] of SIZES_B) {
+      const e = n * deg;
+      if (e * 4 > maxBinding) { console.log(`SKIP B n=${n} deg=${deg} (edges exceed binding limit)`); continue; }
+      status(`Kernel B — n=${si(n)} deg=${deg} …`);
+      const csr = genCSR(n, deg);
+
+      const cpuTimes = [];
+      let cpuOut = null;
+      for (let r = 0; r < REPS; r++) {
+        const t = performance.now();
+        cpuOut = cpuClosure(csr, ITERS);
+        cpuTimes.push(performance.now() - t);
+      }
+
+      let g = null; const tot = [], up = [], cm = [], rb = [];
+      for (let r = 0; r < REPS; r++) {
+        g = await gpuClosure(csr, ITERS, pipeB);
+        tot.push(g.total); up.push(g.upload); cm.push(g.compute); rb.push(g.readback);
+      }
+
+      let maxDiff = 0;
+      for (let i = 0; i < n; i++) maxDiff = Math.max(maxDiff, Math.abs(cpuOut[i] - g.out[i]));
+
+      const row = {
+        label: `n = ${si(n)}, deg ${deg} (${si(e)} edges, ${ITERS} iters)`, n, deg, edges: e,
+        cpuMs: median(cpuTimes), gpuTotalMs: median(tot),
+        uploadMs: median(up), computeMs: median(cm), readbackMs: median(rb),
+        maxDiff, agree: maxDiff < 1e-5,
+        edgeVisitsPerRun: e * ITERS,
+      };
+      row.speedupTotal = row.cpuMs / row.gpuTotalMs;
+      row.speedupCompute = row.cpuMs / row.computeMs;
+      results.kernelB.push(row);
+      console.log("RESULT_B " + JSON.stringify(row));
+      renderTable(results.kernelB, $("tableB"), "size");
+    }
+
+    $("raw").textContent = JSON.stringify(results, null, 2);
+    status("Done.");
+    console.log("DONE " + JSON.stringify(results));
+  } catch (err) {
+    status("FAILED: " + err.message);
+    $("raw").textContent = String(err && err.stack || err);
+    console.error("FATAL " + (err && err.stack || err));
+  }
+})();
+</script>
