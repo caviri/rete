@@ -92,6 +92,25 @@
   .check h4{margin:0 0 5px;font-size:13px}
   .check p{margin:0;color:var(--mut);font-size:12.5px;max-width:none}
   .check .lat{color:var(--faint);font-style:italic;font-size:12px}
+  /* A defined idea you can go read about. Dotted underline, not colour alone. */
+  a.term{color:var(--gold);text-decoration:none;border-bottom:1px dotted rgba(244,201,93,.55)}
+  a.term:hover{border-bottom-style:solid;text-decoration:none}
+  .check .lat a{color:inherit}
+  /* Identity is carried by a swatch NEXT TO the name, never by colouring text. */
+  .src-tag{white-space:nowrap;font-weight:600}
+  .src-tag i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;
+    background:var(--c);vertical-align:0}
+  .q{color:var(--gold);font-variant-numeric:tabular-nums;font-weight:700}
+  .key{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:16px 0 0;padding-top:14px;
+    border-top:1px solid var(--edge);font-size:12.5px;color:var(--mut)}
+  .key b{color:var(--ink);font-weight:600}
+  .reading{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:6px 26px}
+  .reading h4{margin:16px 0 4px;font-size:12.5px;color:var(--amber);text-transform:uppercase;
+    letter-spacing:.4px}
+  .reading ul{padding-left:18px;margin:0}
+  .reading li{margin:7px 0;color:var(--mut);font-size:12.5px;line-height:1.6}
+  .reading a{border-bottom:1px dotted rgba(244,201,93,.45)}
+  .reading a:hover{text-decoration:none;border-bottom-style:solid}
   /* --- argument diagram, trace and toolbar ------------------------------- */
   .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:16px 0 4px;
     padding-top:14px;border-top:1px solid var(--edge)}
@@ -184,13 +203,17 @@
 
   <p>Imagine two friends each keep a notebook about <b>what causes what</b>.</p>
 
-  <p>Ana writes: <em>stress causes bad sleep — I'm 90% sure.</em><br>
-     Ben writes: <em>bad sleep causes stress — I'm 80% sure.</em></p>
+  <p><span class="src-tag"><i style="--c:#3987e5"></i>Ana</span> writes:
+     <em>stress causes bad sleep — I'm <span class="q">90%</span> sure.</em><br>
+     <span class="src-tag"><i style="--c:#008300"></i>Ben</span> writes:
+     <em>bad sleep causes stress — I'm <span class="q">80%</span> sure.</em></p>
 
-  <p>Notice that neither wrote "yes" or "no". They wrote <b>how sure they are</b>. That number between
-     0 and 1 is the whole point of this page. Knowledge graphs built by machines — scraping papers,
+  <p>Notice that neither wrote "yes" or "no". They wrote <b>how sure they are</b> — a
+     <a class="term" href="https://en.wikipedia.org/wiki/Fuzzy_set">degree</a> rather than a fact. That number between
+     <span class="q">0</span> and <span class="q">1</span> is the whole point of this page. Knowledge graphs built by machines — scraping papers,
      extracting claims from text, merging databases — almost never produce certainty. They produce
-     confidence. So the interesting question is not "is this graph broken", it is
+     confidence, which is what <a class="term" href="https://en.wikipedia.org/wiki/Fuzzy_logic">fuzzy logic</a> exists to
+     reason with. So the interesting question is not "is this graph broken", it is
      <b>"where do these two graphs disagree, and how badly?"</b></p>
 
   <p>Put the notebooks side by side. Some contradictions are <b>easy</b>: they sit on the same line.
@@ -201,7 +224,8 @@
      but she wrote stress&nbsp;→&nbsp;bad sleep, bad sleep&nbsp;→&nbsp;poor focus, and poor
      focus&nbsp;→&nbsp;mistakes. Follow her arrows and she <em>implies</em> it. If Ben wrote
      "mistakes cause stress", the two notebooks disagree about which way the whole loop runs — and
-     you cannot see that on any single line. You have to walk the chains.</p>
+     you cannot see that on any single line. You have to walk the chains — which is the
+     <a class="term" href="https://en.wikipedia.org/wiki/Transitive_closure">transitive closure</a> of everything said.</p>
 
   <p>Walking every chain from every starting point is an enormous amount of extremely simple
      arithmetic. That is exactly what a graphics card is for: instead of one worker checking chains
@@ -215,15 +239,26 @@
   <p>That trade — <b>the walk versus the work</b> — is what everything below measures. It is also why
      we keep quoting two different numbers: <b>17×</b> counts the walk and the work together, while
      <b>144×</b> counts only the work. The gap between them is the walking.</p>
+
+  <div class="key">
+    <span><b>How to read this page:</b></span>
+    <span><span class="badge b">chain</span> follows arrows — the expensive kind of work</span>
+    <span><span class="badge a">same line</span> compares two numbers — the cheap kind</span>
+    <span><span class="src-tag"><i style="--c:#3987e5"></i>a swatch</span> means "who said it"</span>
+    <span><a class="term" href="#reading">dotted links</a> are ideas worth reading about</span>
+  </div>
 </section>
 
 <!-- ==================================================== the actual data == -->
 <section class="card">
   <h2>What the data actually looks like</h2>
   <p class="sub">
-    Nothing here is hand-waving about "graphs" in the abstract. A graph is a pile of
+    Nothing here is hand-waving about <a class="term" href="https://en.wikipedia.org/wiki/Knowledge_graph">graphs</a> in the
+    abstract. A graph is a pile of
     <b>subject → predicate → object</b> statements, and in our case each statement carries a
-    confidence. rete stores that with RDF-star, where a triple can itself be the subject of another
+    confidence. rete stores that with
+    <a class="term" href="https://www.w3.org/TR/rdf12-concepts/">RDF-star</a>, where a triple can
+    itself be the subject of another
     triple:
   </p>
 <pre><span class="c"># Ana's notebook — graph G1</span>
@@ -271,7 +306,7 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
       <h4>Do they disagree about direction? <span class="badge b">chain</span></h4>
       <p>One source says the arrow runs this way, another implies the opposite — possibly only after
         several steps. A two-step round trip is a plain disagreement; a longer one is a
-        <span class="lat">circulus in probando</span>, where a claim ends up supporting itself.</p>
+        <a class="term" href="https://en.wikipedia.org/wiki/Circular_reasoning"><span class="lat">circulus in probando</span></a>, where a claim ends up supporting itself.</p>
     </div>
     <div class="check">
       <h4>Does one cause it and another prevent it? <span class="badge a">same line</span></h4>
@@ -282,22 +317,24 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
       <h4>Is the claim stronger than its support? <span class="badge b">chain</span></h4>
       <p>Someone asserts a big direct effect, but the only route between the two runs through a
         chain of weak steps. A chain is only as strong as its weakest link, so the confident
-        conclusion outruns its evidence — a <span class="lat">slippery slope</span>.</p>
+        conclusion outruns its evidence — a <a class="term" href="https://en.wikipedia.org/wiki/Slippery_slope"><span class="lat">slippery slope</span></a>.</p>
     </div>
     <div class="check">
       <h4>Is something else causing both? <span class="badge b">chain</span></h4>
       <p>Two things move together and someone declares one caused the other — but a third thing
-        causes them both. The classic <span class="lat">cum hoc ergo propter hoc</span>: mistaking
+        <a class="term" href="https://en.wikipedia.org/wiki/Confounding">causes them both</a>. The classic <a class="term" href="https://en.wikipedia.org/wiki/Correlation_does_not_imply_causation"><span class="lat">cum hoc ergo propter hoc</span></a>: mistaking
         a shared cause for a direct one.</p>
     </div>
   </div>
 
   <p class="sub" style="margin-top:14px">
     Following arrows uses <code>min</code> along the path (weakest link) and keeps the <code>max</code>
-    over all paths (best available route). That is the <b>max-min</b> rule, and it is exactly what the
+    over all paths (best available route). That is the <b>max-min</b> rule — the same thing as the
+    <a class="term" href="https://en.wikipedia.org/wiki/Widest_path_problem">widest path problem</a> — and it is exactly what the
     GPU kernel computes — on millions of edges instead of a dozen. Three knobs decide what counts:
     <b>τ</b>, how strong something must be before it is reported; <b>k</b>, how many arrows deep to
-    follow; and the <b>t-norm</b>, how fuzzy logic says "both at once" — cautious <code>min(a,b)</code>
+    follow; and the <a class="term" href="https://en.wikipedia.org/wiki/T-norm"><b>t-norm</b></a>, how fuzzy logic says "both at once" —
+    cautious <code>min(a,b)</code>
     or harsher <code>a × b</code>.
   </p>
 
@@ -379,6 +416,9 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
       round, every node takes the best chain reaching it, one arrow longer than before. A chain is
       only as strong as its weakest link, so values can only fall as they travel. The benchmark runs
       exactly this loop <b>k</b> times over millions of arrows without the data ever leaving the card.
+      Formally it is a sparse matrix multiply in the
+      <a class="term" href="https://en.wikipedia.org/wiki/Semiring">(max, min) semiring</a> — a
+      <a class="term" href="https://graphblas.org/">GraphBLAS</a> primitive.
     </p>
     <div class="row" style="margin-bottom:4px">
       <label for="tracestart" style="color:var(--mut);font-size:12.5px">Start from</label>
@@ -455,8 +495,9 @@ confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="
   <h2>Now do it at scale — on your GPU</h2>
   <p class="lede">
     Six statements is a toy. The real question is what happens at millions of edges, where you would
-    genuinely want to reach for a graphics card. The benchmark runs the same two questions as WebGPU
-    compute shaders and races them against a single CPU core — which is the honest comparison, because
+    genuinely want to reach for a graphics card. The benchmark runs the same two questions as
+    <a class="term" href="https://www.w3.org/TR/webgpu/">WebGPU</a>
+    <a class="term" href="https://www.w3.org/TR/WGSL/">compute shaders</a> and races them against a single CPU core — which is the honest comparison, because
     rete's engine is single-threaded in the browser too.
   </p>
 
@@ -592,7 +633,8 @@ fn main(@builtin(global_invocation_id) gid: vec3&lt;u32&gt;) {
     <li><b>Pick the operation, not the hardware.</b> A 2× ceiling and a 17× win came from the same GPU
       on the same data. Arithmetic intensity decided it.</li>
     <li><b>This is not an argument for GPU SPARQL.</b> Remote <code>.rete</code> queries are bound by
-      HTTP range round trips, and local ones finish in single-digit milliseconds — below the latency
+      <a class="term" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Range_requests">HTTP
+      range</a> round trips, and local ones finish in single-digit milliseconds — below the latency
       floor of a GPU round trip. Whole-graph coherence is the opposite shape: batch, seconds-scale,
       one small answer at the end.</li>
     <li><b>On memory:</b> this adapter caps a single buffer below the 4 GiB wasm32 heap, so any
@@ -607,7 +649,8 @@ fn main(@builtin(global_invocation_id) gid: vec3&lt;u32&gt;) {
     <ul style="margin-top:6px">
       <li>The baseline is <b>JavaScript, not wasm</b>. Wasm would likely be 1.5–2× faster, so discount
         accordingly; kernel B still lands around 8–9× end-to-end.</li>
-      <li>The benchmark graph is <b>uniform random</b>. Real causal and citation graphs are power-law,
+      <li>The benchmark graph is <b>uniform random</b>. Real causal and citation graphs are
+        <a class="term" href="https://en.wikipedia.org/wiki/Power_law">power-law</a>,
         and one-thread-per-row will suffer load imbalance on them. This needs re-measuring on a skewed
         degree distribution before anyone trusts it on real data.</li>
       <li>The reference GPU is a <b>high-end discrete card</b>. Integrated GPUs will be far less
@@ -616,9 +659,137 @@ fn main(@builtin(global_invocation_id) gid: vec3&lt;u32&gt;) {
         tiles and materialising the flat arrays is plausibly larger than both the CPU and GPU numbers
         on this page. That is the next thing to measure, and it could sink the whole idea.</li>
       <li>Real causal systems genuinely contain feedback loops, so "both directions asserted" is not
-        automatically an error. That is precisely why this reports a <em>degree</em> and a threshold
+        automatically an error — <a class="term" href="https://en.wikipedia.org/wiki/Feedback">feedback</a> is real. That is
+        precisely why this reports a <em>degree</em> and a threshold
         rather than a verdict.</li>
     </ul>
+  </div>
+</section>
+
+
+<!-- ==================================================== further reading ==== -->
+<section class="card" id="reading">
+  <h2>Where these ideas come from</h2>
+  <p class="sub">
+    Almost nothing on this page is new. It is a handful of well-studied ideas from three different
+    fields that happen to meet: how to reason with uncertainty, how to do that reasoning as matrix
+    algebra, and how to run matrix algebra on a graphics card in a browser tab.
+  </p>
+
+  <div class="reading">
+    <div>
+      <h4>Reasoning with degrees</h4>
+      <ul>
+        <li><a href="https://en.wikipedia.org/wiki/Fuzzy_logic">Fuzzy logic</a> and
+          <a href="https://en.wikipedia.org/wiki/Fuzzy_set">fuzzy sets</a> — truth as a degree in
+          [0,1] rather than yes/no. The reason every claim here carries a number.</li>
+        <li><a href="https://en.wikipedia.org/wiki/T-norm">T-norm</a> — the family of "both at once"
+          operators. The τ knob picks between the two most common ones:
+          <a href="https://en.wikipedia.org/wiki/Fuzzy_set_operations">Gödel (min) and product</a>.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Composition_of_relations">Composition of relations</a>
+          — chaining "a relates to b" with "b relates to c", which is what following arrows is.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Defeasible_reasoning">Defeasible reasoning</a> —
+          conclusions that can be withdrawn when better information arrives. Why this page reports a
+          degree instead of a verdict.</li>
+      </ul>
+    </div>
+
+    <div>
+      <h4>The fallacies it looks for</h4>
+      <ul>
+        <li><a href="https://en.wikipedia.org/wiki/Circular_reasoning">Circular reasoning</a> and
+          <a href="https://en.wikipedia.org/wiki/Begging_the_question">begging the question</a> —
+          the loop check, when the cycle is three steps or more.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Slippery_slope">Slippery slope</a> — a confident
+          conclusion resting on a chain of weak steps.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Correlation_does_not_imply_causation">Correlation
+          does not imply causation</a> and <a href="https://en.wikipedia.org/wiki/Confounding">confounding</a>
+          — the third-thing-causes-both check.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Post_hoc_ergo_propter_hoc">Post hoc ergo propter
+          hoc</a> — the one this page <em>cannot</em> catch, because it has no notion of time.</li>
+        <li><a href="https://en.wikipedia.org/wiki/List_of_fallacies">List of fallacies</a> — most of
+          the rest are rhetorical, not structural, which is what
+          <a href="fallacies.html">the annotation experiment</a> handles instead
+          (<a href="https://en.wikipedia.org/wiki/Ad_hominem">ad hominem</a>,
+          <a href="https://en.wikipedia.org/wiki/Straw_man">straw man</a>).</li>
+        <li><a href="https://en.wikipedia.org/wiki/Argument_map">Argument mapping</a> — the older,
+          broader tradition of drawing arguments to inspect them.</li>
+      </ul>
+    </div>
+
+    <div>
+      <h4>Chains as algebra</h4>
+      <ul>
+        <li><a href="https://en.wikipedia.org/wiki/Widest_path_problem">Widest path problem</a> —
+          the sharpest single reference here. "The strongest chain is only as strong as its weakest
+          link" is exactly the bottleneck/maximum-capacity path, and max-min composition is how you
+          solve it.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Semiring">Semiring</a> — swap (+, ×) for (max, min)
+          and the same matrix multiply answers a completely different question.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Transitive_closure">Transitive closure</a> and the
+          <a href="https://en.wikipedia.org/wiki/Floyd%E2%80%93Warshall_algorithm">Floyd–Warshall
+          algorithm</a> — what "follow the arrows k steps" converges to.</li>
+        <li><a href="https://graphblas.org/">GraphBLAS</a>
+          (<a href="https://en.wikipedia.org/wiki/GraphBLAS">overview</a>) — the standard that says
+          graph algorithms *are* sparse linear algebra. Kernel B is one of its primitives.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Sparse_matrix">Sparse matrices</a> — the CSR
+          layout the benchmark uploads.</li>
+      </ul>
+    </div>
+
+    <div>
+      <h4>Doing it on the GPU</h4>
+      <ul>
+        <li><a href="https://www.w3.org/TR/webgpu/">WebGPU</a>
+          (<a href="https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API">MDN</a>,
+          <a href="https://en.wikipedia.org/wiki/WebGPU">overview</a>) and
+          <a href="https://www.w3.org/TR/WGSL/">WGSL</a> — the API and the shading language the
+          kernels are written in.</li>
+        <li><a href="https://developer.chrome.com/blog/new-in-webgpu-133">Chrome's buffer limits</a>
+          — where the 2 GiB-per-buffer ceiling on this page's hardware comes from.</li>
+        <li><a href="https://github.com/gpuweb/gpuweb/issues/4432">The <code>mapAsync</code> readback
+          cost</a> — the long-standing complaint that reading results back is slow. It was cheaper
+          than expected here, and the measurement is on this page.</li>
+        <li><a href="https://spidermonkey.dev/blog/2025/01/15/is-memory64-actually-worth-using.html">Is
+          Memory64 actually worth using?</a> — the 4 GiB
+          <a href="https://en.wikipedia.org/wiki/WebAssembly">wasm</a> ceiling, the 16 GB
+          alternative, and its 10–100% bounds-checking cost.</li>
+      </ul>
+    </div>
+
+    <div>
+      <h4>GPUs and RDF, before this</h4>
+      <ul>
+        <li><a href="https://www.vldb.org/pvldb/vol11/p1978-jamour.pdf">MAGiQ</a> — SPARQL compiled
+          to matrix algebra, run on GPUs. The clearest statement of the idea kernel B borrows.</li>
+        <li><a href="https://www.usenix.org/conference/atc18/presentation/wang-siyuan">Wukong+G</a> —
+          GPU-assisted RDF querying, and an honest account of how much work goes into hiding the
+          host-to-GPU transfer. The same transfer that dominates this page.</li>
+        <li><a href="https://arxiv.org/abs/1807.01409">TripleID-Q</a> — brute-force scans over
+          dictionary-encoded triples on a GPU.</li>
+        <li><a href="https://arxiv.org/abs/2102.13027">A survey of RDF stores &amp; SPARQL engines</a>
+          — where all of the above sits in the wider landscape.</li>
+      </ul>
+    </div>
+
+    <div>
+      <h4>The rest of rete</h4>
+      <ul>
+        <li><a href="fallacies.html">Fallacy graphs from a conversation</a> — the companion
+          experiment: an agent reads speech and annotates rhetorical fallacies. This page computes
+          structural ones instead.</li>
+        <li><a href="reasoning.html">Reasoning &amp; coherence</a> — the OWL RL / RDFS reasoner and
+          the incoherence checks that motivated the benchmark.</li>
+        <li><a href="sparql.html">SPARQL support</a> and
+          <a href="getting-started.html">getting started</a> — for when your exported
+          <code>argument.ttl</code> becomes a real graph.</li>
+        <li><a href="https://www.w3.org/TR/rdf12-concepts/">RDF 1.2 concepts</a> — the standard
+          behind the <code>&lt;&lt; … &gt;&gt;</code> syntax in the export.</li>
+        <li><a href="BENCHMARK.html">Benchmarks</a> and
+          <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Range_requests">HTTP range
+          requests</a> — why remote queries are bound by round trips rather than compute.</li>
+      </ul>
+    </div>
   </div>
 </section>
 
@@ -819,7 +990,11 @@ function bestChain(adj, from, to, k, fold, skipKey) {
   return best;
 }
 
-const srcList = set => [...set].join(" and ");
+// "Ana", "Ana and Ben", "Ana, Ben and Cara" — never "Ana and Ben and Cara".
+const srcList = set => {
+  const a = [...set];
+  return a.length < 3 ? a.join(" and ") : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
+};
 // "Ana says" but "Ana and Ben say" — strip the third-person s when plural.
 const vb = (set, word) => (set.size > 1 ? word.replace(/s$/, "") : word);
 const chainHtml = path => path.map(esc).join(' <span class="arrow">→</span> ');
@@ -858,7 +1033,7 @@ function runSandbox() {
          <span class="chain">${chainHtml(loop)}</span> — so every claim in the loop is ultimately
          propped up by itself. The loop survives at strength <em>${fmt(c.d)}</em> (its weakest link),
          and it is spread across <b>${srcList(srcs)}</b>, which is why no single speaker looks wrong.
-         <span class="lat">circulus in probando</span>.`;
+         <a class="term" href="https://en.wikipedia.org/wiki/Circular_reasoning"><span class="lat">circulus in probando</span></a>.`;
     push({ kind: "b", d: c.d, title, why, srcs: [...srcs],
            edges: c.edges.map(e => ekey(e.from, e.to)) });
   }
