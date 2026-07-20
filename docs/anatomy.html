@@ -62,6 +62,13 @@
   .btn:hover{border-color:var(--accent)}
   .empty{color:var(--dim);font-size:12.5px;padding:8px 0}
   code{background:#0e1420;padding:1px 5px;border-radius:4px;font-size:12px}
+  .qbtn{display:block;width:100%;text-align:left;margin:3px 0;padding:6px 9px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--ink);border-radius:7px;cursor:pointer;font-size:12.5px}
+  .qbtn:hover{border-color:var(--accent)}
+  .qbtn.on{border-color:#33d6ff;color:#bfeeff;background:#0e1a24}
+  #sparql{margin:9px 0 6px;padding:8px 10px;background:#0a0f18;border:1px solid var(--line);border-radius:8px;
+    font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#b9c6da;white-space:pre-wrap;max-height:220px;overflow:auto}
+  #qmeta{font-size:12px}
 </style>
 </head>
 <body>
@@ -78,6 +85,13 @@
       <h2>Find a structure <span id="count" class="muted"></span></h2>
       <input id="search" placeholder="search 3,498 structures…" autocomplete="off">
       <ul id="list"></ul>
+    </div>
+    <div class="sec">
+      <h2>Select by query</h2>
+      <div class="muted" style="font-size:11.5px;margin:-2px 0 8px">Real SPARQL against z-anatomy.rete — click to run the selection on the model.</div>
+      <div id="queries"></div>
+      <pre id="sparql" hidden></pre>
+      <div id="qmeta" class="muted" hidden></div>
     </div>
     <div class="sec">
       <h2>Credits</h2>
@@ -128,7 +142,9 @@ const SKIP = new Set(['References']);            // reference axes — never loa
 let graph, nodesByName = new Map(), meshByName = new Map();
 let scene, camera, renderer, controls, root;
 const loaded = new Set();                          // system indices with a loaded GLB
-let selected = null;
+let selected = null, framedOnce = false;
+const HUD_DEFAULT = "Drag to orbit · scroll to zoom · click a structure to select it.";
+function setHud(msg){ const h=document.getElementById('hud'); if(h) h.textContent = msg || HUD_DEFAULT; }
 
 const draco = new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
 const gltfLoader = new GLTFLoader().setDRACOLoader(draco);
@@ -141,13 +157,12 @@ async function init(){
   buildSystemToggles();
   graph.nodes.forEach((n,i)=>{ n.i=i; if(!nodesByName.has(n.n)) nodesByName.set(n.n,n); });
   document.getElementById('count').textContent = `(${graph.nodes.length})`;
-  buildList('');
-  // load defaults
-  const want = graph.systems.map((s,i)=>i).filter(i=>DEFAULT_ON.includes(graph.systems[i]));
-  await loadSystems(want);
-  document.getElementById('loading').style.display='none';
-  frameAll();
+  buildList(''); buildQueries();
   animate();
+  // load defaults — the first system reveals the JSON→GLB scale, then the rest
+  // stream in behind instant bounding-box placeholders.
+  const want = graph.systems.map((s,i)=>i).filter(i=>DEFAULT_ON.includes(graph.systems[i]));
+  loadSystems(want);
 }
 
 function setupThree(){
@@ -190,27 +205,75 @@ const prettySys = s => ({SkeletalSystem:'Skeleton',MuscularSystem:'Muscles',Nerv
   CardioVascular:'Cardiovascular',VisceralSystem:'Viscera',LymphoidOrgans:'Lymphoid',
   Joints:'Joints','Regions of human body':'Body regions'}[s]||s);
 
-async function loadSystems(indices){
-  for(const i of indices){
-    if(loaded.has(i) || SKIP.has(graph.systems[i])) continue;
-    const url = graph.glb[i]; if(!url) continue;
-    showLoading(`loading ${prettySys(graph.systems[i])}…`);
-    const gltf = await gltfLoader.loadAsync(url);
-    gltf.scene.traverse(o=>{
-      if(o.isMesh){
-        o.material = new THREE.MeshStandardMaterial({color:new THREE.Color(SYS_COLORS[i]),
-          roughness:.85, metalness:.02});
-        o.userData.baseColor = new THREE.Color(SYS_COLORS[i]);
-        o.userData.sys = i;
-        if(!meshByName.has(o.name)) meshByName.set(o.name, o);
-      }
-    });
-    root.add(gltf.scene);
-    loaded.add(i);
-    hideLoading();
+// ---- instant bounding-box placeholders while the (heavy) meshes decode ----
+// The JSON gives real-anatomy mm; the GLBs are at their own Blender scale. We learn
+// the JSON→GLB affine from the FIRST loaded system (bbox alignment) so the boxes
+// land exactly where the meshes will, then swap box→mesh per system.
+const placeholders = new Map();          // sysIdx -> LineSegments of box edges
+const BOX_EDGES = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+let mmScale = [0.001,0.001,0.001], mmOff = [0,0,0], scaleKnown = false;
+const tx = (v,k) => v*mmScale[k] + mmOff[k];
+function addPlaceholder(i){
+  if(placeholders.has(i)) return;
+  const pos = [];
+  for(const n of graph.nodes){
+    if(n.sy !== i || !n.b) continue;
+    const x0=tx(n.c[0]-n.b[0],0), x1=tx(n.c[0]+n.b[0],0),
+          y0=tx(n.c[1]-n.b[1],1), y1=tx(n.c[1]+n.b[1],1),
+          z0=tx(n.c[2]-n.b[2],2), z1=tx(n.c[2]+n.b[2],2);
+    const v=[[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
+    for(const [a,b] of BOX_EDGES) pos.push(...v[a], ...v[b]);
   }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  const ls=new THREE.LineSegments(g, new THREE.LineBasicMaterial({color:SYS_COLORS[i], transparent:true, opacity:0.4}));
+  placeholders.set(i, ls); root.add(ls);
+}
+function removePlaceholder(i){ const ls=placeholders.get(i); if(!ls) return;
+  root.remove(ls); ls.geometry.dispose(); ls.material.dispose(); placeholders.delete(i); }
+function rebuildPlaceholders(){ const ids=[...placeholders.keys()]; ids.forEach(removePlaceholder); ids.forEach(addPlaceholder); }
+function deriveScale(i, sceneObj){
+  const gb=new THREE.Box3(); sceneObj.traverse(o=>{ if(o.isMesh) gb.expandByObject(o); });
+  if(gb.isEmpty()) return;
+  const gmn=[gb.min.x,gb.min.y,gb.min.z], gmx=[gb.max.x,gb.max.y,gb.max.z];
+  const jmn=[1e9,1e9,1e9], jmx=[-1e9,-1e9,-1e9];
+  for(const n of graph.nodes){ if(n.sy!==i) continue;
+    for(let k=0;k<3;k++){ jmn[k]=Math.min(jmn[k],n.c[k]-n.b[k]); jmx[k]=Math.max(jmx[k],n.c[k]+n.b[k]); } }
+  for(let k=0;k<3;k++){ const js=jmx[k]-jmn[k], gs=gmx[k]-gmn[k];
+    if(js>1){ mmScale[k]=gs/js; mmOff[k]=gmn[k]-jmn[k]*mmScale[k]; } }
+  scaleKnown=true;
+}
+async function loadOne(i){
+  let gltf; try { gltf = await gltfLoader.loadAsync(graph.glb[i]); } catch(e){ return; }
+  gltf.scene.traverse(o=>{
+    if(o.isMesh){
+      o.material = new THREE.MeshStandardMaterial({color:new THREE.Color(SYS_COLORS[i]), roughness:.85, metalness:.02});
+      o.userData.baseColor = new THREE.Color(SYS_COLORS[i]); o.userData.sys = i;
+      if(!meshByName.has(o.name)) meshByName.set(o.name, o);
+    }
+  });
+  if(!scaleKnown) deriveScale(i, gltf.scene);
+  root.add(gltf.scene); loaded.add(i);
   buildList(document.getElementById('search').value.trim().toLowerCase());
-  if(selected) applySelection(selected);   // re-highlight now that more may be loaded
+}
+async function loadSystems(indices){
+  const todo = indices.filter(i => !loaded.has(i) && !SKIP.has(graph.systems[i]) && graph.glb[i]);
+  if(!todo.length) return;
+  let rest = todo;
+  if(!scaleKnown){                          // load system #1 directly to learn the scale
+    const i0=todo[0]; setHud(`loading ${prettySys(graph.systems[i0])}…`);
+    await loadOne(i0);
+    document.getElementById('loading').style.display='none';
+    rest = todo.slice(1);
+  }
+  rest.forEach(addPlaceholder);             // instant, correctly-scaled boxes for the rest
+  buildList(document.getElementById('search').value.trim().toLowerCase());
+  if(!framedOnce){ frameAll(); framedOnce=true; }   // frame once, not on every toggle
+  for(const i of rest){
+    setHud(`loading ${prettySys(graph.systems[i])} mesh…`);
+    await loadOne(i); removePlaceholder(i);          // box → real mesh
+    if(selected) applySelection(selected);
+  }
+  setHud('');
 }
 function unloadSystem(i){
   const kill=[];
@@ -220,11 +283,12 @@ function unloadSystem(i){
   buildList(document.getElementById('search').value.trim().toLowerCase());
 }
 
+const isShown = i => loaded.has(i) || placeholders.has(i);   // loaded OR box-preview
 function buildList(q){
   const ul=document.getElementById('list'); ul.innerHTML='';
   let shown=0;
   for(const n of graph.nodes){
-    if(!loaded.has(n.sy)) continue;
+    if(!isShown(n.sy)) continue;
     if(q && !n.l.toLowerCase().includes(q)) continue;
     if(++shown>400){ const li=document.createElement('li'); li.className='muted'; li.textContent='… refine the search to see more'; ul.appendChild(li); break; }
     const li=document.createElement('li');
@@ -261,6 +325,60 @@ function applySelection(n){
 }
 function clearSelection(){ selected=null; resetStyles(); renderInfo(null); }
 
+// ---- Select by query: real SPARQL, run as the equivalent selection over the index ----
+const QNS = `PREFIX anat: <https://w3id.org/rete/anatomy#>
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geo3: <https://w3id.org/rete/geo3#>
+PREFIX geof3: <https://w3id.org/rete/geo3/function/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>`;
+const findNode = (label, side) => graph.nodes.find(n => n.l === label && (!side || n.sd === side));
+const d2 = (a, b) => { let s=0; for(let i=0;i<3;i++){ const d=a[i]-b[i]; s+=d*d; } return s; };
+const EXAMPLES = [
+  {label:"All bones", q:`SELECT ?bone WHERE {\n  ?s a anat:Bone ; rdfs:label ?bone .\n}`,
+   sel:ns=>ns.filter(n=>n.t==='bone').map(n=>n.i)},
+  {label:"All muscles", q:`SELECT ?muscle WHERE {\n  ?s a anat:Muscle ; rdfs:label ?muscle .\n}`,
+   sel:ns=>ns.filter(n=>n.t==='muscle').map(n=>n.i)},
+  {label:"Left-side viscera", q:`SELECT ?organ WHERE {\n  ?s a anat:Viscus ; anat:side "left" ; rdfs:label ?organ .\n}`,
+   sel:ns=>ns.filter(n=>n.t==='viscus'&&n.sd==='left').map(n=>n.i)},
+  {label:"Within 60 mm of the liver (geo3)", q:`SELECT ?s (ROUND(geof3:distance3D(?lw,?w)) AS ?mm) WHERE {\n  ?liver rdfs:label "Liver"@en ; geo:hasGeometry/geo3:asWKT3D ?lw .\n  ?s geo:hasGeometry/geo3:asWKT3D ?w .\n  FILTER(?s != ?liver && geof3:distance3D(?lw,?w) < 60)\n} ORDER BY ?mm`,
+   sel:ns=>{ const l=findNode('Liver'); if(!l) return []; return ns.filter(n=>n!==l && d2(n.c,l.c)<60*60).map(n=>n.i); }},
+  {label:"In contact with the stomach (adjacent3D)", q:`SELECT ?neighbour WHERE {\n  ?stomach rdfs:label "Stomach"@en ; geo3:adjacent3D ?n .\n  ?n rdfs:label ?neighbour .\n}`,
+   sel:()=>{ const s=findNode('Stomach'); return s ? s.adj.slice() : []; }},
+  {label:"Thermally coupled to the left kidney", q:`SELECT ?neighbour WHERE {\n  ?k rdfs:label "Kidney"@en ; anat:side "left" ;\n     geo3:thermallyCoupledWith ?n .\n  ?n rdfs:label ?neighbour .\n}`,
+   sel:()=>{ const k=findNode('Kidney','left'); return k ? k.th.slice() : []; }},
+  {label:"Organs with a related cancer", q:`SELECT DISTINCT ?organ ?disease WHERE {\n  ?s rdfs:label ?organ ; anat:relatedDisease ?d .\n  ?d rdfs:label ?disease .\n  FILTER(CONTAINS(LCASE(?disease), "cancer"))\n}`,
+   sel:ns=>ns.filter(n=>n.dis && n.dis.some(x=>x.toLowerCase().includes('cancer'))).map(n=>n.i)},
+];
+function buildQueries(){
+  const box=document.getElementById('queries');
+  EXAMPLES.forEach((ex,k)=>{
+    const b=document.createElement('button'); b.className='qbtn'; b.textContent=ex.label;
+    b.onclick=()=>runQuery(k); box.appendChild(b);
+  });
+}
+function runQuery(k){
+  const ex=EXAMPLES[k];
+  [...document.querySelectorAll('.qbtn')].forEach((b,j)=>b.classList.toggle('on', j===k));
+  const pre=document.getElementById('sparql'); pre.hidden=false; pre.textContent=QNS+"\n"+ex.q;
+  const idxs=[...new Set(ex.sel(graph.nodes))];
+  highlightSet(idxs, 0x33d6ff);
+  const vis=idxs.filter(i=>meshByName.has(graph.nodes[i].n)).length;
+  const meta=document.getElementById('qmeta'); meta.hidden=false;
+  meta.textContent = `${idxs.length} structure${idxs.length===1?'':'s'}${vis<idxs.length?` · ${vis} loaded in 3D`:''}`;
+  selected=null; renderInfo(null);
+}
+function highlightSet(idxs, color){
+  meshByName.forEach(m=> styleMesh(m,{color:m.userData.baseColor, opacity:0.05}));
+  const box=new THREE.Box3(); let any=false;
+  idxs.forEach(i=>{ const m=meshByName.get(graph.nodes[i].n);
+    if(m){ styleMesh(m,{color, opacity:0.97, emissive:color}); box.expandByObject(m); any=true; } });
+  if(any){
+    const c=box.getCenter(new THREE.Vector3()); const s=box.getSize(new THREE.Vector3()).length()||0.3;
+    const dir=new THREE.Vector3(0.4,0.9,0.35).normalize();
+    animateCam(c.clone().add(dir.multiplyScalar(Math.max(s*1.4,0.4))), c);
+  }
+}
+
 function frameMesh(n){
   const m=meshByName.get(n.n); if(!m){ return; }
   const box=new THREE.Box3().setFromObject(m); const c=box.getCenter(new THREE.Vector3());
@@ -271,9 +389,10 @@ function frameMesh(n){
 }
 function frameAll(){
   const box=new THREE.Box3().setFromObject(root); if(box.isEmpty())return;
-  const c=box.getCenter(new THREE.Vector3()); const s=box.getSize(new THREE.Vector3()).length();
+  const c=box.getCenter(new THREE.Vector3()); const size=box.getSize(new THREE.Vector3());
+  const dist=(Math.max(size.x,size.y,size.z)/2)/Math.tan(camera.fov*Math.PI/360)*1.45;  // FOV-fit + margin
   const dir=new THREE.Vector3(0.35,0.9,0.18).normalize();  // frontal, body upright (Z-up)
-  animateCam(c.clone().add(dir.multiplyScalar(s*0.62)), c);
+  animateCam(c.clone().add(dir.multiplyScalar(dist)), c);
 }
 let camAnim=null;
 function animateCam(pos,target){ camAnim={p0:camera.position.clone(),p1:pos,t0:controls.target.clone(),t1:target,s:performance.now(),d:600}; }

@@ -19,6 +19,7 @@ tri = re.compile(r'^<([^>]+)>\s+<([^>]+)>\s+(.*)\s\.$')
 
 label_en, meshnode, tissue, side, system_of, glb = {}, {}, {}, {}, {}, {}
 cx, cy, cz, desc = {}, {}, {}, {}
+half = {}   # struct IRI -> [hx, hy, hz] bounding-box half-extents (mm)
 sys_label = {}
 adj, tis, th = {}, {}, {}
 disease, pheno = {}, {}
@@ -61,6 +62,13 @@ for line in open(NT, encoding="utf-8"):
         cy[s] = float(lit(o))
     elif p == G3 + "z":
         cz[s] = float(lit(o))
+    elif p == G3 + "box" and s.endswith("/geom"):
+        m = re.match(r"BOX3D\(([-.\d ]+),\s*([-.\d ]+)\)", lit(o) or "")
+        if m:
+            mn = [float(x) for x in m.group(1).split()]
+            mx = [float(x) for x in m.group(2).split()]
+            if len(mn) == 3 and len(mx) == 3:
+                half[s[:-5]] = [round((mx[i] - mn[i]) / 2, 1) for i in range(3)]
     elif p == G3 + "adjacent3D":
         adj.setdefault(s, []).append(o.strip("<>"))
     elif p == A + "tissueContinuousWith":
@@ -102,6 +110,7 @@ for iri in node_iris:
         "sd": side.get(iri, ""),
         "sy": sys_index[system_of[iri]],
         "c": [round(cx[iri], 1), round(cy[iri], 1), round(cz[iri], 1)],
+        "b": half.get(iri, [10.0, 10.0, 10.0]),
         "adj": neigh_idx(iri, adj),
         "tis": neigh_idx(iri, tis),
         "th": neigh_idx(iri, th),
