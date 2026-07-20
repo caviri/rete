@@ -10,6 +10,7 @@ caviri/rete`).
 
 | Skill | Use it when | Entry point |
 |---|---|---|
+| **[rete-sparql](rete-sparql/SKILL.md)** | "write or debug a SPARQL query against a `.rete`" | supported surface → extensions (reasoning, RDF-star, SERVICE) → 0-rows gotchas → result formats |
 | **[rete-catalog](rete-catalog/SKILL.md)** | "use an existing published dataset" | discover → card/schema/examples → open/download/federate |
 | **[rete-clients](rete-clients/SKILL.md)** | "wire rete into a new project" | Python / Pyodide / JS / script-tag / wasm / Rust setup + first query |
 | **[rete-from-graph](rete-from-graph/SKILL.md)** | "turn this dataset/graph/ontology/endpoint into a `.rete`" | source → N-Triples → `rete build` → verify |
