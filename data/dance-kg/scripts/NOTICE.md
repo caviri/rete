@@ -2,7 +2,7 @@
 
 **This is a non-commercial, highly experimental research prototype.**
 
-The 3D motion and animation pipeline in `scripts/dance-kg/` (SMPL-X → glTF/animation,
+The 3D motion and animation pipeline in `data/dance-kg/scripts/` (SMPL-X → glTF/animation,
 image and mesh transformations) is built on assets and data that are licensed for
 **non-commercial research use only**. It is exploratory work: heuristics (e.g. marker-based
 hand-contact, leader-frame geometry) are approximations, not ground truth, and the outputs

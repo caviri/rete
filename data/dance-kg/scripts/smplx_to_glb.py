@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """CoMPAS3D take (two SMPL-X dancers) -> one animated, skinned .glb.
 
-NON-COMMERCIAL, HIGHLY EXPERIMENTAL research prototype. See scripts/dance-kg/NOTICE.md.
+NON-COMMERCIAL, HIGHLY EXPERIMENTAL research prototype. See data/dance-kg/scripts/NOTICE.md.
 Uses the SMPL-X body model (Max Planck, non-commercial license) + CoMPAS3D (CC-BY-NC).
-Run ONLY inside the container (scripts/dance-kg/Dockerfile.anim), never on the host.
+Run ONLY inside the container (data/dance-kg/scripts/Dockerfile.anim), never on the host.
 
 We build a glTF skin (armature + linear-blend-skinning weights) and drive it with the
 per-frame joint rotations from the take's `poses`; the GPU/model-viewer does the actual
