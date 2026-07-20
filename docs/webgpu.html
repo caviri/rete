@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>rete · WebGPU coherence</title>
-<meta name="description" content="Can a GPU speed up incoherence detection between two fuzzy graphs? A live WebGPU benchmark: elementwise disjointness caps at ~2x, iterated max-min closure reaches 15-17x. Run it on your own GPU."/>
+<meta name="description" content="Two knowledge graphs, each unsure of itself. Where do they contradict each other — and can a GPU find those contradictions faster than one CPU core? An explained, editable, live benchmark."/>
 <style>
   :root{
     --bg:#0b0b0f; --panel:#141319; --panel2:#100f15; --ink:#efe9dd; --mut:#9b93a6;
@@ -31,35 +31,56 @@
   .nav a{color:var(--mut)}
   .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--edge);
     border-radius:14px;padding:18px;box-shadow:0 24px 70px rgba(0,0,0,.55);margin-bottom:20px}
+  .card.teach{border-color:#33304a;background:linear-gradient(180deg,#16151f,#111017)}
   h2{font-size:15px;margin:0 0 4px;letter-spacing:.2px}
-  h3{font-size:13px;margin:20px 0 6px;color:var(--amber);letter-spacing:.3px;text-transform:uppercase}
+  h3{font-size:13px;margin:22px 0 6px;color:var(--amber);letter-spacing:.3px;text-transform:uppercase}
   .lede{color:var(--mut);margin:0 0 18px;max-width:62ch}
-  .sub{color:var(--mut);font-size:12.5px;margin:.2rem 0 14px;max-width:70ch}
+  .sub{color:var(--mut);font-size:12.5px;margin:.2rem 0 14px;max-width:72ch}
   p{max-width:70ch}
+  .big p{font-size:15px;line-height:1.65}
+  .big p b{color:var(--ink)}
   code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
     background:var(--hot);border:1px solid var(--edge);border-radius:4px;padding:1px 5px}
   pre{background:var(--hot);border:1px solid var(--edge);border-radius:9px;padding:12px 14px;
-    overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.5;color:#cdc7d8}
-  pre .k{color:var(--gold)} pre .c{color:var(--faint)}
+    overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.55;color:#cdc7d8}
+  pre .k{color:var(--gold)} pre .c{color:var(--faint)} pre .n{color:var(--s1)}
 
-  /* hero */
   .hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:18px 0 4px}
   .tile{background:var(--hot);border:1px solid var(--edge);border-radius:11px;padding:14px 16px}
   .tile .v{font-size:30px;font-weight:700;line-height:1.1;letter-spacing:-.5px}
   .tile .l{color:var(--mut);font-size:12px;margin-top:5px}
   .tile.b .v{color:var(--s2)} .tile.a .v{color:var(--s1)} .tile.n .v{color:var(--ink)}
 
-  /* controls */
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .ctrls{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px 18px;margin:10px 0 4px}
+  .ctrl label{display:block;color:var(--mut);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}
+  .ctrl .val{color:var(--gold);font-weight:700;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--amber)}
   button{font:inherit;font-weight:600;color:#160f00;background:linear-gradient(180deg,#f7d071,var(--amber));
     border:0;border-radius:9px;padding:9px 17px;cursor:pointer}
   button:hover{filter:brightness(1.08)} button:disabled{opacity:.5;cursor:default;filter:none}
-  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--edge)}
-  select{font:inherit;background:var(--hot);color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:8px 10px}
-  .pill{border:1px solid var(--edge);border-radius:999px;padding:3px 11px;color:var(--faint);font-size:11px}
+  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--edge);font-weight:500;padding:7px 13px}
+  select,input[type=number]{font:inherit;background:var(--hot);color:var(--ink);border:1px solid var(--edge);
+    border-radius:8px;padding:8px 10px}
+  textarea{width:100%;min-height:172px;background:var(--hot);color:var(--ink);border:1px solid var(--edge);
+    border-radius:9px;padding:11px 13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:12.5px;line-height:1.6;resize:vertical}
+  textarea:focus{outline:1px solid var(--amber)}
   #runstatus{color:var(--mut);font-size:12.5px}
 
-  /* charts */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:860px){ .split{grid-template-columns:1fr} }
+
+  .finding{border:1px solid var(--edge);border-left:3px solid var(--bad);border-radius:9px;
+    padding:11px 14px;margin:9px 0;background:#181620}
+  .finding.none{border-left-color:var(--ok)}
+  .finding .hd{font-weight:700;margin-bottom:5px}
+  .finding .hd .deg{color:var(--bad);font-variant-numeric:tabular-nums}
+  .finding .why{color:var(--mut);font-size:12.5px;line-height:1.65}
+  .finding .why em{color:var(--ink);font-style:normal;font-weight:600}
+  .chain{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#cdc7d8}
+  .arrow{color:var(--amber)}
+
   .figure{margin:6px 0 4px}
   .figcap{color:var(--mut);font-size:12.5px;margin:0 0 12px;max-width:70ch}
   svg{display:block;width:100%;height:auto;overflow:visible}
@@ -80,17 +101,18 @@
     box-shadow:0 10px 30px rgba(0,0,0,.6);white-space:nowrap}
   #tip b{color:var(--gold)}
 
-  /* tables */
   table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;margin:6px 0 4px}
   th,td{text-align:right;padding:7px 9px;border-bottom:1px solid #201e29}
   th:first-child,td:first-child{text-align:left}
   th{color:var(--mut);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px}
   td.win{color:var(--ok);font-weight:700} td.lose{color:var(--bad);font-weight:700}
   .scroll{overflow-x:auto}
-  ul{max-width:70ch;padding-left:20px} li{margin:5px 0}
+  ul{max-width:70ch;padding-left:20px} li{margin:6px 0}
   .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 18px;font-size:12.5px}
   .kv dt{color:var(--mut)} .kv dd{margin:0;font-variant-numeric:tabular-nums}
   .warn{border-left:2px solid var(--amber);padding-left:12px;color:var(--mut)}
+  .plain{font-size:14.5px;line-height:1.7}
+  .plain b{color:var(--gold)}
   footer{color:var(--faint);font-size:12px;margin-top:26px;text-align:center}
 </style>
 </head>
@@ -99,7 +121,7 @@
 
 <header>
   <div class="brand"><b>rete</b> · webgpu</div>
-  <h1>incoherence between fuzzy graphs, on the GPU</h1>
+  <h1>finding contradictions between two unsure graphs</h1>
   <nav class="nav">
     <a href="reasoning.html">Reasoning &amp; coherence</a>
     <a href="playground.html">Playground</a>
@@ -107,26 +129,187 @@
   </nav>
 </header>
 
+<!-- ============================================================ ELI5 ==== -->
+<section class="card teach big">
+  <h2>Start here: what is this, really?</h2>
+
+  <p>Imagine two friends each keep a notebook about <b>what causes what</b>.</p>
+
+  <p>Ana writes: <em>stress causes bad sleep — I'm 90% sure.</em><br>
+     Ben writes: <em>bad sleep causes stress — I'm 80% sure.</em></p>
+
+  <p>Notice that neither wrote "yes" or "no". They wrote <b>how sure they are</b>. That number between
+     0 and 1 is the whole point of this page. Knowledge graphs built by machines — scraping papers,
+     extracting claims from text, merging databases — almost never produce certainty. They produce
+     confidence. So the interesting question is not "is this graph broken", it is
+     <b>"where do these two graphs disagree, and how badly?"</b></p>
+
+  <p>Put the notebooks side by side. Some contradictions are <b>easy</b>: they sit on the same line.
+     Ana says the arrow points one way, Ben says it points the other, and both are confident. Finding
+     those is just comparing numbers, line by line.</p>
+
+  <p>The <b>hard</b> contradictions hide behind a chain. Ana never wrote "stress causes mistakes" —
+     but she wrote stress&nbsp;→&nbsp;bad sleep, bad sleep&nbsp;→&nbsp;poor focus, and poor
+     focus&nbsp;→&nbsp;mistakes. Follow her arrows and she <em>implies</em> it. If Ben wrote
+     "mistakes cause stress", the two notebooks disagree about which way the whole loop runs — and
+     you cannot see that on any single line. You have to walk the chains.</p>
+
+  <p>Walking every chain from every starting point is an enormous amount of extremely simple
+     arithmetic. That is exactly what a graphics card is for: instead of one worker checking chains
+     one at a time, you get thousands of tiny workers, each checking one.</p>
+
+  <p>Here's the catch, and it is the real result of this page. <b>The workers live across the room.</b>
+     Before they can start, you must carry every notebook page over to them, and carry the answer
+     back. If there are twenty pages, the walk takes longer than just checking them yourself. If
+     there are twenty million, the walk is absolutely worth it.</p>
+
+  <p>That trade — <b>the walk versus the work</b> — is what everything below measures. It is also why
+     we keep quoting two different numbers: <b>17×</b> counts the walk and the work together, while
+     <b>144×</b> counts only the work. The gap between them is the walking.</p>
+</section>
+
+<!-- ==================================================== the actual data == -->
 <section class="card">
-  <h2>Does a GPU help you find contradictions between two graphs?</h2>
+  <h2>What the data actually looks like</h2>
+  <p class="sub">
+    Nothing here is hand-waving about "graphs" in the abstract. A graph is a pile of
+    <b>subject → predicate → object</b> statements, and in our case each statement carries a
+    confidence. rete stores that with RDF-star, where a triple can itself be the subject of another
+    triple:
+  </p>
+<pre><span class="c"># Ana's notebook — graph G1</span>
+&lt;&lt; :stress     :causes :poor_sleep &gt;&gt; :confidence <span class="n">0.9</span> .
+&lt;&lt; :poor_sleep :causes :low_focus  &gt;&gt; :confidence <span class="n">0.8</span> .
+&lt;&lt; :low_focus  :causes :mistakes   &gt;&gt; :confidence <span class="n">0.7</span> .
+
+<span class="c"># Ben's notebook — graph G2</span>
+&lt;&lt; :poor_sleep :causes :stress     &gt;&gt; :confidence <span class="n">0.8</span> .
+&lt;&lt; :mistakes   :causes :stress     &gt;&gt; :confidence <span class="n">0.75</span> .
+&lt;&lt; :alertness  :causes :coffee     &gt;&gt; :confidence <span class="n">0.2</span> .</pre>
+
+  <p class="sub" style="margin-top:14px">
+    A GPU cannot read any of that. It has no idea what a URL is. So the last step before the GPU is to
+    flatten the graph into three plain number arrays — which is easy, because rete already stores every
+    term as an integer id internally rather than as a string:
+  </p>
+<pre><span class="c">// the same six statements, as the GPU sees them</span>
+src        [ <span class="n">0</span>,  <span class="n">1</span>,  <span class="n">2</span>  |  <span class="n">1</span>,  <span class="n">3</span>,  <span class="n">4</span> ]   <span class="c">u32  — dictionary ids, never strings</span>
+dst        [ <span class="n">1</span>,  <span class="n">2</span>,  <span class="n">3</span>  |  <span class="n">0</span>,  <span class="n">0</span>,  <span class="n">5</span> ]   <span class="c">u32</span>
+confidence [ <span class="n">.9</span>, <span class="n">.8</span>, <span class="n">.7</span> |  <span class="n">.8</span>, <span class="n">.75</span>, <span class="n">.2</span> ]  <span class="c">f32  — the degree of belief</span>
+             <span class="c">└── G1 ──┘    └─── G2 ───┘</span></pre>
+
+  <p class="sub" style="margin-top:14px">
+    <b>Important honesty note.</b> The six statements above are hand-written so you can follow them.
+    The <em>benchmark</em> further down does not use them — it generates synthetic graphs with
+    millions of random edges, because it is measuring <b>speed</b>, not discovering real facts about
+    sleep. The small editable example in the next section is where you can actually see the reasoning
+    happen.
+  </p>
+</section>
+
+<!-- ============================================== the question + sandbox == -->
+<section class="card">
+  <h2>The question we ask — and a place to change it</h2>
+  <p class="sub">
+    Both contradictions from the story are really <b>the same question asked with a different number
+    of steps</b>:
+  </p>
+  <p style="background:var(--hot);border:1px solid var(--edge);border-radius:9px;padding:13px 15px;max-width:none">
+    G1 implies <b>u ⇒ v</b> at degree <b>d</b>, by following up to <b>k</b> arrows.<br>
+    G2 asserts <b>v → u</b> at degree <b>b</b>.<br>
+    They disagree about direction by <b>conflict = t-norm(d, b)</b> — reported when it reaches <b>τ</b>.
+  </p>
+  <p class="sub">
+    At <b>k = 1</b> that is the easy same-line contradiction. At <b>k &gt; 1</b> it is the hard chain
+    one. Two knobs decide what counts as a finding: <b>τ</b>, how strong a conflict must be before you
+    care, and the <b>t-norm</b>, which is just how fuzzy logic says "both at once" — either the
+    cautious <code>min(d,b)</code> (Gödel) or the harsher <code>d × b</code> (product).
+  </p>
+  <p class="sub">
+    A chain is only as strong as its weakest link, so following arrows uses <code>min</code> along the
+    path and keeps the <code>max</code> over all paths. That is the <b>max-min</b> rule, and it is
+    exactly what the GPU kernel computes — just on millions of edges instead of six.
+  </p>
+
+  <h3>Edit the notebooks and watch the answer change</h3>
+  <p class="sub">
+    This runs the real algorithm on your text, live. Try lowering τ until the chain contradiction
+    appears, or setting <b>k = 1</b> so chains stop being followed at all.
+  </p>
+
+  <div class="split">
+    <div>
+      <textarea id="src" spellcheck="false"></textarea>
+      <div class="row" style="margin-top:9px">
+        <button class="ghost" id="reset">Reset example</button>
+        <button class="ghost" id="addloop">Add a longer chain</button>
+      </div>
+    </div>
+    <div>
+      <div class="ctrls">
+        <div class="ctrl">
+          <label for="tau">τ — report at or above <span class="val" id="tauv">0.70</span></label>
+          <input type="range" id="tau" min="0.05" max="1" step="0.05" value="0.70">
+        </div>
+        <div class="ctrl">
+          <label for="k">k — follow up to <span class="val" id="kv">3</span> arrows</label>
+          <input type="range" id="k" min="1" max="5" step="1" value="3">
+        </div>
+        <div class="ctrl">
+          <label for="tnorm">t-norm — "both at once"</label>
+          <select id="tnorm">
+            <option value="min" selected>Gödel — min(d, b)</option>
+            <option value="prod">product — d × b</option>
+          </select>
+        </div>
+      </div>
+      <div id="findings"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================== the benchmark == -->
+<section class="card">
+  <h2>Now do it at scale — on your GPU</h2>
   <p class="lede">
-    When two knowledge graphs describe the same world with <em>degrees</em> of belief rather than
-    crisp facts — CauseNet's extraction confidences, multi-source predictions, alignment scores —
-    checking them against each other stops being symbolic clash detection and becomes arithmetic
-    over [0,1]. Arithmetic is what a GPU is for. This page measures whether that actually pays off.
+    Six statements is a toy. The real question is what happens at millions of edges, where you would
+    genuinely want to reach for a graphics card. The benchmark runs the same two questions as WebGPU
+    compute shaders and races them against a single CPU core — which is the honest comparison, because
+    rete's engine is single-threaded in the browser too.
   </p>
 
   <div class="hero">
-    <div class="tile b"><div class="v" id="h1">17.4×</div><div class="l">closure contradictions, end-to-end vs one CPU core</div></div>
-    <div class="tile n"><div class="v" id="h2">144×</div><div class="l">the same kernel, compute only — upload is the tax</div></div>
-    <div class="tile a"><div class="v" id="h3">2.2×</div><div class="l">ceiling for elementwise disjointness, however big it gets</div></div>
+    <div class="tile b"><div class="v" id="h1">17.4×</div><div class="l">chain contradictions — walk <em>and</em> work</div></div>
+    <div class="tile n"><div class="v" id="h2">144×</div><div class="l">the same job counting only the work</div></div>
+    <div class="tile a"><div class="v" id="h3">2.2×</div><div class="l">same-line contradictions, however big it gets</div></div>
   </div>
   <p class="sub" id="herosrc">
     Reference run: NVIDIA Blackwell, Chrome 150, versus a single-threaded JS baseline.
-    The rete engine is also single-threaded in the browser, so one core is the honest comparison.
   </p>
 
-  <div class="row" style="margin-top:16px">
+  <div class="ctrls" style="margin-top:16px">
+    <div class="ctrl">
+      <label for="btau">τ threshold <span class="val" id="btauv">0.75</span></label>
+      <input type="range" id="btau" min="0.05" max="0.95" step="0.05" value="0.75">
+    </div>
+    <div class="ctrl">
+      <label for="bk">k — closure steps <span class="val" id="bkv">8</span></label>
+      <input type="range" id="bk" min="1" max="16" step="1" value="8">
+    </div>
+    <div class="ctrl">
+      <label for="bdeg">arrows per node <span class="val" id="bdegv">8</span></label>
+      <input type="range" id="bdeg" min="2" max="32" step="2" value="8">
+    </div>
+    <div class="ctrl">
+      <label for="btnorm">t-norm</label>
+      <select id="btnorm">
+        <option value="0" selected>Gödel — min</option>
+        <option value="1">product</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:14px">
     <button id="run" disabled>Run it on your GPU</button>
     <select id="preset">
       <option value="quick" selected>Quick — up to 4M edges</option>
@@ -146,12 +329,13 @@
   <h2>The crossover</h2>
   <p class="figcap">
     Speedup over a single CPU core, against problem size. Both axes are logarithmic. Below the dashed
-    line the GPU is <em>losing</em>. The two kernels do the same kind of work on the same data — the
-    only difference is how much arithmetic each one does per byte it moves.
+    line the GPU is <em>losing</em> — that is the walk costing more than the work. The two kernels run
+    on the same hardware and the same data; the only difference is how much arithmetic each does per
+    byte it moves.
   </p>
   <div class="legend">
-    <span><i style="background:var(--s2)"></i>Kernel B — max-min closure</span>
-    <span><i style="background:var(--s1)"></i>Kernel A — elementwise disjointness</span>
+    <span><i style="background:var(--s2)"></i>Kernel B — chain contradictions (max-min closure)</span>
+    <span><i style="background:var(--s1)"></i>Kernel A — same-line contradictions</span>
     <span><i style="background:var(--faint)"></i>parity with one CPU core</span>
   </div>
   <div class="figure"><svg id="chart1" viewBox="0 0 900 400" role="img" aria-label="Speedup versus problem size for both kernels"></svg></div>
@@ -161,87 +345,75 @@
   <h2>Where the time actually goes</h2>
   <p class="figcap">
     Each bar is one measurement, split into the three phases of a GPU round trip and normalised to
-    100%; the number on the right is the wall-clock total. This is the finding that matters more than
-    any speedup number: at the large sizes, almost everything is <em>upload</em>. Compute is nearly free.
+    100%; the number on the right is the wall-clock total. This is the walking-versus-working picture:
+    at the large sizes almost everything is <em>upload</em>, and the actual arithmetic is nearly free.
   </p>
   <div class="legend">
-    <span><i style="background:var(--s1)"></i>upload (host → GPU)</span>
-    <span><i style="background:var(--s2)"></i>compute (shader)</span>
-    <span><i style="background:var(--s3)"></i>readback (mapAsync)</span>
+    <span><i style="background:var(--s1)"></i>upload — carrying the pages over</span>
+    <span><i style="background:var(--s2)"></i>compute — the actual checking</span>
+    <span><i style="background:var(--s3)"></i>readback — carrying the answer home</span>
   </div>
   <div class="figure"><svg id="chart2" viewBox="0 0 900 430" role="img" aria-label="Share of GPU time spent on upload, compute and readback"></svg></div>
+</section>
+
+<!-- ================================================== plain-words result == -->
+<section class="card teach">
+  <h2>So what actually happened?</h2>
+  <div class="plain" id="plain"></div>
 </section>
 
 <section class="card">
   <h2>Every number</h2>
   <p class="sub">
-    Median of repeated runs. <b>agree</b> is the correctness gate: the GPU result is compared against
-    the CPU result on every configuration — identical counts for kernel A, exact float match for kernel B.
-    A speedup with a failed gate is meaningless.
+    Median of repeated runs. <b>agree</b> is the correctness gate: the GPU answer is compared against
+    the CPU answer on every configuration — identical counts for kernel A, exact float match for
+    kernel B. A speedup with a failed gate would be meaningless, so it is reported alongside.
   </p>
-  <h3>Kernel A — cross-graph fuzzy disjointness</h3>
+  <h3>Kernel A — same-line contradictions</h3>
   <div class="scroll"><table id="tableA"></table></div>
-  <h3>Kernel B — fuzzy transitive-closure contradiction</h3>
+  <h3>Kernel B — chain contradictions</h3>
   <div class="scroll"><table id="tableB"></table></div>
 </section>
 
 <section class="card">
-  <h2>What the two kernels compute</h2>
-
-  <h3>A · disagreement, entity by entity</h3>
-  <p>
-    Two graphs each assert a fuzzy membership <code>μ ∈ [0,1]</code> over the same aligned entities —
-    "G1 is 0.9 sure this is a <em>Drug</em>, G2 is 0.85 sure it is a <em>Protein</em>, and those classes
-    are disjoint". The conflict degree is the Gödel t-norm <code>min(μ_G1, μ_G2)</code>, and anything
-    above a threshold τ is a violation. One <code>min</code> and one compare per entity: the GPU reads
-    two floats to do almost no work, so it is bound by how fast the data arrives, not by the maths.
+  <h2>The shader, for the curious</h2>
+  <p class="sub">
+    One closure step — "let every node take the best chain reaching it, one arrow longer than last
+    time". It runs k times with the graph never leaving the GPU, which is why kernel B pays the walk
+    once and then works for free.
   </p>
-
-  <h3>B · contradictions that only appear after you follow the chain</h3>
-  <p>
-    The interesting incoherences are not visible on any single edge. G1 says <em>x causes y</em> at 0.9
-    and <em>y causes z</em> at 0.8, which implies <em>x causes z</em> at 0.8 under max-min composition;
-    if G2 asserts <em>z causes x</em> at 0.7, the two graphs disagree about causal direction even though
-    no single edge contradicts. Finding those means computing fuzzy reachability — a max-min semiring
-    SpMV, iterated:
-  </p>
-<pre><span class="c">// one closure step; iterated k times with ping-pong buffers,</span>
-<span class="c">// so the graph is uploaded once and never leaves the GPU</span>
-<span class="k">@compute</span> @workgroup_size(256)
+<pre><span class="k">@compute</span> @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3&lt;u32&gt;) {
   var i: u32 = gid.x;
   loop {
     if (i &gt;= params.n) { break; }
-    var best: f32 = x[i];
+    var best: f32 = x[i];                       <span class="c">// what I already believe</span>
     let s = rowPtr[i]; let e = rowPtr[i + 1u];
     for (var k: u32 = s; k &lt; e; k = k + 1u) {
-      best = <span class="k">max</span>(best, <span class="k">min</span>(val[k], x[colIdx[k]]));   <span class="c">// max-min semiring</span>
+      <span class="c">// a chain is only as strong as its weakest link → min</span>
+      <span class="c">// and we keep the best chain of all of them   → max</span>
+      best = <span class="k">max</span>(best, <span class="k">min</span>(val[k], x[colIdx[k]]));
     }
     y[i] = best;
-    i = i + params.stride;
+    i = i + params.stride;                      <span class="c">// grid-stride: cover any size</span>
   }
 }</pre>
-  <p>
-    This is the same GraphBLAS primitive the academic GPU-SPARQL systems are built on, and it is where
-    the arithmetic intensity lives: every edge is touched k times against resident data. On the largest
-    configuration that is 256 million edge-visits in 16 ms.
-  </p>
 </section>
 
 <section class="card">
   <h2>What this means for rete</h2>
   <ul>
-    <li><b>Stage once, run many.</b> Upload throughput measured ~2.2–2.4 GB/s, and it dominates every
-      large configuration. A single one-shot check wastes the GPU; a coherence <em>session</em> that
-      uploads the aligned edge slab once and then sweeps disjointness, asymmetry, k-hop closure and
-      thresholds against the resident copy approaches the compute-only numbers.</li>
-    <li><b>Pick the operation, not the hardware.</b> A 2.2× ceiling and a 17× win came from the same
-      GPU on the same data. Arithmetic intensity decided it.</li>
+    <li><b>Stage once, run many.</b> Upload measured ~2.2–2.4 GB/s and dominates every large
+      configuration. One-shot checks waste the GPU; a coherence <em>session</em> that uploads the edge
+      slab once and then sweeps τ, k and several conflict rules against the resident copy approaches
+      the compute-only numbers.</li>
+    <li><b>Pick the operation, not the hardware.</b> A 2× ceiling and a 17× win came from the same GPU
+      on the same data. Arithmetic intensity decided it.</li>
     <li><b>This is not an argument for GPU SPARQL.</b> Remote <code>.rete</code> queries are bound by
       HTTP range round trips, and local ones finish in single-digit milliseconds — below the latency
       floor of a GPU round trip. Whole-graph coherence is the opposite shape: batch, seconds-scale,
       one small answer at the end.</li>
-    <li><b>On memory:</b> this adapter caps a single buffer well below the 4 GiB wasm32 heap. Any
+    <li><b>On memory:</b> this adapter caps a single buffer below the 4 GiB wasm32 heap, so any
       capacity win comes from using <em>many</em> buffers, not one large one — and rete's lazy tiles
       and chunked dictionary already keep 17 GB files queryable inside that heap.</li>
   </ul>
@@ -253,14 +425,17 @@ fn main(@builtin(global_invocation_id) gid: vec3&lt;u32&gt;) {
     <ul style="margin-top:6px">
       <li>The baseline is <b>JavaScript, not wasm</b>. Wasm would likely be 1.5–2× faster, so discount
         accordingly; kernel B still lands around 8–9× end-to-end.</li>
-      <li>The graph is a <b>uniform random</b> digraph. Real causal and citation graphs are power-law,
-        and one-thread-per-row will suffer load imbalance on them. This number needs re-measuring on a
-        skewed degree distribution before anyone trusts it on real data.</li>
-      <li>The reference GPU is a <b>high-end discrete card</b>. Integrated GPUs will be far less dramatic —
-        which is exactly what the button above is for.</li>
-      <li><b>The cost of getting data out of a <code>.rete</code> is not measured here.</b> Decoding tiles
-        and materialising a columnar slab is plausibly larger than both the CPU and the GPU numbers on
-        this page. That is the next thing to measure, and it could sink the whole idea.</li>
+      <li>The benchmark graph is <b>uniform random</b>. Real causal and citation graphs are power-law,
+        and one-thread-per-row will suffer load imbalance on them. This needs re-measuring on a skewed
+        degree distribution before anyone trusts it on real data.</li>
+      <li>The reference GPU is a <b>high-end discrete card</b>. Integrated GPUs will be far less
+        dramatic — which is exactly what the run button is for.</li>
+      <li><b>The cost of getting data out of a <code>.rete</code> is not measured here.</b> Decoding
+        tiles and materialising the flat arrays is plausibly larger than both the CPU and GPU numbers
+        on this page. That is the next thing to measure, and it could sink the whole idea.</li>
+      <li>Real causal systems genuinely contain feedback loops, so "both directions asserted" is not
+        automatically an error. That is precisely why this reports a <em>degree</em> and a threshold
+        rather than a verdict.</li>
     </ul>
   </div>
 </section>
@@ -277,15 +452,14 @@ fn main(@builtin(global_invocation_id) gid: vec3&lt;u32&gt;) {
 "use strict";
 
 /* ------------------------------------------------------------------ data ---
-   Reference run, measured 2026-07-20 on NVIDIA Blackwell / Chrome 150.
-   A live run replaces these in place.                                      */
+   Reference run, measured 2026-07-20 on NVIDIA Blackwell / Chrome 150,
+   at tau 0.75 / k 8. A live run replaces these in place.                    */
 const REF = {
-  label: "NVIDIA Blackwell · Chrome 150",
   A: [
-    { n: 1e5,  cpu: 0.8,   up: 0.3,   comp: 2.6,  rb: 0.3, total: 4.1,   agree: true },
-    { n: 1e6,  cpu: 8.3,   up: 1.2,   comp: 3.2,  rb: 0.3, total: 4.8,   agree: true },
-    { n: 1e7,  cpu: 81.6,  up: 36.5,  comp: 1.2,  rb: 0.3, total: 37.7,  agree: true },
-    { n: 3e7,  cpu: 257.7, up: 110.3, comp: 6.5,  rb: 0.5, total: 117.4, agree: true },
+    { n: 1e5,  cpu: 0.8,   up: 0.3,   comp: 2.6,  rb: 0.3, total: 4.1,   agree: true, found: 2011 },
+    { n: 1e6,  cpu: 8.3,   up: 1.2,   comp: 3.2,  rb: 0.3, total: 4.8,   agree: true, found: 19873 },
+    { n: 1e7,  cpu: 81.6,  up: 36.5,  comp: 1.2,  rb: 0.3, total: 37.7,  agree: true, found: 200306 },
+    { n: 3e7,  cpu: 257.7, up: 110.3, comp: 6.5,  rb: 0.5, total: 117.4, agree: true, found: 600258 },
   ],
   B: [
     { n: 1e4, deg: 8,  edges: 8e4,   cpu: 5.0,    up: 3.1,   comp: 3.0,  rb: 2.7, total: 8.5,   agree: true },
@@ -293,14 +467,15 @@ const REF = {
     { n: 1e6, deg: 8,  edges: 8e6,   cpu: 656.1,  up: 35.3,  comp: 3.1,  rb: 4.8, total: 42.1,  agree: true },
     { n: 2e6, deg: 16, edges: 3.2e7, cpu: 2357.3, up: 113.6, comp: 16.4, rb: 3.8, total: 135.4, agree: true },
   ],
+  live: false,
 };
 let DATA = REF;
 
-/* ----------------------------------------------------------------- utils --- */
 const $ = id => document.getElementById(id);
 const fmt = (x, d = 2) => Number.isFinite(x) ? x.toFixed(d) : "—";
 const si = n => n >= 1e6 ? (+(n / 1e6).toFixed(n % 1e6 ? 1 : 0)) + "M"
               : n >= 1e3 ? (+(n / 1e3).toFixed(n % 1e3 ? 1 : 0)) + "k" : "" + n;
+const grp = n => n.toLocaleString("en-US");
 const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[s.length >> 1]; };
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}, txt) => {
@@ -310,9 +485,8 @@ const el = (tag, attrs = {}, txt) => {
   return e;
 };
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-const workOf = { A: r => r.n, B: r => r.edges };
+const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
-/* tooltip ------------------------------------------------------------------ */
 const tip = $("tip");
 function showTip(evt, html) {
   tip.innerHTML = html; tip.style.opacity = "1";
@@ -324,70 +498,188 @@ function showTip(evt, html) {
 }
 const hideTip = () => { tip.style.opacity = "0"; };
 
-/* ------------------------------------------------------- chart 1: crossover */
+/* ==================================================== the teaching sandbox =
+   Runs the real algorithm — max-min chain composition, then a direction test
+   against the other graph — on a handful of labelled edges, and explains every
+   finding in words. Same rule as the GPU kernel, six edges instead of 32M.   */
+
+const EXAMPLE = `# Ana's notebook — graph G1
+G1: stress     -> poor_sleep  0.9
+G1: poor_sleep -> low_focus   0.8
+G1: low_focus  -> mistakes    0.7
+
+# Ben's notebook — graph G2
+G2: poor_sleep -> stress      0.8
+G2: mistakes   -> stress      0.75
+G2: alertness  -> coffee      0.2
+G2: coffee     -> alertness   0.85`;
+
+const LONGER = `# A longer chain — needs k = 4 before it is visible
+G1: deadline  -> stress      0.95
+G1: stress    -> poor_sleep  0.9
+G1: poor_sleep-> low_focus   0.8
+G1: low_focus -> mistakes    0.7
+
+# Ben thinks the causation runs the other way round
+G2: mistakes  -> deadline    0.8`;
+
+function parseNotebooks(text) {
+  const edges = { G1: [], G2: [] }, bad = [];
+  text.split("\n").forEach((raw, i) => {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (!line) return;
+    const m = line.match(/^(G1|G2)\s*:\s*(\S+)\s*->\s*(\S+)\s+([0-9]*\.?[0-9]+)\s*$/i);
+    if (!m) { bad.push(`line ${i + 1}: ${raw.trim()}`); return; }
+    const d = parseFloat(m[4]);
+    if (!(d >= 0 && d <= 1)) { bad.push(`line ${i + 1}: confidence must be between 0 and 1`); return; }
+    edges[m[1].toUpperCase()].push({ from: m[2], to: m[3], d });
+  });
+  return { edges, bad };
+}
+
+// Every simple path from `from` to `to` using at most k arrows; max-min scored.
+function bestChain(adj, from, to, k) {
+  let best = null;
+  (function walk(node, path, weakest) {
+    if (path.length - 1 > k) return;
+    if (node === to && path.length > 1) {
+      if (!best || weakest > best.d) best = { d: weakest, path: [...path] };
+      return;
+    }
+    if (path.length - 1 === k) return;
+    for (const e of adj[node] || []) {
+      if (path.includes(e.to)) continue;               // simple paths only
+      path.push(e.to);
+      walk(e.to, path, Math.min(weakest, e.d));
+      path.pop();
+    }
+  })(from, [from], 1);
+  return best;
+}
+
+function runSandbox() {
+  const text = $("src").value;
+  const tau = parseFloat($("tau").value);
+  const k = parseInt($("k").value, 10);
+  const useMin = $("tnorm").value === "min";
+  const tnorm = (a, b) => useMin ? Math.min(a, b) : a * b;
+  const showTnorm = (a, b) => useMin ? `min(${fmt(a)}, ${fmt(b)})` : `${fmt(a)} × ${fmt(b)}`;
+
+  $("tauv").textContent = tau.toFixed(2);
+  $("kv").textContent = k;
+
+  const { edges, bad } = parseNotebooks(text);
+  const out = [];
+
+  if (bad.length) {
+    out.push(`<div class="finding"><div class="hd">Could not read ${bad.length} line(s)</div>
+      <div class="why">Expected <code>G1: a -&gt; b 0.9</code>.<br>${bad.map(esc).join("<br>")}</div></div>`);
+  }
+
+  const adj = {};
+  for (const e of edges.G1) (adj[e.from] ||= []).push(e);
+
+  const findings = [];
+  for (const e of edges.G2) {
+    // G2 says e.from -> e.to. Does G1 imply the reverse, e.to => e.from ?
+    const chain = bestChain(adj, e.to, e.from, k);
+    if (!chain) continue;
+    const conflict = tnorm(chain.d, e.d);
+    if (conflict < tau) {
+      findings.push({ conflict, e, chain, below: true });
+    } else {
+      findings.push({ conflict, e, chain, below: false });
+    }
+  }
+  findings.sort((a, b) => b.conflict - a.conflict);
+
+  const hits = findings.filter(f => !f.below);
+  const near = findings.filter(f => f.below);
+
+  if (!hits.length) {
+    out.push(`<div class="finding none"><div class="hd">No contradictions at τ = ${tau.toFixed(2)}</div>
+      <div class="why">Either the two notebooks agree, or every disagreement is too weak to report.
+      ${near.length ? `${near.length} disagreement(s) fell below the threshold — lower τ to see them.` : ""}</div></div>`);
+  }
+
+  for (const f of hits) {
+    const steps = f.chain.path.length - 1;
+    const chainStr = f.chain.path.map(esc).join(' <span class="arrow">→</span> ');
+    const how = steps === 1
+      ? `G1 states it directly at <em>${fmt(f.chain.d)}</em>.`
+      : `G1 never wrote this down. It follows from ${steps} arrows — <span class="chain">${chainStr}</span> —
+         and a chain is only as strong as its weakest link, so the implied strength is
+         <em>${fmt(f.chain.d)}</em>.`;
+    out.push(`<div class="finding">
+      <div class="hd">${esc(f.chain.path[0])} ⇄ ${esc(f.chain.path[f.chain.path.length - 1])}
+        · conflict <span class="deg">${fmt(f.conflict)}</span></div>
+      <div class="why">
+        <b>G1 implies ${esc(f.chain.path[0])} ⇒ ${esc(f.chain.path[f.chain.path.length - 1])}.</b> ${how}<br>
+        <b>G2 asserts the opposite direction</b> — ${esc(f.e.from)} → ${esc(f.e.to)} at <em>${fmt(f.e.d)}</em>.<br>
+        Both at once: ${showTnorm(f.chain.d, f.e.d)} = <em>${fmt(f.conflict)}</em>, which reaches τ ${tau.toFixed(2)}.
+      </div></div>`);
+  }
+
+  if (hits.length && near.length) {
+    out.push(`<div class="finding none"><div class="hd">${near.length} more below τ</div>
+      <div class="why">Strongest ignored: <em>${fmt(near[0].conflict)}</em>
+      (${esc(near[0].e.from)} → ${esc(near[0].e.to)}). Lower τ to include it.</div></div>`);
+  }
+
+  $("findings").innerHTML = out.join("");
+}
+
+/* --------------------------------------------------------- chart: crossover */
 function drawCrossover() {
   const svg = $("chart1");
   svg.textContent = "";
-  const W = 900, H = 400, m = { t: 18, r: 148, b: 46, l: 54 };
+  const W = 900, H = 400, m = { t: 18, r: 152, b: 46, l: 54 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
 
   const pts = { A: DATA.A.map(r => ({ x: r.n, y: r.cpu / r.total, r })),
                 B: DATA.B.map(r => ({ x: r.edges, y: r.cpu / r.total, r })) };
   const allX = [...pts.A, ...pts.B].map(p => p.x);
   const allY = [...pts.A, ...pts.B].map(p => p.y);
-  if (!allX.length) return;   // a live run clears the data before the first result lands
+  if (!allX.length) return;
   const x0 = Math.log10(Math.min(...allX) / 2.2), x1 = Math.log10(Math.max(...allX) * 2.2);
   const y0 = Math.log10(Math.min(0.6, Math.min(...allY) * 0.7));
   const y1 = Math.log10(Math.max(2, Math.max(...allY) * 1.7));
   const X = v => m.l + (Math.log10(v) - x0) / (x1 - x0) * iw;
   const Y = v => m.t + ih - (Math.log10(v) - y0) / (y1 - y0) * ih;
 
-  // y gridlines
-  const yticks = [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50].filter(v => Math.log10(v) >= y0 && Math.log10(v) <= y1);
-  for (const v of yticks) {
+  for (const v of [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50].filter(v => Math.log10(v) >= y0 && Math.log10(v) <= y1)) {
     svg.appendChild(el("line", { x1: m.l, x2: m.l + iw, y1: Y(v), y2: Y(v), class: "gridline" }));
     svg.appendChild(el("text", { x: m.l - 9, y: Y(v) + 4, class: "tick", "text-anchor": "end" }, v + "×"));
   }
-  // x gridlines at decades
   for (let d = Math.ceil(x0); d <= Math.floor(x1); d++) {
     const v = Math.pow(10, d);
     svg.appendChild(el("line", { x1: X(v), x2: X(v), y1: m.t, y2: m.t + ih, class: "gridline" }));
     svg.appendChild(el("text", { x: X(v), y: m.t + ih + 20, class: "tick", "text-anchor": "middle" }, si(v)));
   }
   svg.appendChild(el("text", { x: m.l + iw / 2, y: H - 6, class: "axlabel", "text-anchor": "middle" },
-    "problem size — entities (A) or edges (B), log scale"));
+    "problem size — statements checked, log scale"));
   svg.appendChild(el("text", { x: 14, y: m.t + ih / 2, class: "axlabel", "text-anchor": "middle",
     transform: `rotate(-90 14 ${m.t + ih / 2})` }, "speedup vs one CPU core"));
 
-  // the "GPU is losing" region, kept recessive
-  if (Math.log10(1) > y0) {
-    svg.appendChild(el("rect", { x: m.l, y: Y(1), width: iw, height: m.t + ih - Y(1),
-      fill: css("--bad"), opacity: .05 }));
-  }
+  svg.appendChild(el("rect", { x: m.l, y: Y(1), width: iw, height: Math.max(0, m.t + ih - Y(1)),
+    fill: css("--bad"), opacity: .05 }));
   svg.appendChild(el("line", { x1: m.l, x2: m.l + iw, y1: Y(1), y2: Y(1), class: "parity" }));
   svg.appendChild(el("text", { x: m.l + 8, y: Y(1) - 8, class: "tick" }, "parity — GPU loses below this line"));
   svg.appendChild(el("line", { x1: m.l, x2: m.l, y1: m.t, y2: m.t + ih, class: "baseline" }));
 
-  const series = [
-    { k: "B", color: css("--s2"), name: "Kernel B", sub: "max-min closure" },
-    { k: "A", color: css("--s1"), name: "Kernel A", sub: "elementwise" },
-  ];
-  for (const s of series) {
+  for (const s of [{ k: "B", color: css("--s2"), name: "Kernel B", sub: "chains" },
+                   { k: "A", color: css("--s1"), name: "Kernel A", sub: "same line" }]) {
     const p = pts[s.k];
     if (!p.length) continue;
-    svg.appendChild(el("polyline", {
-      points: p.map(q => `${X(q.x)},${Y(q.y)}`).join(" "), class: "serie", stroke: s.color,
-      "stroke-linejoin": "round", "stroke-linecap": "round",
-    }));
+    svg.appendChild(el("polyline", { points: p.map(q => `${X(q.x)},${Y(q.y)}`).join(" "), class: "serie",
+      stroke: s.color, "stroke-linejoin": "round", "stroke-linecap": "round" }));
     for (const q of p) {
-      // 2px surface ring so overlapping marks stay legible
       svg.appendChild(el("circle", { cx: X(q.x), cy: Y(q.y), r: 5.5, fill: s.color,
         stroke: css("--panel"), "stroke-width": 2 }));
       const hit = el("circle", { cx: X(q.x), cy: Y(q.y), r: 15, class: "hit" });
-      const label = s.k === "A" ? `${si(q.r.n)} entities` : `${si(q.r.edges)} edges`;
+      const label = s.k === "A" ? `${si(q.r.n)} statements` : `${si(q.r.edges)} arrows`;
       hit.addEventListener("mousemove", e => showTip(e,
-        `<b>${s.name}</b> · ${label}<br>speedup <b>${fmt(q.y)}×</b><br>` +
-        `CPU ${fmt(q.r.cpu)} ms → GPU ${fmt(q.r.total)} ms`));
+        `<b>${s.name}</b> · ${label}<br>speedup <b>${fmt(q.y)}×</b><br>CPU ${fmt(q.r.cpu)} ms → GPU ${fmt(q.r.total)} ms`));
       hit.addEventListener("mouseleave", hideTip);
       svg.appendChild(hit);
     }
@@ -399,41 +691,36 @@ function drawCrossover() {
   }
 }
 
-/* -------------------------------------------------- chart 2: time breakdown */
+/* -------------------------------------------------------- chart: breakdown */
 function drawBreakdown() {
   const svg = $("chart2");
   svg.textContent = "";
   const rows = [
-    ...DATA.A.map(r => ({ ...r, tag: "A", name: `A · ${si(r.n)} entities` })),
-    ...DATA.B.map(r => ({ ...r, tag: "B", name: `B · ${si(r.edges)} edges` })),
+    ...DATA.A.map(r => ({ ...r, name: `A · ${si(r.n)} statements` })),
+    ...DATA.B.map(r => ({ ...r, name: `B · ${si(r.edges)} arrows` })),
   ];
-  const W = 900, m = { t: 26, r: 92, b: 30, l: 150 };
-  const rowH = 34, gap = 10;
+  const W = 900, m = { t: 26, r: 92, b: 30, l: 158 }, rowH = 34, gap = 10;
   const H = m.t + rows.length * (rowH + gap) + m.b;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   const iw = W - m.l - m.r;
 
   for (const p of [0, 25, 50, 75, 100]) {
     const x = m.l + iw * p / 100;
-    svg.appendChild(el("line", { x1: x, x2: x, y1: m.t - 6, y2: m.t + rows.length * (rowH + gap) - gap + 2, class: "gridline" }));
+    svg.appendChild(el("line", { x1: x, x2: x, y1: m.t - 6,
+      y2: m.t + rows.length * (rowH + gap) - gap + 2, class: "gridline" }));
     svg.appendChild(el("text", { x, y: m.t - 12, class: "tick", "text-anchor": "middle" }, p + "%"));
   }
-
   const phases = [
     { key: "up",   color: css("--s1"), name: "upload" },
     { key: "comp", color: css("--s2"), name: "compute" },
     { key: "rb",   color: css("--s3"), name: "readback" },
   ];
-
   rows.forEach((r, i) => {
-    const y = m.t + i * (rowH + gap);
-    const sum = r.up + r.comp + r.rb;
+    const y = m.t + i * (rowH + gap), sum = r.up + r.comp + r.rb;
     svg.appendChild(el("text", { x: m.l - 12, y: y + rowH / 2 + 4, class: "barlabel", "text-anchor": "end" }, r.name));
     let x = m.l;
     phases.forEach((ph, j) => {
-      const frac = r[ph.key] / sum;
-      let w = iw * frac;
-      // 2px surface gap between adjacent segments
+      const frac = r[ph.key] / sum, w = iw * frac;
       const drawW = Math.max(0, w - (j < phases.length - 1 ? 2 : 0));
       const rect = el("rect", { x, y, width: drawW, height: rowH, fill: ph.color,
         rx: j === 0 || j === phases.length - 1 ? 4 : 0 });
@@ -441,49 +728,94 @@ function drawBreakdown() {
         `<b>${ph.name}</b> — ${r.name}<br>${fmt(r[ph.key])} ms · ${(frac * 100).toFixed(1)}% of ${fmt(sum)} ms`));
       rect.addEventListener("mouseleave", hideTip);
       svg.appendChild(rect);
-      // label the dominant segment in place when it has room
-      if (frac > 0.16) {
-        svg.appendChild(el("text", { x: x + drawW / 2, y: y + rowH / 2 + 4,
-          "text-anchor": "middle", fill: "#14100a", "font-size": 11.5, "font-weight": 700 },
-          (frac * 100).toFixed(0) + "%"));
-      }
+      if (frac > 0.16) svg.appendChild(el("text", { x: x + drawW / 2, y: y + rowH / 2 + 4,
+        "text-anchor": "middle", fill: "#14100a", "font-size": 11.5, "font-weight": 700 },
+        (frac * 100).toFixed(0) + "%"));
       x += w;
     });
     svg.appendChild(el("text", { x: W - m.r + 10, y: y + rowH / 2 + 4, class: "bartot" }, fmt(sum, 1) + " ms"));
   });
 }
 
-/* ---------------------------------------------------------------- tables --- */
+/* ------------------------------------------------------------------ tables */
 function drawTables() {
-  const head = extra => `<tr><th>${extra}</th><th>CPU ms</th><th>GPU ms</th><th>upload</th>
+  const headA = `<tr><th>statements</th><th>found</th><th>CPU ms</th><th>GPU ms</th><th>upload</th>
     <th>compute</th><th>readback</th><th>speedup</th><th>compute only</th><th>agree</th></tr>`;
-  const row = (label, r) => {
+  const headB = `<tr><th>graph</th><th>reached</th><th>CPU ms</th><th>GPU ms</th><th>upload</th>
+    <th>compute</th><th>readback</th><th>speedup</th><th>compute only</th><th>agree</th></tr>`;
+  const row = (label, extra, r) => {
     const sp = r.cpu / r.total, spc = r.cpu / r.comp;
-    return `<tr><td>${label}</td><td>${fmt(r.cpu)}</td><td>${fmt(r.total)}</td><td>${fmt(r.up)}</td>
-      <td>${fmt(r.comp)}</td><td>${fmt(r.rb)}</td>
+    return `<tr><td>${label}</td><td>${extra}</td><td>${fmt(r.cpu)}</td><td>${fmt(r.total)}</td>
+      <td>${fmt(r.up)}</td><td>${fmt(r.comp)}</td><td>${fmt(r.rb)}</td>
       <td class="${sp >= 1 ? "win" : "lose"}">${fmt(sp)}×</td><td>${fmt(spc, 1)}×</td>
       <td>${r.agree ? "✓" : "✗"}</td></tr>`;
   };
-  $("tableA").innerHTML = head("entities") + DATA.A.map(r => row(si(r.n), r)).join("");
-  $("tableB").innerHTML = head("graph") +
-    DATA.B.map(r => row(`${si(r.n)} nodes · deg ${r.deg} · ${si(r.edges)} edges`, r)).join("");
+  $("tableA").innerHTML = headA +
+    DATA.A.map(r => row(si(r.n), r.found == null ? "—" : grp(r.found), r)).join("");
+  $("tableB").innerHTML = headB +
+    DATA.B.map(r => row(`${si(r.n)} nodes · ${si(r.edges)} arrows`,
+      r.reached == null ? "—" : grp(r.reached), r)).join("");
 }
 
 function drawHero() {
   const best = rs => rs.length ? rs.reduce((a, b) => (b.cpu / b.total > a.cpu / a.total ? b : a)) : null;
-  const bestB = best(DATA.B), bestA = best(DATA.A);
-  $("h1").textContent = bestB ? fmt(bestB.cpu / bestB.total, 1) + "×" : "—";
-  $("h2").textContent = bestB ? Math.round(bestB.cpu / bestB.comp) + "×" : "—";
-  $("h3").textContent = bestA ? fmt(bestA.cpu / bestA.total, 1) + "×" : "—";
+  const bB = best(DATA.B), bA = best(DATA.A);
+  $("h1").textContent = bB ? fmt(bB.cpu / bB.total, 1) + "×" : "—";
+  $("h2").textContent = bB ? Math.round(bB.cpu / bB.comp) + "×" : "—";
+  $("h3").textContent = bA ? fmt(bA.cpu / bA.total, 1) + "×" : "—";
 }
 
-const renderAll = () => { drawHero(); drawCrossover(); drawBreakdown(); drawTables(); };
+/* ------------------------------------------------- results in plain words -- */
+function drawPlain() {
+  const bA = DATA.A.length ? DATA.A[DATA.A.length - 1] : null;
+  const bB = DATA.B.length ? DATA.B[DATA.B.length - 1] : null;
+  if (!bA && !bB) { $("plain").innerHTML = "<p>No configuration has run yet.</p>"; return; }
+  const who = DATA.live ? "Your GPU" : "The reference GPU";
+  const p = [];
+
+  if (bA) {
+    const sp = bA.cpu / bA.total;
+    p.push(`<p><b>The easy question.</b> We compared ${grp(bA.n)} statements one by one, asking where
+      <em>both</em> graphs make a strong claim at the same time${bA.found != null
+        ? ` — and flagged <b>${grp(bA.found)}</b> of them` : ""}.
+      One CPU core took ${fmt(bA.cpu)} ms. ${who} took ${fmt(bA.total)} ms, which is
+      <b>${fmt(sp)}×</b> ${sp >= 1 ? "faster" : "<em>slower</em>"}.
+      There is barely any arithmetic per statement here, so almost all of that time was spent
+      carrying data to the card and back — this is the job where the walk beats the work.</p>`);
+  }
+  if (bB) {
+    const sp = bB.cpu / bB.total, spc = bB.cpu / bB.comp;
+    const visits = bB.edges * (DATA.iters || 8);
+    p.push(`<p><b>The hard question.</b> We followed chains through a graph of ${grp(bB.edges)} arrows,
+      ${DATA.iters || 8} steps deep — that is <b>${grp(visits)}</b> arrow-follows${bB.reached != null
+        ? `, leaving <b>${grp(bB.reached)}</b> nodes reachable above the threshold` : ""}.
+      One CPU core took ${fmt(bB.cpu)} ms. ${who} took <b>${fmt(bB.total)} ms</b> — <b>${fmt(sp)}×</b>
+      faster. But the shader itself only ran for ${fmt(bB.comp)} ms, which is <b>${fmt(spc, 0)}×</b>
+      faster than the CPU. The difference between those two numbers is the walk.</p>`);
+  }
+  if (bB) {
+    const pct = (bB.up / (bB.up + bB.comp + bB.rb)) * 100;
+    p.push(`<p><b>The lesson.</b> ${fmt(pct, 0)}% of the GPU's time on the biggest run went to
+      <em>uploading</em>, not computing. So the way to actually use a GPU for coherence checking is
+      not to send it one question — it is to send the graph once and then ask it many questions:
+      different thresholds, different chain lengths, different conflict rules, all against data that
+      is already sitting on the card.</p>`);
+  }
+  if (!DATA.live) {
+    p.push(`<p class="sub" style="margin:0">These are the reference numbers. Press
+      <b>Run it on your GPU</b> above to replace every figure on this page with your own — the
+      wording updates too.</p>`);
+  }
+  $("plain").innerHTML = p.join("");
+}
+
+const renderAll = () => { drawHero(); drawCrossover(); drawBreakdown(); drawTables(); drawPlain(); };
 
 /* =========================================================== the benchmark = */
-const WG = 256, TAU = 0.75, ITERS = 8;
+const WG = 256;
 const PRESETS = {
-  quick: { reps: 3, A: [1e5, 1e6, 4e6], B: [[1e4, 8], [1e5, 8], [5e5, 8]] },
-  full:  { reps: 5, A: [1e5, 1e6, 1e7, 3e7], B: [[1e4, 8], [1e5, 8], [1e6, 8], [2e6, 16]] },
+  quick: { reps: 3, A: [1e5, 1e6, 4e6], B: [1e4, 1e5, 5e5] },
+  full:  { reps: 5, A: [1e5, 1e6, 1e7, 3e7], B: [1e4, 1e5, 1e6, 2e6] },
 };
 
 function mulberry32(seed) {
@@ -512,30 +844,33 @@ function genCSR(n, deg) {
   for (let i = 0; i < n; i += 1000) x0[i] = 1;
   return { n, e, deg, rowPtr, colIdx, val, x0 };
 }
-function cpuDisjoint(a, b, tau) {
+// tnorm: 0 = Gödel min, 1 = product. CPU and GPU must agree exactly.
+const combine = (a, b, t) => t ? a * b : (a < b ? a : b);
+
+function cpuDisjoint(a, b, tau, t) {
   let c = 0;
-  for (let i = 0; i < a.length; i++) { const m = a[i] < b[i] ? a[i] : b[i]; if (m >= tau) c++; }
+  for (let i = 0; i < a.length; i++) if (combine(a[i], b[i], t) >= tau) c++;
   return c;
 }
-function cpuClosure(csr, iters) {
+function cpuClosure(csr, iters, t) {
   const { n, rowPtr, colIdx, val, x0 } = csr;
   let x = Float32Array.from(x0), y = new Float32Array(n);
   for (let it = 0; it < iters; it++) {
     for (let i = 0; i < n; i++) {
       let best = x[i];
       for (let k = rowPtr[i], e = rowPtr[i + 1]; k < e; k++) {
-        const w = val[k], xj = x[colIdx[k]], m = w < xj ? w : xj;
+        const m = combine(val[k], x[colIdx[k]], t);
         if (m > best) best = m;
       }
       y[i] = best;
     }
-    const t = x; x = y; y = t;
+    const tmp = x; x = y; y = tmp;
   }
   return x;
 }
 
 const WGSL_A = `
-struct Params { n: u32, tau: f32, stride: u32, _p: u32 };
+struct Params { n: u32, tau: f32, stride: u32, tnorm: u32 };
 @group(0) @binding(0) var<storage, read> a: array<f32>;
 @group(0) @binding(1) var<storage, read> b: array<f32>;
 @group(0) @binding(2) var<storage, read_write> outCount: atomic<u32>;
@@ -546,7 +881,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
   var local: u32 = 0u; var i: u32 = gid.x;
   loop {
     if (i >= params.n) { break; }
-    if (min(a[i], b[i]) >= params.tau) { local = local + 1u; }
+    var c: f32;
+    if (params.tnorm == 0u) { c = min(a[i], b[i]); } else { c = a[i] * b[i]; }
+    if (c >= params.tau) { local = local + 1u; }
     i = i + params.stride;
   }
   partial[lid.x] = local;
@@ -562,7 +899,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
 }`;
 
 const WGSL_B = `
-struct Params { n: u32, stride: u32, _a: u32, _b: u32 };
+struct Params { n: u32, stride: u32, tnorm: u32, _p: u32 };
 @group(0) @binding(0) var<storage, read> rowPtr: array<u32>;
 @group(0) @binding(1) var<storage, read> colIdx: array<u32>;
 @group(0) @binding(2) var<storage, read> val: array<f32>;
@@ -576,23 +913,27 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (i >= params.n) { break; }
     var best: f32 = x[i];
     let s = rowPtr[i]; let e = rowPtr[i + 1u];
-    for (var k: u32 = s; k < e; k = k + 1u) { best = max(best, min(val[k], x[colIdx[k]])); }
+    for (var k: u32 = s; k < e; k = k + 1u) {
+      var m: f32;
+      if (params.tnorm == 0u) { m = min(val[k], x[colIdx[k]]); } else { m = val[k] * x[colIdx[k]]; }
+      best = max(best, m);
+    }
     y[i] = best;
     i = i + params.stride;
   }
 }`;
 
 let device = null, pipeA = null, pipeB = null, maxBinding = 0, maxWG = 65535;
-const STORAGE = 0x80 | 0x08 | 0x04; // STORAGE | COPY_DST | COPY_SRC
-const UNIFORM = 0x40 | 0x08;        // UNIFORM | COPY_DST
+const STORAGE = 0x80 | 0x08 | 0x04;
+const UNIFORM = 0x40 | 0x08;
 
 async function initGPU() {
   if (!navigator.gpu) throw new Error("WebGPU is not available in this browser");
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   if (!adapter) throw new Error("no GPU adapter (WebGPU may be disabled or software-only)");
-  const want = ["maxBufferSize", "maxStorageBufferBindingSize", "maxComputeWorkgroupsPerDimension"];
   const requiredLimits = {};
-  for (const k of want) if (adapter.limits[k] !== undefined) requiredLimits[k] = adapter.limits[k];
+  for (const k of ["maxBufferSize", "maxStorageBufferBindingSize", "maxComputeWorkgroupsPerDimension"])
+    if (adapter.limits[k] !== undefined) requiredLimits[k] = adapter.limits[k];
   try { device = await adapter.requestDevice({ requiredLimits }); }
   catch { device = await adapter.requestDevice(); }
   device.lost.then(i => setStatus(`GPU device lost: ${i.reason || ""} ${i.message || ""}`));
@@ -601,167 +942,171 @@ async function initGPU() {
   pipeA = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: WGSL_A }), entryPoint: "main" } });
   pipeB = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: WGSL_B }), entryPoint: "main" } });
 
-  const info = adapter.info || {};
-  const gib = b => (b / 2 ** 30).toFixed(2) + " GiB";
+  const info = adapter.info || {}, gib = b => (b / 2 ** 30).toFixed(2) + " GiB";
   $("env").innerHTML = `
     <dt>GPU</dt><dd>${[info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(" ") || "reported anonymously"}</dd>
     <dt>CPU threads</dt><dd>${navigator.hardwareConcurrency || "?"}</dd>
     <dt>max buffer</dt><dd>${gib(adapter.limits.maxBufferSize)}</dd>
     <dt>max storage binding</dt><dd>${gib(adapter.limits.maxStorageBufferBindingSize)}</dd>
     <dt>wasm32 heap cap</dt><dd>4.00 GiB — for comparison</dd>`;
-  return adapter;
 }
 
 const mkbuf = (size, usage) => device.createBuffer({ size: Math.max(16, size), usage });
 async function readBack(src, bytes) {
-  const st = mkbuf(bytes, 0x01 | 0x08); // MAP_READ | COPY_DST
+  const st = mkbuf(bytes, 0x01 | 0x08);
   const enc = device.createCommandEncoder();
   enc.copyBufferToBuffer(src, 0, st, 0, bytes);
   device.queue.submit([enc.finish()]);
-  await st.mapAsync(1); // GPUMapMode.READ
+  await st.mapAsync(1);
   const out = st.getMappedRange().slice(0);
   st.unmap(); st.destroy();
   return out;
 }
 const groupsFor = n => Math.min(Math.ceil(n / WG), maxWG);
 
-async function gpuDisjoint(a, b) {
+async function gpuDisjoint(a, b, tau, t) {
   const n = a.length, bytes = n * 4;
   const bA = mkbuf(bytes, STORAGE), bB = mkbuf(bytes, STORAGE),
         bO = mkbuf(4, STORAGE), bP = mkbuf(16, UNIFORM);
   const groups = groupsFor(n), stride = groups * WG;
-  let t = performance.now();
+  let t0 = performance.now();
   device.queue.writeBuffer(bA, 0, a); device.queue.writeBuffer(bB, 0, b);
   device.queue.writeBuffer(bO, 0, new Uint32Array([0]));
-  device.queue.writeBuffer(bP, 0, new Uint32Array([n, 0, stride, 0]));
-  device.queue.writeBuffer(bP, 4, new Float32Array([TAU]));
+  device.queue.writeBuffer(bP, 0, new Uint32Array([n, 0, stride, t]));
+  device.queue.writeBuffer(bP, 4, new Float32Array([tau]));
   await device.queue.onSubmittedWorkDone();
-  const up = performance.now() - t;
+  const up = performance.now() - t0;
   const bind = device.createBindGroup({ layout: pipeA.getBindGroupLayout(0), entries: [
     { binding: 0, resource: { buffer: bA } }, { binding: 1, resource: { buffer: bB } },
     { binding: 2, resource: { buffer: bO } }, { binding: 3, resource: { buffer: bP } }] });
-  t = performance.now();
+  t0 = performance.now();
   const enc = device.createCommandEncoder(), pass = enc.beginComputePass();
   pass.setPipeline(pipeA); pass.setBindGroup(0, bind); pass.dispatchWorkgroups(groups); pass.end();
   device.queue.submit([enc.finish()]);
   await device.queue.onSubmittedWorkDone();
-  const comp = performance.now() - t;
-  t = performance.now();
+  const comp = performance.now() - t0;
+  t0 = performance.now();
   const count = new Uint32Array(await readBack(bO, 4))[0];
-  const rb = performance.now() - t;
+  const rb = performance.now() - t0;
   [bA, bB, bO, bP].forEach(x => x.destroy());
   return { count, up, comp, rb };
 }
 
-async function gpuClosure(csr) {
+async function gpuClosure(csr, iters, t) {
   const { n, e, rowPtr, colIdx, val, x0 } = csr;
   const bR = mkbuf((n + 1) * 4, STORAGE), bC = mkbuf(e * 4, STORAGE), bV = mkbuf(e * 4, STORAGE),
         bX = mkbuf(n * 4, STORAGE), bY = mkbuf(n * 4, STORAGE), bP = mkbuf(16, UNIFORM);
   const groups = groupsFor(n), stride = groups * WG;
-  let t = performance.now();
+  let t0 = performance.now();
   device.queue.writeBuffer(bR, 0, rowPtr); device.queue.writeBuffer(bC, 0, colIdx);
   device.queue.writeBuffer(bV, 0, val); device.queue.writeBuffer(bX, 0, x0);
-  device.queue.writeBuffer(bP, 0, new Uint32Array([n, stride, 0, 0]));
+  device.queue.writeBuffer(bP, 0, new Uint32Array([n, stride, t, 0]));
   await device.queue.onSubmittedWorkDone();
-  const up = performance.now() - t;
+  const up = performance.now() - t0;
   const L = pipeB.getBindGroupLayout(0);
   const mk = (xb, yb) => device.createBindGroup({ layout: L, entries: [
     { binding: 0, resource: { buffer: bR } }, { binding: 1, resource: { buffer: bC } },
     { binding: 2, resource: { buffer: bV } }, { binding: 3, resource: { buffer: xb } },
     { binding: 4, resource: { buffer: yb } }, { binding: 5, resource: { buffer: bP } }] });
   const ping = mk(bX, bY), pong = mk(bY, bX);
-  t = performance.now();
+  t0 = performance.now();
   const enc = device.createCommandEncoder();
-  for (let it = 0; it < ITERS; it++) {
+  for (let it = 0; it < iters; it++) {
     const p = enc.beginComputePass();
     p.setPipeline(pipeB); p.setBindGroup(0, it % 2 === 0 ? ping : pong);
     p.dispatchWorkgroups(groups); p.end();
   }
   device.queue.submit([enc.finish()]);
   await device.queue.onSubmittedWorkDone();
-  const comp = performance.now() - t;
-  t = performance.now();
-  const out = new Float32Array(await readBack(ITERS % 2 ? bY : bX, n * 4));
-  const rb = performance.now() - t;
+  const comp = performance.now() - t0;
+  t0 = performance.now();
+  const out = new Float32Array(await readBack(iters % 2 ? bY : bX, n * 4));
+  const rb = performance.now() - t0;
   [bR, bC, bV, bX, bY, bP].forEach(x => x.destroy());
   return { out, up, comp, rb };
 }
 
 const setStatus = m => { $("runstatus").textContent = m; };
-// Yield to the event loop so the charts repaint between configurations. Deliberately
-// NOT requestAnimationFrame: rAF is throttled to a standstill in a background tab,
-// which would stall the whole run the moment the visitor switches away.
+// Deliberately NOT requestAnimationFrame: rAF is throttled to a standstill in a
+// background tab, which would stall the whole run if the visitor switches away.
 const frame = () => new Promise(r => setTimeout(r, 0));
 
 async function runBenchmark() {
   if (!device) throw new Error("the GPU device is not ready yet");
   const P = PRESETS[$("preset").value];
+  const tau = parseFloat($("btau").value), iters = parseInt($("bk").value, 10);
+  const deg = parseInt($("bdeg").value, 10), tn = parseInt($("btnorm").value, 10);
   $("run").disabled = true;
   const A = [], B = [], skipped = [];
 
-  // Drop the reference run before measuring: a chart that mixed freshly-measured
-  // points with reference points would be lying about where its numbers came from.
-  DATA = { label: "your GPU", A, B };
-  $("herosrc").innerHTML = "Measuring on <b>your GPU</b> now — the reference run has been cleared, " +
-    "so the charts fill in as each configuration completes.";
-  renderAll();
-  await frame();
+  // Drop the reference run before measuring: a chart mixing fresh points with
+  // reference points would misrepresent where its numbers came from.
+  DATA = { A, B, live: true, iters, tau, deg };
+  $("herosrc").innerHTML = "Measuring on <b>your GPU</b> now — the reference run has been cleared.";
+  renderAll(); await frame();
 
   for (const n of P.A) {
     if (n * 4 > maxBinding) { skipped.push(`A ${si(n)} (over this GPU's binding limit)`); continue; }
-    setStatus(`Kernel A — ${si(n)} entities…`); await frame();
+    setStatus(`Same-line check — ${si(n)} statements…`); await frame();
     const { a, b } = genPair(n);
-    const ct = [];
-    let cc = 0;
-    for (let r = 0; r < P.reps; r++) { const t = performance.now(); cc = cpuDisjoint(a, b, TAU); ct.push(performance.now() - t); }
+    const ct = []; let cc = 0;
+    for (let r = 0; r < P.reps; r++) { const t = performance.now(); cc = cpuDisjoint(a, b, tau, tn); ct.push(performance.now() - t); }
     const up = [], cm = [], rb = []; let g = null;
-    for (let r = 0; r < P.reps; r++) { g = await gpuDisjoint(a, b); up.push(g.up); cm.push(g.comp); rb.push(g.rb); }
+    for (let r = 0; r < P.reps; r++) { g = await gpuDisjoint(a, b, tau, tn); up.push(g.up); cm.push(g.comp); rb.push(g.rb); }
     const U = median(up), C = median(cm), R = median(rb);
-    A.push({ n, cpu: median(ct), up: U, comp: C, rb: R, total: U + C + R, agree: cc === g.count });
-    renderAll(); await frame();   // DATA holds these same arrays, so pushes are already visible
+    A.push({ n, cpu: median(ct), up: U, comp: C, rb: R, total: U + C + R, agree: cc === g.count, found: cc });
+    renderAll(); await frame();
   }
 
-  for (const [n, deg] of P.B) {
-    if (n * deg * 4 > maxBinding) { skipped.push(`B ${si(n * deg)} edges (over this GPU's binding limit)`); continue; }
-    setStatus(`Kernel B — ${si(n * deg)} edges…`); await frame();
+  for (const n of P.B) {
+    if (n * deg * 4 > maxBinding) { skipped.push(`B ${si(n * deg)} arrows (over this GPU's binding limit)`); continue; }
+    setStatus(`Chain check — ${si(n * deg)} arrows, ${iters} steps…`); await frame();
     const csr = genCSR(n, deg);
     const ct = []; let co = null;
-    for (let r = 0; r < P.reps; r++) { const t = performance.now(); co = cpuClosure(csr, ITERS); ct.push(performance.now() - t); }
+    for (let r = 0; r < P.reps; r++) { const t = performance.now(); co = cpuClosure(csr, iters, tn); ct.push(performance.now() - t); }
     const up = [], cm = [], rb = []; let g = null;
-    for (let r = 0; r < P.reps; r++) { g = await gpuClosure(csr); up.push(g.up); cm.push(g.comp); rb.push(g.rb); }
-    let diff = 0;
-    for (let i = 0; i < n; i++) diff = Math.max(diff, Math.abs(co[i] - g.out[i]));
+    for (let r = 0; r < P.reps; r++) { g = await gpuClosure(csr, iters, tn); up.push(g.up); cm.push(g.comp); rb.push(g.rb); }
+    let diff = 0, reached = 0;
+    for (let i = 0; i < n; i++) { diff = Math.max(diff, Math.abs(co[i] - g.out[i])); if (co[i] >= tau) reached++; }
     const U = median(up), C = median(cm), R = median(rb);
-    B.push({ n, deg, edges: n * deg, cpu: median(ct), up: U, comp: C, rb: R, total: U + C + R, agree: diff < 1e-5 });
+    B.push({ n, deg, edges: n * deg, cpu: median(ct), up: U, comp: C, rb: R, total: U + C + R,
+             agree: diff < 1e-5, reached });
     renderAll(); await frame();
   }
 
   renderAll();
-  // Never let a dropped configuration read as "we measured everything".
   const note = skipped.length ? ` Skipped: ${skipped.join("; ")}.` : "";
   if (!A.length && !B.length) {
     $("herosrc").innerHTML = "Nothing ran on this GPU — every configuration exceeded its limits." + note;
     setStatus("No configuration could run here.");
   } else {
-    $("herosrc").innerHTML = "Measured just now, <b>on your GPU</b>, against a single-threaded JS baseline. " +
-      "Reload the page to return to the reference run." + note;
+    $("herosrc").innerHTML = `Measured just now on <b>your GPU</b> at τ ${tau.toFixed(2)}, k ${iters},
+      ${deg} arrows per node, versus a single-threaded JS baseline. Reload to return to the reference run.` + note;
     setStatus("Done — the numbers above are yours." + note);
   }
   $("run").disabled = false;
 }
 
 /* ------------------------------------------------------------------ boot -- */
+$("src").value = EXAMPLE;
+runSandbox();
+for (const id of ["tau", "k", "tnorm", "src"]) $(id).addEventListener("input", runSandbox);
+$("tnorm").addEventListener("change", runSandbox);
+$("reset").addEventListener("click", () => { $("src").value = EXAMPLE; $("k").value = 3; runSandbox(); });
+$("addloop").addEventListener("click", () => { $("src").value = LONGER; $("k").value = 4; runSandbox(); });
+for (const [id, out, dp] of [["btau", "btauv", 2], ["bk", "bkv", 0], ["bdeg", "bdegv", 0]])
+  $(id).addEventListener("input", () => { $(out).textContent = parseFloat($(id).value).toFixed(dp); });
+
 renderAll();
 addEventListener("resize", () => { drawCrossover(); drawBreakdown(); });
 (async () => {
   try {
     await initGPU();
-    $("run").disabled = false;          // only clickable once the device exists
+    $("run").disabled = false;
     setStatus("WebGPU ready.");
   } catch (err) {
     setStatus(err.message + " — showing the reference run instead.");
-    $("run").disabled = true;
-    $("env").innerHTML = `<dt>status</dt><dd>${err.message}</dd>
+    $("env").innerHTML = `<dt>status</dt><dd>${esc(err.message)}</dd>
       <dt>wasm32 heap cap</dt><dd>4.00 GiB</dd>`;
   }
 })();

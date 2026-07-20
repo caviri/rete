@@ -83,7 +83,7 @@ The same engine, in your language of choice — every client opens local files
 - **[Subtitle timeline](subtitles.html)** — one film subtitled in 20 languages; scrub the timeline and watch a line of dialogue appear in every language at once. [Launch it →](subtitles.html)
 - **[World Cup 2022 final](wcfinal.html)** — Argentina 3–3 France replayed from real StatsBomb positional freeze-frames: every player's place at every moment, with a live scoreboard and goal jumps. [Launch it →](wcfinal.html)
 - **[Ask the graph](ask-the-graph.md)** — graphRAG search over a `.rete`, entirely in the browser.
-- **[WebGPU coherence (experimental)](webgpu.html)** — can a GPU find contradictions between two *fuzzy* graphs faster than one CPU core? A live benchmark of two incoherence kernels: elementwise disjointness caps at ~2×, iterated max-min closure reaches 15–17×. [Run it on your GPU →](webgpu.html)
+- **[WebGPU coherence (experimental)](webgpu.html)** — two knowledge graphs, each unsure of itself: where do they contradict each other, and can a GPU find that faster than one CPU core? Explained from scratch, with an editable worked example you can change (threshold, chain length, t-norm) and a live benchmark: same-line conflicts cap at ~2×, chain conflicts reach 15–17×. [Run it on your GPU →](webgpu.html)
 - **[Graph-map, topic-map & 3D (experimental)](graph-map.md)** — the community pyramid as a slippy map.
 
 ### Guides
