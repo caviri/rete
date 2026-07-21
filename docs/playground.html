@@ -3486,7 +3486,7 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Exact playground build. If this looks old after a deploy, hard-refresh or clear site data.">build 6ec5124a · 2026-07-21 19:06 UTC</span>
+    <span class="build-ver" id="buildVer" title="Exact playground build. If this looks old after a deploy, hard-refresh or clear site data.">build 30d509b6 · 2026-07-21 19:56 UTC</span>
     <label class="version-picker" for="versionSelect">
       <span>Version</span>
       <select id="versionSelect" aria-label="Playground version">
@@ -3495,7 +3495,7 @@ td.lit { color: var(--ink); }
     </label>
     <span id="previewBadge" class="preview-badge hidden">PR preview</span>
     <script>
-      window.RETE_BUILD = "6ec5124a · 2026-07-21 19:06 UTC";
+      window.RETE_BUILD = "30d509b6 · 2026-07-21 19:56 UTC";
       window.RETE_PREVIEW = null;
     </script>
 
@@ -12839,6 +12839,7 @@ self.onmessage = function (e) {
     state.remote = { url };
     state.activeSource = "remote";
     state.schema = null;
+    clearSchemaPanels("");  // drop the previous dataset's schema/diagram immediately
     state.exploreReady = false;
     state.exploreClass = null;
     state.exploreBackend = "native"; state.exploreNativeMeta = ""; freeExploreEngines();
@@ -14382,8 +14383,15 @@ self.onmessage = function (e) {
     }).catch((e) => {
       const msg = String(e && e.message || e);
       if (/no schema pyramid/i.test(msg)) {
-        $("schemaOut").innerHTML = `<div class="note">This graph carries no schema pyramid (no typed classes), so there's no schema to summarize over range. Use <strong>Cache remote</strong> to compute one by scanning.</div>`;
+        clearSchemaPanels(`<div class="note">This dataset has <strong>no ontology schema to preview</strong> — it was built without a schema pyramid (no typed <code>rdf:type</code> classes to summarise or draw over range). Large graphs like <code>dblp</code> and <code>orcid</code> ship this way because the pyramid step runs out of memory at their scale. Use <strong>Cache remote</strong> to compute one locally by scanning.</div>`);
+      } else if (/null function|signature mismatch|unreachable|RuntimeError/i.test(msg)) {
+        // Known engine gap: schema_url reads the schema block with raw sequential
+        // range reads that aren't Asyncify-safe, so it traps on the async reader
+        // (the desktop default). It works on the sync reader. Be honest and
+        // actionable instead of showing the generic crash card.
+        clearSchemaPanels(`<div class="note">The ontology schema preview can't be read on the <strong>fast (async) reader</strong> yet — a known limitation of the remote schema read. Turn off <strong>async reads</strong> in <strong>Settings</strong> and reopen this tab to view the schema, or <strong>Cache remote</strong> to load the graph and build it locally.</div>`);
       } else {
+        clearSchemaPanels(undefined);
         showError("schemaOut", "Remote schema failed: " + msg);
       }
     });
@@ -18851,6 +18859,16 @@ self.onmessage = function (e) {
       $("reachMeta").textContent = "";
       showError("reachOut", String(e));
     }
+  }
+
+  // Wipe every schema panel (not just schemaOut) so a dataset with no schema
+  // pyramid never shows the PREVIOUS dataset's classes/relations/diagram — the
+  // "stale scholar schema" bug. Called on dataset switch and on no-pyramid.
+  function clearSchemaPanels(noteHtml) {
+    ["schemaSummary", "schemaClasses", "schemaRelations", "ontologyDiagram"].forEach((id) => {
+      const el = $(id); if (el) el.innerHTML = "";
+    });
+    if (noteHtml !== undefined) $("schemaOut").innerHTML = noteHtml;
   }
 
   function renderSchema(schema) {
