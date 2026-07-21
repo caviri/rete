@@ -1988,6 +1988,45 @@ pre {
   max-height: 420px;
 }
 
+/* Ontology reference — a ReSpec-style documentation of the embedded TBox
+   (classes + object/datatype properties with definitions, domains, ranges). */
+.ontology-docs { margin-top: 18px; }
+.onto-doc-head { border-top: 1px solid var(--line); padding-top: 16px; margin-bottom: 12px; }
+.onto-doc-head h2 { font-size: 1.05rem; margin: 0 0 4px; }
+.onto-body { display: grid; grid-template-columns: 190px 1fr; gap: 18px; align-items: start; }
+.onto-toc {
+  position: sticky; top: 8px; align-self: start; max-height: 78vh; overflow: auto;
+  font-size: 0.82rem; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); padding: 8px;
+}
+.onto-toc-group { margin-bottom: 10px; }
+.onto-toc-title { font-weight: 600; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .04em; font-size: 0.68rem; margin: 0 0 4px; }
+.onto-toc a { display: block; padding: 2px 6px; border-radius: 5px; color: var(--ink);
+  text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onto-toc a:hover { background: var(--tint); color: var(--accent-dark); }
+.onto-content { min-width: 0; }
+.onto-section { margin-bottom: 22px; }
+.onto-section h3 { font-size: 0.95rem; margin: 0 0 10px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--line); }
+.onto-term { border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; background: var(--surface); padding: 10px 12px; margin-bottom: 10px;
+  scroll-margin-top: 12px; }
+.onto-term-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.onto-name { font-weight: 650; font-size: 0.95rem; }
+.onto-kind { font-size: 0.64rem; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); border: 1px solid var(--line); border-radius: 10px; padding: 1px 7px; }
+.onto-iri { font-family: var(--mono, ui-monospace, monospace); font-size: 0.72rem;
+  color: var(--muted); word-break: break-all; margin-top: 2px; }
+.onto-def { margin: 8px 0 6px; font-size: 0.88rem; line-height: 1.45; color: var(--ink); }
+.onto-meta { font-size: 0.78rem; color: var(--muted); }
+.onto-rel { color: var(--accent-dark); font-weight: 600; }
+.onto-trunc { color: var(--tint-amber-fg, var(--muted)); font-weight: 600; }
+@media (max-width: 720px) {
+  .onto-body { grid-template-columns: 1fr; }
+  .onto-toc { position: static; max-height: none; }
+}
+
 .graphwrap svg {
   height: 520px;
   cursor: grab;

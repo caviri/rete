@@ -240,6 +240,7 @@ const G2 = [
   ["check_enac", "EPFL ENAC repositories by lab over live R2", 150000, true],
   ["check_schema_empty", "no-pyramid dataset shows honest empty schema (no stale scholar leak)", 120000, true],
   ["check_schema_render", "with-pyramid remote schema + ontology diagram render on async default", 120000, true],
+  ["check_ontology_docs", "ReSpec-style ontology reference (classes+props+definitions) renders, incl. --no-pyramid dblp", 150000, true],
   ["check_map_geo", "embedded GeoSPARQL → Tiles · local PMTiles fixture", 90000, false],
   ["check_service_success", "successful SERVICE join · local SPARQL JSON endpoint", 90000, false],
   ["check_builder", "in-browser N-Quads build → open bytes → query Alice", 90000, false],

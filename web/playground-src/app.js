@@ -2834,6 +2834,7 @@ self.onmessage = function (e) {
     if (mode === "explore") ensureExplore();
     if (mode === "semantic") ensureSemantic();
     if (mode === "schema" && state.remote && !state.schema) ensureRemoteSchema();
+    if (mode === "schema") ensureOntologyDocs();   // ReSpec-style TBox reference
     updateResultVisibility();
     updateHash();
     if (mrbUpdate) mrbUpdate(); // the phone Run bar only shows in SPARQL mode
@@ -7338,10 +7339,140 @@ self.onmessage = function (e) {
   // pyramid never shows the PREVIOUS dataset's classes/relations/diagram — the
   // "stale scholar schema" bug. Called on dataset switch and on no-pyramid.
   function clearSchemaPanels(noteHtml) {
-    ["schemaSummary", "schemaClasses", "schemaRelations", "ontologyDiagram"].forEach((id) => {
+    ["schemaSummary", "schemaClasses", "schemaRelations", "ontologyDiagram", "ontologyDocs"].forEach((id) => {
       const el = $(id); if (el) el.innerHTML = "";
     });
+    state.ontologyDocsReady = false;   // re-query the TBox for the next dataset
     if (noteHtml !== undefined) $("schemaOut").innerHTML = noteHtml;
+  }
+
+  // --- Ontology reference (ReSpec-style TBox documentation) -------------
+  // Reads the dataset's embedded ontology — owl:Class / owl:ObjectProperty /
+  // owl:DatatypeProperty with their labels, definitions, domains, ranges and
+  // superclasses — and renders it as a documentation reference. Runs a handful
+  // of small SPARQL queries via exploreQuery (in memory, or a few HTTP-range
+  // reads over the small TBox when remote), INDEPENDENT of the schema pyramid,
+  // so a graph built --no-pyramid that still carries a real ontology (dblp,
+  // orcid) gets its vocabulary documented anyway. Capped at TBOX_LIMIT so a
+  // huge ontology (wikidata-ontology, 4.4M classes) shows a sample, not a hang.
+  const TBOX_LIMIT = 400;
+  const TBOX_PREFIXES =
+    "PREFIX owl: <http://www.w3.org/2002/07/owl#>\n" +
+    "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n" +
+    "PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n";
+
+  function ontoClean(t) {
+    if (t == null) return "";
+    t = String(t);
+    if (t.charAt(0) === "<") return t.slice(1, -1);
+    const m = t.match(/^"((?:[^"\\]|\\.)*)"/);
+    return m ? m[1].replace(/\\"/g, '"').replace(/\\n/g, " ").replace(/\\r/g, "") : t;
+  }
+
+  function ensureOntologyDocs() {
+    if (state.ontologyDocsReady) return;
+    if (!state.remote && !state.graph) return;
+    state.ontologyDocsReady = true;
+    renderOntologyDocs();
+  }
+
+  function ontoTboxQuery(cls) {
+    const tail = cls === "owl:Class"
+      ? "  OPTIONAL { ?x rdfs:subClassOf ?a }\n"
+      : "  OPTIONAL { ?x rdfs:domain ?a }\n  OPTIONAL { ?x rdfs:range ?b }\n";
+    return TBOX_PREFIXES +
+      "SELECT ?x ?label ?sdef ?cdef ?a ?b WHERE {\n  ?x a " + cls + " .\n" +
+      "  OPTIONAL { ?x rdfs:label ?label }\n" +
+      "  OPTIONAL { ?x skos:definition ?sdef }\n" +
+      "  OPTIONAL { ?x rdfs:comment ?cdef }\n" + tail +
+      "} LIMIT " + TBOX_LIMIT;
+  }
+
+  function ontoGroup(rows, isClass) {
+    const by = new Map();
+    (rows || []).forEach((r) => {
+      const iri = ontoClean(r.x); if (!iri) return;
+      let e = by.get(iri);
+      if (!e) { e = { iri, label: "", def: "", supers: new Set(), domain: new Set(), range: new Set() }; by.set(iri, e); }
+      if (r.label && !e.label) e.label = ontoClean(r.label);
+      const d = ontoClean(r.sdef) || ontoClean(r.cdef);
+      if (d && d.length > e.def.length) e.def = d;
+      if (r.a) { const a = ontoClean(r.a); if (a) (isClass ? e.supers : e.domain).add(a); }
+      if (r.b) { const b = ontoClean(r.b); if (b) e.range.add(b); }
+    });
+    return [...by.values()].sort((x, y) =>
+      localName(x.iri).toLowerCase().localeCompare(localName(y.iri).toLowerCase()));
+  }
+
+  function renderOntologyDocs() {
+    const el = $("ontologyDocs");
+    if (!el) return;
+    const ds = state.dataset;
+    el.innerHTML = '<div class="onto-doc-head"><h2>Ontology reference</h2>' +
+      '<span class="microcopy">reading the embedded ontology…</span></div>';
+    Promise.all([
+      exploreQuery(ontoTboxQuery("owl:Class")).catch(() => ({ rows: [] })),
+      exploreQuery(ontoTboxQuery("owl:ObjectProperty")).catch(() => ({ rows: [] })),
+      exploreQuery(ontoTboxQuery("owl:DatatypeProperty")).catch(() => ({ rows: [] })),
+    ]).then((out) => {
+      if (state.dataset !== ds) return; // dataset switched mid-query
+      const classes = ontoGroup(out[0].rows, true);
+      const objprops = ontoGroup(out[1].rows, false);
+      const dataprops = ontoGroup(out[2].rows, false);
+      el.innerHTML = buildOntologyDocsHtml(classes, objprops, dataprops);
+    }).catch((e) => {
+      if (state.dataset !== ds) return;
+      el.innerHTML = '<div class="note">Couldn’t read the ontology reference: ' +
+        esc(String((e && e.message) || e)) + "</div>";
+    });
+  }
+
+  function ontoAnchor(iri) { return "onto-" + iri.replace(/[^a-zA-Z0-9]/g, "-"); }
+
+  function buildOntologyDocsHtml(classes, objprops, dataprops) {
+    if (!classes.length && !objprops.length && !dataprops.length) {
+      return '<div class="onto-doc-head"><h2>Ontology reference</h2></div>' +
+        '<div class="note">This dataset carries no formal OWL ontology (no <code>owl:Class</code> / ' +
+        '<code>owl:ObjectProperty</code> / <code>owl:DatatypeProperty</code> declarations travel inside the ' +
+        'file). Its classes come from <code>rdf:type</code> — see the schema diagram above.</div>';
+    }
+    const big = (n) => n >= TBOX_LIMIT
+      ? ' <span class="onto-trunc">(first ' + TBOX_LIMIT + ' — large ontology)</span>' : "";
+    const links = (set) => [...set].map((s) => esc(shorten(localName(s), 32))).join(", ");
+    const toc = (title, list) => list.length
+      ? '<div class="onto-toc-group"><div class="onto-toc-title">' + title + " (" + list.length + ")</div>" +
+        list.map((e) => '<a href="#' + ontoAnchor(e.iri) + '">' +
+          esc(shorten(e.label || localName(e.iri), 34)) + "</a>").join("") + "</div>"
+      : "";
+    const term = (e, kind) => {
+      const meta = [];
+      if (e.supers.size) meta.push('<span class="onto-rel">subclass of</span> ' + links(e.supers));
+      if (e.domain.size) meta.push('<span class="onto-rel">domain</span> ' + links(e.domain));
+      if (e.range.size) meta.push('<span class="onto-rel">range</span> ' + links(e.range));
+      return '<div class="onto-term" id="' + ontoAnchor(e.iri) + '">' +
+        '<div class="onto-term-head"><span class="onto-name">' +
+          esc(e.label || shorten(localName(e.iri), 60)) + '</span>' +
+          '<span class="onto-kind">' + kind + "</span></div>" +
+        '<div class="onto-iri" title="' + esc(e.iri) + '">' + esc(e.iri) + "</div>" +
+        (e.def ? '<p class="onto-def">' + esc(e.def) + "</p>" : "") +
+        (meta.length ? '<div class="onto-meta">' + meta.join(" · ") + "</div>" : "") +
+        "</div>";
+    };
+    const section = (title, list, kind) => list.length
+      ? '<section class="onto-section"><h3>' + title + "</h3>" +
+        list.map((e) => term(e, kind)).join("") + "</section>"
+      : "";
+    return '<div class="onto-doc-head"><h2>Ontology reference</h2>' +
+      '<span class="microcopy">' + classes.length + " classes" + big(classes.length) +
+      " · " + objprops.length + " object properties · " + dataprops.length +
+      ' datatype properties — from the embedded ontology, with definitions</span></div>' +
+      '<div class="onto-body"><nav class="onto-toc">' +
+        toc("Classes", classes) + toc("Object properties", objprops) + toc("Datatype properties", dataprops) +
+      "</nav><div class=\"onto-content\">" +
+        section("Classes", classes, "class") +
+        section("Object properties", objprops, "object property") +
+        section("Datatype properties", dataprops, "datatype property") +
+      "</div></div>";
   }
 
   function renderSchema(schema) {
