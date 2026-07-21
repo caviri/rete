@@ -1904,6 +1904,33 @@ let wasm_bindgen = (function(exports) {
             return __reteCallRaw(function () { return wasm.remotegraph_prefix_search(g.__wbg_ptr, ptr0, len0, limit); }, true);
           });
         };
+        // RAW-driven generic *_url call (schema_url, check_schema_url, shacl_url,
+        // reach_url, why_url, …) — the worker's generic "call" path used to drive
+        // the generated WRAPPER through suspend/rewind, which re-marshals its
+        // arguments and runs its free()-epilogue on EVERY pass and trapped with
+        // "null function or function signature mismatch" at the first suspend
+        // (proven in tests/gate/.cache/schema_probe.cjs: wrapper-driven
+        // schema_url traps; the same call raw-driven completes in 4 passes).
+        // Every *_url export is string-in/string-out with the same multivalue
+        // result tuple, so one marshaler covers them: a string becomes a
+        // (ptr, len) pair, null/undefined an absent Option (0, 0), a boolean an
+        // i32 — marshal ONCE, drive raw, unpack only after the rewind completes.
+        exports.reteCallUrlRemote = function (fn) {
+          const args = Array.prototype.slice.call(arguments, 1);
+          return __reteSerial(function () {
+            const raw = wasm[fn];
+            if (typeof raw !== "function") return Promise.reject(new Error("no wasm export " + fn));
+            const flat = [];
+            for (let i = 0; i < args.length; i++) {
+              const a = args[i];
+              if (typeof a === "string") { flat.push(passStringToWasm0(a, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc), WASM_VECTOR_LEN); }
+              else if (a === null || a === undefined) { flat.push(0, 0); }
+              else if (typeof a === "boolean") { flat.push(a ? 1 : 0); }
+              else { flat.push(a); }
+            }
+            return __reteCallRaw(function () { return raw.apply(null, flat); }, true);
+          });
+        };
         async function __reteOpenRemote(url) {
           __reteStack();
           const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);

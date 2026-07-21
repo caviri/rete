@@ -131,14 +131,17 @@
   var sessions = {};   // content_hash -> RemoteGraph
   var urlHash = {};    // url -> content_hash (avoid re-opening a known URL)
   // ASYNC mode (the asyncified wasm variant): every read is a concurrent
-  // Promise.all of fetch, so each wasm query call must be driven through the
-  // Asyncify suspend/rewind loop (wasm_bindgen.reteDrive). OFF: the wasm runs
-  // synchronously over sync-XHR exactly as before. The flag is baked into the
-  // worker blob at creation (self.__RETE_ASYNC), so flipping it recreates the worker.
+  // Promise.all of fetch, so each wasm call must be driven through the Asyncify
+  // suspend/rewind loop. OFF: the wasm runs synchronously over sync-XHR exactly
+  // as before. The flag is baked into the worker blob at creation
+  // (self.__RETE_ASYNC), so flipping it recreates the worker.
   var ASYNC = !!self.__RETE_ASYNC;
-  // Drive one wasm call: glue-in-loop in async mode (the wrapper is re-entered
-  // each suspend), a plain sync call otherwise.
-  function _drive(fn) { return ASYNC ? wasm_bindgen.reteDrive(fn) : Promise.resolve(fn()); }
+  // NOTE: in async mode a wasm call must NEVER drive the generated wasm-bindgen
+  // wrapper through the suspend/rewind loop — the wrapper re-marshals its args
+  // and runs its free()-epilogue on every pass, corrupting the asyncify session
+  // ("null function or function signature mismatch"). Every driven entry goes
+  // through a RAW-driven glue export (reteQueryRemote / retePrefixSearchRemote /
+  // reteCallUrlRemote / reteOpenRemote) instead.
   // Open (or reuse) a resident session. In async mode the OPEN is driven via
   // reteOpenRemote (wraps the pointer once after rewind — no garbage instance for
   // the FinalizationRegistry). content_hash()/stats() do no IO, so they stay sync.
@@ -214,7 +217,11 @@
     if (m.type === "call") {
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
       Promise.resolve(ready).then(function () {
-        return _drive(function () { return wasm_bindgen[m.fn].apply(null, m.args); });
+        // ASYNC: drive the RAW export (reteCallUrlRemote) — wrapper-driven
+        // *_url calls trap at their first suspend (the null-function family;
+        // same root cause the queries fixed via reteQueryRemote).
+        return ASYNC ? wasm_bindgen.reteCallUrlRemote.apply(null, [m.fn].concat(m.args))
+                     : Promise.resolve(wasm_bindgen[m.fn].apply(null, m.args));
       }).then(function (json) {
         self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
       }).catch(function (err) {
@@ -2850,9 +2857,10 @@ self.onmessage = function (e) {
       if (/no schema pyramid/i.test(msg)) {
         clearSchemaPanels(`<div class="note">This dataset has <strong>no ontology schema to preview</strong> — it was built without a schema pyramid (no typed <code>rdf:type</code> classes to summarise or draw over range). Large graphs like <code>dblp</code> and <code>orcid</code> ship this way because the pyramid step runs out of memory at their scale. Use <strong>Cache remote</strong> to compute one locally by scanning.</div>`);
       } else if (/null function|signature mismatch|unreachable|RuntimeError/i.test(msg)) {
-        // Known engine gap: schema_url reads the schema block with raw sequential
-        // range reads that aren't Asyncify-safe, so it traps on the async reader
-        // (the desktop default). It works on the sync reader. Be honest and
+        // Safety net (fixed — should no longer trigger): schema_url used to trap
+        // on the async reader because the worker drove the generated wasm-bindgen
+        // WRAPPER through suspend/rewind; the "call" path is raw-driven now
+        // (reteCallUrlRemote). If a trap ever regresses, stay honest and
         // actionable instead of showing the generic crash card.
         clearSchemaPanels(`<div class="note">The ontology schema preview can't be read on the <strong>fast (async) reader</strong> yet — a known limitation of the remote schema read. Turn off <strong>async reads</strong> in <strong>Settings</strong> and reopen this tab to view the schema, or <strong>Cache remote</strong> to load the graph and build it locally.</div>`);
       } else {
