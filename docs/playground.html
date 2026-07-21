@@ -2073,6 +2073,10 @@ pre {
 .onto-def { margin: 8px 0 6px; font-size: 0.88rem; line-height: 1.45; color: var(--ink); }
 .onto-meta { font-size: 0.78rem; color: var(--muted); }
 .onto-rel { color: var(--accent-dark); font-weight: 600; }
+.onto-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.onto-derived { font-size: 0.62rem; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); background: var(--tint); border-radius: 9px; padding: 1px 7px; }
+.onto-term:has(.onto-derived) { border-left-color: var(--line-strong); }
 .onto-trunc { color: var(--tint-amber-fg, var(--muted)); font-weight: 600; }
 @media (max-width: 720px) {
   .onto-body { grid-template-columns: 1fr; }
@@ -3525,7 +3529,7 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Exact playground build. If this looks old after a deploy, hard-refresh or clear site data.">build b8aae05c · 2026-07-21 21:50 UTC</span>
+    <span class="build-ver" id="buildVer" title="Exact playground build. If this looks old after a deploy, hard-refresh or clear site data.">build 914b1b91 · 2026-07-21 22:12 UTC</span>
     <label class="version-picker" for="versionSelect">
       <span>Version</span>
       <select id="versionSelect" aria-label="Playground version">
@@ -3534,7 +3538,7 @@ td.lit { color: var(--ink); }
     </label>
     <span id="previewBadge" class="preview-badge hidden">PR preview</span>
     <script>
-      window.RETE_BUILD = "b8aae05c · 2026-07-21 21:50 UTC";
+      window.RETE_BUILD = "914b1b91 · 2026-07-21 22:12 UTC";
       window.RETE_PREVIEW = null;
     </script>
 
@@ -14496,6 +14500,7 @@ self.onmessage = function (e) {
       const schema = JSON.parse(out.json);
       state.schema = schema;
       renderSchema(schema);
+      if (state.ontoFormal) renderOntologyDocs();  // fold the effective schema into the ontology reference
       const r = schema.remote || {};
       $("schemaOut").innerHTML = `<div class="banner">${(schema.classes || []).length} classes and ${(schema.relations || []).length} class-level relations — read from the schema pyramid over HTTP range (${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)}, ${r.requests || 0} request(s), no download).</div>`;
     }).catch((e) => {
@@ -19018,7 +19023,31 @@ self.onmessage = function (e) {
     if (state.ontologyDocsReady) return;
     if (!state.remote && !state.graph) return;
     state.ontologyDocsReady = true;
-    renderOntologyDocs();
+    state.ontoFormal = null;
+    const el = $("ontologyDocs");
+    if (el) el.innerHTML = '<div class="onto-doc-head"><h2>Ontology reference</h2>' +
+      '<span class="microcopy">reading the ontology…</span></div>';
+    const ds = state.dataset;
+    // The formal half: any embedded OWL TBox (rich — with definitions).
+    Promise.all([
+      exploreQuery(ontoTboxQuery("owl:Class")).catch(() => ({ rows: [] })),
+      exploreQuery(ontoTboxQuery("owl:ObjectProperty")).catch(() => ({ rows: [] })),
+      exploreQuery(ontoTboxQuery("owl:DatatypeProperty")).catch(() => ({ rows: [] })),
+    ]).then((out) => {
+      if (state.dataset !== ds) return;
+      state.ontoFormal = { classes: ontoGroup(out[0].rows, true),
+        obj: ontoGroup(out[1].rows, false), data: ontoGroup(out[2].rows, false) };
+      renderOntologyDocs();
+    }).catch(() => {
+      if (state.dataset !== ds) return;
+      state.ontoFormal = { classes: [], obj: [], data: [] };
+      renderOntologyDocs();
+    });
+    // The effective half comes from the schema pyramid (classes from rdf:type +
+    // predicate usage). Make sure it loads — ensureRemoteSchema re-renders these
+    // docs once state.schema arrives, so a dataset with no formal ontology still
+    // gets a full reference derived from its data.
+    if (state.remote && !state.schema) ensureRemoteSchema();
   }
 
   function ontoTboxQuery(cls) {
@@ -19049,26 +19078,89 @@ self.onmessage = function (e) {
       localName(x.iri).toLowerCase().localeCompare(localName(y.iri).toLowerCase()));
   }
 
+  // Merge the formal TBox with the effective schema (pyramid) and render. Called
+  // when the formal query resolves AND again when the pyramid arrives, so the
+  // reference fills in from whichever sources a given dataset actually has.
   function renderOntologyDocs() {
     const el = $("ontologyDocs");
-    if (!el) return;
+    if (!el || !state.ontoFormal) return;
+    const eff = effectiveOntology(state.schema, state.ontoFormal);
+    if (!eff.classes.length && !eff.obj.length && !eff.data.length) {
+      ontoLiveFallback(el);           // no formal AND no pyramid → sample live
+      return;
+    }
+    el.innerHTML = buildOntologyDocsHtml(eff.classes, eff.obj, eff.data);
+  }
+
+  // Formal classes/properties (with definitions) + everything the pyramid's
+  // rdf:type classes and class-level relations add (instance counts, derived
+  // domain/range from real usage). A term present in both keeps its formal
+  // definition and gains its usage count.
+  function effectiveOntology(schema, formal) {
+    const classes = (formal.classes || []).slice();
+    const obj = (formal.obj || []).slice();
+    const data = (formal.data || []).slice();
+    const haveC = new Set(classes.map((e) => e.iri));
+    const haveP = new Set(obj.concat(data).map((e) => e.iri));
+    const blank = (iri) => ({ iri, label: "", def: "", supers: new Set(),
+      domain: new Set(), range: new Set(), count: 0, fromData: true });
+
+    const countByClass = new Map();
+    ((schema && schema.classes) || []).forEach((c) => {
+      const iri = ontoClean(c[0]); if (iri) countByClass.set(iri, Number(c[1]) || 0);
+    });
+    classes.forEach((e) => { if (countByClass.has(e.iri)) e.count = countByClass.get(e.iri); });
+    let derived = false;
+    countByClass.forEach((n, iri) => {
+      if (iri === "(literal)" || haveC.has(iri)) return;
+      haveC.add(iri); derived = true;
+      const e = blank(iri); e.count = n; classes.push(e);
+    });
+
+    const byPred = new Map();
+    ((schema && schema.relations) || []).forEach((r) => {
+      const p = ontoClean(r[1]); if (!p) return;
+      let e = byPred.get(p);
+      if (!e) { e = blank(p); e.literal = false; byPred.set(p, e); }
+      const s = ontoClean(r[0]), o = ontoClean(r[2]);
+      if (s && s !== "(untyped)") e.domain.add(s);
+      if (o === "(literal)") e.literal = true;
+      else if (o && o !== "(untyped)") e.range.add(o);
+      e.count += Number(r[3]) || 0;
+    });
+    byPred.forEach((e) => {
+      if (haveP.has(e.iri)) return;
+      derived = true;
+      (e.literal && !e.range.size ? data : obj).push(e);
+    });
+
+    const byName = (a, b) => localName(a.iri).toLowerCase().localeCompare(localName(b.iri).toLowerCase());
+    classes.sort(byName); obj.sort(byName); data.sort(byName);
+    return { classes, obj, data, derived };
+  }
+
+  // Last resort for a graph with neither a formal ontology nor a schema pyramid:
+  // sample the most-used rdf:type classes and predicates live (bounded).
+  function ontoLiveFallback(el) {
     const ds = state.dataset;
-    el.innerHTML = '<div class="onto-doc-head"><h2>Ontology reference</h2>' +
-      '<span class="microcopy">reading the embedded ontology…</span></div>';
+    const num = (v) => Number((String(v).match(/\d+/) || [0])[0]);
+    const mk = (iri, n) => { const e = { iri: ontoClean(iri), label: "", def: "",
+      supers: new Set(), domain: new Set(), range: new Set(), count: n, fromData: true };
+      return e; };
     Promise.all([
-      exploreQuery(ontoTboxQuery("owl:Class")).catch(() => ({ rows: [] })),
-      exploreQuery(ontoTboxQuery("owl:ObjectProperty")).catch(() => ({ rows: [] })),
-      exploreQuery(ontoTboxQuery("owl:DatatypeProperty")).catch(() => ({ rows: [] })),
+      exploreQuery("SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 120").catch(() => ({ rows: [] })),
+      exploreQuery("SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n) LIMIT 120").catch(() => ({ rows: [] })),
     ]).then((out) => {
-      if (state.dataset !== ds) return; // dataset switched mid-query
-      const classes = ontoGroup(out[0].rows, true);
-      const objprops = ontoGroup(out[1].rows, false);
-      const dataprops = ontoGroup(out[2].rows, false);
-      el.innerHTML = buildOntologyDocsHtml(classes, objprops, dataprops);
-    }).catch((e) => {
       if (state.dataset !== ds) return;
-      el.innerHTML = '<div class="note">Couldn’t read the ontology reference: ' +
-        esc(String((e && e.message) || e)) + "</div>";
+      const classes = (out[0].rows || []).map((r) => mk(r.c, num(r.n)))
+        .filter((e) => e.iri && e.iri !== "(literal)");
+      const props = (out[1].rows || []).map((r) => mk(r.p, num(r.n))).filter((e) => e.iri);
+      if (!classes.length && !props.length) {
+        el.innerHTML = '<div class="onto-doc-head"><h2>Ontology reference</h2></div>' +
+          '<div class="note">No vocabulary could be read from this graph.</div>';
+        return;
+      }
+      el.innerHTML = buildOntologyDocsHtml(classes, props, []);
     });
   }
 
@@ -19077,12 +19169,13 @@ self.onmessage = function (e) {
   function buildOntologyDocsHtml(classes, objprops, dataprops) {
     if (!classes.length && !objprops.length && !dataprops.length) {
       return '<div class="onto-doc-head"><h2>Ontology reference</h2></div>' +
-        '<div class="note">This dataset carries no formal OWL ontology (no <code>owl:Class</code> / ' +
-        '<code>owl:ObjectProperty</code> / <code>owl:DatatypeProperty</code> declarations travel inside the ' +
-        'file). Its classes come from <code>rdf:type</code> — see the schema diagram above.</div>';
+        '<div class="note">No vocabulary could be read from this graph.</div>';
     }
+    const anyDerived = classes.concat(objprops, dataprops).some((e) => e.fromData);
+    const anyFormal = classes.concat(objprops, dataprops).some((e) => e.def);
     const big = (n) => n >= TBOX_LIMIT
       ? ' <span class="onto-trunc">(first ' + TBOX_LIMIT + ' — large ontology)</span>' : "";
+    const commas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     const links = (set) => [...set].map((s) => esc(shorten(localName(s), 32))).join(", ");
     const toc = (title, list) => list.length
       ? '<div class="onto-toc-group"><div class="onto-toc-title">' + title + " (" + list.length + ")</div>" +
@@ -19091,13 +19184,17 @@ self.onmessage = function (e) {
       : "";
     const term = (e, kind) => {
       const meta = [];
-      if (e.supers.size) meta.push('<span class="onto-rel">subclass of</span> ' + links(e.supers));
-      if (e.domain.size) meta.push('<span class="onto-rel">domain</span> ' + links(e.domain));
-      if (e.range.size) meta.push('<span class="onto-rel">range</span> ' + links(e.range));
+      if (e.supers && e.supers.size) meta.push('<span class="onto-rel">subclass of</span> ' + links(e.supers));
+      if (e.domain && e.domain.size) meta.push('<span class="onto-rel">domain</span> ' + links(e.domain));
+      if (e.range && e.range.size) meta.push('<span class="onto-rel">range</span> ' + links(e.range));
+      if (e.count) meta.push('<span class="onto-count">' + commas(e.count) +
+        (kind === "class" ? " instances" : " uses") + "</span>");
       return '<div class="onto-term" id="' + ontoAnchor(e.iri) + '">' +
         '<div class="onto-term-head"><span class="onto-name">' +
           esc(e.label || shorten(localName(e.iri), 60)) + '</span>' +
-          '<span class="onto-kind">' + kind + "</span></div>" +
+          '<span class="onto-kind">' + kind + "</span>" +
+          (e.fromData && !e.def ? '<span class="onto-derived" title="Not declared in a formal ontology — derived from the data (rdf:type / predicate usage)">from data</span>' : "") +
+        "</div>" +
         '<div class="onto-iri" title="' + esc(e.iri) + '">' + esc(e.iri) + "</div>" +
         (e.def ? '<p class="onto-def">' + esc(e.def) + "</p>" : "") +
         (meta.length ? '<div class="onto-meta">' + meta.join(" · ") + "</div>" : "") +
@@ -19107,10 +19204,13 @@ self.onmessage = function (e) {
       ? '<section class="onto-section"><h3>' + title + "</h3>" +
         list.map((e) => term(e, kind)).join("") + "</section>"
       : "";
+    const src = anyFormal && anyDerived ? "the embedded ontology + the classes and predicates in the data"
+      : anyFormal ? "the embedded ontology, with definitions"
+      : "the classes and predicates in the data (no formal ontology travels in this file)";
     return '<div class="onto-doc-head"><h2>Ontology reference</h2>' +
       '<span class="microcopy">' + classes.length + " classes" + big(classes.length) +
       " · " + objprops.length + " object properties · " + dataprops.length +
-      ' datatype properties — from the embedded ontology, with definitions</span></div>' +
+      " datatype properties — from " + src + "</span></div>" +
       '<div class="onto-body"><nav class="onto-toc">' +
         toc("Classes", classes) + toc("Object properties", objprops) + toc("Datatype properties", dataprops) +
       "</nav><div class=\"onto-content\">" +

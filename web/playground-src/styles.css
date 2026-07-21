@@ -2021,6 +2021,10 @@ pre {
 .onto-def { margin: 8px 0 6px; font-size: 0.88rem; line-height: 1.45; color: var(--ink); }
 .onto-meta { font-size: 0.78rem; color: var(--muted); }
 .onto-rel { color: var(--accent-dark); font-weight: 600; }
+.onto-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.onto-derived { font-size: 0.62rem; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); background: var(--tint); border-radius: 9px; padding: 1px 7px; }
+.onto-term:has(.onto-derived) { border-left-color: var(--line-strong); }
 .onto-trunc { color: var(--tint-amber-fg, var(--muted)); font-weight: 600; }
 @media (max-width: 720px) {
   .onto-body { grid-template-columns: 1fr; }

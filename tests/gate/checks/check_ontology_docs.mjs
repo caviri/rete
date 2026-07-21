@@ -34,16 +34,20 @@ const main = async () => {
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 160)));
 
-  const c4dt = await readDocs(page, "c4dt");     // rich TBox with definitions
+  const c4dt = await readDocs(page, "c4dt");     // rich TBox with definitions (+ pyramid)
   const dblp = await readDocs(page, "dblp");     // --no-pyramid, but carries dblp.ttl
+  const worldcup = await readDocs(page, "worldcup"); // NO formal ontology — effective schema from data
 
   const c4dtOk = c4dt.terms >= 10 && c4dt.defs >= 5 && c4dt.toc >= 10;
   const dblpOk = dblp.terms >= 5;                // ontology docs despite no pyramid
-  const pass = c4dtOk && dblpOk && errs.length === 0;
+  // the "available for ALL datasets" requirement: a dataset with no formal OWL
+  // ontology still gets a reference derived from its rdf:type classes + predicates
+  const worldcupOk = worldcup.terms >= 10;
+  const pass = c4dtOk && dblpOk && worldcupOk && errs.length === 0;
 
   console.log(JSON.stringify({
     verdict: pass ? "PASS" : "FAIL",
-    c4dt, dblp, c4dtOk, dblpOk, errs: errs.slice(0, 3),
+    c4dt, dblp, worldcup, c4dtOk, dblpOk, worldcupOk, errs: errs.slice(0, 3),
   }, null, 2));
   await browser.close();
   process.exit(pass ? 0 : 1);
