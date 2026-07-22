@@ -4613,7 +4613,26 @@ self.onmessage = function (e) {
   // Inline 3D cells: load the <model-viewer> web component the first time one
   // appears; each <model-viewer> element then upgrades and lazy-loads its own .glb.
   function hydrateModel3d(scope) {
-    if ((scope || document).querySelector(".model3d-cell model-viewer")) ensureModelViewer();
+    const root = scope || document;
+    if (root.querySelector(".model3d-cell model-viewer")) ensureModelViewer();
+    // Time-stamped clips (…glb#t=): once the model loads, freeze it at that moment so
+    // the cell shows the couple exactly when its move happens.
+    root.querySelectorAll(".model3d-cell model-viewer[data-seek]").forEach((mv) => {
+      if (mv.__seekWired) return;
+      mv.__seekWired = true;
+      const at = parseFloat(mv.getAttribute("data-seek"));
+      // play() first to activate the animation timeline (currentTime is a no-op on a
+      // never-started clip), then seek to the moment and pause to hold the pose. The
+      // timeline isn't ready the instant `load` fires, so poll until the seek sticks.
+      const apply = () => { try { mv.play(); mv.currentTime = at; mv.pause(); } catch (e) { /* ignore */ } };
+      let tries = 0;
+      const poll = () => {
+        apply();
+        if (Math.abs((mv.currentTime || 0) - at) > 0.2 && tries++ < 25) setTimeout(poll, 200);
+      };
+      mv.addEventListener("load", poll, { once: true });
+      if (mv.loaded) poll();
+    });
   }
   // ---- geo mini-map cells ---------------------------------------------------
   // A WKT geometry literal (geo:wktLiteral: POINT / POLYGON / LINESTRING …) drawn
@@ -4918,13 +4937,18 @@ self.onmessage = function (e) {
       ? ' camera-target="0m 0.9m 0m" camera-orbit="20deg 80deg 3.4m"' : '';
   }
   function mesh3dCell(t) {
-    const url = httpsUpgrade(t.value);
+    const raw = httpsUpgrade(t.value);
+    // A glb URL may carry a TIME fragment (…glb#t=8.3) — freeze the animation at that
+    // exact moment. The value is built in SPARQL from a move's dance:startTime, so a query
+    // can seek each row to the moment its move happens. Without a fragment, it autoplays.
+    const seek = (raw.match(/#t=([\d.]+)/) || [])[1];
+    const url = raw.replace(/#t=[\d.]+/, "");
     // An inline, rotatable <model-viewer> right in the cell — drag to rotate, plus a
     // gentle auto-spin. The web component is lazy-loaded once (hydrateModel3d); each
     // viewer lazy-loads its .glb only when scrolled near the viewport (loading=lazy),
     // so a 60-row table doesn't fetch 60 meshes at once. The ⛶ opens the full lightbox.
     return `<td class="iri model3d-cell">` +
-      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate autoplay${meshCamera(url)} ` +
+      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate${seek ? ` data-seek="${esc(seek)}"` : " autoplay"}${meshCamera(url)} ` +
       `auto-rotate-delay="0" rotation-per-second="28deg" interaction-prompt="none" disable-zoom ` +
       `loading="lazy" reveal="auto" touch-action="pan-y" environment-image="neutral" ` +
       `shadow-intensity="0.6" alt="3D model"></model-viewer>` +
