@@ -132,6 +132,27 @@ wedged under load — R2 replaced it and it is now unused.
 
 In this repo, commit **without** the Claude `Co-Authored-By` trailer.
 
+## Working Tree
+
+**Never run `git clean -xfd`** (or any `git clean` variant carrying `-x`).
+
+Ignored does not mean disposable here. Several paths are git-ignored *on
+purpose* and hold real, unrecoverable work:
+
+- `/data/*` — dataset build pipelines and their outputs. Some datasets keep
+  their extractor, ontology and metadata artifacts here deliberately, because
+  they should not live in the rete repo.
+- `/.claude/skills/` — the local skill definitions and their scripts.
+- `/dev/` — engineering notes and scratch plans.
+
+`-x` deletes exactly these. None of it is on a remote, so there is no recovery.
+The same caution applies to `git reset --hard`, `git checkout -- .` and force
+pushes: prefer a narrower command, and when the goal is a clean build, remove
+the specific build directory by name instead of sweeping the tree.
+
+Parallel sessions also share this working tree — never delete or revert another
+session's uncommitted changes, even temporarily.
+
 ## Code Conventions
 
 - Rust 2021. Keep public APIs small and explicit.
