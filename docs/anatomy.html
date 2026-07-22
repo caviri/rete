@@ -76,6 +76,35 @@
   #sparql{margin:9px 0 6px;padding:8px 10px;background:#0a0f18;border:1px solid var(--line);border-radius:8px;
     font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#b9c6da;white-space:pre-wrap;max-height:220px;overflow:auto}
   #qmeta{font-size:12px}
+  /* results footer under the 3D */
+  #footer[hidden], #modal[hidden]{display:none}   /* ID specificity beats the UA [hidden] rule */
+  #footer{position:absolute;left:0;right:0;bottom:0;z-index:6;display:flex;flex-direction:column;
+    max-height:44vh;background:rgba(15,21,33,.97);backdrop-filter:blur(6px);border-top:1px solid var(--line)}
+  #footer.collapsed{max-height:none}
+  #footer-bar{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line);font-size:13px}
+  #footer-bar b{font-weight:600}
+  #footer.collapsed #footer-body{display:none}
+  #footer.collapsed #footer-bar{border-bottom:none}
+  #footer-body{overflow:auto;flex:1}
+  .fbtn{background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;width:26px;height:24px;
+    cursor:pointer;font-size:12px;line-height:1}
+  .fbtn:hover{border-color:var(--accent);color:var(--ink)}
+  #results{border-collapse:collapse;width:100%;font-size:12.5px}
+  #results th{position:sticky;top:0;background:#0e1622;text-align:left;padding:6px 12px;color:var(--dim);
+    font-weight:500;border-bottom:1px solid var(--line);white-space:nowrap}
+  #results td{padding:5px 12px;border-bottom:1px solid #161d2b}
+  #results td.rn{color:var(--dim);text-align:right;font-variant-numeric:tabular-nums}
+  #results tr.clk{cursor:pointer} #results tr.clk:hover td{background:#182034}
+  /* modal */
+  #modal{position:fixed;inset:0;z-index:20;background:rgba(4,7,12,.72);display:flex;align-items:center;justify-content:center;padding:24px}
+  #modal-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(720px,94vw);
+    max-height:88vh;overflow:auto;padding:18px 20px}
+  #modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:15px}
+  .ex-card{border:1px solid var(--line);border-radius:9px;padding:11px 13px;margin:9px 0;background:var(--panel2)}
+  .ex-h{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .ex-card pre{margin:0;padding:8px 10px;background:#0a0f18;border:1px solid var(--line);border-radius:7px;
+    font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#b9c6da;white-space:pre-wrap;overflow:auto;max-height:200px}
+  .ex-run{white-space:nowrap}
 </style>
 </head>
 <body>
@@ -97,6 +126,7 @@
       <summary>Select by query</summary>
       <div class="muted" style="font-size:11.5px;margin:-2px 0 8px">Real SPARQL against z-anatomy.rete — click to run the selection on the model.</div>
       <div id="queries"></div>
+      <button class="btn" id="openModal" style="margin-top:8px;width:100%">Browse examples + full SPARQL ↗</button>
       <pre id="sparql" hidden></pre>
       <div id="qmeta" class="muted" hidden></div>
     </details>
@@ -113,7 +143,7 @@
   </div>
   <!-- CENTER -->
   <div id="stage">
-    <div id="hud">Drag to orbit · scroll to zoom · click a structure to select it.</div>
+    <div id="hud">Left-drag orbit · right / Shift-drag pan · scroll zoom · click to select</div>
     <div id="legend">
       <div class="row"><span class="dot" style="background:var(--c-target)"></span>selected</div>
       <div class="row"><span class="dot" style="background:var(--c-adj)"></span>adjacent in 3D (touching)</div>
@@ -121,10 +151,27 @@
       <div class="row"><span class="dot" style="background:var(--c-th)"></span>thermally coupled</div>
     </div>
     <div id="loading"><div>Loading the body…</div><div id="bar"><i></i></div><div id="lmsg" class="muted"></div></div>
+    <div id="footer" hidden>
+      <div id="footer-bar">
+        <b id="footer-title"></b><span id="footer-count" class="muted"></span>
+        <span style="flex:1"></span>
+        <button class="fbtn" id="footer-min" title="collapse / expand">▾</button>
+        <button class="fbtn" id="footer-x" title="close">✕</button>
+      </div>
+      <div id="footer-body"><table id="results"></table></div>
+    </div>
   </div>
   <!-- RIGHT -->
   <div class="col" id="right">
     <div class="sec" id="info"><div class="empty">Pick a structure on the left, or click one in the scene.</div></div>
+  </div>
+</div>
+
+<div id="modal" hidden>
+  <div id="modal-card">
+    <div id="modal-head"><b>Example SPARQL queries — z-anatomy</b><button class="fbtn" id="modal-x" title="close">✕</button></div>
+    <div class="muted" style="font-size:12px;margin:0 0 12px">The playground's z-anatomy examples that select parts / 3D parts. Click <b>Run ▶</b> to execute the selection on the model — matching structures highlight in 3D and the full result appears in the table below the scene.</div>
+    <div id="modal-list"></div>
   </div>
 </div>
 
@@ -150,7 +197,7 @@ let graph, nodesByName = new Map(), meshByName = new Map();
 let scene, camera, renderer, controls, root;
 const loaded = new Set();                          // system indices with a loaded GLB
 let selected = null, framedOnce = false;
-const HUD_DEFAULT = "Drag to orbit · scroll to zoom · click a structure to select it.";
+const HUD_DEFAULT = "Left-drag orbit · right / Shift-drag pan · scroll zoom · click to select";
 function setHud(msg){ const h=document.getElementById('hud'); if(h) h.textContent = msg || HUD_DEFAULT; }
 
 const draco = new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
@@ -188,6 +235,14 @@ function setupThree(){
   root = new THREE.Group(); scene.add(root);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true; controls.dampingFactor = .08;
+  // drag to displace (pan), not only orbit: left = orbit, right / Shift+left = pan,
+  // middle or scroll = zoom; two-finger drag pans on touch.
+  controls.screenSpacePanning = true;
+  controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+  controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+  renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+  addEventListener('keydown', e => { if(e.key==='Shift') controls.mouseButtons.LEFT = THREE.MOUSE.PAN; });
+  addEventListener('keyup',   e => { if(e.key==='Shift') controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE; });
   addEventListener('resize', onResize);
   renderer.domElement.addEventListener('pointerdown', onPick);
   document.getElementById('resetView').onclick = ()=>{ clearSelection(); frameAll(); };
@@ -340,21 +395,49 @@ PREFIX geof3: <https://w3id.org/rete/geo3/function/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>`;
 const findNode = (label, side) => graph.nodes.find(n => n.l === label && (!side || n.sd === side));
 const d2 = (a, b) => { let s=0; for(let i=0;i<3;i++){ const d=a[i]-b[i]; s+=d*d; } return s; };
+const sysName = n => graph.systems[n.sy];
+const rowsFrom = (idxs, extra) => idxs.map(i => { const n=graph.nodes[i];
+  return { i, l:n.l, sys:sysName(n), t:n.t||'', sd:n.sd||'', ...(extra?extra(n):{}) }; });
 const EXAMPLES = [
-  {label:"All bones", q:`SELECT ?bone WHERE {\n  ?s a anat:Bone ; rdfs:label ?bone .\n}`,
-   sel:ns=>ns.filter(n=>n.t==='bone').map(n=>n.i)},
-  {label:"All muscles", q:`SELECT ?muscle WHERE {\n  ?s a anat:Muscle ; rdfs:label ?muscle .\n}`,
-   sel:ns=>ns.filter(n=>n.t==='muscle').map(n=>n.i)},
-  {label:"Left-side viscera", q:`SELECT ?organ WHERE {\n  ?s a anat:Viscus ; anat:side "left" ; rdfs:label ?organ .\n}`,
-   sel:ns=>ns.filter(n=>n.t==='viscus'&&n.sd==='left').map(n=>n.i)},
-  {label:"Within 60 mm of the liver (geo3)", q:`SELECT ?s (ROUND(geof3:distance3D(?lw,?w)) AS ?mm) WHERE {\n  ?liver rdfs:label "Liver"@en ; geo:hasGeometry/geo3:asWKT3D ?lw .\n  ?s geo:hasGeometry/geo3:asWKT3D ?w .\n  FILTER(?s != ?liver && geof3:distance3D(?lw,?w) < 60)\n} ORDER BY ?mm`,
-   sel:ns=>{ const l=findNode('Liver'); if(!l) return []; return ns.filter(n=>n!==l && d2(n.c,l.c)<60*60).map(n=>n.i); }},
-  {label:"In contact with the stomach (adjacent3D)", q:`SELECT ?neighbour WHERE {\n  ?stomach rdfs:label "Stomach"@en ; geo3:adjacent3D ?n .\n  ?n rdfs:label ?neighbour .\n}`,
-   sel:()=>{ const s=findNode('Stomach'); return s ? s.adj.slice() : []; }},
-  {label:"Thermally coupled to the left kidney", q:`SELECT ?neighbour WHERE {\n  ?k rdfs:label "Kidney"@en ; anat:side "left" ;\n     geo3:thermallyCoupledWith ?n .\n  ?n rdfs:label ?neighbour .\n}`,
-   sel:()=>{ const k=findNode('Kidney','left'); return k ? k.th.slice() : []; }},
-  {label:"Organs with a related cancer", q:`SELECT DISTINCT ?organ ?disease WHERE {\n  ?s rdfs:label ?organ ; anat:relatedDisease ?d .\n  ?d rdfs:label ?disease .\n  FILTER(CONTAINS(LCASE(?disease), "cancer"))\n}`,
-   sel:ns=>ns.filter(n=>n.dis && n.dis.some(x=>x.toLowerCase().includes('cancer'))).map(n=>n.i)},
+  {label:"All bones", desc:"Every structure typed as a bone.",
+   q:`SELECT ?bone WHERE {\n  ?s a anat:Bone ; rdfs:label ?bone .\n}`,
+   cols:[{k:'l',h:'Bone'},{k:'sd',h:'Side'}],
+   run:ns=>{ const m=ns.filter(n=>n.t==='bone'); return {idxs:m.map(n=>n.i), rows:rowsFrom(m.map(n=>n.i))}; }},
+  {label:"All muscles", desc:"Every structure typed as a muscle.",
+   q:`SELECT ?muscle WHERE {\n  ?s a anat:Muscle ; rdfs:label ?muscle .\n}`,
+   cols:[{k:'l',h:'Muscle'},{k:'sd',h:'Side'}],
+   run:ns=>{ const m=ns.filter(n=>n.t==='muscle'); return {idxs:m.map(n=>n.i), rows:rowsFrom(m.map(n=>n.i))}; }},
+  {label:"Left-side viscera", desc:"Visceral organs on the left side of the body.",
+   q:`SELECT ?organ WHERE {\n  ?s a anat:Viscus ; anat:side "left" ; rdfs:label ?organ .\n}`,
+   cols:[{k:'l',h:'Organ'}],
+   run:ns=>{ const m=ns.filter(n=>n.t==='viscus'&&n.sd==='left'); return {idxs:m.map(n=>n.i), rows:rowsFrom(m.map(n=>n.i))}; }},
+  {label:"Within 60 mm of the liver (geo3)", desc:"3D distance: structures whose centroid is within 60 mm of the liver, via the geo3 distance3D function.",
+   q:`SELECT ?structure (ROUND(geof3:distance3D(?lw,?w)) AS ?mm) WHERE {\n  ?liver rdfs:label "Liver"@en ; geo:hasGeometry/geo3:asWKT3D ?lw .\n  ?s rdfs:label ?structure ; geo:hasGeometry/geo3:asWKT3D ?w .\n  FILTER(?s != ?liver && geof3:distance3D(?lw,?w) < 60)\n} ORDER BY ?mm`,
+   cols:[{k:'l',h:'Structure'},{k:'sys',h:'System'},{k:'mm',h:'Distance (mm)'}],
+   run:ns=>{ const L=findNode('Liver'); if(!L) return {idxs:[],rows:[]};
+     const m=ns.filter(n=>n!==L && d2(n.c,L.c)<60*60).map(n=>({n, mm:Math.round(Math.sqrt(d2(n.c,L.c)))})).sort((a,b)=>a.mm-b.mm);
+     return {idxs:m.map(x=>x.n.i), rows:m.map(x=>({i:x.n.i, l:x.n.l, sys:sysName(x.n), mm:x.mm}))}; }},
+  {label:"In contact with the stomach (adjacent3D)", desc:"Structures whose surfaces touch the stomach in 3D (materialised geo3:adjacent3D edges).",
+   q:`SELECT ?neighbour WHERE {\n  ?stomach rdfs:label "Stomach"@en ; geo3:adjacent3D ?n .\n  ?n rdfs:label ?neighbour .\n}`,
+   cols:[{k:'l',h:'Neighbour'},{k:'sys',h:'System'},{k:'t',h:'Tissue'}],
+   run:()=>{ const s=findNode('Stomach'); const idxs=s?s.adj.slice():[]; return {idxs, rows:rowsFrom(idxs)}; }},
+  {label:"Thermally coupled to the left kidney", desc:"Neighbours thermally coupled to the left kidney (adjacency where a perfused tissue is involved).",
+   q:`SELECT ?neighbour WHERE {\n  ?k rdfs:label "Kidney"@en ; anat:side "left" ;\n     geo3:thermallyCoupledWith ?n .\n  ?n rdfs:label ?neighbour .\n}`,
+   cols:[{k:'l',h:'Neighbour'},{k:'sys',h:'System'},{k:'t',h:'Tissue'}],
+   run:()=>{ const k=findNode('Kidney','left'); const idxs=k?k.th.slice():[]; return {idxs, rows:rowsFrom(idxs)}; }},
+  {label:"Organs with a related cancer", desc:"Structures that host at least one Disease-Ontology cancer.",
+   q:`SELECT DISTINCT ?organ (COUNT(?d) AS ?cancers) WHERE {\n  ?s rdfs:label ?organ ; anat:relatedDisease ?d .\n  ?d rdfs:label ?disease .\n  FILTER(CONTAINS(LCASE(?disease), "cancer"))\n} GROUP BY ?organ ORDER BY DESC(?cancers)`,
+   cols:[{k:'l',h:'Organ'},{k:'sys',h:'System'},{k:'nd',h:'Cancers'}],
+   run:ns=>{ const m=ns.filter(n=>n.dis && n.dis.some(x=>x.toLowerCase().includes('cancer')))
+       .map(n=>({n, nd:n.dis.filter(x=>x.toLowerCase().includes('cancer')).length})).sort((a,b)=>b.nd-a.nd);
+     return {idxs:m.map(x=>x.n.i), rows:m.map(x=>({i:x.n.i, l:x.n.l, sys:sysName(x.n), nd:x.nd}))}; }},
+  {label:"Diseases of the liver, with ICD-10", desc:"The Disease-Ontology diseases located in the liver and their ICD-10-CM codes.",
+   q:`SELECT ?disease ?icd10 WHERE {\n  ?liver rdfs:label "Liver"@en ; anat:relatedDisease ?d .\n  ?d rdfs:label ?disease .\n  OPTIONAL { ?d anat:icd10 ?icd10 }\n} ORDER BY ?icd10`,
+   cols:[{k:'disease',h:'Disease'},{k:'icd',h:'ICD-10'}],
+   run:()=>{ const L=findNode('Liver'); if(!L) return {idxs:[],rows:[]};
+     const rows=(L.dis||[]).map(x=>{ const p=x.split(' · '); return {disease:p[0], icd:p[1]||''}; })
+       .sort((a,b)=>a.icd.localeCompare(b.icd));
+     return {idxs:[L.i], rows}; }},
 ];
 function buildQueries(){
   const box=document.getElementById('queries');
@@ -362,17 +445,49 @@ function buildQueries(){
     const b=document.createElement('button'); b.className='qbtn'; b.textContent=ex.label;
     b.onclick=()=>runQuery(k); box.appendChild(b);
   });
+  buildModal();
+  document.getElementById('openModal').onclick=()=>{ document.getElementById('modal').hidden=false; };
+  document.getElementById('modal-x').onclick=closeModal;
+  document.getElementById('modal').addEventListener('click', e=>{ if(e.target.id==='modal') closeModal(); });
+  document.getElementById('footer-x').onclick=()=>{ document.getElementById('footer').hidden=true; document.getElementById('legend').style.display=''; };
+  document.getElementById('footer-min').onclick=()=>{ const f=document.getElementById('footer'); f.classList.toggle('collapsed');
+    document.getElementById('footer-min').textContent = f.classList.contains('collapsed')?'▴':'▾'; };
+}
+function closeModal(){ document.getElementById('modal').hidden=true; }
+function buildModal(){
+  const list=document.getElementById('modal-list');
+  list.innerHTML = EXAMPLES.map((ex,k)=>`
+    <div class="ex-card">
+      <div class="ex-h"><b>${ex.label}</b><button class="btn ex-run" data-k="${k}">Run ▶</button></div>
+      <div class="muted" style="font-size:12px;margin:2px 0 6px">${ex.desc}</div>
+      <pre>${(QNS+"\n"+ex.q).replace(/</g,'&lt;')}</pre>
+    </div>`).join('');
+  list.querySelectorAll('.ex-run').forEach(b=> b.onclick=()=>{ runQuery(+b.dataset.k); closeModal(); });
 }
 function runQuery(k){
   const ex=EXAMPLES[k];
   [...document.querySelectorAll('.qbtn')].forEach((b,j)=>b.classList.toggle('on', j===k));
   const pre=document.getElementById('sparql'); pre.hidden=false; pre.textContent=QNS+"\n"+ex.q;
-  const idxs=[...new Set(ex.sel(graph.nodes))];
-  highlightSet(idxs, 0x33d6ff);
-  const vis=idxs.filter(i=>meshByName.has(graph.nodes[i].n)).length;
+  const {idxs, rows}=ex.run(graph.nodes); const uniq=[...new Set(idxs)];
+  highlightSet(uniq, 0x33d6ff);
+  const vis=uniq.filter(i=>meshByName.has(graph.nodes[i].n)).length;
   const meta=document.getElementById('qmeta'); meta.hidden=false;
-  meta.textContent = `${idxs.length} structure${idxs.length===1?'':'s'}${vis<idxs.length?` · ${vis} loaded in 3D`:''}`;
+  meta.textContent = `${uniq.length} highlighted${vis<uniq.length?` · ${vis} in 3D`:''}`;
+  renderFooter(ex.label, ex.cols, rows);
   selected=null; renderInfo(null);
+}
+function renderFooter(title, cols, rows){
+  const f=document.getElementById('footer'); f.hidden=false; f.classList.remove('collapsed');
+  document.getElementById('footer-min').textContent='▾';
+  document.getElementById('footer-title').textContent=title;
+  document.getElementById('footer-count').textContent=`${rows.length} row${rows.length===1?'':'s'}${rows.length>500?' (showing 500)':''}`;
+  const cap=rows.slice(0,500);
+  const esc=s=>String(s??'').replace(/</g,'&lt;');
+  const thead=`<thead><tr><th>#</th>${cols.map(c=>`<th>${c.h}</th>`).join('')}</tr></thead>`;
+  const tbody=`<tbody>${cap.map((r,i)=>`<tr${r.i!=null?` data-i="${r.i}" class="clk"`:''}><td class="rn">${i+1}</td>${cols.map(c=>`<td>${esc(r[c.k])}</td>`).join('')}</tr>`).join('')}</tbody>`;
+  const t=document.getElementById('results'); t.innerHTML=thead+tbody;
+  t.querySelectorAll('tr.clk').forEach(tr=> tr.onclick=()=>{ const n=graph.nodes[+tr.dataset.i]; if(n) select(n); });
+  document.getElementById('legend').style.display='none';
 }
 function highlightSet(idxs, color){
   meshByName.forEach(m=> styleMesh(m,{color:m.userData.baseColor, opacity:0.05}));
@@ -433,6 +548,7 @@ function renderInfo(n){
 const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
 let downXY=null;
 function onPick(e){
+  if(e.button!==0 || e.shiftKey) return;   // left-click only; Shift/right = pan
   downXY=[e.clientX,e.clientY];
   const up=(ev)=>{
     removeEventListener('pointerup',up);
