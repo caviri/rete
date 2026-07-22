@@ -3,6 +3,14 @@
   "generatedFrom": "release-1.0.0-rc1",
   "datasets": [
     {
+      "key": "aifdb-open",
+      "url": "https://data.graphplaza.com/aifdb-open/aifdb-open.rete",
+      "formatVersion": 5,
+      "contentHash": "784c3587f49097571e5c64b5818cc2d6",
+      "size": 13580488,
+      "cardUrl": "https://data.graphplaza.com/aifdb-open/aifdb-open.rete"
+    },
+    {
       "key": "albala",
       "url": "https://data.graphplaza.com/albala/albala.rete",
       "formatVersion": 5,
@@ -163,14 +171,6 @@
       "cardUrl": "https://data.graphplaza.com/dblp/dblp.rete"
     },
     {
-      "key": "aifdb-open",
-      "url": "https://data.graphplaza.com/aifdb-open/aifdb-open.rete",
-      "formatVersion": 5,
-      "contentHash": "784c3587f49097571e5c64b5818cc2d6",
-      "size": 13580488,
-      "cardUrl": "https://data.graphplaza.com/aifdb-open/aifdb-open.rete"
-    },
-    {
       "key": "ecal",
       "url": "https://data.graphplaza.com/ecal/ecal.rete",
       "formatVersion": 5,
@@ -265,6 +265,14 @@
       "contentHash": "c1ad552eec2b2459b3f3e68b0def21a5",
       "size": 1608629,
       "cardUrl": "https://data.graphplaza.com/history/history.rete"
+    },
+    {
+      "key": "imaging-plaza",
+      "url": "https://data.graphplaza.com/imaging-plaza/imaging-plaza.rete",
+      "formatVersion": 5,
+      "contentHash": "e96dfbc1b5c9554abf7ff00016a8cbc9",
+      "size": 223233,
+      "cardUrl": "https://data.graphplaza.com/imaging-plaza/imaging-plaza.rete"
     },
     {
       "key": "jonas",
