@@ -73,6 +73,52 @@ g.contentHash();                // remote graphs: blake3-16 cache key
 await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array)
 ```
 
+## Comunica (and the RDF/JS ecosystem) {#comunica-and-the-rdfjs-ecosystem}
+
+[Comunica](https://comunica.dev) — the modular JS SPARQL framework behind
+LDflex, GraphQL-LD, and much of the Solid ecosystem — talks to rete two
+ways.
+
+**Level 1: zero code, via the SPARQL endpoints.** Every published dataset
+(and any `.rete` URL) is a standard endpoint on the gateway, and Comunica
+federates against endpoints natively:
+
+```js
+import { QueryEngine } from "@comunica/query-sparql";
+
+const engine = new QueryEngine();
+const bindings = await (await engine.queryBindings(sparql, {
+  sources: [{ type: "sparql", value: "https://katospiegel-rete.hf.space/sparql/boe" }],
+})).toArray();
+```
+
+The whole query is pushed down to the rete engine server-side — use this
+for heavy multi-join queries over big remote files, and to let Comunica
+federate rete datasets with TPF, RDF files, and other endpoints.
+
+**Level 2: native, via `ReteSource` (from 0.2.0).** An RDF/JS Source over
+an open graph — local bytes or a lazy URL — pluggable into any Comunica
+pipeline:
+
+```js
+import { QueryEngine } from "@comunica/query-sparql";
+import { open, ReteSource } from "rete-graph";
+
+const source = new ReteSource(await open("https://data.graphplaza.com/boe/boe.rete"));
+const bindings = await (await new QueryEngine().queryBindings(sparql, {
+  sources: [source],
+})).toArray();
+```
+
+Each `match(s, p, o, g)` is one pattern lookup against the file's
+permutation indexes (`countQuads` is implemented too, so Comunica's
+planner can order joins); Comunica executes the joins itself over the
+quad streams. Rule of thumb: **local/embedded file → `ReteSource`; heavy
+joins over a big remote file → level 1**, which keeps rete's own
+optimized joins. Blank-node match arguments are honored by label
+filtering; named-graph semantics follow RDF/JS (`null` graph = default ∪
+named).
+
 ## Feature matrix
 
 | Capability | JS | Notes |
@@ -84,6 +130,7 @@ await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array)
 | Build from RDF text | ✅ | `build()` — uncompressed, like the playground |
 | Script-tag single-file build | ✅ | `dist/rete-graph(.min).js`, global `rete` |
 | TypeScript types | ✅ | bundled `index.d.ts` |
+| RDF/JS Source (Comunica, LDflex, GraphQL-LD) | ✅ 0.2.0 | `ReteSource` — see [Comunica](#comunica-and-the-rdfjs-ecosystem) |
 | `SERVICE` federation | ✅* | via the engine; same worker/Node constraint |
 | Dataset Card / embedded examples | ⏳ | needs a wasm export — planned parity with Python |
 | Custom headers / custom readers | ⏳ | planned |

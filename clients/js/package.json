@@ -1,6 +1,6 @@
 {
   "name": "rete-graph",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Query local and remote .rete graph files with SPARQL — WebAssembly client for browsers and Node.",
   "license": "Apache-2.0",
   "repository": {
@@ -28,6 +28,7 @@
     "test": "npm run build && node --test --test-timeout=60000 ./test/*.test.mjs"
   },
   "devDependencies": {
+    "@comunica/query-sparql": "^4.0.0",
     "esbuild": "^0.25.0"
   }
 }

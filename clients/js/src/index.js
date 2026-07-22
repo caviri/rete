@@ -285,3 +285,6 @@ export async function build(text, format = "nt") {
   await init();
   return wasmBuild(text, format);
 }
+
+// RDF/JS Source for Comunica / LDflex / GraphQL-LD pipelines.
+export { ReteSource } from "./comunica.js";

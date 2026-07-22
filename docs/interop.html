@@ -413,7 +413,15 @@ LIMIT 10
 </code></pre>
 <p>The gateway turns <strong>any</strong> published <code>.rete</code> URL into a standard endpoint
 (<code>/sparql/&lt;full-url&gt;</code> — see <a href="hosting.html">Hosting</a>), so this works for files
-nobody registered anywhere. <code>rete serve</code> does the same for a local file.
+nobody registered anywhere. <code>rete serve</code> does the same for a local file.</p>
+<p><a href="https://comunica.dev">Comunica</a> needs no adapter at all (verified):</p>
+<pre><code class="language-sh">$ npx -y -p @comunica/query-sparql comunica-sparql \
+    "sparql@https://katospiegel-rete.hf.space/sparql/boe" \
+    "SELECT ?title WHERE { &lt;https://www.boe.es/eli/es/c/1978/12/27/(1)&gt; &lt;http://data.europa.eu/eli/ontology#title&gt; ?title }"
+[{"title":"\"Constitución Española.\""}]
+</code></pre>
+<p>For native (non-endpoint) integration, the npm client ships an RDF/JS
+<code>ReteSource</code> — see <a href="javascript.html">the JavaScript client</a>.
 Migrate when you need writes, store-specific features (GraphDB's Lucene
 connectors, say), or co-location with data already living there;
 federate when you just need the answers.</p>

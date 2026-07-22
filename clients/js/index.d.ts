@@ -63,3 +63,20 @@ export function build(text: string, format?: "nt" | "nq" | "ttl"): Promise<Uint8
 
 /** Initialize the wasm engine explicitly (open()/build() do it lazily). */
 export function init(source?: BufferSource | WebAssembly.Module | URL | string | null): Promise<void>;
+
+/**
+ * RDF/JS Source over an open Graph — plugs `.rete` files into Comunica,
+ * LDflex, GraphQL-LD, and anything speaking the RDF/JS Source interface:
+ * `sources: [new ReteSource(graph)]`. Each match() is one pattern lookup
+ * against the file's indexes; Comunica performs the joins. For heavy
+ * multi-join queries over big REMOTE files prefer full pushdown via a
+ * SPARQL endpoint (`rete serve`, or the gateway's `/sparql/<key-or-url>`).
+ */
+export class ReteSource {
+  constructor(graph: Graph);
+  readonly graph: Graph;
+  /** RDF/JS Stream of quads matching the pattern (null/Variable = free). */
+  match(subject?: unknown, predicate?: unknown, object?: unknown, graph?: unknown): unknown;
+  /** Number of matching quads (helps query planners order joins). */
+  countQuads(subject?: unknown, predicate?: unknown, object?: unknown, graph?: unknown): number;
+}

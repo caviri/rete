@@ -142,8 +142,8 @@
       "key": "dance",
       "url": "https://data.graphplaza.com/dance/dance.rete",
       "formatVersion": 5,
-      "contentHash": "381aed89c79c8cdfb4e6fca2cb7cd29a",
-      "size": 531618,
+      "contentHash": "941ca2d29c8fdc07e9f31549b97cc102",
+      "size": 532298,
       "cardUrl": "https://data.graphplaza.com/dance/dance.rete"
     },
     {
@@ -161,6 +161,14 @@
       "contentHash": "4d8eca2df600d18e108221aa47baa9ec",
       "size": 2265161556,
       "cardUrl": "https://data.graphplaza.com/dblp/dblp.rete"
+    },
+    {
+      "key": "aifdb-open",
+      "url": "https://data.graphplaza.com/aifdb-open/aifdb-open.rete",
+      "formatVersion": 5,
+      "contentHash": "784c3587f49097571e5c64b5818cc2d6",
+      "size": 13580488,
+      "cardUrl": "https://data.graphplaza.com/aifdb-open/aifdb-open.rete"
     },
     {
       "key": "ecal",

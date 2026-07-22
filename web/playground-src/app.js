@@ -4908,7 +4908,7 @@ self.onmessage = function (e) {
     // viewer lazy-loads its .glb only when scrolled near the viewport (loading=lazy),
     // so a 60-row table doesn't fetch 60 meshes at once. The ⛶ opens the full lightbox.
     return `<td class="iri model3d-cell">` +
-      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate ` +
+      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate autoplay ` +
       `auto-rotate-delay="0" rotation-per-second="28deg" interaction-prompt="none" disable-zoom ` +
       `loading="lazy" reveal="auto" touch-action="pan-y" environment-image="neutral" ` +
       `shadow-intensity="0.6" alt="3D model"></model-viewer>` +
@@ -5014,7 +5014,7 @@ self.onmessage = function (e) {
     ensureModelViewer().then((ok) => {
       if (el.classList.contains("hidden")) return;        // closed before it loaded
       if (ok) {
-        stage.innerHTML = '<model-viewer src="' + esc(url) + '" camera-controls auto-rotate touch-action="pan-y" ' +
+        stage.innerHTML = '<model-viewer src="' + esc(url) + '" camera-controls auto-rotate autoplay touch-action="pan-y" ' +
           'shadow-intensity="1" exposure="1.1" environment-image="neutral" ' +
           'style="width:100%;height:100%;background:#15161a" alt="3D model"></model-viewer>' +
           '<div class="model3d-scalebar" style="display:none"><span class="scalebar-fill"></span>' +

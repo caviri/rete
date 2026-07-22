@@ -197,6 +197,12 @@ let graph, nodesByName = new Map(), meshByName = new Map();
 let scene, camera, renderer, controls, root;
 const loaded = new Set();                          // system indices with a loaded GLB
 let selected = null, framedOnce = false;
+let dimOpacity = 0.06;                 // context (non-highlighted) opacity — user slider
+let result = null, resultVisible = true;   // { label, cols, rows, idxs } from a query
+const checked = new Set();             // node indices checked in the results table
+const irByTail = new Map();            // IRI tail (e.g. "visc/Liver") -> node, for SPARQL results
+const IRI_BASE = "https://w3id.org/rete/anatomy/structure/";
+const RESULT_COLOR = 0x33d6ff, CHECK_COLOR = 0xffb454, SELECT_COLOR = 0xffd54a;
 const HUD_DEFAULT = "Left-drag orbit · right / Shift-drag pan · scroll zoom · click to select";
 function setHud(msg){ const h=document.getElementById('hud'); if(h) h.textContent = msg || HUD_DEFAULT; }
 
@@ -209,7 +215,7 @@ async function init(){
   setupThree();
   graph = await (await fetch(DATA)).json();
   buildSystemToggles();
-  graph.nodes.forEach((n,i)=>{ n.i=i; if(!nodesByName.has(n.n)) nodesByName.set(n.n,n); });
+  graph.nodes.forEach((n,i)=>{ n.i=i; if(!nodesByName.has(n.n)) nodesByName.set(n.n,n); if(n.ir) irByTail.set(n.ir,n); });
   document.getElementById('count').textContent = `(${graph.nodes.length})`;
   buildList(''); buildQueries();
   animate();
@@ -348,9 +354,11 @@ function unloadSystem(i){
 const isShown = i => loaded.has(i) || placeholders.has(i);   // loaded OR box-preview
 function buildList(q){
   const ul=document.getElementById('list'); ul.innerHTML='';
+  // when a query result is active, the list shows ONLY the result structures
+  const pool = result ? result.idxs.map(i=>graph.nodes[i]) : graph.nodes;
   let shown=0;
-  for(const n of graph.nodes){
-    if(!isShown(n.sy)) continue;
+  for(const n of pool){
+    if(!result && !isShown(n.sy)) continue;
     if(q && !n.l.toLowerCase().includes(q)) continue;
     if(++shown>400){ const li=document.createElement('li'); li.className='muted'; li.textContent='… refine the search to see more'; ul.appendChild(li); break; }
     const li=document.createElement('li');
@@ -358,9 +366,10 @@ function buildList(q){
     li.onclick=()=>select(n);
     ul.appendChild(li);
   }
+  if(result) document.getElementById('count').textContent=`(result: ${result.idxs.length})`;
 }
 
-function select(n){ selected=n; applySelection(n); frameMesh(n); renderInfo(n); }
+function select(n){ selected=n; restyle(); frameMesh(n); renderInfo(n); }
 
 function styleMesh(mesh, {color, opacity, emissive}){
   const m=mesh.material;
@@ -369,23 +378,31 @@ function styleMesh(mesh, {color, opacity, emissive}){
   m.emissiveIntensity = emissive?0.45:0; m.depthWrite = opacity>=0.5;
   mesh.renderOrder = opacity>=1?1:0;
 }
-function resetStyles(){
-  meshByName.forEach(m=> styleMesh(m,{color:m.userData.baseColor,opacity:0.9}));
+const paintIdx = (i,color,opacity,emis)=>{ const m=meshByName.get(graph.nodes[i].n); if(m) styleMesh(m,{color,opacity,emissive:emis}); };
+// One state-driven restyle for the whole scene: dim context, then paint the query
+// result, the checked (multi-select) set, and the single selection (with its 3D
+// neighbours when no query is active).
+function restyle(){
+  const active = !!(result || selected || checked.size);
+  meshByName.forEach(m=> styleMesh(m,{color:m.userData.baseColor, opacity: active?dimOpacity:0.9}));
+  if(result && resultVisible) for(const i of result.idxs) paintIdx(i, RESULT_COLOR, 0.92);
+  for(const i of checked) paintIdx(i, CHECK_COLOR, 1, CHECK_COLOR);
+  if(selected){
+    if(!result){ selected.adj.forEach(i=>paintIdx(i,0xff9f43,0.96,0xff9f43));
+                 selected.tis.forEach(i=>paintIdx(i,0x4ade80,0.96,0x4ade80));
+                 selected.th .forEach(i=>paintIdx(i,0xff5d6c,0.96,0xff5d6c)); }
+    paintIdx(selected.i, SELECT_COLOR, 1, SELECT_COLOR);
+  }
 }
-function applySelection(n){
-  // dim everything, then light up target + neighbours
-  meshByName.forEach(m=> styleMesh(m,{color:m.userData.baseColor,opacity:0.05}));
-  const paint=(idxs,color)=> idxs.forEach(i=>{
-    const nb=graph.nodes[i]; const m=meshByName.get(nb.n);
-    if(m) styleMesh(m,{color,opacity:0.96,emissive:color});
-  });
-  paint(n.adj, 0xff9f43);
-  paint(n.tis, 0x4ade80);
-  paint(n.th , 0xff5d6c);
-  const t=meshByName.get(n.n);
-  if(t) styleMesh(t,{color:0xffd54a,opacity:1,emissive:0xffd54a});
+function clearSelection(){ selected=null; restyle(); renderInfo(null); }
+function frameSet(idxs){
+  const box=new THREE.Box3(); let any=false;
+  idxs.forEach(i=>{ const m=meshByName.get(graph.nodes[i].n); if(m){ box.expandByObject(m); any=true; } });
+  if(!any) return;
+  const c=box.getCenter(new THREE.Vector3()); const s=box.getSize(new THREE.Vector3()).length()||0.3;
+  const dir=new THREE.Vector3(0.4,0.9,0.35).normalize();
+  animateCam(c.clone().add(dir.multiplyScalar(Math.max(s*1.3,0.4))), c);
 }
-function clearSelection(){ selected=null; resetStyles(); renderInfo(null); }
 
 // ---- Select by query: real SPARQL, run as the equivalent selection over the index ----
 const QNS = `PREFIX anat: <https://w3id.org/rete/anatomy#>

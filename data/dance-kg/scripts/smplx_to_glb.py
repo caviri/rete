@@ -56,6 +56,48 @@ def vertex_normals(V, F):
     return n / np.where(ln > 1e-9, ln, 1.0)
 
 
+_BOX_F = [(0, 1, 3), (0, 3, 2), (4, 6, 7), (4, 7, 5), (0, 4, 5), (0, 5, 1),
+          (2, 3, 7), (2, 7, 6), (0, 2, 6), (0, 6, 4), (1, 5, 7), (1, 7, 3)]
+_SIGNS = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)], float)
+
+
+def skeleton_geometry(J, parents):
+    """A procedural stick-figure: a small cube at each joint (weighted to that joint)
+    and a bone box for each parent->child link (weighted to the PARENT joint, so both
+    ends land exactly on the two joints under LBS). Contains NO SMPL-X mesh, weights,
+    topology or blendshapes — only the joint rest locations (like a BVH skeleton), so
+    it is safe to redistribute (pure CoMPAS3D motion). Returns V, faces, per-vertex
+    joint assignment (rigid weight 1)."""
+    verts, faces, assign = [], [], []
+
+    def add_box(corners, jidx):
+        base = len(verts)
+        verts.extend(corners.tolist()); assign.extend([jidx] * 8)
+        for a, b, c in _BOX_F:
+            faces.append((base + a, base + b, base + c))
+
+    for j in range(len(J)):
+        add_box(J[j] + _SIGNS * 0.018, j)                    # joint marker cube
+    for j in range(len(J)):
+        p = parents[j]
+        if p < 0:
+            continue
+        A, B = J[p], J[j]
+        d = B - A; L = np.linalg.norm(d)
+        if L < 1e-4:
+            continue
+        dirn = d / L
+        u = np.cross(dirn, [0.0, 1.0, 0.0])
+        if np.linalg.norm(u) < 1e-3:
+            u = np.cross(dirn, [1.0, 0.0, 0.0])
+        u /= np.linalg.norm(u); v = np.cross(dirn, u)
+        r = 0.011
+        corners = np.array([A + (d if end else 0) + su * u * r + sv * v * r
+                            for end in (0, 1) for su in (-1, 1) for sv in (-1, 1)])
+        add_box(corners, p)                                  # bone -> weighted to parent
+    return np.array(verts, float), np.array(faces, np.uint32), np.array(assign, np.uint8)
+
+
 class Glb:
     """Minimal single-buffer glTF assembler."""
     def __init__(self):
@@ -87,18 +129,15 @@ class Glb:
         return len(self.accessors) - 1
 
 
-def add_dancer(g, V, J, parents, weights, faces, poses, trans, fps, name, color, rconv, center):
+def add_dancer(g, V, faces, j0_arr, w0_arr, J, parents, poses, trans, fps, name, color, rconv, center):
     n = poses.shape[0]
     times = (np.arange(n) / fps).astype(np.float32)
 
-    # --- mesh accessors ---
+    # --- mesh accessors (geometry + rigid/soft skin weights precomputed by caller) ---
     pos = g.add(V.astype(np.float32), FLOAT, "VEC3", minmax=True, target=34962)
     nrm = g.add(vertex_normals(V, faces).astype(np.float32), FLOAT, "VEC3", target=34962)
-    order = np.argsort(-weights, axis=1)[:, :4]                    # top-4 joints/vertex
-    w4 = np.take_along_axis(weights, order, axis=1)
-    w4 = w4 / np.clip(w4.sum(axis=1, keepdims=True), 1e-9, None)
-    j0 = g.add(order.astype(np.uint8), UBYTE, "VEC4", target=34962)
-    wt0 = g.add(w4.astype(np.float32), FLOAT, "VEC4", target=34962)
+    j0 = g.add(j0_arr.astype(np.uint8), UBYTE, "VEC4", target=34962)
+    wt0 = g.add(w0_arr.astype(np.float32), FLOAT, "VEC4", target=34962)
     idx = g.add(faces.reshape(-1).astype(np.uint32), UINT, "SCALAR", target=34963)
 
     # --- joint nodes (skeleton) ---
@@ -128,7 +167,7 @@ def add_dancer(g, V, J, parents, weights, faces, poses, trans, fps, name, color,
     g.meshes.append({"name": name, "primitives": [{
         "attributes": {"POSITION": pos, "NORMAL": nrm, "JOINTS_0": j0, "WEIGHTS_0": wt0},
         "indices": idx, "material": len(g.__dict__.setdefault("materials", []))}]})
-    g.materials.append({"name": name + "_mat", "pbrMetallicRoughness": {
+    g.materials.append({"name": name + "_mat", "doubleSided": True, "pbrMetallicRoughness": {
         "baseColorFactor": color, "metallicFactor": 0.0, "roughnessFactor": 0.85}})
     mesh_node = len(g.nodes)
     g.nodes.append({"name": name + "_mesh", "mesh": len(g.meshes) - 1,
@@ -162,6 +201,8 @@ def main():
     ap.add_argument("--models", default="data/dance-kg/raw/compas3d/non-commertial-data")
     ap.add_argument("--max-seconds", type=float, default=20.0)
     ap.add_argument("--fps", type=float, default=30.0)
+    ap.add_argument("--skeleton", action="store_true",
+                    help="export a license-clean stick-figure (no SMPL-X mesh) instead of the skinned body")
     a = ap.parse_args()
 
     stem = os.path.basename(a.take_dir.rstrip("/\\"))
@@ -191,10 +232,20 @@ def main():
 
     dancer_roots = []
     for role, model, V, J, parents, poses, trans, fps, gender in dancers:
-        roots = add_dancer(g, V, J, parents, model["weights"], model["faces"],
+        if a.skeleton:
+            Vg, faces, jassign = skeleton_geometry(J, parents)   # no SMPL-X mesh in output
+            j0 = np.zeros((len(Vg), 4), np.uint8); j0[:, 0] = jassign
+            w0 = np.zeros((len(Vg), 4), np.float32); w0[:, 0] = 1.0
+        else:
+            Vg, faces = V, model["faces"]
+            order = np.argsort(-model["weights"], axis=1)[:, :4]
+            w4 = np.take_along_axis(model["weights"], order, axis=1)
+            w4 = w4 / np.clip(w4.sum(axis=1, keepdims=True), 1e-9, None)
+            j0, w0 = order.astype(np.uint8), w4.astype(np.float32)
+        roots = add_dancer(g, Vg, faces, j0, w0, J, parents,
                            poses, trans, fps, role, colors[role], rconv, center)
         dancer_roots += roots
-        print(f"  {role}: {poses.shape[0]} frames, gender={gender}")
+        print(f"  {role}: {poses.shape[0]} frames, gender={gender}, verts={len(Vg)}")
 
     gltf = {
         "asset": {"version": "2.0", "generator": "dance-kg smplx_to_glb (non-commercial, experimental)",
