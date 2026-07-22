@@ -177,11 +177,16 @@ jobs:
       - uses: actions/checkout@v6
       - name: Build the headless Blender image
         run: docker build -t rete-blender clients/blender
-      - name: Test the add-on against a fixture graph and the published ones
+      - name: Test the add-on offline (fixture graph built in memory)
         run: |
           docker run --rm -v "$PWD:/work" -w /work rete-blender \
             blender -b --factory-startup -noaudio \
               --python clients/blender/tests/run_tests.py
+      # Informative, not a gate: these read the published graphs over the
+      # network, and a release must not fail because a CDN hiccups.
+      - name: Test against the published graphs
+        continue-on-error: true
+        run: |
           docker run --rm -v "$PWD:/work" -w /work rete-blender \
             blender -b --factory-startup -noaudio \
               --python clients/blender/tests/test_remote.py
@@ -242,12 +247,16 @@ jobs:
             dist/*.zip
             dist/*.mcpb
             dist/SHA256SUMS
-      - name: Bind the CycloneDX SBOM to every release archive
+      # The SBOM describes the Rust dependency graph, so it binds to the native
+      # archives only. The two extensions carry build provenance instead: the
+      # .mcpb ships the wasm engine and the Blender .zip ships Python wheels,
+      # neither of which this dependency graph describes.
+      - name: Bind the CycloneDX SBOM to every native release archive
         uses: actions/attest@v4
         with:
           subject-path: |
             dist/*.tar.gz
-            dist/*.zip
+            dist/rete-*-pc-windows-msvc.zip
           sbom-path: dist/rete-${{ needs.meta.outputs.version }}.cdx.json
       - name: Preserve the complete dry-run release set
         uses: actions/upload-artifact@v7
