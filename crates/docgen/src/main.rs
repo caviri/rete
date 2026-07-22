@@ -32,17 +32,17 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Explore in the browser",
         &[
             ("playground-guide.md", "Playground"),
-            ("plaza/index.html", "Plaza — dataset gallery"),
+            ("plaza-guide.md", "Plaza — dataset gallery"),
             ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
             ("jupyterlite-guide.md", "JupyterLite — Python in the tab"),
             ("jslab-guide.md", "JS lab — rete × D3"),
             ("atlas.md", "Historical atlas — SPARQL + GIS"),
             ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
             ("football.md", "Football — match replays"),
-            ("subtitles.html", "Subtitle timeline"),
-            ("anatomy.html", "Z-Anatomy — 3D human body"),
-            ("lombardi.html", "Lombardi — network drawings in ink"),
-            ("webgpu.html", "WebGPU coherence (exp.)"),
+            ("subtitles-guide.md", "Subtitle timeline"),
+            ("anatomy-guide.md", "Z-Anatomy — 3D human body"),
+            ("lombardi-guide.md", "Lombardi — network drawings in ink"),
+            ("webgpu-guide.md", "WebGPU coherence (exp.)"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
         ],
     ),
@@ -219,6 +219,26 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
             ("pitch.html", "pick any match →"),
             ("wcfinal.html", "the 2022 final →"),
         ]),
+        "subtitles-guide.md" => Some(&[
+            ("subtitles-guide.html", "overview"),
+            ("subtitles.html", "play the timeline →"),
+        ]),
+        "anatomy-guide.md" => Some(&[
+            ("anatomy-guide.html", "overview"),
+            ("anatomy.html", "open the 3D body →"),
+        ]),
+        "lombardi-guide.md" => Some(&[
+            ("lombardi-guide.html", "overview"),
+            ("lombardi.html", "open the drawings →"),
+        ]),
+        "webgpu-guide.md" => Some(&[
+            ("webgpu-guide.html", "overview"),
+            ("webgpu.html", "run the experiment →"),
+        ]),
+        "plaza-guide.md" => Some(&[
+            ("plaza-guide.html", "overview"),
+            ("plaza/index.html", "open the gallery →"),
+        ]),
         _ => None,
     }
 }
@@ -248,8 +268,13 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
                     };
                     sub.push_str(&format!("<li><a href=\"{h}\"{a}{tgt}>{l}</a></li>"));
                 }
+                // The summary title links to the overview: clicking a group in
+                // the sidebar opens its introduction AND (because that page
+                // renders with the group `open`) leaves the sidebar expanded.
+                // The disclosure triangle still toggles the sub-list in place.
+                let sumclass = if *md == current_md { " class=\"active\"" } else { "" };
                 nav_items.push(format!(
-                    "<li class=\"nav-group\"><details{open}><summary>{t}</summary><ul class=\"nav-sub\">{sub}</ul></details></li>"
+                    "<li class=\"nav-group\"><details{open}><summary><a href=\"{overview}\"{sumclass}>{t}</a></summary><ul class=\"nav-sub\">{sub}</ul></details></li>"
                 ));
                 continue;
             }
@@ -425,6 +450,11 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 .sidebar .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
 .sidebar .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
 .sidebar .nav-group summary:hover { background:rgba(20,125,105,.09); color:var(--accent-deep); }
+/* The summary title is a link to the overview; keep it inline (no second block
+   padding) so it reads as the group heading, not a nested item. */
+.sidebar .nav-group summary a { display:inline; padding:0; margin:0; border:0; border-radius:0; box-shadow:none; color:inherit; font-size:inherit; line-height:inherit; }
+.sidebar .nav-group summary a:hover { background:none; color:inherit; }
+.sidebar .nav-group summary a.active { background:none; box-shadow:none; color:var(--accent-deep); font-weight:700; }
 .sidebar .nav-sub { padding-left:.55rem; margin:.1rem 0 .35rem .55rem; border-left:1px solid var(--border); }
 .sidebar .nav-sub a { font-size:.85rem; padding:.3rem .6rem; color:var(--muted); }
 .sidebar .nav-sub a:hover { color:var(--accent-deep); }

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>Experiment: graphs from speech · rete docs</title>
+  <title>Z-Anatomy — 3D human body · rete docs</title>
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -266,7 +266,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
+        <li class="nav-group"><details open><summary><a href="anatomy-guide.html" class="active">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html" class="active">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
@@ -285,7 +285,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="javascript.html">JavaScript — rete-graph</a></li>
         <li><a href="r.html">R — rete</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
-        <li><a href="fallacies.html" class="active">Experiment: graphs from speech</a></li>
+        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -313,189 +313,50 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Experiment — fallacy graphs from a conversation</h1>
-<p>An agent connected to the <a href="agents.html">rete MCP server</a> can now <strong>author</strong>
-knowledge graphs, not just read them: search existing vocabularies, draft
-an ontology, lint it until clean, build a real <code>.rete</code>, and validate it —
-all inside one chat. This page documents the flow with a worked example:
-<strong>annotating the fallacies in a spoken conversation</strong>. Everything below ran
-verbatim against the server (the outputs are real).</p>
-<p>The tools involved: <code>suggest_vocabulary</code> → <code>check_ontology</code> → <code>build_rete</code>
-→ <code>sparql_query</code> / <code>validate_shacl</code>.</p>
-<h2>The scenario</h2>
-<p>Someone sends a voice note of a budget debate. The host app (ChatGPT does
-this natively) transcribes it. This is the input to everything below — the
-same shape you would use in a fine-tuning dataset or hand to the agent
-directly:</p>
-<pre><code class="language-json">{
-  "conversation_id": "budget-debate-2026-07-18",
-  "source": "voice note, auto-transcribed",
-  "participants": ["Bruno", "Ana"],
-  "messages": [
-    {
-      "turn": 1,
-      "speaker": "Bruno",
-      "text": "Look, I've gone through the incident reports from the last two quarters, and the picture is pretty clear to me: ever since we cut the maintenance budget in January, machine breakdowns have grown by roughly forty percent, and every one of those breakdowns translates directly into production downtime that we end up paying for twice over. We should raise the maintenance budget back to where it was, at the very least."
-    },
-    {
-      "turn": 2,
-      "speaker": "Ana",
-      "text": "Honestly, I don't think we can trust Bruno with anything budget-related in the first place — everyone in this room knows he failed economics twice at university, and now he wants to lecture us about cost structures and quarterly figures as if he were the finance director. I don't see why we should take the numbers he waves around at face value."
-    },
-    {
-      "turn": 3,
-      "speaker": "Bruno",
-      "text": "My academic record from fifteen years ago has nothing to do with what the incident reports say — the data comes straight from the plant's logging system, not from me. And I'll add one more thing: when we still ran preventive inspections every six weeks, breakdowns of this kind almost never happened, which is exactly why I think cutting that program was the real mistake."
-    },
-    {
-      "turn": 4,
-      "speaker": "Ana",
-      "text": "What I'm proposing is more modest and, I think, more responsible: before we commit to any budget increase, let's review the support contracts we already pay for, because if the vendors honored the response times they signed, a good part of that downtime would simply not exist, and we would be spending the new budget on a problem that a phone call could prevent."
-    },
-    {
-      "turn": 5,
-      "speaker": "Bruno",
-      "text": "So what Ana wants is to freeze every investment indefinitely, drown the team in paperwork about contracts, and let the factory literally fall apart around us while we wait for lawyers to finish reading the fine print. That's what her plan amounts to, and I don't think anyone here wants to explain that to the clients whose orders arrive late."
-    },
-    {
-      "turn": 6,
-      "speaker": "Ana",
-      "text": "That is not what I said and you know it — reviewing contracts takes two weeks, not an eternity. I'm happy to pair it with something concrete: let's bring back the preventive inspections on the critical line while the review runs, because inspections demonstrably prevent the breakdowns you're worried about, and then we decide the budget question with real information on the table."
-    }
-  ]
-}
-</code></pre>
-<p>Two fallacies hide in there: an <em>ad hominem</em> in turn 2 (Ana attacks
-Bruno's old grades, not his incident data) and a <em>straw man</em> in turn 5
-(Bruno refutes a "freeze everything" plan Ana never proposed). The same
-transcript also carries the causal claims used in the
-<a href="#causal-diagrams-from-the-same-conversation">causal-diagram section</a>
-below — budget cut → breakdowns → downtime, contract review and
-inspections as preventers. The goal: a queryable, validated graph of that
-structure.</p>
-<h2>1. Discover before minting</h2>
-<p><code>suggest_vocabulary("argument fallacy premise")</code> searches
-<a href="https://lov.linkeddata.es">Linked Open Vocabularies</a> and surfaces the
-<strong>Argument Interchange Format</strong> (AIF) — so the ontology anchors to it
-instead of reinventing "argument":</p>
-<h2>2. Draft the ontology, lint until clean</h2>
-<p>The agent drafts Turtle and calls <code>check_ontology</code>. A deliberately broken
-draft shows what the linter catches:</p>
-<pre><code class="language-json">{"ok": false, "issues": [
-  {"severity": "warning", "message": "…fallacy#Utterancia is used as rdfs:domain/rdfs:range but never declared in this document…"},
-  {"severity": "error",   "message": "…fallacy#text is declared BOTH owl:ObjectProperty and owl:DatatypeProperty"},
-  {"severity": "warning", "message": "…fallacy#Fallacy has no rdfs:label — agents and humans will see a bare IRI"}
-]}
-</code></pre>
-<p>The battery: strict parse, domains/ranges over undeclared classes,
-dangling <code>subClassOf</code> targets, missing labels/comments, object+datatype
-clashes, subclass cycles, and an <strong>OWL 2 QL rewriter smoke test</strong>. The
-fixed ontology (abridged — full version in the collapsible below) comes
-back <code>{"ok": true, "profile": {"classes": 7, "properties": 4, "reasoner": "ok"}}</code>:</p>
-<pre><code class="language-ttl">@prefix aif: &lt;http://www.arg.dundee.ac.uk/aif#&gt; .
-@prefix fal: &lt;https://w3id.org/rete/fallacy#&gt; .
-
-fal:Utterance a owl:Class ; rdfs:subClassOf aif:I-node ; rdfs:label "Utterance" .
-fal:Fallacy   a owl:Class ; rdfs:label "Fallacy" .
-fal:AdHominem a owl:Class ; rdfs:subClassOf fal:Fallacy ; rdfs:label "Ad hominem" ;
-  rdfs:comment "Attacks the speaker instead of the claim." .
-fal:StrawMan  a owl:Class ; rdfs:subClassOf fal:Fallacy ; rdfs:label "Straw man" .
-
-fal:saidBy  a owl:ObjectProperty  ; rdfs:domain fal:Utterance ; rdfs:range fal:Speaker .
-fal:text    a owl:DatatypeProperty ; rdfs:domain fal:Utterance ; rdfs:range xsd:string .
-fal:quotes  a owl:ObjectProperty  ; rdfs:domain fal:Fallacy ; rdfs:range fal:Utterance ;
-  rdfs:comment "The utterance that commits the fallacy." .
-fal:attacks a owl:ObjectProperty  ; rdfs:domain fal:Fallacy ; rdfs:range fal:Utterance ;
-  rdfs:comment "The utterance the fallacious move targets." .
-</code></pre>
-<h2>3. Instances with provenance</h2>
-<p>Each intervention becomes an <code>Utterance</code> (text + speaker); each annotation
-a <code>Fallacy</code> node pointing at what it quotes and what it attacks:</p>
-<pre><code class="language-ttl">ex:u1 a fal:Utterance ; fal:saidBy ex:bruno ; fal:text "We should raise the maintenance budget…" .
-ex:u2 a fal:Utterance ; fal:saidBy ex:ana   ; fal:text "We can't trust Bruno — he failed economics twice." .
-
-ex:f1 a fal:AdHominem ; fal:quotes ex:u2 ; fal:attacks ex:u1 .
-ex:f2 a fal:StrawMan  ; fal:quotes ex:u4 ; fal:attacks ex:u3 .
-</code></pre>
-<h2>4. Build a real, queryable file</h2>
-<p><code>build_rete(ontology + instances, card={title: "Fallacy analysis — Ana &amp; Bruno budget debate", …}, examples=[…])</code> returns in under a second:</p>
-<pre><code class="language-json">{"dataset": "generated/f2fd70100e1a0a52.rete", "url": "/generated/f2fd70100e1a0a52.rete",
- "bytes": 5609, "quads": 65, "content_hash": "…"}
-</code></pre>
-<p>That 5.6 KB file is a complete <code>.rete</code> — dictionary, indexes, pyramid,
-Dataset Card with the embedded example queries — served at an ephemeral
-URL, range-readable by every client and the playground, and <strong>immediately
-usable by the other tools</strong> via its dataset key.</p>
-<h2>5. Query it — the reasoning payoff</h2>
-<p>No instance is typed <code>fal:Fallacy</code> directly, only as subclasses. Plain vs
-reasoned, same query:</p>
-<pre><code class="language-sparql">SELECT (COUNT(DISTINCT ?f) AS ?n) WHERE { ?f a fal:Fallacy }
-# reason=false → 0        reason=true → 2
-</code></pre>
-<p>(Note the <code>DISTINCT</code>: query rewriting derives <code>ex:f1</code> three ways — via the
-subclass AND via the domains of <code>quotes</code> and <code>attacks</code> — and a bare COUNT
-counts every derivation.) And the analysis query that the file itself
-carries as an example:</p>
-<pre><code>Ana   → fal:AdHominem
-Bruno → fal:StrawMan
-</code></pre>
-<h2>6. SHACL as the annotation contract</h2>
-<p>"Every annotated fallacy must cite the utterance that commits it and the
-one it attacks":</p>
-<pre><code class="language-ttl">[] a sh:NodeShape ;
-  sh:targetClass fal:AdHominem ; sh:targetClass fal:StrawMan ; sh:targetClass fal:FalseDilemma ;
-  sh:property [ sh:path fal:quotes  ; sh:minCount 1 ;
-    sh:message "every annotated fallacy must cite the utterance that commits it" ] ;
-  sh:property [ sh:path fal:attacks ; sh:minCount 1 ] .
-</code></pre>
-<p><code>validate_shacl</code> → <code>conforms: true</code>. Tighten the contract (require a
-<code>fal:severity</code> the annotations don't carry) and it reports exactly the two
-expected violations — the loop an agent uses to keep its own annotations
-honest.</p>
-<h2 id="causal-diagrams-from-the-same-conversation">Causal diagrams from the same conversation</h2>
-<p>The <code>causal_diagram</code> tool runs the sibling flow for <strong>cause-and-effect
-structure</strong>: the agent extracts claims from the transcript —
-<code>{cause, effect, relation, quote, speaker, confidence}</code> — and one call
-returns three artifacts (this ran verbatim against the server):</p>
-<ul>
-<li><strong>Mermaid</strong> — rendered inline by chat UIs and these docs:</li>
-</ul>
-<pre><code class="language-mermaid">flowchart LR
-  maintenance-budget-cut["maintenance budget cut"]
-  machine-breakdowns["machine breakdowns"]
-  production-downtime["production downtime"]
-  support-contract-review["support contract review"]
-  preventive-inspections["preventive inspections"]
-  maintenance-budget-cut --&gt;|causes| machine-breakdowns
-  machine-breakdowns --&gt;|causes| production-downtime
-  support-contract-review -.-&gt;|prevents| maintenance-budget-cut
-  preventive-inspections -.-&gt;|prevents| machine-breakdowns
-</code></pre>
-<ul>
-<li>a <strong>Graphviz SVG</strong> (<code>svg_data_uri</code>, ~5 KB) for embedding anywhere, and</li>
-<li>a <strong>CauseNet-aligned <code>.rete</code></strong> (71 quads): every claim is a <code>cz:Claim ⊑ cn:CausalRelation</code> reusing <code>cn:cause</code>/<code>cn:effect</code>, with the quote and
-speaker as provenance. Reasoned queries see the conversation's claims AS
-CauseNet relations (<code>?x a cn:CausalRelation</code> → 4), and the file embeds a
-<strong>federated example</strong> that joins the conversation's factors against the
-11 M web-mined relations of the <a href="playground-guide.html"><code>causenet</code> dataset</a>
-via <code>SERVICE</code> — "does the web's causal knowledge agree with this
-meeting?".</li>
-</ul>
-<h2>Same tooling, other conversations</h2>
-<p>Nothing here is fallacy-specific — the pattern is <em>speech → ontology →
-instances → validated graph</em>:</p>
-<ul>
-<li><strong>meeting minutes</strong> → decisions, owners, deadlines, dissent;</li>
-<li><strong>oral-history interviews</strong> → people/places/events, federable with the
-historical datasets already in the catalog;</li>
-<li><strong>spoken symptom descriptions</strong> → instances against a lightweight
-clinical vocabulary;</li>
-<li><strong>full debate argument maps</strong> — AIF proper, with rebuttals and support
-edges.</li>
-</ul>
-<p>Generated files are ephemeral (they live until the next Space restart) —
-ask for <code>include_base64</code> to keep the file, or graduate it through the
-<a href="dataset-cards.html">publish workflow</a> when it deserves a permanent home.</p>
+<h1>Z-Anatomy — the human body as a 3D knowledge graph</h1>
+<p><strong><a href="anatomy.html">▸ Open the 3D body →</a></strong> — a three.js explorer over the
+<code>z-anatomy</code> knowledge graph: pick any bone, muscle, organ or nerve and see its
+real 3D neighbours — the structures touching it, sharing its tissue, or
+thermally coupled to it — plus the diseases and phenotypes located there.</p>
+<figure class="fig-center">
+  <img src="img/anatomy-guide.png" alt="The Z-Anatomy 3D explorer: a full human skeleton with red arteries and veins and green viscera rendered together in 3D at the centre, a left sidebar with body-system checkboxes (Skeleton, Cardiovascular, Viscera, Muscles, Nervous…) and a search box over 3,498 structures, and a legend for selected / adjacent-in-3D / same-tissue / thermally-coupled relations.">
+  <figcaption>The explorer renders the skeleton, cardiovascular system and viscera together in 3D, colour-coding a picked structure's neighbours by how they relate to it.</figcaption>
+</figure>
+<h2>What you see</h2>
+<p>The centre pane is a real 3D scene, not an illustration: left-drag to orbit,
+right-drag (or Shift-drag) to pan, scroll to zoom, click any mesh to select it.
+The left sidebar toggles body systems — Skeleton, Cardiovascular, Viscera,
+Muscles, Nervous, Lymphoid, Joints, Body regions — loading each one's model
+on demand (an instant bounding-box placeholder appears while the real mesh
+streams in). Below that, <strong>Find a structure</strong> searches by name over 3,498
+anatomical structures; click a result to select it, frame the camera on it,
+and see its relations light up. The right panel lists whatever's selected —
+its tissue, side, a short description, and any related Disease Ontology
+conditions or HPO phenotypes located there.</p>
+<h2>Every relation is a materialised edge</h2>
+<p>Each structure is a graph node with real 3D geometry — a point and a
+bounding box, in millimetres, carried over from the original Z-Anatomy
+meshes. The colours in the legend (adjacent in 3D, same tissue, thermally
+coupled) aren't drawn by hand: they're computed once from that geometry by
+<strong>geo3</strong>, rete's extension of GeoSPARQL into three dimensions
+(<code>geof3:distance3D</code>, <code>geo3:adjacent3D</code>, <code>geo3:thermallyCoupledWith</code>…), and
+stored as ordinary triples. So "what touches the stomach" or "what's within
+60 mm of the liver" isn't a spatial-query feature bolted onto the viewer —
+it's the same graph pattern any SPARQL query would match.</p>
+<h2>Select by query</h2>
+<p>The <strong>Select by query</strong> panel runs that idea live: ready examples — all
+bones, left-side viscera, structures within 60 mm of the liver via
+<code>geof3:distance3D</code>, neighbours in contact with the stomach, organs with a
+related cancer and its ICD-10 code — are real SPARQL against
+<code>z-anatomy.rete</code>, executed in-browser (the query engine and graph load
+lazily, once) and highlighted straight onto the model. There's also a box to
+write your own SPARQL from scratch; matches populate the results table below
+the scene and clicking a row selects that structure in 3D.</p>
+<h2>The same data, queryable</h2>
+<p>The explorer is just one lens on a regular playground dataset. Open
+<a href="playground.html#dataset=z-anatomy&amp;load=lazy"><code>z-anatomy</code></a> to run SPARQL
+directly — the same partonomy, geometry, and materialised 3D relations, with
+no 3D rendering in the way.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -503,7 +364,7 @@ ask for <code>include_base64</code> to keep the file, or graduate it through the
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/fallacies.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/anatomy-guide.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

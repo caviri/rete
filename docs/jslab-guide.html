@@ -111,6 +111,11 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 .sidebar .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
 .sidebar .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
 .sidebar .nav-group summary:hover { background:rgba(20,125,105,.09); color:var(--accent-deep); }
+/* The summary title is a link to the overview; keep it inline (no second block
+   padding) so it reads as the group heading, not a nested item. */
+.sidebar .nav-group summary a { display:inline; padding:0; margin:0; border:0; border-radius:0; box-shadow:none; color:inherit; font-size:inherit; line-height:inherit; }
+.sidebar .nav-group summary a:hover { background:none; color:inherit; }
+.sidebar .nav-group summary a.active { background:none; box-shadow:none; color:var(--accent-deep); font-weight:700; }
 .sidebar .nav-sub { padding-left:.55rem; margin:.1rem 0 .35rem .55rem; border-left:1px solid var(--border); }
 .sidebar .nav-sub a { font-size:.85rem; padding:.3rem .6rem; color:var(--muted); }
 .sidebar .nav-sub a:hover { color:var(--accent-deep); }
@@ -244,7 +249,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v1.0.0-rc.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.3.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -252,19 +257,19 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="getting-started.html">Getting started</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li class="nav-h">Explore in the browser</li>
-        <li class="nav-group"><details><summary>Playground</summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
-        <li><a href="plaza/index.html">Plaza — dataset gallery</a></li>
-        <li class="nav-group"><details><summary>SPARQL IDE — yasgui·wasm</summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary>JupyterLite — Python in the tab</summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
-        <li class="nav-group"><details open><summary>JS lab — rete × D3</summary><ul class="nav-sub"><li><a href="jslab-guide.html" class="active">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary>Historical atlas — SPARQL + GIS</summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary>Ask the graph — browser graphRAG</summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary>Football — match replays</summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
-        <li><a href="subtitles.html">Subtitle timeline</a></li>
-        <li><a href="anatomy.html">Z-Anatomy — 3D human body</a></li>
-        <li><a href="lombardi.html">Lombardi — network drawings in ink</a></li>
-        <li><a href="webgpu.html">WebGPU coherence (exp.)</a></li>
-        <li class="nav-group"><details><summary>Graph-map, topic-map & 3D (exp.)</summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="playground-guide.html">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
+        <li class="nav-group"><details open><summary><a href="jslab-guide.html" class="active">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html" class="active">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
