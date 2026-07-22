@@ -25,6 +25,18 @@ ENV RUSTUP_TOOLCHAIN=1.92.0 \
     CARGO_TERM_COLOR=always
 
 COPY . .
+
+# That override is also a drift hazard: bumping rust-toolchain.toml alone would
+# leave this image quietly compiling releases on the old compiler. Fail loudly
+# instead — the pin above and the FROM line have to move together.
+RUN set -eu; \
+    pinned=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml); \
+    if [ "$pinned" != "$RUSTUP_TOOLCHAIN" ]; then \
+      echo "rust-toolchain.toml pins $pinned but this image pins $RUSTUP_TOOLCHAIN;" >&2; \
+      echo "bump the FROM rust:<version> line and RUSTUP_TOOLCHAIN together." >&2; \
+      exit 1; \
+    fi
+
 RUN cargo build --locked --release -p rete-cli \
     && strip target/release/rete
 
