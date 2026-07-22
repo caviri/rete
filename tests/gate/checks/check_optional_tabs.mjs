@@ -20,6 +20,8 @@ const main = async () => {
         value.rag.scholar = {
           emb: "/__gate__/rag.f32", index: "/__gate__/rag.json", model: "gate/stub-model",
           queryPrefix: "query: ", dim: 2, count: 2,
+          caption: "Find people by meaning — 2 records ranked in your browser.",
+          examples: ["Alice", "Bob"],
         };
         Object.defineProperty(window, "RETE_PLAYGROUND_CATALOG", { configurable: true, writable: true, value });
       },
@@ -73,10 +75,15 @@ const main = async () => {
     result: (document.getElementById("semanticOut") || {}).textContent || "",
     ragControl: !document.getElementById("semanticAnswerWrap")?.classList.contains("hidden") && !!document.getElementById("semanticAnswerBtn"),
     answer: (document.getElementById("semanticAnswer") || {}).textContent || "",
+    // Per-dataset caption + clickable starter chips (CATALOG.rag[key].caption/examples).
+    exampleCaption: (document.querySelector("#semanticExamples .sem-cap") || {}).textContent || "",
+    exampleChips: document.querySelectorAll("#semanticExamples button.chip").length,
   }));
   const pass = ask.visible && ask.hasDialog && /needs\s+WebGPU/i.test(ask.copy) && semanticVisible &&
     semantic.barVisible && semantic.hasSearch && /Alice/.test(semantic.result) && semantic.ragControl &&
-    /Stub grounded answer/.test(semantic.answer) && externalModelRequests.length === 0 && errs.length === 0;
+    /Stub grounded answer/.test(semantic.answer) &&
+    /Find people by meaning/.test(semantic.exampleCaption) && semantic.exampleChips >= 2 &&
+    externalModelRequests.length === 0 && errs.length === 0;
   console.log(JSON.stringify({
     verdict: pass ? "PASS" : "FAIL", ask, semanticVisible, semantic,
     externalModelRequests: externalModelRequests.slice(0, 3), errs: errs.slice(0, 4),

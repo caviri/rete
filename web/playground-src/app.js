@@ -2789,16 +2789,24 @@ self.onmessage = function (e) {
     try { const qv = await ragCall({ type: "embed", text: q, prefix: rag.queryPrefix || "query: " }); ragRank(qv, q); }
     catch (e) { $("semanticOut").innerHTML = ""; showError("semanticOut", "Query failed: " + (e && e.message || e)); }
   }
-  // Clickable starter queries for the Semantic tab (CATALOG.rag[key].examples).
+  // A one-line caption + clickable starter queries for the Semantic tab
+  // (CATALOG.rag[key].caption / .examples). The caption explains, per dataset,
+  // what searching by meaning surfaces here; the chips fill the box and run.
   function renderSemanticExamples() {
     const box = $("semanticExamples");
     if (!box) return;
     const rag = (CATALOG.rag || {})[state.dataset] || {};
     const exs = Array.isArray(rag.examples) ? rag.examples : [];
-    if (!exs.length) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+    const cap = typeof rag.caption === "string" ? rag.caption : "";
+    if (!exs.length && !cap) { box.classList.add("hidden"); box.innerHTML = ""; return; }
     box.classList.remove("hidden");
-    box.innerHTML = '<span style="font-size:.82em;color:var(--muted,#888);align-self:center">Try:</span>' +
-      exs.map((q) => `<button type="button" class="chip" style="cursor:pointer" data-q="${esc(q)}">${esc(q)}</button>`).join("");
+    // The caption is a full-width flex item so the chips wrap onto the line below it.
+    box.innerHTML =
+      (cap ? `<div class="sem-cap" style="flex-basis:100%;font-size:.85em;color:var(--muted,#888);line-height:1.45;margin:.1rem 0 .25rem">${esc(cap)}</div>` : "") +
+      (exs.length
+        ? '<span style="font-size:.82em;color:var(--muted,#888);align-self:center">Try:</span>' +
+          exs.map((q) => `<button type="button" class="chip" style="cursor:pointer" data-q="${esc(q)}">${esc(q)}</button>`).join("")
+        : "");
     $$("#semanticExamples button").forEach((b) => { b.onclick = () => { $("semanticQ").value = b.dataset.q; runSemantic(); }; });
   }
 
