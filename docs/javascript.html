@@ -249,7 +249,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v1.0.0-rc.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -283,6 +283,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="python.html">Python — rete-graph</a></li>
         <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
         <li><a href="javascript.html" class="active">JavaScript — rete-graph</a></li>
+        <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
         <li><a href="r.html">R — rete</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
@@ -370,41 +371,18 @@ g.contentHash();                // remote graphs: blake3-16 cache key
 await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array)
 </code></pre>
 <h2 id="comunica-and-the-rdfjs-ecosystem">Comunica (and the RDF/JS ecosystem)</h2>
-<p><a href="https://comunica.dev">Comunica</a> — the modular JS SPARQL framework behind
-LDflex, GraphQL-LD, and much of the Solid ecosystem — talks to rete two
-ways.</p>
-<p><strong>Level 1: zero code, via the SPARQL endpoints.</strong> Every published dataset
-(and any <code>.rete</code> URL) is a standard endpoint on the gateway, and Comunica
-federates against endpoints natively:</p>
-<pre><code class="language-js">import { QueryEngine } from "@comunica/query-sparql";
-
-const engine = new QueryEngine();
-const bindings = await (await engine.queryBindings(sparql, {
-  sources: [{ type: "sparql", value: "https://katospiegel-rete.hf.space/sparql/boe" }],
-})).toArray();
+<p>From <strong>0.2.0</strong> the package ships <code>ReteSource</code>, an RDF/JS Source that plugs
+<code>.rete</code> files into <a href="https://comunica.dev">Comunica</a>, LDflex, GraphQL-LD,
+and the Solid ecosystem:</p>
+<pre><code class="language-js">import { open, ReteSource } from "rete-graph";
+const source = new ReteSource(await open(bytesOrUrl));
+// → sources: [source] in any Comunica QueryEngine
 </code></pre>
-<p>The whole query is pushed down to the rete engine server-side — use this
-for heavy multi-join queries over big remote files, and to let Comunica
-federate rete datasets with TPF, RDF files, and other endpoints.</p>
-<p><strong>Level 2: native, via <code>ReteSource</code> (from 0.2.0).</strong> An RDF/JS Source over
-an open graph — local bytes or a lazy URL — pluggable into any Comunica
-pipeline:</p>
-<pre><code class="language-js">import { QueryEngine } from "@comunica/query-sparql";
-import { open, ReteSource } from "rete-graph";
-
-const source = new ReteSource(await open("https://data.graphplaza.com/boe/boe.rete"));
-const bindings = await (await new QueryEngine().queryBindings(sparql, {
-  sources: [source],
-})).toArray();
-</code></pre>
-<p>Each <code>match(s, p, o, g)</code> is one pattern lookup against the file's
-permutation indexes (<code>countQuads</code> is implemented too, so Comunica's
-planner can order joins); Comunica executes the joins itself over the
-quad streams. Rule of thumb: <strong>local/embedded file → <code>ReteSource</code>; heavy
-joins over a big remote file → level 1</strong>, which keeps rete's own
-optimized joins. Blank-node match arguments are honored by label
-filtering; named-graph semantics follow RDF/JS (<code>null</code> graph = default ∪
-named).</p>
+<p>Comunica also talks to rete <strong>with zero code</strong> through the gateway's
+SPARQL endpoints (full query pushdown — prefer it for heavy joins over big
+remote files). Both levels, the exact semantics, and the
+which-level-when table live on the dedicated page:
+<strong><a href="comunica.html">Comunica — rete in the RDF/JS ecosystem</a></strong>.</p>
 <h2>Feature matrix</h2>
 <table><thead><tr><th>Capability</th><th>JS</th><th>Notes</th></tr></thead><tbody>
 <tr><td>SPARQL SELECT / ASK / CONSTRUCT / DESCRIBE</td><td>✅</td><td><code>query()</code></td></tr>
