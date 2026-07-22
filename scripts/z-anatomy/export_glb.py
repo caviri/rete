@@ -19,15 +19,25 @@ for fbx in fbx_files:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.fbx(filepath=fbx)
 
-    # delete label-lines, cross-sections, references and all empties
-    to_del = []
-    for o in list(bpy.context.scene.objects):
-        keep = (o.type == "MESH"
-                and len(o.data.vertices) >= 12
-                and not o.name.endswith(".j")
-                and not o.name.startswith("Cross Section"))
-        if not keep:
-            to_del.append(o)
+    # the real organ meshes we keep (drop 8-vert '.j' label lines + cross-sections)
+    keep = [o for o in bpy.context.scene.objects
+            if o.type == "MESH" and len(o.data.vertices) >= 12
+            and not o.name.endswith(".j") and not o.name.startswith("Cross Section")]
+
+    # CRITICAL: bake each kept mesh's WORLD transform and unparent it BEFORE deleting
+    # the empties. Many meshes are positioned by a parent empty (a '.g' group); if we
+    # delete that parent first, the mesh collapses to its parent-relative local
+    # transform (this is why MuscularSystem came out at 1/3 scale and misaligned).
+    # CLEAR_KEEP_TRANSFORM writes the world matrix into the object so it survives.
+    bpy.ops.object.select_all(action='DESELECT')
+    for o in keep:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = keep[0]
+    bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
+
+    # now delete everything that is not a kept mesh (empties, label-lines, sections)
+    keepset = set(keep)
+    to_del = [o for o in list(bpy.context.scene.objects) if o not in keepset]
     bpy.ops.object.select_all(action='DESELECT')
     for o in to_del:
         o.select_set(True)
@@ -40,7 +50,8 @@ for fbx in fbx_files:
         filepath=out, export_format='GLB', use_selection=True,
         export_draco_mesh_compression_enable=True,
         export_draco_mesh_compression_level=6,
-        export_yup=True, export_apply=True,
+        export_yup=False, export_apply=True,   # keep Blender Z-up so the GLB frame
+                                               # matches the JSON (mm, Z-up) exactly
         export_materials='NONE',
     )
     sz = os.path.getsize(out) / 1e6
