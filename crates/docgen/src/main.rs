@@ -41,6 +41,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("football.md", "Football — match replays"),
             ("subtitles-guide.md", "Subtitle timeline"),
             ("anatomy-guide.md", "Z-Anatomy — 3D human body"),
+            ("building-guide.md", "FZK-Haus — 3D building (IFC)"),
             ("lombardi-guide.md", "Lombardi — network drawings in ink"),
             ("webgpu-guide.md", "WebGPU coherence (exp.)"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
@@ -227,6 +228,10 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
         "anatomy-guide.md" => Some(&[
             ("anatomy-guide.html", "overview"),
             ("anatomy.html", "open the 3D body →"),
+        ]),
+        "building-guide.md" => Some(&[
+            ("building-guide.html", "overview"),
+            ("building.html", "open the 3D building →"),
         ]),
         "lombardi-guide.md" => Some(&[
             ("lombardi-guide.html", "overview"),

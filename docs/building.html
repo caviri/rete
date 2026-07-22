@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FZK-Haus 3D Explorer — a building as a knowledge graph</title>
+<meta name="description" content="A 3D explorer for an IFC building (the KIT FZK-Haus) turned into a rete knowledge graph: pick any wall, door, window or room and see its floor, the rooms it encloses, the rooms next to it, and everything within reach in 3D — with real SPARQL and geo3 (GeoSPARQL → 3D) against the .rete.">
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121826; --panel2:#0e1420; --line:#1e2636; --ink:#e6ecf5;
+    --dim:#8b97ad; --accent:#5db0ff;
+    --c-sel:#ffd54a; --c-room:#4ade80; --c-elem:#ff9f43; --c-res:#33d6ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  #app{display:grid;grid-template-columns:290px 1fr 320px;height:100%}
+  .col{height:100%;overflow-y:auto;background:var(--panel);border-right:1px solid var(--line)}
+  #right{border-right:none;border-left:1px solid var(--line)}
+  #stage{position:relative;background:radial-gradient(120% 120% at 50% 20%,#141c2b,#080b12)}
+  canvas{display:block}
+  h1{font-size:15px;margin:0;padding:14px 16px;border-bottom:1px solid var(--line);letter-spacing:.2px}
+  h1 small{display:block;color:var(--dim);font-weight:400;font-size:11px;margin-top:2px}
+  .sec{padding:12px 16px;border-bottom:1px solid var(--line)}
+  .sec h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:0 0 8px}
+  details.sec>summary{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);
+    margin:0 0 8px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px;user-select:none}
+  details.sec>summary::-webkit-details-marker{display:none}
+  details.sec>summary::before{content:"▸";font-size:9px;color:var(--dim);transition:transform .15s}
+  details.sec[open]>summary::before{transform:rotate(90deg)}
+  details.sec:not([open])>summary{margin-bottom:0}
+  details.sec>summary:hover{color:var(--ink)}
+  .sys{display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;font-size:13px}
+  .sys input{accent-color:var(--accent)}
+  .sys .m{margin-left:auto;color:var(--dim);font-size:11px;font-variant-numeric:tabular-nums}
+  .swatch{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+  #search{width:100%;padding:8px 10px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:8px;color:var(--ink);font-size:13px}
+  #list{list-style:none;margin:0;padding:0;max-height:40vh;overflow-y:auto}
+  #list li{padding:6px 16px;cursor:pointer;border-bottom:1px solid #161d2b;font-size:13px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #list li:hover{background:#182034}
+  #list li .tt{color:var(--dim);font-size:11px;margin-left:6px}
+  .badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;background:#1b2334;color:var(--dim)}
+  .kv{margin:6px 0;font-size:13px}.kv b{color:var(--dim);font-weight:500}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  .nlist{list-style:none;margin:6px 0 0;padding:0;max-height:220px;overflow:auto}
+  .nlist li{padding:4px 6px;border-radius:6px;cursor:pointer;font-size:12.5px;display:flex;justify-content:space-between;gap:8px}
+  .nlist li:hover{background:#182034}
+  .nlist li .m{color:var(--dim);font-variant-numeric:tabular-nums}
+  .muted{color:var(--dim)}
+  #legend{position:absolute;left:14px;bottom:12px;background:rgba(12,17,28,.82);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:12px}
+  #legend .row{display:flex;align-items:center;gap:7px;padding:2px 0}
+  #hud{position:absolute;right:14px;top:12px;background:rgba(12,17,28,.82);border:1px solid var(--line);
+    border-radius:10px;padding:8px 12px;font-size:12px;color:var(--dim);max-width:260px}
+  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;
+    gap:12px;color:var(--dim);background:rgba(8,11,18,.7);z-index:5}
+  #bar{width:220px;height:5px;background:#1b2334;border-radius:4px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:7px;
+    padding:6px 10px;cursor:pointer;font-size:12px}
+  .btn:hover{border-color:var(--accent)}
+  .empty{color:var(--dim);font-size:12.5px;padding:8px 0}
+  code{background:#0e1420;padding:1px 5px;border-radius:4px;font-size:12px}
+  .qbtn{display:block;width:100%;text-align:left;margin:3px 0;padding:6px 9px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--ink);border-radius:7px;cursor:pointer;font-size:12.5px}
+  .qbtn:hover{border-color:var(--accent)}
+  .qbtn.on{border-color:#33d6ff;color:#bfeeff;background:#0e1a24}
+  #sparql{margin:9px 0 6px;padding:8px 10px;background:#0a0f18;border:1px solid var(--line);border-radius:8px;
+    font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#b9c6da;white-space:pre-wrap;max-height:220px;overflow:auto}
+  #qmeta{font-size:12px}
+  #footer[hidden], #modal[hidden]{display:none}   /* ID specificity beats the UA [hidden] rule */
+  #footer{position:absolute;left:0;right:0;bottom:0;z-index:6;display:flex;flex-direction:column;
+    max-height:44vh;background:rgba(15,21,33,.97);backdrop-filter:blur(6px);border-top:1px solid var(--line)}
+  #footer.collapsed{max-height:none}
+  #footer-bar{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line);font-size:13px}
+  #footer-bar b{font-weight:600}
+  #footer.collapsed #footer-body{display:none}
+  #footer.collapsed #footer-bar{border-bottom:none}
+  #footer-body{overflow:auto;flex:1}
+  .fbtn{background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;width:26px;height:24px;
+    cursor:pointer;font-size:12px;line-height:1}
+  .fbtn:hover{border-color:var(--accent);color:var(--ink)}
+  #results{border-collapse:collapse;width:100%;font-size:12.5px}
+  #results th{position:sticky;top:0;background:#0e1622;text-align:left;padding:6px 12px;color:var(--dim);
+    font-weight:500;border-bottom:1px solid var(--line);white-space:nowrap}
+  #results td{padding:5px 12px;border-bottom:1px solid #161d2b}
+  #results td.rn{color:var(--dim);text-align:right;font-variant-numeric:tabular-nums}
+  #results tr.clk{cursor:pointer} #results tr.clk:hover td{background:#182034}
+  #modal{position:fixed;inset:0;z-index:20;background:rgba(4,7,12,.72);display:flex;align-items:center;justify-content:center;padding:24px}
+  #modal-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(720px,94vw);
+    max-height:88vh;overflow:auto;padding:18px 20px}
+  #modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:15px}
+  .ex-card{border:1px solid var(--line);border-radius:9px;padding:11px 13px;margin:9px 0;background:var(--panel2)}
+  .ex-h{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .ex-card pre{margin:0;padding:8px 10px;background:#0a0f18;border:1px solid var(--line);border-radius:7px;
+    font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#b9c6da;white-space:pre-wrap;overflow:auto;max-height:220px}
+  .ex-run{white-space:nowrap}
+  #customQ{width:100%;min-height:120px;resize:vertical;padding:8px 10px;background:#0a0f18;border:1px solid var(--line);
+    border-radius:7px;color:#d5deea;font:12px/1.55 ui-monospace,Menlo,Consolas,monospace}
+  #customQ:focus{outline:none;border-color:var(--accent)}
+  .resultrow{border-top:1px solid var(--line);margin-top:8px;padding-top:8px}
+  .opac{display:flex;align-items:center;gap:9px;margin-top:11px;font-size:11.5px;color:var(--dim)}
+  .opac input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
+  #results th.cbh, #results td.cb{width:30px;text-align:center;padding-left:10px;padding-right:0}
+  #results input[type=checkbox]{accent-color:#33d6ff;cursor:pointer;vertical-align:middle}
+  *{scrollbar-width:thin;scrollbar-color:#33445f transparent}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#2c3a52;border-radius:8px;border:2px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:#42577f;background-clip:content-box}
+  ::-webkit-scrollbar-corner{background:transparent}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- LEFT -->
+  <div class="col" id="left">
+    <h1>🏠 FZK-Haus 3D Explorer<small>a building (IFC) as a rete knowledge graph</small></h1>
+    <details class="sec" open>
+      <summary>Elements &amp; rooms</summary>
+      <div id="classes"></div>
+      <div id="resultLayer"></div>
+      <div class="opac"><span class="muted">Context opacity</span>
+        <input type="range" id="opacity" min="1" max="60" value="8"></div>
+      <div style="margin-top:6px"><button class="btn" id="resetView">Reset view</button></div>
+    </details>
+    <details class="sec" open>
+      <summary>Storeys</summary>
+      <div id="storeys"></div>
+    </details>
+    <details class="sec" open>
+      <summary>Find an element <span id="count" class="muted"></span></summary>
+      <input id="search" placeholder="search elements &amp; rooms…" autocomplete="off">
+      <ul id="list"></ul>
+    </details>
+    <details class="sec" open>
+      <summary>Select by query</summary>
+      <div class="muted" style="font-size:11.5px;margin:-2px 0 8px">Real SPARQL against fzk-haus.rete — click to run the selection on the model.</div>
+      <div id="queries"></div>
+      <button class="btn" id="openModal" style="margin-top:8px;width:100%">✎ Write your own SPARQL ↗</button>
+      <pre id="sparql" hidden></pre>
+      <div id="qmeta" class="muted" hidden></div>
+    </details>
+    <details class="sec">
+      <summary>Credits</summary>
+      <p class="muted" style="font-size:11.5px;margin:8px 0 0;line-height:1.6">
+        Model: <b>AC20-FZK-Haus</b>, an IFC4 sample building by
+        <a href="https://www.kit.edu" target="_blank" rel="noopener">KIT</a>, from the
+        <a href="https://github.com/ibpsa/project1-wp-2-2-bim" target="_blank" rel="noopener">IBPSA Project 1</a> test files.<br>
+        Topology vocabulary: <a href="https://w3id.org/bot" target="_blank" rel="noopener">BOT</a> (Building Topology Ontology, W3C LBD-CG).
+        Element classes from <a href="https://ifcopenshell.org" target="_blank" rel="noopener">IfcOpenShell</a> (IFC / ISO&nbsp;16739).<br>
+        Graph &amp; <code>geo3</code> (GeoSPARQL&nbsp;→&nbsp;3D) by <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">rete</a>.
+      </p>
+    </details>
+  </div>
+  <!-- CENTER -->
+  <div id="stage">
+    <div id="hud">Left-drag orbit · right / Shift-drag pan · scroll zoom · click to select</div>
+    <div id="legend">
+      <div class="row"><span class="dot" style="background:var(--c-sel)"></span>selected</div>
+      <div class="row"><span class="dot" style="background:var(--c-room)"></span>adjacent / enclosed room</div>
+      <div class="row"><span class="dot" style="background:var(--c-elem)"></span>enclosing element</div>
+      <div class="row"><span class="dot" style="background:var(--c-res)"></span>query result</div>
+    </div>
+    <div id="loading"><div>Loading the building…</div><div id="bar"><i></i></div><div id="lmsg" class="muted"></div></div>
+    <div id="footer" hidden>
+      <div id="footer-bar">
+        <b id="footer-title"></b><span id="footer-count" class="muted"></span>
+        <span style="flex:1"></span>
+        <button class="fbtn" id="footer-min" title="collapse / expand">▾</button>
+        <button class="fbtn" id="footer-x" title="close">✕</button>
+      </div>
+      <div id="footer-body"><table id="results"></table></div>
+    </div>
+  </div>
+  <!-- RIGHT -->
+  <div class="col" id="right">
+    <div class="sec" id="info"><div class="empty">Pick an element on the left, or click one in the scene.</div></div>
+  </div>
+</div>
+
+<div id="modal" hidden>
+  <div id="modal-card">
+    <div id="modal-head"><b>Query the building with SPARQL</b><button class="fbtn" id="modal-x" title="close">✕</button></div>
+    <div class="muted" style="font-size:12px;margin:0 0 12px">Write your own SPARQL, or run a ready example. Matching elements highlight in 3D and the full result appears in the table below the scene. Any element IRI (e.g. <code>?e</code>) maps onto the model. Room labels are language-tagged — match them as <code>"Wohnen"@en</code>.</div>
+    <div class="ex-card">
+      <div class="ex-h"><b>Write your own SPARQL</b><button class="btn ex-run" id="runCustom">Run ▶</button></div>
+      <textarea id="customQ" spellcheck="false">PREFIX bot: &lt;https://w3id.org/bot#&gt;
+PREFIX cad: &lt;https://w3id.org/rete/cad#&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+SELECT ?room ?neighbour WHERE {
+  ?r a bot:Space ; rdfs:label ?room ; cad:adjacentSpace ?n .
+  ?n rdfs:label ?neighbour .
+} ORDER BY ?room</textarea>
+      <div class="muted" id="customMsg" style="font-size:12px;margin-top:4px"></div>
+    </div>
+    <div class="muted" style="text-transform:uppercase;letter-spacing:.08em;font-size:11px;margin:14px 0 4px">Examples</div>
+    <div id="modal-list"></div>
+  </div>
+</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+
+const DATA = 'https://data.graphplaza.com/cad/fzk-viewer.json';
+const RETE = 'https://data.graphplaza.com/cad/fzk-haus.rete';
+const IRI_BASE = 'https://w3id.org/rete/cad/fzk-haus/';
+
+// IFC element class -> {colour, pretty name, default-on}. Ordered for the panel.
+const CLASS_STYLE = {
+  IfcWallStandardCase:{c:'#cbb89d', n:'Walls',          on:true},
+  IfcSlab:            {c:'#9aa0a6', n:'Slabs / floors',  on:true},
+  IfcWindow:          {c:'#7ec9ff', n:'Windows',         on:true},
+  IfcDoor:            {c:'#d98b5f', n:'Doors',           on:true},
+  IfcStair:           {c:'#b58cff', n:'Stairs',          on:true},
+  IfcRailing:         {c:'#ff9f43', n:'Railings',        on:true},
+  IfcBeam:            {c:'#c9a227', n:'Beams',           on:true},
+  IfcMember:          {c:'#8a9bb5', n:'Members',         on:true},
+  IfcOpeningElement:  {c:'#586074', n:'Openings (voids)',on:false},
+  IfcSpace:           {c:'#4ade80', n:'Rooms (spaces)',  on:false},
+};
+const CLASS_ORDER = Object.keys(CLASS_STYLE);
+const pretty = c => (CLASS_STYLE[c]?.n) || c.replace(/^Ifc/,'');
+const colOf  = c => (CLASS_STYLE[c]?.c) || '#8895aa';
+
+const SELECT_COLOR=0xffd54a, ROOM_COLOR=0x4ade80, ELEM_COLOR=0xff9f43, RESULT_COLOR=0x33d6ff, CHECK_COLOR=0xffb454;
+const HUD_DEFAULT='Left-drag orbit · right / Shift-drag pan · scroll zoom · click to select';
+const setHud = m => { const h=document.getElementById('hud'); if(h) h.textContent = m||HUD_DEFAULT; };
+
+let graph, scene, camera, renderer, controls, root;
+const nodeByGuid=new Map(), meshByName=new Map();
+const boundedBy={};                     // roomIdx -> [element idxs that bound it]
+const classOn={}, storeyOn=[], classCb={}, storeyCb=[];
+let selected=null, dimOpacity=0.08;
+let result=null, resultVisible=true;
+const checked=new Set();
+
+const gltfLoader=new GLTFLoader();
+init();
+
+async function init(){
+  setupThree();
+  graph = await (await fetch(DATA)).json();
+  graph.nodes.forEach((n,i)=>{ n.i=i; nodeByGuid.set(n.n,n); });
+  // reverse of bounds: each element bounds spaces (bd) -> room is enclosed by element
+  graph.nodes.forEach(n=>{ (n.bd||[]).forEach(r=>{ (boundedBy[r]=boundedBy[r]||[]).push(n.i); }); });
+  CLASS_ORDER.forEach(c=>{ if(CLASS_STYLE[c]) classOn[c]=CLASS_STYLE[c].on; });
+  graph.storeys.forEach((s,i)=> storeyOn[i]=true);
+  document.getElementById('count').textContent=`(${graph.nodes.length})`;
+  buildClassToggles(); buildStoreyToggles(); buildList(''); buildQueries();
+  animate();
+  await loadGLB();
+}
+
+function setupThree(){
+  const stage=document.getElementById('stage');
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(45, stage.clientWidth/stage.clientHeight, 0.05, 1000);
+  camera.up.set(0,0,1);                       // IFC is Z-up (elevation = +Z)
+  camera.position.set(18,-16,12);
+  renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  stage.appendChild(renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xdfefff, 0x27303f, 1.2));
+  const key=new THREE.DirectionalLight(0xffffff,1.35); key.position.set(6,-8,12); scene.add(key);
+  const fill=new THREE.DirectionalLight(0x9fbfff,.5); fill.position.set(-8,6,4); scene.add(fill);
+  root=new THREE.Group(); scene.add(root);
+  controls=new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping=true; controls.dampingFactor=.08;
+  controls.screenSpacePanning=true;
+  controls.mouseButtons={ LEFT:THREE.MOUSE.ROTATE, MIDDLE:THREE.MOUSE.DOLLY, RIGHT:THREE.MOUSE.PAN };
+  controls.touches={ ONE:THREE.TOUCH.ROTATE, TWO:THREE.TOUCH.DOLLY_PAN };
+  renderer.domElement.addEventListener('contextmenu', e=>e.preventDefault());
+  addEventListener('keydown', e=>{ if(e.key==='Shift') controls.mouseButtons.LEFT=THREE.MOUSE.PAN; });
+  addEventListener('keyup',   e=>{ if(e.key==='Shift') controls.mouseButtons.LEFT=THREE.MOUSE.ROTATE; });
+  addEventListener('resize', onResize);
+  renderer.domElement.addEventListener('pointerdown', onPick);
+  document.getElementById('resetView').onclick=()=>{ clearResult(); clearSelection(); frameAll(); };
+  document.getElementById('search').addEventListener('input', e=>buildList(e.target.value.trim().toLowerCase()));
+}
+
+async function loadGLB(){
+  let gltf;
+  for(let a=0;a<3;a++){
+    try{ gltf=await gltfLoader.loadAsync(graph.glb); break; }
+    catch(e){ if(a===2){ document.getElementById('lmsg').textContent='could not load the 3D model.'; console.warn(e); return; }
+      await new Promise(r=>setTimeout(r,500*(a+1))); }
+  }
+  gltf.scene.traverse(o=>{
+    if(o.isMesh){
+      const n=nodeByGuid.get(o.name);
+      const col=new THREE.Color(n?colOf(n.c):'#8895aa');
+      o.material=new THREE.MeshStandardMaterial({color:col, roughness:.82, metalness:.03,
+        transparent:true, opacity:(n&&n.k==='Space')?0.16:0.92, side:THREE.DoubleSide});
+      o.userData.baseColor=col;
+      meshByName.set(o.name, o);
+    }
+  });
+  root.add(gltf.scene);
+  root.updateMatrixWorld(true);                 // bake world matrices before framing
+  document.getElementById('loading').style.display='none';
+  applyVisibility(); restyle(); frameAll(true);  // snap the initial view, then render once
+  renderer.render(scene,camera);
+  updateCounts();
+}
+
+// ---------- left panel ----------
+function classCount(c){ let k=0; graph.nodes.forEach(n=>{ if(n.c===c) k++; }); return k; }
+function buildClassToggles(){
+  const box=document.getElementById('classes'); box.innerHTML='';
+  CLASS_ORDER.forEach(c=>{
+    const cnt=classCount(c); if(!cnt) return;
+    const el=document.createElement('label'); el.className='sys';
+    el.innerHTML=`<input type="checkbox" ${classOn[c]?'checked':''}>
+      <span class="swatch" style="background:${colOf(c)}"></span>${pretty(c)}<span class="m">${cnt}</span>`;
+    el.querySelector('input').onchange=e=>{ classOn[c]=e.target.checked; applyVisibility(); };
+    classCb[c]=el.querySelector('input');
+    box.appendChild(el);
+  });
+}
+function buildStoreyToggles(){
+  const box=document.getElementById('storeys'); box.innerHTML='';
+  graph.storeys.forEach((s,i)=>{
+    const el=document.createElement('label'); el.className='sys';
+    el.innerHTML=`<input type="checkbox" checked>
+      <span class="swatch" style="background:#46577a"></span>${s.l}<span class="m">${(+s.el).toFixed(2)} m</span>`;
+    el.querySelector('input').onchange=e=>{ storeyOn[i]=e.target.checked; applyVisibility(); };
+    storeyCb[i]=el.querySelector('input');
+    box.appendChild(el);
+  });
+}
+function updateCounts(){ /* counts already shown; hook for future */ }
+
+function visibleNode(n){
+  const cOn = classOn[n.c] !== false;
+  const sOn = n.st<0 ? true : storeyOn[n.st] !== false;
+  return cOn && sOn;
+}
+function applyVisibility(){
+  meshByName.forEach((m,name)=>{ const n=nodeByGuid.get(name); m.visible = n ? visibleNode(n) : true; });
+}
+// turn on whatever classes/storeys a set of nodes needs, so results are actually visible
+function ensureVisible(idxs){
+  let changed=false;
+  for(const i of idxs){ const n=graph.nodes[i];
+    if(classOn[n.c]===false){ classOn[n.c]=true; if(classCb[n.c]) classCb[n.c].checked=true; changed=true; }
+    if(n.st>=0 && storeyOn[n.st]===false){ storeyOn[n.st]=true; if(storeyCb[n.st]) storeyCb[n.st].checked=true; changed=true; }
+  }
+  if(changed) applyVisibility();
+}
+
+function buildList(q){
+  const ul=document.getElementById('list'); ul.innerHTML='';
+  // the list is a full searchable index of every element & room; the class/storey
+  // toggles only control the 3D scene — selecting a hidden item reveals it.
+  const pool = result ? result.idxs.map(i=>graph.nodes[i]) : graph.nodes;
+  let shown=0;
+  for(const n of pool){
+    if(q && !n.l.toLowerCase().includes(q)) continue;
+    if(++shown>400){ const li=document.createElement('li'); li.className='muted'; li.textContent='… refine the search to see more'; ul.appendChild(li); break; }
+    const li=document.createElement('li');
+    li.innerHTML=`${n.l}<span class="tt">${pretty(n.c)}</span>`;
+    li.onclick=()=>select(n);
+    ul.appendChild(li);
+  }
+  document.getElementById('count').textContent = result ? `(result: ${result.idxs.length})` : `(${graph.nodes.length})`;
+}
+
+// ---------- selection & styling ----------
+function select(n){ selected=n; renderInfo(n); const rel=relatedOf(n);
+  ensureVisible([n.i, ...rel.rooms, ...rel.elems]); restyle(); frameMesh(n); }
+function relatedOf(n){
+  if(n.k==='Space') return {rooms:(n.adj||[]), elems:(boundedBy[n.i]||[])};
+  return {rooms:(n.bd||[]), elems:[]};
+}
+function styleMesh(mesh,{color,opacity,emissive}){
+  const m=mesh.material;
+  m.color.set(color); m.opacity=opacity; m.transparent=opacity<1;
+  m.emissive.set(emissive||0x000000);
+  m.emissiveIntensity=emissive?0.4:0; m.depthWrite=opacity>=0.5;
+  mesh.renderOrder=opacity>=1?1:0;
+}
+const isSpace = i => graph.nodes[i].k==='Space';
+const paintIdx=(i,color,opacity,emis)=>{ const m=meshByName.get(graph.nodes[i].n); if(m) styleMesh(m,{color,opacity,emissive:emis}); };
+function restyle(){
+  const active=!!(result||selected||checked.size);
+  meshByName.forEach((m,name)=>{ const n=nodeByGuid.get(name);
+    const space=n&&n.k==='Space'; const base=space?0.16:0.92;
+    styleMesh(m,{color:m.userData.baseColor, opacity: active ? (space?Math.min(dimOpacity,0.1):dimOpacity) : base}); });
+  if(result&&resultVisible) for(const i of result.idxs) paintIdx(i, RESULT_COLOR, isSpace(i)?0.4:0.95, RESULT_COLOR);
+  for(const i of checked) paintIdx(i, CHECK_COLOR, isSpace(i)?0.45:1, CHECK_COLOR);
+  if(selected){
+    if(!result){ const rel=relatedOf(selected);
+      rel.rooms.forEach(i=>paintIdx(i, ROOM_COLOR, 0.42, ROOM_COLOR));
+      rel.elems.forEach(i=>paintIdx(i, ELEM_COLOR, 0.95, ELEM_COLOR)); }
+    paintIdx(selected.i, SELECT_COLOR, isSpace(selected.i)?0.5:1, SELECT_COLOR);
+  }
+}
+function clearSelection(){ selected=null; restyle(); renderInfo(null); }
+
+// ---------- queries ----------
+const QNS=`PREFIX bot: <https://w3id.org/bot#>
+PREFIX cad: <https://w3id.org/rete/cad#>
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geo3: <https://w3id.org/rete/geo3#>
+PREFIX geof3: <https://w3id.org/rete/geo3/function/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>`;
+const floorOf = n => (n.st>=0 && graph.storeys[n.st]) ? graph.storeys[n.st].l : '—';
+const roomRows = idxs => idxs.map(i=>{ const n=graph.nodes[i]; return {i, room:n.l, floor:floorOf(n)}; });
+const elRows   = idxs => idxs.map(i=>{ const n=graph.nodes[i]; return {i, el:n.l, type:pretty(n.c), floor:floorOf(n)}; });
+const d3 = (a,b)=>{ let s=0; for(let k=0;k<3;k++){ const d=a[k]-b[k]; s+=d*d; } return Math.sqrt(s); };  // centroid distance (matches geo3 distance3D on POINT Z)
+const findSpace = l => graph.nodes.find(n=>n.k==='Space' && n.l===l);
+
+const EXAMPLES=[
+  {label:"Rooms on each floor", desc:"The building's spatial breakdown: every storey and the rooms it aggregates (BOT bot:hasSpace).",
+   q:`SELECT ?floor ?room WHERE {\n  ?s a bot:Storey ; rdfs:label ?floor ; bot:hasSpace ?r .\n  ?r rdfs:label ?room .\n} ORDER BY ?floor ?room`,
+   cols:[{k:'floor',h:'Floor'},{k:'room',h:'Room'}],
+   run:ns=>{ const r=ns.filter(n=>n.k==='Space');
+     const rows=r.map(n=>({i:n.i, floor:floorOf(n), room:n.l})).sort((a,b)=>a.floor.localeCompare(b.floor)||a.room.localeCompare(b.room));
+     return {idxs:r.map(n=>n.i), rows}; }},
+  {label:"Building element inventory", desc:"How many of each IFC element type the model contains — the bill of parts.",
+   q:`SELECT ?type (COUNT(?e) AS ?count) WHERE {\n  ?e a bot:Element ; cad:ifcClass ?type .\n} GROUP BY ?type ORDER BY DESC(?count)`,
+   cols:[{k:'type',h:'Element type'},{k:'count',h:'Count'}],
+   run:ns=>{ const e=ns.filter(n=>n.k==='Element'); const by={}; e.forEach(n=>by[n.c]=(by[n.c]||0)+1);
+     const rows=Object.entries(by).map(([c,n])=>({type:pretty(c), count:n})).sort((a,b)=>b.count-a.count);
+     return {idxs:e.map(n=>n.i), rows}; }},
+  {label:"Rooms next to the living room", desc:"Spatial topology: rooms sharing a boundary with the living room (Wohnen), via cad:adjacentSpace derived from IFC space boundaries.",
+   q:`SELECT ?neighbour WHERE {\n  ?w rdfs:label "Wohnen"@en ; cad:adjacentSpace ?n .\n  ?n rdfs:label ?neighbour .\n}`,
+   cols:[{k:'room',h:'Adjacent room'},{k:'floor',h:'Floor'}],
+   run:ns=>{ const w=findSpace('Wohnen'); const idxs=w?w.adj.slice():[]; return {idxs, rows:roomRows(idxs)}; }},
+  {label:"Walls that enclose the kitchen", desc:"Which walls physically bound the kitchen (Küche) — IfcRelSpaceBoundary as cad:boundsSpace.",
+   q:`SELECT ?wall WHERE {\n  ?k rdfs:label "Küche"@en .\n  ?e cad:boundsSpace ?k ;\n     cad:ifcClass "IfcWallStandardCase" ; rdfs:label ?wall .\n}`,
+   cols:[{k:'el',h:'Wall'},{k:'floor',h:'Floor'}],
+   run:ns=>{ const k=findSpace('Küche'); if(!k) return {idxs:[],rows:[]};
+     const idxs=(boundedBy[k.i]||[]).filter(i=>graph.nodes[i].c==='IfcWallStandardCase');
+     return {idxs, rows:elRows(idxs)}; }},
+  {label:"10 elements nearest the staircase (geo3)", desc:"3D nearest-neighbours: the ten elements whose centre is closest to the staircase, ranked by the geo3 distance3D function — GeoSPARQL extended to 3D. Same engine as the anatomy explorer, now on a building.",
+   q:`SELECT ?element ?type (ROUND(geof3:distance3D(?sw,?w)*100)/100 AS ?m) WHERE {\n  ?stair cad:ifcClass "IfcStair" ; geo:hasGeometry/geo3:asWKT3D ?sw .\n  ?e a bot:Element ; rdfs:label ?element ; cad:ifcClass ?type ;\n     geo:hasGeometry/geo3:asWKT3D ?w .\n  FILTER(?e != ?stair && ?type != "IfcOpeningElement")\n} ORDER BY ?m LIMIT 10`,
+   cols:[{k:'el',h:'Element'},{k:'type',h:'Type'},{k:'m',h:'Distance (m)'}],
+   run:ns=>{ const s=ns.find(n=>n.c==='IfcStair'); if(!s) return {idxs:[],rows:[]};
+     const m=ns.filter(n=>n!==s && n.k==='Element' && n.c!=='IfcOpeningElement').map(n=>({n,d:d3(n.cc,s.cc)})).sort((a,b)=>a.d-b.d).slice(0,10);
+     return {idxs:m.map(x=>x.n.i), rows:m.map(x=>({i:x.n.i, el:x.n.l, type:pretty(x.n.c), m:x.d.toFixed(2)}))}; }},
+  {label:"How many walls enclose each room", desc:"A per-room wall count — the enclosure degree of every space, from the boundary graph.",
+   q:`SELECT ?room (COUNT(?e) AS ?walls) WHERE {\n  ?e cad:boundsSpace ?r ; cad:ifcClass "IfcWallStandardCase" .\n  ?r rdfs:label ?room .\n} GROUP BY ?room ORDER BY DESC(?walls)`,
+   cols:[{k:'room',h:'Room'},{k:'walls',h:'Enclosing walls'}],
+   run:ns=>{ const rooms=ns.filter(n=>n.k==='Space');
+     const rows=rooms.map(n=>({i:n.i, room:n.l, walls:(boundedBy[n.i]||[]).filter(i=>graph.nodes[i].c==='IfcWallStandardCase').length})).sort((a,b)=>b.walls-a.walls);
+     return {idxs:rooms.map(n=>n.i), rows}; }},
+];
+function buildQueries(){
+  const box=document.getElementById('queries');
+  EXAMPLES.forEach((ex,k)=>{ const b=document.createElement('button'); b.className='qbtn'; b.textContent=ex.label;
+    b.onclick=()=>runQuery(k); box.appendChild(b); });
+  buildModal();
+  document.getElementById('openModal').onclick=()=>{ document.getElementById('modal').hidden=false; };
+  document.getElementById('modal-x').onclick=closeModal;
+  document.getElementById('modal').addEventListener('click', e=>{ if(e.target.id==='modal') closeModal(); });
+  document.getElementById('footer-x').onclick=clearResult;
+  document.getElementById('footer-min').onclick=()=>{ const f=document.getElementById('footer'); f.classList.toggle('collapsed');
+    document.getElementById('footer-min').textContent=f.classList.contains('collapsed')?'▴':'▾'; };
+  const op=document.getElementById('opacity'); op.oninput=()=>{ dimOpacity=+op.value/100; restyle(); };
+}
+function closeModal(){ document.getElementById('modal').hidden=true; }
+function buildModal(){
+  const list=document.getElementById('modal-list');
+  list.innerHTML=EXAMPLES.map((ex,k)=>`
+    <div class="ex-card">
+      <div class="ex-h"><b>${ex.label}</b><button class="btn ex-run" data-k="${k}">Run ▶</button></div>
+      <div class="muted" style="font-size:12px;margin:2px 0 6px">${ex.desc}</div>
+      <pre>${(QNS+"\n"+ex.q).replace(/</g,'&lt;')}</pre>
+    </div>`).join('');
+  list.querySelectorAll('.ex-run').forEach(b=> b.onclick=()=>{ runQuery(+b.dataset.k); closeModal(); });
+  document.getElementById('runCustom').onclick=()=>runCustom(document.getElementById('customQ').value);
+}
+function runQuery(k){
+  const ex=EXAMPLES[k];
+  [...document.querySelectorAll('.qbtn')].forEach((b,j)=>b.classList.toggle('on', j===k));
+  const pre=document.getElementById('sparql'); pre.hidden=false; pre.textContent=QNS+"\n"+ex.q;
+  const {idxs, rows}=ex.run(graph.nodes);
+  showResult({label:ex.label, cols:ex.cols, rows, idxs:[...new Set(idxs)]});
+}
+
+// ---------- your own SPARQL: whole-file sync engine, loaded lazily ----------
+let engine=null, engineLoading=null;
+function getEngine(){
+  if(engine) return Promise.resolve(engine);
+  if(engineLoading) return engineLoading;
+  engineLoading=(async()=>{
+    const msg=document.getElementById('customMsg'); if(msg) msg.textContent='loading the query engine + graph (~9 MB, once)…';
+    const m=await import('./engine/rete_wasm.js'); await m.default();
+    const bytes=new Uint8Array(await (await fetch(RETE)).arrayBuffer());
+    engine=new m.Graph(bytes); if(msg) msg.textContent=''; return engine;
+  })();
+  return engineLoading;
+}
+const cleanTerm = t => { if(t==null) return ''; if(String(t)[0]==='<') return String(t).slice(1,-1);
+  const m=String(t).match(/^"([\s\S]*)"(?:@[\w-]+|\^\^.*)?$/); return m?m[1]:String(t); };
+const resolveNode = t => { if(!t||String(t)[0]!=='<') return null; const iri=String(t).slice(1,-1);
+  return iri.startsWith(IRI_BASE) ? nodeByGuid.get(iri.slice(IRI_BASE.length)) : null; };
+async function runCustom(q){
+  const msg=document.getElementById('customMsg'); if(msg) msg.textContent='';
+  if(!q.trim()){ if(msg) msg.textContent='Write a SPARQL SELECT query.'; return; }
+  try{
+    const g=await getEngine();
+    const j=JSON.parse(g.query(q,'json'));
+    if(j.kind!=='select'){ if(msg) msg.textContent=`Only SELECT is shown here (got ${j.kind}).`; return; }
+    const cols=j.vars.map(v=>({k:v,h:v}));
+    const idxs=[], seen=new Set();
+    const rows=j.rows.map(row=>{ const r={}; let node=null;
+      for(const v of j.vars){ r[v]=cleanTerm(row[v]); const nn=resolveNode(row[v]); if(nn && !node) node=nn; }
+      if(node){ r.__i=node.i; if(!seen.has(node.i)){ seen.add(node.i); idxs.push(node.i); } }
+      return r; });
+    [...document.querySelectorAll('.qbtn')].forEach(b=>b.classList.remove('on'));
+    const pre=document.getElementById('sparql'); pre.hidden=false; pre.textContent=q;
+    showResult({label:'Custom query', cols, rows, idxs}); closeModal();
+  }catch(e){ if(msg) msg.textContent='Query error: '+(e.message||e); }
+}
+
+function showResult(r){
+  result=r; resultVisible=true; checked.clear(); selected=null;
+  ensureVisible(r.idxs);
+  restyle(); renderFooter(r.label, r.cols, r.rows);
+  buildList(document.getElementById('search').value.trim().toLowerCase());
+  renderResultLayer(); renderInfo(null); frameSet(r.idxs);
+  const vis=r.idxs.filter(i=>meshByName.has(graph.nodes[i].n)).length;
+  const meta=document.getElementById('qmeta'); meta.hidden=false;
+  meta.textContent=`${r.idxs.length} matched${vis<r.idxs.length?` · ${vis} in 3D`:''}`;
+}
+function clearResult(){
+  result=null; resultVisible=true; checked.clear(); selected=null; restyle();
+  document.getElementById('footer').hidden=true;
+  document.getElementById('legend').style.display='';
+  [...document.querySelectorAll('.qbtn')].forEach(b=>b.classList.remove('on'));
+  document.getElementById('qmeta').hidden=true;
+  buildList(document.getElementById('search').value.trim().toLowerCase());
+  renderResultLayer();
+}
+function renderResultLayer(){
+  const el=document.getElementById('resultLayer');
+  if(!result){ el.innerHTML=''; return; }
+  el.innerHTML=`<label class="sys resultrow">
+    <input type="checkbox" id="resultToggle" ${resultVisible?'checked':''}>
+    <span class="swatch" style="background:#33d6ff"></span>Query result <span class="muted">(${result.idxs.length})</span>
+    <span style="flex:1"></span><button class="fbtn" id="resultClear" title="clear query">✕</button></label>`;
+  document.getElementById('resultToggle').onchange=e=>{ resultVisible=e.target.checked; restyle(); };
+  document.getElementById('resultClear').onclick=clearResult;
+}
+function renderFooter(title, cols, rows){
+  const f=document.getElementById('footer'); f.hidden=false; f.classList.remove('collapsed');
+  document.getElementById('footer-min').textContent='▾';
+  document.getElementById('footer-title').textContent=title;
+  document.getElementById('footer-count').textContent=`${rows.length} row${rows.length===1?'':'s'}${rows.length>500?' · showing 500':''}`;
+  const cap=rows.slice(0,500);
+  const esc=s=>String(s??'').replace(/</g,'&lt;');
+  const idxOf=r=> r.__i!=null ? r.__i : (r.i!=null ? r.i : null);
+  const thead=`<thead><tr><th class="cbh"><input type="checkbox" id="checkAll" title="select all"></th><th>#</th>${cols.map(c=>`<th>${esc(c.h)}</th>`).join('')}</tr></thead>`;
+  const tbody=`<tbody>${cap.map((r,i)=>{ const ci=idxOf(r);
+    return `<tr${ci!=null?` data-i="${ci}"`:''}><td class="cb">${ci!=null?'<input type="checkbox" class="rcb">':''}</td><td class="rn">${i+1}</td>${cols.map(c=>`<td class="${ci!=null?'clk':''}">${esc(r[c.k])}</td>`).join('')}</tr>`;
+  }).join('')}</tbody>`;
+  const t=document.getElementById('results'); t.innerHTML=thead+tbody;
+  t.querySelectorAll('td.clk').forEach(td=> td.onclick=()=>{ const n=graph.nodes[+td.parentElement.dataset.i]; if(n) select(n); });
+  t.querySelectorAll('tr[data-i]').forEach(tr=>{ const i=+tr.dataset.i; const cb=tr.querySelector('.rcb'); if(!cb) return;
+    cb.checked=checked.has(i);
+    cb.onchange=()=>{ if(cb.checked){ checked.add(i); ensureVisible([i]); } else checked.delete(i); restyle(); }; });
+  document.getElementById('checkAll').onchange=e=>{
+    const add=[];
+    t.querySelectorAll('tr[data-i]').forEach(tr=>{ const i=+tr.dataset.i; const cb=tr.querySelector('.rcb');
+      if(cb){ cb.checked=e.target.checked; if(e.target.checked){ checked.add(i); add.push(i); } else checked.delete(i); } });
+    if(add.length) ensureVisible(add);
+    restyle();
+  };
+  document.getElementById('legend').style.display='none';
+}
+
+// ---------- info panel ----------
+function renderInfo(n){
+  const el=document.getElementById('info');
+  if(!n){ el.innerHTML='<div class="empty">Pick an element on the left, or click one in the scene.</div>'; return; }
+  const rel=relatedOf(n);
+  const relList=(title,color,idxs,lab)=>{
+    if(!idxs.length) return '';
+    const items=idxs.map(i=>{ const nb=graph.nodes[i];
+      return `<li data-i="${i}"><span>${nb.l}</span><span class="m">${lab(nb)}</span></li>`; }).join('');
+    return `<div style="margin-top:12px"><span class="dot" style="background:${color}"></span><b class="muted">${title}</b> <span class="badge">${idxs.length}</span>
+      <ul class="nlist">${items}</ul></div>`;
+  };
+  const floor = n.st>=0 ? floorOf(n) : '—';
+  el.innerHTML=`
+    <div style="font-size:16px;font-weight:600;margin-bottom:2px">${n.l}</div>
+    <div class="muted" style="margin-bottom:8px">${pretty(n.c)} · ${n.k==='Space'?'room':'element'}</div>
+    <div class="kv"><b>Floor:</b> ${floor}</div>
+    ${n.mt?`<div class="kv"><b>Material:</b> ${n.mt}</div>`:''}
+    ${n.ar?`<div class="kv"><b>Floor area:</b> ${n.ar} m²</div>`:''}
+    <div class="kv"><b>Centre (m):</b> ${n.cc.map(v=>v.toFixed(2)).join(', ')}</div>
+    ${n.k==='Space'
+      ? relList('Adjacent rooms', 'var(--c-room)', rel.rooms, nb=>floorOf(nb))
+        + relList('Enclosed by', 'var(--c-elem)', rel.elems, nb=>pretty(nb.c))
+      : relList('Encloses rooms', 'var(--c-room)', rel.rooms, nb=>floorOf(nb))}
+    <div style="margin-top:14px" class="muted" style="font-size:11px">Click a related item to jump to it.</div>`;
+  el.querySelectorAll('.nlist li').forEach(li=> li.onclick=()=>select(graph.nodes[+li.dataset.i]));
+}
+
+// ---------- picking & camera ----------
+const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
+let downXY=null;
+function onPick(e){
+  if(e.button!==0 || e.shiftKey) return;
+  downXY=[e.clientX,e.clientY];
+  const up=ev=>{
+    removeEventListener('pointerup',up);
+    if(!downXY||Math.hypot(ev.clientX-downXY[0],ev.clientY-downXY[1])>5) return;
+    const r=renderer.domElement.getBoundingClientRect();
+    mouse.x=((ev.clientX-r.left)/r.width)*2-1; mouse.y=-((ev.clientY-r.top)/r.height)*2+1;
+    ray.setFromCamera(mouse,camera);
+    const hits=ray.intersectObjects(root.children,true).filter(h=>h.object.visible && h.object.material.opacity>0.4);
+    if(hits.length){ const n=nodeByGuid.get(hits[0].object.name); if(n) select(n); }
+  };
+  addEventListener('pointerup',up);
+}
+function frameMesh(n){
+  const m=meshByName.get(n.n); if(!m) return;
+  const box=new THREE.Box3().setFromObject(m); const c=box.getCenter(new THREE.Vector3());
+  const s=box.getSize(new THREE.Vector3()).length()||0.5;
+  const dir=new THREE.Vector3(0.8,-0.9,0.5).normalize();
+  animateCam(c.clone().add(dir.multiplyScalar(Math.max(s*2.2,2.5))), c);
+}
+function frameSet(idxs){
+  const box=new THREE.Box3(); let any=false;
+  idxs.forEach(i=>{ const m=meshByName.get(graph.nodes[i].n); if(m){ box.expandByObject(m); any=true; } });
+  if(!any) return;
+  const c=box.getCenter(new THREE.Vector3()); const s=box.getSize(new THREE.Vector3()).length()||2;
+  const dir=new THREE.Vector3(0.8,-0.9,0.5).normalize();
+  animateCam(c.clone().add(dir.multiplyScalar(Math.max(s*1.1,3))), c);
+}
+function frameAll(snap){
+  const box=new THREE.Box3().setFromObject(root); if(box.isEmpty()) return;
+  const c=box.getCenter(new THREE.Vector3()); const size=box.getSize(new THREE.Vector3());
+  const dist=(Math.max(size.x,size.y,size.z)/2)/Math.tan(camera.fov*Math.PI/360)*1.5;
+  const dir=new THREE.Vector3(0.85,-0.95,0.55).normalize();
+  const pos=c.clone().add(dir.multiplyScalar(dist));
+  if(snap){ camera.position.copy(pos); controls.target.copy(c); camera.lookAt(c); controls.update(); camAnim=null; }
+  else animateCam(pos, c);
+}
+let camAnim=null;
+function animateCam(pos,target){ camAnim={p0:camera.position.clone(),p1:pos,t0:controls.target.clone(),t1:target,s:performance.now(),d:600}; }
+function onResize(){ const s=document.getElementById('stage');
+  camera.aspect=s.clientWidth/s.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(s.clientWidth,s.clientHeight); }
+function animate(){
+  requestAnimationFrame(animate);
+  if(camAnim){ const k=Math.min(1,(performance.now()-camAnim.s)/camAnim.d); const e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+    camera.position.lerpVectors(camAnim.p0,camAnim.p1,e); controls.target.lerpVectors(camAnim.t0,camAnim.t1,e); if(k>=1)camAnim=null; }
+  controls.update(); renderer.render(scene,camera);
+}
+</script>
+</body>
+</html>

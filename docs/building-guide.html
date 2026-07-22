@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>Client development & releases · rete docs</title>
+  <title>FZK-Haus — 3D building (IFC) · rete docs</title>
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -267,7 +267,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — 3D building (IFC)</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
+        <li class="nav-group"><details open><summary><a href="building-guide.html" class="active">FZK-Haus — 3D building (IFC)</a></summary><ul class="nav-sub"><li><a href="building-guide.html" class="active">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
@@ -302,7 +302,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="SPEC.html">Format specification</a></li>
         <li><a href="rust-api.html">Rust API</a></li>
         <li><a href="browser.html">WASM & JavaScript API</a></li>
-        <li><a href="clients-dev.html" class="active">Client development & releases</a></li>
+        <li><a href="clients-dev.html">Client development & releases</a></li>
         <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
         <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
         <li><a href="BENCHMARK.html">Benchmarks</a></li>
@@ -315,293 +315,66 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Client development &amp; releases</h1>
-<p>Maintainer documentation for the language clients under <code>clients/</code> — how they
-are laid out, built, tested, and released. <strong>Users</strong> should read the pages in
-the <em>Clients</em> nav section instead (e.g. <a href="python.html">Python — rete-graph</a>).</p>
-<h2>Monorepo layout</h2>
-<p>One directory per language client, each owning its toolchain:</p>
-<pre><code>clients/
-  python/        # PyO3 + maturin -&gt; PyPI `rete-graph`
-  r/             # extendr + rextendr -&gt; CRAN/R-universe `rete`
-  go/            # (future)
-</code></pre>
-<p>Clients consume <code>crates/rete-core</code> — never the other way around. The Python
-crate is <strong>excluded from the cargo workspace</strong> (root <code>Cargo.toml</code>, like
-<code>fuzz/</code>): it versions and locks independently (<code>clients/python/Cargo.lock</code>),
-so the workspace release gates (<code>--locked</code> checks, feature matrix, coverage
-floors, MSRV) never see binding-only changes.</p>
-<h2>The Python client</h2>
-<pre><code>clients/python/
-  Cargo.toml               # cdylib `_rete`; pyo3 abi3-py39, rete-core, ureq
-  pyproject.toml           # maturin backend; the PyPI version lives HERE
-  src/lib.rs               # bindings, mirroring the wasm Graph/RemoteGraph
-  src/readers.rs           # Local (pread) / Http (Range) / Py (callback) readers
-  python/rete_graph/       # pure-Python layer: Term parsing, open(), Builder
-  tests/                   # pytest; Range-capable local HTTP fixture
-  examples/tutorial.ipynb  # executed notebook (re-run it when the API changes)
-</code></pre>
-<p>Design invariants worth keeping:</p>
+<h1>FZK-Haus — a building as a 3D knowledge graph</h1>
+<p><strong><a href="building.html">▸ Open the 3D building →</a></strong> — a three.js explorer over the
+<code>fzk-haus</code> knowledge graph: pick any wall, door, window, slab or room and see
+where it sits — its floor, the rooms it encloses, the rooms next to it, and
+everything within reach in 3D — with real SPARQL and <strong>geo3</strong> (GeoSPARQL → 3D)
+running in the browser against the <code>.rete</code>.</p>
+<figure class="fig-center">
+  <img src="img/building-guide.png" alt="The FZK-Haus 3D explorer: a detached two-storey house rendered in 3D at the centre with walls, a pitched roof, windows and a spiral stair, a left sidebar of element-type checkboxes (Walls, Slabs, Windows, Doors, Stairs, Railings, Beams, Members, Rooms) with counts and a storey filter (Erdgeschoss, Dachgeschoss), and a legend for selected / adjacent room / enclosing element / query result.">
+  <figcaption>The explorer renders every IFC element of the house in 3D and colour-codes a picked element's relations — the rooms it encloses, the rooms adjacent to it, and the results of a spatial query.</figcaption>
+</figure>
+<h2>From CAD to graph</h2>
+<p>The model is <strong>AC20-FZK-Haus</strong>, an openly-licensed IFC4 sample building (a small
+detached house) published by KIT for the IBPSA Project 1. IFC (ISO 16739) is the
+open BIM exchange format, and it is already semantic: it carries <em>typed
+elements</em> (walls, doors, windows, slabs, stairs…), <em>spatial structure</em>
+(site → building → storey → space), and <em>relationships</em> (which elements bound a
+room, which openings a wall hosts). We parse it with
+<a href="https://ifcopenshell.org">IfcOpenShell</a> and lift it into three layers of RDF:</p>
 <ul>
-<li>The method surface <strong>mirrors the wasm client</strong> (<code>crates/rete-wasm</code>) — same
-JSON envelopes, same lazy-open pipeline (counting reader → block cache →
-<code>open_ranged_lazy</code>), same incomplete-fetch-is-an-error contract.</li>
-<li>Every engine call runs inside <code>Python::allow_threads</code>; the HTTP reader's
-16-way <code>read_many</code> matches the CLI and the browser fetch pool.</li>
-<li>The engine emits N-Triples tokens (<code>&lt;iri&gt;</code>); the pure-Python layer converts
-them to clean values everywhere (<code>Term</code>, <code>schema()</code>, <code>graph_names()</code>,
-searches). Keep new bindings consistent with that.</li>
-<li>Dataset Card entries written from Python must be <strong>complete</strong> — the CLI's
-card schema has required fields (counts, <code>format_version</code>, every field of a
-rich example query); a partial entry makes <code>rete card</code> reject the card.</li>
+<li><strong><a href="https://w3id.org/bot">BOT</a></strong> — the W3C Building Topology Ontology — for the
+spatial breakdown: <code>bot:Site</code>, <code>bot:Building</code>, <code>bot:Storey</code>, <code>bot:Space</code>,
+<code>bot:Element</code>, tied together by <code>bot:hasStorey</code>, <code>bot:hasSpace</code>,
+<code>bot:containsElement</code>, <code>bot:adjacentElement</code>.</li>
+<li><strong><code>cad:</code></strong> for the IFC specifics: <code>cad:ifcClass</code>, <code>cad:material</code>,
+<code>cad:boundsSpace</code> (space boundaries), <code>cad:adjacentSpace</code>, <code>cad:fillsWall</code>.</li>
+<li><strong>geo3</strong> for geometry: every element carries a 3D point and an
+axis-aligned bounding box, in metres, in the building's own coordinate frame.</li>
 </ul>
-<h3>Build and test (Docker-only, nothing on the host)</h3>
-<pre><code class="language-sh"># wheel
-docker run --rm -v "$PWD":/io ghcr.io/pyo3/maturin build \
-    --release -m clients/python/Cargo.toml --out clients/python/dist
-
-# fmt + clippy (the image's entrypoint is maturin; override it)
-docker run --rm --entrypoint sh -v "$PWD":/io -w /io/clients/python \
-    ghcr.io/pyo3/maturin -c "cargo fmt --check &amp;&amp; cargo clippy --all-targets -- -D warnings"
-
-# tests, installing the wheel with uv in a clean container
-docker run --rm -v "$PWD":/io -w /io/clients/python python:3.12-slim bash -c \
-    "pip install -q uv; uv venv /tmp/v &amp;&amp; uv pip install --python /tmp/v/bin/python \
-     dist/*.whl pytest pandas rdflib &amp;&amp; /tmp/v/bin/python -m pytest tests -q"
-</code></pre>
-<h2>CI: two workflows, deliberately separate</h2>
-<table><thead><tr><th>Workflow</th><th>Trigger</th><th>Does</th></tr></thead><tbody>
-<tr><td><code>python-test.yml</code></td><td>PR / push touching <code>clients/python/**</code> or <code>crates/rete-core/**</code></td><td>fmt + clippy, build wheel, pytest (incl. the live R2 remote smoke) — <strong>never publishes</strong></td></tr>
-<tr><td><code>python-client-publish.yml</code></td><td>pushing a <code>py-v*</code> tag only</td><td>full wheel matrix + sdist, then PyPI upload</td></tr>
-</tbody></table>
-<p>Merging to main can never publish; releasing is always the deliberate tag.</p>
-<h2>Releasing to PyPI</h2>
-<p>Publishing uses <strong>trusted publishing</strong> (OIDC) — no tokens, no secrets. The
-registered publisher on PyPI: project <code>rete-graph</code>, owner <code>caviri</code>, repo
-<code>rete</code>, workflow <code>python-client-publish.yml</code>, environment <code>pypi</code>. Renaming
-that workflow file breaks publishing until the PyPI form is updated.</p>
-<p>Release procedure:</p>
-<ol>
-<li>Bump <code>version</code> in <code>clients/python/pyproject.toml</code> (PyPI refuses to
-re-upload an existing version, so a forgotten bump just fails cleanly).</li>
-<li>Commit, push, then <code>git tag py-vX.Y.Z &amp;&amp; git push origin py-vX.Y.Z</code>.</li>
-<li>Watch the <em>Python client publish</em> run: test → 4 wheels + sdist → publish.</li>
-</ol>
-<p>Hard-won build-matrix facts (already encoded in the workflow — keep them):</p>
-<ul>
-<li>The <strong>aarch64 wheel must build on <code>manylinux: 2_28</code></strong>: <code>ring</code>'s pregenerated
-ARM assembly rejects manylinux2014's old cross-assembler
-(<code>ARM assembler must define __ARM_ARCH</code>).</li>
-<li><code>fail-fast: false</code> on the wheel matrix, so one platform's failure cannot
-cancel the other wheels.</li>
-<li>Wheels are abi3 (<code>abi3-py39</code>): one wheel per platform covers every
-CPython ≥ 3.9 — no per-Python-version matrix.</li>
-</ul>
-<p>Optionally add required reviewers to the <code>pypi</code> GitHub environment to make
-every release pause for a manual approval.</p>
-<h2>Runtime compatibility</h2>
-<p>The main wheels are <strong>native</strong> CPython extensions: anything running real
-CPython works out of the box — scripts, Jupyter, <strong>marimo (desktop/server)</strong>,
-Colab, uv/pip/poetry/conda environments, Linux (x86_64/aarch64, glibc
-2.17+/2.28+), macOS (Intel + Apple Silicon), Windows x64.</p>
-<h3>The Pyodide (browser Python) build</h3>
-<p>From 0.2.0 the release also ships <strong>PyEmscripten wheels</strong> (PEP 783,
-<code>pyemscripten_*_wasm32</code> tags — accepted by PyPI) for Pyodide runtimes:
-JupyterLite, marimo WASM. How it works, all behind
-<code>cfg(target_os = "emscripten")</code> so native builds are untouched:</p>
-<ul>
-<li><strong>No sockets in browsers</strong> → <code>ureq</code>, <code>HttpRangeReader</code>, and the SERVICE
-client are compiled out (this also drops <code>ring</code>/rustls, the one dependency
-that genuinely hurts on emscripten). Remote opens route through the
-pure-Python <code>_XhrRangeReader</code> — synchronous <code>XMLHttpRequest</code> with binary
-responses, which browsers allow <strong>only in web workers</strong>; JupyterLite and
-marimo run their kernels there. The engine stays fully synchronous: no
-Asyncify anywhere.</li>
-<li><strong>No threads in wasm</strong> → with the HTTP reader gone, nothing spawns threads;
-the Python-callback reader uses the default sequential <code>read_many</code>.</li>
-<li><strong>No C zstd encoder</strong> → rete-core builds without the <code>compression</code> feature;
-reads of compressed files still work (pure-Rust decoder), in-browser
-<code>build()</code> writes codec NONE like the playground's Build tab.</li>
-<li><strong>Toolchain — three hard-won pins</strong> (all encoded in the <code>wheel-pyodide</code>
-job; change them together or not at all):
-<ol>
-<li><strong>A dated nightly</strong> (<code>nightly-2025-06-01</code>): pyodide-build drives cargo
-with <code>-Z</code> emscripten flags — nightly-only, and <em>newer</em> nightlies dropped
-<code>-Z emscripten-wasm-eh</code> once it became the default. The window is
-≥ 1.87 (the workspace MSRV) and pre-removal. Set it via
-<code>RUSTUP_TOOLCHAIN</code> — the repo's <code>rust-toolchain.toml</code> stable pin
-silently overrides <code>rustup default</code> otherwise.</li>
-<li><strong><code>build-std</code></strong> (<code>CARGO_UNSTABLE_BUILD_STD=std,panic_abort,panic_unwind</code>
-<ul>
-<li>the <code>rust-src</code> component): Rust's <em>prebuilt</em> emscripten std is
-compiled <strong>without</strong> wasm-EH; linking it emits JS-EH <code>invoke_*</code> imports
-that Pyodide's runtime refuses at import time
-(<code>cannot resolve symbol invoke_vii</code>). Recompiling std with the same
-flags fixes the ABI mismatch.</li>
-</ul>
-</li>
-<li><strong>cibuildwheel</strong> (<code>--platform pyodide</code>) provisions the pinned emsdk +
-xbuildenv and emits one wheel per Pyodide ABI year.
-Revisit all three when pyodide-build supports stable Rust — upstream main
-already pins <code>1.93.0</code> + Emscripten 5, at which point the nightly and
-build-std steps disappear.</li>
-</ol>
-</li>
-</ul>
-<p>Local build (Docker, like everything else):</p>
-<pre><code class="language-sh">docker run --rm -v "$PWD":/io -w /io/clients/python python:3.13-bookworm bash -c '
-  curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
-  export PATH=/root/.cargo/bin:$PATH
-  rustup toolchain install nightly-2025-06-01 --profile minimal
-  rustup target add --toolchain nightly-2025-06-01 wasm32-unknown-emscripten
-  rustup component add --toolchain nightly-2025-06-01 rust-src
-  export RUSTUP_TOOLCHAIN=nightly-2025-06-01
-  export CARGO_UNSTABLE_BUILD_STD=std,panic_abort,panic_unwind
-  pip install cibuildwheel &amp;&amp; cibuildwheel --platform pyodide --output-dir dist-pyodide .'
-</code></pre>
-<p>Smoke-test the wheel in a node-backed Pyodide venv (<code>pip install pyodide-build &amp;&amp; pyodide venv /tmp/pyenv</code>, then install the wheel with its
-pip and import) — it must print <code>sys.platform == "emscripten"</code> and answer a
-query. Remote/XHR paths need a real browser (worker), so keep a manual
-JupyterLite check for releases that touch the reader.</p>
-<p><strong>wasm64 (tracked future work)</strong>: wasm32 caps memory at 4 GiB. Browsers ship
-memory64 now, but Pyodide/emscripten don't build for it yet — when Pyodide
-gains a wasm64 ABI, add its wheel here; nothing in our code assumes 32-bit.</p>
-<h2>The JavaScript client</h2>
-<p><code>clients/js/</code> (npm <code>rete-graph</code>) wraps the <strong>wasm engine built fresh from the
-checked-out crates</strong> — <code>build-wasm.sh</code> runs <code>wasm-pack build crates/rete-wasm --target web</code> into <code>vendor/pkg</code> (gitignored). It deliberately does <em>not</em>
-vendor the committed <code>web/pkg</code> playground artifacts: those follow their own
-build pipeline and have been observed to lag the engine sources (a stale
-artifact rejects newer-format files with <code>header: unsupported version</code>).</p>
-<ul>
-<li><code>build.mjs</code> (esbuild) emits three shapes: <code>dist/index.js</code> (ESM, wasm as a
-lazy-loaded sibling file — bundlers, Node), and the p5.js-style script-tag
-singles <code>dist/rete-graph.js</code> / <code>.min.js</code> (wasm embedded via the <code>binary</code>
-loader, global <code>rete</code>). Node builtins stay <code>external: ["node:*"]</code> behind
-dynamic imports so browser bundles never resolve them.</li>
-<li><strong>Remote opens on Node</strong> go through <code>src/node-sync-xhr.js</code>: a minimal
-<code>XMLHttpRequest</code> implementing exactly the subset <code>web_sys</code> calls, backed by
-fetch in a worker thread + <code>Atomics.wait</code>. Two gotchas encoded in the
-tests: anything the blocked main thread must <em>itself</em> serve deadlocks — the
-test Range server runs in its own worker; and the IIFE's <code>var rete</code> only
-becomes a global under classic-script semantics, so the bundle test loads
-it via <code>vm.runInThisContext</code>, not <code>import</code>.</li>
-<li>CI: <code>js-test.yml</code> (paths-filtered: clients/js + rete-wasm + rete-core) and
-<code>js-client-publish.yml</code> (<code>js-v*</code> tags → npm publish via OIDC trusted
-publishing; configure the publisher on npmjs.com → package → Settings →
-Trusted Publisher: repo <code>caviri/rete</code>, workflow <code>js-client-publish.yml</code>).</li>
-<li>Parity backlog vs Python: Dataset Card + embedded examples (needs a
-<code>card()</code> export in rete-wasm — an engine change, so the playground gate
-applies), custom headers, a Builder.</li>
-</ul>
-<h2>The R client</h2>
-<p><code>clients/r/</code> (package <code>rete</code>) binds <code>rete-core</code> with <strong>extendr</strong>, scaffolded
-by <code>rextendr::use_extendr()</code> in its CRAN-ready shape (<code>configure</code> +
-<code>tools/msrv.R</code> check for cargo, <code>src/Makevars.in</code> drives the cargo build
-during <code>R CMD INSTALL</code>). The crate at <code>clients/r/src/rust/</code> is excluded from
-the cargo workspace like the Python one.</p>
-<ul>
-<li><strong>extendr is pinned to the 0.8 line</strong> (<code>extendr-api = '0.8'</code>): rextendr
-0.5's generated plumbing (entrypoint.c, wrapper conventions) targets it,
-and 0.9 changed the <code>#[extendr]</code> macro contract.</li>
-<li>Two extendr 0.8 shapes that cost a debugging session — keep them:
-the struct needs its <strong>own</strong> <code>#[extendr]</code> attribute (it generates the
-<code>Robj</code> conversions; the impl-level macro alone leaves you with opaque
-<code>ToVectorValue</code>/<code>TryFrom</code> errors), and fallible functions don't return
-<code>Result</code> — they diverge via <code>throw_r_error</code> (the <code>fail()</code> helper), which
-surfaces as a regular R condition.</li>
-<li><code>R/extendr-wrappers.R</code> is <strong>generated</strong> by <code>rextendr::document()</code> (which
-recompiles the crate first — plain <code>devtools::document()</code> does not);
-regenerate and commit it whenever the Rust surface changes. CI diff-checks
-it.</li>
-<li>The R layer follows the same rule as Python: the engine emits N-Triples
-tokens, and <code>R/query.R</code> coerces them (<code>parse_term</code>/<code>coerce_terms</code>) into
-clean data-frame columns — IRIs unbracket, numeric/boolean literals become
-R types, <code>rete_query_raw()</code> keeps full fidelity.</li>
-</ul>
-<p>Build and test (Docker, nothing on the host):</p>
-<pre><code class="language-sh">docker run --rm -v "$PWD":/io -w /io/clients/r rocker/r2u:jammy bash -c '
-  apt-get update -qq &amp;&amp; apt-get install -y -qq curl build-essential &gt;/dev/null
-  curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-  export PATH=/root/.cargo/bin:$PATH
-  Rscript -e "install.packages(c(\"rextendr\", \"devtools\", \"jsonlite\", \"testthat\"))"
-  Rscript -e "rextendr::document()"
-  Rscript -e "devtools::test(stop_on_failure = TRUE)"'
-</code></pre>
-<p>CI: <code>r-test.yml</code> (paths-filtered: clients/r + rete-core) regenerates the
-wrappers, fails if the committed copy is stale, runs testthat, then
-<code>R CMD check --no-manual</code> as a CRAN preflight. See the <em>Releasing to CRAN</em>
-notes at the end of this section.</p>
-<p>Two install-path facts, both verified in clean containers:</p>
-<ul>
-<li>Direct installs need <code>remotes::install_github(..., subdir = "clients/r", build = FALSE)</code> — the default first builds a tarball of the subdir alone,
-where the <code>../../../../crates/rete-core</code> path dependency cannot resolve;
-<code>build = FALSE</code> installs from the extracted repo tree. <code>pak</code>'s
-<code>user/repo/subdir</code> shorthand has no such switch and fails — pak support
-arrives with R-universe/CRAN hosting.</li>
-<li>The executable bits on <code>configure</code>/<code>cleanup</code> matter: committed from
-Windows they become mode 644, and <code>R CMD INSTALL</code> on Unix rejects a
-non-executable <code>configure</code> (<code>R CMD build</code> silently corrects it, hiding
-the problem from tarball-based checks). Fixed via
-<code>git update-index --chmod=+x</code>; keep it when regenerating the scaffold.</li>
-</ul>
-<h3>Releasing to CRAN (and the pragmatic path first)</h3>
-<p>CRAN has a <a href="https://cran.r-project.org/web/packages/using_rust.html">Rust policy</a>:
-builds must not download the network, so every crate must be <strong>vendored</strong>
-into the source tarball:</p>
-<ol>
-<li><code>rextendr::vendor_pkgs()</code> — writes <code>src/rust/vendor.tar.xz</code> +
-<code>vendor-config.toml</code> and points the Makevars at the offline registry.
-Because <code>rete-core</code> is a <em>path</em> dependency it rides along automatically;
-re-vendor after any engine change.</li>
-<li><code>LICENSE.note</code> must list every vendored crate and its license
-(<code>rextendr::write_license_note()</code>).</li>
-<li>The DESCRIPTION already carries the required
-<code>SystemRequirements: Cargo (Rust's package manager), rustc &gt;= 1.87</code>; keep
-the version in sync with the workspace MSRV.</li>
-<li>Stage the standalone package first — <code>scripts/r_cran_prep.sh &lt;dir&gt; [--vendor]</code> embeds a self-contained <code>rete-core</code> via <code>cargo package</code>
-(the path dependency climbs out of the package, so an unstaged
-<code>R CMD build</code> tarball cannot compile) — then <code>R CMD build</code> +
-<code>R CMD check --as-cran</code> on the result must be clean (no ERROR/WARNING;
-justify any NOTE in the submission comment). Known NOTE: extendr-api 0.8
-itself calls the non-API <code>R_NamespaceRegistry</code>; CRAN's API-compliance
-push may question it on a <em>new</em> submission — the fix lands with the
-extendr 0.9 line, so consider timing the CRAN submission to a future
-rextendr/extendr upgrade and using R-universe meanwhile.
-Check the tarball stays under CRAN's 5 MB preference — the vendor archive
-is the risk; mention it in the submission comment if exceeded.</li>
-<li>Submit at <a href="https://cran.r-project.org/submit.html">https://cran.r-project.org/submit.html</a>; confirm the
-maintainer-address email. First submissions get a human review measured
-in days-to-weeks.</li>
-</ol>
-<p><strong>R-universe first</strong>: before (or instead of) CRAN, register the repo at
-<a href="https://github.com/r-universe-org">https://github.com/r-universe-org</a> (a <code>caviri.r-universe.dev</code> universe with
-a <code>packages.json</code> pointing at <code>caviri/rete</code>, <code>subdir: clients/r</code>). It builds
-binaries for all platforms on every push — users
-<code>install.packages("rete", repos = "https://caviri.r-universe.dev")</code> with no
-Rust toolchain — and it exercises the exact source layout CRAN will see.</p>
-<h2>Adding a new language client (R, Go, …)</h2>
-<p>The checklist that made Python work:</p>
-<ol>
-<li><code>clients/&lt;lang&gt;/</code> with its own toolchain and lockfile; bind <code>rete-core</code>
-natively (R: extendr; Go: cgo over a small C ABI crate).</li>
-<li>Mirror the wasm <code>Graph</code>/<code>RemoteGraph</code> surface and the reader contract:
-HTTP Range with a hard 206 requirement, short reads are errors, batched
-<code>read_many</code> fetched concurrently, block cache on top, and the
-incomplete-fetch guard before returning results.</li>
-<li>Parse the shared JSON envelopes; present clean IRIs/values, not <code>&lt;tokens&gt;</code>.</li>
-<li>Two workflows: <code>&lt;lang&gt;-test.yml</code> paths-filtered to the client + rete-core,
-and <code>&lt;lang&gt;-client-publish.yml</code> gated on <code>&lt;lang&gt;-v*</code> tags with the
-registry's trusted-publishing equivalent.</li>
-<li>A user page in the <em>Clients</em> nav section, dev notes in this page, and a
-runnable example (notebook or equivalent) executed in CI or Docker.</li>
-</ol>
-<h2>Docs maintenance</h2>
-<p>Client pages are Markdown under <code>docs/</code>; the nav lives in
-<code>crates/docgen/src/main.rs</code> (<code>SECTIONS</code>). After editing either:</p>
-<pre><code class="language-sh">docker run --rm -v "$PWD":/work -w /work rust:1.92-bookworm cargo run -q -p docgen
-python scripts/check_docs_links.py
-</code></pre>
-<p>CI re-renders and diff-checks <code>docs/</code>, so commit the regenerated HTML.</p>
+<h2>What you see</h2>
+<p>The centre pane is a real 3D scene: left-drag to orbit, right-drag (or
+Shift-drag) to pan, scroll to zoom, click any element to select it. The left
+sidebar toggles element types — Walls, Slabs, Windows, Doors, Stairs, Railings,
+Beams, structural Members, and the room volumes — each with a live count, plus a
+<strong>Storeys</strong> filter to isolate a floor. <strong>Find an element</strong> searches every element
+and room by name. The right panel describes whatever is selected: its IFC type,
+floor, material, and its topological neighbours — for a room, the rooms adjacent
+to it and the elements that enclose it; for a wall, the rooms it encloses.
+Clicking a related item jumps to it.</p>
+<h2>Every relation is a materialised edge</h2>
+<p>The colours in the legend aren't drawn by hand. Room adjacency comes from the
+IFC space boundaries (<code>cad:boundsSpace</code> → <code>cad:adjacentSpace</code>); "what's near the
+staircase" is computed by <strong>geo3</strong>, rete's extension of GeoSPARQL into three
+dimensions (<code>geof3:distance3D</code>, and the same <code>geo3:box</code> / <code>geo3:asWKT3D</code> geometry
+the anatomy explorer uses) — the <em>identical engine</em>, now finding relations
+between the physical parts of a building instead of an organism.</p>
+<h2>Select by query</h2>
+<p>The <strong>Select by query</strong> panel runs that idea live. Ready examples — the rooms on
+each floor, the building's element inventory, the rooms adjacent to the living
+room, the walls that enclose the kitchen, the ten elements nearest the staircase
+via <code>geof3:distance3D</code>, and how many walls enclose each room — are real SPARQL
+against <code>fzk-haus.rete</code>, executed in-browser (the query engine and graph load
+lazily, once) and highlighted straight onto the model. There's also a box to
+write your own SPARQL; matches populate the results table below the scene and
+clicking a row selects that element in 3D. Room labels are language-tagged, so
+match them as <code>"Wohnen"@en</code>.</p>
+<h2>The same data, queryable</h2>
+<p>The explorer is one lens on a regular playground dataset. Open
+<a href="playground.html#dataset=fzk-haus&amp;load=lazy"><code>fzk-haus</code></a> to run SPARQL directly —
+the same spatial structure, topology, and 3D geometry, with no rendering in the
+way.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -609,7 +382,7 @@ python scripts/check_docs_links.py
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/clients-dev.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/building-guide.md</code> by <code>cargo run -p docgen</code>.</footer>
   </main>
   <script>
 (function () {

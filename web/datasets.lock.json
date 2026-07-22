@@ -219,6 +219,14 @@
       "cardUrl": "https://data.graphplaza.com/fuero_juzgo/fuero_juzgo.rete"
     },
     {
+      "key": "fzk-haus",
+      "url": "https://data.graphplaza.com/cad/fzk-haus.rete",
+      "formatVersion": 5,
+      "contentHash": "40cb9ee250458d13a9c05cea0b433eea",
+      "size": 82518,
+      "cardUrl": "https://data.graphplaza.com/cad/fzk-haus.rete"
+    },
+    {
       "key": "gbif-birds",
       "url": "https://data.graphplaza.com/gbif-birds/gbif-birds.rete",
       "formatVersion": 5,
