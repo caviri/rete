@@ -303,7 +303,7 @@ async function loadGLB(){
       const n=nodeByGuid.get(o.name);
       const col=new THREE.Color(n?colOf(n.c):'#8895aa');
       o.material=new THREE.MeshStandardMaterial({color:col, roughness:.82, metalness:.03,
-        transparent:true, opacity:(n&&n.k==='Space')?0.16:0.92, side:THREE.DoubleSide});
+        transparent:true, opacity:(n&&n.k==='Space')?0.16:0.92, flatShading:true, side:THREE.DoubleSide});
       o.userData.baseColor=col;
       meshByName.set(o.name, o);
     }

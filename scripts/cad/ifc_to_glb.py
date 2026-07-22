@@ -34,7 +34,12 @@ if it.initialize():
             if len(faces):
                 m = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
                 m.remove_unreferenced_vertices()
-                if len(m.vertices):
+                if len(m.faces):
+                    # Per-face vertices → flat (crisp) normals, and force the
+                    # normals to be computed so the GLB actually ships a NORMAL
+                    # accessor. Without normals every PBR material renders black.
+                    m.unmerge_vertices()
+                    _ = m.vertex_normals
                     nm = guid(sh.guid)
                     scene.add_geometry(m, geom_name=nm, node_name=nm)
                     n += 1
