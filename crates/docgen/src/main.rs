@@ -67,6 +67,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("python.md", "Python — rete-graph"),
             ("python-build-tutorial.md", "Python: build a .rete"),
             ("javascript.md", "JavaScript — rete-graph"),
+            ("comunica.md", "Comunica — RDF/JS source"),
             ("r.md", "R — rete"),
             ("agents.md", "Agents — MCP, plugin & skills"),
             ("fallacies.md", "Experiment: graphs from speech"),
@@ -272,7 +273,11 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
                 // the sidebar opens its introduction AND (because that page
                 // renders with the group `open`) leaves the sidebar expanded.
                 // The disclosure triangle still toggles the sub-list in place.
-                let sumclass = if *md == current_md { " class=\"active\"" } else { "" };
+                let sumclass = if *md == current_md {
+                    " class=\"active\""
+                } else {
+                    ""
+                };
                 nav_items.push(format!(
                     "<li class=\"nav-group\"><details{open}><summary><a href=\"{overview}\"{sumclass}>{t}</a></summary><ul class=\"nav-sub\">{sub}</ul></details></li>"
                 ));

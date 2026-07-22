@@ -75,49 +75,21 @@ await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array)
 
 ## Comunica (and the RDF/JS ecosystem) {#comunica-and-the-rdfjs-ecosystem}
 
-[Comunica](https://comunica.dev) — the modular JS SPARQL framework behind
-LDflex, GraphQL-LD, and much of the Solid ecosystem — talks to rete two
-ways.
-
-**Level 1: zero code, via the SPARQL endpoints.** Every published dataset
-(and any `.rete` URL) is a standard endpoint on the gateway, and Comunica
-federates against endpoints natively:
+From **0.2.0** the package ships `ReteSource`, an RDF/JS Source that plugs
+`.rete` files into [Comunica](https://comunica.dev), LDflex, GraphQL-LD,
+and the Solid ecosystem:
 
 ```js
-import { QueryEngine } from "@comunica/query-sparql";
-
-const engine = new QueryEngine();
-const bindings = await (await engine.queryBindings(sparql, {
-  sources: [{ type: "sparql", value: "https://katospiegel-rete.hf.space/sparql/boe" }],
-})).toArray();
-```
-
-The whole query is pushed down to the rete engine server-side — use this
-for heavy multi-join queries over big remote files, and to let Comunica
-federate rete datasets with TPF, RDF files, and other endpoints.
-
-**Level 2: native, via `ReteSource` (from 0.2.0).** An RDF/JS Source over
-an open graph — local bytes or a lazy URL — pluggable into any Comunica
-pipeline:
-
-```js
-import { QueryEngine } from "@comunica/query-sparql";
 import { open, ReteSource } from "rete-graph";
-
-const source = new ReteSource(await open("https://data.graphplaza.com/boe/boe.rete"));
-const bindings = await (await new QueryEngine().queryBindings(sparql, {
-  sources: [source],
-})).toArray();
+const source = new ReteSource(await open(bytesOrUrl));
+// → sources: [source] in any Comunica QueryEngine
 ```
 
-Each `match(s, p, o, g)` is one pattern lookup against the file's
-permutation indexes (`countQuads` is implemented too, so Comunica's
-planner can order joins); Comunica executes the joins itself over the
-quad streams. Rule of thumb: **local/embedded file → `ReteSource`; heavy
-joins over a big remote file → level 1**, which keeps rete's own
-optimized joins. Blank-node match arguments are honored by label
-filtering; named-graph semantics follow RDF/JS (`null` graph = default ∪
-named).
+Comunica also talks to rete **with zero code** through the gateway's
+SPARQL endpoints (full query pushdown — prefer it for heavy joins over big
+remote files). Both levels, the exact semantics, and the
+which-level-when table live on the dedicated page:
+**[Comunica — rete in the RDF/JS ecosystem](comunica.md)**.
 
 ## Feature matrix
 
