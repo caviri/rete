@@ -387,7 +387,7 @@ async function loadSystems(indices){
   for(const i of rest){
     setHud(`loading ${prettySys(graph.systems[i])} mesh…`);
     await loadOne(i); removePlaceholder(i);          // box → real mesh
-    if(selected) applySelection(selected);
+    if(selected || result || checked.size) restyle();   // re-paint as meshes arrive
   }
   setHud('');
 }
