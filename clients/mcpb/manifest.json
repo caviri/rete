@@ -1,0 +1,57 @@
+{
+  "manifest_version": "0.3",
+  "name": "rete-graphs",
+  "display_name": "rete — knowledge graphs",
+  "version": "0.0.0",
+  "description": "Query and build .rete knowledge graphs — locally and over the web, reading only the bytes each query touches.",
+  "long_description": "A `.rete` file is a whole RDF knowledge graph in one immutable, range-queryable file. This extension puts the complete engine — compiled to WebAssembly — on your machine, so Claude can:\n\n* **Query your own graphs.** Point it at a folder and every `.rete` in it becomes queryable with SPARQL 1.1. Files are read lazily, byte range by byte range, so a multi-gigabyte graph answers a selective query in megabytes and never has to be loaded into memory. Nothing leaves your machine.\n* **Query the published catalogue.** 60+ public knowledge graphs — legislation, scholarly works, biodiversity, museum collections, historical maps — read the same lazy way over HTTP Range requests, with no server in between.\n* **Build new graphs offline.** Turn Turtle or N-Triples into a real `.rete` file in your own folder, then query it immediately.\n* **Check data quality.** Validate SHACL Core shapes, and reason over ontologies with OWL 2 QL entailment.\n\nEvery answer reports the bytes and requests it actually read.",
+  "author": {
+    "name": "Carlos Vivar Rios",
+    "url": "https://github.com/caviri/rete"
+  },
+  "homepage": "https://caviri.github.io/rete/",
+  "documentation": "https://caviri.github.io/rete/javascript.html",
+  "support": "https://github.com/caviri/rete/issues",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.mjs", "${user_config.graph_folders}"]
+    }
+  },
+  "user_config": {
+    "graph_folders": {
+      "type": "directory",
+      "title": "Graph folders",
+      "description": "Folders holding your .rete files. Everything in them can be queried, and new graphs are built here. Leave empty to use only the published catalogue.",
+      "multiple": true,
+      "required": false
+    }
+  },
+  "tools": [
+    { "name": "list_datasets", "description": "List reachable graphs — your local files and the published catalogue" },
+    { "name": "dataset_card", "description": "A graph's embedded self-description: what it is, licence, provenance, counts" },
+    { "name": "dataset_schema", "description": "Classes and relations with counts, from the file's baked schema pyramid" },
+    { "name": "example_queries", "description": "Runnable SPARQL the dataset ships with" },
+    { "name": "sparql_query", "description": "Run SPARQL 1.1, optionally with OWL 2 QL reasoning" },
+    { "name": "find_entities", "description": "Resolve a name to entity IRIs by label prefix and full text" },
+    { "name": "describe_entity", "description": "Every statement about one IRI, in both directions" },
+    { "name": "validate_shacl", "description": "Validate SHACL Core shapes against a graph" },
+    { "name": "build_rete", "description": "Build a new .rete file from RDF text, offline" }
+  ],
+  "keywords": ["rdf", "sparql", "knowledge-graph", "linked-data", "wasm", "offline"],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/caviri/rete"
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

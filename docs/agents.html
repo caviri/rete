@@ -321,6 +321,7 @@ query — and to validated, media-rich answers — without any out-of-band
 documentation.</p>
 <table><thead><tr><th>Surface</th><th>What it is</th><th>For</th></tr></thead><tbody>
 <tr><td><strong>MCP server</strong></td><td><code>https://katospiegel-rete.hf.space/mcp/</code> — 13 tools over the published catalog and any <code>.rete</code> URL</td><td>ChatGPT, Claude, any MCP client</td></tr>
+<tr><td><strong>Desktop extension</strong></td><td><code>rete.mcpb</code> — the whole engine as a one-click local install</td><td>Claude Desktop, incl. private graphs and offline work</td></tr>
 <tr><td><strong>Claude Code plugin</strong></td><td>this repo, installable as a plugin + marketplace</td><td>Claude Code users: MCP + skills in two commands</td></tr>
 <tr><td><strong>Skills</strong></td><td>four repo-aware playbooks under <code>skills/</code></td><td>Claude Code; also readable as human docs</td></tr>
 </tbody></table>
@@ -411,6 +412,48 @@ async with Client("https://katospiegel-rete.hf.space/mcp/") as c:
 <a href="https://katospiegel-rete.hf.space/docs"><code>/docs</code></a>) and every dataset is a
 standard <a href="interop.html">SPARQL 1.1 Protocol endpoint</a>
 (<code>/sparql/&lt;key&gt;</code> or <code>/sparql/&lt;any-.rete-URL&gt;</code>).</p>
+<h2>The desktop extension (<code>rete.mcpb</code>)</h2>
+<p>The MCP server above is a <em>hosted</em> surface: it queries the published
+catalog, and your own graphs are not on it. The
+<a href="https://github.com/modelcontextprotocol/mcpb">MCP Bundle</a> inverts that —
+it installs the <strong>whole engine on the user's machine</strong>, so Claude Desktop
+can query private <code>.rete</code> files with no network at all, and reach the
+published catalog directly over HTTP Range with no server in between.</p>
+<p>The format makes this unusually easy. MCPB's own guidance notes that Python
+bundles cannot portably ship compiled dependencies and that binary bundles
+need a build per platform; the rete engine is Rust <strong>already compiled to
+architecture-neutral wasm</strong>, so the extension is a plain <code>node</code> bundle — one
+JS file plus one <code>.wasm</code>, 1.3 MB packed — that runs unchanged on macOS,
+Windows and Linux with the Node runtime Claude Desktop ships.</p>
+<p>Nine tools, mirroring the hosted server's read surface plus local authoring:
+<code>list_datasets</code>, <code>dataset_card</code>, <code>dataset_schema</code>, <code>example_queries</code>,
+<code>sparql_query</code>, <code>find_entities</code>, <code>describe_entity</code>, <code>validate_shacl</code>,
+<code>build_rete</code>. Every <code>dataset</code> argument takes a local file name, a catalog
+key, or an <code>https://</code> URL to any published <code>.rete</code>.</p>
+<p>The decisive property is that <strong>local files are read lazily too</strong> — the same
+byte-range path as a remote graph, via the JS client's <code>file://</code> reader — so
+a multi-gigabyte graph on disk answers a selective query in megabytes and is
+never loaded into memory.</p>
+<h3>Try it now</h3>
+<p><strong>⬇ <a href="https://data.graphplaza.com/mcpb/rete.mcpb">Download rete.mcpb</a></strong> (1.4 MB)
+— then double-click it, or drag it into Claude Desktop.</p>
+<p>That link always serves the current build; a pinned copy of each version sits
+beside it (for example
+<a href="https://data.graphplaza.com/mcpb/rete-0.3.0.mcpb"><code>rete-0.3.0.mcpb</code></a>). Every
+tagged release additionally attaches <code>rete-&lt;version&gt;.mcpb</code> to the
+<a href="https://github.com/caviri/rete/releases">releases page</a>, built by the release
+workflow with a SHA-256 checksum and build provenance — take that copy if you
+want to verify what you are installing before you run it.</p>
+<pre><code class="language-sh"># or build it yourself — Docker only, no node needed
+cd clients/mcpb &amp;&amp; ./build.sh --test
+</code></pre>
+<p>At install time you choose which folders to expose. Leaving that empty is a
+fine way to start: the published catalog still works and the extension can read
+nothing on disk. Then ask Claude <em>"list the rete datasets, then show me the
+classes in the BOE graph"</em>. To query your own graphs, point it at a folder
+holding <code>.rete</code> files — reads and writes stay confined to the folders you
+granted, compared on real paths so a symlink cannot escape. See
+<code>clients/mcpb/README.md</code> for the build and test details.</p>
 <h2>The Claude Code plugin</h2>
 <p>The repo doubles as a plugin <strong>and</strong> its own marketplace:</p>
 <pre><code>/plugin marketplace add caviri/rete

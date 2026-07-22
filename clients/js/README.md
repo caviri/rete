@@ -63,7 +63,27 @@ worker. The host serving the file must send CORS headers and honor `Range`.
 `.value` / `.datatype` / `.lang`, plus `.toJS()` (number/boolean/BigInt for
 common XSD types) and `.n3`. Also: `queryRaw`, `query(q, {reason: true})`
 (OWL 2 QL entailment), `prefixSearch`, `textSearch`, `schema`, `graphNames`,
-`info`, and on remote graphs `stats()` / `contentHash()`.
+`info`, `card()` / `examples()` (the file's embedded Dataset Card and its
+example queries), `shacl(shapes)` (SHACL Core validation), and on lazily
+opened graphs `stats()` / `contentHash()`. `wasm` re-exports the raw engine
+for anything this wrapper doesn't wrap.
+
+## Local files, read lazily (Node)
+
+A `file://` URL is read exactly like a remote one — only the byte ranges a
+query touches — so a multi-gigabyte graph on disk is queryable without loading
+it into memory:
+
+```js
+import { pathToFileURL } from "node:url";
+const g = await open(pathToFileURL("/data/huge.rete").href);
+g.card().title;            // two small reads, whatever the file's size
+g.query("SELECT ?s WHERE { ?s a <urn:Thing> } LIMIT 10");
+g.stats();                 // { fileLength, bytes, requests }
+```
+
+Passing bytes still works and is right for small files; `file://` is the way
+to keep big ones out of memory.
 
 ## Building from source
 

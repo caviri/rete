@@ -195,6 +195,28 @@ pub fn schema_packed(bytes: &[u8]) -> Result<String, JsValue> {
     .to_string())
 }
 
+/// The embedded **Dataset Card** — the file's own self-description (title,
+/// description, license, provenance, counts, example queries) as the JSON text
+/// it was written with, or `undefined` when the file carries none. Reads the
+/// metadata section straight out of the buffer.
+#[wasm_bindgen]
+pub fn card(bytes: &[u8]) -> Result<Option<String>, JsValue> {
+    let bytes = rete_core::read_metadata_ranged(&SliceReader::new(bytes)).map_err(err)?;
+    Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
+}
+
+/// The embedded **Dataset Card of a remote `.rete`**, in **two small range
+/// requests**: the header, then the metadata section it points at — never the
+/// dictionary, index, or pyramid. This is the index-free CARD tier: a client
+/// learns what a multi-gigabyte graph *is* for a few KB. `undefined` when the
+/// file carries no card. Worker-only (synchronous XHR).
+#[wasm_bindgen]
+pub fn card_url(url: &str) -> Result<Option<String>, JsValue> {
+    let reader = XhrRangeReader::open(url)?;
+    let bytes = rete_core::read_metadata_ranged(&reader).map_err(err)?;
+    Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
+}
+
 /// A `.rete` opened **once** and kept resident, so a client (the playground's
 /// cached/in-memory mode) can run many queries on a big file without re-copying
 /// the whole buffer into wasm and re-decoding its dictionary on every call. The
@@ -306,6 +328,13 @@ impl Graph {
             "relations": schema_summary(&self.rete),
         }))
         .map_err(err)
+    }
+
+    /// See [`card`] — the Dataset Card of the resident file.
+    pub fn card(&self) -> Option<String> {
+        self.rete
+            .metadata()
+            .map(|b| String::from_utf8_lossy(b).into_owned())
     }
 
     /// See [`query_communities`].
@@ -447,6 +476,67 @@ impl RemoteGraph {
     ) -> Result<String, JsValue> {
         text_search_json(&self.rete, &words, contains_prefix.as_deref(), limit)
     }
+
+    /// See [`card_url`] — the Dataset Card, over the resident handle's reader
+    /// (so the header range it already fetched is served from the block cache).
+    pub fn card(&self) -> Result<Option<String>, JsValue> {
+        let bytes = rete_core::read_metadata_ranged(&*self.reader).map_err(err)?;
+        Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
+    }
+
+    /// See [`schema_url`] — the **baked** schema pyramid over the resident
+    /// handle. Deliberately never falls back to the scanning [`schema`]: that
+    /// would drag the whole remote file across the wire.
+    pub fn schema(&self) -> Result<String, JsValue> {
+        use serde_json::json;
+        let (classes, relations) = rete_core::read_schema_summary_ranged(&*self.reader)
+            .map_err(err)?
+            .ok_or_else(|| js_error("file has no schema pyramid"))?;
+        let classes: Vec<serde_json::Value> = classes.iter().map(|(c, n)| json!([c, n])).collect();
+        let relations: Vec<serde_json::Value> = relations
+            .iter()
+            .map(|(s, p, o, n)| json!([s, p, o, n]))
+            .collect();
+        Ok(json!({
+            "schemaVersion": JSON_SCHEMA_VERSION,
+            "kind": "schema",
+            "classes": classes,
+            "relations": relations,
+        })
+        .to_string())
+    }
+
+    /// See [`info`] — read from the resident header, no extra fetch.
+    pub fn info(&self) -> String {
+        let h = self.rete.header();
+        format!(
+            r#"{{"schemaVersion":1,"quads":{},"terms":{},"pyramidLevels":{},"namedGraphs":{}}}"#,
+            h.quad_count,
+            h.term_count,
+            h.pyramid_levels,
+            self.rete.graph_names().len()
+        )
+    }
+
+    /// See [`graph_names`].
+    pub fn graph_names(&self) -> Result<String, JsValue> {
+        serde_json::to_string(&self.rete.graph_names()).map_err(err)
+    }
+
+    /// See [`shacl_url`] — validate over the resident handle. The default graph
+    /// validates lazily against the index (only the shapes' targets are
+    /// fetched), so a shape over a huge remote file stays cheap.
+    pub fn shacl(
+        &self,
+        shapes_turtle: &str,
+        graph: Option<String>,
+        format: &str,
+    ) -> Result<String, JsValue> {
+        self.rete.reset_load_failures();
+        let out = shacl_rete(&self.rete, shapes_turtle, graph.as_deref(), format)?;
+        incomplete_guard(&self.rete, "validation")?;
+        Ok(out)
+    }
 }
 
 /// Serialize a label prefix search as `[{"label":…,"subject":…}]`.
@@ -479,21 +569,25 @@ fn text_search_json(
 
 /// Parse the fixed-size header and report the byte ranges a *progressive*
 /// client needs for the overview — the dictionary and the pyramid summary — plus
-/// the (large) index range it can skip. JSON:
-/// `{ "dictOffset","dictLen","pyramidOffset","pyramidLen","indexOffset","indexLen" }`.
+/// the (large) index range it can skip, and the metadata (Dataset Card) range.
+/// JSON: `{ "dictOffset","dictLen","pyramidOffset","pyramidLen","indexOffset",
+/// "indexLen","metadataOffset","metadataLen" }`.
 /// The browser fetches bytes `0..HEADER_LEN`, calls this, then range-fetches only the
-/// dict + pyramid — never the index.
+/// dict + pyramid — never the index. A host with its own byte reader (Node over a
+/// local file, say) can use `metadataOffset`/`metadataLen` to read just the card.
 #[wasm_bindgen]
 pub fn header_ranges(head: &[u8]) -> Result<String, JsValue> {
     let h = Header::from_bytes(head).map_err(err)?;
     Ok(format!(
-        r#"{{"schemaVersion":1,"dictOffset":{},"dictLen":{},"pyramidOffset":{},"pyramidLen":{},"indexOffset":{},"indexLen":{}}}"#,
+        r#"{{"schemaVersion":1,"dictOffset":{},"dictLen":{},"pyramidOffset":{},"pyramidLen":{},"indexOffset":{},"indexLen":{},"metadataOffset":{},"metadataLen":{}}}"#,
         h.dictionary_offset,
         h.dictionary_len,
         h.pyramid_meta_offset,
         h.pyramid_meta_len,
         h.root_dir_offset,
         h.root_dir_len,
+        h.metadata_offset,
+        h.metadata_len,
     ))
 }
 
@@ -1054,12 +1148,10 @@ impl RangeReader for XhrRangeReader {
         }
         #[cfg(not(feature = "asyncify"))]
         {
-            let has_pool = js_sys::Reflect::get(
-                &js_sys::global(),
-                &JsValue::from_str("reteReadMany"),
-            )
-            .map(|h| h.is_function())
-            .unwrap_or(false);
+            let has_pool =
+                js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("reteReadMany"))
+                    .map(|h| h.is_function())
+                    .unwrap_or(false);
             if has_pool {
                 16
             } else {

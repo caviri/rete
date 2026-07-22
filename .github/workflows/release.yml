@@ -128,9 +128,49 @@ jobs:
           path: dist/rete-wasm-${{ needs.meta.outputs.version }}.tar.gz
           if-no-files-found: error
 
+  mcpb:
+    name: Claude Desktop extension
+    needs: meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the wasm engine in the pinned image
+        run: |
+          docker build -t rete-dev-release -f .devcontainer/Dockerfile .
+          docker run --rm --user root \
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+            -e CARGO_TARGET_DIR=/work/target \
+            -v "$PWD:/work" -w /work rete-dev-release \
+            sh -lc 'git config --global --add safe.directory /work &&
+                    wasm-pack build crates/rete-wasm --target web --no-opt \
+                      --out-dir /work/clients/js/vendor/pkg'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Build the JS client, then the bundle
+        run: |
+          npm --prefix clients/js install --no-audit --no-fund
+          node clients/js/build.mjs
+          npm --prefix clients/mcpb install --no-audit --no-fund
+          node clients/mcpb/build.mjs
+      - name: Verify the bundle over stdio before shipping it
+        run: node --test --test-timeout=180000 clients/mcpb/test/*.test.mjs
+      - name: Validate and pack
+        run: |
+          npx --yes @anthropic-ai/mcpb@2 validate clients/mcpb/build/manifest.json
+          mkdir -p dist
+          npx --yes @anthropic-ai/mcpb@2 pack clients/mcpb/build \
+            "dist/rete-${{ needs.meta.outputs.version }}.mcpb"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rete-mcpb
+          path: dist/rete-${{ needs.meta.outputs.version }}.mcpb
+          if-no-files-found: error
+
   assemble:
     name: checksums, SBOM, attestations, and GitHub release
-    needs: [meta, native, wasm]
+    needs: [meta, native, wasm, mcpb]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -146,7 +186,7 @@ jobs:
           merge-multiple: true
       - name: Create SHA-256 checksums
         working-directory: dist
-        run: sha256sum *.tar.gz *.zip > SHA256SUMS
+        run: sha256sum *.tar.gz *.zip *.mcpb > SHA256SUMS
       - name: Generate the locked CycloneDX dependency graph
         run: |
           docker build -t rete-dev-release -f .devcontainer/Dockerfile .
@@ -163,6 +203,7 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.mcpb
             dist/SHA256SUMS
       - name: Bind the CycloneDX SBOM to every release archive
         uses: actions/attest@v4

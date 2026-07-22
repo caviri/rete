@@ -1,0 +1,21 @@
+{
+  "name": "rete-mcpb",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build tooling for rete.mcpb — the rete knowledge-graph desktop extension for Claude.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test --test-timeout=120000 ./test/*.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
+    "esbuild": "^0.25.0",
+    "rete-graph": "file:../js"
+  }
+}

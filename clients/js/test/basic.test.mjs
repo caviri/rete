@@ -1,7 +1,11 @@
 // End-to-end tests over the BUILT package (dist/): bytes, remote over a
 // Range server (through the Node sync-XHR bridge), and the script-tag bundle.
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { Term, build, open } from "../dist/index.js";
 import { serveBytes } from "./range-server.mjs";
@@ -96,4 +100,46 @@ test("script-tag bundle: global `rete`, embedded wasm", async () => {
   assert.equal(g.quads, 1);
   assert.equal(g.query("ASK { <urn:a> ?p ?o }"), true);
   assert.ok(api.Term.parse("<urn:a>").value === "urn:a");
+});
+
+test("file:// opens read a local graph lazily, by byte range", async () => {
+  const data = await build(NT);
+  const dir = await mkdtemp(join(tmpdir(), "rete-js-"));
+  const path = join(dir, "graph.rete");
+  await writeFile(path, data);
+
+  const g = await open(pathToFileURL(path).href);
+  assert.deepEqual(
+    g.query(KNOWS_Q).map((r) => r.o.value),
+    ["http://example.org/alice"],
+  );
+  // Same lazy machinery as a remote open: counted reads, not a whole-file load.
+  const stats = g.stats();
+  assert.equal(stats.fileLength, data.length);
+  assert.ok(stats.requests >= 1);
+  assert.equal(g.info().quads, 6);
+  assert.deepEqual(g.schema().classes, [["http://example.org/Person", 2]]);
+});
+
+test("card, examples and shacl over a lazily opened file", async () => {
+  // A card travels inside the file; build() writes none, so this asserts the
+  // honest empty answers plus a real SHACL run.
+  const dir = await mkdtemp(join(tmpdir(), "rete-js-"));
+  const path = join(dir, "graph.rete");
+  await writeFile(path, await build(NT));
+  const g = await open(pathToFileURL(path).href);
+
+  assert.equal(g.card(), null);
+  assert.deepEqual(g.examples(), []);
+
+  const report = g.shacl(`@prefix sh: <http://www.w3.org/ns/shacl#> .
+[] a sh:NodeShape ; sh:targetClass <http://example.org/Person> ;
+   sh:property [ sh:path <http://www.w3.org/2000/01/rdf-schema#label> ; sh:minCount 1 ] .`);
+  assert.equal(report.conforms, true);
+
+  const failing = g.shacl(`@prefix sh: <http://www.w3.org/ns/shacl#> .
+[] a sh:NodeShape ; sh:targetClass <http://example.org/Person> ;
+   sh:property [ sh:path <http://example.org/email> ; sh:minCount 1 ] .`);
+  assert.equal(failing.conforms, false);
+  assert.equal(failing.results.length, 2);
 });

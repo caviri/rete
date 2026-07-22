@@ -40,6 +40,15 @@ export class Graph {
     relations: [s: string, p: string, o: string, count: number][];
   };
   info(): { quads: number; terms: number; pyramidLevels: number; namedGraphs: number };
+  /** The embedded Dataset Card, or null when the file carries none. */
+  card(): Record<string, unknown> | null;
+  /** Example SPARQL queries from the card; `sparql` plus optional rich fields. */
+  examples(): { sparql: string; title?: string; question?: string }[];
+  /** Validate SHACL Core shapes (Turtle); lazy over remote graphs. */
+  shacl(
+    shapesTurtle: string,
+    opts?: { graph?: string | null; format?: "json" | "text" },
+  ): unknown;
   readonly quads: number;
   graphNames(): string[];
   /** Remote graphs only: cumulative fetch counters; null for bytes graphs. */
@@ -49,14 +58,19 @@ export class Graph {
 }
 
 /**
- * Open a `.rete` graph: bytes, or an http(s) URL read lazily over HTTP Range.
- * Remote opens use synchronous XHR: Node and browser web workers only
- * (browser main threads forbid sync binary XHR — open bytes there).
+ * Open a `.rete` graph: bytes, an http(s) URL read lazily over HTTP Range, or
+ * (Node only) a `file://` URL read lazily off disk — same byte-range path, so
+ * a huge local file is queryable without loading it. Lazy opens use
+ * synchronous XHR: Node and browser web workers only (browser main threads
+ * forbid sync binary XHR — open bytes there).
  */
 export function open(
   source: Uint8Array | ArrayBuffer | string,
   opts?: { headers?: Record<string, string> },
 ): Promise<Graph>;
+
+/** The raw wasm engine — escape hatch for exports this wrapper doesn't wrap. */
+export const wasm: Record<string, (...args: never[]) => unknown>;
 
 /** Build a complete `.rete` file image from RDF text ("nt", "nq", "ttl"). */
 export function build(text: string, format?: "nt" | "nq" | "ttl"): Promise<Uint8Array>;

@@ -46,7 +46,8 @@ skills/rete-publish/scripts/upload_bucket.sh web/foo.rete foo/foo.rete
 skills/rete-publish/scripts/upload_bucket.sh data/foo/foo-tables/ foo
 ```
 
-The uploader reads `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, and
+It runs the upload in a container (like everything else here); the host needs
+only Docker. The uploader reads `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, and
 `S3_API_ENDPOINT` from the environment or the repository's gitignored `.env`.
 Objects are public at `https://data.graphplaza.com/<key>` without a redirect or
 token. The bucket defaults to `rete`; override it with `RETE_BUCKET`.

@@ -219,6 +219,40 @@ export class Graph {
     return JSON.parse(this.#g.info?.() ?? "{}");
   }
 
+  /**
+   * The embedded Dataset Card — the file's own self-description (title,
+   * description, license, provenance, counts, example queries) — or `null`
+   * when the file carries none. On a remote graph this is the index-free CARD
+   * tier: the metadata section's byte range, nothing else.
+   */
+  card() {
+    const s = this.#g.card();
+    return s ? JSON.parse(s) : null;
+  }
+
+  /**
+   * The example SPARQL queries the file ships with. Rich entries carry
+   * `title`/`question`/`dimension`/`tier` alongside `sparql`; run one with
+   * `g.query(g.examples()[0].sparql)`. Empty when the file has no card.
+   */
+  examples() {
+    const card = this.card() ?? {};
+    return [
+      ...(card.queries ?? []).map((q) => ({ ...q })),
+      ...(card.example_queries ?? []).map((sparql) => ({ sparql })),
+    ];
+  }
+
+  /**
+   * Validate SHACL Core shapes (Turtle) against the graph. Returns the
+   * report as `"json"` (default) or `"text"`. Over a remote graph the default
+   * graph validates lazily — only the shapes' target nodes are fetched.
+   */
+  shacl(shapesTurtle, { graph = null, format = "json" } = {}) {
+    const out = this.#g.shacl(shapesTurtle, graph ?? undefined, format);
+    return format === "json" ? JSON.parse(out) : out;
+  }
+
   get quads() {
     return this.info().quads;
   }
@@ -242,19 +276,26 @@ const isBytes = (s) =>
   s instanceof Uint8Array || s instanceof ArrayBuffer || ArrayBuffer.isView(s);
 
 /**
- * Open a `.rete` graph: a `Uint8Array`/`ArrayBuffer` file image, or an
- * `http(s)://` URL queried lazily over HTTP Range requests. Remote opens use
- * synchronous XHR: works in Node (built-in polyfill) and in browser **web
- * workers** — not on a browser main thread (open bytes there instead).
+ * Open a `.rete` graph: a `Uint8Array`/`ArrayBuffer` file image, an
+ * `http(s)://` URL queried lazily over HTTP Range requests, or — in Node — a
+ * `file://` URL read lazily off disk the same way (only the byte ranges a
+ * query touches, so a multi-gigabyte local file needs no memory). Lazy opens
+ * use synchronous XHR: they work in Node (built-in polyfill) and in browser
+ * **web workers** — not on a browser main thread (open bytes there instead).
  */
 export async function open(source, { headers } = {}) {
   await init();
   if (headers) {
     throw new Error("custom headers are not supported by the JS client yet");
   }
-  if (typeof source === "string" && /^https?:\/\//.test(source)) {
-    if (typeof XMLHttpRequest === "undefined") {
-      if (typeof process !== "undefined" && process.versions?.node) {
+  if (typeof source === "string" && /^(https?|file):\/\//.test(source)) {
+    const isFile = source.startsWith("file:");
+    const node = typeof process !== "undefined" && !!process.versions?.node;
+    if (isFile && !node) {
+      throw new Error("file:// .rete opens are Node-only; pass bytes in the browser");
+    }
+    if (typeof XMLHttpRequest === "undefined" || isFile) {
+      if (node) {
         const { install } = await import("./node-sync-xhr.js");
         install();
       } else {
@@ -288,3 +329,10 @@ export async function build(text, format = "nt") {
 
 // RDF/JS Source for Comunica / LDflex / GraphQL-LD pipelines.
 export { ReteSource } from "./comunica.js";
+
+/**
+ * The raw wasm engine — an escape hatch to the exports this wrapper does not
+ * surface (`header_ranges`, `schema_url`, `reach`, `why_triples`, …). Same
+ * instance the wrapper uses; strings in, JSON strings out.
+ */
+export * as wasm from "../vendor/pkg/rete_wasm.js";

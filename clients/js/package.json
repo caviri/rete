@@ -1,7 +1,7 @@
 {
   "name": "rete-graph",
-  "version": "0.2.0",
-  "description": "Query local and remote .rete graph files with SPARQL — WebAssembly client for browsers and Node.",
+  "version": "0.3.0",
+  "description": "Query local and remote .rete graph files with SPARQL — WebAssembly client for browsers and Node, with lazy byte-range reads over HTTP and local files.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
