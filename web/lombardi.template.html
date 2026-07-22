@@ -63,6 +63,25 @@
     border-radius:3px;font-size:14px;line-height:1;display:grid;place-items:center;padding:0}
   #zoom button:hover{border-color:var(--ink-faint)}
 
+  /* arrange / trace toolbar, top-left of the sheet */
+  #tools{position:absolute;left:14px;top:12px;display:flex;flex-direction:column;gap:7px;align-items:flex-start}
+  .tbtn{border:1px solid var(--rule);background:#fdfaf1;border-radius:4px;padding:5px 9px;
+    font:500 11.5px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;color:var(--ink-soft);
+    display:inline-flex;align-items:center;white-space:nowrap}
+  .tbtn:hover{border-color:var(--ink-faint);color:var(--ink)}
+  #arrange.on{background:var(--ink);color:var(--ui);border-color:var(--ink)}
+  #arrangebar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;max-width:340px;
+    background:rgba(247,242,230,.86);backdrop-filter:blur(3px);border:1px solid var(--rule);
+    border-radius:6px;padding:7px 8px}
+  #arrangebar .opac{display:inline-flex;align-items:center;gap:6px;font:600 9.5px/1 ui-sans-serif,system-ui,sans-serif;
+    text-transform:uppercase;letter-spacing:.08em;color:var(--ink-faint)}
+  #arrangebar input[type=range]{width:78px;accent-color:var(--red)}
+  #arrangebar input[type=range]:disabled{opacity:.4}
+  .tbtn.file{cursor:pointer;position:relative;overflow:hidden}
+  .tbtn.file input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;font-size:0}
+  #nobg{flex-basis:100%;font:italic 10.5px/1.4 ui-serif,Georgia,serif;color:var(--ink-faint)}
+  body.trace-hint #note-l{color:var(--red)}
+
   /* the photograph of the actual sheet, pinned to the corner of the drawing */
   #original{position:absolute;right:14px;bottom:34px;width:266px;background:#fdfaf1;
     border:1px solid var(--rule);padding:8px 8px 0;box-shadow:0 6px 20px rgba(74,60,32,.22);
@@ -195,6 +214,17 @@
       <button id="zin"  title="Zoom in">+</button>
       <button id="zout" title="Zoom out">−</button>
       <button id="zfit" title="Fit the sheet">⤢</button>
+    </div>
+    <div id="tools">
+      <button id="arrange" class="tbtn" title="Trace the names onto the original drawing, then download their coordinates">✥&nbsp;Arrange</button>
+      <div id="arrangebar" hidden>
+        <label class="opac" title="Fade the original behind the names">orig
+          <input id="opacity" type="range" min="0" max="100" value="68"></label>
+        <button id="dljson" class="tbtn" title="Download the coordinates you traced as JSON">↓&nbsp;JSON</button>
+        <label class="tbtn file" title="Load a coordinates JSON to resume">↥&nbsp;Load<input id="ldjson" type="file" accept="application/json,.json"></label>
+        <button id="resetpos" class="tbtn" title="Throw away this tracing and re-run the automatic layout">↺&nbsp;Reset</button>
+        <span id="nobg" hidden>no original for this drawing — arrange freely</span>
+      </div>
     </div>
     <figure id="original" hidden></figure>
     <div id="indexcard" class="gone"></div>

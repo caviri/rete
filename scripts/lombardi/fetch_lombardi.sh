@@ -55,6 +55,9 @@ dst = os.path.join(root, "data", "lombardi", "moma", "lombardi_moma.json")
 json.dump(out, open(dst, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
 print("  %d works by Mark Lombardi at MoMA" % len(out))
 PY
+# the open-data ImageURL is a signed 1024px transform; harvest the largest signed
+# size (up to 2000px) from each work's collection page for the tracing background
+python "$ROOT/scripts/lombardi/moma_hires.py"
 
 echo "== per-network data + page"
 ok=0

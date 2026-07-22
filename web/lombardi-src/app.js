@@ -161,8 +161,9 @@ const Q = {
   /* The physical sheet, for the 17 drawings MoMA holds. Their collection data is
    * CC0; the IMAGE is not — it stays on moma.org and the graph carries a rights
    * statement next to it. */
-  object: (w) => `SELECT ?img ?page ?date ?medium ?dims ?credit ?accession ?rights WHERE {
+  object: (w) => `SELECT ?img ?full ?page ?date ?medium ?dims ?credit ?accession ?rights WHERE {
   <${w}> lo:momaImage ?img ; lo:momaPage ?page ; lo:accession ?accession .
+  OPTIONAL { <${w}> lo:momaImageFull ?full }
   OPTIONAL { <${w}> schema:dateCreated ?date }
   OPTIONAL { <${w}> schema:artMedium ?medium }
   OPTIONAL { <${w}> lo:dimensions ?dims }
@@ -403,6 +404,9 @@ const state = {
   works: [], work: null, nodes: [], edges: [], byId: new Map(),
   notation: new Map(),   // arc class IRI → {label, drawn}
   sel: null, view: { x: 0, y: 0, w: W, h: H },
+  // arrange / trace mode:
+  trace: false, original: null, image: null, bgOpacity: 0.68,
+  arcEls: [],            // arc <path> elements, for live redraw while dragging
 };
 
 function drawSheet() {
@@ -418,18 +422,24 @@ function drawSheet() {
   svg.appendChild(mk("rect", Object.assign({ fill: "#d9cdae" }, table)));
   svg.appendChild(mk("rect", Object.assign({ fill: "#7d6f4c", filter: "url(#grain)" }, table)));
   svg.appendChild(mk("rect", { x: 0, y: 0, width: W, height: H, fill: "#ece3ce", filter: "url(#drop)" }));
-  svg.appendChild(mk("rect", { x: 0, y: 0, width: W, height: H, fill: "#8a7a52", filter: "url(#grain)" }));
-  svg.appendChild(mk("rect", { x: 0, y: 0, width: W, height: H, fill: "url(#vig)" }));
+  // In trace mode the paper texture is skipped so the photograph reads clearly.
+  if (!state.trace) {
+    svg.appendChild(mk("rect", { x: 0, y: 0, width: W, height: H, fill: "#8a7a52", filter: "url(#grain)" }));
+    svg.appendChild(mk("rect", { x: 0, y: 0, width: W, height: H, fill: "url(#vig)" }));
+  }
 
-  // everything drawn in pencil sits in one group, tipped a fraction of a degree
-  // the way a sheet lies on a table
-  const sheet = mk("g", { transform: `rotate(-0.28 ${W / 2} ${H / 2})` });
+  // Everything drawn in pencil sits in one group, tipped a fraction of a degree
+  // the way a sheet lies on a table — but flat when tracing, so screen deltas map
+  // cleanly to sheet coordinates and the exported positions are unrotated.
+  const sheet = mk("g", state.trace ? { id: "pencil" }
+                                     : { id: "pencil", transform: `rotate(-0.28 ${W / 2} ${H / 2})` });
   svg.appendChild(sheet);
 
   const gArcs = mk("g", { filter: "url(#ink)", fill: "none", "stroke-linecap": "round" });
   const gNodes = mk("g", {});
   sheet.appendChild(gArcs);
   sheet.appendChild(gNodes);
+  refreshBackground();          // drops the original photo behind the names, if tracing
 
   // ---- the timeline rule, if this drawing has year markers
   const years = state.nodes.filter((d) => d.year);
@@ -462,9 +472,11 @@ function drawSheet() {
     if (m.tip === "both") { p.setAttribute("marker-end", "url(#ah)"); p.setAttribute("marker-start", "url(#ah)"); }
     if (m.tip === "bar") p.setAttribute("marker-end", "url(#bar)");
     p.dataset.s = e.s; p.dataset.o = e.o;
+    p.dataset.bulge = bulge.toFixed(3); p.dataset.sweep = sweep;   // for live redraw while dragging
     p.appendChild(mk("title", {})).textContent = `${a.label} → ${b.label} · ${e.type} (${e.drawn})${e.amount ? " · " + e.amount : ""}`;
     gArcs.appendChild(p);
   });
+  state.arcEls = [...gArcs.querySelectorAll("path[data-s]")];
 
   // ---- names
   for (const d of state.nodes) {
@@ -508,9 +520,14 @@ function drawSheet() {
     }
     g.appendChild(mk("title", {})).textContent =
       `${d.label} — ${d.kind}${d.wc > 1 ? ` · appears in ${d.wc} drawings` : ""}`;
-    g.addEventListener("click", (ev) => { ev.stopPropagation(); selectNode(d.id, g); });
-    g.addEventListener("mouseenter", () => highlight(d.id));
-    g.addEventListener("mouseleave", () => highlight(state.sel));
+    if (state.trace) {
+      makeNodeDraggable(g, d);          // drag names onto the drawing behind them
+    } else {
+      g.style.cursor = "pointer";
+      g.addEventListener("click", (ev) => { ev.stopPropagation(); selectNode(d.id, g); });
+      g.addEventListener("mouseenter", () => highlight(d.id));
+      g.addEventListener("mouseleave", () => highlight(state.sel));
+    }
     gNodes.appendChild(g);
   }
 
@@ -543,6 +560,159 @@ function highlight(id) {
   $("sheet").querySelectorAll("g.node").forEach((g) => {
     g.style.opacity = !id ? "" : (g.dataset.id === id ? "1" : "0.42");
   });
+}
+
+/* --------------------------------------------------- arrange / trace mode
+ * The names can't be placed where Lombardi placed them — those coordinates were
+ * never digitized. So this mode hands the job to a person: it drops the original
+ * drawing in behind the names and lets you drag each one onto its counterpart,
+ * then download the coordinates you traced. That JSON is exactly the (x,y) layer
+ * Tolksdorf's data is missing — feed a folder of them back and the redrawing
+ * becomes the real drawing. */
+
+function refreshBackground() {
+  const sheet = document.getElementById("pencil");
+  if (!sheet) return;
+  const old = sheet.querySelector("image.bg");
+  if (old) old.remove();
+  if (!(state.trace && state.image)) return;
+  const img = mk("image", { x: 0, y: 0, width: W, height: H,
+    preserveAspectRatio: "none", opacity: state.bgOpacity });
+  img.setAttribute("class", "bg");
+  img.setAttribute("href", state.image);
+  img.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", state.image);
+  sheet.insertBefore(img, sheet.firstChild);      // behind the arcs and names
+}
+
+function redrawIncidentArcs(id) {
+  for (const p of state.arcEls) {
+    if (p.dataset.s === id || p.dataset.o === id) {
+      const a = state.byId.get(p.dataset.s), b = state.byId.get(p.dataset.o);
+      if (a && b) p.setAttribute("d", arcPath(a.x, a.y, b.x, b.y, +p.dataset.bulge, +p.dataset.sweep));
+    }
+  }
+}
+
+function makeNodeDraggable(g, d) {
+  g.style.cursor = "move";
+  let drag = null;
+  g.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    const rect = $("sheet").getBoundingClientRect();
+    drag = { px: e.clientX, py: e.clientY, moved: 0,
+             sx: state.view.w / rect.width, sy: state.view.h / rect.height };
+    g.setPointerCapture(e.pointerId);
+    g.parentNode.appendChild(g);          // raise the name being moved
+  });
+  g.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const mvx = e.clientX - drag.px, mvy = e.clientY - drag.py;
+    d.x += mvx * drag.sx; d.y += mvy * drag.sy;
+    drag.moved += Math.hypot(mvx, mvy);
+    drag.px = e.clientX; drag.py = e.clientY;
+    g.setAttribute("transform", `translate(${d.x.toFixed(1)},${d.y.toFixed(1)})`);
+    redrawIncidentArcs(d.id);
+  });
+  const end = () => {
+    if (!drag) return;
+    if (drag.moved < 4) selectNode(d.id, g);   // a tap inspects; a drag moves
+    else savePositions();
+    drag = null;
+  };
+  g.addEventListener("pointerup", end);
+  g.addEventListener("pointercancel", end);
+}
+
+const posKey = () => "lombardi:pos:" + (state.work ? localName(state.work.w) : "");
+
+function savePositions() {
+  try {
+    const pos = {};
+    for (const d of state.nodes) pos[d.id] = [Math.round(d.x), Math.round(d.y)];
+    localStorage.setItem(posKey(), JSON.stringify({ w: W, h: H, pos }));
+  } catch (_) { /* private mode / quota — the download still works */ }
+}
+
+function loadPositions() {
+  try {
+    const raw = localStorage.getItem(posKey());
+    if (!raw) return false;
+    const s = JSON.parse(raw), m = s.pos || s, sw = s.w || W, sh = s.h || H;
+    let any = false;
+    for (const d of state.nodes) if (m[d.id]) {
+      d.x = m[d.id][0] * (W / sw); d.y = m[d.id][1] * (H / sh); any = true;
+    }
+    return any;
+  } catch (_) { return false; }
+}
+
+function downloadPositions() {
+  if (!state.work) return;
+  const data = {
+    dataset: "lombardi", work: state.work.w, networkId: localName(state.work.w),
+    title: state.work.title,
+    sheet: { width: W, height: H, note: "origin top-left; x in [0,width], y in [0,height]" },
+    original: state.original ? {
+      moma: state.original.page, image: state.image,
+      dimensions: state.original.dims, accession: state.original.accession,
+    } : null,
+    rights: "Node coordinates only. Any MoMA image referenced is © The Estate of "
+      + "Mark Lombardi, linked not redistributed, and not covered by CC BY-NC-SA.",
+    tracedIn: "docs/lombardi.html",
+    nodes: state.nodes.map((d) => Object.assign(
+      { id: d.id, name: d.label, type: d.kind, x: Math.round(d.x), y: Math.round(d.y) },
+      d.year ? { year: d.year } : {})),
+  };
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+  a.download = `lombardi-${localName(state.work.w)}-positions.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  flash(`downloaded ${state.nodes.length} positions`);
+}
+
+function importPositions(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      const by = new Map((data.nodes || []).map((n) => [n.id, n]));
+      let any = false;
+      for (const d of state.nodes) {
+        const n = by.get(d.id);
+        if (n && isFinite(n.x) && isFinite(n.y)) { d.x = +n.x; d.y = +n.y; any = true; }
+      }
+      if (!any) return flash("no matching names in that file");
+      drawSheet(); savePositions();
+      flash(`loaded ${(data.nodes || []).length} positions`);
+    } catch (_) { flash("could not read that JSON"); }
+  };
+  reader.readAsText(file);
+}
+
+function updateArrangeAvailability() {
+  const has = !!state.image;
+  const op = $("opacity"); if (op) op.disabled = !has;
+  const nobg = $("nobg"); if (nobg) nobg.hidden = !(state.trace && !has);
+}
+
+function setArrange(on) {
+  state.trace = on;
+  $("arrange").classList.toggle("on", on);
+  $("arrangebar").hidden = !on;
+  hideCard();
+  drawSheet();
+  $("note-l").textContent = on
+    ? "arrange · drag each name onto the drawing behind it, then ↓ JSON"
+    : `${state.nodes.length} names · ${state.edges.length} arcs · click any name`;
+  updateArrangeAvailability();
+}
+
+function flash(msg) {
+  const el = $("note-l"); const prev = el.dataset.base || el.textContent;
+  el.dataset.base = prev; el.textContent = msg;
+  clearTimeout(flash._t);
+  flash._t = setTimeout(() => { el.textContent = el.dataset.base || ""; }, 2600);
 }
 
 /* --------------------------------------------------------------- the card */
@@ -676,12 +846,18 @@ async function paintOriginal(iri) {
   const box = $("original");
   box.hidden = true;
   box.innerHTML = "";
+  state.original = null;
+  state.image = null;
+  updateArrangeAvailability();
   let rows;
   try {
     rows = await engine.ask("the original object", Q.object(iri));
   } catch (err) { return; }
   if (!rows.length || state.work.w !== iri) return;
   const r = rows[0];
+  state.original = r;
+  state.image = r.full || r.img;       // 2000px for tracing/zoom; 1024 as fallback
+  updateArrangeAvailability();
   const cap = [r.date, r.medium, r.dims].filter(Boolean).join(" · ");
   box.innerHTML =
     `<button class="plate-open" title="See the original, larger">` +
@@ -695,6 +871,8 @@ async function paintOriginal(iri) {
   box.querySelector(".plate-open").addEventListener("click", () => openLightbox(r));
   // if MoMA ever stops serving it, take the plate away rather than leave a blank frame
   box.querySelector("img").addEventListener("error", () => { box.hidden = true; });
+  // if we're already tracing, drop the (now-known) image in behind the names
+  if (state.trace) refreshBackground();
 }
 
 /* The photograph, full-size — so the actual arrangement of Lombardi's hand is
@@ -703,7 +881,7 @@ function openLightbox(r) {
   const lb = $("lightbox");
   const cap = [r.date, r.medium, r.dims].filter(Boolean).join(" · ");
   lb.innerHTML =
-    `<img src="${esc(r.img)}" alt="The original drawing by Mark Lombardi, courtesy MoMA">` +
+    `<img src="${esc(r.full || r.img)}" alt="The original drawing by Mark Lombardi, courtesy MoMA">` +
     `<div class="lb-cap">${esc(cap)} · MoMA ${esc(r.accession)} — artwork © The Estate of ` +
     `Mark Lombardi, image courtesy MoMA · ` +
     `<a href="${esc(r.page)}" target="_blank" rel="noopener">see it at MoMA ↗</a></div>`;
@@ -735,6 +913,7 @@ async function openWork(iri, focusNode) {
   const w = state.works.find((x) => x.w === iri);
   if (!w) return;
   state.work = w;
+  state.image = null; state.original = null;
   hideCard();
   $("curtain").classList.remove("gone");
   $("curtain-s").textContent = w.title;
@@ -755,6 +934,7 @@ async function openWork(iri, focusNode) {
   state.edges = arcs.map((r) => ({ s: r.s, o: r.o, type: r.type, drawn: r.drawn, amount: r.amount }));
 
   layout(state.nodes, state.edges, iri, aspectFromDims(w.dims));
+  loadPositions();          // bring back a saved tracing for this work, if any
   drawSheet();
   paintLegend();
   const prop = w.dims ? " · sheet to scale" : "";
@@ -838,6 +1018,21 @@ function wireStage() {
     if (!lb.classList.contains("gone")) { lb.classList.add("gone"); return; }
     if (!$("indexcard").classList.contains("gone")) hideCard();
   });
+
+  // arrange / trace toolbar
+  $("arrange").onclick = () => setArrange(!state.trace);
+  $("opacity").oninput = (e) => {
+    state.bgOpacity = e.target.value / 100;
+    const img = document.querySelector("#pencil image.bg");
+    if (img) img.setAttribute("opacity", state.bgOpacity);
+  };
+  $("dljson").onclick = downloadPositions;
+  $("resetpos").onclick = () => {
+    try { localStorage.removeItem(posKey()); } catch (_) {}
+    layout(state.nodes, state.edges, state.work.w, aspectFromDims(state.work.dims));
+    drawSheet(); flash("layout reset");
+  };
+  $("ldjson").onchange = (e) => { if (e.target.files[0]) importPositions(e.target.files[0]); e.target.value = ""; };
 
   try {
     await engine.boot();

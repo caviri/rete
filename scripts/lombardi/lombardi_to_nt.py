@@ -291,8 +291,14 @@ def main():
                 t(w, LO + "creditLine", lit(rec["CreditLine"]))
             if rec.get("ImageURL"):
                 t(w, SCHEMA + "image", rec["ImageURL"])
-                t(w, LO + "momaImage", rec["ImageURL"])
+                t(w, LO + "momaImage", rec["ImageURL"])          # 1024px thumbnail
                 t(w, DCT + "rights", lit(IMAGE_RIGHTS))
+            if rec.get("FullImageURL"):
+                # the largest MoMA-signed size (2000px) — for the tracing background
+                # and the zoomed view; same rights as the thumbnail
+                t(w, LO + "momaImageFull", rec["FullImageURL"])
+                if rec.get("FullImageSize"):
+                    t(w, LO + "momaImageFullPx", lit(str(rec["FullImageSize"]), XSD + "integer"))
 
     if moma:
         t(MOMA_WD, RDF + "type", SCHEMA + "Museum")
@@ -484,7 +490,10 @@ lo:heldBy a owl:ObjectProperty ; rdfs:label "held by"@en ; rdfs:domain lo:Drawin
 lo:momaPage a owl:DatatypeProperty ; rdfs:label "MoMA page"@en ;
     rdfs:comment "The work's page in MoMA's online collection."@en .
 lo:momaImage a owl:DatatypeProperty ; rdfs:label "MoMA image"@en ;
-    rdfs:comment "A photograph of the original sheet, hosted by MoMA. Artwork (c) The Estate of Mark Lombardi; linked, never redistributed, and NOT covered by this dataset's licence."@en .
+    rdfs:comment "A 1024px photograph of the original sheet, hosted by MoMA. Artwork (c) The Estate of Mark Lombardi; linked, never redistributed, and NOT covered by this dataset's licence."@en .
+lo:momaImageFull a owl:DatatypeProperty ; rdfs:label "MoMA image (full)"@en ;
+    rdfs:comment "The largest MoMA-signed photograph of the sheet (up to 2000px), harvested from the work's collection page. Same rights as lo:momaImage."@en .
+lo:momaImageFullPx a owl:DatatypeProperty ; rdfs:label "MoMA image longest edge (px)"@en ; rdfs:range xsd:integer .
 lo:accession a owl:DatatypeProperty ; rdfs:label "accession number"@en .
 lo:dimensions a owl:DatatypeProperty ; rdfs:label "dimensions"@en ;
     rdfs:comment "The size of the physical sheet, as catalogued."@en .

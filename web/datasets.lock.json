@@ -286,8 +286,8 @@
       "key": "lombardi",
       "url": "https://data.graphplaza.com/lombardi/lombardi.rete",
       "formatVersion": 5,
-      "contentHash": "17a9146cba93ec266e7d4b36fdb23567",
-      "size": 1039323,
+      "contentHash": "819317267ddf42e67b256da67512a616",
+      "size": 1040326,
       "cardUrl": "https://data.graphplaza.com/lombardi/lombardi.rete"
     },
     {
@@ -425,6 +425,14 @@
       "contentHash": "8c94928f5ecd89e748c1f61bf2499fc6",
       "size": 902612,
       "cardUrl": "https://data.graphplaza.com/orkg/orkg.rete"
+    },
+    {
+      "key": "oss-github-benchmark",
+      "url": "https://data.graphplaza.com/oss-github-benchmark/oss-github-benchmark.rete",
+      "formatVersion": 5,
+      "contentHash": "6d471fb3057ae8e4396badee65446972",
+      "size": 32146364,
+      "cardUrl": "https://data.graphplaza.com/oss-github-benchmark/oss-github-benchmark.rete"
     },
     {
       "key": "peirce",
