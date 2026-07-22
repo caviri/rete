@@ -105,6 +105,23 @@
   .ex-card pre{margin:0;padding:8px 10px;background:#0a0f18;border:1px solid var(--line);border-radius:7px;
     font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#b9c6da;white-space:pre-wrap;overflow:auto;max-height:200px}
   .ex-run{white-space:nowrap}
+  #customQ{width:100%;min-height:120px;resize:vertical;padding:8px 10px;background:#0a0f18;border:1px solid var(--line);
+    border-radius:7px;color:#d5deea;font:12px/1.55 ui-monospace,Menlo,Consolas,monospace}
+  #customQ:focus{outline:none;border-color:var(--accent)}
+  /* body-systems: query-result layer + opacity slider */
+  .resultrow{border-top:1px solid var(--line);margin-top:8px;padding-top:8px}
+  .opac{display:flex;align-items:center;gap:9px;margin-top:11px;font-size:11.5px;color:var(--dim)}
+  .opac input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
+  /* table checkboxes */
+  #results th.cbh, #results td.cb{width:30px;text-align:center;padding-left:10px;padding-right:0}
+  #results input[type=checkbox]{accent-color:#33d6ff;cursor:pointer;vertical-align:middle}
+  /* aesthetic scrollbars */
+  *{scrollbar-width:thin;scrollbar-color:#33445f transparent}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#2c3a52;border-radius:8px;border:2px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:#42577f;background-clip:content-box}
+  ::-webkit-scrollbar-corner{background:transparent}
 </style>
 </head>
 <body>
@@ -115,7 +132,10 @@
     <details class="sec" open>
       <summary>Body systems</summary>
       <div id="systems"></div>
-      <div style="margin-top:8px"><button class="btn" id="resetView">Reset view</button></div>
+      <div id="resultLayer"></div>
+      <div class="opac"><span class="muted">Context opacity</span>
+        <input type="range" id="opacity" min="1" max="60" value="6"></div>
+      <div style="margin-top:6px"><button class="btn" id="resetView">Reset view</button></div>
     </details>
     <details class="sec" open>
       <summary>Find a structure <span id="count" class="muted"></span></summary>
@@ -126,7 +146,7 @@
       <summary>Select by query</summary>
       <div class="muted" style="font-size:11.5px;margin:-2px 0 8px">Real SPARQL against z-anatomy.rete — click to run the selection on the model.</div>
       <div id="queries"></div>
-      <button class="btn" id="openModal" style="margin-top:8px;width:100%">Browse examples + full SPARQL ↗</button>
+      <button class="btn" id="openModal" style="margin-top:8px;width:100%">✎ Write your own SPARQL ↗</button>
       <pre id="sparql" hidden></pre>
       <div id="qmeta" class="muted" hidden></div>
     </details>
@@ -169,8 +189,20 @@
 
 <div id="modal" hidden>
   <div id="modal-card">
-    <div id="modal-head"><b>Example SPARQL queries — z-anatomy</b><button class="fbtn" id="modal-x" title="close">✕</button></div>
-    <div class="muted" style="font-size:12px;margin:0 0 12px">The playground's z-anatomy examples that select parts / 3D parts. Click <b>Run ▶</b> to execute the selection on the model — matching structures highlight in 3D and the full result appears in the table below the scene.</div>
+    <div id="modal-head"><b>Query z-anatomy with SPARQL</b><button class="fbtn" id="modal-x" title="close">✕</button></div>
+    <div class="muted" style="font-size:12px;margin:0 0 12px">Write your own SPARQL, or run a ready example. Matching structures highlight in 3D and the full result appears in the table below the scene. Select any structure IRI (e.g. <code>?s</code>) and it maps onto the model.</div>
+    <div class="ex-card">
+      <div class="ex-h"><b>Write your own SPARQL</b><button class="btn ex-run" id="runCustom">Run ▶</button></div>
+      <textarea id="customQ" spellcheck="false">PREFIX anat: &lt;https://w3id.org/rete/anatomy#&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+SELECT ?s ?bone WHERE {
+  ?s a anat:Bone ; rdfs:label ?bone ; anat:inRegion ?r .
+  ?r rdfs:label "Thorax"@en .
+  FILTER(langMatches(lang(?bone), "en"))
+}</textarea>
+      <div class="muted" id="customMsg" style="font-size:12px;margin-top:4px"></div>
+    </div>
+    <div class="muted" style="text-transform:uppercase;letter-spacing:.08em;font-size:11px;margin:14px 0 4px">Examples</div>
     <div id="modal-list"></div>
   </div>
 </div>
@@ -251,7 +283,7 @@ function setupThree(){
   addEventListener('keyup',   e => { if(e.key==='Shift') controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE; });
   addEventListener('resize', onResize);
   renderer.domElement.addEventListener('pointerdown', onPick);
-  document.getElementById('resetView').onclick = ()=>{ clearSelection(); frameAll(); };
+  document.getElementById('resetView').onclick = ()=>{ clearResult(); clearSelection(); frameAll(); };
   document.getElementById('search').addEventListener('input', e=>buildList(e.target.value.trim().toLowerCase()));
 }
 
@@ -385,7 +417,7 @@ const paintIdx = (i,color,opacity,emis)=>{ const m=meshByName.get(graph.nodes[i]
 function restyle(){
   const active = !!(result || selected || checked.size);
   meshByName.forEach(m=> styleMesh(m,{color:m.userData.baseColor, opacity: active?dimOpacity:0.9}));
-  if(result && resultVisible) for(const i of result.idxs) paintIdx(i, RESULT_COLOR, 0.92);
+  if(result && resultVisible) for(const i of result.idxs) paintIdx(i, RESULT_COLOR, 0.95, RESULT_COLOR);
   for(const i of checked) paintIdx(i, CHECK_COLOR, 1, CHECK_COLOR);
   if(selected){
     if(!result){ selected.adj.forEach(i=>paintIdx(i,0xff9f43,0.96,0xff9f43));
@@ -466,9 +498,10 @@ function buildQueries(){
   document.getElementById('openModal').onclick=()=>{ document.getElementById('modal').hidden=false; };
   document.getElementById('modal-x').onclick=closeModal;
   document.getElementById('modal').addEventListener('click', e=>{ if(e.target.id==='modal') closeModal(); });
-  document.getElementById('footer-x').onclick=()=>{ document.getElementById('footer').hidden=true; document.getElementById('legend').style.display=''; };
+  document.getElementById('footer-x').onclick=clearResult;
   document.getElementById('footer-min').onclick=()=>{ const f=document.getElementById('footer'); f.classList.toggle('collapsed');
     document.getElementById('footer-min').textContent = f.classList.contains('collapsed')?'▴':'▾'; };
+  const op=document.getElementById('opacity'); op.oninput=()=>{ dimOpacity=+op.value/100; restyle(); };
 }
 function closeModal(){ document.getElementById('modal').hidden=true; }
 function buildModal(){
@@ -480,42 +513,103 @@ function buildModal(){
       <pre>${(QNS+"\n"+ex.q).replace(/</g,'&lt;')}</pre>
     </div>`).join('');
   list.querySelectorAll('.ex-run').forEach(b=> b.onclick=()=>{ runQuery(+b.dataset.k); closeModal(); });
+  document.getElementById('runCustom').onclick=()=>runCustom(document.getElementById('customQ').value);
+}
+
+// ---- your own SPARQL: whole-file sync engine, loaded lazily on first custom run ----
+let engine=null, engineLoading=null;
+function getEngine(){
+  if(engine) return Promise.resolve(engine);
+  if(engineLoading) return engineLoading;
+  engineLoading=(async()=>{
+    const msg=document.getElementById('customMsg'); if(msg) msg.textContent='loading the query engine + graph (~9 MB, once)…';
+    const m=await import('./engine/rete_wasm.js'); await m.default();
+    const bytes=new Uint8Array(await (await fetch('https://data.graphplaza.com/z-anatomy/z-anatomy.rete')).arrayBuffer());
+    engine=new m.Graph(bytes); if(msg) msg.textContent=''; return engine;
+  })();
+  return engineLoading;
+}
+const cleanTerm = t => { if(t==null) return ''; if(String(t)[0]==='<') return String(t).slice(1,-1);
+  const m=String(t).match(/^"([\s\S]*)"(?:@[\w-]+|\^\^.*)?$/); return m?m[1]:String(t); };
+const resolveNode = t => { if(!t||String(t)[0]!=='<') return null; const iri=String(t).slice(1,-1);
+  return iri.startsWith(IRI_BASE) ? irByTail.get(iri.slice(IRI_BASE.length)) : null; };
+async function runCustom(q){
+  const msg=document.getElementById('customMsg'); if(msg) msg.textContent='';
+  if(!q.trim()){ if(msg) msg.textContent='Write a SPARQL SELECT query.'; return; }
+  try{
+    const g=await getEngine();
+    const j=JSON.parse(g.query(q,'json'));
+    if(j.kind!=='select'){ if(msg) msg.textContent=`Only SELECT is shown here (got ${j.kind}).`; return; }
+    const cols=j.vars.map(v=>({k:v,h:v}));
+    const idxs=[], seen=new Set();
+    const rows=j.rows.map(row=>{ const r={}; let node=null;
+      for(const v of j.vars){ r[v]=cleanTerm(row[v]); const nn=resolveNode(row[v]); if(nn && !node) node=nn; }
+      if(node){ r.__i=node.i; if(!seen.has(node.i)){ seen.add(node.i); idxs.push(node.i); } }
+      return r; });
+    [...document.querySelectorAll('.qbtn')].forEach(b=>b.classList.remove('on'));
+    const pre=document.getElementById('sparql'); pre.hidden=false; pre.textContent=q;
+    showResult({label:'Custom query', cols, rows, idxs}); closeModal();
+  }catch(e){ if(msg) msg.textContent='Query error: '+(e.message||e); }
 }
 function runQuery(k){
   const ex=EXAMPLES[k];
   [...document.querySelectorAll('.qbtn')].forEach((b,j)=>b.classList.toggle('on', j===k));
   const pre=document.getElementById('sparql'); pre.hidden=false; pre.textContent=QNS+"\n"+ex.q;
-  const {idxs, rows}=ex.run(graph.nodes); const uniq=[...new Set(idxs)];
-  highlightSet(uniq, 0x33d6ff);
-  const vis=uniq.filter(i=>meshByName.has(graph.nodes[i].n)).length;
+  const {idxs, rows}=ex.run(graph.nodes);
+  showResult({label:ex.label, cols:ex.cols, rows, idxs:[...new Set(idxs)]});
+}
+function showResult(r){
+  result=r; resultVisible=true; checked.clear(); selected=null;
+  restyle(); frameSet(r.idxs);
+  renderFooter(r.label, r.cols, r.rows);
+  buildList(document.getElementById('search').value.trim().toLowerCase());
+  renderResultLayer();
+  const vis=r.idxs.filter(i=>meshByName.has(graph.nodes[i].n)).length;
   const meta=document.getElementById('qmeta'); meta.hidden=false;
-  meta.textContent = `${uniq.length} highlighted${vis<uniq.length?` · ${vis} in 3D`:''}`;
-  renderFooter(ex.label, ex.cols, rows);
-  selected=null; renderInfo(null);
+  meta.textContent = `${r.idxs.length} matched${vis<r.idxs.length?` · ${vis} in 3D`:''}`;
+  renderInfo(null);
+}
+function clearResult(){
+  result=null; resultVisible=true; checked.clear(); selected=null; restyle();
+  document.getElementById('footer').hidden=true;
+  document.getElementById('legend').style.display='';
+  [...document.querySelectorAll('.qbtn')].forEach(b=>b.classList.remove('on'));
+  document.getElementById('count').textContent=`(${graph.nodes.length})`;
+  buildList(document.getElementById('search').value.trim().toLowerCase());
+  renderResultLayer();
+}
+function renderResultLayer(){
+  const el=document.getElementById('resultLayer');
+  if(!result){ el.innerHTML=''; return; }
+  el.innerHTML=`<label class="sys resultrow">
+    <input type="checkbox" id="resultToggle" ${resultVisible?'checked':''}>
+    <span class="swatch" style="background:#33d6ff"></span>Query result <span class="muted">(${result.idxs.length})</span>
+    <span style="flex:1"></span><button class="fbtn" id="resultClear" title="clear query">✕</button></label>`;
+  document.getElementById('resultToggle').onchange=e=>{ resultVisible=e.target.checked; restyle(); };
+  document.getElementById('resultClear').onclick=clearResult;
 }
 function renderFooter(title, cols, rows){
   const f=document.getElementById('footer'); f.hidden=false; f.classList.remove('collapsed');
   document.getElementById('footer-min').textContent='▾';
   document.getElementById('footer-title').textContent=title;
-  document.getElementById('footer-count').textContent=`${rows.length} row${rows.length===1?'':'s'}${rows.length>500?' (showing 500)':''}`;
+  document.getElementById('footer-count').textContent=`${rows.length} row${rows.length===1?'':'s'}${rows.length>500?' · showing 500':''}`;
   const cap=rows.slice(0,500);
   const esc=s=>String(s??'').replace(/</g,'&lt;');
-  const thead=`<thead><tr><th>#</th>${cols.map(c=>`<th>${c.h}</th>`).join('')}</tr></thead>`;
-  const tbody=`<tbody>${cap.map((r,i)=>`<tr${r.i!=null?` data-i="${r.i}" class="clk"`:''}><td class="rn">${i+1}</td>${cols.map(c=>`<td>${esc(r[c.k])}</td>`).join('')}</tr>`).join('')}</tbody>`;
+  const idxOf=r=> r.__i!=null ? r.__i : (r.i!=null ? r.i : null);
+  const thead=`<thead><tr><th class="cbh"><input type="checkbox" id="checkAll" title="select all"></th><th>#</th>${cols.map(c=>`<th>${esc(c.h)}</th>`).join('')}</tr></thead>`;
+  const tbody=`<tbody>${cap.map((r,i)=>{ const ci=idxOf(r);
+    return `<tr${ci!=null?` data-i="${ci}"`:''}><td class="cb">${ci!=null?'<input type="checkbox" class="rcb">':''}</td><td class="rn">${i+1}</td>${cols.map(c=>`<td class="${ci!=null?'clk':''}">${esc(r[c.k])}</td>`).join('')}</tr>`;
+  }).join('')}</tbody>`;
   const t=document.getElementById('results'); t.innerHTML=thead+tbody;
-  t.querySelectorAll('tr.clk').forEach(tr=> tr.onclick=()=>{ const n=graph.nodes[+tr.dataset.i]; if(n) select(n); });
+  t.querySelectorAll('td.clk').forEach(td=> td.onclick=()=>{ const n=graph.nodes[+td.parentElement.dataset.i]; if(n) select(n); });
+  t.querySelectorAll('tr[data-i]').forEach(tr=>{ const i=+tr.dataset.i; const cb=tr.querySelector('.rcb'); if(!cb) return;
+    cb.checked=checked.has(i); cb.onchange=()=>{ cb.checked?checked.add(i):checked.delete(i); restyle(); }; });
+  document.getElementById('checkAll').onchange=e=>{
+    t.querySelectorAll('tr[data-i]').forEach(tr=>{ const i=+tr.dataset.i; const cb=tr.querySelector('.rcb');
+      if(cb){ cb.checked=e.target.checked; e.target.checked?checked.add(i):checked.delete(i); } });
+    restyle();
+  };
   document.getElementById('legend').style.display='none';
-}
-function highlightSet(idxs, color){
-  meshByName.forEach(m=> styleMesh(m,{color:m.userData.baseColor, opacity:0.05}));
-  const box=new THREE.Box3(); let any=false;
-  idxs.forEach(i=>{ const m=meshByName.get(graph.nodes[i].n);
-    if(m){ styleMesh(m,{color, opacity:0.97, emissive:color}); box.expandByObject(m); any=true; } });
-  if(any){
-    const c=box.getCenter(new THREE.Vector3()); const s=box.getSize(new THREE.Vector3()).length()||0.3;
-    const dir=new THREE.Vector3(0.4,0.9,0.35).normalize();
-    animateCam(c.clone().add(dir.multiplyScalar(Math.max(s*1.4,0.4))), c);
-  }
 }
 
 function frameMesh(n){

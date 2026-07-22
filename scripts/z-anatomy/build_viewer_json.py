@@ -109,6 +109,7 @@ for iri in node_iris:
         "t": tissue.get(iri, ""),
         "sd": side.get(iri, ""),
         "sy": sys_index[system_of[iri]],
+        "ir": iri.replace("https://w3id.org/rete/anatomy/structure/", ""),  # IRI tail (maps SPARQL results -> meshes)
         "c": [round(cx[iri], 1), round(cy[iri], 1), round(cz[iri], 1)],
         "b": half.get(iri, [10.0, 10.0, 10.0]),
         "adj": neigh_idx(iri, adj),
