@@ -4901,6 +4901,14 @@ self.onmessage = function (e) {
         || /\.nxz(\?|#|$)/i.test(v)                   // Nexus multiresolution mesh
         || /\/3dhop\b/i.test(v);
   }
+  // A whole-body animation (dance skeletons travel across the floor) auto-frames low,
+  // near the feet. Point the camera at the couple's torso, near eye level, so the
+  // default view shows the whole couple. Scoped to the dance-anim URLs — other 3D
+  // cells (objects, anatomy) keep their auto-framing.
+  function meshCamera(url) {
+    return /\/dance\/anim\/|\.skeleton\.glb(\?|#|$)/i.test(url)
+      ? ' camera-target="0m 0.9m 0m" camera-orbit="20deg 80deg 3.4m"' : '';
+  }
   function mesh3dCell(t) {
     const url = httpsUpgrade(t.value);
     // An inline, rotatable <model-viewer> right in the cell — drag to rotate, plus a
@@ -4908,7 +4916,7 @@ self.onmessage = function (e) {
     // viewer lazy-loads its .glb only when scrolled near the viewport (loading=lazy),
     // so a 60-row table doesn't fetch 60 meshes at once. The ⛶ opens the full lightbox.
     return `<td class="iri model3d-cell">` +
-      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate autoplay ` +
+      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate autoplay${meshCamera(url)} ` +
       `auto-rotate-delay="0" rotation-per-second="28deg" interaction-prompt="none" disable-zoom ` +
       `loading="lazy" reveal="auto" touch-action="pan-y" environment-image="neutral" ` +
       `shadow-intensity="0.6" alt="3D model"></model-viewer>` +
@@ -5014,7 +5022,7 @@ self.onmessage = function (e) {
     ensureModelViewer().then((ok) => {
       if (el.classList.contains("hidden")) return;        // closed before it loaded
       if (ok) {
-        stage.innerHTML = '<model-viewer src="' + esc(url) + '" camera-controls auto-rotate autoplay touch-action="pan-y" ' +
+        stage.innerHTML = '<model-viewer src="' + esc(url) + '" camera-controls auto-rotate autoplay touch-action="pan-y"' + meshCamera(url) + ' ' +
           'shadow-intensity="1" exposure="1.1" environment-image="neutral" ' +
           'style="width:100%;height:100%;background:#15161a" alt="3D model"></model-viewer>' +
           '<div class="model3d-scalebar" style="display:none"><span class="scalebar-fill"></span>' +
