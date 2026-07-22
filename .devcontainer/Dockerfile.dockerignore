@@ -1,0 +1,11 @@
+# This Dockerfile has no COPY/ADD — it only installs apt packages and cargo
+# tools — so it needs no build context at all. Sending one costs real time:
+# ci.yml, fuzz.yml, release.yml and `docker compose build dev` all build it with
+# context `.`, which on a working tree carrying data/ and target/ can mean tens
+# of gigabytes uploaded to the daemon for nothing.
+#
+# BuildKit prefers `<dockerfile>.dockerignore` over the context's root
+# .dockerignore, so this applies to THIS Dockerfile only and leaves the other
+# builds that legitimately need a full context (scripts/Dockerfile.gltf,
+# scripts/Dockerfile.blender, …) alone.
+**
