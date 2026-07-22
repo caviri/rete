@@ -1727,7 +1727,7 @@ fn join_iter<'q>(
             let probe = inlj_hint(ctx).is_some()
                 || (shares_certain_var(ctx, patterns, &lcert)
                     && crate::bgp::bgp_min_scan_bytes(ctx, index, patterns)
-                        .map_or(true, |n| n >= crate::bgp::FAT_SCAN_BYTES));
+                        .is_none_or(|n| n >= crate::bgp::FAT_SCAN_BYTES));
             if probe {
                 return match ProbePlan::new(ctx, patterns, &lcert) {
                     Some(plan) => {

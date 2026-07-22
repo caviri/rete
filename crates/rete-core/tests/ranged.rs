@@ -586,10 +586,9 @@ fn reset_load_failures_makes_failed_fetches_retryable() {
     let image = multi_tile_image();
     let expected = {
         // The complete answer, computed over a healthy session.
-        let healthy = Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(
-            image.clone(),
-        )))
-        .unwrap();
+        let healthy =
+            Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(image.clone())))
+                .unwrap();
         let q = format!("SELECT ?o WHERE {{ {} <http://ex/knows> ?o }}", mt_node(7));
         match eval_query(&healthy, &q).unwrap() {
             QueryOutput::Select(_, rows) => rows.len(),

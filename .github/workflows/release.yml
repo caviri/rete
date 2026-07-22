@@ -223,15 +223,20 @@ jobs:
         with:
           name: Rete ${{ needs.meta.outputs.version }}
           body_path: docs/release.md
-          prerelease: ${{ contains(needs.meta.outputs.version, '-rc.') }}
+          prerelease: ${{ contains(needs.meta.outputs.version, '-rc.') || startsWith(needs.meta.outputs.version, '0.') }}
           files: dist/*
 
+  # crates.io Trusted Publishing can only be configured on a crate that already
+  # exists, so the very first publication of each crate has to be the manual
+  # `publish_crates.sh --bootstrap` run with an ephemeral token (see
+  # docs/release.md). v0.3.0 is that bootstrap tag; every later tag publishes
+  # here through OIDC with no stored registry secret.
   publish-crates:
     name: protected crates.io publishing
     needs: [meta, assemble]
     if: >-
       startsWith(github.ref, 'refs/tags/v') &&
-      ((github.event_name == 'push' && github.ref_name != 'v1.0.0-rc.1') ||
+      ((github.event_name == 'push' && github.ref_name != 'v0.3.0') ||
        (github.event_name == 'workflow_dispatch' && inputs.verify_crates_io_auth))
     runs-on: ubuntu-24.04
     environment: crates-io

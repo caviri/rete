@@ -651,7 +651,7 @@ checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "rete-core"
-version = "1.0.0-rc.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "getrandom 0.2.17",
@@ -671,7 +671,7 @@ dependencies = [
 
 [[package]]
 name = "rete-python"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pyo3",
  "rete-core",

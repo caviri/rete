@@ -3,6 +3,7 @@
 S3method("$",RGraph)
 S3method("[[",RGraph)
 S3method(print,rete_graph)
+export(engine_version)
 export(rete_build)
 export(rete_card)
 export(rete_content_hash)

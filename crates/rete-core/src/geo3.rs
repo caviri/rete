@@ -41,8 +41,16 @@ pub(crate) enum Rel3 {
 }
 
 const KEYWORDS: &[&str] = &[
-    "POINT", "MULTIPOINT", "LINESTRING", "MULTILINESTRING", "POLYGON",
-    "MULTIPOLYGON", "POLYHEDRALSURFACE", "TIN", "GEOMETRYCOLLECTION", "BOX3D",
+    "POINT",
+    "MULTIPOINT",
+    "LINESTRING",
+    "MULTILINESTRING",
+    "POLYGON",
+    "MULTIPOLYGON",
+    "POLYHEDRALSURFACE",
+    "TIN",
+    "GEOMETRYCOLLECTION",
+    "BOX3D",
 ];
 
 /// Parse a 3D WKT / BOX3D lexical form into its AABB. A leading CRS URI
@@ -70,7 +78,10 @@ pub(crate) fn parse(input: &str) -> Option<Aabb> {
     }
     let body = &s[open + 1..close];
     // flatten nested rings/parens; group coordinates by comma
-    let flat: String = body.chars().map(|c| if c == '(' || c == ')' { ' ' } else { c }).collect();
+    let flat: String = body
+        .chars()
+        .map(|c| if c == '(' || c == ')' { ' ' } else { c })
+        .collect();
 
     let mut mn = [f64::INFINITY; 3];
     let mut mx = [f64::NEG_INFINITY; 3];
@@ -149,16 +160,25 @@ mod tests {
     fn parse_point_box_multipoint() {
         assert_eq!(
             p("POINT Z(1 2 3)"),
-            Aabb { min: [1.0, 2.0, 3.0], max: [1.0, 2.0, 3.0] }
+            Aabb {
+                min: [1.0, 2.0, 3.0],
+                max: [1.0, 2.0, 3.0]
+            }
         );
         assert_eq!(
             p("BOX3D(0 0 0, 10 20 30)"),
-            Aabb { min: [0.0, 0.0, 0.0], max: [10.0, 20.0, 30.0] }
+            Aabb {
+                min: [0.0, 0.0, 0.0],
+                max: [10.0, 20.0, 30.0]
+            }
         );
         // multipoint / linestring → bounding box over all coords
         assert_eq!(
             p("MULTIPOINT Z(1 1 1, 5 -2 9)"),
-            Aabb { min: [1.0, -2.0, 1.0], max: [5.0, 1.0, 9.0] }
+            Aabb {
+                min: [1.0, -2.0, 1.0],
+                max: [5.0, 1.0, 9.0]
+            }
         );
         // CRS prefix ignored; 2D point → z defaults to 0
         assert_eq!(p("<urn:crs> POINT(4 5)").min, [4.0, 5.0, 0.0]);

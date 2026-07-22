@@ -2,10 +2,12 @@
 all-features = true
 
 [advisories]
-# Temporary RC-development exceptions. oxrdfxml 0.1.7/0.2.3 pins
-# quick-xml 0.37.5; remove both entries as soon as the Oxigraph RDF/XML crates
-# publish a release that accepts quick-xml >=0.41. Publication preflight runs
-# cargo-audit without this allow-list, so these cannot be silently shipped.
+# Temporary exceptions. oxrdfxml 0.1.7/0.2.3 pins quick-xml 0.37.5; remove both
+# entries as soon as the Oxigraph RDF/XML crates publish a release that accepts
+# quick-xml >=0.41. Both findings are availability-only DoS reachable through
+# untrusted RDF/XML input. scripts/publish_crates.sh carries the same two
+# --ignore flags and the full rationale; keep the two lists in step, and note
+# that no other advisory is exempt anywhere.
 ignore = [
   { id = "RUSTSEC-2026-0194", reason = "Blocked on a crates.io oxrdfxml release using quick-xml >=0.41" },
   { id = "RUSTSEC-2026-0195", reason = "Blocked on a crates.io oxrdfxml release using quick-xml >=0.41" },

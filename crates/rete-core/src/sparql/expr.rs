@@ -408,8 +408,13 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         }
         // geo3:distance3D(g1, g2) → xsd:double (min AABB gap, literal's own unit).
         Builtin::Geo3Distance => {
-            let d = crate::geo3::distance(&geo3_arg(&a0()?)?, &geo3_arg(&args.get(1)?.value(ctx, b)?)?);
-            Some(Rc::from(make_literal(&fmt_plain(d), None, Some(XSD_DOUBLE))))
+            let d =
+                crate::geo3::distance(&geo3_arg(&a0()?)?, &geo3_arg(&args.get(1)?.value(ctx, b)?)?);
+            Some(Rc::from(make_literal(
+                &fmt_plain(d),
+                None,
+                Some(XSD_DOUBLE),
+            )))
         }
         _ => None,
     }

@@ -597,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "rete-core"
-version = "1.0.0-rc.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "getrandom 0.2.17",

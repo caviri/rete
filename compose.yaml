@@ -13,6 +13,22 @@ x-rete-dev: &rete-dev
     - cargo-registry:/usr/local/cargo/registry
     - cargo-target:/target
 
+x-rete-r: &rete-r
+  build:
+    context: .
+    dockerfile: .devcontainer/Dockerfile.r
+  working_dir: /work/clients/r
+  environment:
+    # No CARGO_TARGET_DIR here: src/Makevars.in pins `--target-dir ./rust/target`
+    # on the cargo command line (CRAN wants a self-contained build), which wins
+    # over the env var. Those artifacts are multi-GB and gitignored; run
+    # `clients/r/cleanup` to reclaim the space.
+    CARGO_TERM_COLOR: always
+  volumes:
+    - .:/work
+    # Only the registry is shared — the build tree has to live in the package.
+    - r-cargo-registry:/usr/local/cargo/registry
+
 x-rete-gate: &rete-gate
   image: mcr.microsoft.com/playwright:v1.49.0-jammy
   working_dir: /work/tests/gate
@@ -67,6 +83,20 @@ services:
         condition: service_completed_successfully
     command: ["bash", "scripts/build_playground_async.sh"]
 
+  # `R/extendr-wrappers.R` is generated — regenerate it here after changing
+  # anything inside `extendr_module!`. Separate image (see the Dockerfile) so the
+  # main dev image every CI job builds stays free of the R package tree.
+  # Its own cargo volumes: this container runs as root, and sharing the dev
+  # service's volumes would leave root-owned files behind for the vscode user.
+  r:
+    <<: *rete-r
+    command: ["Rscript", "-e", "rextendr::document()"]
+
+  r-test:
+    <<: *rete-r
+    command:
+      ["Rscript", "-e", "rextendr::document(); testthat::test_local()"]
+
   gate:
     <<: *rete-gate
     environment:
@@ -97,3 +127,5 @@ services:
 volumes:
   cargo-registry:
   cargo-target:
+  r-cargo-registry:
+  r-cargo-target:

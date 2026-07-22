@@ -24,17 +24,27 @@ pub type RawTriple = (String, String, String);
 /// A parsed quad: the triple plus an optional graph term (`None` = default graph).
 pub type RawQuad = (String, String, String, Option<String>);
 
+/// Why an ingest failed. Parser errors from `oxttl`/`oxrdfxml` and I/O errors
+/// are flattened to their `Display` string rather than wrapped: the variants
+/// then carry no foreign types, which keeps the error usable from the wasm
+/// bindings and stable across upstream parser upgrades.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum IngestError {
+    /// A malformed N-Triples/N-Quads line: its 1-based line number and a short
+    /// reason (`"bad subject"`, `"missing trailing '.'"`, …).
     #[error("line {0}: {1}")]
     Line(usize, &'static str),
+    /// The Turtle parser rejected the input.
     #[error("turtle: {0}")]
     Turtle(String),
+    /// The RDF/XML parser rejected the input.
     #[error("rdf/xml: {0}")]
     RdfXml(String),
+    /// The requested format is not one this crate can parse.
     #[error("unknown input format: {0} (expected nt, nq, ttl, or rdf/xml)")]
     UnknownFormat(String),
+    /// The input could not be read (streaming builds surface the path here).
     #[error("io: {0}")]
     Io(String),
 }
@@ -327,10 +337,15 @@ pub(crate) fn quoted_triple_parts(t: &str) -> Option<(String, String, String)> {
 /// Counts describing an assembled file, for status lines and UIs.
 #[derive(Debug, Clone, Copy)]
 pub struct BuildStats {
+    /// Total statements ingested, across the default graph and every named one.
     pub statements: usize,
+    /// Statements that landed in the default graph.
     pub default_triples: usize,
+    /// How many named graphs the input mentioned; one index is written per graph.
     pub named_graphs: usize,
+    /// Distinct terms in the shared dictionary.
     pub terms: usize,
+    /// Levels in the community pyramid, or `0` when the build skipped it.
     pub pyramid_levels: u16,
 }
 

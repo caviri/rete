@@ -7,6 +7,16 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![warn(missing_docs)]
 
+/// The engine version, as published on crates.io.
+///
+/// Language bindings re-export this so a caller can always tell which engine is
+/// embedded in their wheel, npm package, or bundle. That is the question behind
+/// "does my install support feature X?", and it is not answerable from the
+/// binding's own version, which tracks the binding. Client versions match this
+/// crate's `MAJOR.MINOR` (see `scripts/sync_versions.py`) while their patch
+/// component moves independently for binding-only fixes.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[doc(hidden)]
 pub mod bgp;
 #[doc(hidden)]
@@ -16,6 +26,8 @@ pub mod dict;
 #[doc(hidden)]
 pub mod dictionary;
 #[doc(hidden)]
+pub mod extbuild;
+#[doc(hidden)]
 pub mod file;
 #[doc(hidden)]
 pub mod geo;
@@ -24,8 +36,6 @@ pub mod geo3;
 pub mod header;
 #[doc(hidden)]
 pub mod index;
-#[doc(hidden)]
-pub mod extbuild;
 
 pub mod ingest;
 #[doc(hidden)]

@@ -14,6 +14,12 @@ categories = ["database", "data-structures", "web-programming"]
 publish = ["crates-io"]
 include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md", "LICENSE"]
 
+# docs.rs builds default features only, which would hide the `parallel` module.
+# The builder is native Linux with a C toolchain, so `compression` + `rayon`
+# both build there.
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 thiserror.workspace = true
 oxrdf.workspace = true
