@@ -24,6 +24,7 @@ KEY = sys.argv[3] if len(sys.argv) > 3 else "model"
 BOT = "https://w3id.org/bot#"
 CAD = "https://w3id.org/rete/cad#"
 INST = f"https://w3id.org/rete/cad/{KEY}/"
+GLB_BASE = f"https://data.graphplaza.com/cad/{KEY}"   # <base>.glb (whole) + <base>-storey-<guid>.glb
 GEO = "http://www.opengis.net/ont/geosparql#"
 GEO3 = "https://w3id.org/rete/geo3#"
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
@@ -128,6 +129,7 @@ objp("boundsSpace", "bounds space", "This element (wall/slab/…) is a boundary 
 objp("connectsSpace", "connects space", "A door/window/opening that connects two spaces (navigation).", sym=True)
 objp("fillsWall", "fills opening in", "A door/window fills an opening void in this wall.")
 objp("adjacentSpace", "adjacent space", "Two spaces that share a boundary element.", sym=True)
+objp("glbModel", "3D model (glTF)", "A glTF/GLB 3D model of this spatial structure, for inline preview.")
 for local, lab in [("ifcClass", "IFC class"), ("ifcGuid", "IFC GlobalId"), ("material", "material"),
                    ("netArea", "net area (m2)"), ("grossVolume", "gross volume (m3)"),
                    ("elevation", "elevation (m)")]:
@@ -165,6 +167,11 @@ def emit_node(e):
     tl(s, RDFS + "label", str(label_of(e)), lang="en")
     if e.is_a("IfcBuildingStorey") and getattr(e, "Elevation", None) is not None:
         tl(s, CAD + "elevation", fnum(e.Elevation * scale), dt=XSD + "decimal")
+    # 3D preview models: the whole building on the Building, each floor on its Storey
+    if e.is_a("IfcBuilding"):
+        t(s, CAD + "glbModel", iri(GLB_BASE + ".glb"))
+    if e.is_a("IfcBuildingStorey"):
+        t(s, CAD + "glbModel", iri(GLB_BASE + "-storey-" + guid(e) + ".glb"))
 
 spatial = (f.by_type("IfcSite") + f.by_type("IfcBuilding") +
            f.by_type("IfcBuildingStorey") + f.by_type("IfcSpace"))
