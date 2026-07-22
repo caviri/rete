@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1
+# Slim runtime image for the `rete` CLI — `rete build`, `rete sparql`,
+# `rete serve`, `rete federate`, … with no toolchain attached.
+#
+# Multi-arch by native build: .github/workflows/docker-publish.yml builds this
+# on an amd64 runner and an arm64 runner and merges the two into one manifest
+# list, so nothing here ever cross-compiles or runs under QEMU.
+#
+# The final stage carries the binary and nothing else, which the CLI's
+# dependency choices make safe:
+#   * TLS is rustls + webpki-roots (crates/rete-cli/Cargo.toml), so remote
+#     `query-url` / `summary-url` need no system OpenSSL and no ca-certificates
+#     — the trust roots are compiled in.
+#   * zstd is the vendored C source compiled into the binary, not libzstd.so.
+#   * the CLI never spawns a subprocess, so there is nothing to shell out to.
+
+FROM rust:1.92-bookworm AS build
+WORKDIR /src
+
+# rust-toolchain.toml asks for clippy, rustfmt, rust-src and the wasm target; a
+# release build of the CLI needs none of them. Pinning RUSTUP_TOOLCHAIN to the
+# toolchain the base image already ships overrides that file, so the build never
+# reaches static.rust-lang.org to install components it will not use.
+ENV RUSTUP_TOOLCHAIN=1.92.0 \
+    CARGO_TERM_COLOR=always
+
+COPY . .
+RUN cargo build --locked --release -p rete-cli \
+    && strip target/release/rete
+
+# distroless/cc = glibc + libgcc_s (Rust's unwinder needs it) and nothing else.
+FROM gcr.io/distroless/cc-debian12
+COPY --from=build /src/target/release/rete /usr/local/bin/rete
+
+# Mount your graphs here. The image stays root-owned so a plain
+# `-v "$PWD:/work"` can write output files; pass `--user "$(id -u):$(id -g)"`
+# when you would rather it did not.
+WORKDIR /work
+
+# `rete serve` binds 127.0.0.1:7878 by default, which is unreachable from
+# outside a container — always pass `--bind 0.0.0.0:7878` (and `--token`, since
+# a bound endpoint accepts SPARQL Update).
+EXPOSE 7878
+
+ENTRYPOINT ["/usr/local/bin/rete"]
+CMD ["--help"]

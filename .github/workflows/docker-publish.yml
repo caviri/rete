@@ -1,0 +1,205 @@
+name: Publish container images
+
+# Publishes three multi-arch (linux/amd64 + linux/arm64) images to GHCR:
+#
+#   ghcr.io/caviri/rete-dev     the full toolchain — Rust + the pinned asyncify
+#                               nightly, wasm-pack, the cargo release tools,
+#                               node, python3 + uv, binaryen, chromium. This is
+#                               .devcontainer/Dockerfile, the image the repo
+#                               already builds everything in, so a dataset or
+#                               playground artifact can be produced from a bare
+#                               machine with one `docker run`.
+#   ghcr.io/caviri/rete-relay   the gateway from hf-space/ — HTTP Range + CORS
+#                               over /data, the `/api` SPARQL plane and the
+#                               `/mcp` MCP server. Same image the live Space
+#                               runs; the engine comes from the published
+#                               `rete-graph` wheel, so this rebuilds in minutes.
+#   ghcr.io/caviri/rete-cli     just the `rete` binary on distroless (~50 MB),
+#                               for `rete build` / `rete serve` in CI or on a
+#                               server without dragging a toolchain along.
+#
+# PUBLISHING IS RELEASE-GATED. Images are cut when the version moves — a `v*`
+# tag, the same trigger release.yml uses — and never on an ordinary push to
+# main. Three multi-arch images per commit would be a lot of runner time to
+# spend on tags nobody consumes, and it would make `latest` mean "whatever
+# landed last" instead of "the last release".
+#
+# The heavy lifting (per-arch native builds + manifest merge) lives in the
+# reusable docker-image.yml; this file only decides WHAT to build and WHEN.
+
+on:
+  push:
+    tags: ["v*"]
+  # Build-only check — never pushes. Scoped to the files that define the images,
+  # so an ordinary code PR does not pay for it; a PR that breaks a Dockerfile
+  # finds out here rather than in the middle of a release.
+  pull_request:
+    paths:
+      - ".devcontainer/Dockerfile*"
+      - "hf-space/**"
+      - "docker/**"
+      - ".github/workflows/docker-*.yml"
+  workflow_dispatch:
+    inputs:
+      images:
+        description: Which image to publish.
+        type: choice
+        default: all
+        options: [all, dev, relay, cli]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  # Never cancel a release: a half-pushed manifest list is worse than a slow one.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: decide what to build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      dev: ${{ steps.select.outputs.dev }}
+      relay: ${{ steps.select.outputs.relay }}
+      cli: ${{ steps.select.outputs.cli }}
+      dev-tag: ${{ steps.select.outputs.dev-tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Refuse a tag that does not match the workspace version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          # Same extraction scripts/package_release.sh uses, so the images and
+          # the release archives can never disagree about what a tag means.
+          workspace=$(awk \
+            '/^\[workspace.package\]/{found=1; next} found && /^version = /{gsub(/[" ]/, "", $3); print $3; exit}' \
+            Cargo.toml)
+          if [ "$version" != "$workspace" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match workspace version $workspace"
+            exit 1
+          fi
+          echo "publishing images for version $workspace"
+
+      - name: Select images
+        id: select
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          CHOICE: ${{ github.event.inputs.images }}
+        run: |
+          set -euo pipefail
+          # A version tag republishes all three, so the set always carries a
+          # consistent release tag; a manual run publishes only what was asked.
+          case "$EVENT" in
+            workflow_dispatch) pick=$CHOICE ;;
+            push) pick=all ;;
+            *) pick=none ;;
+          esac
+
+          select_one() {
+            if [ "$pick" = all ] || [ "$pick" = "$1" ]; then echo true; else echo false; fi
+          }
+
+          {
+            echo "dev=$(select_one dev)"
+            echo "relay=$(select_one relay)"
+            echo "cli=$(select_one cli)"
+            # Immutable content tag for the toolchain image, identical to the
+            # one ci.yml derives for its local build — so `rete-dev:<hash>` in
+            # GHCR is byte-for-byte the image CI validated against.
+            echo "dev-tag=$(sha256sum .devcontainer/Dockerfile | cut -c1-16)"
+          } >> "$GITHUB_OUTPUT"
+
+  dev:
+    name: rete-dev
+    needs: plan
+    if: needs.plan.outputs.dev == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-image.yml
+    with:
+      image: rete-dev
+      context: .
+      file: .devcontainer/Dockerfile
+      description: >-
+        Rete toolchain — Rust, wasm-pack, cargo release tools, node, python3+uv,
+        chromium. Everything needed to build .rete datasets and playground artifacts.
+      version-tag: ${{ needs.plan.outputs.dev-tag }}
+      # Read ci.yml's warm amd64 layer cache, but never write: this image is
+      # multiple GB per arch and a `cache-to` here would evict most of the
+      # repo's 10 GB Actions cache — including the entries CI depends on.
+      # It only rebuilds when the Dockerfile changes, which invalidates the
+      # expensive layers anyway, so there is little to gain by writing.
+      cache-from: type=gha,scope=rete-dev
+      # ~8 cargo-install-from-source tools; a cold arm64 build is not quick.
+      timeout-minutes: 120
+
+  relay:
+    name: rete-relay
+    needs: plan
+    if: needs.plan.outputs.relay == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-image.yml
+    with:
+      image: rete-relay
+      context: hf-space
+      file: hf-space/Dockerfile
+      description: >-
+        Rete relay — HTTP Range/CORS gateway over a .rete data directory, plus
+        the /api SPARQL plane and the /mcp MCP server. Port 7860, data in /data.
+      cache-from: type=gha,scope=rete-relay-{arch}
+      cache-to: type=gha,mode=max,scope=rete-relay-{arch}
+      timeout-minutes: 30
+
+  cli:
+    name: rete-cli
+    needs: plan
+    if: needs.plan.outputs.cli == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-image.yml
+    with:
+      image: rete-cli
+      context: .
+      file: docker/Dockerfile.cli
+      description: >-
+        The `rete` CLI on distroless — build, inspect, query and serve .rete
+        graph files with no toolchain attached.
+      cache-from: type=gha,scope=rete-cli-{arch}
+      cache-to: type=gha,mode=max,scope=rete-cli-{arch}
+      timeout-minutes: 45
+
+  # The toolchain image is left out of the PR check on purpose: ci.yml already
+  # builds .devcontainer/Dockerfile on every PR that touches it, and doing it
+  # twice would add ~40 minutes for no extra signal.
+  verify:
+    name: verify ${{ matrix.image }} builds (no push)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: relay, context: hf-space, file: hf-space/Dockerfile }
+          - { image: cli, context: ., file: docker/Dockerfile.cli }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Build for amd64 only
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=rete-${{ matrix.image }}-amd64

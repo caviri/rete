@@ -1,0 +1,17 @@
+# Allowlist: the CLI image compiles the workspace and needs nothing else. See
+# .devcontainer/Dockerfile.dockerignore for why this is a per-Dockerfile ignore
+# file rather than a root .dockerignore.
+#
+# `cargo build -p rete-cli --locked` resolves against the workspace, so every
+# member under crates/ has to be present even though only rete-cli and
+# rete-core end up compiled. clients/ and fuzz/ are workspace-excluded and stay
+# out.
+**
+!/Cargo.toml
+!/Cargo.lock
+!/rust-toolchain.toml
+!/crates/**
+
+# Never ship build output or fixtures-turned-artifacts into the context.
+/crates/**/target
+**/*.rete
