@@ -232,6 +232,7 @@ let selected = null, framedOnce = false;
 let dimOpacity = 0.06;                 // context (non-highlighted) opacity — user slider
 let result = null, resultVisible = true;   // { label, cols, rows, idxs } from a query
 const checked = new Set();             // node indices checked in the results table
+const sysCheckbox = {};                // system index -> its toggle <input> (for auto-load)
 const irByTail = new Map();            // IRI tail (e.g. "visc/Liver") -> node, for SPARQL results
 const IRI_BASE = "https://w3id.org/rete/anatomy/structure/";
 const RESULT_COLOR = 0x33d6ff, CHECK_COLOR = 0xffb454, SELECT_COLOR = 0xffd54a;
@@ -298,8 +299,18 @@ function buildSystemToggles(){
     el.querySelector('input').onchange = e=>{
       if(e.target.checked) loadSystems([i]); else unloadSystem(i);
     };
+    sysCheckbox[i] = el.querySelector('input');
     box.appendChild(el);
   });
+}
+// Load any body systems a set of structures needs (a query result, a checked row,
+// or a clicked structure) so there is actually a mesh to highlight — and tick their
+// toggles so the UI reflects it.
+async function ensureSystems(sysIdxs){
+  const need = [...new Set(sysIdxs)].filter(i => i!=null && !loaded.has(i) && !SKIP.has(graph.systems[i]) && graph.glb[i]);
+  if(!need.length) return;
+  need.forEach(i => { if(sysCheckbox[i]) sysCheckbox[i].checked = true; });
+  await loadSystems(need);
 }
 const prettySys = s => ({SkeletalSystem:'Skeleton',MuscularSystem:'Muscles',NervousSystem:'Nervous',
   CardioVascular:'Cardiovascular',VisceralSystem:'Viscera',LymphoidOrgans:'Lymphoid',
@@ -343,7 +354,12 @@ function deriveScale(i, sceneObj){
   scaleKnown=true;
 }
 async function loadOne(i){
-  let gltf; try { gltf = await gltfLoader.loadAsync(graph.glb[i]); } catch(e){ return; }
+  let gltf;
+  for(let attempt=0; attempt<3; attempt++){
+    try { gltf = await gltfLoader.loadAsync(graph.glb[i]); break; }
+    catch(e){ if(attempt===2){ console.warn('GLB load failed:', graph.systems[i], e); return; }
+      await new Promise(r=>setTimeout(r, 500*(attempt+1))); }   // transient (ERR_NETWORK_CHANGED) → retry
+  }
   gltf.scene.traverse(o=>{
     if(o.isMesh){
       o.material = new THREE.MeshStandardMaterial({color:new THREE.Color(SYS_COLORS[i]), roughness:.85, metalness:.02});
@@ -401,7 +417,7 @@ function buildList(q){
   if(result) document.getElementById('count').textContent=`(result: ${result.idxs.length})`;
 }
 
-function select(n){ selected=n; restyle(); frameMesh(n); renderInfo(n); }
+async function select(n){ selected=n; renderInfo(n); await ensureSystems([n.sy]); restyle(); frameMesh(n); }
 
 function styleMesh(mesh, {color, opacity, emissive}){
   const m=mesh.material;
@@ -558,16 +574,18 @@ function runQuery(k){
   const {idxs, rows}=ex.run(graph.nodes);
   showResult({label:ex.label, cols:ex.cols, rows, idxs:[...new Set(idxs)]});
 }
-function showResult(r){
+async function showResult(r){
   result=r; resultVisible=true; checked.clear(); selected=null;
-  restyle(); frameSet(r.idxs);
+  restyle();                                        // highlight whatever is already loaded
   renderFooter(r.label, r.cols, r.rows);
   buildList(document.getElementById('search').value.trim().toLowerCase());
   renderResultLayer();
+  renderInfo(null);
+  await ensureSystems(r.idxs.map(i=>graph.nodes[i].sy));   // load the systems the result needs
+  restyle(); frameSet(r.idxs);                      // now paint + frame the full result
   const vis=r.idxs.filter(i=>meshByName.has(graph.nodes[i].n)).length;
   const meta=document.getElementById('qmeta'); meta.hidden=false;
   meta.textContent = `${r.idxs.length} matched${vis<r.idxs.length?` · ${vis} in 3D`:''}`;
-  renderInfo(null);
 }
 function clearResult(){
   result=null; resultVisible=true; checked.clear(); selected=null; restyle();
@@ -603,10 +621,13 @@ function renderFooter(title, cols, rows){
   const t=document.getElementById('results'); t.innerHTML=thead+tbody;
   t.querySelectorAll('td.clk').forEach(td=> td.onclick=()=>{ const n=graph.nodes[+td.parentElement.dataset.i]; if(n) select(n); });
   t.querySelectorAll('tr[data-i]').forEach(tr=>{ const i=+tr.dataset.i; const cb=tr.querySelector('.rcb'); if(!cb) return;
-    cb.checked=checked.has(i); cb.onchange=()=>{ cb.checked?checked.add(i):checked.delete(i); restyle(); }; });
-  document.getElementById('checkAll').onchange=e=>{
+    cb.checked=checked.has(i);
+    cb.onchange=async ()=>{ if(cb.checked){ checked.add(i); await ensureSystems([graph.nodes[i].sy]); } else checked.delete(i); restyle(); }; });
+  document.getElementById('checkAll').onchange=async e=>{
+    const sys=new Set();
     t.querySelectorAll('tr[data-i]').forEach(tr=>{ const i=+tr.dataset.i; const cb=tr.querySelector('.rcb');
-      if(cb){ cb.checked=e.target.checked; e.target.checked?checked.add(i):checked.delete(i); } });
+      if(cb){ cb.checked=e.target.checked; if(e.target.checked){ checked.add(i); sys.add(graph.nodes[i].sy); } else checked.delete(i); } });
+    if(e.target.checked) await ensureSystems([...sys]);
     restyle();
   };
   document.getElementById('legend').style.display='none';
