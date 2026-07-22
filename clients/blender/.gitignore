@@ -1,0 +1,7 @@
+# Build output: the packaged extension and the wheels bundled into it. Both are
+# reproduced by build.sh from PyPI, so neither belongs in the repository — the
+# zip alone is ~14 MB.
+dist/
+addon/wheels/
+__pycache__/
+tests/tmp/

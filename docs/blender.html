@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Blender — graphs as scenes · rete docs</title>
+  <script>
+  /* Theme, before first paint (no flash): an explicit localStorage choice
+     ("theme" = "light"/"dark", shared with the playground) pins data-theme;
+     otherwise prefers-color-scheme decides. */
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  })();
+  </script>
+  <style>
+:root {
+  --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
+  --side:#eef4ef; --side-fg:#25342e; --accent:#147d69; --accent-2:#c84f2f;
+  --border:#d9e2de; --code-bg:#eef3f1; --code-border:#cfd9d5;
+  --accent-deep:#0b4f42; --iri:#0b6f5e; --on-accent:#ffffff;
+  --tint:#eaf1ed; --warm:#fff8f4;
+  --hl-kw:#8a3d5a; --hl-str:#0b745f; --hl-num:#a85424; --hl-comment:#78877f;
+  --rail-bg:rgba(255,255,255,.72); --bevel:rgba(255,255,255,.8);
+  --shadow:0 18px 44px rgba(32,47,41,.10);
+  color-scheme: light;
+}
+/* Dark palette — same green-tinted family, inverted. An explicit choice
+   (data-theme, set before first paint) wins; otherwise the OS decides. */
+:root[data-theme="dark"] {
+  --fg:#dde8e2; --muted:#93a69d; --bg:#0f1512; --panel:#171f1b;
+  --side:#131a16; --side-fg:#c4d4cc; --accent:#35b299; --accent-2:#e57e5e;
+  --border:#2a352f; --code-bg:#1a231e; --code-border:#31403a;
+  --accent-deep:#7fdcc7; --iri:#6fcdb6;
+  --tint:#1a2620; --warm:#2c211a;
+  --hl-kw:#d98cab; --hl-str:#57c9ab; --hl-num:#e0a06d; --hl-comment:#7d8d85;
+  --rail-bg:rgba(23,31,27,.85); --bevel:rgba(255,255,255,.06);
+  --shadow:0 18px 44px rgba(0,0,0,.45);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --fg:#dde8e2; --muted:#93a69d; --bg:#0f1512; --panel:#171f1b;
+    --side:#131a16; --side-fg:#c4d4cc; --accent:#35b299; --accent-2:#e57e5e;
+    --border:#2a352f; --code-bg:#1a231e; --code-border:#31403a;
+    --accent-deep:#7fdcc7; --iri:#6fcdb6;
+    --tint:#1a2620; --warm:#2c211a;
+    --hl-kw:#d98cab; --hl-str:#57c9ab; --hl-num:#e0a06d; --hl-comment:#7d8d85;
+    --rail-bg:rgba(23,31,27,.85); --bevel:rgba(255,255,255,.06);
+    --shadow:0 18px 44px rgba(0,0,0,.45);
+    color-scheme: dark;
+  }
+}
+.theme-toggle {
+  margin-top:.9rem; padding:.3rem .65rem; font:inherit; font-size:.82rem;
+  color:var(--muted); background:transparent; border:1px solid var(--border);
+  border-radius:7px; cursor:pointer;
+}
+.theme-toggle:hover { color:var(--fg); border-color:var(--accent); }
+* { box-sizing:border-box; }
+/* text-size-adjust: without it, mobile browsers "boost" the font of wide
+   blocks — exactly our no-wrap code blocks, which render comically large
+   on phones. 100% = render at the authored size. */
+html { scroll-behavior:smooth; -webkit-text-size-adjust:100%; text-size-adjust:100%; }
+body {
+  margin:0; color:var(--fg); background:linear-gradient(90deg,var(--side) 0 272px,var(--bg) 272px);
+  display:flex; font:16px/1.68 "Aptos","Segoe UI",system-ui,sans-serif;
+  text-rendering:optimizeLegibility;
+}
+code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace; }
+
+.sidebar {
+  width:272px; min-height:100vh; padding:1.45rem 1.1rem;
+  flex:0 0 272px; color:var(--side-fg); border-right:1px solid var(--border);
+}
+.sidebar .brand {
+  color:var(--fg); font-family:Georgia,"Times New Roman",serif; font-size:1.75rem;
+  font-weight:700; text-decoration:none; display:inline-block; line-height:1;
+}
+.sidebar .brand::after { content:""; display:block; width:2.2rem; height:3px; margin-top:.55rem; background:var(--accent-2); }
+.sidebar .tagline { color:var(--muted); font-size:.82rem; line-height:1.35; margin:.75rem 0 .6rem; }
+.sidebar .meta { display:flex; align-items:center; gap:.5rem; font-size:.8rem; margin:0 0 1.1rem; }
+.sidebar .meta .ver {
+  font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
+  font-size:.72rem; font-weight:700; color:var(--accent-deep); background:var(--panel);
+  border:1px solid var(--border); border-radius:999px; padding:.06rem .55rem;
+}
+.sidebar .meta a { display:inline; padding:0; border:0; color:var(--iri); font-weight:600; }
+.sidebar .meta a:hover { background:none; text-decoration:underline; }
+.sidebar ul { list-style:none; padding:0; margin:0; }
+.sidebar li { margin:.08rem 0; }
+.sidebar li.nav-h {
+  margin:1.15rem 0 .3rem; padding:0 .62rem; font-size:.66rem; font-weight:800;
+  letter-spacing:.09em; text-transform:uppercase; color:var(--side-fg);
+}
+.sidebar li.nav-h:first-child { margin-top:.2rem; }
+.sidebar a {
+  color:var(--side-fg); text-decoration:none; display:block; padding:.42rem .62rem;
+  border-left:3px solid transparent; border-radius:0 6px 6px 0; font-size:.93rem; line-height:1.25;
+}
+.sidebar a:hover { background:rgba(20,125,105,.09); color:var(--accent-deep); }
+.sidebar a.active { background:var(--panel); border-left-color:var(--accent); color:var(--accent-deep); font-weight:700; box-shadow:0 6px 18px rgba(20,125,105,.10); }
+.sidebar .nav-group summary {
+  cursor:pointer; list-style:none; padding:.42rem .62rem; font-size:.93rem; line-height:1.25;
+  color:var(--side-fg); border-left:3px solid transparent; border-radius:0 6px 6px 0;
+}
+.sidebar .nav-group summary::-webkit-details-marker { display:none; }
+.sidebar .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
+.sidebar .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
+.sidebar .nav-group summary:hover { background:rgba(20,125,105,.09); color:var(--accent-deep); }
+/* The summary title is a link to the overview; keep it inline (no second block
+   padding) so it reads as the group heading, not a nested item. */
+.sidebar .nav-group summary a { display:inline; padding:0; margin:0; border:0; border-radius:0; box-shadow:none; color:inherit; font-size:inherit; line-height:inherit; }
+.sidebar .nav-group summary a:hover { background:none; color:inherit; }
+.sidebar .nav-group summary a.active { background:none; box-shadow:none; color:var(--accent-deep); font-weight:700; }
+.sidebar .nav-sub { padding-left:.55rem; margin:.1rem 0 .35rem .55rem; border-left:1px solid var(--border); }
+.sidebar .nav-sub a { font-size:.85rem; padding:.3rem .6rem; color:var(--muted); }
+.sidebar .nav-sub a:hover { color:var(--accent-deep); }
+.sidebar .nav-sub a.active { font-weight:700; color:var(--accent-deep); }
+.sidebar .foot { margin-top:1.3rem; font-size:.85rem; }
+.sidebar .foot a { display:inline; padding:0; border:0; color:var(--muted); }
+
+main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+.page {
+  width:min(1320px,100%); margin:0 auto; display:grid;
+  grid-template-columns:minmax(0,980px) 230px;
+  gap:2.4rem; padding:0 2.2rem; align-items:start;
+}
+.content { min-width:0; padding:3.1rem 0 2rem; }
+footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:var(--muted); font-size:.84rem; }
+
+.rail {
+  margin-top:3.25rem; font-size:.82rem;
+}
+.toc,.keyterms { background:var(--rail-bg); border:1px solid var(--border); border-radius:8px; padding:.72rem .78rem; box-shadow:var(--shadow); }
+.toc .toc-h,.keyterms .kt-h {
+  font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--side-fg); margin-bottom:.55rem;
+}
+.toc ul { list-style:none; margin:0; padding:0; }
+.toc a {
+  display:block; padding:.25rem .35rem; border-left:2px solid transparent;
+  color:var(--muted); text-decoration:none; line-height:1.32;
+}
+.toc a:hover,.toc a.active { color:var(--accent); }
+.toc a.active { border-left-color:var(--accent); font-weight:700; }
+.toc .toc-sub a { padding-left:1rem; font-size:.95em; }
+.keyterms { margin-top:1rem; border-top:3px solid var(--accent-2); }
+.keyterms .kt-i { margin:.45rem 0; line-height:1.42; color:var(--muted); }
+.keyterms .kt-i b { color:var(--fg); }
+
+.content h1,.content h2,.content h3 { scroll-margin-top:1rem; }
+.content h1 {
+  max-width:860px; font-family:Georgia,"Times New Roman",serif; font-size:2.65rem;
+  line-height:1.08; margin:.1rem 0 1.15rem; font-weight:700;
+}
+.content h1::after { content:""; display:block; width:4.4rem; height:4px; margin-top:1rem; background:var(--accent); }
+.content h2 {
+  font-size:1.42rem; margin:2.45rem 0 .75rem; padding-top:.25rem;
+  border-top:1px solid var(--border);
+}
+.content h3 { font-size:1.12rem; margin:1.55rem 0 .5rem; }
+.content a { color:var(--iri); text-decoration:none; font-weight:600; }
+.content a:hover { text-decoration:underline; text-underline-offset:.18em; }
+.content p,.content li { color:var(--fg); }
+.content li { margin:.18rem 0; }
+.content code {
+  background:var(--code-bg); border:1px solid var(--code-border); padding:.08em .34em;
+  border-radius:5px; font-size:.88em;
+}
+.content pre {
+  background:var(--tint); border:1px solid var(--code-border); border-radius:8px;
+  max-width:100%; padding:1rem 1.1rem; overflow:auto; line-height:1.52;
+  box-shadow:inset 0 1px 0 var(--bevel);
+}
+.content pre code { display:block; min-width:100%; width:max-content; background:none; border:0; padding:0; font-size:.85rem; }
+.content blockquote {
+  margin:1.15rem 0; padding:.65rem 1rem; border-left:4px solid var(--accent-2);
+  background:var(--warm); color:#49362e; border-radius:0 8px 8px 0;
+}
+.content table { border-collapse:separate; border-spacing:0; width:100%; margin:1.1rem 0; font-size:.9rem; overflow:hidden; border:1px solid var(--border); border-radius:8px; }
+.content th,.content td { border-bottom:1px solid var(--border); padding:.52rem .68rem; text-align:left; vertical-align:top; }
+.content th { background:var(--tint); color:#26342f; font-weight:800; }
+.content tr:nth-child(even) td { background:var(--panel); }
+.content tr:last-child td { border-bottom:0; }
+.content img { max-width:100%; }
+.content hr { border:none; border-top:1px solid var(--border); margin:2.2rem 0; }
+
+.content figure { margin:0; }
+.content figure.fig-right { float:right; width:min(42%, 390px); margin:.35rem 0 1rem 1.8rem; clear:right; }
+.content figure.fig-center { margin:1.4rem auto; max-width:680px; }
+.content figure img {
+  width:100%; border:1px solid var(--border); border-radius:8px; background:var(--panel);
+  padding:.55rem; box-shadow:var(--shadow);
+}
+.content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
+.content h2 { clear:right; }
+
+.content img { cursor:zoom-in; }
+.lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out; background:rgba(19,29,25,.86); padding:3vmin; }
+.lightbox.open { display:flex; align-items:center; justify-content:center; }
+.lightbox img { max-width:96vw; max-height:94vh; width:auto; height:auto; border-radius:8px; background:var(--panel); padding:.5rem; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+.lightbox .lb-close { position:fixed; top:1rem; right:1.25rem; font-size:2rem; line-height:1; color:var(--on-accent); opacity:.82; cursor:pointer; user-select:none; }
+.lightbox .lb-close:hover { opacity:1; }
+
+.content .term { border-bottom:1px dotted var(--accent); cursor:help; position:relative; }
+.content .term:focus { outline:2px solid rgba(20,125,105,.32); outline-offset:2px; }
+.content .term .tip {
+  display:none; position:absolute; left:0; top:1.55em; z-index:60; width:max-content; max-width:280px;
+  background:var(--fg); color:var(--tint); padding:.5rem .7rem; border-radius:7px; font-size:.78rem;
+  font-weight:400; line-height:1.45; box-shadow:0 6px 22px rgba(15,22,32,.3);
+  pointer-events:none;
+}
+.content .term:hover .tip,.content .term:focus .tip { display:block; }
+
+.content pre code .tok-com  { color:var(--hl-comment); font-style:italic; }
+.content pre code .tok-str  { color:var(--hl-str); }
+.content pre code .tok-kw   { color:var(--hl-kw); font-weight:700; }
+.content pre code .tok-num  { color:var(--hl-num); }
+.content pre code .tok-fn   { color:var(--iri); }
+.content pre code .tok-iri  { color:var(--iri); }
+.content pre code .tok-var  { color:var(--hl-num); }
+.content pre code .tok-flag { color:#9a5a14; }
+.content pre code .tok-punct{ color:var(--muted); }
+
+@media (max-width:1120px) { .page { grid-template-columns:minmax(0,1fr); } .rail { display:none; } }
+@media (max-width:980px) { .content figure.fig-right { float:none; width:100%; margin:1.4rem 0; } }
+@media (max-width:780px) {
+  body { display:block; background:var(--bg); }
+  .sidebar { width:100%; min-height:auto; position:static; border-right:0; border-bottom:1px solid var(--border); background:var(--side); }
+  .sidebar ul { columns:2; column-gap:.7rem; }
+  .sidebar li { break-inside:avoid; }
+  .page { padding:0 1.15rem; }
+  .content { padding-top:2rem; }
+  .content h1 { font-size:2.15rem; }
+  footer { padding-left:1.15rem; padding-right:1.15rem; }
+}
+@media (max-width:520px) {
+  .sidebar ul { columns:1; }
+  .content table { display:block; overflow-x:auto; }
+  .content .term .tip { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; width:auto; max-width:none; }
+}
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <p class="meta"><span class="ver">v0.3.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <ul>
+        <li class="nav-h">Start here</li>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li class="nav-h">Explore in the browser</li>
+        <li class="nav-group"><details><summary><a href="playground-guide.html">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-h">Guides</li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
+        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
+        <li class="nav-h">Clients</li>
+        <li><a href="python.html">Python — rete-graph</a></li>
+        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
+        <li><a href="javascript.html">JavaScript — rete-graph</a></li>
+        <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
+        <li><a href="r.html">R — rete</a></li>
+        <li><a href="blender.html" class="active">Blender — graphs as scenes</a></li>
+        <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
+        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
+        <li class="nav-h">Publish & share</li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="hosting.html">Hosting your .rete</a></li>
+        <li><a href="interop.html">Triple-store interop</a></li>
+        <li><a href="media-companions.html">Media & SQL companions</a></li>
+        <li><a href="release.html">1.0 release candidate</a></li>
+        <li class="nav-h">Graph analysis</li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li class="nav-h">Development</li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="rust-api.html">Rust API</a></li>
+        <li><a href="browser.html">WASM & JavaScript API</a></li>
+        <li><a href="clients-dev.html">Client development & releases</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
+    <button type="button" class="theme-toggle" id="themeToggle"
+      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel">System</span></button>
+  </nav>
+  <main>
+    <div class="page">
+      <article class="content">
+<h1>Blender — knowledge graphs as scenes</h1>
+<p>The Blender add-on makes a <code>.rete</code> file a source of <strong>scene content</strong>. You write
+SPARQL; the answer becomes objects — 3D assets imported, geometry placed, every
+RDF property inherited onto the object as a drivable custom property, relations
+turned into hierarchy or into physical constraints, and time mapped onto the
+timeline. Scenes go back out as new <code>.rete</code> files, so Blender also becomes an
+authoring tool for 3D knowledge graphs.</p>
+<p>It bundles the engine (the <a href="python.html">Python client</a>'s wheel), so remote graphs
+are read lazily over HTTP <code>Range</code> requests from inside Blender: point it at a
+multi-gigabyte graph and a selective query fetches kilobytes.</p>
+<blockquote>
+<p>Source and build script: <a href="https://github.com/caviri/rete/tree/main/clients/blender"><code>clients/blender/</code></a>.
+Blender 4.2 or newer (tested on 4.5 LTS and 5.1).</p>
+</blockquote>
+<h2>Install</h2>
+<p>Download <code>rete-&lt;version&gt;.zip</code> and use <strong>Edit ▸ Preferences ▸ Add-ons ▸ ⌄ ▸
+Install from Disk…</strong>. The engine ships inside the extension — no pip, no
+network, no build tools. The panels appear in the 3D viewport sidebar
+(<kbd>N</kbd>) under the <strong>rete</strong> tab.</p>
+<p>Building it yourself, in the container:</p>
+<pre><code class="language-sh">docker build -t rete-blender clients/blender
+docker run --rm -v "$PWD":/work -w /work rete-blender sh clients/blender/build.sh
+</code></pre>
+<h2>The loop</h2>
+<ol>
+<li><strong>Graph</strong> — paste a <code>.rete</code> URL (or pick one from the preset menu) and hit
+<em>Open graph</em>. The file describes itself: title, licence, counts, and the
+library of <a href="dataset-cards.html">example queries</a> that travels inside it.</li>
+<li><strong>Query</strong> — start from an example or write your own; it lives in a Blender
+text block, editable in the Text Editor.</li>
+<li><strong>Run query</strong> — the <strong>Columns</strong> panel reports what each column was understood
+to be, and lets you override it.</li>
+<li><strong>Build scene</strong>.</li>
+</ol>
+<h2>How columns become scenes</h2>
+<p>The add-on knows no dataset's vocabulary. Each column earns a role from the
+shape of its values, with the variable name and the predicate that bound it as
+supporting evidence — so an arbitrary query against an arbitrary graph still
+produces a sensible scene.</p>
+<table><thead><tr><th>Role</th><th>Recognised from</th><th>Becomes</th></tr></thead><tbody>
+<tr><td>3D asset</td><td>a <code>.glb</code>/<code>.gltf</code>/<code>.obj</code>/<code>.fbx</code>/<code>.stl</code>/<code>.ply</code>/<code>.usd</code>/<code>.abc</code>/<code>.dae</code> URL</td><td>an imported, cached, instanced model</td></tr>
+<tr><td>Mesh node</td><td>a node name inside a shared asset</td><td>just that node, keeping its place in the file</td></tr>
+<tr><td>Geometry</td><td>WKT (<code>POINT Z</code>, <code>LINESTRING</code>, <code>POLYGON</code>) or <code>BOX3D</code></td><td>position, real mesh geometry, and size</td></tr>
+<tr><td>Time</td><td>a date, timestamp, year, duration, or decimal seconds</td><td>a position on the frame range</td></tr>
+<tr><td>Image</td><td>an image or IIIF URL</td><td>a textured material</td></tr>
+<tr><td>Colour</td><td><code>#rrggbb</code>, <code>rgb()</code>, or a CSS name</td><td>the base colour</td></tr>
+<tr><td>Number</td><td>any numeric literal</td><td>a drivable property, a colour ramp, a mass</td></tr>
+<tr><td>Class</td><td><code>rdf:type</code> and type-like columns</td><td>grouping and a stable per-class colour</td></tr>
+</tbody></table>
+<p><code>geo:hasGeometry</code>, <code>geo3:asWKT3D</code>, <code>geo3:box</code>, <code>anat:glbFile</code>, <code>anat:meshNode</code>,
+<code>dance:animation</code>, <code>tracking:t</code>, <code>subtitles:start</code> and the other published
+vocabularies are pinned explicitly — which matters most for the graphs that
+publish <strong>time as bare decimal seconds</strong>, since those are indistinguishable
+from any other number by value alone.</p>
+<h2>Inherited properties</h2>
+<p>With <strong>Inherit all properties</strong>, every statement about every imported entity is
+fetched — batched, so a thousand entities cost a handful of queries — and
+written onto the object as custom properties. They appear in <strong>Object Properties
+▸ Custom Properties</strong> with the predicate IRI as the tooltip, numeric ones are
+<strong>drivable</strong> (right-click ▸ <em>Copy as New Driver</em>), Geometry Nodes can read them,
+and the local-name → predicate-IRI map travels with the object so the export
+round-trips losslessly.</p>
+<p>That is the whole idea: a bone's tissue type, a building element's IFC class, a
+paper's citation count stop being metadata in a table and become quantities that
+drive geometry, shading and simulation.</p>
+<h2>Placement, honestly</h2>
+<p>Graphs are authored in millimetres (anatomy), metres (buildings), or degrees
+(maps). The <strong>Placement</strong> panel folds unit scale, a <em>fit to size</em> mode, Y-up→Z-up
+conversion, an X flip and recentring into one transform applied to the whole
+result.</p>
+<p>Geographic coordinates are projected to metres — but only on evidence that they
+<em>are</em> degrees (a WKT literal, or columns named lon/lat). A football pitch is
+105 × 68 metres, comfortably inside the longitude/latitude envelope; projected
+as degrees it would scatter across half a continent. See
+<a href="geosparql.html">GeoSPARQL</a> for the geometry vocabulary itself.</p>
+<h2>Time</h2>
+<p><strong>Appear</strong> keys objects in and out at their moment (with constant interpolation,
+so what you scrub is what you render). <strong>Grow in</strong> scales them up. <strong>Motion
+path</strong> turns rows sharing an entity into one keyframed trajectory — and works
+out which column names the moving thing, since trajectory datasets give every
+sample its own IRI. <strong>Retime assets</strong> places each asset's own animation at its
+own moment.</p>
+<h2>Relations, and relations as physics</h2>
+<p>One predicate, read three ways: as Blender's <strong>object hierarchy</strong> (a partonomy
+becomes the Outliner), as <strong>collections</strong>, or as <strong>edge geometry</strong> — one line
+per statement in a single mesh, ready for a Skin or Wireframe modifier.</p>
+<p>Then the one worth trying. Under <strong>Physics</strong>, a predicate becomes a network of
+<strong>rigid-body constraints</strong>: every statement is a physical link between two
+objects, fixed or hinged or springy, with mass read from a numeric property and
+normalised into a usable band. Anatomical adjacency, a building's topology, a
+citation network — the graph stops being a diagram and becomes a structure that
+holds itself together, which you can then pull apart to see what the topology
+actually does.</p>
+<h2>Scale</h2>
+<p><strong>As point cloud</strong> writes the whole result into one attributed mesh — a vertex
+per row, numeric and colour columns as named attributes, categorical ones as an
+integer index plus a lookup table — with a Geometry Nodes instancer attached.
+That carries results far past what one-object-per-row can.</p>
+<h2>Live values in drivers</h2>
+<pre><code class="language-python">rete_count("?s a &lt;https://w3id.org/rete/anatomy#Muscle&gt;")
+rete("SELECT (AVG(?m) AS ?avg) WHERE { ?s &lt;https://x.org/mass&gt; ?m }", variable="avg")
+</code></pre>
+<p>Both are registered in Blender's driver namespace and memoised, since a driver
+is evaluated on every redraw.</p>
+<h2>Exploring, and exporting</h2>
+<p>Select an object and <strong>Expand neighbours</strong> pulls its graph neighbours into the
+scene with the connecting edges drawn; <strong>Select by query</strong> runs SPARQL and
+selects what it returns.</p>
+<p><strong>Export</strong> writes any scene as a queryable <code>.rete</code>: objects, transforms,
+hierarchy, collections, materials, mesh statistics, animation ranges and every
+custom property, with original predicates restored and imported entities keeping
+their IRIs. The vocabulary is <code>https://w3id.org/rete/scene#</code>, described inside
+the exported file along with runnable example queries.</p>
+<h2>Graphs to try</h2>
+<p><code>z-anatomy</code> (4,884 human structures with per-system <code>.glb</code>), <code>smithsonian3d</code>
+(2,199 CC0 models), <code>dance</code> (salsa duets as animated skeletons), <code>bioexplora</code>
+(specimen scans), <code>scrolls</code> (Herculaneum segment meshes), <code>tracking</code> (player
+positions over time), <code>geoadmin</code> (boundaries to extrude) — all at
+<code>https://data.graphplaza.com/&lt;key&gt;/&lt;key&gt;.rete</code>, and the rest in the
+<a href="playground-guide.html">playground</a>.</p>
+
+      </article>
+      <aside class="rail" aria-label="On this page">
+        <nav class="toc" id="toc"></nav>
+        <div class="keyterms" id="keyterms"></div>
+      </aside>
+    </div>
+    <footer>Generated from <code>docs/blender.md</code> by <code>cargo run -p docgen</code>.</footer>
+  </main>
+  <script>
+(function () {
+  function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+  // Shared token regexes (sticky: must match at the cursor).
+  var COM_HASH = /#.*/y, COM_SLASH = /\/\/.*/y, COM_BLOCK = /\/\*[\s\S]*?\*\//y;
+  var STR = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/y;
+  var NUM = /\b\d[\d_]*(?:\.\d+)?\b/y;
+  var WS  = /\s+/y, IDENT = /[A-Za-z_]\w*/y;
+  var IRI = /<[^>\s]*>/y, VAR = /[?$][A-Za-z_]\w*/y;
+  var PNAME = /[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*|:[A-Za-z_][\w.-]*/y;
+  var FLAG = /--?[A-Za-z][\w-]*/y;
+  function kw(words, flags){ return new RegExp("\\b(?:" + words.join("|") + ")\\b", (flags||"") + "y"); }
+  var RUST = kw(["as","async","await","break","const","continue","crate","dyn","else","enum","extern","false","fn","for","if","impl","in","let","loop","match","mod","move","mut","pub","ref","return","self","Self","static","struct","super","trait","true","type","unsafe","use","where","while"]);
+  var PY = kw(["def","return","import","from","as","for","in","if","elif","else","while","with","class","lambda","None","True","False","and","or","not","is","pass","break","continue","try","except","finally","raise","yield","global","nonlocal","assert","del","print","async","await"]);
+  var SPARQL = kw(["SELECT","CONSTRUCT","ASK","DESCRIBE","WHERE","PREFIX","BASE","FILTER","OPTIONAL","UNION","MINUS","GRAPH","SERVICE","BIND","VALUES","DISTINCT","REDUCED","ORDER","BY","ASC","DESC","GROUP","HAVING","LIMIT","OFFSET","FROM","NAMED","COUNT","SUM","AVG","MIN","MAX","SAMPLE","STR","LANG","DATATYPE","BOUND","IRI","URI","REGEX","EXISTS","NOT","AS"], "i");
+  var SH = kw(["rete","cargo","docker","python3","python","pip","curl","wget","cd","cp","mv","rm","ls","mkdir","cat","grep","echo","node","git","wasm-pack","jq","tee","export","sudo","bash","sh"]);
+  var JS = kw(["const","let","var","function","return","if","else","for","while","do","switch","case","break","continue","new","class","extends","super","this","typeof","instanceof","in","of","await","async","import","from","export","default","try","catch","finally","throw","yield","true","false","null","undefined","void","delete"]);
+  var RULES = {
+    rust:   [[COM_SLASH,"com"],[COM_BLOCK,"com"],[STR,"str"],[/\b[a-z_]\w*!/y,"fn"],[RUST,"kw"],[NUM,"num"],[IDENT,null]],
+    py:     [[COM_HASH,"com"],[STR,"str"],[/@\w+/y,"fn"],[PY,"kw"],[NUM,"num"],[IDENT,null]],
+    sh:     [[COM_HASH,"com"],[STR,"str"],[FLAG,"flag"],[SH,"fn"],[NUM,"num"],[IDENT,null]],
+    js:     [[COM_SLASH,"com"],[COM_BLOCK,"com"],[STR,"str"],[/`(?:\\.|[^`\\])*`/y,"str"],[JS,"kw"],[/\b[A-Za-z_]\w*(?=\s*\()/y,"fn"],[NUM,"num"],[IDENT,null]],
+    json:   [[STR,"str"],[kw(["true","false","null"]),"kw"],[NUM,"num"],[IDENT,null]],
+    sparql: [[COM_HASH,"com"],[IRI,"iri"],[STR,"str"],[VAR,"var"],[/\ba\b/y,"kw"],[SPARQL,"kw"],[PNAME,"fn"],[NUM,"num"],[IDENT,null]],
+    ttl:    [[COM_HASH,"com"],[IRI,"iri"],[STR,"str"],[/@[A-Za-z]+/y,"kw"],[/\ba\b/y,"kw"],[PNAME,"fn"],[NUM,"num"],[IDENT,null]]
+  };
+  var ALIAS = {bash:"sh",shell:"sh",console:"sh",sh:"sh",rs:"rust",rust:"rust",python:"py",py:"py",js:"js",javascript:"js",mjs:"js",json:"json",sparql:"sparql",turtle:"ttl",ttl:"ttl",nt:"ttl",ntriples:"ttl",nq:"ttl",trig:"ttl"};
+  function highlight(code, rules){
+    var out = "", i = 0, n = code.length;
+    outer: while (i < n){
+      WS.lastIndex = i; var w = WS.exec(code);
+      if (w && w.index === i){ out += w[0]; i += w[0].length; continue; }
+      for (var r = 0; r < rules.length; r++){
+        var re = rules[r][0], cls = rules[r][1];
+        re.lastIndex = i; var m = re.exec(code);
+        if (m && m.index === i && m[0].length){
+          out += cls ? '<span class="tok-' + cls + '">' + esc(m[0]) + "</span>" : esc(m[0]);
+          i += m[0].length; continue outer;
+        }
+      }
+      out += esc(code[i]); i++;
+    }
+    return out;
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    var blocks = document.querySelectorAll('pre code[class*="language-"]');
+    blocks.forEach(function (el) {
+      var cls = (el.className.match(/language-([\w-]+)/) || [])[1] || "";
+      var rules = RULES[ALIAS[cls.toLowerCase()] || ""];
+      if (!rules) return;
+      el.innerHTML = highlight(el.textContent, rules);
+    });
+  });
+})();
+</script>
+  <script>
+(function () {
+  document.addEventListener("DOMContentLoaded", function () {
+    var imgs = document.querySelectorAll(".content img");
+    if (!imgs.length) return;
+    var box = document.createElement("div");
+    box.className = "lightbox";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-label", "Enlarged image");
+    var close = document.createElement("span");
+    close.className = "lb-close";
+    close.setAttribute("aria-hidden", "true");
+    close.textContent = "×"; // ×
+    var big = document.createElement("img");
+    box.appendChild(close);
+    box.appendChild(big);
+    document.body.appendChild(box);
+
+    function open(src, alt) {
+      big.src = src;
+      big.alt = alt || "";
+      box.classList.add("open");
+    }
+    function hide() {
+      box.classList.remove("open");
+      big.removeAttribute("src");
+    }
+    imgs.forEach(function (img) {
+      img.addEventListener("click", function () { open(img.currentSrc || img.src, img.alt); });
+    });
+    box.addEventListener("click", hide);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && box.classList.contains("open")) hide();
+    });
+  });
+})();
+</script>
+  <script>
+(function () {
+  var GLOSSARY = {
+    "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
+    "SPARQL": "The W3C query language for RDF graphs (SELECT / ASK / CONSTRUCT / DESCRIBE).",
+    "SHACL": "Shapes Constraint Language - the W3C language for validating RDF graphs against shapes.",
+    "IRI": "Internationalized Resource Identifier — a global, URL-like id for a resource.",
+    "BGP": "Basic Graph Pattern — a set of triple patterns joined on their shared variables.",
+    "HDT": "Header-Dictionary-Triples — a compact binary RDF format rete's dictionary draws on.",
+    "triple": "One fact: subject – predicate – object.",
+    "dictionary": "The table that maps terms (IRIs / literals) to compact integer ids.",
+    "zstd": "Zstandard — a fast lossless compression algorithm.",
+    "blake3": "A fast cryptographic hash, used here for content addressing / integrity.",
+    "WebAssembly": "A portable binary format that runs in browsers at near-native speed.",
+    "WASM": "WebAssembly — a portable binary format that runs in the browser at near-native speed.",
+    "SPO": "One of the three index orderings (Subject-Predicate-Object; also POS and OSP).",
+    "Louvain": "A community-detection algorithm that groups densely-connected nodes.",
+    "PMTiles": "A single-file, range-readable format for map tiles — an inspiration for rete.",
+    "Parquet": "A columnar single-file format for tabular data — an inspiration for rete.",
+    "CORS": "Cross-Origin Resource Sharing — browser rules for fetching across domains.",
+    "COOP": "Cross-Origin-Opener-Policy — a header that helps enable cross-origin isolation.",
+    "COEP": "Cross-Origin-Embedder-Policy — paired with COOP to unlock SharedArrayBuffer.",
+    "LDA": "Latent Dirichlet Allocation — a statistical topic-modelling method.",
+    "OWL RL": "The rule-based profile of OWL, suited to forward-chaining over triples.",
+    "OWL": "Web Ontology Language — schema axioms (class hierarchies, disjointness, identity).",
+    "RDFS": "RDF Schema — a basic class/property vocabulary with simple entailments.",
+    "DOI": "Digital Object Identifier — a persistent id for a publication.",
+    "CVE": "Common Vulnerabilities and Exposures — a public id for a security flaw.",
+    "SBOM": "Software Bill of Materials — an inventory of a piece of software's components.",
+    "N-Triples": "A line-based plain-text RDF format: one triple per line.",
+    "N-Quads": "Like N-Triples, with a fourth column naming the graph.",
+    "Turtle": "A compact, human-friendly text syntax for RDF.",
+    "zone map": "Per-block min/max stats that let a query skip blocks that cannot match.",
+    "property path": "A SPARQL path over edges (e.g. knows+ = follow knows transitively).",
+    "named graph": "A sub-graph within a dataset, identified by its own IRI.",
+    "pyramid": "rete's progressively-coarsened community summary: overview first, drill into detail.",
+    "range request": "An HTTP request for a byte range, so a client fetches only part of a file.",
+    "Oxigraph": "A popular Rust RDF triplestore + SPARQL engine, used here as a benchmark baseline."
+  };
+  function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function rx(term){
+    var e = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    var tail = /[A-Za-z0-9_]$/.test(term) ? "(?![A-Za-z0-9_])" : "";
+    return new RegExp("(^|[^A-Za-z0-9_])(" + e + ")" + tail);
+  }
+  function present(text, term){ return rx(term).test(text); }
+
+  function wrapFirst(root, term, def){
+    var re = rx(term);
+    var skip = "pre,code,a,h1,h2,h3,.rail,.term";
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) {
+        if (!n.nodeValue || !n.parentElement) return NodeFilter.FILTER_REJECT;
+        if (n.parentElement.closest(skip)) return NodeFilter.FILTER_REJECT;
+        return re.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      }
+    });
+    var node = walker.nextNode();
+    if (!node) return;
+    var m = re.exec(node.nodeValue);
+    if (!m) return;
+    var start = m.index + m[1].length;
+    var mid = node.splitText(start);
+    mid.splitText(term.length);
+    var span = document.createElement("span");
+    span.className = "term"; span.tabIndex = 0; span.setAttribute("role", "note");
+    span.textContent = term;
+    var tip = document.createElement("span");
+    tip.className = "tip"; tip.textContent = def;
+    span.appendChild(tip);
+    mid.parentNode.replaceChild(span, mid);
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var content = document.querySelector(".content");
+    if (!content) return;
+    var terms = Object.keys(GLOSSARY).sort(function (a, b) { return b.length - a.length; });
+
+    // 1) Key terms box in the right rail (under the TOC): every glossary term
+    //    that appears on the page, in order of first appearance.
+    var pageText = content.textContent || "";
+    var present = terms
+      .filter(function (t) { return rx(t).test(pageText); })
+      .map(function (t) { return { t: t, at: pageText.search(rx(t)) }; })
+      .sort(function (a, b) { return a.at - b.at; });
+    var kt = document.getElementById("keyterms");
+    if (kt && present.length) {
+      kt.innerHTML = '<div class="kt-h">Key terms</div>' + present.map(function (e) {
+        return '<div class="kt-i"><b>' + esc(e.t) + "</b> — " + esc(GLOSSARY[e.t]) + "</div>";
+      }).join("");
+    }
+
+    // 2) Inline tooltips: wrap the first occurrence of each term in the prose.
+    terms.forEach(function (t) { wrapFirst(content, t, GLOSSARY[t]); });
+  });
+})();
+</script>
+  <script>
+(function () {
+  document.addEventListener("DOMContentLoaded", function () {
+    var toc = document.getElementById("toc");
+    var content = document.querySelector(".content");
+    if (!toc || !content) return;
+    var heads = [].slice.call(content.querySelectorAll("h2, h3"));
+    if (heads.length < 2) { toc.remove(); return; } // not worth a TOC
+
+    var used = {};
+    function slug(s) {
+      var base = s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "section";
+      var id = base, i = 2;
+      while (used[id]) { id = base + "-" + i++; }
+      used[id] = 1; return id;
+    }
+    var ul = document.createElement("ul");
+    heads.forEach(function (h) {
+      if (!h.id) h.id = slug(h.textContent);
+      var li = document.createElement("li");
+      if (h.tagName === "H3") li.className = "toc-sub";
+      var a = document.createElement("a");
+      a.href = "#" + h.id;
+      a.textContent = h.textContent;
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
+    var head = document.createElement("div");
+    head.className = "toc-h"; head.textContent = "On this page";
+    toc.appendChild(head);
+    toc.appendChild(ul);
+
+    // Scroll-spy: mark the heading currently at/above the top of the viewport.
+    var links = {};
+    toc.querySelectorAll("a").forEach(function (a) { links[a.getAttribute("href").slice(1)] = a; });
+    function spy() {
+      var current = heads[0].id;
+      for (var i = 0; i < heads.length; i++) {
+        if (heads[i].getBoundingClientRect().top - 100 <= 0) current = heads[i].id;
+      }
+      Object.keys(links).forEach(function (id) {
+        links[id].classList.toggle("active", id === current);
+      });
+    }
+    window.addEventListener("scroll", spy, { passive: true });
+    window.addEventListener("resize", spy, { passive: true });
+    spy();
+  });
+})();
+
+// Theme toggle: cycles System -> Light -> Dark. "System" clears the pin so
+// prefers-color-scheme decides; explicit choices persist under the SAME
+// localStorage key ("theme") the playground uses, so the preference follows
+// the reader across the whole site.
+(function () {
+  var btn = document.getElementById("themeToggle");
+  var label = document.getElementById("themeToggleLabel");
+  if (!btn || !label) return;
+  function current() {
+    try {
+      var t = localStorage.getItem("theme");
+      return t === "light" || t === "dark" ? t : "system";
+    } catch (e) { return "system"; }
+  }
+  function render() {
+    var t = current();
+    label.textContent = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+  }
+  btn.addEventListener("click", function () {
+    var next = { system: "light", light: "dark", dark: "system" }[current()];
+    try {
+      if (next === "system") localStorage.removeItem("theme");
+      else localStorage.setItem("theme", next);
+    } catch (e) {}
+    if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
+    else delete document.documentElement.dataset.theme;
+    render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

@@ -69,6 +69,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("javascript.md", "JavaScript — rete-graph"),
             ("comunica.md", "Comunica — RDF/JS source"),
             ("r.md", "R — rete"),
+            ("blender.md", "Blender — graphs as scenes"),
             ("agents.md", "Agents — MCP, plugin & skills"),
             ("fallacies.md", "Experiment: graphs from speech"),
         ],

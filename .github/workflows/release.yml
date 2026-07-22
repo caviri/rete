@@ -168,9 +168,46 @@ jobs:
           path: dist/rete-${{ needs.meta.outputs.version }}.mcpb
           if-no-files-found: error
 
+  blender:
+    name: Blender add-on
+    needs: meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the headless Blender image
+        run: docker build -t rete-blender clients/blender
+      - name: Test the add-on against a fixture graph and the published ones
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work rete-blender \
+            blender -b --factory-startup -noaudio \
+              --python clients/blender/tests/run_tests.py
+          docker run --rm -v "$PWD:/work" -w /work rete-blender \
+            blender -b --factory-startup -noaudio \
+              --python clients/blender/tests/test_remote.py
+      - name: Package the extension, wheels bundled
+        run: |
+          docker run --rm -e RETE_ADDON_VERSION=${{ needs.meta.outputs.version }} \
+            -v "$PWD:/work" -w /work rete-blender sh clients/blender/build.sh
+          mkdir -p dist
+          mv clients/blender/dist/rete-*.zip \
+            "dist/rete-blender-${{ needs.meta.outputs.version }}.zip"
+      - name: Verify the packaged extension installs with no engine present
+        run: |
+          docker build --build-arg WITH_ENGINE=0 -t rete-blender-clean clients/blender
+          docker run --rm -v "$PWD:/work" -w /work rete-blender-clean sh -c '
+            blender -b -noaudio --command extension install-file \
+              -r user_default --enable dist/rete-blender-*.zip &&
+            blender -b -noaudio --python clients/blender/tests/test_extension.py'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rete-blender
+          path: dist/rete-blender-${{ needs.meta.outputs.version }}.zip
+          if-no-files-found: error
+
   assemble:
     name: checksums, SBOM, attestations, and GitHub release
-    needs: [meta, native, wasm, mcpb]
+    needs: [meta, native, wasm, mcpb, blender]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

@@ -23,9 +23,15 @@ The release also provides native archives for:
 Each archive includes `rete`, Bash/Zsh/Fish/PowerShell completions, `rete(1)`,
 README, license, and changelog.
 
-Two more artifacts ship alongside them:
+Three more artifacts ship alongside them:
 
 - `rete-<version>-wasm.tar.gz` — the browser/WASM bundle.
+- `rete-blender-<version>.zip` — the **Blender add-on**, which turns a SPARQL
+  answer into scene content: 3D assets imported, geometry placed, RDF properties
+  inherited as drivable custom properties, relations as hierarchy or rigid-body
+  constraints, time on the timeline. Install it with *Preferences ▸ Add-ons ▸
+  Install from Disk…*; the engine is bundled for every platform, so there is no
+  further install step. See the [Blender guide](blender.md).
 - `rete-<version>.mcpb` — the **Claude Desktop extension**
   ([MCP Bundle](https://github.com/modelcontextprotocol/mcpb)). Download it and
   double-click, or drag it into Claude Desktop. It carries the same engine
@@ -33,7 +39,7 @@ Two more artifacts ship alongside them:
   your own `.rete` files offline and the published catalogue over HTTP Range.
   See the [agentic interfaces guide](agents.md).
 
-`SHA256SUMS` covers every archive, the WASM bundle, and the extension. A
+`SHA256SUMS` covers every archive, the WASM bundle, and both extensions. A
 CycloneDX JSON SBOM and GitHub artifact attestations are published with the
 release; the SBOM describes the Rust dependency graph and is bound to the
 native and WASM archives, while the extension carries build provenance only.
