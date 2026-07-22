@@ -67,12 +67,49 @@
   #original{position:absolute;right:14px;bottom:34px;width:266px;background:#fdfaf1;
     border:1px solid var(--rule);padding:8px 8px 0;box-shadow:0 6px 20px rgba(74,60,32,.22);
     transform:rotate(.5deg);z-index:4}
+  #original .plate-open{display:block;width:100%;padding:0;border:none;background:none;cursor:zoom-in}
   #original img{display:block;width:100%;height:auto;background:var(--paper)}
   #original .cap{padding:7px 2px 9px;font-size:10.5px;line-height:1.5;color:var(--ink-soft)}
   #original .cap b{font-size:11px;color:var(--ink)}
   #original .cr{display:block;color:var(--ink-faint);font-size:9.5px;margin-top:3px;line-height:1.45}
   @media (max-width:1180px){ #original{width:196px} }
   @media (max-width:880px){ #original{position:static;width:auto;margin:10px;transform:none} }
+
+  /* -------------------------------------------------------- the index card
+   * Lombardi worked from 14,500 index cards before a drawing existed. Clicking a
+   * name pops one back out of the graph — a real card, ruled and pinned, near the
+   * name you touched. */
+  #indexcard{position:absolute;z-index:6;width:312px;max-height:74%;overflow:auto;
+    background:#fcf8ee;border:1px solid #cdbf9c;
+    background-image:
+      linear-gradient(90deg,transparent 30px,rgba(164,48,42,.28) 30px,rgba(164,48,42,.28) 31px,transparent 31px),
+      repeating-linear-gradient(#fcf8ee,#fcf8ee 21px,#cfe0e6 21px,#cfe0e6 22px);
+    background-attachment:local;
+    box-shadow:0 14px 40px rgba(60,44,18,.34);transform:rotate(-1.1deg);
+    transition:opacity .13s ease;padding:0}
+  #indexcard.gone{opacity:0;pointer-events:none;visibility:hidden}
+  #indexcard .ic-head{position:sticky;top:0;display:flex;align-items:flex-start;gap:8px;
+    padding:11px 12px 8px 38px;cursor:grab;
+    background:linear-gradient(#fcf8ee,#fcf8ee 82%,rgba(252,248,238,.6))}
+  #indexcard.drag .ic-head{cursor:grabbing}
+  #indexcard .ic-x{position:absolute;top:6px;right:7px;width:20px;height:20px;border:none;
+    background:none;color:var(--ink-faint);font-size:17px;line-height:1;padding:0;border-radius:4px}
+  #indexcard .ic-x:hover{color:var(--red);background:rgba(164,48,42,.08)}
+  #indexcard #cardbody{padding:2px 12px 14px 38px}
+  #indexcard .nm{font-size:16px;line-height:1.25;margin:0 2px 1px 0;padding-right:16px}
+  #indexcard .kind{font-size:10px;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--ink-faint);font-family:ui-sans-serif,system-ui,sans-serif}
+
+  /* the photograph, blown up */
+  #lightbox{position:absolute;inset:0;z-index:8;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:12px;padding:26px;
+    background:rgba(28,22,12,.86);cursor:zoom-out}
+  #lightbox.gone{display:none}
+  #lightbox img{max-width:94%;max-height:82%;box-shadow:0 18px 60px rgba(0,0,0,.5);
+    background:var(--paper)}
+  #lightbox .lb-cap{color:#e9dfc8;font-size:12px;max-width:70ch;text-align:center;line-height:1.6}
+  #lightbox .lb-cap a{color:#f0d9a0}
+  #original a{cursor:zoom-in}
 
   #curtain{position:absolute;inset:0;display:grid;place-items:center;background:var(--paper);
     z-index:6;transition:opacity .45s;text-align:center;padding:24px}
@@ -119,6 +156,7 @@
   .legend li{display:flex;align-items:center;gap:9px;padding:2.5px 0}
   .legend svg{flex:0 0 46px}
   .legend span{color:var(--ink-soft)}
+  .legnote{margin:9px 0 0;font-size:11px;color:var(--ink-faint);line-height:1.5}
   .foot{padding:12px 15px 22px;font-size:10.8px;color:var(--ink-faint);line-height:1.6}
   .foot a{color:var(--ink-soft)}
 
@@ -159,6 +197,8 @@
       <button id="zfit" title="Fit the sheet">⤢</button>
     </div>
     <figure id="original" hidden></figure>
+    <div id="indexcard" class="gone"></div>
+    <div id="lightbox" class="gone"></div>
     <div id="stagenote">
       <span id="note-l"></span>
       <span id="note-r"></span>
@@ -175,19 +215,14 @@
   <!-- ------------------------------------------------------------ RIGHT -->
   <div class="side" id="right">
     <div class="phead">
-      <h1>The card</h1>
-      <p>Click anyone on the sheet. Every field below is a live query.</p>
-    </div>
-    <div id="card">
-      <div class="card-empty">
-        Lombardi kept his research on index cards — <b>14,500</b> of them — before
-        any of it became a drawing. Click a name on the sheet to pull its card back
-        out of the graph.
-      </div>
+      <h1>The notation</h1>
+      <p>Click a name on the sheet to pull its <b>index card</b> back out of the
+        graph — Lombardi kept 14,500 of them before any drawing existed.</p>
     </div>
     <div class="sec">
-      <h2>The notation</h2>
       <ul class="legend" id="legend"></ul>
+      <p class="legnote">In Lombardi's hand the <i>line style is the meaning</i>.
+        These read straight from the ontology inside the <code>.rete</code>.</p>
     </div>
     <div class="sec" style="padding-bottom:4px">
       <h2>Queries sent to the .rete</h2>
@@ -198,8 +233,10 @@
       arc by <b>Robert Tolksdorf</b> (Freie Universität Berlin) and published at
       <a href="https://lombardinetworks.net/" target="_blank" rel="noopener">lombardinetworks.net</a>
       under <a href="http://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noopener">CC&nbsp;BY-NC-SA&nbsp;4.0</a>.
-      This page is a <i>reading</i> of that data, not a facsimile: the topology and the
-      arc types are his, the layout is the browser's.
+      A <i>reading</i> of that data, not a facsimile: the connections and the arc
+      types are his and the sheet takes the real drawing's proportions when MoMA
+      records them, but the exact placement of names is the browser's — Tolksdorf
+      digitized who-connects-to-whom, never the coordinates.
       <br><br>
       <a href="playground.html?ds=lombardi">Query it yourself in the playground →</a><br>
       <span id="stamp"></span>

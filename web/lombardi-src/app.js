@@ -119,9 +119,10 @@ function paintTraffic() {
 /* ---------------------------------------------------------------- queries */
 
 const Q = {
-  works: `SELECT ?w ?title ?nodes ?arcs ?from ?to WHERE {
+  works: `SELECT ?w ?title ?nodes ?arcs ?from ?to ?dims WHERE {
   ?w a lo:Drawing ; rdfs:label ?title ; lo:nodeCount ?nodes ; lo:edgeCount ?arcs .
   OPTIONAL { ?w lo:narrationStart ?from . ?w lo:narrationEnd ?to }
+  OPTIONAL { ?w lo:dimensions ?dims }
 } ORDER BY ?title`,
 
   nodes: (w) => `SELECT ?n ?label ?type ?wc ?year WHERE {
@@ -221,12 +222,32 @@ function boxOf(d) {
   return { hw: (chars * size * 0.56) / 2 + 9, hh: 11 };
 }
 
-function layout(nodes, edges, seed) {
+/* The width:height ratio of the real sheet, parsed from MoMA's catalogued
+ * dimensions ("50 x 120\" (127 x 304.8 cm)"). We can't place the names where
+ * Lombardi placed them — those coordinates were never digitized — but we CAN give
+ * the sheet the true proportions of the object: the BNL drawing then reads as the
+ * 2.4:1 banner it actually is (127 x 305 cm), not a generic rectangle. */
+function aspectFromDims(dims) {
+  if (!dims) return null;
+  const cm = dims.match(/\(([\d.]+)\s*[x×]\s*([\d.]+)\s*cm\)/i)
+          || dims.match(/([\d.]+)\s*[x×]\s*([\d.]+)\s*cm/i);
+  const any = cm || dims.match(/([\d.]+)\s*[x×]\s*([\d.]+)/);
+  if (!any) return null;
+  const h = parseFloat(any[1]), w = parseFloat(any[2]);   // MoMA lists height × width
+  if (!(h > 0 && w > 0)) return null;
+  return Math.max(0.85, Math.min(2.6, w / h));             // clamp the extremes
+}
+
+function layout(nodes, edges, seed, ratio) {
   const rand = rng(seed);
   const n = nodes.length;
   // a bigger cast needs a bigger sheet — he worked up to five feet wide
-  W = Math.round(Math.max(1500, Math.min(3000, 980 + n * 6.2)));
-  H = Math.round(W * 0.70);
+  const r = ratio || (1 / 0.70);                 // default landscape if unknown
+  const baseW = Math.max(1500, Math.min(3000, 980 + n * 6.2));
+  // keep the drawable AREA roughly constant across ratios, so a wide sheet gets
+  // wider rather than just flatter and more crowded
+  W = Math.round(baseW * Math.sqrt(r / (1 / 0.70)));
+  H = Math.round(W / r);
   const idx = new Map(nodes.map((d, i) => [d.id, i]));
   const years = nodes.filter((d) => d.year).sort((a, b) => a.year - b.year || a.label.localeCompare(b.label));
 
@@ -487,7 +508,7 @@ function drawSheet() {
     }
     g.appendChild(mk("title", {})).textContent =
       `${d.label} — ${d.kind}${d.wc > 1 ? ` · appears in ${d.wc} drawings` : ""}`;
-    g.addEventListener("click", (ev) => { ev.stopPropagation(); selectNode(d.id); });
+    g.addEventListener("click", (ev) => { ev.stopPropagation(); selectNode(d.id, g); });
     g.addEventListener("mouseenter", () => highlight(d.id));
     g.addEventListener("mouseleave", () => highlight(state.sel));
     gNodes.appendChild(g);
@@ -526,16 +547,70 @@ function highlight(id) {
 
 /* --------------------------------------------------------------- the card */
 
-async function selectNode(id) {
-  state.sel = id;
-  highlight(id);
+function hideCard() {
+  state.sel = null;
+  $("indexcard").classList.add("gone");
+  highlight(null);
+}
+
+/* Drop the index card near the name that was clicked, then clamp it onto the
+ * stage. Called only when a new name is clicked (anchor given) or the card was
+ * closed — a click WITHIN the card leaves it where the reader dragged it. */
+function positionCard(anchorEl) {
+  const card = $("indexcard");
+  const stage = $("stage").getBoundingClientRect();
+  const cw = 312, ch = Math.min(stage.height * 0.74, 430);
+  let cx, cy;
+  if (anchorEl && anchorEl.getBoundingClientRect) {
+    const r = anchorEl.getBoundingClientRect();
+    const nx = r.left + r.width / 2 - stage.left, ny = r.top + r.height / 2 - stage.top;
+    cx = nx + 26;
+    if (cx + cw > stage.width - 12) cx = nx - cw - 26;   // flip to the other side
+    cy = ny - 46;
+  } else {
+    cx = stage.width - cw - 26; cy = 58;
+  }
+  card.style.left = Math.max(12, Math.min(stage.width - cw - 12, cx)) + "px";
+  card.style.top = Math.max(12, Math.min(Math.max(12, stage.height - ch - 12), cy)) + "px";
+}
+
+/* Make the card draggable by its head, and closable. Bound once per open. */
+function bindCardChrome() {
+  const card = $("indexcard");
+  card.querySelector(".ic-x").onclick = () => hideCard();
+  const head = card.querySelector(".ic-head");
+  let drag = null;
+  head.onpointerdown = (e) => {
+    if (e.target.closest(".ic-x")) return;
+    drag = { x: e.clientX, y: e.clientY,
+             l: parseFloat(card.style.left) || 0, t: parseFloat(card.style.top) || 0 };
+    card.classList.add("drag"); head.setPointerCapture(e.pointerId);
+  };
+  head.onpointermove = (e) => {
+    if (!drag) return;
+    card.style.left = (drag.l + e.clientX - drag.x) + "px";
+    card.style.top = (drag.t + e.clientY - drag.y) + "px";
+  };
+  const stop = () => { drag = null; card.classList.remove("drag"); };
+  head.onpointerup = stop; head.onpointercancel = stop;
+}
+
+async function selectNode(id, anchorEl) {
   const d = state.byId.get(id);
   if (!d) return;
+  const card = $("indexcard");
+  const reposition = anchorEl || card.classList.contains("gone");
+  state.sel = id;
+  highlight(id);
 
-  $("card").innerHTML =
-    `<div id="cardbody"><p class="nm">${esc(d.label)}</p>` +
-    `<div class="kind">${esc(d.kind)}</div>` +
-    `<div class="card-empty" style="padding:12px 0">reading the graph…</div></div>`;
+  card.innerHTML =
+    `<button class="ic-x" title="Close (Esc)">×</button>` +
+    `<div class="ic-head"><p class="nm">${esc(d.label)}</p>` +
+    `<div class="kind">${esc(d.kind)}${d.year ? " · " + d.year : ""}</div></div>` +
+    `<div id="cardbody"><div class="card-empty" style="padding:8px 0">reading the graph…</div></div>`;
+  if (reposition) positionCard(anchorEl);
+  card.classList.remove("gone");
+  bindCardChrome();
 
   let out, inc, also;
   try {
@@ -545,7 +620,7 @@ async function selectNode(id) {
       d.wc > 1 ? engine.ask(`also drawn in · ${d.label}`, Q.alsoIn(id)) : Promise.resolve([]),
     ]);
   } catch (err) {
-    $("card").innerHTML = `<div class="card-empty">The card would not come out of the
+    $("cardbody").innerHTML = `<div class="card-empty">The card would not come out of the
       graph: ${esc(err.message || err)}</div>`;
     return;
   }
@@ -567,9 +642,7 @@ async function selectNode(id) {
   const outHere = out.filter(here), incHere = inc.filter(here);
   const elsewhere = [...out.filter((r) => !here(r)), ...inc.filter((r) => !here(r))];
 
-  $("card").innerHTML = `<div id="cardbody">
-    <p class="nm">${esc(d.label)}</p>
-    <div class="kind">${esc(d.kind)}${d.year ? " · " + d.year : ""}</div>
+  $("cardbody").innerHTML = `
     <div class="stat">
       <div><b>${outHere.length}</b><i>reaches out</i></div>
       <div><b>${incHere.length}</b><i>reached by</i></div>
@@ -586,12 +659,12 @@ async function selectNode(id) {
         .map((a) => `<li data-work="${esc(a.w)}">${esc(a.title)}</li>`).join("")}</ul>
       <div class="foot" style="padding:9px 0 0">Lombardi drew this same actor on
       another sheet, and Tolksdorf gave it the same id — which is what makes the
-      51 drawings one graph rather than 51.</div>` : ""}
-  </div>`;
+      51 drawings one graph rather than 51.</div>` : ""}`;
 
-  $("card").querySelectorAll("[data-go]").forEach((el) =>
+  // clicking a name in the card re-reads that node's card, IN PLACE (no anchor)
+  $("cardbody").querySelectorAll("[data-go]").forEach((el) =>
     el.addEventListener("click", () => selectNode(el.dataset.go)));
-  $("card").querySelectorAll("[data-work]").forEach((el) =>
+  $("cardbody").querySelectorAll("[data-work]").forEach((el) =>
     el.addEventListener("click", () => openWork(el.dataset.work, d.id)));
 }
 
@@ -611,15 +684,31 @@ async function paintOriginal(iri) {
   const r = rows[0];
   const cap = [r.date, r.medium, r.dims].filter(Boolean).join(" · ");
   box.innerHTML =
-    `<a href="${esc(r.page)}" target="_blank" rel="noopener" title="See this work at MoMA">` +
-    `<img src="${esc(r.img)}" alt="Photograph of the original drawing, courtesy MoMA"></a>` +
+    `<button class="plate-open" title="See the original, larger">` +
+    `<img src="${esc(r.img)}" alt="Photograph of the original drawing, courtesy MoMA"></button>` +
     `<div class="cap"><b>The original sheet</b>${cap ? " — " + esc(cap) : ""}` +
     (r.credit ? `<span class="cr">${esc(r.credit)}</span>` : "") +
     `<span class="cr">MoMA ${esc(r.accession)} · artwork © The Estate of Mark Lombardi, ` +
     `image courtesy MoMA — <a href="${esc(r.page)}" target="_blank" rel="noopener">see it there</a></span></div>`;
   box.hidden = false;
+  // click the plate to study the real arrangement full-size
+  box.querySelector(".plate-open").addEventListener("click", () => openLightbox(r));
   // if MoMA ever stops serving it, take the plate away rather than leave a blank frame
   box.querySelector("img").addEventListener("error", () => { box.hidden = true; });
+}
+
+/* The photograph, full-size — so the actual arrangement of Lombardi's hand is
+ * there to read, even though the redrawing beside it can only echo the topology. */
+function openLightbox(r) {
+  const lb = $("lightbox");
+  const cap = [r.date, r.medium, r.dims].filter(Boolean).join(" · ");
+  lb.innerHTML =
+    `<img src="${esc(r.img)}" alt="The original drawing by Mark Lombardi, courtesy MoMA">` +
+    `<div class="lb-cap">${esc(cap)} · MoMA ${esc(r.accession)} — artwork © The Estate of ` +
+    `Mark Lombardi, image courtesy MoMA · ` +
+    `<a href="${esc(r.page)}" target="_blank" rel="noopener">see it at MoMA ↗</a></div>`;
+  lb.classList.remove("gone");
+  lb.onclick = (e) => { if (!e.target.closest("a")) lb.classList.add("gone"); };
 }
 
 /* ------------------------------------------------------------ the legend */
@@ -646,7 +735,7 @@ async function openWork(iri, focusNode) {
   const w = state.works.find((x) => x.w === iri);
   if (!w) return;
   state.work = w;
-  state.sel = null;
+  hideCard();
   $("curtain").classList.remove("gone");
   $("curtain-s").textContent = w.title;
   $("bar").firstElementChild.style.width = "22%";
@@ -665,15 +754,19 @@ async function openWork(iri, focusNode) {
   state.byId = new Map(state.nodes.map((d) => [d.id, d]));
   state.edges = arcs.map((r) => ({ s: r.s, o: r.o, type: r.type, drawn: r.drawn, amount: r.amount }));
 
-  layout(state.nodes, state.edges, iri);
+  layout(state.nodes, state.edges, iri, aspectFromDims(w.dims));
   drawSheet();
   paintLegend();
+  const prop = w.dims ? " · sheet to scale" : "";
   $("note-l").textContent =
-    `${state.nodes.length} names · ${state.edges.length} arcs · click any name`;
+    `${state.nodes.length} names · ${state.edges.length} arcs${prop} · click any name`;
   paintOriginal(iri);
   $("bar").firstElementChild.style.width = "100%";
   setTimeout(() => $("curtain").classList.add("gone"), 130);
-  if (focusNode && state.byId.has(focusNode)) selectNode(focusNode);
+  if (focusNode && state.byId.has(focusNode)) {
+    const g = document.querySelector(`#sheet g.node[data-id="${CSS.escape(focusNode)}"]`);
+    selectNode(focusNode, g);
+  }
 }
 
 /* --------------------------------------------------------------- the list */
@@ -730,7 +823,7 @@ function wireStage() {
   const stop = () => { drag = null; svg.classList.remove("drag"); };
   svg.addEventListener("pointerup", stop);
   svg.addEventListener("pointercancel", stop);
-  svg.addEventListener("click", (e) => { if (e.target === svg) { state.sel = null; highlight(null); } });
+  svg.addEventListener("click", (e) => { if (e.target === svg) hideCard(); });
 }
 
 /* ------------------------------------------------------------------- boot */
@@ -739,6 +832,12 @@ function wireStage() {
   $("stamp").textContent = BUILD_STAMP;
   wireStage();
   $("search").addEventListener("input", (e) => paintWorks(e.target.value));
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const lb = $("lightbox");
+    if (!lb.classList.contains("gone")) { lb.classList.add("gone"); return; }
+    if (!$("indexcard").classList.contains("gone")) hideCard();
+  });
 
   try {
     await engine.boot();
@@ -748,7 +847,7 @@ function wireStage() {
       state.notation.set(r.t, { label: r.label, drawn: r.drawn });
     }
     state.works = (await engine.ask("the 51 drawings", Q.works))
-      .map((r) => ({ w: r.w, title: r.title, nodes: +r.nodes, arcs: +r.arcs, from: r.from, to: r.to }));
+      .map((r) => ({ w: r.w, title: r.title, nodes: +r.nodes, arcs: +r.arcs, from: r.from, to: r.to, dims: r.dims }));
     paintWorks("");
     // open on the Nugan Hand Bank: a CIA-tied merchant bank that collapsed in
     // 1980, small enough to read whole and dense enough to show the notation
