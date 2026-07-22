@@ -20,9 +20,12 @@ const readDocs = async (page, ds) => {
   return page.evaluate(() => {
     const el = document.getElementById("ontologyDocs");
     return {
-      terms: el.querySelectorAll(".onto-term").length,
-      defs: el.querySelectorAll(".onto-def").length,
+      terms: el.querySelectorAll(".onto-class").length,          // class cards
+      props: el.querySelectorAll(".onto-prop").length,           // property rows
+      defs: el.querySelectorAll(".onto-def, .onto-prop-def").length,
       toc: el.querySelectorAll(".onto-toc a").length,
+      links: el.querySelectorAll(".onto-range-link").length,     // class-to-class connections
+      ttlBtn: el.querySelectorAll('[data-onto-view="ttl"]').length,
       txt: (el.textContent || "").replace(/\s+/g, " ").slice(0, 100),
     };
   });
@@ -38,11 +41,14 @@ const main = async () => {
   const dblp = await readDocs(page, "dblp");     // --no-pyramid, but carries dblp.ttl
   const worldcup = await readDocs(page, "worldcup"); // NO formal ontology — effective schema from data
 
-  const c4dtOk = c4dt.terms >= 10 && c4dt.defs >= 5 && c4dt.toc >= 10;
-  const dblpOk = dblp.terms >= 5;                // ontology docs despite no pyramid
-  // the "available for ALL datasets" requirement: a dataset with no formal OWL
-  // ontology still gets a reference derived from its rdf:type classes + predicates
-  const worldcupOk = worldcup.terms >= 10;
+  // class-centric explorer: classes, per-class properties, class-to-class range
+  // links (connections), definitions, and the Turtle toggle
+  const c4dtOk = c4dt.terms >= 10 && c4dt.props >= 10 && c4dt.defs >= 5 &&
+    c4dt.links >= 1 && c4dt.ttlBtn >= 1;
+  const dblpOk = dblp.terms >= 5 && dblp.props >= 5;   // ontology docs despite no pyramid
+  // "available for ALL datasets": a dataset with no formal OWL ontology still
+  // gets a reference derived from its rdf:type classes + predicate usage
+  const worldcupOk = worldcup.terms >= 5 && worldcup.props >= 5;
   const pass = c4dtOk && dblpOk && worldcupOk && errs.length === 0;
 
   console.log(JSON.stringify({

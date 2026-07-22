@@ -7344,6 +7344,7 @@ self.onmessage = function (e) {
       const el = $(id); if (el) el.innerHTML = "";
     });
     state.ontologyDocsReady = false;   // re-query the TBox for the next dataset
+    state.ontoData = null;
     if (noteHtml !== undefined) $("schemaOut").innerHTML = noteHtml;
   }
 
@@ -7440,7 +7441,92 @@ self.onmessage = function (e) {
       ontoLiveFallback(el);           // no formal AND no pyramid → sample live
       return;
     }
-    el.innerHTML = buildOntologyDocsHtml(eff.classes, eff.obj, eff.data);
+    state.ontoData = eff;
+    augmentDiagram(eff);              // redraw the diagram with the declared edges too
+    bindOntoDocs(el);
+    el.innerHTML = buildOntologyDocsHtml(eff, state.ontoView || "ref");
+  }
+
+  // Redraw the schema diagram from the FULL ontology: the pyramid's class-level
+  // relations PLUS the ontology's declared object properties (domain -> range),
+  // with the most-connected classes shown first — so a class linked only by a
+  // declared property is no longer stranded in the top-8 view.
+  function augmentDiagram(eff) {
+    const el = $("ontologyDiagram");
+    if (!el) return;
+    const cnt = new Map();
+    ((state.schema && state.schema.classes) || []).forEach((c) => cnt.set(ontoClean(c[0]), Number(c[1]) || 0));
+    const rels = ((state.schema && state.schema.relations) || [])
+      .map((r) => [ontoClean(r[0]), ontoClean(r[1]), ontoClean(r[2]), Number(r[3]) || 0]);
+    const add = (list, asLiteral) => list.forEach((e) => {
+      const doms = e.domain.size ? [...e.domain] : ["(untyped)"];
+      doms.forEach((d) => {
+        if (asLiteral || !e.range.size) rels.push([d, e.iri, "(literal)", e.count || 1]);
+        else [...e.range].forEach((rg) => rels.push([d, e.iri, rg, e.count || 1]));
+      });
+    });
+    add(eff.obj, false); add(eff.data, true);
+    const cset = new Map();
+    eff.classes.forEach((c) => cset.set(c.iri, c.count || cnt.get(c.iri) || 0));
+    cnt.forEach((n, iri) => { if (!cset.has(iri)) cset.set(iri, n); });
+    const deg = new Map();
+    rels.forEach((r) => { if (r[2] !== "(literal)") { deg.set(r[0], (deg.get(r[0]) || 0) + 1); deg.set(r[2], (deg.get(r[2]) || 0) + 1); } });
+    const classes = [...cset.entries()]
+      .filter((e) => e[0] && e[0] !== "(literal)" && e[0] !== "(untyped)")
+      .sort((a, b) => (deg.get(b[0]) || 0) - (deg.get(a[0]) || 0) || b[1] - a[1]);
+    if (classes.length) el.innerHTML = renderOntologyDiagram(classes, rels);
+  }
+
+  function ontoSetView(v) {
+    state.ontoView = v;
+    const el = $("ontologyDocs");
+    if (el && state.ontoData) el.innerHTML = buildOntologyDocsHtml(state.ontoData, v);
+  }
+
+  // One delegated listener for the ontology reference: the Reference/Turtle
+  // toggle, "copy Turtle", and opening a class's <details> when a range link
+  // jumps to it (native anchors scroll but don't expand a target details).
+  function bindOntoDocs(el) {
+    if (el._ontoBound) return;
+    el._ontoBound = true;
+    el.addEventListener("click", (ev) => {
+      const vb = ev.target.closest("[data-onto-view]");
+      if (vb) { ev.preventDefault(); ontoSetView(vb.getAttribute("data-onto-view")); return; }
+      const cp = ev.target.closest("[data-onto-copy]");
+      if (cp) { ev.preventDefault(); const pre = $("ontoTtlPre");
+        if (pre && navigator.clipboard) { navigator.clipboard.writeText(pre.textContent); cp.textContent = "copied"; setTimeout(() => { cp.textContent = "Copy"; }, 1200); }
+        return; }
+      const go = ev.target.closest("a[data-goto]");
+      if (go) { const d = document.getElementById(go.getAttribute("data-goto")); if (d && d.tagName === "DETAILS") d.open = true; }
+    });
+  }
+
+  // Serialize the (effective) ontology as Turtle — classes and properties with
+  // their labels, definitions, superclasses and domain/range (declared, or
+  // derived from the data). A copy-pasteable TBox for the whole dataset.
+  function ontologyTurtle(eff) {
+    const q = (s) => '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r?\n/g, " ") + '"';
+    const lines = [
+      "@prefix owl:  <http://www.w3.org/2002/07/owl#> .",
+      "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
+      "@prefix skos: <http://www.w3.org/2004/02/skos/core#> .",
+      "",
+    ];
+    const term = (e, type) => {
+      const parts = ["a " + type];
+      if (e.label) parts.push("rdfs:label " + q(e.label));
+      if (e.def) parts.push("skos:definition " + q(e.def));
+      (e.supers ? [...e.supers] : []).forEach((s) => parts.push("rdfs:subClassOf <" + s + ">"));
+      (e.domain ? [...e.domain] : []).forEach((d) => parts.push("rdfs:domain <" + d + ">"));
+      (e.range ? [...e.range] : []).forEach((r) => parts.push("rdfs:range <" + r + ">"));
+      return "<" + e.iri + ">\n    " + parts.join(" ;\n    ") + " .";
+    };
+    eff.classes.forEach((e) => lines.push(term(e, "owl:Class")));
+    if (eff.obj.length) lines.push("");
+    eff.obj.forEach((e) => lines.push(term(e, "owl:ObjectProperty")));
+    if (eff.data.length) lines.push("");
+    eff.data.forEach((e) => lines.push(term(e, "owl:DatatypeProperty")));
+    return lines.join("\n");
   }
 
   // Formal classes/properties (with definitions) + everything the pyramid's
@@ -7517,58 +7603,87 @@ self.onmessage = function (e) {
 
   function ontoAnchor(iri) { return "onto-" + iri.replace(/[^a-zA-Z0-9]/g, "-"); }
 
-  function buildOntologyDocsHtml(classes, objprops, dataprops) {
-    if (!classes.length && !objprops.length && !dataprops.length) {
+  // Class-centric ontology reference: a list of classes you click to expand,
+  // each showing its own properties (with the class each object property points
+  // to, so connections are explicit and navigable) — plus a Turtle view.
+  function buildOntologyDocsHtml(eff, view) {
+    const classes = eff.classes, obj = eff.obj, data = eff.data;
+    if (!classes.length && !obj.length && !data.length) {
       return '<div class="onto-doc-head"><h2>Ontology reference</h2></div>' +
         '<div class="note">No vocabulary could be read from this graph.</div>';
     }
-    const anyDerived = classes.concat(objprops, dataprops).some((e) => e.fromData);
-    const anyFormal = classes.concat(objprops, dataprops).some((e) => e.def);
-    const big = (n) => n >= TBOX_LIMIT
-      ? ' <span class="onto-trunc">(first ' + TBOX_LIMIT + ' — large ontology)</span>' : "";
+    const anyDerived = classes.concat(obj, data).some((e) => e.fromData);
+    const anyFormal = classes.concat(obj, data).some((e) => e.def);
     const commas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    const links = (set) => [...set].map((s) => esc(shorten(localName(s), 32))).join(", ");
-    const toc = (title, list) => list.length
-      ? '<div class="onto-toc-group"><div class="onto-toc-title">' + title + " (" + list.length + ")</div>" +
-        list.map((e) => '<a href="#' + ontoAnchor(e.iri) + '">' +
-          esc(shorten(e.label || localName(e.iri), 34)) + "</a>").join("") + "</div>"
-      : "";
-    const term = (e, kind) => {
-      const meta = [];
-      if (e.supers && e.supers.size) meta.push('<span class="onto-rel">subclass of</span> ' + links(e.supers));
-      if (e.domain && e.domain.size) meta.push('<span class="onto-rel">domain</span> ' + links(e.domain));
-      if (e.range && e.range.size) meta.push('<span class="onto-rel">range</span> ' + links(e.range));
-      if (e.count) meta.push('<span class="onto-count">' + commas(e.count) +
-        (kind === "class" ? " instances" : " uses") + "</span>");
-      return '<div class="onto-term" id="' + ontoAnchor(e.iri) + '">' +
-        '<div class="onto-term-head"><span class="onto-name">' +
-          esc(e.label || shorten(localName(e.iri), 60)) + '</span>' +
-          '<span class="onto-kind">' + kind + "</span>" +
-          (e.fromData && !e.def ? '<span class="onto-derived" title="Not declared in a formal ontology — derived from the data (rdf:type / predicate usage)">from data</span>' : "") +
-        "</div>" +
-        '<div class="onto-iri" title="' + esc(e.iri) + '">' + esc(e.iri) + "</div>" +
-        (e.def ? '<p class="onto-def">' + esc(e.def) + "</p>" : "") +
-        (meta.length ? '<div class="onto-meta">' + meta.join(" · ") + "</div>" : "") +
-        "</div>";
-    };
-    const section = (title, list, kind) => list.length
-      ? '<section class="onto-section"><h3>' + title + "</h3>" +
-        list.map((e) => term(e, kind)).join("") + "</section>"
-      : "";
+    const shortT = (iri, n) => esc(shorten(localName(iri), n || 30));
     const src = anyFormal && anyDerived ? "the embedded ontology + the classes and predicates in the data"
       : anyFormal ? "the embedded ontology, with definitions"
-      : "the classes and predicates in the data (no formal ontology travels in this file)";
-    return '<div class="onto-doc-head"><h2>Ontology reference</h2>' +
-      '<span class="microcopy">' + classes.length + " classes" + big(classes.length) +
-      " · " + objprops.length + " object properties · " + dataprops.length +
-      " datatype properties — from " + src + "</span></div>" +
-      '<div class="onto-body"><nav class="onto-toc">' +
-        toc("Classes", classes) + toc("Object properties", objprops) + toc("Datatype properties", dataprops) +
-      "</nav><div class=\"onto-content\">" +
-        section("Classes", classes, "class") +
-        section("Object properties", objprops, "object property") +
-        section("Datatype properties", dataprops, "datatype property") +
-      "</div></div>";
+      : "the classes and predicates in the data (no formal ontology in this file)";
+    const head =
+      '<div class="onto-doc-head"><div class="onto-head-row"><h2>Ontology reference</h2>' +
+        '<div class="onto-views">' +
+          '<button type="button" class="onto-view-btn' + (view !== "ttl" ? " active" : "") + '" data-onto-view="ref">Reference</button>' +
+          '<button type="button" class="onto-view-btn' + (view === "ttl" ? " active" : "") + '" data-onto-view="ttl">Turtle</button>' +
+        "</div></div>" +
+      '<span class="microcopy">' + classes.length + " classes · " + obj.length +
+        " object properties · " + data.length + " datatype properties — from " + src + "</span></div>";
+
+    if (view === "ttl") {
+      return head + '<div class="onto-ttl-bar"><button type="button" class="onto-copy" data-onto-copy>Copy</button></div>' +
+        '<pre id="ontoTtlPre" class="onto-ttl">' + esc(ontologyTurtle(eff)) + "</pre>";
+    }
+
+    // attach every property to the class(es) it has as a domain
+    const known = new Set(classes.map((c) => c.iri));
+    const propsOf = new Map(); classes.forEach((c) => propsOf.set(c.iri, []));
+    const globals = [];
+    const attach = (e, kind) => {
+      const doms = [...e.domain].filter((d) => known.has(d));
+      if (doms.length) doms.forEach((d) => propsOf.get(d).push({ e, kind }));
+      else globals.push({ e, kind });
+    };
+    obj.forEach((e) => attach(e, "object"));
+    data.forEach((e) => attach(e, "data"));
+
+    const rangeHtml = (e, kind) => {
+      if (kind === "data") return '<span class="onto-range-lit">literal</span>';
+      const rs = [...e.range];
+      if (!rs.length) return '<span class="onto-range-lit">resource</span>';
+      return rs.map((r) => known.has(r)
+        ? '<a class="onto-range-link" href="#' + ontoAnchor(r) + '" data-goto="' + ontoAnchor(r) + '">' + shortT(r, 26) + "</a>"
+        : shortT(r, 26)).join(", ");
+    };
+    const propRow = (p) => '<div class="onto-prop">' +
+      '<span class="onto-prop-name" title="' + esc(p.e.iri) + '">' + esc(p.e.label || localName(p.e.iri)) + "</span>" +
+      '<span class="onto-prop-arrow">→</span><span class="onto-prop-range">' + rangeHtml(p.e, p.kind) + "</span>" +
+      (p.e.count ? '<span class="onto-count">' + commas(p.e.count) + "</span>" : "") +
+      (p.e.def ? '<div class="onto-prop-def">' + esc(p.e.def) + "</div>" : "") + "</div>";
+    const openAll = classes.length <= 10;
+    const classCard = (c) => {
+      const props = propsOf.get(c.iri) || [];
+      return '<details class="onto-class" id="' + ontoAnchor(c.iri) + '"' + (openAll ? " open" : "") + ">" +
+        '<summary><span class="onto-name">' + esc(c.label || shorten(localName(c.iri), 46)) + "</span>" +
+        (c.fromData && !c.def ? '<span class="onto-derived" title="Derived from the data (rdf:type), not a formal owl:Class declaration">from data</span>' : "") +
+        (c.count ? '<span class="onto-count">' + commas(c.count) + " instances</span>" : "") +
+        '<span class="onto-propn">' + props.length + " prop" + (props.length === 1 ? "" : "s") + "</span></summary>" +
+        '<div class="onto-class-body"><div class="onto-iri" title="' + esc(c.iri) + '">' + esc(c.iri) + "</div>" +
+        (c.def ? '<p class="onto-def">' + esc(c.def) + "</p>" : "") +
+        (c.supers.size ? '<div class="onto-meta"><span class="onto-rel">subclass of</span> ' +
+          [...c.supers].map((s) => shortT(s)).join(", ") + "</div>" : "") +
+        (props.length ? '<div class="onto-props">' + props.map(propRow).join("") + "</div>"
+          : '<div class="onto-props-empty">No properties are recorded with this class as their domain.</div>') +
+        "</div></details>";
+    };
+    const toc = '<nav class="onto-toc"><div class="onto-toc-group"><div class="onto-toc-title">Classes (' + classes.length + ")</div>" +
+      classes.map((c) => '<a href="#' + ontoAnchor(c.iri) + '" data-goto="' + ontoAnchor(c.iri) + '">' +
+        esc(shorten(c.label || localName(c.iri), 32)) + "</a>").join("") + "</div>" +
+      (globals.length ? '<div class="onto-toc-group"><div class="onto-toc-title"><a href="#onto-globals" data-goto="onto-globals">Global properties (' + globals.length + ")</a></div></div>" : "") +
+      "</nav>";
+    const content = '<div class="onto-content">' + classes.map(classCard).join("") +
+      (globals.length ? '<details class="onto-class" id="onto-globals"><summary><span class="onto-name">Properties with no declared domain</span><span class="onto-propn">' + globals.length + "</span></summary>" +
+        '<div class="onto-class-body"><div class="onto-props">' + globals.map(propRow).join("") + "</div></div></details>" : "") +
+      "</div>";
+    return head + '<div class="onto-body">' + toc + content + "</div>";
   }
 
   function renderSchema(schema) {

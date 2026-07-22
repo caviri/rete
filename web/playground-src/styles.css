@@ -1993,6 +1993,42 @@ pre {
 .ontology-docs { margin-top: 18px; }
 .onto-doc-head { border-top: 1px solid var(--line); padding-top: 16px; margin-bottom: 12px; }
 .onto-doc-head h2 { font-size: 1.05rem; margin: 0 0 4px; }
+.onto-head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.onto-views { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.onto-view-btn { border: 0; background: var(--surface); color: var(--muted); font: inherit;
+  font-size: 0.8rem; padding: 3px 12px; cursor: pointer; }
+.onto-view-btn + .onto-view-btn { border-left: 1px solid var(--line); }
+.onto-view-btn.active { background: var(--accent); color: var(--on-accent); }
+/* Class-centric explorer: a class you click to expand to its own properties. */
+.onto-class { border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; background: var(--surface); margin-bottom: 8px; scroll-margin-top: 12px; }
+.onto-class > summary { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 9px 12px; cursor: pointer; list-style: none; }
+.onto-class > summary::-webkit-details-marker { display: none; }
+.onto-class > summary::before { content: "▸"; color: var(--muted); margin-right: 2px; font-size: 0.8rem; }
+.onto-class[open] > summary::before { content: "▾"; }
+.onto-class[open] > summary { border-bottom: 1px solid var(--line); }
+.onto-class .onto-name { font-weight: 650; font-size: 0.92rem; }
+.onto-propn { font-size: 0.7rem; color: var(--muted); margin-left: auto; }
+.onto-class-body { padding: 8px 12px 12px 22px; }
+.onto-props { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.onto-prop { display: grid; grid-template-columns: minmax(120px, max-content) auto 1fr auto;
+  align-items: baseline; gap: 6px; padding: 4px 0; border-top: 1px solid var(--line); }
+.onto-prop:first-child { border-top: 0; }
+.onto-prop-name { font-weight: 600; font-size: 0.85rem; }
+.onto-prop-arrow { color: var(--muted); }
+.onto-prop-range { font-size: 0.85rem; }
+.onto-range-link { color: var(--accent-dark); text-decoration: none; font-weight: 600; }
+.onto-range-link:hover { text-decoration: underline; }
+.onto-range-lit { color: var(--muted); }
+.onto-prop-def { grid-column: 1 / -1; font-size: 0.8rem; color: var(--muted); line-height: 1.4; margin: 1px 0 2px; }
+.onto-props-empty { margin-top: 8px; font-size: 0.82rem; color: var(--muted); font-style: italic; }
+.onto-ttl-bar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.onto-copy { border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  font: inherit; font-size: 0.78rem; padding: 3px 12px; border-radius: 6px; cursor: pointer; }
+.onto-ttl { border: 1px solid var(--line); border-radius: 8px; background: var(--code, var(--surface));
+  padding: 12px 14px; overflow: auto; max-height: 70vh; font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.78rem; line-height: 1.5; white-space: pre; }
 .onto-body { display: grid; grid-template-columns: 190px 1fr; gap: 18px; align-items: start; }
 .onto-toc {
   position: sticky; top: 8px; align-self: start; max-height: 78vh; overflow: auto;
