@@ -34,6 +34,7 @@ CLASS = "CLASS"
 TEXT = "TEXT"
 VIDEO = "VIDEO"
 MAP = "MAP"
+SPLAT = "SPLAT"
 IGNORE = "IGNORE"
 
 ROLE_ITEMS = [
@@ -46,6 +47,7 @@ ROLE_ITEMS = [
     (IMAGE, "Image", "Image or IIIF URL — a texture, image plane, or 360° world"),
     (VIDEO, "Video", "Video URL — a movie-textured plane synced to the timeline"),
     (MAP, "Map (PMTiles)", "A .pmtiles map — becomes vector or raster map geometry"),
+    (SPLAT, "Gaussian splat", "A 3DGS .ply/.splat — via the 3DGS add-on, or a preview"),
     (COLOR, "Colour", "Colour literal — becomes the material's base colour"),
     (TIME, "Time", "A date, time or number placing the row on the timeline"),
     (TIME_END, "Time (end)", "End of the row's interval on the timeline"),
@@ -57,6 +59,12 @@ ROLE_ITEMS = [
 
 #: Video container extensions Blender can load as a movie image datablock.
 VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv", ".m4v", ".ogv", ".avi"}
+
+#: Gaussian-splat container extensions. ``.ply`` is deliberately absent — it is
+#: ambiguous (mesh or splat), and is disambiguated by sniffing the file's header
+#: at import time (:func:`assets.is_splat_ply`), so a splat ``.ply`` still routes
+#: to the splat path even though it detects as a plain 3D asset.
+SPLAT_EXT = {".splat", ".ksplat", ".spz"}
 
 #: File extensions Blender can import, mapped to the importer family. The CAD/BIM
 #: formats (ifc, dxf, step) need an external importer and are handled specially
@@ -115,6 +123,7 @@ _NAME_HINTS: List[Tuple[str, str]] = [
     (r"^(mesh|glb|gltf|model3d|asset|geometryfile|glbfile|animation)$", ASSET),
     (r"(meshnode|nodename|meshname)", MESH_NODE),
     (r"^(pmtiles|basemap|tiles|maptiles)$|(pmtiles)", MAP),
+    (r"^(splat|splats|gaussian|gaussiansplat|3dgs|radiance)$", SPLAT),
     (r"^(video|movie|clip|footage|reel)$", VIDEO),
     (r"^(wkt|geom|geometry|aswkt|aswkt3d|box|box3d|bbox|shape|location|coords?)$", GEOMETRY),
     (r"(thumbnail|depiction|image|photo|picture|iiif|cover|scan|poster)", IMAGE),
@@ -163,6 +172,8 @@ KNOWN_PREDICATES: Dict[str, str] = {
     "https://w3id.org/rete/cad#glbModel": ASSET,
     "https://w3id.org/rete/cad#ifcModel": ASSET,
     "https://w3id.org/rete/cad#ifcFile": ASSET,
+    "https://w3id.org/rete/media#splat": SPLAT,
+    "https://w3id.org/rete/media#gaussianSplat": SPLAT,
     "https://w3id.org/rete/cad#ifcClass": CLASS,
     "https://w3id.org/rete/cad#elevation": NUMBER,
     "https://w3id.org/rete/cad#netArea": NUMBER,
@@ -235,6 +246,11 @@ def is_map_url(value: str) -> bool:
     return url_extension(value) == ".pmtiles"
 
 
+def is_splat_url(value: str) -> bool:
+    """A splat-only container. ``.ply`` is not here — it is content-sniffed."""
+    return url_extension(value) in SPLAT_EXT
+
+
 def is_image_url(value: str) -> bool:
     if url_extension(value) in IMAGE_EXT:
         return True
@@ -272,6 +288,8 @@ def classify_cell(cell) -> Optional[str]:
     if cell.kind == "iri":
         if is_map_url(value):
             return MAP
+        if is_splat_url(value):
+            return SPLAT
         if is_model_url(value):
             return ASSET
         if is_video_url(value):
@@ -283,6 +301,8 @@ def classify_cell(cell) -> Optional[str]:
         return GEOMETRY
     if is_map_url(value):
         return MAP
+    if is_splat_url(value):
+        return SPLAT
     if is_model_url(value):
         return ASSET
     if is_video_url(value):
@@ -458,6 +478,10 @@ class Binding:
         return self.all_of(MAP)
 
     @property
+    def splat(self) -> Optional[str]:
+        return self.first(SPLAT)
+
+    @property
     def color(self) -> Optional[str]:
         return self.first(COLOR)
 
@@ -521,7 +545,7 @@ def resolve(result, roles: Dict[str, str], overrides: Optional[Dict[str, str]] =
         # The fallback identity is the first plain IRI column — but not one that
         # already plays a content role (a map/asset/video/image URL is an IRI
         # too, and consuming it as the entity would drop the content).
-        content = {MAP, ASSET, VIDEO, IMAGE}
+        content = {MAP, ASSET, VIDEO, IMAGE, SPLAT}
         for var in result.vars:
             if merged.get(var) in content:
                 continue

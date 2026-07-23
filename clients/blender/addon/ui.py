@@ -264,6 +264,11 @@ class RETE_PT_media(RetePanel, Panel):
         row.prop(settings, "map_tiles")
         column.prop(settings, "map_extrude")
 
+        layout.separator()
+        column = layout.column(align=True)
+        column.label(text="Gaussian splats", icon="OUTLINER_OB_POINTCLOUD")
+        column.prop(settings, "splat_points")
+
 
 class RETE_PT_time(RetePanel, Panel):
     bl_idname = "RETE_PT_time"

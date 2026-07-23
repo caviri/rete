@@ -362,6 +362,7 @@ produces a sensible scene.</p>
 <tr><td>Image</td><td>an image or IIIF URL</td><td>a texture, an upright image plane, or a 360° world</td></tr>
 <tr><td>Video</td><td>an <code>.mp4</code>/<code>.webm</code>/<code>.mov</code>/… URL</td><td>a movie-textured plane synced to the timeline</td></tr>
 <tr><td>Map</td><td>a <code>.pmtiles</code> URL</td><td>vector map meshes (per layer) or raster tile planes</td></tr>
+<tr><td>Splat</td><td>a 3DGS <code>.ply</code>/<code>.splat</code>/<code>.ksplat</code> URL</td><td>the 3DGS add-on's splats, or a point-cloud preview</td></tr>
 <tr><td>Colour</td><td><code>#rrggbb</code>, <code>rgb()</code>, or a CSS name</td><td>the base colour</td></tr>
 <tr><td>Number</td><td>any numeric literal</td><td>a drivable property, a colour ramp, a mass</td></tr>
 <tr><td>Class</td><td><code>rdf:type</code> and type-like columns</td><td>grouping and a stable per-class colour</td></tr>
@@ -407,6 +408,15 @@ world</strong> environment.</p>
 plays, <strong>synced to the scene's frame range</strong> — a graph of clips laid out in
 space, playing as you scrub. It uses Blender's own movie reader; a build without
 FFmpeg degrades cleanly.</p>
+<p><strong>Gaussian splats.</strong> A 3DGS splat URL (<code>.ply</code> — sniffed apart from a mesh <code>.ply</code>
+— <code>.splat</code>, <code>.ksplat</code>, <code>.spz</code>) is handled like IFC: if a 3DGS add-on such as KIRI
+Engine's <em>3DGS Render</em> is installed, it imports and renders the real splats;
+otherwise an add-on-free fallback parses the Gaussian centres and colours into an
+honest point-cloud preview, with a note about installing the add-on. Splats are
+parented to an empty and placed by moving the empty, so their stored attributes
+(position, scale, rotation, spherical-harmonic colour, opacity) are never
+desynced by an ordinary transform. <code>.ksplat</code>/<code>.spz</code> are convert-to-<code>.ply</code> for the
+preview.</p>
 <h2>Inherited properties</h2>
 <p>With <strong>Inherit all properties</strong>, every statement about every imported entity is
 fetched — batched, so a thousand entities cost a handful of queries — and

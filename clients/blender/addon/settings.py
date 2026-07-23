@@ -214,6 +214,15 @@ class ReteSettings(PropertyGroup):
         description="Give map polygons height, in metres — footprints become massing",
     )
 
+    # -- Gaussian splats ---------------------------------------------------
+    splat_points: IntProperty(
+        name="Preview points", default=200_000, min=1000, soft_max=1_000_000,
+        description=(
+            "How many Gaussian centres the fallback preview shows when no 3DGS "
+            "add-on is installed (the add-on, if present, renders the real splats)"
+        ),
+    )
+
     # -- time --------------------------------------------------------------
     time_mode: EnumProperty(name="Time", items=builder.TIME_MODES, default="NONE")
     frame_start: IntProperty(name="Start frame", default=1, min=0)
@@ -292,6 +301,7 @@ class ReteSettings(PropertyGroup):
             map_zoom=self.map_zoom,
             map_tiles=self.map_tiles,
             map_extrude=self.map_extrude,
+            splat_points=self.splat_points,
             time_mode=self.time_mode,
             frame_start=self.frame_start,
             frame_end=self.frame_end,

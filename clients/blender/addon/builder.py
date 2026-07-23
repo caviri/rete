@@ -110,6 +110,7 @@ class Settings:
         self.map_zoom: int = kw.get("map_zoom", -1)               # -1 = auto
         self.map_tiles: int = kw.get("map_tiles", 40)
         self.map_extrude: float = kw.get("map_extrude", 0.0)
+        self.splat_points: int = kw.get("splat_points", 200_000)  # preview cap
 
         self.time_mode: str = kw.get("time_mode", "NONE")
         self.frame_start: int = kw.get("frame_start", 1)
@@ -406,6 +407,7 @@ def build(result, settings: Settings, context=None) -> Report:
 
     video_var = binding.video
     image_var = binding.image
+    splat_var = binding.splat
     max_video_frames = 0
 
     asset_budget = settings.max_assets
@@ -429,8 +431,26 @@ def build(result, settings: Settings, context=None) -> Report:
         asset_url = row[asset_var].value if asset_var and row.get(asset_var) is not None else ""
         node_name = row[node_var].value if node_var and row.get(node_var) is not None else ""
 
+        # A splat is its own path — either an explicit splat column, or an asset
+        # column that turns out to be a splat .ply on inspection.
+        splat_url = row[splat_var].value if splat_var and row.get(splat_var) is not None else ""
+        if not splat_url and asset_url and assets.is_splat_asset(asset_url):
+            splat_url, asset_url = asset_url, ""
+
         keep_transform = False
-        if asset_url and asset_budget > 0:
+        if splat_url and asset_budget > 0:
+            obj, note = _splat_object(splat_url, name, collection, settings)
+            if obj is None:
+                report.warn(note)
+            else:
+                report.assets += 1
+                asset_budget -= 1
+                if note:
+                    report.warn(note)
+        elif splat_url:
+            report.warn(f"asset limit ({settings.max_assets}) reached — remaining rows are markers")
+
+        if obj is None and asset_url and asset_budget > 0:
             # A CAD/BIM asset carries real coordinates; so does any asset paired
             # with a geometry column while we lay out by geometry. Either way it
             # should stay where it lands rather than be re-placed.
@@ -447,7 +467,7 @@ def build(result, settings: Settings, context=None) -> Report:
             else:
                 report.assets += 1
                 asset_budget -= 1
-        elif asset_url:
+        elif asset_url and obj is None:
             report.warn(f"asset limit ({settings.max_assets}) reached — remaining rows are markers")
 
         # Video and image-plane rows become upright screens at the row's spot.
@@ -759,6 +779,37 @@ def _asset_object(
         return (None, str(exc), False)
     except Exception as exc:  # pragma: no cover - importer-specific failures
         return (None, f"{url}: {exc}", False)
+
+
+def _splat_object(
+    url: str,
+    name: str,
+    collection: "bpy.types.Collection",
+    settings: Settings,
+) -> Tuple[Optional["bpy.types.Object"], str]:
+    """A Gaussian splat, wrapped in an empty so placement never touches it.
+
+    The empty is what gets positioned; the splat is parented to it, and its own
+    matrix (and therefore its stored Gaussian attributes) is left untouched.
+    Returns ``(empty, note)``.
+    """
+    try:
+        objects, note, via_addon = assets.import_splat_asset(url, limit=settings.splat_points)
+    except IOError as exc:
+        return (None, str(exc))
+    if not objects:
+        return (None, note or f"no splat imported from {url}")
+
+    empty = bpy.data.objects.new(name, None)
+    empty.empty_display_type = "SPHERE"
+    empty.empty_display_size = 0.3
+    collection.objects.link(empty)
+    empty["rete:splatGroup"] = url
+    for obj in objects:
+        if not via_addon and obj.name not in collection.objects:
+            collection.objects.link(obj)  # our preview arrives unlinked
+        obj.parent = empty  # deliberately no matrix change — see the docstring
+    return (empty, note)
 
 
 def _geometry_object(

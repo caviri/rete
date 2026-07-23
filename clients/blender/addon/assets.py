@@ -22,7 +22,8 @@ from typing import Dict, List, Optional, Tuple
 
 import bpy
 
-from . import detect
+from . import detect, splats
+from .splats import is_splat_ply  # noqa: F401 — re-exported for callers
 
 USER_AGENT = "rete-blender (+https://github.com/caviri/rete)"
 TIMEOUT = 60
@@ -151,7 +152,37 @@ def library_collection() -> "bpy.types.Collection":
 
 
 def _family(path: str) -> str:
-    return detect.MODEL_EXT.get(os.path.splitext(path)[1].lower(), "")
+    ext = os.path.splitext(path)[1].lower()
+    if ext in detect.SPLAT_EXT:
+        return "splat"
+    return detect.MODEL_EXT.get(ext, "")
+
+
+#: url -> whether it is a Gaussian splat (cached; a ``.ply`` costs one sniff).
+_splat_sniff: Dict[str, bool] = {}
+
+
+def is_splat_asset(url: str) -> bool:
+    """Whether a URL is a Gaussian splat, sniffing ``.ply`` headers when needed.
+
+    ``.splat``/``.ksplat``/``.spz`` are splat-only by extension; a ``.ply`` may be
+    a plain mesh or a splat, told apart by its header — so a splat exported as
+    ``.ply`` still gets splat handling.
+    """
+    url = url.split("#", 1)[0]
+    if url in _splat_sniff:
+        return _splat_sniff[url]
+    ext = detect.url_extension(url)
+    result = False
+    if ext in detect.SPLAT_EXT:
+        result = True
+    elif ext == ".ply":
+        try:
+            result = is_splat_ply(fetch(url))
+        except IOError:
+            result = False
+    _splat_sniff[url] = result
+    return result
 
 
 def import_asset(url: str, *, refresh: bool = False) -> List["bpy.types.Object"]:
@@ -169,7 +200,14 @@ def import_asset(url: str, *, refresh: bool = False) -> List["bpy.types.Object"]
     family = _family(path)
 
     before = set(bpy.data.objects)
-    if family in detect.CAD_FAMILIES:
+    if family == "splat" or (family == "ply" and is_splat_ply(path)):
+        objects, _, via_addon = splats.import_splat(path, url)
+        if not via_addon:
+            for obj in objects:  # preview objects arrive unlinked
+                bpy.context.scene.collection.objects.link(obj)
+        _library[url] = [o.name for o in objects]
+        return objects
+    elif family in detect.CAD_FAMILIES:
         new = _import_cad(path, family, url)
     else:
         op = _importer(path)
@@ -191,6 +229,27 @@ def import_asset(url: str, *, refresh: bool = False) -> List["bpy.types.Object"]
     for obj in new:
         _nodes[(url, obj.name)] = obj.name
     return new
+
+
+def import_splat_asset(url: str, *, refresh: bool = False, limit: int = None) -> Tuple[List["bpy.types.Object"], str, bool]:
+    """Import a Gaussian splat, returning ``(objects, note, via_addon)``.
+
+    Separate from :func:`import_asset` because the splat path carries a note (the
+    preview / add-on message), reports whether an add-on handled it, and its
+    objects are used in place, never instanced — copying a splat object would
+    risk desyncing its attributes. Objects are left unlinked (preview) or as the
+    add-on placed them (via_addon); the builder does the linking and placement.
+    """
+    url = url.split("#", 1)[0]
+    if not refresh and url in _library:
+        objs = [bpy.data.objects.get(n) for n in _library[url] if bpy.data.objects.get(n)]
+        if objs:
+            return objs, "", False
+    path = fetch(url, refresh=refresh)
+    kwargs = {"limit": limit} if limit else {}
+    objects, note, via_addon = splats.import_splat(path, url, **kwargs)
+    _library[url] = [o.name for o in objects]
+    return objects, note, via_addon
 
 
 # --------------------------------------------------------------- CAD / BIM

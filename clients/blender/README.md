@@ -134,6 +134,23 @@ scene content:
 The **Media & maps** panel picks the image mode, the plane height, and the map
 zoom / tile budget / extrusion.
 
+### Gaussian splats (3DGS)
+
+A splat URL — a photoreal 3D Gaussian Splatting scan — is scene content too. A
+`.ply` (told apart from a mesh `.ply` by sniffing its header), `.splat`,
+`.ksplat` or `.spz` is recognised, and handled the same way as IFC: if a **3DGS
+add-on** is installed (e.g. KIRI Engine's *3DGS Render*), the add-on imports and
+renders the real splats; otherwise the add-on-free fallback parses the Gaussian
+centres and their colours into an **honest point-cloud preview** — so you see
+the shape and where it sits — with a note about installing the add-on for real
+rendering. `.ksplat`/`.spz` are compressed web formats: an add-on that reads
+them works, but the preview asks you to convert to a 3DGS `.ply` first.
+
+Splats never have an ordinary Blender transform baked onto them (that would
+desync their stored attributes): the importer parents the splat to an empty and
+moves the empty, leaving the splat's own matrix untouched. The **Media & maps**
+panel sets the preview point cap.
+
 ### Inherited properties
 
 This is the point of the whole thing. With **Inherit all properties** on, every

@@ -55,6 +55,7 @@ produces a sensible scene.
 | Image | an image or IIIF URL | a texture, an upright image plane, or a 360° world |
 | Video | an `.mp4`/`.webm`/`.mov`/… URL | a movie-textured plane synced to the timeline |
 | Map | a `.pmtiles` URL | vector map meshes (per layer) or raster tile planes |
+| Splat | a 3DGS `.ply`/`.splat`/`.ksplat` URL | the 3DGS add-on's splats, or a point-cloud preview |
 | Colour | `#rrggbb`, `rgb()`, or a CSS name | the base colour |
 | Number | any numeric literal | a drivable property, a colour ramp, a mass |
 | Class | `rdf:type` and type-like columns | grouping and a stable per-class colour |
@@ -109,6 +110,16 @@ world** environment.
 plays, **synced to the scene's frame range** — a graph of clips laid out in
 space, playing as you scrub. It uses Blender's own movie reader; a build without
 FFmpeg degrades cleanly.
+
+**Gaussian splats.** A 3DGS splat URL (`.ply` — sniffed apart from a mesh `.ply`
+— `.splat`, `.ksplat`, `.spz`) is handled like IFC: if a 3DGS add-on such as KIRI
+Engine's *3DGS Render* is installed, it imports and renders the real splats;
+otherwise an add-on-free fallback parses the Gaussian centres and colours into an
+honest point-cloud preview, with a note about installing the add-on. Splats are
+parented to an empty and placed by moving the empty, so their stored attributes
+(position, scale, rotation, spherical-harmonic colour, opacity) are never
+desynced by an ordinary transform. `.ksplat`/`.spz` are convert-to-`.ply` for the
+preview.
 
 ## Inherited properties
 

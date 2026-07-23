@@ -39,6 +39,7 @@ from addon import (  # noqa: E402
     physics,
     props as rprops,
     relations,
+    splats,
     tiles,
     timeline,
 )
@@ -227,6 +228,19 @@ def t_detect():
     b = detect.resolve(MapResult(), detect.classify_result(MapResult()), {})
     eq(b.maps, ["map"], "map column kept as MAP, not entity")
     truthy(b.entity is None, "no fallback entity stole the map column")
+
+    # Gaussian-splat URLs: .splat/.ksplat by extension; .ply stays ASSET (it is
+    # sniffed at import); a splat-named column of non-URLs falls back to SPLAT.
+    eq(detect.classify_column("m", [C("iri", "https://x.org/scan.splat")]), detect.SPLAT)
+    eq(detect.classify_column("m", [C("iri", "https://x.org/scan.ksplat")]), detect.SPLAT)
+    eq(detect.classify_column("m", [C("iri", "https://x.org/scan.ply")]), detect.ASSET)
+    eq(detect.classify_column("gaussian", [C("literal", "ref-42")]), detect.SPLAT)
+    eq(
+        detect.classify_column(
+            "s", [C("iri", "https://x.org/x")], predicate="https://w3id.org/rete/media#splat"
+        ),
+        detect.SPLAT,
+    )
 
     # CAD / BIM asset URLs are recognised, whatever the column is called.
     eq(detect.classify_column("m", [C("iri", "https://x.org/house.ifc")]), detect.ASSET)
@@ -1224,6 +1238,207 @@ def t_pmtiles_range():
         server.shutdown()
 
 
+def _make_dot_splat(path: str, n: int = 40) -> str:
+    """A minimal antimatter15 .splat: n × 32-byte records."""
+    import struct
+
+    with open(path, "wb") as fh:
+        for i in range(n):
+            fh.write(struct.pack("<fff", i * 0.1, i * 0.2, i * 0.05))  # position
+            fh.write(struct.pack("<fff", 0.01, 0.01, 0.01))            # scale
+            fh.write(bytes((i % 256, (2 * i) % 256, (3 * i) % 256, 255)))  # rgba
+            fh.write(bytes((128, 128, 128, 255)))                     # rotation
+    return path
+
+
+def _make_splat_ply(path: str, n: int = 30) -> str:
+    """A minimal binary 3DGS .ply with the tell-tale f_dc/scale/rot properties."""
+    import struct
+
+    props = ["x", "y", "z", "f_dc_0", "f_dc_1", "f_dc_2", "opacity",
+             "scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"]
+    header = "ply\nformat binary_little_endian 1.0\n"
+    header += f"element vertex {n}\n"
+    header += "".join(f"property float {p}\n" for p in props)
+    header += "end_header\n"
+    with open(path, "wb") as fh:
+        fh.write(header.encode("ascii"))
+        for i in range(n):
+            row = [i * 0.1, i * 0.2, i * 0.05,   # xyz
+                   0.5, -0.2, 0.1,               # f_dc (colour)
+                   3.0,                          # opacity (sigmoid → ~0.95)
+                   0.01, 0.01, 0.01,             # scale
+                   1.0, 0.0, 0.0, 0.0]           # rot quaternion
+            fh.write(struct.pack("<14f", *row))
+    return path
+
+
+def _make_mesh_ply(path: str) -> str:
+    """A plain (non-splat) PLY — no f_dc/scale/rot properties."""
+    header = ("ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
+              "property float x\nproperty float y\nproperty float z\n"
+              "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+              "element face 0\nproperty list uchar int vertex_indices\nend_header\n")
+    import struct
+
+    with open(path, "wb") as fh:
+        fh.write(header.encode("ascii"))
+        fh.write(struct.pack("<fff", 0.0, 0.0, 0.0) + bytes((255, 0, 0)))
+    return path
+
+
+@test("splats: .ply headers are told apart; .splat/.ply parse into preview points")
+def t_splat_parse():
+    directory = STATE.get("dir") or tempfile.mkdtemp(prefix="rete-splat-")
+    STATE["dir"] = directory
+
+    splat_ply = _make_splat_ply(os.path.join(directory, "s.ply"), 30)
+    mesh_ply = _make_mesh_ply(os.path.join(directory, "m.ply"))
+    dot = _make_dot_splat(os.path.join(directory, "s.splat"), 40)
+
+    truthy(splats.is_splat_ply(splat_ply), "3DGS .ply recognised as a splat")
+    truthy(not splats.is_splat_ply(mesh_ply), "plain mesh .ply is not a splat")
+    truthy(assets.is_splat_asset("file://" + dot.replace("\\", "/")), ".splat is a splat asset")
+    truthy(
+        assets.is_splat_asset("file://" + splat_ply.replace("\\", "/")),
+        "splat .ply is a splat asset (sniffed)",
+    )
+    truthy(
+        not assets.is_splat_asset("file://" + mesh_ply.replace("\\", "/")),
+        "mesh .ply is not routed to splats",
+    )
+
+    pos, col = splats.parse_dot_splat(dot)
+    eq(len(pos), 40, ".splat points parsed")
+    eq(len(col), 40, ".splat colours parsed")
+    pos2, col2 = splats.parse_ply_splat(splat_ply)
+    eq(len(pos2), 30, ".ply splat points parsed")
+    # f_dc 0.5 → colour 0.5 + C0*0.5 ≈ 0.64; opacity sigmoid(3) ≈ 0.95.
+    truthy(0.5 < col2[0][0] < 0.8, f"SH colour decoded ({col2[0][0]:.2f})")
+    truthy(col2[0][3] > 0.9, "opacity decoded")
+
+
+@test("splats: no add-on → an honest centred point-cloud preview, with a note")
+def t_splat_preview():
+    directory = STATE["dir"]
+    dot = _make_dot_splat(os.path.join(directory, "prev.splat"), 50)
+    url = "file://" + dot.replace("\\", "/")
+
+    truthy(splats.find_splat_importer() is None, "no 3DGS add-on registered in a clean Blender")
+    objects, note, via_addon = assets.import_splat_asset(url, refresh=True)
+    truthy(not via_addon, "fell back to preview")
+    eq(len(objects), 1, "one preview object")
+    obj = objects[0]
+    eq(len(obj.data.vertices), 50, "a vertex per Gaussian")
+    truthy("splat_color" in obj.data.attributes, "colour attribute present")
+    truthy(obj.get("rete:splatPreview"), "flagged as a preview")
+    truthy("3DGS add-on" in note or "add-on" in note, "note points at the add-on")
+    # Centred on its centroid, so it lands cleanly when placed.
+    xs = [v.co.x for v in obj.data.vertices]
+    truthy(abs(sum(xs) / len(xs)) < 1e-4, "preview centred on its centroid")
+
+
+@test("splats: a .ksplat with no add-on degrades with a convert message")
+def t_splat_ksplat():
+    directory = STATE["dir"]
+    path = os.path.join(directory, "web.ksplat")
+    with open(path, "wb") as fh:
+        fh.write(b"KSPL" + bytes(64))  # not parseable, and no add-on
+    try:
+        assets.import_splat_asset("file://" + path.replace("\\", "/"), refresh=True)
+        raise AssertionError("expected an IOError for .ksplat without an add-on")
+    except IOError as exc:
+        truthy(".ply" in str(exc) or "convert" in str(exc), "message suggests converting to .ply")
+
+
+@test("splats: a registered 3DGS operator is discovered and used")
+def t_splat_addon_handoff():
+    calls = {"n": 0}
+
+    class RETE_OT_fake_3dgs_import(bpy.types.Operator):
+        bl_idname = "object.rete_fake_3dgs_import"
+        bl_label = "Fake 3DGS import"
+
+        def execute(self, context):
+            calls["n"] += 1
+            obj = bpy.data.objects.new("fake-splat", None)
+            context.scene.collection.objects.link(obj)
+            return {"FINISHED"}
+
+    # This module uses `from __future__ import annotations`, so a class-body
+    # `filepath: StringProperty(...)` would stringize and never register. Set the
+    # real property object explicitly.
+    RETE_OT_fake_3dgs_import.__annotations__ = {
+        "filepath": bpy.props.StringProperty(subtype="FILE_PATH")
+    }
+    bpy.utils.register_class(RETE_OT_fake_3dgs_import)
+    try:
+        op = splats.find_splat_importer()
+        truthy(op is not None, "discovery found the 3DGS importer")
+        directory = STATE["dir"]
+        dot = _make_dot_splat(os.path.join(directory, "handoff.splat"), 10)
+        objects, note, via_addon = assets.import_splat_asset(
+            "file://" + dot.replace("\\", "/"), refresh=True
+        )
+        truthy(via_addon, "handoff reported")
+        truthy(calls["n"] >= 1, "the add-on operator was actually called")
+        truthy(any(o.name.startswith("fake-splat") for o in objects), "add-on objects returned")
+        truthy(all(o.get("rete:splat") for o in objects), "tagged as splats")
+    finally:
+        bpy.utils.unregister_class(RETE_OT_fake_3dgs_import)
+        # Clear the cached import so later tests re-resolve without the add-on.
+        assets._splat_sniff.clear()
+
+
+@test("splats: build path wraps the splat in an empty, never mutating its matrix")
+def t_splat_build():
+    directory = STATE["dir"]
+    dot = _make_dot_splat(os.path.join(directory, "build.splat"), 60)
+    url = "file://" + dot.replace("\\", "/")
+
+    nt = (
+        '<https://x.org/o> <http://www.w3.org/2000/01/rdf-schema#label> "Object" .\n'
+        '<https://x.org/o> <https://w3id.org/rete/media#splat> <%s> .\n'
+        '<https://x.org/o> <https://w3id.org/rete/geo3#asWKT3D> "POINT Z(5000 0 0)" .\n' % url
+    )
+    src = os.path.join(directory, "splat.rete")
+    engine.engine().Builder().add(nt, "nt").export(src)
+    r = engine.select(
+        src,
+        "PREFIX m: <https://w3id.org/rete/media#>\n"
+        "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n"
+        "PREFIX geo3: <https://w3id.org/rete/geo3#>\n"
+        "SELECT ?s ?label ?splat ?wkt WHERE { ?s rdfs:label ?label ; m:splat ?splat ; geo3:asWKT3D ?wkt }",
+    )
+    eq(detect.classify_result(r)["splat"], detect.SPLAT, "m:splat detected as a splat")
+
+    name = fresh_local("splat-build")
+    report = builder.build(
+        r,
+        builder.Settings(source=src, collection_name=name, scale_mode="MM", recentre=False,
+                         deep_properties=False, material_mode="NONE", layout="GEOMETRY"),
+    )
+    truthy(report.assets >= 1, "splat counted as an imported asset")
+    coll = bpy.data.collections[name]
+    empties = [o for o in coll.all_objects if o.type == "EMPTY" and o.get("rete:splatGroup")]
+    truthy(empties, "splat wrapped in an empty")
+    empty = empties[0]
+    bpy.context.view_layer.update()
+    # POINT Z(5000 0 0) in mm → 5 m along X: the EMPTY carries the placement.
+    truthy(abs(empty.location[0] - 5.0) < 1e-3, f"empty placed at the row position ({empty.location[0]:.2f})")
+    splat = next((c for c in empty.children if c.get("rete:splat")), None)
+    truthy(splat is not None, "splat parented to the empty")
+    # The splat's OWN matrix must be untouched (identity basis) — the whole point.
+    truthy(splat.matrix_basis == _identity_matrix(), "splat's own transform never mutated")
+    truthy("splat_color" in splat.data.attributes, "preview colour survived")
+
+
+def _identity_matrix():
+    import mathutils
+
+    return mathutils.Matrix.Identity(4)
+
+
 @test("point cloud: rows become one mesh with named attributes")
 def t_point_cloud():
     settings = builder.Settings(
@@ -1314,6 +1529,7 @@ def main() -> None:
         t_cad_graph, t_cad_relations, t_ifc_import,
         t_image_plane, t_world_panorama, t_video,
         t_pmtiles_vector, t_pmtiles_raster, t_pmtiles_range,
+        t_splat_parse, t_splat_preview, t_splat_ksplat, t_splat_addon_handoff, t_splat_build,
         t_point_cloud, t_export, t_drivers, t_register,
     ):
         fn()
