@@ -35,6 +35,7 @@ TEXT = "TEXT"
 VIDEO = "VIDEO"
 MAP = "MAP"
 SPLAT = "SPLAT"
+POINTS = "POINTS"
 IGNORE = "IGNORE"
 
 ROLE_ITEMS = [
@@ -48,6 +49,7 @@ ROLE_ITEMS = [
     (VIDEO, "Video", "Video URL — a movie-textured plane synced to the timeline"),
     (MAP, "Map (PMTiles)", "A .pmtiles map — becomes vector or raster map geometry"),
     (SPLAT, "Gaussian splat", "A 3DGS .ply/.splat — via the 3DGS add-on, or a preview"),
+    (POINTS, "Point cloud", "A LAS/LAZ/COPC point cloud — becomes a coloured point mesh"),
     (COLOR, "Colour", "Colour literal — becomes the material's base colour"),
     (TIME, "Time", "A date, time or number placing the row on the timeline"),
     (TIME_END, "Time (end)", "End of the row's interval on the timeline"),
@@ -65,6 +67,10 @@ VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv", ".m4v", ".ogv", ".avi"}
 #: at import time (:func:`assets.is_splat_ply`), so a splat ``.ply`` still routes
 #: to the splat path even though it detects as a plain 3D asset.
 SPLAT_EXT = {".splat", ".ksplat", ".spz"}
+
+#: Point-cloud container extensions. ``.copc.laz`` (Cloud Optimized Point Cloud)
+#: ends in ``.laz`` and is told apart by its full name / header at import.
+POINTCLOUD_EXT = {".las", ".laz"}
 
 #: File extensions Blender can import, mapped to the importer family. The CAD/BIM
 #: formats (ifc, dxf, step) need an external importer and are handled specially
@@ -124,6 +130,7 @@ _NAME_HINTS: List[Tuple[str, str]] = [
     (r"(meshnode|nodename|meshname)", MESH_NODE),
     (r"^(pmtiles|basemap|tiles|maptiles)$|(pmtiles)", MAP),
     (r"^(splat|splats|gaussian|gaussiansplat|3dgs|radiance)$", SPLAT),
+    (r"^(pointcloud|points|lidar|copc|lasfile|laz)$|(pointcloud|lidar)", POINTS),
     (r"^(video|movie|clip|footage|reel)$", VIDEO),
     (r"^(wkt|geom|geometry|aswkt|aswkt3d|box|box3d|bbox|shape|location|coords?)$", GEOMETRY),
     (r"(thumbnail|depiction|image|photo|picture|iiif|cover|scan|poster)", IMAGE),
@@ -174,6 +181,9 @@ KNOWN_PREDICATES: Dict[str, str] = {
     "https://w3id.org/rete/cad#ifcFile": ASSET,
     "https://w3id.org/rete/media#splat": SPLAT,
     "https://w3id.org/rete/media#gaussianSplat": SPLAT,
+    "https://w3id.org/rete/media#pointCloud": POINTS,
+    "https://w3id.org/rete/media#copc": POINTS,
+    "https://w3id.org/rete/media#lidar": POINTS,
     "https://w3id.org/rete/cad#ifcClass": CLASS,
     "https://w3id.org/rete/cad#elevation": NUMBER,
     "https://w3id.org/rete/cad#netArea": NUMBER,
@@ -251,6 +261,11 @@ def is_splat_url(value: str) -> bool:
     return url_extension(value) in SPLAT_EXT
 
 
+def is_pointcloud_url(value: str) -> bool:
+    """A LAS/LAZ/COPC point cloud (``.copc.laz`` ends in ``.laz``)."""
+    return url_extension(value) in POINTCLOUD_EXT
+
+
 def is_image_url(value: str) -> bool:
     if url_extension(value) in IMAGE_EXT:
         return True
@@ -288,6 +303,8 @@ def classify_cell(cell) -> Optional[str]:
     if cell.kind == "iri":
         if is_map_url(value):
             return MAP
+        if is_pointcloud_url(value):
+            return POINTS
         if is_splat_url(value):
             return SPLAT
         if is_model_url(value):
@@ -301,6 +318,8 @@ def classify_cell(cell) -> Optional[str]:
         return GEOMETRY
     if is_map_url(value):
         return MAP
+    if is_pointcloud_url(value):
+        return POINTS
     if is_splat_url(value):
         return SPLAT
     if is_model_url(value):
@@ -482,6 +501,10 @@ class Binding:
         return self.first(SPLAT)
 
     @property
+    def points(self) -> Optional[str]:
+        return self.first(POINTS)
+
+    @property
     def color(self) -> Optional[str]:
         return self.first(COLOR)
 
@@ -545,7 +568,7 @@ def resolve(result, roles: Dict[str, str], overrides: Optional[Dict[str, str]] =
         # The fallback identity is the first plain IRI column — but not one that
         # already plays a content role (a map/asset/video/image URL is an IRI
         # too, and consuming it as the entity would drop the content).
-        content = {MAP, ASSET, VIDEO, IMAGE, SPLAT}
+        content = {MAP, ASSET, VIDEO, IMAGE, SPLAT, POINTS}
         for var in result.vars:
             if merged.get(var) in content:
                 continue

@@ -151,6 +151,30 @@ desync their stored attributes): the importer parents the splat to an empty and
 moves the empty, leaving the splat's own matrix untouched. The **Media & maps**
 panel sets the preview point cap.
 
+### Point clouds — LAS, LAZ, and cloud-native COPC
+
+A point-cloud URL becomes a coloured point mesh. The modern, efficient,
+cloud-native format is **COPC** (Cloud Optimized Point Cloud) — a single
+`.copc.laz` whose points sit in a clustered octree, so a remote cloud is read
+**over HTTP range at a bounded level of detail**: only the octree nodes for the
+levels you ask for are fetched, exactly the way `.rete` and PMTiles are read. A
+billion-point city scan on a static host answers in megabytes.
+
+- **COPC** (`.copc.laz`) — level-of-detail read; remote clouds stream node by
+  node, capped by the point budget, never downloading the whole file.
+- **LAS / LAZ** — read whole and decimated to the budget.
+
+RGB colour becomes a point attribute (falling back to nothing when the cloud is
+uncoloured). LAZ and COPC need **laspy** with the `lazrs` backend — a small pip
+install, not bundled:
+
+```sh
+<blender-python> -m pip install "laspy[lazrs]"
+```
+
+Without it, uncompressed **LAS** still reads through a built-in parser; LAZ/COPC
+degrade with a clear message. The **Media & maps** panel sets the point budget.
+
 ### Inherited properties
 
 This is the point of the whole thing. With **Inherit all properties** on, every

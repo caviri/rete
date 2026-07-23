@@ -223,6 +223,15 @@ class ReteSettings(PropertyGroup):
         ),
     )
 
+    # -- point clouds ------------------------------------------------------
+    points_max: IntProperty(
+        name="Point budget", default=500_000, min=1000, soft_max=10_000_000,
+        description=(
+            "Maximum points to load. A COPC caps by octree level (fetching only "
+            "that detail); LAS/LAZ are decimated to fit"
+        ),
+    )
+
     # -- time --------------------------------------------------------------
     time_mode: EnumProperty(name="Time", items=builder.TIME_MODES, default="NONE")
     frame_start: IntProperty(name="Start frame", default=1, min=0)
@@ -302,6 +311,7 @@ class ReteSettings(PropertyGroup):
             map_tiles=self.map_tiles,
             map_extrude=self.map_extrude,
             splat_points=self.splat_points,
+            points_max=self.points_max,
             time_mode=self.time_mode,
             frame_start=self.frame_start,
             frame_end=self.frame_end,

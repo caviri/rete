@@ -269,6 +269,11 @@ class RETE_PT_media(RetePanel, Panel):
         column.label(text="Gaussian splats", icon="OUTLINER_OB_POINTCLOUD")
         column.prop(settings, "splat_points")
 
+        layout.separator()
+        column = layout.column(align=True)
+        column.label(text="Point clouds (LAS/LAZ/COPC)", icon="POINTCLOUD_DATA")
+        column.prop(settings, "points_max")
+
 
 class RETE_PT_time(RetePanel, Panel):
     bl_idname = "RETE_PT_time"

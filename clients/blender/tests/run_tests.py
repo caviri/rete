@@ -37,6 +37,7 @@ from addon import (  # noqa: E402
     materials,
     media,
     physics,
+    pointcloud,
     props as rprops,
     relations,
     splats,
@@ -235,6 +236,20 @@ def t_detect():
     eq(detect.classify_column("m", [C("iri", "https://x.org/scan.ksplat")]), detect.SPLAT)
     eq(detect.classify_column("m", [C("iri", "https://x.org/scan.ply")]), detect.ASSET)
     eq(detect.classify_column("gaussian", [C("literal", "ref-42")]), detect.SPLAT)
+
+    # Point clouds: LAS/LAZ/COPC.
+    eq(detect.classify_column("m", [C("iri", "https://x.org/scan.las")]), detect.POINTS)
+    eq(detect.classify_column("m", [C("iri", "https://x.org/scan.laz")]), detect.POINTS)
+    eq(detect.classify_column("m", [C("iri", "https://x.org/city.copc.laz")]), detect.POINTS)
+    truthy(pointcloud.is_copc_name("https://x.org/city.copc.laz"))
+    truthy(not pointcloud.is_copc_name("https://x.org/city.laz"))
+    eq(detect.classify_column("lidar", [C("literal", "ref")]), detect.POINTS)
+    eq(
+        detect.classify_column(
+            "p", [C("iri", "https://x.org/x")], predicate="https://w3id.org/rete/media#copc"
+        ),
+        detect.POINTS,
+    )
     eq(
         detect.classify_column(
             "s", [C("iri", "https://x.org/x")], predicate="https://w3id.org/rete/media#splat"
@@ -1439,6 +1454,201 @@ def _identity_matrix():
     return mathutils.Matrix.Identity(4)
 
 
+def _make_las(path: str, n: int = 50) -> str:
+    """A minimal uncompressed LAS 1.2, point format 2 (XYZ + RGB)."""
+    import struct
+
+    header = bytearray(227)
+    header[0:4] = b"LASF"
+    header[24] = 1  # version major
+    header[25] = 2  # version minor
+    struct.pack_into("<H", header, 94, 227)   # header size
+    struct.pack_into("<I", header, 96, 227)   # offset to point data
+    header[104] = 2                            # point data record format
+    struct.pack_into("<H", header, 105, 26)   # record length
+    struct.pack_into("<I", header, 107, n)    # legacy point count
+    struct.pack_into("<3d", header, 131, 0.001, 0.001, 0.001)  # scales
+    struct.pack_into("<3d", header, 155, 0.0, 0.0, 0.0)        # offsets
+
+    body = bytearray()
+    for i in range(n):
+        x, y, z = i * 0.1, i * 0.2, i * 0.05
+        rec = bytearray(26)
+        struct.pack_into("<iii", rec, 0, round(x / 0.001), round(y / 0.001), round(z / 0.001))
+        struct.pack_into("<HHH", rec, 20, (i * 5) % 65536, 0, (i * 3) % 65536)  # RGB
+        body += rec
+    with open(path, "wb") as fh:
+        fh.write(header + body)
+    return path
+
+
+@test("points: the built-in LAS reader parses positions and colour")
+def t_las_builtin():
+    directory = STATE.get("dir") or tempfile.mkdtemp(prefix="rete-pc-")
+    STATE["dir"] = directory
+    las = _make_las(os.path.join(directory, "cloud.las"), 50)
+
+    positions, colors = pointcloud.parse_las(las)
+    eq(len(positions), 50, "all points parsed")
+    truthy(colors is not None and len(colors) == 50, "RGB parsed")
+    # x = i*0.1 with scale 0.001, offset 0 → recovered exactly.
+    close(positions[10][0], 1.0, 1e-6, what="LAS x decoded")
+    close(positions[10][1], 2.0, 1e-6, what="LAS y decoded")
+    truthy(0.0 <= colors[10][0] <= 1.0, "colour normalised")
+
+
+@test("points: laspy reads a LAZ into a coloured point mesh")
+def t_laz_laspy():
+    try:
+        import laspy  # noqa: F401
+    except Exception:
+        print("       (laspy absent — skipping)")
+        return
+    import numpy as np
+
+    directory = STATE["dir"]
+    path = os.path.join(directory, "cloud.laz")
+    header = laspy.LasHeader(point_format=3, version="1.4")
+    las = laspy.LasData(header)
+    n = 80
+    las.x = np.linspace(0, 8, n)
+    las.y = np.linspace(0, 4, n)
+    las.z = np.linspace(0, 2, n)
+    las.red = np.linspace(0, 65535, n).astype("uint16")
+    las.green = np.zeros(n, dtype="uint16")
+    las.blue = np.full(n, 30000, dtype="uint16")
+    las.write(path, do_compress=True)
+
+    url = "file://" + path.replace("\\", "/")
+    objects, note = pointcloud.import_points(url, path, is_remote=False, limit=1_000_000)
+    eq(len(objects), 1, "one point-cloud object")
+    obj = objects[0]
+    eq(len(obj.data.vertices), n, "a vertex per point")
+    truthy("point_color" in obj.data.attributes, "colour attribute present")
+    truthy(obj.get("rete:pointCloud"), "tagged as a point cloud")
+    # Centred on its centroid so it lands at the placement point.
+    xs = [v.co.x for v in obj.data.vertices]
+    truthy(abs(sum(xs) / len(xs)) < 1e-4, "recentred on centroid")
+
+
+@test("points: a COPC reads via level-of-detail (the cloud-native format)")
+def t_copc_local():
+    fixture = os.path.join(HERE, "fixtures", "tiny.copc.laz")
+    if not os.path.exists(fixture):
+        print("       (tiny.copc.laz fixture absent — skipping)")
+        return
+    try:
+        import laspy  # noqa: F401
+    except Exception:
+        print("       (laspy absent — skipping)")
+        return
+
+    url = "file://" + fixture.replace("\\", "/")
+    truthy(pointcloud.is_copc_name(url), "recognised as COPC")
+    objects, note = pointcloud.import_points(url, fixture, is_remote=False, limit=1_000_000)
+    eq(len(objects), 1, "one object")
+    obj = objects[0]
+    truthy(len(obj.data.vertices) > 50, f"COPC points read ({len(obj.data.vertices)})")
+    truthy("point_color" in obj.data.attributes, "COPC colour read")
+    truthy("octree" in note.lower() or "level" in note.lower(), f"LOD read reported: {note}")
+
+
+@test("points: a remote COPC is read over HTTP range, level by level")
+def t_copc_range():
+    fixture = os.path.join(HERE, "fixtures", "tiny.copc.laz")
+    try:
+        import laspy  # noqa: F401
+    except Exception:
+        print("       (laspy absent — skipping)")
+        return
+    import http.server
+    import threading
+
+    blob = open(fixture, "rb").read()
+    stats = {"range": 0, "full": 0}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            rng = self.headers.get("Range", "")
+            if rng.startswith("bytes="):
+                lo, hi = rng[6:].split("-")
+                lo = int(lo)
+                hi = int(hi) if hi else len(blob) - 1
+                chunk = blob[lo:hi + 1]
+                stats["range"] += 1
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {lo}-{hi}/{len(blob)}")
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Length", str(len(chunk)))
+                self.end_headers()
+                self.wfile.write(chunk)
+            else:
+                stats["full"] += 1
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(blob)))
+                self.send_header("Accept-Ranges", "bytes")
+                self.end_headers()
+                self.wfile.write(blob)
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/tiny.copc.laz"
+        objects, note = pointcloud.import_points(url, url, is_remote=True, limit=1_000_000)
+        truthy(objects and len(objects[0].data.vertices) > 0, "remote COPC returned points")
+        truthy(stats["range"] >= 1, f"read over HTTP range ({stats['range']} range requests)")
+    finally:
+        server.shutdown()
+
+
+@test("points: build path places a coloured cloud without rescaling it")
+def t_points_build():
+    fixture = os.path.join(HERE, "fixtures", "tiny.copc.laz")
+    try:
+        import laspy  # noqa: F401
+    except Exception:
+        print("       (laspy absent — skipping)")
+        return
+
+    url = "file://" + fixture.replace("\\", "/")
+    nt = (
+        '<https://x.org/site> <http://www.w3.org/2000/01/rdf-schema#label> "Site" .\n'
+        '<https://x.org/site> <https://w3id.org/rete/media#copc> <%s> .\n'
+        '<https://x.org/site> <https://w3id.org/rete/geo3#asWKT3D> "POINT Z(3000 0 0)" .\n' % url
+    )
+    src = os.path.join(STATE["dir"], "points.rete")
+    engine.engine().Builder().add(nt, "nt").export(src)
+    r = engine.select(
+        src,
+        "PREFIX m: <https://w3id.org/rete/media#>\n"
+        "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n"
+        "PREFIX geo3: <https://w3id.org/rete/geo3#>\n"
+        "SELECT ?s ?label ?pc ?wkt WHERE { ?s rdfs:label ?label ; m:copc ?pc ; geo3:asWKT3D ?wkt }",
+    )
+    eq(detect.classify_result(r)["pc"], detect.POINTS, "m:copc detected as a point cloud")
+
+    name = fresh_local("points-build")
+    report = builder.build(
+        r,
+        builder.Settings(source=src, collection_name=name, scale_mode="MM", recentre=False,
+                         deep_properties=False, material_mode="NONE", layout="GEOMETRY",
+                         point_style="CUBE"),
+    )
+    truthy(report.assets >= 1, "point cloud counted")
+    clouds = [o for o in bpy.data.collections[name].all_objects if o.get("rete:pointCloud")]
+    truthy(clouds, "point cloud in the scene")
+    cloud = clouds[0]
+    bpy.context.view_layer.update()
+    # POINT Z(3000 0 0) mm → 3 m along X; the cloud sits there…
+    truthy(abs(cloud.location[0] - 3.0) < 1e-3, f"placed at the row position ({cloud.location[0]:.2f})")
+    # …and was NOT rescaled to a marker box (scale stays 1).
+    truthy(all(abs(s - 1.0) < 1e-4 for s in cloud.scale), "point cloud not rescaled")
+    truthy("point_color" in cloud.data.attributes, "colour survived into the scene")
+
+
 @test("point cloud: rows become one mesh with named attributes")
 def t_point_cloud():
     settings = builder.Settings(
@@ -1530,6 +1740,7 @@ def main() -> None:
         t_image_plane, t_world_panorama, t_video,
         t_pmtiles_vector, t_pmtiles_raster, t_pmtiles_range,
         t_splat_parse, t_splat_preview, t_splat_ksplat, t_splat_addon_handoff, t_splat_build,
+        t_las_builtin, t_laz_laspy, t_copc_local, t_copc_range, t_points_build,
         t_point_cloud, t_export, t_drivers, t_register,
     ):
         fn()

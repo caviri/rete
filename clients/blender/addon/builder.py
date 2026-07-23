@@ -111,6 +111,7 @@ class Settings:
         self.map_tiles: int = kw.get("map_tiles", 40)
         self.map_extrude: float = kw.get("map_extrude", 0.0)
         self.splat_points: int = kw.get("splat_points", 200_000)  # preview cap
+        self.points_max: int = kw.get("points_max", 500_000)       # point-cloud budget
 
         self.time_mode: str = kw.get("time_mode", "NONE")
         self.frame_start: int = kw.get("frame_start", 1)
@@ -408,6 +409,7 @@ def build(result, settings: Settings, context=None) -> Report:
     video_var = binding.video
     image_var = binding.image
     splat_var = binding.splat
+    points_var = binding.points
     max_video_frames = 0
 
     asset_budget = settings.max_assets
@@ -437,6 +439,8 @@ def build(result, settings: Settings, context=None) -> Report:
         if not splat_url and asset_url and assets.is_splat_asset(asset_url):
             splat_url, asset_url = asset_url, ""
 
+        points_url = row[points_var].value if points_var and row.get(points_var) is not None else ""
+
         keep_transform = False
         if splat_url and asset_budget > 0:
             obj, note = _splat_object(splat_url, name, collection, settings)
@@ -448,6 +452,18 @@ def build(result, settings: Settings, context=None) -> Report:
                 if note:
                     report.warn(note)
         elif splat_url:
+            report.warn(f"asset limit ({settings.max_assets}) reached — remaining rows are markers")
+
+        if obj is None and points_url and asset_budget > 0:
+            obj, note = _pointcloud_object(points_url, name, collection, settings)
+            if obj is None:
+                report.warn(note)
+            else:
+                report.assets += 1
+                asset_budget -= 1
+                if note:
+                    report.warn(note)
+        elif points_url and obj is None:
             report.warn(f"asset limit ({settings.max_assets}) reached — remaining rows are markers")
 
         if obj is None and asset_url and asset_budget > 0:
@@ -812,6 +828,36 @@ def _splat_object(
     return (empty, note)
 
 
+def _pointcloud_object(
+    url: str,
+    name: str,
+    collection: "bpy.types.Collection",
+    settings: Settings,
+) -> Tuple[Optional["bpy.types.Object"], str]:
+    """A point cloud (LAS/LAZ/COPC) as a coloured point mesh. ``(object, note)``.
+
+    A remote COPC is streamed by URL so only the requested level of detail is
+    fetched; everything else is fetched whole and decimated.
+    """
+    from . import pointcloud
+
+    is_remote = url.startswith(("http://", "https://"))
+    try:
+        if is_remote and pointcloud.is_copc_name(url):
+            objects, note = pointcloud.import_points(url, url, is_remote=True, limit=settings.points_max)
+        else:
+            path = assets.fetch(url)
+            objects, note = pointcloud.import_points(url, path, is_remote=False, limit=settings.points_max)
+    except IOError as exc:
+        return (None, str(exc))
+    if not objects:
+        return (None, note or f"no points imported from {url}")
+    obj = objects[0]
+    if obj.name not in collection.objects:
+        collection.objects.link(obj)
+    return (obj, note)
+
+
 def _geometry_object(
     geom: Optional[geometry.Geometry],
     placement: geometry.Placement,
@@ -893,7 +939,13 @@ def _place(
 
     if position is not None:
         obj.location = placement.apply(position)
-        if obj.type == "MESH" and settings.point_style in ("CUBE", "SPHERE"):
+        # Bounding-box sizing is for marker primitives only — never rescale an
+        # imported mesh (a point cloud, say) to a row's box.
+        if (
+            obj.type == "MESH"
+            and settings.point_style in ("CUBE", "SPHERE")
+            and not obj.get("rete:pointCloud")
+        ):
             sizer = geom if (geom is not None and geom.kind == geometry.BOX) else box
             if sizer is not None:
                 _fit_to_size(obj, _box_extent(sizer, placement))

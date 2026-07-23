@@ -363,6 +363,7 @@ produces a sensible scene.</p>
 <tr><td>Video</td><td>an <code>.mp4</code>/<code>.webm</code>/<code>.mov</code>/… URL</td><td>a movie-textured plane synced to the timeline</td></tr>
 <tr><td>Map</td><td>a <code>.pmtiles</code> URL</td><td>vector map meshes (per layer) or raster tile planes</td></tr>
 <tr><td>Splat</td><td>a 3DGS <code>.ply</code>/<code>.splat</code>/<code>.ksplat</code> URL</td><td>the 3DGS add-on's splats, or a point-cloud preview</td></tr>
+<tr><td>Point cloud</td><td>a <code>.las</code>/<code>.laz</code>/<code>.copc.laz</code> URL</td><td>a coloured point mesh (COPC read at a bounded level of detail)</td></tr>
 <tr><td>Colour</td><td><code>#rrggbb</code>, <code>rgb()</code>, or a CSS name</td><td>the base colour</td></tr>
 <tr><td>Number</td><td>any numeric literal</td><td>a drivable property, a colour ramp, a mass</td></tr>
 <tr><td>Class</td><td><code>rdf:type</code> and type-like columns</td><td>grouping and a stable per-class colour</td></tr>
@@ -417,6 +418,14 @@ parented to an empty and placed by moving the empty, so their stored attributes
 (position, scale, rotation, spherical-harmonic colour, opacity) are never
 desynced by an ordinary transform. <code>.ksplat</code>/<code>.spz</code> are convert-to-<code>.ply</code> for the
 preview.</p>
+<p><strong>Point clouds.</strong> A <code>.las</code>/<code>.laz</code>/<code>.copc.laz</code> URL becomes a coloured point mesh.
+The modern cloud-native format is <strong>COPC</strong> (Cloud Optimized Point Cloud): a
+single <code>.copc.laz</code> whose points sit in a clustered octree, read <strong>over HTTP range
+at a bounded level of detail</strong> — only the octree nodes for the requested levels
+are fetched, the same idea as <code>.rete</code> and PMTiles. Plain <code>.las</code>/<code>.laz</code> are read
+whole and decimated to the point budget. LAZ/COPC need <strong>laspy</strong> with <code>lazrs</code>
+(<code>pip install "laspy[lazrs]"</code>, not bundled); without it, uncompressed <code>.las</code>
+still reads and LAZ/COPC degrade with a clear message.</p>
 <h2>Inherited properties</h2>
 <p>With <strong>Inherit all properties</strong>, every statement about every imported entity is
 fetched — batched, so a thousand entities cost a handful of queries — and

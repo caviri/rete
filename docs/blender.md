@@ -56,6 +56,7 @@ produces a sensible scene.
 | Video | an `.mp4`/`.webm`/`.mov`/… URL | a movie-textured plane synced to the timeline |
 | Map | a `.pmtiles` URL | vector map meshes (per layer) or raster tile planes |
 | Splat | a 3DGS `.ply`/`.splat`/`.ksplat` URL | the 3DGS add-on's splats, or a point-cloud preview |
+| Point cloud | a `.las`/`.laz`/`.copc.laz` URL | a coloured point mesh (COPC read at a bounded level of detail) |
 | Colour | `#rrggbb`, `rgb()`, or a CSS name | the base colour |
 | Number | any numeric literal | a drivable property, a colour ramp, a mass |
 | Class | `rdf:type` and type-like columns | grouping and a stable per-class colour |
@@ -120,6 +121,15 @@ parented to an empty and placed by moving the empty, so their stored attributes
 (position, scale, rotation, spherical-harmonic colour, opacity) are never
 desynced by an ordinary transform. `.ksplat`/`.spz` are convert-to-`.ply` for the
 preview.
+
+**Point clouds.** A `.las`/`.laz`/`.copc.laz` URL becomes a coloured point mesh.
+The modern cloud-native format is **COPC** (Cloud Optimized Point Cloud): a
+single `.copc.laz` whose points sit in a clustered octree, read **over HTTP range
+at a bounded level of detail** — only the octree nodes for the requested levels
+are fetched, the same idea as `.rete` and PMTiles. Plain `.las`/`.laz` are read
+whole and decimated to the point budget. LAZ/COPC need **laspy** with `lazrs`
+(`pip install "laspy[lazrs]"`, not bundled); without it, uncompressed `.las`
+still reads and LAZ/COPC degrade with a clear message.
 
 ## Inherited properties
 
