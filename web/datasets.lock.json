@@ -259,6 +259,14 @@
       "cardUrl": "https://data.graphplaza.com/getty-ulan/getty-ulan.rete"
     },
     {
+      "key": "gni-bim",
+      "url": "https://data.graphplaza.com/gni-bim/gni-bim.rete",
+      "formatVersion": 5,
+      "contentHash": "554b39c4f0a7469461899c8b8b91f2b9",
+      "size": 120628,
+      "cardUrl": "https://data.graphplaza.com/gni-bim/gni-bim.rete"
+    },
+    {
       "key": "gotriple",
       "url": "https://data.graphplaza.com/gotriple/gotriple.rete",
       "formatVersion": 5,
