@@ -52,7 +52,9 @@ produces a sensible scene.
 | Mesh node | a node name inside a shared asset | just that node, keeping its place in the file |
 | Geometry | WKT (`POINT Z`, `LINESTRING`, `POLYGON`) or `BOX3D` | position, real mesh geometry, and size |
 | Time | a date, timestamp, year, duration, or decimal seconds | a position on the frame range |
-| Image | an image or IIIF URL | a textured material |
+| Image | an image or IIIF URL | a texture, an upright image plane, or a 360° world |
+| Video | an `.mp4`/`.webm`/`.mov`/… URL | a movie-textured plane synced to the timeline |
+| Map | a `.pmtiles` URL | vector map meshes (per layer) or raster tile planes |
 | Colour | `#rrggbb`, `rgb()`, or a CSS name | the base colour |
 | Number | any numeric literal | a drivable property, a colour ramp, a mass |
 | Class | `rdf:type` and type-like columns | grouping and a stable per-class colour |
@@ -84,6 +86,29 @@ than the engine itself. Without either, IFC rows degrade with a clear message
 and everything else still builds — and most CAD graphs also ship a
 `cad:glbModel` column that needs no extra install. `.dxf` uses the importer
 Blender already ships; `.step` has no core importer.
+
+## Maps, images & video
+
+Beyond 3D models, three URL kinds become scene content.
+
+**PMTiles maps.** A `.pmtiles` URL — a whole tiled map in one immutable,
+HTTP-range-readable file, the same idea as `.rete` — is read directly, fetching
+only the byte ranges the build touches (a continent's boundaries in a few
+hundred KB). Vector tiles (MVT) are decoded into one mesh **per layer**, coloured
+per layer, optionally extruded, and projected into the same geographic frame as
+any points drawn on top of them; raster tiles become textured planes. The reader
+and the MVT decoder are pure Python — no new dependency. Zoom, tile budget and
+extrusion are set in the **Media & maps** panel.
+
+**Images.** An image or IIIF URL is a textured material by default; it can
+instead become an upright **image plane** at the entity's position (sized to the
+picture's aspect), or an equirectangular panorama can become the scene's **360°
+world** environment.
+
+**Video.** An `.mp4`/`.webm`/`.mov`/… URL becomes an upright plane whose texture
+plays, **synced to the scene's frame range** — a graph of clips laid out in
+space, playing as you scrub. It uses Blender's own movie reader; a build without
+FFmpeg degrades cleanly.
 
 ## Inherited properties
 

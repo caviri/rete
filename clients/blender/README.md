@@ -109,6 +109,31 @@ else still builds — and most CAD graphs also carry a `cad:glbModel` column,
 which imports with no extra install. `.dxf` uses the add-on Blender already
 ships; `.step`/`.stp` has no core importer and reports so.
 
+### Maps, images & video
+
+A `.rete` graph can point at more than 3D models. Three URL kinds now become
+scene content:
+
+- **PMTiles maps** — a `.pmtiles` URL (a whole tiled map in one immutable,
+  HTTP-range-readable file, the same idea as `.rete`) is read directly, fetching
+  only the byte ranges the build touches. Vector maps (MVT) are decoded into one
+  mesh **per layer** — roads and boundaries as lines, land and water as filled,
+  optionally **extruded**, polygons — coloured per layer and projected into the
+  same geographic frame as any points on top of them. Raster maps become
+  textured tile planes. Everything is pure-Python — no new dependency, and a
+  continent's boundaries answer in a few hundred KB over range requests.
+- **Images** — an image or IIIF URL is a textured **material** by default, but
+  can instead become an upright **image plane** standing in 3D at the entity's
+  position (sized to the picture's own aspect), or, for an equirectangular
+  panorama, the scene's **360° world**.
+- **Video** — a `.mp4`/`.webm`/`.mov`/… URL becomes an upright plane whose
+  texture **plays, synced to the timeline**, so a graph of clips lays them out
+  in space and scrubbing plays them. Video uses Blender's own movie reader; a
+  build without FFmpeg degrades cleanly instead of failing.
+
+The **Media & maps** panel picks the image mode, the plane height, and the map
+zoom / tile budget / extrusion.
+
 ### Inherited properties
 
 This is the point of the whole thing. With **Inherit all properties** on, every

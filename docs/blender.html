@@ -359,7 +359,9 @@ produces a sensible scene.</p>
 <tr><td>Mesh node</td><td>a node name inside a shared asset</td><td>just that node, keeping its place in the file</td></tr>
 <tr><td>Geometry</td><td>WKT (<code>POINT Z</code>, <code>LINESTRING</code>, <code>POLYGON</code>) or <code>BOX3D</code></td><td>position, real mesh geometry, and size</td></tr>
 <tr><td>Time</td><td>a date, timestamp, year, duration, or decimal seconds</td><td>a position on the frame range</td></tr>
-<tr><td>Image</td><td>an image or IIIF URL</td><td>a textured material</td></tr>
+<tr><td>Image</td><td>an image or IIIF URL</td><td>a texture, an upright image plane, or a 360° world</td></tr>
+<tr><td>Video</td><td>an <code>.mp4</code>/<code>.webm</code>/<code>.mov</code>/… URL</td><td>a movie-textured plane synced to the timeline</td></tr>
+<tr><td>Map</td><td>a <code>.pmtiles</code> URL</td><td>vector map meshes (per layer) or raster tile planes</td></tr>
 <tr><td>Colour</td><td><code>#rrggbb</code>, <code>rgb()</code>, or a CSS name</td><td>the base colour</td></tr>
 <tr><td>Number</td><td>any numeric literal</td><td>a drivable property, a colour ramp, a mass</td></tr>
 <tr><td>Class</td><td><code>rdf:type</code> and type-like columns</td><td>grouping and a stable per-class colour</td></tr>
@@ -387,6 +389,24 @@ than the engine itself. Without either, IFC rows degrade with a clear message
 and everything else still builds — and most CAD graphs also ship a
 <code>cad:glbModel</code> column that needs no extra install. <code>.dxf</code> uses the importer
 Blender already ships; <code>.step</code> has no core importer.</p>
+<h2>Maps, images &amp; video</h2>
+<p>Beyond 3D models, three URL kinds become scene content.</p>
+<p><strong>PMTiles maps.</strong> A <code>.pmtiles</code> URL — a whole tiled map in one immutable,
+HTTP-range-readable file, the same idea as <code>.rete</code> — is read directly, fetching
+only the byte ranges the build touches (a continent's boundaries in a few
+hundred KB). Vector tiles (MVT) are decoded into one mesh <strong>per layer</strong>, coloured
+per layer, optionally extruded, and projected into the same geographic frame as
+any points drawn on top of them; raster tiles become textured planes. The reader
+and the MVT decoder are pure Python — no new dependency. Zoom, tile budget and
+extrusion are set in the <strong>Media &amp; maps</strong> panel.</p>
+<p><strong>Images.</strong> An image or IIIF URL is a textured material by default; it can
+instead become an upright <strong>image plane</strong> at the entity's position (sized to the
+picture's aspect), or an equirectangular panorama can become the scene's <strong>360°
+world</strong> environment.</p>
+<p><strong>Video.</strong> An <code>.mp4</code>/<code>.webm</code>/<code>.mov</code>/… URL becomes an upright plane whose texture
+plays, <strong>synced to the scene's frame range</strong> — a graph of clips laid out in
+space, playing as you scrub. It uses Blender's own movie reader; a build without
+FFmpeg degrades cleanly.</p>
 <h2>Inherited properties</h2>
 <p>With <strong>Inherit all properties</strong>, every statement about every imported entity is
 fetched — batched, so a thousand entities cost a handful of queries — and

@@ -38,6 +38,18 @@ PHYSICS_MODES = (
     ("PASSIVE", "Passive bodies", "Objects collide but do not move"),
 )
 
+IMAGE_MODES = (
+    ("MATERIAL", "Material", "Texture the row's object with the image"),
+    ("PLANE", "Image plane", "Stand the image upright in 3D at the row's position"),
+    ("WORLD", "360° world", "Use the first image as the scene's world environment"),
+)
+
+MAP_MODES = (
+    ("AUTO", "Auto", "Vector or raster, from the file"),
+    ("VECTOR", "Vector", "Decode MVT features into meshes"),
+    ("RASTER", "Raster", "Lay tile images onto planes"),
+)
+
 AXIS_UP = (
     ("Z", "Z up", "The data is already Z-up, like Blender"),
     ("Y", "Y up", "The data is Y-up (glTF convention) and needs converting"),
@@ -177,6 +189,31 @@ class ReteSettings(PropertyGroup):
         ),
     )
 
+    # -- media (images, video) --------------------------------------------
+    image_mode: EnumProperty(
+        name="Images", items=IMAGE_MODES, default="MATERIAL",
+        description="How an image column is used",
+    )
+    media_height: FloatProperty(
+        name="Screen height", default=1.0, min=0.01, soft_max=50.0, unit="LENGTH",
+        description="Height of image and video planes, in metres",
+    )
+
+    # -- maps (PMTiles) ----------------------------------------------------
+    map_mode: EnumProperty(name="Map", items=MAP_MODES, default="AUTO")
+    map_zoom: IntProperty(
+        name="Zoom", default=-1, min=-1, max=22,
+        description="Tile zoom level; -1 picks the highest that fits the tile budget",
+    )
+    map_tiles: IntProperty(
+        name="Tile budget", default=40, min=1, soft_max=400,
+        description="Maximum tiles to read for the chosen extent",
+    )
+    map_extrude: FloatProperty(
+        name="Extrude", default=0.0, min=0.0, soft_max=1000.0, unit="LENGTH",
+        description="Give map polygons height, in metres — footprints become massing",
+    )
+
     # -- time --------------------------------------------------------------
     time_mode: EnumProperty(name="Time", items=builder.TIME_MODES, default="NONE")
     frame_start: IntProperty(name="Start frame", default=1, min=0)
@@ -249,6 +286,12 @@ class ReteSettings(PropertyGroup):
             reason=self.reason,
             material_mode=self.material_mode,
             material_var=self.material_var,
+            image_mode=self.image_mode,
+            media_height=self.media_height,
+            map_mode=self.map_mode,
+            map_zoom=self.map_zoom,
+            map_tiles=self.map_tiles,
+            map_extrude=self.map_extrude,
             time_mode=self.time_mode,
             frame_start=self.frame_start,
             frame_end=self.frame_end,

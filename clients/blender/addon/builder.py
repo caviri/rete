@@ -103,6 +103,14 @@ class Settings:
         self.material_var: str = kw.get("material_var", "")
         self.texture_size: int = kw.get("texture_size", 2048)
 
+        # Media (images, video) and maps (PMTiles).
+        self.image_mode: str = kw.get("image_mode", "MATERIAL")  # MATERIAL/PLANE/WORLD
+        self.media_height: float = kw.get("media_height", 1.0)
+        self.map_mode: str = kw.get("map_mode", "AUTO")           # AUTO/VECTOR/RASTER
+        self.map_zoom: int = kw.get("map_zoom", -1)               # -1 = auto
+        self.map_tiles: int = kw.get("map_tiles", 40)
+        self.map_extrude: float = kw.get("map_extrude", 0.0)
+
         self.time_mode: str = kw.get("time_mode", "NONE")
         self.frame_start: int = kw.get("frame_start", 1)
         self.frame_end: int = kw.get("frame_end", 250)
@@ -133,6 +141,8 @@ class Report:
         self.relations = 0
         self.bodies = 0
         self.constraints = 0
+        self.media = 0
+        self.map_layers = 0
         self.warnings: List[str] = []
         self.collection: Optional["bpy.types.Collection"] = None
 
@@ -152,6 +162,10 @@ class Report:
             bits.append(f"{self.relations} relations")
         if self.constraints:
             bits.append(f"{self.constraints} constraints")
+        if self.media:
+            bits.append(f"{self.media} media")
+        if self.map_layers:
+            bits.append(f"{self.map_layers} map layers")
         return ", ".join(bits)
 
 
@@ -390,6 +404,10 @@ def build(result, settings: Settings, context=None) -> Report:
     if settings.time_mode == "PATH":
         identity_var = _path_group_var(rows, binding) or entity_var
 
+    video_var = binding.video
+    image_var = binding.image
+    max_video_frames = 0
+
     asset_budget = settings.max_assets
     for index, row in enumerate(rows):
         iri = row[identity_var].value if identity_var and row.get(identity_var) is not None else ""
@@ -431,6 +449,41 @@ def build(result, settings: Settings, context=None) -> Report:
                 asset_budget -= 1
         elif asset_url:
             report.warn(f"asset limit ({settings.max_assets}) reached — remaining rows are markers")
+
+        # Video and image-plane rows become upright screens at the row's spot.
+        if obj is None and video_var and row.get(video_var) is not None:
+            from . import media
+
+            made = media.video_plane(
+                row[video_var].value, name, collection,
+                height=settings.media_height, frame_start=settings.frame_start,
+            )
+            if made is not None:
+                obj, frames = made
+                report.media += 1
+                max_video_frames = max(max_video_frames, frames)
+            else:
+                report.warn(f"could not load video {row[video_var].value}")
+        if (
+            obj is None
+            and settings.image_mode == "PLANE"
+            and image_var
+            and row.get(image_var) is not None
+        ):
+            from . import media
+
+            obj = media.image_plane(
+                row[image_var].value, name, collection,
+                height=settings.media_height, max_pixels=settings.texture_size,
+            )
+            if obj is not None:
+                report.media += 1
+
+        # A row that only carries a map URL (built separately, scene-wide) should
+        # not also leave a stray marker behind.
+        if obj is None and geom is None and not iri:
+            if any(row.get(m) is not None for m in binding.maps):
+                continue
 
         if obj is None:
             obj = _geometry_object(geom, placement, name, settings)
@@ -499,7 +552,107 @@ def build(result, settings: Settings, context=None) -> Report:
     if settings.physics_mode != "NONE":
         _apply_physics(by_iri, settings, report)
 
+    # -- media and maps ---------------------------------------------------
+    if max_video_frames > 0:
+        # Make sure the timeline is long enough to play the longest clip.
+        scene.frame_end = max(scene.frame_end, settings.frame_start + max_video_frames)
+
+    if settings.image_mode == "WORLD" and image_var:
+        from . import media
+
+        first = next((row[image_var].value for row in rows if row.get(image_var) is not None), "")
+        if first and media.set_world_panorama(first):
+            report.media += 1
+        elif first:
+            report.warn("could not set the world panorama")
+
+    if binding.maps:
+        _apply_maps(rows, binding, placement, positions, collection, settings, report)
+
     return report
+
+
+def _apply_maps(rows, binding, placement, positions, collection, settings, report) -> None:
+    """Build every distinct PMTiles map the result points at."""
+    from . import tiles
+
+    # The map projects lon/lat through a geographic placement. Reuse the scene's
+    # if it is already geographic (so the map aligns with the points on it);
+    # otherwise build one centred on the map's extent.
+    coords = [p for p in positions if p is not None]
+    bbox = None
+    if placement.geographic and coords:
+        lons = [c[0] for c in coords]
+        lats = [c[1] for c in coords]
+        pad = 0.5
+        bbox = (min(lons) - pad, min(lats) - pad, max(lons) + pad, max(lats) + pad)
+
+    urls: List[str] = []
+    for var in binding.maps:
+        for row in rows:
+            cell = row.get(var)
+            if cell is not None and cell.value not in urls:
+                urls.append(cell.value)
+
+    map_placement = placement if placement.geographic else _map_placement(bbox, settings)
+    for url in urls[:8]:
+        try:
+            objects, note = tiles.build_map(
+                url,
+                placement=map_placement,
+                bbox=bbox,
+                zoom=settings.map_zoom,
+                max_tiles=settings.map_tiles,
+                extrude=settings.map_extrude,
+                collection=collection,
+                name=_map_name(url),
+            )
+        except Exception as exc:
+            report.warn(f"map {url.rsplit('/', 1)[-1]} failed: {exc}")
+            continue
+        for obj in objects:
+            _colour_map_layer(obj)
+        report.objects += len(objects)
+        report.map_layers += len(objects)
+        if note:
+            report.warn(note)
+
+
+def _map_placement(bbox, settings: Settings) -> geometry.Placement:
+    """A geographic placement for a stand-alone map (no other geometry)."""
+    from . import tiles
+
+    box = bbox or tiles.WORLD_BBOX
+    ref_lon = (box[0] + box[2]) / 2.0
+    ref_lat = (box[1] + box[3]) / 2.0
+    placement = geometry.Placement(
+        scale=1.0, axis_up=settings.axis_up, flip_x=settings.flip_x,
+        geographic=True, ref_lon=ref_lon, ref_lat=ref_lat,
+    )
+    # Fit the projected extent to the requested size.
+    corners = [
+        (box[0], box[1], 0.0), (box[2], box[1], 0.0),
+        (box[2], box[3], 0.0), (box[0], box[3], 0.0),
+    ]
+    if settings.recentre:
+        placement.offset = geometry.centre_of(corners, placement)
+    if settings.scale_mode == "FIT":
+        placement.scale = geometry.fit_scale(corners, settings.fit_size, placement)
+    elif settings.scale_mode == "CUSTOM":
+        placement.scale = settings.custom_scale
+    else:
+        placement.scale = UNIT_SCALE.get(settings.scale_mode, 1.0)
+    return placement
+
+
+def _map_name(url: str) -> str:
+    base = url.rsplit("/", 1)[-1]
+    return base[:-8] if base.endswith(".pmtiles") else (base or "map")
+
+
+def _colour_map_layer(obj: "bpy.types.Object") -> None:
+    layer = str(obj.get("rete:mapLayer", "") or obj.name)
+    materials.assign(obj, materials.solid(f"map:{layer}", materials.color_for_key(layer)))
 
 
 def _placement(

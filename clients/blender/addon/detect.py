@@ -32,16 +32,20 @@ TIME_END = "TIME_END"
 NUMBER = "NUMBER"
 CLASS = "CLASS"
 TEXT = "TEXT"
+VIDEO = "VIDEO"
+MAP = "MAP"
 IGNORE = "IGNORE"
 
 ROLE_ITEMS = [
     ("AUTO", "Auto", "Use the detected role"),
     (ENTITY, "Entity", "The IRI identifying the thing this row is about"),
     (LABEL, "Label", "Human-readable name — becomes the object name"),
-    (ASSET, "3D asset", "URL of a 3D model to import (.glb, .gltf, .obj, …)"),
+    (ASSET, "3D asset", "URL of a 3D model to import (.glb, .gltf, .obj, .ifc, …)"),
     (MESH_NODE, "Mesh node", "Name of the node to isolate inside a shared asset"),
     (GEOMETRY, "Geometry", "WKT or BOX3D literal — becomes position and shape"),
-    (IMAGE, "Image", "Image URL — becomes a textured material"),
+    (IMAGE, "Image", "Image or IIIF URL — a texture, image plane, or 360° world"),
+    (VIDEO, "Video", "Video URL — a movie-textured plane synced to the timeline"),
+    (MAP, "Map (PMTiles)", "A .pmtiles map — becomes vector or raster map geometry"),
     (COLOR, "Colour", "Colour literal — becomes the material's base colour"),
     (TIME, "Time", "A date, time or number placing the row on the timeline"),
     (TIME_END, "Time (end)", "End of the row's interval on the timeline"),
@@ -50,6 +54,9 @@ ROLE_ITEMS = [
     (TEXT, "Text", "Kept as a custom property"),
     (IGNORE, "Ignore", "Left out of the scene"),
 ]
+
+#: Video container extensions Blender can load as a movie image datablock.
+VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv", ".m4v", ".ogv", ".avi"}
 
 #: File extensions Blender can import, mapped to the importer family. The CAD/BIM
 #: formats (ifc, dxf, step) need an external importer and are handled specially
@@ -107,6 +114,8 @@ WKT_DT = (
 _NAME_HINTS: List[Tuple[str, str]] = [
     (r"^(mesh|glb|gltf|model3d|asset|geometryfile|glbfile|animation)$", ASSET),
     (r"(meshnode|nodename|meshname)", MESH_NODE),
+    (r"^(pmtiles|basemap|tiles|maptiles)$|(pmtiles)", MAP),
+    (r"^(video|movie|clip|footage|reel)$", VIDEO),
     (r"^(wkt|geom|geometry|aswkt|aswkt3d|box|box3d|bbox|shape|location|coords?)$", GEOMETRY),
     (r"(thumbnail|depiction|image|photo|picture|iiif|cover|scan|poster)", IMAGE),
     (r"(colou?r|rgb|hex)$", COLOR),
@@ -218,6 +227,14 @@ def is_model_url(value: str) -> bool:
     return url_extension(value) in MODEL_EXT
 
 
+def is_video_url(value: str) -> bool:
+    return url_extension(value) in VIDEO_EXT
+
+
+def is_map_url(value: str) -> bool:
+    return url_extension(value) == ".pmtiles"
+
+
 def is_image_url(value: str) -> bool:
     if url_extension(value) in IMAGE_EXT:
         return True
@@ -253,15 +270,23 @@ def classify_cell(cell) -> Optional[str]:
         return None
     value, dt = cell.value, cell.datatype
     if cell.kind == "iri":
+        if is_map_url(value):
+            return MAP
         if is_model_url(value):
             return ASSET
+        if is_video_url(value):
+            return VIDEO
         if is_image_url(value):
             return IMAGE
         return None  # an IRI alone does not say whether it is entity or class
     if dt in WKT_DT or geometry.parse(value) is not None:
         return GEOMETRY
+    if is_map_url(value):
+        return MAP
     if is_model_url(value):
         return ASSET
+    if is_video_url(value):
+        return VIDEO
     if is_image_url(value):
         return IMAGE
     if is_color(value):
@@ -425,6 +450,14 @@ class Binding:
         return self.first(IMAGE)
 
     @property
+    def video(self) -> Optional[str]:
+        return self.first(VIDEO)
+
+    @property
+    def maps(self) -> List[str]:
+        return self.all_of(MAP)
+
+    @property
     def color(self) -> Optional[str]:
         return self.first(COLOR)
 
@@ -485,7 +518,13 @@ def resolve(result, roles: Dict[str, str], overrides: Optional[Dict[str, str]] =
             merged[var] = role
 
     if not any(r == ENTITY for r in merged.values()):
+        # The fallback identity is the first plain IRI column — but not one that
+        # already plays a content role (a map/asset/video/image URL is an IRI
+        # too, and consuming it as the entity would drop the content).
+        content = {MAP, ASSET, VIDEO, IMAGE}
         for var in result.vars:
+            if merged.get(var) in content:
+                continue
             cells = [c for c in result.column(var) if c is not None]
             if cells and all(c.kind == "iri" for c in cells[:20]):
                 merged[var] = ENTITY

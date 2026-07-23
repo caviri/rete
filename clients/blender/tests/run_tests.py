@@ -35,9 +35,11 @@ from addon import (  # noqa: E402
     export,
     geometry,
     materials,
+    media,
     physics,
     props as rprops,
     relations,
+    tiles,
     timeline,
 )
 
@@ -208,6 +210,23 @@ def t_detect():
     )
     # IIIF URLs have no extension.
     truthy(detect.is_image_url("https://iiif.example.org/img/abc/full/full/0/default.jpg"))
+
+    # Maps, videos and CAD/BIM asset URLs are recognised, whatever the column
+    # is called — value evidence outranks the name.
+    eq(detect.classify_column("m", [C("iri", "https://x.org/world.pmtiles")]), detect.MAP)
+    eq(detect.classify_column("v", [C("iri", "https://x.org/clip.mp4")]), detect.VIDEO)
+    eq(detect.classify_column("v", [C("iri", "https://x.org/clip.webm")]), detect.VIDEO)
+    truthy(detect.is_map_url("https://x.org/a.pmtiles"))
+    truthy(detect.is_video_url("https://x.org/a.mov"))
+    # A .pmtiles column is not swallowed as the fallback entity.
+    class MapResult:
+        vars = ["map"]
+        query = ""
+        def column(self, v):
+            return [C("iri", "https://x.org/basemap.pmtiles")]
+    b = detect.resolve(MapResult(), detect.classify_result(MapResult()), {})
+    eq(b.maps, ["map"], "map column kept as MAP, not entity")
+    truthy(b.entity is None, "no fallback entity stole the map column")
 
     # CAD / BIM asset URLs are recognised, whatever the column is called.
     eq(detect.classify_column("m", [C("iri", "https://x.org/house.ifc")]), detect.ASSET)
@@ -922,6 +941,289 @@ def t_physics():
     eq(empty.rigid_body_constraint.type, "FIXED")
 
 
+def _varint(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        out.append(b | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def _make_raster_pmtiles(tile_png: bytes, path: str) -> str:
+    """Synthesize a minimal valid one-tile PMTiles v3 (raster/PNG, z0/0/0).
+
+    The only way to test the raster branch offline — every published PMTiles in
+    the repo is vector.
+    """
+    import gzip
+    import struct
+
+    # One directory entry: tile_id 0 (z0/0/0), run_length 1, at offset 0.
+    d = bytearray()
+    d += _varint(1)          # entry count
+    d += _varint(0)          # tile_id delta (absolute 0)
+    d += _varint(1)          # run_length
+    d += _varint(len(tile_png))  # length
+    d += _varint(1)          # offset encoded as value+1 (offset 0)
+    root = gzip.compress(bytes(d))
+    meta = gzip.compress(b"{}")
+
+    header = bytearray(127)
+    header[0:7] = b"PMTiles"
+    header[7] = 3
+    root_off = 127
+    meta_off = root_off + len(root)
+    tile_off = meta_off + len(meta)
+    struct.pack_into(
+        "<11Q", header, 8,
+        root_off, len(root), meta_off, len(meta), 0, 0, tile_off, len(tile_png),
+        1, 1, 1,
+    )
+    header[96] = 1  # clustered
+    header[97] = 2  # internal compression = gzip
+    header[98] = 1  # tile compression = none (PNG is already compressed)
+    header[99] = 2  # tile type = PNG
+    header[100] = 0  # min zoom
+    header[101] = 0  # max zoom
+    with open(path, "wb") as fh:
+        fh.write(bytes(header) + root + meta + tile_png)
+    return path
+
+
+def _make_png(path: str, w: int, h: int, rgba=(0.2, 0.5, 0.9, 1.0)) -> str:
+    """A solid-colour PNG written by Blender itself — no external deps."""
+    img = bpy.data.images.new("rete-test-png", width=w, height=h, alpha=True)
+    img.pixels = list(rgba) * (w * h)
+    img.filepath_raw = path
+    img.file_format = "PNG"
+    img.save()
+    return path
+
+
+def _make_mp4(directory: str, frames: int = 5) -> str:
+    """A tiny real .mp4 rendered by Blender (bundled FFmpeg)."""
+    scene = bpy.context.scene
+    scene.render.resolution_x, scene.render.resolution_y = 32, 16
+    scene.frame_start, scene.frame_end = 1, frames
+    scene.render.image_settings.file_format = "FFMPEG"
+    scene.render.ffmpeg.format = "MPEG4"
+    scene.render.ffmpeg.codec = "H264"
+    scene.render.filepath = os.path.join(directory, "clip")
+    bpy.ops.render.render(animation=True)
+    for f in os.listdir(directory):
+        if f.endswith(".mp4"):
+            return os.path.join(directory, f)
+    raise AssertionError("Blender did not produce an .mp4")
+
+
+@test("media: an image URL becomes an upright plane sized to its aspect")
+def t_image_plane():
+    directory = STATE.get("dir") or tempfile.mkdtemp(prefix="rete-media-")
+    STATE["dir"] = directory
+    png = _make_png(os.path.join(directory, "wide.png"), 40, 20)  # 2:1
+    url = "file://" + png.replace("\\", "/")
+
+    name = fresh_local("img-plane")
+    coll = builder.get_collection(name, bpy.context.scene)
+    obj = media.image_plane(url, "photo", coll, height=1.0)
+    truthy(obj is not None, "image plane created")
+    truthy(obj.type == "MESH" and len(obj.data.polygons) == 1, "a single quad")
+    bpy.context.view_layer.update()
+    truthy(abs(obj.dimensions[0] - 2.0) < 0.05, f"width follows the 2:1 aspect ({obj.dimensions[0]:.2f})")
+    truthy(abs(obj.dimensions[2] - 1.0) < 0.05, "height is the requested 1 m")
+    truthy(obj.material_slots and obj.material_slots[0].material, "textured")
+
+
+@test("media: a 2:1 image becomes the world's 360° environment")
+def t_world_panorama():
+    directory = STATE["dir"]
+    png = _make_png(os.path.join(directory, "pano.png"), 64, 32)
+    url = "file://" + png.replace("\\", "/")
+    ok = media.set_world_panorama(url)
+    truthy(ok, "panorama set")
+    world = bpy.context.scene.world
+    truthy(world and world.use_nodes, "world uses nodes")
+    envs = [n for n in world.node_tree.nodes if n.type == "TEX_ENVIRONMENT"]
+    truthy(envs and envs[0].image is not None, "environment texture wired")
+
+
+@test("media: a video URL becomes a movie-textured plane synced to the timeline")
+def t_video():
+    directory = STATE.get("dir") or tempfile.mkdtemp(prefix="rete-media-")
+    STATE["dir"] = directory
+
+    # Detection is FFmpeg-independent and always checked.
+    eq(detect.classify_column("v", [engine.Cell("iri", "file:///x/clip.mp4")]), detect.VIDEO)
+    eq(detect.classify_column("v", [engine.Cell("iri", "file:///x/clip.webm")]), detect.VIDEO)
+
+    # Some Blender builds ship without FFmpeg and can neither render nor decode a
+    # movie; the render attempt is the reliable probe. The add-on must then
+    # degrade cleanly rather than crash.
+    try:
+        mp4 = _make_mp4(directory, frames=5)
+    except (TypeError, RuntimeError) as exc:
+        result = media.video_plane("file:///does/not/exist.mp4", "clip",
+                                   builder.get_collection(fresh_local("video"), bpy.context.scene))
+        truthy(result is None, "video degrades to None without FFmpeg")
+        print(f"       Blender build lacks FFmpeg ({exc}) — degradation verified")
+        return
+    url = "file://" + mp4.replace("\\", "/")
+    name = fresh_local("video")
+    coll = builder.get_collection(name, bpy.context.scene)
+    result = media.video_plane(url, "clip", coll, height=1.0, frame_start=1)
+    truthy(result is not None, "video plane created")
+    obj, frames = result
+    eq(frames, 5, "clip length read")
+    mat = obj.material_slots[0].material if obj.material_slots else None
+    truthy(mat is not None, "video material assigned")
+    tex = next((n for n in mat.node_tree.nodes if n.type == "TEX_IMAGE"), None)
+    truthy(tex is not None and tex.image.source == "MOVIE", "movie texture")
+    truthy(tex.image_user.use_auto_refresh, "plays on the timeline")
+
+    # And through the build path: a graph row with a geo point + a video column.
+    nt = (
+        '<https://x.org/c> <http://www.w3.org/2000/01/rdf-schema#label> "Clip" .\n'
+        '<https://x.org/c> <https://w3id.org/rete/media#video> <%s> .\n'
+        '<https://x.org/c> <https://w3id.org/rete/geo3#asWKT3D> "POINT Z(0 0 0)" .\n' % url
+    )
+    src = os.path.join(directory, "video.rete")
+    engine.engine().Builder().add(nt, "nt").export(src)
+    r = engine.select(
+        src,
+        "PREFIX m: <https://w3id.org/rete/media#>\n"
+        "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n"
+        "PREFIX geo3: <https://w3id.org/rete/geo3#>\n"
+        "SELECT ?s ?label ?video ?wkt WHERE { ?s rdfs:label ?label ; m:video ?video ; geo3:asWKT3D ?wkt }",
+    )
+    eq(detect.classify_result(r)["video"], detect.VIDEO, "m:video detected as video")
+    bname = fresh_local("video-build")
+    report = builder.build(
+        r,
+        builder.Settings(source=src, collection_name=bname, scale_mode="M",
+                         deep_properties=False, material_mode="NONE", frame_start=1, frame_end=2),
+    )
+    truthy(report.media >= 1, "video built into the scene")
+    # The timeline was extended to fit the 5-frame clip.
+    truthy(bpy.context.scene.frame_end >= 5, f"timeline covers the clip ({bpy.context.scene.frame_end})")
+
+
+@test("PMTiles: a vector .pmtiles builds one mesh per map layer")
+def t_pmtiles_vector():
+    pmt = os.path.join(REPO, "experiments", "graph-map", "out", "graphmap.pmtiles")
+    if not os.path.exists(pmt):
+        print("       (graphmap.pmtiles absent — skipping)")
+        return
+
+    archive = tiles.PMTiles(pmt)
+    eq(archive.type_name(), "mvt", "recognised as vector")
+    data = archive.tile(archive.min_zoom, 0, 0)
+    truthy(data, "tile 0/0/0 present")
+    feats = tiles.decode_tile(data, 0, 0, archive.min_zoom)
+    truthy(len(feats) > 50, f"features decoded ({len(feats)})")
+    # Coordinates are real lon/lat.
+    lon, lat = feats[0].rings[0][0]
+    truthy(-180 <= lon <= 180 and -85 <= lat <= 85, f"geographic coords ({lon:.1f},{lat:.1f})")
+
+    url = "file://" + pmt.replace("\\", "/")
+    src = os.path.join(STATE["dir"], "map.rete")
+    engine.engine().Builder().add(
+        f'<https://x.org/d> <https://w3id.org/rete/map#basemap> <{url}> .\n', "nt"
+    ).export(src)
+    r = engine.select(src, "SELECT ?s ?map WHERE { ?s <https://w3id.org/rete/map#basemap> ?map }")
+    eq(detect.classify_result(r)["map"], detect.MAP, "the .pmtiles column is a map")
+
+    name = fresh_local("pmtiles")
+    report = builder.build(
+        r,
+        builder.Settings(source=src, collection_name=name, scale_mode="FIT", fit_size=10.0,
+                         map_zoom=-1, map_tiles=40, deep_properties=False, material_mode="NONE"),
+    )
+    truthy(report.map_layers >= 1, f"map layers built ({report.map_layers})")
+    layer_objs = [o for o in bpy.data.collections[name].all_objects if o.get("rete:mapLayer")]
+    truthy(layer_objs, "layer objects present")
+    verts = sum(len(o.data.vertices) for o in layer_objs)
+    truthy(verts > 500, f"real geometry ({verts} verts)")
+    truthy(all(o.material_slots and o.material_slots[0].material for o in layer_objs), "layers coloured")
+    # Fit-scaled into a ~10 m box.
+    bpy.context.view_layer.update()
+    biggest = max(max(o.dimensions) for o in layer_objs)
+    truthy(2.0 < biggest < 30.0, f"map fit to scene size ({biggest:.1f} m)")
+    print(f"       {report.summary()}")
+
+
+@test("PMTiles: a raster .pmtiles becomes textured tile planes")
+def t_pmtiles_raster():
+    directory = STATE["dir"]
+    png = open(_make_png(os.path.join(directory, "tile.png"), 8, 8, (0.9, 0.3, 0.1, 1.0)), "rb").read()
+    pmt = _make_raster_pmtiles(png, os.path.join(directory, "raster.pmtiles"))
+
+    archive = tiles.PMTiles(pmt)
+    eq(archive.type_name(), "png", "recognised as raster")
+    truthy(archive.tile(0, 0, 0) == png, "the single tile round-trips")
+
+    placement = geometry.Placement(geographic=True, ref_lon=0.0, ref_lat=0.0, scale=1e-5)
+    name = fresh_local("raster")
+    coll = builder.get_collection(name, bpy.context.scene)
+    objs, note = tiles.build_map(
+        "file://" + pmt.replace("\\", "/"),
+        placement=placement, bbox=(-180, -85, 180, 85), zoom=0, max_tiles=4,
+        collection=coll, name="ras",
+    )
+    truthy(objs, f"raster tile planes built ({note})")
+    plane = objs[0]
+    truthy(plane.type == "MESH" and len(plane.data.polygons) == 1, "a quad per tile")
+    truthy(plane.material_slots and plane.material_slots[0].material, "tile textured")
+
+
+@test("PMTiles: a remote .pmtiles is read over HTTP range, not downloaded whole")
+def t_pmtiles_range():
+    import http.server
+    import threading
+
+    directory = STATE["dir"]
+    png = open(_make_png(os.path.join(directory, "r2.png"), 8, 8), "rb").read()
+    pmt_path = _make_raster_pmtiles(png, os.path.join(directory, "range.pmtiles"))
+    blob = open(pmt_path, "rb").read()
+    served = {"bytes": 0}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            rng = self.headers.get("Range", "")
+            if rng.startswith("bytes="):
+                lo, hi = rng[6:].split("-")
+                lo, hi = int(lo), int(hi)
+                chunk = blob[lo:hi + 1]
+                served["bytes"] += len(chunk)
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {lo}-{hi}/{len(blob)}")
+                self.send_header("Content-Length", str(len(chunk)))
+                self.end_headers()
+                self.wfile.write(chunk)
+            else:
+                served["bytes"] += len(blob)
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(blob)))
+                self.end_headers()
+                self.wfile.write(blob)
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/range.pmtiles"
+        archive = tiles.PMTiles(url)          # header + root dir only
+        eq(archive.type_name(), "png", "remote header parsed over range")
+        tile = archive.tile(0, 0, 0)
+        eq(tile, png, "remote tile fetched over range")
+        truthy(served["bytes"] < len(blob), f"read {served['bytes']} of {len(blob)} bytes, not the whole file")
+    finally:
+        server.shutdown()
+
+
 @test("point cloud: rows become one mesh with named attributes")
 def t_point_cloud():
     settings = builder.Settings(
@@ -1010,6 +1312,8 @@ def main() -> None:
         t_timeline, t_materials, t_props,
         t_fixture, t_build, t_asset, t_relations, t_time, t_motion_path, t_physics,
         t_cad_graph, t_cad_relations, t_ifc_import,
+        t_image_plane, t_world_panorama, t_video,
+        t_pmtiles_vector, t_pmtiles_raster, t_pmtiles_range,
         t_point_cloud, t_export, t_drivers, t_register,
     ):
         fn()

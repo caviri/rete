@@ -239,6 +239,32 @@ class RETE_PT_assets(RetePanel, Panel):
         layout.operator(ops.RETE_OT_clear_cache.bl_idname, icon="TRASH")
 
 
+class RETE_PT_media(RetePanel, Panel):
+    bl_idname = "RETE_PT_media"
+    bl_label = "Media & maps"
+    bl_parent_id = "RETE_PT_build"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.rete
+
+        column = layout.column(align=True)
+        column.label(text="Images & video", icon="IMAGE_DATA")
+        column.prop(settings, "image_mode", text="Images")
+        if settings.image_mode == "PLANE" or True:
+            column.prop(settings, "media_height")
+
+        layout.separator()
+        column = layout.column(align=True)
+        column.label(text="Maps (PMTiles)", icon="WORLD")
+        column.prop(settings, "map_mode", text="Mode")
+        row = column.row(align=True)
+        row.prop(settings, "map_zoom")
+        row.prop(settings, "map_tiles")
+        column.prop(settings, "map_extrude")
+
+
 class RETE_PT_time(RetePanel, Panel):
     bl_idname = "RETE_PT_time"
     bl_label = "Time"
@@ -404,6 +430,7 @@ CLASSES = (
     RETE_PT_build,
     RETE_PT_placement,
     RETE_PT_assets,
+    RETE_PT_media,
     RETE_PT_time,
     RETE_PT_relations,
     RETE_PT_physics,
