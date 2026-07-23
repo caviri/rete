@@ -44,8 +44,15 @@ for p, lab in [("subset", "subset"), ("discipline", "discipline"), ("schema", "I
                ("count", "count"), ("parsed", "fully parsed")]:
     t(GB + p, RDF, iri(OWL + "DatatypeProperty")); tl(GB + p, RDFS + "label", lab, lang="en")
 for p, lab in [("project", "project"), ("hasModel", "has model"), ("pairedWith", "paired with"),
-               ("tally", "element tally"), ("ifcClass", "IFC class")]:
+               ("tally", "element tally"), ("ifcClass", "IFC class"), ("glbModel", "3D model (glTF)")]:
     t(GB + p, RDF, iri(OWL + "ObjectProperty")); tl(GB + p, RDFS + "label", lab, lang="en")
+
+# Models we have rendered to a glTF/GLB (for inline 3D preview in the playground)
+GLB_BASE = "https://data.graphplaza.com/gni-bim/"
+GLB_MODELS = {
+    "p/model_0_arc": GLB_BASE + "bim-pair-arc.glb",
+    "p/model_0_structure": GLB_BASE + "bim-pair-structure.glb",
+}
 
 classes_seen = set()
 def class_node(cls):
@@ -84,6 +91,8 @@ def emit_model(mid, label, subset, discipline, path):
     sz = os.path.getsize(path) / 1e6
     schema, ne, ns, nsp, cc = profile(path)
     t(s, RDF, iri(GB + "Model")); tl(s, RDFS + "label", label, lang="en")
+    if mid in GLB_MODELS:
+        t(s, GB + "glbModel", iri(GLB_MODELS[mid]))
     tl(s, GB + "subset", subset); tl(s, GB + "discipline", discipline)
     tl(s, GB + "schema", schema); tl(s, GB + "fileSizeMB", round(sz, 2), dt=XSD + "decimal")
     tl(s, GB + "parsed", "true" if ne is not None else "false", dt=XSD + "boolean")

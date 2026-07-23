@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture vs Structure — one building, two BIM models</title>
+<meta name="description" content="A paired 3D viewer for one building from the TUM GNI BIM corpus: toggle between its architectural model (the envelope — walls, curtain walls, furniture) and its structural model (the load-bearing skeleton — beams, columns, slabs), or overlay the skeleton inside a translucent envelope.">
+<style>
+  :root{ --bg:#0b0e14; --panel:#121826; --line:#1e2636; --ink:#e6ecf5; --dim:#8b97ad; --accent:#5db0ff;
+    --c-arc:#cbb89d; --c-str:#ff8c42; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  #stage{position:absolute;inset:0;background:radial-gradient(120% 120% at 50% 20%,#141c2b,#080b12)}
+  canvas{display:block}
+  #title{position:absolute;left:16px;top:14px;z-index:4;max-width:60vw}
+  #title h1{font-size:16px;margin:0;font-weight:600}
+  #title p{font-size:12px;color:var(--dim);margin:2px 0 0}
+  #modes{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:5;display:flex;gap:4px;
+    background:rgba(18,24,38,.9);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:11px;padding:4px}
+  #modes button{background:none;border:none;color:var(--dim);padding:7px 14px;border-radius:8px;cursor:pointer;
+    font-size:13px;font-weight:600;white-space:nowrap}
+  #modes button.on{background:var(--accent);color:#05131f}
+  #modes button:not(.on):hover{color:var(--ink)}
+  #legend{position:absolute;left:16px;bottom:14px;z-index:4;background:rgba(12,17,28,.82);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:12.5px}
+  #legend .row{display:flex;align-items:center;gap:8px;padding:2px 0}
+  #legend .sw{width:12px;height:12px;border-radius:3px;flex:0 0 auto}
+  #legend .n{color:var(--dim);font-variant-numeric:tabular-nums}
+  #hud{position:absolute;right:14px;bottom:14px;z-index:4;color:var(--dim);font-size:11.5px;
+    background:rgba(12,17,28,.7);border:1px solid var(--line);border-radius:9px;padding:6px 10px;max-width:230px}
+  #credits{position:absolute;right:14px;top:14px;z-index:4;font-size:11px;color:var(--dim);text-align:right;max-width:44vw}
+  #loading{position:absolute;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;flex-direction:column;
+    gap:12px;color:var(--dim);background:rgba(8,11,18,.72)}
+  #bar{width:220px;height:5px;background:#1b2334;border-radius:4px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
+  @media (max-width:640px){ #title{max-width:52vw} #credits{display:none} #modes button{padding:7px 10px;font-size:12px} }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="title"><h1>🏗️ Architecture vs Structure</h1><p>one building, two BIM models — TUM GNI BIM corpus</p></div>
+  <div id="modes">
+    <button data-mode="arc" class="on">Architecture</button>
+    <button data-mode="both">Both</button>
+    <button data-mode="str">Structure</button>
+  </div>
+  <div id="legend">
+    <div class="row"><span class="sw" style="background:var(--c-arc)"></span>Architectural <span class="n" id="n-arc"></span></div>
+    <div class="row"><span class="sw" style="background:var(--c-str)"></span>Structural <span class="n" id="n-str"></span></div>
+  </div>
+  <div id="hud">Drag to orbit · right / Shift-drag pan · scroll zoom</div>
+  <div id="credits">Model: <b>Project 0</b>, TUM GNI BIM Dataset (<a href="https://github.com/ZijianWang-ZW/GNI-BIM-Dataset" target="_blank" rel="noopener">CC BY 4.0</a>).<br>
+    The corpus: <a href="playground.html#dataset=gni-bim&load=lazy" target="_blank" rel="noopener">gni-bim in the playground</a> · viewer by <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">rete</a>.</div>
+  <div id="loading"><div>Loading both models…</div><div id="bar"><i></i></div><div id="lmsg" style="font-size:12px"></div></div>
+</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+
+const BASE = 'https://data.graphplaza.com/gni-bim/';
+const MODELS = {
+  arc: {url: BASE+'bim-pair-arc.glb',       color:0xcbb89d},
+  str: {url: BASE+'bim-pair-structure.glb', color:0xff8c42},
+};
+let scene, camera, renderer, controls, root, camAnim=null;
+const groups = {};              // 'arc' | 'str' -> THREE.Group
+let mode = 'arc';
+
+init();
+
+async function init(){
+  const stage = document.getElementById('stage');
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(45, stage.clientWidth/stage.clientHeight, 0.05, 5000);
+  camera.up.set(0,0,1);                          // IFC is Z-up
+  camera.position.set(40,-40,28);
+  renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  stage.appendChild(renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xdfefff,0x27303f,1.25));
+  const key=new THREE.DirectionalLight(0xffffff,1.35); key.position.set(6,-8,12); scene.add(key);
+  const fill=new THREE.DirectionalLight(0x9fbfff,.5); fill.position.set(-8,6,4); scene.add(fill);
+  root=new THREE.Group(); scene.add(root);
+  controls=new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping=true; controls.dampingFactor=.08; controls.screenSpacePanning=true;
+  controls.mouseButtons={LEFT:THREE.MOUSE.ROTATE, MIDDLE:THREE.MOUSE.DOLLY, RIGHT:THREE.MOUSE.PAN};
+  controls.touches={ONE:THREE.TOUCH.ROTATE, TWO:THREE.TOUCH.DOLLY_PAN};
+  renderer.domElement.addEventListener('contextmenu', e=>e.preventDefault());
+  addEventListener('keydown', e=>{ if(e.key==='Shift') controls.mouseButtons.LEFT=THREE.MOUSE.PAN; });
+  addEventListener('keyup',   e=>{ if(e.key==='Shift') controls.mouseButtons.LEFT=THREE.MOUSE.ROTATE; });
+  addEventListener('resize', onResize);
+  document.querySelectorAll('#modes button').forEach(b=> b.onclick=()=>setMode(b.dataset.mode));
+  animate();
+  const loader=new GLTFLoader();
+  const bar=document.querySelector('#bar>i'); let done=0;
+  for(const k of ['str','arc']){                 // structure first (small), then the big envelope
+    document.getElementById('lmsg').textContent = k==='str' ? 'structural skeleton…' : 'architectural envelope (18 MB)…';
+    const g=await loadOne(loader, k); groups[k]=g; root.add(g);
+    bar.style.width = (++done/2*100)+'%';
+  }
+  document.getElementById('n-arc').textContent = `(${meshCount('arc')} parts)`;
+  document.getElementById('n-str').textContent = `(${meshCount('str')} parts)`;
+  root.updateMatrixWorld(true);
+  document.getElementById('loading').style.display='none';
+  setMode('arc'); frameAll(true); renderer.render(scene,camera);
+}
+
+async function loadOne(loader, k){
+  const {url,color}=MODELS[k];
+  let gltf;
+  for(let a=0;a<3;a++){ try{ gltf=await loader.loadAsync(url); break; }
+    catch(e){ if(a===2){ document.getElementById('lmsg').textContent='could not load '+k; throw e; }
+      await new Promise(r=>setTimeout(r,600*(a+1))); } }
+  gltf.scene.traverse(o=>{ if(o.isMesh){
+    o.material=new THREE.MeshStandardMaterial({color, roughness:.82, metalness:.04,
+      flatShading:true, side:THREE.DoubleSide, transparent:true, opacity:1});
+    o.userData.disc=k;
+  }});
+  return gltf.scene;
+}
+const meshCount = k => { let n=0; groups[k]&&groups[k].traverse(o=>{if(o.isMesh)n++;}); return n; };
+
+function setMode(m){
+  mode=m;
+  document.querySelectorAll('#modes button').forEach(b=> b.classList.toggle('on', b.dataset.mode===m));
+  const arc=groups.arc, str=groups.str; if(!arc||!str) return;
+  const setOpacity=(g,op,vis)=>{ g.visible=vis; g.traverse(o=>{ if(o.isMesh){ o.material.opacity=op;
+    o.material.transparent=op<1; o.material.depthWrite=op>=0.5; } }); };
+  if(m==='arc'){ setOpacity(arc,1,true);  setOpacity(str,1,false); }
+  if(m==='str'){ setOpacity(arc,1,false); setOpacity(str,1,true); }
+  if(m==='both'){ setOpacity(arc,0.14,true); setOpacity(str,1,true); }   // skeleton inside the envelope
+}
+
+function frameAll(snap){
+  const box=new THREE.Box3().setFromObject(root); if(box.isEmpty()) return;
+  const c=box.getCenter(new THREE.Vector3()); const size=box.getSize(new THREE.Vector3());
+  const dist=(Math.max(size.x,size.y,size.z)/2)/Math.tan(camera.fov*Math.PI/360)*1.5;
+  const dir=new THREE.Vector3(0.8,-0.9,0.5).normalize();
+  const pos=c.clone().add(dir.multiplyScalar(dist));
+  if(snap){ camera.position.copy(pos); controls.target.copy(c); camera.lookAt(c); controls.update(); camAnim=null; }
+  else camAnim={p0:camera.position.clone(),p1:pos,t0:controls.target.clone(),t1:c,s:performance.now(),d:600};
+}
+function onResize(){ const s=document.getElementById('stage');
+  camera.aspect=s.clientWidth/s.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(s.clientWidth,s.clientHeight); }
+function animate(){
+  requestAnimationFrame(animate);
+  if(camAnim){ const k=Math.min(1,(performance.now()-camAnim.s)/camAnim.d); const e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+    camera.position.lerpVectors(camAnim.p0,camAnim.p1,e); controls.target.lerpVectors(camAnim.t0,camAnim.t1,e); if(k>=1)camAnim=null; }
+  controls.update(); renderer.render(scene,camera);
+}
+</script>
+</body>
+</html>
