@@ -41,7 +41,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::dict::DEFAULT_RESTART_INTERVAL;
-use crate::index::INDEX_TILE_BUDGET;
+use crate::index::{GroupSizer, INDEX_TILE_BUDGET};
 use crate::ingest::{BuildStats, IngestError, RawQuad};
 use crate::triples::TripleBlockBuilder;
 use crate::varint::write_uvarint;
@@ -1062,8 +1062,15 @@ struct StreamingTiler {
     /// triples of the tile being accumulated
     tile: Vec<(u32, u32, u32)>,
     tile_size: usize,
-    /// the a-group currently being measured
+    /// the a-group slice currently being measured — bounded: a group whose
+    /// running encoded size alone exceeds the tile budget is cut into
+    /// consecutive tiles sharing the leading id (same rule as `build_tiles`,
+    /// via the shared [`GroupSizer`]), so mega-groups (a 2B-triple predicate
+    /// in POS/PSO, a hot class object in OSP/OPS) can no longer grow this
+    /// buffer to tens of GB
     group: Vec<(u32, u32, u32)>,
+    sizer: GroupSizer,
+    gtotal: usize,
     prev_a: u32,
     /// finished-but-uncompressed tiles awaiting a parallel compress batch
     pending: Vec<Vec<(u32, u32, u32)>>,
@@ -1084,6 +1091,8 @@ impl StreamingTiler {
             tile: Vec::new(),
             tile_size: 0,
             group: Vec::new(),
+            sizer: GroupSizer::start(0, 0),
+            gtotal: 0,
             prev_a: 0,
             pending: Vec::new(),
             comp_out: BufWriter::with_capacity(1 << 20, File::create(&comp_path)?),
@@ -1093,7 +1102,11 @@ impl StreamingTiler {
         })
     }
 
-    /// Push the next triple (already permuted, sorted, deduped).
+    /// Push the next triple (already permuted, sorted, deduped). Runs the
+    /// SAME boundary rules as `build_tiles` (shared `GroupSizer` accounting):
+    /// whole-group packing to the byte budget, plus a mid-group cut whenever
+    /// the current group's own running size exceeds the budget — the cut is
+    /// what bounds this tiler's memory under mega-group skew.
     fn push(&mut self, t: (u32, u32, u32)) -> Result<(), ExtBuildError> {
         self.count += 1;
         if let Some(&(ga, _, _)) = self.group.first() {
@@ -1101,38 +1114,33 @@ impl StreamingTiler {
                 self.close_group()?;
             }
         }
+        if self.group.is_empty() {
+            self.sizer = GroupSizer::start(t.0, self.prev_a);
+        }
         self.group.push(t);
+        self.gtotal = self.sizer.push(t.1, t.2);
+        if self.gtotal > self.tile_budget {
+            // Mega-group cut — mirror `build_tiles`: completed groups plus
+            // the slice measured so far become ONE tile; the group continues
+            // in a fresh chain with `a` as its own delta base.
+            self.tile.append(&mut self.group);
+            self.flush_tile()?;
+            self.tile_size = 0;
+            self.prev_a = t.0;
+            self.gtotal = 0;
+        }
         Ok(())
     }
 
-    /// The current a-group is complete: measure it with the same running-delta
-    /// accounting as `build_tiles`, flush the tile first if it would overflow.
+    /// The current a-group (or its final slice after mid-group cuts) is
+    /// complete: pack it into the current tile, flushing first on overflow —
+    /// identical to `build_tiles`' end-of-group rule.
     fn close_group(&mut self) -> Result<(), ExtBuildError> {
         if self.group.is_empty() {
             return Ok(());
         }
         let a = self.group[0].0;
-        let mut gsize = varint_len((a - self.prev_a) as u64);
-        let mut i = 0usize;
-        let g = &self.group;
-        let mut num_b = 0u64;
-        while i < g.len() {
-            let b = g[i].1;
-            num_b += 1;
-            let prev_b = if num_b == 1 { 0 } else { g[i - 1].1 };
-            gsize += varint_len((b - prev_b) as u64);
-            let mut num_c = 0u64;
-            let mut prev_c = 0u32;
-            while i < g.len() && g[i].1 == b {
-                gsize += varint_len((g[i].2 - prev_c) as u64);
-                prev_c = g[i].2;
-                num_c += 1;
-                i += 1;
-            }
-            gsize += varint_len(num_c);
-        }
-        gsize += varint_len(num_b);
-
+        let gsize = self.sizer.total();
         if !self.tile.is_empty() && self.tile_size + gsize > self.tile_budget {
             self.flush_tile()?;
         }
@@ -1242,14 +1250,6 @@ impl StreamingTiler {
     }
 }
 
-fn varint_len(mut v: u64) -> usize {
-    let mut n = 1;
-    while v >= 0x80 {
-        v >>= 7;
-        n += 1;
-    }
-    n
-}
 
 // ---------------------------------------------------------------------------
 // Phase 5: final streaming file assembly
@@ -1487,6 +1487,38 @@ mod tests {
         assert_eq!(
             bytes_floor, reference,
             "single-chunk external build must be byte-identical"
+        );
+    }
+
+    /// Mega-group inputs (one predicate dominating the graph — the Crossref
+    /// `cites` shape) exercise the mid-group tile cuts; the external and
+    /// in-RAM builds must STILL be byte-identical, proving both tilers cut at
+    /// the same boundaries (shared `GroupSizer`).
+    #[test]
+    fn skewed_external_build_is_byte_identical() {
+        let mut quads: Vec<RawQuad> = Vec::new();
+        for i in 0..30_000usize {
+            quads.push((
+                format!("<http://ex/s{}>", i % 500),
+                "<http://ex/cites>".to_string(),
+                format!("<http://ex/o{i}>"),
+                None,
+            ));
+        }
+        for i in 0..500usize {
+            quads.push((
+                format!("<http://ex/s{i}>"),
+                format!("<http://ex/p{}>", i % 7),
+                format!("\"lit {i}\""),
+                None,
+            ));
+        }
+        let reference = build_reference(quads.clone());
+        let (bytes, stats) = build_ext(quads.clone(), 0);
+        assert_eq!(stats.statements, quads.len());
+        assert_eq!(
+            bytes, reference,
+            "mega-group external build must be byte-identical"
         );
     }
 
