@@ -293,6 +293,13 @@ regression check (`qbench --check`: per-query row counts + time ceilings), and
 the WASM build in containers, so nothing builds on the host. See
 [Getting started](https://caviri.github.io/rete/getting-started.html) for the dev-container setup.
 
+## Support
+
+rete is free and open source. If it's useful to you, you can support its
+development on Ko-fi:
+
+<a href='https://ko-fi.com/M1W723PEW3' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi2.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+
 ## License
 
 [Apache-2.0](LICENSE).

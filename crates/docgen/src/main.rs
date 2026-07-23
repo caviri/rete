@@ -338,7 +338,7 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/{current_md}</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/{current_md}</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <script>{script}</script>
   <script>{lightbox}</script>
