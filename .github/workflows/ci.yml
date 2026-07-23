@@ -181,7 +181,7 @@ jobs:
           docker run --rm --user root \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -e CARGO_TARGET_DIR=/work/target -e GITHUB_SHA="$GITHUB_SHA" \
-            -e RETE_BUILD_STAMP=1.0.0-rc.1 \
+            -e RETE_BUILD_STAMP=0.3.0 \
             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/build_wasm.sh'
       - name: Verify provenance and generated browser files

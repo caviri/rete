@@ -55,7 +55,7 @@ fn top_level_help_and_version_are_stable() {
         .arg("--version")
         .assert()
         .success()
-        .stdout("rete 1.0.0-rc.1\n");
+        .stdout(format!("rete {}\n", env!("CARGO_PKG_VERSION")));
 }
 
 #[test]

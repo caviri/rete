@@ -28,6 +28,9 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 from . import _rete
 
 __version__ = _rete.__version__
+#: Version of the Rust engine compiled into this wheel. Tracks `__version__`'s
+#: major.minor; the patch components move independently.
+__engine_version__ = _rete.__engine_version__
 __all__ = ["open", "build", "Builder", "Graph", "Term"]
 
 _XSD = "http://www.w3.org/2001/XMLSchema#"

@@ -7,6 +7,8 @@ set -eu
 cd "$(dirname "$0")/.."
 
 quality() {
+  # Cheapest gate first: every client must sit on the engine's minor line.
+  python3 scripts/sync_versions.py --check
   cargo fmt --all -- --check
   cargo clippy --workspace --exclude rete-bench --all-targets -- -D warnings
   cargo test --workspace --exclude rete-bench

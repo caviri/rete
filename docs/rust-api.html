@@ -249,7 +249,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v1.0.0-rc.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.3.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -270,6 +270,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">launch in the playground →</a></li></ul></details></li>
         <li class="nav-h">Buildings & BIM (IFC)</li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
@@ -288,6 +289,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="javascript.html">JavaScript — rete-graph</a></li>
         <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
         <li><a href="r.html">R — rete</a></li>
+        <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
@@ -318,9 +320,9 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1>Rust API</h1>
-<p><code>rete-core</code> is the embeddable Rust implementation of the <code>.rete</code> format. Starting
-with <code>1.0.0-rc.1</code>, its supported SemVer surface is organized into five facade
-modules:</p>
+<p><code>rete-core</code> is the embeddable Rust implementation of the <code>.rete</code> format. Its
+supported surface is organized into five facade modules, which become the
+SemVer-stable API at <code>1.0.0</code>:</p>
 <table><thead><tr><th>Module</th><th>Supported purpose</th></tr></thead><tbody>
 <tr><td><a href="https://docs.rs/rete-core/latest/rete_core/format/"><code>format</code></a></td><td>Parse RDF, build or open a <code>.rete</code>, inspect its header, and verify the container</td></tr>
 <tr><td><a href="https://docs.rs/rete-core/latest/rete_core/query/"><code>query</code></a></td><td>Evaluate SPARQL and graph patterns, format results, and configure federation</td></tr>
@@ -332,10 +334,10 @@ modules:</p>
 exports and implementation namespaces for the other workspace crates, but they
 are not part of the 1.x compatibility contract and may change without a major
 release.</p>
-<h2>Add the release candidate</h2>
-<p>Until the final release, pin the release candidate explicitly:</p>
+<h2>Add the dependency</h2>
+<p>Until the 1.0.0 release, pin the exact 0.x version:</p>
 <pre><code class="language-toml">[dependencies]
-rete-core = "=1.0.0-rc.1"
+rete-core = "=0.3.0"
 </code></pre>
 <p>The default feature set supports compressed <code>.rete</code> files. Optional parallel or
 browser-thread features remain experimental; they do not change the five facade
@@ -405,8 +407,9 @@ supported entailments and inconsistency checks.</p>
 <ul>
 <li><code>.rete</code> format compatibility and Rust API compatibility are versioned
 independently. The format byte and read window live in <code>format</code>.</li>
-<li>The five facade modules follow SemVer from <code>1.0.0-rc.1</code> onward. Hidden modules
-and experimental feature-gated APIs do not.</li>
+<li>The five facade modules follow SemVer from <code>1.0.0</code> onward; while the crates
+are 0.x any release may change them. Hidden modules and experimental
+feature-gated APIs are excluded even after 1.0.0.</li>
 <li>Public errors and result shapes are non-exhaustive. Treat unfamiliar variants
 as unsupported input or output rather than panicking.</li>
 <li>Rustdoc is built with warnings denied, and release CI compares the facade with
@@ -420,7 +423,7 @@ the previous release using <code>cargo-semver-checks</code>.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/rust-api.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/rust-api.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <script>
 (function () {

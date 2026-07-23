@@ -4,3 +4,11 @@ src/Makevars.win
 inst/doc
 vignettes/*.html
 vignettes/*.R
+# `src/Makevars.in` pins `--target-dir ./rust/target` on the cargo command line
+# (CRAN requires a self-contained build), so this cannot be redirected with
+# CARGO_TARGET_DIR. A debug build here is multi-GB; `clients/r/cleanup` removes
+# it along with the compiled objects below.
+src/rust/target
+src/*.o
+src/*.so
+src/*.dll

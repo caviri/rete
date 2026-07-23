@@ -276,9 +276,19 @@ fn build_dataset(
     bytes
 }
 
+/// Version of the Rust engine compiled into this package. The package's own
+/// version tracks the binding and shares only the engine's major.minor, so this
+/// is what answers "which engine am I actually running?".
+/// @export
+#[extendr]
+fn engine_version() -> String {
+    rete_core::VERSION.to_string()
+}
+
 // Macro to generate exports.
 extendr_module! {
     mod rete;
     fn build_dataset;
+    fn engine_version;
     impl RGraph;
 }

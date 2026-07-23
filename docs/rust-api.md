@@ -1,8 +1,8 @@
 # Rust API
 
-`rete-core` is the embeddable Rust implementation of the `.rete` format. Starting
-with `1.0.0-rc.1`, its supported SemVer surface is organized into five facade
-modules:
+`rete-core` is the embeddable Rust implementation of the `.rete` format. Its
+supported surface is organized into five facade modules, which become the
+SemVer-stable API at `1.0.0`:
 
 | Module | Supported purpose |
 |---|---|
@@ -17,13 +17,13 @@ exports and implementation namespaces for the other workspace crates, but they
 are not part of the 1.x compatibility contract and may change without a major
 release.
 
-## Add the release candidate
+## Add the dependency
 
-Until the final release, pin the release candidate explicitly:
+Until the 1.0.0 release, pin the exact 0.x version:
 
 ```toml
 [dependencies]
-rete-core = "=1.0.0-rc.1"
+rete-core = "=0.3.0"
 ```
 
 The default feature set supports compressed `.rete` files. Optional parallel or
@@ -110,8 +110,9 @@ supported entailments and inconsistency checks.
 
 - `.rete` format compatibility and Rust API compatibility are versioned
   independently. The format byte and read window live in `format`.
-- The five facade modules follow SemVer from `1.0.0-rc.1` onward. Hidden modules
-  and experimental feature-gated APIs do not.
+- The five facade modules follow SemVer from `1.0.0` onward; while the crates
+  are 0.x any release may change them. Hidden modules and experimental
+  feature-gated APIs are excluded even after 1.0.0.
 - Public errors and result shapes are non-exhaustive. Treat unfamiliar variants
   as unsupported input or output rather than panicking.
 - Rustdoc is built with warnings denied, and release CI compares the facade with

@@ -17,5 +17,5 @@ fn generate_writes_all_release_shell_and_man_artifacts() {
     }
 
     let man = std::fs::read_to_string(dir.path().join("rete.1")).unwrap();
-    assert!(man.contains("rete 1.0.0-rc.1"));
+    assert!(man.contains(&format!("rete {}", env!("CARGO_PKG_VERSION"))));
 }

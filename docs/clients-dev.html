@@ -249,7 +249,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v1.0.0-rc.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.3.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -270,6 +270,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">launch in the playground →</a></li></ul></details></li>
         <li class="nav-h">Buildings & BIM (IFC)</li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
@@ -288,6 +289,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="javascript.html">JavaScript — rete-graph</a></li>
         <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
         <li><a href="r.html">R — rete</a></li>
+        <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
@@ -514,13 +516,27 @@ surfaces as a regular R condition.</li>
 <li><code>R/extendr-wrappers.R</code> is <strong>generated</strong> by <code>rextendr::document()</code> (which
 recompiles the crate first — plain <code>devtools::document()</code> does not);
 regenerate and commit it whenever the Rust surface changes. CI diff-checks
-it.</li>
+it. Note <code>rextendr::document()</code> prints a deprecation notice (removed-in-favour
+of <code>devtools::document()</code> since rextendr 0.4.0). It still works and still
+recompiles; before switching, verify the replacement actually rebuilds the
+crate, since a silent no-op would commit stale wrappers — the exact failure
+the parenthesis above warns about.</li>
 <li>The R layer follows the same rule as Python: the engine emits N-Triples
 tokens, and <code>R/query.R</code> coerces them (<code>parse_term</code>/<code>coerce_terms</code>) into
 clean data-frame columns — IRIs unbracket, numeric/boolean literals become
 R types, <code>rete_query_raw()</code> keeps full fidelity.</li>
 </ul>
 <p>Build and test (Docker, nothing on the host):</p>
+<pre><code class="language-sh">docker compose run --rm r        # regenerate wrappers + docs
+docker compose run --rm r-test   # regenerate, then run testthat
+</code></pre>
+<p>Both use <code>.devcontainer/Dockerfile.r</code> — the recipe below, baked into a cached
+image on <code>rocker/r2u</code> (every CRAN package as an apt binary) with rustc pinned to
+the workspace toolchain. It is a separate image from the main devcontainer on
+purpose: that one is rebuilt by nearly every CI job, and the R package tree
+would add ~1 GB to all of them. Cargo artifacts go to a named volume, since
+<code>clients/r/src/rust/target</code> is not gitignored.</p>
+<p>The equivalent from scratch, if you would rather not use compose:</p>
 <pre><code class="language-sh">docker run --rm -v "$PWD":/io -w /io/clients/r rocker/r2u:jammy bash -c '
   apt-get update -qq &amp;&amp; apt-get install -y -qq curl build-essential &gt;/dev/null
   curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
@@ -611,7 +627,7 @@ python scripts/check_docs_links.py
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/clients-dev.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/clients-dev.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <script>
 (function () {

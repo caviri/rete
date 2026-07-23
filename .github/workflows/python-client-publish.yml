@@ -118,6 +118,45 @@ jobs:
         with:
           name: wheel-pyodide
           path: dist
+      # Pyodide 0.29's installer predates PEP 783, which renamed the platform
+      # tag `pyodide_*` -> `pyemscripten_*`. It therefore cannot resolve the
+      # wheel PyPI now requires, so docs/python.md points those users at a
+      # retagged copy on our own bucket. Same compiled artifact, old spelling.
+      #
+      # This MUST stay out of `dist`: the publish job uploads that directory to
+      # PyPI, which rejects the legacy tag. Hence a separate artifact, and a
+      # separate manual upload step (no R2 credentials exist in Actions) —
+      # see scripts/publish_pyodide_wheel.sh and the release runbook.
+      - name: Retag the 2025 ABI wheel for pre-PEP-783 installers
+        run: |
+          set -eu
+          mkdir -p dist-legacy
+          # Depending on the cibuildwheel/pyodide-build version, the 0.29 target
+          # may already emit the legacy spelling. Accept either and normalize.
+          legacy=$(ls dist/*pyodide_2025_0_wasm32.whl 2>/dev/null | head -1 || true)
+          modern=$(ls dist/*pyemscripten_2025_0_wasm32.whl 2>/dev/null | head -1 || true)
+          if [ -n "$legacy" ]; then
+            echo "cp313 target already emits the legacy tag; copying as-is"
+            cp "$legacy" dist-legacy/
+          elif [ -n "$modern" ]; then
+            echo "retagging $(basename "$modern")"
+            pip install wheel
+            cp "$modern" dist-legacy/
+            wheel tags --platform-tag pyodide_2025_0_wasm32 --remove dist-legacy/*.whl
+          else
+            echo "no 2025-ABI Pyodide wheel was built, so the fallback wheel" >&2
+            echo "documented in docs/python.md cannot be produced. Either the" >&2
+            echo "cp313/Pyodide-0.29 target was dropped — in which case delete" >&2
+            echo "this step and that paragraph together — or the build failed." >&2
+            ls -l dist >&2
+            exit 1
+          fi
+          ls -l dist-legacy
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-pyodide-legacy
+          path: dist-legacy
+          if-no-files-found: error
 
   sdist:
     name: sdist

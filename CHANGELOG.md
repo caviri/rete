@@ -3,11 +3,39 @@
 All notable user-facing changes are recorded here. Rete follows semantic
 versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
-## [1.0.0-rc.1] - 2026-07-14
+## [Unreleased]
 
-First release candidate for the stable Rete format and toolchain.
+## [0.3.0] - 2026-07-22
+
+First release to crates.io, published as `rete-core`, `rete-cli`, and
+`rete-wasm`. It carries the same code the 1.0 line will ship, but goes out as a
+0.x on purpose: it proves the published packaging, the docs.rs builds, and the
+release automation end to end before any version has to honour a compatibility
+promise. The on-disk format is already stable generation 1; the Rust, CLI, and
+WASM APIs carry no semver guarantee until 1.0.0.
 
 ### Added
+
+- **Client versions now track the engine.** `rete-graph` on PyPI and npm and the
+  R package all carry the engine's `MAJOR.MINOR` (0.3.x), so "same minor" means
+  "same engine"; each client keeps its patch component for binding-only fixes.
+  `scripts/sync_versions.py` propagates the workspace version and gates drift in
+  CI. Every client also exposes the engine build it embeds — `rete_graph
+  .__engine_version__` in Python, backed by the new `rete_core::VERSION`.
+- **Claude Desktop extension** (`clients/mcpb`): the engine packaged as an
+  [MCP Bundle](https://github.com/modelcontextprotocol/mcpb) — nine tools over
+  local and published `.rete` graphs, plus offline `build_rete`. Ships as a
+  plain `node` bundle (one JS file + the wasm engine), so a single artifact
+  covers macOS, Windows and Linux.
+- **Lazy `file://` opens in the JavaScript client**: a local `.rete` is read by
+  byte range like a remote one, so a multi-gigabyte file is queryable without
+  loading it into memory.
+- WASM `card` / `card_url` (the index-free Dataset Card tier, two small range
+  reads at any file size) and `RemoteGraph::{card, schema, info, graph_names,
+  shacl}` — the resident remote handle now covers the full read surface.
+- `header_ranges` additionally reports the metadata section's byte range.
+- JavaScript client `card()`, `examples()`, `shacl()`, and a `wasm` escape
+  hatch to the raw engine exports (client 0.3.0).
 
 - Stable format version 1 with compatibility fixtures and defensive ranged-file readers.
 - Publishable `rete-core`, `rete-cli`, and `rete-wasm` crates with Rust 1.87 MSRV.
@@ -18,17 +46,17 @@ First release candidate for the stable Rete format and toolchain.
 
 ### Compatibility
 
-- Pre-1.0 `.rete` files are not guaranteed to open. Rebuild source RDF with the matching 1.0 CLI.
-- Files produced by an RC may still require rebuilding before final 1.0.0. The compatibility promise begins with the final release.
+- Pre-1.0 `.rete` files are not guaranteed to open. Rebuild source RDF with the matching CLI.
+- Files produced by 0.x may still require rebuilding before final 1.0.0. The compatibility promise begins with that release.
 
 ### Known limitations
 
 - Browser bindings are single-threaded by default; threaded WASM remains opt-in and requires cross-origin isolation.
 - SPARQL results are evaluated eagerly after lazy range reads.
 - File federation unions per-file results; it does not perform arbitrary cross-file joins.
-- The current upstream RDF/XML dependency still resolves `quick-xml 0.37.5`; registry publication is blocked on resolving its two active RustSec advisories.
+- The upstream RDF/XML dependency still resolves `quick-xml 0.37.5`, because every published `oxrdfxml` requires `quick-xml ^0.37`. RUSTSEC-2026-0194 and RUSTSEC-2026-0195 (both availability-only DoS on untrusted RDF/XML input) are therefore carried as documented exceptions in `deny.toml` and the publish preflight, and will be dropped as soon as Oxigraph ships a `quick-xml >= 0.41` bump.
 
-[1.0.0-rc.1]: https://github.com/caviri/rete/releases/tag/v1.0.0-rc.1
+[0.3.0]: https://github.com/caviri/rete/releases/tag/v0.3.0
 
 ## Pre-1.0 development history
 

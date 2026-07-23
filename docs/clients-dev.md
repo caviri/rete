@@ -220,13 +220,31 @@ the cargo workspace like the Python one.
 - `R/extendr-wrappers.R` is **generated** by `rextendr::document()` (which
   recompiles the crate first — plain `devtools::document()` does not);
   regenerate and commit it whenever the Rust surface changes. CI diff-checks
-  it.
+  it. Note `rextendr::document()` prints a deprecation notice (removed-in-favour
+  of `devtools::document()` since rextendr 0.4.0). It still works and still
+  recompiles; before switching, verify the replacement actually rebuilds the
+  crate, since a silent no-op would commit stale wrappers — the exact failure
+  the parenthesis above warns about.
 - The R layer follows the same rule as Python: the engine emits N-Triples
   tokens, and `R/query.R` coerces them (`parse_term`/`coerce_terms`) into
   clean data-frame columns — IRIs unbracket, numeric/boolean literals become
   R types, `rete_query_raw()` keeps full fidelity.
 
 Build and test (Docker, nothing on the host):
+
+```sh
+docker compose run --rm r        # regenerate wrappers + docs
+docker compose run --rm r-test   # regenerate, then run testthat
+```
+
+Both use `.devcontainer/Dockerfile.r` — the recipe below, baked into a cached
+image on `rocker/r2u` (every CRAN package as an apt binary) with rustc pinned to
+the workspace toolchain. It is a separate image from the main devcontainer on
+purpose: that one is rebuilt by nearly every CI job, and the R package tree
+would add ~1 GB to all of them. Cargo artifacts go to a named volume, since
+`clients/r/src/rust/target` is not gitignored.
+
+The equivalent from scratch, if you would rather not use compose:
 
 ```sh
 docker run --rm -v "$PWD":/io -w /io/clients/r rocker/r2u:jammy bash -c '

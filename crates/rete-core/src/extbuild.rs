@@ -47,6 +47,22 @@ use crate::triples::TripleBlockBuilder;
 use crate::varint::write_uvarint;
 use crate::DictionaryBuilder;
 
+/// An id-triple in a single permutation's ordering.
+type IdTriple = (u32, u32, u32);
+/// A tile synopsis: `(min_b, max_b, min_c, max_c)` over the tile's triples.
+type Synopsis = (u32, u32, u32, u32);
+/// Builds the metadata payload (the Dataset Card) once the counts are known.
+/// Return an empty `Vec` for none — byte-identical to a metadata-free build.
+pub type MetadataFn = Box<dyn FnOnce(&BuildStats) -> Vec<u8>>;
+/// A distinct term with the `(chunk, local id)` pairs that carry it.
+type TermCarriers = (String, Vec<(usize, u32)>);
+/// Merge-heap entry: an id-triple tagged with the run it came from.
+type MergeEntry = std::cmp::Reverse<(IdTriple, usize)>;
+/// One tile's directory entry: `(min_a, max_a, compressed length, synopsis)`.
+type TileDirEntry = (u32, u32, u64, Synopsis);
+/// One encoded tile: `(min_a, max_a, compressed bytes, synopsis)`.
+type EncodedTile = (u32, u32, Vec<u8>, Synopsis);
+
 /// Options for [`build_external`].
 pub struct ExternalBuildOptions {
     /// Approximate peak-RAM target in bytes. Controls how many chunks the input
@@ -58,8 +74,7 @@ pub struct ExternalBuildOptions {
     /// filesystem, no surprise `/tmp` exhaustion.
     pub tmp_dir: Option<PathBuf>,
     /// Metadata payload (the Dataset Card), derived after counts are known.
-    /// Return an empty Vec for none (byte-identical to a metadata-free build).
-    pub metadata: Box<dyn FnOnce(&BuildStats) -> Vec<u8>>,
+    pub metadata: MetadataFn,
 }
 
 impl Default for ExternalBuildOptions {
@@ -78,8 +93,10 @@ pub enum ExtBuildError {
     Ingest(#[from] IngestError),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
-    #[error("external build supports the default graph only (named graph {0} found); \
-             use the standard build, or strip graph terms (.nq -> .nt) first")]
+    #[error(
+        "external build supports the default graph only (named graph {0} found); \
+             use the standard build, or strip graph terms (.nq -> .nt) first"
+    )]
     NamedGraph(String),
     #[error("internal: {0}")]
     Internal(&'static str),
@@ -230,11 +247,7 @@ impl TmpDir {
         // same process (or parallel tests) must never share a spill directory.
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = parent.join(format!(
-            ".rete-extbuild-{}-{}",
-            std::process::id(),
-            seq
-        ));
+        let dir = parent.join(format!(".rete-extbuild-{}-{}", std::process::id(), seq));
         std::fs::create_dir_all(&dir)?;
         Ok(TmpDir { dir })
     }
@@ -548,7 +561,7 @@ impl KWayTerms {
     }
 
     /// Next distinct term with its (chunk, local_id) carriers.
-    fn next(&mut self) -> Result<Option<(String, Vec<(usize, u32)>)>, std::io::Error> {
+    fn next(&mut self) -> Result<Option<TermCarriers>, std::io::Error> {
         let first = match self.heap.pop() {
             Some(e) => e,
             None => return Ok(None),
@@ -696,13 +709,14 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
             // empty shared reader + real pred reader => a plain single stream
             streams.push(SpaceStream::new(
                 TermFileReader::open(&tmp.path(&format!("c{ci}.pred")))?,
-                TermFileReader::open(&tmp.path(&format!("c{ci}.pred.empty",)))
-                    .or_else(|_| -> Result<TermFileReader, std::io::Error> {
+                TermFileReader::open(&tmp.path(&format!("c{ci}.pred.empty",))).or_else(
+                    |_| -> Result<TermFileReader, std::io::Error> {
                         // create-once empty file per chunk
                         let p = tmp.path(&format!("c{ci}.pred.empty"));
                         File::create(&p)?;
                         TermFileReader::open(&p)
-                    })?,
+                    },
+                )?,
                 chunks[ci].section_terms[3],
             )?);
         }
@@ -755,10 +769,8 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
         }
     }
 
-    let term_count = n_shared as u64
-        + n_subj as u64
-        + n_obj as u64
-        + section_files[3].term_count as u64;
+    let term_count =
+        n_shared as u64 + n_subj as u64 + n_obj as u64 + section_files[3].term_count as u64;
 
     Ok(MergedDict {
         section_files: section_files.map(|s| s.file),
@@ -801,7 +813,7 @@ impl RawSectionWriter {
     fn push(&mut self, term: &str) -> Result<(), std::io::Error> {
         let r = DEFAULT_RESTART_INTERVAL as u64;
         let mut entry = Vec::with_capacity(term.len() + 8);
-        if self.n % r == 0 {
+        if self.n.is_multiple_of(r) {
             self.restart_offsets.push(self.body_len);
             write_uvarint(&mut entry, 0);
             write_uvarint(&mut entry, term.len() as u64);
@@ -993,7 +1005,7 @@ fn build_permutation_section(
             .iter()
             .map(|p| RunReader::open(p))
             .collect::<Result<_, _>>()?;
-        let mut heap: BinaryHeap<std::cmp::Reverse<((u32, u32, u32), usize)>> = BinaryHeap::new();
+        let mut heap: BinaryHeap<MergeEntry> = BinaryHeap::new();
         for (i, r) in readers.iter_mut().enumerate() {
             if let Some(t) = r.next()? {
                 heap.push(std::cmp::Reverse((t, i)));
@@ -1018,12 +1030,12 @@ fn build_permutation_section(
 }
 
 #[cfg(feature = "parallel")]
-fn sort_triples(v: &mut Vec<(u32, u32, u32)>) {
+fn sort_triples(v: &mut [IdTriple]) {
     use rayon::slice::ParallelSliceMut;
     v.par_sort_unstable();
 }
 #[cfg(not(feature = "parallel"))]
-fn sort_triples(v: &mut Vec<(u32, u32, u32)>) {
+fn sort_triples(v: &mut [IdTriple]) {
     v.sort_unstable();
 }
 
@@ -1078,7 +1090,7 @@ struct StreamingTiler {
     comp_out: BufWriter<File>,
     comp_path: PathBuf,
     /// per-tile directory: (min_a, max_a, comp_len, synopsis)
-    dir: Vec<(u32, u32, u64, (u32, u32, u32, u32))>,
+    dir: Vec<TileDirEntry>,
     count: u64,
 }
 
@@ -1186,13 +1198,12 @@ impl StreamingTiler {
             (run[0].0, run[run.len() - 1].0, comp, syn)
         };
         #[cfg(feature = "parallel")]
-        let encoded: Vec<(u32, u32, Vec<u8>, (u32, u32, u32, u32))> = {
+        let encoded: Vec<EncodedTile> = {
             use rayon::prelude::*;
             batch.par_iter().map(encode_one).collect()
         };
         #[cfg(not(feature = "parallel"))]
-        let encoded: Vec<(u32, u32, Vec<u8>, (u32, u32, u32, u32))> =
-            batch.iter().map(encode_one).collect();
+        let encoded: Vec<EncodedTile> = batch.iter().map(encode_one).collect();
         for (min_a, max_a, comp, syn) in encoded {
             self.comp_out.write_all(&comp)?;
             self.dir.push((min_a, max_a, comp.len() as u64, syn));
@@ -1266,9 +1277,7 @@ fn write_final_file(
     quad_count: u64,
     codec: u8,
 ) -> Result<(), ExtBuildError> {
-    use crate::header::{
-        Header, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN,
-    };
+    use crate::header::{Header, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN};
 
     // container framings are tiny; build them in RAM
     let mut dict_frame = Vec::new();
@@ -1311,8 +1320,8 @@ fn write_final_file(
 
     // dict container
     let write_hashed = |out: &mut BufWriter<File>,
-                            hasher: &mut blake3::Hasher,
-                            bytes: &[u8]|
+                        hasher: &mut blake3::Hasher,
+                        bytes: &[u8]|
      -> Result<(), std::io::Error> {
         out.write_all(bytes)?;
         hasher.update(bytes);
@@ -1560,9 +1569,12 @@ mod tests {
                     let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
                     let p = u32::from_le_bytes(buf[4..8].try_into().unwrap());
                     let o = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                    w.write_all(&maps.subj[(s - 1) as usize].to_le_bytes()).unwrap();
-                    w.write_all(&maps.pred[(p - 1) as usize].to_le_bytes()).unwrap();
-                    w.write_all(&maps.obj[(o - 1) as usize].to_le_bytes()).unwrap();
+                    w.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())
+                        .unwrap();
+                    w.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())
+                        .unwrap();
+                    w.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())
+                        .unwrap();
                 }
             }
             w.flush().unwrap();
@@ -1573,8 +1585,7 @@ mod tests {
         let mut count = None;
         for perm in crate::index::ALL_PERMS {
             // tiny runs to force multi-run merging
-            let (sec, n) =
-                build_permutation_section(&tmp, &global_tri, perm, 256, codec).unwrap();
+            let (sec, n) = build_permutation_section(&tmp, &global_tri, perm, 256, codec).unwrap();
             if let Some(prev) = count {
                 assert_eq!(prev, n);
             }

@@ -1,0 +1,32 @@
+schema_version = "1.0.0"
+
+id = "rete"
+version = "0.1.0"
+name = "rete — knowledge graphs in 3D"
+tagline = "Query .rete knowledge graphs and build scenes from the answers"
+maintainer = "Carlos Vivar Rios <https://github.com/caviri>"
+type = "add-on"
+
+website = "https://caviri.github.io/rete/"
+tags = ["Import-Export", "3D View", "Geometry Nodes", "Physics"]
+
+blender_version_min = "4.2.0"
+license = ["SPDX:Apache-2.0"]
+copyright = ["2026 Carlos Vivar Rios"]
+
+# Filled in by build.sh, which downloads one `rete-graph` wheel per platform
+# (all abi3, so each covers every Blender Python) and lists exactly what it
+# fetched. Left empty here so the source tree validates on a fresh clone and so
+# no 14 MB of binaries live in the repository.
+wheels = []
+
+[permissions]
+network = "Read remote .rete graphs and fetch the assets they reference"
+files = "Open local .rete files, cache assets, and export scenes"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.*",
+  "/tests/",
+]

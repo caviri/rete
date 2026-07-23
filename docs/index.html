@@ -249,7 +249,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v1.0.0-rc.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.3.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html" class="active">Overview</a></li>
@@ -270,6 +270,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">launch in the playground →</a></li></ul></details></li>
         <li class="nav-h">Buildings & BIM (IFC)</li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
@@ -288,6 +289,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="javascript.html">JavaScript — rete-graph</a></li>
         <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
         <li><a href="r.html">R — rete</a></li>
+        <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
@@ -319,7 +321,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
       <article class="content">
 <h1>rete</h1>
 <p><strong>A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server.</strong></p>
-<p><a href="https://github.com/caviri/rete"><code>github.com/caviri/rete</code></a> · crates <strong>v1.0.0-rc.1</strong> · stable file-format generation <strong>1</strong> (<code>0x05</code>)</p>
+<p><a href="https://github.com/caviri/rete"><code>github.com/caviri/rete</code></a> · crates <strong>v0.3.0</strong> · stable file-format generation <strong>1</strong> (<code>0x05</code>)</p>
 <p><code>rete</code> packs an RDF graph (or a full dataset of named graphs) into one immutable
 <code>.rete</code> file with its own dictionary, permutation indexes, and a pyramidal
 community summary. Drop the file on S3, GitHub, or any HTTP host that honors
@@ -368,6 +370,7 @@ rete schema  social.rete    # semantic (by rdf:type)
 <tr><td><strong>JavaScript</strong> — <a href="https://www.npmjs.com/package/rete-graph"><code>rete-graph</code> on npm</a></td><td><code>npm install rete-graph</code>, or one <a href="javascript.html"><code>&lt;script&gt;</code> tag via CDN</a></td><td>Node ≥ 18, browsers (bundlers or script-tag)</td><td><a href="javascript.html">JavaScript API</a></td></tr>
 <tr><td><strong>R</strong> — <code>rete</code> (from this repo; CRAN/R-universe pending)</td><td><code>remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)</code></td><td>R ≥ 4.2 + Rust toolchain; results as data frames</td><td><a href="r.html">R API</a></td></tr>
 <tr><td><strong>Rust</strong> — <code>rete-core</code> / <code>rete-cli</code> (in this repo; crates.io release pending)</td><td><code>cargo add rete-core --git https://github.com/caviri/rete</code></td><td>anywhere Rust runs — native + wasm</td><td><a href="rust-api.html">Rust API</a> · <a href="cli.html">CLI</a></td></tr>
+<tr><td><strong>Blender</strong> — add-on (engine bundled)</td><td>Install the <code>rete-*.zip</code> from <code>clients/blender</code></td><td>Blender ≥ 4.2; SPARQL results become 3D scenes</td><td><a href="blender.html">Blender add-on</a></td></tr>
 <tr><td><strong>Browser, zero install</strong></td><td>—</td><td>any modern browser</td><td><a href="playground-guide.html">Playground</a> · <a href="yasgui-guide.html">SPARQL IDE</a></td></tr>
 <tr><td><strong>Agents</strong> — MCP server + Claude Code plugin</td><td><code>/plugin marketplace add caviri/rete</code> — or point any MCP client at the <a href="https://katospiegel-rete.hf.space/mcp/">gateway</a></td><td>ChatGPT, Claude, pydantic-ai, any MCP host</td><td><a href="agents.html">Agentic interfaces</a></td></tr>
 </tbody></table>
@@ -426,12 +429,12 @@ rete schema  social.rete    # semantic (by rdf:type)
 </ul>
 <h2>Version &amp; status</h2>
 <p>Developed in the open at <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>.
-The crates are <strong>v1.0.0-rc.1</strong>. Stable file-format generation 1 (header byte
-<code>0x05</code>) is the compatibility baseline for Rete 1.x. Stable readers keep reading
-it; a future incompatible layout must retain generation-1 read support and ship
-a documented migration path. Pre-1.0 experimental files must be rebuilt from
-RDF source. The public Rust, CLI, and WASM APIs remain release candidates until
-1.0.0 final.
+The crates are <strong>v0.3.0</strong>, the first release on crates.io. Stable file-format
+generation 1 (header byte <code>0x05</code>) is the compatibility baseline for Rete 1.x.
+Stable readers keep reading it; a future incompatible layout must retain
+generation-1 read support and ship a documented migration path. Pre-1.0
+experimental files must be rebuilt from RDF source. The public Rust, CLI, and
+WASM APIs carry no semantic-versioning promise until 1.0.0 final.
 Everything is built and tested in Docker — see
 <a href="getting-started.html">Getting started</a>.</p>
 
@@ -441,7 +444,7 @@ Everything is built and tested in Docker — see
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/index.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/index.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <script>
 (function () {

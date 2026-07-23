@@ -10,7 +10,7 @@ publish = false
 # pulls in Oxigraph only here. In-memory Oxigraph needs no RocksDB/clang, so we
 # disable default features to keep the build light.
 [dependencies]
-rete-core = { version = "=1.0.0-rc.1", path = "../rete-core", features = ["parallel"] }
+rete-core = { version = "=0.3.0", path = "../rete-core", features = ["parallel"] }
 oxigraph = { version = "0.5", default-features = false }
 anyhow = "1"
 serde_json = { workspace = true }

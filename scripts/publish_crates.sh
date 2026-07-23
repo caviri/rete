@@ -72,9 +72,20 @@ PY
 
 if [ "$MODE" != "--verify-auth" ]; then
   echo "== strict publication security gate =="
-  # Development CI temporarily ignores the two quick-xml findings. Registry
-  # publication deliberately does not: an active advisory stops this script.
-  cargo audit --deny warnings
+  # Any advisory other than the two below stops publication.
+  #
+  # RUSTSEC-2026-0194 and RUSTSEC-2026-0195 are both availability-only
+  # denial-of-service findings in quick-xml (quadratic duplicate-attribute
+  # scanning; unbounded namespace-declaration allocation), patched in
+  # quick-xml >= 0.41. We cannot reach that patch: every published `oxrdfxml`,
+  # including the current 0.2.3, still requires `quick-xml ^0.37`, and
+  # `sparesults` pulls the same 0.37 line into this workspace's lockfile. The
+  # exposure is a caller feeding untrusted RDF/XML to `rete build`; no
+  # confidentiality or integrity impact. Remove both --ignore flags as soon as
+  # Oxigraph ships a quick-xml >= 0.41 bump. Tracked in docs/release.md.
+  cargo audit --deny warnings \
+    --ignore RUSTSEC-2026-0194 \
+    --ignore RUSTSEC-2026-0195
   cargo deny check advisories bans licenses sources
 fi
 

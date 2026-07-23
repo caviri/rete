@@ -17,7 +17,7 @@ members = [
 exclude = ["fuzz", "clients/python", "clients/r/src/rust"]
 
 [workspace.package]
-version = "1.0.0-rc.1"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/caviri/rete"

@@ -485,5 +485,8 @@ fn _rete(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build, m)?)?;
     m.add_function(wrap_pyfunction!(build_dataset, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    // The binding's version tracks the binding; this reports the engine actually
+    // compiled into the wheel, which is what "does my install support X?" means.
+    m.add("__engine_version__", rete_core::VERSION)?;
     Ok(())
 }

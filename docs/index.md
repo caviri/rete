@@ -2,7 +2,7 @@
 
 **A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server.**
 
-[`github.com/caviri/rete`](https://github.com/caviri/rete) · crates **v1.0.0-rc.1** · stable file-format generation **1** (`0x05`)
+[`github.com/caviri/rete`](https://github.com/caviri/rete) · crates **v0.3.0** · stable file-format generation **1** (`0x05`)
 
 `rete` packs an RDF graph (or a full dataset of named graphs) into one immutable
 `.rete` file with its own dictionary, permutation indexes, and a pyramidal
@@ -62,6 +62,7 @@ The same engine, in your language of choice — every client opens local files
 | **JavaScript** — [`rete-graph` on npm](https://www.npmjs.com/package/rete-graph) | `npm install rete-graph`, or one [`<script>` tag via CDN](javascript.md) | Node ≥ 18, browsers (bundlers or script-tag) | [JavaScript API](javascript.md) |
 | **R** — `rete` (from this repo; CRAN/R-universe pending) | `remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)` | R ≥ 4.2 + Rust toolchain; results as data frames | [R API](r.md) |
 | **Rust** — `rete-core` / `rete-cli` (in this repo; crates.io release pending) | `cargo add rete-core --git https://github.com/caviri/rete` | anywhere Rust runs — native + wasm | [Rust API](rust-api.md) · [CLI](cli.md) |
+| **Blender** — add-on (engine bundled) | Install the `rete-*.zip` from `clients/blender` | Blender ≥ 4.2; SPARQL results become 3D scenes | [Blender add-on](blender.md) |
 | **Browser, zero install** | — | any modern browser | [Playground](playground-guide.md) · [SPARQL IDE](yasgui-guide.md) |
 | **Agents** — MCP server + Claude Code plugin | `/plugin marketplace add caviri/rete` — or point any MCP client at the [gateway](https://katospiegel-rete.hf.space/mcp/) | ChatGPT, Claude, pydantic-ai, any MCP host | [Agentic interfaces](agents.md) |
 
@@ -122,11 +123,11 @@ The same engine, in your language of choice — every client opens local files
 ## Version & status
 
 Developed in the open at [github.com/caviri/rete](https://github.com/caviri/rete).
-The crates are **v1.0.0-rc.1**. Stable file-format generation 1 (header byte
-`0x05`) is the compatibility baseline for Rete 1.x. Stable readers keep reading
-it; a future incompatible layout must retain generation-1 read support and ship
-a documented migration path. Pre-1.0 experimental files must be rebuilt from
-RDF source. The public Rust, CLI, and WASM APIs remain release candidates until
-1.0.0 final.
+The crates are **v0.3.0**, the first release on crates.io. Stable file-format
+generation 1 (header byte `0x05`) is the compatibility baseline for Rete 1.x.
+Stable readers keep reading it; a future incompatible layout must retain
+generation-1 read support and ship a documented migration path. Pre-1.0
+experimental files must be rebuilt from RDF source. The public Rust, CLI, and
+WASM APIs carry no semantic-versioning promise until 1.0.0 final.
 Everything is built and tested in Docker — see
 [Getting started](getting-started.md).

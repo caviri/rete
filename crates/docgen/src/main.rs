@@ -44,6 +44,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("lombardi-guide.md", "Lombardi — network drawings in ink"),
             ("webgpu-guide.md", "WebGPU coherence (exp.)"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
+            ("neuro-showcase-guide.md", "Neuromorphology — 3D neurons & astrocytes (exp.)"),
         ],
     ),
     (
@@ -76,6 +77,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("javascript.md", "JavaScript — rete-graph"),
             ("comunica.md", "Comunica — RDF/JS source"),
             ("r.md", "R — rete"),
+            ("blender.md", "Blender — graphs as scenes"),
             ("agents.md", "Agents — MCP, plugin & skills"),
             ("fallacies.md", "Experiment: graphs from speech"),
         ],
@@ -255,6 +257,10 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
             ("plaza-guide.html", "overview"),
             ("plaza/index.html", "open the gallery →"),
         ]),
+        "neuro-showcase-guide.md" => Some(&[
+            ("neuro-showcase-guide.html", "overview"),
+            ("playground.html#dataset=neuro-showcase&load=lazy", "launch in the playground →"),
+        ]),
         _ => None,
     }
 }
@@ -352,7 +358,7 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/{current_md}</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/{current_md}</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <script>{script}</script>
   <script>{lightbox}</script>

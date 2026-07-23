@@ -249,7 +249,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v1.0.0-rc.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.3.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -270,6 +270,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">launch in the playground →</a></li></ul></details></li>
         <li class="nav-h">Buildings & BIM (IFC)</li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
@@ -288,6 +289,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="javascript.html">JavaScript — rete-graph</a></li>
         <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
         <li><a href="r.html">R — rete</a></li>
+        <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
@@ -317,35 +319,54 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Rete 1.0.0-rc.1 release candidate</h1>
-<p>This candidate freezes the intended 1.0 file-format contract, Rust API, CLI,
-browser/WASM API, and crates.io package layout for final review. It is a
-pre-release: report compatibility problems before 1.0.0 is tagged.</p>
+<h1>Rete 0.3.0</h1>
+<p>The first release of <code>rete-core</code>, <code>rete-cli</code>, and <code>rete-wasm</code> on crates.io.</p>
+<p>This is deliberately a 0.x. The code is the same code the 1.0 line will ship,
+and the on-disk format is already stable generation 1 — but publishing at 0.3.0
+first proves the packaging, the docs.rs builds, <code>cargo install rete-cli</code>, and
+the release automation against the real registry before any version has to
+honour a compatibility promise. Report problems here rather than against 1.0.0.</p>
 <h2>Install and artifacts</h2>
-<p>The release provides native archives for:</p>
+<pre><code class="language-sh">cargo install rete-cli --version 0.3.0 --locked
+</code></pre>
+<p>The release also provides native archives for:</p>
 <ul>
 <li>Linux GNU: x86-64 and ARM64</li>
 <li>macOS: Intel x86-64 and Apple Silicon ARM64</li>
 <li>Windows MSVC: x86-64 and ARM64</li>
 </ul>
 <p>Each archive includes <code>rete</code>, Bash/Zsh/Fish/PowerShell completions, <code>rete(1)</code>,
-README, license, and changelog. <code>SHA256SUMS</code> covers every archive and the WASM
-bundle. A CycloneDX JSON SBOM and GitHub artifact attestations are published with
-the release.</p>
-<p>The crates are intended to appear as
-<a href="https://crates.io/crates/rete-core"><code>rete-core</code></a>,
-<a href="https://crates.io/crates/rete-cli"><code>rete-cli</code></a>, and
-<a href="https://crates.io/crates/rete-wasm"><code>rete-wasm</code></a>. The first RC uses the audited
-bootstrap procedure; subsequent releases use crates.io trusted publishing with
-GitHub OIDC.</p>
+README, license, and changelog.</p>
+<p>Three more artifacts ship alongside them:</p>
+<ul>
+<li><code>rete-&lt;version&gt;-wasm.tar.gz</code> — the browser/WASM bundle.</li>
+<li><code>rete-blender-&lt;version&gt;.zip</code> — the <strong>Blender add-on</strong>, which turns a SPARQL
+answer into scene content: 3D assets imported, geometry placed, RDF properties
+inherited as drivable custom properties, relations as hierarchy or rigid-body
+constraints, time on the timeline. Install it with <em>Preferences ▸ Add-ons ▸
+Install from Disk…</em>; the engine is bundled for every platform, so there is no
+further install step. See the <a href="blender.html">Blender guide</a>.</li>
+<li><code>rete-&lt;version&gt;.mcpb</code> — the <strong>Claude Desktop extension</strong>
+(<a href="https://github.com/modelcontextprotocol/mcpb">MCP Bundle</a>). Download it and
+double-click, or drag it into Claude Desktop. It carries the same engine
+compiled to wasm, so one file installs on macOS, Windows and Linux; it queries
+your own <code>.rete</code> files offline and the published catalogue over HTTP Range.
+See the <a href="agents.html">agentic interfaces guide</a>.</li>
+</ul>
+<p><code>SHA256SUMS</code> covers every archive, the WASM bundle, and both extensions. A
+CycloneDX JSON SBOM and GitHub artifact attestations are published with the
+release; the SBOM describes the Rust dependency graph and is bound to the
+native and WASM archives, while the extension carries build provenance only.</p>
 <h2>Crates.io publication runbook</h2>
-<p>The one-time <code>1.0.0-rc.1</code> bootstrap runs only after the signed tag is checked
-out in a clean worktree. Enter the ephemeral token inside the running
-devcontainer; do not use <code>cargo login</code>:</p>
+<p>crates.io can only attach a trusted publisher to a crate that already exists, so
+this first publication is a one-time manual bootstrap; every later tag publishes
+through GitHub OIDC with no stored registry secret. It runs only after the
+signed tag is checked out in a clean worktree. Enter the ephemeral token inside
+the running devcontainer; do not use <code>cargo login</code>:</p>
 <pre><code class="language-sh">read -r -s -p "crates.io bootstrap token: " CARGO_REGISTRY_TOKEN
 printf '\n'
 export CARGO_REGISTRY_TOKEN
-bash scripts/publish_crates.sh --bootstrap 1.0.0-rc.1
+bash scripts/publish_crates.sh --bootstrap 0.3.0
 unset CARGO_REGISTRY_TOKEN
 </code></pre>
 <p>The script packages and publishes <code>rete-core</code>, waits for registry and sparse
@@ -354,30 +375,55 @@ existing package only when its registry checksum matches the locally packaged
 archive. It then downloads all three registry archives, tests fresh native and
 WASM consumers, and writes the non-secret
 <code>target/release/crates-io-receipt.json</code>. Revoke the bootstrap token immediately
-after attaching that receipt to the prerelease and verifying the crates and
+after attaching that receipt to the release and verifying the crates and
 docs.rs pages.</p>
 <p>After bootstrap, configure trusted publishers for all three crates with owner
 <code>caviri</code>, repository <code>rete</code>, workflow <code>release.yml</code>, and environment
 <code>crates-io</code>. Configure that GitHub environment with required approval and only
 protected <code>v*</code> tags; it must contain no crates.io secret. Run the release
-workflow manually against the <code>v1.0.0-rc.1</code> tag with
-<code>verify_crates_io_auth=true</code>. This requests and automatically revokes a
-short-lived OIDC token, validates the tag and package preflight, and makes no
-publish call. Later release tags publish in dependency order through the same
-protected job.</p>
+workflow manually against the <code>v0.3.0</code> tag with <code>verify_crates_io_auth=true</code>.
+This requests and automatically revokes a short-lived OIDC token, validates the
+tag and package preflight, and makes no publish call. Later release tags publish
+in dependency order through the same protected job.</p>
+<h2>Language clients</h2>
+<p>Client versions track the engine's <code>MAJOR.MINOR</code>: <code>rete-graph</code> 0.3.x on PyPI and
+npm, and the R package, all embed engine 0.3.x. The patch component moves
+independently, so a binding-only fix ships as 0.3.1 without an engine release.
+<code>scripts/sync_versions.py --check</code> enforces this in CI; <code>--write</code> realigns.
+Every client also exposes the engine version it embeds — <code>rete_graph .__engine_version__</code> in Python — which is the reliable answer to "does my
+install support feature X?", since the binding's own version tracks the binding.</p>
+<p>Clients release from their own tags (<code>py-v0.3.0</code>, <code>js-v0.3.0</code>), not the <code>v*</code>
+release tag.</p>
+<h3>The Pyodide fallback wheel</h3>
+<p><code>%pip install rete-graph</code> resolves from PyPI and needs no pin. But Pyodide
+0.29's installer predates PEP 783, which renamed the wheel platform tag
+<code>pyodide_*</code> to <code>pyemscripten_*</code>, so it cannot see the wheel PyPI now requires.
+<code>docs/python.md</code> points those users at a retagged copy on our own bucket.</p>
+<p>The publish workflow builds that copy for every <code>py-v*</code> tag and uploads it as
+the <code>wheel-pyodide-legacy</code> artifact — kept out of <code>dist</code>, which goes to PyPI and
+would reject the legacy tag. Actually publishing it is a separate step, because
+the repository has no R2 credentials in Actions:</p>
+<pre><code class="language-sh">scripts/publish_pyodide_wheel.sh          # after the py-v&lt;version&gt; run finishes
+</code></pre>
+<p>It pulls the artifact from that tag's run, refuses anything whose version or
+platform tag disagrees with what <code>docs/python.md</code> promises, uploads it to
+<code>wheels/</code>, and verifies the documented URL returns 200 with a plausible body.
+<code>sync_versions.py --check</code> keeps that URL's version honest; only this step makes
+it resolve.</p>
 <h2>Compatibility statement</h2>
 <p>Pre-1.0 <code>.rete</code> bytes were explicitly unstable. Rebuild every dataset from its
-source RDF with the 1.0 toolchain; do not rename an older file and assume it is
-compatible. RC-produced files may also need one final rebuild if review changes
-the format before 1.0.0. The durable compatibility promise starts at final
+source RDF with the 0.3 toolchain; do not rename an older file and assume it is
+compatible. Files produced by 0.3.0 may still need one final rebuild if review
+changes the format before 1.0.0. The durable compatibility promise starts at
 1.0.0.</p>
-<p>The Rust crates declare Rust 1.87 as their minimum supported version. Public
-Rust, CLI, and WASM surfaces follow semantic versioning after final 1.0.0.</p>
+<p>The Rust crates declare Rust 1.87 as their minimum supported version. The
+public Rust, CLI, and WASM surfaces carry no semantic-versioning promise while
+the crates are 0.x; semver applies from 1.0.0 onward.</p>
 <h2>Verify a download</h2>
 <pre><code class="language-sh">sha256sum -c SHA256SUMS
-gh attestation verify rete-1.0.0-rc.1-x86_64-unknown-linux-gnu.tar.gz \
+gh attestation verify rete-0.3.0-x86_64-unknown-linux-gnu.tar.gz \
   --repo caviri/rete
-./rete-1.0.0-rc.1-x86_64-unknown-linux-gnu/rete --version
+./rete-0.3.0-x86_64-unknown-linux-gnu/rete --version
 </code></pre>
 <p>Then build and query a source graph:</p>
 <pre><code class="language-sh">rete build source.nq -o graph.rete --pyramid-algo types --card
@@ -391,12 +437,16 @@ require cross-origin isolation.</li>
 <li>Range reads are lazy; query result materialization is currently eager.</li>
 <li>Federation unions results from independent files and does not resolve general
 joins spanning files.</li>
-<li>The RDF/XML parser is temporarily pinned through upstream Oxigraph crates to
-<code>quick-xml 0.37.5</code>. The two active RustSec findings are visible in development
-CI, and crates.io publication remains blocked until the release preflight is
-explicitly clean.</li>
+<li>The RDF/XML parser resolves <code>quick-xml 0.37.5</code> through upstream Oxigraph:
+every published <code>oxrdfxml</code>, including the current 0.2.3, requires
+<code>quick-xml ^0.37</code>, so the patched 0.41 line is unreachable from here.
+RUSTSEC-2026-0194 and RUSTSEC-2026-0195 are consequently carried as documented
+exceptions in <code>deny.toml</code> and in the publish preflight. Both are
+availability-only denial-of-service findings whose exposure is a caller
+parsing untrusted RDF/XML; neither affects confidentiality or integrity. Both
+exceptions are removed as soon as Oxigraph ships a <code>quick-xml &gt;= 0.41</code> bump.</li>
 </ul>
-<p>Full changes are in the <a href="https://github.com/caviri/rete/blob/release-1.0.0-rc1/CHANGELOG.html">changelog</a>.</p>
+<p>Full changes are in the <a href="https://github.com/caviri/rete/blob/main/CHANGELOG.html">changelog</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -404,7 +454,7 @@ explicitly clean.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/release.md</code> by <code>cargo run -p docgen</code>.</footer>
+    <footer>Generated from <code>docs/release.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <script>
 (function () {
