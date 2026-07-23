@@ -1,372 +1,22 @@
-//! Render the Markdown files in `/docs` into a static HTML site.
-//!
-//! Pure Rust (pulldown-cmark) so it runs in the dev container with no Node /
-//! mkdocs toolchain. Each `docs/<name>.md` becomes `docs/<name>.html`, wrapped in
-//! a shared template with a sidebar; inter-doc `.md` links are rewritten to
-//! `.html`. Run: `cargo run -p docgen` (from the repo root, or pass the docs dir).
-
-use std::fs;
-use std::path::PathBuf;
-
-use pulldown_cmark::{html, Options, Parser};
-
-/// Crate version, shown in the sidebar next to the repository link.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const REPO_URL: &str = "https://github.com/caviri/rete";
-
-/// Sectioned nav: (section title, [(file, sidebar title)]). Markdown entries are
-/// rendered to the sibling `.html`; entries already ending in `.html` are
-/// pre-built pages (e.g. the WASM playground from `scripts/build_playground.py`)
-/// and are linked as-is, never rendered.
-const SECTIONS: &[(&str, &[(&str, &str)])] = &[
-    (
-        "Start here",
-        &[
-            ("index.md", "Overview"),
-            ("intro.md", "Graph data 101"),
-            ("getting-started.md", "Getting started"),
-            ("scenario.md", "Real-world scenario"),
-        ],
-    ),
-    (
-        "Explore in the browser",
-        &[
-            ("playground-guide.md", "Playground"),
-            ("plaza-guide.md", "Plaza — dataset gallery"),
-            ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
-            ("jupyterlite-guide.md", "JupyterLite — Python in the tab"),
-            ("jslab-guide.md", "JS lab — rete × D3"),
-            ("atlas.md", "Historical atlas — SPARQL + GIS"),
-            ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
-            ("football.md", "Football — match replays"),
-            ("subtitles-guide.md", "Subtitle timeline"),
-            ("anatomy-guide.md", "Z-Anatomy — 3D human body"),
-            ("lombardi-guide.md", "Lombardi — network drawings in ink"),
-            ("webgpu-guide.md", "WebGPU coherence (exp.)"),
-            ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
-            ("neuro-showcase-guide.md", "Neuromorphology — 3D neurons & astrocytes (exp.)"),
-        ],
-    ),
-    (
-        "Guides",
-        &[
-            ("cli.md", "CLI reference"),
-            ("sparql.md", "SPARQL support"),
-            ("geosparql.md", "GeoSPARQL (geometry + time)"),
-            ("shacl.md", "SHACL validation"),
-            ("reasoning.md", "Reasoning & coherence"),
-            ("federation.md", "Federated queries"),
-            ("semantic-zoom.md", "Semantic zoom (schema pyramid)"),
-            ("compatibility.md", "Compatibility & Cypher"),
-        ],
-    ),
-    // User-facing docs for the language clients (clients/<lang> in the repo).
-    // Maintainer docs live apart in Development → clients-dev.md.
-    (
-        "Clients",
-        &[
-            ("python.md", "Python — rete-graph"),
-            ("python-build-tutorial.md", "Python: build a .rete"),
-            ("javascript.md", "JavaScript — rete-graph"),
-            ("comunica.md", "Comunica — RDF/JS source"),
-            ("r.md", "R — rete"),
-            ("blender.md", "Blender — graphs as scenes"),
-            ("agents.md", "Agents — MCP, plugin & skills"),
-            ("fallacies.md", "Experiment: graphs from speech"),
-        ],
-    ),
-    (
-        "Publish & share",
-        &[
-            ("dataset-cards.md", "Dataset Cards"),
-            ("hosting.md", "Hosting your .rete"),
-            ("interop.md", "Triple-store interop"),
-            ("media-companions.md", "Media & SQL companions"),
-            ("release.md", "1.0 release candidate"),
-        ],
-    ),
-    (
-        "Graph analysis",
-        &[
-            ("topic-modeling.md", "Topic modeling (LDA)"),
-            ("multi-criteria.md", "Multi-criteria communities"),
-        ],
-    ),
-    (
-        "Development",
-        &[
-            ("architecture.md", "Architecture"),
-            ("SPEC.md", "Format specification"),
-            ("rust-api.md", "Rust API"),
-            ("browser.md", "WASM & JavaScript API"),
-            ("clients-dev.md", "Client development & releases"),
-            ("parallel-browser.md", "Parallel in browser (exp.)"),
-            ("data-engineering.md", "Tables, VKG & big builds"),
-            ("BENCHMARK.md", "Benchmarks"),
-            ("conformance.md", "SPARQL 1.1 conformance"),
-        ],
-    ),
-];
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Docs dir: first CLI arg, else ./docs.
-    let docs_dir: PathBuf = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("docs"));
-    if !docs_dir.is_dir() {
-        return Err(format!("docs dir not found: {}", docs_dir.display()).into());
-    }
-
-    let mut rendered = 0;
-    for (_, pages) in SECTIONS {
-        for (md, title) in *pages {
-            if !md.ends_with(".md") {
-                continue; // pre-built page (playground); linked, never rendered
-            }
-            let src = docs_dir.join(md);
-            if !src.exists() {
-                eprintln!(
-                    "warning: {} listed in nav but missing — skipping",
-                    src.display()
-                );
-                continue;
-            }
-            let markdown = fs::read_to_string(&src)?;
-            let body = render_markdown(&markdown);
-            let html_name = md.replace(".md", ".html");
-            let page = template(title, &body, md);
-            let out = docs_dir.join(&html_name);
-            fs::write(&out, page)?;
-            println!("  {md:<22} -> {html_name}");
-            rendered += 1;
-        }
-    }
-    println!(
-        "docgen: wrote {rendered} HTML page(s) to {}",
-        docs_dir.display()
-    );
-    Ok(())
-}
-
-/// Markdown → HTML body, with GitHub-flavored extensions (tables, etc.) and
-/// inter-doc `.md` links rewritten to `.html`.
-fn render_markdown(md: &str) -> String {
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TABLES);
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TASKLISTS);
-    opts.insert(Options::ENABLE_FOOTNOTES);
-    opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
-
-    let parser = Parser::new_ext(md, opts);
-    let mut out = String::new();
-    html::push_html(&mut out, parser);
-    rewrite_links(&out)
-}
-
-/// Make links between docs work in the rendered site: a `docs/`-prefixed or bare
-/// `*.md` href becomes the sibling `*.html`. Only touches `href="..."` targets,
-/// not code or text.
-fn rewrite_links(html: &str) -> String {
-    html.replace("href=\"docs/", "href=\"")
-        .replace(".md\"", ".html\"")
-        .replace(".md#", ".html#")
-}
-
-/// Overview `.md` pages that head a collapsible nav group of full-screen
-/// interactive apps. The **first** sub is the rendered overview (stays in-page);
-/// the rest are pre-built apps that open in a new tab.
-fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
-    match md {
-        "playground-guide.md" => Some(&[
-            ("playground-guide.html", "overview"),
-            ("playground.html", "launch the playground →"),
-        ]),
-        "graph-map.md" => Some(&[
-            ("graph-map.html", "overview"),
-            ("graph-map/viewer.html", "structural map"),
-            ("graph-map/viewer-topics.html", "topic map (LDA)"),
-            ("graph-map/viewer-3d.html", "3D — deck.gl"),
-            ("graph-map/viewer-3d-three.html", "3D — three.js + fog"),
-        ]),
-        "yasgui-guide.md" => Some(&[
-            ("yasgui-guide.html", "overview"),
-            ("yasgui.html", "launch the IDE →"),
-        ]),
-        "jupyterlite-guide.md" => Some(&[
-            ("jupyterlite-guide.html", "overview"),
-            (
-                "jupyterlite/lab/index.html?path=rete-graph.ipynb",
-                "tour: query graphs →",
-            ),
-            (
-                "jupyterlite/lab/index.html?path=build-a-rete.ipynb",
-                "build: anatomy of a .rete →",
-            ),
-        ]),
-        "jslab-guide.md" => Some(&[
-            ("jslab-guide.html", "overview"),
-            ("jslab.html", "launch the lab →"),
-        ]),
-        "atlas.md" => Some(&[
-            ("atlas.html", "overview"),
-            ("atlas-app.html", "launch the atlas →"),
-        ]),
-        "ask-the-graph.md" => Some(&[
-            ("ask-the-graph.html", "overview"),
-            ("ask-browser.html", "launch ask the graph →"),
-        ]),
-        "football.md" => Some(&[
-            ("football.html", "overview"),
-            ("pitch.html", "pick any match →"),
-            ("wcfinal.html", "the 2022 final →"),
-        ]),
-        "subtitles-guide.md" => Some(&[
-            ("subtitles-guide.html", "overview"),
-            ("subtitles.html", "play the timeline →"),
-        ]),
-        "anatomy-guide.md" => Some(&[
-            ("anatomy-guide.html", "overview"),
-            ("anatomy.html", "open the 3D body →"),
-        ]),
-        "lombardi-guide.md" => Some(&[
-            ("lombardi-guide.html", "overview"),
-            ("lombardi.html", "open the drawings →"),
-        ]),
-        "webgpu-guide.md" => Some(&[
-            ("webgpu-guide.html", "overview"),
-            ("webgpu.html", "run the experiment →"),
-        ]),
-        "plaza-guide.md" => Some(&[
-            ("plaza-guide.html", "overview"),
-            ("plaza/index.html", "open the gallery →"),
-        ]),
-        "neuro-showcase-guide.md" => Some(&[
-            ("neuro-showcase-guide.html", "overview"),
-            ("playground.html#dataset=neuro-showcase&load=lazy", "launch in the playground →"),
-        ]),
-        _ => None,
-    }
-}
-
-fn template(title: &str, body: &str, current_md: &str) -> String {
-    let mut nav_items: Vec<String> = Vec::new();
-    for (section, pages) in SECTIONS {
-        nav_items.push(format!("<li class=\"nav-h\">{section}</li>"));
-        for (md, t) in *pages {
-            // An overview `.md` that owns a set of full-screen interactive pages
-            // renders as a collapsible group: the first sub is the rendered
-            // overview (in-page), the rest are the apps (each in a new tab).
-            if let Some(subs) = nav_group_subs(md) {
-                let open = if *md == current_md { " open" } else { "" };
-                let overview = subs[0].0;
-                let mut sub = String::new();
-                for (i, (h, l)) in subs.iter().enumerate() {
-                    let a = if i == 0 && *h == overview && *md == current_md {
-                        " class=\"active\""
-                    } else {
-                        ""
-                    };
-                    let tgt = if i == 0 {
-                        "" // the overview stays in-page
-                    } else {
-                        " target=\"_blank\" rel=\"noopener\""
-                    };
-                    sub.push_str(&format!("<li><a href=\"{h}\"{a}{tgt}>{l}</a></li>"));
-                }
-                // The summary title links to the overview: clicking a group in
-                // the sidebar opens its introduction AND (because that page
-                // renders with the group `open`) leaves the sidebar expanded.
-                // The disclosure triangle still toggles the sub-list in place.
-                let sumclass = if *md == current_md {
-                    " class=\"active\""
-                } else {
-                    ""
-                };
-                nav_items.push(format!(
-                    "<li class=\"nav-group\"><details{open}><summary><a href=\"{overview}\"{sumclass}>{t}</a></summary><ul class=\"nav-sub\">{sub}</ul></details></li>"
-                ));
-                continue;
-            }
-            let href = md.replace(".md", ".html");
-            let class = if *md == current_md {
-                " class=\"active\""
-            } else {
-                ""
-            };
-            nav_items.push(format!("<li><a href=\"{href}\"{class}>{t}</a></li>"));
-        }
-    }
-    let nav = nav_items.join("\n        ");
-
-    format!(
-        r##"<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>{title} · rete docs</title>
+  <title>Neuromorphology — 3D neurons & astrocytes (exp.) · rete docs</title>
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
      otherwise prefers-color-scheme decides. */
-  (function () {{
-    try {{
+  (function () {
+    try {
       var t = localStorage.getItem("theme");
       if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
-    }} catch (e) {{}}
-  }})();
+    } catch (e) {}
+  })();
   </script>
-  <style>{css}</style>
-</head>
-<body>
-  <nav class="sidebar">
-    <a class="brand" href="index.html">rete</a>
-    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v{version}</span> <a href="{repo}">caviri/rete</a></p>
-    <ul>
-        {nav}
-    </ul>
-    <p class="foot"><a href="{repo}">github.com/caviri/rete</a></p>
-    <button type="button" class="theme-toggle" id="themeToggle"
-      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel">System</span></button>
-  </nav>
-  <main>
-    <div class="page">
-      <article class="content">
-{body}
-      </article>
-      <aside class="rail" aria-label="On this page">
-        <nav class="toc" id="toc"></nav>
-        <div class="keyterms" id="keyterms"></div>
-      </aside>
-    </div>
-    <footer>Generated from <code>docs/{current_md}</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
-  </main>
-  <script>{script}</script>
-  <script>{lightbox}</script>
-  <script>{glossary}</script>
-  <script>{toc}</script>
-</body>
-</html>
-"##,
-        title = title,
-        css = CSS,
-        nav = nav,
-        body = body,
-        current_md = current_md,
-        version = VERSION,
-        repo = REPO_URL,
-        script = HIGHLIGHTER,
-        lightbox = LIGHTBOX,
-        glossary = GLOSSARY_JS,
-        toc = TOC_JS,
-    )
-}
-
-const CSS: &str = r#"
+  <style>
 :root {
   --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
   --side:#eef4ef; --side-fg:#25342e; --accent:#147d69; --accent-2:#c84f2f;
@@ -593,13 +243,154 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   .content table { display:block; overflow-x:auto; }
   .content .term .tip { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; width:auto; max-width:none; }
 }
-"#;
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a class="brand" href="index.html">rete</a>
+    <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
+    <p class="meta"><span class="ver">v0.3.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <ul>
+        <li class="nav-h">Start here</li>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="scenario.html">Real-world scenario</a></li>
+        <li class="nav-h">Explore in the browser</li>
+        <li class="nav-group"><details><summary><a href="playground-guide.html">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
+        <li class="nav-group"><details open><summary><a href="neuro-showcase-guide.html" class="active">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html" class="active">overview</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">launch in the playground →</a></li></ul></details></li>
+        <li class="nav-h">Guides</li>
+        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="sparql.html">SPARQL support</a></li>
+        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
+        <li><a href="reasoning.html">Reasoning & coherence</a></li>
+        <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
+        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
+        <li class="nav-h">Clients</li>
+        <li><a href="python.html">Python — rete-graph</a></li>
+        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
+        <li><a href="javascript.html">JavaScript — rete-graph</a></li>
+        <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
+        <li><a href="r.html">R — rete</a></li>
+        <li><a href="blender.html">Blender — graphs as scenes</a></li>
+        <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
+        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
+        <li class="nav-h">Publish & share</li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="hosting.html">Hosting your .rete</a></li>
+        <li><a href="interop.html">Triple-store interop</a></li>
+        <li><a href="media-companions.html">Media & SQL companions</a></li>
+        <li><a href="release.html">1.0 release candidate</a></li>
+        <li class="nav-h">Graph analysis</li>
+        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
+        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
+        <li class="nav-h">Development</li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="SPEC.html">Format specification</a></li>
+        <li><a href="rust-api.html">Rust API</a></li>
+        <li><a href="browser.html">WASM & JavaScript API</a></li>
+        <li><a href="clients-dev.html">Client development & releases</a></li>
+        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
+        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
+        <li><a href="BENCHMARK.html">Benchmarks</a></li>
+        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+    </ul>
+    <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
+    <button type="button" class="theme-toggle" id="themeToggle"
+      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel">System</span></button>
+  </nav>
+  <main>
+    <div class="page">
+      <article class="content">
+<h1>Neuromorphology — 3D neurons &amp; astrocytes, and a fly connectome</h1>
+<p><strong><a href="playground.html#dataset=neuro-showcase&amp;load=lazy">▸ Launch in the playground →</a></strong>
+— a small <code>.rete</code> you can query in your browser, with the astrocyte meshes
+rendering <strong>inline in the results table</strong>.</p>
+<p>This is an <strong>experiment</strong>: a demonstrator built from two of the neuroscience
+datasets harvested into rete, and the point it makes is about <em>file formats</em> as
+much as neurons — the difference between a <strong>lossless, queryable graph</strong> and a
+<strong>lossy 3D render preview</strong>, kept as two layers instead of one.</p>
+<h2>What's in it</h2>
+<p>Just 30 cells, chosen to be interesting rather than large:</p>
+<ul>
+<li><strong>3 astrocytes</strong> from the Blue Brain <strong>Neuro-Glia-Vascular</strong> reconstruction
+(Zisis et al. 2021), traced from <strong>FIB-SEM electron microscopy</strong>. Each one
+links (<code>schema:contentUrl</code>) to a Draco-compressed <strong><code>.glb</code> surface mesh</strong> that
+the playground renders inline — click 🧊 to rotate it. Astrocytes have a fine
+"spongiform" morphology, sheet- and leaflet-like processes that sit <em>below the
+resolution of light microscopy</em>; these EM meshes show detail that the tracing
+skeletons in a database like NeuroMorpho simply cannot capture.</li>
+<li><strong>27 neurons</strong> from the Janelia <strong>hemibrain</strong> connectome — a connected cluster
+of the <em>Drosophila</em> <strong>mushroom body</strong>, the fly's learning-and-memory circuit.
+Each carries its cell type and predicted <strong>neurotransmitter</strong>, and they are
+joined by <strong>30 real weighted synaptic edges</strong>. The synapse count on each
+connection is attached to the edge itself with <strong>RDF-star</strong>
+(<code>&lt;&lt; ?a neuro:connectsTo ?b &gt;&gt; neuro:weight ?w</code>), so an edge is a first-class
+thing you can query, not a flattened triple.</li>
+</ul>
+<h2>The point: lossless graph + lossy preview</h2>
+<p>The astrocyte meshes are enormous — one is 10 million triangles, ~400 MB as raw
+OBJ. That geometry is <strong>not</strong> what belongs in the graph. So the dataset keeps
+two layers:</p>
+<ul>
+<li>the <strong><code>.rete</code></strong> holds every fact <strong>losslessly</strong> — the cells, their types,
+neurotransmitters, morphometrics, the connectome, and the <em>URL</em> of each mesh;</li>
+<li>the <strong><code>.glb</code></strong> is a <strong>lossy preview</strong> for rendering only: decimated to 15 % of
+its triangles and Draco-quantised (a few-nanometre grid, well below the
+imaging resolution), ~8–17 MB instead of hundreds.</li>
+</ul>
+<p>The full-resolution OBJ meshes and SWC skeletons stay as the analytical source
+of truth. Draco-GLB is a wonderful <em>delivery</em> format for a browser, but it is
+lossy and it cannot express a graph — so it rides alongside the <code>.rete</code>, never
+replaces it.</p>
+<h2>Try it</h2>
+<p>Open the playground and run the built-in examples:</p>
+<ul>
+<li><strong>🧊 The astrocytes in 3D</strong> — returns each astrocyte with its mesh URL; click
+🧊 to open the EM reconstruction and rotate it.</li>
+<li><strong>Heaviest synapses in the circuit</strong> — reads the RDF-star edge weights; the
+giant modulatory neurons DPM and APL dominate.</li>
+<li><strong>Neurons by neurotransmitter</strong> — the acetylcholine / GABA balance of the
+mushroom body.</li>
+<li><strong>The connectome cluster as a network</strong> — switch Output to Graph to see the
+wiring draw itself.</li>
+</ul>
+<h2>Licence &amp; credit</h2>
+<p>Mixed, and published here as a <strong>non-commercial research demonstrator with
+attribution</strong>:</p>
+<ul>
+<li>astrocytes — <strong>CC BY-NC-SA 4.0</strong>, © BBP/EPFL; cite Zisis et al. 2021,
+<em>Digital Reconstruction of the Neuro-Glia-Vascular Architecture</em>, Cerebral
+Cortex 31(12):5686–5703, <a href="https://doi.org/10.1093/cercor/bhab254">doi:10.1093/cercor/bhab254</a>;</li>
+<li>hemibrain neurons — <strong>CC BY 4.0</strong>; cite Scheffer et al. 2020,
+<em>A connectome and analysis of the adult Drosophila central brain</em>, eLife.</li>
+</ul>
+<p>Both licences and the citations travel inside the file's dataset card
+(<code>rete card</code>).</p>
 
-/// A tiny dependency-free syntax highlighter, embedded in every page. It runs on
-/// `DOMContentLoaded`, tokenizes each `<pre><code class="language-…">` block with
-/// a per-language rule list, and wraps tokens in `<span class="tok-…">` that the
-/// CSS theme above colors. No CDN, no build step — works offline / from file://.
-const HIGHLIGHTER: &str = r#"
+      </article>
+      <aside class="rail" aria-label="On this page">
+        <nav class="toc" id="toc"></nav>
+        <div class="keyterms" id="keyterms"></div>
+      </aside>
+    </div>
+    <footer>Generated from <code>docs/neuro-showcase-guide.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+  </main>
+  <script>
 (function () {
   function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
   // Shared token regexes (sticky: must match at the cursor).
@@ -653,12 +444,8 @@ const HIGHLIGHTER: &str = r#"
     });
   });
 })();
-"#;
-
-/// Click-to-zoom lightbox for content images. On `DOMContentLoaded` it builds a
-/// single fullscreen overlay and opens it with the clicked image's source;
-/// clicking the overlay (or pressing Escape) closes it. No dependencies.
-const LIGHTBOX: &str = r#"
+</script>
+  <script>
 (function () {
   document.addEventListener("DOMContentLoaded", function () {
     var imgs = document.querySelectorAll(".content img");
@@ -694,16 +481,8 @@ const LIGHTBOX: &str = r#"
     });
   });
 })();
-"#;
-
-/// Glossary tooltips + per-section "reminder" boxes. On `DOMContentLoaded`:
-///  1. for each `<h2>` section, a small right-margin box recaps the glossary
-///     terms that appear in it (a quick reminder of what each one means);
-///  2. the first occurrence of each glossary term in the prose is wrapped in a
-///     `.term` span whose hover/focus tooltip shows the definition (acronyms
-///     included). Code blocks, links, headings, the boxes, and the TOC are
-///     skipped. No dependencies.
-const GLOSSARY_JS: &str = r#"
+</script>
+  <script>
 (function () {
   var GLOSSARY = {
     "RDF": "Resource Description Framework — the W3C model where data is statements (triples).",
@@ -799,12 +578,8 @@ const GLOSSARY_JS: &str = r#"
     terms.forEach(function (t) { wrapFirst(content, t, GLOSSARY[t]); });
   });
 })();
-"#;
-
-/// "On this page" table of contents, built client-side from the `<h2>`/`<h3>`
-/// headings and shown sticky at the top-right (collapses on narrow screens). It
-/// gives each heading a slug id, links to it, and highlights the section in view.
-const TOC_JS: &str = r##"
+</script>
+  <script>
 (function () {
   document.addEventListener("DOMContentLoaded", function () {
     var toc = document.getElementById("toc");
@@ -884,4 +659,6 @@ const TOC_JS: &str = r##"
   });
   render();
 })();
-"##;
+</script>
+</body>
+</html>
