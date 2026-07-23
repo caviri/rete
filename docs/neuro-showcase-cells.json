@@ -1,0 +1,454 @@
+{
+ "base": "https://data.graphplaza.com/neuro-showcase",
+ "cells": [
+  {
+   "id": "astrocyte-morphology-1",
+   "label": "NGV astrocyte 1",
+   "kind": "astrocyte",
+   "glb": "https://data.graphplaza.com/neuro-showcase/astrocyte2-1024-reconstructed.glb",
+   "modality": "FIB-SEM electron microscopy",
+   "faces": 10349588,
+   "nt": null
+  },
+  {
+   "id": "astrocyte-morphology-2",
+   "label": "NGV astrocyte 2",
+   "kind": "astrocyte",
+   "glb": "https://data.graphplaza.com/neuro-showcase/astrocyte4-1024-reconstructed.glb",
+   "modality": "FIB-SEM electron microscopy",
+   "faces": 6938268,
+   "nt": null
+  },
+  {
+   "id": "astrocyte-morphology-3",
+   "label": "NGV astrocyte 3",
+   "kind": "astrocyte",
+   "glb": "https://data.graphplaza.com/neuro-showcase/astrocyte7-1024-reconstructed.glb",
+   "modality": "FIB-SEM electron microscopy",
+   "faces": 4858412,
+   "nt": null
+  },
+  {
+   "id": "hb-1048172314",
+   "bodyId": "1048172314",
+   "label": "PPL103(y2a'1)(PDL05)_L",
+   "kind": "neuron",
+   "cellType": "PPL103",
+   "nt": "dopamine",
+   "glb": "https://data.graphplaza.com/neuro-showcase/1048172314.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-1078693835",
+   "bodyId": "1078693835",
+   "label": "MBON09(y3B'1)_R",
+   "kind": "neuron",
+   "cellType": "MBON09",
+   "nt": "gaba",
+   "glb": "https://data.graphplaza.com/neuro-showcase/1078693835.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-1189230639",
+   "bodyId": "1189230639",
+   "label": "LT1_R",
+   "kind": "neuron",
+   "cellType": "LT1",
+   "nt": "acetylcholine",
+   "glb": "https://data.graphplaza.com/neuro-showcase/1189230639.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-1196854070",
+   "bodyId": "1196854070",
+   "label": "PPL101(y1pedc)(PDL05)_L",
+   "kind": "neuron",
+   "cellType": "PPL101",
+   "nt": "dopamine",
+   "glb": "https://data.graphplaza.com/neuro-showcase/1196854070.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-1640909284",
+   "bodyId": "1640909284",
+   "label": "lLN2F_b(Full)_R",
+   "kind": "neuron",
+   "cellType": "lLN2F_b",
+   "nt": "acetylcholine",
+   "glb": "https://data.graphplaza.com/neuro-showcase/1640909284.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-1670287030",
+   "bodyId": "1670287030",
+   "label": "lLN2F_a(Full)_R",
+   "kind": "neuron",
+   "cellType": "lLN2F_a",
+   "nt": "serotonin",
+   "glb": "https://data.graphplaza.com/neuro-showcase/1670287030.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-1671292719",
+   "bodyId": "1671292719",
+   "label": "lLN2T_c(Tortuous)_R",
+   "kind": "neuron",
+   "cellType": "lLN2T_c",
+   "nt": "serotonin",
+   "glb": "https://data.graphplaza.com/neuro-showcase/1671292719.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-1671620613",
+   "bodyId": "1671620613",
+   "label": "v2LN30_R",
+   "kind": "neuron",
+   "cellType": "v2LN30",
+   "nt": "gaba",
+   "glb": "https://data.graphplaza.com/neuro-showcase/1671620613.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-1704347707",
+   "bodyId": "1704347707",
+   "label": "lLN2T_c(Tortuous)_R",
+   "kind": "neuron",
+   "cellType": "lLN2T_c",
+   "nt": "serotonin",
+   "glb": "https://data.graphplaza.com/neuro-showcase/1704347707.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-2124762952",
+   "bodyId": "2124762952",
+   "label": "mALC2_L",
+   "kind": "neuron",
+   "cellType": "mALC2",
+   "nt": "gaba",
+   "glb": "https://data.graphplaza.com/neuro-showcase/2124762952.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-393766777",
+   "bodyId": "393766777",
+   "label": "PPL101(y1pedc)_R",
+   "kind": "neuron",
+   "cellType": "PPL101",
+   "nt": "dopamine",
+   "glb": "https://data.graphplaza.com/neuro-showcase/393766777.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-422725634",
+   "bodyId": "422725634",
+   "label": "MBON06(B1>a)(AVM07)_L",
+   "kind": "neuron",
+   "cellType": "MBON06",
+   "nt": "glutamate",
+   "glb": "https://data.graphplaza.com/neuro-showcase/422725634.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-424767514",
+   "bodyId": "424767514",
+   "label": "MBON11(y1pedc>a/B)_R",
+   "kind": "neuron",
+   "cellType": "MBON11",
+   "nt": "gaba",
+   "glb": "https://data.graphplaza.com/neuro-showcase/424767514.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-425790257",
+   "bodyId": "425790257",
+   "label": "APL_R",
+   "kind": "neuron",
+   "cellType": "APL",
+   "nt": "gaba",
+   "glb": "https://data.graphplaza.com/neuro-showcase/425790257.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-447228814",
+   "bodyId": "447228814",
+   "label": "PVLP106_R",
+   "kind": "neuron",
+   "cellType": "PVLP106",
+   "nt": "glutamate",
+   "glb": "https://data.graphplaza.com/neuro-showcase/447228814.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-5813020988",
+   "bodyId": "5813020988",
+   "label": "LHMB1_R",
+   "kind": "neuron",
+   "cellType": "LHMB1",
+   "nt": "glutamate",
+   "glb": "https://data.graphplaza.com/neuro-showcase/5813020988.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-5813022234",
+   "bodyId": "5813022234",
+   "label": "MBON30(y1y2y3)_R",
+   "kind": "neuron",
+   "cellType": "MBON30",
+   "nt": "glutamate",
+   "glb": "https://data.graphplaza.com/neuro-showcase/5813022234.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-5813022424",
+   "bodyId": "5813022424",
+   "label": "PPL103(y2a'1)_R",
+   "kind": "neuron",
+   "cellType": "PPL103",
+   "nt": "dopamine",
+   "glb": "https://data.graphplaza.com/neuro-showcase/5813022424.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-5813024698",
+   "bodyId": "5813024698",
+   "label": "lLN2F_b(Full)_R",
+   "kind": "neuron",
+   "cellType": "lLN2F_b",
+   "nt": "serotonin",
+   "glb": "https://data.graphplaza.com/neuro-showcase/5813024698.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-5813034493",
+   "bodyId": "5813034493",
+   "label": "lLN2T_b(Tortuous)_R",
+   "kind": "neuron",
+   "cellType": "lLN2T_b",
+   "nt": "serotonin",
+   "glb": "https://data.graphplaza.com/neuro-showcase/5813034493.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-5813061218",
+   "bodyId": "5813061218",
+   "label": "LT39_R",
+   "kind": "neuron",
+   "cellType": "LT39",
+   "nt": "gaba",
+   "glb": "https://data.graphplaza.com/neuro-showcase/5813061218.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-5813105172",
+   "bodyId": "5813105172",
+   "label": "DPM_R",
+   "kind": "neuron",
+   "cellType": "DPM",
+   "nt": "dopamine",
+   "glb": "https://data.graphplaza.com/neuro-showcase/5813105172.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-5901218894",
+   "bodyId": "5901218894",
+   "label": "lLN2F_a(Full)_R",
+   "kind": "neuron",
+   "cellType": "lLN2F_a",
+   "nt": "serotonin",
+   "glb": "https://data.graphplaza.com/neuro-showcase/5901218894.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-612371421",
+   "bodyId": "612371421",
+   "label": "MBON01(y5B'2a)_R",
+   "kind": "neuron",
+   "cellType": "MBON01",
+   "nt": "glutamate",
+   "glb": "https://data.graphplaza.com/neuro-showcase/612371421.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-642732835",
+   "bodyId": "642732835",
+   "label": "MBON32(y2)_R",
+   "kind": "neuron",
+   "cellType": "MBON32",
+   "nt": "gaba",
+   "glb": "https://data.graphplaza.com/neuro-showcase/642732835.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-759810119",
+   "bodyId": "759810119",
+   "label": "CSD(5HT1)(AVM03)_L",
+   "kind": "neuron",
+   "cellType": "CSD",
+   "nt": "serotonin",
+   "glb": "https://data.graphplaza.com/neuro-showcase/759810119.glb",
+   "modality": "hemibrain EM skeleton"
+  },
+  {
+   "id": "hb-799586652",
+   "bodyId": "799586652",
+   "label": "MBON05(y4>y1y2)(AVM07)_L",
+   "kind": "neuron",
+   "cellType": "MBON05",
+   "nt": "glutamate",
+   "glb": "https://data.graphplaza.com/neuro-showcase/799586652.glb",
+   "modality": "hemibrain EM skeleton"
+  }
+ ],
+ "edges": [
+  {
+   "pre": "hb-5813105172",
+   "post": "hb-425790257",
+   "weight": 4299
+  },
+  {
+   "pre": "hb-425790257",
+   "post": "hb-5813105172",
+   "weight": 1740
+  },
+  {
+   "pre": "hb-5813105172",
+   "post": "hb-799586652",
+   "weight": 1065
+  },
+  {
+   "pre": "hb-5813024698",
+   "post": "hb-5901218894",
+   "weight": 1015
+  },
+  {
+   "pre": "hb-1196854070",
+   "post": "hb-424767514",
+   "weight": 989
+  },
+  {
+   "pre": "hb-393766777",
+   "post": "hb-424767514",
+   "weight": 961
+  },
+  {
+   "pre": "hb-1189230639",
+   "post": "hb-447228814",
+   "weight": 958
+  },
+  {
+   "pre": "hb-1640909284",
+   "post": "hb-5901218894",
+   "weight": 930
+  },
+  {
+   "pre": "hb-5813024698",
+   "post": "hb-1670287030",
+   "weight": 888
+  },
+  {
+   "pre": "hb-5813022424",
+   "post": "hb-425790257",
+   "weight": 833
+  },
+  {
+   "pre": "hb-1640909284",
+   "post": "hb-1670287030",
+   "weight": 824
+  },
+  {
+   "pre": "hb-5813061218",
+   "post": "hb-2124762952",
+   "weight": 793
+  },
+  {
+   "pre": "hb-5813024698",
+   "post": "hb-1704347707",
+   "weight": 787
+  },
+  {
+   "pre": "hb-1640909284",
+   "post": "hb-1704347707",
+   "weight": 773
+  },
+  {
+   "pre": "hb-1048172314",
+   "post": "hb-425790257",
+   "weight": 744
+  },
+  {
+   "pre": "hb-5813024698",
+   "post": "hb-1671292719",
+   "weight": 730
+  },
+  {
+   "pre": "hb-1640909284",
+   "post": "hb-1671292719",
+   "weight": 717
+  },
+  {
+   "pre": "hb-5813105172",
+   "post": "hb-1078693835",
+   "weight": 694
+  },
+  {
+   "pre": "hb-425790257",
+   "post": "hb-799586652",
+   "weight": 613
+  },
+  {
+   "pre": "hb-425790257",
+   "post": "hb-612371421",
+   "weight": 535
+  },
+  {
+   "pre": "hb-759810119",
+   "post": "hb-1640909284",
+   "weight": 525
+  },
+  {
+   "pre": "hb-759810119",
+   "post": "hb-5813024698",
+   "weight": 524
+  },
+  {
+   "pre": "hb-799586652",
+   "post": "hb-5813022234",
+   "weight": 518
+  },
+  {
+   "pre": "hb-1671292719",
+   "post": "hb-1671620613",
+   "weight": 503
+  },
+  {
+   "pre": "hb-5813105172",
+   "post": "hb-422725634",
+   "weight": 473
+  },
+  {
+   "pre": "hb-1704347707",
+   "post": "hb-1671620613",
+   "weight": 459
+  },
+  {
+   "pre": "hb-5813024698",
+   "post": "hb-5813034493",
+   "weight": 452
+  },
+  {
+   "pre": "hb-5813020988",
+   "post": "hb-425790257",
+   "weight": 451
+  },
+  {
+   "pre": "hb-425790257",
+   "post": "hb-5813020988",
+   "weight": 433
+  },
+  {
+   "pre": "hb-5813022424",
+   "post": "hb-642732835",
+   "weight": 429
+  }
+ ]
+}

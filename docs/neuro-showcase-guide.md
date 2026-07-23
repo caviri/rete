@@ -1,8 +1,13 @@
 # Neuromorphology — 3D neurons & astrocytes, and a fly connectome
 
-**[▸ Launch in the playground →](playground.html#dataset=neuro-showcase&load=lazy)**
-— a small `.rete` you can query in your browser, with the astrocyte meshes
-rendering **inline in the results table**.
+**[▸ Reconstruct the shapes in 3D →](neuro-showcase.html)** — a standalone
+WebGL viewer that streams the electron-microscopy meshes and rebuilds each cell
+in your browser; rotate an astrocyte, or show the whole neuron cluster at once,
+coloured by neurotransmitter.
+
+**[▸ Query it in the playground →](playground.html#dataset=neuro-showcase&load=lazy)**
+— the same cells as a `.rete` graph, the 3D meshes rendering **inline in the
+results table**.
 
 This is an **experiment**: a demonstrator built from two of the neuroscience
 datasets harvested into rete, and the point it makes is about *file formats* as

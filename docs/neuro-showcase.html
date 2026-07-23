@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neuromorphology — 3D neurons & astrocytes · rete</title>
+<style>
+  :root { --bg:#0c1512; --panel:#111d19; --border:#22332d; --ink:#e8f1ed; --muted:#8ba79c; --accent:#3dd0a8; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
+  #app { display:grid; grid-template-columns:300px 1fr; height:100%; }
+  aside { background:var(--panel); border-right:1px solid var(--border); overflow-y:auto; padding:14px 14px 40px; }
+  h1 { font-size:1.02rem; margin:.2rem 0 .1rem; }
+  .sub { color:var(--muted); font-size:.8rem; margin:0 0 .9rem; }
+  .grp { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);
+    margin:1.1rem 0 .4rem; border-bottom:1px solid var(--border); padding-bottom:.25rem; }
+  button.cell { display:flex; align-items:center; gap:.5rem; width:100%; text-align:left; cursor:pointer;
+    background:transparent; color:var(--ink); border:0; border-radius:7px; padding:.32rem .45rem; font-size:.82rem; }
+  button.cell:hover { background:rgba(61,208,168,.10); }
+  button.cell.on { background:rgba(61,208,168,.18); font-weight:600; }
+  .dot { width:11px; height:11px; border-radius:50%; flex:0 0 auto; box-shadow:0 0 0 1px rgba(255,255,255,.15); }
+  .cell .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row { display:flex; gap:.4rem; margin:.5rem 0; flex-wrap:wrap; }
+  .row button { flex:1; cursor:pointer; background:#16261f; color:var(--ink); border:1px solid var(--border);
+    border-radius:7px; padding:.4rem; font-size:.78rem; }
+  .row button:hover { border-color:var(--accent); color:var(--accent); }
+  .legend { display:grid; grid-template-columns:1fr 1fr; gap:.15rem .4rem; font-size:.75rem; color:var(--muted); margin:.3rem 0 .2rem; }
+  .legend span { display:flex; align-items:center; gap:.35rem; }
+  main { position:relative; }
+  canvas { display:block; }
+  #meta { position:absolute; left:14px; bottom:14px; max-width:60%; background:rgba(10,18,15,.82);
+    border:1px solid var(--border); border-radius:9px; padding:.6rem .8rem; font-size:.82rem; backdrop-filter:blur(3px); }
+  #meta b { color:var(--accent); }
+  #meta .mut { color:var(--muted); }
+  #status { position:absolute; top:14px; right:16px; color:var(--muted); font-size:.8rem; }
+  #status.busy::before { content:"⟳ "; }
+  a { color:var(--accent); }
+  .foot { margin-top:1.4rem; font-size:.74rem; color:var(--muted); line-height:1.5; }
+  .foot a { color:var(--muted); text-decoration:underline; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <h1>Neuromorphology in 3D</h1>
+    <p class="sub">Electron-microscopy reconstructions, streamed from a <code>.rete</code> graph.</p>
+
+    <div class="grp">Astrocytes — EM surface meshes</div>
+    <div id="astro"></div>
+
+    <div class="grp">Neurons — hemibrain mushroom body</div>
+    <div class="row">
+      <button id="allNeurons">Show the whole cluster</button>
+      <button id="clear">Clear</button>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div id="neurons"></div>
+
+    <p class="foot">
+      Astrocytes © BBP/EPFL (CC BY-NC-SA 4.0, Zisis et al. 2021). Neurons: Janelia
+      hemibrain (CC BY 4.0, Scheffer et al. 2020). Meshes are lossy Draco previews;
+      the lossless graph is queryable in the
+      <a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">playground</a>.
+      · <a href="neuro-showcase-guide.html">about this experiment</a>
+    </p>
+  </aside>
+  <main>
+    <div id="status">loading…</div>
+    <div id="meta"><span class="mut">Pick a cell on the left to reconstruct it in 3D.</span></div>
+  </main>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+
+const NT_COLOR = {
+  acetylcholine: 0xe15759, gaba: 0x4e79a7, glutamate: 0x59a14f,
+  dopamine: 0xf28e2b, serotonin: 0xb07aa1, octopamine: 0x76b7b2, neither: 0x8a8a8a,
+};
+const ASTRO_COLOR = 0x9ad6c4;
+const statusEl = document.getElementById("status");
+const metaEl = document.getElementById("meta");
+function status(t, busy) { statusEl.textContent = t || ""; statusEl.className = busy ? "busy" : ""; }
+
+// --- scene ---
+const main = document.querySelector("main");
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+main.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0c1512);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 5e7);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(1, 1, 1); scene.add(key);
+const rim = new THREE.DirectionalLight(0x88bbff, 0.7); rim.position.set(-1, 0.3, -1); scene.add(rim);
+
+function resize() {
+  const w = main.clientWidth, h = main.clientHeight;
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize); resize();
+(function loop(){ controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop); })();
+
+const draco = new DRACOLoader();
+draco.setDecoderPath("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/gltf/");
+const gltf = new GLTFLoader(); gltf.setDRACOLoader(draco);
+
+const loaded = new Map();   // id -> THREE.Group
+const cache = new Map();    // glb url -> geometry group (parsed once)
+
+function frameLoaded() {
+  const box = new THREE.Box3();
+  let any = false;
+  for (const g of loaded.values()) { box.expandByObject(g); any = true; }
+  if (!any) return;
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  const r = Math.max(s.x, s.y, s.z) * 0.5 || 1;
+  controls.target.copy(c);
+  camera.position.copy(c).add(new THREE.Vector3(r * 1.9, r * 1.2, r * 2.4));
+  camera.near = r / 100; camera.far = r * 100; camera.updateProjectionMatrix();
+}
+
+async function addCell(cell, { solo }) {
+  if (solo) clearAll();
+  if (loaded.has(cell.id)) { removeCell(cell.id); refreshButtons(); return; }
+  status(`loading ${cell.label}…`, true);
+  try {
+    const g = await new Promise((res, rej) => gltf.load(cell.glb, (r)=>res(r.scene), undefined, rej));
+    const color = cell.kind === "astrocyte" ? ASTRO_COLOR : (NT_COLOR[cell.nt] ?? 0xcccccc);
+    g.traverse((o) => {
+      if (o.isMesh) {
+        o.material = new THREE.MeshStandardMaterial({
+          color, roughness:0.55, metalness:0.0,
+          transparent: cell.kind === "astrocyte", opacity: cell.kind === "astrocyte" ? 0.82 : 1,
+          side: THREE.DoubleSide });
+      }
+    });
+    loaded.set(cell.id, g); scene.add(g);
+    frameLoaded(); showMeta(cell); refreshButtons(); status("");
+  } catch (e) { status("failed to load — " + (e?.message || e)); }
+}
+function removeCell(id) { const g = loaded.get(id); if (g) { scene.remove(g); loaded.delete(id); } }
+function clearAll() { for (const id of [...loaded.keys()]) removeCell(id); metaEl.innerHTML = '<span class="mut">Cleared.</span>'; refreshButtons(); }
+
+function showMeta(cell) {
+  if (cell.kind === "astrocyte") {
+    metaEl.innerHTML = `<b>${cell.label}</b> &middot; protoplasmic astrocyte<br>` +
+      `<span class="mut">${cell.modality} · ${(cell.faces/1e6).toFixed(1)} M triangles (full-res) · CC BY-NC-SA</span>`;
+  } else {
+    metaEl.innerHTML = `<b>${cell.label}</b> &middot; ${cell.cellType}<br>` +
+      `<span class="mut">releases <b style="color:#${(NT_COLOR[cell.nt]||0x999).toString(16)}">${cell.nt}</b> · hemibrain body ${cell.bodyId} · CC BY 4.0</span>`;
+  }
+}
+
+// --- UI ---
+let CELLS = [];
+function refreshButtons() {
+  document.querySelectorAll("button.cell").forEach((b) => b.classList.toggle("on", loaded.has(b.dataset.id)));
+}
+function cellButton(cell) {
+  const b = document.createElement("button");
+  b.className = "cell"; b.dataset.id = cell.id;
+  const color = cell.kind === "astrocyte" ? ASTRO_COLOR : (NT_COLOR[cell.nt] ?? 0x999999);
+  b.innerHTML = `<span class="dot" style="background:#${color.toString(16).padStart(6,"0")}"></span><span class="nm">${cell.label}</span>`;
+  b.onclick = () => addCell(cell, { solo: cell.kind === "astrocyte" });
+  return b;
+}
+
+(async function init() {
+  try {
+    const man = await fetch("neuro-showcase-cells.json").then(r => r.json());
+    CELLS = man.cells;
+    const astro = document.getElementById("astro"), neu = document.getElementById("neurons");
+    CELLS.filter(c => c.kind === "astrocyte").forEach(c => astro.appendChild(cellButton(c)));
+    CELLS.filter(c => c.kind === "neuron").forEach(c => neu.appendChild(cellButton(c)));
+    // legend from the neurotransmitters actually present
+    const nts = [...new Set(CELLS.filter(c=>c.kind==="neuron").map(c=>c.nt))];
+    document.getElementById("legend").innerHTML = nts.map(nt =>
+      `<span><span class="dot" style="background:#${(NT_COLOR[nt]||0x999).toString(16).padStart(6,"0")}"></span>${nt}</span>`).join("");
+    document.getElementById("allNeurons").onclick = async () => {
+      clearAll();
+      for (const c of CELLS.filter(c => c.kind === "neuron")) await addCell(c, { solo:false });
+      status("");
+    };
+    document.getElementById("clear").onclick = clearAll;
+    // open with astrocyte 1 so the page shows something immediately
+    const first = CELLS.find(c => c.kind === "astrocyte");
+    if (first) addCell(first, { solo:true }); else status("");
+  } catch (e) { status("could not load manifest — " + (e?.message || e)); }
+})();
+</script>
+</body>
+</html>
