@@ -2865,14 +2865,16 @@ self.onmessage = function (e) {
     }).catch((e) => {
       const msg = String(e && e.message || e);
       if (/no schema pyramid/i.test(msg)) {
-        clearSchemaPanels(`<div class="note">This dataset has <strong>no ontology schema to preview</strong> — it was built without a schema pyramid (no typed <code>rdf:type</code> classes to summarise or draw over range). Large graphs like <code>dblp</code> and <code>orcid</code> ship this way because the pyramid step runs out of memory at their scale. Use <strong>Cache remote</strong> to compute one locally by scanning.</div>`);
+        clearSchemaPanels(`<div class="note">This dataset has <strong>no schema pyramid</strong> — the class/relation summary can't be drawn over range (large graphs like <code>crossref</code>, <code>dblp</code> and <code>orcid</code> ship this way because the pyramid step runs out of memory at their scale). The <strong>Ontology reference</strong> below still documents the ontology embedded in the graph itself, read live with a few small range requests. <strong>Cache remote</strong> can compute the full summary locally by scanning — only sensible for smaller files, since it downloads the whole graph.</div>`, { keepOntologyDocs: true });
+        ensureOntologyDocs();  // (re)read the embedded TBox — it doesn't need the pyramid
       } else if (/null function|signature mismatch|unreachable|RuntimeError/i.test(msg)) {
         // Safety net (fixed — should no longer trigger): schema_url used to trap
         // on the async reader because the worker drove the generated wasm-bindgen
         // WRAPPER through suspend/rewind; the "call" path is raw-driven now
         // (reteCallUrlRemote). If a trap ever regresses, stay honest and
         // actionable instead of showing the generic crash card.
-        clearSchemaPanels(`<div class="note">The ontology schema preview can't be read on the <strong>fast (async) reader</strong> yet — a known limitation of the remote schema read. Turn off <strong>async reads</strong> in <strong>Settings</strong> and reopen this tab to view the schema, or <strong>Cache remote</strong> to load the graph and build it locally.</div>`);
+        clearSchemaPanels(`<div class="note">The ontology schema preview can't be read on the <strong>fast (async) reader</strong> yet — a known limitation of the remote schema read. Turn off <strong>async reads</strong> in <strong>Settings</strong> and reopen this tab to view the schema, or <strong>Cache remote</strong> to load the graph and build it locally.</div>`, { keepOntologyDocs: true });
+        ensureOntologyDocs();
       } else {
         clearSchemaPanels(undefined);
         showError("schemaOut", "Remote schema failed: " + msg);
@@ -4613,7 +4615,26 @@ self.onmessage = function (e) {
   // Inline 3D cells: load the <model-viewer> web component the first time one
   // appears; each <model-viewer> element then upgrades and lazy-loads its own .glb.
   function hydrateModel3d(scope) {
-    if ((scope || document).querySelector(".model3d-cell model-viewer")) ensureModelViewer();
+    const root = scope || document;
+    if (root.querySelector(".model3d-cell model-viewer")) ensureModelViewer();
+    // Time-stamped clips (…glb#t=): once the model loads, freeze it at that moment so
+    // the cell shows the couple exactly when its move happens.
+    root.querySelectorAll(".model3d-cell model-viewer[data-seek]").forEach((mv) => {
+      if (mv.__seekWired) return;
+      mv.__seekWired = true;
+      const at = parseFloat(mv.getAttribute("data-seek"));
+      // play() first to activate the animation timeline (currentTime is a no-op on a
+      // never-started clip), then seek to the moment and pause to hold the pose. The
+      // timeline isn't ready the instant `load` fires, so poll until the seek sticks.
+      const apply = () => { try { mv.play(); mv.currentTime = at; mv.pause(); } catch (e) { /* ignore */ } };
+      let tries = 0;
+      const poll = () => {
+        apply();
+        if (Math.abs((mv.currentTime || 0) - at) > 0.2 && tries++ < 25) setTimeout(poll, 200);
+      };
+      mv.addEventListener("load", poll, { once: true });
+      if (mv.loaded) poll();
+    });
   }
   // ---- geo mini-map cells ---------------------------------------------------
   // A WKT geometry literal (geo:wktLiteral: POINT / POLYGON / LINESTRING …) drawn
@@ -4918,13 +4939,18 @@ self.onmessage = function (e) {
       ? ' camera-target="0m 0.9m 0m" camera-orbit="20deg 80deg 3.4m"' : '';
   }
   function mesh3dCell(t) {
-    const url = httpsUpgrade(t.value);
+    const raw = httpsUpgrade(t.value);
+    // A glb URL may carry a TIME fragment (…glb#t=8.3) — freeze the animation at that
+    // exact moment. The value is built in SPARQL from a move's dance:startTime, so a query
+    // can seek each row to the moment its move happens. Without a fragment, it autoplays.
+    const seek = (raw.match(/#t=([\d.]+)/) || [])[1];
+    const url = raw.replace(/#t=[\d.]+/, "");
     // An inline, rotatable <model-viewer> right in the cell — drag to rotate, plus a
     // gentle auto-spin. The web component is lazy-loaded once (hydrateModel3d); each
     // viewer lazy-loads its .glb only when scrolled near the viewport (loading=lazy),
     // so a 60-row table doesn't fetch 60 meshes at once. The ⛶ opens the full lightbox.
     return `<td class="iri model3d-cell">` +
-      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate autoplay${meshCamera(url)} ` +
+      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate${seek ? ` data-seek="${esc(seek)}"` : " autoplay"}${meshCamera(url)} ` +
       `auto-rotate-delay="0" rotation-per-second="28deg" interaction-prompt="none" disable-zoom ` +
       `loading="lazy" reveal="auto" touch-action="pan-y" environment-image="neutral" ` +
       `shadow-intensity="0.6" alt="3D model"></model-viewer>` +
@@ -7355,12 +7381,21 @@ self.onmessage = function (e) {
   // Wipe every schema panel (not just schemaOut) so a dataset with no schema
   // pyramid never shows the PREVIOUS dataset's classes/relations/diagram — the
   // "stale scholar schema" bug. Called on dataset switch and on no-pyramid.
-  function clearSchemaPanels(noteHtml) {
-    ["schemaSummary", "schemaClasses", "schemaRelations", "ontologyDiagram", "ontologyDocs"].forEach((id) => {
+  function clearSchemaPanels(noteHtml, opts) {
+    // keepOntologyDocs: the ontology reference reads the EMBEDDED TBox and is
+    // independent of the schema pyramid — a pyramid-less dataset (crossref,
+    // dblp, orcid) must keep its ontology docs when the pyramid probe fails,
+    // instead of having them clobbered by the failure note.
+    const keepDocs = opts && opts.keepOntologyDocs;
+    const panels = ["schemaSummary", "schemaClasses", "schemaRelations", "ontologyDiagram"];
+    if (!keepDocs) panels.push("ontologyDocs");
+    panels.forEach((id) => {
       const el = $(id); if (el) el.innerHTML = "";
     });
-    state.ontologyDocsReady = false;   // re-query the TBox for the next dataset
-    state.ontoData = null;
+    if (!keepDocs) {
+      state.ontologyDocsReady = false;   // re-query the TBox for the next dataset
+      state.ontoData = null;
+    }
     if (noteHtml !== undefined) $("schemaOut").innerHTML = noteHtml;
   }
 

@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BIM viewer — architecture vs structure, across projects</title>
+<meta name="description" content="A paired 3D viewer for the TUM GNI BIM corpus: pick a project, toggle between its architectural model (the envelope) and its structural model (the load-bearing skeleton) or overlay them, download the raw IFC files, and run SPARQL over all 224 models — Draco-compressed GLBs, streamed from the cloud.">
+<style>
+  :root{ --bg:#0b0e14; --panel:#121826; --panel2:#0e1420; --line:#1e2636; --ink:#e6ecf5; --dim:#8b97ad; --accent:#5db0ff;
+    --c-arc:#cbb89d; --c-str:#ff8c42; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  #stage{position:absolute;inset:0;background:radial-gradient(120% 120% at 50% 20%,#141c2b,#080b12)}
+  canvas{display:block}
+  #title{position:absolute;left:16px;top:14px;z-index:4;max-width:52vw}
+  #title h1{font-size:16px;margin:0;font-weight:600}
+  #title p{font-size:12px;color:var(--dim);margin:2px 0 0}
+  #modes{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:5;display:flex;gap:4px;
+    background:rgba(18,24,38,.9);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:11px;padding:4px}
+  #modes button{background:none;border:none;color:var(--dim);padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap}
+  #modes button.on{background:var(--accent);color:#05131f}
+  #modes button:not(.on):hover{color:var(--ink)}
+  #pick{position:absolute;right:16px;top:14px;z-index:5;display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dim)}
+  #pick select{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 9px;font-size:13px;cursor:pointer}
+  #legend{position:absolute;left:16px;bottom:14px;z-index:4;background:rgba(12,17,28,.82);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:12.5px;max-width:280px}
+  #legend .row{display:flex;align-items:center;gap:8px;padding:2px 0}
+  #legend .sw{width:12px;height:12px;border-radius:3px;flex:0 0 auto}
+  #legend .n{color:var(--dim);font-variant-numeric:tabular-nums;margin-left:auto}
+  #legend .dl{margin-top:7px;padding-top:7px;border-top:1px solid var(--line);font-size:11.5px}
+  #hud{position:absolute;right:16px;bottom:14px;z-index:4;color:var(--dim);font-size:11.5px;
+    background:rgba(12,17,28,.7);border:1px solid var(--line);border-radius:9px;padding:6px 10px;max-width:250px}
+  #loading{position:absolute;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;flex-direction:column;
+    gap:12px;color:var(--dim);background:rgba(8,11,18,.72)}
+  #bar{width:220px;height:5px;background:#1b2334;border-radius:4px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
+  /* SPARQL panel */
+  #sqlBtn{position:absolute;right:16px;bottom:70px;z-index:5;background:rgba(18,24,38,.92);border:1px solid var(--line);
+    color:var(--ink);border-radius:10px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;backdrop-filter:blur(6px)}
+  #sqlBtn:hover{border-color:var(--accent)}
+  #sql[hidden]{display:none}
+  #sql{position:absolute;left:0;right:0;bottom:0;z-index:8;display:flex;flex-direction:column;max-height:56vh;
+    background:rgba(15,21,33,.98);backdrop-filter:blur(8px);border-top:1px solid var(--line)}
+  #sql-bar{display:flex;align-items:center;gap:9px;padding:8px 14px;border-bottom:1px solid var(--line);font-size:13px}
+  #sql-bar b{font-weight:600}
+  #sql-body{display:grid;grid-template-columns:300px 1fr;overflow:hidden;flex:1}
+  #sql-left{border-right:1px solid var(--line);padding:11px 13px;overflow:auto}
+  #sql-left .muted{color:var(--dim);font-size:11.5px;margin-bottom:7px}
+  .qbtn{display:block;width:100%;text-align:left;margin:3px 0;padding:6px 9px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--ink);border-radius:7px;cursor:pointer;font-size:12.5px}
+  .qbtn:hover{border-color:var(--accent)}
+  #customQ{width:100%;min-height:96px;margin-top:8px;resize:vertical;padding:8px;background:#0a0f18;border:1px solid var(--line);
+    border-radius:7px;color:#d5deea;font:11.5px/1.5 ui-monospace,Menlo,Consolas,monospace}
+  #customQ:focus{outline:none;border-color:var(--accent)}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:7px;padding:6px 12px;cursor:pointer;font-size:12.5px}
+  .btn:hover{border-color:var(--accent)}
+  #sql-right{overflow:auto}
+  #results{border-collapse:collapse;width:100%;font-size:12.5px}
+  #results th{position:sticky;top:0;background:#0e1622;text-align:left;padding:6px 12px;color:var(--dim);font-weight:500;
+    border-bottom:1px solid var(--line);white-space:nowrap}
+  #results td{padding:5px 12px;border-bottom:1px solid #161d2b;vertical-align:top}
+  #results td.rn{color:var(--dim);text-align:right;font-variant-numeric:tabular-nums}
+  .fbtn{background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;width:26px;height:24px;cursor:pointer}
+  .fbtn:hover{border-color:var(--accent);color:var(--ink)}
+  #sqlMsg{color:var(--dim);font-size:12px;padding:8px 14px}
+  *{scrollbar-width:thin;scrollbar-color:#33445f transparent}
+  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#2c3a52;border-radius:8px;border:2px solid transparent;background-clip:content-box}
+  @media (max-width:680px){ #title{max-width:46vw} #pick{display:none} #sql-body{grid-template-columns:1fr} #sql-left{max-height:26vh} #modes button{padding:7px 10px;font-size:12px} }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="title"><h1>🏗️ Architecture vs Structure</h1><p>one building, two BIM models — TUM GNI BIM corpus</p></div>
+  <div id="modes">
+    <button data-mode="arc" class="on">Architecture</button>
+    <button data-mode="both">Both</button>
+    <button data-mode="str">Structure</button>
+  </div>
+  <div id="pick"><span>Project</span><select id="proj"></select></div>
+  <div id="legend">
+    <div class="row"><span class="sw" style="background:var(--c-arc)"></span>Architectural <span class="n" id="n-arc"></span></div>
+    <div class="row"><span class="sw" style="background:var(--c-str)"></span>Structural <span class="n" id="n-str"></span></div>
+    <div class="dl" id="downloads"></div>
+  </div>
+  <div id="hud">Drag to orbit · right / Shift-drag pan · scroll zoom. GLBs are Draco-compressed, streamed from the cloud.</div>
+  <button id="sqlBtn">⌕ Query all 224 models (SPARQL)</button>
+  <div id="loading"><div>Loading models…</div><div id="bar"><i></i></div><div id="lmsg" style="font-size:12px"></div></div>
+</div>
+
+<div id="sql" hidden>
+  <div id="sql-bar"><b>SPARQL over the GNI BIM corpus</b><span style="color:var(--dim);font-size:12px">— 224 models, remote-lazy from gni-bim.rete</span>
+    <span style="flex:1"></span><span id="sql-count" style="color:var(--dim);font-size:12px"></span>
+    <button class="fbtn" id="sql-x" title="close">✕</button></div>
+  <div id="sql-body">
+    <div id="sql-left">
+      <div class="muted">Ready examples — click to run:</div>
+      <div id="examples"></div>
+      <textarea id="customQ" spellcheck="false"></textarea>
+      <div style="margin-top:6px"><button class="btn" id="runCustom">Run ▶</button></div>
+      <div id="sqlMsg2" class="muted" style="margin-top:6px"></div>
+    </div>
+    <div id="sql-right"><div id="sqlMsg">Pick an example or write a query. Results — including a clickable IFC download for every model — appear here.</div><table id="results"></table></div>
+  </div>
+</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {DRACOLoader} from 'three/addons/loaders/DRACOLoader.js';
+
+const BASE = 'https://data.graphplaza.com/gni-bim/';
+const RETE = BASE + 'gni-bim.rete';
+const IFC = BASE + 'ifc/p/';
+const ARC_COL = 0xcbb89d, STR_COL = 0xff8c42;
+// projects rendered to (Draco) GLBs — the rest of the 224 are queryable/downloadable but not previewed
+const PROJECTS = {
+  '0': {label: 'Project 0', arcN: 2132, strN: 149,  arc: 'bim-pair-arc.glb',    str: 'bim-pair-structure.glb'},
+  '3': {label: 'Project 3', arcN: 1668, strN: 194,  arc: 'bim-pair-p3-arc.glb', str: 'bim-pair-p3-structure.glb'},
+  '7': {label: 'Project 7', arcN: 1200, strN: 860,  arc: 'bim-pair-p7-arc.glb', str: 'bim-pair-p7-structure.glb'},
+};
+
+let scene, camera, renderer, controls, root, camAnim = null, loader;
+const groups = {};                 // 'arc' | 'str' -> THREE.Group
+let mode = 'arc', current = '0', loadToken = 0;
+
+init();
+
+async function init(){
+  const stage = document.getElementById('stage');
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(45, stage.clientWidth/stage.clientHeight, 0.05, 8000);
+  camera.up.set(0,0,1);
+  camera.position.set(40,-40,28);
+  renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(stage.clientWidth, stage.clientHeight);
+  stage.appendChild(renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xdfefff,0x27303f,1.25));
+  const key=new THREE.DirectionalLight(0xffffff,1.35); key.position.set(6,-8,12); scene.add(key);
+  const fill=new THREE.DirectionalLight(0x9fbfff,.5); fill.position.set(-8,6,4); scene.add(fill);
+  root=new THREE.Group(); scene.add(root);
+  controls=new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping=true; controls.dampingFactor=.08; controls.screenSpacePanning=true;
+  controls.mouseButtons={LEFT:THREE.MOUSE.ROTATE, MIDDLE:THREE.MOUSE.DOLLY, RIGHT:THREE.MOUSE.PAN};
+  controls.touches={ONE:THREE.TOUCH.ROTATE, TWO:THREE.TOUCH.DOLLY_PAN};
+  renderer.domElement.addEventListener('contextmenu', e=>e.preventDefault());
+  addEventListener('keydown', e=>{ if(e.key==='Shift') controls.mouseButtons.LEFT=THREE.MOUSE.PAN; });
+  addEventListener('keyup',   e=>{ if(e.key==='Shift') controls.mouseButtons.LEFT=THREE.MOUSE.ROTATE; });
+  addEventListener('resize', onResize);
+  const draco=new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+  loader=new GLTFLoader().setDRACOLoader(draco);
+  const sel=document.getElementById('proj');
+  sel.innerHTML=Object.entries(PROJECTS).map(([k,p])=>`<option value="${k}">${p.label}</option>`).join('');
+  sel.onchange=()=>loadProject(sel.value);
+  document.querySelectorAll('#modes button').forEach(b=> b.onclick=()=>setMode(b.dataset.mode));
+  document.getElementById('sqlBtn').onclick=()=>{ document.getElementById('sql').hidden=false; ensureExamples(); };
+  document.getElementById('sql-x').onclick=()=>{ document.getElementById('sql').hidden=true; };
+  document.getElementById('runCustom').onclick=()=>runQuery(document.getElementById('customQ').value, 'Custom query');
+  animate();
+  await loadProject('0');
+}
+
+async function loadProject(k){
+  current=k; const p=PROJECTS[k]; const tok=++loadToken;
+  document.getElementById('loading').style.display='flex';
+  const bar=document.querySelector('#bar>i'); bar.style.width='0%';
+  for(const g of Object.values(groups)){ if(!g) continue; root.remove(g); g.traverse(o=>{ if(o.isMesh){o.geometry.dispose(); o.material.dispose();} }); }
+  groups.arc=undefined; groups.str=undefined;
+  let done=0;
+  for(const [disc,url] of [['str', BASE+p.str], ['arc', BASE+p.arc]]){
+    document.getElementById('lmsg').textContent = disc==='str' ? 'structural skeleton…' : 'architectural envelope…';
+    const g=await loadGLB(url, disc==='arc'?ARC_COL:STR_COL);
+    if(tok!==loadToken) return;                  // a newer project was picked
+    groups[disc]=g; root.add(g); bar.style.width=(++done/2*100)+'%';
+  }
+  document.getElementById('n-arc').textContent=`(${p.arcN.toLocaleString()} elements)`;
+  document.getElementById('n-str').textContent=`(${p.strN.toLocaleString()} elements)`;
+  document.getElementById('downloads').innerHTML =
+    `Download IFC: <a href="${IFC}model_${k}_arc.ifc">architectural</a> · <a href="${IFC}model_${k}_structure.ifc">structural</a>`;
+  root.updateMatrixWorld(true);
+  document.getElementById('loading').style.display='none';
+  setMode(mode); frameAll(true); renderer.render(scene,camera);
+}
+
+async function loadGLB(url, color){
+  let gltf;
+  for(let a=0;a<3;a++){ try{ gltf=await loader.loadAsync(url); break; }
+    catch(e){ if(a===2){ document.getElementById('lmsg').textContent='could not load a model'; throw e; }
+      await new Promise(r=>setTimeout(r,600*(a+1))); } }
+  gltf.scene.traverse(o=>{ if(o.isMesh){
+    o.material=new THREE.MeshStandardMaterial({color, roughness:.82, metalness:.04, flatShading:true, side:THREE.DoubleSide, transparent:true, opacity:1});
+  }});
+  return gltf.scene;
+}
+
+function setMode(m){
+  mode=m;
+  document.querySelectorAll('#modes button').forEach(b=> b.classList.toggle('on', b.dataset.mode===m));
+  const arc=groups.arc, str=groups.str; if(!arc||!str) return;
+  const set=(g,op,vis)=>{ g.visible=vis; g.traverse(o=>{ if(o.isMesh){ o.material.opacity=op; o.material.transparent=op<1; o.material.depthWrite=op>=0.5; } }); };
+  if(m==='arc'){ set(arc,1,true);  set(str,1,false); }
+  if(m==='str'){ set(arc,1,false); set(str,1,true); }
+  if(m==='both'){ set(arc,0.13,true); set(str,1,true); }
+}
+
+function frameAll(snap){
+  const box=new THREE.Box3().setFromObject(root); if(box.isEmpty()) return;
+  const c=box.getCenter(new THREE.Vector3()); const size=box.getSize(new THREE.Vector3());
+  const dist=(Math.max(size.x,size.y,size.z)/2)/Math.tan(camera.fov*Math.PI/360)*1.5;
+  const dir=new THREE.Vector3(0.8,-0.9,0.5).normalize(); const pos=c.clone().add(dir.multiplyScalar(dist));
+  if(snap){ camera.position.copy(pos); controls.target.copy(c); camera.lookAt(c); controls.update(); camAnim=null; }
+  else camAnim={p0:camera.position.clone(),p1:pos,t0:controls.target.clone(),t1:c,s:performance.now(),d:600};
+}
+function onResize(){ const s=document.getElementById('stage'); camera.aspect=s.clientWidth/s.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(s.clientWidth,s.clientHeight); }
+function animate(){
+  requestAnimationFrame(animate);
+  if(camAnim){ const k=Math.min(1,(performance.now()-camAnim.s)/camAnim.d); const e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+    camera.position.lerpVectors(camAnim.p0,camAnim.p1,e); controls.target.lerpVectors(camAnim.t0,camAnim.t1,e); if(k>=1)camAnim=null; }
+  controls.update(); renderer.render(scene,camera);
+}
+
+// ---------- SPARQL over the corpus (wasm engine + gni-bim.rete, loaded lazily) ----------
+const G = 'PREFIX g: <https://w3id.org/rete/gnibim#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n';
+const EXAMPLES = [
+  {label:'The corpus at a glance', q:G+'SELECT ?subset ?discipline (COUNT(?m) AS ?models) WHERE {\n  ?m a g:Model ; g:subset ?subset ; g:discipline ?discipline .\n} GROUP BY ?subset ?discipline ORDER BY DESC(?models)'},
+  {label:'How 208 people modelled one building', q:G+'SELECT (COUNT(?m) AS ?models) (MIN(?e) AS ?min) (ROUND(AVG(?e)) AS ?mean) (MAX(?e) AS ?max) WHERE {\n  ?m g:subset "fundamentals" ; g:elementCount ?e .\n}'},
+  {label:'Architecture vs structure, side by side', q:G+'SELECT ?project ?arcElements ?structElements WHERE {\n  ?p a g:Project ; rdfs:label ?project ; g:hasModel ?a , ?s .\n  ?a g:discipline "architectural" ; g:elementCount ?arcElements .\n  ?s g:discipline "structural" ; g:elementCount ?structElements .\n} ORDER BY ?project'},
+  {label:'Every model + its downloadable IFC', q:G+'SELECT ?model ?discipline ?elements ?ifc WHERE {\n  ?m a g:Model ; rdfs:label ?model ; g:discipline ?discipline ; g:elementCount ?elements ; g:ifcFile ?ifc .\n} ORDER BY DESC(?elements) LIMIT 80'},
+  {label:'Element classes across the corpus', q:G+'SELECT ?ifcClass (SUM(?c) AS ?instances) WHERE {\n  ?t g:ifcClass ?cl ; g:count ?c . ?cl rdfs:label ?ifcClass .\n} GROUP BY ?ifcClass ORDER BY DESC(?instances)'},
+];
+let examplesBuilt=false;
+function ensureExamples(){
+  if(examplesBuilt) return; examplesBuilt=true;
+  const box=document.getElementById('examples');
+  EXAMPLES.forEach(ex=>{ const b=document.createElement('button'); b.className='qbtn'; b.textContent=ex.label;
+    b.onclick=()=>{ document.getElementById('customQ').value=ex.q; runQuery(ex.q, ex.label); }; box.appendChild(b); });
+  document.getElementById('customQ').value=EXAMPLES[3].q;
+}
+let engine=null, engineLoading=null;
+function getEngine(){
+  if(engine) return Promise.resolve(engine);
+  if(engineLoading) return engineLoading;
+  engineLoading=(async()=>{
+    const msg=document.getElementById('sqlMsg2'); if(msg) msg.textContent='loading the query engine + graph (~9 MB, once)…';
+    const m=await import('./engine/rete_wasm.js'); await m.default();
+    const bytes=new Uint8Array(await (await fetch(RETE)).arrayBuffer());
+    engine=new m.Graph(bytes); if(msg) msg.textContent=''; return engine;
+  })();
+  return engineLoading;
+}
+const clean=t=>{ if(t==null) return ''; const s=String(t); if(s[0]==='<') return s.slice(1,-1);
+  const m=s.match(/^"([\s\S]*)"(?:@[\w-]+|\^\^.*)?$/); return m?m[1]:s; };
+const isUrl=t=> t!=null && String(t)[0]==='<' && /^<https?:\/\//.test(String(t));
+async function runQuery(q, label){
+  const msg=document.getElementById('sqlMsg2'); if(msg) msg.textContent='';
+  document.getElementById('sqlMsg').textContent='running…'; document.getElementById('results').innerHTML='';
+  try{
+    const g=await getEngine(); const j=JSON.parse(g.query(q,'json'));
+    if(j.kind!=='select'){ document.getElementById('sqlMsg').textContent=`Only SELECT is shown (got ${j.kind}).`; return; }
+    renderTable(j.vars, j.rows, label);
+  }catch(e){ document.getElementById('sqlMsg').textContent='Query error: '+(e.message||e); }
+}
+function renderTable(vars, rows, label){
+  document.getElementById('sqlMsg').textContent = rows.length ? '' : 'No rows.';
+  document.getElementById('sql-count').textContent=`${label} · ${rows.length} row${rows.length===1?'':'s'}`;
+  const esc=s=>String(s??'').replace(/</g,'&lt;');
+  const cap=rows.slice(0,500);
+  const cell=t=>{ if(isUrl(t)){ const u=clean(t); const short=u.split('/').pop(); return `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(short)}</a>`; } return esc(clean(t)); };
+  const thead=`<thead><tr><th>#</th>${vars.map(v=>`<th>${esc(v)}</th>`).join('')}</tr></thead>`;
+  const tbody=`<tbody>${cap.map((r,i)=>`<tr><td class="rn">${i+1}</td>${vars.map(v=>`<td>${cell(r[v])}</td>`).join('')}</tr>`).join('')}</tbody>`;
+  document.getElementById('results').innerHTML=thead+tbody;
+}
+</script>
+</body>
+</html>
