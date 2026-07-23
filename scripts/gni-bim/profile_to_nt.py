@@ -44,8 +44,12 @@ for p, lab in [("subset", "subset"), ("discipline", "discipline"), ("schema", "I
                ("count", "count"), ("parsed", "fully parsed")]:
     t(GB + p, RDF, iri(OWL + "DatatypeProperty")); tl(GB + p, RDFS + "label", lab, lang="en")
 for p, lab in [("project", "project"), ("hasModel", "has model"), ("pairedWith", "paired with"),
-               ("tally", "element tally"), ("ifcClass", "IFC class"), ("glbModel", "3D model (glTF)")]:
+               ("tally", "element tally"), ("ifcClass", "IFC class"), ("glbModel", "3D model (glTF)"),
+               ("ifcFile", "IFC file")]:
     t(GB + p, RDF, iri(OWL + "ObjectProperty")); tl(GB + p, RDFS + "label", lab, lang="en")
+
+# Every model's raw IFC on the bucket (keyed by the model id: f/model_N or p/model_N_kind)
+IFC_BASE = "https://data.graphplaza.com/gni-bim/ifc/"
 
 # Models we have rendered to a glTF/GLB (for inline 3D preview in the playground)
 GLB_BASE = "https://data.graphplaza.com/gni-bim/"
@@ -91,6 +95,7 @@ def emit_model(mid, label, subset, discipline, path):
     sz = os.path.getsize(path) / 1e6
     schema, ne, ns, nsp, cc = profile(path)
     t(s, RDF, iri(GB + "Model")); tl(s, RDFS + "label", label, lang="en")
+    t(s, GB + "ifcFile", iri(IFC_BASE + mid + ".ifc"))
     if mid in GLB_MODELS:
         t(s, GB + "glbModel", iri(GLB_MODELS[mid]))
     tl(s, GB + "subset", subset); tl(s, GB + "discipline", discipline)
