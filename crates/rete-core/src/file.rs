@@ -592,23 +592,23 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
         restart_interval: 1,
         restart_offsets: Vec::new(),
     });
-    let body_start = meta.restart_offsets.first().copied().unwrap_or(raw.len());
-    let header = &raw[..body_start.min(raw.len())];
+    let body_start = meta.restart_offsets.first().copied().unwrap_or(raw.len() as u64);
+    let header = &raw[..(body_start.min(raw.len() as u64)) as usize];
 
     // Split runs into chunks by body-byte budget (whole runs only).
     let n_runs = meta.restart_offsets.len();
-    let mut bounds: Vec<(usize, usize, usize)> = Vec::new(); // (first_run, start, end)
+    let mut bounds: Vec<(usize, u64, u64)> = Vec::new(); // (first_run, start, end)
     let mut r = 0;
     while r < n_runs {
         let start = meta.restart_offsets[r];
         let mut r2 = r + 1;
-        while r2 < n_runs && meta.restart_offsets[r2] - start < DICT_CHUNK_BUDGET {
+        while r2 < n_runs && meta.restart_offsets[r2] - start < DICT_CHUNK_BUDGET as u64 {
             r2 += 1;
         }
         let end = if r2 < n_runs {
             meta.restart_offsets[r2]
         } else {
-            raw.len()
+            raw.len() as u64
         };
         bounds.push((r, start, end));
         r = r2;
@@ -616,7 +616,7 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
 
     let compressed: Vec<Vec<u8>> = bounds
         .iter()
-        .map(|&(_, s, e)| compress(codec, &raw[s..e]))
+        .map(|&(_, s, e)| compress(codec, &raw[s as usize..e as usize]))
         .collect();
     let mut out = Vec::new();
     write_uvarint(&mut out, header.len() as u64);
@@ -624,7 +624,7 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
     write_uvarint(&mut out, bounds.len() as u64);
     let mut prev_run = 0usize;
     for (&(first_run, start, _), comp) in bounds.iter().zip(&compressed) {
-        let first_term = crate::dict::run_first_term(raw, start).unwrap_or_default();
+        let first_term = crate::dict::run_first_term(raw, start as usize).unwrap_or_default();
         write_uvarint(&mut out, (first_run - prev_run) as u64);
         write_uvarint(&mut out, first_term.len() as u64);
         out.extend_from_slice(&first_term);
@@ -642,9 +642,9 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
 struct DictChunkEntry {
     first_run: usize,
     first_term: Vec<u8>,
-    body_start: usize,
-    start: usize,
-    end: usize,
+    body_start: u64,
+    start: u64,
+    end: u64,
 }
 
 /// Parse a chunked dictionary section's header + directory (not the chunks).
@@ -652,7 +652,7 @@ struct DictChunkEntry {
 /// `total_len`.
 fn parse_chunked_dict_dir(
     bytes: &[u8],
-    total_len: usize,
+    total_len: u64,
 ) -> Result<(crate::dict::SectionMeta, Vec<DictChunkEntry>), FileError> {
     let mut pos = 0usize;
     let take = |pos: &mut usize| -> Result<u64, FileError> {
@@ -681,7 +681,7 @@ fn parse_chunked_dict_dir(
             .ok_or(FileError::Container("truncated dict chunk first term"))?
             .to_vec();
         pos += tlen;
-        let clen = take(&mut pos)? as usize;
+        let clen = take(&mut pos)?;
         let first_run = prev_run + drun;
         let body_start = meta
             .restart_offsets
@@ -698,7 +698,7 @@ fn parse_chunked_dict_dir(
         lens.push(clen);
         prev_run = first_run;
     }
-    let mut start = pos;
+    let mut start = pos as u64;
     for (e, len) in entries.iter_mut().zip(lens) {
         let end = start
             .checked_add(len)
@@ -726,7 +726,7 @@ fn read_dict_dir_ranged<R: RangeReader>(
     reader: &R,
     section: ByteRange,
 ) -> Result<(crate::dict::SectionMeta, Vec<DictChunkEntry>), FileError> {
-    let total = section.len as usize;
+    let total = section.len;
     // Initial prefix: the header prefix ([header_len][term_count][interval]) and,
     // for a *small* section, the whole chunk directory too — so those still cost
     // a single read. A big section has a huge restart table between the header
@@ -747,8 +747,8 @@ fn read_dict_dir_ranged<R: RangeReader>(
     }
     // The chunk directory begins right after the header body — i.e. past the
     // `header_len` bytes, which include the restart table we never materialize.
-    let dir_start = hbase
-        .checked_add(header_len as usize)
+    let dir_start = (hbase as u64)
+        .checked_add(header_len)
         .filter(|&d| d <= total)
         .ok_or(FileError::Container("dict header overruns section"))?;
     let dir_total = total - dir_start;
@@ -766,15 +766,15 @@ fn read_dict_dir_ranged<R: RangeReader>(
     };
     // Fast path: the directory already sits in the prefix we read (small section
     // — its restart table is tiny, so the ~few KiB over-read is negligible).
-    if dir_start < head.len() {
-        if let Ok(entries) = parse_chunk_dir_only(&head[dir_start..], dir_total) {
+    if dir_start < head.len() as u64 {
+        if let Ok(entries) = parse_chunk_dir_only(&head[dir_start as usize..], dir_total) {
             return Ok(finish(entries));
         }
     }
     // Big section: range-read the directory on its own, skipping the table.
-    let mut prefetch = 4096.min(dir_total).max(1);
+    let mut prefetch = 4096u64.min(dir_total).max(1);
     loop {
-        let dir = reader.read_at(section.offset + dir_start as u64, prefetch as u64)?;
+        let dir = reader.read_at(section.offset + dir_start, prefetch)?;
         match parse_chunk_dir_only(&dir, dir_total) {
             Ok(entries) => return Ok(finish(entries)),
             Err(_) if prefetch < dir_total => prefetch = prefetch.saturating_mul(2).min(dir_total),
@@ -789,7 +789,7 @@ fn read_dict_dir_ranged<R: RangeReader>(
 /// start; `body_start` is 0 (a lite section never uses it — lookups derive run
 /// offsets per chunk). Bodies aren't needed here, so `dir` may end at the first
 /// body as long as it covers the whole directory.
-fn parse_chunk_dir_only(dir: &[u8], dir_total: usize) -> Result<Vec<DictChunkEntry>, FileError> {
+fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<Vec<DictChunkEntry>, FileError> {
     let mut pos = 0usize;
     let take = |pos: &mut usize| -> Result<u64, FileError> {
         let (v, n) = read_uvarint(dir.get(*pos..).unwrap_or(&[]))
@@ -809,7 +809,7 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: usize) -> Result<Vec<DictChunkEnt
             .ok_or(FileError::Container("truncated dict chunk first term"))?
             .to_vec();
         pos += tlen;
-        let clen = take(&mut pos)? as usize;
+        let clen = take(&mut pos)?;
         let first_run = prev_run + drun;
         entries.push(DictChunkEntry {
             first_run,
@@ -821,7 +821,7 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: usize) -> Result<Vec<DictChunkEnt
         lens.push(clen);
         prev_run = first_run;
     }
-    let mut start = pos;
+    let mut start = pos as u64;
     for (e, len) in entries.iter_mut().zip(lens) {
         let end = start
             .checked_add(len)
@@ -841,7 +841,7 @@ fn decode_chunked_dict_section(
     payload: &[u8],
     codec: u8,
 ) -> Result<crate::dict::ChunkedSection, FileError> {
-    let (meta, entries) = parse_chunked_dict_dir(payload, payload.len())?;
+    let (meta, entries) = parse_chunked_dict_dir(payload, payload.len() as u64)?;
     let chunks = entries
         .into_iter()
         .map(|e| {
@@ -849,7 +849,7 @@ fn decode_chunked_dict_section(
                 e.first_run,
                 e.first_term,
                 e.body_start,
-                decompress(codec, &payload[e.start..e.end])?,
+                decompress(codec, &payload[e.start as usize..e.end as usize])?,
             ))
         })
         .collect::<Result<Vec<_>, FileError>>()?;
@@ -931,8 +931,8 @@ fn encode_tiled_section(tiles: &[crate::index::Tile], codec: u8) -> Vec<u8> {
 struct TileDirEntry {
     min_a: u32,
     max_a: u32,
-    start: usize,
-    end: usize,
+    start: u64,
+    end: u64,
 }
 
 /// One tile's synopsis: inclusive min/max of the two non-leading columns.
@@ -971,7 +971,7 @@ fn parse_tile_synopsis(
 /// **prefix** of the payload (a ranged reader fetches the directory before any
 /// tile); tile byte ranges are validated against `total_len`, the full payload
 /// length. Every length is untrusted.
-fn parse_tile_directory(bytes: &[u8], total_len: usize) -> Result<Vec<TileDirEntry>, FileError> {
+fn parse_tile_directory(bytes: &[u8], total_len: u64) -> Result<Vec<TileDirEntry>, FileError> {
     let mut pos = 0usize;
     let take = |pos: &mut usize| -> Result<u64, FileError> {
         let (v, n) = read_uvarint(bytes.get(*pos..).unwrap_or(&[]))
@@ -986,7 +986,7 @@ fn parse_tile_directory(bytes: &[u8], total_len: usize) -> Result<Vec<TileDirEnt
     for _ in 0..num_tiles {
         let dmin = take(&mut pos)? as u32;
         let span = take(&mut pos)? as u32;
-        let len = take(&mut pos)? as usize;
+        let len = take(&mut pos)?;
         let min_a = prev_min.wrapping_add(dmin);
         entries.push(TileDirEntry {
             min_a,
@@ -997,7 +997,7 @@ fn parse_tile_directory(bytes: &[u8], total_len: usize) -> Result<Vec<TileDirEnt
         lens.push(len);
         prev_min = min_a;
     }
-    let mut start = pos;
+    let mut start = pos as u64;
     for (e, len) in entries.iter_mut().zip(lens) {
         let end = start
             .checked_add(len)
@@ -1017,10 +1017,10 @@ fn read_tile_directory_ranged<R: RangeReader>(
     reader: &R,
     section: ByteRange,
 ) -> Result<Vec<TileDirEntry>, FileError> {
-    let total = section.len as usize;
-    let mut prefetch = 4096.min(total);
+    let total = section.len;
+    let mut prefetch = 4096u64.min(total);
     loop {
-        let prefix = reader.read_at(section.offset, prefetch as u64)?;
+        let prefix = reader.read_at(section.offset, prefetch)?;
         match parse_tile_directory(&prefix, total) {
             Ok(dir) => return Ok(dir),
             Err(_) if prefetch < total => prefetch = prefetch.saturating_mul(2).min(total),
@@ -1043,12 +1043,12 @@ fn read_tile_synopsis_ranged<R: RangeReader>(
     let n = dir.len();
     let none = vec![None; n];
     let trailer_start = dir.iter().map(|e| e.end).max().unwrap_or(0);
-    let total = section.len as usize;
+    let total = section.len;
     if n == 0 || trailer_start >= total {
         return none; // no trailer bytes present
     }
-    let trailer_len = (total - trailer_start) as u64;
-    let Ok(bytes) = reader.read_at(section.offset + trailer_start as u64, trailer_len) else {
+    let trailer_len = total - trailer_start;
+    let Ok(bytes) = reader.read_at(section.offset + trailer_start, trailer_len) else {
         return none;
     };
     match parse_tile_synopsis(&bytes, 0, n) {
@@ -1071,7 +1071,7 @@ fn tile_file_ranges(
         let Some(payload) = index_bytes.get(start..start + range.len as usize) else {
             continue;
         };
-        if let Ok(dir) = parse_tile_directory(payload, payload.len()) {
+        if let Ok(dir) = parse_tile_directory(payload, payload.len() as u64) {
             *section = dir
                 .into_iter()
                 .map(|e| {
@@ -1093,13 +1093,13 @@ fn tile_file_ranges(
 /// Decode a tiled section payload into `(min_a, max_a, uncompressed tile)`
 /// triples.
 fn decode_tiled_section(payload: &[u8], codec: u8) -> Result<Vec<(u32, u32, Vec<u8>)>, FileError> {
-    parse_tile_directory(payload, payload.len())?
+    parse_tile_directory(payload, payload.len() as u64)?
         .into_iter()
         .map(|e| {
             Ok((
                 e.min_a,
                 e.max_a,
-                decompress(codec, &payload[e.start..e.end])?,
+                decompress(codec, &payload[e.start as usize..e.end as usize])?,
             ))
         })
         .collect()
@@ -2656,7 +2656,7 @@ fn fetch_routed_matches<R: RangeReader>(
                     (last.end - base) as u64,
                 )?;
                 for e in &dir {
-                    let tile = decompress(codec, &body[e.start - base..e.end - base])?;
+                    let tile = decompress(codec, &body[(e.start - base) as usize..(e.end - base) as usize])?;
                     out.extend(GraphIndex::match_serialized_block(
                         &tile,
                         routed.permutation,
@@ -3164,6 +3164,33 @@ mod tests {
     /// The tile-synopsis trailer round-trips through encode/parse, and each parsed
     /// synopsis is **exactly** the tile block's own b/c zone — so the directory
     /// can never prune a tile the tile itself would have matched.
+    /// Section-internal byte offsets are u64: a directory whose tiles sit past
+    /// 4 GiB must parse with exact offsets on EVERY platform. On wasm32 (32-bit
+    /// usize) the old parse truncated a >4 GiB section length and rejected the
+    /// tail ("dict chunk overruns section" on the first >4 GiB dictionary —
+    /// crossref's 5.2 GB g.obj — the playground regression this guards).
+    #[test]
+    fn tile_directory_offsets_survive_past_4gib() {
+        let mut dir = Vec::new();
+        write_uvarint(&mut dir, 2); // two tiles
+        write_uvarint(&mut dir, 5); // tile 1: Δmin_a
+        write_uvarint(&mut dir, 0); //         span
+        write_uvarint(&mut dir, 3 << 30); //   len = 3 GiB
+        write_uvarint(&mut dir, 1); // tile 2: Δmin_a
+        write_uvarint(&mut dir, 0);
+        write_uvarint(&mut dir, 2 << 30); //   len = 2 GiB
+        let total = dir.len() as u64 + (3u64 << 30) + (2u64 << 30) + 64;
+        let entries = parse_tile_directory(&dir, total).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].start, dir.len() as u64 + (3u64 << 30));
+        assert!(
+            entries[1].end > u32::MAX as u64,
+            "tail tile sits past 4 GiB"
+        );
+        // a total smaller than the tiles must still reject the directory
+        assert!(parse_tile_directory(&dir, 1 << 20).is_err());
+    }
+
     #[test]
     fn tile_synopsis_trailer_round_trips() {
         let mut ib = GraphIndexBuilder::new().with_tile_budget(64);
@@ -3175,20 +3202,24 @@ mod tests {
         assert!(tiles.len() > 3, "tiny budget forces many tiles");
 
         let payload = encode_tiled_section(tiles, CODEC_NONE);
-        let dir = parse_tile_directory(&payload, payload.len()).unwrap();
+        let dir = parse_tile_directory(&payload, payload.len() as u64).unwrap();
         assert_eq!(dir.len(), tiles.len());
         // The trailer sits past the last tile; the old directory parse stops there.
         let trailer_start = dir.iter().map(|e| e.end).max().unwrap();
-        assert!(trailer_start < payload.len(), "a trailer follows the tiles");
+        assert!(
+            trailer_start < payload.len() as u64,
+            "a trailer follows the tiles"
+        );
         for e in &dir {
             assert!(
-                e.end <= payload.len(),
+                e.end <= payload.len() as u64,
                 "tiles still located within the payload"
             );
         }
-        let syn = parse_tile_synopsis(&payload, trailer_start, dir.len()).unwrap();
+        let syn = parse_tile_synopsis(&payload, trailer_start as usize, dir.len()).unwrap();
         for (e, (min_b, max_b, min_c, max_c)) in dir.iter().zip(syn) {
-            let block = decompress(CODEC_NONE, &payload[e.start..e.end]).unwrap();
+            let block =
+                decompress(CODEC_NONE, &payload[e.start as usize..e.end as usize]).unwrap();
             let z = *crate::triples::TripleBlock::parse(&block).unwrap().zone();
             assert_eq!(
                 (min_b, max_b, min_c, max_c),
