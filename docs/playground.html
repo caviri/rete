@@ -3565,7 +3565,7 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Exact playground build. If this looks old after a deploy, hard-refresh or clear site data.">build ff89c54ef8c83ba03798be17159861bdb53f5119</span>
+    <span class="build-ver" id="buildVer" title="Exact playground build. If this looks old after a deploy, hard-refresh or clear site data.">build ea613e7833eb674e4d192e0e3f230c61db7cba54</span>
     <label class="version-picker" for="versionSelect">
       <span>Version</span>
       <select id="versionSelect" aria-label="Playground version">
@@ -3574,7 +3574,7 @@ td.lit { color: var(--ink); }
     </label>
     <span id="previewBadge" class="preview-badge hidden">PR preview</span>
     <script>
-      window.RETE_BUILD = "ff89c54ef8c83ba03798be17159861bdb53f5119";
+      window.RETE_BUILD = "ea613e7833eb674e4d192e0e3f230c61db7cba54";
       window.RETE_PREVIEW = null;
     </script>
 
@@ -14869,14 +14869,16 @@ self.onmessage = function (e) {
     }).catch((e) => {
       const msg = String(e && e.message || e);
       if (/no schema pyramid/i.test(msg)) {
-        clearSchemaPanels(`<div class="note">This dataset has <strong>no ontology schema to preview</strong> — it was built without a schema pyramid (no typed <code>rdf:type</code> classes to summarise or draw over range). Large graphs like <code>dblp</code> and <code>orcid</code> ship this way because the pyramid step runs out of memory at their scale. Use <strong>Cache remote</strong> to compute one locally by scanning.</div>`);
+        clearSchemaPanels(`<div class="note">This dataset has <strong>no schema pyramid</strong> — the class/relation summary can't be drawn over range (large graphs like <code>crossref</code>, <code>dblp</code> and <code>orcid</code> ship this way because the pyramid step runs out of memory at their scale). The <strong>Ontology reference</strong> below still documents the ontology embedded in the graph itself, read live with a few small range requests. <strong>Cache remote</strong> can compute the full summary locally by scanning — only sensible for smaller files, since it downloads the whole graph.</div>`, { keepOntologyDocs: true });
+        ensureOntologyDocs();  // (re)read the embedded TBox — it doesn't need the pyramid
       } else if (/null function|signature mismatch|unreachable|RuntimeError/i.test(msg)) {
         // Safety net (fixed — should no longer trigger): schema_url used to trap
         // on the async reader because the worker drove the generated wasm-bindgen
         // WRAPPER through suspend/rewind; the "call" path is raw-driven now
         // (reteCallUrlRemote). If a trap ever regresses, stay honest and
         // actionable instead of showing the generic crash card.
-        clearSchemaPanels(`<div class="note">The ontology schema preview can't be read on the <strong>fast (async) reader</strong> yet — a known limitation of the remote schema read. Turn off <strong>async reads</strong> in <strong>Settings</strong> and reopen this tab to view the schema, or <strong>Cache remote</strong> to load the graph and build it locally.</div>`);
+        clearSchemaPanels(`<div class="note">The ontology schema preview can't be read on the <strong>fast (async) reader</strong> yet — a known limitation of the remote schema read. Turn off <strong>async reads</strong> in <strong>Settings</strong> and reopen this tab to view the schema, or <strong>Cache remote</strong> to load the graph and build it locally.</div>`, { keepOntologyDocs: true });
+        ensureOntologyDocs();
       } else {
         clearSchemaPanels(undefined);
         showError("schemaOut", "Remote schema failed: " + msg);
@@ -19383,12 +19385,21 @@ self.onmessage = function (e) {
   // Wipe every schema panel (not just schemaOut) so a dataset with no schema
   // pyramid never shows the PREVIOUS dataset's classes/relations/diagram — the
   // "stale scholar schema" bug. Called on dataset switch and on no-pyramid.
-  function clearSchemaPanels(noteHtml) {
-    ["schemaSummary", "schemaClasses", "schemaRelations", "ontologyDiagram", "ontologyDocs"].forEach((id) => {
+  function clearSchemaPanels(noteHtml, opts) {
+    // keepOntologyDocs: the ontology reference reads the EMBEDDED TBox and is
+    // independent of the schema pyramid — a pyramid-less dataset (crossref,
+    // dblp, orcid) must keep its ontology docs when the pyramid probe fails,
+    // instead of having them clobbered by the failure note.
+    const keepDocs = opts && opts.keepOntologyDocs;
+    const panels = ["schemaSummary", "schemaClasses", "schemaRelations", "ontologyDiagram"];
+    if (!keepDocs) panels.push("ontologyDocs");
+    panels.forEach((id) => {
       const el = $(id); if (el) el.innerHTML = "";
     });
-    state.ontologyDocsReady = false;   // re-query the TBox for the next dataset
-    state.ontoData = null;
+    if (!keepDocs) {
+      state.ontologyDocsReady = false;   // re-query the TBox for the next dataset
+      state.ontoData = null;
+    }
     if (noteHtml !== undefined) $("schemaOut").innerHTML = noteHtml;
   }
 
