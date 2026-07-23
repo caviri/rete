@@ -12,7 +12,7 @@ assert.throws(() => normalizeCatalogScope("remote"), /embedded.*all/);
 const all = catalogCases("all");
 const embedded = catalogCases("embedded");
 
-assert.equal(all.length, 581, "every catalog query must be in the exhaustive matrix");
+assert.equal(all.length, 582, "every catalog query must be in the exhaustive matrix");
 assert.equal(embedded.length, 73, "the deterministic tier must cover every embedded query");
 assert.equal(new Set(all.map((entry) => entry.id)).size, all.length, "case ids must be unique");
 assert.ok(all.every((entry) => entry.query.trim()), "every case must carry executable SPARQL");
