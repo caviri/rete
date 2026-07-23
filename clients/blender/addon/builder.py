@@ -51,6 +51,10 @@ SCALE_MODES = (
 
 UNIT_SCALE = {"MM": 0.001, "CM": 0.01, "M": 1.0, "KM": 1000.0}
 
+#: Asset URL extensions whose files carry their own real-world coordinates, so
+#: an import keeps its transform rather than being laid out.
+_WORLD_PLACED_EXT = frozenset((".ifc", ".ifczip", ".ifcxml", ".dxf"))
+
 TIME_MODES = (
     ("NONE", "None", "Ignore the time column"),
     ("APPEAR", "Appear", "Objects appear (and disappear) at their moment"),
@@ -409,8 +413,16 @@ def build(result, settings: Settings, context=None) -> Report:
 
         keep_transform = False
         if asset_url and asset_budget > 0:
+            # A CAD/BIM asset carries real coordinates; so does any asset paired
+            # with a geometry column while we lay out by geometry. Either way it
+            # should stay where it lands rather than be re-placed.
+            world_placed = (
+                detect.url_extension(asset_url) in _WORLD_PLACED_EXT
+                or (positions[index] is not None and settings.layout in ("AUTO", "GEOMETRY"))
+            )
             obj, note, keep_transform = _asset_object(
-                asset_url, node_name, name, collection, settings
+                asset_url, node_name, name, collection, settings,
+                world_placed=world_placed,
             )
             if obj is None:
                 report.warn(note)
@@ -535,12 +547,17 @@ def _asset_object(
     name: str,
     collection: "bpy.types.Collection",
     settings: Settings,
+    *,
+    world_placed: bool = False,
 ) -> Tuple[Optional["bpy.types.Object"], str, bool]:
     """An object for one row's asset — a node of a shared file, or the whole file.
 
     Returns ``(object, note, keep_transform)``. Isolated nodes keep the transform
     they have inside the asset, because that *is* their position: the anatomy
     graph's nine body-system files place every structure correctly already.
+    ``world_placed`` marks a whole-file asset that already carries real
+    coordinates — an IFC/CAD model, or a glTF exported at building/geographic
+    coordinates — so it stays where it lands instead of being laid out.
     """
     try:
         if node:
@@ -579,7 +596,12 @@ def _asset_object(
             for root in roots:
                 child = assets.instance(root, f"{name}/{root.name}", collection, children=True)
                 child.parent = obj
-        return (obj, "", False)
+                if world_placed:
+                    # Keep each element's own world coordinates (BIM/CAD models
+                    # place every element already); parenting alone would leave
+                    # them there, but be explicit against a non-identity wrapper.
+                    child.matrix_world = root.matrix_world.copy()
+        return (obj, "", world_placed)
     except IOError as exc:
         return (None, str(exc), False)
     except Exception as exc:  # pragma: no cover - importer-specific failures

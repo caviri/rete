@@ -150,6 +150,10 @@ def library_collection() -> "bpy.types.Collection":
     return coll
 
 
+def _family(path: str) -> str:
+    return detect.MODEL_EXT.get(os.path.splitext(path)[1].lower(), "")
+
+
 def import_asset(url: str, *, refresh: bool = False) -> List["bpy.types.Object"]:
     """Import an asset URL once, returning the objects it produced.
 
@@ -162,16 +166,20 @@ def import_asset(url: str, *, refresh: bool = False) -> List["bpy.types.Object"]
             return objs
 
     path = fetch(url, refresh=refresh)
-    op = _importer(path)
-    if op is None:
-        raise IOError(f"no importer available for {os.path.basename(path)}")
+    family = _family(path)
 
     before = set(bpy.data.objects)
-    try:
-        op(filepath=path)
-    except RuntimeError as exc:
-        raise IOError(f"import failed for {url}: {exc}") from exc
-    new = [o for o in bpy.data.objects if o not in before]
+    if family in detect.CAD_FAMILIES:
+        new = _import_cad(path, family, url)
+    else:
+        op = _importer(path)
+        if op is None:
+            raise IOError(f"no importer available for {os.path.basename(path)}")
+        try:
+            op(filepath=path)
+        except RuntimeError as exc:
+            raise IOError(f"import failed for {url}: {exc}") from exc
+        new = [o for o in bpy.data.objects if o not in before]
 
     coll = library_collection()
     for obj in new:
@@ -183,6 +191,163 @@ def import_asset(url: str, *, refresh: bool = False) -> List["bpy.types.Object"]
     for obj in new:
         _nodes[(url, obj.name)] = obj.name
     return new
+
+
+# --------------------------------------------------------------- CAD / BIM
+
+IFC_HINT = (
+    "IFC import needs ifcopenshell in Blender's Python. Install it with "
+    "`<blender-python> -m pip install ifcopenshell`, or install the Bonsai "
+    "(BlenderBIM) add-on. Many CAD graphs also carry a cad:glbModel column, "
+    "which imports with no extra install."
+)
+
+
+def _import_cad(path: str, family: str, url: str) -> List["bpy.types.Object"]:
+    if family == "ifc":
+        return _import_ifc(path)
+    if family == "dxf":
+        return _import_dxf(path, url)
+    if family == "step":
+        raise IOError(
+            f"STEP import ({os.path.basename(path)}) has no importer in core "
+            "Blender; convert the model to glTF or IFC, or point the graph at a "
+            "cad:glbModel instead"
+        )
+    raise IOError(f"unsupported CAD family {family!r}")
+
+
+def _import_dxf(path: str, url: str) -> List["bpy.types.Object"]:
+    """Import a DXF via the add-on Blender ships (disabled by default)."""
+    before = set(bpy.data.objects)
+    op = getattr(bpy.ops.import_scene, "dxf", None)
+    if op is None or "dxf" not in dir(bpy.ops.import_scene):
+        try:
+            import addon_utils
+
+            addon_utils.enable("io_import_dxf", default_set=False, persistent=False)
+        except Exception as exc:  # pragma: no cover - depends on the build
+            raise IOError(
+                f"DXF import needs the 'Import AutoCAD DXF' add-on, which could "
+                f"not be enabled: {exc}"
+            ) from exc
+    try:
+        bpy.ops.import_scene.dxf(filepath=path)
+    except (RuntimeError, AttributeError) as exc:
+        raise IOError(f"DXF import failed for {url}: {exc}") from exc
+    return [o for o in bpy.data.objects if o not in before]
+
+
+def _ifc_settings(geom):
+    """A world-coordinate geometry settings object across ifcopenshell versions.
+
+    0.8 keys settings by string; earlier releases used enum attributes. World
+    coordinates bake each element's placement into its vertices, so the imported
+    building lands assembled without a separate transform pass.
+    """
+    settings = geom.settings()
+    for key in ("use-world-coords",):
+        try:
+            settings.set(key, True)
+            return settings
+        except (TypeError, RuntimeError):
+            pass
+    enum = getattr(settings, "USE_WORLD_COORDS", None)
+    if enum is not None:
+        settings.set(enum, True)
+    return settings
+
+
+def _import_ifc(path: str) -> List["bpy.types.Object"]:
+    """Tessellate an IFC model into Blender meshes with ifcopenshell.
+
+    One object per IFC element, named by class and name, carrying its GlobalId
+    and IFC class as custom properties so the BIM identity survives even on the
+    imported-asset path. Falls back to the Bonsai add-on's project loader when
+    ifcopenshell is not importable but Bonsai is installed.
+    """
+    try:
+        import ifcopenshell
+        import ifcopenshell.geom as geom
+    except Exception:
+        objs = _import_ifc_via_bonsai(path)
+        if objs is not None:
+            return objs
+        raise IOError(IFC_HINT)
+
+    try:
+        model = ifcopenshell.open(path)
+    except Exception as exc:
+        raise IOError(f"could not open IFC {os.path.basename(path)}: {exc}") from exc
+
+    settings = _ifc_settings(geom)
+    try:
+        iterator = geom.iterator(settings, model)
+    except Exception as exc:
+        raise IOError(f"IFC geometry iterator failed: {exc}") from exc
+
+    created: List["bpy.types.Object"] = []
+    if not iterator.initialize():
+        raise IOError(f"IFC model has no renderable geometry: {os.path.basename(path)}")
+    while True:
+        shape = iterator.get()
+        obj = _ifc_shape_to_object(model, shape)
+        if obj is not None:
+            created.append(obj)
+        if not iterator.next():
+            break
+    if not created:
+        raise IOError(f"no geometry tessellated from {os.path.basename(path)}")
+    return created
+
+
+def _ifc_shape_to_object(model, shape) -> Optional["bpy.types.Object"]:
+    geometry = shape.geometry
+    verts = list(geometry.verts)
+    faces = list(geometry.faces)
+    if not verts or not faces:
+        return None
+    coords = [(verts[i], verts[i + 1], verts[i + 2]) for i in range(0, len(verts), 3)]
+    tris = [(faces[i], faces[i + 1], faces[i + 2]) for i in range(0, len(faces), 3)]
+
+    # The iterator's element carries class/name/guid directly; a model lookup is
+    # only the fallback, so this stays correct across ifcopenshell versions.
+    ifc_class = getattr(shape, "type", "") or ""
+    name = getattr(shape, "name", "") or ""
+    guid = getattr(shape, "guid", "") or ""
+    if not ifc_class:
+        try:
+            element = model.by_id(shape.id)
+            ifc_class = element.is_a()
+            name = name or (getattr(element, "Name", None) or "")
+            guid = guid or (getattr(element, "GlobalId", "") or "")
+        except Exception:
+            ifc_class = "IfcElement"
+    label = f"{ifc_class}:{name}" if name else f"{ifc_class}:{(guid[:8] or shape.id)}"
+
+    mesh = bpy.data.meshes.new(label)
+    mesh.from_pydata(coords, [], tris)
+    mesh.update()
+    obj = bpy.data.objects.new(label, mesh)
+    # BIM identity as custom properties, so the imported asset is still queryable
+    # and colour-by-class works even without the graph's own columns.
+    if guid:
+        obj["ifcGuid"] = guid
+    obj["ifcClass"] = ifc_class
+    return obj
+
+
+def _import_ifc_via_bonsai(path: str) -> Optional[List["bpy.types.Object"]]:
+    """Load an IFC through the Bonsai add-on if it is installed, else ``None``."""
+    loader = getattr(getattr(bpy.ops, "bim", None), "load_project", None)
+    if loader is None or "load_project" not in dir(getattr(bpy.ops, "bim", object())):
+        return None
+    before = set(bpy.data.objects)
+    try:
+        bpy.ops.bim.load_project(filepath=path)
+    except (RuntimeError, AttributeError):
+        return None
+    return [o for o in bpy.data.objects if o not in before] or None
 
 
 def _strip_blender_suffix(name: str) -> str:

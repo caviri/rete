@@ -27,6 +27,7 @@ if ADDON_ROOT not in sys.path:
 
 import addon  # noqa: E402
 from addon import (  # noqa: E402
+    assets,
     attributes,
     builder,
     detect,
@@ -39,6 +40,8 @@ from addon import (  # noqa: E402
     relations,
     timeline,
 )
+
+REPO = os.path.dirname(os.path.dirname(ADDON_ROOT))
 
 PASSED: list = []
 FAILED: list = []
@@ -64,6 +67,24 @@ def test(name):
 def eq(actual, expected, what=""):
     if actual != expected:
         raise AssertionError(f"{what or 'value'}: expected {expected!r}, got {actual!r}")
+
+
+def fresh_local(name: str) -> str:
+    """A clean collection name, so re-runs in one session don't accumulate."""
+    existing = bpy.data.collections.get(name)
+    if existing is not None:
+        for obj in list(existing.all_objects):
+            bpy.data.objects.remove(obj, do_unlink=True)
+    return name
+
+
+def _pairs(source, iris, predicate):
+    """``[(subject_iri, object_iri)]`` for one predicate over the given IRIs."""
+    out = []
+    for subject, cell in engine.pairs_by_predicate(source, iris, predicate):
+        if cell.is_iri:
+            out.append((subject, cell.value))
+    return out
 
 
 def close(actual, expected, tol=1e-4, what=""):
@@ -187,6 +208,38 @@ def t_detect():
     )
     # IIIF URLs have no extension.
     truthy(detect.is_image_url("https://iiif.example.org/img/abc/full/full/0/default.jpg"))
+
+    # CAD / BIM asset URLs are recognised, whatever the column is called.
+    eq(detect.classify_column("m", [C("iri", "https://x.org/house.ifc")]), detect.ASSET)
+    eq(detect.classify_column("m", [C("iri", "https://x.org/plan.dxf")]), detect.ASSET)
+    truthy(detect.is_model_url("https://data.graphplaza.com/cad/fzk-haus.glb"))
+    truthy(detect.url_extension("https://x.org/a.ifc") == ".ifc")
+    # The cad: vocabulary is pinned for determinism.
+    eq(
+        detect.classify_column(
+            "glb", [C("iri", "https://x.org/x.glb")], predicate="https://w3id.org/rete/cad#glbModel"
+        ),
+        detect.ASSET,
+    )
+    eq(
+        detect.classify_column(
+            "cls", [C("literal", "IfcWallStandardCase")], predicate="https://w3id.org/rete/cad#ifcClass"
+        ),
+        detect.CLASS,
+    )
+    eq(
+        detect.classify_column(
+            "e", [C("literal", "2.7", "http://www.w3.org/2001/XMLSchema#decimal")],
+            predicate="https://w3id.org/rete/cad#elevation",
+        ),
+        detect.NUMBER,
+    )
+    eq(
+        detect.classify_column(
+            "m", [C("iri", "https://x.org/whatever")], predicate="https://w3id.org/rete/cad#ifcModel"
+        ),
+        detect.ASSET,
+    )
 
     # Decimal seconds named like a time are a time, not a measurement — this is
     # how the subtitles, dance and tracking graphs publish their timelines.
@@ -627,6 +680,222 @@ def t_motion_path():
     scene.frame_set(1)
 
 
+@test("CAD: an IFC building graph builds — geometry in metres, IFC class, storeys")
+def t_cad_graph():
+    src = os.path.join(REPO, "web", "fzk-haus.rete")
+    if not os.path.exists(src):
+        print("       (web/fzk-haus.rete absent — skipping)")
+        return
+
+    query = """
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+PREFIX geo3: <https://w3id.org/rete/geo3#>
+PREFIX cad:  <https://w3id.org/rete/cad#>
+SELECT ?s ?ifc ?wkt ?box WHERE {
+  ?s cad:ifcClass ?ifc ; geo:hasGeometry ?g .
+  ?g geo3:asWKT3D ?wkt ; geo3:box ?box .
+} LIMIT 80
+"""
+    result = engine.select(src, query)
+    truthy(len(result) > 20, f"elements returned ({len(result)})")
+    roles = detect.classify_result(result)
+    eq(roles["wkt"], detect.GEOMETRY, "geo3:asWKT3D is geometry")
+    eq(roles["box"], detect.GEOMETRY, "geo3:box is geometry")
+    eq(roles["ifc"], detect.CLASS, "cad:ifcClass is a class")
+
+    name = fresh_local("cad-build")
+    report = builder.build(
+        result,
+        builder.Settings(
+            source=src,
+            query=query,
+            collection_name=name,
+            scale_mode="M",        # IFC coordinates are metres
+            recentre=True,
+            point_style="CUBE",    # box geometry sizes the massing
+            material_mode="CLASS", # colour by IFC class
+            deep_properties=True,
+            import_assets=False,
+            layout="GEOMETRY",
+        ),
+    )
+    truthy(report.objects > 20, f"objects built ({report.objects})")
+    objects = list(bpy.data.collections[name].all_objects)
+    bpy.context.view_layer.update()
+
+    # FZK-Haus is a two-storey house ~12 x 10 x 7 m; sized boxes must be
+    # building-scale, not millimetre dots or kilometre slabs.
+    sized = [o for o in objects if max(o.dimensions) > 1e-3]
+    truthy(sized, "boxes sized the elements")
+    biggest = max(max(o.dimensions) for o in sized)
+    truthy(1.0 < biggest < 40.0, f"largest element is building-scale ({biggest:.1f} m)")
+
+    # The IFC class rode in as an inherited property, and coloured the scene.
+    classed = [o for o in objects if str(o.get("ifcClass", "")).startswith("Ifc")]
+    truthy(classed, "elements carry their IFC class as an inherited property")
+    distinct_classes = {str(o.get("ifcClass", "")) for o in classed}
+    truthy(len(distinct_classes) >= 2, f"several IFC classes present ({len(distinct_classes)})")
+    truthy(
+        any(o.material_slots and o.material_slots[0].material for o in objects),
+        "elements coloured by class",
+    )
+    STATE["cad_src"] = src
+
+
+@test("CAD: BOT topology becomes collections, adjacency becomes constraints")
+def t_cad_relations():
+    src = STATE.get("cad_src")
+    if not src:
+        print("       (no CAD source — skipping)")
+        return
+    # Storeys and their elements: bot:containsElement is the containment edge.
+    query = """
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX cad:  <https://w3id.org/rete/cad#>
+SELECT ?s ?ifc ?storey WHERE {
+  ?s cad:ifcClass ?ifc ; cad:inStorey ?storey .
+} LIMIT 120
+"""
+    result = engine.select(src, query)
+    truthy(len(result) > 10, f"elements in storeys ({len(result)})")
+
+    name = fresh_local("cad-topo")
+    report = builder.build(
+        result,
+        builder.Settings(
+            source=src,
+            query=query,
+            collection_name=name,
+            scale_mode="M",
+            deep_properties=False,
+            material_mode="CLASS",
+            import_assets=False,
+            layout="GRID",
+            relation_mode="COLLECTION",
+            relation_predicate="https://w3id.org/rete/cad#inStorey",
+        ),
+    )
+    truthy(report.objects > 10, "elements built")
+    truthy(report.relations > 0, f"storey grouping applied ({report.relations})")
+    storeys = [c for c in bpy.data.collections if c.name.startswith("Storey") or "storey" in c.name.lower()]
+    # Grouping created named sub-collections (the storeys), whatever they're called.
+    truthy(len(bpy.data.collections[name].children) >= 1, "storey collections created")
+
+    # Now the "building topology as physics" path: build the spaces and turn
+    # cad:adjacentSpace into rigid-body constraints between them.
+    space_q = """
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+PREFIX geo3: <https://w3id.org/rete/geo3#>
+PREFIX cad:  <https://w3id.org/rete/cad#>
+SELECT ?s ?wkt WHERE {
+  ?s cad:ifcClass "IfcSpace" ; geo:hasGeometry ?g .
+  ?g geo3:asWKT3D ?wkt .
+}
+"""
+    spaces = engine.select(src, space_q)
+    truthy(len(spaces) >= 3, f"spaces returned ({len(spaces)})")
+    sname = fresh_local("cad-spaces")
+    builder.build(
+        spaces,
+        builder.Settings(
+            source=src, collection_name=sname, scale_mode="M", recentre=True,
+            deep_properties=False, material_mode="NONE", import_assets=False,
+            layout="GEOMETRY", point_style="SPHERE", point_size=0.5,
+        ),
+    )
+    by_iri = {o.get(rprops.IRI): o for o in bpy.data.collections[sname].all_objects if o.get(rprops.IRI)}
+    edges = [
+        (by_iri.get(s), by_iri.get(o))
+        for s, o in _pairs(src, list(by_iri), "https://w3id.org/rete/cad#adjacentSpace")
+        if by_iri.get(s) and by_iri.get(o)
+    ]
+    made = physics.constraint_network(edges, constraint_type="FIXED")
+    truthy(made > 0, f"space adjacency became rigid-body constraints ({made})")
+    print(f"       {report.summary()}, {len(spaces)} spaces, {made} adjacency constraints")
+
+
+@test("IFC: a raw .ifc URL imports as meshes (or degrades with a clear message)")
+def t_ifc_import():
+    ifc = os.path.join(REPO, "data", "cad", "raw", "FZK-Haus.ifc")
+    if not os.path.exists(ifc):
+        print("       (FZK-Haus.ifc absent — skipping)")
+        return
+    url = "file://" + ifc.replace("\\", "/")
+
+    try:
+        import ifcopenshell  # noqa: F401
+
+        have_ifc = True
+    except Exception:
+        have_ifc = False
+
+    if not have_ifc:
+        # The graceful path: a clear, actionable message, no crash.
+        try:
+            assets.import_asset(url)
+            raise AssertionError("expected an IOError without ifcopenshell")
+        except IOError as exc:
+            truthy("ifcopenshell" in str(exc), "message names ifcopenshell")
+        print("       ifcopenshell absent — graceful message verified")
+        return
+
+    objects = assets.import_asset(url)
+    truthy(len(objects) > 20, f"IFC elements tessellated ({len(objects)})")
+    meshes = [o for o in objects if o.type == "MESH" and o.data.vertices]
+    truthy(meshes, "elements have real geometry")
+    truthy(sum(len(o.data.vertices) for o in meshes) > 1000, "substantial geometry")
+    # BIM identity survived onto the imported meshes.
+    classed = [o for o in objects if o.get("ifcClass")]
+    truthy(classed, "imported elements carry their IFC class")
+    walls = [o for o in objects if "Wall" in str(o.get("ifcClass", ""))]
+    truthy(walls, "the house has walls")
+
+    # World coordinates: FZK-Haus is a ~12 m house, so the whole model spans a
+    # sane building extent rather than collapsing to a point.
+    xs = [v.co.x for o in meshes for v in o.data.vertices]
+    span = max(xs) - min(xs)
+    truthy(2.0 < span < 200.0, f"the model is building-scale ({span:.1f} m across)")
+
+    # And it drops into a scene through the normal build path: a graph whose one
+    # row points a cad:ifcModel column straight at the .ifc URL.
+    directory = STATE.get("dir") or tempfile.mkdtemp(prefix="rete-ifc-")
+    STATE["dir"] = directory
+    graph_path = os.path.join(directory, "ifc-ref.rete")
+    engine.engine().Builder().add(
+        f'<https://x.org/b> <https://w3id.org/rete/cad#ifcModel> <{url}> .\n'
+        '<https://x.org/b> <http://www.w3.org/2000/01/rdf-schema#label> "FZK-Haus" .\n',
+        "nt",
+    ).export(graph_path)
+    result = engine.select(
+        graph_path,
+        "PREFIX cad: <https://w3id.org/rete/cad#>\n"
+        "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n"
+        "SELECT ?s ?label ?m WHERE { ?s cad:ifcModel ?m ; rdfs:label ?label }",
+    )
+    eq(len(result), 1, "the ifcModel row")
+    eq(detect.classify_result(result)["m"], detect.ASSET, "cad:ifcModel is an asset")
+    name = fresh_local("ifc-scene")
+    report = builder.build(
+        result,
+        builder.Settings(
+            source=graph_path,
+            collection_name=name,
+            import_assets=True,
+            max_assets=1,
+            deep_properties=False,
+            material_mode="CLASS",
+            layout="GEOMETRY",
+        ),
+    )
+    eq(report.assets, 1, "the IFC imported through the build path")
+    scene_meshes = [o for o in bpy.data.collections[name].all_objects if o.type == "MESH"]
+    truthy(scene_meshes, "IFC elements are in the scene")
+    print(f"       imported {len(objects)} IFC elements, {span:.1f} m across, "
+          f"{len(scene_meshes)} placed in the scene")
+
+
 @test("physics: rigid bodies, mass from a property, relation constraints")
 def t_physics():
     by_iri = STATE["by_iri"]
@@ -740,6 +1009,7 @@ def main() -> None:
         t_geometry, t_geographic_evidence, t_placement, t_detect, t_query_predicates, t_axes,
         t_timeline, t_materials, t_props,
         t_fixture, t_build, t_asset, t_relations, t_time, t_motion_path, t_physics,
+        t_cad_graph, t_cad_relations, t_ifc_import,
         t_point_cloud, t_export, t_drivers, t_register,
     ):
         fn()

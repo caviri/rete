@@ -151,16 +151,23 @@ def apply(
     *,
     inverse: bool = False,
 ) -> Tuple[int, str]:
-    """Fetch a relation and apply it in the chosen mode. Returns ``(n, note)``."""
+    """Fetch a relation and apply it in the chosen mode. Returns ``(n, note)``.
+
+    Parenting and edges need both ends in the scene; grouping only needs the
+    target as a key (the storey an element sits in names its collection even
+    when no storey object was imported), so it keeps edges to outside targets.
+    """
     if mode == "NONE" or not predicate:
         return (0, "")
-    edges = fetch_edges(source, objects, predicate, inverse=inverse)
+    within = mode != "COLLECTION"
+    edges = fetch_edges(source, objects, predicate, inverse=inverse, within_scene=within)
     if not edges:
         return (0, f"no {rprops.local_name(predicate)} statements among the imported entities")
     if mode == "PARENT":
         return (apply_parenting(edges), "parented")
     if mode == "COLLECTION":
-        return (apply_collections(edges, root), "grouped")
+        labels = engine.labels_for(source, [target for _, _, target in edges])
+        return (apply_collections(edges, root, labels), "grouped")
     if mode == "EDGES":
         obj = build_edge_mesh(edges, f"edges:{rprops.local_name(predicate)}", root)
         return ((len(edges) if obj else 0), "drawn")

@@ -64,15 +64,50 @@ one carrying its full RDF description as custom properties.
 ### 3D assets
 
 A column holding a `.glb`, `.gltf`, `.obj`, `.fbx`, `.stl`, `.ply`, `.usd`,
-`.abc` or `.dae` URL is recognised as an asset and imported. Files are cached on
-disk and imported **once**: repeated references become linked copies sharing one
-mesh, so a result whose rows all point at the same file costs one download.
+`.abc`, `.dae` — or a CAD/BIM `.ifc`, `.ifczip`, `.dxf` — URL is recognised as an
+asset and imported. Files are cached on disk and imported **once**: repeated
+references become linked copies sharing one mesh, so a result whose rows all
+point at the same file costs one download.
 
 When a row also names a node inside the file — the anatomy graph's nine
 body-system files hold thousands of named structures each — only that node is
 instanced, keeping its own place inside the asset. If the graph's node name and
 the file's differ, the match degrades gracefully to the structure's constituent
 parts rather than failing.
+
+### CAD & BIM (IFC)
+
+A `.rete` graph that describes a building works two ways, and the add-on handles
+both.
+
+**As geometry in the graph.** IFC-derived graphs (the FZK-Haus example) carry
+each element's `geo3:asWKT3D` point and `geo3:box` bounding box in metres, its
+`cad:ifcClass` (`IfcWallStandardCase`, `IfcWindow`, `IfcSpace`, …), and the full
+BOT topology. Query the elements and you get a massing model sized by bounding
+box, coloured by IFC class, with:
+
+- **BOT topology → structure** — `bot:containsElement`, `cad:inStorey`,
+  `bot:hasStorey`/`hasSpace` become parenting or per-storey collections;
+- **`cad:adjacentSpace` / `bot:adjacentElement` → physics** — the building's
+  own adjacency graph becomes rigid-body constraints, so the spaces of a house
+  are literally wired to their neighbours;
+- **`cad:elevation`, `cad:netArea`, `cad:grossVolume`** inherited as drivable
+  numbers.
+
+**As an IFC file URL.** A column pointing at a raw `.ifc` (via `cad:ifcModel`,
+`cad:ifcFile`, or any `.ifc` URL) is imported element by element, at true world
+coordinates, each mesh carrying its `ifcGuid` and `ifcClass`. This needs
+**ifcopenshell** in Blender's Python — it is *not* bundled (too large):
+
+```sh
+<blender-python> -m pip install ifcopenshell
+```
+
+or install the **Bonsai** (BlenderBIM) add-on, which the importer will use if
+present. Without either, IFC rows degrade with a clear message and everything
+else still builds — and most CAD graphs also carry a `cad:glbModel` column,
+which imports with no extra install. `.dxf` uses the add-on Blender already
+ships; `.step`/`.stp` has no core importer and reports so.
 
 ### Inherited properties
 
@@ -240,6 +275,10 @@ the [playground](https://caviri.github.io/rete/playground.html).
 - Imported assets keep their own scale; the placement transform applies to
   geometry literals. Use either assets or geometry to position a given import,
   not both.
+- CAD/BIM assets (IFC, DXF) keep their real-world coordinates and are not
+  rescaled — a building imports at true metres regardless of the scale mode.
+- IFC import needs ifcopenshell or Bonsai; it is not bundled. STEP has no core
+  Blender importer.
 - The asset limit (default 400 rows) guards against a query that would import
   thousands of files; rows past it become markers.
 

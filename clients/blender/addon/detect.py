@@ -51,7 +51,9 @@ ROLE_ITEMS = [
     (IGNORE, "Ignore", "Left out of the scene"),
 ]
 
-#: File extensions Blender can import, mapped to the importer family.
+#: File extensions Blender can import, mapped to the importer family. The CAD/BIM
+#: formats (ifc, dxf, step) need an external importer and are handled specially
+#: in :mod:`.assets`, but they are asset URLs all the same.
 MODEL_EXT = {
     ".glb": "gltf", ".gltf": "gltf",
     ".obj": "obj",
@@ -64,7 +66,15 @@ MODEL_EXT = {
     ".x3d": "x3d", ".wrl": "x3d",
     ".svg": "svg",
     ".blend": "blend",
+    # CAD / BIM
+    ".ifc": "ifc", ".ifczip": "ifc", ".ifcxml": "ifc",
+    ".dxf": "dxf",
+    ".step": "step", ".stp": "step",
 }
+
+#: The CAD/BIM families, which need an external importer (ifcopenshell / Bonsai,
+#: or a bundled add-on) rather than a core ``bpy.ops`` operator.
+CAD_FAMILIES = frozenset(("ifc", "dxf", "step"))
 IMAGE_EXT = {
     ".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff",
     ".exr", ".bmp", ".tga", ".hdr", ".jp2",
@@ -138,6 +148,16 @@ KNOWN_PREDICATES: Dict[str, str] = {
     "https://bioexplora.cat/prop/mesh": ASSET,
     "https://w3id.org/rete/dance#animation": ASSET,
     "https://w3id.org/rete/anatomy#meshNode": MESH_NODE,
+    # CAD / BIM assets. glbModel is the shipped predicate; ifcModel/ifcFile are
+    # pinned so a graph pointing straight at a raw .ifc imports without relying
+    # on the URL suffix alone.
+    "https://w3id.org/rete/cad#glbModel": ASSET,
+    "https://w3id.org/rete/cad#ifcModel": ASSET,
+    "https://w3id.org/rete/cad#ifcFile": ASSET,
+    "https://w3id.org/rete/cad#ifcClass": CLASS,
+    "https://w3id.org/rete/cad#elevation": NUMBER,
+    "https://w3id.org/rete/cad#netArea": NUMBER,
+    "https://w3id.org/rete/cad#grossVolume": NUMBER,
     # geometry
     "https://w3id.org/rete/geo3#asWKT3D": GEOMETRY,
     "https://w3id.org/rete/geo3#box": GEOMETRY,

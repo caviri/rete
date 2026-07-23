@@ -48,7 +48,7 @@ produces a sensible scene.
 
 | Role | Recognised from | Becomes |
 |---|---|---|
-| 3D asset | a `.glb`/`.gltf`/`.obj`/`.fbx`/`.stl`/`.ply`/`.usd`/`.abc`/`.dae` URL | an imported, cached, instanced model |
+| 3D asset | a `.glb`/`.gltf`/`.obj`/`.fbx`/`.stl`/`.ply`/`.usd`/`.abc`/`.dae` URL, or a CAD/BIM `.ifc`/`.ifczip`/`.dxf` | an imported, cached, instanced model |
 | Mesh node | a node name inside a shared asset | just that node, keeping its place in the file |
 | Geometry | WKT (`POINT Z`, `LINESTRING`, `POLYGON`) or `BOX3D` | position, real mesh geometry, and size |
 | Time | a date, timestamp, year, duration, or decimal seconds | a position on the frame range |
@@ -62,6 +62,28 @@ produces a sensible scene.
 vocabularies are pinned explicitly — which matters most for the graphs that
 publish **time as bare decimal seconds**, since those are indistinguishable
 from any other number by value alone.
+
+## CAD & BIM (IFC)
+
+A building `.rete` works two ways. Its geometry can live **in the graph** — an
+IFC-derived graph (the FZK-Haus example, from [`cad-ifc`](geosparql.md)) carries
+each element's `geo3:asWKT3D` and `geo3:box` in metres, its `cad:ifcClass`, and
+the [BOT](https://w3c-lbd-cg.github.io/bot/) topology. Query the elements and you
+get a massing model sized by bounding box, coloured by IFC class, with
+`bot:containsElement` / `cad:inStorey` becoming per-storey collections,
+`cad:adjacentSpace` becoming rigid-body constraints between the spaces, and
+`cad:elevation` / `cad:netArea` / `cad:grossVolume` inherited as drivable
+numbers.
+
+Or the graph can point at a **raw `.ifc` file** (via `cad:ifcModel`,
+`cad:ifcFile`, or any `.ifc` URL). It is imported element by element at true
+world coordinates, each mesh carrying its `ifcGuid` and `ifcClass`. That path
+needs **ifcopenshell** in Blender's Python (`<blender-python> -m pip install
+ifcopenshell`) or the **Bonsai** add-on; it is not bundled, being far larger
+than the engine itself. Without either, IFC rows degrade with a clear message
+and everything else still builds — and most CAD graphs also ship a
+`cad:glbModel` column that needs no extra install. `.dxf` uses the importer
+Blender already ships; `.step` has no core importer.
 
 ## Inherited properties
 

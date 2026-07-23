@@ -355,7 +355,7 @@ shape of its values, with the variable name and the predicate that bound it as
 supporting evidence — so an arbitrary query against an arbitrary graph still
 produces a sensible scene.</p>
 <table><thead><tr><th>Role</th><th>Recognised from</th><th>Becomes</th></tr></thead><tbody>
-<tr><td>3D asset</td><td>a <code>.glb</code>/<code>.gltf</code>/<code>.obj</code>/<code>.fbx</code>/<code>.stl</code>/<code>.ply</code>/<code>.usd</code>/<code>.abc</code>/<code>.dae</code> URL</td><td>an imported, cached, instanced model</td></tr>
+<tr><td>3D asset</td><td>a <code>.glb</code>/<code>.gltf</code>/<code>.obj</code>/<code>.fbx</code>/<code>.stl</code>/<code>.ply</code>/<code>.usd</code>/<code>.abc</code>/<code>.dae</code> URL, or a CAD/BIM <code>.ifc</code>/<code>.ifczip</code>/<code>.dxf</code></td><td>an imported, cached, instanced model</td></tr>
 <tr><td>Mesh node</td><td>a node name inside a shared asset</td><td>just that node, keeping its place in the file</td></tr>
 <tr><td>Geometry</td><td>WKT (<code>POINT Z</code>, <code>LINESTRING</code>, <code>POLYGON</code>) or <code>BOX3D</code></td><td>position, real mesh geometry, and size</td></tr>
 <tr><td>Time</td><td>a date, timestamp, year, duration, or decimal seconds</td><td>a position on the frame range</td></tr>
@@ -369,6 +369,24 @@ produces a sensible scene.</p>
 vocabularies are pinned explicitly — which matters most for the graphs that
 publish <strong>time as bare decimal seconds</strong>, since those are indistinguishable
 from any other number by value alone.</p>
+<h2>CAD &amp; BIM (IFC)</h2>
+<p>A building <code>.rete</code> works two ways. Its geometry can live <strong>in the graph</strong> — an
+IFC-derived graph (the FZK-Haus example, from <a href="geosparql.html"><code>cad-ifc</code></a>) carries
+each element's <code>geo3:asWKT3D</code> and <code>geo3:box</code> in metres, its <code>cad:ifcClass</code>, and
+the <a href="https://w3c-lbd-cg.github.io/bot/">BOT</a> topology. Query the elements and you
+get a massing model sized by bounding box, coloured by IFC class, with
+<code>bot:containsElement</code> / <code>cad:inStorey</code> becoming per-storey collections,
+<code>cad:adjacentSpace</code> becoming rigid-body constraints between the spaces, and
+<code>cad:elevation</code> / <code>cad:netArea</code> / <code>cad:grossVolume</code> inherited as drivable
+numbers.</p>
+<p>Or the graph can point at a <strong>raw <code>.ifc</code> file</strong> (via <code>cad:ifcModel</code>,
+<code>cad:ifcFile</code>, or any <code>.ifc</code> URL). It is imported element by element at true
+world coordinates, each mesh carrying its <code>ifcGuid</code> and <code>ifcClass</code>. That path
+needs <strong>ifcopenshell</strong> in Blender's Python (<code>&lt;blender-python&gt; -m pip install ifcopenshell</code>) or the <strong>Bonsai</strong> add-on; it is not bundled, being far larger
+than the engine itself. Without either, IFC rows degrade with a clear message
+and everything else still builds — and most CAD graphs also ship a
+<code>cad:glbModel</code> column that needs no extra install. <code>.dxf</code> uses the importer
+Blender already ships; <code>.step</code> has no core importer.</p>
 <h2>Inherited properties</h2>
 <p>With <strong>Inherit all properties</strong>, every statement about every imported entity is
 fetched — batched, so a thousand entities cost a handful of queries — and

@@ -38,4 +38,13 @@ RUN /opt/blender/*/python/bin/python3* -m ensurepip --upgrade && \
         /opt/blender/*/python/bin/python3* -m pip install --no-cache-dir "rete-graph>=0.2.3"; \
     fi
 
+# ifcopenshell exercises the IFC-import path in the tests. It is NOT bundled in
+# the shipped extension (too large); end users install it themselves, or use the
+# cad:glbModel column instead. Skipped in the clean image, whose absence of it
+# proves the graceful "install ifcopenshell" message.
+ARG WITH_IFC=1
+RUN if [ "$WITH_ENGINE" = "1" ] && [ "$WITH_IFC" = "1" ]; then \
+        /opt/blender/*/python/bin/python3* -m pip install --no-cache-dir ifcopenshell; \
+    fi
+
 WORKDIR /work
