@@ -37,7 +37,7 @@ def parse_swc(path):
     e = [(i, idx[pp]) for i, pp in enumerate(par) if pp != -1 and pp in idx]
     return xyz, rad, np.array(e, dtype=np.int64)
 
-def tube_mesh(xyz, rad, edges, sides=5, min_r_frac=0.004):
+def tube_mesh(xyz, rad, edges, sides=7, min_r_frac=0.012):
     p0 = xyz[edges[:, 1]]  # parent end
     p1 = xyz[edges[:, 0]]  # child end
     r = np.maximum(rad[edges[:, 0]], rad[edges[:, 1]])
