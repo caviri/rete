@@ -727,3 +727,45 @@ fn shacl_over_lazy_open_matches_eager_and_fetches_only_targets() {
         image.len()
     );
 }
+
+/// A split mega-group (one predicate far over the tile budget) must stay fully
+/// queryable through the LAZY open: a bound (p, o) probe whose object sits in a
+/// LATE slice of the split run must find its subjects. (Regression: the first
+/// split file returned 0 for exactly this shape while plain opens passed.)
+#[test]
+fn lazy_bound_object_lookup_reaches_late_slices_of_a_split_group() {
+    let node = mt_node;
+    let cites = "<http://ex/cites>".to_string();
+    let mut db = DictionaryBuilder::new();
+    let edges: Vec<(u32, u32)> = (0..8000u32).map(|i| (i % 400, 10_000 + i)).collect();
+    for &(s, o) in &edges {
+        db.observe(&node(s), &cites, &node(o));
+    }
+    let dict = db.build();
+    let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+    for &(s, o) in &edges {
+        ib.push(dict.encode(&node(s), &cites, &node(o)).unwrap());
+    }
+    let image = write_file(&dict, &ib.build(), false, &[], 0);
+
+    let plain = Rete::open(&image).unwrap();
+    let lazy =
+        Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(image.clone()))).unwrap();
+    for i in [0u32, 4_000, 7_999] {
+        let q = format!(
+            "SELECT ?s WHERE {{ ?s <http://ex/cites> {} }}",
+            node(10_000 + i)
+        );
+        let want = match eval_query(&plain, &q).unwrap() {
+            QueryOutput::Select(_, r) => r.len(),
+            _ => unreachable!(),
+        };
+        assert_eq!(want, 1, "plain open must find o=10{i}");
+        let got = match eval_query(&lazy, &q).unwrap() {
+            QueryOutput::Select(_, r) => r.len(),
+            _ => unreachable!(),
+        };
+        assert!(!lazy.index_incomplete());
+        assert_eq!(got, want, "LAZY open must find o offset {i} in its slice");
+    }
+}

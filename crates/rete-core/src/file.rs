@@ -2618,7 +2618,8 @@ fn route_pattern<R: RangeReader>(
 }
 
 /// Fetch and scan a routed pattern's matches: read the tile directory, then only
-/// the matching tile byte ranges (one tile for a bound leading id — the
+/// the matching tile byte ranges (the run of covering tiles for a bound leading
+/// id — one for ordinary groups, several for a split mega-group — the
 /// O(matching bytes) promise).
 fn fetch_routed_matches<R: RangeReader>(
     reader: &R,
@@ -2629,7 +2630,8 @@ fn fetch_routed_matches<R: RangeReader>(
     let codec = routed.header.block_codec;
     let mut out = Vec::new();
     match pa {
-        // Bound leading id: at most one tile contains it.
+        // Bound leading id: the run of covering tiles (several for a split
+        // mega-group; one otherwise).
         Some(a) => {
             for e in dir.iter().filter(|e| e.min_a <= a && a <= e.max_a) {
                 let bytes = reader.read_at(
@@ -4408,4 +4410,65 @@ mod tests {
             scan_ms / idx_ms
         );
     }
+
+    /// Operational debugging harness for a REAL on-disk file (ignored; driven
+    /// by env vars): step-by-step dump of a bound (p, o) POS routing.
+    ///   RETE_DEBUG_FILE=<path.rete> RETE_DEBUG_P=<iri> RETE_DEBUG_O=<iri>
+    #[test]
+    #[ignore = "operational tool, driven by RETE_DEBUG_* env vars"]
+    fn debug_bound_po_routing() {
+        use crate::index::IndexPermutation;
+        struct FR(std::fs::File);
+        impl crate::RangeReader for FR {
+            fn len(&self) -> u64 {
+                self.0.metadata().map(|m| m.len()).unwrap_or(0)
+            }
+            fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+                use std::os::unix::fs::FileExt;
+                let mut buf = vec![0u8; len as usize];
+                self.0.read_exact_at(&mut buf, offset)?;
+                Ok(buf)
+            }
+        }
+        let path = std::env::var("RETE_DEBUG_FILE").expect("RETE_DEBUG_FILE");
+        let p_iri = std::env::var("RETE_DEBUG_P").expect("RETE_DEBUG_P");
+        let o_iri = std::env::var("RETE_DEBUG_O").expect("RETE_DEBUG_O");
+        let rete = Rete::open_ranged_lazy(std::sync::Arc::new(FR(
+            std::fs::File::open(&path).unwrap(),
+        )))
+        .unwrap();
+        let pid = rete.dict.predicate_id(&p_iri).expect("p resolves");
+        let oid = rete.dict.object_id(&o_iri).expect("o resolves");
+        eprintln!("pid={pid} oid={oid}");
+        let pattern = (None, Some(pid), Some(oid));
+        let perm = GraphIndex::best_permutation(pattern);
+        eprintln!("best_permutation = {}", perm.name());
+        let si = perm.section_index();
+        let tiles = &rete.index.sections[si];
+        eprintln!("section {} tiles = {}", perm.name(), tiles.len());
+        let [pa, pb, pc] = perm.order_pattern(pattern);
+        eprintln!("permuted pattern pa={pa:?} pb={pb:?} pc={pc:?}");
+        let (start, end) = rete.index.tile_span(si, pa);
+        eprintln!("tile_span = [{start}, {end}) -> {} tiles", end - start);
+        let mut admitted = 0usize;
+        for ti in start..end {
+            let t = &tiles[ti];
+            if t.syn_admits(pb, pc) {
+                admitted += 1;
+                if admitted <= 10 {
+                    let (lo, hi) = t.leading_range();
+                    eprintln!(
+                        "  admit tile {ti}: a=[{lo},{hi}] syn={:?}",
+                        t.syn
+                    );
+                }
+            }
+        }
+        eprintln!("admitted {admitted} tile(s) by synopsis");
+        let n = rete.index.scan_iter(pattern).count();
+        eprintln!("scan_iter matches = {n}");
+        let hi_res = rete.query(None, Some(&p_iri), Some(&o_iri));
+        eprintln!("high-level query matches = {}", hi_res.len());
+    }
 }
+
