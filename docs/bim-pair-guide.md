@@ -4,7 +4,13 @@
 twice by one team of the TUM *BIM Project* course: an **architectural** model
 (the envelope — walls, curtain walls, doors, windows, furniture) and a
 **structural** model (the load-bearing skeleton — beams, columns, slabs). Toggle
-between them, or overlay the skeleton inside a translucent envelope.
+between them, or overlay the skeleton inside a translucent envelope. **Pick a
+different project** from the selector, **download either raw IFC**, or **run
+SPARQL over all 224 models** — the ⌕ button opens a query panel on the corpus.
+
+The models are **Draco-compressed** and streamed from the cloud (the three.js
+community's standard for web-delivered geometry): the architectural GLBs shrink
+~6–15× — e.g. 47 MB → 3 MB — so the viewer stays snappy even on a phone.
 
 <figure class="fig-center">
   <img src="img/bim-pair-guide.png" alt="The paired BIM viewer: an architectural building model in warm tan on the left and its structural skeleton of orange beams, columns and slabs on the right, with a three-way toggle — Architecture / Both / Structure — above the 3D scene.">

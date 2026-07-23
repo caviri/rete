@@ -41,11 +41,16 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("football.md", "Football — match replays"),
             ("subtitles-guide.md", "Subtitle timeline"),
             ("anatomy-guide.md", "Z-Anatomy — 3D human body"),
-            ("building-guide.md", "FZK-Haus — 3D building (IFC)"),
-            ("bim-pair-guide.md", "BIM: architecture vs structure"),
             ("lombardi-guide.md", "Lombardi — network drawings in ink"),
             ("webgpu-guide.md", "WebGPU coherence (exp.)"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
+        ],
+    ),
+    (
+        "Buildings & BIM (IFC)",
+        &[
+            ("building-guide.md", "FZK-Haus — one building in 3D"),
+            ("bim-pair-guide.md", "Architecture vs structure"),
         ],
     ),
     (

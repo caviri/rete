@@ -56,6 +56,10 @@ GLB_BASE = "https://data.graphplaza.com/gni-bim/"
 GLB_MODELS = {
     "p/model_0_arc": GLB_BASE + "bim-pair-arc.glb",
     "p/model_0_structure": GLB_BASE + "bim-pair-structure.glb",
+    "p/model_3_arc": GLB_BASE + "bim-pair-p3-arc.glb",
+    "p/model_3_structure": GLB_BASE + "bim-pair-p3-structure.glb",
+    "p/model_7_arc": GLB_BASE + "bim-pair-p7-arc.glb",
+    "p/model_7_structure": GLB_BASE + "bim-pair-p7-structure.glb",
 }
 
 classes_seen = set()

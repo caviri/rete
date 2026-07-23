@@ -248,6 +248,7 @@ SELECT ?room ?neighbour WHERE {
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {DRACOLoader} from 'three/addons/loaders/DRACOLoader.js';
 
 const DATA = 'https://data.graphplaza.com/cad/fzk-viewer.json';
 const RETE = 'https://data.graphplaza.com/cad/fzk-haus.rete';
@@ -282,7 +283,8 @@ let selected=null, dimOpacity=0.08;
 let result=null, resultVisible=true;
 const checked=new Set();
 
-const gltfLoader=new GLTFLoader();
+const gltfLoader=new GLTFLoader().setDRACOLoader(
+  new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/'));
 init();
 
 async function init(){
