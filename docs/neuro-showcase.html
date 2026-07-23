@@ -31,8 +31,25 @@
   .legend span { display:flex; align-items:center; gap:.35rem; }
   main { position:relative; }
   canvas { display:block; }
-  #meta { position:absolute; left:14px; bottom:14px; max-width:60%; background:rgba(10,18,15,.82);
+  #meta { position:absolute; left:14px; bottom:14px; max-width:46%; background:rgba(10,18,15,.82);
     border:1px solid var(--border); border-radius:9px; padding:.6rem .8rem; font-size:.82rem; backdrop-filter:blur(3px); }
+  #info { position:absolute; top:14px; right:16px; width:308px; max-height:calc(100% - 30px); overflow-y:auto;
+    background:rgba(10,18,15,.92); border:1px solid var(--border); border-radius:11px; padding:.8rem .9rem;
+    font-size:.82rem; backdrop-filter:blur(4px); }
+  #info.hidden { display:none; }
+  #info h2 { font-size:.98rem; margin:.1rem 0 .35rem; word-break:break-word; }
+  .kindbadge { display:inline-block; font-size:.68rem; text-transform:uppercase; letter-spacing:.05em;
+    padding:.08rem .45rem; border-radius:20px; border:1px solid var(--border); color:var(--muted); margin-bottom:.55rem; }
+  .kindbadge.neuron { color:#ffd39a; } .kindbadge.astrocyte { color:var(--accent); }
+  .props { display:flex; flex-direction:column; gap:.1rem; margin-bottom:.7rem; }
+  .pr { display:flex; justify-content:space-between; gap:.7rem; border-bottom:1px solid rgba(34,51,45,.5); padding:.16rem 0; }
+  .pk { color:var(--muted); flex:0 0 auto; } .pv { text-align:right; word-break:break-word; }
+  .sqhead { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:.2rem 0 .3rem; }
+  pre.sq { background:#0a1310; border:1px solid var(--border); border-radius:7px; padding:.5rem .6rem; margin:0 0 .5rem;
+    font-size:.7rem; line-height:1.45; overflow-x:auto; white-space:pre; color:#cfe6dc; }
+  .runq { display:inline-block; background:#16261f; border:1px solid var(--border); border-radius:7px;
+    padding:.35rem .6rem; color:var(--accent); font-size:.8rem; }
+  .runq:hover { border-color:var(--accent); }
   #meta b { color:var(--accent); }
   #meta .mut { color:var(--muted); }
   #status { position:absolute; top:14px; right:16px; color:var(--muted); font-size:.8rem; }
@@ -94,6 +111,7 @@
   <main>
     <div id="status">loading…</div>
     <div id="meta"><span class="mut">Pick a cell on the left to reconstruct it in 3D.</span></div>
+    <aside id="info" class="hidden"></aside>
   </main>
 </div>
 
@@ -149,17 +167,19 @@ const rim = new THREE.DirectionalLight(0xffffff, 0.8); rim.position.set(-0.2, -0
 // Selectable lighting rigs (ambient / hemisphere / key / fill / rim intensities +
 // per-kind emissive). Pick one from the sidebar.
 const LIGHTING = {
-  "Balanced":      { a:0.30, h:0.95, k:2.2, f:1.0, r:0.8, en:0.22, ea:0.05 },
-  "Bright studio": { a:0.75, h:1.30, k:1.6, f:1.2, r:0.4, en:0.10, ea:0.03 },
-  "Dramatic":      { a:0.10, h:0.35, k:3.4, f:0.4, r:1.4, en:0.18, ea:0.04 },
-  "Neon glow":     { a:0.08, h:0.28, k:1.0, f:0.5, r:1.6, en:0.55, ea:0.10 },
-  "Backlit rim":   { a:0.22, h:0.60, k:0.6, f:0.6, r:2.6, en:0.30, ea:0.06 },
+  "Balanced":      { a:0.35, h:0.90, k:2.0, kc:0xffffff, f:1.0, fc:0x9fc6ff, r:0.8, rc:0xffffff, en:0.12, ea:0.05 },
+  "Bright studio": { a:0.90, h:1.30, k:1.6, kc:0xffffff, f:1.2, fc:0xffffff, r:0.4, rc:0xffffff, en:0.05, ea:0.02 },
+  "Dramatic":      { a:0.07, h:0.28, k:3.4, kc:0xffd39a, f:0.3, fc:0x33407a, r:1.3, rc:0xfff0d8, en:0.12, ea:0.04 },
+  "Neon glow":     { a:0.05, h:0.20, k:0.9, kc:0xff5db8, f:0.9, fc:0x4de1ff, r:1.6, rc:0xff5db8, en:0.40, ea:0.10 },
+  "Backlit rim":   { a:0.18, h:0.50, k:0.5, kc:0xffffff, f:0.5, fc:0x8aa0ff, r:2.8, rc:0xffffff, en:0.18, ea:0.05 },
 };
 let EMIS = LIGHTING["Balanced"];
 function applyLighting(name) {
   const L = LIGHTING[name] || LIGHTING["Balanced"]; EMIS = L;
   ambient.intensity = L.a; hemi.intensity = L.h;
-  key.intensity = L.k; fill.intensity = L.f; rim.intensity = L.r;
+  key.intensity = L.k; key.color.setHex(L.kc);
+  fill.intensity = L.f; fill.color.setHex(L.fc);
+  rim.intensity = L.r; rim.color.setHex(L.rc);
   for (const g of loaded.values()) g.traverse((o) => {
     if (o.isMesh && o.material) o.material.emissiveIntensity = o.userData.kind === "astrocyte" ? L.ea : L.en;
   });
@@ -209,11 +229,11 @@ async function addCell(cell, { solo }) {
       }
     });
     loaded.set(cell.id, g); scene.add(g);
-    frameLoaded(); showMeta(cell); refreshButtons(); status("");
+    frameLoaded(); showMeta(cell); showInfo(cell); refreshButtons(); status("");
   } catch (e) { status("failed to load — " + (e?.message || e)); }
 }
 function removeCell(id) { const g = loaded.get(id); if (g) { scene.remove(g); loaded.delete(id); } }
-function clearAll() { for (const id of [...loaded.keys()]) removeCell(id); metaEl.innerHTML = '<span class="mut">Cleared.</span>'; refreshButtons(); }
+function clearAll() { for (const id of [...loaded.keys()]) removeCell(id); metaEl.innerHTML = '<span class="mut">Cleared.</span>'; document.getElementById("info").classList.add("hidden"); refreshButtons(); }
 
 const modal = document.getElementById("modal"), mv = document.getElementById("mv"), cap = document.getElementById("cap");
 function openModal(cell) {
@@ -238,6 +258,51 @@ function showMeta(cell) {
       `<span class="mut">releases <b style="color:#${(NT_COLOR[cell.nt]||0x999).toString(16)}">${cell.nt}</b> · hemibrain body ${cell.bodyId} · CC BY 4.0</span>`;
   }
   const b = metaEl.querySelector(".enlarge");
+  if (b) b.onclick = () => openModal(cell);
+}
+
+// Right-side panel: the selected cell's properties + a SPARQL snippet that fetches
+// exactly those facts from the .rete, with a one-click "run in the playground".
+const infoEl = document.getElementById("info");
+function propRows(cell) {
+  const rows = [];
+  const add = (k, v) => { if (v != null && v !== "") rows.push([k, v]); };
+  add("type", cell.cellType);
+  if (cell.kind === "neuron") {
+    add("neurotransmitter", cell.nt);
+    add("synapses (in cluster)", cell.synapses);
+    add("hemibrain body", cell.bodyId);
+  } else {
+    add("triangles", cell.faces ? cell.faces.toLocaleString() : null);
+    add("endfeet", cell.endfeet);
+  }
+  add("imaging", cell.modality);
+  add("source", cell.source);
+  add("licence", cell.license);
+  if (cell.doi) add("doi", cell.doi);
+  return rows.map(([k, v]) => `<div class="pr"><span class="pk">${k}</span><span class="pv">${v}</span></div>`).join("");
+}
+function sparqlFor(cell) {
+  return `PREFIX neuro:  <https://w3id.org/rete/neuro#>
+PREFIX schema: <https://schema.org/>
+PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?property ?value WHERE {
+  <${cell.iri}> ?property ?value .
+}`;
+}
+function showInfo(cell) {
+  const q = sparqlFor(cell);
+  const pl = `playground.html#dataset=neuro-showcase&load=lazy&mode=sparql&q=${encodeURIComponent(q)}`;
+  infoEl.innerHTML =
+    `<h2>${cell.label} <button class="enlarge" title="Open up close, with shadows">⛶</button></h2>` +
+    `<div class="kindbadge ${cell.kind}">${cell.kind}</div>` +
+    `<div class="props">${propRows(cell)}</div>` +
+    `<div class="sqhead">SPARQL — this cell in the graph</div>` +
+    `<pre class="sq">${q.replace(/[&<]/g, (c) => (c === "&" ? "&amp;" : "&lt;"))}</pre>` +
+    `<a class="runq" href="${pl}" target="_blank" rel="noopener">▶ run in the playground</a>`;
+  infoEl.classList.remove("hidden");
+  const b = infoEl.querySelector(".enlarge");
   if (b) b.onclick = () => openModal(cell);
 }
 
@@ -273,6 +338,7 @@ function cellButton(cell) {
     };
     document.getElementById("clear").onclick = clearAll;
     document.getElementById("lightSel").onchange = (e) => applyLighting(e.target.value);
+    applyLighting("Balanced");
     // open with astrocyte 1 so the page shows something immediately
     const first = CELLS.find(c => c.kind === "astrocyte");
     if (first) addCell(first, { solo:true }); else status("");
