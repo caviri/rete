@@ -259,7 +259,8 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
         ]),
         "neuro-showcase-guide.md" => Some(&[
             ("neuro-showcase-guide.html", "overview"),
-            ("playground.html#dataset=neuro-showcase&load=lazy", "launch in the playground →"),
+            ("neuro-showcase.html", "reconstruct in 3D →"),
+            ("playground.html#dataset=neuro-showcase&load=lazy", "query in the playground →"),
         ]),
         _ => None,
     }
