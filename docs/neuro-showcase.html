@@ -12,7 +12,9 @@
   #app { display:grid; grid-template-columns:300px 1fr; height:100%; }
   aside { background:var(--panel); border-right:1px solid var(--border); overflow-y:auto; padding:14px 14px 40px; }
   h1 { font-size:1.02rem; margin:.2rem 0 .1rem; }
-  .sub { color:var(--muted); font-size:.8rem; margin:0 0 .9rem; }
+  .sub { color:var(--muted); font-size:.8rem; margin:0 0 .7rem; }
+  .lightrow { display:flex; align-items:center; gap:.5rem; font-size:.8rem; color:var(--muted); margin:0 0 .8rem; }
+  .lightrow select { flex:1; background:#16261f; color:var(--ink); border:1px solid var(--border); border-radius:6px; padding:.28rem; font-size:.8rem; }
   .grp { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);
     margin:1.1rem 0 .4rem; border-bottom:1px solid var(--border); padding-bottom:.25rem; }
   button.cell { display:flex; align-items:center; gap:.5rem; width:100%; text-align:left; cursor:pointer;
@@ -60,6 +62,15 @@
   <aside>
     <h1>Neuromorphology in 3D</h1>
     <p class="sub">Electron-microscopy reconstructions, streamed from a <code>.rete</code> graph.</p>
+    <label class="lightrow">💡 Lighting
+      <select id="lightSel">
+        <option>Balanced</option>
+        <option>Bright studio</option>
+        <option>Dramatic</option>
+        <option>Neon glow</option>
+        <option>Backlit rim</option>
+      </select>
+    </label>
 
     <div class="grp">Astrocytes — EM surface meshes</div>
     <div id="astro"></div>
@@ -95,14 +106,13 @@
     <div class="cap" id="cap"></div>
   </div>
 </div>
-<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
-
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
 }}
 </script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
 <script type="module">
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -131,11 +141,29 @@ controls.enableDamping = true;
 // Layered lights so thin tube geometry reads with depth (no shadow maps — scales
 // vary hugely between an astrocyte in µm and a neuron in nm; a modal gives the
 // close-up contact-shadow view instead).
-scene.add(new THREE.AmbientLight(0xffffff, 0.30));
-scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x0a1210, 0.95));
+const ambient = new THREE.AmbientLight(0xffffff, 0.30); scene.add(ambient);
+const hemi = new THREE.HemisphereLight(0xcfe0ff, 0x0a1210, 0.95); scene.add(hemi);
 const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(1, 1.3, 0.7); scene.add(key);
 const fill = new THREE.DirectionalLight(0x9fc6ff, 1.0); fill.position.set(-1, 0.15, -0.8); scene.add(fill);
 const rim = new THREE.DirectionalLight(0xffffff, 0.8); rim.position.set(-0.2, -0.7, -0.9); scene.add(rim);
+// Selectable lighting rigs (ambient / hemisphere / key / fill / rim intensities +
+// per-kind emissive). Pick one from the sidebar.
+const LIGHTING = {
+  "Balanced":      { a:0.30, h:0.95, k:2.2, f:1.0, r:0.8, en:0.22, ea:0.05 },
+  "Bright studio": { a:0.75, h:1.30, k:1.6, f:1.2, r:0.4, en:0.10, ea:0.03 },
+  "Dramatic":      { a:0.10, h:0.35, k:3.4, f:0.4, r:1.4, en:0.18, ea:0.04 },
+  "Neon glow":     { a:0.08, h:0.28, k:1.0, f:0.5, r:1.6, en:0.55, ea:0.10 },
+  "Backlit rim":   { a:0.22, h:0.60, k:0.6, f:0.6, r:2.6, en:0.30, ea:0.06 },
+};
+let EMIS = LIGHTING["Balanced"];
+function applyLighting(name) {
+  const L = LIGHTING[name] || LIGHTING["Balanced"]; EMIS = L;
+  ambient.intensity = L.a; hemi.intensity = L.h;
+  key.intensity = L.k; fill.intensity = L.f; rim.intensity = L.r;
+  for (const g of loaded.values()) g.traverse((o) => {
+    if (o.isMesh && o.material) o.material.emissiveIntensity = o.userData.kind === "astrocyte" ? L.ea : L.en;
+  });
+}
 
 function resize() {
   const w = main.clientWidth, h = main.clientHeight;
@@ -172,9 +200,10 @@ async function addCell(cell, { solo }) {
     const color = cell.kind === "astrocyte" ? ASTRO_COLOR : (NT_COLOR[cell.nt] ?? 0xcccccc);
     g.traverse((o) => {
       if (o.isMesh) {
+        o.userData.kind = cell.kind;
         o.material = new THREE.MeshStandardMaterial({
           color, roughness:0.5, metalness:0.05,
-          emissive: color, emissiveIntensity: cell.kind === "neuron" ? 0.22 : 0.05,
+          emissive: color, emissiveIntensity: cell.kind === "neuron" ? EMIS.en : EMIS.ea,
           transparent: cell.kind === "astrocyte", opacity: cell.kind === "astrocyte" ? 0.82 : 1,
           side: THREE.DoubleSide });
       }
@@ -243,6 +272,7 @@ function cellButton(cell) {
       status("");
     };
     document.getElementById("clear").onclick = clearAll;
+    document.getElementById("lightSel").onchange = (e) => applyLighting(e.target.value);
     // open with astrocyte 1 so the page shows something immediately
     const first = CELLS.find(c => c.kind === "astrocyte");
     if (first) addCell(first, { solo:true }); else status("");
