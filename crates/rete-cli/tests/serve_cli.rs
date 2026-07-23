@@ -235,3 +235,76 @@ fn serve_update_token_guards_writes_not_reads() {
     stop_server(server);
     let _ = std::fs::remove_file(&journal);
 }
+
+/// Run one CLI invocation and assert success (for the manifest setup steps).
+fn run_cli(args: &[&str]) {
+    let out = Command::new(env!("CARGO_BIN_EXE_rete"))
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "rete {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The write-while-query loop over a MANIFEST: serve its fold live, take
+/// SPARQL Updates into the journal, stop, `manifest seal` the journal into
+/// fresh segments, and restart on the grown manifest — same state, journal
+/// empty. This is the WAL checkpoint cycle end to end.
+#[test]
+fn serve_manifest_then_seal_checkpoints_the_journal() {
+    let _server_test_guard = SERVER_TEST_LOCK.lock().unwrap();
+    let base = build_fixture("manifest_base");
+    let manifest = temp_path("manifest_serve", "json");
+    let journal = format!("{}.changes", manifest.display());
+    let _ = std::fs::remove_file(&manifest);
+    let _ = std::fs::remove_file(&journal);
+    run_cli(&[
+        "manifest",
+        "init",
+        manifest.to_str().unwrap(),
+        base.to_str().unwrap(),
+    ]);
+
+    // Serve the manifest's fold; write through SPARQL Update.
+    let port = free_port();
+    let server = spawn_server(&manifest, port, &[]);
+    let all = "SELECT ?s ?n WHERE { ?s <http://ex/name> ?n } ORDER BY ?n";
+    assert_eq!(select_rows(port, all).len(), 2);
+    assert_eq!(
+        post_update(
+            port,
+            "INSERT DATA { <http://ex/c> <http://ex/name> \"Carol\" }"
+        ),
+        Ok(204)
+    );
+    assert_eq!(
+        post_update(
+            port,
+            "DELETE DATA { <http://ex/a> <http://ex/name> \"Alice\" }"
+        ),
+        Ok(204)
+    );
+    let rows = select_rows(port, all);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|b| b["n"] == "\"Carol\""));
+    stop_server(server);
+
+    // Checkpoint: the journal becomes an adds segment + a tombstone segment.
+    assert!(!std::fs::read_to_string(&journal).unwrap().is_empty());
+    run_cli(&["manifest", "seal", manifest.to_str().unwrap()]);
+    assert_eq!(std::fs::read_to_string(&journal).unwrap(), "");
+
+    // Restart on the sealed manifest: same visible state, no journal replay.
+    let port2 = free_port();
+    let server2 = spawn_server(&manifest, port2, &[]);
+    let rows = select_rows(port2, all);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|b| b["n"] == "\"Carol\""));
+    assert!(!rows.iter().any(|b| b["n"] == "\"Alice\""));
+    stop_server(server2);
+
+    let _ = std::fs::remove_file(&journal);
+}

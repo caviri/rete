@@ -512,7 +512,8 @@ enum Command {
     /// (publish = upload the snapshot, delete the journal). Other rete
     /// clients can federate against it with `SERVICE <http://host:port/sparql>`.
     Serve {
-        /// Path to the `.rete` file to serve.
+        /// Path to the `.rete` file — or a `.rete-manifest.json` (`.json`),
+        /// serving that manifest's visible fold — to serve.
         file: String,
         /// Address to bind. Loopback by default — bind 0.0.0.0 deliberately,
         /// and set --token when you do.
@@ -625,6 +626,93 @@ enum Command {
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
+    },
+    /// Manage a **manifest**: a writable logical graph made of immutable
+    /// `.rete` segments — an ordered log of additions and tombstone deletions
+    /// that many sessions can grow independently, queried as ONE graph, and
+    /// folded back into a single `.rete` with `compact`. `rete serve` accepts
+    /// a manifest too (live SPARQL Update over the fold); `seal` then turns
+    /// its journal into fresh segments.
+    Manifest {
+        #[command(subcommand)]
+        command: ManifestCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ManifestCommand {
+    /// Start a manifest whose log holds one base segment.
+    Init {
+        /// Path of the manifest to create (conventionally `<name>.rete-manifest.json`).
+        manifest: String,
+        /// The base `.rete` segment (path relative to the manifest, or http(s):// URL).
+        base: String,
+        /// Logical graph name (default: the manifest's file stem).
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Append one log entry — a built segment and/or a tombstone file — and
+    /// bump the generation. This is how independent sessions contribute.
+    Add {
+        /// Path to the manifest.
+        manifest: String,
+        /// A `.rete` of quads this entry adds.
+        #[arg(long)]
+        adds: Option<String>,
+        /// A `.rete` of quads this entry deletes (a tombstone segment).
+        #[arg(long)]
+        dels: Option<String>,
+    },
+    /// Show the log and verify every segment against its `{size, blake3_16}` pin.
+    Status {
+        /// Path to the manifest.
+        manifest: String,
+        /// Also run the full fold and report the visible quad count.
+        #[arg(long)]
+        count: bool,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run SPARQL over the fold as ONE graph: joins across segments resolve
+    /// (pattern-level, unlike `federate`'s per-source UNION).
+    Query {
+        /// Path to the manifest.
+        manifest: String,
+        /// The SPARQL query (SELECT / ASK / CONSTRUCT).
+        query: String,
+        /// Emit standard SPARQL Results JSON (SELECT/ASK).
+        #[arg(long)]
+        json: bool,
+        /// OWL 2 QL entailment (see `sparql --entail`).
+        #[arg(long)]
+        entail: bool,
+    },
+    /// Checkpoint a `rete serve` journal: net its `+`/`-` changes, build them
+    /// as an adds segment + a tombstone segment, append one log entry, and
+    /// truncate the journal. Stop the server first (single-writer journal).
+    Seal {
+        /// Path to the manifest.
+        manifest: String,
+        /// Journal path override (default: `<manifest>.changes`, matching `rete serve`).
+        #[arg(long)]
+        journal: Option<String>,
+        /// Directory for the new segment files (default: the manifest's directory).
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Fold the whole log into ONE fresh `.rete` and reset the manifest to a
+    /// single entry. Superseded segments are left on disk.
+    Compact {
+        /// Path to the manifest.
+        manifest: String,
+        /// Output path for the compacted `.rete` (default: `<name>-g<gen>-<hash>.rete`
+        /// next to the manifest).
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Skip the pyramid build (faster; the file loses semantic-zoom summaries).
+        #[arg(long)]
+        no_pyramid: bool,
     },
 }
 
@@ -930,6 +1018,39 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             json,
             no_route,
         } => commands::federate::federate(&sources, &query, json, !no_route),
+        Command::Manifest { command } => match command {
+            ManifestCommand::Init {
+                manifest,
+                base,
+                name,
+            } => commands::manifest::init(&manifest, &base, name.as_deref()),
+            ManifestCommand::Add {
+                manifest,
+                adds,
+                dels,
+            } => commands::manifest::add(&manifest, adds.as_deref(), dels.as_deref()),
+            ManifestCommand::Status {
+                manifest,
+                count,
+                json,
+            } => commands::manifest::status(&manifest, count, json),
+            ManifestCommand::Query {
+                manifest,
+                query,
+                json,
+                entail,
+            } => commands::manifest::query(&manifest, &query, json, entail),
+            ManifestCommand::Seal {
+                manifest,
+                journal,
+                dir,
+            } => commands::manifest::seal(&manifest, journal.as_deref(), dir.as_deref()),
+            ManifestCommand::Compact {
+                manifest,
+                output,
+                no_pyramid,
+            } => commands::manifest::compact(&manifest, output.as_deref(), no_pyramid),
+        },
     }
 }
 

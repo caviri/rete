@@ -1,5 +1,6 @@
-//! `rete serve` — a minimal **SPARQL 1.1 Protocol endpoint over one `.rete`**,
-//! including SPARQL **Update**.
+//! `rete serve` — a minimal **SPARQL 1.1 Protocol endpoint over one `.rete`**
+//! (or over a **manifest** of segments, see `commands::manifest`), including
+//! SPARQL **Update**.
 //!
 //! The base file is **never mutated** (it stays a content-hashed, CDN-servable
 //! artifact). Updates append to a plain-text **journal** next to it
@@ -8,7 +9,8 @@
 //! (dirty flag), so update bursts coalesce into one rebuild. Restart = base +
 //! journal replay. `GET /snapshot.rete` serializes the *current* state as a
 //! fresh `.rete` — the downloadable companion; publishing an update cycle is
-//! "upload the snapshot, delete the journal".
+//! "upload the snapshot, delete the journal" — or, when serving a manifest,
+//! `rete manifest seal` turns the journal into fresh segments incrementally.
 //!
 //! This makes the write path a small, single-writer authority while every
 //! *read* path stays serverless — and closes the federation loop: any rete
@@ -59,6 +61,17 @@ fn nq_line(q: &RawQuad) -> String {
     }
 }
 
+/// Assemble a queryable image from a quad set. Pyramid off: the endpoint
+/// serves SPARQL, and skipping it makes the after-write rebuild fast.
+fn build_image(quads: &QuadSet) -> anyhow::Result<(Vec<u8>, Rete)> {
+    let quads: Vec<RawQuad> = quads.iter().cloned().collect();
+    let (image, _stats) = assemble_dataset_with_opts(quads, false, false, None, |_, _| Vec::new());
+    let mut rete = Rete::open(&image)?;
+    // The endpoint itself supports SERVICE blocks in incoming queries.
+    rete.set_service_client(Box::new(HttpServiceClient));
+    Ok((image, rete))
+}
+
 /// Parse one journal payload (an N-Quads line) back to a quad.
 fn parse_nq_line(line: &str) -> anyhow::Result<RawQuad> {
     let mut quads = parse_quads(line)?;
@@ -69,22 +82,27 @@ fn parse_nq_line(line: &str) -> anyhow::Result<RawQuad> {
 }
 
 impl Store {
-    /// Open the base file, extract every quad, replay the journal, build the
-    /// first image.
+    /// Open the source — one `.rete` file, or a **manifest** (`.json`, see
+    /// `commands::manifest`) whose visible fold becomes the initial state —
+    /// extract every quad, replay the journal, build the first image.
     fn open(base: &str, journal: std::path::PathBuf) -> anyhow::Result<Store> {
-        let rete = open_local(base)?;
-        let mut quads: QuadSet = rete
-            .dump(None)
-            .into_iter()
-            .map(|(s, p, o)| (s, p, o, None))
-            .collect();
-        let graphs: Vec<String> = rete.graph_names().iter().map(|g| g.to_string()).collect();
-        for g in graphs {
-            for (s, p, o) in rete.dump(Some(&g)) {
-                quads.insert((s, p, o, Some(g.clone())));
+        let mut quads: QuadSet = if super::manifest::is_manifest_path(base) {
+            super::manifest::visible_quads(base)?
+        } else {
+            let rete = open_local(base)?;
+            let mut quads: QuadSet = rete
+                .dump(None)
+                .into_iter()
+                .map(|(s, p, o)| (s, p, o, None))
+                .collect();
+            let graphs: Vec<String> = rete.graph_names().iter().map(|g| g.to_string()).collect();
+            for g in graphs {
+                for (s, p, o) in rete.dump(Some(&g)) {
+                    quads.insert((s, p, o, Some(g.clone())));
+                }
             }
-        }
-        drop(rete);
+            quads
+        };
 
         // Replay the journal (if any): each line is `+ <nq>` or `- <nq>`.
         let mut replayed = 0usize;
@@ -135,18 +153,11 @@ impl Store {
     }
 
     /// Rebuild the queryable image from the quad set if updates are pending.
-    /// Pyramid off: the endpoint serves SPARQL, and skipping it makes the
-    /// after-write rebuild fast.
     fn ensure_current(&mut self) -> anyhow::Result<()> {
         if !self.dirty {
             return Ok(());
         }
-        let quads: Vec<RawQuad> = self.quads.iter().cloned().collect();
-        let (image, _stats) =
-            assemble_dataset_with_opts(quads, false, false, None, |_, _| Vec::new());
-        let mut rete = Rete::open(&image)?;
-        // The endpoint itself supports SERVICE blocks in incoming queries.
-        rete.set_service_client(Box::new(HttpServiceClient));
+        let (image, rete) = build_image(&self.quads)?;
         self.image = image;
         self.rete = rete;
         self.dirty = false;
