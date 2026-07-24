@@ -189,20 +189,23 @@ def load_lock(path: Path) -> dict[str, dict]:
 
 
 def write_lock(path: Path, results: list[dict]) -> None:
+    # MERGE with the existing lock: a --key run probes a subset, and the
+    # unprobed datasets' entries must survive (a plain rewrite once wiped
+    # 80+ entries from the lock).
+    merged = load_lock(path)
+    for result in results:
+        merged[result["key"]] = {
+            "key": result["key"],
+            "url": result["url"],
+            "formatVersion": result["formatVersion"],
+            "contentHash": result["contentHash"],
+            "size": result["size"],
+            "cardUrl": result["url"],
+        }
     document = {
         "schemaVersion": 1,
         "generatedFrom": "release-1.0.0-rc1",
-        "datasets": [
-            {
-                "key": result["key"],
-                "url": result["url"],
-                "formatVersion": result["formatVersion"],
-                "contentHash": result["contentHash"],
-                "size": result["size"],
-                "cardUrl": result["url"],
-            }
-            for result in sorted(results, key=lambda item: item["key"])
-        ],
+        "datasets": [merged[key] for key in sorted(merged)],
     }
     path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
