@@ -187,9 +187,27 @@ Built so far (both `rete verify` green):
   a selective query touches ~34 MB of the 17 GB file.
 
 Month pipeline economics: `day_pipeline.py` (download → Parquet →
-`GZIP=1` RDF → delete raw) runs ~15–18 min/day; three parallel pipelines
-cover a month in a few hours. `.nt.gz` is ~1 GB/day vs 8 GB plain — a
-plain-NT month (~280 GB) would not have fit on disk.
+`GZIP=1` RDF → delete raw) runs ~15–18 min/day for rich-era days
+(~4 min/day post-cut); three parallel pipelines cover a month in a few
+hours. `.nt.gz` is ~1 GB/day vs 8 GB plain — a plain-NT month (~280 GB)
+would not have fit on disk.
+
+## The post-cut feed, measured properly (June 2026, full month)
+
+- **`data/github-archive/gharchive-2026-06.rete`** — 729,745,084 triples,
+  163.5M terms, 6.49 GB. 112.2M events: PushEvent 95.4M (85%),
+  CreateEvent 10.0M, DeleteEvent 3.9M, PullRequestEvent 1.16M,
+  issue events 844k, WatchEvent 310,744, ReleaseEvent 69,837.
+- **The cut deepens over time**: stars 3.7M/month (July 2025) → 310,744
+  (June 2026, ~12×) → ~200× low by late July 2026 (the single-day
+  measurements above). Don't extrapolate one day to an era.
+- **Asymmetric survival**: `pull_request` objects are EMPTY (1.16M PR
+  events, zero titles/diff-stats/merged-by, no embedded base/head repos —
+  so the RDF-star star-count observation layer is forkee-only here:
+  68,891 snapshots, all ≤1 star), while ISSUE events kept titles, labels
+  and comment bodies, and releases kept tags/names.
+- Push `head`/`before` shas exist in the Parquet tables but are not
+  emitted to RDF.
 
 Pipeline gotchas (all already handled in the scripts):
 

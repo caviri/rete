@@ -259,6 +259,14 @@
       "cardUrl": "https://data.graphplaza.com/gharchive/gharchive-2025-07.rete"
     },
     {
+      "key": "gharchive-2026-06",
+      "url": "https://data.graphplaza.com/gharchive/gharchive-2026-06.rete",
+      "formatVersion": 5,
+      "contentHash": "e38388c076ff3c0127fa3edc1df3397f",
+      "size": 6486757065,
+      "cardUrl": "https://data.graphplaza.com/gharchive/gharchive-2026-06.rete"
+    },
+    {
       "key": "gotriple",
       "url": "https://data.graphplaza.com/gotriple/gotriple.rete",
       "formatVersion": 5,
