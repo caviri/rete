@@ -1,0 +1,33 @@
+# Replica of the ossbenchmark.com USERS ranking table.
+# Site columns (user-ranking.component): Name, Github user (login), Company,
+# Location, Twitter, Contributions, Public repos, Public gists, Followers,
+# Created at, Updated at. Site default sort: followers DESC.
+#
+# NB: the "Contributions" (contributions_sum) column is NOT reproducible from this
+# source — the paginated /users endpoint does not expose per-user contribution
+# totals, so this dataset has no such edge. Every other column is present.
+#
+# Reads: schema:name, pulse:githubUsername, gme:company, gme:location,
+#        gme:twitter_username, gme:public_repos, ossb:publicGists,
+#        gme:followers_count, gme:github_created_at, gme:github_updated_at
+PREFIX ossb:   <https://w3id.org/rete/oss-benchmark#>
+PREFIX pulse:  <https://open-pulse.epfl.ch/ontology#>
+PREFIX gme:    <https://openpulse.science/git-metadata-extractor#>
+PREFIX schema: <http://schema.org/>
+
+SELECT ?name ?login ?company ?location ?twitter ?publicRepos ?publicGists ?followers ?created ?updated
+WHERE {
+  ?p a schema:Person ;
+     pulse:githubUsername ?login ;
+     gme:followers_count ?followers .
+  OPTIONAL { ?p schema:name ?name }
+  OPTIONAL { ?p gme:company ?company }
+  OPTIONAL { ?p gme:location ?location }
+  OPTIONAL { ?p gme:twitter_username ?twitter }
+  OPTIONAL { ?p gme:public_repos ?publicRepos }
+  OPTIONAL { ?p ossb:publicGists ?publicGists }
+  OPTIONAL { ?p gme:github_created_at ?created }
+  OPTIONAL { ?p gme:github_updated_at ?updated }
+}
+ORDER BY DESC(?followers)
+LIMIT 30

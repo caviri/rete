@@ -13,7 +13,7 @@ this for you; raw form:
 
 ```bash
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/work" -w /work rete-dev:latest \
-  /work/target/release/rete build /work/data/foo/foo.nt -o /work/web/foo.rete \
+  /work/target/release/rete build /work/data/foo/foo.nt -o /work/data/foo/foo.rete \
   --pyramid-algo types --card
 ```
 

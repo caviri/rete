@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Upload a built .rete file or companion directory to the public R2 bucket.
 #
-#   upload_bucket.sh web/foo.rete                 # -> foo/foo.rete
-#   upload_bucket.sh web/foo.rete foo/foo.rete    # explicit object key
+#   upload_bucket.sh data/foo/foo.rete            # -> foo/foo.rete
+#   upload_bucket.sh data/foo/foo.rete foo/foo.rete   # explicit object key
 #   upload_bucket.sh data/foo/ foo                # recursive prefix upload
 #
 # Runs in a container like everything else in this repo — the host keeps no

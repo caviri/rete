@@ -15,7 +15,7 @@
 #
 # Examples:
 #   skills/rete-from-graph/scripts/rete validate /work/data/foo/foo.nt
-#   skills/rete-from-graph/scripts/rete build /work/data/foo/foo.nt -o /work/web/foo.rete --pyramid-algo types --card
+#   skills/rete-from-graph/scripts/rete build /work/data/foo/foo.nt -o /work/data/foo/foo.rete --pyramid-algo types --card
 set -euo pipefail
 export MSYS_NO_PATHCONV=1   # Windows Git-Bash: don't rewrite /work into a Windows path
 

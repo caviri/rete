@@ -12,7 +12,9 @@
   #app { display:grid; grid-template-columns:300px 1fr; height:100%; }
   aside { background:var(--panel); border-right:1px solid var(--border); overflow-y:auto; padding:14px 14px 40px; }
   h1 { font-size:1.02rem; margin:.2rem 0 .1rem; }
-  .sub { color:var(--muted); font-size:.8rem; margin:0 0 .9rem; }
+  .sub { color:var(--muted); font-size:.8rem; margin:0 0 .7rem; }
+  .lightrow { display:flex; align-items:center; gap:.5rem; font-size:.8rem; color:var(--muted); margin:0 0 .8rem; }
+  .lightrow select { flex:1; background:#16261f; color:var(--ink); border:1px solid var(--border); border-radius:6px; padding:.28rem; font-size:.8rem; }
   .grp { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);
     margin:1.1rem 0 .4rem; border-bottom:1px solid var(--border); padding-bottom:.25rem; }
   button.cell { display:flex; align-items:center; gap:.5rem; width:100%; text-align:left; cursor:pointer;
@@ -29,8 +31,25 @@
   .legend span { display:flex; align-items:center; gap:.35rem; }
   main { position:relative; }
   canvas { display:block; }
-  #meta { position:absolute; left:14px; bottom:14px; max-width:60%; background:rgba(10,18,15,.82);
+  #meta { position:absolute; left:14px; bottom:14px; max-width:46%; background:rgba(10,18,15,.82);
     border:1px solid var(--border); border-radius:9px; padding:.6rem .8rem; font-size:.82rem; backdrop-filter:blur(3px); }
+  #info { position:absolute; top:14px; right:16px; width:308px; max-height:calc(100% - 30px); overflow-y:auto;
+    background:rgba(10,18,15,.92); border:1px solid var(--border); border-radius:11px; padding:.8rem .9rem;
+    font-size:.82rem; backdrop-filter:blur(4px); }
+  #info.hidden { display:none; }
+  #info h2 { font-size:.98rem; margin:.1rem 0 .35rem; word-break:break-word; }
+  .kindbadge { display:inline-block; font-size:.68rem; text-transform:uppercase; letter-spacing:.05em;
+    padding:.08rem .45rem; border-radius:20px; border:1px solid var(--border); color:var(--muted); margin-bottom:.55rem; }
+  .kindbadge.neuron { color:#ffd39a; } .kindbadge.astrocyte { color:var(--accent); }
+  .props { display:flex; flex-direction:column; gap:.1rem; margin-bottom:.7rem; }
+  .pr { display:flex; justify-content:space-between; gap:.7rem; border-bottom:1px solid rgba(34,51,45,.5); padding:.16rem 0; }
+  .pk { color:var(--muted); flex:0 0 auto; } .pv { text-align:right; word-break:break-word; }
+  .sqhead { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:.2rem 0 .3rem; }
+  pre.sq { background:#0a1310; border:1px solid var(--border); border-radius:7px; padding:.5rem .6rem; margin:0 0 .5rem;
+    font-size:.7rem; line-height:1.45; overflow-x:auto; white-space:pre; color:#cfe6dc; }
+  .runq { display:inline-block; background:#16261f; border:1px solid var(--border); border-radius:7px;
+    padding:.35rem .6rem; color:var(--accent); font-size:.8rem; }
+  .runq:hover { border-color:var(--accent); }
   #meta b { color:var(--accent); }
   #meta .mut { color:var(--muted); }
   #status { position:absolute; top:14px; right:16px; color:var(--muted); font-size:.8rem; }
@@ -38,6 +57,21 @@
   a { color:var(--accent); }
   .foot { margin-top:1.4rem; font-size:.74rem; color:var(--muted); line-height:1.5; }
   .foot a { color:var(--muted); text-decoration:underline; }
+  .enlarge { margin-left:.6rem; cursor:pointer; background:#16261f; color:var(--accent); border:1px solid var(--border);
+    border-radius:6px; padding:.05rem .4rem; font-size:.85rem; }
+  .enlarge:hover { border-color:var(--accent); }
+  #modal { position:fixed; inset:0; z-index:50; display:none; background:rgba(4,9,7,.82); backdrop-filter:blur(3px); }
+  #modal.on { display:grid; place-items:center; }
+  #modal .box { width:min(90vw,900px); height:min(86vh,720px); background:#0e1a16; border:1px solid var(--border);
+    border-radius:12px; overflow:hidden; position:relative; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+  #modal model-viewer { width:100%; height:100%; --poster-color:transparent; background:
+    radial-gradient(120% 120% at 50% 20%, #14231d 0%, #0a1310 70%); }
+  #modal .cap { position:absolute; left:14px; bottom:12px; font-size:.85rem; color:var(--ink);
+    background:rgba(8,15,12,.7); border:1px solid var(--border); border-radius:8px; padding:.4rem .7rem; }
+  #modal .cap b { color:var(--accent); }
+  #modal .x { position:absolute; top:10px; right:12px; cursor:pointer; background:rgba(8,15,12,.7);
+    border:1px solid var(--border); color:var(--ink); border-radius:8px; width:32px; height:32px; font-size:1.1rem; }
+  #modal .x:hover { color:var(--accent); border-color:var(--accent); }
 </style>
 </head>
 <body>
@@ -45,6 +79,15 @@
   <aside>
     <h1>Neuromorphology in 3D</h1>
     <p class="sub">Electron-microscopy reconstructions, streamed from a <code>.rete</code> graph.</p>
+    <label class="lightrow">💡 Lighting
+      <select id="lightSel">
+        <option>Balanced</option>
+        <option>Bright studio</option>
+        <option>Dramatic</option>
+        <option>Neon glow</option>
+        <option>Backlit rim</option>
+      </select>
+    </label>
 
     <div class="grp">Astrocytes — EM surface meshes</div>
     <div id="astro"></div>
@@ -68,15 +111,26 @@
   <main>
     <div id="status">loading…</div>
     <div id="meta"><span class="mut">Pick a cell on the left to reconstruct it in 3D.</span></div>
+    <aside id="info" class="hidden"></aside>
   </main>
 </div>
 
+<div id="modal">
+  <div class="box">
+    <button class="x" title="Close (Esc)">✕</button>
+    <model-viewer id="mv" camera-controls auto-rotate auto-rotate-delay="0" rotation-per-second="18deg"
+      shadow-intensity="1.4" shadow-softness="0.9" exposure="1.1" environment-image="neutral"
+      interaction-prompt="none" tone-mapping="neutral"></model-viewer>
+    <div class="cap" id="cap"></div>
+  </div>
+</div>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
 }}
 </script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
 <script type="module">
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -102,9 +156,34 @@ scene.background = new THREE.Color(0x0c1512);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 5e7);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-scene.add(new THREE.AmbientLight(0xffffff, 0.75));
-const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(1, 1, 1); scene.add(key);
-const rim = new THREE.DirectionalLight(0x88bbff, 0.7); rim.position.set(-1, 0.3, -1); scene.add(rim);
+// Layered lights so thin tube geometry reads with depth (no shadow maps — scales
+// vary hugely between an astrocyte in µm and a neuron in nm; a modal gives the
+// close-up contact-shadow view instead).
+const ambient = new THREE.AmbientLight(0xffffff, 0.30); scene.add(ambient);
+const hemi = new THREE.HemisphereLight(0xcfe0ff, 0x0a1210, 0.95); scene.add(hemi);
+const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(1, 1.3, 0.7); scene.add(key);
+const fill = new THREE.DirectionalLight(0x9fc6ff, 1.0); fill.position.set(-1, 0.15, -0.8); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 0.8); rim.position.set(-0.2, -0.7, -0.9); scene.add(rim);
+// Selectable lighting rigs (ambient / hemisphere / key / fill / rim intensities +
+// per-kind emissive). Pick one from the sidebar.
+const LIGHTING = {
+  "Balanced":      { a:0.35, h:0.90, k:2.0, kc:0xffffff, f:1.0, fc:0x9fc6ff, r:0.8, rc:0xffffff, en:0.12, ea:0.05 },
+  "Bright studio": { a:0.90, h:1.30, k:1.6, kc:0xffffff, f:1.2, fc:0xffffff, r:0.4, rc:0xffffff, en:0.05, ea:0.02 },
+  "Dramatic":      { a:0.07, h:0.28, k:3.4, kc:0xffd39a, f:0.3, fc:0x33407a, r:1.3, rc:0xfff0d8, en:0.12, ea:0.04 },
+  "Neon glow":     { a:0.05, h:0.20, k:0.9, kc:0xff5db8, f:0.9, fc:0x4de1ff, r:1.6, rc:0xff5db8, en:0.40, ea:0.10 },
+  "Backlit rim":   { a:0.18, h:0.50, k:0.5, kc:0xffffff, f:0.5, fc:0x8aa0ff, r:2.8, rc:0xffffff, en:0.18, ea:0.05 },
+};
+let EMIS = LIGHTING["Balanced"];
+function applyLighting(name) {
+  const L = LIGHTING[name] || LIGHTING["Balanced"]; EMIS = L;
+  ambient.intensity = L.a; hemi.intensity = L.h;
+  key.intensity = L.k; key.color.setHex(L.kc);
+  fill.intensity = L.f; fill.color.setHex(L.fc);
+  rim.intensity = L.r; rim.color.setHex(L.rc);
+  for (const g of loaded.values()) g.traverse((o) => {
+    if (o.isMesh && o.material) o.material.emissiveIntensity = o.userData.kind === "astrocyte" ? L.ea : L.en;
+  });
+}
 
 function resize() {
   const w = main.clientWidth, h = main.clientHeight;
@@ -141,27 +220,93 @@ async function addCell(cell, { solo }) {
     const color = cell.kind === "astrocyte" ? ASTRO_COLOR : (NT_COLOR[cell.nt] ?? 0xcccccc);
     g.traverse((o) => {
       if (o.isMesh) {
+        // Neuron tube GLBs ship without normals — without them a lit material is
+        // pitch black, so compute smooth normals before assigning the material.
+        if (!o.geometry.attributes.normal) o.geometry.computeVertexNormals();
+        o.userData.kind = cell.kind;
         o.material = new THREE.MeshStandardMaterial({
-          color, roughness:0.55, metalness:0.0,
+          color, roughness:0.5, metalness:0.05,
+          emissive: color, emissiveIntensity: cell.kind === "neuron" ? EMIS.en : EMIS.ea,
           transparent: cell.kind === "astrocyte", opacity: cell.kind === "astrocyte" ? 0.82 : 1,
           side: THREE.DoubleSide });
       }
     });
     loaded.set(cell.id, g); scene.add(g);
-    frameLoaded(); showMeta(cell); refreshButtons(); status("");
+    frameLoaded(); showMeta(cell); showInfo(cell); refreshButtons(); status("");
   } catch (e) { status("failed to load — " + (e?.message || e)); }
 }
 function removeCell(id) { const g = loaded.get(id); if (g) { scene.remove(g); loaded.delete(id); } }
-function clearAll() { for (const id of [...loaded.keys()]) removeCell(id); metaEl.innerHTML = '<span class="mut">Cleared.</span>'; refreshButtons(); }
+function clearAll() { for (const id of [...loaded.keys()]) removeCell(id); metaEl.innerHTML = '<span class="mut">Cleared.</span>'; document.getElementById("info").classList.add("hidden"); refreshButtons(); }
+
+const modal = document.getElementById("modal"), mv = document.getElementById("mv"), cap = document.getElementById("cap");
+function openModal(cell) {
+  mv.src = cell.glb;
+  cap.innerHTML = cell.kind === "astrocyte"
+    ? `<b>${cell.label}</b> — protoplasmic astrocyte · ${cell.modality}`
+    : `<b>${cell.label}</b> — ${cell.cellType} · releases <b style="color:#${(NT_COLOR[cell.nt]||0x999).toString(16)}">${cell.nt}</b>`;
+  modal.classList.add("on");
+}
+function closeModal() { modal.classList.remove("on"); mv.src = ""; }
+modal.querySelector(".x").onclick = closeModal;
+modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 
 function showMeta(cell) {
+  const enlarge = ` <button class="enlarge" title="Open up close, with shadows">⛶ enlarge</button>`;
   if (cell.kind === "astrocyte") {
-    metaEl.innerHTML = `<b>${cell.label}</b> &middot; protoplasmic astrocyte<br>` +
+    metaEl.innerHTML = `<b>${cell.label}</b> &middot; protoplasmic astrocyte${enlarge}<br>` +
       `<span class="mut">${cell.modality} · ${(cell.faces/1e6).toFixed(1)} M triangles (full-res) · CC BY-NC-SA</span>`;
   } else {
-    metaEl.innerHTML = `<b>${cell.label}</b> &middot; ${cell.cellType}<br>` +
+    metaEl.innerHTML = `<b>${cell.label}</b> &middot; ${cell.cellType}${enlarge}<br>` +
       `<span class="mut">releases <b style="color:#${(NT_COLOR[cell.nt]||0x999).toString(16)}">${cell.nt}</b> · hemibrain body ${cell.bodyId} · CC BY 4.0</span>`;
   }
+  const b = metaEl.querySelector(".enlarge");
+  if (b) b.onclick = () => openModal(cell);
+}
+
+// Right-side panel: the selected cell's properties + a SPARQL snippet that fetches
+// exactly those facts from the .rete, with a one-click "run in the playground".
+const infoEl = document.getElementById("info");
+function propRows(cell) {
+  const rows = [];
+  const add = (k, v) => { if (v != null && v !== "") rows.push([k, v]); };
+  add("type", cell.cellType);
+  if (cell.kind === "neuron") {
+    add("neurotransmitter", cell.nt);
+    add("synapses (in cluster)", cell.synapses);
+    add("hemibrain body", cell.bodyId);
+  } else {
+    add("triangles", cell.faces ? cell.faces.toLocaleString() : null);
+    add("endfeet", cell.endfeet);
+  }
+  add("imaging", cell.modality);
+  add("source", cell.source);
+  add("licence", cell.license);
+  if (cell.doi) add("doi", cell.doi);
+  return rows.map(([k, v]) => `<div class="pr"><span class="pk">${k}</span><span class="pv">${v}</span></div>`).join("");
+}
+function sparqlFor(cell) {
+  return `PREFIX neuro:  <https://w3id.org/rete/neuro#>
+PREFIX schema: <https://schema.org/>
+PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?property ?value WHERE {
+  <${cell.iri}> ?property ?value .
+}`;
+}
+function showInfo(cell) {
+  const q = sparqlFor(cell);
+  const pl = `playground.html#dataset=neuro-showcase&load=lazy&mode=sparql&q=${encodeURIComponent(q)}`;
+  infoEl.innerHTML =
+    `<h2>${cell.label} <button class="enlarge" title="Open up close, with shadows">⛶</button></h2>` +
+    `<div class="kindbadge ${cell.kind}">${cell.kind}</div>` +
+    `<div class="props">${propRows(cell)}</div>` +
+    `<div class="sqhead">SPARQL — this cell in the graph</div>` +
+    `<pre class="sq">${q.replace(/[&<]/g, (c) => (c === "&" ? "&amp;" : "&lt;"))}</pre>` +
+    `<a class="runq" href="${pl}" target="_blank" rel="noopener">▶ run in the playground</a>`;
+  infoEl.classList.remove("hidden");
+  const b = infoEl.querySelector(".enlarge");
+  if (b) b.onclick = () => openModal(cell);
 }
 
 // --- UI ---
@@ -195,6 +340,8 @@ function cellButton(cell) {
       status("");
     };
     document.getElementById("clear").onclick = clearAll;
+    document.getElementById("lightSel").onchange = (e) => applyLighting(e.target.value);
+    applyLighting("Balanced");
     // open with astrocyte 1 so the page shows something immediately
     const first = CELLS.find(c => c.kind === "astrocyte");
     if (first) addCell(first, { solo:true }); else status("");

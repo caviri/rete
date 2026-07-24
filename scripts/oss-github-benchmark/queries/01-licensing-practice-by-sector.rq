@@ -1,0 +1,51 @@
+# Licensing practice by economic sector.
+# Relates: sector -> institution -> GitHub org -> repository -> license,
+# contrasting permissive vs copyleft vs unlicensed within each sector.
+# Forks are excluded so the numbers describe code the institutions actually authored.
+#
+# NB: each counter BINDs ?repo (not the license IRI) inside its OPTIONAL — counting
+# the license variable would count distinct *licenses* (max 31), not repositories.
+#
+# Reads: skos:prefLabel, ossb:sector, org:unitOf, pulse:ownedBy, schema:license,
+#        pulse:githubRepoStars, ossb:isFork
+PREFIX ossb:   <https://w3id.org/rete/oss-benchmark#>
+PREFIX pulse:  <https://open-pulse.epfl.ch/ontology#>
+PREFIX org:    <http://www.w3.org/ns/org#>
+PREFIX schema: <http://schema.org/>
+PREFIX skos:   <http://www.w3.org/2004/02/skos/core#>
+
+SELECT ?sector
+       (COUNT(DISTINCT ?repo) AS ?repos)
+       (COUNT(DISTINCT ?licensedRepo) AS ?licensed)
+       (COUNT(DISTINCT ?permissiveRepo) AS ?permissive)
+       (COUNT(DISTINCT ?copyleftRepo) AS ?copyleft)
+       (SUM(?stars) AS ?stars)
+WHERE {
+  ?i a ossb:Institution ; ossb:sector ?s .
+  ?s skos:prefLabel ?sector .
+  ?o org:unitOf ?i .
+  ?repo pulse:ownedBy ?o ;
+        ossb:isFork false ;
+        pulse:githubRepoStars ?stars .
+  OPTIONAL { ?repo schema:license ?anyLic . BIND(?repo AS ?licensedRepo) }
+  OPTIONAL {
+    ?repo schema:license ?pLic .
+    FILTER(?pLic IN (<https://spdx.org/licenses/MIT>,
+                     <https://spdx.org/licenses/Apache-2.0>,
+                     <https://spdx.org/licenses/BSD-3-Clause>,
+                     <https://spdx.org/licenses/BSD-2-Clause>,
+                     <https://spdx.org/licenses/ISC>))
+    BIND(?repo AS ?permissiveRepo)
+  }
+  OPTIONAL {
+    ?repo schema:license ?cLic .
+    FILTER(?cLic IN (<https://spdx.org/licenses/GPL-3.0-only>,
+                     <https://spdx.org/licenses/GPL-2.0-only>,
+                     <https://spdx.org/licenses/AGPL-3.0-only>,
+                     <https://spdx.org/licenses/LGPL-3.0-only>,
+                     <https://spdx.org/licenses/LGPL-2.1-only>))
+    BIND(?repo AS ?copyleftRepo)
+  }
+}
+GROUP BY ?sector
+ORDER BY DESC(?repos)

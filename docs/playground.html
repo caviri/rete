@@ -3304,6 +3304,31 @@ th .coltype.coltype-on {
 .m3-ctl input[type="range"] { width: 96px; accent-color: #6d4aff; }
 .m3-spin { font: inherit; font-size: 11.5px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg, #fff); color: var(--muted); cursor: pointer; }
 .m3-spin.on { background: linear-gradient(135deg, #6d4aff, #a23bd6); color: var(--on-accent); border-color: transparent; }
+/* molecular-structure cells + lightbox (lazy 3Dmol.js: .cif/.pdb) */
+.mol3d-cell { padding: 6px 8px; position: relative; }
+.mol3d-inline { width: 170px; height: 132px; display: block; position: relative; background: #15161a; border-radius: 8px; cursor: grab; overflow: hidden; }
+.mol3d-inline canvas { border-radius: 8px; }
+.mol3d-loading { color: #cfd2da; font-size: 11px; padding: 8px; text-align: center; }
+.mol3d-fallback { color: var(--muted); font-size: 11px; padding: 8px; text-align: center; }
+.mol3d-fallback-link { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: #9ad; font-size: 12px; text-decoration: none; }
+.mol3d-fallback-link:hover { text-decoration: underline; }
+.mol3d-expand { position: absolute; top: 10px; right: 12px; width: 22px; height: 22px; border: 1px solid var(--line); background: var(--float-bg); color: var(--ink); border-radius: 6px; font-size: 12px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s; z-index: 2; }
+.mol3d-cell:hover .mol3d-expand, .mol3d-expand:focus-visible { opacity: 1; }
+.mol3d-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.mol3d-modal.hidden { display: none; }
+.mol3d-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); }
+.mol3d-box { position: relative; z-index: 1; width: min(820px, 94vw); height: min(70vh, 640px); display: flex; flex-direction: column; background: var(--bg, #fff); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 24px 70px rgba(0, 0, 0, .45); overflow: hidden; }
+.mol3d-close { position: absolute; top: 8px; right: 10px; width: 30px; height: 30px; border: 1px solid var(--line); background: var(--side); color: var(--ink); border-radius: 8px; font-size: 19px; line-height: 1; cursor: pointer; z-index: 2; }
+.mol3d-close:hover { background: var(--accent-dark); color: var(--on-accent); }
+.mol3d-stage { flex: 1; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; background: #15161a; }
+.mol3d-stage canvas { border-radius: 0; }
+.mol3d-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--line); background: var(--side); }
+.mol3d-style, .mol3d-spin { font: inherit; font-size: 11.5px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg, #fff); color: var(--muted); cursor: pointer; }
+.mol3d-style.on, .mol3d-spin.on { background: linear-gradient(135deg, #6d4aff, #a23bd6); color: var(--on-accent); border-color: transparent; }
+.mol3d-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); background: var(--bg, #fff); }
+.mol3d-hint { color: var(--muted); }
+.mol3d-src { color: var(--accent-dark, #2b6); text-decoration: none; }
+.mol3d-src:hover { text-decoration: underline; }
 /* audio / video cells */
 .media-cell { padding: 6px 8px; position: relative; white-space: nowrap; }
 .cell-audio { width: 100%; min-width: 460px; max-width: 720px; height: 38px; vertical-align: middle; }
@@ -3565,7 +3590,7 @@ td.lit { color: var(--ink); }
       <span class="brand-mark">rete</span>
       <span class="brand-sub">offline graph console</span>
     </a>
-    <span class="build-ver" id="buildVer" title="Exact playground build. If this looks old after a deploy, hard-refresh or clear site data.">build dev · 2026-07-23 17:07 UTC</span>
+    <span class="build-ver" id="buildVer" title="Exact playground build. If this looks old after a deploy, hard-refresh or clear site data.">build dev · 2026-07-24 09:40 UTC</span>
     <label class="version-picker" for="versionSelect">
       <span>Version</span>
       <select id="versionSelect" aria-label="Playground version">
@@ -3574,7 +3599,7 @@ td.lit { color: var(--ink); }
     </label>
     <span id="previewBadge" class="preview-badge hidden">PR preview</span>
     <script>
-      window.RETE_BUILD = "dev · 2026-07-23 17:07 UTC";
+      window.RETE_BUILD = "dev · 2026-07-24 09:40 UTC";
       window.RETE_PREVIEW = null;
     </script>
 
@@ -6833,6 +6858,8 @@ window.RETE_PLAYGROUND_CATALOG = {
     "orkg": { "What's in the graph": 15, "Papers": 10, "Node types in the graph": 9 }
   },
   datasets: [
+    {"key": "ethz-research-collection", "kind": "remote-lazy", "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete", "label": "ethz-research-collection.rete — the ETH Zürich institutional repository as a scholarly graph, DOI/ORCID-linked to the hub (306,835 works + a file manifest, remote, lazy)", "description": "The <a href=\"https://www.research-collection.ethz.ch/\" target=\"_blank\" rel=\"noopener\">ETH Zürich Research Collection</a> (DSpace 7.6) — the institutional repository of ETH Zürich — as one range-queried scholarly graph. <b>306,835 items</b> (293,270 live + 13,565 deleted-tombstone records): <b>289,592 publications</b> and <b>3,678 research-data</b> items, typed by publication type (<code>ethz:JournalArticle</code> 143k, <code>ethz:ConferencePaper</code> 39k, <code>ethz:DoctoralThesis</code> 32k, book chapters, reports, working papers, datasets…). Each work carries title, abstract, dates, publisher, licence, availability (<b>36% open access</b>) and external IDs — DOI, arXiv, Web of Science, Scopus, ISSN, ISBN. <b>434,635 author nodes</b> link via <code>ethz:creator</code>; the <b>6,402 ORCID-identified</b> ones are minted at <code>https://orcid.org/{orcid}</code> so they MERGE with the ORCID dataset, and the <b>122,711 works with a DOI</b> are minted at <code>https://doi.org/{doi}</code> so they federate for free with OpenAIRE, DataCite, Crossref and OpenCitations on the shared DOI. The ETH affiliation <b>Leitzahl tree</b> is a <code>org:Organization</code> hierarchy (1,881 units, <code>org:subOrganizationOf</code>) you walk with a property path to roll up a whole department's output. The DSpace <b>entity-relationship graph</b> is preserved — version chains, citations, has-part, supplements. And the <b>ORIGINAL-file MANIFEST is a first-class layer</b>: <b>158,339 deposited bitstreams</b> (<code>ethz:File</code>) with MIME, byte size, MD5 checksum and a download URL — cataloguing <b>10.23 TB WITHOUT storing any bytes</b>. Harvested via OAI-PMH (the xoai complete-dump format), modelled by data/ethz-research-collection/scripts/xoai_to_nt.py against the <code>ethz:</code> OWL 2 QL ontology and aligned to the rete scholar hub, then rete build --pyramid-algo types --card. 11.6 M triples, remote-lazy on Cloudflare R2. Per-class Parquet/DuckDB companions (works, persons, files, journals, grants, units) + JSON Schema + Croissant + the OWL ontology travel beside it. CC0 metadata harvest; each item's own dc:rights governs its files."},
+    {"key": "swissubase", "kind": "remote-lazy", "url": "https://data.graphplaza.com/swissubase/swissubase.rete", "label": "swissubase.rete — the Swiss national social-sciences & humanities data catalogue (FORS/DaSCH/UNINE/UZH), DOI-linked to the scholarly hub (remote, lazy)", "description": "The metadata graph of <a href=\"https://www.swissubase.ch/\" target=\"_blank\" rel=\"noopener\">SWISSUbase</a> — the Swiss national repository for social-sciences & humanities research data, run by <b>FORS</b> with DaSCH, UNINE and UZH's Language Repository. <b>12,530 studies</b> and <b>1,435 citable datasets</b> over <b>1,772 published versions</b>, harvested from the catalogue's own public APIs (no auth) into a 4.5 M-triple graph. Each dataset carries its <b>DataCite DOI</b>, multilingual title & abstract (de/fr/en/it), files, DDI-coded survey metadata (data type, time method, informed consent) and its usage licence; its <b>1,079,488 files</b> are individual nodes. <b>The canonical DOI (10.48573) is a CONCEPT DOI shared across versions</b> — like Zenodo — so the graph separates a citable <code>su:Dataset</code> (minted at <code>https://doi.org/{doi}</code>) from its <code>su:DatasetVersion</code>s (each <code>dcterms:isVersionOf</code> it, holding that version's own files, dates and licence), so nothing collapses: e.g. <code>10.48573/pjmf-8s41</code> has 19 versions. <b>It joins the rete scholarly hub for free</b>: <code>su:Dataset ⊑ dcite:Resource, scholar:Work</code> and <code>su:Study ⊑ scholar:Project</code>, and both DOIs are <code>scholar:doi</code>, so with the 🧠 reasoner it federates with DataCite, Zenodo, OpenAIRE, Crossref and DBLP on the shared DOI. The catalogue's controlled vocabularies (discipline, geography, funding source, licence, schema) travel as <b>SKOS concept schemes</b> with multilingual labels and a broader/narrower hierarchy, and the SNSF &amp; EU funding concepts carry <code>skos:exactMatch</code> to their Crossref Funder DOIs. Metadata-only: the data files themselves are mostly <b>Restricted</b> (a bilateral download contract with the responsible Data Service Unit), 151 versions are Open and 120 under a Creative Commons licence. The OWL 2 QL ontology and 11 example queries ship inside the file. Built by data/swissubase/scripts/{harvest.py → to_nt.py} → rete build --pyramid-algo types --text-index. TEXT_INDEX over titles/abstracts. Remote-lazy on Cloudflare R2."},
     {"key": "neuro-showcase", "kind": "remote-lazy", "url": "https://data.graphplaza.com/neuro-showcase/neuro-showcase.rete", "label": "neuro-showcase.rete — 3D neuron & astrocyte morphology + a fly connectome, with inline 3D previews (remote, lazy)", "description": "A small demonstrator that puts two harvested neuroscience datasets in one range-queried graph and shows the split between a <b>lossless queryable graph</b> and <b>lossy 3D render previews</b>. Three <b>Blue Brain NGV astrocytes</b> reconstructed from FIB-SEM electron microscopy — each linked (schema:contentUrl) to a Draco-compressed <b>.glb surface mesh</b> that renders <b>inline in the results table</b> (click 🧊): astrocytes have a fine 'spongiform' morphology below light-microscopy resolution, so these EM meshes show detail a skeleton cannot. And a connected <b>Drosophila mushroom-body cluster of 27 hemibrain neurons</b> (Janelia FlyEM) with predicted neurotransmitter and <b>30 real weighted synaptic edges</b> — the edge weights carried via <b>RDF-star</b> (<code>&lt;&lt; ?a neuro:connectsTo ?b &gt;&gt; neuro:weight ?w</code>). The full-resolution OBJ meshes and SWC skeletons stay as the analytical source of truth; the .rete keeps 100% of the metadata + connectome losslessly while the GLB is a disposable preview. Licence is MIXED — CC BY-NC-SA 4.0 for the NGV astrocytes (NonCommercial, ShareAlike), CC BY 4.0 for the hemibrain neurons — so treat the astrocyte assets as noncommercial. Cite Zisis et al. 2021 (doi:10.1093/cercor/bhab254) and the Janelia hemibrain (Scheffer et al. 2020). Built by data/neuro-showcase/build_graph.py → rete build --text-index --card. Remote-lazy on Cloudflare R2."},
     {"key": "imaging-plaza", "kind": "remote-lazy", "url": "https://data.graphplaza.com/imaging-plaza/imaging-plaza.rete", "label": "imaging-plaza.rete — EPFL/SDSC catalogue of research imaging software, with the SHACL shapes that score its FAIR levels (remote, lazy)", "description": "The catalogue of research <b>imaging software and code</b> kept by <a href=\"https://imaging-plaza.epfl.ch/\" target=\"_blank\" rel=\"noopener\">Imaging Plaza</a> (EPFL &amp; the Swiss Data Science Center) — <b>76 curated entries</b>, from DeepLabCut, StarDist, Cellpose and CEBRA to MRI reconstruction networks and radio-interferometric imaging. Every entry is described with the <b>Imaging Plaza ontology</b>, an alignment of schema.org + the <b>Software Description Ontology</b> (<code>sd:</code>, OKN) + <b>metadata4ing</b> + <b>bioschemas</b> + <b>SPHN</b>, and the <b>full ontology and its SHACL shapes travel inside the file</b> (1,107 of the 5,834 triples). <b>The point of this graph is that the SHACL shapes ARE the FAIR score</b>: Imaging Plaza computes each entry's FAIR level by validating it, and every constraint carries the level it gates as its <code>sh:message</code> — so running the SHACL tab in the browser re-derives the badges the website shows, and each violation tells you exactly what a project must add to level up. Levels here run 1&nbsp;(4) · 2&nbsp;(15) · 3&nbsp;(55) · 4&nbsp;(DeepLabCut) · 5&nbsp;(lungs-segmentation). Beyond the software: <b>227 people</b> (58 distinct ORCID iDs), 37 funder organizations with their grant numbers (SNSF, ERC, Marie&nbsp;Curie, Horizon&nbsp;2020), <b>95 screenshots</b> that render inline in the results table, 68 supporting datasets with their imaging modality and dimensionality, <b>33 executable notebooks</b> and <b>16 runnable examples</b> — 9 of them live Gradio apps you can open from a query result. <b>It federates without reconciliation</b>: software subjects are minted at the bare repository URL (<code>https://github.com/{owner}/{repo}</code>), the exact IRI <code>open-pulse</code>, <code>c4dt</code>, <code>oss-github-benchmark</code> and <code>enac-it4research</code> already use, so a union merges the same nodes. Because the source stores every IRI-ish value as a plain string (its own shapes declare <code>sh:datatype xsd:string</code>), the source triples are kept <i>verbatim</i> and a link layer is <i>added</i> under predicates the shapes do not constrain — <code>owl:sameAs</code> to 58 ORCID IRIs, <code>dcterms:references</code> to 72 DOIs, <code>dcterms:license</code> to SPDX, and <code>schema:funder</code> resolving the funding chain — so the file still validates against the upstream shapes while joining ORCID, Crossref and OpenCitations. Two upstream facts are recorded rather than hidden and are visible in the graph: <b>cellpose is catalogued twice</b> under two casings of its GitHub owner (<code>MouseLand</code> / <code>mouseland</code>) with two different DOIs — the Nature Methods paper and the bioRxiv preprint — and dates are stored as date-<i>times</i> where the shapes ask for <code>xsd:date</code>, which the SHACL tab duly flags. 554 blank nodes were skolemised to the <code>inst:</code> IRIs the source already uses for people and organizations. TEXT_INDEX over descriptions and READMEs."},
     {"key": "c4dt", "kind": "remote-lazy", "url": "https://data.graphplaza.com/c4dt/c4dt.rete", "label": "c4dt.rete — EPFL's Center for Digital Trust technology showcase (remote, lazy)", "description": "The catalogue the <b>EPFL Center for Digital Trust (C4DT)</b> keeps of the research its affiliated labs produce — <b>315 projects across 36 labs</b>, built from the <a href=\"https://github.com/c4dt/showcase_v2\" target=\"_blank\" rel=\"noopener\">c4dt/showcase_v2</a> repository (AGPL-3.0). Each project carries a plain-language AND a technical description, its research categories and application verticals, 64 technical tags, languages, license, code repository, maturity, and the papers, videos, demos and blog posts written about it (275 resources, 209 of them papers). C4DT's own incubation work is modelled too: 27 incubations with their status and the 19 products that came out of them (d-voting, Calypso, the Swiss e-ID demos), plus 81 internal staff interest ratings that the repository's own JSON Schema never documented. <b>The point of this graph is that it JOINS the <code>open-pulse</code> EPFL/SDSC research-software graph without any reconciliation</b>: repositories are minted at the IRI Open Pulse already uses (<code>https://github.com/{owner}/{repo}</code>, 271 of them), every lab is <code>org:unitOf</code> EPFL's ROR IRI, and <code>c4dt:developedBy</code> is a sub-property of <code>pulse:ownedBy</code> — so an unmodified Open Pulse query returns C4DT projects, and the 🧠 reasoner turns 272 answers into 587. Vocabulary is mostly alignment, not invention: schema.org + W3C Org + SKOS + Dublin Core + Open Pulse, with the OWL 2 QL ontology shipped inside the file. Two facts the source's own schema gets wrong and this graph does not: the slug <code>meditron</code> belongs to TWO different projects (labs MLO and NLP) pointing at one repository, and <code>type</code>/<code>language</code> are comma-separated multi-values. TEXT_INDEX on descriptions."},
@@ -6950,15 +6977,20 @@ window.RETE_PLAYGROUND_CATALOG = {
     {"key": "biosyslit", "kind": "remote-lazy", "url": "https://data.graphplaza.com/biosyslit/biosyslit.rete", "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", "label": "biosyslit.rete — Zenodo Biodiversity Literature Repository: taxonomic treatments with Darwin Core taxonomy + IIIF (remote, lazy)", "description": "The Biodiversity Literature Repository (BLR) community on Zenodo — curated by Plazi / Pensoft — as one 106M-triple range-queryable graph (1.65 GB, remote-lazy over HTTP range). 2,013,749 records, of which 688,222 are TAXONOMIC TREATMENTS (zen:TaxonomicTreatment ⊑ dcite:Text): each describes a taxon and carries the full DARWIN CORE taxonomy directly in the dwc: namespace — dwc:kingdom / dwc:phylum / dwc:class / dwc:order / dwc:family / dwc:genus, dwc:taxonRank, dwc:scientificNameAuthorship — so you can roll treatments up by family (Staphylinidae 17,101, Formicidae 15,424, Cerambycidae 12,068, Ichneumonidae, Curculionidae…), order or genus WITHOUT touching a single record. Every record sits at its canonical DOI IRI and carries dcite:title, the full treatment description text, usage stats (zen:views / zen:downloads), an IIIF manifest (zen:iiifManifest → the treatment's figures on Zenodo's IIIF server), its files (zen:hasFile → treatment.html / images with mime + byte size) and its community membership (zen:inCommunity → the biosyslit zen:Community node). The RELATION NETWORK links each treatment to its source journal article and related treatments (dcite:isPartOf / dcite:cites / dcite:isVersionOf → other DOIs). Because works are DOIs and ORCID authors mint at orcid.org, it federates with the DataCite / OpenAIRE / ORCID scholarly graph — and it is a rich subset of the sibling `zenodo-records` graph (BLR records ARE Zenodo records), kept separate for the Zenodo-native detail (IIIF, files, Darwin Core) that the bare DataCite metadata drops. Built by scripts/zenodo/biosyslit_to_nt.py → rete build --pyramid-algo types --card. CC-BY 4.0. The richest slice of Zenodo for biodiversity."},
     {"key": "gotriple", "kind": "remote-lazy", "url": "https://data.graphplaza.com/gotriple/gotriple.rete", "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", "label": "gotriple.rete — GoTriple: 2.7M Social-Sciences & Humanities publications, DOI-federated (remote, lazy)", "description": "The GoTriple metadata corpus — the EU-funded discovery platform for the Social Sciences & Humanities (gotriple.eu / TRIPLE / OPERAS) — as one 57.7M-triple range-queryable graph (832 MB, remote-lazy over HTTP range on Cloudflare R2). Built from the CC0 Zenodo dump (18185971): 6,074,813 discipline-placements that DEDUPLICATE, under rete's canonical-IRI policy, into 2,712,267 DISTINCT publications — a multi-disciplinary paper (same GoTriple id across several discipline files) and a paper indexed from several providers (same DOI) MERGE into one gtr:Document node that carries all its gtr:inDiscipline tags (so 855,688 distinct DOIs come from 2.46M DOI-bearing records, ~2.9 copies each). Each document carries a multilingual gtr:title, its GoTriple discipline(s) (a 26-term SKOS scheme: History, Sociology, Law, Psychology, Economics, Linguistics, Philosophy, Art…), authors, keywords, source provider/publisher, language, access status and its full-text URL — and, the connective tissue, gtr:knowsAbout → shared SSH-LCSH subject-authority nodes (semantics.gr, with multilingual labels) that DEDUPE across the whole corpus into a real subject graph (Education links 288k docs, Economics 229k, 'State, The' 219k…). The 855,688 documents WITH a DOI mint at their canonical https://doi.org/{doi} IRI, so this graph AUTO-MERGES with the DataCite / Zenodo / OpenAIRE / OpenCitations scholarly datasets on the shared DOI — and it brings the SSH breadth those STEM-heavy sources lack (see data/scholar/scholar.ttl). The go-triple.ttl ontology (gtr:) travels INSIDE the file. Built by scripts/gotriple/{jsonl_to_parquet,gotriple_to_nt}.py → rete build --no-pyramid + rete repyramid --pyramid-algo types. CC0. Selective queries — one DOI, a subject's documents, an open-access slice of one discipline — are cheap over HTTP range; a full-corpus aggregate scans the file, so lean on the Schema pyramid for the big picture."},
     {"key": "orcid", "kind": "remote-lazy", "url": "https://data.graphplaza.com/orcid/orcid.rete", "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", "label": "orcid.rete — every public ORCID profile: 25M researchers, 150M works, ONE 1.3-billion-triple file (remote, lazy)", "description": "The ORCID Public Data File 2025 (CC0) as ONE range-queryable graph — 1,296,338,454 triples / 397M terms / 17.5 GB, the largest single .rete published, and the first built with the memory-bounded external build (rete build --memory-budget-mb 16384: the 198 GB N-Triples stream is chunked to disk, dictionaries k-way-merged, each permutation external-sorted — peak RAM stays inside the budget while the output is byte-identical to an in-RAM build). 25,048,058 researchers sit at their CANONICAL https://orcid.org/{id} IRI (orc:Researcher with given/family names, credit-name label, country) — so this graph AUTO-MERGES with zenodo-records' 877k ORCID creators and the rest of the scholarly constellation (see data/scholar/scholar.ttl). 149,782,968 works (orc:Work + a fine-grained type like orc:journal-article / orc:conference-paper / orc:book-chapter) carry dcterms:creator → the researcher, the title as rdfs:label, orc:publicationYear, orc:journalTitle — and 78% carry orc:doi, the join key to DataCite / OpenAIRE / OpenCitations / DBLP. 25,063,901 affiliations are reified career events — orc:Employment / orc:Education / orc:Qualification / orc:Distinction / orc:InvitedPosition / orc:Membership / orc:Service ⊑ orc:Affiliation — each with orc:affiliationOf → the person, orc:organizationName, orc:roleTitle, start/end years, and (where ORCID disambiguated the org to ROR) orc:affiliationWith → the RAW https://ror.org/{id} IRI: the ror.rete dataset answers those same nodes, so the two files JOIN cross-source in the playground. Plus 1,838,095 fundings (orc:Funding, orc:awardedTo). The orcid.ttl OWL 2 QL ontology (https://w3id.org/rete/orcid#) travels inside the file. Built by scripts/orcid/orcid_to_nt.py → scripts/orcid/build_single_rete.sh. NOTE: the external build ships no Schema pyramid yet — keep queries SELECTIVE (one person, one org's people, one work's neighbourhood); each such query reads ~30–60 MB of the 17.5 GB over HTTP range, but a whole-graph aggregate would scan the file."},
+    {"key": "gharchive", "kind": "remote-lazy", "url": "https://data.graphplaza.com/gharchive/gharchive-2025-07.rete", "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", "label": "gharchive-2025-07.rete — a full month of GitHub: every public event of July 2025, 1.64 BILLION triples with RDF-star provenance (remote, lazy)", "description": "One full UTC month of the public GitHub event stream (GH Archive, July 2025) as ONE range-queryable graph — 1,644,492,596 triples / 334.5M terms / 17.1 GB, the LARGEST single .rete published (it passes orcid's 1.30B). ~118M events are PROV activities — gh:PushEvent / PullRequestEvent / IssuesEvent / IssueCommentEvent / WatchEvent (a star) / ForkEvent / CreateEvent / DeleteEvent / ReleaseEvent / the review events, all ⊑ prov:Activity — each carrying prov:atTime, prov:wasAssociatedWith → the actor and gh:repo → the repository, plus ~90M commits (truncated messages + author names; emails deliberately excluded), 8.5M PR nodes with adds/dels/merged-by, issues with labels, and 4.2M releases. Entities live at their REAL GitHub URLs (https://github.com/{login}, /{owner}/{repo}, /pull/{n}, /commit/{sha}) — the same bare-GitHub-URL IRIs open-pulse and oss-github-benchmark use, so repositories, users and orgs are the SAME NODES across those graphs. THE RDF-STAR LAYER IS THE POINT: GitHub events embed full repository objects, so volatile metadata becomes dated OBSERVATIONS — << ?repo gh:stars ?n >> prov:generatedAtTime ?t ; prov:wasGeneratedBy ?event (~14M embedded repo snapshots) — microsoft/vscode's star count resolves hour-by-hour from 174,029 (Jul 1, 00:33) to 175,188 (Jul 31, 23:54), and every gh:starred / gh:forked edge knows who, when, and from which event. Stable facts (schema:description, programmingLanguage, SPDX licence IRI, topics, dateCreated) sit plainly on the repo node. WHY JULY 2025: GitHub cut the public feed around Aug–Sep 2025 — stars/PRs/issues dropped ~200×, PushEvent lost its commits[] — so this is one of the last full months of the rich firehose, a preserved snapshot of GitHub's social pulse. Streamed through the memory-bounded external build ({ cat ontology; zcat 186 day-section .nt.gz } | rete build - --memory-budget-mb 16384, 42 chunks, ~4.5 h). Public GitHub timeline via gharchive.org; content © its authors. NOTE: no Schema pyramid (external-build v1) — keep queries SELECTIVE (one repo, one user, one PR): each reads ~30–330 MB of the 17 GB over HTTP range; a whole-graph aggregate would scan the file."},
     {"key": "ror", "kind": "remote-lazy", "url": "https://data.graphplaza.com/ror/ror.rete", "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", "label": "ror.rete — the Research Organization Registry: 111k organizations, the org authority of the scholarly web (remote, lazy)", "description": "ROR v1.54 (CC0) — all 111,068 registered research organizations as one 1.87M-triple graph (30 MB, remote-lazy). ROR is THE open successor to GRID: virtually every scholarly dataset that disambiguates an institution points here, and each org sits at its canonical https://ror.org/{id} IRI — the exact IRIs orcid.rete's 19M ROR-disambiguated affiliations target with orc:affiliationWith, so the two files JOIN cross-source in the playground (and DataCite / OpenAIRE / EPFL-graph resolve here too). Each organization is typed ror:Organization plus its roles — ror:Education / ror:Funder / ror:Facility / ror:Government / ror:Healthcare / ror:Company / ror:Archive / ror:Nonprofit — and carries its rdfs:label + aliases, ror:countryCode / ror:countryName, ror:locationName with ror:lat / ror:long, ror:established (gYear), ror:status, ror:website and ror:wikipedia. The CROSSWALK layer is the quiet superpower: ror:grid, ror:isni, ror:wikidata and ror:fundref put the legacy GRID ids, ISNIs, Wikidata Q-ids and Crossref Funder ids in one place, so any older dataset keyed to those resolves through this file. The org HIERARCHY is here too — ror:hasParent / ror:hasChild (CNRS alone has 383 child institutes), ror:predecessor / ror:successor, ror:relatedOrganization — a real institutional family tree. The ror.ttl ontology travels inside the file; Schema pyramid included (types algo). Built by scripts/ror/ror_to_nt.py → rete build --pyramid-algo types --card. Small enough to explore freely — aggregates, maps of a country's orgs, transitive hierarchy walks are all cheap."},
     {"key": "dblp", "kind": "remote-lazy", "url": "https://data.graphplaza.com/dblp/dblp.rete", "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", "label": "dblp.rete — the DBLP computer-science bibliography, with the author co-authorship graph (remote, lazy)", "description": "The complete DBLP computer-science bibliography (dblp.org, CC0) as one 196.8M-triple range-queryable graph (2.27 GB, remote-lazy over HTTP range on Cloudflare R2). 12.74M records: 8,608,631 PUBLICATIONS (dblp:Publication + a subtype — dblp:Article 4.36M, dblp:Inproceedings/conference-paper 3.91M, dblp:Incollection, dblp:Book, dblp:Thesis 156k…) plus 4.14M dblp:PersonPage author home-pages, wired to 5.79M CREATOR nodes by 33.76M dblp:authoredBy edges — the CO-AUTHORSHIP graph (ask for an author's collaborators, ranked by shared papers). Each publication carries dblp:title, dblp:year, dblp:venue (journal/booktitle), volume/number/pages/publisher, and sits at its CANONICAL DOI IRI when it has one (7,257,488 do → https://doi.org/{doi}) else its real DBLP page https://dblp.org/rec/{key}. Authors mint at https://orcid.org/{orcid} when known (1,542,309 ORCID'd creators) else a DBLP-disambiguated name IRI (DBLP's own '… 0001' homonym suffixes keep distinct people apart). Because works are keyed by DOI and people by ORCID, this graph AUTO-MERGES with the DataCite / Zenodo / OpenAIRE / OpenCitations datasets on the DOI and with the 25M-researcher orcid.rete on the ORCID — DBLP is the COMPUTER-SCIENCE vertex of the scholarly graph, and the one that brings a dense author collaboration network. Built by scripts/dblp/dblp_to_nt.py → rete build --memory-budget-mb 6000 (bounded-RAM external build); embeds the dblp.ttl ontology, itself aligned to DBLP's own official https://dblp.org/rdf/schema#. CC0. No Schema pyramid yet (repyramid OOMs at this scale on a shared box) — keep queries SELECTIVE (one author's papers, their co-authors, a specific paper); each reads a few MB over HTTP range, while a full-corpus aggregate scans the file."},
     {"key": "aifdb-open", "kind": "remote-lazy", "url": "https://data.graphplaza.com/aifdb-open/aifdb-open.rete", "label": "aifdb-open.rete — QT30: argument & conflict in BBC Question Time, as a graph (remote, lazy)", "description": "QT30 — the largest corpus of analysed broadcast political debate — as a queryable argument graph in the <b>Argument Interchange Format</b>. 30 episodes of the BBC's <i>Question Time</i> (2020–21), 1,478 annotated fragments, hand-analysed with Inference Anchoring Theory by <b>Hautli-Janisz, Kikteva, Siskou, Gorska, Becker & Reed (LREC 2022)</b> and published open at <a href=\"https://corpora.aifdb.org/qt30\" target=\"_blank\" rel=\"noopener\">corpora.aifdb.org/qt30</a>. The distinctive thing about AIF is that every fragment carries <b>two layers at once</b>: the <i>dialogue</i> as spoken (aif:L-node locutions with a resolved speaker, aif:TA-node transitions) and the <i>argument</i> as reconstructed (aif:I-node claims joined by scheme nodes — aif:RA-node inference, aif:CA-node conflict, aif:MA-node rephrase), stitched together by aif:YA-node illocutionary anchors (Asserting / Arguing / Disagreeing / RhetoricalQuestioning …). So you can ask both <i>what was argued</i> and <i>who said it, and how</i>. 841 speakers are resolved to schema:Person nodes — host Fiona Bruce (5,692 locutions), then the politicians and panellists (Lisa Nandy, Nadhim Zahawi, Grant Shapps, Caroline Lucas…) and studio-audience turns. Because the raw AIF edges keep the scheme-node indirection, this build also materialises one-step shortcuts over them — <b>aifx:supports</b>, <b>aifx:conflictsWith</b>, <b>aifx:rephrases</b> and <b>aifx:illocutes</b> (locution → the claim it conveys) — so 'which claims are attacked, and by how many distinct speakers' is a single pattern. The AIF TBox (aif.ttl, OWL 2 QL-safe: I/L/RA/CA/MA/YA/TA class hierarchy + property domains) travels inside the file, and TEXT_INDEX is on for full-text search over every claim. Node IRIs match AIFdb's own RDF (aifdb.org/nodes/…) so this federates with the wider Argument Web. Built by data/aifdb/scripts/{harvest,aifdb_to_nt}.py → rete build --pyramid-algo types --card --text-index. <b>Licence: the QT30 annotation metadata is released as open data (CC0 1.0) by its authors; the underlying material is public BBC broadcast debate.</b> This is the one corpus of AIFdb's 538 with a clean open-licence + public-broadcast footing — the rest (many carrying forum/Reddit usernames, most with undeclared licences) stay unpublished. Tiny (13.6 MB) — explore freely."},
+    {"key": "plantatlas", "kind": "remote-lazy", "url": "https://data.graphplaza.com/plantatlas/plantatlas.rete", "label": "plantatlas.rete — Digital Plant Atlas: archaeobotany seed/fruit & geolocated field photos, each with its picture (remote, lazy)", "description": "The <b>Digital Plant Atlas</b> (<a href=\"https://www.plantatlas.eu/\" target=\"_blank\" rel=\"noopener\">plantatlas.eu</a>, GIA-Groningen + DAI Berlin, CC BY-NC-SA 3.0 NL) — an archaeobotany reference collection of high-quality photos of plant <b>seeds, fruits and vegetative parts</b> with verified scientific names — as one 1.33M-triple range-queryable graph (10.3 MB, remote-lazy over HTTP range on Cloudflare R2). <b>28,595 pa:Photo</b>, each carrying its own <b>WebP picture</b> (schema:image + foaf:depiction → data.graphplaza.com/plantatlas/images_webp/&lt;id&gt;.webp — switch a column's cell type to Image and the photos render inline), plus Darwin Core taxonomy (dwc:family / dwc:genus / dwc:scientificName), pa:plantPart, pa:lengthMm / pa:widthMm, pa:appendages / pa:surface. <b>52,907 pa:Specimen</b> reference-collection records (provenance: pa:deliveryInstitution, dwc:country, taphonomy pa:processing, dwc:verbatimEventDate + a cleaned dwc:eventDate) wired to their photos by <b>pa:hasPhoto</b> — the specimen↔photo join. <b>3,920 pa:Locality</b> places (859 with WGS84 geo:lat/long + GeoSPARQL geo:asWKT — switch Output → Map to see where the 'Nature' field photos were collected). <b>3,551 pa:Taxon</b> (family/genus, genus skos:broader family). Two photo sets live here: MI_/DF_ seed-fruit reference photos (with measurements) and RC_ geolocated field photos (lat/lon lives only in the map layer). Coordinates cleaned (the 'Unknown' / −25,133 placeholders dropped, out-of-range flagged); taxa come from family+genus because the upstream scientificName is only 13% filled. TEXT_INDEX on for full-text name/locality search. Acquired by a reverse-engineered crawl of the site's Pimcore/Symfony JSON endpoints (no public API) → Parquet → data/plantatlas/scripts/build_nt.py + plantatlas-ontology.ttl → rete build --pyramid-algo types --card --text-index. Remote-lazy on Cloudflare R2."},
   ],
   // Structured metadata for the dataset table. `triples`: exact for bundled
   // graphs (from `rete info`), approximate string for the big remote ones, null
   // when unknown. `source`: where the data came from ("" = synthetic / internal).
   // Type (Bundled vs Remote) is derived from each dataset's `kind`.
   datasetMeta: {
+    "ethz-research-collection": {"triples": "11.6 M", "size": "206 MB", "license": "CC0-1.0 (metadata harvest); per-item object rights vary (In Copyright / CC BY / CC BY-NC-ND / …)", "source": "https://www.research-collection.ethz.ch/", "provenance": "Harvested via OAI-PMH from the ETH Research Collection (DSpace 7.6) — the all_items context in the native xoai COMPLETE-DUMP format (306,835 records), which uniquely embeds, beyond every metadata field, the DSpace entity-relationship graph AND the file manifest (bundles/bitstreams: MIME, size, MD5 checksum, URL) — so no separate REST pass was needed. data/ethz-research-collection/scripts/harvest_oai.py (resumable) → xoai_to_nt.py joins xoai (files + relationships + entity type) with the oai_ethz crosswalk (structured authors+ORCID, grants) by handle, minting DOI-bearing works at https://doi.org/{doi}, ORCID authors at https://orcid.org/{orcid}, serials by ISSN, and the ETH Leitzahl affiliation tree as an org: hierarchy. Aligned to data/scholar/scholar.ttl via the ethz: OWL 2 QL ontology (ethz:Publication ⊑ scholar:Work; ethz:doi ⊑ scholar:doi; ethz:orcid ⊑ scholar:orcid). rete build --pyramid-algo types --card (Docker). 289,592 Publication + 3,678 ResearchData, 434,635 Person (6,402 ORCID), 158,339 File (10.23 TB catalogued, 0 bytes stored), 19,456 Journal, 1,881 OrgUnit → 11,611,695 triples. Per-class Parquet/DuckDB companions + JSON Schema + Croissant + OWL. Remote-lazy on Cloudflare R2."},
+    "plantatlas":            { triples: "1.33 M", size: "10.3 MB", license: "CC BY-NC-SA 3.0 NL (© Digital Plant Atlas — RUG & DAI; commercial use → info@plantatlas.eu)", source: "https://www.plantatlas.eu/", provenance: "The Digital Plant Atlas (GIA-Groningen + DAI Berlin) archaeobotany reference collection, acquired by a reverse-engineered crawl of its Pimcore/Symfony JSON endpoints (no public API) — /search/{database,reference,map}/load/references, driven with the form CSRF token: 12,735 MI_ seed/fruit photo stubs + 52,907 specimen catalogue rows + 424 families → 15,860 geolocated RC_ 'Nature' photos, plus 26,967 photo + 52,907 specimen detail pages and 28,595 image_large JPEGs (data/plantatlas/scripts/download.py — staged, resumable, atomic). JPEGs → WebP q80 (make_webp.py, 4.0→2.45 GB) uploaded to R2 under plantatlas/images_webp/; Parquet star-schema via build_parquet.py; build_nt.py + plantatlas-ontology.ttl → rete build --pyramid-algo types --card --text-index (Docker). 1,329,981 triples, 236,135 terms; 28,595 pa:Photo, 52,907 pa:Specimen, 3,920 pa:Locality, 3,551 pa:Taxon; content-hash verified. Data-quality handled: map longitudes partly corrupt (validity-flagged / dropped), scientificName 13% filled (taxon derived from family+genus), collection dates cleaned to plausible years. Remote-lazy on Cloudflare R2." },
+    "swissubase":            {"triples": "4.51 M", "size": "44 MB", "license": "Catalogue metadata: SWISSUbase terms of use (swissubase.ch/en/terms-of-use); per-dataset data licences vary — mostly Restricted, 151 Open, 120 Creative Commons", "source": "https://www.swissubase.ch/en/", "provenance": "Harvested from SWISSUbase's public catalogue APIs (search-studies + /api/v2/datasets + /api/v2/schemas; no auth) into data/swissubase/raw — the studies pager sweeps referenceNumber ASC+DESC to defeat the API's page-index + 10k deep-paging cap; datasets are brute-scanned by id (200 public / 403 embargoed / 404 absent). data/swissubase/scripts/to_nt.py mints each citable dataset at its canonical concept DOI (https://doi.org/{10.48573…}) and each version at a local IRI dcterms:isVersionOf it, then rete build --pyramid-algo types --text-index --card-file. 12,530 su:Study + 1,435 su:Dataset + 1,772 su:DatasetVersion + 1,079,488 su:File + 1,715 DDI su:DomainMetadata + SKOS vocabularies = 4.51 M triples. Aligned to data/scholar/scholar.ttl (su:Dataset ⊑ dcite:Resource, scholar:Work; DOIs ⊑ scholar:doi). Metadata-only, no research-data bytes. Remote-lazy on Cloudflare R2."},
     "neuro-showcase":        {"triples": "300", "size": "43 KB", "license": "CC BY-NC-SA 4.0 (NGV astrocytes) / CC BY 4.0 (hemibrain neurons)", "source": "https://bbp.epfl.ch/ngv-portal/ + https://www.janelia.org/project-team/flyem/hemibrain", "provenance": "Two harvested datasets combined. NGV astrocytes: 3 FIB-SEM reconstructions from the Blue Brain NGV portal (Zisis et al. 2021, Cereb Cortex 31(12):5686-5703, doi:10.1093/cercor/bhab254, CC BY-NC-SA 4.0), OBJ surface meshes decimated to 15% faces and exported as Draco-GLB previews (scripts/decimate_to_glb.py, Blender 3.6, 14-bit position quant) — originals kept in data/ngv-astrocytes/raw. Hemibrain: a connected mushroom-body cluster of 27 neurons + 30 weighted synaptic edges from Janelia FlyEM hemibrain v1.2 (Scheffer et al. 2020, eLife, CC BY 4.0), neurons + neurotransmitters + edges from the public gs://hemibrain export. data/neuro-showcase/build_graph.py assembles showcase.ttl (tiny neuro: ontology; edge weights via RDF-star; astrocyte 3D linked with schema:contentUrl) → rete build --text-index --card-file. 300 triples, 223 terms. GLB previews (8-17 MB) + the .rete on R2 under neuro-showcase/. Remote-lazy on Cloudflare R2."},
     "c4dt":                  {"triples": "18.2 K", "size": "458 KB", "license": "AGPL-3.0-or-later (c4dt/showcase_v2)", "source": "https://github.com/c4dt/showcase_v2", "provenance": "The C4DT showcase YAML (data/labs.yaml + data/<LAB>/projects.yaml, AGPL-3.0) → data/c4dt/extract.py (7 normalized tables; explodes the comma-separated type/language multi-values, folds 17 spellings of code.type into orthogonal platform+ownership facets and 18 spellings of information[].type, keys projects on (lab, slug) because `meditron` collides) → data/c4dt/to_nt.py → rete build --pyramid-algo types --text-index --card, with the OWL 2 QL ontology data/c4dt/c4dt.ttl embedded. Aligned to the Open Pulse ontology by REUSING its IRIs rather than mapping onto them: repos at https://github.com/{owner}/{repo} + pulse:githubRepositoryHandle, EPFL at https://ror.org/02s376052, c4dt:developedBy ⊑ pulse:ownedBy — so a union with `open-pulse` merges with no owl:sameAs. 18,221 triples, 5,747 terms; 315 c4dt:Project (310 also schema:SoftwareSourceCode), 36 labs, 275 resources, 27 incubations, 81 ratings, 149 SKOS concepts in 8 schemes. Verified by data/c4dt/verify.py: 22 differential checks against a fresh independent parse of the source YAML (every title, repository URL, date, tag count, rating and professor compared verbatim) — 22/22 pass. JSON Schema + Croissant 1.0 + the ontology are published alongside the .rete. Remote-lazy on Cloudflare R2."},
     "lombardi":              {"triples": "70.5 K", "size": "1.0 MB", "license": "CC BY-NC-SA 4.0 — digitization © Robert Tolksdorf (FU Berlin), lombardinetworks.net", "source": "https://lombardinetworks.net/", "provenance": "The 51 digitized networks at lombardinetworks.net (Robert Tolksdorf, FU Berlin; GraphML/JSON/XGMML + lombardi.owl, CC BY-NC-SA 4.0) → scripts/lombardi/fetch_lombardi.sh → scripts/lombardi/lombardi_to_nt.py (adds works, reified arcs and the derived overlap / narration-span / same-name layers) → rete build lombardi.nt lombardi-rete.ttl lombardi.owl --pyramid-algo types --text-index --card"},
@@ -6969,6 +7001,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "zenodo-records":        { triples: "215 M", size: "2.09 GB", license: "CC-BY-4.0 (Zenodo metadata export)", source: "https://zenodo.org/api/exporter", provenance: "The OFFICIAL Zenodo exporter site-wide snapshot (records-xml-2026-07-10.tar.gz — 7,759,325 records, DataCite kernel-4.5 XML) → Parquet by scripts/zenodo/xml_to_parquet.py → N-Triples by scripts/zenodo/records_to_nt.py honoring the scholar-alignment canonical-IRI policy (work → https://doi.org/{doi}, ORCID creator → https://orcid.org/{orcid}, related DOIs → the same DOI node), typed zen:Record + the DataCite resource class, relatedIdentifiers mapped to dcite: relation edges (isVersionOf/isPartOf/cites/references/…). rete build --pyramid-algo types --card (Docker). 215,396,999 triples, 64.5M terms; 7,745,036 zen:Record + 877,926 ORCID dcite:Agent nodes. Federates with datacite/openaire/orcid/opencitations/dblp on the shared DOI/ORCID IRIs (data/scholar/scholar.ttl). Remote-lazy on Cloudflare R2." },
     "biosyslit":             { triples: "106 M", size: "1.65 GB", license: "CC-BY-4.0", source: "https://zenodo.org/communities/biosyslit", provenance: "The Zenodo Biodiversity Literature Repository community export (biosyslit-records-json-2026-03-27.tar.gz — 2,013,749 Zenodo-native JSON records) → Parquet by scripts/zenodo/biosyslit_to_parquet.py → N-Triples by scripts/zenodo/biosyslit_to_nt.py: works at canonical DOI IRIs, 688,222 zen:TaxonomicTreatment carrying Darwin Core taxonomy in the dwc: namespace, IIIF manifests, files (zen:hasFile), usage stats, zen:Community membership, and dcite: relation edges to source articles; ORCID authors mint at orcid.org. rete build --pyramid-algo types --card. 106,411,817 triples (103.7M unique), 33.25M terms. A richer, Zenodo-native subset of `zenodo-records`. Remote-lazy on Cloudflare R2." },
     "orcid":                 { triples: "1.30 B", size: "17.5 GB", license: "CC0-1.0", source: "https://orcid.org", provenance: "The ORCID Public Data File 2025 (figshare DOI 10.23640/07243.30375589.v1, CC0, snapshot 2025-10-01) summaries — 12 tarballs of namespaced XML → Parquet by scripts/orcid/summaries_to_parquet.py → 1.30B N-Triples by scripts/orcid/orcid_to_nt.py (DuckDB assembles complete escaped NT lines in SQL; researcher → canonical https://orcid.org/{id}, works/affiliations/fundings under w3id.org/rete/orcid/, disambiguated orgs → raw https://ror.org/{id} IRIs, per the scholar-alignment canonical-IRI policy). Built as ONE file by the memory-bounded external build: rete build --memory-budget-mb 16384 --tmp-dir (scripts/orcid/build_single_rete.sh) — 37 disk-spilled chunks, k-way dictionary merge to 397,092,191 terms, per-permutation external sort, streaming write; byte-identical to an unbounded build. 1,296,338,454 triples: 25.05M orc:Researcher, 149.8M orc:Work (78% with orc:doi), 25.06M reified affiliations (19M with orc:affiliationWith → ROR), 1.84M orc:Funding. orcid.ttl (OWL 2 QL) embedded. No pyramid (external-build v1). Remote-lazy on Cloudflare R2." },
+    "gharchive":             { triples: "1.64 B", size: "17.1 GB", license: "Public GitHub timeline (gharchive.org); content © its authors", source: "https://www.gharchive.org/", provenance: "GH Archive hourly JSON (data.gharchive.org/YYYY-MM-DD-H.json.gz, all 31 days of July 2025, 744 files ≈66 GB gz — deliberately the last full month of the RICH feed: GitHub cut the public stream ~Aug–Sep 2025, non-push events −200×, PushEvent commits[] removed; measured in data/github-archive/README.md) → per-hour Parquet by data/github-archive/scripts/to_parquet.py (DuckDB read_json: envelope table + push_commits/pull_requests/issues/releases detail tables + repo_snapshots = the full repo objects embedded in PR base/head and forkee payloads, deduped per hour; JSON extraction must stay OUT of WHERE clauses — DuckDB miscompiles it) → per-day per-section N-Triples by to_rdf.py (real github.com URLs as IRIs; 16 event classes ⊑ prov:Activity; schema.org + SPDX repo facts; RDF-star << s p o >> prov:generatedAtTime + prov:wasGeneratedBy annotations on volatile observations (stars/forks/openIssues/pushedAt) and starred/forked edges; commit author emails excluded from RDF) → ONE file by the memory-bounded external build: { cat gharchive-ontology.nt; gzip -dc rdf/2025-07-*/*.nt.gz; } | rete build - --format nt --memory-budget-mb 16384 --tmp-dir spill (42 disk-spilled chunks, ~4.5 h, detached container). 1,644,492,596 triples / 334,506,373 terms; content-hash verified. No pyramid (external-build v1) — selective queries only. Remote-lazy on Cloudflare R2." },
     "ror":                   { triples: "1.87 M", size: "30 MB", license: "CC0-1.0", source: "https://ror.org", provenance: "ROR v1.54 data dump (CC0) — 111,068 research organizations → N-Triples by scripts/ror/ror_to_nt.py (org at canonical https://ror.org/{id}, typed ror:Organization + role classes, with labels/aliases, country + city + lat/long, established, status, website, wikipedia, the GRID/ISNI/Wikidata/FundRef crosswalk ids, and the hasParent/hasChild/predecessor/successor hierarchy; ror.ttl ontology embedded) → rete build --pyramid-algo types --card. 1,875,022 triples, 914,153 terms. The organization-authority hub the ORCID / DataCite / OpenAIRE datasets resolve their institutions against. Remote-lazy on Cloudflare R2." },
     "open-pulse":            { triples: "3.70 M", size: "49 MB", license: "GitHub public metadata (facts); Open-Pulse ontology © SDSC-ORDES", source: "https://github.com/sdsc-ordes/open-pulse-ontology", provenance: "Crawled by the Open-Pulse git-metadata-extractor into per-entity JSON-LD (schema.org + W3C org/time + pulse: + gme: vocab) — 59,516 documents across 114 batches. scripts/open-pulse/build_nt.py keeps the LATEST COMPLETE extraction per source_url (drops re-crawls below 50% of the entity's richest node count, then newest GitHub timestamp) → rdflib JSON-LD→N-Triples, normalizing the extractor's double-prefixed GitHub IRIs (https://github.com/https://github.com/x → …/x) on every term and flattening the nested ROR country into a clean gme:ror_country literal. rete build --pyramid-algo types --card (Docker). Per-class + flat Parquet / DuckDB companions via scripts/open-pulse/build_parquet.py + build_duckdb.py. 40,574 entities → 3,697,829 unique triples." },
     "oss-github-benchmark":  {"triples": "2.09 M", "size": "32 MB", "license": "GPL-3.0 (benchmark code); GitHub public metadata (facts)", "source": "https://ossbenchmark.com", "provenance": "Harvested from the ossbenchmark.com public API (paginatedInstitutions + singleInstitution + paginatedRepositories + paginatedUsers) by scripts/oss-github-benchmark/harvest.py — using a UNIQUE sort key (login / uuid) because the underlying Mongo skip/limit pagination silently drops ~half the records under a non-unique sort (a plausible-looking full count of 127,529 users held only 60,467 distinct logins). scripts/oss-github-benchmark/build_nt.py projects the JSON onto Open-Pulse's IRIs and vocabularies (schema.org + W3C org + pulse:/gme:), collapsing the per-institution duplicate records to one node per entity (freshest crawl wins), canonicalizing case-insensitive GitHub org handles to a single IRI, mapping the 31 licence names to SPDX, and keeping 11 stale institution keys as ossb:unlistedInstitutionKey literals rather than dangling references. The ontology scripts/oss-github-benchmark/ossbenchmark.ttl (ossb: = https://w3id.org/rete/oss-benchmark#, OWL 2 QL) travels inside the file. rete build --pyramid-algo types --card (Docker). Validated against scripts/oss-github-benchmark/shapes.ttl — all five SHACL Core shapes conform. Flat + per-class Parquet/DuckDB companions via build_parquet.py. 235 institutions / 373 organizations / 17,143 repositories / 127,180 people → 2,087,142 triples."},
@@ -7048,6 +7081,32 @@ window.RETE_PLAYGROUND_CATALOG = {
   // Paths are relative to remoteBase; the explorer appends ?token=remoteToken.
   // A dataset with no entry here shows only the rete Graph backend (no companions).
   companions: {
+    "ethz-research-collection": {
+      rete: "ethz-research-collection/ethz-research-collection.rete",
+      parquetDir: "ethz-research-collection/ethz-research-collection-tables",
+      duckdb: "ethz-research-collection/ethz-research-collection.duckdb", duckdbSize: "207 MB",
+      about: "The ETH Research Collection as relational companions on R2, beside the <code>.rete</code> — one wide table per class. <code>works</code> is one row per publication / research-data item (title, type, issue date, DOI, handle, availability, language, publisher, licence, abstract, and list columns for author IRIs and subjects). <code>persons</code> are authors/editors/supervisors (ORCID where known); <code>files</code> is the ORIGINAL-bundle manifest — name, MIME, size, MD5 checksum, download URL — the file layer as SQL; <code>journals</code>, <code>grants</code> and <code>units</code> (the ETH Leitzahl org tree) round out the entities, and <code>triples</code> is the whole graph as a flat (S, P, O) table. All lossless, Parquet + a combined DuckDB. Also beside them: schema.json (JSON Schema 2020-12), croissant.jsonld (Croissant 1.0) and ethz.ttl (the OWL ontology).",
+      tables: [
+        { name: "works",    file: "works.parquet",    label: "works — one row per publication / research-data item", entities: 293248 },
+        { name: "persons",  file: "persons.parquet",  label: "persons — authors, editors, supervisors (ORCID where known)", entities: 434635 },
+        { name: "files",    file: "files.parquet",    label: "files — ORIGINAL bitstream manifest (name, MIME, size, MD5, URL)", entities: 158339 },
+        { name: "journals", file: "journals.parquet", label: "journals — serials (ISSN)", entities: 19456 },
+        { name: "grants",   file: "grants.parquet",   label: "grants — funding (name, id, programme)", entities: 3496 },
+        { name: "units",    file: "units.parquet",    label: "units — ETH Leitzahl organisational tree", entities: 1881 },
+        { name: "triples",  file: "triples.parquet",  label: "triples — every fact (S, P, O)", entities: 11611344 },
+      ],
+      sqlCols: ["work", "title", "type", "issued", "doi", "handle", "availability", "language", "publisher", "license", "abstract", "authors", "subjects"],
+      examples: [
+        { label: "Publications per year", table: { file: "works.parquet", name: "works" },
+          sparql: "PREFIX ethz: <https://w3id.org/rete/ethz#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nSELECT ?year (COUNT(?w) AS ?n) WHERE {\n  ?w ethz:publicationType [] ; dcterms:issued ?d .\n  BIND(SUBSTR(STR(?d),1,4) AS ?year)\n} GROUP BY ?year ORDER BY DESC(?year) LIMIT 15",
+          duck: "SELECT left(issued, 4) AS year, COUNT(*) AS n\nFROM {T}\nWHERE issued IS NOT NULL\nGROUP BY year\nORDER BY year DESC\nLIMIT 15;",
+          note: "Deposit volume by issue year — a GROUP BY over the works table, the same shape in SPARQL and SQL." },
+        { label: "The largest deposited files", table: { file: "files.parquet", name: "files" },
+          sparql: "PREFIX ethz: <https://w3id.org/rete/ethz#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?name ?mime ?bytes ?url WHERE {\n  ?f a ethz:File ; rdfs:label ?name ; ethz:sizeBytes ?bytes ;\n     <http://purl.org/dc/terms/format> ?mime ; ethz:downloadURL ?url .\n} ORDER BY DESC(?bytes) LIMIT 20",
+          duck: "SELECT name, mime, size_bytes, download_url\nFROM {T}\nORDER BY size_bytes DESC\nLIMIT 20;",
+          note: "The file manifest as SQL — the biggest ORIGINAL bitstreams by byte size, with their download URLs. Only the metadata is here; the bytes stay at ETH." },
+      ]
+    },
     "imaging-plaza": {"rete": "imaging-plaza/imaging-plaza.rete", "duckdb": "imaging-plaza/imaging-plaza.duckdb", "duckdbSize": "780 KB", "sqlite": "imaging-plaza/imaging-plaza.sqlite", "sqliteSize": "1.9 MB", "parquet": "imaging-plaza/imaging-plaza.parquet", "flat": true, "about": "The Imaging Plaza graph as a flat <code>triples</code> table (subject, predicate, object token + decoded value/datatype/lang) in Parquet, DuckDB and SQLite — the same 5,834 facts, in SQL, to compare against the rete engine. Includes the ontology and SHACL shapes, so the FAIR constraints are queryable as rows too."},
     "enac-it4research": {"rete": "enac-it4research/enac-it4research.rete", "duckdb": "enac-it4research/enac-it4research.duckdb", "duckdbSize": "2.6 MB", "sqlite": "enac-it4research/enac-it4research.sqlite", "sqliteSize": "2.9 MB", "parquet": "enac-it4research/enac-it4research.parquet", "flat": true, "about": "The ENAC graph as a flat <code>triples</code> table (subject, predicate, object token + decoded value/datatype/lang) in Parquet, DuckDB and SQLite — the same 5,612 facts, in SQL, to compare against the rete engine."},
     "c4dt": {"rete": "c4dt/c4dt.rete", "duckdb": "c4dt/c4dt.duckdb", "duckdbSize": "1.6 MB", "sqlite": "c4dt/c4dt.sqlite", "sqliteSize": "6.5 MB", "parquet": "c4dt/c4dt.parquet", "flat": true, "about": "The C4DT graph as a flat <code>triples</code> table (subject, predicate, object token + decoded value/datatype/lang) in Parquet, DuckDB and SQLite — the same 18,221 facts, queryable in SQL to compare against the rete engine.", "tables": [{"name": "triples", "file": "c4dt.parquet", "label": "triples — every fact (S, P, O)", "entities": 18221}], "sqlCols": ["subject", "predicate", "object", "otype", "value", "datatype", "lang"], "examples": [{"label": "Projects per lab", "table": {"file": "c4dt.parquet", "name": "triples"}, "sparql": "PREFIX c4dt: <https://w3id.org/rete/c4dt#>\nSELECT ?lab (COUNT(?p) AS ?n) WHERE {\n  ?p c4dt:developedBy ?l . ?l c4dt:labIdentifier ?lab .\n} GROUP BY ?lab ORDER BY DESC(?n)", "duck": "SELECT l.value AS lab, COUNT(*) AS n\nFROM {T} d\nJOIN {T} l ON l.subject = d.object\n            AND l.predicate = '<https://w3id.org/rete/c4dt#labIdentifier>'\nWHERE d.predicate = '<https://w3id.org/rete/c4dt#developedBy>'\nGROUP BY lab\nORDER BY n DESC;", "sqlite": "SELECT l.value AS lab, COUNT(*) AS n\nFROM \"triples\" d\nJOIN \"triples\" l ON l.subject = d.object\n              AND l.predicate = '<https://w3id.org/rete/c4dt#labIdentifier>'\nWHERE d.predicate = '<https://w3id.org/rete/c4dt#developedBy>'\nGROUP BY lab\nORDER BY n DESC;", "note": "One join in SQL to follow project → lab and read its code; one basic graph pattern in SPARQL."}, {"label": "The most-used technical tags", "table": {"file": "c4dt.parquet", "name": "triples"}, "sparql": "PREFIX c4dt: <https://w3id.org/rete/c4dt#>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nSELECT ?tag (COUNT(?p) AS ?n) WHERE {\n  ?p c4dt:tag ?c . ?c skos:notation ?tag .\n} GROUP BY ?tag ORDER BY DESC(?n) LIMIT 20", "duck": "SELECT n.value AS tag, COUNT(*) AS uses\nFROM {T} t\nJOIN {T} n ON n.subject = t.object\n            AND n.predicate = '<http://www.w3.org/2004/02/skos/core#notation>'\nWHERE t.predicate = '<https://w3id.org/rete/c4dt#tag>'\nGROUP BY tag\nORDER BY uses DESC\nLIMIT 20;", "sqlite": "SELECT n.value AS tag, COUNT(*) AS uses\nFROM \"triples\" t\nJOIN \"triples\" n ON n.subject = t.object\n              AND n.predicate = '<http://www.w3.org/2004/02/skos/core#notation>'\nWHERE t.predicate = '<https://w3id.org/rete/c4dt#tag>'\nGROUP BY tag\nORDER BY uses DESC\nLIMIT 20;", "note": "Tags are SKOS concepts, not strings, so both engines join through the concept node to reach its notation."}]},
@@ -7570,6 +7629,9 @@ window.RETE_PLAYGROUND_CATALOG = {
   // `icon` is the tile glyph; `tags` are quick descriptive labels; `reasoning`
   // marks graphs where the Coherence/OWL reasoner is illustrative.
   datasetExtra: {
+    "ethz-research-collection": {"icon": "🎓", "tags": ["ETH Zürich", "institutional-repository", "DSpace", "OAI-PMH", "scholarly", "publications", "research-data", "authors", "ORCID", "DOI", "affiliations", "grants", "file-manifest", "scholar-hub", "federation", "OWL", "reasoning", "CC0"], "reasoning": true},
+    "plantatlas":            { icon: "🌱", tags: ["archaeobotany","plants","seeds","fruits","botany","taxonomy","Darwin-Core","GeoSPARQL","images","WebP","specimens","reference-collection","GIA","DAI","CC-BY-NC-SA"] },
+    "swissubase":            {"icon": "🇨🇭", "tags": ["FORS", "Switzerland", "social-sciences", "humanities", "research-data", "DataCite", "DOI", "DDI", "SKOS", "scholar-hub", "versioning", "multilingual", "CC"], "reasoning": true},
     "c4dt":                  {"icon": "🛡️", "tags": ["EPFL", "C4DT", "research-software", "digital-trust", "privacy", "security", "cryptography", "labs", "open-pulse", "federation", "schema.org", "SKOS", "W3C-Org", "OWL", "reasoning", "AGPL"], "reasoning": true},
     "lombardi":              {"icon": "🕸️", "tags": ["Mark Lombardi", "art", "networks", "conspiracy", "drawings", "BCCI", "arms trade", "banking", "scandals", "OWL", "reasoning", "schema.org", "FOAF", "CC-BY-NC-SA"], "reasoning": true},
     "dblp":                  { icon: "💻", tags: ["DBLP","computer-science","bibliography","co-authorship","authors","DOI","ORCID","scholarly","publications","conferences","federation","CC0"] },
@@ -7578,6 +7640,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     "gotriple":              { icon: "📚", tags: ["SSH","social-sciences","humanities","GoTriple","OPERAS","DOI","scholarly","open-access","disciplines","SSH-LCSH","subjects","multilingual","federation","CC0"] },
     "zenodo-records":        { icon: "🔬", tags: ["Zenodo","DataCite","DOI","ORCID","scholarly","research-data","open-access","citations","versions","federation","CERN","CC-BY"] },
     "orcid":                 { icon: "🧑‍🔬", tags: ["ORCID","researchers","works","affiliations","DOI","ROR","scholarly","career","billion-triples","external-build","federation","CC0"] },
+    "gharchive":             { icon: "🐙", tags: ["GitHub","events","PROV","RDF-star","provenance","time-series","stars","commits","billion-triples","external-build","federation","open-pulse"] },
     "ror":                   { icon: "🏛️", tags: ["ROR","organizations","institutions","authority","crosswalk","GRID","ISNI","Wikidata","FundRef","hierarchy","scholarly","federation","CC0"] },
     "biosyslit":             { icon: "🦋", tags: ["Zenodo","biodiversity","taxonomy","Darwin-Core","treatments","Plazi","BLR","IIIF","DOI","scholarly","federation","CC-BY"] },
     "open-pulse":            { icon: "💓", tags: ["EPFL","SDSC","research-software","GitHub","open-source","contributors","organizations","ROR","ORCID","schema.org","org-ontology","Switzerland"] },
@@ -7651,6 +7714,80 @@ window.RETE_PLAYGROUND_CATALOG = {
     "ecal":                  { icon: "🎨", tags: ["art", "design", "photography", "cinema", "ECAL", "Lausanne", "covers", "schema.org"] },
   },
   examples: {
+    "ethz-research-collection": [
+      {"family": "Select", "label": "Recent ETH doctoral theses", "view": "table",
+       "cols": {"t": "Thesis", "title": "Title", "y": "Year"},
+       "tip": "ETH doctoral theses, newest first — each ?t is minted at its ETH DOI (10.3929/ethz-…). ethz:DoctoralThesis is one of ~18 per-type classes the graph is typed by, so the types pyramid groups them.\nSwap ethz:DoctoralThesis for ethz:JournalArticle, ethz:ConferencePaper or ethz:Dataset to browse another output type.",
+       "q": "PREFIX ethz: <https://w3id.org/rete/ethz#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nSELECT ?t ?title ?y WHERE {\n  ?t a ethz:DoctoralThesis ; rdfs:label ?title ; dcterms:issued ?y .\n} ORDER BY DESC(?y) LIMIT 50"},
+      {"family": "Select", "label": "The file manifest of a publication", "view": "table",
+       "cols": {"name": "File", "mime": "Type", "bytes": "Bytes", "url": "Download"},
+       "tip": "The ORIGINAL-bundle files of one item — here handle 20.500.11850/715512 (the paper 'MathGAP'). Each ethz:File carries its MIME type, byte size, MD5 checksum and a resolvable download URL; the bytes themselves are NOT in the graph, only their manifest.\nChange the handle to any item's to see its files; the ?url column links straight to ETH's bitstream endpoint.",
+       "q": "PREFIX ethz: <https://w3id.org/rete/ethz#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nSELECT ?name ?mime ?bytes ?url WHERE {\n  ?w ethz:handle \"20.500.11850/715512\" ; ethz:hasFile ?f .\n  ?f rdfs:label ?name ; dcterms:format ?mime ; ethz:sizeBytes ?bytes ; ethz:downloadURL ?url .\n}"},
+      {"family": "Aggregate", "label": "Most prolific ORCID-identified authors", "view": "table",
+       "cols": {"name": "Author", "n": "Works"},
+       "tip": "Authors with the most deposited works, restricted to those with an ORCID (ethz:orcid) so the count is per real person, not per name string. Each ?a is minted at https://orcid.org/{orcid} — the SAME IRI the ORCID dataset uses, so adding orcid as a second source merges these nodes.\nKay Axhausen (transport planning) tops the list; the ?name is the person's name.",
+       "q": "PREFIX ethz: <https://w3id.org/rete/ethz#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?name (COUNT(?w) AS ?n) WHERE {\n  ?w ethz:creator ?a . ?a ethz:orcid ?o ; rdfs:label ?name .\n} GROUP BY ?a ?name ORDER BY DESC(?n) LIMIT 25"},
+      {"family": "Path", "label": "A whole department's journal output (affiliation tree)", "view": "table",
+       "cols": {"title": "Article", "y": "Year"},
+       "tip": "Walks the ETH Leitzahl org tree with a property path: org:subOrganizationOf* gathers unit 02150 (Dep. Informatik / Computer Science) AND every institute and chair beneath it, then pulls the journal articles affiliated to any of them.\nSwap unit 02150 for another Leitzahl code to roll up a different department.",
+       "q": "PREFIX ethz: <https://w3id.org/rete/ethz#>\nPREFIX org: <http://www.w3.org/ns/org#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nSELECT ?title ?y WHERE {\n  ?u org:subOrganizationOf* <https://w3id.org/rete/ethz/unit/02150> .\n  ?w ethz:affiliation ?u ; a ethz:JournalArticle ; rdfs:label ?title ; dcterms:issued ?y .\n} ORDER BY DESC(?y) LIMIT 50"},
+      {"family": "Aggregate", "label": "Open access vs metadata-only", "view": "table",
+       "cols": {"avail": "Availability", "n": "Items"},
+       "tip": "How ETH's outputs split by access status — Metadata only vs Open access vs Closed / Embargoed. Open-access items are the ones whose ethz:hasFile bitstreams are publicly downloadable.\nA plain GROUP BY over ethz:availability across the live items.",
+       "q": "PREFIX ethz: <https://w3id.org/rete/ethz#>\nSELECT ?avail (COUNT(?w) AS ?n) WHERE {\n  ?w ethz:availability ?avail .\n} GROUP BY ?avail ORDER BY DESC(?n)"},
+    ],
+    "plantatlas": [
+      {"family": "Select", "label": "Wheat (Triticum) seeds & fruits, with the photo", "view": "table",
+       "cols": {"name": "Scientific name", "part": "Plant part", "image": "Photo"},
+       "tip": "Every pa:Photo carries its picture as a WebP URL (schema:image). The 'Photo' column ends in .webp, so the playground renders it inline as a thumbnail — click to enlarge.\nThis pulls the reference-collection photos of the wheat genus Triticum (MI_/DF_ accessions) with their published plant part.",
+       "q": "PREFIX pa: <https://w3id.org/rete/plantatlas/ontology#>\nPREFIX dwc: <http://rs.tdwg.org/dwc/terms/>\nPREFIX schema: <http://schema.org/>\nSELECT ?name ?part ?image WHERE {\n  ?photo a pa:Photo ; dwc:genus \"Triticum\" ;\n         dwc:scientificName ?name ; pa:plantPart ?part ;\n         schema:image ?image .\n} LIMIT 40"},
+      {"family": "Geo", "label": "Where the field ('Nature') photos were collected", "view": "map",
+       "cols": {"name": "Species", "image": "Photo", "wkt": "Location"},
+       "tip": "The RC_ 'Nature' photos are the only geolocated set — their collection place (pa:atLocality → a pa:Locality with geo:asWKT) is the sole source of lat/lon.\nSwitch Output → Map to plot each photo at its locality; the popup shows the species and its WebP picture.",
+       "q": "PREFIX pa: <https://w3id.org/rete/plantatlas/ontology#>\nPREFIX schema: <http://schema.org/>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?name ?image ?wkt WHERE {\n  ?photo a pa:Photo ; pa:source \"nature\" ; rdfs:label ?name ;\n         schema:image ?image ; pa:atLocality ?loc .\n  ?loc geo:asWKT ?wkt .\n} LIMIT 400"},
+      {"family": "Aggregate", "label": "Top plant families by number of photos", "view": "table",
+       "cols": {"family": "Family", "n": "Photos"},
+       "tip": "Taxon comes from dwc:family (100% filled) rather than the upstream scientificName (only 13% filled).\nPoaceae (grasses — the cereals) and Fabaceae (legumes) dominate, as you'd expect of an archaeobotany seed reference collection.",
+       "q": "PREFIX pa: <https://w3id.org/rete/plantatlas/ontology#>\nPREFIX dwc: <http://rs.tdwg.org/dwc/terms/>\nSELECT ?family (COUNT(?photo) AS ?n) WHERE {\n  ?photo a pa:Photo ; dwc:family ?family .\n} GROUP BY ?family ORDER BY DESC(?n) LIMIT 25"},
+      {"family": "Path", "label": "A specimen → its example photos", "view": "table",
+       "cols": {"label": "Specimen", "part": "Plant part", "image": "Photo"},
+       "tip": "pa:hasPhoto is the specimen↔photo join, recovered from the reference-collection detail pages: one pa:Specimen has several pa:Photo parts (florets, fruits, spikelets…).\nThe 'Photo' column renders each part's WebP inline — a single specimen shown from several angles/parts.",
+       "q": "PREFIX pa: <https://w3id.org/rete/plantatlas/ontology#>\nPREFIX schema: <http://schema.org/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?label ?part ?image WHERE {\n  ?spec a pa:Specimen ; rdfs:label ?label ; pa:hasPhoto ?photo .\n  ?photo schema:image ?image ; pa:plantPart ?part .\n} LIMIT 40"},
+      {"family": "Summary", "label": "Plant parts across all photos", "view": "table",
+       "cols": {"part": "Plant part", "n": "Photos"},
+       "tip": "pa:plantPart is the published archaeobotanical part label — what the reference photo actually shows.\nSeed and Fruit dominate (this is a seed/fruit identification atlas), then whole plants (the geolocated field photos) and finer parts like fruitlet, floret and spikelet.",
+       "q": "PREFIX pa: <https://w3id.org/rete/plantatlas/ontology#>\nSELECT ?part (COUNT(?photo) AS ?n) WHERE {\n  ?photo a pa:Photo ; pa:plantPart ?part .\n} GROUP BY ?part ORDER BY DESC(?n) LIMIT 20"}
+    ],
+    "swissubase": [
+      {"family": "Aggregate", "label": "Most-versioned datasets", "view": "table",
+       "cols": {"dataset": "Dataset (DOI)", "title": "Title", "versions": "Versions"},
+       "tip": "Each citable su:Dataset is minted at its canonical concept DOI (prefix 10.48573) and groups its su:DatasetVersion nodes.\nThe top hit, 10.48573/pjmf-8s41, has 19 versions — SWISSUbase reuses one concept DOI across every version, like Zenodo, so the graph keeps the versions distinct instead of collapsing them.",
+       "q": "PREFIX su: <https://w3id.org/rete/swissubase#>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?dataset ?title (COUNT(?v) AS ?versions) WHERE {\n  ?dataset a su:Dataset ; dct:title ?title ; su:hasVersion ?v .\n} GROUP BY ?dataset ?title ORDER BY DESC(?versions) LIMIT 15"},
+      {"family": "Select", "label": "Creative-Commons dataset versions", "view": "table",
+       "cols": {"version": "Version", "title": "Title", "license": "CC licence"},
+       "tip": "dct:license carries the canonical Creative Commons licence URI, and only the openly-licensed versions have it.\nMost SWISSUbase data is Restricted (needs a download contract) — these are the freely reusable ones.",
+       "q": "PREFIX su: <https://w3id.org/rete/swissubase#>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?version ?title ?license WHERE {\n  ?version a su:DatasetVersion ; dct:title ?title ; dct:license ?license .\n} LIMIT 50"},
+      {"family": "Path", "label": "Studies → the datasets they produced", "view": "table",
+       "cols": {"study": "Study", "dataset": "Dataset (DOI)", "datasetTitle": "Dataset title"},
+       "tip": "su:hasDataset links a research study to the citable datasets it produced (from the catalogue hierarchy).\nThe dataset IRI is its DOI, so each row resolves to a real DataCite record at doi.org.",
+       "q": "PREFIX su: <https://w3id.org/rete/swissubase#>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?study ?dataset ?datasetTitle WHERE {\n  ?study a su:Study ; su:hasDataset ?dataset .\n  ?dataset dct:title ?datasetTitle .\n} LIMIT 50"},
+      {"family": "Aggregate", "label": "Licence-type breakdown", "view": "table",
+       "cols": {"licenceType": "Licence type", "n": "Versions"},
+       "tip": "su:licenseIconCode is the licence per dataset version: 'restricted' vs the Creative Commons variants (by, by-sa, by-nc, …), 'public' and 'public-domain'.\nRestricted dominates — SWISSUbase mediates most access through a bilateral contract with the responsible Data Service Unit.",
+       "q": "PREFIX su: <https://w3id.org/rete/swissubase#>\nSELECT ?licenceType (COUNT(?v) AS ?n) WHERE {\n  ?v a su:DatasetVersion ; su:licenseIconCode ?licenceType .\n} GROUP BY ?licenceType ORDER BY DESC(?n)"},
+      {"family": "Path", "label": "Discipline SKOS hierarchy", "view": "table",
+       "cols": {"field": "Broader field", "subDiscipline": "Sub-discipline"},
+       "tip": "The SNSF discipline classification is modelled as a SKOS concept scheme with skos:broader / narrower and multilingual labels.\nThis walks each sub-discipline up to its broader field, in English.",
+       "q": "PREFIX su: <https://w3id.org/rete/swissubase#>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nSELECT ?field ?subDiscipline WHERE {\n  ?narrow a su:Discipline ; skos:broader ?broad ; skos:prefLabel ?subDiscipline .\n  ?broad skos:prefLabel ?field .\n  FILTER(LANG(?subDiscipline) = \"en\" && LANG(?field) = \"en\")\n} ORDER BY ?field LIMIT 40"},
+      {"family": "Select", "label": "Survey data with informed consent", "view": "table",
+       "cols": {"version": "Version", "title": "Title"},
+       "tip": "DDI domain metadata is reified as su:DomainMetadata blocks; su:consentOfRespondents flags survey datasets that recorded participant consent.\nThe numeric DDI codes (data type, time method) are kept raw because their label vocabulary is member-gated on SWISSUbase.",
+       "q": "PREFIX su: <https://w3id.org/rete/swissubase#>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?version ?title WHERE {\n  ?version a su:DatasetVersion ; dct:title ?title ; su:hasDomainMetadata ?dm .\n  ?dm su:consentOfRespondents true .\n} LIMIT 50"},
+      {"family": "Select", "label": "Hub join by DOI — turn on 🧠", "view": "table",
+       "cols": {"work": "Work", "doi": "DOI", "title": "Title"},
+       "tip": "Turn on the 🧠 reasoner: su:canonicalDoi and su:forsDoi are sub-properties of scholar:doi, so this resolves SWISSUbase DOIs — and the SAME query spans DataCite, Zenodo, OpenAIRE, Crossref and DBLP in a federated graph.\nWithout reasoning it returns nothing, because scholar:doi is never asserted directly.",
+       "q": "PREFIX scholar: <https://w3id.org/rete/scholar#>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?work ?doi ?title WHERE {\n  ?work scholar:doi ?doi ; dct:title ?title .\n} LIMIT 50"}
+    ],
     "neuro-showcase": [
       {"family": "Select", "label": "🧊 The astrocytes in 3D", "view": "table", "cols": {"model": "3D mesh", "astrocyte": "Cell", "faces": "Triangles", "endfeet": "Endfeet"},
        "tip": "The three NGV astrocytes, each with the URL of its Draco-GLB surface mesh in the ?model column — the playground renders it inline, so click 🧊 to open the mesh and rotate it.\nThese are electron-microscopy reconstructions: the sponge-like leaflet processes you can see are exactly the fine morphology that light-microscopy skeletons (e.g. NeuroMorpho's astrocytes) cannot resolve. Triangle counts are the full-resolution figures; the preview GLB is decimated to 15%.",
@@ -7765,6 +7902,22 @@ window.RETE_PLAYGROUND_CATALOG = {
        "tip": "Switch Output to Graph. One document at the centre with its SSH-LCSH subjects fanning out (gtr:knowsAbout), each labelled in English — how a paper is placed in the subject network.\nBecause the document sits at its canonical DOI IRI, this same node is where it joins the DataCite / Zenodo / OpenAIRE graphs. Change the DOI to explore another paper.",
        "q": "PREFIX gtr: <https://w3id.org/rete/gotriple#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nCONSTRUCT {\n  ?d gtr:knowsAbout ?s .\n  ?d rdfs:label ?dl .\n  ?s rdfs:label ?sl .\n} WHERE {\n  VALUES ?d { <https://doi.org/10.26504/rs97.pdf> }\n  OPTIONAL { ?d rdfs:label ?dl }\n  ?d gtr:knowsAbout ?s .\n  OPTIONAL { ?s rdfs:label ?sl }\n}"}
     ],
+    "gharchive": [
+      {"family": "Select", "label": "⭐ VS Code's star count, hour by hour — RDF-star observations", "view": "table", "cols": {"stars": "Stargazers", "t": "Observed at (UTC)"},
+       "tip": "Every GitHub PR event embeds the repository's live metadata, so the graph holds the star count of microsoft/vscode (the VS Code editor) as ~1,900 dated OBSERVATIONS rather than one overwritten number: << repo gh:stars ?n >> prov:generatedAtTime ?t. Across July 2025 it climbs from 174,029 to 175,188.\nThis is the RDF-star quoted-triple syntax — the subject of prov:generatedAtTime is the star-count statement itself. Swap in any busy repo's https://github.com/{owner}/{repo} IRI to chart its month.",
+       "q": "PREFIX gh: <https://w3id.org/rete/gharchive#>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nSELECT ?stars ?t WHERE {\n  << <https://github.com/microsoft/vscode> gh:stars ?stars >> prov:generatedAtTime ?t .\n} ORDER BY ?t LIMIT 200"},
+      {"family": "Select", "label": "Who starred PyTorch on July 22 — with full provenance", "view": "table", "cols": {"user": "Stargazer", "t": "When (UTC)", "ev": "Generating event"},
+       "tip": "Each gh:starred edge is annotated with WHEN it happened and WHICH archived event asserted it — the provenance triple pattern << ?user gh:starred ?repo >> prov:atTime ?t ; prov:wasGeneratedBy ?ev. pytorch/pytorch is the deep-learning framework's main repo.\nThe FILTER keeps one day of the month; drop it to see all ~2,600 July stargazers. The ?ev IRI is the GH Archive event id — a stable citation for the observation.",
+       "q": "PREFIX gh: <https://w3id.org/rete/gharchive#>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\nSELECT ?user ?t ?ev WHERE {\n  << ?user gh:starred <https://github.com/pytorch/pytorch> >> prov:atTime ?t .\n  << ?user gh:starred <https://github.com/pytorch/pytorch> >> prov:wasGeneratedBy ?ev .\n  FILTER(?t >= \"2025-07-22T00:00:00Z\"^^xsd:dateTime && ?t < \"2025-07-23T00:00:00Z\"^^xsd:dateTime)\n} ORDER BY ?t LIMIT 100"},
+      {"family": "Select", "label": "Linus Torvalds' July, event by event", "view": "table", "cols": {"type": "Event type", "repo": "Repository", "t": "When (UTC)"},
+       "tip": "One person's public month: all 65 events prov:wasAssociatedWith https://github.com/torvalds — kernel pushes to torvalds/linux interleaved with commits to 1590A, his guitar-pedal electronics side project.\nUsers sit at their real GitHub URL, so any https://github.com/{login} works here — and because the IRIs are shared, the same node carries data in the open-pulse and oss-github-benchmark graphs.",
+       "q": "PREFIX gh: <https://w3id.org/rete/gharchive#>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nSELECT ?type ?repo ?t WHERE {\n  ?ev prov:wasAssociatedWith <https://github.com/torvalds> ;\n      a ?type ; gh:repo ?repo ; prov:atTime ?t .\n} ORDER BY ?t LIMIT 100"},
+      {"family": "Select", "label": "A repository's metadata card: 🤗 transformers", "view": "table", "cols": {"p": "Property", "o": "Value"},
+       "tip": "The stable facts observed for huggingface/transformers during July: schema:description, programmingLanguage Python, the licence as a real SPDX IRI (Apache-2.0), 21 schema:keywords topics, dateCreated — plus the RDF-star-annotated volatile counts (gh:stars/gh:forks) with their observation times.\nAll of it was harvested from event payloads alone — no GitHub API call was ever made. Bind any repo that had a PR or fork in July 2025 (~1.9M of them carry a snapshot).",
+       "q": "SELECT ?p ?o WHERE {\n  <https://github.com/huggingface/transformers> ?p ?o .\n} LIMIT 100"},
+      {"family": "Select", "label": "Home Assistant's July release train", "view": "table", "cols": {"tag": "Tag", "t": "Released (UTC)"},
+       "tip": "Releases are first-class nodes linked to their repo by gh:inRepo and to the archived ReleaseEvent that announced them — home-assistant/core (the smart-home platform) shipped its 2025.7 betas, the 2025.7.x patch series and the first 2025.8 beta inside the month.\nJoin ?ev prov:atTime for the exact publication moment; gh:tag holds the git tag string.",
+       "q": "PREFIX gh: <https://w3id.org/rete/gharchive#>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nSELECT ?tag ?t WHERE {\n  ?rel gh:inRepo <https://github.com/home-assistant/core> ; gh:tag ?tag .\n  ?ev gh:release ?rel ; prov:atTime ?t .\n} ORDER BY ?t LIMIT 50"}],
     "orcid": [
       {"family": "Select", "label": "Researcher cards: Berners-Lee, Bengio & co", "view": "table", "cols": {"researcher": "ORCID iD", "name": "Name", "given": "Given names", "family": "Family name", "id": "iD"},
        "tip": "Three single-subject probes on a 1.3-BILLION-triple file — https://orcid.org/0000-0003-1279-3709 is Tim Berners-Lee, 0000-0002-9322-3515 is Yoshua Bengio — each read fetches only the index tiles those nodes touch (~30 MB of 17.5 GB).\nThe iD column is the canonical orcid.org IRI itself: paste any ORCID you know into the VALUES to add a row.",
@@ -16766,6 +16919,171 @@ self.onmessage = function (e) {
   }
   function model3dCell(t) { return looksMeshUrl(t.value) ? mesh3dCell(t) : viewer3dCell(t); }
 
+  // ---- inline molecular-structure cells (.cif/.pdb via 3Dmol.js) -------------
+  // Protein / complex structures are NOT meshes — <model-viewer> can't parse mmCIF
+  // or PDB — so a .cif/.pdb/.mmcif/.ent URL gets a lazy 3Dmol.js viewer instead
+  // (cartoon ribbon, spectrum colour, gentle spin). The library is one CDN script
+  // loaded on first appearance; each viewer FETCHES its structure text (so, unlike
+  // an <img>, it needs CORS) only when scrolled near the viewport. A structure on a
+  // host that omits CORS can't be read cross-origin — the cell then degrades to an
+  // "open structure ↗" link (e.g. ProteinBase's own bucket; mirror to R2 to fix).
+  function looksMolUrl(v) {
+    return /^https?:\/\//i.test(v) && /\.(cif|mmcif|bcif|pdb|pdb1|ent)(\.gz)?(\?|#|$)/i.test(v);
+  }
+  function molFormat(url) {
+    const u = String(url).split(/[?#]/)[0].toLowerCase().replace(/\.gz$/, "");
+    return /\.(cif|mmcif|bcif)$/.test(u) ? "cif" : "pdb";
+  }
+  let mol3dLoading = null;
+  function ensureMol3d() {
+    if (mol3dLoading) return mol3dLoading;
+    mol3dLoading = new Promise((resolve) => {
+      if (window.$3Dmol) { resolve(true); return; }
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/3dmol@2.4.2/build/3Dmol-min.js";
+      s.onload = () => resolve(true);
+      s.onerror = () => resolve(false);
+      document.head.appendChild(s);
+    });
+    return mol3dLoading;
+  }
+  function mol3dCell(t) {
+    const url = httpsUpgrade(t.value);
+    const fmt = molFormat(url);
+    return `<td class="iri mol3d-cell">` +
+      `<div class="mol3d-inline" data-mol-url="${esc(url)}" data-mol-format="${fmt}" ` +
+      `role="img" aria-label="3D molecular structure"></div>` +
+      `<button type="button" class="mol3d-expand" data-mol="${esc(url)}" data-mol-format="${fmt}" ` +
+      `title="Enlarge — ${esc(t.value)}" aria-label="Enlarge structure">⛶</button>` +
+      `${mediaSourceLink(url, "mol3d")}</td>`;
+  }
+  // Style a freshly-loaded model: cartoon+spectrum for polymers, sticks for any
+  // ligand/small molecule that has no secondary structure to ribbon.
+  function molStyleDefault(v) {
+    v.setStyle({}, { cartoon: { color: "spectrum" } });
+    v.setStyle({ hetflag: true }, { stick: {} });
+  }
+  function buildMolViewer(el, opts) {
+    el.__molBuilt = true;
+    const url = el.getAttribute("data-mol-url");
+    const fmt = el.getAttribute("data-mol-format") || molFormat(url);
+    el.innerHTML = '<div class="mol3d-loading">Loading structure…</div>';
+    ensureMol3d().then((ok) => {
+      if (!ok) { el.innerHTML = '<div class="mol3d-fallback">3D viewer unavailable</div>'; return; }
+      fetch(url).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+        .then((data) => {
+          el.innerHTML = "";
+          const v = window.$3Dmol.createViewer(el, { backgroundColor: (opts && opts.bg) || "0x15161a" });
+          v.addModel(data, fmt);
+          molStyleDefault(v);
+          v.zoomTo();
+          v.render();
+          v.zoom(1.15, 400);
+          if (!opts || opts.spin !== false) v.spin("y", 0.6);
+          el.__molViewer = v;
+        })
+        .catch((err) => {
+          // CORS or fetch failure — degrade to a link rather than a dead box.
+          el.classList.add("mol3d-blocked");
+          el.innerHTML = '<a class="mol3d-fallback-link" href="' + esc(url) + '" target="_blank" ' +
+            'rel="noopener noreferrer" title="' + esc(String((err && err.message) || err)) +
+            '">⚛ open structure ↗</a>';
+        });
+    });
+  }
+  let molObserver = null;
+  function hydrateMol3d(scope) {
+    const root = scope || document;
+    const isCell = root.classList && root.classList.contains("mol3d-inline");
+    const cells = isCell ? [root] : (root.querySelectorAll ? Array.from(root.querySelectorAll(".mol3d-inline")) : []);
+    if (!cells.length) return;
+    if (!molObserver && "IntersectionObserver" in window) {
+      molObserver = new IntersectionObserver((entries) => {
+        entries.forEach((en) => {
+          if (en.isIntersecting && !en.target.__molBuilt) { buildMolViewer(en.target); molObserver.unobserve(en.target); }
+        });
+      }, { rootMargin: "200px" });
+    }
+    cells.forEach((el) => {
+      if (el.__molBuilt || el.__molObserved) return;
+      if (molObserver) { el.__molObserved = true; molObserver.observe(el); }
+      else buildMolViewer(el);
+    });
+  }
+  // ---- molecular-structure lightbox (⛶) — bigger viewer + representation toggles
+  let mol3dModalEl = null;
+  function ensureMol3dModal() {
+    if (mol3dModalEl) return mol3dModalEl;
+    const el = document.createElement("div");
+    el.className = "mol3d-modal hidden";
+    el.innerHTML =
+      '<div class="mol3d-backdrop"></div>' +
+      '<div class="mol3d-box" role="dialog" aria-modal="true" aria-label="Structure viewer">' +
+        '<button class="mol3d-close" type="button" aria-label="close">×</button>' +
+        '<div class="mol3d-stage"></div>' +
+        '<div class="mol3d-controls">' +
+          '<button type="button" class="mol3d-style on" data-style="cartoon">Cartoon</button>' +
+          '<button type="button" class="mol3d-style" data-style="stick">Sticks</button>' +
+          '<button type="button" class="mol3d-style" data-style="sphere">Spheres</button>' +
+          '<button type="button" class="mol3d-style" data-style="surface">Surface</button>' +
+          '<button type="button" class="mol3d-spin on">Spin</button>' +
+        '</div>' +
+        '<div class="mol3d-foot"><span class="mol3d-hint">drag to rotate · scroll to zoom</span>' +
+          '<a class="mol3d-src" target="_blank" rel="noopener noreferrer">open file ↗</a></div>' +
+      '</div>';
+    const close = () => { el.classList.add("hidden"); el.querySelector(".mol3d-stage").innerHTML = ""; el.__viewer = null; };
+    el.querySelector(".mol3d-close").addEventListener("click", close);
+    el.querySelector(".mol3d-backdrop").addEventListener("click", close);
+    el.querySelectorAll(".mol3d-style").forEach((b) => b.addEventListener("click", () => {
+      el.querySelectorAll(".mol3d-style").forEach((x) => x.classList.remove("on"));
+      b.classList.add("on");
+      const v = el.__viewer; if (!v) return;
+      const s = b.getAttribute("data-style");
+      if (v.removeAllSurfaces) v.removeAllSurfaces();
+      v.setStyle({}, {});
+      if (s === "cartoon") molStyleDefault(v);
+      else if (s === "stick") v.setStyle({}, { stick: {} });
+      else if (s === "sphere") v.setStyle({}, { sphere: {} });
+      else if (s === "surface") { molStyleDefault(v); v.addSurface(window.$3Dmol.SurfaceType.VDW, { opacity: 0.68, color: "white" }); }
+      v.render();
+    }));
+    const spinBtn = el.querySelector(".mol3d-spin");
+    spinBtn.addEventListener("click", () => {
+      const on = !spinBtn.classList.contains("on");
+      spinBtn.classList.toggle("on", on);
+      if (el.__viewer) el.__viewer.spin(on ? "y" : false);
+    });
+    document.body.appendChild(el);
+    mol3dModalEl = el;
+    return el;
+  }
+  function openMol3d(url, fmt) {
+    const el = ensureMol3dModal();
+    const stage = el.querySelector(".mol3d-stage");
+    el.querySelector(".mol3d-src").href = url;
+    el.querySelector(".mol3d-spin").classList.add("on");
+    el.querySelectorAll(".mol3d-style").forEach((x, i) => x.classList.toggle("on", i === 0));
+    stage.innerHTML = '<div class="mol3d-loading">Loading structure…</div>';
+    el.classList.remove("hidden");
+    ensureMol3d().then((ok) => {
+      if (!ok) { stage.innerHTML = '<div class="mol3d-loading">3D viewer unavailable — <a href="' + esc(url) + '" target="_blank" rel="noopener">open file ↗</a></div>'; return; }
+      fetch(url).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+        .then((data) => {
+          stage.innerHTML = "";
+          const v = window.$3Dmol.createViewer(stage, { backgroundColor: "0x15161a" });
+          v.addModel(data, fmt || molFormat(url));
+          molStyleDefault(v);
+          v.zoomTo(); v.render(); v.spin("y", 0.6);
+          el.__viewer = v;
+        })
+        .catch((err) => {
+          stage.innerHTML = '<div class="mol3d-loading">Couldn’t load this structure (' +
+            esc(String((err && err.message) || err)) + ').<br>The host may not allow cross-origin reads — <a href="' +
+            esc(url) + '" target="_blank" rel="noopener">open file ↗</a></div>';
+        });
+    });
+  }
+
   let modelViewerLoading = null;
   function ensureModelViewer() {
     if (modelViewerLoading) return modelViewerLoading;
@@ -16979,6 +17297,7 @@ self.onmessage = function (e) {
       if (looksImageUrl(t.value)) return imageCell(t); // a Commons file or *.jpg/png/…
       if (looksIiifUrl(t.value)) return iiifCell(t);    // a IIIF manifest → fetch + show its thumbnail
       if (looksMeshUrl(t.value)) return mesh3dCell(t);  // a streamable mesh → inline 3D viewer
+      if (looksMolUrl(t.value)) return mol3dCell(t);    // a .cif/.pdb structure → inline 3Dmol viewer
       if (looks3dViewerUrl(t.value)) return viewer3dCell(t); // a 3D viewer page → open in a tab
       if (looksAudioUrl(t.value)) return audioCell(t);  // a media file → inline player
       if (looksSpinUrl(t.value)) return spinCell(t);    // a pre-rendered turntable → looping spin
@@ -17006,6 +17325,7 @@ self.onmessage = function (e) {
       case "iiif": return iiifCell(t);
       case "geo": return geoCell(t);
       case "model3d": return model3dCell(t);
+      case "mol3d": return mol3dCell(t);
       case "audio": return audioCell(t);
       case "video": return videoCell(t);
       case "spin": return spinCell(t);
@@ -17029,7 +17349,7 @@ self.onmessage = function (e) {
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"], ["button", "Button"],
     ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF viewer"], ["page", "Page preview"], ["markdown", "Markdown"],
-    ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
+    ["geo", "Map"], ["model3d", "3D"], ["mol3d", "Structure"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
@@ -17261,7 +17581,7 @@ self.onmessage = function (e) {
     cardFocus.io = new IntersectionObserver((ents) => {
       ents.forEach((en) => {
         if (!en.isIntersecting) return;
-        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target); hydratePdfViewers(en.target); hydratePagePreviews(en.target);
+        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMol3d(en.target); hydrateMediaMeta(en.target); hydratePdfViewers(en.target); hydratePagePreviews(en.target);
         en.target.querySelectorAll("img.cell-thumb[loading='lazy']").forEach((im) => { im.loading = "eager"; });
         cardFocus.io.unobserve(en.target);
       });
@@ -21105,13 +21425,15 @@ self.onmessage = function (e) {
       const obs = new MutationObserver(() => {
         if (pending) return;
         pending = true;
-        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); hydratePdfViewers(host); hydratePagePreviews(host); }, 60);
+        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMol3d(host); hydrateMediaMeta(host); hydratePdfViewers(host); hydratePagePreviews(host); }, 60);
       });
       obs.observe(host, { childList: true, subtree: true });
       // Delegated: the ⛶ on an inline 3D cell (or a 🧊 3D button) opens the full viewer.
       host.addEventListener("click", (e) => {
         const btn = e.target && e.target.closest && e.target.closest(".model3d-btn, .model3d-expand");
         if (btn) { e.preventDefault(); openModel3d(btn.getAttribute("data-mesh")); return; }
+        const mb = e.target && e.target.closest && e.target.closest(".mol3d-expand");
+        if (mb) { e.preventDefault(); openMol3d(mb.getAttribute("data-mol"), mb.getAttribute("data-mol-format")); return; }
         const gc = e.target && e.target.closest && e.target.closest(".geo-cell[data-geo]");
         if (gc) { e.preventDefault(); openGeoModal(geoData[gc.getAttribute("data-geo")]); }
       });

@@ -5,8 +5,9 @@ description: Publish a built `.rete` dataset to the rete playground: generate op
 
 # Publish a `.rete` dataset to the playground
 
-After **rete-from-graph** produces and verifies `web/foo.rete`, this workflow
-makes it available in the browser playground:
+After **rete-from-graph** produces and verifies `data/foo/foo.rete` (the `.rete`
+lives WITH its dataset, not in `web/`), this workflow makes it available in the
+browser playground:
 
 ```text
 build companions -> upload to R2 -> register catalog -> rebuild -> verify
@@ -14,11 +15,13 @@ build companions -> upload to R2 -> register catalog -> rebuild -> verify
 
 ## 0. Pick the load mode
 
+- **Remote-lazy** (default; anything more than a few MB): serve it straight from
+  Cloudflare R2 from `data/foo/foo.rete`. The browser fetches only the ranges each
+  query touches. The file never needs to enter `web/`.
 - **Embedded** (small, no more than a few MB): base64-inline it into
-  `docs/playground.html` with `scripts/build_playground.py`. The file must be
-  staged in `web/`.
-- **Remote-lazy** (larger): serve it directly from Cloudflare R2. The browser
-  fetches only the ranges each query touches.
+  `docs/playground.html` with `scripts/build_playground.py`. This is the ONLY case
+  that needs the file in `web/` — copy it there as a staging step
+  (`cp data/foo/foo.rete web/foo.rete`) just before the playground rebuild.
 
 Both modes are mirrored in R2 so users can cache or lazy-load the graph.
 
@@ -39,10 +42,10 @@ Companions are optional.
 
 ```bash
 # Defaults to foo/foo.rete.
-skills/rete-publish/scripts/upload_bucket.sh web/foo.rete
+skills/rete-publish/scripts/upload_bucket.sh data/foo/foo.rete
 
 # Explicit object key and recursive companion prefix.
-skills/rete-publish/scripts/upload_bucket.sh web/foo.rete foo/foo.rete
+skills/rete-publish/scripts/upload_bucket.sh data/foo/foo.rete foo/foo.rete
 skills/rete-publish/scripts/upload_bucket.sh data/foo/foo-tables/ foo
 ```
 

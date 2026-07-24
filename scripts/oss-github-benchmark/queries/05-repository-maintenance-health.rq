@@ -1,0 +1,48 @@
+# Maintenance health of institutional code, bucketed by how long ago it was touched.
+# Relates: repository -> last-modified date -> archived flag -> license presence ->
+# fork status -> commit/contributor/issue volume, grouped into staleness buckets.
+#
+# Answers "how much of this code is actually alive?" — a repo that is unlicensed,
+# unarchived and untouched for years is the worst case: it looks available but
+# cannot legally be reused and nobody is maintaining it.
+#
+# CAVEAT: archiving a repository bumps GitHub's updated_at, so archived repos all
+# land in recent buckets — the oldest bucket shows 0 archived not because old code
+# was never retired but because retiring it counts as a touch.
+#
+# Reads: schema:dateModified, gme:archived, schema:license, ossb:isFork,
+#        ossb:numCommits, ossb:numContributors, pulse:githubRepoStars
+PREFIX ossb:   <https://w3id.org/rete/oss-benchmark#>
+PREFIX pulse:  <https://open-pulse.epfl.ch/ontology#>
+PREFIX gme:    <https://openpulse.science/git-metadata-extractor#>
+PREFIX schema: <http://schema.org/>
+PREFIX xsd:    <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?lastTouched
+       (COUNT(DISTINCT ?repo) AS ?repos)
+       (COUNT(DISTINCT ?archivedRepo) AS ?archived)
+       (COUNT(DISTINCT ?repo) - COUNT(DISTINCT ?licensedRepo) AS ?unlicensed)
+       (SUM(?stars) AS ?stars)
+       (SUM(?commits) AS ?commits)
+       (ROUND(AVG(?contributors)) AS ?avgContributors)
+WHERE {
+  ?repo a schema:SoftwareSourceCode ;
+        ossb:isFork false ;
+        schema:dateModified ?modified ;
+        pulse:githubRepoStars ?stars ;
+        ossb:numCommits ?commits ;
+        ossb:numContributors ?contributors .
+
+  BIND(YEAR(?modified) AS ?y)
+  BIND(IF(?y >= 2026, "2026 (current)",
+       IF(?y = 2025, "2025",
+       IF(?y = 2024, "2024",
+       IF(?y >= 2022, "2022-2023", "2021 or older")))) AS ?lastTouched)
+
+  OPTIONAL { ?repo gme:archived true . BIND(?repo AS ?archivedRepo) }
+  # Count the licensed ones and subtract: an OPTIONAL whose only content is
+  # FILTER NOT EXISTS + BIND never binds, so counting "unlicensed" directly yields 0.
+  OPTIONAL { ?repo schema:license ?anyLic . BIND(?repo AS ?licensedRepo) }
+}
+GROUP BY ?lastTouched
+ORDER BY DESC(?lastTouched)

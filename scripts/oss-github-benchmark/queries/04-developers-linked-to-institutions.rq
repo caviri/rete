@@ -1,0 +1,51 @@
+# Developers whose self-declared GitHub company names a benchmark institution.
+# Relates: person -> free-text company string -> institution -> sector, alongside
+# the person's followers / public repos / location / account age.
+#
+# The benchmark has no person->institution edge, so this reconstructs the
+# affiliation by matching the person's gme:company text against institution names.
+#
+# Matching must be on WHOLE WORDS, not substrings: a plain CONTAINS links "Roche"
+# to "University of Rochester" and "Mobiliar" to "Immobiliare.it". Both sides are
+# therefore lowercased, stripped of punctuation to single spaces, and padded with
+# spaces, so " roche " cannot match inside "rochester".
+#
+# ENGINE GOTCHA: the obvious spelling — REGEX(?company, CONCAT("\\b", ?inst, "\\b"))
+# — SILENTLY RETURNS NOTHING. rete's REGEX only evaluates a CONSTANT pattern; the
+# identical pattern built with CONCAT matches 0 rows with no error. REPLACE with a
+# constant pattern is fine, hence this formulation.
+#
+# Reads: pulse:githubUsername, gme:company, gme:location, gme:followers_count,
+#        gme:public_repos, gme:github_created_at, ossb:sector, skos:prefLabel
+PREFIX ossb:   <https://w3id.org/rete/oss-benchmark#>
+PREFIX pulse:  <https://open-pulse.epfl.ch/ontology#>
+PREFIX gme:    <https://openpulse.science/git-metadata-extractor#>
+PREFIX schema: <http://schema.org/>
+PREFIX skos:   <http://www.w3.org/2004/02/skos/core#>
+
+SELECT ?login ?institution ?sector ?company ?location ?followers ?publicRepos ?since
+WHERE {
+  ?p a schema:Person ;
+     pulse:githubUsername ?login ;
+     gme:company ?company ;
+     gme:followers_count ?followers ;
+     gme:public_repos ?publicRepos ;
+     gme:github_created_at ?created .
+
+  ?i a ossb:Institution ; schema:name ?institution ; ossb:sector ?s .
+  ?s skos:prefLabel ?sector .
+
+  # Normalize both sides to " word word " form, then require a whole-word hit.
+  BIND(CONCAT(" ", REPLACE(LCASE(?company),     "[^a-z0-9]+", " "), " ") AS ?normCompany)
+  BIND(CONCAT(" ", REPLACE(LCASE(?institution), "[^a-z0-9]+", " "), " ") AS ?normInst)
+
+  # Institution names under 5 characters ("ABB", "SBB") produce noise even as words.
+  FILTER(STRLEN(?institution) >= 5)
+  FILTER(CONTAINS(?normCompany, ?normInst))
+  FILTER(?followers > 100)
+
+  BIND(SUBSTR(STR(?created), 1, 4) AS ?since)
+  OPTIONAL { ?p gme:location ?location }
+}
+ORDER BY DESC(?followers)
+LIMIT 25

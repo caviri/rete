@@ -4613,7 +4613,26 @@ self.onmessage = function (e) {
   // Inline 3D cells: load the <model-viewer> web component the first time one
   // appears; each <model-viewer> element then upgrades and lazy-loads its own .glb.
   function hydrateModel3d(scope) {
-    if ((scope || document).querySelector(".model3d-cell model-viewer")) ensureModelViewer();
+    const root = scope || document;
+    if (root.querySelector(".model3d-cell model-viewer")) ensureModelViewer();
+    // Time-stamped clips (…glb#t=): once the model loads, freeze it at that moment so
+    // the cell shows the couple exactly when its move happens.
+    root.querySelectorAll(".model3d-cell model-viewer[data-seek]").forEach((mv) => {
+      if (mv.__seekWired) return;
+      mv.__seekWired = true;
+      const at = parseFloat(mv.getAttribute("data-seek"));
+      // play() first to activate the animation timeline (currentTime is a no-op on a
+      // never-started clip), then seek to the moment and pause to hold the pose. The
+      // timeline isn't ready the instant `load` fires, so poll until the seek sticks.
+      const apply = () => { try { mv.play(); mv.currentTime = at; mv.pause(); } catch (e) { /* ignore */ } };
+      let tries = 0;
+      const poll = () => {
+        apply();
+        if (Math.abs((mv.currentTime || 0) - at) > 0.2 && tries++ < 25) setTimeout(poll, 200);
+      };
+      mv.addEventListener("load", poll, { once: true });
+      if (mv.loaded) poll();
+    });
   }
   // ---- geo mini-map cells ---------------------------------------------------
   // A WKT geometry literal (geo:wktLiteral: POINT / POLYGON / LINESTRING …) drawn
@@ -4918,13 +4937,18 @@ self.onmessage = function (e) {
       ? ' camera-target="0m 0.9m 0m" camera-orbit="20deg 80deg 3.4m"' : '';
   }
   function mesh3dCell(t) {
-    const url = httpsUpgrade(t.value);
+    const raw = httpsUpgrade(t.value);
+    // A glb URL may carry a TIME fragment (…glb#t=8.3) — freeze the animation at that
+    // exact moment. The value is built in SPARQL from a move's dance:startTime, so a query
+    // can seek each row to the moment its move happens. Without a fragment, it autoplays.
+    const seek = (raw.match(/#t=([\d.]+)/) || [])[1];
+    const url = raw.replace(/#t=[\d.]+/, "");
     // An inline, rotatable <model-viewer> right in the cell — drag to rotate, plus a
     // gentle auto-spin. The web component is lazy-loaded once (hydrateModel3d); each
     // viewer lazy-loads its .glb only when scrolled near the viewport (loading=lazy),
     // so a 60-row table doesn't fetch 60 meshes at once. The ⛶ opens the full lightbox.
     return `<td class="iri model3d-cell">` +
-      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate autoplay${meshCamera(url)} ` +
+      `<model-viewer class="model3d-inline" src="${esc(url)}" camera-controls auto-rotate${seek ? ` data-seek="${esc(seek)}"` : " autoplay"}${meshCamera(url)} ` +
       `auto-rotate-delay="0" rotation-per-second="28deg" interaction-prompt="none" disable-zoom ` +
       `loading="lazy" reveal="auto" touch-action="pan-y" environment-image="neutral" ` +
       `shadow-intensity="0.6" alt="3D model"></model-viewer>` +
@@ -4940,6 +4964,171 @@ self.onmessage = function (e) {
       `${mediaSourceLink(url, "viewer3d")}</td>`;
   }
   function model3dCell(t) { return looksMeshUrl(t.value) ? mesh3dCell(t) : viewer3dCell(t); }
+
+  // ---- inline molecular-structure cells (.cif/.pdb via 3Dmol.js) -------------
+  // Protein / complex structures are NOT meshes — <model-viewer> can't parse mmCIF
+  // or PDB — so a .cif/.pdb/.mmcif/.ent URL gets a lazy 3Dmol.js viewer instead
+  // (cartoon ribbon, spectrum colour, gentle spin). The library is one CDN script
+  // loaded on first appearance; each viewer FETCHES its structure text (so, unlike
+  // an <img>, it needs CORS) only when scrolled near the viewport. A structure on a
+  // host that omits CORS can't be read cross-origin — the cell then degrades to an
+  // "open structure ↗" link (e.g. ProteinBase's own bucket; mirror to R2 to fix).
+  function looksMolUrl(v) {
+    return /^https?:\/\//i.test(v) && /\.(cif|mmcif|bcif|pdb|pdb1|ent)(\.gz)?(\?|#|$)/i.test(v);
+  }
+  function molFormat(url) {
+    const u = String(url).split(/[?#]/)[0].toLowerCase().replace(/\.gz$/, "");
+    return /\.(cif|mmcif|bcif)$/.test(u) ? "cif" : "pdb";
+  }
+  let mol3dLoading = null;
+  function ensureMol3d() {
+    if (mol3dLoading) return mol3dLoading;
+    mol3dLoading = new Promise((resolve) => {
+      if (window.$3Dmol) { resolve(true); return; }
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/3dmol@2.4.2/build/3Dmol-min.js";
+      s.onload = () => resolve(true);
+      s.onerror = () => resolve(false);
+      document.head.appendChild(s);
+    });
+    return mol3dLoading;
+  }
+  function mol3dCell(t) {
+    const url = httpsUpgrade(t.value);
+    const fmt = molFormat(url);
+    return `<td class="iri mol3d-cell">` +
+      `<div class="mol3d-inline" data-mol-url="${esc(url)}" data-mol-format="${fmt}" ` +
+      `role="img" aria-label="3D molecular structure"></div>` +
+      `<button type="button" class="mol3d-expand" data-mol="${esc(url)}" data-mol-format="${fmt}" ` +
+      `title="Enlarge — ${esc(t.value)}" aria-label="Enlarge structure">⛶</button>` +
+      `${mediaSourceLink(url, "mol3d")}</td>`;
+  }
+  // Style a freshly-loaded model: cartoon+spectrum for polymers, sticks for any
+  // ligand/small molecule that has no secondary structure to ribbon.
+  function molStyleDefault(v) {
+    v.setStyle({}, { cartoon: { color: "spectrum" } });
+    v.setStyle({ hetflag: true }, { stick: {} });
+  }
+  function buildMolViewer(el, opts) {
+    el.__molBuilt = true;
+    const url = el.getAttribute("data-mol-url");
+    const fmt = el.getAttribute("data-mol-format") || molFormat(url);
+    el.innerHTML = '<div class="mol3d-loading">Loading structure…</div>';
+    ensureMol3d().then((ok) => {
+      if (!ok) { el.innerHTML = '<div class="mol3d-fallback">3D viewer unavailable</div>'; return; }
+      fetch(url).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+        .then((data) => {
+          el.innerHTML = "";
+          const v = window.$3Dmol.createViewer(el, { backgroundColor: (opts && opts.bg) || "0x15161a" });
+          v.addModel(data, fmt);
+          molStyleDefault(v);
+          v.zoomTo();
+          v.render();
+          v.zoom(1.15, 400);
+          if (!opts || opts.spin !== false) v.spin("y", 0.6);
+          el.__molViewer = v;
+        })
+        .catch((err) => {
+          // CORS or fetch failure — degrade to a link rather than a dead box.
+          el.classList.add("mol3d-blocked");
+          el.innerHTML = '<a class="mol3d-fallback-link" href="' + esc(url) + '" target="_blank" ' +
+            'rel="noopener noreferrer" title="' + esc(String((err && err.message) || err)) +
+            '">⚛ open structure ↗</a>';
+        });
+    });
+  }
+  let molObserver = null;
+  function hydrateMol3d(scope) {
+    const root = scope || document;
+    const isCell = root.classList && root.classList.contains("mol3d-inline");
+    const cells = isCell ? [root] : (root.querySelectorAll ? Array.from(root.querySelectorAll(".mol3d-inline")) : []);
+    if (!cells.length) return;
+    if (!molObserver && "IntersectionObserver" in window) {
+      molObserver = new IntersectionObserver((entries) => {
+        entries.forEach((en) => {
+          if (en.isIntersecting && !en.target.__molBuilt) { buildMolViewer(en.target); molObserver.unobserve(en.target); }
+        });
+      }, { rootMargin: "200px" });
+    }
+    cells.forEach((el) => {
+      if (el.__molBuilt || el.__molObserved) return;
+      if (molObserver) { el.__molObserved = true; molObserver.observe(el); }
+      else buildMolViewer(el);
+    });
+  }
+  // ---- molecular-structure lightbox (⛶) — bigger viewer + representation toggles
+  let mol3dModalEl = null;
+  function ensureMol3dModal() {
+    if (mol3dModalEl) return mol3dModalEl;
+    const el = document.createElement("div");
+    el.className = "mol3d-modal hidden";
+    el.innerHTML =
+      '<div class="mol3d-backdrop"></div>' +
+      '<div class="mol3d-box" role="dialog" aria-modal="true" aria-label="Structure viewer">' +
+        '<button class="mol3d-close" type="button" aria-label="close">×</button>' +
+        '<div class="mol3d-stage"></div>' +
+        '<div class="mol3d-controls">' +
+          '<button type="button" class="mol3d-style on" data-style="cartoon">Cartoon</button>' +
+          '<button type="button" class="mol3d-style" data-style="stick">Sticks</button>' +
+          '<button type="button" class="mol3d-style" data-style="sphere">Spheres</button>' +
+          '<button type="button" class="mol3d-style" data-style="surface">Surface</button>' +
+          '<button type="button" class="mol3d-spin on">Spin</button>' +
+        '</div>' +
+        '<div class="mol3d-foot"><span class="mol3d-hint">drag to rotate · scroll to zoom</span>' +
+          '<a class="mol3d-src" target="_blank" rel="noopener noreferrer">open file ↗</a></div>' +
+      '</div>';
+    const close = () => { el.classList.add("hidden"); el.querySelector(".mol3d-stage").innerHTML = ""; el.__viewer = null; };
+    el.querySelector(".mol3d-close").addEventListener("click", close);
+    el.querySelector(".mol3d-backdrop").addEventListener("click", close);
+    el.querySelectorAll(".mol3d-style").forEach((b) => b.addEventListener("click", () => {
+      el.querySelectorAll(".mol3d-style").forEach((x) => x.classList.remove("on"));
+      b.classList.add("on");
+      const v = el.__viewer; if (!v) return;
+      const s = b.getAttribute("data-style");
+      if (v.removeAllSurfaces) v.removeAllSurfaces();
+      v.setStyle({}, {});
+      if (s === "cartoon") molStyleDefault(v);
+      else if (s === "stick") v.setStyle({}, { stick: {} });
+      else if (s === "sphere") v.setStyle({}, { sphere: {} });
+      else if (s === "surface") { molStyleDefault(v); v.addSurface(window.$3Dmol.SurfaceType.VDW, { opacity: 0.68, color: "white" }); }
+      v.render();
+    }));
+    const spinBtn = el.querySelector(".mol3d-spin");
+    spinBtn.addEventListener("click", () => {
+      const on = !spinBtn.classList.contains("on");
+      spinBtn.classList.toggle("on", on);
+      if (el.__viewer) el.__viewer.spin(on ? "y" : false);
+    });
+    document.body.appendChild(el);
+    mol3dModalEl = el;
+    return el;
+  }
+  function openMol3d(url, fmt) {
+    const el = ensureMol3dModal();
+    const stage = el.querySelector(".mol3d-stage");
+    el.querySelector(".mol3d-src").href = url;
+    el.querySelector(".mol3d-spin").classList.add("on");
+    el.querySelectorAll(".mol3d-style").forEach((x, i) => x.classList.toggle("on", i === 0));
+    stage.innerHTML = '<div class="mol3d-loading">Loading structure…</div>';
+    el.classList.remove("hidden");
+    ensureMol3d().then((ok) => {
+      if (!ok) { stage.innerHTML = '<div class="mol3d-loading">3D viewer unavailable — <a href="' + esc(url) + '" target="_blank" rel="noopener">open file ↗</a></div>'; return; }
+      fetch(url).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+        .then((data) => {
+          stage.innerHTML = "";
+          const v = window.$3Dmol.createViewer(stage, { backgroundColor: "0x15161a" });
+          v.addModel(data, fmt || molFormat(url));
+          molStyleDefault(v);
+          v.zoomTo(); v.render(); v.spin("y", 0.6);
+          el.__viewer = v;
+        })
+        .catch((err) => {
+          stage.innerHTML = '<div class="mol3d-loading">Couldn’t load this structure (' +
+            esc(String((err && err.message) || err)) + ').<br>The host may not allow cross-origin reads — <a href="' +
+            esc(url) + '" target="_blank" rel="noopener">open file ↗</a></div>';
+        });
+    });
+  }
 
   let modelViewerLoading = null;
   function ensureModelViewer() {
@@ -5154,6 +5343,7 @@ self.onmessage = function (e) {
       if (looksImageUrl(t.value)) return imageCell(t); // a Commons file or *.jpg/png/…
       if (looksIiifUrl(t.value)) return iiifCell(t);    // a IIIF manifest → fetch + show its thumbnail
       if (looksMeshUrl(t.value)) return mesh3dCell(t);  // a streamable mesh → inline 3D viewer
+      if (looksMolUrl(t.value)) return mol3dCell(t);    // a .cif/.pdb structure → inline 3Dmol viewer
       if (looks3dViewerUrl(t.value)) return viewer3dCell(t); // a 3D viewer page → open in a tab
       if (looksAudioUrl(t.value)) return audioCell(t);  // a media file → inline player
       if (looksSpinUrl(t.value)) return spinCell(t);    // a pre-rendered turntable → looping spin
@@ -5181,6 +5371,7 @@ self.onmessage = function (e) {
       case "iiif": return iiifCell(t);
       case "geo": return geoCell(t);
       case "model3d": return model3dCell(t);
+      case "mol3d": return mol3dCell(t);
       case "audio": return audioCell(t);
       case "video": return videoCell(t);
       case "spin": return spinCell(t);
@@ -5204,7 +5395,7 @@ self.onmessage = function (e) {
   const COL_TYPES = [
     ["auto", "Auto"], ["text", "Text"], ["link", "Link"], ["button", "Button"],
     ["image", "Image"], ["iiif", "IIIF"], ["pdf", "PDF viewer"], ["page", "Page preview"], ["markdown", "Markdown"],
-    ["geo", "Map"], ["model3d", "3D"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
+    ["geo", "Map"], ["model3d", "3D"], ["mol3d", "Structure"], ["audio", "Audio"], ["video", "Video"], ["spin", "Spin"], ["number", "Number"],
   ];
   const tableStates = new Map();
   let tableSeq = 0;
@@ -5436,7 +5627,7 @@ self.onmessage = function (e) {
     cardFocus.io = new IntersectionObserver((ents) => {
       ents.forEach((en) => {
         if (!en.isIntersecting) return;
-        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMediaMeta(en.target); hydratePdfViewers(en.target); hydratePagePreviews(en.target);
+        hydrateIiif(en.target); hydrateModel3d(en.target); hydrateMol3d(en.target); hydrateMediaMeta(en.target); hydratePdfViewers(en.target); hydratePagePreviews(en.target);
         en.target.querySelectorAll("img.cell-thumb[loading='lazy']").forEach((im) => { im.loading = "eager"; });
         cardFocus.io.unobserve(en.target);
       });
@@ -9280,13 +9471,15 @@ self.onmessage = function (e) {
       const obs = new MutationObserver(() => {
         if (pending) return;
         pending = true;
-        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMediaMeta(host); hydratePdfViewers(host); hydratePagePreviews(host); }, 60);
+        setTimeout(() => { pending = false; hydrateIiif(host); hydrateModel3d(host); hydrateMol3d(host); hydrateMediaMeta(host); hydratePdfViewers(host); hydratePagePreviews(host); }, 60);
       });
       obs.observe(host, { childList: true, subtree: true });
       // Delegated: the ⛶ on an inline 3D cell (or a 🧊 3D button) opens the full viewer.
       host.addEventListener("click", (e) => {
         const btn = e.target && e.target.closest && e.target.closest(".model3d-btn, .model3d-expand");
         if (btn) { e.preventDefault(); openModel3d(btn.getAttribute("data-mesh")); return; }
+        const mb = e.target && e.target.closest && e.target.closest(".mol3d-expand");
+        if (mb) { e.preventDefault(); openMol3d(mb.getAttribute("data-mol"), mb.getAttribute("data-mol-format")); return; }
         const gc = e.target && e.target.closest && e.target.closest(".geo-cell[data-geo]");
         if (gc) { e.preventDefault(); openGeoModal(geoData[gc.getAttribute("data-geo")]); }
       });

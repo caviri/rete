@@ -1,0 +1,757 @@
+{
+ "@context": {
+  "@language": "en",
+  "@vocab": "https://schema.org/",
+  "citeAs": "cr:citeAs",
+  "column": "cr:column",
+  "conformsTo": "dct:conformsTo",
+  "cr": "http://mlcommons.org/croissant/",
+  "data": {
+   "@id": "cr:data",
+   "@type": "@json"
+  },
+  "dataType": {
+   "@id": "cr:dataType",
+   "@type": "@vocab"
+  },
+  "dct": "http://purl.org/dc/terms/",
+  "equivalentProperty": "cr:equivalentProperty",
+  "examples": {
+   "@id": "cr:examples",
+   "@type": "@json"
+  },
+  "extract": "cr:extract",
+  "field": "cr:field",
+  "fileObject": "cr:fileObject",
+  "fileProperty": "cr:fileProperty",
+  "fileSet": "cr:fileSet",
+  "format": "cr:format",
+  "includes": "cr:includes",
+  "isLiveDataset": "cr:isLiveDataset",
+  "jsonPath": "cr:jsonPath",
+  "key": "cr:key",
+  "md5": "cr:md5",
+  "parentField": "cr:parentField",
+  "path": "cr:path",
+  "rai": "http://mlcommons.org/croissant/RAI/",
+  "recordSet": "cr:recordSet",
+  "references": "cr:references",
+  "regex": "cr:regex",
+  "repeated": "cr:repeated",
+  "replace": "cr:replace",
+  "samplingRate": "cr:samplingRate",
+  "sc": "https://schema.org/",
+  "separator": "cr:separator",
+  "source": "cr:source",
+  "subField": "cr:subField",
+  "transform": "cr:transform"
+ },
+ "@type": "Dataset",
+ "conformsTo": "http://mlcommons.org/croissant/1.0",
+ "name": "ethz-research-collection",
+ "description": "ETH Zürich Research Collection (DSpace 7.6) scholarly graph — per-class entity tables (works, persons, files, journals, grants, units) plus the flat triples table. Companions to the ethz-research-collection.rete graph; aligned to the rete scholar hub via canonical DOI/ORCID/ISSN IRIs.",
+ "url": "https://www.research-collection.ethz.ch/",
+ "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+ "version": "1.0.0",
+ "citeAs": "ETH Research Collection (research-collection.ethz.ch), harvested via OAI-PMH.",
+ "datePublished": "2026-07-23",
+ "distribution": [
+  {
+   "@type": "cr:FileObject",
+   "@id": "files.parquet",
+   "name": "files.parquet",
+   "description": "The ORIGINAL-bundle file manifest — one row per deposited bitstream: name, MIME, size (bytes), MD5 checksum, download URL, bundle. Metadata only; no bytes.",
+   "contentUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-tables/files.parquet",
+   "encodingFormat": "application/x-parquet",
+   "sha256": "unknown"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "grants.parquet",
+   "name": "grants.parquet",
+   "description": "Grants funding the works (name, identifier, programme).",
+   "contentUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-tables/grants.parquet",
+   "encodingFormat": "application/x-parquet",
+   "sha256": "unknown"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "journals.parquet",
+   "name": "journals.parquet",
+   "description": "Serials/journals (one row per journal), ISSN-identified where available.",
+   "contentUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-tables/journals.parquet",
+   "encodingFormat": "application/x-parquet",
+   "sha256": "unknown"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "persons.parquet",
+   "name": "persons.parquet",
+   "description": "Authors, editors and supervisors (one row per person). ORCID-identified people are minted at https://orcid.org/{orcid}.",
+   "contentUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-tables/persons.parquet",
+   "encodingFormat": "application/x-parquet",
+   "sha256": "unknown"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "triples.parquet",
+   "name": "triples.parquet",
+   "description": "The entire graph as a flat, lossless (subject, predicate, object) table with decoded value/datatype/lang columns.",
+   "contentUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-tables/triples.parquet",
+   "encodingFormat": "application/x-parquet",
+   "sha256": "unknown"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "units.parquet",
+   "name": "units.parquet",
+   "description": "ETH Leitzahl organisational units (department / institute / chair-group tree).",
+   "contentUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-tables/units.parquet",
+   "encodingFormat": "application/x-parquet",
+   "sha256": "unknown"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "works.parquet",
+   "name": "works.parquet",
+   "description": "Publications & research data (one row per item), with title, type, issue date, DOI, handle, availability, language, publisher, licence, abstract, and list columns for authors (IRIs) and subjects.",
+   "contentUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-tables/works.parquet",
+   "encodingFormat": "application/x-parquet",
+   "sha256": "unknown"
+  }
+ ],
+ "recordSet": [
+  {
+   "@type": "cr:RecordSet",
+   "@id": "files",
+   "name": "files",
+   "description": "The ORIGINAL-bundle file manifest — one row per deposited bitstream: name, MIME, size (bytes), MD5 checksum, download URL, bundle. Metadata only; no bytes. (158,339 rows)",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "files/entity",
+     "name": "entity",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "files.parquet"
+      },
+      "extract": {
+       "column": "entity"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "files/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "files.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "files/mime",
+     "name": "mime",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "files.parquet"
+      },
+      "extract": {
+       "column": "mime"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "files/size_bytes",
+     "name": "size_bytes",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "files.parquet"
+      },
+      "extract": {
+       "column": "size_bytes"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "files/checksum",
+     "name": "checksum",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "files.parquet"
+      },
+      "extract": {
+       "column": "checksum"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "files/checksum_algorithm",
+     "name": "checksum_algorithm",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "files.parquet"
+      },
+      "extract": {
+       "column": "checksum_algorithm"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "files/download_url",
+     "name": "download_url",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "files.parquet"
+      },
+      "extract": {
+       "column": "download_url"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "files/bundle",
+     "name": "bundle",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "files.parquet"
+      },
+      "extract": {
+       "column": "bundle"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "grants",
+   "name": "grants",
+   "description": "Grants funding the works (name, identifier, programme). (3,496 rows)",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "grants/entity",
+     "name": "entity",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "grants.parquet"
+      },
+      "extract": {
+       "column": "entity"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "grants/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "grants.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "grants/identifier",
+     "name": "identifier",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "grants.parquet"
+      },
+      "extract": {
+       "column": "identifier"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "grants/program",
+     "name": "program",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "grants.parquet"
+      },
+      "extract": {
+       "column": "program"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "journals",
+   "name": "journals",
+   "description": "Serials/journals (one row per journal), ISSN-identified where available. (19,456 rows)",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "journals/entity",
+     "name": "entity",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "journals.parquet"
+      },
+      "extract": {
+       "column": "entity"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "journals/title",
+     "name": "title",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "journals.parquet"
+      },
+      "extract": {
+       "column": "title"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "journals/issn",
+     "name": "issn",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "journals.parquet"
+      },
+      "extract": {
+       "column": "issn"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "persons",
+   "name": "persons",
+   "description": "Authors, editors and supervisors (one row per person). ORCID-identified people are minted at https://orcid.org/{orcid}. (434,635 rows)",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "persons/entity",
+     "name": "entity",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "persons.parquet"
+      },
+      "extract": {
+       "column": "entity"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "persons/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "persons.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "persons/orcid",
+     "name": "orcid",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "persons.parquet"
+      },
+      "extract": {
+       "column": "orcid"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "triples",
+   "name": "triples",
+   "description": "The entire graph as a flat, lossless (subject, predicate, object) table with decoded value/datatype/lang columns. (11,611,344 rows)",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "triples/subject",
+     "name": "subject",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "triples.parquet"
+      },
+      "extract": {
+       "column": "subject"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "triples/predicate",
+     "name": "predicate",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "triples.parquet"
+      },
+      "extract": {
+       "column": "predicate"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "triples/object",
+     "name": "object",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "triples.parquet"
+      },
+      "extract": {
+       "column": "object"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "triples/otype",
+     "name": "otype",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "triples.parquet"
+      },
+      "extract": {
+       "column": "otype"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "triples/value",
+     "name": "value",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "triples.parquet"
+      },
+      "extract": {
+       "column": "value"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "triples/datatype",
+     "name": "datatype",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "triples.parquet"
+      },
+      "extract": {
+       "column": "datatype"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "triples/lang",
+     "name": "lang",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "triples.parquet"
+      },
+      "extract": {
+       "column": "lang"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "units",
+   "name": "units",
+   "description": "ETH Leitzahl organisational units (department / institute / chair-group tree). (1,881 rows)",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "units/entity",
+     "name": "entity",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "units.parquet"
+      },
+      "extract": {
+       "column": "entity"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "units/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "units.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "units/leitzahl_code",
+     "name": "leitzahl_code",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "units.parquet"
+      },
+      "extract": {
+       "column": "leitzahl_code"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "works",
+   "name": "works",
+   "description": "Publications & research data (one row per item), with title, type, issue date, DOI, handle, availability, language, publisher, licence, abstract, and list columns for authors (IRIs) and subjects. (293,248 rows)",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "works/work",
+     "name": "work",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "work"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/title",
+     "name": "title",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "title"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/type",
+     "name": "type",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "type"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/issued",
+     "name": "issued",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "issued"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/doi",
+     "name": "doi",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "doi"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/handle",
+     "name": "handle",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "handle"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/availability",
+     "name": "availability",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "availability"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/language",
+     "name": "language",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "language"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/publisher",
+     "name": "publisher",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "publisher"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/license",
+     "name": "license",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "license"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/abstract",
+     "name": "abstract",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "abstract"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/authors",
+     "name": "authors",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "authors"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "works/subjects",
+     "name": "subjects",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "works.parquet"
+      },
+      "extract": {
+       "column": "subjects"
+      }
+     },
+     "repeated": true
+    }
+   ]
+  }
+ ]
+}

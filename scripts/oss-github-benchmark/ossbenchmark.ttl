@@ -1,0 +1,212 @@
+@prefix ossb:    <https://w3id.org/rete/oss-benchmark#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix schema:  <http://schema.org/> .
+@prefix org:     <http://www.w3.org/ns/org#> .
+@prefix pulse:   <https://open-pulse.epfl.ch/ontology#> .
+@prefix gme:     <https://openpulse.science/git-metadata-extractor#> .
+
+##############################################################################
+# Ontology
+##############################################################################
+
+<https://w3id.org/rete/oss-benchmark> a owl:Ontology ;
+    dcterms:title "OSS GitHub Benchmark vocabulary"@en ;
+    dcterms:description """Vocabulary for the Digital Sustainability OSS GitHub
+Benchmark (ossbenchmark.com) — Swiss institutions' open-source activity on GitHub.
+
+DESIGN RULE: this vocabulary deliberately defines as little as possible. Entities
+reuse the *same IRIs* as the Open-Pulse graph (a repository is
+<https://github.com/{org}/{repo}>, a person <https://github.com/{login}>, a GitHub
+organization <https://github.com/{org}>), and properties reuse schema.org, the W3C
+Organization vocabulary and the Open-Pulse pulse:/gme: terms wherever an equivalent
+exists. Only facts with no Open-Pulse counterpart are minted here: the benchmark's
+sector taxonomy, its institution grouping, and its commit/issue/pull-request/comment
+counters.
+
+Kept inside OWL 2 QL."""@en ;
+    dcterms:source <https://ossbenchmark.com> ,
+                   <https://github.com/digital-sustainability/oss-github-benchmark> ;
+    rdfs:seeAlso <https://open-pulse.epfl.ch/ontology#> ;
+    owl:versionInfo "1.0" .
+
+##############################################################################
+# Classes
+##############################################################################
+
+ossb:Institution a owl:Class ;
+    rdfs:subClassOf org:Organization ;
+    rdfs:label "Institution"@en ;
+    rdfs:comment """An institution tracked by the benchmark (a company, government
+body, university, NGO or community). This is the grouping level the benchmark adds:
+one institution owns one or more GitHub organizations, linked with org:unitOf — the
+same pattern Open-Pulse uses to link a GitHub organization to its ROR institution.
+Institutions reconciled to ROR carry schema:sameAs to the ROR IRI."""@en .
+
+ossb:Sector a owl:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Sector"@en ;
+    rdfs:comment "One of the benchmark's 14 economic-sector categories."@en .
+
+##############################################################################
+# Object properties
+##############################################################################
+
+ossb:sector a owl:ObjectProperty ;
+    rdfs:label "sector"@en ;
+    rdfs:comment "The economic sector the benchmark assigns to an institution."@en ;
+    rdfs:domain ossb:Institution ;
+    rdfs:range ossb:Sector .
+
+ossb:attributedToInstitution a owl:ObjectProperty ;
+    rdfs:label "attributed to institution"@en ;
+    rdfs:comment """Links a repository to an institution whose benchmark figures it
+counts towards. Deliberately multi-valued: 517 repositories are claimed by more than
+one institution (e.g. k8up-io/k8up counts for both VSHN and the k8up community).
+This is a benchmark accounting relation, not ownership — use pulse:ownedBy for the
+GitHub organization that actually owns the repository."""@en ;
+    rdfs:domain schema:SoftwareSourceCode ;
+    rdfs:range ossb:Institution .
+
+##############################################################################
+# Datatype properties — repository counters with no Open-Pulse equivalent
+##############################################################################
+
+ossb:numCommits a owl:DatatypeProperty ;
+    rdfs:label "number of commits"@en ;
+    rdfs:domain schema:SoftwareSourceCode ; rdfs:range xsd:integer .
+
+ossb:numContributors a owl:DatatypeProperty ;
+    rdfs:label "number of contributors"@en ;
+    rdfs:domain schema:SoftwareSourceCode ; rdfs:range xsd:integer .
+
+ossb:hasOwnCommits a owl:DatatypeProperty ;
+    rdfs:label "own commits"@en ;
+    rdfs:comment "Commits made by the institution itself, excluding those inherited from an upstream repository when the repository is a fork."@en ;
+    rdfs:domain schema:SoftwareSourceCode ; rdfs:range xsd:integer .
+
+ossb:issuesAll a owl:DatatypeProperty ;
+    rdfs:label "issues (all)"@en ;
+    rdfs:domain schema:SoftwareSourceCode ; rdfs:range xsd:integer .
+
+ossb:issuesClosed a owl:DatatypeProperty ;
+    rdfs:label "issues (closed)"@en ;
+    rdfs:domain schema:SoftwareSourceCode ; rdfs:range xsd:integer .
+
+ossb:pullRequestsAll a owl:DatatypeProperty ;
+    rdfs:label "pull requests (all)"@en ;
+    rdfs:domain schema:SoftwareSourceCode ; rdfs:range xsd:integer .
+
+ossb:pullRequestsClosed a owl:DatatypeProperty ;
+    rdfs:label "pull requests (closed)"@en ;
+    rdfs:comment """DO NOT USE AS A PULL-REQUEST MEASURE. Upstream writes one
+"closed" figure into both issues_closed and pull_requests_closed: the two are equal
+in all 17,661 source records, so this property actually carries the closed-ISSUE
+count and exceeds ossb:pullRequestsAll in 3,741 repositories. It is kept only so the
+graph mirrors the source faithfully; compute issue-closure rates from
+ossb:issuesClosed / ossb:issuesAll, and treat PR-closure rates as unavailable."""@en ;
+    rdfs:domain schema:SoftwareSourceCode ; rdfs:range xsd:integer .
+
+ossb:comments a owl:DatatypeProperty ;
+    rdfs:label "comments"@en ;
+    rdfs:domain schema:SoftwareSourceCode ; rdfs:range xsd:integer .
+
+ossb:isFork a owl:DatatypeProperty ;
+    rdfs:label "is a fork"@en ;
+    rdfs:comment """Whether the repository is a fork. The benchmark records only the
+flag, never the upstream parent, so pulse:isForkOf cannot be populated from this
+source — a merged graph may still supply it from Open-Pulse."""@en ;
+    rdfs:domain schema:SoftwareSourceCode ; rdfs:range xsd:boolean .
+
+ossb:unlistedInstitutionKey a owl:DatatypeProperty ;
+    rdfs:label "unlisted institution key"@en ;
+    rdfs:comment """The raw institution key from a repository record whose value does
+not appear in the benchmark's institution listing — a stale or renamed key upstream
+(286 records across 11 keys: 'appuio', 'Bertschi', 'Winterthur', 'Axpo', …). Kept as
+a literal rather than as an ossb:attributedToInstitution edge, which would dangle.
+NB: because these records still count towards the published totals, an institution
+whose old key survives on some repositories has its num_repos inflated — 'Bertschi'
+and 'BertschiAG' together publish 42 repositories for 21 distinct ones."""@en ;
+    rdfs:domain schema:SoftwareSourceCode ; rdfs:range xsd:string .
+
+ossb:crawledAt a owl:DatatypeProperty ;
+    rdfs:label "crawled at"@en ;
+    rdfs:comment "When the benchmark last crawled this record. Where a repository is claimed by several institutions the freshest record supplies its metrics."@en ;
+    rdfs:range xsd:dateTime .
+
+##############################################################################
+# Datatype properties — institution-level published aggregates
+##############################################################################
+
+ossb:shortName a owl:DatatypeProperty ;
+    rdfs:label "short name"@en ;
+    rdfs:comment "The benchmark's institution key. Case-sensitive: 'Swisstopo' and 'swisstopo' are two distinct institutions."@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:string .
+
+ossb:numRepos a owl:DatatypeProperty ;
+    rdfs:label "number of repositories"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:numOrgs a owl:DatatypeProperty ;
+    rdfs:label "number of GitHub organizations"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:numMembers a owl:DatatypeProperty ;
+    rdfs:label "number of members"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:totalContributors a owl:DatatypeProperty ;
+    rdfs:label "total contributors"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:totalCommits a owl:DatatypeProperty ;
+    rdfs:label "total commits"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:totalStars a owl:DatatypeProperty ;
+    rdfs:label "total stars"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:totalWatchers a owl:DatatypeProperty ;
+    rdfs:label "total watchers"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:totalForksInRepos a owl:DatatypeProperty ;
+    rdfs:label "total forks in repositories"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:totalIssues a owl:DatatypeProperty ;
+    rdfs:label "total issues"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:totalIssuesClosed a owl:DatatypeProperty ;
+    rdfs:label "total issues closed"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:totalPullRequests a owl:DatatypeProperty ;
+    rdfs:label "total pull requests"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:totalPullRequestsClosed a owl:DatatypeProperty ;
+    rdfs:label "total pull requests closed"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:totalComments a owl:DatatypeProperty ;
+    rdfs:label "total comments"@en ;
+    rdfs:domain ossb:Institution ; rdfs:range xsd:integer .
+
+ossb:publicGists a owl:DatatypeProperty ;
+    rdfs:label "public gists"@en ;
+    rdfs:domain schema:Person ; rdfs:range xsd:integer .
+
+##############################################################################
+# Sector concept scheme
+##############################################################################
+
+<https://w3id.org/rete/oss-benchmark/sectors> a skos:ConceptScheme ;
+    dcterms:title "OSS Benchmark sectors"@en ;
+    skos:prefLabel "OSS Benchmark sectors"@en .

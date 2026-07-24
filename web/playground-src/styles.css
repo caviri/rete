@@ -3252,6 +3252,31 @@ th .coltype.coltype-on {
 .m3-ctl input[type="range"] { width: 96px; accent-color: #6d4aff; }
 .m3-spin { font: inherit; font-size: 11.5px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg, #fff); color: var(--muted); cursor: pointer; }
 .m3-spin.on { background: linear-gradient(135deg, #6d4aff, #a23bd6); color: var(--on-accent); border-color: transparent; }
+/* molecular-structure cells + lightbox (lazy 3Dmol.js: .cif/.pdb) */
+.mol3d-cell { padding: 6px 8px; position: relative; }
+.mol3d-inline { width: 170px; height: 132px; display: block; position: relative; background: #15161a; border-radius: 8px; cursor: grab; overflow: hidden; }
+.mol3d-inline canvas { border-radius: 8px; }
+.mol3d-loading { color: #cfd2da; font-size: 11px; padding: 8px; text-align: center; }
+.mol3d-fallback { color: var(--muted); font-size: 11px; padding: 8px; text-align: center; }
+.mol3d-fallback-link { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: #9ad; font-size: 12px; text-decoration: none; }
+.mol3d-fallback-link:hover { text-decoration: underline; }
+.mol3d-expand { position: absolute; top: 10px; right: 12px; width: 22px; height: 22px; border: 1px solid var(--line); background: var(--float-bg); color: var(--ink); border-radius: 6px; font-size: 12px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s; z-index: 2; }
+.mol3d-cell:hover .mol3d-expand, .mol3d-expand:focus-visible { opacity: 1; }
+.mol3d-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.mol3d-modal.hidden { display: none; }
+.mol3d-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); }
+.mol3d-box { position: relative; z-index: 1; width: min(820px, 94vw); height: min(70vh, 640px); display: flex; flex-direction: column; background: var(--bg, #fff); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 24px 70px rgba(0, 0, 0, .45); overflow: hidden; }
+.mol3d-close { position: absolute; top: 8px; right: 10px; width: 30px; height: 30px; border: 1px solid var(--line); background: var(--side); color: var(--ink); border-radius: 8px; font-size: 19px; line-height: 1; cursor: pointer; z-index: 2; }
+.mol3d-close:hover { background: var(--accent-dark); color: var(--on-accent); }
+.mol3d-stage { flex: 1; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; background: #15161a; }
+.mol3d-stage canvas { border-radius: 0; }
+.mol3d-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--line); background: var(--side); }
+.mol3d-style, .mol3d-spin { font: inherit; font-size: 11.5px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg, #fff); color: var(--muted); cursor: pointer; }
+.mol3d-style.on, .mol3d-spin.on { background: linear-gradient(135deg, #6d4aff, #a23bd6); color: var(--on-accent); border-color: transparent; }
+.mol3d-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); background: var(--bg, #fff); }
+.mol3d-hint { color: var(--muted); }
+.mol3d-src { color: var(--accent-dark, #2b6); text-decoration: none; }
+.mol3d-src:hover { text-decoration: underline; }
 /* audio / video cells */
 .media-cell { padding: 6px 8px; position: relative; white-space: nowrap; }
 .cell-audio { width: 100%; min-width: 460px; max-width: 720px; height: 38px; vertical-align: middle; }

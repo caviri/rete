@@ -1,0 +1,37 @@
+# Repositories claimed by more than one institution — the collaboration surface.
+# Relates: repository -> its owning GitHub org -> every institution that counts it
+# -> that institution's sector, plus the repo's own stars/commits/license.
+#
+# These 517 repositories are where two Swiss institutions share one codebase
+# (e.g. VSHN and the k8up community, or a university and one of its labs).
+# GROUP_CONCAT collapses the institution/sector lists onto one row per repository.
+#
+# Reads: ossb:attributedToInstitution, ossb:sector, pulse:ownedBy,
+#        pulse:githubRepoStars, ossb:numCommits, gme:license_name
+PREFIX ossb:   <https://w3id.org/rete/oss-benchmark#>
+PREFIX pulse:  <https://open-pulse.epfl.ch/ontology#>
+PREFIX gme:    <https://openpulse.science/git-metadata-extractor#>
+PREFIX schema: <http://schema.org/>
+PREFIX skos:   <http://www.w3.org/2004/02/skos/core#>
+
+SELECT ?repoName
+       (GROUP_CONCAT(DISTINCT ?instName; SEPARATOR=" + ") AS ?institutions)
+       (GROUP_CONCAT(DISTINCT ?sectorName; SEPARATOR=" / ") AS ?sectors)
+       (COUNT(DISTINCT ?i) AS ?nInstitutions)
+       (SAMPLE(?stars) AS ?stars)
+       (SAMPLE(?commits) AS ?commits)
+       (SAMPLE(?lic) AS ?license)
+WHERE {
+  ?repo a schema:SoftwareSourceCode ;
+        schema:name ?repoName ;
+        ossb:attributedToInstitution ?i ;
+        pulse:githubRepoStars ?stars ;
+        ossb:numCommits ?commits .
+  ?i schema:name ?instName ; ossb:sector ?s .
+  ?s skos:prefLabel ?sectorName .
+  OPTIONAL { ?repo gme:license_name ?lic }
+}
+GROUP BY ?repo ?repoName
+HAVING (COUNT(DISTINCT ?i) > 1)
+ORDER BY DESC(?stars)
+LIMIT 20

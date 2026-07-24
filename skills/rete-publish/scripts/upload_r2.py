@@ -83,6 +83,11 @@ def main() -> int:
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--bucket", default=os.environ.get("RETE_BUCKET", BUCKET))
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--content-type",
+        help="override the Content-Type for every uploaded object (e.g. text/html "
+        "for a polyglot .rete that a browser should render)",
+    )
     args = parser.parse_args()
 
     plan = upload_plan(args.source, args.destination)
@@ -94,7 +99,7 @@ def main() -> int:
     load_env_file(args.env_file)
     client = make_client()
     for source, key in plan:
-        content_type = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+        content_type = args.content_type or mimetypes.guess_type(source.name)[0] or "application/octet-stream"
         print(f"upload {source} -> s3://{args.bucket}/{key}")
         client.upload_file(
             str(source),

@@ -63,7 +63,7 @@ pub struct Tile {
     /// component *before* faulting it (remote reads). `None` = no synopsis (an
     /// older file, or a locally-built/opened tile) — then nothing is pruned early
     /// and the in-tile zone map prunes after the tile is in hand, as before.
-    syn: Option<(u32, u32, u32, u32)>,
+    pub(crate) syn: Option<(u32, u32, u32, u32)>,
     /// Encoded byte length of this tile (compressed on-disk size for a remote
     /// tile, in-memory image size for a local one; 0 = unknown). Feeds the join
     /// planner's fatness gates without faulting any data.
@@ -118,7 +118,7 @@ impl Tile {
     /// the bound `b`/`c` fall inside the recorded ranges. Conservative: a `false`
     /// is a *proven* miss (the in-tile zone map would reject the same tile), so
     /// skipping the fetch never drops a result.
-    fn syn_admits(&self, pb: Option<u32>, pc: Option<u32>) -> bool {
+    pub(crate) fn syn_admits(&self, pb: Option<u32>, pc: Option<u32>) -> bool {
         match self.syn {
             None => true,
             Some((min_b, max_b, min_c, max_c)) => {
@@ -360,11 +360,76 @@ fn varint_len(mut v: u64) -> usize {
     n
 }
 
-/// Split sorted, deduped permuted triples into size-targeted tiles on whole
-/// a-group boundaries: append groups until the (estimated, near-exact) encoded
-/// size would exceed `budget`, then flush. A single group larger than the
-/// budget becomes one oversized tile — groups are never split, so a bound
-/// leading id always routes to exactly one tile.
+/// Incremental encoded-size accounting for one a-group of a tiled section —
+/// the running-delta chain of [`build_tiles`], streamable triple by triple.
+/// Shared by the in-memory tiler here and the external build's streaming
+/// tiler ([`crate::extbuild`]) so both choose IDENTICAL tile boundaries and
+/// their outputs stay byte-identical.
+pub(crate) struct GroupSizer {
+    /// finalized contributions: the a-delta plus every closed b-run
+    size: usize,
+    num_b: u64,
+    cur_b: u32,
+    /// the open b-run's c count / last c
+    num_c: u64,
+    prev_c: u32,
+    empty: bool,
+}
+
+impl GroupSizer {
+    /// Start a group for leading id `a` whose delta base is `prev_a` (the
+    /// previous group's leading id; `a` again for a mid-group continuation).
+    pub(crate) fn start(a: u32, prev_a: u32) -> Self {
+        GroupSizer {
+            size: varint_len((a - prev_a) as u64),
+            num_b: 0,
+            cur_b: 0,
+            num_c: 0,
+            prev_c: 0,
+            empty: true,
+        }
+    }
+
+    /// Account one `(b, c)` of this group; returns the group's total encoded
+    /// size so far (open count varints included).
+    pub(crate) fn push(&mut self, b: u32, c: u32) -> usize {
+        if self.empty || b != self.cur_b {
+            if self.empty {
+                self.size += varint_len(b as u64); // first b-run: delta from 0
+            } else {
+                self.size += varint_len(self.num_c); // close the previous b-run
+                self.size += varint_len((b - self.cur_b) as u64);
+            }
+            self.cur_b = b;
+            self.num_c = 0;
+            self.prev_c = 0;
+            self.num_b += 1;
+            self.empty = false;
+        }
+        self.size += varint_len((c - self.prev_c) as u64);
+        self.prev_c = c;
+        self.num_c += 1;
+        self.total()
+    }
+
+    /// The group's total encoded size so far.
+    pub(crate) fn total(&self) -> usize {
+        self.size
+            + if self.empty { 0 } else { varint_len(self.num_c) }
+            + varint_len(self.num_b)
+    }
+}
+
+/// Split sorted, deduped permuted triples into size-targeted tiles: append
+/// whole a-groups until the (estimated, near-exact) encoded size would exceed
+/// `budget`, then flush — and additionally cut WITHIN an a-group whose own
+/// running size exceeds the budget (a mega-group: one predicate or class
+/// carrying a large share of the graph, e.g. a 2B-triple `cites` predicate in
+/// POS). Split slices become consecutive tiles sharing the leading id — a
+/// bound leading id routes to the whole run of covering tiles (see
+/// [`GraphIndex::tile_span`]) — which bounds both builder memory and the
+/// bytes a remote reader faults for one lookup. Boundary accounting lives in
+/// [`GroupSizer`], shared with the external build for byte-identity.
 fn build_tiles(mut triples: Vec<Triple>, budget: usize) -> Vec<Tile> {
     #[cfg(feature = "parallel")]
     {
@@ -388,50 +453,53 @@ fn build_tiles(mut triples: Vec<Triple>, budget: usize) -> Vec<Tile> {
 
     let mut tiles = Vec::new();
     let mut tile_start = 0usize;
-    let mut tile_size = 0usize;
+    let mut tile_size = 0usize; // completed groups in the current tile
     let mut prev_a = 0u32;
     let mut i = 0usize;
     while i < triples.len() {
-        // Measure the a-group starting at `i` (its encoded size given the
-        // running delta chain — near-exact; the budget is a soft target).
         let a = triples[i].0;
-        let mut gsize = varint_len((a - prev_a) as u64);
-        let gstart = i;
-        let mut num_b = 0u64;
+        let mut slice_start = i; // group start, or the last mid-group cut
+        let mut sizer = GroupSizer::start(a, prev_a);
+        let mut gtotal = 0usize;
         while i < triples.len() && triples[i].0 == a {
-            let b = triples[i].1;
-            num_b += 1;
-            let prev_b = if num_b == 1 { 0 } else { triples[i - 1].1 };
-            gsize += varint_len((b - prev_b) as u64);
-            let mut num_c = 0u64;
-            let mut prev_c = 0u32;
-            while i < triples.len() && triples[i].0 == a && triples[i].1 == b {
-                gsize += varint_len((triples[i].2 - prev_c) as u64);
-                prev_c = triples[i].2;
-                num_c += 1;
-                i += 1;
+            gtotal = sizer.push(triples[i].1, triples[i].2);
+            i += 1;
+            if gtotal > budget {
+                // Mega-group cut: everything buffered — completed groups plus
+                // the slice measured so far — becomes one tile; the group
+                // continues in a fresh chain with `a` as its own delta base.
+                tiles.push(make_tile(&triples[tile_start..i]));
+                tile_start = i;
+                tile_size = 0;
+                prev_a = a;
+                slice_start = i;
+                sizer = GroupSizer::start(a, a);
+                gtotal = 0;
             }
-            gsize += varint_len(num_c);
         }
-        gsize += varint_len(num_b);
-
-        if gstart > tile_start && tile_size + gsize > budget {
-            tiles.push(make_tile(&triples[tile_start..gstart]));
-            tile_start = gstart;
+        if slice_start == i {
+            continue; // the cut landed exactly on the group's end
+        }
+        if slice_start > tile_start && tile_size + gtotal > budget {
+            tiles.push(make_tile(&triples[tile_start..slice_start]));
+            tile_start = slice_start;
             tile_size = 0;
         }
-        tile_size += gsize;
+        tile_size += gtotal;
         prev_a = a;
     }
-    tiles.push(make_tile(&triples[tile_start..]));
+    if tile_start < triples.len() {
+        tiles.push(make_tile(&triples[tile_start..]));
+    }
     tiles
 }
 
 /// The six tiled permutation sections, queryable by triple pattern.
 pub struct GraphIndex {
     /// Tiles per permutation (SPO, SOP, PSO, POS, OSP, OPS — see [`ALL_PERMS`]),
-    /// ascending and disjoint in their leading-id ranges.
-    sections: [Vec<Tile>; NUM_PERMS],
+    /// ascending in their leading-id ranges; consecutive tiles may share a
+    /// leading id when a mega-group was split (see [`build_tiles`]).
+    pub(crate) sections: [Vec<Tile>; NUM_PERMS],
     /// Faults in remote tiles on first scan (`None` for local indexes).
     loader: Option<TileLoader>,
     /// Optional batched fetch for multi-tile scans (`None` falls back to
@@ -822,19 +890,22 @@ impl GraphIndex {
     }
 
     /// The tile index span a scan must visit: every tile when the leading
-    /// component is unbound, else the single tile whose leading-id range
-    /// covers it (tile ranges are ascending and disjoint).
-    fn tile_span(&self, section: usize, pa: Option<u32>) -> (usize, usize) {
+    /// component is unbound, else the run of tiles whose leading-id ranges
+    /// cover it. Tile ranges are ascending; consecutive tiles may SHARE a
+    /// leading id when a mega-group was split across tiles (see
+    /// [`build_tiles`]), so the span is a range scan, not a single hit —
+    /// files without splits still yield a span of at most one tile.
+    pub(crate) fn tile_span(&self, section: usize, pa: Option<u32>) -> (usize, usize) {
         let tiles = &self.sections[section];
         match pa {
             None => (0, tiles.len()),
             Some(a) => {
                 let i = tiles.partition_point(|t| t.max_a < a);
-                if i < tiles.len() && tiles[i].min_a <= a {
-                    (i, i + 1)
-                } else {
-                    (0, 0)
+                let mut j = i;
+                while j < tiles.len() && tiles[j].min_a <= a {
+                    j += 1;
                 }
+                (i, j)
             }
         }
     }
@@ -909,9 +980,11 @@ mod tests {
         assert_eq!(idx.match_pattern((None, None, None)), sorted);
     }
 
-    /// A tiny tile budget must split sections into many tiles, and every
-    /// pattern shape must still match the brute-force reference — bound
-    /// leading ids route to exactly one tile, unbound scans chain all tiles.
+    /// A tiny tile budget must split sections into many tiles — including
+    /// MID-GROUP cuts (budget 1/16 makes every a-group oversized) — and every
+    /// pattern shape must still match the brute-force reference: bound
+    /// leading ids route to the run of covering tiles, unbound scans chain
+    /// all tiles.
     #[test]
     fn multi_tile_sections_match_reference_every_shape() {
         // Enough distinct leading ids to split under a tiny budget.
@@ -933,9 +1006,10 @@ mod tests {
             if budget <= 16 {
                 assert!(spo_tiles > 1, "budget {budget} should force tiling");
             }
-            // Tile ranges must be ascending and disjoint.
+            // Tile ranges must be ascending; a split mega-group may leave
+            // consecutive tiles SHARING a leading id (never overlapping past it).
             for w in idx.tile_sections()[0].windows(2) {
-                assert!(w[0].leading_range().1 < w[1].leading_range().0);
+                assert!(w[0].leading_range().1 <= w[1].leading_range().0);
             }
             assert_eq!(idx.triple_count() as usize, data.len(), "budget {budget}");
 
@@ -958,6 +1032,58 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// The Crossref shape: ONE mega-predicate carrying most of the graph. At
+    /// the real 64 KiB budget its P-leading a-group must be split across
+    /// multiple tiles (bounding builder memory), and a bound leading id must
+    /// route to the whole run of covering tiles with complete results.
+    #[test]
+    fn mega_group_splits_across_tiles_and_lookups_stay_complete() {
+        let hot_p = 7u32;
+        let mut data: Vec<Triple> = Vec::new();
+        for i in 0..40_000u32 {
+            data.push((1_000 + i % 200, hot_p, 50_000 + i));
+        }
+        data.push((1, 1, 1));
+        data.push((2, 2, 2));
+        let mut b = GraphIndexBuilder::new(); // default INDEX_TILE_BUDGET
+        for &t in &data {
+            b.push(t);
+        }
+        let idx = b.build();
+
+        // PSO (a = predicate): the hot_p group must span several tiles.
+        let pso = ALL_PERMS
+            .iter()
+            .position(|p| matches!(p, IndexPermutation::Pso))
+            .unwrap();
+        let covering = idx.tile_sections()[pso]
+            .iter()
+            .filter(|t| {
+                let (lo, hi) = t.leading_range();
+                lo <= hot_p && hot_p <= hi
+            })
+            .count();
+        assert!(
+            covering > 1,
+            "expected the hot predicate split across tiles, got {covering}"
+        );
+
+        // Bound-p lookup must still return every triple of the mega-group —
+        // probing bound objects in the FIRST, MIDDLE and LAST slices of the
+        // split run (a mid-run object once returned 0 on the first split file).
+        for pat in [
+            (None, Some(hot_p), None),
+            (Some(1_050), Some(hot_p), None),
+            (None, Some(hot_p), Some(50_123)),  // first slice
+            (None, Some(hot_p), Some(70_000)),  // middle of the run
+            (None, Some(hot_p), Some(89_999)),  // last slice
+            (None, Some(hot_p), Some(49_000)),  // below the range → empty
+            (None, Some(hot_p), Some(95_000)),  // above the range → empty
+        ] {
+            assert_eq!(idx.match_pattern(pat), reference(&data, pat), "{pat:?}");
         }
     }
 

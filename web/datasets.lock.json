@@ -195,6 +195,14 @@
       "cardUrl": "https://data.graphplaza.com/epfl-infoscience/epfl-infoscience.rete"
     },
     {
+      "key": "ethz-research-collection",
+      "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete",
+      "formatVersion": 5,
+      "contentHash": "e399dfb7a43a0d7f2dd4d4c0d778285a",
+      "size": 206054877,
+      "cardUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete"
+    },
+    {
       "key": "factgrid-illuminati",
       "url": "https://data.graphplaza.com/factgrid-illuminati/factgrid-illuminati.rete",
       "formatVersion": 5,
