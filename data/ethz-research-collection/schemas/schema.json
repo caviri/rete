@@ -1,0 +1,316 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://w3id.org/rete/ethz-research-collection/schema.json",
+ "title": "ethz-research-collection — Parquet table schemas",
+ "description": "Row schemas for the ETH Research Collection per-class entity Parquet companion tables.",
+ "$defs": {
+  "files": {
+   "type": "object",
+   "title": "files",
+   "description": "The ORIGINAL-bundle file manifest — one row per deposited bitstream: name, MIME, size (bytes), MD5 checksum, download URL, bundle. Metadata only; no bytes. (158,339 rows)",
+   "properties": {
+    "entity": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "name": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "mime": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "size_bytes": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "checksum": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "checksum_algorithm": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "download_url": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "bundle": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "additionalProperties": false
+  },
+  "grants": {
+   "type": "object",
+   "title": "grants",
+   "description": "Grants funding the works (name, identifier, programme). (3,496 rows)",
+   "properties": {
+    "entity": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "name": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "identifier": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "program": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "additionalProperties": false
+  },
+  "journals": {
+   "type": "object",
+   "title": "journals",
+   "description": "Serials/journals (one row per journal), ISSN-identified where available. (19,456 rows)",
+   "properties": {
+    "entity": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "title": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "issn": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "additionalProperties": false
+  },
+  "persons": {
+   "type": "object",
+   "title": "persons",
+   "description": "Authors, editors and supervisors (one row per person). ORCID-identified people are minted at https://orcid.org/{orcid}. (434,635 rows)",
+   "properties": {
+    "entity": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "name": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "orcid": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "additionalProperties": false
+  },
+  "triples": {
+   "type": "object",
+   "title": "triples",
+   "description": "The entire graph as a flat, lossless (subject, predicate, object) table with decoded value/datatype/lang columns. (11,611,344 rows)",
+   "properties": {
+    "subject": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "predicate": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "object": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "otype": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "value": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "datatype": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "lang": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "additionalProperties": false
+  },
+  "units": {
+   "type": "object",
+   "title": "units",
+   "description": "ETH Leitzahl organisational units (department / institute / chair-group tree). (1,881 rows)",
+   "properties": {
+    "entity": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "name": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "leitzahl_code": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "additionalProperties": false
+  },
+  "works": {
+   "type": "object",
+   "title": "works",
+   "description": "Publications & research data (one row per item), with title, type, issue date, DOI, handle, availability, language, publisher, licence, abstract, and list columns for authors (IRIs) and subjects. (293,248 rows)",
+   "properties": {
+    "work": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "title": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "type": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "issued": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "doi": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "handle": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "availability": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "language": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "publisher": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "license": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "abstract": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "authors": {
+     "type": [
+      "array",
+      "null"
+     ],
+     "items": {
+      "type": "string"
+     }
+    },
+    "subjects": {
+     "type": [
+      "array",
+      "null"
+     ],
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "additionalProperties": false
+  }
+ }
+}
