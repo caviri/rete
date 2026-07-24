@@ -150,6 +150,67 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
     }
 }
 
+/// Wraps a [`RangeReader`] so every access is shifted by `base` bytes: a `.rete`
+/// that starts at byte `base` of the backing resource — e.g. behind an HTML shell
+/// in a **polyglot** file that is both a web page and a graph — reads exactly as
+/// if it began at offset 0, lazily, touching only the `.rete` bytes a query needs
+/// and never the prefix. Pair with [`detect_polyglot_base`] to find `base`.
+pub struct OffsetReader<R> {
+    inner: R,
+    base: u64,
+}
+
+impl<R> OffsetReader<R> {
+    pub fn new(inner: R, base: u64) -> Self {
+        Self { inner, base }
+    }
+    pub fn base(&self) -> u64 {
+        self.base
+    }
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
+}
+
+impl<R: RangeReader> RangeReader for OffsetReader<R> {
+    fn len(&self) -> u64 {
+        self.inner.len().saturating_sub(self.base)
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.inner.read_at(self.base + offset, len)
+    }
+
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        let shifted: Vec<(u64, u64)> = ranges.iter().map(|&(o, l)| (self.base + o, l)).collect();
+        self.inner.read_many(&shifted)
+    }
+
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
+    }
+}
+
+/// The marker a polyglot (HTML + `.rete`) file carries in its first bytes so a
+/// reader can locate the embedded `.rete` without knowing the file size: ASCII
+/// `RETE-BASE:` followed by [`POLYGLOT_DIGITS`] zero-padded decimal digits — the
+/// byte offset where the `.rete` begins. It is emitted inside an HTML comment so
+/// browsers ignore it, and it sits within the first header window a reader fetches.
+pub const POLYGLOT_MARKER: &[u8] = b"RETE-BASE:";
+/// Fixed decimal width of the offset that follows [`POLYGLOT_MARKER`].
+pub const POLYGLOT_DIGITS: usize = 16;
+
+/// If `head` (the first bytes of a resource whose byte 0 is NOT the `RETE` magic)
+/// carries a [`POLYGLOT_MARKER`], return the byte offset of the embedded `.rete`.
+pub fn detect_polyglot_base(head: &[u8]) -> Option<u64> {
+    let pos = head
+        .windows(POLYGLOT_MARKER.len())
+        .position(|w| w == POLYGLOT_MARKER)?;
+    let start = pos + POLYGLOT_MARKER.len();
+    let digits = head.get(start..start + POLYGLOT_DIGITS)?;
+    std::str::from_utf8(digits).ok()?.parse::<u64>().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
