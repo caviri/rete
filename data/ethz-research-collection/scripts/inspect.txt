@@ -1,0 +1,305 @@
+
+=== ETH Research Collection — oai_ethz profile ===
+pages:   3069
+records: 306,835  (deleted: 13,565)
+
+--- publication types (top 25) ---
+  143,803   46.9%  Journal Article
+   38,935   12.7%  Conference Paper
+   31,867   10.4%  Doctoral Thesis
+   21,262    6.9%  Other Conference Item
+    9,921    3.2%  Book Chapter
+    7,260    2.4%  Report
+    6,693    2.2%  Working Paper
+    5,898    1.9%  Other Journal Item
+    4,724    1.5%  Review Article
+    3,458    1.1%  Other Publication
+    3,316    1.1%  Presentation
+    2,675    0.9%  Conference Poster
+    2,333    0.8%  Master Thesis
+    2,003    0.7%  Monograph
+    1,971    0.6%  Dataset
+    1,389    0.5%  Edited Volume
+    1,002    0.3%  Journal Issue
+      922    0.3%  Newspaper Article
+      895    0.3%  Data Collection
+      608    0.2%  Educational Material
+      529    0.2%  Conference Proceedings
+      489    0.2%  Book Review
+      326    0.1%  Software
+      296    0.1%  Encyclopedia Entry
+      275    0.1%  Student Paper
+
+--- identifier coverage ---
+  122,733   40.0%  doi
+    2,319    0.8%  arxiv
+  129,868   42.3%  wos
+   81,489   26.6%  scopus
+  450,915  147.0%  issn
+   71,169   23.2%  isbn
+        0    0.0%  pmid
+  293,579   95.7%  handle_uri
+
+--- availability ---
+  170,314   55.5%  Metadata only
+  111,480   36.3%  Open access
+   10,590    3.5%  Closed access
+      657    0.2%  Embargoed
+      229    0.1%  ETHZ users
+
+--- licenses (top 15) ---
+   63,489   20.7%  In Copyright - Non-Commercial Use Permitted
+   39,899   13.0%  Creative Commons Attribution 4.0 International
+    6,953    2.3%  Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International
+    4,248    1.4%  Creative Commons Attribution 3.0 Unported
+    2,983    1.0%  Creative Commons Attribution-NonCommercial 4.0 International
+      801    0.3%  Creative Commons Attribution-NonCommercial 3.0 Unported
+      749    0.2%  Creative Commons Attribution- NonCommercial-NoDerivatives 4.0 International
+      564    0.2%  Creative Commons Attribution 2.0 Generic
+      467    0.2%  Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+      425    0.1%  Creative Commons Attribution-NonCommercial-NoDerivs 3.0 Unported
+      401    0.1%  Creative Commons Attribution-ShareAlike 4.0 International
+      278    0.1%  Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported
+      153    0.0%  MIT License
+      138    0.0%  Creative Commons Attribution-NoDerivatives 4.0 International
+       93    0.0%  Creative Commons Attribution-NonCommercial-ShareAlike 2.5 Generic
+
+--- languages (top 10) ---
+  256,247   83.5%  en
+   33,156   10.8%  de
+    2,019    0.7%  fr
+      622    0.2%  it
+      292    0.1%  es
+      163    0.1%  nl
+       91    0.0%  zh
+       75    0.0%  ja
+       45    0.0%  pt
+       41    0.0%  pl
+
+--- issue year (recent 15) ---
+        8  2027
+    5,820  2026
+   13,110  2025
+   13,866  2024
+   13,704  2023
+   14,148  2022
+   14,051  2021
+   13,456  2020
+   13,524  2019
+   13,573  2018
+   13,108  2017
+   13,171  2016
+   12,951  2015
+   13,324  2014
+   12,903  2013
+
+--- authors/record ---
+  records with >=1 author: 291,242 ( 94.9%)
+  mean (nonzero): 4.7   max: 633
+
+--- top-level sets (setSpec, top 20) ---
+  163,299  com_20.500.11850_1
+  151,114  col_20.500.11850_3
+   67,237  com_20.500.11850_6
+   42,143  col_20.500.11850_8
+   34,708  com_20.500.11850_15
+   31,905  col_20.500.11850_16
+   21,809  col_20.500.11850_10
+   14,376  com_20.500.11850_20
+   13,796  com_20.500.11850_11
+   10,270  col_20.500.11850_14
+    7,536  col_20.500.11850_21
+    6,840  col_20.500.11850_22
+    6,184  col_20.500.11850_5
+    5,572  com_20.500.11850_23
+    4,946  col_20.500.11850_4
+    3,711  com_20.500.11850_29
+    3,517  col_20.500.11850_28
+    3,346  com_20.500.11850_40
+    3,346  col_20.500.11850_41
+    2,728  col_20.500.11850_9
+
+--- field fill rates (top 60 by presence) ---
+   95.6%  293,270  type  (avg 1.0/rec)
+   95.6%  293,270  title  (avg 1.0/rec)
+   95.6%  293,270  date-issued  (avg 1.0/rec)
+   95.6%  293,270  date-deposited  (avg 1.0/rec)
+   95.6%  293,270  date-availablelist  (avg 1.0/rec)
+   95.6%  293,270  date-available  (avg 1.9/rec)
+   95.6%  293,269  availability  (avg 1.0/rec)
+   95.6%  293,268  identifier-uri  (avg 1.0/rec)
+   95.6%  293,267  date-accessioned  (avg 1.0/rec)
+   95.6%  293,262  eth  (avg 1.0/rec)
+   95.5%  293,161  sourcelist  (avg 1.0/rec)
+   95.5%  293,161  source  (avg 1.0/rec)
+   95.1%  291,773  language-isolist  (avg 1.0/rec)
+   95.1%  291,773  language-iso  (avg 1.0/rec)
+   94.9%  291,242  contributor-authorlist  (avg 1.0/rec)
+   94.9%  291,242  contributor-author  (avg 4.7/rec)
+   94.9%  291,242  contributor-author-name  (avg 4.7/rec)
+   94.9%  291,242  contributor-author-orcid  (avg 4.7/rec)
+   94.4%  289,563  publication-status  (avg 1.0/rec)
+   93.0%  285,337  publisher  (avg 1.0/rec)
+   75.3%  231,110  leitzahllist  (avg 1.0/rec)
+   75.3%  231,110  leitzahl  (avg 1.3/rec)
+   69.2%  212,287  pages-start  (avg 1.0/rec)
+   66.5%  204,153  leitzahl-certifiedlist  (avg 1.0/rec)
+   66.5%  204,153  leitzahl-certified  (avg 1.2/rec)
+   64.4%  197,597  journal-title  (avg 1.0/rec)
+   61.1%  187,432  journal-volume  (avg 1.0/rec)
+   58.3%  178,883  identifier-other  (avg 1.0/rec)
+   56.2%  172,573  identifier-issnlist  (avg 1.0/rec)
+   56.2%  172,573  identifier-issn  (avg 2.6/rec)
+   50.2%  153,948  pages-end  (avg 1.0/rec)
+   49.6%  152,080  subjectlist  (avg 1.0/rec)
+   49.6%  152,080  subject  (avg 5.7/rec)
+   44.2%  135,748  ecitpidlist  (avg 1.0/rec)
+   44.2%  135,748  ecitpid  (avg 1.0/rec)
+   43.7%  133,990  journal-abbreviated  (avg 1.0/rec)
+   43.1%  132,342  journal-issue  (avg 1.0/rec)
+   42.3%  129,794  identifier-woslist  (avg 1.0/rec)
+   42.3%  129,794  identifier-wos  (avg 1.0/rec)
+   41.5%  127,246  size  (avg 1.0/rec)
+   41.2%  126,475  publication-place  (avg 1.0/rec)
+   40.2%  123,336  formatlist  (avg 1.0/rec)
+   40.2%  123,336  format  (avg 1.1/rec)
+   40.0%  122,733  identifier-doi  (avg 1.0/rec)
+   39.8%  122,258  rights-uri  (avg 1.0/rec)
+   39.8%  122,249  rights-license  (avg 1.0/rec)
+   35.6%  109,283  date-published  (avg 1.0/rec)
+   34.6%  106,145  identifier-nebislist  (avg 1.0/rec)
+   34.6%  106,145  identifier-nebis  (avg 1.0/rec)
+   30.7%   94,335  noteslist  (avg 1.0/rec)
+   30.7%   94,335  notes  (avg 1.0/rec)
+   26.5%   81,422  identifier-scopuslist  (avg 1.0/rec)
+   26.5%   81,422  identifier-scopus  (avg 1.0/rec)
+   23.1%   70,858  version-deposit  (avg 1.0/rec)
+   21.8%   66,894  event  (avg 1.0/rec)
+   21.6%   66,333  event-date  (avg 1.0/rec)
+   20.7%   63,404  event-location  (avg 1.0/rec)
+   17.8%   54,541  description-abstractlist  (avg 1.0/rec)
+   17.8%   54,541  description-abstract  (avg 1.0/rec)
+   16.3%   50,014  book-title  (avg 1.0/rec)
+
+=== xoai — complete-dump enrichment profile ===
+records: 293,270   (3069 pages)
+
+--- entity types (dspace.entity.type) ---
+  289,592   98.7%  Publication
+    3,678    1.3%  ResearchData
+
+--- relationship edges by type ---
+  records with >=1 relationship: 232,965 ( 79.4%)
+  196,355  isJournalOfPublication
+  136,501  isAuthorOfPublication
+    9,190  isSupervisorOfPublication
+    5,235  isPubHasPartPub
+    5,109  isPubPartOfPub
+    4,708  isAuthorOfResearchData
+    4,404  isEditorOfPublication
+    3,392  isPubPreviousVersionOfPub
+    3,127  isPubNewVersionOfPub
+    2,055  isRDSupplementToPub
+    2,003  isPubSupplementedByRD
+    1,330  isPubVariantFormOfPub
+    1,320  isPubOriginalFormOfPub
+    1,295  isPubCitedByPub
+    1,253  isContactPersonOfResearchData
+    1,065  isPubCitesPub
+      681  isPubReferencedByPub
+      680  isPubReferencesPub
+      551  isDataCollectorOfResearchData
+      480  isPubIdenticalToPub
+      436  isProjectLeaderOfResearchData
+      277  isResearchGroupOfResearchData
+      245  isPubDerivedFromPub
+      244  isProducerOfResearchData
+      242  isPubSourceOfPub
+      229  isProjectMemberOfResearchData
+      219  isRDPartOfRD
+      218  isRDHasPartRD
+      207  isPubContinuedByPub
+      206  isPubContinuesPub
+      196  isPubSupplementToPub
+      177  isPubSupplementedByPub
+      171  isResearcherOfResearchData
+      144  isProjectManagerOfResearchData
+      130  isRDCitedByPub
+      126  isOtherOfResearchData
+      121  isPubCitesRD
+      105  isPubCompiledByPub
+      104  isPubCompilesPub
+      102  isPubDocumentsPub
+      102  isPubDocumentedByPub
+       98  isRightsHolderOfResearchData
+       84  isJournalOfResearchData
+       68  isRDPartOfPub
+       67  isPubHasPartRD
+       64  isRDCitesPub
+       62  isPubCitedByRD
+       59  isRDHasPartPub
+       49  isPubPartOfRD
+       47  isRDCitesRD
+       46  isRDCitedByRD
+       46  isRDPreviousVersionOfRD
+       46  isRDNewVersionOfRD
+       39  isRDSupplementedByPub
+       32  isRelatedPersonOfResearchData
+       32  isPubSupplementToRD
+       23  isRDReferencedByPub
+       23  isPubReferencesRD
+       22  isPubDocumentsRD
+       20  isRDDocumentedByPub
+       18  isRDSupplementToRD
+       18  isRDSupplementedByRD
+       17  isRDSourceOfPub
+       16  isPubDerivedFromRD
+       12  isRDCompiledByRD
+       12  isRDCompilesRD
+       10  isRDContinuedByRD
+       10  isRDContinuesRD
+       10  isRDSourceOfRD
+        7  isPubReviewedByPub
+        6  isRDReferencedByRD
+        6  isRDDerivedFromRD
+        6  isRDDocumentsPub
+        6  isRDReferencesRD
+        6  isPubDocumentedByRD
+        6  isPubReviewsPub
+        5  isRDPreviousVersionOfPub
+        5  isRDDerivedFromPub
+        5  isPubSourceOfRD
+        4  isPubNewVersionOfRD
+        2  isRDContinuesPub
+        2  isPubCompilesRD
+        2  isPubPreviousVersionOfRD
+        2  isRDCompiledByPub
+        2  isPubContinuedByRD
+        2  isRDNewVersionOfPub
+        1  isRDVariantFormOfPub
+        1  isRDOriginalFormOfRD
+        1  isRDReferencesPub
+        1  isRDDocumentsRD
+        1  isRDCompilesPub
+        1  isPubReferencedByRD
+        1  isRDIdenticalToPub
+        1  isRDVariantFormOfRD
+
+--- files / bitstreams ---
+  records with >=1 file: 293,217 (100.0%)
+  bitstreams total:      868,237
+  bitstream bytes total: 10,300,775,875,859  (10.30 TB, not downloaded)
+  bundles:
+  MIME types (top 12):
+    292,637  application/xml
+    184,129  text/plain
+    178,754  application/octet-stream
+    148,967  application/pdf
+     54,219  text/plain; charset=utf-8
+      3,690  application/zip
+      1,860  text/csv
+        878  application/netcdf
+        790  application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+        348  application/x-tar
+        257  video/mp4
+        251  image/tiff

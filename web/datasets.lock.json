@@ -3,12 +3,12 @@
   "generatedFrom": "release-1.0.0-rc1",
   "datasets": [
     {
-      "key": "crossref",
-      "url": "https://data.graphplaza.com/crossref/crossref.rete",
+      "key": "ethz-research-collection",
+      "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete",
       "formatVersion": 5,
-      "contentHash": "902166fd7c400c831c5efbfbe365477c",
-      "size": 60222891295,
-      "cardUrl": "https://data.graphplaza.com/crossref/crossref.rete"
+      "contentHash": "e399dfb7a43a0d7f2dd4d4c0d778285a",
+      "size": 206054877,
+      "cardUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete"
     }
   ]
 }
