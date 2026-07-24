@@ -491,6 +491,14 @@
       "cardUrl": "https://data.graphplaza.com/postscriptum/postscriptum.rete"
     },
     {
+      "key": "proteinbase",
+      "url": "https://data.graphplaza.com/proteinbase/proteinbase.rete",
+      "formatVersion": 5,
+      "contentHash": "e2ba553da70586abb16c90f2df26ea08",
+      "size": 10815712,
+      "cardUrl": "https://data.graphplaza.com/proteinbase/proteinbase.rete"
+    },
+    {
       "key": "ramon_llull",
       "url": "https://data.graphplaza.com/ramon_llull/ramon_llull.rete",
       "formatVersion": 5,
