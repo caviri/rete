@@ -39,8 +39,11 @@ regex-lite = "0.1"
 md-5 = "0.10"
 sha1 = "0.10"
 sha2 = "0.10"
-# Randomness for the SPARQL RAND/UUID/STRUUID/BNODE built-ins. On wasm the
-# browser backend is enabled via the `js` feature in the wasm-target block below.
+# Randomness for the SPARQL RAND/UUID/STRUUID/BNODE built-ins. On
+# wasm32-unknown-unknown getrandom has no default backend: a *browser* consumer
+# turns on the `wasm-js` feature below (crypto.getRandomValues); a non-browser
+# wasm host (Chicory/WASI/Wasmtime) must supply its own via getrandom's `custom`
+# backend. Native targets use the OS backend and need neither.
 getrandom = "0.2"
 zstd = { workspace = true, optional = true }
 # Data-parallel query evaluator (prototype). Behind the `parallel` feature so it
@@ -60,6 +63,11 @@ compression = ["dep:zstd"]
 # Prototype data-parallel query evaluator. NOT default; wasm must never enable it
 # (wasm has no threads). Enables the `parallel` module + `rayon`.
 parallel = ["dep:rayon"]
+# getrandom's browser backend (crypto.getRandomValues, via js-sys/wasm-bindgen).
+# Enable ONLY for a wasm build that runs in a browser — it makes the module
+# import wasm-bindgen JS glue, which a non-browser wasm host (Chicory on the JVM,
+# WASI) cannot link. Those hosts leave this off and register a `custom` backend.
+wasm-js = ["getrandom/js"]
 
 # The parallel benchmark only compiles with the `parallel` feature (it uses
 # rayon + the feature-gated `parallel` module). Without the gate, a default
@@ -67,7 +75,3 @@ parallel = ["dep:rayon"]
 [[example]]
 name = "parallel_bench"
 required-features = ["parallel"]
-
-# On wasm, getrandom (pulled transitively via oxrdf) needs its browser backend.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }

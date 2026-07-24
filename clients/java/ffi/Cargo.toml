@@ -1,0 +1,45 @@
+# The wasm FFI crate behind the Java client — deliberately OUTSIDE the cargo
+# workspace (see the root Cargo.toml `exclude`), exactly like clients/python and
+# clients/r/src/rust: it versions/locks independently and builds for a different
+# target (`wasm32-unknown-unknown`), so the workspace release gates stay
+# untouched by client-only changes. clients/ consumes crates/, never the reverse.
+#
+# There is NO wasm-bindgen here on purpose: the output must be an import-free
+# wasm module a pure-Java runtime (Chicory) can run with no JS glue. See src/lib.rs.
+[package]
+name = "rete-ffi"
+# Kept in lockstep with the engine's version (and clients/java/pom.xml).
+version = "0.3.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/caviri/rete"
+homepage = "https://caviri.github.io/rete/"
+rust-version = "1.87"
+description = "C-ABI wasm bindings for querying rete graph files from a JVM (Chicory)."
+publish = false
+
+[lib]
+# Produces `rete_ffi.wasm` under target/wasm32-unknown-unknown/release/.
+name = "rete_ffi"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Feature-less, like the browser/Pyodide builds: wasm has no C zstd *encoder*,
+# and the pure-Rust ruzstd decoder in rete-core reads compressed files fine.
+# Crucially NOT `wasm-js` — a JVM host has no crypto.getRandomValues; enabling it
+# would import wasm-bindgen glue Chicory cannot link.
+rete-core = { path = "../../../crates/rete-core", default-features = false }
+# getrandom has no default backend on wasm32-unknown-unknown. The browser build
+# uses `js`; here we register a `custom` backend (see src/lib.rs) so the module
+# stays import-free. rete-core pulls getrandom transitively for the SPARQL
+# RAND/UUID/BNODE built-ins; enabling `custom` here turns on that backend graph-wide.
+getrandom = { version = "0.2", features = ["custom"] }
+
+[profile.release]
+# panic=abort so a Rust panic traps as a clean wasm `unreachable` (Chicory
+# surfaces it as an exception) instead of pulling in unwinding machinery; strip
+# + size-opt keep the wasm small enough to ship inside the JAR.
+panic = "abort"
+opt-level = "s"
+lto = true
+strip = true

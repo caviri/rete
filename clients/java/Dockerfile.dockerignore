@@ -1,0 +1,36 @@
+# Build context is the repo root, which holds multi-GB data/ and target trees.
+# Denylist the heavy/irrelevant trees; the wasm + Java build only needs the two
+# root manifests, crates/, and clients/java (minus its build outputs).
+.git
+.venv
+__pycache__
+data
+dev
+docs
+web
+hf-space
+experiments
+rdf-tests
+examples
+fuzz
+scripts
+skills
+tests
+target
+target-*
+rete-tests
+**/*.rete
+**/*.parquet
+
+# Other language clients are not part of this image.
+clients/python
+clients/r
+clients/js
+clients/blender
+clients/mcpb
+
+# Java client build outputs (sources are kept).
+clients/java/ffi/target
+clients/java/rete-client/target
+clients/java/rete-rdf4j/target
+clients/java/**/*.wasm

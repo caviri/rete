@@ -1,0 +1,56 @@
+name: Java client tests
+
+# Runs ONLY when the Java client or the engine crate it binds changes: build the
+# C-ABI wasm engine from the crates, then build both Maven modules (the Chicory
+# wrapper and the RDF4J binding) and run their JUnit suites.
+on:
+  push:
+    branches: [main, "release-*"]
+    paths:
+      - "clients/java/**"
+      - "crates/rete-core/**"
+      - ".github/workflows/java-test.yml"
+  pull_request:
+    paths:
+      - "clients/java/**"
+      - "crates/rete-core/**"
+      - ".github/workflows/java-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: java-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: wasm + maven verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      # The repo's rust-toolchain.toml pins the toolchain + the wasm target;
+      # cargo is invoked from the repo root so that pin applies to the FFI crate.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/java/ffi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Build the wasm engine (C-ABI, no wasm-bindgen)
+        run: >
+          cargo build --release --target wasm32-unknown-unknown
+          --manifest-path clients/java/ffi/Cargo.toml
+      - name: Drop the engine into the client's resources
+        run: >
+          install -D
+          clients/java/ffi/target/wasm32-unknown-unknown/release/rete_ffi.wasm
+          clients/java/rete-client/src/main/resources/io/github/caviri/rete/rete_ffi.wasm
+      - name: Build both modules and run the test suite
+        working-directory: clients/java
+        run: mvn -B verify
