@@ -220,6 +220,9 @@ async function addCell(cell, { solo }) {
     const color = cell.kind === "astrocyte" ? ASTRO_COLOR : (NT_COLOR[cell.nt] ?? 0xcccccc);
     g.traverse((o) => {
       if (o.isMesh) {
+        // Neuron tube GLBs ship without normals — without them a lit material is
+        // pitch black, so compute smooth normals before assigning the material.
+        if (!o.geometry.attributes.normal) o.geometry.computeVertexNormals();
         o.userData.kind = cell.kind;
         o.material = new THREE.MeshStandardMaterial({
           color, roughness:0.5, metalness:0.05,

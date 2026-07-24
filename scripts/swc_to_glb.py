@@ -107,7 +107,9 @@ def swc_glb(xyz, rad, edges, sides):
         V.append(v); F.append(f + off); off += len(v)
     if not V:
         return None
-    return trimesh.Trimesh(vertices=np.concatenate(V), faces=np.concatenate(F), process=False)
+    m = trimesh.Trimesh(vertices=np.concatenate(V), faces=np.concatenate(F), process=False)
+    _ = m.vertex_normals  # force smooth normals so the exported GLB carries NORMAL
+    return m
 
 def main():
     out_dir = Path(sys.argv[1]); out_dir.mkdir(parents=True, exist_ok=True)
