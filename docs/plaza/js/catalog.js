@@ -1,25 +1,106 @@
-// catalog.js — the plaza grid. Loads the manifest, then for each dataset reads
-// its embedded Dataset Card live (two HTTP range requests) and paints a tile
-// whose image is a deterministic fingerprint of that card.
+// catalog.js — the plaza front page.
+//
+// Loads the manifest, reads each dataset's embedded Card live (two HTTP range
+// requests, never the graph), and paints a gallery whose artwork is a
+// deterministic fingerprint of that card.
+//
+// The browsing model is faceted, in the way a model hub is: filters are
+// CUMULATIVE — values inside one group widen (OR), groups narrow each other
+// (AND) — and each value carries the count it would yield, computed against the
+// OTHER groups' selections so a number is never a lie about what clicking does.
 import { readReteCard, liteCardFromHeader, fmtBytes } from "./rete-card.js";
 import { imageInfoFromCard } from "./procgen.js";
 import { renderFingerprint } from "./procgen-p5.js";
 import { derivedFacets, FILTERABLE } from "./facets.js";
 import { detectProviders } from "./providers.js";
 import { usedOntologies } from "./vocabs.js";
+import { mountSearch } from "./search.js";
 
 const ART = { w: 520, h: 325 };
+const SPOT_MS = 7000;
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const fmt = (n) => (n == null ? "—" : Intl.NumberFormat().format(n));
 const themeNow = () => (document.documentElement.dataset.theme === "light" ? "light" : "dark");
+const escapeHtml = (s) =>
+  String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 const cats = $("#cats");
 const empty = $("#empty");
+const countEl = $("#count");
+const facetsEl = $("#facets");
+const activeEl = $("#active");
+const clearBtn = $("#clearAll");
+const sortEl = $("#sort");
+
+let entries = [];              // { entry, card, header, img, facets, ontologies, providers, search }
+let query = "";
+let sortBy = "relevance";
+const selected = new Map();    // groupId -> Set(value)
+const expanded = new Set();    // groupIds showing their full value list
+
+// ── facet model ────────────────────────────────────────────────────────────
+// Each group knows how to read its values off a record. Everything else — the
+// sidebar, the counts, the tokens, the search index — is derived from this.
+const SIZE_BUCKETS = [
+  { label: "under 1 MB", test: (n) => n != null && n < 1e6 },
+  { label: "1 – 50 MB", test: (n) => n != null && n >= 1e6 && n < 5e7 },
+  { label: "50 – 500 MB", test: (n) => n != null && n >= 5e7 && n < 5e8 },
+  { label: "over 500 MB", test: (n) => n != null && n >= 5e8 },
+];
+
+// "GeoSPARQL" is both a derived FEATURE (the file carries geometry) and a
+// VOCABULARY (it imports the ontology) — the same word for two different facts.
+// The underlying value stays as-is (dataset.html shows the same chips); only the
+// sidebar wording is disambiguated.
+const FEATURE_LABEL = {
+  GeoSPARQL: "has geometry",
+  temporal: "has time",
+  multilingual: "multilingual",
+  incoherent: "schema defects",
+  "header-only": "no embedded card",
+};
+
+const GROUPS = [
+  { id: "type", label: "Type", open: true, of: (r) => [categoryOf(r) === "ontology" ? "ontology" : "dataset"] },
+  { id: "kind", label: "Delivery", open: true, of: (r) => (r.facets || []).filter((f) => f === "remote" || f === "bundled") },
+  { id: "feature", label: "Features", open: true, display: (v) => FEATURE_LABEL[v] || v,
+    of: (r) => (r.facets || []).filter((f) => FILTERABLE.has(f) && f !== "remote" && f !== "bundled") },
+  { id: "vocab", label: "Vocabulary", open: true, of: (r) => (r.ontologies || []).map((o) => o.name) },
+  { id: "topic", label: "Topic", open: true, of: (r) => r.entry.tags || [] },
+  { id: "licence", label: "Licence", open: false, of: (r) => { const l = (r.card && r.card.license) || r.entry.license; return l ? [l] : []; } },
+  { id: "size", label: "File size", open: false, of: (r) => { const b = SIZE_BUCKETS.find((s) => s.test(r.size)); return b ? [b.label] : []; } },
+  { id: "provider", label: "Connected to", open: false, of: (r) => (r.providers || []).map((p) => p.name) },
+];
+const GROUP_BY_ID = Object.fromEntries(GROUPS.map((g) => [g.id, g]));
+
+const valuesOf = (rec, gid) => {
+  try { return GROUP_BY_ID[gid].of(rec) || []; } catch { return []; }
+};
+
+/** Does `rec` satisfy every selected group except `skip`? */
+function passesFacets(rec, skip) {
+  for (const [gid, set] of selected) {
+    if (!set.size || gid === skip) continue;
+    const vals = valuesOf(rec, gid);
+    if (!vals.some((v) => set.has(v))) return false;
+  }
+  return true;
+}
+const passesQuery = (rec) =>
+  !query || (rec.search || (rec.entry.title + " " + rec.entry.key).toLowerCase()).includes(query);
+
+const matches = (rec) => passesFacets(rec, null) && passesQuery(rec);
+
+function toggle(gid, value) {
+  const set = selected.get(gid) || new Set();
+  set.has(value) ? set.delete(value) : set.add(value);
+  set.size ? selected.set(gid, set) : selected.delete(gid);
+  render();
+}
 
 // A dataset's category: its manifest `category`, else derived (ontology tags, or
-// an owl-class-dominated schema). The catalog has two groups: Datasets ("graph")
-// and Ontologies ("ontology" .rete files + the reference vocabularies).
+// an owl-class-dominated schema).
 function categoryOf(rec) {
   if (rec.entry.category) return rec.entry.category;
   const tags = (rec.entry.tags || []).map((t) => t.toLowerCase());
@@ -34,22 +115,11 @@ function categoryOf(rec) {
   }
   return "graph";
 }
-const qInput = $("#q");
-const chipsEl = $("#chips");
-const countEl = $("#count");
 
-let entries = []; // { entry, card, header, img, search } enriched as cards resolve
-let activeTags = new Set();
-let query = "";
-
+// ── boot ───────────────────────────────────────────────────────────────────
 (async function main() {
   const manifest = await fetch("plaza.json").then((r) => r.json());
-  $("#tagline").textContent = manifest.tagline || "";
-  $("#hdrmeta").textContent = `${manifest.datasets.length} datasets · cards read live from each .rete file`;
-
-  // Seed the records + skeleton tiles immediately, fill them as cards arrive.
   entries = manifest.datasets.map((entry) => ({ entry, card: null, header: null, img: null }));
-  renderChips();
   render();
 
   await Promise.all(
@@ -60,7 +130,7 @@ let query = "";
         rec.card = card || liteCardFromHeader(header, rec.entry);
         rec.size = size;
       } catch (err) {
-        // CORS / offline / not-a-rete — fall back to manifest-only, image from key.
+        // CORS / offline / not-a-rete — fall back to manifest-only.
         rec.card = { _unreachable: true, title: rec.entry.title, description: rec.entry.blurb };
         rec.error = String(err);
       }
@@ -70,32 +140,235 @@ let query = "";
       const mode = categoryOf(rec) === "ontology" ? "ontology" : "dataset";
       rec.img = await renderFingerprint(imageInfoFromCard(rec.card, rec.entry, rec.header, mode), { theme: themeNow(), ...ART });
       rec.search = [
-        rec.entry.key,
-        rec.entry.title,
-        rec.entry.blurb,
+        rec.entry.key, rec.entry.title, rec.entry.blurb,
         (rec.entry.tags || []).join(" "),
-        rec.facets.join(" "),
-        rec.providers.map((p) => p.name).join(" "),
-        rec.ontologies.map((o) => o.name).join(" "),
+        (rec.facets || []).join(" "),
+        (rec.providers || []).map((p) => p.name).join(" "),
+        (rec.ontologies || []).map((o) => o.name).join(" "),
         (rec.card.vocabularies || []).join(" "),
         rec.card.license || "",
-      ]
-        .join(" ")
-        .toLowerCase();
-      renderChips();
+      ].join(" ").toLowerCase();
       render();
     })
   );
   await buildOntologyThumbs();
   render();
+  startSpotlight();
 })();
 
-// Procedural thumbnails for the reference-ontology cards (square nodes, sized by
-// properties). Uses the backing .rete card when one provides the ontology, else
-// an abstract plate seeded by the ontology name.
+// ── search ─────────────────────────────────────────────────────────────────
+mountSearch({
+  input: $("#q"),
+  panel: $("#ac"),
+  onQuery: (q) => { query = q; render(); },
+  getIndex: () => {
+    const idx = [];
+    for (const rec of entries) {
+      idx.push({
+        type: "dataset",
+        label: rec.entry.title || rec.entry.key,
+        meta: rec.card && rec.card.triple_count != null ? `${fmt(rec.card.triple_count)} triples` : "open",
+        pick: () => { location.href = `dataset.html?key=${encodeURIComponent(rec.entry.key)}`; },
+      });
+    }
+    for (const o of aggregateOntologies(true)) {
+      idx.push({
+        type: "ontology",
+        label: o.name,
+        meta: `${o.datasets.length} dataset${o.datasets.length > 1 ? "s" : ""}`,
+        pick: () => { location.href = `ontology.html?id=${encodeURIComponent(o.name)}`; },
+      });
+    }
+    for (const gid of ["topic", "licence", "provider", "feature"]) {
+      const type = { topic: "tag", licence: "licence", provider: "provider", feature: "tag" }[gid];
+      const g = GROUP_BY_ID[gid];
+      for (const [value, n] of countsFor(gid, true)) {
+        if (!n) continue;
+        idx.push({
+          type,
+          label: g.display ? g.display(value) : value,
+          meta: `${n} dataset${n > 1 ? "s" : ""}`,
+          pick: () => toggle(gid, value),
+        });
+      }
+    }
+    return idx;
+  },
+});
+
+// ── facet counts ───────────────────────────────────────────────────────────
+/** [value, count] for one group, counted against the OTHER groups + the query.
+ *
+ *  Seeded with every value the whole corpus has, so an option that the current
+ *  filters reduce to zero is shown greyed at 0 rather than DISAPPEARING — a
+ *  vanishing checkbox reads as a bug, and it hides the fact that the
+ *  combination is empty. */
+function countsFor(gid, ignoreQuery = false) {
+  const tally = new Map();
+  for (const rec of entries) for (const v of valuesOf(rec, gid)) tally.set(v, 0);
+  for (const rec of entries) {
+    if (!passesFacets(rec, gid)) continue;
+    if (!ignoreQuery && !passesQuery(rec)) continue;
+    for (const v of valuesOf(rec, gid)) tally.set(v, (tally.get(v) || 0) + 1);
+  }
+  return [...tally.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+}
+
+// ── sidebar ────────────────────────────────────────────────────────────────
+function renderFacets() {
+  facetsEl.innerHTML = "";
+  for (const g of GROUPS) {
+    const counts = countsFor(g.id);
+    if (!counts.length) continue;
+    const sel = selected.get(g.id) || new Set();
+    const isOpen = g.open || sel.size > 0 || expanded.has(g.id);
+
+    const det = document.createElement("details");
+    det.className = "pz-group";
+    det.open = isOpen;
+    det.innerHTML = `<summary>${escapeHtml(g.label)}${sel.size ? ` <span class="n">${sel.size}</span>` : ""}</summary>`;
+
+    const box = document.createElement("div");
+    box.className = "pz-opts";
+    const show = expanded.has(g.id) ? counts : counts.slice(0, 6);
+    for (const [value, n] of show) {
+      const on = sel.has(value);
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "pz-opt" + (on ? " on" : "");
+      if (!n && !on) b.disabled = true;
+      const shown = g.display ? g.display(value) : value;
+      b.title = shown === value ? value : `${shown} (${value})`;
+      b.innerHTML = `<span class="box">${on ? "✓" : ""}</span><span class="lab">${escapeHtml(shown)}</span><span class="n">${n}</span>`;
+      b.onclick = () => toggle(g.id, value);
+      box.appendChild(b);
+    }
+    if (counts.length > 6) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "pz-more";
+      more.textContent = expanded.has(g.id) ? "Show less" : `Show ${counts.length - 6} more`;
+      more.onclick = () => { expanded.has(g.id) ? expanded.delete(g.id) : expanded.add(g.id); render(); };
+      box.appendChild(more);
+    }
+    det.appendChild(box);
+    facetsEl.appendChild(det);
+  }
+}
+
+function renderActive() {
+  activeEl.innerHTML = "";
+  let any = false;
+  for (const [gid, set] of selected) {
+    for (const value of set) {
+      any = true;
+      const g = GROUP_BY_ID[gid];
+      const tok = document.createElement("span");
+      tok.className = "pz-tok";
+      tok.innerHTML = `<em>${escapeHtml(g.label)}</em>${escapeHtml(g.display ? g.display(value) : value)}<button aria-label="Remove filter">×</button>`;
+      tok.querySelector("button").onclick = () => toggle(gid, value);
+      activeEl.appendChild(tok);
+    }
+  }
+  if (query) {
+    any = true;
+    const tok = document.createElement("span");
+    tok.className = "pz-tok";
+    tok.innerHTML = `<em>Search</em>${escapeHtml(query)}<button aria-label="Clear search">×</button>`;
+    tok.querySelector("button").onclick = () => { query = ""; $("#q").value = ""; render(); };
+    activeEl.appendChild(tok);
+  }
+  clearBtn.hidden = !any;
+}
+
+clearBtn.onclick = () => { selected.clear(); query = ""; $("#q").value = ""; render(); };
+sortEl.onchange = () => { sortBy = sortEl.value; render(); };
+
+// ── hero ───────────────────────────────────────────────────────────────────
+function renderHeroStats() {
+  const withCard = entries.filter((r) => r.card && !r.card._unreachable);
+  const triples = withCard.reduce((a, r) => a + (r.card.triple_count ?? r.card.quad_count ?? 0), 0);
+  const bytes = entries.reduce((a, r) => a + (r.size || 0), 0);
+  const vocabs = new Set(entries.flatMap((r) => (r.ontologies || []).map((o) => o.name)));
+  const el = $("#heroStats");
+  if (!el) return;
+  el.innerHTML = [
+    [entries.length, "datasets"],
+    [triples ? fmt(triples) : "…", "triples"],
+    [bytes ? fmtBytes(bytes) : "…", "of graph"],
+    [vocabs.size || "…", "vocabularies"],
+  ].map(([b, s]) => `<div class="pz-stat"><b>${escapeHtml(String(b))}</b><span>${s}</span></div>`).join("");
+}
+
+let spotIdx = 0;
+let spotTimer = null;
+const spotPool = () => entries.filter((r) => r.img && r.card && !r.card._unreachable).slice(0, 6);
+
+function renderSpot() {
+  const pool = spotPool();
+  if (!pool.length) return;
+  spotIdx %= pool.length;
+  const rec = pool[spotIdx];
+  const t = splitTitle(rec.entry.title || rec.entry.key);
+  const triples = rec.card.triple_count ?? rec.card.quad_count;
+
+  $("#spotArt").innerHTML = `<img src="${rec.img}" alt="">`;
+  $("#spotKicker").textContent = categoryOf(rec) === "ontology" ? "ontology in the plaza" : "in the plaza";
+  const a = $("#spotTitle");
+  a.textContent = t.name;
+  a.href = `dataset.html?key=${encodeURIComponent(rec.entry.key)}`;
+  $("#spotSub").textContent = t.sub || rec.entry.blurb || "";
+  $("#spotStats").innerHTML = [
+    rec.size ? `<span><b>${fmtBytes(rec.size)}</b></span>` : "",
+    triples != null ? `<span><b>${fmt(triples)}</b> triples</span>` : "",
+    (rec.ontologies || []).length ? `<span>${escapeHtml(rec.ontologies.slice(0, 3).map((o) => o.name).join(" · "))}</span>` : "",
+  ].join("");
+
+  const dots = $("#spotDots");
+  dots.innerHTML = "";
+  pool.forEach((_, i) => {
+    const d = document.createElement("button");
+    d.className = "pz-spot-dot" + (i === spotIdx ? " on" : "");
+    d.type = "button";
+    d.setAttribute("aria-label", `Spotlight ${i + 1}`);
+    d.onclick = () => { spotIdx = i; renderSpot(); restartSpotlight(); };
+    dots.appendChild(d);
+  });
+}
+
+function startSpotlight() {
+  renderSpot();
+  restartSpotlight();
+  const spot = $("#spot");
+  spot?.addEventListener("mouseenter", () => clearInterval(spotTimer));
+  spot?.addEventListener("mouseleave", restartSpotlight);
+}
+function restartSpotlight() {
+  clearInterval(spotTimer);
+  spotTimer = setInterval(() => { spotIdx++; renderSpot(); }, SPOT_MS);
+}
+
+function renderRail() {
+  const rail = $("#ontRail");
+  if (!rail) return;
+  const sel = selected.get("vocab") || new Set();
+  const onts = aggregateOntologies(true).slice(0, 14);
+  rail.innerHTML = "";
+  for (const o of onts) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pz-onto" + (sel.has(o.name) ? " on" : "");
+    b.innerHTML = `<i>${escapeHtml(o.name.slice(0, 1).toUpperCase())}</i>${escapeHtml(o.name)}<s>${o.datasets.length}</s>`;
+    b.title = o.desc || `Filter by ${o.name}`;
+    b.onclick = () => toggle("vocab", o.name);
+    rail.appendChild(b);
+  }
+}
+
+// ── ontologies ─────────────────────────────────────────────────────────────
 let ontImg = {};
 async function buildOntologyThumbs() {
-  const onts = aggregateOntologies();
+  const onts = aggregateOntologies(true);
   await Promise.all(
     onts.map(async (o) => {
       const backing = entries.find((r) => (r.entry.provides || []).includes(o.name));
@@ -107,44 +380,45 @@ async function buildOntologyThumbs() {
   );
 }
 
-function renderChips() {
-  const tags = new Set();
-  for (const rec of entries) {
-    (rec.entry.tags || []).forEach((t) => tags.add(t));
-    (rec.facets || []).forEach((t) => { if (FILTERABLE.has(t)) tags.add(t); });
-  }
-  chipsEl.innerHTML = "";
-  [...tags].sort().forEach((t) => {
-    const c = document.createElement("span");
-    c.className = "chip" + (activeTags.has(t) ? " on" : "");
-    c.textContent = t;
-    c.onclick = () => {
-      activeTags.has(t) ? activeTags.delete(t) : activeTags.add(t);
-      renderChips();
-      render();
-    };
-    chipsEl.appendChild(c);
-  });
+/** name -> {url, desc, datasets[]}, across every record (or only the shown ones). */
+function aggregateOntologies(all = false) {
+  const pool = all ? entries : entries.filter(matches);
+  const omap = new Map();
+  for (const rec of pool)
+    for (const o of rec.ontologies || []) {
+      const e = omap.get(o.name) || { name: o.name, url: o.url, desc: o.desc, datasets: [] };
+      if (!e.desc && o.desc) e.desc = o.desc;
+      if (!e.url && o.url) e.url = o.url;
+      if (!e.datasets.some((d) => d.key === rec.entry.key))
+        e.datasets.push({ key: rec.entry.key, title: rec.entry.title || rec.entry.key, card: rec.card });
+      omap.set(o.name, e);
+    }
+  return [...omap.values()].sort((a, b) => b.datasets.length - a.datasets.length || a.name.localeCompare(b.name));
 }
 
-function matches(rec) {
-  const { entry } = rec;
-  const tags = [...(entry.tags || []), ...(rec.facets || [])];
-  if (activeTags.size && ![...activeTags].some((t) => tags.includes(t))) return false;
-  if (!query) return true;
-  return (rec.search || (entry.title + " " + entry.key).toLowerCase()).includes(query);
-}
+// ── grid ───────────────────────────────────────────────────────────────────
+const SORTERS = {
+  relevance: (a, b) => Number(Boolean(b.card)) - Number(Boolean(a.card)) || tri(b) - tri(a),
+  name: (a, b) => String(a.entry.title || a.entry.key).localeCompare(String(b.entry.title || b.entry.key)),
+  triples: (a, b) => tri(b) - tri(a),
+  size: (a, b) => (b.size || 0) - (a.size || 0),
+  vocabs: (a, b) => (b.ontologies || []).length - (a.ontologies || []).length,
+};
+const tri = (r) => (r.card && (r.card.triple_count ?? r.card.quad_count)) || 0;
 
 function render() {
-  const shown = entries.filter(matches);
-  countEl.textContent = `${shown.length} / ${entries.length}`;
+  renderFacets();
+  renderActive();
+  renderHeroStats();
+  renderRail();
+
+  const shown = entries.filter(matches).sort(SORTERS[sortBy] || SORTERS.relevance);
+  countEl.textContent = `${shown.length} of ${entries.length}`;
   cats.innerHTML = "";
 
-  // Datasets (knowledge graphs).
   const graphs = shown.filter((r) => categoryOf(r) === "graph");
   if (graphs.length) cats.appendChild(tileSection("Datasets", graphs));
 
-  // Ontologies = the ontology .rete files + the reference vocabularies used across the plaza.
   const ontTiles = shown.filter((r) => categoryOf(r) === "ontology");
   const onts = aggregateOntologies();
   if (ontTiles.length || onts.length) {
@@ -187,23 +461,6 @@ function tileSection(label, recs) {
   return sec;
 }
 
-// Aggregate the ontologies used across all datasets → name → {url, desc, datasets[]}.
-function aggregateOntologies() {
-  const omap = new Map();
-  for (const rec of entries)
-    for (const o of (rec.ontologies || [])) {
-      const e = omap.get(o.name) || { name: o.name, url: o.url, desc: o.desc, datasets: [] };
-      if (!e.desc && o.desc) e.desc = o.desc;
-      if (!e.url && o.url) e.url = o.url;
-      if (!e.datasets.some((d) => d.key === rec.entry.key))
-        e.datasets.push({ key: rec.entry.key, title: rec.entry.title || rec.entry.key, card: rec.card });
-      omap.set(o.name, e);
-    }
-  let onts = [...omap.values()].sort((a, b) => b.datasets.length - a.datasets.length || a.name.localeCompare(b.name));
-  if (query) onts = onts.filter((o) => o.name.toLowerCase().includes(query));
-  return onts;
-}
-
 function tile(rec) {
   const { entry, card, img } = rec;
   const el = document.createElement("a");
@@ -244,23 +501,12 @@ function tile(rec) {
   return el;
 }
 
-function escapeHtml(s) {
-  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
-  );
-}
-
-// Split a title at the first " — "/" – "/" - " into a name + secondary subtitle.
+/** Split a title at the first " — "/" – "/" - " into a name + secondary subtitle. */
 function splitTitle(t) {
   const s = String(t || "");
   const m = s.match(/^(.*?)\s+[—–-]\s+(.*)$/);
   return m ? { name: m[1].trim(), sub: m[2].trim() } : { name: s.trim(), sub: "" };
 }
-
-qInput.addEventListener("input", () => {
-  query = qInput.value.trim().toLowerCase();
-  render();
-});
 
 // Re-skin the procedural images when the theme toggles.
 window.addEventListener("plaza-theme", async () => {
@@ -273,4 +519,5 @@ window.addEventListener("plaza-theme", async () => {
   );
   await buildOntologyThumbs();
   render();
+  renderSpot();
 });

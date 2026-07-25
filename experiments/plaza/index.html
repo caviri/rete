@@ -4,38 +4,158 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>rete plaza — semantic dataset gallery</title>
+  <meta name="description" content="A gallery of self-describing .rete knowledge graphs. Every card is read live from the file itself, over two HTTP range requests." />
   <script>try{var t=localStorage.getItem('plaza-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;}catch(e){}</script>
   <script src="vendor/p5.min.js"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="wrap">
-    <header class="site">
-      <div class="site-top">
-        <h1>rete <span class="dot">plaza</span></h1>
-        <nav class="site-nav">
-          <a href="https://caviri.github.io/rete/" target="_blank" rel="noopener">rete ↗</a>
-          <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">GitHub ↗</a>
-          <button class="theme-toggle" id="themeBtn" aria-label="Toggle light/dark theme">Light</button>
-        </nav>
-      </div>
-      <p class="tag" id="tagline">a gathering place for self-describing semantic datasets</p>
-      <div class="meta" id="hdrmeta">reading dataset cards…</div>
-    </header>
 
-    <div class="controls">
-      <div class="searchbar">
-        <input id="q" type="search" placeholder="Search datasets by name, tag, or vocabulary…" autocomplete="off" />
-        <span class="count" id="count"></span>
+<!-- ── top bar ─────────────────────────────────────────────────────────── -->
+<header class="pz-top">
+  <div class="pz-top-in">
+    <a class="pz-brand" href="./">rete <span class="dot">plaza</span></a>
+
+    <!-- The search owns the top bar, HF-style: one field, suggestions grouped
+         by what they ARE (a dataset opens; a tag/vocabulary/licence filters). -->
+    <div class="pz-search" id="search">
+      <svg class="pz-search-ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 3a5.5 5.5 0 1 1-3.9 9.4A5.5 5.5 0 0 1 8.5 3Zm0 1.6a3.9 3.9 0 1 0 0 7.8 3.9 3.9 0 0 0 0-7.8Zm4.9 7.3 3.4 3.4-1.1 1.1-3.4-3.4 1.1-1.1Z" fill="currentColor"/></svg>
+      <input id="q" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Search datasets, ontologies, vocabularies, licences…"
+             role="combobox" aria-expanded="false" aria-controls="ac" aria-autocomplete="list" />
+      <kbd class="pz-kbd">/</kbd>
+      <div class="pz-ac" id="ac" role="listbox" hidden></div>
+    </div>
+
+    <nav class="pz-nav">
+      <button class="pz-btn pz-btn-accent" id="submitBtn">Submit a dataset</button>
+      <a href="https://caviri.github.io/rete/" target="_blank" rel="noopener">docs&nbsp;↗</a>
+      <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">GitHub&nbsp;↗</a>
+      <button class="theme-toggle" id="themeBtn" aria-label="Toggle light/dark theme">Light</button>
+    </nav>
+  </div>
+</header>
+
+<!-- ── hero ────────────────────────────────────────────────────────────── -->
+<section class="pz-hero">
+  <div class="pz-hero-in">
+    <div class="pz-hero-copy">
+      <h1>A gathering place for<br><em>self-describing</em> graphs</h1>
+      <p>
+        Every tile below is read <strong>live from the file itself</strong> —
+        two HTTP range requests fetch the header and the embedded
+        <a href="https://caviri.github.io/rete/dataset-cards.html" target="_blank" rel="noopener">Dataset Card</a>,
+        never the graph. The artwork is a deterministic fingerprint of that card:
+        same file, same constellation, every time.
+      </p>
+      <div class="pz-hero-stats" id="heroStats"></div>
+    </div>
+
+    <!-- Spotlight: one dataset at a time, drawn from the manifest, advancing on
+         its own. It is the hero's job to show that these are real graphs. -->
+    <div class="pz-spot" id="spot">
+      <div class="pz-spot-frame"><div class="pz-spot-art" id="spotArt"></div></div>
+      <div class="pz-spot-body">
+        <div class="pz-spot-kicker" id="spotKicker">spotlight</div>
+        <a class="pz-spot-title" id="spotTitle" href="#">—</a>
+        <div class="pz-spot-sub" id="spotSub"></div>
+        <div class="pz-spot-stats" id="spotStats"></div>
       </div>
-      <div class="chips" id="chips"></div>
+      <div class="pz-spot-dots" id="spotDots"></div>
+    </div>
+  </div>
+
+  <!-- The ontology rail: the vocabularies these graphs are actually built with,
+       as filters. Answers "what is modelled here?" before any scrolling. -->
+  <div class="pz-rail-wrap">
+    <div class="pz-rail-in">
+      <span class="pz-rail-label">Built with</span>
+      <div class="pz-rail" id="ontRail"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── body: sidebar + results ─────────────────────────────────────────── -->
+<div class="pz-shell">
+
+  <aside class="pz-side" id="side">
+    <div class="pz-side-head">
+      <span>Filters</span>
+      <button class="pz-clear" id="clearAll" hidden>Clear all</button>
+    </div>
+    <div id="facets"></div>
+  </aside>
+
+  <main class="pz-main">
+    <div class="pz-bar">
+      <div class="pz-active" id="active"></div>
+      <div class="pz-bar-right">
+        <span class="pz-count" id="count"></span>
+        <label class="pz-sort">
+          Sort
+          <select id="sort">
+            <option value="relevance">featured</option>
+            <option value="name">name</option>
+            <option value="triples">triples</option>
+            <option value="size">file size</option>
+            <option value="vocabs">vocabularies</option>
+          </select>
+        </label>
+      </div>
     </div>
 
     <div id="cats"></div>
-    <div class="empty" id="empty" hidden>Nothing matches your search.</div>
-  </div>
+    <div class="empty" id="empty" hidden>Nothing matches these filters.</div>
+  </main>
+</div>
 
-  <script type="module" src="js/theme.js"></script>
-  <script type="module" src="js/catalog.js"></script>
+<footer class="pz-foot">
+  <div class="pz-foot-in">
+    <div>
+      <strong>rete plaza</strong> — an experiment in datasets that introduce themselves.
+      <br>Cards, counts, licences and vocabularies all come from inside each file.
+    </div>
+    <div class="pz-foot-links">
+      <a href="https://caviri.github.io/rete/">Documentation</a>
+      <a href="https://caviri.github.io/rete/playground.html">SPARQL playground</a>
+      <a href="https://github.com/caviri/rete">Source (Apache-2.0)</a>
+      <a href="#" id="submitBtn2">Submit a dataset</a>
+    </div>
+  </div>
+</footer>
+
+<!-- ── submit composer ─────────────────────────────────────────────────── -->
+<div class="modal" id="submitModal" hidden>
+  <div class="modal-card pz-submit">
+    <button class="modal-x" id="submitX" aria-label="Close">×</button>
+    <div class="modal-kicker">Add to the plaza</div>
+    <h2>Submit a dataset</h2>
+    <p class="modal-desc">
+      Anything readable as a <code>.rete</code> file over HTTP — or a graph you
+      think should become one. Write it here; the buttons below carry the text
+      with you, so nothing is retyped.
+    </p>
+
+    <form id="submitForm" class="pz-form">
+      <label>Dataset name<input name="name" required placeholder="e.g. Nomisma coinage" /></label>
+      <label>URL<input name="url" type="url" placeholder="https://…/graph.rete — or a source/homepage" /></label>
+      <div class="pz-form-row">
+        <label>Licence<input name="license" placeholder="CC0 / CC-BY-4.0 / …" /></label>
+        <label>Your name or handle<input name="who" placeholder="optional" /></label>
+      </div>
+      <label>What is it?<textarea name="about" rows="5" required placeholder="What the graph contains, roughly how big it is, which vocabularies it uses, and why it belongs here."></textarea></label>
+    </form>
+
+    <div class="pz-submit-actions">
+      <a class="pz-btn pz-btn-accent" id="ghBtn" href="#" target="_blank" rel="noopener">Open a GitHub issue&nbsp;↗</a>
+      <a class="pz-btn" id="mailBtn" href="#">Send it by email</a>
+    </div>
+    <p class="pz-submit-note" id="submitNote"></p>
+  </div>
+</div>
+
+<script type="module" src="js/theme.js"></script>
+<script type="module" src="js/submit.js"></script>
+<script type="module" src="js/catalog.js"></script>
 </body>
 </html>
