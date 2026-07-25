@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>.rete — serverless SPARQL over range-addressable RDF snapshots · demo</title>
+<meta name="description" content="Live demonstration accompanying the ISWC 2026 paper: three knowledge graphs (Crossref, Zenodo, Open Pulse) published as static files and queried in place from a browser, a notebook and an agent.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='25' font-size='26'%3E%F0%9F%95%B8%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/theme.js"></script>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html">rete</a>
+    <button class="theme-toggle" id="theme" type="button">light / dark</button>
+    <span class="host">ISWC 2026 · demonstration snapshot</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<div class="hero">
+  <p class="kicker">ISWC 2026 · Posters &amp; Demos · Bari, Italy</p>
+  <h1><span class="dot">.</span>rete — serverless SPARQL over<br>range-addressable RDF snapshots</h1>
+  <p class="byline">
+    Carlos Vivar Ríos ·
+    <a href="https://orcid.org/0000-0002-8076-2034">0000-0002-8076-2034</a> ·
+    Swiss Data Science Center &amp; EPFL, Lausanne
+  </p>
+  <p class="lede">
+    Publishing an RDF graph for interactive use normally means running a SPARQL
+    endpoint or shipping the whole dataset to whoever asks. This demonstration
+    takes a third route: the graph, its dictionary, its six permutation indexes
+    and its own description are packed into <strong>one immutable file whose
+    sections are addressed by byte range</strong>. Put that file on ordinary
+    static hosting and a browser can query it in place — reading only the bytes
+    the query touches.
+  </p>
+  <p class="lede">
+    Three graphs are published here, up to <strong>60 GB and 3.8 billion
+    triples</strong>. Nothing behind them is a server. Every station below shows
+    you the answer <em>and</em> what the answer physically cost.
+  </p>
+  <div class="pillrow">
+    <span class="pill"><b>0</b> servers</span>
+    <span class="pill"><b>3</b> graphs</span>
+    <span class="pill"><b>4.0 B</b> triples</span>
+    <span class="pill"><b>62 GB</b> published</span>
+    <span class="pill"><b>49 KB</b> to open the 2.09 GB one</span>
+  </div>
+</div>
+
+<section id="how">
+  <h2>How one file answers a query</h2>
+  <p class="sub">
+    A <code>.rete</code> file opens with a 1 KB header holding a typed section
+    directory — the offset and length of everything else. Nothing later in the
+    file is ever found by scanning, so every read is a bounded HTTP
+    <code>Range</code> request.
+  </p>
+
+  <div class="figure">
+    <svg viewBox="0 0 720 250" role="img" aria-labelledby="anat-t">
+      <title id="anat-t">Anatomy of a .rete file: a browser reads the dataset card in three requests, or routes a selective query into one index permutation.</title>
+      <style>
+        .a-sec  { fill:var(--panel); stroke:var(--border); stroke-width:1; }
+        .a-secq { fill:var(--tint);  stroke:var(--border); stroke-width:1; }
+        .a-lbl  { fill:var(--fg); font:13px "Aptos","Segoe UI",system-ui,sans-serif; }
+        .a-sm   { fill:var(--muted); font:11px "Aptos","Segoe UI",system-ui,sans-serif; }
+        .a-anno { fill:var(--accent-deep); font:12px "Aptos","Segoe UI",system-ui,sans-serif; font-weight:700; }
+        .a-arr  { stroke:var(--accent); stroke-width:1.6; fill:none; }
+        .a-box  { fill:none; stroke:var(--accent); stroke-width:1.5; }
+      </style>
+      <defs>
+        <marker id="ah" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+          <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--accent)"/>
+        </marker>
+      </defs>
+
+      <!-- browser -->
+      <rect class="a-secq" x="266" y="8" width="188" height="34" rx="8"/>
+      <text class="a-lbl" x="360" y="24" text-anchor="middle">Browser · WebAssembly engine</text>
+      <text class="a-sm"  x="360" y="37" text-anchor="middle">static hosting · no server</text>
+
+      <!-- the file -->
+      <rect class="a-box" x="252" y="70" width="216" height="168" rx="9"/>
+      <rect class="a-secq" x="262" y="79" width="196" height="24"/>
+      <text class="a-lbl" x="360" y="95" text-anchor="middle">Header · section directory</text>
+      <rect class="a-secq" x="262" y="105" width="196" height="24"/>
+      <text class="a-lbl" x="360" y="121" text-anchor="middle">Dataset card · 47 KB</text>
+      <rect class="a-sec" x="262" y="131" width="196" height="24"/>
+      <text class="a-lbl" x="360" y="147" text-anchor="middle">Dictionary · 395 MB</text>
+      <rect class="a-sec" x="262" y="157" width="196" height="42"/>
+      <text class="a-lbl" x="360" y="174" text-anchor="middle">SPO · POS · OSP · SOP · PSO · OPS</text>
+      <text class="a-sm"  x="360" y="190" text-anchor="middle">tiled permutation indexes · 1.70 GB</text>
+      <rect class="a-secq" x="262" y="201" width="196" height="24"/>
+      <text class="a-lbl" x="360" y="217" text-anchor="middle">Schema pyramid · 371 KB</text>
+
+      <!-- left route: the card -->
+      <path class="a-arr" marker-end="url(#ah)" d="M266,25 H150 V117 H262"/>
+      <text class="a-anno" x="142" y="86" text-anchor="end">cold start</text>
+      <text class="a-sm"   x="142" y="101" text-anchor="end">3 requests · 49 KB</text>
+      <text class="a-sm"   x="142" y="114" text-anchor="end">index never read</text>
+
+      <!-- right route: a selective query -->
+      <path class="a-arr" marker-end="url(#ah)" d="M454,25 H570 V178 H458"/>
+      <text class="a-anno" x="578" y="147" >selective query</text>
+      <text class="a-sm"   x="578" y="162" >41 requests · 7.6 MB</text>
+      <text class="a-sm"   x="578" y="175" >one permutation, tiled</text>
+
+      <text class="a-sm" x="360" y="246" text-anchor="middle">zenodo-records.rete · 2.09 GB · 215,396,999 triples · CC-BY-4.0</text>
+    </svg>
+    <p class="figcap">
+      The <b>dataset card</b> and the <b>schema pyramid</b> sit before the
+      dictionary, so a visitor can learn what a graph contains — title, licence,
+      provenance, exact per-predicate and per-class histograms, runnable starter
+      queries — without opening a triple index at all. Because all six
+      permutations exist, a triple pattern with bound terms resolves to a
+      contiguous range with its bound components leading, which is what keeps
+      remote routing bounded.
+    </p>
+  </div>
+</section>
+
+<section id="graphs">
+  <h2>The three graphs</h2>
+  <p class="sub">
+    All three are plain objects on Cloudflare R2 behind a CDN — 206 Partial
+    Content, CORS, no token, no redirect. The same URLs feed all three stations.
+  </p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Graph</th><th class="num">Triples</th><th class="num">File</th>
+          <th>Licence</th><th>Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="name">crossref
+            <span class="sm">The complete Crossref March 2026 citation graph: 179.5M registered works and 2.0B <code>cites</code> edges — the largest single <code>.rete</code> published.</span></td>
+          <td class="num">3,777,727,303</td><td class="num">60.2 GB</td>
+          <td>CC BY 4.0</td>
+          <td><a href="https://www.crossref.org/learning/public-data-file/">Public Data File</a></td>
+        </tr>
+        <tr>
+          <td class="name">zenodo-records
+            <span class="sm">Every published Zenodo record (7.76M) as a DataCite scholarly graph, with ORCID creators and version chains.</span></td>
+          <td class="num">215,396,999</td><td class="num">2.09 GB</td>
+          <td>CC-BY-4.0</td>
+          <td><a href="https://zenodo.org/api/exporter">Zenodo exporter</a></td>
+        </tr>
+        <tr>
+          <td class="name">open-pulse
+            <span class="sm">The EPFL/SDSC research-software graph — repositories, people, labs and their ROR institutions. A third-party graph, not ours.</span></td>
+          <td class="num">3,697,829</td><td class="num">49 MB</td>
+          <td>GitHub metadata · ontology © SDSC-ORDES</td>
+          <td><a href="https://openpulse.epfl.ch">Open Pulse</a></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">
+    They share canonical IRIs — a work is <code>https://doi.org/…</code>, a
+    person is <code>https://orcid.org/…</code> — so Crossref and Zenodo join on
+    DOIs and ORCIDs without any <code>owl:sameAs</code> reconciliation.
+  </p>
+</section>
+
+<section id="stations">
+  <h2>Three ways to ask</h2>
+  <p class="sub">
+    Because the file <em>is</em> the interface, anything that can issue an HTTP
+    range request can query it. None of these three has a server behind it.
+  </p>
+
+  <div class="stations">
+
+    <article class="card">
+      <a class="shot" href="playground/index.html" target="_blank" rel="noopener">
+        <img src="assets/crossref-playground.png" alt="The rete SPARQL console showing a Crossref query and its run strip: 100 rows, 162 range requests, 96 MB of 57 GB fetched.">
+      </a>
+      <div class="body">
+        <h3><span class="tag">a</span>In the browser</h3>
+        <p>
+          A static page with the engine compiled to WebAssembly. Open a graph
+          you did not build, read its card, run a summary-safe query that never
+          touches the index, then a selective one — and watch the run strip
+          report the requests issued, the bytes moved, the permutation chosen
+          and the exact byte ranges read.
+        </p>
+        <div class="go">
+          <a class="btn" href="playground/index.html" target="_blank" rel="noopener">Open the SPARQL console →</a>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <a class="shot" href="notebook/lab/index.html?path=rete-demo.ipynb" target="_blank" rel="noopener">
+        <img src="assets/jupyterlite.png" alt="A JupyterLite notebook running the rete-graph Python client on a Pyodide kernel.">
+      </a>
+      <div class="body">
+        <h3><span class="tag">b</span>In a notebook</h3>
+        <p>
+          The same URLs, from Python — no kernel, no server, no local install.
+          Pyodide runs in the page and <code>rete-graph</code> installs from
+          PyPI; results land in pandas, and <code>stats()</code> keeps counting
+          the bytes and range requests each step actually spent.
+        </p>
+        <div class="go">
+          <a class="btn" href="notebook/lab/index.html?path=rete-demo.ipynb" target="_blank" rel="noopener">Open the notebook →</a>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <a class="shot" href="agent/index.html">
+        <img src="assets/mcpb-tools.png" alt="An assistant's tool trace showing four Run SPARQL calls against a remote .rete file.">
+      </a>
+      <div class="body">
+        <h3><span class="tag">c</span>From an agent</h3>
+        <p>
+          A packaged MCP extension puts the same engine inside an
+          MCP-capable assistant: nine tools over these files, among them the
+          card, the schema and SPARQL. It reads the card to learn the
+          vocabulary before querying — which is what stops a model inventing
+          predicate names.
+        </p>
+        <div class="go">
+          <a class="btn" href="agent/index.html">Install the extension →</a>
+        </div>
+      </div>
+    </article>
+
+  </div>
+</section>
+
+<section id="cost">
+  <h2>What it costs</h2>
+  <p class="sub">
+    Measured on 2026-07-24 against the public files, over a residential link,
+    end to end — process start and TLS included. Reproducible with the shipped
+    <code>rete card-url</code>, <code>sparql-url</code>, <code>why-url</code>
+    and <code>cost</code> commands.
+  </p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Interaction on <code>zenodo-records.rete</code></th>
+          <th class="num">Requests</th><th class="num">Bytes read</th>
+          <th class="num">% of file</th><th>Index read</th><th class="num">Time</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Dataset card</td><td class="num">3</td><td class="num">49,452</td><td class="num">0.002%</td><td>no</td><td class="num">0.7 s</td></tr>
+        <tr><td>Predicate histogram, <b>exact</b></td><td class="num">3</td><td class="num">49,452</td><td class="num">0.002%</td><td>no</td><td class="num">0.7 s</td></tr>
+        <tr><td>Selective pattern, 19 triples</td><td class="num">41</td><td class="num">7,602,176</td><td class="num">0.36%</td><td>partial</td><td class="num">5.7 s</td></tr>
+        <tr><td>Join: version chain → title</td><td class="num">30</td><td class="num">17,825,792</td><td class="num">0.85%</td><td>partial</td><td class="num">4.3 s</td></tr>
+        <tr><td>Join: ORCID author → works</td><td class="num">50</td><td class="num">18,743,296</td><td class="num">0.89%</td><td>partial</td><td class="num">7.3 s</td></tr>
+        <tr><td>Join: cited-by, empty result</td><td class="num">24</td><td class="num">4,980,736</td><td class="num">0.24%</td><td>partial</td><td class="num">3.4 s</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">
+    The card's 36 per-predicate counts sum to <b>exactly</b> 215,396,999 — the
+    histogram is exact, not sampled. And the entry cost barely grows with the
+    graph: the same three requests return 2.6–2.8 KB on the 17.5 GB ORCID and
+    35.9 GB OpenCitations files.
+  </p>
+
+  <div class="callout">
+    <p>
+      <b>Where the model stops paying off.</b> Bounded, kilobyte-scale access is
+      guaranteed for summary-safe questions and typical for selectively routed
+      ones. An unselective aggregate over a whole graph must read the index and
+      will move a large fraction of the file — the demonstration lets you
+      trigger that too, and watch it happen.
+    </p>
+    <p>
+      Snapshots are also immutable: updates mean a rebuild. This is a
+      publication format, not a transactional one.
+    </p>
+  </div>
+</section>
+
+<section id="paper">
+  <h2>The paper</h2>
+  <p>
+    <b>.rete: Serverless SPARQL over Range-Addressable RDF Snapshots.</b>
+    ISWC 2026 Posters &amp; Demonstrations Track, Bari, Italy, 25–29 October 2026.
+  </p>
+  <p style="margin-top:1rem">
+    <a class="btn" href="paper/rete-iswc2026-demo.pdf">Read the paper (PDF)</a>
+    <a class="btn ghost" href="https://github.com/caviri/rete" style="margin-left:.5rem">Source code (Apache-2.0)</a>
+    <a class="btn ghost" href="https://caviri.github.io/rete/" style="margin-left:.5rem">Full project site</a>
+  </p>
+  <p class="note">
+    This site is a <b>frozen snapshot</b> built for the demonstration: three
+    graphs, one console, one notebook, one extension. The live project — 80+
+    published graphs, the CLI, and clients for JavaScript, Python, R, Java and
+    Blender — continues at
+    <a href="https://caviri.github.io/rete/playground.html">caviri.github.io/rete</a>.
+  </p>
+</section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <p>© 2026 Carlos Vivar Ríos · Swiss Data Science Center &amp; EPFL.</p>
+      <p>Code released under the Apache License 2.0. Each dataset keeps its own
+         licence, stated inside the file it ships in.</p>
+    </div>
+    <div class="links">
+      <a href="playground/index.html">SPARQL console</a>
+      <a href="notebook/lab/index.html?path=rete-demo.ipynb">Notebook</a>
+      <a href="agent/index.html">Agent extension</a>
+      <a href="paper/rete-iswc2026-demo.pdf">Paper (PDF)</a>
+      <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
+    </div>
+  </div>
+</footer>
+
+
+</body>
+</html>

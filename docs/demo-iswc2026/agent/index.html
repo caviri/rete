@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Station (c) — query the graphs from an agent · .rete demo</title>
+<meta name="description" content="Install rete-demo.mcpb: an MCP extension that puts the .rete engine inside an MCP-capable assistant, with nine tools over Crossref, Zenodo and Open Pulse.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='25' font-size='26'%3E%F0%9F%95%B8%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/site.css">
+<script src="../assets/theme.js"></script>
+<style>
+.crumb { font-size:.85rem; color:var(--muted); margin:1.6rem 0 0; }
+.crumb a { text-decoration:none; }
+.steps { counter-reset:step; list-style:none; padding:0; margin:1.4rem 0 0; display:grid; gap:1.1rem; }
+.steps li { counter-increment:step; position:relative; padding-left:2.6rem; max-width:46rem; }
+.steps li::before {
+  content:counter(step); position:absolute; left:0; top:-.1rem;
+  width:1.75rem; height:1.75rem; border-radius:50%; display:grid; place-items:center;
+  background:var(--accent); color:var(--on-accent); font-size:.85rem; font-weight:700;
+}
+.steps li b { display:block; margin-bottom:.15rem; }
+.steps li p { margin:.15rem 0 0; color:var(--muted); font-size:.93rem; }
+.shots { display:grid; gap:1.2rem; grid-template-columns:repeat(auto-fit,minmax(18rem,1fr)); margin:1.6rem 0 0; }
+figure { margin:0; background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+figure img { width:100%; display:block; border-bottom:1px solid var(--border); background:var(--tint); }
+figure figcaption { padding:.7rem .9rem .85rem; font-size:.85rem; color:var(--muted); }
+.dl { display:flex; flex-wrap:wrap; align-items:center; gap:1rem; margin:1.4rem 0 0; }
+.dl .meta { font-size:.85rem; color:var(--muted); }
+.dl .meta code { color:var(--accent-deep); }
+.tools { display:grid; gap:.55rem; grid-template-columns:repeat(auto-fit,minmax(15rem,1fr)); margin:1.3rem 0 0; padding:0; list-style:none; }
+.tools li { border:1px solid var(--border); border-radius:9px; padding:.6rem .8rem; background:var(--panel); font-size:.9rem; }
+.tools li code { color:var(--accent-deep); font-weight:600; display:block; font-size:.86rem; }
+.tools li span { color:var(--muted); font-size:.86rem; }
+pre.code { background:var(--code-bg); border:1px solid var(--code-border); border-radius:10px;
+  padding:.8rem 1rem; overflow-x:auto; font-size:.86rem; line-height:1.55;
+  font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace; margin:1rem 0 0; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="../index.html">rete</a>
+    <button class="theme-toggle" id="theme" type="button">light / dark</button>
+    <span class="host">ISWC 2026 · demonstration snapshot</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<p class="crumb"><a href="../index.html">← demo home</a></p>
+
+<div class="hero" style="padding-top:1.4rem">
+  <p class="kicker">Station (c)</p>
+  <h1>Query the graphs<br>from an agent</h1>
+  <p class="lede">
+    <code>rete-demo.mcpb</code> is a packaged
+    <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
+    extension. Installing it puts the whole engine — the same WebAssembly build
+    the console runs — inside an MCP-capable assistant, with nine tools over the
+    three graphs of this demonstration. Enabling it is one toggle; after that a
+    question in plain language is answered from the graph.
+  </p>
+  <p class="lede">
+    Nothing is uploaded and nothing is downloaded whole: the assistant reads
+    the same byte ranges over HTTP that everything else here reads, on your
+    machine.
+  </p>
+
+  <div class="dl">
+    <a class="btn" href="rete-demo.mcpb" download>Download rete-demo.mcpb</a>
+    <span class="meta">
+      1.2 MB · engine <code>0.3.0</code> · Apache-2.0 ·
+      needs Node ≥ 18 and an MCP host that installs bundles
+      (<a href="https://www.claude.com/download">Claude Desktop</a> ≥ 0.10)
+    </span>
+  </div>
+</div>
+
+<section>
+  <h2>Install it</h2>
+  <p class="sub">Four steps, no configuration.</p>
+  <ol class="steps">
+    <li>
+      <b>Download the bundle</b>
+      <p>The button above saves <code>rete-demo.mcpb</code>. A
+        <code>.mcpb</code> is a signed-shaped zip carrying one server file and
+        the WebAssembly engine — nothing is fetched at install time.</p>
+    </li>
+    <li>
+      <b>Open your assistant's extension settings</b>
+      <p>In Claude Desktop: <em>Settings → Extensions → Advanced settings →
+        Install extension…</em>, then pick the downloaded file.</p>
+    </li>
+    <li>
+      <b>Toggle it on</b>
+      <p>It then appears wherever your host lists connectors, as
+        <em>rete — ISWC 2026 demonstration</em>. Leave <em>Graph folders</em>
+        empty: this build needs no local files.</p>
+    </li>
+    <li>
+      <b>Ask a question</b>
+      <p>Try <em>“Use rete to list the datasets you can reach”</em>, then
+        <em>“Which organizations relate to the sdsc-ordes/gimie repository?”</em></p>
+    </li>
+  </ol>
+
+  <div class="shots">
+    <figure>
+      <img src="../assets/mcpb-install.png" alt="A connector list with 'rete — knowledge graphs' toggled on.">
+      <figcaption><b>(a)</b> One toggle. The extension is listed like any other
+        connector; turning it on is the whole activation step. (Captured with the
+        full extension, <em>rete — knowledge graphs</em>; this build is listed
+        under its own name.)</figcaption>
+    </figure>
+    <figure>
+      <img src="../assets/mcpb-answer.png" alt="An assistant's answer tracing organizations related to the sdsc-ordes/gimie repository, with ROR identifiers.">
+      <figcaption><b>(b)</b> Question and answer. Asked which organizations
+        relate to <code>sdsc-ordes/gimie</code>, it resolves ownership
+        (<code>org:unitOf</code> → Swiss Data Science Center, ROR
+        <code>02hdt9m26</code>) and the affiliations of nine contributors —
+        flagging the identifier inconsistencies it meets on the way.</figcaption>
+    </figure>
+    <figure>
+      <img src="../assets/mcpb-tools.png" alt="A tool trace listing four Run SPARQL calls interleaved with the assistant's reasoning.">
+      <figcaption><b>(c)</b> The trace you can inspect. Four
+        <code>Run SPARQL</code> calls against the remote file, each one visible.
+        The agent reads the card first to learn the vocabulary — which is what
+        stops a model inventing predicate names.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <h2>What it can reach</h2>
+  <p class="sub">
+    This is the demonstration build. Its published catalogue holds the three
+    graphs the paper names, and that catalogue <em>is</em> its whole reach — an
+    off-catalogue URL is refused rather than opened.
+  </p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Key</th><th class="num">Triples</th><th class="num">File</th><th>Licence</th></tr></thead>
+      <tbody>
+        <tr><td class="name">crossref</td><td class="num">3,777,727,303</td><td class="num">60.2 GB</td><td>CC BY 4.0</td></tr>
+        <tr><td class="name">zenodo-records</td><td class="num">215,396,999</td><td class="num">2.09 GB</td><td>CC-BY-4.0</td></tr>
+        <tr><td class="name">open-pulse</td><td class="num">3,697,829</td><td class="num">49 MB</td><td>GitHub metadata · ontology © SDSC-ORDES</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">
+    The full extension — 80+ published graphs, plus every <code>.rete</code> in
+    folders you grant it — ships from
+    <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>.
+  </p>
+</section>
+
+<section>
+  <h2>The nine tools</h2>
+  <p class="sub">
+    Every one of them reads lazily, and every answer reports the bytes and
+    requests it actually spent.
+  </p>
+  <ul class="tools">
+    <li><code>list_datasets</code><span>What this extension can reach</span></li>
+    <li><code>dataset_card</code><span>A graph's embedded self-description: what it is, licence, provenance, counts</span></li>
+    <li><code>dataset_schema</code><span>Classes and relations with counts, from the file's baked schema pyramid</span></li>
+    <li><code>example_queries</code><span>Runnable SPARQL the dataset ships with</span></li>
+    <li><code>sparql_query</code><span>SPARQL 1.1, optionally with OWL 2 QL reasoning</span></li>
+    <li><code>find_entities</code><span>Resolve a name to entity IRIs by label prefix and full text</span></li>
+    <li><code>describe_entity</code><span>Every statement about one IRI, in both directions</span></li>
+    <li><code>validate_shacl</code><span>Validate SHACL Core shapes against a graph</span></li>
+    <li><code>build_rete</code><span>Build a new <code>.rete</code> from RDF text, offline (needs a granted folder)</span></li>
+  </ul>
+</section>
+
+<section>
+  <h2>Run it without an installer</h2>
+  <p class="sub">
+    A <code>.mcpb</code> is a zip. If your MCP host takes a plain stdio command
+    instead of a bundle, unpack it and point at the server directly.
+  </p>
+<pre class="code">unzip rete-demo.mcpb -d rete-demo
+node rete-demo/server/index.mjs        # speaks MCP over stdio
+
+# or wire it into any MCP client config:
+#   "command": "node",
+#   "args": ["/abs/path/rete-demo/server/index.mjs"]</pre>
+  <p class="note">
+    The server is one bundled ESM file plus a 3.1 MB <code>.wasm</code>; no
+    <code>node_modules</code>, no network access at start-up.
+  </p>
+</section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <p>© 2026 Carlos Vivar Ríos · Swiss Data Science Center &amp; EPFL.</p>
+      <p>Code released under the Apache License 2.0. Each dataset keeps its own
+         licence, stated inside the file it ships in.</p>
+    </div>
+    <div class="links">
+      <a href="../index.html">Demo home</a>
+      <a href="../playground/index.html">SPARQL console</a>
+      <a href="../notebook/lab/index.html?path=rete-demo.ipynb">Notebook</a>
+      <a href="../paper/rete-iswc2026-demo.pdf">Paper (PDF)</a>
+      <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

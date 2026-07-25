@@ -1,0 +1,30 @@
+# Cloudflare Pages response headers for demo.graphplaza.com.
+#
+# Deliberately NO Cross-Origin-Opener/Embedder-Policy at the site level: the
+# console only wants cross-origin isolation when a visitor opts in with
+# ?parallel=1, and it gets there through its own service worker
+# (/playground/coi-serviceworker.js, scoped to /playground/). Setting COEP
+# globally would instead break the JupyterLite station, which loads the Pyodide
+# runtime from a CDN that sends no CORP header.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: SAMEORIGIN
+
+# The extension bundle: a zip under another name. Force a download rather than
+# letting a browser guess, and name the saved file predictably.
+/agent/rete-demo.mcpb
+  Content-Type: application/octet-stream
+  Content-Disposition: attachment; filename="rete-demo.mcpb"
+
+# Screenshots, stylesheet, paper — immutable for the life of the snapshot.
+/assets/*
+  Cache-Control: public, max-age=86400
+/paper/*
+  Cache-Control: public, max-age=86400
+
+# The console is one 6.4 MB document; let a returning visitor revalidate rather
+# than re-download it.
+/playground/index.html
+  Cache-Control: public, max-age=3600, must-revalidate
