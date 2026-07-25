@@ -647,3 +647,90 @@ table.rs tr:hover td { background: #161b25; }
 }
 /* an action that has nothing to send yet */
 .pz-disabled { opacity: .45; cursor: not-allowed; filter: saturate(.4); }
+
+/* ---- funding ticker ------------------------------------------------------
+   A right-to-left marquee on an ORDERED-DITHER band.
+
+   The dither is two offset dot grids — a 50%-coverage checkerboard, which is
+   what a 4×4 Bayer threshold produces at mid grey — laid over the accent
+   gradient and masked so the dots crowd at the edges and thin out behind the
+   text. That ramp is the attention-grabber; the text stays on flat colour and
+   remains readable, which a full-bleed pattern would not allow.               */
+.pz-ticker {
+  position: relative; z-index: 70; overflow: hidden;
+  background: linear-gradient(90deg,
+      color-mix(in oklab, var(--accent-2) 30%, var(--bg)) 0%,
+      color-mix(in oklab, var(--accent) 22%, var(--bg)) 50%,
+      color-mix(in oklab, var(--accent-2) 30%, var(--bg)) 100%);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 12.5px; line-height: 1;
+}
+/* the dither ramp */
+.pz-ticker::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  color: var(--ink);
+  background-image:
+    radial-gradient(currentColor 41%, transparent 43%),
+    radial-gradient(currentColor 41%, transparent 43%);
+  background-size: 4px 4px, 4px 4px;
+  background-position: 0 0, 2px 2px;
+  opacity: .46;
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, transparent 40%, transparent 60%, #000 100%);
+  mask-image: linear-gradient(90deg, #000 0%, transparent 40%, transparent 60%, #000 100%);
+}
+/* a second, coarser grid: the ramp reads as three tones instead of two */
+.pz-ticker::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  color: var(--ink);
+  background-image: radial-gradient(currentColor 34%, transparent 36%);
+  background-size: 8px 8px;
+  opacity: .32;
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, transparent 48%, transparent 52%, #000 100%);
+  mask-image: linear-gradient(90deg, #000 0%, transparent 48%, transparent 52%, #000 100%);
+}
+
+.pz-ticker-track {
+  display: flex; width: max-content; position: relative; z-index: 1;
+  padding: 7px 0;
+}
+.pz-ticker.run .pz-ticker-track {
+  animation: pz-marquee var(--dur, 30s) linear infinite;
+}
+@keyframes pz-marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(var(--shift, -50%), 0, 0); }
+}
+.pz-ticker:hover .pz-ticker-track,
+.pz-ticker:focus-within .pz-ticker-track { animation-play-state: paused; }
+
+.pz-ticker-run { display: inline-flex; align-items: center; gap: 8px; padding-right: 26px; white-space: nowrap; }
+.pz-ticker-run b { font-weight: 700; }
+.pz-ticker-run a {
+  color: var(--ink); text-decoration: none; font-weight: 640;
+  border: 1px solid color-mix(in oklab, var(--ink) 35%, transparent);
+  border-radius: 999px; padding: 3px 10px;
+  background: color-mix(in oklab, var(--bg) 55%, transparent);
+}
+.pz-ticker-run a:hover { background: var(--ink); color: var(--bg); text-decoration: none; }
+.pz-ticker-run i { font-style: normal; color: color-mix(in oklab, var(--ink) 45%, transparent); }
+
+.pz-ticker-x {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%); z-index: 2;
+  background: color-mix(in oklab, var(--bg) 70%, transparent);
+  border: 1px solid var(--line); border-radius: 6px; color: var(--muted);
+  font-size: 15px; line-height: 1; width: 22px; height: 22px; cursor: pointer; padding: 0;
+}
+.pz-ticker-x:hover { color: var(--ink); border-color: var(--faint); }
+
+/* Motion is decoration here; the message is not. Stop the scroll, keep one
+   legible copy, and let it wrap on small screens. */
+@media (prefers-reduced-motion: reduce) {
+  .pz-ticker.run .pz-ticker-track { animation: none; }
+  .pz-ticker-track { width: 100%; justify-content: center; padding: 7px 30px 7px 12px; }
+  .pz-ticker-run:not(:first-child) { display: none; }
+  .pz-ticker-run { white-space: normal; text-align: center; }
+}
+
+.pz-foot-fund { margin: 10px 0 0; }
+.pz-foot-fund a { font-weight: 620; }

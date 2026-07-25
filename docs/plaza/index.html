@@ -11,6 +11,24 @@
 </head>
 <body>
 
+<!-- ── funding ticker ──────────────────────────────────────────────────── -->
+<!-- Right-to-left marquee over an ordered-dither band. The dithering is doing
+     real work here: a 1-bit dot ramp reads as texture rather than as another
+     coloured bar, so the eye lands on it once without the strip having to shout
+     in saturated colour. It pauses on hover/focus, honours reduced-motion, and
+     can be dismissed for good — an unstoppable marquee is hostile. -->
+<div class="pz-ticker" id="ticker" role="complementary" aria-label="Project funding">
+  <div class="pz-ticker-track" id="tickerTrack">
+    <span class="pz-ticker-run">
+      <b>rete plaza is an open-source project with no funding behind it.</b>
+      The format, the engine and this gallery are built in spare time and given away under Apache-2.0.
+      <a href="https://ko-fi.com/caviri" target="_blank" rel="noopener">Buy me a coffee&nbsp;☕</a>
+      <i aria-hidden="true">◆</i>
+    </span>
+  </div>
+  <button class="pz-ticker-x" id="tickerX" aria-label="Dismiss this message">×</button>
+</div>
+
 <!-- ── top bar ─────────────────────────────────────────────────────────── -->
 <header class="pz-top">
   <div class="pz-top-in">
@@ -114,12 +132,17 @@
     <div>
       <strong>rete plaza</strong> — an experiment in datasets that introduce themselves.
       <br>Cards, counts, licences and vocabularies all come from inside each file.
+      <p class="pz-foot-fund">
+        No grant, no company, no funding — just spare time, released under
+        Apache-2.0. <a href="https://ko-fi.com/caviri" target="_blank" rel="noopener">Buy me a coffee&nbsp;☕</a>
+      </p>
     </div>
     <div class="pz-foot-links">
       <a href="https://caviri.github.io/rete/">Documentation</a>
       <a href="https://caviri.github.io/rete/playground.html">SPARQL playground</a>
       <a href="https://github.com/caviri/rete">Source (Apache-2.0)</a>
       <a href="#" id="submitBtn2">Submit a dataset</a>
+      <a href="https://ko-fi.com/caviri" target="_blank" rel="noopener">Support the project ☕</a>
     </div>
   </div>
 </footer>
@@ -155,6 +178,7 @@
 </div>
 
 <script type="module" src="js/theme.js"></script>
+<script type="module" src="js/ticker.js"></script>
 <script type="module" src="js/submit.js"></script>
 <script type="module" src="js/catalog.js"></script>
 </body>
