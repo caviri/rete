@@ -284,6 +284,26 @@ function renderActive() {
 clearBtn.onclick = () => { selected.clear(); query = ""; $("#q").value = ""; render(); };
 sortEl.onchange = () => { sortBy = sortEl.value; render(); };
 
+// The sidebar collapses on narrow screens (see the media query); this is its
+// disclosure. It carries the active-filter count so a collapsed panel can never
+// hide the fact that filters are on.
+const side = $("#side");
+const sideToggle = $("#sideToggle");
+sideToggle?.addEventListener("click", () => {
+  const open = side.classList.toggle("open");
+  sideToggle.setAttribute("aria-expanded", String(open));
+});
+function renderSideToggle() {
+  const n = [...selected.values()].reduce((a, s) => a + s.size, 0);
+  const badge = $("#sideToggleN");
+  if (!badge) return;
+  badge.hidden = !n;
+  badge.textContent = String(n);
+  // A filter applied from the rail or the search box should be visible even if
+  // the visitor never opened the panel.
+  if (n && window.matchMedia("(max-width: 900px)").matches) side.classList.add("open");
+}
+
 // ── hero ───────────────────────────────────────────────────────────────────
 function renderHeroStats() {
   const withCard = entries.filter((r) => r.card && !r.card._unreachable);
@@ -409,6 +429,7 @@ const tri = (r) => (r.card && (r.card.triple_count ?? r.card.quad_count)) || 0;
 function render() {
   renderFacets();
   renderActive();
+  renderSideToggle();
   renderHeroStats();
   renderRail();
 

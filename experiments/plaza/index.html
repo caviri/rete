@@ -101,6 +101,14 @@
       <span>Filters</span>
       <button class="pz-clear" id="clearAll" hidden>Clear all</button>
     </div>
+    <!-- On a phone the sidebar would push every result below the fold, so there
+         it collapses behind this button. Hidden on wide screens, where the
+         filters are the point of the left column. -->
+    <button class="pz-side-toggle" id="sideToggle" aria-expanded="false" aria-controls="facets">
+      <span class="pz-side-toggle-lab">Filters</span>
+      <span class="pz-side-toggle-n" id="sideToggleN" hidden></span>
+      <span class="pz-side-toggle-ic" aria-hidden="true">▾</span>
+    </button>
     <div id="facets"></div>
   </aside>
 

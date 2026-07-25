@@ -734,3 +734,139 @@ table.rs tr:hover td { background: #161b25; }
 
 .pz-foot-fund { margin: 10px 0 0; }
 .pz-foot-fund a { font-weight: 620; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   plaza v3 — scrollbars, a darker ticker, and the phone layout.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ---- scrollbars ----------------------------------------------------------
+   Default scrollbars are the one piece of chrome that ignores the palette: a
+   bright system bar down the side of a near-black page, and a chunky one under
+   the ontology rail. Styled once, globally, so every scroller — page, sidebar,
+   rail, autocomplete, textarea, the detail page's panels — matches.           */
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+*:hover { scrollbar-color: var(--faint) transparent; }
+
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  /* padding-box + a transparent border insets the thumb, so it reads as a slim
+     pill rather than a full-width slab. */
+  background: var(--line);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--faint); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* The rail and the sidebar keep a slimmer variant — they are inside panels. */
+.pz-rail::-webkit-scrollbar, .pz-side::-webkit-scrollbar,
+.pz-ac::-webkit-scrollbar { width: 8px; height: 8px; }
+.pz-rail::-webkit-scrollbar-thumb, .pz-side::-webkit-scrollbar-thumb,
+.pz-ac::-webkit-scrollbar-thumb { border-width: 2px; }
+
+/* ---- ticker: darker ------------------------------------------------------
+   The accent wash was bright enough to compete with the hero. In dark mode the
+   band now sits BELOW the page background, so it reads as a recessed strip and
+   the dither and the coffee pill supply the contrast instead of the fill.      */
+:root, :root[data-theme="dark"] {
+  --ticker-edge: #06080d;
+  --ticker-mid: #0e131c;
+}
+:root[data-theme="light"] {
+  --ticker-edge: color-mix(in oklab, var(--accent-2) 16%, #e9edf5);
+  --ticker-mid: color-mix(in oklab, var(--accent) 12%, #f2f5fa);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --ticker-edge: #06080d; --ticker-mid: #0e131c; }
+}
+.pz-ticker {
+  background: linear-gradient(90deg,
+      var(--ticker-edge) 0%, var(--ticker-mid) 50%, var(--ticker-edge) 100%);
+}
+:root[data-theme="dark"] .pz-ticker,
+:root:not([data-theme="light"]) .pz-ticker { color: #dfe7f2; }
+/* On the darker fill the dots need a touch more presence to still read. */
+:root[data-theme="dark"] .pz-ticker::before,
+:root:not([data-theme="light"]) .pz-ticker::before { opacity: .34; }
+:root[data-theme="dark"] .pz-ticker::after,
+:root:not([data-theme="light"]) .pz-ticker::after { opacity: .24; }
+.pz-ticker-run a { border-color: color-mix(in oklab, var(--accent) 60%, transparent); }
+.pz-ticker-run a:hover { background: var(--accent); color: #08111d; border-color: var(--accent); }
+
+/* ---- mobile filters ------------------------------------------------------ */
+.pz-side-toggle {
+  display: none; width: 100%; align-items: center; gap: 8px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px;
+  color: var(--ink); font: inherit; font-size: 13.5px; padding: 9px 12px; cursor: pointer;
+}
+.pz-side-toggle-lab { flex: 1; text-align: left; font-weight: 620; }
+.pz-side-toggle-n {
+  font-size: 11px; font-weight: 700; color: #08111d; background: var(--accent);
+  border-radius: 999px; padding: 1px 7px;
+}
+.pz-side-toggle-ic { color: var(--faint); font-size: 11px; transition: transform .15s; }
+.pz-side.open .pz-side-toggle-ic { transform: rotate(180deg); }
+
+/* ---- phones -------------------------------------------------------------- */
+@media (max-width: 900px) {
+  /* Nothing may exceed the viewport: a page that scrolls sideways on a phone
+     feels broken even when every element is individually fine. */
+  html, body { max-width: 100%; overflow-x: hidden; }
+
+  .pz-side-head { display: none; }
+  .pz-side-toggle { display: flex; }
+  .pz-side { padding: 10px; }
+  .pz-side #facets { display: none; margin-top: 10px; }
+  .pz-side.open #facets { display: block; }
+
+  .pz-spot { max-width: none; }
+  .pz-hero-copy h1 { font-size: 30px; }
+  .pz-hero-copy p { font-size: 14.5px; }
+  .pz-stat { padding: 7px 11px; }
+  .pz-stat b { font-size: 17px; }
+
+  .pz-rail-in { padding: 9px 16px; gap: 10px; }
+  .pz-rail-label { display: none; }
+
+  .pz-bar { gap: 10px; }
+  .pz-bar-right { width: 100%; justify-content: space-between; }
+
+  .pz-foot-in { padding: 22px 16px 30px; gap: 16px; }
+
+  /* The composer is a full-height sheet rather than a floating card: on a small
+     screen a centred modal with a long textarea ends up scrolling inside a box
+     inside a page. */
+  .modal { padding: 0; align-items: flex-end; }
+  .pz-submit { max-width: none; border-radius: 14px 14px 0 0; max-height: 92vh; }
+}
+
+@media (max-width: 560px) {
+  .pz-top-in { padding: 9px 12px; gap: 8px; }
+  .pz-brand { font-size: 17px; }
+  /* "Submit a dataset" is the only nav item worth its width here. */
+  .pz-btn { padding: 7px 11px; font-size: 12.5px; }
+  .pz-hero-in { padding: 24px 14px 22px; }
+  .pz-shell { padding: 14px 14px 36px; gap: 16px; }
+  .pz-hero-copy h1 { font-size: 26px; }
+  .pz-hero-stats { gap: 7px; }
+  .pz-stat { flex: 1 1 calc(50% - 7px); }
+  .grid { grid-template-columns: 1fr; gap: 14px; }
+  .ogrid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .pz-ticker { font-size: 11.5px; }
+  .pz-ticker-run { gap: 6px; padding-right: 18px; }
+  .pz-kbd { display: none; }
+  .pz-search input { font-size: 16px; }  /* ≥16px or iOS zooms the page on focus */
+  .pz-form input, .pz-form textarea { font-size: 16px; }
+  .modal-card h2 { font-size: 19px; }
+}
+
+/* Coarse pointers have no hover, so a scroll the user must hover to pause is a
+   scroll they can never pause — and the tap targets need to be finger-sized. */
+@media (hover: none) {
+  .pz-ticker-x { width: 28px; height: 28px; font-size: 17px; }
+  .pz-opt { padding: 7px 6px; }
+  .pz-onto { padding: 7px 13px 7px 7px; }
+  .pz-spot-dot { width: 9px; height: 9px; }
+}
