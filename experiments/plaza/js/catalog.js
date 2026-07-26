@@ -37,7 +37,10 @@ let entries = [];              // { entry, card, header, img, facets, ontologies
 let query = "";
 let sortBy = "relevance";
 const selected = new Map();    // groupId -> Set(value)
-const expanded = new Set();    // groupIds showing their full value list
+
+const SIDEBAR_ROWS = 6;        // values shown in the sidebar; the rest via the picker
+let pickerGid = null;          // group whose full list the modal is showing
+let pickerQuery = "";
 
 // ── facet model ────────────────────────────────────────────────────────────
 // Each group knows how to read its values off a record. Everything else — the
@@ -66,7 +69,8 @@ const GROUPS = [
   { id: "kind", label: "Delivery", open: true, of: (r) => (r.facets || []).filter((f) => f === "remote" || f === "bundled") },
   { id: "feature", label: "Features", open: true, display: (v) => FEATURE_LABEL[v] || v,
     of: (r) => (r.facets || []).filter((f) => FILTERABLE.has(f) && f !== "remote" && f !== "bundled") },
-  { id: "vocab", label: "Vocabulary", open: true, of: (r) => (r.ontologies || []).map((o) => o.name) },
+  // Named to match the hero rail — same facet, two places to reach it.
+  { id: "vocab", label: "Built with", open: true, of: (r) => (r.ontologies || []).map((o) => o.name) },
   { id: "topic", label: "Topic", open: true, of: (r) => r.entry.tags || [] },
   { id: "licence", label: "Licence", open: false, of: (r) => { const l = (r.card && r.card.license) || r.entry.license; return l ? [l] : []; } },
   { id: "size", label: "File size", open: false, of: (r) => { const b = SIZE_BUCKETS.find((s) => s.test(r.size)); return b ? [b.label] : []; } },
@@ -221,7 +225,7 @@ function renderFacets() {
     const counts = countsFor(g.id);
     if (!counts.length) continue;
     const sel = selected.get(g.id) || new Set();
-    const isOpen = g.open || sel.size > 0 || expanded.has(g.id);
+    const isOpen = g.open || sel.size > 0;
 
     const det = document.createElement("details");
     det.className = "pz-group";
@@ -230,7 +234,9 @@ function renderFacets() {
 
     const box = document.createElement("div");
     box.className = "pz-opts";
-    const show = expanded.has(g.id) ? counts : counts.slice(0, 6);
+    // Only the head of the list lives in the sidebar. Thirty vocabularies in a
+    // column is a scroll, not a filter — the rest go behind the picker.
+    const show = counts.slice(0, SIDEBAR_ROWS);
     for (const [value, n] of show) {
       const on = sel.has(value);
       const b = document.createElement("button");
@@ -243,18 +249,85 @@ function renderFacets() {
       b.onclick = () => toggle(g.id, value);
       box.appendChild(b);
     }
-    if (counts.length > 6) {
+    if (counts.length > SIDEBAR_ROWS) {
       const more = document.createElement("button");
       more.type = "button";
       more.className = "pz-more";
-      more.textContent = expanded.has(g.id) ? "Show less" : `Show ${counts.length - 6} more`;
-      more.onclick = () => { expanded.has(g.id) ? expanded.delete(g.id) : expanded.add(g.id); render(); };
+      more.innerHTML = `Show all ${counts.length} <span aria-hidden="true">›</span>`;
+      more.onclick = () => openPicker(g.id);
       box.appendChild(more);
     }
     det.appendChild(box);
     facetsEl.appendChild(det);
   }
 }
+
+// ── facet picker ───────────────────────────────────────────────────────────
+// The full value list of one group: searchable, multi-select, applied live.
+// Selected values are pinned to the top, because a filter you cannot find is a
+// filter you cannot remove — the whole reason the sidebar keeps them visible.
+const picker = $("#facetModal");
+
+function openPicker(gid) {
+  pickerGid = gid;
+  pickerQuery = "";
+  $("#facetSearch").value = "";
+  $("#facetTitle").textContent = GROUP_BY_ID[gid].label;
+  picker.hidden = false;
+  renderPicker();
+  setTimeout(() => $("#facetSearch").focus(), 30);
+}
+function closePicker() {
+  picker.hidden = true;
+  pickerGid = null;
+}
+
+function renderPicker() {
+  if (!pickerGid) return;
+  const g = GROUP_BY_ID[pickerGid];
+  const sel = selected.get(pickerGid) || new Set();
+  const counts = countsFor(pickerGid);
+  const label = (v) => (g.display ? g.display(v) : v);
+
+  const hits = counts.filter(([v]) => !pickerQuery || label(v).toLowerCase().includes(pickerQuery));
+  hits.sort((a, b) => Number(sel.has(b[0])) - Number(sel.has(a[0])) || b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+
+  const list = $("#facetList");
+  list.innerHTML = "";
+  if (!hits.length) {
+    list.innerHTML = `<div class="pz-picker-empty">Nothing matches “${escapeHtml(pickerQuery)}”.</div>`;
+  }
+  for (const [value, n] of hits) {
+    const on = sel.has(value);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pz-pick" + (on ? " on" : "");
+    if (!n && !on) b.disabled = true;
+    b.innerHTML = `<span class="box">${on ? "✓" : ""}</span><span class="lab">${escapeHtml(label(value))}</span><span class="n">${n}</span>`;
+    b.onclick = () => toggle(pickerGid, value); // render() repaints this list
+    list.appendChild(b);
+  }
+
+  const shown = entries.filter(matches).length;
+  $("#facetSummary").textContent =
+    `${sel.size} selected · ${shown} of ${entries.length} dataset${entries.length === 1 ? "" : "s"}`;
+  $("#facetClear").disabled = !sel.size;
+}
+
+$("#facetSearch")?.addEventListener("input", (e) => {
+  pickerQuery = e.target.value.trim().toLowerCase();
+  renderPicker();
+});
+$("#facetClear")?.addEventListener("click", () => {
+  if (pickerGid) selected.delete(pickerGid);
+  render();
+});
+$("#facetDone")?.addEventListener("click", closePicker);
+$("#facetX")?.addEventListener("click", closePicker);
+picker?.addEventListener("click", (e) => { if (e.target === picker) closePicker(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && pickerGid) closePicker();
+});
 
 function renderActive() {
   activeEl.innerHTML = "";
@@ -430,6 +503,7 @@ function render() {
   renderFacets();
   renderActive();
   renderSideToggle();
+  renderPicker();
   renderHeroStats();
   renderRail();
 

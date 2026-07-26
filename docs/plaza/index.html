@@ -155,6 +155,30 @@
   </div>
 </footer>
 
+<!-- ── facet picker ────────────────────────────────────────────────────── -->
+<!-- The sidebar shows only the top few values of a group; this is the rest.
+     Searchable, multi-select, and it applies as you tick rather than on a
+     confirm button — the result count behind it moves with every choice. -->
+<div class="modal" id="facetModal" hidden>
+  <div class="modal-card pz-picker">
+    <button class="modal-x" id="facetX" aria-label="Close">×</button>
+    <div class="modal-kicker">Filter by</div>
+    <h2 id="facetTitle">Vocabulary</h2>
+    <label class="pz-picker-search">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 3a5.5 5.5 0 1 1-3.9 9.4A5.5 5.5 0 0 1 8.5 3Zm0 1.6a3.9 3.9 0 1 0 0 7.8 3.9 3.9 0 0 0 0-7.8Zm4.9 7.3 3.4 3.4-1.1 1.1-3.4-3.4 1.1-1.1Z" fill="currentColor"/></svg>
+      <input id="facetSearch" type="search" autocomplete="off" spellcheck="false" placeholder="Search…" />
+    </label>
+    <div class="pz-picker-list" id="facetList"></div>
+    <div class="pz-picker-foot">
+      <span class="pz-picker-sum" id="facetSummary"></span>
+      <span class="pz-picker-btns">
+        <button class="pz-btn" id="facetClear">Clear group</button>
+        <button class="pz-btn pz-btn-accent" id="facetDone">Done</button>
+      </span>
+    </div>
+  </div>
+</div>
+
 <!-- ── submit composer ─────────────────────────────────────────────────── -->
 <div class="modal" id="submitModal" hidden>
   <div class="modal-card pz-submit">
