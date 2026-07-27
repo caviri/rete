@@ -1,0 +1,965 @@
+{
+ "@context": {
+  "@language": "en",
+  "@vocab": "https://schema.org/",
+  "citeAs": "cr:citeAs",
+  "column": "cr:column",
+  "conformsTo": "dct:conformsTo",
+  "cr": "http://mlcommons.org/croissant/",
+  "data": {
+   "@id": "cr:data",
+   "@type": "@json"
+  },
+  "dataType": {
+   "@id": "cr:dataType",
+   "@type": "@vocab"
+  },
+  "dct": "http://purl.org/dc/terms/",
+  "equivalentProperty": "cr:equivalentProperty",
+  "examples": {
+   "@id": "cr:examples",
+   "@type": "@json"
+  },
+  "extract": "cr:extract",
+  "field": "cr:field",
+  "fileObject": "cr:fileObject",
+  "fileProperty": "cr:fileProperty",
+  "fileSet": "cr:fileSet",
+  "format": "cr:format",
+  "includes": "cr:includes",
+  "isLiveDataset": "cr:isLiveDataset",
+  "jsonPath": "cr:jsonPath",
+  "key": "cr:key",
+  "md5": "cr:md5",
+  "parentField": "cr:parentField",
+  "path": "cr:path",
+  "rai": "http://mlcommons.org/croissant/RAI/",
+  "recordSet": "cr:recordSet",
+  "references": "cr:references",
+  "regex": "cr:regex",
+  "repeated": "cr:repeated",
+  "replace": "cr:replace",
+  "samplingRate": "cr:samplingRate",
+  "sc": "https://schema.org/",
+  "separator": "cr:separator",
+  "source": "cr:source",
+  "subField": "cr:subField",
+  "transform": "cr:transform"
+ },
+ "@type": "Dataset",
+ "conformsTo": "http://mlcommons.org/croissant/1.0",
+ "name": "deps-dev",
+ "description": "deps.dev (Open Source Insights) snapshot 2026-07-13: package versions, version-pinned dependency edges, package-project links, projects, and security advisories. Google, CC BY 4.0.",
+ "url": "https://deps.dev/",
+ "license": "https://creativecommons.org/licenses/by/4.0/",
+ "version": "1.0.0",
+ "datePublished": "2026-07-13",
+ "citeAs": "Includes data from deps.dev (Open Source Insights) by Google, CC BY 4.0.",
+ "distribution": [
+  {
+   "@type": "cr:FileObject",
+   "@id": "file-PackageVersions",
+   "name": "PackageVersions.parquet",
+   "description": "PackageVersions Parquet (161,888,666 rows).",
+   "contentUrl": "https://data.graphplaza.com/deps-dev/raw/PackageVersions.parquet",
+   "encodingFormat": "application/x-parquet"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "file-dependency_edges",
+   "name": "dependency_edges.parquet",
+   "description": "dependency_edges Parquet (570,601,975 rows).",
+   "contentUrl": "https://data.graphplaza.com/deps-dev/raw/dependency_edges.parquet",
+   "encodingFormat": "application/x-parquet"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "file-PackageVersionToProject",
+   "name": "PackageVersionToProject.parquet",
+   "description": "PackageVersionToProject Parquet (172,093,192 rows).",
+   "contentUrl": "https://data.graphplaza.com/deps-dev/raw/PackageVersionToProject.parquet",
+   "encodingFormat": "application/x-parquet"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "file-Projects",
+   "name": "Projects.parquet",
+   "description": "Projects Parquet (5,122,936 rows).",
+   "contentUrl": "https://data.graphplaza.com/deps-dev/raw/Projects.parquet",
+   "encodingFormat": "application/x-parquet"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "file-Advisories",
+   "name": "Advisories.parquet",
+   "description": "Advisories Parquet (272,582 rows).",
+   "contentUrl": "https://data.graphplaza.com/deps-dev/raw/Advisories.parquet",
+   "encodingFormat": "application/x-parquet"
+  }
+ ],
+ "recordSet": [
+  {
+   "@type": "cr:RecordSet",
+   "@id": "PackageVersions",
+   "name": "PackageVersions",
+   "description": "deps-dev PackageVersions records (161,888,666).",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/SnapshotAt",
+     "name": "SnapshotAt",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "SnapshotAt"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/System",
+     "name": "System",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "System"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Name",
+     "name": "Name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Version",
+     "name": "Version",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Version"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Licenses",
+     "name": "Licenses",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Licenses"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Links",
+     "name": "Links",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Links"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Advisories",
+     "name": "Advisories",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Advisories"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/VersionInfo",
+     "name": "VersionInfo",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "VersionInfo"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Hashes",
+     "name": "Hashes",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Hashes"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/DependenciesProcessed",
+     "name": "DependenciesProcessed",
+     "dataType": "sc:Boolean",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "DependenciesProcessed"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/DependencyError",
+     "name": "DependencyError",
+     "dataType": "sc:Boolean",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "DependencyError"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/UpstreamPublishedAt",
+     "name": "UpstreamPublishedAt",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "UpstreamPublishedAt"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Registries",
+     "name": "Registries",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Registries"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/SLSAProvenance",
+     "name": "SLSAProvenance",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "SLSAProvenance"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/UpstreamIdentifiers",
+     "name": "UpstreamIdentifiers",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "UpstreamIdentifiers"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Purl",
+     "name": "Purl",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Purl"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Attestations",
+     "name": "Attestations",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Attestations"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Description",
+     "name": "Description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Description"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/Deprecated",
+     "name": "Deprecated",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "Deprecated"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/ProjectStatus",
+     "name": "ProjectStatus",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "ProjectStatus"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersions/ProjectStatusReason",
+     "name": "ProjectStatusReason",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersions"
+      },
+      "extract": {
+       "column": "ProjectStatusReason"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "dependency_edges",
+   "name": "dependency_edges",
+   "description": "deps-dev dependency_edges records (570,601,975).",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "dependency_edges/System",
+     "name": "System",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-dependency_edges"
+      },
+      "extract": {
+       "column": "System"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "dependency_edges/from_name",
+     "name": "from_name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-dependency_edges"
+      },
+      "extract": {
+       "column": "from_name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "dependency_edges/from_version",
+     "name": "from_version",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-dependency_edges"
+      },
+      "extract": {
+       "column": "from_version"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "dependency_edges/dep_system",
+     "name": "dep_system",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-dependency_edges"
+      },
+      "extract": {
+       "column": "dep_system"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "dependency_edges/to_name",
+     "name": "to_name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-dependency_edges"
+      },
+      "extract": {
+       "column": "to_name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "dependency_edges/to_version",
+     "name": "to_version",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-dependency_edges"
+      },
+      "extract": {
+       "column": "to_version"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "PackageVersionToProject",
+   "name": "PackageVersionToProject",
+   "description": "deps-dev PackageVersionToProject records (172,093,192).",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersionToProject/SnapshotAt",
+     "name": "SnapshotAt",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersionToProject"
+      },
+      "extract": {
+       "column": "SnapshotAt"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersionToProject/System",
+     "name": "System",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersionToProject"
+      },
+      "extract": {
+       "column": "System"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersionToProject/Name",
+     "name": "Name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersionToProject"
+      },
+      "extract": {
+       "column": "Name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersionToProject/Version",
+     "name": "Version",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersionToProject"
+      },
+      "extract": {
+       "column": "Version"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersionToProject/ProjectType",
+     "name": "ProjectType",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersionToProject"
+      },
+      "extract": {
+       "column": "ProjectType"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersionToProject/ProjectName",
+     "name": "ProjectName",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersionToProject"
+      },
+      "extract": {
+       "column": "ProjectName"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersionToProject/RelationProvenance",
+     "name": "RelationProvenance",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersionToProject"
+      },
+      "extract": {
+       "column": "RelationProvenance"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "PackageVersionToProject/RelationType",
+     "name": "RelationType",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-PackageVersionToProject"
+      },
+      "extract": {
+       "column": "RelationType"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "Projects",
+   "name": "Projects",
+   "description": "deps-dev Projects records (5,122,936).",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "Projects/SnapshotAt",
+     "name": "SnapshotAt",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Projects"
+      },
+      "extract": {
+       "column": "SnapshotAt"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Projects/Type",
+     "name": "Type",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Projects"
+      },
+      "extract": {
+       "column": "Type"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Projects/Name",
+     "name": "Name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Projects"
+      },
+      "extract": {
+       "column": "Name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Projects/OpenIssuesCount",
+     "name": "OpenIssuesCount",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "file-Projects"
+      },
+      "extract": {
+       "column": "OpenIssuesCount"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Projects/StarsCount",
+     "name": "StarsCount",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "file-Projects"
+      },
+      "extract": {
+       "column": "StarsCount"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Projects/ForksCount",
+     "name": "ForksCount",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "file-Projects"
+      },
+      "extract": {
+       "column": "ForksCount"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Projects/Licenses",
+     "name": "Licenses",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Projects"
+      },
+      "extract": {
+       "column": "Licenses"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Projects/Description",
+     "name": "Description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Projects"
+      },
+      "extract": {
+       "column": "Description"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Projects/Homepage",
+     "name": "Homepage",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Projects"
+      },
+      "extract": {
+       "column": "Homepage"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Projects/OSSFuzz",
+     "name": "OSSFuzz",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Projects"
+      },
+      "extract": {
+       "column": "OSSFuzz"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "Advisories",
+   "name": "Advisories",
+   "description": "deps-dev Advisories records (272,582).",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/SnapshotAt",
+     "name": "SnapshotAt",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "SnapshotAt"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/Source",
+     "name": "Source",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "Source"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/SourceID",
+     "name": "SourceID",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "SourceID"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/SourceURL",
+     "name": "SourceURL",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "SourceURL"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/Title",
+     "name": "Title",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "Title"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/Description",
+     "name": "Description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "Description"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/ReferenceURLs",
+     "name": "ReferenceURLs",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "ReferenceURLs"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/CVSS3Score",
+     "name": "CVSS3Score",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "CVSS3Score"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/Severity",
+     "name": "Severity",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "Severity"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/GitHubSeverity",
+     "name": "GitHubSeverity",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "GitHubSeverity"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/Disclosed",
+     "name": "Disclosed",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "Disclosed"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/Packages",
+     "name": "Packages",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "Packages"
+      }
+     },
+     "repeated": true
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "Advisories/Aliases",
+     "name": "Aliases",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "file-Advisories"
+      },
+      "extract": {
+       "column": "Aliases"
+      }
+     },
+     "repeated": true
+    }
+   ]
+  }
+ ]
+}
