@@ -8,6 +8,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='25' font-size='26'%3E%F0%9F%95%B8%EF%B8%8F%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/site.css">
 <script src="assets/theme.js"></script>
+<script src="assets/copy.js" defer></script>
 </head>
 <body>
 
@@ -102,7 +103,7 @@
   <p class="byline">
     Carlos Vivar Ríos ·
     <a href="https://orcid.org/0000-0002-8076-2034">0000-0002-8076-2034</a> ·
-    Swiss Data Science Center &amp; EPFL, Lausanne ·
+    <a href="https://h4ck1ng.science" target="_blank" rel="noopener">h4ck1ng.science</a> ·
     <a href="paper/rete-iswc2026-demo.pdf">read the paper (PDF)</a>
   </p>
 </section>
@@ -278,6 +279,111 @@
   </div>
 </section>
 
+<section id="clients">
+  <h2>One engine, many clients</h2>
+  <p class="sub">
+    The core is a single Rust library compiled natively and to WebAssembly.
+    These wrap it. They differ in language and runtime but not in what they do:
+    each opens a local <code>.rete</code> or a remote URL through the same range
+    interface, and <b>none of them needs a server</b>.
+  </p>
+
+  <div class="clients">
+
+    <article class="client">
+      <div class="client-head">
+        <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M15.9 3c-3.3 0-3.1 1.4-3.1 1.4v2.4h3.2v.9H10s-3 .3-3 4.6c0 4.3 2.6 4.2 2.6 4.2h1.7v-2.4s0-2.6 2.5-2.6h3.9s2.4.1 2.4-2.4V5.5S20.6 3 15.9 3Zm-1.8 1.5a.9.9 0 1 1 0 1.9.9.9 0 0 1 0-1.9Z" fill="#3776AB"/><path d="M16.1 29c3.3 0 3.1-1.4 3.1-1.4v-2.4H16v-.9h6s3-.3 3-4.6c0-4.3-2.6-4.2-2.6-4.2h-1.7v2.4s0 2.6-2.5 2.6h-3.9s-2.4-.1-2.4 2.4v4.6S11.4 29 16.1 29Zm1.8-1.5a.9.9 0 1 1 0-1.9.9.9 0 0 1 0 1.9Z" fill="#FFD43B"/></svg></span>
+        <div>
+          <h3>Python</h3>
+          <a class="reg" href="https://pypi.org/project/rete-graph/" target="_blank" rel="noopener">rete-graph on PyPI ↗</a>
+        </div>
+      </div>
+      <pre class="cmd"><code>pip install rete-graph</code><button class="copy" type="button" aria-label="Copy">copy</button></pre>
+      <p class="note">CPython ≥ 3.9 everywhere — and Pyodide, which is what makes the notebook station work.</p>
+    </article>
+
+    <article class="client">
+      <div class="client-head">
+        <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="4" fill="#F7DF1E"/><path d="M8.6 25.4c-.6-.9-1-1.6-1.5-2.4l2.4-1.4c.4.7.8 1.3 1.6 1.3.7 0 1.2-.3 1.2-1.4v-7.6h3v7.7c0 3-1.8 4.4-4.3 4.4-2.3 0-3.6-1.2-4.3-2.6m10.4-.3c.9 1.4 2 2.4 4 2.4 1.6 0 2.7-.8 2.7-2 0-1.3-1.1-1.8-2.8-2.6l-1-.4c-2.8-1.2-4.6-2.6-4.6-5.7 0-2.8 2.2-5 5.5-5 2.4 0 4.1.8 5.3 3l-2.9 1.8c-.6-1.1-1.3-1.6-2.4-1.6s-1.9.7-1.9 1.6c0 1.1.7 1.6 2.3 2.3l1 .4c3.3 1.4 5.1 2.8 5.1 6 0 3.4-2.7 5.3-6.3 5.3-3.5 0-5.7-1.7-6.8-3.8" fill="#000"/></svg></span>
+        <div>
+          <h3>JavaScript</h3>
+          <a class="reg" href="https://www.npmjs.com/package/rete-graph" target="_blank" rel="noopener">rete-graph on npm ↗</a>
+        </div>
+      </div>
+      <pre class="cmd"><code>npm install rete-graph</code><button class="copy" type="button" aria-label="Copy">copy</button></pre>
+      <p class="note">Node ≥ 18 and browsers, via a bundler or one <code>&lt;script&gt;</code> tag. This is the engine the console runs.</p>
+    </article>
+
+    <article class="client">
+      <div class="client-head">
+        <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="12" fill="none" stroke="#DEA584" stroke-width="2.6"/><path d="M16 2.6 17.6 5h-3.2zM16 29.4 14.4 27h3.2zM2.6 16 5 14.4v3.2zM29.4 16 27 17.6v-3.2zM6.5 6.5l2.7.5-1.9 1.9zM25.5 25.5l-2.7-.5 1.9-1.9zM25.5 6.5l-.8 2.6-1.9-1.9zM6.5 25.5l.8-2.6 1.9 1.9z" fill="#DEA584"/><path d="M12 10.5h5.2c2 0 3.3 1 3.3 2.8 0 1.3-.7 2.2-1.9 2.6l2.2 5.6h-2.6l-1.9-5.1h-1.9v5.1H12Zm2.4 1.9v2.4h2.5c.9 0 1.4-.4 1.4-1.2s-.5-1.2-1.4-1.2Z" fill="#DEA584"/></svg></span>
+        <div>
+          <h3>Rust</h3>
+          <a class="reg" href="https://github.com/caviri/rete" target="_blank" rel="noopener">source — crates.io pending ↗</a>
+        </div>
+      </div>
+      <pre class="cmd"><code>cargo add rete-core --git https://github.com/caviri/rete</code><button class="copy" type="button" aria-label="Copy">copy</button></pre>
+      <p class="note">The core library and the CLI. Anywhere Rust runs, native or wasm.</p>
+    </article>
+
+    <article class="client">
+      <div class="client-head">
+        <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M13 22.6s-1.3.8.9 1c2.7.4 4 .3 7-.3 0 0 .8.5 1.9.9-6.6 2.8-15 .2-9.8-1.6M12.2 19s-1.4 1.1.8 1.3c2.9.3 5.2.3 9.2-.5 0 0 .5.6 1.4.9-8 2.3-16.9.2-11.4-1.7" fill="#E76F00"/><path d="M18.6 13c1.6 1.9-.4 3.5-.4 3.5s4.1-2.1 2.2-4.7c-1.7-2.5-3.1-3.7 4.2-8 0 0-11.6 2.9-6 9.2" fill="#E76F00"/><path d="M27.2 25.3s1 .8-1.1 1.4c-3.9 1.2-16.1 1.5-19.5 0-1.2-.5 1.1-1.3 1.8-1.4.8-.2 1.2-.2 1.2-.2-1.3-1-8.7 1.9-3.7 2.7 13.7 2.2 25-1 21.3-2.5M13.7 15.2s-6.3 1.5-2.2 2c1.7.3 5.1.2 8.3-.1 2.6-.2 5.2-.7 5.2-.7s-.9.4-1.6.9c-6.4 1.7-18.7.9-15.1-.8 3-1.4 5.4-1.3 5.4-1.3M23.2 21.2c6.5-3.4 3.5-6.7 1.4-6.2-.5.1-.7.2-.7.2s.2-.3.6-.4c4-1.4 7.1 4.2-1.4 6.6 0 0 .1-.1.1-.2" fill="#E76F00"/><path d="M20.4 3s3.6 3.6-3.4 9.1c-5.6 4.5-1.3 7-.1 9.9-3.1-2.8-5.4-5.2-3.9-7.5C15.3 11.2 21.9 9.5 20.4 3" fill="#E76F00"/></svg></span>
+        <div>
+          <h3>Java</h3>
+          <a class="reg" href="https://github.com/caviri/rete/tree/main/clients/java" target="_blank" rel="noopener">Maven modules in-repo ↗</a>
+        </div>
+      </div>
+      <pre class="cmd"><code>mvn -f clients/java install</code><button class="copy" type="button" aria-label="Copy">copy</button></pre>
+      <p class="note"><code>io.github.caviri:rete-client</code> (wasm on Chicory) and <code>rete-rdf4j</code>, a read-only RDF4J <code>Repository</code>. Not on Maven Central yet.</p>
+    </article>
+
+    <article class="client">
+      <div class="client-head">
+        <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><ellipse cx="16" cy="16" rx="14" ry="10.5" fill="#9BA5AE"/><ellipse cx="16" cy="16" rx="10.5" ry="7.4" fill="var(--panel)"/><path d="M11.6 8.9h6.6c3 0 4.9 1.5 4.9 4 0 1.9-1.1 3.2-2.9 3.7l3.6 7.9h-3.9l-3-7.1h-1.7v7.1h-3.6Zm3.6 2.7v3.4h2.7c1.3 0 2-.6 2-1.7s-.7-1.7-2-1.7Z" fill="#276DC3"/></svg></span>
+        <div>
+          <h3>R</h3>
+          <a class="reg" href="https://github.com/caviri/rete/tree/main/clients/r" target="_blank" rel="noopener">source — CRAN pending ↗</a>
+        </div>
+      </div>
+      <pre class="cmd"><code>remotes::install_github("caviri/rete", subdir = "clients/r")</code><button class="copy" type="button" aria-label="Copy">copy</button></pre>
+      <p class="note">R ≥ 4.2 plus a Rust toolchain. Results come back as data frames.</p>
+    </article>
+
+    <article class="client">
+      <div class="client-head">
+        <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="12" fill="none" stroke="var(--accent)" stroke-width="1.6" opacity=".55"/><circle cx="16" cy="6.5" r="2.6" fill="var(--accent)"/><circle cx="7.5" cy="21" r="2.6" fill="var(--accent)"/><circle cx="24.5" cy="21" r="2.6" fill="var(--accent)"/><path d="M16 9v6m0 0-6 4.5M16 15l6 4.5" stroke="var(--accent)" stroke-width="1.6" fill="none"/></svg></span>
+        <div>
+          <h3>Agents — MCP</h3>
+          <a class="reg" href="agent/index.html">the demo bundle →</a>
+        </div>
+      </div>
+      <pre class="cmd"><code>/plugin marketplace add caviri/rete</code><button class="copy" type="button" aria-label="Copy">copy</button></pre>
+      <p class="note">Nine tools over these files in any MCP host. Or install the packaged <code>.mcpb</code> from station (c) above.</p>
+    </article>
+
+    <article class="client">
+      <div class="client-head">
+        <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><circle cx="18" cy="17" r="9" fill="#EA7600"/><circle cx="18" cy="17" r="4.2" fill="var(--panel)"/><path d="M4 13.5 13 7l2.2 3.4-7.6 5.3z" fill="#265787"/></svg></span>
+        <div>
+          <h3>Blender</h3>
+          <a class="reg" href="https://github.com/caviri/rete/tree/main/clients/blender" target="_blank" rel="noopener">add-on in-repo ↗</a>
+        </div>
+      </div>
+      <pre class="cmd"><code>Preferences → Add-ons → Install… → rete-*.zip</code><button class="copy" type="button" aria-label="Copy">copy</button></pre>
+      <p class="note">Blender ≥ 4.2, engine bundled. SPARQL results become 3D scenes.</p>
+    </article>
+
+  </div>
+
+  <p class="note">
+    Registries where they exist, source where they do not — the Rust crate, the
+    Java modules and the R package are built from the repository until their
+    first release. The full matrix, with API docs for each, is on the
+    <a href="https://caviri.github.io/rete/">project site</a>.
+  </p>
+</section>
+
 <section id="paper">
   <h2>The paper</h2>
   <p>
@@ -303,7 +409,7 @@
 <footer>
   <div class="wrap">
     <div>
-      <p>© 2026 Carlos Vivar Ríos · Swiss Data Science Center &amp; EPFL.</p>
+      <p>© 2026 Carlos Vivar Ríos · <a href="https://h4ck1ng.science" target="_blank" rel="noopener">h4ck1ng.science</a></p>
       <p>Code released under the Apache License 2.0. Each dataset keeps its own
          licence, stated inside the file it ships in.</p>
     </div>
