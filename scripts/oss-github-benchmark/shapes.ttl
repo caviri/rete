@@ -1,0 +1,233 @@
+@prefix sh:      <http://www.w3.org/ns/shacl#> .
+@prefix ossb:    <https://w3id.org/rete/oss-benchmark#> .
+@prefix schema:  <http://schema.org/> .
+@prefix org:     <http://www.w3.org/ns/org#> .
+@prefix pulse:   <https://open-pulse.epfl.ch/ontology#> .
+@prefix gme:     <https://openpulse.science/git-metadata-extractor#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+
+# SHACL Core shapes for the OSS GitHub Benchmark graph.
+#
+# rete implements SHACL Core (2017 Rec) — no SHACL-SPARQL — so every constraint
+# here is Core: cardinality, datatype, nodeKind, class, value range, sh:in,
+# sh:pattern and the property-pair constraints (sh:lessThanOrEquals).
+#
+# Run:  rete shacl /work/web/oss-github-benchmark.rete \
+#         --shapes /work/scripts/oss-github-benchmark/shapes.ttl
+# Exits non-zero when non-conformant, so it works as a CI gate.
+#
+# PERFORMANCE: validating all five shapes over 2.09M triples is slow — measured on
+# this graph: Sector 5s, Institution 22s, Organization 27s, Repository 49 MINUTES
+# (17,143 targets x 13 property shapes). Person (127,180 targets) is slower still.
+# Split this file and validate one shape at a time, or validate a subset graph, when
+# you want a quick answer. The equivalent checks written as plain SPARQL FILTER /
+# FILTER NOT EXISTS queries answer in seconds — see the dataset README — so use those
+# in a tight loop and keep SHACL for the authoritative gate.
+
+##############################################################################
+# Repository — the widest shape: identity, ownership, metrics and their
+# internal consistency (closed counts can never exceed totals).
+##############################################################################
+
+ossb:RepositoryShape a sh:NodeShape ;
+    sh:targetClass schema:SoftwareSourceCode ;
+    rdfs:label "Repository" ;
+
+    sh:property [
+        sh:path schema:name ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:minLength 1 ;
+        sh:message "A repository needs exactly one non-empty schema:name." ] ;
+
+    # Collapsed to one node per URL by the build, so ownership is single-valued.
+    sh:property [
+        sh:path pulse:ownedBy ;
+        sh:maxCount 1 ;
+        sh:class org:Organization ;
+        sh:message "pulse:ownedBy must point at a single org:Organization." ] ;
+
+    # The benchmark accounting relation is deliberately multi-valued, and every
+    # value must resolve to a typed Institution (no dangling references).
+    sh:property [
+        sh:path ossb:attributedToInstitution ;
+        sh:class ossb:Institution ;
+        sh:message "attributedToInstitution must resolve to a typed ossb:Institution." ] ;
+
+    # Every repository must be attributed SOMEHOW — either to a listed institution,
+    # or, for the 11 stale upstream keys, by the raw key literal. 30 repositories
+    # carry only the latter, so this is an sh:or rather than a minCount on the edge.
+    sh:or (
+        [ sh:property [ sh:path ossb:attributedToInstitution ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path ossb:unlistedInstitutionKey ;  sh:minCount 1 ] ]
+    ) ;
+
+    sh:property [
+        sh:path ossb:isFork ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:boolean ;
+        sh:message "ossb:isFork must be exactly one xsd:boolean (the API sends the STRING 'true'/'false' — the build must have coerced it)." ] ;
+
+    sh:property [
+        sh:path pulse:githubRepoStars ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ;
+        sh:message "Star count must be a single non-negative integer." ] ;
+
+    sh:property [
+        sh:path pulse:githubRepoForks ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ] ;
+
+    sh:property [
+        sh:path ossb:numCommits ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ] ;
+
+    sh:property [
+        sh:path ossb:numContributors ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ] ;
+
+    # Property-pair constraints: the closed subset can never exceed the total.
+    sh:property [
+        sh:path ossb:issuesClosed ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ;
+        sh:lessThanOrEquals ossb:issuesAll ;
+        sh:message "Closed issues exceed total issues." ] ;
+
+    # NOTE: deliberately NO sh:lessThanOrEquals ossb:pullRequestsAll here, unlike the
+    # issues pair above. Upstream writes a single "closed" figure into BOTH
+    # issues_closed and pull_requests_closed — they are equal in all 17,661 records —
+    # so pull_requests_closed is really the closed-ISSUE count and exceeds the PR
+    # total in 3,741 records. Asserting the constraint would fail the gate on an
+    # upstream defect we cannot fix. See ossb:pullRequestsClosed in ossbenchmark.ttl.
+    sh:property [
+        sh:path ossb:pullRequestsClosed ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ] ;
+
+    # Licenses are emitted only as SPDX IRIs; 'none'/'Other' are dropped.
+    sh:property [
+        sh:path schema:license ;
+        sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+        sh:pattern "^https://spdx\\.org/licenses/" ;
+        sh:message "schema:license must be a single SPDX IRI." ] ;
+
+    sh:property [
+        sh:path gme:archived ;
+        sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+
+    sh:property [
+        sh:path schema:dateCreated ;
+        sh:maxCount 1 ; sh:datatype xsd:dateTime ;
+        sh:message "schema:dateCreated must be a single xsd:dateTime." ] .
+
+##############################################################################
+# Institution — the layer the benchmark adds on top of Open-Pulse.
+##############################################################################
+
+ossb:InstitutionShape a sh:NodeShape ;
+    sh:targetClass ossb:Institution ;
+    rdfs:label "Institution" ;
+
+    sh:property [
+        sh:path ossb:shortName ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:message "Each institution carries exactly one benchmark shortname." ] ;
+
+    sh:property [
+        sh:path schema:name ;
+        sh:minCount 1 ; sh:datatype xsd:string ] ;
+
+    sh:property [
+        sh:path ossb:sector ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:class ossb:Sector ;
+        sh:message "Every institution sits in exactly one of the 14 sectors." ] ;
+
+    sh:property [
+        sh:path ossb:numRepos ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ] ;
+
+    sh:property [
+        sh:path ossb:numOrgs ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ] ;
+
+    sh:property [
+        sh:path ossb:totalIssuesClosed ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ;
+        sh:lessThanOrEquals ossb:totalIssues ;
+        sh:message "Institution closed-issue total exceeds its issue total." ] ;
+
+    sh:property [
+        sh:path ossb:totalStars ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ] .
+
+##############################################################################
+# GitHub organization — must attach to an institution and to Open-Pulse's IRI shape.
+##############################################################################
+
+ossb:OrganizationShape a sh:NodeShape ;
+    sh:targetClass org:Organization ;
+    rdfs:label "GitHub organization" ;
+
+    sh:property [
+        sh:path org:unitOf ;
+        sh:class ossb:Institution ;
+        sh:message "org:unitOf must point at an ossb:Institution." ] ;
+
+    sh:property [
+        sh:path schema:email ;
+        sh:maxCount 1 ; sh:datatype xsd:string ] ;
+
+    sh:property [
+        sh:path gme:github_created_at ;
+        sh:maxCount 1 ; sh:datatype xsd:dateTime ] .
+
+##############################################################################
+# Person — collapsed to one node per login, so the crawl counters are single-valued.
+##############################################################################
+
+ossb:PersonShape a sh:NodeShape ;
+    sh:targetClass schema:Person ;
+    rdfs:label "Person" ;
+
+    sh:property [
+        sh:path pulse:githubUsername ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:message "Exactly one GitHub login per person node." ] ;
+
+    sh:property [
+        sh:path gme:followers_count ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ;
+        sh:message "Duplicate follower counts mean two crawl records were not collapsed." ] ;
+
+    sh:property [
+        sh:path gme:public_repos ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ] ;
+
+    sh:property [
+        sh:path ossb:publicGists ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ] .
+
+##############################################################################
+# Sector — a closed 14-value SKOS taxonomy.
+##############################################################################
+
+ossb:SectorShape a sh:NodeShape ;
+    sh:targetClass ossb:Sector ;
+    rdfs:label "Sector" ;
+
+    sh:property [
+        sh:path skos:prefLabel ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "Each sector needs exactly one prefLabel." ] ;
+
+    sh:property [
+        sh:path skos:inScheme ;
+        sh:minCount 1 ; sh:nodeKind sh:IRI ] ;
+
+    sh:property [
+        sh:path skos:notation ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:in ( "IT" "Communities" "Insurances" "Banking" "Media" "Others"
+                "Gov_Companies" "Gov_Federal" "Gov_Cantons" "Gov_Cities"
+                "ResearchAndEducation" "NGOs" "Pharma" "FoodBeverage" ) ;
+        sh:message "Sector notation must be one of the benchmark's 14 codes." ] .

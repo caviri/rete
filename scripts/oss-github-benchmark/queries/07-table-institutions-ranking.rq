@@ -1,0 +1,25 @@
+# Replica of the ossbenchmark.com INSTITUTIONS ranking table.
+# Site columns (frontend ranking.component): Institution (name_de), Repositories
+# (num_repos), Sector, Location, Created at, Members (num_members).
+# Site default sort: num_repos DESC.
+#
+# Reads: schema:name, ossb:numRepos, ossb:sector -> skos:prefLabel, gme:location,
+#        schema:dateCreated, ossb:numMembers
+PREFIX ossb:   <https://w3id.org/rete/oss-benchmark#>
+PREFIX gme:    <https://openpulse.science/git-metadata-extractor#>
+PREFIX schema: <http://schema.org/>
+PREFIX skos:   <http://www.w3.org/2004/02/skos/core#>
+
+SELECT ?institution ?repositories ?sector ?location ?created ?members
+WHERE {
+  ?i a ossb:Institution ;
+     schema:name ?institution ;
+     ossb:numRepos ?repositories ;
+     ossb:sector ?s .
+  ?s skos:prefLabel ?sector .
+  OPTIONAL { ?i gme:location ?location }
+  OPTIONAL { ?i schema:dateCreated ?created }
+  OPTIONAL { ?i ossb:numMembers ?members }
+}
+ORDER BY DESC(?repositories)
+LIMIT 30

@@ -1,0 +1,56 @@
+# Replica of the ossbenchmark.com REPOSITORIES ranking table.
+# Site columns (repositories-ranking.component): Name, Institution, GitHub
+# Organization, Comments, Issues (issues_all), Pull requests (pull_requests_all),
+# Commits (num_commits), Contributors, Forks, Stars, Own commits, Created at,
+# Updated at, Is fork?, License. Site default sort: num_commits DESC.
+#
+# One row per repository. The site emits a row per (repo, institution) record; here
+# repositories are collapsed to one node, so the possibly-several institutions are
+# GROUP_CONCAT into the Institution cell (usually one).
+#
+# Reads: schema:name, ossb:attributedToInstitution, pulse:ownedBy ->
+#        pulse:githubOrganizationHandle, ossb:comments, ossb:issuesAll,
+#        ossb:pullRequestsAll, ossb:numCommits, ossb:numContributors,
+#        pulse:githubRepoForks, pulse:githubRepoStars, ossb:hasOwnCommits,
+#        schema:dateCreated, schema:dateModified, ossb:isFork, gme:license_name
+PREFIX ossb:   <https://w3id.org/rete/oss-benchmark#>
+PREFIX pulse:  <https://open-pulse.epfl.ch/ontology#>
+PREFIX gme:    <https://openpulse.science/git-metadata-extractor#>
+PREFIX schema: <http://schema.org/>
+
+SELECT ?name
+       (GROUP_CONCAT(DISTINCT ?instName; SEPARATOR=", ") AS ?institution)
+       (SAMPLE(?orgHandle) AS ?organization)
+       (SAMPLE(?comments) AS ?comments)
+       (SAMPLE(?issues) AS ?issues)
+       (SAMPLE(?prs) AS ?pullRequests)
+       (SAMPLE(?commits) AS ?commits)
+       (SAMPLE(?contributors) AS ?contributors)
+       (SAMPLE(?forks) AS ?forks)
+       (SAMPLE(?stars) AS ?stars)
+       (SAMPLE(?ownCommits) AS ?ownCommits)
+       (SAMPLE(?created) AS ?created)
+       (SAMPLE(?updated) AS ?updated)
+       (SAMPLE(?fork) AS ?isFork)
+       (SAMPLE(?license) AS ?license)
+WHERE {
+  ?repo a schema:SoftwareSourceCode ;
+        schema:name ?name ;
+        ossb:numCommits ?commits ;
+        ossb:numContributors ?contributors ;
+        pulse:githubRepoForks ?forks ;
+        pulse:githubRepoStars ?stars ;
+        ossb:issuesAll ?issues ;
+        ossb:pullRequestsAll ?prs ;
+        ossb:comments ?comments ;
+        ossb:hasOwnCommits ?ownCommits ;
+        ossb:isFork ?fork ;
+        schema:dateCreated ?created ;
+        schema:dateModified ?updated .
+  OPTIONAL { ?repo ossb:attributedToInstitution ?inst . ?inst schema:name ?instName }
+  OPTIONAL { ?repo pulse:ownedBy ?org . ?org pulse:githubOrganizationHandle ?orgHandle }
+  OPTIONAL { ?repo gme:license_name ?license }
+}
+GROUP BY ?repo ?name
+ORDER BY DESC(?commits)
+LIMIT 30

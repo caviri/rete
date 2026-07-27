@@ -10,6 +10,7 @@ caviri/rete`).
 
 | Skill | Use it when | Entry point |
 |---|---|---|
+| **[dataset-download](dataset-download/SKILL.md)** | "download this dataset / get `<source>` into `./data`" | investigate → scaffold `data/<name>/` → download (resumable) → verify → profile → document |
 | **[rete-sparql](rete-sparql/SKILL.md)** | "write or debug a SPARQL query against a `.rete`" | supported surface → extensions (reasoning, RDF-star, SERVICE) → 0-rows gotchas → result formats |
 | **[rete-catalog](rete-catalog/SKILL.md)** | "use an existing published dataset" | discover → card/schema/examples → open/download/federate |
 | **[rete-clients](rete-clients/SKILL.md)** | "wire rete into a new project" | Python / Pyodide / JS / script-tag / wasm / Rust setup + first query |
@@ -17,14 +18,17 @@ caviri/rete`).
 | **[rete-publish](rete-publish/SKILL.md)** | "make this `.rete` explorable in the playground" | companions → bucket → catalog → rebuild → verify |
 
 ```
-                    rete-from-graph                         rete-publish
- any graph    ─▶  NT  ─▶  rete build  ─▶  verify   ─▶   companions ─▶ bucket ─▶ catalog ─▶ playground
- (RDF/SPARQL/OWL/
-  GeoJSON/CSV/DwC-A/
-  TEI/JSON API)
+   dataset-download                 rete-from-graph                         rete-publish
+ source ─▶ data/<name>/raw  ─▶  NT  ─▶  rete build  ─▶  verify   ─▶   companions ─▶ bucket ─▶ catalog ─▶ playground
+ (page/API/bucket +
+  linked assets)
 ```
 
 ## Utilities included (all runnable)
+
+`dataset-download/scripts/`
+- **`scaffold.sh`** — create `data/<name>/{raw,scripts}` + README skeleton + `download.sh` stub.
+- **`fetch_urls.py`** — parallel, resumable, atomic URL-list downloader (stdlib-only; `s3://`→https; retries).
 
 `rete-from-graph/scripts/`
 - **`rete`** — run the `rete` CLI (PATH, else the `rete-dev` Docker binary).

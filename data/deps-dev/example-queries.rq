@@ -1,0 +1,82 @@
+## deps-dev example SPARQL queries (each returns 4–5 columns)
+## Model: https://w3id.org/rete/deps-dev#  — see deps-dev.ttl
+## Prefixes used throughout:
+##   PREFIX deps:    <https://w3id.org/rete/deps-dev#>
+##   PREFIX schema:  <https://schema.org/>
+##   PREFIX dcterms: <http://purl.org/dc/terms/>
+
+# 1 — Direct dependencies of a specific version (npm lodash@4.17.21).
+#     Tip: deps:dependsOn is version-pinned; each row is one resolved dependency.
+PREFIX deps: <https://w3id.org/rete/deps-dev#>
+PREFIX schema: <https://schema.org/>
+SELECT ?depSystem ?depName ?depVersion ?depPurl WHERE {
+  ?v deps:purl "pkg:npm/lodash@4.17.21" ;
+     deps:dependsOn ?d .
+  ?d deps:system ?depSystem ; deps:packageName ?depName ;
+     schema:softwareVersion ?depVersion ; deps:purl ?depPurl .
+}
+ORDER BY ?depName
+
+# 2 — Dependents of a version (the REVERSE of the edges): who depends on
+#     npm inherits@2.0.4. Tip: dependents come free from deps:dependsOn read backward.
+PREFIX deps: <https://w3id.org/rete/deps-dev#>
+PREFIX schema: <https://schema.org/>
+SELECT ?system ?name ?version ?purl ?license WHERE {
+  ?target deps:purl "pkg:npm/inherits@2.0.4" .
+  ?v deps:dependsOn ?target ;
+     deps:system ?system ; deps:packageName ?name ;
+     schema:softwareVersion ?version ; deps:purl ?purl .
+  OPTIONAL { ?v schema:license ?license }
+}
+LIMIT 200
+
+# 3 — Most-depended-upon npm packages (by number of dependent versions).
+#     Tip: counts direct dependents at version granularity across all of npm.
+PREFIX deps: <https://w3id.org/rete/deps-dev#>
+PREFIX schema: <https://schema.org/>
+SELECT ?name ?version ?purl (COUNT(?v) AS ?dependents) WHERE {
+  ?v deps:dependsOn ?target .
+  ?target deps:system "NPM" ; deps:packageName ?name ;
+          schema:softwareVersion ?version ; deps:purl ?purl .
+}
+GROUP BY ?name ?version ?purl
+ORDER BY DESC(?dependents)
+LIMIT 25
+
+# 4 — Package versions with a known security advisory, worst CVSS first.
+#     Tip: deps:hasAdvisory links a version to a GHSA/OSV advisory.
+PREFIX deps: <https://w3id.org/rete/deps-dev#>
+PREFIX schema: <https://schema.org/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+SELECT ?name ?version ?severity ?cvss ?title WHERE {
+  ?v deps:hasAdvisory ?a ;
+     deps:packageName ?name ; schema:softwareVersion ?version .
+  ?a deps:severity ?severity ; deps:cvss3Score ?cvss ; dcterms:title ?title .
+}
+ORDER BY DESC(?cvss)
+LIMIT 50
+
+# 5 — MIT-licensed npm packages ranked by their source project's stars.
+#     Tip: schema:license points to the SPDX license IRI; deps:hasProject to the repo.
+PREFIX deps: <https://w3id.org/rete/deps-dev#>
+PREFIX schema: <https://schema.org/>
+SELECT ?name ?version ?stars ?forks ?repo WHERE {
+  ?v deps:system "NPM" ;
+     schema:license <http://spdx.org/licenses/MIT> ;
+     deps:packageName ?name ; schema:softwareVersion ?version ;
+     deps:hasProject ?p .
+  ?p deps:starsCount ?stars ; deps:forksCount ?forks ; schema:url ?repo .
+}
+ORDER BY DESC(?stars)
+LIMIT 25
+
+# 6 — A version's identity + source project metrics in one row.
+#     Tip: joins the package-version node to its Project (stars/forks/repo).
+PREFIX deps: <https://w3id.org/rete/deps-dev#>
+PREFIX schema: <https://schema.org/>
+SELECT ?name ?version ?stars ?forks ?repo WHERE {
+  ?v deps:purl "pkg:pypi/requests@2.31.0" ;
+     deps:packageName ?name ; schema:softwareVersion ?version ;
+     deps:hasProject ?p .
+  ?p deps:starsCount ?stars ; deps:forksCount ?forks ; schema:url ?repo .
+}

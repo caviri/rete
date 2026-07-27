@@ -2530,6 +2530,68 @@ impl Rete {
             .collect()
     }
 
+    /// Match a triple pattern **within a single graph** — `None` is the default
+    /// graph, `Some(iri)` a named graph — resolving matches to canonical terms.
+    /// This is [`Rete::query`] (default-graph only) generalized to any graph: the
+    /// graph-scoped primitive a quad-aware consumer (e.g. an RDF4J `Sail`'s
+    /// `getStatements`) needs. An unknown graph IRI, or a bound term absent from
+    /// the shared dictionary, yields an empty result. All graphs share one
+    /// dictionary, so the pattern resolves once against that ID space.
+    pub fn query_in_graph(
+        &self,
+        graph: Option<&str>,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+    ) -> Vec<TermTriple> {
+        let pattern = match self.resolve_query_pattern(s, p, o) {
+            Some(pattern) => pattern,
+            None => return Vec::new(),
+        };
+        let index = match graph {
+            None => &self.index,
+            Some(g) => match self.graph_index(g) {
+                Some(i) => i,
+                None => return Vec::new(),
+            },
+        };
+        self.dict.prefetch_all();
+        index
+            .match_pattern(pattern)
+            .into_iter()
+            .filter_map(|(s, p, o)| {
+                Some((
+                    self.dict.subject_term(s)?,
+                    self.dict.predicate_term(p)?,
+                    self.dict.object_term(o)?,
+                ))
+            })
+            .collect()
+    }
+
+    /// Match a triple pattern across the default graph **and every named graph**,
+    /// tagging each match with its graph (`None` = default). The quad-level
+    /// companion to [`Rete::query`]; default-graph matches come first, then each
+    /// named graph in stored order.
+    pub fn query_quads(
+        &self,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+    ) -> Vec<(TermTriple, Option<String>)> {
+        let mut out: Vec<(TermTriple, Option<String>)> = self
+            .query_in_graph(None, s, p, o)
+            .into_iter()
+            .map(|t| (t, None))
+            .collect();
+        for (iri, _) in &self.named_graphs {
+            for triple in self.query_in_graph(Some(iri), s, p, o) {
+                out.push((triple, Some(iri.clone())));
+            }
+        }
+        out
+    }
+
     /// Evaluate one triple pattern through a [`RangeReader`] by fetching only
     /// the header, the dictionary, and â€” for a tiled (v0.2) file â€” the
     /// selected permutation section's tile **directory** plus the tile(s) the
@@ -4112,6 +4174,92 @@ mod tests {
             rete.dump(Some("http://ex/g1")),
             vec![("Bob".into(), "age".into(), "30".into())]
         );
+    }
+
+    #[test]
+    fn query_in_graph_is_graph_scoped() {
+        // Default graph: Alice knows Bob, Alice knows Carol.
+        // Named g1: Alice knows Dave (same predicate, different graph).
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in [
+            ("Alice", "knows", "Bob"),
+            ("Alice", "knows", "Carol"),
+            ("Alice", "knows", "Dave"),
+        ] {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+
+        let mut def = GraphIndexBuilder::new();
+        def.push(dict.encode("Alice", "knows", "Bob").unwrap());
+        def.push(dict.encode("Alice", "knows", "Carol").unwrap());
+        let mut g1 = GraphIndexBuilder::new();
+        g1.push(dict.encode("Alice", "knows", "Dave").unwrap());
+
+        let named = vec![("http://ex/g1".to_string(), g1.build())];
+        let bytes = write_dataset(&dict, &def.build(), &named, true, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+
+        // Default graph only: the two default-graph objects, not Dave.
+        let mut def_objs: Vec<String> = rete
+            .query_in_graph(None, Some("Alice"), Some("knows"), None)
+            .into_iter()
+            .map(|(_, _, o)| o)
+            .collect();
+        def_objs.sort();
+        assert_eq!(def_objs, vec!["Bob".to_string(), "Carol".to_string()]);
+
+        // Named graph only: just Dave.
+        assert_eq!(
+            rete.query_in_graph(Some("http://ex/g1"), Some("Alice"), None, None),
+            vec![("Alice".into(), "knows".into(), "Dave".into())]
+        );
+
+        // A wildcard-everything scan is scoped to its graph.
+        assert_eq!(rete.query_in_graph(None, None, None, None).len(), 2);
+        assert_eq!(
+            rete.query_in_graph(Some("http://ex/g1"), None, None, None).len(),
+            1
+        );
+
+        // An unknown graph IRI is empty, not an error.
+        assert!(rete
+            .query_in_graph(Some("http://ex/missing"), None, None, None)
+            .is_empty());
+    }
+
+    #[test]
+    fn query_quads_tags_every_graph() {
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in [("Alice", "knows", "Bob"), ("Alice", "knows", "Dave")] {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut def = GraphIndexBuilder::new();
+        def.push(dict.encode("Alice", "knows", "Bob").unwrap());
+        let mut g1 = GraphIndexBuilder::new();
+        g1.push(dict.encode("Alice", "knows", "Dave").unwrap());
+        let named = vec![("http://ex/g1".to_string(), g1.build())];
+        let bytes = write_dataset(&dict, &def.build(), &named, true, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+
+        // `Alice knows ?` spans both graphs; each match carries its graph tag.
+        let quads = rete.query_quads(Some("Alice"), Some("knows"), None);
+        assert_eq!(quads.len(), 2);
+        assert_eq!(
+            quads[0],
+            (("Alice".into(), "knows".into(), "Bob".into()), None)
+        );
+        assert_eq!(
+            quads[1],
+            (
+                ("Alice".into(), "knows".into(), "Dave".into()),
+                Some("http://ex/g1".to_string())
+            )
+        );
+
+        // A bound term absent from the dictionary yields nothing, in any graph.
+        assert!(rete.query_quads(Some("Nobody"), None, None).is_empty());
     }
 
     #[test]

@@ -1,0 +1,37 @@
+# Audit: the institution's PUBLISHED aggregates vs the sums DERIVED from its repos.
+# Relates: institution -> published totals (ossb:totalStars / totalCommits /
+# numRepos) -> its GitHub orgs -> its repositories -> the same measures re-summed,
+# and reports the drift.
+#
+# Worth running because the two disagree by construction: the benchmark's published
+# num_repos/total_* are computed with its own fork policy and at its own crawl time,
+# while the derived sums here walk org:unitOf -> pulse:ownedBy over the repository
+# records. A large drift flags an institution whose org list and repo list were
+# crawled at different times, or whose repos are attributed to several institutions.
+#
+# Reads: ossb:numRepos, ossb:totalStars, ossb:totalCommits, org:unitOf,
+#        pulse:ownedBy, pulse:githubRepoStars, ossb:numCommits
+PREFIX ossb:   <https://w3id.org/rete/oss-benchmark#>
+PREFIX pulse:  <https://open-pulse.epfl.ch/ontology#>
+PREFIX org:    <http://www.w3.org/ns/org#>
+PREFIX schema: <http://schema.org/>
+
+SELECT ?institution
+       ?publishedRepos  (COUNT(DISTINCT ?repo) AS ?derivedRepos)
+       ?publishedStars  (SUM(?stars) AS ?derivedStars)
+       ?publishedCommits (SUM(?commits) AS ?derivedCommits)
+       (COUNT(DISTINCT ?repo) - ?publishedRepos AS ?repoDrift)
+WHERE {
+  ?i a ossb:Institution ;
+     schema:name ?institution ;
+     ossb:numRepos ?publishedRepos ;
+     ossb:totalStars ?publishedStars ;
+     ossb:totalCommits ?publishedCommits .
+  ?o org:unitOf ?i .
+  ?repo pulse:ownedBy ?o ;
+        pulse:githubRepoStars ?stars ;
+        ossb:numCommits ?commits .
+}
+GROUP BY ?institution ?publishedRepos ?publishedStars ?publishedCommits
+ORDER BY DESC(ABS(COUNT(DISTINCT ?repo) - ?publishedRepos))
+LIMIT 15

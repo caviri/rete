@@ -97,6 +97,16 @@ services:
     command:
       ["Rscript", "-e", "rextendr::document(); testthat::test_local()"]
 
+  # Pure-Java client: multi-stage build compiles the C-ABI crate to wasm, drops
+  # it into the JAR resources, and runs `mvn verify` (Chicory runs the wasm in
+  # the JVM). Self-contained — no shared cargo/maven volumes, no host toolchain.
+  #   docker compose run --rm java
+  java:
+    build:
+      context: .
+      dockerfile: clients/java/Dockerfile
+    command: ["mvn", "-B", "-o", "verify"]
+
   gate:
     <<: *rete-gate
     environment:

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SWISSUbase — a .rete that opens itself</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1a1a1a; --bg:#fbfbfa; --mut:#666; --acc:#e2001a; --card:#fff; --bd:#e4e4e2; --code:#f4f4f2; }
+  @media (prefers-color-scheme: dark){ :root { --fg:#e8e8e6; --bg:#161615; --mut:#9a9a97; --acc:#ff5a6a; --card:#1f1f1e; --bd:#333; --code:#242423; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:var(--fg); background:var(--bg); }
+  header { padding:28px 20px 18px; max-width:1100px; margin:0 auto; }
+  .flag { font-size:34px; }
+  h1 { margin:.2em 0 .1em; font-size:26px; }
+  .sub { color:var(--mut); max-width:70ch; }
+  .self { display:inline-block; margin-top:10px; padding:5px 10px; border:1px dashed var(--acc); border-radius:6px; color:var(--acc); font-size:12.5px; }
+  .stats { color:var(--mut); font-size:13px; margin-top:10px; }
+  .stats b { color:var(--fg); }
+  main { max-width:1100px; margin:0 auto; padding:0 20px 60px; }
+  .layout { display:grid; grid-template-columns:300px 1fr; gap:22px; align-items:start; }
+  @media (max-width:820px){ .layout { grid-template-columns:1fr; } }
+  .qlist { display:flex; flex-direction:column; gap:8px; }
+  .qbtn { text-align:left; padding:10px 12px; border:1px solid var(--bd); background:var(--card); border-radius:8px; cursor:pointer; color:var(--fg); font:inherit; }
+  .qbtn:hover { border-color:var(--acc); }
+  .qbtn small { display:block; color:var(--mut); font-size:11.5px; margin-top:2px; }
+  .qbtn .brain { color:var(--acc); font-weight:600; }
+  textarea { width:100%; min-height:120px; font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; padding:11px; border:1px solid var(--bd); border-radius:8px; background:var(--code); color:var(--fg); resize:vertical; }
+  .bar { display:flex; gap:10px; align-items:center; margin:10px 0; flex-wrap:wrap; }
+  button.run { background:var(--acc); color:#fff; border:none; padding:9px 18px; border-radius:8px; font:inherit; font-weight:600; cursor:pointer; }
+  .status { color:var(--mut); font-size:13px; }
+  .results { margin-top:14px; overflow:auto; border:1px solid var(--bd); border-radius:8px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--bd); vertical-align:top; white-space:nowrap; max-width:520px; overflow:hidden; text-overflow:ellipsis; }
+  th { position:sticky; top:0; background:var(--card); color:var(--mut); font-weight:600; }
+  td a { color:var(--acc); text-decoration:none; }
+  #splash { position:fixed; inset:0; z-index:99999; background:var(--bg); display:flex; align-items:center; justify-content:center; text-align:center; transition:opacity .45s ease; }
+  .splash-inner { max-width:440px; padding:28px; }
+  .splash-flag { font-size:60px; line-height:1; animation:float 3s ease-in-out infinite; }
+  .splash-title { font-size:30px; font-weight:700; margin:12px 0 4px; }
+  .splash-tag { color:var(--mut); font-size:14px; }
+  .spin { width:34px; height:34px; margin:26px auto 0; border-radius:50%; border:3px solid var(--bd); border-top-color:var(--acc); animation:spin .9s linear infinite; }
+  .splash-status { color:var(--fg); margin-top:18px; font-size:14px; min-height:1.4em; font-weight:500; }
+  .splash-note { color:var(--mut); font-size:12.5px; margin-top:16px; line-height:1.55; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  footer { max-width:1100px; margin:0 auto; padding:20px; color:var(--mut); font-size:12.5px; border-top:1px solid var(--bd); }
+</style>
+</head>
+<body>
+<div id="splash">
+  <div class="splash-inner">
+    <div class="splash-flag">🇨🇭</div>
+    <div class="splash-title">SWISSUbase</div>
+    <div class="splash-tag">a <code>.rete</code> graph that opens itself</div>
+    <div class="spin"></div>
+    <div class="splash-status" id="splash-status">Waking up…</div>
+    <div class="splash-note">One file is loading here — the web page, the query engine, and the entire graph are all inside it. Hang tight while it reads its own bytes.</div>
+  </div>
+</div>
+<div id="app" style="display:none">
+  <header>
+    <div class="flag">🇨🇭</div>
+    <h1 id="title">SWISSUbase</h1>
+    <div class="sub" id="desc"></div>
+    <div class="self">⚡ You are looking at a single <code>.rete</code> file. This page, the query engine, and the graph are the <b>same file</b> — it reads its own bytes and queries itself, entirely in your browser.</div>
+    <div class="stats" id="stats"></div>
+  </header>
+  <main>
+    <div class="layout">
+      <div>
+        <div style="font-size:12px;color:var(--mut);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">Example queries (from the file's own card)</div>
+        <div class="qlist" id="qlist"></div>
+      </div>
+      <div>
+        <textarea id="q" spellcheck="false"></textarea>
+        <div class="bar">
+          <button class="run" id="run">Run ▶</button>
+          <span class="status" id="status"></span>
+        </div>
+        <div class="results" id="results"></div>
+      </div>
+    </div>
+  </main>
+  <footer>
+    A polyglot experiment: one file that is both a web page and a queryable <code>.rete</code> graph. The HTML carries the WebAssembly query engine and the whole graph — it opens itself in your browser, with no server doing any work. __FOOTER_NOTE__ Built by <code>experiments/polyglot/build_polyglot.py</code>.
+  </footer>
+</div>
+
+<script>__GLUE_JS__</script>
+<script>
+const WASM_B64 = "__WASM_B64__";
+__GRAPH_SOURCE_JS__
+const dec = new TextDecoder();
+
+// --- minimal .rete header + card reader (from experiments/plaza/js/rete-card.js) ---
+function parseHeader(b){
+  if (dec.decode(b.subarray(0,4)) !== "RETE") throw new Error("bad magic");
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const u16=o=>dv.getUint16(o,true), u64=o=>Number(dv.getBigUint64(o,true));
+  const version=b[4];
+  if (version>=3){
+    const quadCount=u64(24), termCount=u64(32), sectionCount=u16(44);
+    let metadataOffset=0, metadataLen=0;
+    for(let i=0;i<sectionCount;i++){ const p=64+i*24; if(p+24>b.length)break;
+      const kind=u16(p), off=u64(p+8), len=u64(p+16);
+      if(kind===1){ metadataOffset=off; metadataLen=len; } }
+    return {version,metadataOffset,metadataLen,quadCount,termCount};
+  }
+  return {version,metadataOffset:u64(8),metadataLen:u64(16),quadCount:u64(76),termCount:u64(84)};
+}
+function readCard(b){
+  const h=parseHeader(b);
+  let card=null;
+  if(h.metadataLen>0) card=JSON.parse(dec.decode(b.subarray(h.metadataOffset,h.metadataOffset+h.metadataLen)));
+  return {header:h, card};
+}
+function fmt(n){ if(n==null)return"?"; const u=["","K","M","B"]; let i=0,v=n; while(v>=1000&&i<3){v/=1000;i++;} return (v>=100||i===0?Math.round(v):v.toFixed(1))+u[i]; }
+
+let graph=null;
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function cell(v){
+  if(v==null) return "";
+  const s=String(v);
+  let m=s.match(/^<(.+)>$/);                                   // <IRI>
+  if(m) return `<a href="${esc(m[1])}" target="_blank" rel="noopener">${esc(m[1])}</a>`;
+  m=s.match(/^"((?:[^"\\]|\\.)*)"(?:@[\w-]+|\^\^<[^>]+>)?$/);   // "literal"(@lang|^^<dt>)?
+  if(m) return esc(m[1].replace(/\\"/g,'"').replace(/\\n/g," ").replace(/\\t/g," "));
+  if(/^https?:\/\//.test(s)) return `<a href="${esc(s)}" target="_blank" rel="noopener">${esc(s)}</a>`;
+  return esc(s);
+}
+function renderTable(r){
+  const res=document.getElementById("results");
+  if(r.kind==="ask"){ res.innerHTML=`<div style="padding:12px">ASK → <b>${r.boolean}</b></div>`; return; }
+  if(r.kind==="construct"){ res.innerHTML=`<div style="padding:12px">${(r.triples||[]).length} triple(s)</div>`; return; }
+  const vars=r.vars||[], rows=r.rows||[];
+  let h="<table><thead><tr>"+vars.map(v=>`<th>${esc(v)}</th>`).join("")+"</tr></thead><tbody>";
+  for(const row of rows) h+="<tr>"+vars.map(v=>`<td title="${esc(row[v]??"")}">${cell(row[v])}</td>`).join("")+"</tr>";
+  h+="</tbody></table>";
+  res.innerHTML=h;
+  document.getElementById("status").textContent=`${rows.length} row(s)`;
+}
+function run(){
+  const q=document.getElementById("q").value.trim();
+  if(!q||!graph) return;
+  const reasoned=/\bscholar:/.test(q);
+  document.getElementById("status").textContent=reasoned?"running with 🧠 reasoning…":"running…";
+  setTimeout(()=>{ try{
+      const out=reasoned?graph.query_reasoned(q,"json"):graph.query(q,"json");
+      renderTable(JSON.parse(out));
+    }catch(e){ document.getElementById("results").innerHTML=`<div style="padding:12px;color:var(--acc)">${esc(e.message||e)}</div>`; document.getElementById("status").textContent="error"; }
+  },10);
+}
+function label(query){ const l=query.split("\n")[0].replace(/^#\s*/,""); return l.length>2?l:"Query"; }
+
+const setStep=m=>{ const el=document.getElementById("splash-status"); if(el) el.textContent=m; };
+(async function(){
+  try{
+    setStep("Starting the query engine…");
+    const wasmBytes=Uint8Array.from(atob(WASM_B64), c=>c.charCodeAt(0));
+    await wasm_bindgen({module_or_path:wasmBytes});
+    setStep("Reading the graph out of this very file…");
+    const bytes=await getGraphBytes();
+    setStep("Opening the graph…");
+    const {header,card}=readCard(bytes);
+    graph=new wasm_bindgen.Graph(bytes);
+    // populate UI
+    if(card){
+      if(card.title) document.getElementById("title").textContent=card.title;
+      if(card.description) document.getElementById("desc").textContent=card.description;
+    }
+    document.getElementById("stats").innerHTML=
+      `<b>${fmt(header.quadCount)}</b> triples · <b>${fmt(header.termCount)}</b> terms · format v${header.version} · ${SRC_LABEL} · engine ${Math.round(wasmBytes.length/1e6)} MB wasm`;
+    const qs=(card&&card.example_queries)||[];
+    const list=document.getElementById("qlist");
+    qs.forEach((q,i)=>{
+      const b=document.createElement("button"); b.className="qbtn";
+      const reasoned=/\bscholar:/.test(q);
+      b.innerHTML=`${esc(label(q))}${reasoned?' <span class="brain">🧠</span>':''}<small>${reasoned?"needs reasoning — runs automatically":"click to load & run"}</small>`;
+      b.onclick=()=>{ document.getElementById("q").value=q; run(); };
+      list.appendChild(b);
+      if(i===0){ document.getElementById("q").value=q; }
+    });
+    document.getElementById("run").onclick=run;
+    setStep("Ready!");
+    // Served as text/html, the raw .rete bytes appended after </html> get parsed
+    // as trailing body text — drop everything after our last <script> so the page
+    // is clean. (This only touches the DOM; the tail is range-read from the server.)
+    const scripts=document.getElementsByTagName("script");
+    const last=scripts[scripts.length-1];
+    while(last && last.nextSibling) last.nextSibling.remove();
+    document.getElementById("app").style.display="block";
+    // fade the splash away
+    const sp=document.getElementById("splash");
+    sp.style.opacity="0"; setTimeout(()=>sp.remove(),480);
+    if(qs.length) run();
+  }catch(e){
+    setStep("Couldn't open this file");
+    const note=document.querySelector(".splash-note");
+    if(note) note.innerHTML=`${esc(e.message||e)}<br><br>This page reads its own bytes, so it must be served over HTTP with byte-range support — open it from the R2 URL, not as a local file.`;
+    const spin=document.querySelector(".spin"); if(spin) spin.style.display="none";
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+# Institution engagement funnel: how much code, how much attention, how responsive.
+# Relates: institution -> sector -> org -> repository, then rolls repository-level
+# stars / commits / contributors / issues / pull requests up to the institution and
+# derives an issue-closure rate.
+#
+# Reads: schema:name, skos:prefLabel, ossb:sector, org:unitOf, pulse:ownedBy,
+#        pulse:githubRepoStars, ossb:numCommits, ossb:numContributors,
+#        ossb:issuesAll, ossb:issuesClosed, ossb:pullRequestsAll
+PREFIX ossb:   <https://w3id.org/rete/oss-benchmark#>
+PREFIX pulse:  <https://open-pulse.epfl.ch/ontology#>
+PREFIX org:    <http://www.w3.org/ns/org#>
+PREFIX schema: <http://schema.org/>
+PREFIX skos:   <http://www.w3.org/2004/02/skos/core#>
+
+SELECT ?institution ?sector
+       (COUNT(DISTINCT ?repo) AS ?repos)
+       (SUM(?stars) AS ?stars)
+       (SUM(?commits) AS ?commits)
+       (SUM(?contributors) AS ?contributors)
+       (SUM(?issues) AS ?issues)
+       (ROUND(100.0 * SUM(?closed) / SUM(?issues)) AS ?pctIssuesClosed)
+WHERE {
+  ?i a ossb:Institution ; schema:name ?institution ; ossb:sector ?s .
+  ?s skos:prefLabel ?sector .
+  ?o org:unitOf ?i .
+  ?repo pulse:ownedBy ?o ;
+        ossb:isFork false ;
+        pulse:githubRepoStars ?stars ;
+        ossb:numCommits ?commits ;
+        ossb:numContributors ?contributors ;
+        ossb:issuesAll ?issues ;
+        ossb:issuesClosed ?closed .
+}
+GROUP BY ?institution ?sector
+HAVING (SUM(?issues) > 500)
+ORDER BY DESC(?stars)
+LIMIT 20

@@ -64,8 +64,10 @@ binary. Use the wrapper so you don't memorize the incantation:
 
 ```bash
 # the wrapper finds `rete` on PATH, else runs it in rete-dev against target/release/rete
+# The .rete lives WITH its dataset, in data/<name>/ (NOT web/) — it's published
+# to R2, and web/ is only a staging step for the few small EMBEDDED datasets.
 skills/rete-from-graph/scripts/rete build /work/data/foo/foo.nt \
-  -o /work/web/foo.rete --pyramid-algo types --card
+  -o /work/data/foo/foo.rete --pyramid-algo types --card
 ```
 
 Flag che-sheet (full detail + memory/large-build guidance in
@@ -105,7 +107,7 @@ A monolithic build holds the dictionary + index in RAM. If it OOMs:
 ## 5. Verify
 
 ```bash
-skills/rete-from-graph/scripts/verify_rete.sh /work/web/foo.rete
+skills/rete-from-graph/scripts/verify_rete.sh /work/data/foo/foo.rete
 ```
 Runs `rete info` / `rete stats` / `rete verify` (content-hash) and a sample
 `rete sparql`. For engine-level correctness on the codebase itself, the project's
@@ -127,5 +129,9 @@ Parquet/DuckDB/SQLite companions, upload to the bucket, and register the dataset
 - **Don't scrape robots-blocked sites.** Prefer an official dump, a SPARQL endpoint,
   or an open-data API. Several datasets in this repo went to primary sources for
   exactly this reason.
-- Keep `data/` and the built `web/*.rete` out of git (they're gitignored); the
-  `.rete` lives in the bucket, the *converter script* lives in the repo.
+- Keep the built `.rete` in its dataset folder, `data/<name>/<name>.rete` — NOT
+  in `web/`. All of `data/` is gitignored, so the file stays out of git; the
+  *converter script* lives in the repo and R2 holds the published bytes. `web/` is
+  only a staging area for the handful of small EMBEDDED datasets that get base64
+  inlined into `docs/playground.html` (see rete-publish); everything remote-lazy
+  is served straight from R2 and never touches `web/`.

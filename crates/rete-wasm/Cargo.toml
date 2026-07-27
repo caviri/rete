@@ -45,8 +45,10 @@ asyncify = []
 
 [dependencies]
 # No default features: the C zstd encoder isn't available on wasm; the pure-Rust
-# ruzstd decoder in rete-core reads compressed files just fine.
-rete-core = { version = "=0.3.0", path = "../rete-core", default-features = false }
+# ruzstd decoder in rete-core reads compressed files just fine. `wasm-js` gives
+# getrandom the browser backend (crypto.getRandomValues) it needs on
+# wasm32-unknown-unknown — this crate always runs in a JS host.
+rete-core = { version = "=0.3.0", path = "../rete-core", default-features = false, features = ["wasm-js"] }
 wasm-bindgen = "0.2"
 serde_json = "1"
 # Sync-XHR range reader for the in-worker remote-query path (`sparql_url`).

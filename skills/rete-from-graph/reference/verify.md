@@ -9,12 +9,12 @@ The `scripts/verify_rete.sh` wrapper runs these; individually:
 
 ```bash
 rete validate data/foo/foo.nt          # BEFORE build: do the inputs parse? counts or a parse error
-rete info     web/foo.rete             # header: version, sections, counts
-rete stats    web/foo.rete             # size, counts, graphs, pyramid, top predicates
-rete verify   web/foo.rete             # content-hash check (detects corruption/truncation)
-rete card     web/foo.rete             # the embedded Dataset Card (if --card)
-rete sparql   web/foo.rete "SELECT ?c (COUNT(*) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 20"
-rete schema   web/foo.rete             # the effective class-to-class schema (sanity-check the model)
+rete info     data/foo/foo.rete        # header: version, sections, counts
+rete stats    data/foo/foo.rete        # size, counts, graphs, pyramid, top predicates
+rete verify   data/foo/foo.rete        # content-hash check (detects corruption/truncation)
+rete card     data/foo/foo.rete        # the embedded Dataset Card (if --card)
+rete sparql   data/foo/foo.rete "SELECT ?c (COUNT(*) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 20"
+rete schema   data/foo/foo.rete        # the effective class-to-class schema (sanity-check the model)
 ```
 
 Good signs: `validate` green, `stats` triple count matches the source, `schema`

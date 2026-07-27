@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>io.github.caviri</groupId>
+  <artifactId>rete-parent</artifactId>
+  <!-- Kept in lockstep with the engine version and clients/java/ffi/Cargo.toml. -->
+  <version>0.3.0</version>
+  <packaging>pom</packaging>
+
+  <name>rete (Java clients)</name>
+  <description>Pure-Java clients for the rete cloud-native RDF graph file format.</description>
+  <url>https://caviri.github.io/rete/</url>
+
+  <licenses>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+    </license>
+  </licenses>
+
+  <scm>
+    <url>https://github.com/caviri/rete</url>
+    <connection>scm:git:https://github.com/caviri/rete.git</connection>
+    <developerConnection>scm:git:git@github.com:caviri/rete.git</developerConnection>
+  </scm>
+
+  <!-- Maven Central requires at least one developer entry. -->
+  <developers>
+    <developer>
+      <id>caviri</id>
+      <name>caviri</name>
+      <url>https://github.com/caviri</url>
+    </developer>
+  </developers>
+
+  <modules>
+    <!-- The lightweight core: the wasm engine on Chicory. No heavy deps. -->
+    <module>rete-client</module>
+    <!-- The RDF4J binding: a read-only Sail/Repository over a .rete. Pulls RDF4J,
+         so it is a separate artifact users opt into. -->
+    <module>rete-rdf4j</module>
+  </modules>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>21</maven.compiler.release>
+    <chicory.version>1.7.5</chicory.version>
+    <rdf4j.version>5.3.2</rdf4j.version>
+    <!-- Matches the version RDF4J already resolves, so the classpath stays aligned. -->
+    <jackson.version>2.21.0</jackson.version>
+    <junit.version>5.11.4</junit.version>
+    <surefire.version>3.2.5</surefire.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- One place to pin every RDF4J module version. -->
+      <dependency>
+        <groupId>org.eclipse.rdf4j</groupId>
+        <artifactId>rdf4j-bom</artifactId>
+        <version>${rdf4j.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${junit.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.dylibso.chicory</groupId>
+        <artifactId>runtime</artifactId>
+        <version>${chicory.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.dylibso.chicory</groupId>
+        <artifactId>wasm</artifactId>
+        <version>${chicory.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>${jackson.version}</version>
+      </dependency>
+      <!-- The reactor's own core module, consumed by rete-rdf4j. -->
+      <dependency>
+        <groupId>io.github.caviri</groupId>
+        <artifactId>rete-client</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${surefire.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+
+  <!-- Release to Maven Central (Sonatype Central Portal). Off by default so the
+       normal build never needs signing keys or the extra plugins. Activate with
+       `-Prelease`. See clients/java/RELEASING.md. Inherited by both modules; the
+       source/javadoc plugins skip the pom-packaged parent automatically. -->
+  <profiles>
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.3.1</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <phase>package</phase>
+                <goals><goal>jar-no-fork</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.11.2</version>
+            <configuration>
+              <!-- Central needs a javadoc jar to exist, not doclint-perfection. -->
+              <doclint>none</doclint>
+              <quiet>true</quiet>
+            </configuration>
+            <executions>
+              <execution>
+                <id>attach-javadoc</id>
+                <phase>package</phase>
+                <goals><goal>jar</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.7</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals><goal>sign</goal></goals>
+              </execution>
+            </executions>
+            <configuration>
+              <!-- gpg 2.x needs loopback pinentry for a non-interactive passphrase. -->
+              <gpgArguments>
+                <arg>--pinentry-mode</arg>
+                <arg>loopback</arg>
+              </gpgArguments>
+            </configuration>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.7.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <!-- Upload + validate, but require a manual "Publish" click on the
+                   portal — never auto-release (an irreversible public action). -->
+              <autoPublish>false</autoPublish>
+              <waitUntil>validated</waitUntil>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

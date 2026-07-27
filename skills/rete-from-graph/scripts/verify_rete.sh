@@ -2,7 +2,7 @@
 # Sanity-check a freshly built .rete: header, stats, content-hash, card, schema, and
 # a spot-check SPARQL. Uses the sibling `rete` wrapper (PATH or rete-dev Docker).
 #
-# Usage: verify_rete.sh /work/web/foo.rete   (path as the `rete` wrapper expects)
+# Usage: verify_rete.sh /work/data/foo/foo.rete   (path as the `rete` wrapper expects)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RETE="$HERE/rete"

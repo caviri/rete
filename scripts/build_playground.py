@@ -345,7 +345,7 @@ DATASETS = [
     ("antarctic-expeditions", "antarctic-expeditions.rete"),  # Heroic-Age expeditions, crews & ships (Wikidata, CC0)
     ("theographic-graph", "theographic-graph.rete"),
     ("monarch", "monarch.rete"),
-    ("opencitations", "opencitations.rete"),
+    # opencitations is REMOTE-LAZY (~34 GB on R2, not embeddable) — see catalog.js.
     # NOTE: mira, mira-wikidata, causalgraph and lineara moved to REMOTE-LAZY
     # (served from the bucket, range-read; see catalog.js kind:"remote-lazy"), so
     # they are intentionally NOT embedded here.

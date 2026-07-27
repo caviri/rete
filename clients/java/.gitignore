@@ -1,0 +1,10 @@
+# Maven build output (all modules).
+target/
+*/target/
+
+# Rust wasm build output (the FFI crate locks/builds independently).
+ffi/target/
+
+# The engine wasm is generated at build time (Dockerfile stage 1) and dropped
+# into the resource path — never committed.
+rete-client/src/main/resources/io/github/caviri/rete/rete_ffi.wasm
