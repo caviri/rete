@@ -1,0 +1,43 @@
+{
+  "content": [
+    {
+      "content": null,
+      "created": "2026-07-25T11:32:07.950654Z",
+      "format": null,
+      "hash": null,
+      "hash_algorithm": null,
+      "last_modified": "2026-07-25T11:31:59Z",
+      "mimetype": null,
+      "name": "build-a-rete.ipynb",
+      "path": "build-a-rete.ipynb",
+      "size": 13061,
+      "type": "notebook",
+      "writable": true
+    },
+    {
+      "content": null,
+      "created": "2026-07-25T11:32:07.970161Z",
+      "format": null,
+      "hash": null,
+      "hash_algorithm": null,
+      "last_modified": "2026-07-25T11:31:59Z",
+      "mimetype": null,
+      "name": "rete-demo.ipynb",
+      "path": "rete-demo.ipynb",
+      "size": 10688,
+      "type": "notebook",
+      "writable": true
+    }
+  ],
+  "created": "2026-07-25T11:32:07.966053Z",
+  "format": "json",
+  "hash": null,
+  "hash_algorithm": null,
+  "last_modified": "2026-07-25T11:32:07.966053Z",
+  "mimetype": null,
+  "name": "",
+  "path": "",
+  "size": null,
+  "type": "directory",
+  "writable": true
+}

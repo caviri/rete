@@ -33,6 +33,12 @@ Dockerfile   text eol=lf
 
 # Generated/runtime binary assets.
 *.wasm  binary
+*.whl   binary
+*.mcpb  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
 *.png   binary
 *.jpg   binary
 *.jpeg  binary

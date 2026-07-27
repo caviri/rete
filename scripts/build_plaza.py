@@ -65,6 +65,7 @@ def main() -> None:
     worker.write_text(
         worker.read_text(encoding="utf-8").replace("../../../web/pkg-nomodules/", "../pkg-nomodules/"),
         encoding="utf-8",
+        newline="\n",
     )
 
     # 4. plaza.json: copy each bundled ../../web/<x>.rete into data/, rewrite the
@@ -92,7 +93,12 @@ def main() -> None:
                 # local companion tables aren't published to Pages; point at the
                 # repo on GitHub so the link still resolves to something real.
                 comp["url"] = "https://github.com/caviri/rete/tree/main/" + u[len("../../"):]
-    (OUT / "plaza.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    # newline="\n": the repository is LF-only (`* text=auto eol=lf`), and
+    # write_text would otherwise emit CRLF on Windows — which git normalizes on
+    # commit, so the file shows as modified after every rebuild for no reason.
+    (OUT / "plaza.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8", newline="\n"
+    )
 
     # 5. Belt-and-braces: nothing under docs/plaza should still climb out of it.
     residual = []

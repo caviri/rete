@@ -1,0 +1,198 @@
+/* demo.graphplaza.com — shared page styles.
+   Palette and type follow the project docs site so the demonstration and
+   the documentation read as one thing. */
+:root {
+  --fg:#17211d; --muted:#66746e; --bg:#f6f8f7; --panel:#ffffff;
+  --accent:#147d69; --accent-2:#c84f2f; --accent-deep:#0b4f42;
+  --border:#d9e2de; --code-bg:#eef3f1; --code-border:#cfd9d5;
+  --tint:#eaf1ed; --warm:#fff8f4; --on-accent:#ffffff;
+  --shadow:0 18px 44px rgba(32,47,41,.10);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --fg:#dde8e2; --muted:#93a69d; --bg:#0f1512; --panel:#171f1b;
+    --accent:#35b299; --accent-2:#e57e5e; --accent-deep:#7fdcc7;
+    --border:#2a352f; --code-bg:#1a231e; --code-border:#31403a;
+    --tint:#1a2620; --warm:#2c211a; --on-accent:#0f1512;
+    --shadow:0 18px 44px rgba(0,0,0,.45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --fg:#dde8e2; --muted:#93a69d; --bg:#0f1512; --panel:#171f1b;
+  --accent:#35b299; --accent-2:#e57e5e; --accent-deep:#7fdcc7;
+  --border:#2a352f; --code-bg:#1a231e; --code-border:#31403a;
+  --tint:#1a2620; --warm:#2c211a; --on-accent:#0f1512;
+  --shadow:0 18px 44px rgba(0,0,0,.45);
+  color-scheme: dark;
+}
+* { box-sizing:border-box; }
+html { -webkit-text-size-adjust:100%; text-size-adjust:100%; scroll-behavior:smooth; }
+body {
+  margin:0; color:var(--fg); background:var(--bg);
+  font:16px/1.68 "Aptos","Segoe UI",system-ui,sans-serif;
+  text-rendering:optimizeLegibility;
+}
+code, .mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace; }
+a { color:var(--accent); text-underline-offset:.18em; }
+.wrap { max-width:62rem; margin:0 auto; padding:0 1.5rem; }
+
+/* ---- masthead ---- */
+header.top { border-bottom:1px solid var(--border); background:var(--panel); }
+header.top .wrap { display:flex; align-items:center; gap:1rem; padding-top:1rem; padding-bottom:1rem; flex-wrap:wrap; }
+.brand { font-family:Georgia,"Times New Roman",serif; font-size:1.6rem; font-weight:700;
+         color:var(--fg); text-decoration:none; line-height:1; }
+.brand::after { content:""; display:block; width:2.1rem; height:3px; margin-top:.45rem; background:var(--accent-2); }
+.host { color:var(--muted); font-size:.85rem; margin-left:auto; }
+.host code { color:var(--accent-deep); }
+.theme-toggle { padding:.3rem .6rem; font:inherit; font-size:.8rem; color:var(--muted);
+  background:transparent; border:1px solid var(--border); border-radius:7px; cursor:pointer; }
+.theme-toggle:hover { color:var(--fg); border-color:var(--accent); }
+
+/* ---- hero ---- */
+.hero { padding:3.2rem 0 1.6rem; }
+.kicker { font-size:.78rem; letter-spacing:.08em; text-transform:uppercase;
+          color:var(--accent-2); font-weight:700; margin:0 0 .8rem; }
+h1 { font-family:Georgia,"Times New Roman",serif; font-size:clamp(2rem,4.4vw,3rem);
+     line-height:1.15; margin:0 0 .7rem; font-weight:700; letter-spacing:-.01em; }
+h1 .dot { color:var(--accent); }
+.byline { color:var(--muted); font-size:.95rem; margin:0 0 1.6rem; }
+.lede { font-size:1.14rem; line-height:1.62; max-width:44rem; margin:0 0 1.4rem; }
+.lede strong { font-weight:600; }
+.pillrow { display:flex; flex-wrap:wrap; gap:.5rem; margin:1.6rem 0 0; }
+.pill { font-size:.82rem; padding:.32rem .75rem; border-radius:999px;
+        border:1px solid var(--border); background:var(--panel); color:var(--muted); }
+.pill b { color:var(--fg); font-weight:600; }
+
+/* ---- section furniture ---- */
+section { padding:2.4rem 0; }
+section + section { border-top:1px solid var(--border); }
+h2 { font-family:Georgia,"Times New Roman",serif; font-size:1.55rem; margin:0 0 .5rem; font-weight:700; }
+h2 .num { color:var(--accent-2); font-size:.85em; margin-right:.4rem; }
+.sub { color:var(--muted); margin:0 0 1.5rem; max-width:46rem; }
+p { max-width:46rem; }
+
+/* ---- anatomy figure ---- */
+.figure { background:var(--panel); border:1px solid var(--border); border-radius:14px;
+          padding:1.4rem 1.2rem 1rem; box-shadow:var(--shadow); margin:0 0 1.4rem; }
+.figure svg { width:100%; height:auto; display:block; }
+.figcap { color:var(--muted); font-size:.85rem; margin:.9rem 0 0; max-width:none; }
+
+/* ---- station cards ---- */
+.stations { display:grid; gap:1.2rem; grid-template-columns:repeat(auto-fit,minmax(17.5rem,1fr)); }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:14px;
+        overflow:hidden; display:flex; flex-direction:column; box-shadow:var(--shadow); }
+.card .shot { display:block; background:var(--tint); border-bottom:1px solid var(--border);
+              aspect-ratio:16/10; overflow:hidden; }
+.card .shot img { width:100%; height:100%; object-fit:contain; object-position:center;
+                  display:block; padding:.5rem; }
+.card .body { padding:1.1rem 1.15rem 1.25rem; display:flex; flex-direction:column; flex:1; gap:.6rem; }
+.card h3 { margin:0; font-size:1.08rem; font-weight:650; }
+.card h3 .tag { display:inline-block; font-size:.72rem; font-weight:700; color:var(--accent-deep);
+  background:var(--tint); border:1px solid var(--border); border-radius:6px;
+  padding:.1rem .4rem; margin-right:.45rem; vertical-align:.08em; }
+.card p { margin:0; font-size:.93rem; color:var(--muted); flex:1; max-width:none; }
+.card .go { margin-top:.3rem; }
+.btn { display:inline-block; padding:.5rem 1rem; border-radius:9px; font-size:.9rem; font-weight:600;
+       text-decoration:none; background:var(--accent); color:var(--on-accent); border:1px solid var(--accent); }
+.btn:hover { background:var(--accent-deep); border-color:var(--accent-deep); }
+.btn.ghost { background:transparent; color:var(--accent); }
+.btn.ghost:hover { background:var(--tint); color:var(--accent-deep); }
+
+/* ---- tables ---- */
+.tablewrap { overflow-x:auto; border:1px solid var(--border); border-radius:12px; background:var(--panel); }
+table { border-collapse:collapse; width:100%; font-size:.9rem; }
+th, td { text-align:left; padding:.6rem .85rem; border-bottom:1px solid var(--border); white-space:nowrap; }
+thead th { font-size:.76rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); font-weight:700; }
+tbody tr:last-child td { border-bottom:0; }
+td.num, th.num { text-align:right; font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace; }
+td.name { font-weight:600; }
+td .sm { display:block; font-size:.8rem; color:var(--muted); font-weight:400; white-space:normal; }
+.note { color:var(--muted); font-size:.85rem; margin:.9rem 0 0; }
+
+/* ---- callout ---- */
+.callout { background:var(--warm); border:1px solid var(--border); border-left:3px solid var(--accent-2);
+           border-radius:10px; padding:.95rem 1.1rem; margin:1.4rem 0 0; }
+.callout p { margin:0; font-size:.92rem; max-width:none; }
+.callout p + p { margin-top:.5rem; }
+
+/* ---- footer ---- */
+footer { border-top:1px solid var(--border); background:var(--panel); padding:2rem 0 3rem; margin-top:1rem; }
+footer .wrap { display:flex; flex-wrap:wrap; gap:1.6rem; justify-content:space-between; }
+footer p { font-size:.87rem; color:var(--muted); margin:.2rem 0; max-width:30rem; }
+footer .links { display:flex; flex-direction:column; gap:.3rem; font-size:.9rem; }
+@media (max-width:640px) {
+  th, td { white-space:normal; }
+}
+
+/* ---- stations-first landing -------------------------------------------
+   The three demonstrations are the page's reason to exist, so they sit
+   immediately under the title rather than below three screens of prose. The
+   hero shrinks to a heading and one sentence to make room; the explanation,
+   the graphs and the cost table follow underneath for whoever wants them. */
+.hero-lead { padding: 2.6rem 0 1.4rem; }
+.hero-lead .lede { font-size: 1.18rem; max-width: 46rem; margin-bottom: 0; }
+.stations-lead { padding-top: 0; border-top: 0; }
+.stations-lead .pillrow { margin-top: 1.6rem; }
+.stations-lead .byline { margin: .9rem 0 0; }
+/* Leading the page, the cards carry more weight than they did mid-scroll. */
+.stations-lead .card h3 { font-size: 1.14rem; }
+.stations-lead .card .body { padding: 1.15rem 1.2rem 1.3rem; }
+@media (max-width: 700px) {
+  .hero-lead { padding: 1.8rem 0 1rem; }
+  .hero-lead .lede { font-size: 1.05rem; }
+}
+
+/* A short laptop screen is the common case at a conference. Tighten the hero so
+   the cards' buttons — not just their tops — clear the fold there too. */
+@media (min-width: 700px) and (max-height: 820px) {
+  .hero-lead { padding: 1.5rem 0 .9rem; }
+  .hero-lead h1 { font-size: clamp(1.7rem, 2.6vw, 2.15rem); }
+  .hero-lead .lede { font-size: 1.02rem; }
+  /* Crop the thumbnails rather than clamp the descriptions: losing image is
+     cheaper than losing the sentence that explains what the station does. */
+  .stations-lead .card .shot { aspect-ratio: 21/9; }
+  .stations-lead .card .body { padding: .85rem 1rem 1rem; gap: .45rem; }
+  .stations-lead .card h3 { font-size: 1.06rem; }
+  .stations-lead .pillrow { margin-top: 1rem; }
+}
+
+/* ---- clients ------------------------------------------------------------ */
+.clients { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); }
+.client {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 13px;
+  padding: 1rem 1.1rem 1.1rem; display: flex; flex-direction: column; gap: .7rem;
+}
+.client-head { display: flex; align-items: center; gap: .7rem; }
+.client-head h3 { margin: 0; font-size: 1.02rem; font-weight: 650; line-height: 1.2; }
+.client .logo { flex: none; width: 30px; height: 30px; display: block; }
+.client .logo svg { width: 100%; height: 100%; display: block; }
+.client .reg { font-size: .8rem; color: var(--muted); text-decoration: none; }
+.client .reg:hover { color: var(--accent); text-decoration: underline; }
+.client .note { margin: 0; font-size: .85rem; color: var(--muted); max-width: none; }
+
+/* The install line: monospace, scrollable rather than wrapping — a wrapped
+   command is a command you copy wrong. */
+.cmd {
+  position: relative; margin: 0; padding: .55rem 3.6rem .55rem .7rem;
+  background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 9px;
+  overflow-x: auto; font-size: .82rem; line-height: 1.5;
+}
+.cmd code {
+  font-family: "Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
+  white-space: pre; color: var(--fg);
+}
+.copy {
+  position: absolute; top: 50%; right: .45rem; transform: translateY(-50%);
+  font: inherit; font-size: .72rem; line-height: 1; cursor: pointer;
+  padding: .28rem .5rem; border-radius: 6px;
+  color: var(--muted); background: var(--panel); border: 1px solid var(--border);
+}
+.copy:hover { color: var(--fg); border-color: var(--accent); }
+.copy.ok { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+
+@media (max-width: 560px) {
+  .clients { grid-template-columns: 1fr; }
+  .cmd { font-size: .78rem; }
+}

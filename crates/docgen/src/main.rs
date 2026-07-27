@@ -48,6 +48,13 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Buildings & BIM (IFC)",
+        &[
+            ("building-guide.md", "FZK-Haus — one building in 3D"),
+            ("bim-pair-guide.md", "Architecture vs structure"),
+        ],
+    ),
+    (
         "Guides",
         &[
             ("cli.md", "CLI reference"),
@@ -229,6 +236,14 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
         "anatomy-guide.md" => Some(&[
             ("anatomy-guide.html", "overview"),
             ("anatomy.html", "open the 3D body →"),
+        ]),
+        "building-guide.md" => Some(&[
+            ("building-guide.html", "overview"),
+            ("building.html", "open the 3D building →"),
+        ]),
+        "bim-pair-guide.md" => Some(&[
+            ("bim-pair-guide.html", "overview"),
+            ("bim-pair.html", "open the paired viewer →"),
         ]),
         "lombardi-guide.md" => Some(&[
             ("lombardi-guide.html", "overview"),

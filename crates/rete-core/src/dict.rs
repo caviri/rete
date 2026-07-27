@@ -96,7 +96,7 @@ pub struct SectionMeta {
     pub term_count: u32,
     pub restart_interval: u32,
     /// Absolute offsets into the section bytes for each run start.
-    pub restart_offsets: Vec<usize>,
+    pub restart_offsets: Vec<u64>,
 }
 
 /// Parse only the header/restart table of a section.
@@ -118,9 +118,9 @@ pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
     // pre-allocation at the buffer length to avoid an OOM on a bogus count.
     let mut rel = Vec::with_capacity(num_restarts.min(bytes.len()));
     for _ in 0..num_restarts {
-        rel.push(take(&mut pos)? as usize);
+        rel.push(take(&mut pos)?);
     }
-    let body_start = pos;
+    let body_start = pos as u64;
     Ok(SectionMeta {
         term_count,
         restart_interval,
@@ -167,7 +167,7 @@ pub fn section_term(bytes: &[u8], meta: &SectionMeta, id: u32) -> Option<String>
     let run = idx / meta.restart_interval as usize;
     let steps = idx % meta.restart_interval as usize;
     let mut buf = Vec::new();
-    let mut pos = run_entry_into(bytes, *meta.restart_offsets.get(run)?, &mut buf)?;
+    let mut pos = run_entry_into(bytes, *meta.restart_offsets.get(run)? as usize, &mut buf)?;
     for _ in 0..steps {
         pos = entry_into(bytes, pos, &mut buf)?;
     }
@@ -182,7 +182,7 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
     let mut hi = meta.restart_offsets.len();
     while lo < hi {
         let mid = (lo + hi) / 2;
-        run_entry_into(bytes, meta.restart_offsets[mid], &mut buf)?;
+        run_entry_into(bytes, meta.restart_offsets[mid] as usize, &mut buf)?;
         if buf.as_slice() <= term.as_bytes() {
             lo = mid + 1;
         } else {
@@ -193,7 +193,7 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
         return None; // smaller than every term
     }
     let run = lo - 1;
-    let mut pos = run_entry_into(bytes, meta.restart_offsets[run], &mut buf)?;
+    let mut pos = run_entry_into(bytes, meta.restart_offsets[run] as usize, &mut buf)?;
     let base_id = (run * meta.restart_interval as usize) as u32 + 1;
     // saturating_sub: corrupt metadata where run*interval > term_count must not
     // underflow-panic.
@@ -244,7 +244,7 @@ pub struct SectionChunk {
     /// First term of the chunk (for chunk-level binary search in `id`);
     /// unused (empty) for the single local chunk.
     first_term: Vec<u8>,
-    body_start: usize,
+    body_start: u64,
     data: OnceLock<Vec<u8>>,
     /// This chunk's per-run byte offsets, **relative to its own decompressed
     /// body** — the chunk-local stand-in for the section-wide restart table.
@@ -256,7 +256,7 @@ pub struct SectionChunk {
 
 impl SectionChunk {
     /// A remote chunk descriptor (data faults in through the loader).
-    pub fn remote(first_run: usize, first_term: Vec<u8>, body_start: usize) -> Self {
+    pub fn remote(first_run: usize, first_term: Vec<u8>, body_start: u64) -> Self {
         SectionChunk {
             first_run,
             first_term,
@@ -270,7 +270,7 @@ impl SectionChunk {
     pub fn resident(
         first_run: usize,
         first_term: Vec<u8>,
-        body_start: usize,
+        body_start: u64,
         data: Vec<u8>,
     ) -> Self {
         let cell = OnceLock::new();
@@ -502,6 +502,7 @@ impl ChunkedSection {
                 .restart_offsets
                 .get(run)?
                 .checked_sub(chunk.body_start)
+                .map(|o| o as usize)
         }
     }
 
