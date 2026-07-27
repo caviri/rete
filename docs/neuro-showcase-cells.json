@@ -1,6 +1,7 @@
 {
  "base": "https://data.graphplaza.com/neuro-showcase",
  "iri_prefix": "https://w3id.org/rete/neuro/cell/",
+ "voxel_um": 0.008,
  "cells": [
   {
    "id": "astrocyte-morphology-1",
@@ -8,10 +9,17 @@
    "label": "NGV astrocyte 1",
    "kind": "astrocyte",
    "cellType": "protoplasmic astrocyte",
+   "cellClass": "astrocyte",
    "glb": "https://data.graphplaza.com/neuro-showcase/astrocyte2-1024-reconstructed.glb",
    "modality": "FIB-SEM electron microscopy",
    "faces": 10349588,
    "endfeet": 2,
+   "dims": [
+    47.7,
+    46.6,
+    36.9
+   ],
+   "scale": 1.0,
    "nt": null,
    "source": "NGV / Blue Brain (Zisis et al. 2021)",
    "license": "CC BY-NC-SA 4.0",
@@ -23,10 +31,17 @@
    "label": "NGV astrocyte 2",
    "kind": "astrocyte",
    "cellType": "protoplasmic astrocyte",
+   "cellClass": "astrocyte",
    "glb": "https://data.graphplaza.com/neuro-showcase/astrocyte4-1024-reconstructed.glb",
    "modality": "FIB-SEM electron microscopy",
    "faces": 6938268,
    "endfeet": 2,
+   "dims": [
+    76.0,
+    76.4,
+    98.5
+   ],
+   "scale": 1.0,
    "nt": null,
    "source": "NGV / Blue Brain (Zisis et al. 2021)",
    "license": "CC BY-NC-SA 4.0",
@@ -38,10 +53,17 @@
    "label": "NGV astrocyte 3",
    "kind": "astrocyte",
    "cellType": "protoplasmic astrocyte",
+   "cellClass": "astrocyte",
    "glb": "https://data.graphplaza.com/neuro-showcase/astrocyte7-1024-reconstructed.glb",
    "modality": "FIB-SEM electron microscopy",
    "faces": 4858412,
    "endfeet": 2,
+   "dims": [
+    66.2,
+    51.9,
+    58.5
+   ],
+   "scale": 1.0,
    "nt": null,
    "source": "NGV / Blue Brain (Zisis et al. 2021)",
    "license": "CC BY-NC-SA 4.0",
@@ -54,8 +76,23 @@
    "label": "PPL103(y2a'1)(PDL05)_L",
    "kind": "neuron",
    "cellType": "PPL103",
+   "cellClass": "dopaminergic neuron",
    "nt": "dopamine",
-   "synapses": 1,
+   "nt_wd": "Q170304",
+   "nt_chebi": "18243",
+   "hemisphere": "L",
+   "compartment": "y2a'1",
+   "regions": [
+    "gL(R)",
+    "a'L(R)",
+    "CRE(L)"
+   ],
+   "dims": [
+    164.0,
+    123.7,
+    146.9
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/1048172314.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -68,8 +105,23 @@
    "label": "MBON09(y3B'1)_R",
    "kind": "neuron",
    "cellType": "MBON09",
+   "cellClass": "mushroom body output neuron",
    "nt": "gaba",
-   "synapses": 1,
+   "nt_wd": "Q210021",
+   "nt_chebi": "16865",
+   "hemisphere": "R",
+   "compartment": "y3B'1",
+   "regions": [
+    "gL(R)",
+    "CRE(R)",
+    "CRE(L)"
+   ],
+   "dims": [
+    185.2,
+    61.6,
+    106.3
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/1078693835.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -82,8 +134,23 @@
    "label": "LT1_R",
    "kind": "neuron",
    "cellType": "LT1",
+   "cellClass": "neuron",
    "nt": "acetylcholine",
-   "synapses": 1,
+   "nt_wd": "Q180623",
+   "nt_chebi": "15355",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "PVLP(R)",
+    "AVLP(R)",
+    "LO(R)"
+   ],
+   "dims": [
+    73.1,
+    163.1,
+    157.2
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/1189230639.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -96,8 +163,23 @@
    "label": "PPL101(y1pedc)(PDL05)_L",
    "kind": "neuron",
    "cellType": "PPL101",
+   "cellClass": "dopaminergic neuron",
    "nt": "dopamine",
-   "synapses": 1,
+   "nt_wd": "Q170304",
+   "nt_chebi": "18243",
+   "hemisphere": "L",
+   "compartment": "y1pedc",
+   "regions": [
+    "gL(R)",
+    "PED(R)",
+    "SMP(L)"
+   ],
+   "dims": [
+    185.1,
+    111.5,
+    124.6
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/1196854070.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -110,8 +192,23 @@
    "label": "lLN2F_b(Full)_R",
    "kind": "neuron",
    "cellType": "lLN2F_b",
+   "cellClass": "local neuron",
    "nt": "acetylcholine",
-   "synapses": 5,
+   "nt_wd": "Q180623",
+   "nt_chebi": "15355",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "AL(R)",
+    "VES(R)",
+    "NotPrimary"
+   ],
+   "dims": [
+    90.0,
+    88.1,
+    95.6
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/1640909284.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -124,8 +221,23 @@
    "label": "lLN2F_a(Full)_R",
    "kind": "neuron",
    "cellType": "lLN2F_a",
+   "cellClass": "local neuron",
    "nt": "serotonin",
-   "synapses": 2,
+   "nt_wd": "Q167934",
+   "nt_chebi": "28790",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "AL(R)",
+    "VES(R)",
+    "NotPrimary"
+   ],
+   "dims": [
+    92.0,
+    88.8,
+    95.1
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/1670287030.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -138,8 +250,22 @@
    "label": "lLN2T_c(Tortuous)_R",
    "kind": "neuron",
    "cellType": "lLN2T_c",
+   "cellClass": "local neuron",
    "nt": "serotonin",
-   "synapses": 3,
+   "nt_wd": "Q167934",
+   "nt_chebi": "28790",
+   "hemisphere": "R",
+   "compartment": "Tortuous",
+   "regions": [
+    "AL(R)",
+    "NotPrimary"
+   ],
+   "dims": [
+    82.9,
+    81.4,
+    91.0
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/1671292719.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -152,8 +278,22 @@
    "label": "v2LN30_R",
    "kind": "neuron",
    "cellType": "v2LN30",
+   "cellClass": "local neuron",
    "nt": "gaba",
-   "synapses": 2,
+   "nt_wd": "Q210021",
+   "nt_chebi": "16865",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "AL(R)",
+    "NotPrimary"
+   ],
+   "dims": [
+    82.6,
+    71.7,
+    114.2
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/1671620613.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -166,8 +306,23 @@
    "label": "lLN2T_c(Tortuous)_R",
    "kind": "neuron",
    "cellType": "lLN2T_c",
+   "cellClass": "local neuron",
    "nt": "serotonin",
-   "synapses": 3,
+   "nt_wd": "Q167934",
+   "nt_chebi": "28790",
+   "hemisphere": "R",
+   "compartment": "Tortuous",
+   "regions": [
+    "AL(R)",
+    "LAL(R)",
+    "NotPrimary"
+   ],
+   "dims": [
+    82.3,
+    82.0,
+    96.5
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/1704347707.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -180,8 +335,23 @@
    "label": "mALC2_L",
    "kind": "neuron",
    "cellType": "mALC2",
+   "cellClass": "neuron",
    "nt": "gaba",
-   "synapses": 1,
+   "nt_wd": "Q210021",
+   "nt_chebi": "16865",
+   "hemisphere": "L",
+   "compartment": null,
+   "regions": [
+    "LO(R)",
+    "NotPrimary",
+    "LAL(R)"
+   ],
+   "dims": [
+    275.3,
+    182.3,
+    153.9
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/2124762952.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -194,8 +364,23 @@
    "label": "PPL101(y1pedc)_R",
    "kind": "neuron",
    "cellType": "PPL101",
+   "cellClass": "dopaminergic neuron",
    "nt": "dopamine",
-   "synapses": 1,
+   "nt_wd": "Q170304",
+   "nt_chebi": "18243",
+   "hemisphere": "R",
+   "compartment": "y1pedc",
+   "regions": [
+    "gL(R)",
+    "PED(R)",
+    "SMP(R)"
+   ],
+   "dims": [
+    190.1,
+    189.3,
+    140.5
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/393766777.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -208,8 +393,23 @@
    "label": "MBON06(B1>a)(AVM07)_L",
    "kind": "neuron",
    "cellType": "MBON06",
+   "cellClass": "mushroom body output neuron",
    "nt": "glutamate",
-   "synapses": 1,
+   "nt_wd": "Q26995161",
+   "nt_chebi": "16015",
+   "hemisphere": "L",
+   "compartment": "B1>a",
+   "regions": [
+    "bL(R)",
+    "aL(R)",
+    "SIP(R)"
+   ],
+   "dims": [
+    183.6,
+    110.2,
+    137.7
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/422725634.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -222,8 +422,23 @@
    "label": "MBON11(y1pedc>a/B)_R",
    "kind": "neuron",
    "cellType": "MBON11",
+   "cellClass": "mushroom body output neuron",
    "nt": "gaba",
-   "synapses": 2,
+   "nt_wd": "Q210021",
+   "nt_chebi": "16865",
+   "hemisphere": "R",
+   "compartment": "y1pedc>a/B",
+   "regions": [
+    "gL(R)",
+    "PED(R)",
+    "CRE(R)"
+   ],
+   "dims": [
+    185.0,
+    112.0,
+    135.5
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/424767514.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -236,8 +451,23 @@
    "label": "APL_R",
    "kind": "neuron",
    "cellType": "APL",
+   "cellClass": "broad modulatory neuron",
    "nt": "gaba",
-   "synapses": 8,
+   "nt_wd": "Q210021",
+   "nt_chebi": "16865",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "gL(R)",
+    "CA(R)",
+    "aL(R)"
+   ],
+   "dims": [
+    261.0,
+    202.7,
+    200.7
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/425790257.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -250,8 +480,23 @@
    "label": "PVLP106_R",
    "kind": "neuron",
    "cellType": "PVLP106",
+   "cellClass": "neuron",
    "nt": "glutamate",
-   "synapses": 1,
+   "nt_wd": "Q26995161",
+   "nt_chebi": "16015",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "PVLP(R)",
+    "AVLP(R)",
+    "SLP(R)"
+   ],
+   "dims": [
+    97.3,
+    113.8,
+    192.8
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/447228814.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -264,8 +509,23 @@
    "label": "LHMB1_R",
    "kind": "neuron",
    "cellType": "LHMB1",
+   "cellClass": "neuron",
    "nt": "glutamate",
-   "synapses": 2,
+   "nt_wd": "Q26995161",
+   "nt_chebi": "16015",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "CA(R)",
+    "a'L(R)",
+    "SIP(R)"
+   ],
+   "dims": [
+    163.2,
+    181.6,
+    98.9
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/5813020988.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -278,8 +538,23 @@
    "label": "MBON30(y1y2y3)_R",
    "kind": "neuron",
    "cellType": "MBON30",
+   "cellClass": "mushroom body output neuron",
    "nt": "glutamate",
-   "synapses": 1,
+   "nt_wd": "Q26995161",
+   "nt_chebi": "16015",
+   "hemisphere": "R",
+   "compartment": "y1y2y3",
+   "regions": [
+    "gL(R)",
+    "CRE(R)",
+    "CRE(L)"
+   ],
+   "dims": [
+    168.7,
+    75.6,
+    97.7
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/5813022234.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -292,8 +567,23 @@
    "label": "PPL103(y2a'1)_R",
    "kind": "neuron",
    "cellType": "PPL103",
+   "cellClass": "dopaminergic neuron",
    "nt": "dopamine",
-   "synapses": 2,
+   "nt_wd": "Q170304",
+   "nt_chebi": "18243",
+   "hemisphere": "R",
+   "compartment": "y2a'1",
+   "regions": [
+    "gL(R)",
+    "a'L(R)",
+    "CRE(R)"
+   ],
+   "dims": [
+    200.1,
+    186.2,
+    188.9
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/5813022424.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -306,8 +596,23 @@
    "label": "lLN2F_b(Full)_R",
    "kind": "neuron",
    "cellType": "lLN2F_b",
+   "cellClass": "local neuron",
    "nt": "serotonin",
-   "synapses": 6,
+   "nt_wd": "Q167934",
+   "nt_chebi": "28790",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "AL(R)",
+    "NotPrimary",
+    "VES(R)"
+   ],
+   "dims": [
+    91.0,
+    89.0,
+    92.2
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/5813024698.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -320,8 +625,23 @@
    "label": "lLN2T_b(Tortuous)_R",
    "kind": "neuron",
    "cellType": "lLN2T_b",
+   "cellClass": "local neuron",
    "nt": "serotonin",
-   "synapses": 1,
+   "nt_wd": "Q167934",
+   "nt_chebi": "28790",
+   "hemisphere": "R",
+   "compartment": "Tortuous",
+   "regions": [
+    "AL(R)",
+    "VES(R)",
+    "NotPrimary"
+   ],
+   "dims": [
+    88.3,
+    93.4,
+    95.5
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/5813034493.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -334,8 +654,23 @@
    "label": "LT39_R",
    "kind": "neuron",
    "cellType": "LT39",
+   "cellClass": "neuron",
    "nt": "gaba",
-   "synapses": 1,
+   "nt_wd": "Q210021",
+   "nt_chebi": "16865",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "LO(R)",
+    "PLP(R)",
+    "SPS(R)"
+   ],
+   "dims": [
+    238.0,
+    183.5,
+    175.1
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/5813061218.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -348,8 +683,23 @@
    "label": "DPM_R",
    "kind": "neuron",
    "cellType": "DPM",
+   "cellClass": "broad modulatory neuron",
    "nt": "dopamine",
-   "synapses": 5,
+   "nt_wd": "Q170304",
+   "nt_chebi": "18243",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "gL(R)",
+    "b'L(R)",
+    "aL(R)"
+   ],
+   "dims": [
+    115.5,
+    193.4,
+    148.6
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/5813105172.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -362,8 +712,23 @@
    "label": "lLN2F_a(Full)_R",
    "kind": "neuron",
    "cellType": "lLN2F_a",
+   "cellClass": "local neuron",
    "nt": "serotonin",
-   "synapses": 2,
+   "nt_wd": "Q167934",
+   "nt_chebi": "28790",
+   "hemisphere": "R",
+   "compartment": null,
+   "regions": [
+    "AL(R)",
+    "NotPrimary",
+    "VES(R)"
+   ],
+   "dims": [
+    88.7,
+    88.8,
+    94.6
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/5901218894.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -376,8 +741,23 @@
    "label": "MBON01(y5B'2a)_R",
    "kind": "neuron",
    "cellType": "MBON01",
+   "cellClass": "mushroom body output neuron",
    "nt": "glutamate",
-   "synapses": 1,
+   "nt_wd": "Q26995161",
+   "nt_chebi": "16015",
+   "hemisphere": "R",
+   "compartment": "y5B'2a",
+   "regions": [
+    "gL(R)",
+    "SMP(R)",
+    "b'L(R)"
+   ],
+   "dims": [
+    105.3,
+    65.3,
+    146.0
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/612371421.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -390,8 +770,23 @@
    "label": "MBON32(y2)_R",
    "kind": "neuron",
    "cellType": "MBON32",
+   "cellClass": "mushroom body output neuron",
    "nt": "gaba",
-   "synapses": 1,
+   "nt_wd": "Q210021",
+   "nt_chebi": "16865",
+   "hemisphere": "R",
+   "compartment": "y2",
+   "regions": [
+    "gL(R)",
+    "SMP(R)",
+    "CRE(R)"
+   ],
+   "dims": [
+    153.3,
+    156.1,
+    198.4
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/642732835.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -404,8 +799,23 @@
    "label": "CSD(5HT1)(AVM03)_L",
    "kind": "neuron",
    "cellType": "CSD",
+   "cellClass": "neuron",
    "nt": "serotonin",
-   "synapses": 2,
+   "nt_wd": "Q167934",
+   "nt_chebi": "28790",
+   "hemisphere": "L",
+   "compartment": "5HT1",
+   "regions": [
+    "AL(R)",
+    "LH(R)",
+    "SLP(R)"
+   ],
+   "dims": [
+    268.8,
+    211.7,
+    248.8
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/759810119.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -418,8 +828,23 @@
    "label": "MBON05(y4>y1y2)(AVM07)_L",
    "kind": "neuron",
    "cellType": "MBON05",
+   "cellClass": "mushroom body output neuron",
    "nt": "glutamate",
-   "synapses": 3,
+   "nt_wd": "Q26995161",
+   "nt_chebi": "16015",
+   "hemisphere": "L",
+   "compartment": "y4>y1y2",
+   "regions": [
+    "gL(R)",
+    "CRE(R)",
+    "SMP(R)"
+   ],
+   "dims": [
+    184.2,
+    74.4,
+    88.7
+   ],
+   "scale": 0.008,
    "glb": "https://data.graphplaza.com/neuro-showcase/799586652.glb",
    "modality": "hemibrain EM skeleton",
    "source": "Janelia hemibrain v1.2",
@@ -576,6 +1001,116 @@
    "pre": "hb-5813022424",
    "post": "hb-642732835",
    "weight": 429
+  }
+ ],
+ "synapses": [
+  {
+   "pre": "5813105172",
+   "post": "425790257",
+   "weight": 4299,
+   "x": 127.68,
+   "y": 245.15,
+   "z": 126.75,
+   "gap_um": 0.0
+  },
+  {
+   "pre": "425790257",
+   "post": "5813105172",
+   "weight": 1740,
+   "x": 127.68,
+   "y": 245.15,
+   "z": 126.75,
+   "gap_um": 0.0
+  },
+  {
+   "pre": "5813105172",
+   "post": "799586652",
+   "weight": 1065,
+   "x": 158.72,
+   "y": 256.35,
+   "z": 147.23,
+   "gap_um": 0.0
+  },
+  {
+   "pre": "5813024698",
+   "post": "5901218894",
+   "weight": 1015,
+   "x": 144.56,
+   "y": 247.18,
+   "z": 205.41,
+   "gap_um": 0.04
+  },
+  {
+   "pre": "1196854070",
+   "post": "424767514",
+   "weight": 989,
+   "x": 101.53,
+   "y": 235.84,
+   "z": 148.41,
+   "gap_um": 0.01
+  },
+  {
+   "pre": "393766777",
+   "post": "424767514",
+   "weight": 961,
+   "x": 109.82,
+   "y": 244.96,
+   "z": 147.74,
+   "gap_um": 0.0
+  },
+  {
+   "pre": "1189230639",
+   "post": "447228814",
+   "weight": 958,
+   "x": 47.5,
+   "y": 180.87,
+   "z": 189.3,
+   "gap_um": 0.09
+  },
+  {
+   "pre": "1640909284",
+   "post": "5901218894",
+   "weight": 930,
+   "x": 138.66,
+   "y": 244.2,
+   "z": 212.38,
+   "gap_um": 0.05
+  },
+  {
+   "pre": "5813024698",
+   "post": "1670287030",
+   "weight": 888,
+   "x": 159.46,
+   "y": 279.02,
+   "z": 242.71,
+   "gap_um": 0.07
+  },
+  {
+   "pre": "5813022424",
+   "post": "425790257",
+   "weight": 833,
+   "x": 123.65,
+   "y": 267.54,
+   "z": 127.65,
+   "gap_um": 0.03
+  },
+  {
+   "pre": "1640909284",
+   "post": "1670287030",
+   "weight": 824,
+   "x": 168.62,
+   "y": 265.03,
+   "z": 221.15,
+   "gap_um": 0.06
+  },
+  {
+   "pre": "5813061218",
+   "post": "2124762952",
+   "weight": 793,
+   "x": 14.13,
+   "y": 120.98,
+   "z": 160.9,
+   "gap_um": 0.05
   }
  ]
 }

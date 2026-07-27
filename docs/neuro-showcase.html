@@ -100,6 +100,9 @@
     <div class="legend" id="legend"></div>
     <div id="neurons"></div>
 
+    <div class="grp">Heaviest synapses — focus the contact volume</div>
+    <div id="synapses"></div>
+
     <p class="foot">
       Astrocytes © BBP/EPFL (CC BY-NC-SA 4.0, Zisis et al. 2021). Neurons: Janelia
       hemibrain (CC BY 4.0, Scheffer et al. 2020). Meshes are lossy Draco previews;
@@ -231,12 +234,15 @@ async function addCell(cell, { solo }) {
           side: THREE.DoubleSide });
       }
     });
+    // Real units: hemibrain skeletons are 8 nm voxels (scale 0.008 → µm); NGV
+    // astrocytes are already µm (scale 1). So the scene is in real micrometres.
+    g.scale.setScalar(cell.scale || 1);
     loaded.set(cell.id, g); scene.add(g);
     frameLoaded(); showMeta(cell); showInfo(cell); refreshButtons(); status("");
   } catch (e) { status("failed to load — " + (e?.message || e)); }
 }
 function removeCell(id) { const g = loaded.get(id); if (g) { scene.remove(g); loaded.delete(id); } }
-function clearAll() { for (const id of [...loaded.keys()]) removeCell(id); metaEl.innerHTML = '<span class="mut">Cleared.</span>'; document.getElementById("info").classList.add("hidden"); refreshButtons(); }
+function clearAll() { for (const id of [...loaded.keys()]) removeCell(id); clearMarker(); metaEl.innerHTML = '<span class="mut">Cleared.</span>'; document.getElementById("info").classList.add("hidden"); refreshButtons(); }
 
 const modal = document.getElementById("modal"), mv = document.getElementById("mv"), cap = document.getElementById("cap");
 function openModal(cell) {
@@ -267,18 +273,28 @@ function showMeta(cell) {
 // Right-side panel: the selected cell's properties + a SPARQL snippet that fetches
 // exactly those facts from the .rete, with a one-click "run in the playground".
 const infoEl = document.getElementById("info");
+const lk = (href, t) => `<a href="${href}" target="_blank" rel="noopener">${t}</a>`;
 function propRows(cell) {
   const rows = [];
   const add = (k, v) => { if (v != null && v !== "") rows.push([k, v]); };
   add("type", cell.cellType);
+  add("class", cell.cellClass);
   if (cell.kind === "neuron") {
-    add("neurotransmitter", cell.nt);
-    add("synapses (in cluster)", cell.synapses);
+    if (cell.nt) {
+      const xr = [];
+      if (cell.nt_wd) xr.push(lk("https://www.wikidata.org/wiki/" + cell.nt_wd, "Wikidata"));
+      if (cell.nt_chebi) xr.push(lk("https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:" + cell.nt_chebi, "ChEBI"));
+      add("neurotransmitter", cell.nt + (xr.length ? ` <span class="mut">(${xr.join(" · ")})</span>` : ""));
+    }
+    add("hemisphere", { L: "left", R: "right" }[cell.hemisphere] || cell.hemisphere);
+    add("MB compartment", cell.compartment);
+    if (cell.regions && cell.regions.length) add("brain regions", cell.regions.join(", "));
     add("hemibrain body", cell.bodyId);
   } else {
     add("triangles", cell.faces ? cell.faces.toLocaleString() : null);
     add("endfeet", cell.endfeet);
   }
+  if (cell.dims) add("size (µm)", cell.dims.map((d) => Math.round(d)).join(" × "));
   add("imaging", cell.modality);
   add("source", cell.source);
   add("licence", cell.license);
@@ -309,6 +325,44 @@ function showInfo(cell) {
   if (b) b.onclick = () => openModal(cell);
 }
 
+// --- synapse focus: load both partners, mark the closest-approach contact, and
+// frame the local contact volume (the "extract that volume" view) ---
+let synMarker = null;
+function clearMarker() { if (synMarker) { scene.remove(synMarker); synMarker = null; } }
+function frameOn(c, r) {
+  controls.target.set(c.x, c.y, c.z);
+  camera.position.set(c.x + r * 1.8, c.y + r * 1.2, c.z + r * 2.2);
+  camera.near = r / 100; camera.far = r * 300; camera.updateProjectionMatrix();
+}
+const cellById = (id) => CELLS.find((c) => c.id === id);
+const labelOf = (id) => (cellById(id) || {}).label || id;
+async function focusSynapse(syn) {
+  clearAll();
+  const pre = cellById(syn.pre), post = cellById(syn.post);
+  if (pre) await addCell(pre, { solo: false });
+  if (post) await addCell(post, { solo: false });
+  clearMarker();
+  synMarker = new THREE.Mesh(new THREE.SphereGeometry(2.4, 24, 24),
+    new THREE.MeshStandardMaterial({ color: 0xffef6b, emissive: 0xffef6b, emissiveIntensity: 0.75 }));
+  synMarker.position.set(syn.x, syn.y, syn.z); scene.add(synMarker);
+  frameOn(synMarker.position, 15);
+  infoEl.innerHTML = `<h2>Synapse contact</h2><div class="kindbadge neuron">${syn.weight} synapses</div>` +
+    `<div class="props">` +
+    `<div class="pr"><span class="pk">presynaptic</span><span class="pv">${labelOf(syn.pre)}</span></div>` +
+    `<div class="pr"><span class="pk">postsynaptic</span><span class="pv">${labelOf(syn.post)}</span></div>` +
+    `<div class="pr"><span class="pk">location (µm)</span><span class="pv">${syn.x.toFixed(0)}, ${syn.y.toFixed(0)}, ${syn.z.toFixed(0)}</span></div>` +
+    `<div class="pr"><span class="pk">skeleton gap</span><span class="pv">${syn.gap_um} µm</span></div></div>` +
+    `<div class="mut" style="margin-top:.45rem">Camera framed on the contact volume — where the two arbors come closest (closest skeleton approach). Yellow marker = synapse location.</div>`;
+  infoEl.classList.remove("hidden"); status("");
+}
+function synButton(syn) {
+  const b = document.createElement("button");
+  b.className = "cell";
+  b.innerHTML = `<span class="dot" style="background:#ffef6b"></span><span class="nm">${labelOf(syn.pre)} → ${labelOf(syn.post)} · ${syn.weight}</span>`;
+  b.onclick = () => focusSynapse(syn);
+  return b;
+}
+
 // --- UI ---
 let CELLS = [];
 function refreshButtons() {
@@ -330,6 +384,8 @@ function cellButton(cell) {
     const astro = document.getElementById("astro"), neu = document.getElementById("neurons");
     CELLS.filter(c => c.kind === "astrocyte").forEach(c => astro.appendChild(cellButton(c)));
     CELLS.filter(c => c.kind === "neuron").forEach(c => neu.appendChild(cellButton(c)));
+    const synEl = document.getElementById("synapses");
+    (man.synapses || []).slice(0, 10).forEach(s => synEl.appendChild(synButton(s)));
     // legend from the neurotransmitters actually present
     const nts = [...new Set(CELLS.filter(c=>c.kind==="neuron").map(c=>c.nt))];
     document.getElementById("legend").innerHTML = nts.map(nt =>
