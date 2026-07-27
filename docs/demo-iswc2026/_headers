@@ -18,11 +18,20 @@
   Content-Type: application/octet-stream
   Content-Disposition: attachment; filename="rete-demo.mcpb"
 
-# Screenshots, stylesheet, paper — immutable for the life of the snapshot.
+# The stylesheet and scripts must never be older than the HTML that references
+# them. A 24-hour max-age here once paired new markup with a day-old stylesheet
+# and the page rendered without its layout — so these revalidate every time, and
+# their URLs additionally carry a content hash (dev/demo/build/stamp_assets.py).
+/assets/*.css
+  Cache-Control: public, max-age=0, must-revalidate
+/assets/*.js
+  Cache-Control: public, max-age=0, must-revalidate
+# Screenshots change only when the build does, and are hash-free, so keep them
+# cheap but still revalidating.
 /assets/*
-  Cache-Control: public, max-age=86400
+  Cache-Control: public, max-age=3600, must-revalidate
 /paper/*
-  Cache-Control: public, max-age=86400
+  Cache-Control: public, max-age=3600, must-revalidate
 
 # The console is one 6.4 MB document; let a returning visitor revalidate rather
 # than re-download it.
