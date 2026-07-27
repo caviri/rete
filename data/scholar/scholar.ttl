@@ -1,0 +1,246 @@
+@prefix scholar: <https://w3id.org/rete/scholar#> .
+@prefix dblp:    <https://w3id.org/rete/dblp#> .
+@prefix dcite:   <https://w3id.org/rete/datacite#> .
+@prefix cx:      <https://w3id.org/rete/crossref#> .
+@prefix oc:      <https://w3id.org/rete/opencitations#> .
+@prefix oaire:   <https://w3id.org/rete/openaire#> .
+@prefix orcid:   <https://w3id.org/rete/orcid#> .
+@prefix ror:     <https://w3id.org/rete/ror#> .
+@prefix zen:     <https://w3id.org/rete/zenodo#> .
+@prefix cordis:  <https://w3id.org/rete/cordis#> .
+@prefix gtr:     <https://w3id.org/rete/gotriple#> .
+@prefix hf:      <https://w3id.org/rete/huggingface#> .
+@prefix s66:     <http://data.europa.eu/s66#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix frapo:   <http://purl.org/cerif/frapo/> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix foaf:    <http://xmlns.com/foaf/0.1/> .
+@prefix org:     <http://www.w3.org/ns/org#> .
+@prefix fabio:   <http://purl.org/spar/fabio/> .
+
+#################################################################
+#  rete Scholarly-Graph alignment ontology
+#
+#  Ties the sibling scholarly datasets — DBLP, DataCite, OpenAIRE,
+#  OpenCitations, ORCID, ROR, Zenodo and CORDIS — into one coherent,
+#  queryable graph, WITHOUT merging their schemas. It does two things:
+#
+#  ROR is the ORGANIZATION AUTHORITY: because its orgs are minted at
+#  https://ror.org/{id} and the canonical-IRI policy below mints every
+#  other dataset's ROR-identified org at the same IRI, ROR's rich org
+#  node (name, geo, type, parent/child) becomes the shared target that
+#  ORCID affiliations, DataCite funders and OpenAIRE orgs merge into.
+#
+#  1. HUB CLASSES / PROPERTIES: a thin upper layer (scholar:Work,
+#     Agent, Person, Organization, Funder + scholar:doi/orcid/ror/
+#     pmid/isbn) under which each dataset's own class/property is
+#     declared a subclass/subproperty. A single query over
+#     scholar:Work or scholar:doi then spans all five, with each
+#     dataset ontology still standing on its own.
+#
+#  2. CANONICAL INSTANCE-IRI POLICY (below): the build-time rule that
+#     makes cross-dataset links FREE — the same real-world entity is
+#     minted with the SAME IRI in every dataset, so a union graph
+#     merges them with no owl:sameAs. Alignment here is via shared
+#     upper vocabularies + shared IRIs + shared join keys, NOT via
+#     direct dataset-to-dataset owl:equivalentClass (deliberate: the
+#     datasets are similar, not identical).
+#
+#  OWL 2 QL-safe (subClassOf / subPropertyOf only; no disjointness
+#  across the hub, to avoid inconsistency on messy aggregated data).
+#################################################################
+
+scholar: a owl:Ontology ;
+  dcterms:title "rete Scholarly-Graph Alignment Ontology"@en ;
+  dcterms:description """Upper alignment layer for the rete scholarly datasets (DBLP, DataCite, Crossref, OpenAIRE, OpenCitations, ORCID, ROR, Zenodo, CORDIS). Provides hub classes and canonical join-key properties, and defines the canonical instance-IRI minting policy that lets the datasets link automatically on shared PIDs. ROR is the organization authority; Crossref is the Funder ID authority and contributes the ~2B-edge reference/citation graph (cx:cites ⊑ cito:cites, alongside dcite:cites); Zenodo records are DataCite-based (zen:Record ⊑ dcite:Resource); CORDIS (EURIO) adds the EU research-projects & funding dimension (scholar:Project, scholar:Grant)."""@en ;
+  rdfs:comment """CANONICAL INSTANCE-IRI POLICY (apply in every .rete build so the
+     graphs link for free — same entity ⇒ same IRI ⇒ auto-merge in a union graph):
+
+       • Work with a DOI          → https://doi.org/{doi}            (doi lowercased, bare)
+       • Person with an ORCID     → https://orcid.org/{orcid}
+       • Organization with a ROR  → https://ror.org/{ror}
+       • Funder (Crossref FunderID)→ https://doi.org/10.13039/{id}   (else its ROR)
+       • Serial/venue with an ISSN→ https://portal.issn.org/resource/ISSN/{issn}
+       • Work with only a PMID    → https://pubmed.ncbi.nlm.nih.gov/{pmid}
+       • anything without a shared PID → dataset-local, minted under
+         https://w3id.org/rete/{dataset}/{kind}/{native-id}
+         (e.g. .../openaire/product/{openaire-id}, .../dblp/publication/{record-key},
+          .../opencitations/br/{omid})
+
+     Keep the native id too, as the dataset's own datatype property (dcite:doi,
+     dblp:recordKey, oc:omid, …), so native lookups still work. When two records
+     clearly match but you cannot mint one canonical IRI, link them with
+     skos:exactMatch (safe) rather than owl:sameAs (which merges all statements)."""@en ;
+  dcterms:license <https://creativecommons.org/publicdomain/zero/1.0/> ;
+  rdfs:seeAlso dblp: , dcite: , cx: , oc: , oaire: , orcid: , ror: , zen: , cordis: , gtr: , hf: ;
+  owl:versionInfo "1.4.0 (2026-07-27)" .
+
+#################################################################
+#  HUB CLASSES
+#################################################################
+
+scholar:Work a owl:Class ;
+  rdfs:label "Scholarly work"@en ;
+  rdfs:comment "Any scholarly output across the datasets: publication, dataset, software, etc."@en ;
+  rdfs:subClassOf fabio:Work .
+
+scholar:Agent a owl:Class ;
+  rdfs:label "Agent"@en ;
+  rdfs:comment "A person or organization that creates, contributes to, funds or hosts a work."@en ;
+  rdfs:subClassOf foaf:Agent .
+
+scholar:Person a owl:Class ;
+  rdfs:label "Person"@en ;
+  rdfs:subClassOf scholar:Agent , foaf:Person .
+
+scholar:Organization a owl:Class ;
+  rdfs:label "Organization"@en ;
+  rdfs:subClassOf scholar:Agent , org:Organization .
+
+scholar:Funder a owl:Class ;
+  rdfs:label "Funder"@en ;
+  rdfs:subClassOf scholar:Organization .
+
+# --- each dataset's class becomes a subclass of the hub -----------
+# (subClassOf, not equivalentClass — the datasets are specific, not identical)
+
+dblp:Publication          rdfs:subClassOf scholar:Work .
+dcite:Resource            rdfs:subClassOf scholar:Work .
+cx:Work                   rdfs:subClassOf scholar:Work .
+oc:BibliographicResource  rdfs:subClassOf scholar:Work .
+oaire:ResearchProduct     rdfs:subClassOf scholar:Work .
+orcid:Work                rdfs:subClassOf scholar:Work .
+zen:Record                rdfs:subClassOf scholar:Work .  # also ⊑ dcite:Resource (Zenodo is DataCite-based)
+gtr:Document              rdfs:subClassOf scholar:Work .  # GoTriple SSH publications
+hf:Model                  rdfs:subClassOf scholar:Work .  # Hugging Face Hub (models/datasets/spaces/papers)
+hf:DatasetRepo            rdfs:subClassOf scholar:Work .
+hf:Space                  rdfs:subClassOf scholar:Work .
+hf:Paper                  rdfs:subClassOf scholar:Work .  # minted at https://doi.org/10.48550/arxiv.{id}
+
+dblp:Creator   rdfs:subClassOf scholar:Agent .
+dcite:Agent    rdfs:subClassOf scholar:Agent .
+cx:Agent       rdfs:subClassOf scholar:Agent .
+oc:Agent       rdfs:subClassOf scholar:Agent .
+
+dblp:Person       rdfs:subClassOf scholar:Person .
+orcid:Researcher  rdfs:subClassOf scholar:Person .
+oaire:Person      rdfs:subClassOf scholar:Person .
+gtr:Author        rdfs:subClassOf scholar:Person .
+hf:User           rdfs:subClassOf scholar:Person .
+
+oaire:Organization  rdfs:subClassOf scholar:Organization .
+orcid:Organization  rdfs:subClassOf scholar:Organization .
+ror:Organization    rdfs:subClassOf scholar:Organization .
+hf:Organization     rdfs:subClassOf scholar:Organization .
+
+dcite:Funder  rdfs:subClassOf scholar:Funder .
+cx:Funder     rdfs:subClassOf scholar:Funder .
+ror:Funder    rdfs:subClassOf scholar:Funder .
+
+#################################################################
+#  CANONICAL JOIN-KEY PROPERTIES
+#  Each dataset's identifier property → a subproperty of the shared
+#  one, so `?x scholar:doi ?d` matches every dataset that has a DOI.
+#################################################################
+
+scholar:doi a owl:DatatypeProperty ;
+  rdfs:label "DOI"@en ; rdfs:range xsd:string ;
+  rdfs:comment "Canonical DOI join key (lowercased, bare). Instance IRI form: https://doi.org/{value}."@en .
+dblp:doi   rdfs:subPropertyOf scholar:doi .
+dcite:doi  rdfs:subPropertyOf scholar:doi .
+cx:doi     rdfs:subPropertyOf scholar:doi .
+cx:citedDOI rdfs:subPropertyOf scholar:doi .   # the cited endpoint of a Crossref reference
+oc:doi     rdfs:subPropertyOf scholar:doi .
+orcid:doi  rdfs:subPropertyOf scholar:doi .
+gtr:doi    rdfs:subPropertyOf scholar:doi .   # GoTriple SSH publications (~69% carry a DOI)
+hf:doi     rdfs:subPropertyOf scholar:doi .   # Hub papers' arXiv DataCite DOIs (10.48550/arxiv.*)
+# NB: OpenAIRE stores DOIs inside oaire:Pid (oaire:pidScheme "doi" / oaire:pidValue),
+# not a direct property, so it joins via that pattern or the canonical IRI, not scholar:doi.
+
+scholar:orcid a owl:DatatypeProperty ;
+  rdfs:label "ORCID iD"@en ; rdfs:range xsd:string ;
+  rdfs:comment "Canonical ORCID join key (path form). Instance IRI form: https://orcid.org/{value}."@en .
+dblp:orcid    rdfs:subPropertyOf scholar:orcid .
+dcite:orcid   rdfs:subPropertyOf scholar:orcid .
+cx:orcid      rdfs:subPropertyOf scholar:orcid .
+oc:orcidId    rdfs:subPropertyOf scholar:orcid .
+orcid:orcidId rdfs:subPropertyOf scholar:orcid .
+
+scholar:ror a owl:DatatypeProperty ;
+  rdfs:label "ROR id"@en ; rdfs:range xsd:string ;
+  rdfs:comment "Canonical ROR organization join key. Instance IRI form: https://ror.org/{value}. ROR is the authority for this key."@en .
+dcite:rorId  rdfs:subPropertyOf scholar:ror .
+ror:rorId    rdfs:subPropertyOf scholar:ror .
+# ORCID/OpenAIRE carry the ROR inside their org disambiguation fields.
+
+# --- organization-identifier crosswalk (ROR is the authority that
+#     resolves these to one org node; its own values are authoritative) ---
+scholar:grid a owl:DatatypeProperty ;
+  rdfs:label "GRID id"@en ; rdfs:range xsd:string ;
+  rdfs:comment "Legacy GRID organization id (ROR is its successor registry)."@en .
+ror:grid  rdfs:subPropertyOf scholar:grid .
+
+scholar:fundref a owl:DatatypeProperty ;
+  rdfs:label "Crossref Funder ID"@en ; rdfs:range xsd:string ;
+  rdfs:comment "Crossref Funder ID of an organization; joins DataCite funding references. IRI form: https://doi.org/10.13039/{value}. Crossref is the authority for this key."@en .
+ror:fundref  rdfs:subPropertyOf scholar:fundref .
+cx:funderId  rdfs:subPropertyOf scholar:fundref .
+
+scholar:isni a owl:DatatypeProperty ;
+  rdfs:label "ISNI"@en ; rdfs:range xsd:string .
+ror:isni  rdfs:subPropertyOf scholar:isni .
+
+scholar:wikidata a owl:DatatypeProperty ;
+  rdfs:label "Wikidata QID"@en ; rdfs:range xsd:string ;
+  rdfs:comment "Wikidata QID of an organization. IRI form: https://www.wikidata.org/entity/{value}."@en .
+ror:wikidata  rdfs:subPropertyOf scholar:wikidata .
+
+scholar:pmid a owl:DatatypeProperty ;
+  rdfs:label "PMID"@en ; rdfs:range xsd:string ;
+  rdfs:comment "Canonical PubMed id join key. Instance IRI form: https://pubmed.ncbi.nlm.nih.gov/{value}."@en .
+oc:pmid  rdfs:subPropertyOf scholar:pmid .
+
+scholar:isbn a owl:DatatypeProperty ;
+  rdfs:label "ISBN"@en ; rdfs:range xsd:string .
+dblp:isbn  rdfs:subPropertyOf scholar:isbn .
+cx:isbn    rdfs:subPropertyOf scholar:isbn .
+oc:isbn    rdfs:subPropertyOf scholar:isbn .
+
+#################################################################
+#  CORDIS / EURIO (added 2026-07-17) — the EU research-PROJECTS &
+#  FUNDING dimension. Uses EURIO's native s66: terms (like DBLP's
+#  dblps:). Adds two hub classes — scholar:Project and scholar:Grant —
+#  that also unify OpenAIRE's and ORCID's project/funding entities.
+#################################################################
+
+scholar:Project a owl:Class ;
+  rdfs:label "Research project"@en ;
+  rdfs:comment "A funded research project / grant activity."@en ;
+  rdfs:subClassOf foaf:Project .
+
+scholar:Grant a owl:Class ;
+  rdfs:label "Grant / funding"@en ;
+  rdfs:comment "A grant, award or funding that supports a project."@en ;
+  rdfs:subClassOf frapo:Grant .
+
+# CORDIS works, organisations and funders join the existing hubs.
+s66:Result        rdfs:subClassOf scholar:Work .
+s66:Organisation  rdfs:subClassOf scholar:Organization .
+s66:FundingAgency rdfs:subClassOf scholar:Funder .
+
+# the project / grant dimension (CORDIS + OpenAIRE + ORCID).
+s66:Project    rdfs:subClassOf scholar:Project .
+oaire:Project  rdfs:subClassOf scholar:Project .
+s66:Grant      rdfs:subClassOf scholar:Grant .
+oaire:Funding  rdfs:subClassOf scholar:Grant .
+orcid:Funding  rdfs:subClassOf scholar:Grant .
+cx:Funding     rdfs:subClassOf scholar:Grant .
+
+# NB: CORDIS s66:doi is the full DOI URL (xsd:anyURI), not a bare literal, so it
+# is intentionally NOT a subproperty of scholar:doi (which is bare); CORDIS works
+# still merge with DataCite/OpenAIRE/Zenodo at the canonical https://doi.org/{doi}
+# IRI. CORDIS's org/geo detail (Site, PostalAddress, Coordinates, NUTS) has no
+# direct ROR, so those orgs join at the hub-class level, not on scholar:ror.
