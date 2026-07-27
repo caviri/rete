@@ -486,34 +486,6 @@ table.rs tr:hover td { background: #161b25; }
 }
 .pz-spot-dot.on { background: var(--accent); border-color: var(--accent); }
 
-/* ontology rail */
-.pz-rail-wrap { border-top: 1px solid var(--line); background: color-mix(in oklab, var(--panel) 40%, transparent); }
-.pz-rail-in {
-  max-width: 1440px; margin: 0 auto; padding: 11px 22px;
-  display: flex; align-items: center; gap: 14px;
-}
-.pz-rail-label {
-  flex: none; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
-  color: var(--faint); font-weight: 700;
-}
-.pz-rail { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
-.pz-rail::-webkit-scrollbar { height: 5px; }
-.pz-rail::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
-.pz-onto {
-  flex: none; display: inline-flex; align-items: center; gap: 7px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
-  padding: 5px 12px 5px 6px; font-size: 12.5px; color: var(--muted);
-  cursor: pointer; white-space: nowrap; font-family: inherit;
-}
-.pz-onto:hover { color: var(--ink); border-color: var(--accent); }
-.pz-onto.on { border-color: var(--accent); color: var(--ink); background: color-mix(in oklab, var(--accent) 14%, var(--panel)); }
-.pz-onto i {
-  font-style: normal; width: 20px; height: 20px; border-radius: 50%;
-  display: grid; place-items: center; font-size: 10px; font-weight: 700;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #08111d;
-}
-.pz-onto s { text-decoration: none; color: var(--faint); font-size: 11px; }
-
 /* ---- shell: sidebar + main ---- */
 .pz-shell {
   max-width: 1440px; margin: 0 auto; padding: 24px 22px 60px;
@@ -761,9 +733,9 @@ table.rs tr:hover td { background: #161b25; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* The rail and the sidebar keep a slimmer variant — they are inside panels. */
-.pz-rail::-webkit-scrollbar, .pz-side::-webkit-scrollbar,
+.pz-side::-webkit-scrollbar,
 .pz-ac::-webkit-scrollbar { width: 8px; height: 8px; }
-.pz-rail::-webkit-scrollbar-thumb, .pz-side::-webkit-scrollbar-thumb,
+.pz-side::-webkit-scrollbar-thumb,
 .pz-ac::-webkit-scrollbar-thumb { border-width: 2px; }
 
 /* ---- ticker: darker ------------------------------------------------------
@@ -827,8 +799,6 @@ table.rs tr:hover td { background: #161b25; }
   .pz-stat { padding: 7px 11px; }
   .pz-stat b { font-size: 17px; }
 
-  .pz-rail-in { padding: 9px 16px; gap: 10px; }
-  .pz-rail-label { display: none; }
 
   .pz-bar { gap: 10px; }
   .pz-bar-right { width: 100%; justify-content: space-between; }
@@ -867,7 +837,6 @@ table.rs tr:hover td { background: #161b25; }
 @media (hover: none) {
   .pz-ticker-x { width: 28px; height: 28px; font-size: 17px; }
   .pz-opt { padding: 7px 6px; }
-  .pz-onto { padding: 7px 13px 7px 7px; }
   .pz-spot-dot { width: 9px; height: 9px; }
 }
 

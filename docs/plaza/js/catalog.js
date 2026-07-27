@@ -69,7 +69,6 @@ const GROUPS = [
   { id: "kind", label: "Delivery", open: true, of: (r) => (r.facets || []).filter((f) => f === "remote" || f === "bundled") },
   { id: "feature", label: "Features", open: true, display: (v) => FEATURE_LABEL[v] || v,
     of: (r) => (r.facets || []).filter((f) => FILTERABLE.has(f) && f !== "remote" && f !== "bundled") },
-  // Named to match the hero rail — same facet, two places to reach it.
   { id: "vocab", label: "Built with", open: true, of: (r) => (r.ontologies || []).map((o) => o.name) },
   { id: "topic", label: "Topic", open: true, of: (r) => r.entry.tags || [] },
   { id: "licence", label: "Licence", open: false, of: (r) => { const l = (r.card && r.card.license) || r.entry.license; return l ? [l] : []; } },
@@ -441,22 +440,6 @@ function restartSpotlight() {
   spotTimer = setInterval(() => { spotIdx++; renderSpot(); }, SPOT_MS);
 }
 
-function renderRail() {
-  const rail = $("#ontRail");
-  if (!rail) return;
-  const sel = selected.get("vocab") || new Set();
-  const onts = aggregateOntologies(true).slice(0, 14);
-  rail.innerHTML = "";
-  for (const o of onts) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "pz-onto" + (sel.has(o.name) ? " on" : "");
-    b.innerHTML = `<i>${escapeHtml(o.name.slice(0, 1).toUpperCase())}</i>${escapeHtml(o.name)}<s>${o.datasets.length}</s>`;
-    b.title = o.desc || `Filter by ${o.name}`;
-    b.onclick = () => toggle("vocab", o.name);
-    rail.appendChild(b);
-  }
-}
 
 // ── ontologies ─────────────────────────────────────────────────────────────
 let ontImg = {};
@@ -505,7 +488,6 @@ function render() {
   renderSideToggle();
   renderPicker();
   renderHeroStats();
-  renderRail();
 
   const shown = entries.filter(matches).sort(SORTERS[sortBy] || SORTERS.relevance);
   countEl.textContent = `${shown.length} of ${entries.length}`;
