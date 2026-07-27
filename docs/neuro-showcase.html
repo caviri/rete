@@ -152,6 +152,7 @@ function status(t, busy) { statusEl.textContent = t || ""; statusEl.className = 
 // --- scene ---
 const main = document.querySelector("main");
 const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.localClippingEnabled = true;   // for cropping meshes to a synapse contact volume
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 main.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
@@ -242,7 +243,7 @@ async function addCell(cell, { solo }) {
   } catch (e) { status("failed to load — " + (e?.message || e)); }
 }
 function removeCell(id) { const g = loaded.get(id); if (g) { scene.remove(g); loaded.delete(id); } }
-function clearAll() { for (const id of [...loaded.keys()]) removeCell(id); clearMarker(); metaEl.innerHTML = '<span class="mut">Cleared.</span>'; document.getElementById("info").classList.add("hidden"); refreshButtons(); }
+function clearAll() { for (const id of [...loaded.keys()]) removeCell(id); clearMarker(); clearClip(); metaEl.innerHTML = '<span class="mut">Cleared.</span>'; document.getElementById("info").classList.add("hidden"); refreshButtons(); }
 
 const modal = document.getElementById("modal"), mv = document.getElementById("mv"), cap = document.getElementById("cap");
 function openModal(cell) {
@@ -329,6 +330,23 @@ function showInfo(cell) {
 // frame the local contact volume (the "extract that volume" view) ---
 let synMarker = null;
 function clearMarker() { if (synMarker) { scene.remove(synMarker); synMarker = null; } }
+// Crop the loaded meshes to an axis-aligned box of half-size r (µm) centred on a
+// synapse — six clipping planes applied to every material. The synapse coords are
+// in µm and the meshes are scaled to µm, so world-space clipping lines up exactly.
+function applyClip(planes) {
+  for (const g of loaded.values()) g.traverse((o) => {
+    if (o.isMesh && o.material) { o.material.clippingPlanes = planes.length ? planes : null; o.material.needsUpdate = true; }
+  });
+}
+function cropToSynapse(syn, r) {
+  const V = THREE.Vector3, c = syn;
+  applyClip([
+    new THREE.Plane(new V( 1, 0, 0), r - c.x), new THREE.Plane(new V(-1, 0, 0), r + c.x),
+    new THREE.Plane(new V( 0, 1, 0), r - c.y), new THREE.Plane(new V( 0,-1, 0), r + c.y),
+    new THREE.Plane(new V( 0, 0, 1), r - c.z), new THREE.Plane(new V( 0, 0,-1), r + c.z),
+  ]);
+}
+function clearClip() { applyClip([]); }
 function frameOn(c, r) {
   controls.target.set(c.x, c.y, c.z);
   camera.position.set(c.x + r * 1.8, c.y + r * 1.2, c.z + r * 2.2);
@@ -352,8 +370,15 @@ async function focusSynapse(syn) {
     `<div class="pr"><span class="pk">postsynaptic</span><span class="pv">${labelOf(syn.post)}</span></div>` +
     `<div class="pr"><span class="pk">location (µm)</span><span class="pv">${syn.x.toFixed(0)}, ${syn.y.toFixed(0)}, ${syn.z.toFixed(0)}</span></div>` +
     `<div class="pr"><span class="pk">skeleton gap</span><span class="pv">${syn.gap_um} µm</span></div></div>` +
-    `<div class="mut" style="margin-top:.45rem">Camera framed on the contact volume — where the two arbors come closest (closest skeleton approach). Yellow marker = synapse location.</div>`;
+    `<button class="runq" id="cropBtn">✂ crop to contact volume</button>` +
+    `<div class="mut" style="margin-top:.45rem">The camera is framed on the contact volume — where the two arbors come closest. Crop clips both meshes to a ±12 µm box around the synapse (yellow marker), extracting just that sub-volume of the GLB.</div>`;
   infoEl.classList.remove("hidden"); status("");
+  let cropped = false;
+  infoEl.querySelector("#cropBtn").onclick = (e) => {
+    cropped = !cropped;
+    if (cropped) { cropToSynapse(syn, 12); frameOn(synMarker.position, 13); e.target.textContent = "◻ show full neurons"; }
+    else { clearClip(); frameOn(synMarker.position, 15); e.target.textContent = "✂ crop to contact volume"; }
+  };
 }
 function synButton(syn) {
   const b = document.createElement("button");
