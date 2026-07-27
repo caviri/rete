@@ -66,19 +66,12 @@ def path_tube(P, R, sides):
     if nseg > 2:
         T[1:-1] = sd[:-1] + sd[1:]
     tl = np.linalg.norm(T, axis=1, keepdims=True); tl[tl == 0] = 1; T = T / tl
-    # parallel-transport an initial normal along the path
-    N = np.zeros((nseg, 3))
-    a = np.array([0, 0, 1.0]) if abs(T[0, 2]) < 0.9 else np.array([0, 1.0, 0])
-    n0 = np.cross(T[0], a); N[0] = n0 / (np.linalg.norm(n0) or 1)
-    for i in range(1, nseg):
-        v = np.cross(T[i - 1], T[i]); s = np.linalg.norm(v); c = np.dot(T[i - 1], T[i])
-        Ni = N[i - 1]
-        if s > 1e-9:
-            v = v / s; ang = np.arctan2(s, c)
-            Ni = (Ni * np.cos(ang) + np.cross(v, Ni) * np.sin(ang)
-                  + v * np.dot(v, Ni) * (1 - np.cos(ang)))
-        Ni = Ni - np.dot(Ni, T[i]) * T[i]
-        N[i] = Ni / (np.linalg.norm(Ni) or 1)
+    # per-node fixed-reference frame (vectorised — fast, coherent tube; minor twist
+    # on curved paths is invisible for a preview vs. the O(n) parallel-transport loop)
+    ref = np.tile(np.array([0.0, 0.0, 1.0]), (nseg, 1))
+    ref[np.abs(T[:, 2]) > 0.9] = np.array([0.0, 1.0, 0.0])
+    N = ref - np.sum(ref * T, axis=1, keepdims=True) * T
+    N /= np.linalg.norm(N, axis=1, keepdims=True)
     Bn = np.cross(T, N)
     th = np.linspace(0, 2 * np.pi, sides, endpoint=False)
     ca, sa = np.cos(th), np.sin(th)
