@@ -125,3 +125,35 @@ footer .links { display:flex; flex-direction:column; gap:.3rem; font-size:.9rem;
 @media (max-width:640px) {
   th, td { white-space:normal; }
 }
+
+/* ---- stations-first landing -------------------------------------------
+   The three demonstrations are the page's reason to exist, so they sit
+   immediately under the title rather than below three screens of prose. The
+   hero shrinks to a heading and one sentence to make room; the explanation,
+   the graphs and the cost table follow underneath for whoever wants them. */
+.hero-lead { padding: 2.6rem 0 1.4rem; }
+.hero-lead .lede { font-size: 1.18rem; max-width: 46rem; margin-bottom: 0; }
+.stations-lead { padding-top: 0; border-top: 0; }
+.stations-lead .pillrow { margin-top: 1.6rem; }
+.stations-lead .byline { margin: .9rem 0 0; }
+/* Leading the page, the cards carry more weight than they did mid-scroll. */
+.stations-lead .card h3 { font-size: 1.14rem; }
+.stations-lead .card .body { padding: 1.15rem 1.2rem 1.3rem; }
+@media (max-width: 700px) {
+  .hero-lead { padding: 1.8rem 0 1rem; }
+  .hero-lead .lede { font-size: 1.05rem; }
+}
+
+/* A short laptop screen is the common case at a conference. Tighten the hero so
+   the cards' buttons — not just their tops — clear the fold there too. */
+@media (min-width: 700px) and (max-height: 820px) {
+  .hero-lead { padding: 1.5rem 0 .9rem; }
+  .hero-lead h1 { font-size: clamp(1.7rem, 2.6vw, 2.15rem); }
+  .hero-lead .lede { font-size: 1.02rem; }
+  /* Crop the thumbnails rather than clamp the descriptions: losing image is
+     cheaper than losing the sentence that explains what the station does. */
+  .stations-lead .card .shot { aspect-ratio: 21/9; }
+  .stations-lead .card .body { padding: .85rem 1rem 1rem; gap: .45rem; }
+  .stations-lead .card h3 { font-size: 1.06rem; }
+  .stations-lead .pillrow { margin-top: 1rem; }
+}

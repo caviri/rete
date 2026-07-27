@@ -21,28 +21,77 @@
 
 <div class="wrap">
 
-<div class="hero">
+<div class="hero hero-lead">
   <p class="kicker">ISWC 2026 · Posters &amp; Demos · Bari, Italy</p>
   <h1><span class="dot">.</span>rete — serverless SPARQL over<br>range-addressable RDF snapshots</h1>
-  <p class="byline">
-    Carlos Vivar Ríos ·
-    <a href="https://orcid.org/0000-0002-8076-2034">0000-0002-8076-2034</a> ·
-    Swiss Data Science Center &amp; EPFL, Lausanne
-  </p>
   <p class="lede">
-    Publishing an RDF graph for interactive use normally means running a SPARQL
-    endpoint or shipping the whole dataset to whoever asks. This demonstration
-    takes a third route: the graph, its dictionary, its six permutation indexes
-    and its own description are packed into <strong>one immutable file whose
-    sections are addressed by byte range</strong>. Put that file on ordinary
-    static hosting and a browser can query it in place — reading only the bytes
-    the query touches.
+    Three knowledge graphs — up to <strong>60 GB and 3.8 billion triples</strong> —
+    published as plain files on static hosting, with <strong>no server behind
+    them</strong>. Query them here, three ways, and watch what each answer
+    physically cost.
   </p>
-  <p class="lede">
-    Three graphs are published here, up to <strong>60 GB and 3.8 billion
-    triples</strong>. Nothing behind them is a server. Every station below shows
-    you the answer <em>and</em> what the answer physically cost.
-  </p>
+</div>
+
+<section id="stations" class="stations-lead">
+  <div class="stations">
+
+    <article class="card">
+      <a class="shot" href="playground/index.html" target="_blank" rel="noopener">
+        <img src="assets/crossref-playground.png" alt="The rete SPARQL console showing a Crossref query and its run strip: 100 rows, 162 range requests, 96 MB of 57 GB fetched.">
+      </a>
+      <div class="body">
+        <h3><span class="tag">a</span>In the browser</h3>
+        <p>
+          A static page with the engine compiled to WebAssembly. Open a graph
+          you did not build, read its card, run a summary-safe query that never
+          touches the index, then a selective one — and watch the run strip
+          report the requests issued, the bytes moved, the permutation chosen
+          and the exact byte ranges read.
+        </p>
+        <div class="go">
+          <a class="btn" href="playground/index.html" target="_blank" rel="noopener">Open the SPARQL console →</a>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <a class="shot" href="notebook/lab/index.html?path=rete-demo.ipynb" target="_blank" rel="noopener">
+        <img src="assets/jupyterlite.png" alt="A JupyterLite notebook running the rete-graph Python client on a Pyodide kernel.">
+      </a>
+      <div class="body">
+        <h3><span class="tag">b</span>In a notebook</h3>
+        <p>
+          The same URLs, from Python — no kernel, no server, no local install.
+          Pyodide runs in the page and <code>rete-graph</code> installs from
+          PyPI; results land in pandas, and <code>stats()</code> keeps counting
+          the bytes and range requests each step actually spent.
+        </p>
+        <div class="go">
+          <a class="btn" href="notebook/lab/index.html?path=rete-demo.ipynb" target="_blank" rel="noopener">Open the notebook →</a>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <a class="shot" href="agent/index.html">
+        <img src="assets/mcpb-tools.png" alt="An assistant's tool trace showing four Run SPARQL calls against a remote .rete file.">
+      </a>
+      <div class="body">
+        <h3><span class="tag">c</span>From an agent</h3>
+        <p>
+          A packaged MCP extension puts the same engine inside an
+          MCP-capable assistant: nine tools over these files, among them the
+          card, the schema and SPARQL. It reads the card to learn the
+          vocabulary before querying — which is what stops a model inventing
+          predicate names.
+        </p>
+        <div class="go">
+          <a class="btn" href="agent/index.html">Install the extension →</a>
+        </div>
+      </div>
+    </article>
+
+  </div>
   <div class="pillrow">
     <span class="pill"><b>0</b> servers</span>
     <span class="pill"><b>3</b> graphs</span>
@@ -50,15 +99,25 @@
     <span class="pill"><b>62 GB</b> published</span>
     <span class="pill"><b>49 KB</b> to open the 2.09 GB one</span>
   </div>
-</div>
+  <p class="byline">
+    Carlos Vivar Ríos ·
+    <a href="https://orcid.org/0000-0002-8076-2034">0000-0002-8076-2034</a> ·
+    Swiss Data Science Center &amp; EPFL, Lausanne ·
+    <a href="paper/rete-iswc2026-demo.pdf">read the paper (PDF)</a>
+  </p>
+</section>
 
 <section id="how">
   <h2>How one file answers a query</h2>
   <p class="sub">
-    A <code>.rete</code> file opens with a 1 KB header holding a typed section
-    directory — the offset and length of everything else. Nothing later in the
-    file is ever found by scanning, so every read is a bounded HTTP
-    <code>Range</code> request.
+    Publishing an RDF graph for interactive use normally means running a SPARQL
+    endpoint or shipping the whole dataset to whoever asks. These three take a
+    third route: the graph, its dictionary, its six permutation indexes and its
+    own description are packed into <strong>one immutable file whose sections
+    are addressed by byte range</strong>. A <code>.rete</code> opens with a 1 KB
+    header holding a typed section directory — the offset and length of
+    everything else — so nothing later in the file is ever found by scanning and
+    every read is a bounded HTTP <code>Range</code> request.
   </p>
 
   <div class="figure">
@@ -168,74 +227,6 @@
     person is <code>https://orcid.org/…</code> — so Crossref and Zenodo join on
     DOIs and ORCIDs without any <code>owl:sameAs</code> reconciliation.
   </p>
-</section>
-
-<section id="stations">
-  <h2>Three ways to ask</h2>
-  <p class="sub">
-    Because the file <em>is</em> the interface, anything that can issue an HTTP
-    range request can query it. None of these three has a server behind it.
-  </p>
-
-  <div class="stations">
-
-    <article class="card">
-      <a class="shot" href="playground/index.html" target="_blank" rel="noopener">
-        <img src="assets/crossref-playground.png" alt="The rete SPARQL console showing a Crossref query and its run strip: 100 rows, 162 range requests, 96 MB of 57 GB fetched.">
-      </a>
-      <div class="body">
-        <h3><span class="tag">a</span>In the browser</h3>
-        <p>
-          A static page with the engine compiled to WebAssembly. Open a graph
-          you did not build, read its card, run a summary-safe query that never
-          touches the index, then a selective one — and watch the run strip
-          report the requests issued, the bytes moved, the permutation chosen
-          and the exact byte ranges read.
-        </p>
-        <div class="go">
-          <a class="btn" href="playground/index.html" target="_blank" rel="noopener">Open the SPARQL console →</a>
-        </div>
-      </div>
-    </article>
-
-    <article class="card">
-      <a class="shot" href="notebook/lab/index.html?path=rete-demo.ipynb" target="_blank" rel="noopener">
-        <img src="assets/jupyterlite.png" alt="A JupyterLite notebook running the rete-graph Python client on a Pyodide kernel.">
-      </a>
-      <div class="body">
-        <h3><span class="tag">b</span>In a notebook</h3>
-        <p>
-          The same URLs, from Python — no kernel, no server, no local install.
-          Pyodide runs in the page and <code>rete-graph</code> installs from
-          PyPI; results land in pandas, and <code>stats()</code> keeps counting
-          the bytes and range requests each step actually spent.
-        </p>
-        <div class="go">
-          <a class="btn" href="notebook/lab/index.html?path=rete-demo.ipynb" target="_blank" rel="noopener">Open the notebook →</a>
-        </div>
-      </div>
-    </article>
-
-    <article class="card">
-      <a class="shot" href="agent/index.html">
-        <img src="assets/mcpb-tools.png" alt="An assistant's tool trace showing four Run SPARQL calls against a remote .rete file.">
-      </a>
-      <div class="body">
-        <h3><span class="tag">c</span>From an agent</h3>
-        <p>
-          A packaged MCP extension puts the same engine inside an
-          MCP-capable assistant: nine tools over these files, among them the
-          card, the schema and SPARQL. It reads the card to learn the
-          vocabulary before querying — which is what stops a model inventing
-          predicate names.
-        </p>
-        <div class="go">
-          <a class="btn" href="agent/index.html">Install the extension →</a>
-        </div>
-      </div>
-    </article>
-
-  </div>
 </section>
 
 <section id="cost">
