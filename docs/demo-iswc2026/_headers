@@ -22,13 +22,16 @@
 # them. A 24-hour max-age here once paired new markup with a day-old stylesheet
 # and the page rendered without its layout — so these revalidate every time, and
 # their URLs additionally carry a content hash (dev/demo/build/stamp_assets.py).
+# NOTE: Cloudflare applies EVERY matching rule and concatenates the values, so
+# a broad `/assets/*` alongside these would emit two max-age directives in one
+# header. The patterns below are disjoint by extension for that reason.
 /assets/*.css
   Cache-Control: public, max-age=0, must-revalidate
 /assets/*.js
   Cache-Control: public, max-age=0, must-revalidate
 # Screenshots change only when the build does, and are hash-free, so keep them
 # cheap but still revalidating.
-/assets/*
+/assets/*.png
   Cache-Control: public, max-age=3600, must-revalidate
 /paper/*
   Cache-Control: public, max-age=3600, must-revalidate
