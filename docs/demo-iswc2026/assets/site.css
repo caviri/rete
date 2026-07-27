@@ -196,3 +196,21 @@ footer .links { display:flex; flex-direction:column; gap:.3rem; font-size:.9rem;
   .clients { grid-template-columns: 1fr; }
   .cmd { font-size: .78rem; }
 }
+
+/* a second, secondary command inside a client card */
+.cmd-lab { margin: 0; font-size: .8rem; color: var(--muted); max-width: none; }
+.client-cta { margin: .1rem 0 0; }
+.client-cta .btn { font-size: .85rem; padding: .45rem .9rem; }
+
+/* A long command scrolls rather than wraps — a wrapped command is a command you
+   copy wrong — but the system scrollbar under it is chunky and off-palette.
+   Slim, themed, and it only appears when there is something to scroll to. */
+.cmd { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.cmd::-webkit-scrollbar { height: 7px; }
+.cmd::-webkit-scrollbar-track { background: transparent; }
+.cmd::-webkit-scrollbar-thumb {
+  background: var(--border); border-radius: 99px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
+.cmd:hover::-webkit-scrollbar-thumb { background: var(--muted); background-clip: padding-box; }
+.cmd::-webkit-scrollbar-button { width: 0; height: 0; display: none; }

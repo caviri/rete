@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>.rete — serverless SPARQL over range-addressable RDF snapshots · demo</title>
+<title>.rete — browser-native SPARQL over static, range-addressable RDF files · demo</title>
 <meta name="description" content="Live demonstration accompanying the ISWC 2026 paper: three knowledge graphs (Crossref, Zenodo, Open Pulse) published as static files and queried in place from a browser, a notebook and an agent.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='25' font-size='26'%3E%F0%9F%95%B8%EF%B8%8F%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="assets/site.css?v=8f5f47a2">
+<link rel="stylesheet" href="assets/site.css?v=c163d00a">
 <script src="assets/theme.js?v=66cef7b8"></script>
 <script src="assets/copy.js?v=7f9d3545" defer></script>
 </head>
@@ -24,7 +24,7 @@
 
 <div class="hero hero-lead">
   <p class="kicker">ISWC 2026 · Posters &amp; Demos · Bari, Italy</p>
-  <h1><span class="dot">.</span>rete — serverless SPARQL over<br>range-addressable RDF snapshots</h1>
+  <h1><span class="dot">.</span>rete — browser-native SPARQL over<br>static, range-addressable RDF files</h1>
   <p class="lede">
     Three knowledge graphs — up to <strong>60 GB and 3.8 billion triples</strong> —
     published as plain files on static hosting, with <strong>no server behind
@@ -104,7 +104,7 @@
     Carlos Vivar Ríos ·
     <a href="https://orcid.org/0000-0002-8076-2034">0000-0002-8076-2034</a> ·
     <a href="https://h4ck1ng.science" target="_blank" rel="noopener">h4ck1ng.science</a> ·
-    <a href="paper/rete-iswc2026-demo.pdf">read the paper (PDF)</a>
+    <a href="paper/rete-iswc2026-demo.pdf?v=b978dded">read the paper (PDF)</a>
   </p>
 </section>
 
@@ -299,7 +299,13 @@
         </div>
       </div>
       <pre class="cmd"><code>pip install rete-graph</code><button class="copy" type="button" aria-label="Copy">copy</button></pre>
-      <p class="note">CPython ≥ 3.9 everywhere — and Pyodide, which is what makes the notebook station work.</p>
+      <p class="cmd-lab">…or in <b>Pyodide</b> — JupyterLite, marimo, any browser kernel:</p>
+      <pre class="cmd"><code>%pip install rete-graph</code><button class="copy" type="button" aria-label="Copy">copy</button></pre>
+      <p class="note">
+        CPython ≥ 3.9 everywhere. In Pyodide the same package resolves a
+        <b>PyEmscripten wheel straight from PyPI</b> and runs in the page — no
+        kernel, no server. That is exactly what station&nbsp;(b) above is doing.
+      </p>
     </article>
 
     <article class="client">
@@ -370,7 +376,15 @@
           <a class="reg" href="https://github.com/caviri/rete/tree/main/clients/blender" target="_blank" rel="noopener">add-on in-repo ↗</a>
         </div>
       </div>
-      <pre class="cmd"><code>Preferences → Add-ons → Install… → rete-*.zip</code><button class="copy" type="button" aria-label="Copy">copy</button></pre>
+      <p class="note">
+        Download the add-on zip, then in Blender:
+        <b>Edit → Preferences → Add-ons → Install…</b> and pick
+        <code>rete-*.zip</code>. Enable it and the panel appears in the 3D view's
+        sidebar.
+      </p>
+      <p class="client-cta">
+        <a class="btn" href="https://github.com/caviri/rete/tree/main/clients/blender" target="_blank" rel="noopener">Get the add-on ↗</a>
+      </p>
       <p class="note">Blender ≥ 4.2, engine bundled. SPARQL results become 3D scenes.</p>
     </article>
 
@@ -387,11 +401,11 @@
 <section id="paper">
   <h2>The paper</h2>
   <p>
-    <b>.rete: Serverless SPARQL over Range-Addressable RDF Snapshots.</b>
+    <b>.rete: Browser-Native SPARQL over Static, Range-Addressable RDF Files.</b>
     ISWC 2026 Posters &amp; Demonstrations Track, Bari, Italy, 25–29 October 2026.
   </p>
   <p style="margin-top:1rem">
-    <a class="btn" href="paper/rete-iswc2026-demo.pdf">Read the paper (PDF)</a>
+    <a class="btn" href="paper/rete-iswc2026-demo.pdf?v=b978dded">Read the paper (PDF)</a>
     <a class="btn ghost" href="https://github.com/caviri/rete" style="margin-left:.5rem">Source code (Apache-2.0)</a>
     <a class="btn ghost" href="https://caviri.github.io/rete/" style="margin-left:.5rem">Full project site</a>
   </p>
@@ -417,7 +431,7 @@
       <a href="playground/index.html">SPARQL console</a>
       <a href="notebook/lab/index.html?path=rete-demo.ipynb">Notebook</a>
       <a href="agent/index.html">Agent extension</a>
-      <a href="paper/rete-iswc2026-demo.pdf">Paper (PDF)</a>
+      <a href="paper/rete-iswc2026-demo.pdf?v=b978dded">Paper (PDF)</a>
       <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
     </div>
   </div>
