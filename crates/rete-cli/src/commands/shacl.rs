@@ -6,6 +6,7 @@ use rete_core::{
 };
 
 use crate::http::HttpRangeReader;
+use crate::commands::range_source::open_local;
 
 pub(crate) fn shacl_cmd(
     file: &str,
@@ -13,8 +14,7 @@ pub(crate) fn shacl_cmd(
     graph: Option<&str>,
     format: &str,
 ) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
     let data = DataGraph::from_rete(&rete, graph);
     let shapes_text = std::fs::read_to_string(shapes_file)?;
     let shapes = ShaclShapes::parse_turtle(&shapes_text)?;

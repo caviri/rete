@@ -3,13 +3,12 @@
 //! query (`sparql`), and the read-only Cypher subset (`cypher`). The HTTP/range
 //! variants live in `commands::url`; the result rendering lives in `main.rs`.
 
-use rete_core::{
-    eval_bgp, eval_query, ByteRange, PatternTerm, Rete, TriplePattern, TripleProvenance,
-};
+use rete_core::{eval_bgp, eval_query, ByteRange, PatternTerm, TriplePattern, TripleProvenance};
 use serde_json::json;
 
 use crate::commands::render::print_query_output;
 use crate::cypher;
+use crate::commands::range_source::open_local;
 
 /// Query a triple pattern: unspecified positions are variables, terms match as
 /// canonical N-Triples tokens.
@@ -19,8 +18,7 @@ pub(crate) fn query(
     p: Option<String>,
     o: Option<String>,
 ) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
     let results = rete.query(s.as_deref(), p.as_deref(), o.as_deref());
     for (s, p, o) in &results {
         println!("{s} {p} {o} .");
@@ -91,8 +89,7 @@ pub(crate) fn why(
     o: Option<String>,
     as_json: bool,
 ) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
     let results = rete.query_with_provenance(s.as_deref(), p.as_deref(), o.as_deref());
     print_provenance(s.as_deref(), p.as_deref(), o.as_deref(), &results, as_json)
 }
@@ -158,8 +155,7 @@ pub(crate) fn print_provenance(
 /// Evaluate a Basic Graph Pattern: patterns separated by ` . `, terms by spaces,
 /// `?name` is a variable.
 pub(crate) fn bgp(file: &str, query: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
 
     let mut patterns = Vec::new();
     for clause in query.split(" . ") {
@@ -185,8 +181,7 @@ pub(crate) fn bgp(file: &str, query: &str) -> anyhow::Result<()> {
 
 /// Run a SPARQL query (SELECT / ASK / CONSTRUCT) against a local file.
 pub(crate) fn sparql(file: &str, query: &str, json: bool, entail: bool) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let mut rete = Rete::open(&bytes)?;
+    let mut rete = open_local(file)?;
     // SERVICE blocks federate to remote SPARQL endpoints over HTTP.
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
     let eval = if entail {
@@ -202,8 +197,7 @@ pub(crate) fn sparql(file: &str, query: &str, json: bool, entail: bool) -> anyho
 /// Run a read-only Cypher-subset query: translate it to SPARQL (see
 /// `cypher.rs`), evaluate with the existing engine, and render like `sparql`.
 pub(crate) fn cypher_cmd(file: &str, query: &str, base: &str, json: bool) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
     let result = cypher::eval_cypher(&rete, query, base).map_err(|e| anyhow::anyhow!("{e}"))?;
     print_query_output(&result, json);
     Ok(())

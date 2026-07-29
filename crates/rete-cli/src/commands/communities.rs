@@ -5,6 +5,7 @@
 use rete_core::{Rete, DEFAULT_TILE_BUDGET};
 
 use crate::commands::render::literal_lexical;
+use crate::commands::range_source::open_local;
 
 /// One community's membership + literal corpus, ready to serialize.
 struct CommunityRecord {
@@ -137,8 +138,7 @@ pub(crate) fn communities(
     profile: bool,
     predicate: Option<&str>,
 ) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
     let records = collect_communities(&rete, round, min_size, profile, predicate)?;
 
     if json {

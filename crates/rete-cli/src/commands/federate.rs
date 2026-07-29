@@ -6,6 +6,7 @@ use rete_core::{eval_query, query_predicates, QueryOutput, Rete, SliceReader, Su
 
 use crate::commands::render::print_query_output;
 use crate::http::HttpRangeReader;
+use crate::commands::range_source::open_local;
 
 /// Is this source an `http(s)://` URL (vs. a local file path)?
 fn is_url(source: &str) -> bool {
@@ -43,8 +44,7 @@ fn eval_source(source: &str, query: &str) -> anyhow::Result<QueryOutput> {
         let reader = HttpRangeReader::open(source)?;
         Rete::open_ranged(&reader)?
     } else {
-        let bytes = std::fs::read(source)?;
-        Rete::open(&bytes)?
+        open_local(source)?
     };
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
     eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{source}: {e}"))

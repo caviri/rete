@@ -1,14 +1,13 @@
 //! The `export` command plus the RDF serialization helpers (Turtle / JSON-LD)
 //! shared with the SPARQL CONSTRUCT output and `reason`.
 
-use rete_core::Rete;
 
 use crate::commands::render::term_to_json;
+use crate::commands::range_source::open_local;
 
 /// `rete export <file> <format>`: write the graph as N-Quads, Turtle, or JSON-LD.
 pub(crate) fn export(file: &str, format: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
     match format {
         // N-Quads: lossless dump of the default graph + every named graph.
         // Streamed (dump_each) so a 100M+ triple file serializes in constant

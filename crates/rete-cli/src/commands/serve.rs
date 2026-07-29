@@ -31,6 +31,7 @@ use spargebra::term::{
 use spargebra::{GraphUpdateOperation, Query, Update};
 
 use super::service_http::HttpServiceClient;
+use crate::commands::range_source::open_local;
 
 /// One quad as term tokens; `None` graph = the default graph. `BTreeSet` gives
 /// set semantics (RDF graphs are sets) and a deterministic rebuild order.
@@ -71,8 +72,7 @@ impl Store {
     /// Open the base file, extract every quad, replay the journal, build the
     /// first image.
     fn open(base: &str, journal: std::path::PathBuf) -> anyhow::Result<Store> {
-        let bytes = std::fs::read(base)?;
-        let rete = Rete::open(&bytes)?;
+        let rete = open_local(base)?;
         let mut quads: QuadSet = rete
             .dump(None)
             .into_iter()
@@ -114,10 +114,15 @@ impl Store {
             }
         }
 
+        // The base file is already dropped (its quads are in `quads`), so the
+        // placeholder is built from an empty image — cheap, and always valid.
+        // `ensure_current` below replaces it with the merged one.
+        let (empty_image, _) =
+            assemble_dataset_with_opts(Vec::new(), false, false, None, |_, _| Vec::new());
         let mut store = Store {
             quads,
             image: Vec::new(),
-            rete: Rete::open(&bytes)?, // placeholder; rebuilt below
+            rete: Rete::open(&empty_image)?,
             dirty: true,
             journal,
             bnode_seq: 0,

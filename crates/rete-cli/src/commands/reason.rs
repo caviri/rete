@@ -9,6 +9,7 @@ use rete_core::{CountingReader, RangeReader, Rete};
 use crate::commands::card::{self, Coherence};
 use crate::commands::export::export_turtle;
 use crate::http::HttpRangeReader;
+use crate::commands::range_source::open_local;
 
 type Triples = Vec<(String, String, String)>;
 
@@ -87,8 +88,7 @@ pub(crate) fn reason_cmd(
 fn load_base(file: Option<&str>, url: Option<&str>) -> anyhow::Result<Triples> {
     match (file, url) {
         (Some(path), None) => {
-            let bytes = std::fs::read(path)?;
-            Ok(Rete::open(&bytes)?.dump(None))
+            Ok(open_local(path)?.dump(None))
         }
         (None, Some(u)) => {
             let reader = std::sync::Arc::new(CountingReader::new(HttpRangeReader::open(u)?));

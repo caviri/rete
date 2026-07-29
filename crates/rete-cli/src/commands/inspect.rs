@@ -4,7 +4,8 @@
 //! (`predicates`), and the type-level schema (`schema`). Several of these answer
 //! from the summary alone, never touching the triple index.
 
-use rete_core::{Rete, SliceReader, SummaryView, CODEC_ZSTD};
+use rete_core::{SliceReader, SummaryView, CODEC_ZSTD};
+use crate::commands::range_source::{open_local, LocalRangeReader};
 
 /// Print the raw file header (section offsets, counts, codec), plus the embedded
 /// Dataset Card catalog when the file carries one.
@@ -29,10 +30,10 @@ pub(crate) fn info(file: &str) -> anyhow::Result<()> {
 /// per-predicate totals + community count come from the summary alone (the
 /// triple index is never read).
 pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
     let h = rete.header();
-    println!("{file} — {} bytes", bytes.len());
+    let file_len = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+    println!("{file} — {file_len} bytes");
     println!("  default-graph triples : {}", h.quad_count);
     println!("  distinct terms        : {}", h.term_count);
     println!("  named graphs          : {}", rete.graph_names().len());
@@ -49,8 +50,9 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
         }
     );
 
-    // Per-predicate totals + community count come from the summary alone.
-    let reader = SliceReader::new(&bytes);
+    // Per-predicate totals + community count come from the summary alone — read
+    // through a range reader so this stays cheap on a multi-GB file.
+    let reader = LocalRangeReader::open(file)?;
     if let Some(view) = SummaryView::open_ranged(&reader)? {
         println!("  communities           : {}", view.community_count());
         let totals = view.predicate_totals();
@@ -151,8 +153,7 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
 /// block in the pyramid-meta — no literal scan. `--json` emits a versioned
 /// `{schemaVersion, matches:[{label, subject}]}` envelope.
 pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
     let hits = rete.prefix_search(prefix, limit);
     if json {
         let items: Vec<String> = hits
@@ -196,8 +197,7 @@ pub(crate) fn search_contains(
     limit: usize,
     json: bool,
 ) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
     if !rete.has_text_index() {
         if json {
             println!(
@@ -258,8 +258,7 @@ fn json_str(s: &str) -> String {
 
 /// List the named graphs in a dataset (or note that there are none).
 pub(crate) fn graphs(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
     let names = rete.graph_names();
     if names.is_empty() {
         println!("(default graph only — no named graphs)");
@@ -407,8 +406,7 @@ fn render_schema_level(view: &SummaryView, k: usize) -> anyhow::Result<()> {
 /// Ontology-aware coarse graph: relations between `rdf:type` classes with
 /// instance counts (the dataset's effective schema).
 pub(crate) fn schema(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let rete = Rete::open(&bytes)?;
+    let rete = open_local(file)?;
 
     let classes = rete_core::schema_classes(&rete);
     if classes.is_empty() {
