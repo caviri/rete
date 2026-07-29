@@ -8,7 +8,7 @@ documentation.
 
 | Surface | What it is | For |
 |---|---|---|
-| **MCP server** | `https://katospiegel-rete.hf.space/mcp/` — 13 tools over the published catalog and any `.rete` URL | ChatGPT, Claude, any MCP client |
+| **MCP server** | `https://katospiegel-rete.hf.space/mcp/` — 18 tools over the published catalog and any `.rete` URL | ChatGPT, Claude, any MCP client |
 | **Desktop extension** | `rete.mcpb` — the whole engine as a one-click local install | Claude Desktop, incl. private graphs and offline work |
 | **Claude Code plugin** | this repo, installable as a plugin + marketplace | Claude Code users: MCP + skills in two commands |
 | **Skills** | four repo-aware playbooks under `skills/` | Claude Code; also readable as human docs |
@@ -41,7 +41,7 @@ stays observable. The server instructions teach the intended workflow
 
 Two integration levels:
 
-1. **Developer mode (all 13 tools).** Settings → *Apps & Connectors* →
+1. **Developer mode (all 18 tools).** Settings → *Apps & Connectors* →
    enable *Developer mode* (under advanced settings) → *Create* a
    connector: any name, MCP server URL
    `https://katospiegel-rete.hf.space/mcp/`, authentication **None**.
@@ -85,6 +85,12 @@ slightly per client):
 ```
 
 ### Programmatic agents
+
+An agent framework can reach a graph two ways: through this MCP server, or by
+calling the `rete-graph` library **in process**, so the tools run against a
+local path or a URL with no server in between —
+[LangChain & Pydantic AI](agent-frameworks.md) is the tutorial for both,
+with runnable scripts.
 
 Verified with [pydantic-ai](https://ai.pydantic.dev) (2.x) — the full
 tool loop over this server:
@@ -181,7 +187,7 @@ The repo doubles as a plugin **and** its own marketplace:
 
 Installing wires up, in one step:
 
-- the **MCP server** above (13 tools available in every session), and
+- the **MCP server** above (18 tools available in every session), and
 - the four **skills**, namespaced as `/rete-graph:<skill>`.
 
 Versioning follows git — every push to `main` is a new plugin version, so

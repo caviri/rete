@@ -99,7 +99,14 @@ def main():
     html = html.replace("__GRAPH_SOURCE_JS__", POLYGLOT_SRC)
     html = html.replace("__FOOTER_NOTE__", POLYGLOT_FOOTER)
     assert html.count(TOKEN) == 1, f"{TOKEN} must appear exactly once"
-    offset = len(html.encode("utf-8"))  # tail begins right after the HTML
+    # Wrap the appended .rete inside an inert <script type="text/plain"> element:
+    # served as text/html, the browser would otherwise parse all N MB of binary
+    # into a pathological DOM (freezing the tab). In "script data" state the whole
+    # tail is consumed as ONE text token — never rendered, never executed — while
+    # the page's own byte-range read of the tail is unaffected. The closing
+    # </script> never appears in the binary, so the element runs to EOF.
+    html += '\n<script type="text/plain" id="rete-tail">\n'
+    offset = len(html.encode("utf-8"))  # tail begins right after the wrapper opener
     assert offset < 10**12
     html = html.replace(TOKEN, str(offset).zfill(12))  # 12 -> 12 chars, length-stable
     html_bytes = html.encode("utf-8")
