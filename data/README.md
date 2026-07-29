@@ -261,3 +261,97 @@ WHERE m.label IS NOT NULL AND o.label IS NOT NULL LIMIT 20;
   catalog dataset count and that every embedded dataset loads and answers a query.
 - Both run headless in the `mcr.microsoft.com/playwright` Docker image. **When adding a
   dataset, bump the count assertion and add the key to the run loop.**
+
+---
+
+# Raw acquisitions — downloaded, `.rete` not yet built
+
+Datasets acquired into `data/<name>/raw/` with committed `scripts/`, a
+per-dataset `README.md`, `SHA256SUMS.txt` and a `PROFILE.txt`. These are
+**reproducible from git alone** — `data/` is gitignored, so the scripts *are* the
+dataset as far as the repo is concerned. Each folder's own README carries the
+full provenance, licence, schema and gotchas; this is the index.
+
+| dataset | size | headline | licence |
+|---|---:|---|---|
+| [`ikea/`](ikea/README.md) | ~52 GB | 157,105 products × 5 locales, **27,765 real `.glb` 3D models**, 4 research datasets | mixed; 3D Assembly CC BY-NC-SA |
+| [`lego/`](lego/README.md) | ~23 GB | Rebrickable 1.87M rows, 133,461 images, **~29,500 LDraw 3D parts** | LDraw **CC BY 4.0**; Rebrickable **unverified** |
+| [`openfoodfacts/`](openfoodfacts/README.md) | 20.1 GB | **4,639,959 products**, 29,173 SKOS concepts, **GS1 Web Vocabulary** (2,532-term official barcode ontology) | **ODbL** (share-alike) |
+| [`openlibrary/`](openlibrary/README.md) | 17.5 GB | **56,442,419 editions**, VIAF/Wikidata/ISNI author links | **CC0** |
+| [`geospatial-geneve/`](geospatial-geneve/README.md) | ~11 GB | **239,177-tree** cantonal inventory as GeoJSON, 584 SITG layers, 50 LiDAR tiles | opendata.swiss **Open use** |
+| [`music/`](music/README.md) | 12 GB | MusicBrainz CC0 export + **176,581 Lakh MIDI** (71% with drum tracks) + scores + 444 h drumming | mixed; MAESTRO/DCML are **NC** |
+
+## The pattern that makes these federatable
+
+Every one of them turned out to hang off a **global join key**, which is what
+makes the collection a graph rather than a pile:
+
+| dataset | join key |
+|---|---|
+| ikea | `globalId` — same article, different item number per market |
+| lego | `elements.design_id` — bridge to the LEGO Group's own part numbering |
+| openfoodfacts | **GTIN / barcode** — and GS1 publishes the matching ontology |
+| openlibrary | **ISBN**, plus VIAF / Wikidata / ISNI on authors |
+| music | MBID, and MSD ids bridging metadata ↔ actual notes |
+| scholar hub | DOI / ORCID / ROR (see the published datasets above) |
+
+## Discipline coverage — what this catalogue is and isn't
+
+Strong: **scholarly infrastructure** (Crossref, ORCID, OpenAIRE, DataCite, DBLP,
+OpenCitations, ROR, CORDIS), **bibliographic** (databnf, bne, BCUL, USTC,
+Biblissima, Open Library), **life sciences** (188 OBO ontologies, ChEBI, HPO,
+Uberon, GBIF, five neuro/connectome sets), **cultural heritage** (a dozen
+Spanish/Catalan/Swiss/Irish archives, manuscripts, IIIF), **software** (deps.dev,
+GH Archive 1.64B, HuggingFace), **geo/3D**.
+
+Known gaps, roughly in order of value:
+
+1. ~~Music~~ — **filled** by `music/`.
+2. **Language & linguistics** — no WordNet, DBnary (Wiktionary as RDF),
+   Glottolog or Universal Dependencies. Odd, given the collection is about text.
+3. **Art & museums** — only Lombardi + Smithsonian 3D + WikiArt. Missing the
+   **Getty vocabularies** (AAT/ULAN/TGN), which are native LOD and *the* art
+   ontology; also Europeana and the Met's CC0 release.
+4. **Classics / ancient world** — Pleiades, Perseus, Nomisma (numismatics LOD),
+   Papyri.info.
+5. **Astronomy** — nothing. SIMBAD, Gaia.
+6. **Mathematics** — nothing. OEIS is small and very graph-shaped.
+7. **Film / audiovisual** — subtitles only.
+8. **Economics & corporate** — GLEIF (legal-entity ownership graph), Eurostat /
+   World Bank SDMX, PatentsView.
+9. **Law beyond Spain** — EUR-Lex / CELLAR has a real SPARQL endpoint.
+10. **Historical audio** — see below.
+
+### The shape gap, not just the topic gap
+
+Nearly everything here is a **catalogue**: records *about* things. What is scarce
+is **notation** — data where the content itself is the structure. `music/` is the
+first real entry (scores, MIDI, harmonic analyses); lexicons and mathematical
+sequences would be the next. That is a materially different thing to model, and a
+better stress test for the format than another catalogue.
+
+### Historical audio — surveyed 2026-07-27, not yet downloaded
+
+Verified item counts via the Internet Archive `advancedsearch` + `scrape` APIs
+(the scrape endpoint supports cursor pagination for bulk metadata):
+
+| IA collection | items | what |
+|---|---:|---|
+| `audio_music` | 520,539 | all music audio |
+| `78rpm` | **310,709** | digitised 78 rpm discs |
+| `etree` | **301,997** | Live Music Archive — taper-sanctioned concert recordings |
+| `georgeblood` | **186,858** | the **Great 78 Project** digitisations |
+| `oldtimeradio` | 8,853 | old-time radio broadcasts |
+
+Also worth having: **UCSB Cylinder Audio Archive** (wax cylinders, site live) and
+the **LoC National Jukebox** (its JSON API returned 403 to a plain client and
+needs proper headers).
+
+**Discogs** monthly dumps (CC0, the authority on physical pressings/labels) could
+not be reached: `discogs-data-dumps.s3.us-west-2.amazonaws.com` returns
+`AccessDenied` for both bucket listing and direct object URLs from here. Needs
+investigation before being promised.
+
+Note the split: IA **metadata** is bulk-harvestable and largely open; the
+**audio** is per-item licensed (US-public-domain 78s, artist-sanctioned etree
+recordings), so treat rights per collection, not per archive.
