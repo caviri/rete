@@ -9,6 +9,14 @@
       "contentHash": "e399dfb7a43a0d7f2dd4d4c0d778285a",
       "size": 206054877,
       "cardUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete"
+    },
+    {
+      "key": "hugging-face",
+      "url": "https://data.graphplaza.com/hugging-face/hugging-face.rete",
+      "formatVersion": 5,
+      "contentHash": "32b5bd3e27fb9bae91ee21f789e4e339",
+      "size": 1161874550,
+      "cardUrl": "https://data.graphplaza.com/hugging-face/hugging-face.rete"
     }
   ]
 }
