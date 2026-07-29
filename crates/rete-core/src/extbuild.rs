@@ -40,7 +40,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use crate::dict::DEFAULT_RESTART_INTERVAL;
+use crate::dict::env_restart_interval;
+
 use crate::index::{GroupSizer, INDEX_TILE_BUDGET};
 use crate::ingest::{BuildStats, IngestError, RawQuad};
 use crate::triples::TripleBlockBuilder;
@@ -811,7 +812,7 @@ impl RawSectionWriter {
     }
 
     fn push(&mut self, term: &str) -> Result<(), std::io::Error> {
-        let r = DEFAULT_RESTART_INTERVAL as u64;
+        let r = env_restart_interval() as u64;
         let mut entry = Vec::with_capacity(term.len() + 8);
         if self.n.is_multiple_of(r) {
             self.restart_offsets.push(self.body_len);
@@ -849,7 +850,7 @@ impl RawSectionWriter {
         // the raw header exactly as DictSectionBuilder writes it
         let mut header = Vec::new();
         write_uvarint(&mut header, self.n);
-        write_uvarint(&mut header, DEFAULT_RESTART_INTERVAL as u64);
+        write_uvarint(&mut header, env_restart_interval() as u64);
         write_uvarint(&mut header, self.restart_offsets.len() as u64);
         for off in &self.restart_offsets {
             write_uvarint(&mut header, *off);

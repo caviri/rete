@@ -28,11 +28,30 @@ pub struct DictSectionBuilder {
     restart_interval: u32,
 }
 
+/// Terms per restart run, overridable via `RETE_DICT_RESTART_INTERVAL`.
+///
+/// The interval sets random-access granularity as well as front-coding gain:
+/// chunks are cut on whole-run boundaries, so with very large literals (e.g.
+/// base64-embedded images) a single run dwarfs the 64 KiB chunk budget and one
+/// term lookup drags in ~`r` terms' worth of bytes. Setting `1` makes every term
+/// its own restart — direct seek, larger restart table, no front-coding (which
+/// is worthless for base64 anyway, since such terms share no prefix).
+pub fn env_restart_interval() -> u32 {
+    static R: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *R.get_or_init(|| {
+        std::env::var("RETE_DICT_RESTART_INTERVAL")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&v| v >= 1)
+            .unwrap_or(DEFAULT_RESTART_INTERVAL)
+    })
+}
+
 impl DictSectionBuilder {
     pub fn new() -> Self {
         Self {
             terms: Vec::new(),
-            restart_interval: DEFAULT_RESTART_INTERVAL,
+            restart_interval: env_restart_interval(),
         }
     }
 
@@ -96,7 +115,7 @@ pub struct SectionMeta {
     pub term_count: u32,
     pub restart_interval: u32,
     /// Absolute offsets into the section bytes for each run start.
-    pub restart_offsets: Vec<u64>,
+    pub restart_offsets: Vec<usize>,
 }
 
 /// Parse only the header/restart table of a section.
@@ -118,9 +137,9 @@ pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
     // pre-allocation at the buffer length to avoid an OOM on a bogus count.
     let mut rel = Vec::with_capacity(num_restarts.min(bytes.len()));
     for _ in 0..num_restarts {
-        rel.push(take(&mut pos)?);
+        rel.push(take(&mut pos)? as usize);
     }
-    let body_start = pos as u64;
+    let body_start = pos;
     Ok(SectionMeta {
         term_count,
         restart_interval,
@@ -167,7 +186,7 @@ pub fn section_term(bytes: &[u8], meta: &SectionMeta, id: u32) -> Option<String>
     let run = idx / meta.restart_interval as usize;
     let steps = idx % meta.restart_interval as usize;
     let mut buf = Vec::new();
-    let mut pos = run_entry_into(bytes, *meta.restart_offsets.get(run)? as usize, &mut buf)?;
+    let mut pos = run_entry_into(bytes, *meta.restart_offsets.get(run)?, &mut buf)?;
     for _ in 0..steps {
         pos = entry_into(bytes, pos, &mut buf)?;
     }
@@ -182,7 +201,7 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
     let mut hi = meta.restart_offsets.len();
     while lo < hi {
         let mid = (lo + hi) / 2;
-        run_entry_into(bytes, meta.restart_offsets[mid] as usize, &mut buf)?;
+        run_entry_into(bytes, meta.restart_offsets[mid], &mut buf)?;
         if buf.as_slice() <= term.as_bytes() {
             lo = mid + 1;
         } else {
@@ -193,7 +212,7 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
         return None; // smaller than every term
     }
     let run = lo - 1;
-    let mut pos = run_entry_into(bytes, meta.restart_offsets[run] as usize, &mut buf)?;
+    let mut pos = run_entry_into(bytes, meta.restart_offsets[run], &mut buf)?;
     let base_id = (run * meta.restart_interval as usize) as u32 + 1;
     // saturating_sub: corrupt metadata where run*interval > term_count must not
     // underflow-panic.
@@ -244,7 +263,7 @@ pub struct SectionChunk {
     /// First term of the chunk (for chunk-level binary search in `id`);
     /// unused (empty) for the single local chunk.
     first_term: Vec<u8>,
-    body_start: u64,
+    body_start: usize,
     data: OnceLock<Vec<u8>>,
     /// This chunk's per-run byte offsets, **relative to its own decompressed
     /// body** — the chunk-local stand-in for the section-wide restart table.
@@ -256,7 +275,7 @@ pub struct SectionChunk {
 
 impl SectionChunk {
     /// A remote chunk descriptor (data faults in through the loader).
-    pub fn remote(first_run: usize, first_term: Vec<u8>, body_start: u64) -> Self {
+    pub fn remote(first_run: usize, first_term: Vec<u8>, body_start: usize) -> Self {
         SectionChunk {
             first_run,
             first_term,
@@ -270,7 +289,7 @@ impl SectionChunk {
     pub fn resident(
         first_run: usize,
         first_term: Vec<u8>,
-        body_start: u64,
+        body_start: usize,
         data: Vec<u8>,
     ) -> Self {
         let cell = OnceLock::new();
@@ -502,7 +521,6 @@ impl ChunkedSection {
                 .restart_offsets
                 .get(run)?
                 .checked_sub(chunk.body_start)
-                .map(|o| o as usize)
         }
     }
 
