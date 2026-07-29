@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>Author ego-network: Baculard d&#39;Arnaud -&gt; novels -&gt; genre — mimotext</title>
+<meta name="description" content="Answer: 41 nodes, 59 edges in 11 ms. Builds a small subgraph of one author (Baculard d&#39;Arnaud), their novels, and each novel&#39;s genre - rendered as a node-link diagram. Runs live in your browser over mimotext (27389 triples · 126 KB) — no server." />
+<link rel="canonical" href="https://caviri.github.io/rete/q/mimotext-5.html" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="rete" />
+<meta property="og:title" content="Author ego-network: Baculard d&#39;Arnaud -&gt; novels -&gt; genre — mimotext" />
+<meta property="og:description" content="Answer: 41 nodes, 59 edges in 11 ms. Builds a small subgraph of one author (Baculard d&#39;Arnaud), their novels, and each novel&#39;s genre - rendered as a node-link diagram. Runs live in your browser over mimotext (27389 triples · 126 KB) — no server." />
+<meta property="og:url" content="https://caviri.github.io/rete/q/mimotext-5.html" />
+<meta property="og:image" content="https://caviri.github.io/rete/og/q/mimotext-5.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Author ego-network: Baculard d&#39;Arnaud -&gt; novels -&gt; genre — mimotext" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Author ego-network: Baculard d&#39;Arnaud -&gt; novels -&gt; genre — mimotext" />
+<meta name="twitter:description" content="Answer: 41 nodes, 59 edges in 11 ms. Builds a small subgraph of one author (Baculard d&#39;Arnaud), their novels, and each novel&#39;s genre - rendered as a node-link diagram. Runs live in your browser over mimotext (27389 triples · 126 KB) — no server." />
+<meta name="twitter:image" content="https://caviri.github.io/rete/og/q/mimotext-5.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Author ego-network: Baculard d'Arnaud -> novels -> genre","description":"Answer: 41 nodes, 59 edges in 11 ms. Builds a small subgraph of one author (Baculard d'Arnaud), their novels, and each novel's genre - rendered as a node-link diagram. Runs live in your browser over mimotext (27389 triples · 126 KB) — no server.","url":"https://caviri.github.io/rete/q/mimotext-5.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"mimotext","url":"https://caviri.github.io/rete/d/mimotext.html"}}</script>
+<link rel="stylesheet" href="../preview.css" />
+<script>
+(function(){
+  try{
+    if(/[?&]stay=1\b/.test(location.search)) return;
+    location.replace("../playground.html#dataset=mimotext&mode=sparql&ex=5");
+  }catch(e){}
+})();</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage"><div class="card">
+    <svg class="net" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+  <g stroke="#147d69" stroke-width="1.1">
+    <path d="M30 40 L100 20 L170 55 L150 130 L70 160 L20 110 Z"/>
+    <path d="M100 20 L70 160 M30 40 L150 130 M170 55 L20 110 M100 20 L20 110 M30 40 L70 160"/>
+    <path d="M100 90 L30 40 M100 90 L170 55 M100 90 L150 130 M100 90 L70 160 M100 90 L20 110 M100 90 L100 20"/>
+  </g>
+  <g fill="#0b4f42">
+    <circle cx="30" cy="40" r="5"/><circle cx="100" cy="20" r="5"/><circle cx="170" cy="55" r="5"/><circle cx="150" cy="130" r="5"/><circle cx="70" cy="160" r="5"/><circle cx="20" cy="110" r="5"/><circle cx="100" cy="90" r="7"/>
+  </g>
+</svg>
+    <div class="head">
+      <div class="brand"><b>rete</b><span>playground</span></div>
+      <div class="chip">Construct</div>
+    </div>
+    <h1 class="title s2">Author ego-network: Baculard d&#39;Arnaud -&gt; novels -&gt; genre</h1>
+    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">CONSTRUCT</span> {
+  <span class="v">?work</span> wdt:P5 <span class="v">?author</span> . <span class="v">?work</span> wdt:P12 <span class="v">?genre</span> .
+  <span class="v">?author</span> rdfs:label <span class="v">?aL</span> . <span class="v">?work</span> rdfs:label <span class="v">?wL</span> . <span class="v">?genre</span> …
+} <span class="kw">WHERE</span> {
+  <span class="v">?author</span> rdfs:label <span class="v">?aL</span> . <span class="kw">FILTER</span>(LANG(<span class="v">?aL</span>)=&quot;en&quot; &amp;&amp; CONTA…
+  <span class="v">?work</span> wdt:P5 <span class="v">?author</span> ; rdfs:label <span class="v">?wL</span> . <span class="kw">FILTER</span>(LANG(<span class="v">?wL</span>…</pre></div></div><aside class="rail">
+      <div class="icon">📖</div>
+      <div class="key">mimotext</div>
+      <div class="facts"><b>27389</b> triples · 126 KB<br />embedded in the page</div>
+      <div class="answer"><div class="big">41 nodes, 59 edges</div>
+        <div class="sub">answered in 11 ms</div>
+        </div>
+    </aside></div>
+    <div class="foot">
+      <div class="cta">Run this query in your browser — <b>no server, no download</b></div>
+      <div class="url">caviri.github.io/rete</div>
+    </div>
+  </div></div>
+  <div class="actions">
+    <a class="go" href="../playground.html#dataset=mimotext&amp;mode=sparql&amp;ex=5">Run this query in the playground →</a>
+    <span class="alt">41 nodes, 59 edges · 11 ms · no server, no download — the query runs in your browser.</span>
+  </div>
+  <div class="q"><h2>The query</h2>PREFIX wdt: &lt;http://data.mimotext.uni-trier.de/prop/direct/&gt;
+PREFIX rdfs:&lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+CONSTRUCT {
+  ?work wdt:P5 ?author . ?work wdt:P12 ?genre .
+  ?author rdfs:label ?aL . ?work rdfs:label ?wL . ?genre rdfs:label ?gL .
+} WHERE {
+  ?author rdfs:label ?aL . FILTER(LANG(?aL)=&quot;en&quot; &amp;&amp; CONTAINS(?aL,&quot;Baculard&quot;))
+  ?work wdt:P5 ?author ; rdfs:label ?wL . FILTER(LANG(?wL)=&quot;en&quot;)
+  OPTIONAL { ?work wdt:P12 ?genre . ?genre rdfs:label ?gL FILTER(LANG(?gL)=&quot;en&quot;) }
+}</div>
+  <p class="alt" style="margin-top:20px">
+    <a href="../playground.html">rete playground</a> ·
+    <a href="../index.html">documentation</a> ·
+    <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
+  </p>
+</div>
+<script>
+(function(){
+  var stage=document.querySelector(".stage"),wrap=document.querySelector(".wrap");
+  if(!stage||!wrap) return;
+  function fit(){
+    var s=Math.min(1,wrap.clientWidth/1200);
+    stage.style.transform="scale("+s+")";
+    stage.style.marginBottom=(630*s-630)+"px";
+  }
+  fit(); addEventListener("resize",fit);
+})();</script>
+</body>
+</html>

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>Coordinates of a place — wikidata</title>
+<meta name="description" content="Answer: 1 row in 11 ms. wdt:P625 is Wikidata&#39;s &#39;coordinate location&#39; property. For Bemelen (Q100001) it returns a single geo:wktLiteral point - the WKT datatype recovered… Runs live in your browser over wikidata (1.04 GB) — no server." />
+<link rel="canonical" href="https://caviri.github.io/rete/q/wikidata-3.html" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="rete" />
+<meta property="og:title" content="Coordinates of a place — wikidata" />
+<meta property="og:description" content="Answer: 1 row in 11 ms. wdt:P625 is Wikidata&#39;s &#39;coordinate location&#39; property. For Bemelen (Q100001) it returns a single geo:wktLiteral point - the WKT datatype recovered… Runs live in your browser over wikidata (1.04 GB) — no server." />
+<meta property="og:url" content="https://caviri.github.io/rete/q/wikidata-3.html" />
+<meta property="og:image" content="https://caviri.github.io/rete/og/q/wikidata-3.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Coordinates of a place — wikidata" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Coordinates of a place — wikidata" />
+<meta name="twitter:description" content="Answer: 1 row in 11 ms. wdt:P625 is Wikidata&#39;s &#39;coordinate location&#39; property. For Bemelen (Q100001) it returns a single geo:wktLiteral point - the WKT datatype recovered… Runs live in your browser over wikidata (1.04 GB) — no server." />
+<meta name="twitter:image" content="https://caviri.github.io/rete/og/q/wikidata-3.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Coordinates of a place","description":"Answer: 1 row in 11 ms. wdt:P625 is Wikidata's 'coordinate location' property. For Bemelen (Q100001) it returns a single geo:wktLiteral point - the WKT datatype recovered… Runs live in your browser over wikidata (1.04 GB) — no server.","url":"https://caviri.github.io/rete/q/wikidata-3.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"wikidata","url":"https://caviri.github.io/rete/d/wikidata.html"}}</script>
+<link rel="stylesheet" href="../preview.css" />
+<script>
+(function(){
+  try{
+    if(/[?&]stay=1\b/.test(location.search)) return;
+    location.replace("../playground.html#dataset=wikidata&load=lazy&mode=sparql&ex=3");
+  }catch(e){}
+})();</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage"><div class="card">
+    <svg class="net" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+  <g stroke="#147d69" stroke-width="1.1">
+    <path d="M30 40 L100 20 L170 55 L150 130 L70 160 L20 110 Z"/>
+    <path d="M100 20 L70 160 M30 40 L150 130 M170 55 L20 110 M100 20 L20 110 M30 40 L70 160"/>
+    <path d="M100 90 L30 40 M100 90 L170 55 M100 90 L150 130 M100 90 L70 160 M100 90 L20 110 M100 90 L100 20"/>
+  </g>
+  <g fill="#0b4f42">
+    <circle cx="30" cy="40" r="5"/><circle cx="100" cy="20" r="5"/><circle cx="170" cy="55" r="5"/><circle cx="150" cy="130" r="5"/><circle cx="70" cy="160" r="5"/><circle cx="20" cy="110" r="5"/><circle cx="100" cy="90" r="7"/>
+  </g>
+</svg>
+    <div class="head">
+      <div class="brand"><b>rete</b><span>playground</span></div>
+      <div class="chip">Select</div>
+    </div>
+    <h1 class="title s1">Coordinates of a place</h1>
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Coord</th></tr></thead><tbody><tr><td class=""></td></tr></tbody></table></div></div><aside class="rail">
+      <div class="icon">🌐</div>
+      <div class="key">wikidata</div>
+      <div class="facts">1.04 GB<br />remote · HTTP range</div>
+      <div class="answer"><div class="big">1 row</div>
+        <div class="sub">answered in 11 ms</div>
+        </div>
+    </aside></div>
+    <div class="foot">
+      <div class="cta">Run this query in your browser — <b>no server, no download</b></div>
+      <div class="url">caviri.github.io/rete</div>
+    </div>
+  </div></div>
+  <div class="actions">
+    <a class="go" href="../playground.html#dataset=wikidata&amp;load=lazy&amp;mode=sparql&amp;ex=3">Run this query in the playground →</a>
+    <span class="alt">1 row · 11 ms · no server, no download — the query runs in your browser.</span>
+  </div>
+  <div class="q"><h2>The query</h2>PREFIX wdt: &lt;http://www.wikidata.org/prop/direct/&gt;
+SELECT ?coord WHERE {
+  &lt;http://www.wikidata.org/entity/Q100001&gt; wdt:P625 ?coord
+}</div>
+  <p class="alt" style="margin-top:20px">
+    <a href="../playground.html">rete playground</a> ·
+    <a href="../index.html">documentation</a> ·
+    <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
+  </p>
+</div>
+<script>
+(function(){
+  var stage=document.querySelector(".stage"),wrap=document.querySelector(".wrap");
+  if(!stage||!wrap) return;
+  function fit(){
+    var s=Math.min(1,wrap.clientWidth/1200);
+    stage.style.transform="scale("+s+")";
+    stage.style.marginBottom=(630*s-630)+"px";
+  }
+  fit(); addEventListener("resize",fit);
+})();</script>
+</body>
+</html>

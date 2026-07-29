@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>Districts of a country (admin-2) — geoadmin</title>
+<meta name="description" content="Answer: 52 mapped feature(s) in 13 ms. 48,362 second-level admin areas (geoBoundaries ADM2). Here every district of Spain (ES) — change the code to FR, MA, IT… Detailed OSM boundaries;… Runs live in your browser over geoadmin (372.5 K triples · 39 MB) — no server." />
+<link rel="canonical" href="https://caviri.github.io/rete/q/geoadmin-5.html" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="rete" />
+<meta property="og:title" content="Districts of a country (admin-2) — geoadmin" />
+<meta property="og:description" content="Answer: 52 mapped feature(s) in 13 ms. 48,362 second-level admin areas (geoBoundaries ADM2). Here every district of Spain (ES) — change the code to FR, MA, IT… Detailed OSM boundaries;… Runs live in your browser over geoadmin (372.5 K triples · 39 MB) — no server." />
+<meta property="og:url" content="https://caviri.github.io/rete/q/geoadmin-5.html" />
+<meta property="og:image" content="https://caviri.github.io/rete/og/q/geoadmin-5.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Districts of a country (admin-2) — geoadmin" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Districts of a country (admin-2) — geoadmin" />
+<meta name="twitter:description" content="Answer: 52 mapped feature(s) in 13 ms. 48,362 second-level admin areas (geoBoundaries ADM2). Here every district of Spain (ES) — change the code to FR, MA, IT… Detailed OSM boundaries;… Runs live in your browser over geoadmin (372.5 K triples · 39 MB) — no server." />
+<meta name="twitter:image" content="https://caviri.github.io/rete/og/q/geoadmin-5.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Districts of a country (admin-2)","description":"Answer: 52 mapped feature(s) in 13 ms. 48,362 second-level admin areas (geoBoundaries ADM2). Here every district of Spain (ES) — change the code to FR, MA, IT… Detailed OSM boundaries;… Runs live in your browser over geoadmin (372.5 K triples · 39 MB) — no server.","url":"https://caviri.github.io/rete/q/geoadmin-5.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"geoadmin","url":"https://caviri.github.io/rete/d/geoadmin.html"}}</script>
+<link rel="stylesheet" href="../preview.css" />
+<script>
+(function(){
+  try{
+    if(/[?&]stay=1\b/.test(location.search)) return;
+    location.replace("../playground.html#dataset=geoadmin&load=lazy&mode=sparql&ex=5");
+  }catch(e){}
+})();</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage"><div class="card">
+    <svg class="net" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+  <g stroke="#147d69" stroke-width="1.1">
+    <path d="M30 40 L100 20 L170 55 L150 130 L70 160 L20 110 Z"/>
+    <path d="M100 20 L70 160 M30 40 L150 130 M170 55 L20 110 M100 20 L20 110 M30 40 L70 160"/>
+    <path d="M100 90 L30 40 M100 90 L170 55 M100 90 L150 130 M100 90 L70 160 M100 90 L20 110 M100 90 L100 20"/>
+  </g>
+  <g fill="#0b4f42">
+    <circle cx="30" cy="40" r="5"/><circle cx="100" cy="20" r="5"/><circle cx="170" cy="55" r="5"/><circle cx="150" cy="130" r="5"/><circle cx="70" cy="160" r="5"/><circle cx="20" cy="110" r="5"/><circle cx="100" cy="90" r="7"/>
+  </g>
+</svg>
+    <div class="head">
+      <div class="brand"><b>rete</b><span>playground</span></div>
+      <div class="chip">Select</div>
+    </div>
+    <h1 class="title s1">Districts of a country (admin-2)</h1>
+    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?district</span> <span class="v">?boundary</span> <span class="kw">WHERE</span> {
+  <span class="v">?d</span> a class:District ; g:country &quot;ES&quot; ; schema:name <span class="v">?dis</span>…
+} <span class="kw">LIMIT</span> 400</pre></div></div><aside class="rail">
+      <div class="icon">🗺</div>
+      <div class="key">geoadmin</div>
+      <div class="facts"><b>372.5 K</b> triples · 39 MB<br />remote · HTTP range</div>
+      <div class="answer"><div class="big">52 mapped feature(s)</div>
+        <div class="sub">answered in 13 ms</div>
+        </div>
+    </aside></div>
+    <div class="foot">
+      <div class="cta">Run this query in your browser — <b>no server, no download</b></div>
+      <div class="url">caviri.github.io/rete</div>
+    </div>
+  </div></div>
+  <div class="actions">
+    <a class="go" href="../playground.html#dataset=geoadmin&amp;load=lazy&amp;mode=sparql&amp;ex=5">Run this query in the playground →</a>
+    <span class="alt">52 mapped feature(s) · 13 ms · no server, no download — the query runs in your browser.</span>
+  </div>
+  <div class="q"><h2>The query</h2>PREFIX g: &lt;https://w3id.org/rete/geoadmin/prop/&gt;
+PREFIX schema: &lt;http://schema.org/&gt;
+PREFIX geo: &lt;http://www.opengis.net/ont/geosparql#&gt;
+PREFIX class: &lt;https://w3id.org/rete/geoadmin/class/&gt;
+SELECT ?district ?boundary WHERE {
+  ?d a class:District ; g:country &quot;ES&quot; ; schema:name ?district ; geo:asWKT ?boundary .
+} LIMIT 400</div>
+  <p class="alt" style="margin-top:20px">
+    <a href="../playground.html">rete playground</a> ·
+    <a href="../index.html">documentation</a> ·
+    <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
+  </p>
+</div>
+<script>
+(function(){
+  var stage=document.querySelector(".stage"),wrap=document.querySelector(".wrap");
+  if(!stage||!wrap) return;
+  function fit(){
+    var s=Math.min(1,wrap.clientWidth/1200);
+    stage.style.transform="scale("+s+")";
+    stage.style.marginBottom=(630*s-630)+"px";
+  }
+  fit(); addEventListener("resize",fit);
+})();</script>
+</body>
+</html>

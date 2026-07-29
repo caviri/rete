@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>wikidata-100mb — A real 100 MB Wikidata slice</title>
+<meta name="description" content="A real ~104 MB slice of Wikidata, range-queried directly from Cloudflare R2 - the browser fetches only the dictionary chunks and index tiles each… (104 MB) — query it in your browser, no server, no download." />
+<link rel="canonical" href="https://caviri.github.io/rete/d/wikidata-100mb.html" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="rete" />
+<meta property="og:title" content="wikidata-100mb — A real 100 MB Wikidata slice" />
+<meta property="og:description" content="A real ~104 MB slice of Wikidata, range-queried directly from Cloudflare R2 - the browser fetches only the dictionary chunks and index tiles each… (104 MB) — query it in your browser, no server, no download." />
+<meta property="og:url" content="https://caviri.github.io/rete/d/wikidata-100mb.html" />
+<meta property="og:image" content="https://caviri.github.io/rete/og/d/wikidata-100mb.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="wikidata-100mb — A real 100 MB Wikidata slice" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="wikidata-100mb — A real 100 MB Wikidata slice" />
+<meta name="twitter:description" content="A real ~104 MB slice of Wikidata, range-queried directly from Cloudflare R2 - the browser fetches only the dictionary chunks and index tiles each… (104 MB) — query it in your browser, no server, no download." />
+<meta name="twitter:image" content="https://caviri.github.io/rete/og/d/wikidata-100mb.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Dataset","name":"wikidata-100mb — A real 100 MB Wikidata slice","description":"A real ~104 MB slice of Wikidata, range-queried directly from Cloudflare R2 - the browser fetches only the dictionary chunks and index tiles each query touches (a typical selective query reads ~10 MB of the 104 MB), never the whole file. People (wd:Q5 humans) carry rdfs:label (multilingual), occupation (wdt:P106 -> e.g. physicist Q169470, philosopher Q4964182, writer Q36180, politician Q82955), date of birth (wdt:P569), place of birth (wdt:P19), citizenship (wdt:P27) and 'influenced by' (wdt:P737). Entity/property IRIs stay as wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. Pick SELECTIVE shapes (a bound subject/object, an occupation intersection) for snappy reads; aggregates over a whole predicate scan more. CC0 (Wikidata). The 1 GB version (key: wikidata) is the same idea at 10x the data.","url":"https://caviri.github.io/rete/d/wikidata-100mb.html","license":"CC0","creator":{"@type":"Organization","name":"rete"},"distribution":[{"@type":"DataDownload","encodingFormat":"application/octet-stream","contentUrl":"https://data.graphplaza.com/wikidata-100mb/wikidata-100mb.rete"}],"isAccessibleForFree":true}</script>
+<link rel="stylesheet" href="../preview.css" />
+<script>
+(function(){
+  try{
+    if(/[?&]stay=1\b/.test(location.search)) return;
+    location.replace("../playground.html#dataset=wikidata-100mb&load=lazy&mode=sparql");
+  }catch(e){}
+})();</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage"><div class="card dataset">
+    <svg class="net" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+  <g stroke="#147d69" stroke-width="1.1">
+    <path d="M30 40 L100 20 L170 55 L150 130 L70 160 L20 110 Z"/>
+    <path d="M100 20 L70 160 M30 40 L150 130 M170 55 L20 110 M100 20 L20 110 M30 40 L70 160"/>
+    <path d="M100 90 L30 40 M100 90 L170 55 M100 90 L150 130 M100 90 L70 160 M100 90 L20 110 M100 90 L100 20"/>
+  </g>
+  <g fill="#0b4f42">
+    <circle cx="30" cy="40" r="5"/><circle cx="100" cy="20" r="5"/><circle cx="170" cy="55" r="5"/><circle cx="150" cy="130" r="5"/><circle cx="70" cy="160" r="5"/><circle cx="20" cy="110" r="5"/><circle cx="100" cy="90" r="7"/>
+  </g>
+</svg>
+    <div class="head">
+      <div class="brand"><b>rete</b><span>dataset</span></div>
+      <div class="chip">6 example queries</div>
+    </div>
+    <h1 class="title s1">A real 100 MB Wikidata slice</h1>
+    <div class="body"><div class="left">
+      <ul class="bullets"><li>Physicists who are also philosophers</li><li>People influenced by Plato</li><li>Lines of influence from Plato (transitive)</li><li>Writers who are also politicians</li><li>Most common occupations</li></ul>
+      
+    </div><aside class="rail">
+      <div class="icon">🌐</div>
+      <div class="key">wikidata-100mb</div>
+      <div class="facts">104 MB<br />remote · HTTP range<br />CC0</div>
+      
+    </aside></div>
+    <div class="foot">
+      <div class="cta">Explore this graph in your browser — <b>no server, no download</b></div>
+      <div class="url">caviri.github.io/rete</div>
+    </div>
+  </div></div>
+  <div class="actions">
+    <a class="go" href="../playground.html#dataset=wikidata-100mb&amp;load=lazy&amp;mode=sparql">Open this graph in the playground →</a>
+    <span class="alt">no server, no download — the query runs in your browser.</span>
+  </div>
+  
+  <p class="alt" style="margin-top:20px">
+    <a href="../playground.html">rete playground</a> ·
+    <a href="../index.html">documentation</a> ·
+    <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
+  </p>
+</div>
+<script>
+(function(){
+  var stage=document.querySelector(".stage"),wrap=document.querySelector(".wrap");
+  if(!stage||!wrap) return;
+  function fit(){
+    var s=Math.min(1,wrap.clientWidth/1200);
+    stage.style.transform="scale("+s+")";
+    stage.style.marginBottom=(630*s-630)+"px";
+  }
+  fit(); addEventListener("resize",fit);
+})();</script>
+</body>
+</html>

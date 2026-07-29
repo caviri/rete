@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>hugging-face — The whole Hugging Face Hub as one graph: 2.9M models, 1.4M spaces, 1.35M people, and what was finetuned from what</title>
+<meta name="description" content="The public Hugging Face Hub — 85.1 M triples covering 2,932,554 models, 1,428,760 spaces, 972,446 dataset repos, 94,404 arXiv papers and the… (85.1 M triples · 1.16 GB) — query it in your browser, no server, no download." />
+<link rel="canonical" href="https://caviri.github.io/rete/d/hugging-face.html" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="rete" />
+<meta property="og:title" content="hugging-face — The whole Hugging Face Hub as one graph: 2.9M models, 1.4M spaces, 1.35M people, and what was finetuned from what" />
+<meta property="og:description" content="The public Hugging Face Hub — 85.1 M triples covering 2,932,554 models, 1,428,760 spaces, 972,446 dataset repos, 94,404 arXiv papers and the… (85.1 M triples · 1.16 GB) — query it in your browser, no server, no download." />
+<meta property="og:url" content="https://caviri.github.io/rete/d/hugging-face.html" />
+<meta property="og:image" content="https://caviri.github.io/rete/og/d/hugging-face.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="hugging-face — The whole Hugging Face Hub as one graph: 2.9M models, 1.4M spaces, 1.35M people, and what was finetuned from what" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="hugging-face — The whole Hugging Face Hub as one graph: 2.9M models, 1.4M spaces, 1.35M people, and what was finetuned from what" />
+<meta name="twitter:description" content="The public Hugging Face Hub — 85.1 M triples covering 2,932,554 models, 1,428,760 spaces, 972,446 dataset repos, 94,404 arXiv papers and the… (85.1 M triples · 1.16 GB) — query it in your browser, no server, no download." />
+<meta name="twitter:image" content="https://caviri.github.io/rete/og/d/hugging-face.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Dataset","name":"hugging-face — The whole Hugging Face Hub as one graph: 2.9M models, 1.4M spaces, 1.35M people, and what was finetuned from what","description":"The public Hugging Face Hub — 85.1 M triples covering 2,932,554 models, 1,428,760 spaces, 972,446 dataset repos, 94,404 arXiv papers and the 1,354,271 accounts behind them (1,315,773 users + 38,498 organizations, harvested account-by-account from the Hub API over three days). The point of this graph is the derivation fabric: 842,649 base-model edges typed by how a model derives (hf:finetunedFrom, hf:quantizedFrom, hf:adapterFor, hf:mergedFrom — all ⊑ prov:wasDerivedFrom), so hf:finetunedFrom+ walks a whole model genealogy: 19,543 descendants hang off Llama-3.1-8B, and distilbert-base-uncased is the most-finetuned node on the Hub with 12,052 direct children. Alongside it: 981,507 space→repo edges from the Hub's own used-in index (hf:usesModel/hf:usesDataset — Qwen2.5-Coder-32B-Instruct powers 33,872 spaces), 350,688 model→training-dataset links, and 766,758 repo→paper citations.","url":"https://caviri.github.io/rete/d/hugging-face.html","license":"Apache-2.0","creator":{"@type":"Organization","name":"rete"},"distribution":[{"@type":"DataDownload","encodingFormat":"application/octet-stream","contentUrl":"https://data.graphplaza.com/hugging-face/hugging-face.rete"}],"isAccessibleForFree":true}</script>
+<link rel="stylesheet" href="../preview.css" />
+<script>
+(function(){
+  try{
+    if(/[?&]stay=1\b/.test(location.search)) return;
+    location.replace("../playground.html#dataset=hugging-face&load=lazy&mode=sparql");
+  }catch(e){}
+})();</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage"><div class="card dataset">
+    <svg class="net" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+  <g stroke="#147d69" stroke-width="1.1">
+    <path d="M30 40 L100 20 L170 55 L150 130 L70 160 L20 110 Z"/>
+    <path d="M100 20 L70 160 M30 40 L150 130 M170 55 L20 110 M100 20 L20 110 M30 40 L70 160"/>
+    <path d="M100 90 L30 40 M100 90 L170 55 M100 90 L150 130 M100 90 L70 160 M100 90 L20 110 M100 90 L100 20"/>
+  </g>
+  <g fill="#0b4f42">
+    <circle cx="30" cy="40" r="5"/><circle cx="100" cy="20" r="5"/><circle cx="170" cy="55" r="5"/><circle cx="150" cy="130" r="5"/><circle cx="70" cy="160" r="5"/><circle cx="20" cy="110" r="5"/><circle cx="100" cy="90" r="7"/>
+  </g>
+</svg>
+    <div class="head">
+      <div class="brand"><b>rete</b><span>dataset</span></div>
+      <div class="chip">7 example queries</div>
+    </div>
+    <h1 class="title s3">The whole Hugging Face Hub as one graph: 2.9M models, 1.4M spaces, 1.35M people, and what was finetuned from what</h1>
+    <div class="body"><div class="left">
+      <ul class="bullets"><li>The most-finetuned models on the Hub</li><li>The whole family tree below Llama-3.1-8B</li><li>Which models power the most Spaces</li><li>An organization&#39;s people, ranked by reach</li><li>The papers the most models cite</li></ul>
+      
+    </div><aside class="rail">
+      <div class="icon">🤗</div>
+      <div class="key">hugging-face</div>
+      <div class="facts"><b>85.1 M</b> triples · 1.16 GB<br />remote · HTTP range<br />Apache-2.0</div>
+      
+    </aside></div>
+    <div class="foot">
+      <div class="cta">Explore this graph in your browser — <b>no server, no download</b></div>
+      <div class="url">caviri.github.io/rete</div>
+    </div>
+  </div></div>
+  <div class="actions">
+    <a class="go" href="../playground.html#dataset=hugging-face&amp;load=lazy&amp;mode=sparql">Open this graph in the playground →</a>
+    <span class="alt">no server, no download — the query runs in your browser.</span>
+  </div>
+  
+  <p class="alt" style="margin-top:20px">
+    <a href="../playground.html">rete playground</a> ·
+    <a href="../index.html">documentation</a> ·
+    <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
+  </p>
+</div>
+<script>
+(function(){
+  var stage=document.querySelector(".stage"),wrap=document.querySelector(".wrap");
+  if(!stage||!wrap) return;
+  function fit(){
+    var s=Math.min(1,wrap.clientWidth/1200);
+    stage.style.transform="scale("+s+")";
+    stage.style.marginBottom=(630*s-630)+"px";
+  }
+  fit(); addEventListener("resize",fit);
+})();</script>
+</body>
+</html>

@@ -5,6 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>Playground · rete docs</title>
+  <meta name="description" content="Launch the playground — one static HTML page that runs the full rete engine in WebAssembly. No server, no account, no install: it works offline, even opened from file://." />
+  <link rel="canonical" href="https://caviri.github.io/rete/playground-guide.html" />
+  <meta property="og:type" content="article" />
+  <meta property="og:site_name" content="rete" />
+  <meta property="og:title" content="Playground · rete docs" />
+  <meta property="og:description" content="Launch the playground — one static HTML page that runs the full rete engine in WebAssembly. No server, no account, no install: it works offline, even opened from file://." />
+  <meta property="og:url" content="https://caviri.github.io/rete/playground-guide.html" />
+  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/playground-guide.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Playground · rete docs" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Playground · rete docs" />
+  <meta name="twitter:description" content="Launch the playground — one static HTML page that runs the full rete engine in WebAssembly. No server, no account, no install: it works offline, even opened from file://." />
+  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/playground-guide.png" />
+  <meta name="rete:section" content="Explore in the browser" />
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -333,9 +349,9 @@ few bytes crossed the wire.</p>
 <p>The dataset picker groups the catalog by theme (heritage, science, reference,
 demos). Each entry shows its size, license, and a description; picking one
 loads its <strong>example queries</strong> as one-click chips, each with a short tip
-explaining what the query shows. A 🔗 on every chip copies a <strong>deep link</strong> —
-<code>playground.html#dataset=&lt;key&gt;&amp;ex=&lt;n&gt;</code> — that reopens the playground on that
-dataset with that example loaded, ready to share.</p>
+explaining what the query shows. A 🔗 on every chip copies a <strong>share link</strong> that
+reopens the playground on that dataset with that example loaded — see
+<a href="#sharing">Sharing a query</a> for what that link looks like and why.</p>
 <p>A dataset can also be <strong>sharded</strong>: one logical graph served as several files
 (a "⛓ N shards" chip appears). Every query fans out across the shards and the
 rows merge — you just query it as one dataset.</p>
@@ -469,6 +485,29 @@ endpoint becomes the query target and <strong>SPARQL Update is enabled</strong> 
 a running <code>rete serve</code>, the playground becomes the <em>editing UI</em> over a live
 graph: <code>INSERT DATA</code>, watch the next SELECT reflect it, download the snapshot.
 (Deep-linkable as <code>#endpoint=&lt;url&gt;</code>.)</p>
+<h2 id="sharing">Sharing a query</h2>
+<p>The playground keeps its entire state in the URL <strong>fragment</strong> —
+<code>playground.html#dataset=&lt;key&gt;&amp;load=lazy&amp;mode=sparql&amp;ex=&lt;n&gt;</code> — so any view is
+reproducible from its address alone, with nothing stored server-side. A fragment
+has one limitation: it is never sent to a server, and no link preview executes
+the page's JavaScript. Pasted into a chat, a feed or a search index, every deep
+link would therefore unfurl as the same anonymous "rete playground" card, with
+no hint of which graph or which question it points at.</p>
+<p>So each catalog example and each dataset also has a small <strong>preview page</strong> of its
+own, and that is what <strong>🔗</strong> and <strong>Share</strong> copy:</p>
+<table><thead><tr><th>Copied link</th><th>Shows</th></tr></thead><tbody>
+<tr><td><code>q/&lt;dataset&gt;-&lt;n&gt;.html</code></td><td>one example query: the question, the dataset, and the answer it really returns</td></tr>
+<tr><td><code>d/&lt;dataset&gt;.html</code></td><td>one dataset: what it holds, how big it is, and its first example questions</td></tr>
+</tbody></table>
+<p>Opening either one forwards you straight to the playground deep link it
+describes — the preview page exists for the crawler, not to slow you down. Its
+card is not a mock-up: every number on it was measured by actually running that
+query in a browser against the published file (<code>scripts/preview/</code>), including
+the range-read cost — <em>"12 range requests · 3.5 MB of 28.7 MB read"</em>. Browse them
+all at <a href="shared.html">Shareable queries</a>.</p>
+<p>An ad-hoc query has no such page (there is nothing pre-rendered to preview), so
+editing the SPARQL — or connecting a live endpoint, or building your own graph
+in the page — goes back to sharing the deep link itself, exactly as before.</p>
 <h2>Watching the bytes (and the caches)</h2>
 <p>For a remote dataset the result line reports what the query physically did —
 <code>N range requests · M KB fetched · file is X MB</code> — and <strong>⊞ requests</strong> opens the
