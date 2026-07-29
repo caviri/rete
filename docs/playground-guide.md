@@ -18,9 +18,9 @@ few bytes crossed the wire.
 The dataset picker groups the catalog by theme (heritage, science, reference,
 demos). Each entry shows its size, license, and a description; picking one
 loads its **example queries** as one-click chips, each with a short tip
-explaining what the query shows. A 🔗 on every chip copies a **deep link** —
-`playground.html#dataset=<key>&ex=<n>` — that reopens the playground on that
-dataset with that example loaded, ready to share.
+explaining what the query shows. A 🔗 on every chip copies a **share link** that
+reopens the playground on that dataset with that example loaded — see
+[Sharing a query](#sharing) for what that link looks like and why.
 
 A dataset can also be **sharded**: one logical graph served as several files
 (a "⛓ N shards" chip appears). Every query fans out across the shards and the
@@ -168,6 +168,35 @@ endpoint becomes the query target and **SPARQL Update is enabled** — pointed a
 a running `rete serve`, the playground becomes the *editing UI* over a live
 graph: `INSERT DATA`, watch the next SELECT reflect it, download the snapshot.
 (Deep-linkable as `#endpoint=<url>`.)
+
+## Sharing a query {#sharing}
+
+The playground keeps its entire state in the URL **fragment** —
+`playground.html#dataset=<key>&load=lazy&mode=sparql&ex=<n>` — so any view is
+reproducible from its address alone, with nothing stored server-side. A fragment
+has one limitation: it is never sent to a server, and no link preview executes
+the page's JavaScript. Pasted into a chat, a feed or a search index, every deep
+link would therefore unfurl as the same anonymous "rete playground" card, with
+no hint of which graph or which question it points at.
+
+So each catalog example and each dataset also has a small **preview page** of its
+own, and that is what **🔗** and **Share** copy:
+
+| Copied link | Shows |
+| --- | --- |
+| `q/<dataset>-<n>.html` | one example query: the question, the dataset, and the answer it really returns |
+| `d/<dataset>.html` | one dataset: what it holds, how big it is, and its first example questions |
+
+Opening either one forwards you straight to the playground deep link it
+describes — the preview page exists for the crawler, not to slow you down. Its
+card is not a mock-up: every number on it was measured by actually running that
+query in a browser against the published file (`scripts/preview/`), including
+the range-read cost — *"12 range requests · 3.5 MB of 28.7 MB read"*. Browse them
+all at [Shareable queries](shared.html).
+
+An ad-hoc query has no such page (there is nothing pre-rendered to preview), so
+editing the SPARQL — or connecting a live endpoint, or building your own graph
+in the page — goes back to sharing the deep link itself, exactly as before.
 
 ## Watching the bytes (and the caches)
 

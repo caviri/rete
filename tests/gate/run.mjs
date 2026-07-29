@@ -66,6 +66,23 @@ function g0() {
       String(e.stderr || e.stdout || e).slice(-160),
     );
   }
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_social_previews.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "social previews (share pages + og:image)",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS"
+        ? `${verdict.sharePages} share pages, ${verdict.pagesWithPreview} pages with a card`
+        : out.slice(-200),
+    );
+  } catch (e) {
+    record("G0", "social previews (share pages + og:image)", false,
+      String(e.stderr || e.stdout || e).slice(-200));
+  }
   for (const f of ["web/playground-src/app.js", "web/playground-src/catalog.js", "web/playground-src/versions.js"]) {
     try { execSync(`node --check ${ROOT}/${f}`, { stdio: "pipe" }); record("G0", `parse ${f}`, true); }
     catch (e) { record("G0", `parse ${f}`, false, String(e.stderr || e).slice(0, 120)); }

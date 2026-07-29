@@ -13,6 +13,10 @@ use pulldown_cmark::{html, Options, Parser};
 /// Crate version, shown in the sidebar next to the repository link.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REPO_URL: &str = "https://github.com/caviri/rete";
+/// Where the rendered site lives. Open Graph requires ABSOLUTE URLs — a relative
+/// `og:image` is silently dropped by every unfurler — so social tags are the one
+/// place the site's own address has to be hard-coded.
+const SITE_BASE: &str = "https://caviri.github.io/rete/";
 
 /// Sectioned nav: (section title, [(file, sidebar title)]). Markdown entries are
 /// rendered to the sibling `.html`; entries already ending in `.html` are
@@ -136,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let markdown = fs::read_to_string(&src)?;
             let body = render_markdown(&markdown);
             let html_name = md.replace(".md", ".html");
-            let page = template(title, &body, md);
+            let page = template(title, &body, md, &summarize(&markdown));
             let out = docs_dir.join(&html_name);
             fs::write(&out, page)?;
             println!("  {md:<22} -> {html_name}");
@@ -148,6 +152,148 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         docs_dir.display()
     );
     Ok(())
+}
+
+/// The page's social summary: its first real paragraph, flattened to plain text.
+///
+/// This is what a link unfurls to in a chat client or a search result, so it has
+/// to be prose — headings, badge rows, tables, code and block quotes are skipped,
+/// and inline Markdown is stripped rather than escaped.
+fn summarize(markdown: &str) -> String {
+    let mut paragraph = String::new();
+    let mut in_code = false;
+    for raw in markdown.lines() {
+        let line = raw.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_code = !in_code;
+            if !paragraph.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if in_code {
+            continue;
+        }
+        if line.is_empty() {
+            if !paragraph.is_empty() {
+                break; // the paragraph ended
+            }
+            continue;
+        }
+        // Skip everything that is not running prose.
+        let skip = line.starts_with('#')
+            || line.starts_with('>')
+            || line.starts_with('|')
+            || line.starts_with("- ")
+            || line.starts_with("* ")
+            || line.starts_with("<")
+            || line.starts_with("![")
+            || line.starts_with("---");
+        if skip {
+            if !paragraph.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if !paragraph.is_empty() {
+            paragraph.push(' ');
+        }
+        paragraph.push_str(line);
+    }
+
+    let plain = strip_inline_markdown(&paragraph);
+    truncate_words(&plain, 200)
+}
+
+/// `**bold**`, `` `code` ``, `[text](url)` and friends → the text they carry.
+fn strip_inline_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            // [label](target) and ![alt](src) keep only the label.
+            '[' => {
+                let mut depth = 1;
+                let mut j = i + 1;
+                let mut label = String::new();
+                while j < chars.len() && depth > 0 {
+                    match chars[j] {
+                        '[' => depth += 1,
+                        ']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    if depth > 0 {
+                        label.push(chars[j]);
+                    }
+                    j += 1;
+                }
+                out.push_str(&label);
+                i = j + 1;
+                // Drop the (target) that follows a link.
+                if i < chars.len() && chars[i] == '(' {
+                    while i < chars.len() && chars[i] != ')' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            '*' | '`' | '~' => i += 1,
+            '!' if i + 1 < chars.len() && chars[i + 1] == '[' => i += 1,
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    // A link label can itself hold `code` or **bold**; the label was copied
+    // verbatim above, so clear the emphasis markers in one final pass. `_` is
+    // left alone on purpose — these docs are full of snake_case identifiers.
+    let out = out.replace(['*', '`', '~'], "");
+    // Interactive pages open with a "▶ Launch … —" call to action; the sentence
+    // after the marker is the real summary. The repo uses several triangles.
+    let out = out.trim_start_matches(['▸', '▶', '▷', '►', '→', '»', '·', ' ']);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Truncate on a word boundary, preferring a sentence end when one is near.
+fn truncate_words(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max).collect();
+    if let Some(stop) = cut.rfind(". ") {
+        if stop > max * 55 / 100 {
+            return cut[..=stop].trim_end().to_string();
+        }
+    }
+    match cut.rfind(' ') {
+        Some(space) => format!("{}…", &cut[..space]),
+        None => format!("{cut}…"),
+    }
+}
+
+/// The nav section a page belongs to — the card's category chip.
+fn section_for(md: &str) -> &'static str {
+    for (section, pages) in SECTIONS {
+        if pages.iter().any(|(page, _)| *page == md) {
+            return section;
+        }
+    }
+    "Documentation"
+}
+
+/// HTML-escape for attribute values (social tags carry arbitrary prose).
+fn attr(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// Markdown → HTML body, with GitHub-flavored extensions (tables, etc.) and
@@ -252,7 +398,7 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
     }
 }
 
-fn template(title: &str, body: &str, current_md: &str) -> String {
+fn template(title: &str, body: &str, current_md: &str, summary: &str) -> String {
     let mut nav_items: Vec<String> = Vec::new();
     for (section, pages) in SECTIONS {
         nav_items.push(format!("<li class=\"nav-h\">{section}</li>"));
@@ -302,6 +448,43 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
     }
     let nav = nav_items.join("\n        ");
 
+    // Social preview. The card image is pre-rendered per page by
+    // scripts/preview/render_cards.mjs into docs/og/doc/<name>.png; the gate
+    // checks that every page's og:image actually exists.
+    let html_name = current_md.replace(".md", ".html");
+    let stem = html_name.trim_end_matches(".html");
+    let section = section_for(current_md);
+    let social_title = format!("{title} · rete docs");
+    let social_desc = if summary.is_empty() {
+        format!("{section} — the rete documentation. Cloud-native, range-queryable RDF graph files.")
+    } else {
+        summary.to_string()
+    };
+    let social = format!(
+        r#"<meta name="description" content="{desc}" />
+  <link rel="canonical" href="{base}{page}" />
+  <meta property="og:type" content="article" />
+  <meta property="og:site_name" content="rete" />
+  <meta property="og:title" content="{ogtitle}" />
+  <meta property="og:description" content="{desc}" />
+  <meta property="og:url" content="{base}{page}" />
+  <meta property="og:image" content="{base}og/doc/{stem}.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="{ogtitle}" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="{ogtitle}" />
+  <meta name="twitter:description" content="{desc}" />
+  <meta name="twitter:image" content="{base}og/doc/{stem}.png" />
+  <meta name="rete:section" content="{section}" />"#,
+        base = SITE_BASE,
+        page = html_name,
+        stem = stem,
+        section = attr(section),
+        ogtitle = attr(&social_title),
+        desc = attr(&social_desc),
+    );
+
     format!(
         r##"<!doctype html>
 <html lang="en">
@@ -310,6 +493,7 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>{title} · rete docs</title>
+  {social}
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -355,6 +539,7 @@ fn template(title: &str, body: &str, current_md: &str) -> String {
 </html>
 "##,
         title = title,
+        social = social,
         css = CSS,
         nav = nav,
         body = body,
