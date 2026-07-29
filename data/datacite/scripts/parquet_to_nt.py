@@ -79,7 +79,7 @@ def lit(s):
 
 
 def relkey(rt):
-    return re.sub(r'[^a-z]', '', (rt or "").lower())
+    return re.sub(r'[^a-z]', '', str(rt or "").lower())
 
 
 def pid_iri(pid, ptype=None):
@@ -158,8 +158,8 @@ def emit_metadata(buf, C, i):
         orcid = None
         for nid in cr.get("nameIdentifiers", []) or []:
             if isinstance(nid, dict):
-                sch = (nid.get("nameIdentifierScheme") or "").lower()
-                val = nid.get("nameIdentifier") or ""
+                sch = str(nid.get("nameIdentifierScheme") or "").lower()
+                val = str(nid.get("nameIdentifier") or "")
                 if sch == "orcid" or "orcid.org" in val.lower():
                     m = _ORCID.search(val)
                     if m:
@@ -181,31 +181,31 @@ def emit_metadata(buf, C, i):
             if an:
                 buf.append(f'<{airi}> <{D}affiliationName> "{lit(an)}" .\n')
             if isinstance(aff, dict):
-                ai = aff.get("affiliationIdentifier") or ""
+                ai = str(aff.get("affiliationIdentifier") or "")
                 if "ror.org" in ai.lower():
                     buf.append(f'<{airi}> <{D}rorId> "{lit(ai)}"^^<{XSD}anyURI> .\n')
     # related identifiers -> typed relation edges
     for rel in jload(C["related_identifiers_json"][i]) or []:
         if not isinstance(rel, dict):
             continue
-        if (rel.get("relatedIdentifierType") or "").upper() != "DOI":
+        if str(rel.get("relatedIdentifierType") or "").upper() != "DOI":
             continue
         prop = REL_PROP.get(relkey(rel.get("relationType")))
         rid = rel.get("relatedIdentifier")
         if prop and rid:
-            t(f"{D}{prop}", f"<{DOIB}{ienc(rid.strip().lower())}>")
+            t(f"{D}{prop}", f"<{DOIB}{ienc(str(rid).strip().lower())}>")
     # funding
     for fr in jload(C["funding_references_json"][i]) or []:
         if not isinstance(fr, dict):
             continue
         fname = fr.get("funderName")
-        fid = fr.get("funderIdentifier") or ""
+        fid = str(fr.get("funderIdentifier") or "")
         if "ror.org" in fid.lower():
             firi = RORB + ienc(fid.lower().split("ror.org/")[-1])
         elif fid.lower().startswith("10.") or "doi.org" in fid.lower():
             firi = DOIB + ienc(fid.lower().replace("https://doi.org/", ""))
         elif fname:
-            firi = f"{subj}/funder/{ienc(fname)[:80]}"
+            firi = f"{subj}/funder/{ienc(str(fname))[:80]}"
         else:
             continue
         t(f"{D}fundedBy", f"<{firi}>")
