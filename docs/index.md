@@ -65,6 +65,7 @@ The same engine, in your language of choice — every client opens local files
 | **Blender** — add-on (engine bundled) | Install the `rete-*.zip` from `clients/blender` | Blender ≥ 4.2; SPARQL results become 3D scenes | [Blender add-on](blender.md) |
 | **Browser, zero install** | — | any modern browser | [Playground](playground-guide.md) · [SPARQL IDE](yasgui-guide.md) |
 | **Agents** — MCP server + Claude Code plugin | `/plugin marketplace add caviri/rete` — or point any MCP client at the [gateway](https://katospiegel-rete.hf.space/mcp/) | ChatGPT, Claude, pydantic-ai, any MCP host | [Agentic interfaces](agents.md) |
+| **Agent frameworks** — the graph as tools, in process | `pip install rete-graph` + your framework | LangChain / LangGraph, Pydantic AI; local or remote graphs, no server | [LangChain & Pydantic AI](agent-frameworks.md) |
 
 ## Documentation
 

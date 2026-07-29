@@ -271,9 +271,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="neuro-showcase.html" target="_blank" rel="noopener">reconstruct in 3D →</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">query in the playground →</a></li></ul></details></li>
-        <li class="nav-h">Buildings & BIM (IFC)</li>
-        <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
@@ -291,6 +288,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="r.html">R — rete</a></li>
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html" class="active">Agents — MCP, plugin & skills</a></li>
+        <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
         <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
@@ -326,7 +324,7 @@ file), so an agent can go from "what datasets exist?" to a correct SPARQL
 query — and to validated, media-rich answers — without any out-of-band
 documentation.</p>
 <table><thead><tr><th>Surface</th><th>What it is</th><th>For</th></tr></thead><tbody>
-<tr><td><strong>MCP server</strong></td><td><code>https://katospiegel-rete.hf.space/mcp/</code> — 13 tools over the published catalog and any <code>.rete</code> URL</td><td>ChatGPT, Claude, any MCP client</td></tr>
+<tr><td><strong>MCP server</strong></td><td><code>https://katospiegel-rete.hf.space/mcp/</code> — 18 tools over the published catalog and any <code>.rete</code> URL</td><td>ChatGPT, Claude, any MCP client</td></tr>
 <tr><td><strong>Desktop extension</strong></td><td><code>rete.mcpb</code> — the whole engine as a one-click local install</td><td>Claude Desktop, incl. private graphs and offline work</td></tr>
 <tr><td><strong>Claude Code plugin</strong></td><td>this repo, installable as a plugin + marketplace</td><td>Claude Code users: MCP + skills in two commands</td></tr>
 <tr><td><strong>Skills</strong></td><td>four repo-aware playbooks under <code>skills/</code></td><td>Claude Code; also readable as human docs</td></tr>
@@ -351,7 +349,7 @@ stays observable. The server instructions teach the intended workflow
 <h3>Connect from ChatGPT</h3>
 <p>Two integration levels:</p>
 <ol>
-<li><strong>Developer mode (all 13 tools).</strong> Settings → <em>Apps &amp; Connectors</em> →
+<li><strong>Developer mode (all 18 tools).</strong> Settings → <em>Apps &amp; Connectors</em> →
 enable <em>Developer mode</em> (under advanced settings) → <em>Create</em> a
 connector: any name, MCP server URL
 <code>https://katospiegel-rete.hf.space/mcp/</code>, authentication <strong>None</strong>.
@@ -394,6 +392,11 @@ slightly per client):</p>
 }
 </code></pre>
 <h3>Programmatic agents</h3>
+<p>An agent framework can reach a graph two ways: through this MCP server, or by
+calling the <code>rete-graph</code> library <strong>in process</strong>, so the tools run against a
+local path or a URL with no server in between —
+<a href="agent-frameworks.html">LangChain &amp; Pydantic AI</a> is the tutorial for both,
+with runnable scripts.</p>
 <p>Verified with <a href="https://ai.pydantic.dev">pydantic-ai</a> (2.x) — the full
 tool loop over this server:</p>
 <pre><code class="language-python">from pydantic_ai import Agent
@@ -467,7 +470,7 @@ granted, compared on real paths so a symlink cannot escape. See
 </code></pre>
 <p>Installing wires up, in one step:</p>
 <ul>
-<li>the <strong>MCP server</strong> above (13 tools available in every session), and</li>
+<li>the <strong>MCP server</strong> above (18 tools available in every session), and</li>
 <li>the four <strong>skills</strong>, namespaced as <code>/rete-graph:&lt;skill&gt;</code>.</li>
 </ul>
 <p>Versioning follows git — every push to <code>main</code> is a new plugin version, so
