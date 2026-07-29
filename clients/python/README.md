@@ -21,7 +21,9 @@ Wheels cover Linux (x86_64/aarch64), macOS, Windows — and, from 0.2.0,
 graphs are queried over sync-XHR range requests, no server anywhere.
 
 A runnable tour with captured outputs lives in
-[`examples/tutorial.ipynb`](examples/tutorial.ipynb).
+[`examples/tutorial.ipynb`](examples/tutorial.ipynb), and
+[`examples/agents/`](examples/agents) turns a graph into agent tools for
+LangChain and Pydantic AI.
 
 ## Use
 
