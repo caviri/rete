@@ -636,6 +636,13 @@ runnable example (notebook or equivalent) executed in CI or Docker.</li>
 python scripts/check_docs_links.py
 </code></pre>
 <p>CI re-renders and diff-checks <code>docs/</code>, so commit the regenerated HTML.</p>
+<p>A new page also needs its social card, which is rendered from the tags docgen
+just wrote into it:</p>
+<pre><code class="language-sh">scripts/preview/run.sh build
+</code></pre>
+<p>That covers the whole preview tree (<code>docs/og</code>, <code>docs/q</code>, <code>docs/d</code>); the G0 gate
+check fails on a page whose <code>og:image</code> does not exist. See
+<code>scripts/preview/README.md</code>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

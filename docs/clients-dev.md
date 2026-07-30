@@ -341,3 +341,14 @@ python scripts/check_docs_links.py
 ```
 
 CI re-renders and diff-checks `docs/`, so commit the regenerated HTML.
+
+A new page also needs its social card, which is rendered from the tags docgen
+just wrote into it:
+
+```sh
+scripts/preview/run.sh build
+```
+
+That covers the whole preview tree (`docs/og`, `docs/q`, `docs/d`); the G0 gate
+check fails on a page whose `og:image` does not exist. See
+`scripts/preview/README.md`.
