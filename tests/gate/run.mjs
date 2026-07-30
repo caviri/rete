@@ -38,11 +38,15 @@ function g0() {
       encoding: "utf8",
     });
     const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
     record(
       "G0",
-      "catalog exhaustive matrix (483 queries)",
-      verdict && verdict.verdict === "PASS",
-      verdict && verdict.verdict === "PASS" ? "" : out.slice(-160),
+      // Count from the run, not from a literal: a hard-coded label goes stale
+      // the first time someone adds an example, and then says the wrong number
+      // on every green run.
+      `catalog exhaustive matrix${ok ? ` (${verdict.allQueries} queries)` : ""}`,
+      ok,
+      ok ? "" : out.slice(-160),
     );
   } catch (e) {
     record("G0", "catalog exhaustive matrix", false, String(e.stderr || e.stdout || e).slice(-160));
