@@ -12,7 +12,7 @@ assert.throws(() => normalizeCatalogScope("remote"), /embedded.*all/);
 const all = catalogCases("all");
 const embedded = catalogCases("embedded");
 
-assert.equal(all.length, 627, "every catalog query must be in the exhaustive matrix");
+assert.equal(all.length, 637, "every catalog query must be in the exhaustive matrix");
 assert.equal(embedded.length, 69, "the deterministic tier must cover every embedded query");
 assert.equal(new Set(all.map((entry) => entry.id)).size, all.length, "case ids must be unique");
 assert.ok(all.every((entry) => entry.query.trim()), "every case must carry executable SPARQL");
@@ -20,7 +20,7 @@ assert.ok(all.every((entry) => Number.isInteger(entry.index)), "every case needs
 
 const allGroups = catalogDatasetGroups("all");
 const embeddedGroups = catalogDatasetGroups("embedded");
-assert.equal(allGroups.length, 90, "the exhaustive tier must cover every dataset");
+assert.equal(allGroups.length, 91, "the exhaustive tier must cover every dataset");
 assert.equal(embeddedGroups.length, 10, "the deterministic tier must cover every embedded dataset");
 assert.deepEqual(
   allGroups.flatMap((group) => group.cases.map((entry) => entry.id)),

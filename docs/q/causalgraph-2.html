@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>Downstream effects of injection pressure — causalgraph</title>
+<meta name="description" content="Answer: 3 rows in 2.0 ms. Everything injection pressure directly causes - mould fill (0.92, +2s), the short-shot defect (0.80, +2s) and part warpage (0.60, +25s). Runs live in your browser over causalgraph (315 triples · 57 KB) — no server." />
+<link rel="canonical" href="https://caviri.github.io/rete/q/causalgraph-2.html" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="rete" />
+<meta property="og:title" content="Downstream effects of injection pressure — causalgraph" />
+<meta property="og:description" content="Answer: 3 rows in 2.0 ms. Everything injection pressure directly causes - mould fill (0.92, +2s), the short-shot defect (0.80, +2s) and part warpage (0.60, +25s). Runs live in your browser over causalgraph (315 triples · 57 KB) — no server." />
+<meta property="og:url" content="https://caviri.github.io/rete/q/causalgraph-2.html" />
+<meta property="og:image" content="https://caviri.github.io/rete/og/q/causalgraph-2.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Downstream effects of injection pressure — causalgraph" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Downstream effects of injection pressure — causalgraph" />
+<meta name="twitter:description" content="Answer: 3 rows in 2.0 ms. Everything injection pressure directly causes - mould fill (0.92, +2s), the short-shot defect (0.80, +2s) and part warpage (0.60, +25s). Runs live in your browser over causalgraph (315 triples · 57 KB) — no server." />
+<meta name="twitter:image" content="https://caviri.github.io/rete/og/q/causalgraph-2.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Downstream effects of injection pressure","description":"Answer: 3 rows in 2.0 ms. Everything injection pressure directly causes - mould fill (0.92, +2s), the short-shot defect (0.80, +2s) and part warpage (0.60, +25s). Runs live in your browser over causalgraph (315 triples · 57 KB) — no server.","url":"https://caviri.github.io/rete/q/causalgraph-2.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"causalgraph","url":"https://caviri.github.io/rete/d/causalgraph.html"}}</script>
+<link rel="stylesheet" href="../preview.css" />
+<script>
+(function(){
+  try{
+    if(/[?&]stay=1\b/.test(location.search)) return;
+    location.replace("../playground.html#dataset=causalgraph&load=lazy&mode=sparql&ex=2");
+  }catch(e){}
+})();</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage"><div class="card">
+    <svg class="net" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+  <g stroke="#147d69" stroke-width="1.1">
+    <path d="M30 40 L100 20 L170 55 L150 130 L70 160 L20 110 Z"/>
+    <path d="M100 20 L70 160 M30 40 L150 130 M170 55 L20 110 M100 20 L20 110 M30 40 L70 160"/>
+    <path d="M100 90 L30 40 M100 90 L170 55 M100 90 L150 130 M100 90 L70 160 M100 90 L20 110 M100 90 L100 20"/>
+  </g>
+  <g fill="#0b4f42">
+    <circle cx="30" cy="40" r="5"/><circle cx="100" cy="20" r="5"/><circle cx="170" cy="55" r="5"/><circle cx="150" cy="130" r="5"/><circle cx="70" cy="160" r="5"/><circle cx="20" cy="110" r="5"/><circle cx="100" cy="90" r="7"/>
+  </g>
+</svg>
+    <div class="head">
+      <div class="brand"><b>rete</b><span>playground</span></div>
+      <div class="chip">Path</div>
+    </div>
+    <h1 class="title s1">Downstream effects of injection pressure</h1>
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Effect</th><th>Confidence</th><th>Time Lag</th></tr></thead><tbody><tr><td class="">Mould fill level</td><td class="num">0.92</td><td class="num">2</td></tr><tr><td class="">Short-shot defect</td><td class="num">0.8</td><td class="num">2</td></tr><tr><td class="">Part warpage</td><td class="num">0.6</td><td class="num">25</td></tr></tbody></table></div></div><aside class="rail">
+      <div class="icon">⛓️</div>
+      <div class="key">causalgraph</div>
+      <div class="facts"><b>315</b> triples · 57 KB<br />remote · HTTP range</div>
+      <div class="answer"><div class="big">3 rows</div>
+        <div class="sub">answered in 2.0 ms</div>
+        </div>
+    </aside></div>
+    <div class="foot">
+      <div class="cta">Run this query in your browser — <b>no server, no download</b></div>
+      <div class="url">caviri.github.io/rete</div>
+    </div>
+  </div></div>
+  <div class="actions">
+    <a class="go" href="../playground.html#dataset=causalgraph&amp;load=lazy&amp;mode=sparql&amp;ex=2">Run this query in the playground →</a>
+    <span class="alt">3 rows · 2.0 ms · no server, no download — the query runs in your browser.</span>
+  </div>
+  <div class="q"><h2>The query</h2>PREFIX cg: &lt;http://iwu.fraunhofer.de/causalgraph#&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+SELECT ?effect ?confidence ?timeLag WHERE {
+  ?cause rdfs:label &quot;Injection pressure&quot; .
+  ?e cg:hasCause ?cause ; cg:hasEffect ?f ; cg:hasConfidence ?confidence ; cg:hasTimeLag ?timeLag .
+  ?f rdfs:label ?effect .
+} ORDER BY DESC(?confidence)</div>
+  <p class="alt" style="margin-top:20px">
+    <a href="../playground.html">rete playground</a> ·
+    <a href="../index.html">documentation</a> ·
+    <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
+  </p>
+</div>
+<script>
+(function(){
+  var stage=document.querySelector(".stage"),wrap=document.querySelector(".wrap");
+  if(!stage||!wrap) return;
+  function fit(){
+    var s=Math.min(1,wrap.clientWidth/1200);
+    stage.style.transform="scale("+s+")";
+    stage.style.marginBottom=(630*s-630)+"px";
+  }
+  fit(); addEventListener("resize",fit);
+})();</script>
+</body>
+</html>

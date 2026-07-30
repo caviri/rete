@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>What&#39;s in this dance graph — dance</title>
+<meta name="description" content="Answer: 4 rows in 10 ms. The shape of the graph: 18 dancers in 9 pairs, 72 recorded salsa performances, and 2,920 annotated 8-count move segments. Runs live in your browser over dance (41,666 triples · 531 KB) — no server." />
+<link rel="canonical" href="https://caviri.github.io/rete/q/dance-3.html" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="rete" />
+<meta property="og:title" content="What&#39;s in this dance graph — dance" />
+<meta property="og:description" content="Answer: 4 rows in 10 ms. The shape of the graph: 18 dancers in 9 pairs, 72 recorded salsa performances, and 2,920 annotated 8-count move segments. Runs live in your browser over dance (41,666 triples · 531 KB) — no server." />
+<meta property="og:url" content="https://caviri.github.io/rete/q/dance-3.html" />
+<meta property="og:image" content="https://caviri.github.io/rete/og/q/dance-3.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="What&#39;s in this dance graph — dance" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="What&#39;s in this dance graph — dance" />
+<meta name="twitter:description" content="Answer: 4 rows in 10 ms. The shape of the graph: 18 dancers in 9 pairs, 72 recorded salsa performances, and 2,920 annotated 8-count move segments. Runs live in your browser over dance (41,666 triples · 531 KB) — no server." />
+<meta name="twitter:image" content="https://caviri.github.io/rete/og/q/dance-3.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"What's in this dance graph","description":"Answer: 4 rows in 10 ms. The shape of the graph: 18 dancers in 9 pairs, 72 recorded salsa performances, and 2,920 annotated 8-count move segments. Runs live in your browser over dance (41,666 triples · 531 KB) — no server.","url":"https://caviri.github.io/rete/q/dance-3.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"dance","url":"https://caviri.github.io/rete/d/dance.html"}}</script>
+<link rel="stylesheet" href="../preview.css" />
+<script>
+(function(){
+  try{
+    if(/[?&]stay=1\b/.test(location.search)) return;
+    location.replace("../playground.html#dataset=dance&load=lazy&mode=sparql&ex=3");
+  }catch(e){}
+})();</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage"><div class="card">
+    <svg class="net" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+  <g stroke="#147d69" stroke-width="1.1">
+    <path d="M30 40 L100 20 L170 55 L150 130 L70 160 L20 110 Z"/>
+    <path d="M100 20 L70 160 M30 40 L150 130 M170 55 L20 110 M100 20 L20 110 M30 40 L70 160"/>
+    <path d="M100 90 L30 40 M100 90 L170 55 M100 90 L150 130 M100 90 L70 160 M100 90 L20 110 M100 90 L100 20"/>
+  </g>
+  <g fill="#0b4f42">
+    <circle cx="30" cy="40" r="5"/><circle cx="100" cy="20" r="5"/><circle cx="170" cy="55" r="5"/><circle cx="150" cy="130" r="5"/><circle cx="70" cy="160" r="5"/><circle cx="20" cy="110" r="5"/><circle cx="100" cy="90" r="7"/>
+  </g>
+</svg>
+    <div class="head">
+      <div class="brand"><b>rete</b><span>playground</span></div>
+      <div class="chip">Summary</div>
+    </div>
+    <h1 class="title s1">What&#39;s in this dance graph</h1>
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody><tr><td class="">dancers</td><td class="num">18</td></tr><tr><td class="">pairs</td><td class="num">9</td></tr><tr><td class="">performances</td><td class="num">72</td></tr><tr><td class="">move segments</td><td class="num">2920</td></tr></tbody></table></div></div><aside class="rail">
+      <div class="icon">💃</div>
+      <div class="key">dance</div>
+      <div class="facts"><b>41,666</b> triples · 531 KB<br />remote · HTTP range</div>
+      <div class="answer"><div class="big">4 rows</div>
+        <div class="sub">answered in 10 ms</div>
+        </div>
+    </aside></div>
+    <div class="foot">
+      <div class="cta">Run this query in your browser — <b>no server, no download</b></div>
+      <div class="url">caviri.github.io/rete</div>
+    </div>
+  </div></div>
+  <div class="actions">
+    <a class="go" href="../playground.html#dataset=dance&amp;load=lazy&amp;mode=sparql&amp;ex=3">Run this query in the playground →</a>
+    <span class="alt">4 rows · 10 ms · no server, no download — the query runs in your browser.</span>
+  </div>
+  <div class="q"><h2>The query</h2>PREFIX dance: &lt;https://w3id.org/rete/dance#&gt;
+SELECT ?metric ?n WHERE {
+  { SELECT (&quot;dancers&quot; AS ?metric) (COUNT(?d) AS ?n) WHERE { ?d a dance:Dancer } }
+  UNION { SELECT (&quot;pairs&quot; AS ?metric) (COUNT(?p) AS ?n) WHERE { ?p a dance:Pair } }
+  UNION { SELECT (&quot;performances&quot; AS ?metric) (COUNT(?pf) AS ?n) WHERE { ?pf a dance:Performance } }
+  UNION { SELECT (&quot;move segments&quot; AS ?metric) (COUNT(?s) AS ?n) WHERE { ?x dance:hasSegment ?s } }
+}</div>
+  <p class="alt" style="margin-top:20px">
+    <a href="../playground.html">rete playground</a> ·
+    <a href="../index.html">documentation</a> ·
+    <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
+  </p>
+</div>
+<script>
+(function(){
+  var stage=document.querySelector(".stage"),wrap=document.querySelector(".wrap");
+  if(!stage||!wrap) return;
+  function fit(){
+    var s=Math.min(1,wrap.clientWidth/1200);
+    stage.style.transform="scale("+s+")";
+    stage.style.marginBottom=(630*s-630)+"px";
+  }
+  fit(); addEventListener("resize",fit);
+})();</script>
+</body>
+</html>

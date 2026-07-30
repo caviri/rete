@@ -1878,13 +1878,17 @@ self.onmessage = function (e) {
     $$("#examples [data-example]").forEach((btn) => {
       btn.onclick = () => selectExample(Number(btn.dataset.example));
     });
-    // Copy a short, index-based share link (#dataset=…&ex=N) for any example.
+    // Copy a share link for any example: the generated preview page when the
+    // dataset has one (so the link unfurls with the question and its answer —
+    // see shareableUrl), else the short index-based deep link.
     $$("#examples [data-copy]").forEach((btn) => {
       btn.onclick = (e) => {
         e.stopPropagation();
         const i = Number(btn.dataset.copy);
-        const url = location.origin + location.pathname + "#dataset=" +
-          encodeURIComponent(state.dataset) + "&ex=" + i;
+        const url = hasSharePage(state.dataset)
+          ? sharePageUrl(`q/${state.dataset}-${i}.html`)
+          : location.origin + location.pathname + "#dataset=" +
+            encodeURIComponent(state.dataset) + "&ex=" + i;
         copyToClipboard(url).then((done) => {
           if (done) {
             btn.textContent = "✓"; btn.title = "Copied!";
@@ -8899,9 +8903,42 @@ self.onmessage = function (e) {
     return new URLSearchParams(location.hash.replace(/^#/, ""));
   }
 
+  // ---- shareable links -------------------------------------------------------
+  // This page keeps its whole state in the URL fragment, and a fragment is never
+  // sent to a server — no crawler ever sees which dataset or which example a
+  // link points at, so every deep link unfurls in chat, in a feed or in search
+  // as the same generic playground card.
+  //
+  // So the catalog's examples and datasets each get a generated page (docs/q/…,
+  // docs/d/…, built by scripts/preview/) carrying their own Open Graph tags and
+  // a pre-rendered card that shows the question, the dataset and the real
+  // answer — and forwarding straight back here. Sharing hands out that page.
+  // Anything ad-hoc — an edited query, a live endpoint, a graph the visitor
+  // built in this browser — has no such page and shares the deep link as before.
+  function hasSharePage(ds) {
+    return !!datasetInfo(ds) && !userBytes.has(ds);
+  }
+
+  function sharePageUrl(rel) {
+    return new URL(rel, location.href).href;
+  }
+
+  function shareableUrl() {
+    const deep = location.href;
+    try {
+      if (state.liveEndpoint || !hasSharePage(state.dataset)) return deep;
+      const params = readHash();
+      if (params.get("q")) return deep;         // an ad-hoc or edited query
+      const ex = params.get("ex");
+      return sharePageUrl(ex ? `q/${state.dataset}-${ex}.html` : `d/${state.dataset}.html`);
+    } catch (e) {
+      return deep;
+    }
+  }
+
   async function shareUrl() {
     updateHash();
-    const url = location.href;
+    const url = shareableUrl();
     const ok = await copyToClipboard(url);
     const b = $("shareBtn");
     if (ok) {

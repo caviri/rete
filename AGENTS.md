@@ -67,6 +67,11 @@ docker compose run --rm dev uv run python scripts/build_playground.py
 - `docs/playground.html` is generated separately with
   `uv run python scripts/build_playground.py` from `web/playground.template.html`,
   `web/playground-src/*`, the no-modules WASM package, and staged datasets.
+- Social previews (Open Graph tags, card images, the `docs/q` + `docs/d` share
+  pages) are generated — see `scripts/preview/README.md`. `docgen` writes the
+  tags for the pages it renders; after adding a catalog example or a dataset,
+  run `scripts/preview/run.sh capture --dataset=<key>` then
+  `scripts/preview/run.sh build`. The G0 gate fails on a missing card or page.
 - Keep documentation critical and current. If source code and docs disagree,
   trust the code and tests first, then update the prose.
 - Prefer precise claims over marketing language. Preserve caveats around v0 file

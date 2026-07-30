@@ -5,6 +5,27 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **Shared links now preview.** The playground keeps its state in the URL
+  fragment, which no unfurler or search crawler can see, so every deep link used
+  to preview as the same anonymous card. Each catalog example now has a page of
+  its own at `q/<dataset>-<n>.html` (each dataset at `d/<dataset>.html`) carrying
+  Open Graph / Twitter tags and a pre-rendered 1200×630 card — the question, the
+  dataset, and **the answer that query really returns** — which then forwards to
+  the playground deep link it describes. 🔗 and **Share** hand out those URLs;
+  ad-hoc queries still share the deep link. Browse them at `shared.html`.
+  The card numbers are measured, not written: `scripts/preview/capture.mjs` runs
+  all 637 examples over the 91 published graphs in a real browser and records
+  each result, its timing and its range-read cost.
+- **Every documentation and application page carries social tags.** `docgen`
+  derives each page's description from its own opening paragraph and emits the
+  tags plus a rendered card; `scripts/preview/inject_og.mjs` does the same for
+  the pre-built apps (playground, yasgui, atlas, the 3D viewers …) and patches
+  their `web/*.template.html`, so a rebuild keeps them. Dataset pages also carry
+  schema.org `Dataset` JSON-LD. A new G0 gate check fails if any share page,
+  card image or tag goes missing.
+
 ## [0.3.0] - 2026-07-22
 
 First release to crates.io, published as `rete-core`, `rete-cli`, and

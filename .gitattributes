@@ -52,3 +52,12 @@ Dockerfile   text eol=lf
 # Lockfile is committed and machine-generated; keep it out of language stats and
 # review diffs by default.
 Cargo.lock linguist-generated=true
+
+# Generated social previews (scripts/preview/): review them as build artifacts,
+# not as source — they are regenerated wholesale, never hand-edited.
+docs/q/**                linguist-generated=true
+docs/d/**                linguist-generated=true
+docs/og/**               linguist-generated=true
+docs/shared.html         linguist-generated=true
+docs/preview.css         linguist-generated=true
+web/preview/answers.json linguist-generated=true

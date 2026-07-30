@@ -1,6 +1,24 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <!-- og:start (scripts/preview/inject_og.mjs) -->
+  <meta name="description" content="Launch the playground — one static HTML page that runs the full rete engine in WebAssembly. No server, no account, no install: it works offline, even opened from file://." />
+  <link rel="canonical" href="https://caviri.github.io/rete/playground.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="rete" />
+  <meta property="og:title" content="rete playground — query knowledge graphs in your browser" />
+  <meta property="og:description" content="Launch the playground — one static HTML page that runs the full rete engine in WebAssembly. No server, no account, no install: it works offline, even opened from file://." />
+  <meta property="og:url" content="https://caviri.github.io/rete/playground.html" />
+  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/playground.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="rete playground — query knowledge graphs in your browser" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="rete playground — query knowledge graphs in your browser" />
+  <meta name="twitter:description" content="Launch the playground — one static HTML page that runs the full rete engine in WebAssembly. No server, no account, no install: it works offline, even opened from file://." />
+  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/playground.png" />
+  <meta name="rete:section" content="Explore in the browser" />
+  <!-- og:end -->
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
@@ -7914,7 +7932,7 @@ window.RETE_PLAYGROUND_CATALOG = {
        "q": "PREFIX neuro: <https://w3id.org/rete/neuro#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?pre ?nt ?post ?w WHERE {\n  << ?a neuro:connectsTo ?b >> neuro:weight ?w .\n  ?a rdfs:label ?pre ; neuro:neurotransmitter/rdfs:label ?nt .\n  ?b rdfs:label ?post .\n} ORDER BY DESC(?w) LIMIT 15"},
       {"family": "Aggregate", "label": "Neurons by predicted neurotransmitter", "view": "table", "cols": {"nt": "Neurotransmitter", "neurons": "Neurons"},
        "tip": "Every hemibrain neuron carries a predicted neurotransmitter (the FlyEM classifier's top class over GABA / acetylcholine / glutamate / dopamine / serotonin / octopamine).\nIn this mushroom-body cluster acetylcholine and GABA lead — the excitatory Kenyon-cell / feedback-inhibition balance the circuit is known for.",
-       "q": "PREFIX neuro: <https://w3id.org/rete/neuro#>\nSELECT ?nt (COUNT(?n) AS ?neurons) WHERE {\n  ?n a neuro:Neuron ; neuro:neurotransmitter/rdfs:label ?nt .\n} GROUP BY ?nt ORDER BY DESC(?neurons)"},
+       "q": "PREFIX neuro: <https://w3id.org/rete/neuro#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?nt (COUNT(?n) AS ?neurons) WHERE {\n  ?n a neuro:Neuron ; neuro:neurotransmitter/rdfs:label ?nt .\n} GROUP BY ?nt ORDER BY DESC(?neurons)"},
       {"family": "Construct", "label": "The connectome cluster as a network", "view": "graph",
        "tip": "Switch Output to Graph. Each neuron becomes a node and every synaptic connection an edge, so the mushroom-body wiring draws itself — the DPM/APL hubs sit in the middle with the MBON and projection neurons around them.\nEdges here are the plain neuro:connectsTo shortcut (the per-edge synapse weight lives on the RDF-star annotation, see the synapse example).",
        "q": "PREFIX neuro: <https://w3id.org/rete/neuro#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nCONSTRUCT { ?a neuro:connectsTo ?b . ?a rdfs:label ?la . ?b rdfs:label ?lb }\nWHERE {\n  ?a neuro:connectsTo ?b . ?a rdfs:label ?la . ?b rdfs:label ?lb .\n} LIMIT 200"}],
@@ -14012,13 +14030,17 @@ self.onmessage = function (e) {
     $$("#examples [data-example]").forEach((btn) => {
       btn.onclick = () => selectExample(Number(btn.dataset.example));
     });
-    // Copy a short, index-based share link (#dataset=…&ex=N) for any example.
+    // Copy a share link for any example: the generated preview page when the
+    // dataset has one (so the link unfurls with the question and its answer —
+    // see shareableUrl), else the short index-based deep link.
     $$("#examples [data-copy]").forEach((btn) => {
       btn.onclick = (e) => {
         e.stopPropagation();
         const i = Number(btn.dataset.copy);
-        const url = location.origin + location.pathname + "#dataset=" +
-          encodeURIComponent(state.dataset) + "&ex=" + i;
+        const url = hasSharePage(state.dataset)
+          ? sharePageUrl(`q/${state.dataset}-${i}.html`)
+          : location.origin + location.pathname + "#dataset=" +
+            encodeURIComponent(state.dataset) + "&ex=" + i;
         copyToClipboard(url).then((done) => {
           if (done) {
             btn.textContent = "✓"; btn.title = "Copied!";
@@ -21033,9 +21055,42 @@ self.onmessage = function (e) {
     return new URLSearchParams(location.hash.replace(/^#/, ""));
   }
 
+  // ---- shareable links -------------------------------------------------------
+  // This page keeps its whole state in the URL fragment, and a fragment is never
+  // sent to a server — no crawler ever sees which dataset or which example a
+  // link points at, so every deep link unfurls in chat, in a feed or in search
+  // as the same generic playground card.
+  //
+  // So the catalog's examples and datasets each get a generated page (docs/q/…,
+  // docs/d/…, built by scripts/preview/) carrying their own Open Graph tags and
+  // a pre-rendered card that shows the question, the dataset and the real
+  // answer — and forwarding straight back here. Sharing hands out that page.
+  // Anything ad-hoc — an edited query, a live endpoint, a graph the visitor
+  // built in this browser — has no such page and shares the deep link as before.
+  function hasSharePage(ds) {
+    return !!datasetInfo(ds) && !userBytes.has(ds);
+  }
+
+  function sharePageUrl(rel) {
+    return new URL(rel, location.href).href;
+  }
+
+  function shareableUrl() {
+    const deep = location.href;
+    try {
+      if (state.liveEndpoint || !hasSharePage(state.dataset)) return deep;
+      const params = readHash();
+      if (params.get("q")) return deep;         // an ad-hoc or edited query
+      const ex = params.get("ex");
+      return sharePageUrl(ex ? `q/${state.dataset}-${ex}.html` : `d/${state.dataset}.html`);
+    } catch (e) {
+      return deep;
+    }
+  }
+
   async function shareUrl() {
     updateHash();
-    const url = location.href;
+    const url = shareableUrl();
     const ok = await copyToClipboard(url);
     const b = $("shareBtn");
     if (ok) {

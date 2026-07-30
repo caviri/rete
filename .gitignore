@@ -76,3 +76,9 @@ target-wasm/
 tests/gate/.cache/
 tests/gate/.playwright/
 tests/gate/node_modules/
+
+# Social-preview pipeline: the append-only capture cache (raw JSONL + the result
+# thumbnails it screenshots). The reviewable output — web/preview/answers.json,
+# docs/og/, docs/q/, docs/d/ — is committed; regenerate the cache with
+# scripts/preview/run.sh capture.
+/web/preview/.cache/

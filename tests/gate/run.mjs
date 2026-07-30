@@ -38,11 +38,15 @@ function g0() {
       encoding: "utf8",
     });
     const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
     record(
       "G0",
-      "catalog exhaustive matrix (483 queries)",
-      verdict && verdict.verdict === "PASS",
-      verdict && verdict.verdict === "PASS" ? "" : out.slice(-160),
+      // Count from the run, not from a literal: a hard-coded label goes stale
+      // the first time someone adds an example, and then says the wrong number
+      // on every green run.
+      `catalog exhaustive matrix${ok ? ` (${verdict.allQueries} queries)` : ""}`,
+      ok,
+      ok ? "" : out.slice(-160),
     );
   } catch (e) {
     record("G0", "catalog exhaustive matrix", false, String(e.stderr || e.stdout || e).slice(-160));
@@ -65,6 +69,23 @@ function g0() {
       false,
       String(e.stderr || e.stdout || e).slice(-160),
     );
+  }
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_social_previews.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "social previews (share pages + og:image)",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS"
+        ? `${verdict.sharePages} share pages, ${verdict.pagesWithPreview} pages with a card`
+        : out.slice(-200),
+    );
+  } catch (e) {
+    record("G0", "social previews (share pages + og:image)", false,
+      String(e.stderr || e.stdout || e).slice(-200));
   }
   for (const f of ["web/playground-src/app.js", "web/playground-src/catalog.js", "web/playground-src/versions.js"]) {
     try { execSync(`node --check ${ROOT}/${f}`, { stdio: "pipe" }); record("G0", `parse ${f}`, true); }

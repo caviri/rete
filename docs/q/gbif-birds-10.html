@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>🗺️ Map the raptors: where are the Accipitridae? — gbif-birds</title>
+<meta name="description" content="A taxonomy-driven map: all occurrences whose species is (transitively) in the hawk-and-eagle family Accipitridae — hitting the pyramid&#39;s Family… Runs live in your browser over gbif-birds (334 M triples · 1.53 GB) — no server." />
+<link rel="canonical" href="https://caviri.github.io/rete/q/gbif-birds-10.html" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="rete" />
+<meta property="og:title" content="🗺️ Map the raptors: where are the Accipitridae? — gbif-birds" />
+<meta property="og:description" content="A taxonomy-driven map: all occurrences whose species is (transitively) in the hawk-and-eagle family Accipitridae — hitting the pyramid&#39;s Family… Runs live in your browser over gbif-birds (334 M triples · 1.53 GB) — no server." />
+<meta property="og:url" content="https://caviri.github.io/rete/q/gbif-birds-10.html" />
+<meta property="og:image" content="https://caviri.github.io/rete/og/q/gbif-birds-10.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="🗺️ Map the raptors: where are the Accipitridae? — gbif-birds" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="🗺️ Map the raptors: where are the Accipitridae? — gbif-birds" />
+<meta name="twitter:description" content="A taxonomy-driven map: all occurrences whose species is (transitively) in the hawk-and-eagle family Accipitridae — hitting the pyramid&#39;s Family… Runs live in your browser over gbif-birds (334 M triples · 1.53 GB) — no server." />
+<meta name="twitter:image" content="https://caviri.github.io/rete/og/q/gbif-birds-10.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"🗺️ Map the raptors: where are the Accipitridae?","description":"A taxonomy-driven map: all occurrences whose species is (transitively) in the hawk-and-eagle family Accipitridae — hitting the pyramid's Family… Runs live in your browser over gbif-birds (334 M triples · 1.53 GB) — no server.","url":"https://caviri.github.io/rete/q/gbif-birds-10.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"gbif-birds","url":"https://caviri.github.io/rete/d/gbif-birds.html"}}</script>
+<link rel="stylesheet" href="../preview.css" />
+<script>
+(function(){
+  try{
+    if(/[?&]stay=1\b/.test(location.search)) return;
+    location.replace("../playground.html#dataset=gbif-birds&load=lazy&mode=sparql&ex=10");
+  }catch(e){}
+})();</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage"><div class="card">
+    <svg class="net" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+  <g stroke="#147d69" stroke-width="1.1">
+    <path d="M30 40 L100 20 L170 55 L150 130 L70 160 L20 110 Z"/>
+    <path d="M100 20 L70 160 M30 40 L150 130 M170 55 L20 110 M100 20 L20 110 M30 40 L70 160"/>
+    <path d="M100 90 L30 40 M100 90 L170 55 M100 90 L150 130 M100 90 L70 160 M100 90 L20 110 M100 90 L100 20"/>
+  </g>
+  <g fill="#0b4f42">
+    <circle cx="30" cy="40" r="5"/><circle cx="100" cy="20" r="5"/><circle cx="170" cy="55" r="5"/><circle cx="150" cy="130" r="5"/><circle cx="70" cy="160" r="5"/><circle cx="20" cy="110" r="5"/><circle cx="100" cy="90" r="7"/>
+  </g>
+</svg>
+    <div class="head">
+      <div class="brand"><b>rete</b><span>playground</span></div>
+      <div class="chip">Select</div>
+    </div>
+    <h1 class="title s2">🗺️ Map the raptors: where are the Accipitridae?</h1>
+    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?wkt</span> <span class="kw">WHERE</span> {
+  <span class="v">?sp</span> rdfs:subClassOf+ &lt;https://w3id.org/rete/gbif/taxon/…
+  <span class="v">?o</span> a <span class="v">?sp</span> ; geo:asWKT <span class="v">?wkt</span> .
+} <span class="kw">LIMIT</span> 3000</pre></div></div><aside class="rail">
+      <div class="icon">🐦</div>
+      <div class="key">gbif-birds</div>
+      <div class="facts"><b>334 M</b> triples · 1.53 GB<br />remote · HTTP range</div>
+      
+    </aside></div>
+    <div class="foot">
+      <div class="cta">Run this query in your browser — <b>no server, no download</b></div>
+      <div class="url">caviri.github.io/rete</div>
+    </div>
+  </div></div>
+  <div class="actions">
+    <a class="go" href="../playground.html#dataset=gbif-birds&amp;load=lazy&amp;mode=sparql&amp;ex=10">Run this query in the playground →</a>
+    <span class="alt">no server, no download — the query runs in your browser.</span>
+  </div>
+  <div class="q"><h2>The query</h2>PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+PREFIX geo: &lt;http://www.opengis.net/ont/geosparql#&gt;
+SELECT ?wkt WHERE {
+  ?sp rdfs:subClassOf+ &lt;https://w3id.org/rete/gbif/taxon/family/Accipitridae&gt; .
+  ?o a ?sp ; geo:asWKT ?wkt .
+} LIMIT 3000</div>
+  <p class="alt" style="margin-top:20px">
+    <a href="../playground.html">rete playground</a> ·
+    <a href="../index.html">documentation</a> ·
+    <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>
+  </p>
+</div>
+<script>
+(function(){
+  var stage=document.querySelector(".stage"),wrap=document.querySelector(".wrap");
+  if(!stage||!wrap) return;
+  function fit(){
+    var s=Math.min(1,wrap.clientWidth/1200);
+    stage.style.transform="scale("+s+")";
+    stage.style.marginBottom=(630*s-630)+"px";
+  }
+  fit(); addEventListener("resize",fit);
+})();</script>
+</body>
+</html>
