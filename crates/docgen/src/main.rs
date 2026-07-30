@@ -123,6 +123,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("docs dir not found: {}", docs_dir.display()).into());
     }
 
+    // Nav entries whose source is absent, collected BEFORE rendering: every page
+    // shares one nav, so a page that cannot be rendered must not be linked from
+    // any of them.
+    let missing: Vec<&str> = SECTIONS
+        .iter()
+        .flat_map(|(_, pages)| pages.iter())
+        .filter(|(page, _)| page.ends_with(".md") && !docs_dir.join(page).exists())
+        .map(|(page, _)| *page)
+        .collect();
+    for page in &missing {
+        eprintln!("warning: {page} is listed in nav but missing — skipping it and its nav entry");
+    }
+
     let mut rendered = 0;
     for (_, pages) in SECTIONS {
         for (md, title) in *pages {
@@ -131,16 +144,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let src = docs_dir.join(md);
             if !src.exists() {
-                eprintln!(
-                    "warning: {} listed in nav but missing — skipping",
-                    src.display()
-                );
-                continue;
+                continue; // already reported above
             }
             let markdown = fs::read_to_string(&src)?;
             let body = render_markdown(&markdown);
             let html_name = md.replace(".md", ".html");
-            let page = template(title, &body, md, &summarize(&markdown));
+            let page = template(title, &body, md, &summarize(&markdown), &missing);
             let out = docs_dir.join(&html_name);
             fs::write(&out, page)?;
             println!("  {md:<22} -> {html_name}");
@@ -398,11 +407,24 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
     }
 }
 
-fn template(title: &str, body: &str, current_md: &str, summary: &str) -> String {
+fn template(
+    title: &str,
+    body: &str,
+    current_md: &str,
+    summary: &str,
+    missing: &[&str],
+) -> String {
     let mut nav_items: Vec<String> = Vec::new();
     for (section, pages) in SECTIONS {
         nav_items.push(format!("<li class=\"nav-h\">{section}</li>"));
         for (md, t) in *pages {
+            // A nav entry for a page this run did not produce would be a link to
+            // nothing on all 50 pages — the exact breakage `check_docs_links.py`
+            // reports. Listing a `.md` in SECTIONS before committing it is an
+            // easy mistake; the entry simply reappears once the file lands.
+            if missing.contains(md) {
+                continue;
+            }
             // An overview `.md` that owns a set of full-screen interactive pages
             // renders as a collapsible group: the first sub is the rendered
             // overview (in-page), the rest are the apps (each in a new tab).
