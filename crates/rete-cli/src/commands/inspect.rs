@@ -10,10 +10,13 @@ use crate::commands::range_source::{open_local, LocalRangeReader};
 /// Print the raw file header (section offsets, counts, codec), plus the embedded
 /// Dataset Card catalog when the file carries one.
 pub(crate) fn info(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let header = rete_core::Header::from_bytes(&bytes)?;
+    // Header + card are small addressable ranges — read exactly those instead
+    // of slurping the file (on a 50 GB graph this is two range reads, not 50 GB).
+    let reader = LocalRangeReader::open(file)?;
+    let head = rete_core::RangeReader::read_at(&reader, 0, rete_core::HEADER_LEN as u64)?;
+    let header = rete_core::Header::from_bytes(&head)?;
     println!("{header:#?}");
-    if let Some(card) = crate::commands::card::load_card(&bytes)? {
+    if let Some(card) = crate::commands::card::load_card_ranged(&reader)? {
         println!();
         println!(
             "{}",

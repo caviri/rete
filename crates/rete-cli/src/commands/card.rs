@@ -1112,9 +1112,12 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
 /// `rete card <file> [--json]`: print the embedded dataset card (catalog view),
 /// or the raw JSON with `--json`. Prints `(no dataset card)` when absent.
 pub(crate) fn card_cmd(file: &str, json: bool) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let header = Header::from_bytes(&bytes)?;
-    match load_card(&bytes)? {
+    // The CARD tier: header + metadata range only — the same two range reads
+    // `card-url` does over HTTP, so a 50 GB local file costs KBs to describe.
+    let reader = crate::commands::range_source::LocalRangeReader::open(file)?;
+    let head = rete_core::RangeReader::read_at(&reader, 0, rete_core::HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+    match load_card_ranged(&reader)? {
         None => println!("(no dataset card)"),
         Some(card) => {
             if json {
