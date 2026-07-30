@@ -414,7 +414,7 @@ release tag.</p>
 <code>pyodide_*</code> to <code>pyemscripten_*</code>, so it cannot see the wheel PyPI now requires.
 <code>docs/python.md</code> points those users at a retagged copy on our own bucket.</p>
 <p>The publish workflow builds that copy for every <code>py-v*</code> tag and uploads it as
-the <code>wheel-pyodide-legacy</code> artifact — kept out of <code>dist</code>, which goes to PyPI and
+the <code>pyodide-legacy-wheel</code> artifact — kept out of <code>dist</code>, which goes to PyPI and
 would reject the legacy tag. Actually publishing it is a separate step, because
 the repository has no R2 credentials in Actions:</p>
 <pre><code class="language-sh">scripts/publish_pyodide_wheel.sh          # after the py-v&lt;version&gt; run finishes

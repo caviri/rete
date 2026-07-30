@@ -154,7 +154,7 @@ jobs:
           ls -l dist-legacy
       - uses: actions/upload-artifact@v7
         with:
-          name: wheel-pyodide-legacy
+          name: pyodide-legacy-wheel
           path: dist-legacy
           if-no-files-found: error
 

@@ -99,7 +99,7 @@ release tag.
 `docs/python.md` points those users at a retagged copy on our own bucket.
 
 The publish workflow builds that copy for every `py-v*` tag and uploads it as
-the `wheel-pyodide-legacy` artifact — kept out of `dist`, which goes to PyPI and
+the `pyodide-legacy-wheel` artifact — kept out of `dist`, which goes to PyPI and
 would reject the legacy tag. Actually publishing it is a separate step, because
 the repository has no R2 credentials in Actions:
 
