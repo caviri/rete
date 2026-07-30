@@ -9,7 +9,7 @@
 # platform tag `pyodide_*` to `pyemscripten_*` — so it cannot see the wheel PyPI
 # requires. docs/python.md therefore points those users at a retagged copy at
 #   https://data.graphplaza.com/wheels/rete_graph-<version>-cp39-abi3-pyodide_2025_0_wasm32.whl
-# The publish workflow builds that copy (artifact `wheel-pyodide-legacy`) but
+# The publish workflow builds that copy (artifact `pyodide-legacy-wheel`) but
 # cannot upload it: the repository has no R2 credentials in Actions. This script
 # is that last step. `sync_versions.py --check` keeps the documented URL's
 # version honest, but only this makes the URL resolve.
@@ -33,11 +33,11 @@ wheel="${1:-}"
 if [ -z "$wheel" ]; then
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-  echo "== downloading the wheel-pyodide-legacy artifact from py-v$version =="
+  echo "== downloading the pyodide-legacy-wheel artifact from py-v$version =="
   run=$(gh run list --workflow=python-client-publish.yml \
         --branch "py-v$version" --limit 1 --json databaseId --jq '.[0].databaseId')
   test -n "$run" || { echo "no publish run found for tag py-v$version" >&2; exit 1; }
-  gh run download "$run" --name wheel-pyodide-legacy --dir "$tmp"
+  gh run download "$run" --name pyodide-legacy-wheel --dir "$tmp"
   wheel=$(ls "$tmp"/*.whl | head -1)
 fi
 
