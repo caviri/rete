@@ -150,3 +150,12 @@ existing rete scholarly hub (DBLP / OpenAIRE / OpenCitations / ORCID / ROR /
 Crossref) on DOI, ORCID and ROR/affiliation keys — hand off to the
 **rete-from-graph** skill. Model from `xoai` (complete); `oai_ethz` is a
 convenience cross-check.
+
+<!-- r2-backup -->
+## Storage — mirrored on Cloudflare R2
+
+Built artifacts for this dataset are mirrored on Cloudflare R2 (public, HTTP-range served). The local copies were **reclaimed 2026-07-30** to free disk; re-fetch from the URLs below, or rebuild via `scripts/`.
+
+| file | size | URL |
+|---|--:|---|
+| `ethz-research-collection.rete` | 0.21 GB | https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete |

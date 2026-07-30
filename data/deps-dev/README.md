@@ -185,3 +185,19 @@ rete build deps-dev-cargo.nt deps-dev.ontology.nt \
   and isn't needed for SPARQL — shards are `--no-pyramid`.
 - **Federation ≠ joins** — client federation is UNION + term routing, so a query
   joining a subject in one shard to an object's metadata in another won't resolve.
+
+<!-- r2-backup -->
+## Storage — mirrored on Cloudflare R2
+
+Built artifacts for this dataset are mirrored on Cloudflare R2 (public, HTTP-range served). The local copies were **reclaimed 2026-07-30** to free disk; re-fetch from the URLs below, or rebuild via `scripts/`.
+
+| file | size | URL |
+|---|--:|---|
+| `deps-dev-cargo.rete` | 0.23 GB | https://data.graphplaza.com/deps-dev/deps-dev-cargo.rete |
+| `deps-dev-go.rete` | 3.01 GB | https://data.graphplaza.com/deps-dev/deps-dev-go.rete |
+| `deps-dev-npm-0.rete` | 3.27 GB | https://data.graphplaza.com/deps-dev/deps-dev-npm-0.rete |
+| `deps-dev-npm-1.rete` | 3.15 GB | https://data.graphplaza.com/deps-dev/deps-dev-npm-1.rete |
+| `deps-dev-maven.rete` | 1.48 GB | https://data.graphplaza.com/deps-dev/deps-dev-maven.rete |
+| `deps-dev-pypi.rete` | 0.80 GB | https://data.graphplaza.com/deps-dev/deps-dev-pypi.rete |
+| `deps-dev-nuget.rete` | 0.78 GB | https://data.graphplaza.com/deps-dev/deps-dev-nuget.rete |
+| `deps-dev-rubygems.rete` | 0.12 GB | https://data.graphplaza.com/deps-dev/deps-dev-rubygems.rete |
