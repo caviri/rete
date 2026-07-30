@@ -446,7 +446,7 @@ fn raw_solutions_in(ctx: &Ctx, sel: &Select) -> Vec<Row> {
     let mut raw = match &sel.group {
         // Grouping runs directly on the integer rows â€” only group keys and the
         // values an aggregate needs are ever resolved.
-        Some(g) => aggregate(ctx, eval_plan_iter(ctx, active, nf, &sel.plan).collect(), g),
+        Some(g) => aggregate(ctx, eval_plan_iter(ctx, active, nf, &sel.plan), g),
         None => eval_plan_iter(ctx, active, nf, &sel.plan).collect(),
     };
     for row in raw.iter_mut() {
@@ -583,7 +583,7 @@ fn finish_select<'a, 'q>(
 ) -> (Vec<String>, Vec<Binding>) {
     // Source rows: aggregation is blocking; everything else streams.
     let mut source: RowIter<'q> = match &sel.group {
-        Some(g) => Box::new(aggregate(ctx, source.collect(), g).into_iter()),
+        Some(g) => Box::new(aggregate(ctx, source, g).into_iter()),
         None => source,
     };
 

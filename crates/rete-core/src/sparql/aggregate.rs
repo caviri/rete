@@ -3,57 +3,238 @@
 //! term), and an aggregate resolves only the values it actually needs — the
 //! dictionary decode and numeric parse are memoized by the per-query resolver,
 //! so a repeated literal is decoded once, not once per row.
+//!
+//! **Streaming.** Rows are folded through per-group [`Accum`]s one at a time, so
+//! resident memory is O(number of groups × aggregates), NOT O(number of rows).
+//! A `COUNT(*)` with no `GROUP BY` is a single counter — O(1) — regardless of how
+//! many solutions the pattern yields. Only inherently-retaining aggregates
+//! (`COUNT(DISTINCT)`, `GROUP_CONCAT`) hold per-group state, and only proportional
+//! to their distinct/concatenated values.
 
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::rc::Rc;
 
 use crate::row::{Ctx, Row, Val};
 
 use super::{as_number, fmt_num_typed, lexical, Agg, GroupSpec};
 
-/// Group `rows` and compute aggregates, producing one row per group (group-by
-/// slots keep their values; each aggregate's result lands in its result slot).
-pub(super) fn aggregate(ctx: &Ctx, mut rows: Vec<Row>, g: &GroupSpec) -> Vec<Row> {
-    use std::collections::BTreeMap;
-    // Aggregate-over-expression: materialize each synthetic column per row BEFORE
-    // grouping, so the aggregate below reads it exactly like a plain variable's
-    // slot. An expression that errors on a row leaves that row's column unbound
-    // (and the aggregate filters it), matching SPARQL's error semantics.
-    for (var, expr) in &g.pre {
-        if let Some(slot) = ctx.slots.slot(var) {
-            for r in rows.iter_mut() {
-                r[slot] = expr.value(ctx, r).map(Val::Str);
+/// A single aggregate's running state — updated per row, finalized once per group.
+/// Slot is resolved once at construction; `None` = the variable isn't in scope.
+enum Accum {
+    /// COUNT(*) — every row counts (distinct-* is treated as plain count, as before).
+    CountStar(u64),
+    Count {
+        slot: Option<usize>,
+        distinct: bool,
+        n: u64,
+        seen: BTreeSet<Val>,
+    },
+    Sum {
+        slot: Option<usize>,
+        sum: f64,
+    },
+    Avg {
+        slot: Option<usize>,
+        bound: u64,
+        sum: f64,
+        num: u64,
+    },
+    Sample {
+        slot: Option<usize>,
+        done: bool,
+        val: Option<Rc<str>>,
+    },
+    GroupConcat {
+        slot: Option<usize>,
+        sep: String,
+        distinct: bool,
+        parts: Vec<String>,
+        seen: HashSet<String>,
+    },
+    MinMax {
+        slot: Option<usize>,
+        want_min: bool,
+        best: Option<Rc<str>>,
+    },
+}
+
+impl Accum {
+    fn new(agg: &Agg, ctx: &Ctx) -> Accum {
+        let slot = |v: &str| ctx.slots.slot(v);
+        match agg {
+            Agg::CountStar { .. } => Accum::CountStar(0),
+            Agg::Count(v, d) => Accum::Count {
+                slot: slot(v),
+                distinct: *d,
+                n: 0,
+                seen: BTreeSet::new(),
+            },
+            Agg::Sum(v) => Accum::Sum { slot: slot(v), sum: 0.0 },
+            Agg::Avg(v) => Accum::Avg {
+                slot: slot(v),
+                bound: 0,
+                sum: 0.0,
+                num: 0,
+            },
+            Agg::Sample(v) => Accum::Sample {
+                slot: slot(v),
+                done: false,
+                val: None,
+            },
+            Agg::GroupConcat(v, sep, d) => Accum::GroupConcat {
+                slot: slot(v),
+                sep: sep.clone(),
+                distinct: *d,
+                parts: Vec::new(),
+                seen: HashSet::new(),
+            },
+            Agg::Min(v) => Accum::MinMax { slot: slot(v), want_min: true, best: None },
+            Agg::Max(v) => Accum::MinMax { slot: slot(v), want_min: false, best: None },
+        }
+    }
+
+    fn update(&mut self, ctx: &Ctx, row: &Row) {
+        match self {
+            Accum::CountStar(n) => *n += 1,
+            Accum::Count { slot, distinct, n, seen } => {
+                if let Some(v) = slot.and_then(|s| row[s].as_ref()) {
+                    if *distinct {
+                        seen.insert(v.clone());
+                    } else {
+                        *n += 1;
+                    }
+                }
+            }
+            Accum::Sum { slot, sum } => {
+                if let Some(x) = slot.and_then(|s| row[s].as_ref()).and_then(|v| ctx.resolver.num(v)) {
+                    *sum += x;
+                }
+            }
+            Accum::Avg { slot, bound, sum, num } => {
+                if let Some(v) = slot.and_then(|s| row[s].as_ref()) {
+                    *bound += 1;
+                    if let Some(x) = ctx.resolver.num(v) {
+                        *sum += x;
+                        *num += 1;
+                    }
+                }
+            }
+            Accum::Sample { slot, done, val } => {
+                if !*done {
+                    if let Some(v) = slot.and_then(|s| row[s].as_ref()) {
+                        *done = true;
+                        *val = ctx.resolver.str_of(v);
+                    }
+                }
+            }
+            Accum::GroupConcat { slot, distinct, parts, seen, .. } => {
+                if let Some(t) = slot.and_then(|s| row[s].as_ref()).and_then(|v| ctx.resolver.str_of(v)) {
+                    let p = lexical(&t);
+                    if !*distinct || seen.insert(p.clone()) {
+                        parts.push(p);
+                    }
+                }
+            }
+            Accum::MinMax { slot, want_min, best } => {
+                if let Some(t) = slot.and_then(|s| row[s].as_ref()).and_then(|v| ctx.resolver.str_of(v)) {
+                    let take = match best.as_ref() {
+                        None => true,
+                        Some(cur) => match (as_number(&t), as_number(cur)) {
+                            (Some(a), Some(b)) if *want_min => a < b,
+                            (Some(a), Some(b)) => a > b,
+                            _ if *want_min => t < *cur,
+                            _ => t > *cur,
+                        },
+                    };
+                    if take {
+                        *best = Some(t);
+                    }
+                }
             }
         }
     }
+
+    /// The group's final value in the aggregate's result slot (`None` = unbound,
+    /// e.g. a type error or an out-of-scope variable).
+    fn finalize(self) -> Option<String> {
+        match self {
+            Accum::CountStar(n) => Some(fmt_num_typed(n as f64)),
+            Accum::Count { slot, distinct, n, seen } => {
+                if slot.is_none() {
+                    return Some(fmt_num_typed(0.0)); // COUNT of an out-of-scope var is 0
+                }
+                let c = if distinct { seen.len() as f64 } else { n as f64 };
+                Some(fmt_num_typed(c))
+            }
+            Accum::Sum { sum, .. } => Some(fmt_num_typed(sum)),
+            Accum::Avg { slot, bound, sum, num } => {
+                slot?; // AVG of an out-of-scope var is unbound
+                if bound == 0 {
+                    return Some(fmt_num_typed(0.0)); // AVG of an empty group is 0
+                }
+                if num != bound {
+                    return None; // a bound value wasn't numeric — type error
+                }
+                Some(fmt_num_typed(sum / num as f64))
+            }
+            Accum::Sample { val, .. } => val.map(|t| t.to_string()),
+            Accum::GroupConcat { sep, parts, .. } => {
+                // A simple literal (no datatype or language tag); empty group → "".
+                Some(crate::terms::make_literal(&parts.join(&sep), None, None))
+            }
+            Accum::MinMax { best, .. } => best.map(|t| t.to_string()),
+        }
+    }
+}
+
+/// Group `rows` and compute aggregates, producing one row per group (group-by
+/// slots keep their values; each aggregate's result lands in its result slot).
+/// Rows are consumed as an iterator and folded per group — never all held at once.
+pub(super) fn aggregate<I>(ctx: &Ctx, rows: I, g: &GroupSpec) -> Vec<Row>
+where
+    I: IntoIterator<Item = Row>,
+{
     let by_slots: Vec<Option<usize>> = g.by.iter().map(|v| ctx.slots.slot(v)).collect();
+    let new_accs = || -> Vec<Accum> { g.aggs.iter().map(|(_, a)| Accum::new(a, ctx)).collect() };
 
     // BTreeMap keeps group order deterministic (by integer id / value order).
-    let mut groups: BTreeMap<Vec<Option<Val>>, Vec<Row>> = BTreeMap::new();
-    for r in rows {
+    let mut groups: BTreeMap<Vec<Option<Val>>, Vec<Accum>> = BTreeMap::new();
+    for mut r in rows {
+        // Aggregate-over-expression: materialize each synthetic column on THIS row
+        // before grouping, so an aggregate reads it exactly like a plain slot. An
+        // expression that errors leaves the column unbound (SPARQL error semantics).
+        for (var, expr) in &g.pre {
+            if let Some(slot) = ctx.slots.slot(var) {
+                r[slot] = expr.value(ctx, &r).map(Val::Str);
+            }
+        }
         let key: Vec<Option<Val>> = by_slots
             .iter()
             .map(|s| s.and_then(|i| r[i].clone()))
             .collect();
-        groups.entry(key).or_default().push(r);
+        let accs = groups.entry(key).or_insert_with(new_accs);
+        for acc in accs.iter_mut() {
+            acc.update(ctx, &r);
+        }
     }
     // A grouped query with no rows still yields one (empty/zero) group.
     if g.by.is_empty() && groups.is_empty() {
-        groups.insert(Vec::new(), Vec::new());
+        groups.insert(Vec::new(), new_accs());
     }
 
     let mut out = Vec::new();
-    for (key, members) in groups {
+    for (key, accs) in groups {
         let mut row = ctx.slots.empty_row();
         for (slot, val) in by_slots.iter().zip(key.into_iter()) {
             if let (Some(i), Some(v)) = (slot, val) {
                 row[*i] = Some(v);
             }
         }
-        for (res_var, agg) in &g.aggs {
+        for ((res_var, _), acc) in g.aggs.iter().zip(accs.into_iter()) {
             if let Some(slot) = ctx.slots.slot(res_var) {
-                if let Some(val) = compute_agg(ctx, agg, &members) {
-                    // Canonicalize so the computed value joins/dedups exactly
-                    // like an equal dictionary term would.
+                if let Some(val) = acc.finalize() {
+                    // Canonicalize so the computed value joins/dedups exactly like
+                    // an equal dictionary term would.
                     row[slot] = Some(ctx.resolver.canon_term(&val));
                 }
             }
@@ -63,107 +244,15 @@ pub(super) fn aggregate(ctx: &Ctx, mut rows: Vec<Row>, g: &GroupSpec) -> Vec<Row
     out
 }
 
-/// A variable's values across `members` as numbers (memoized by the resolver:
-/// a repeated literal parses once, not once per row).
-fn agg_nums(ctx: &Ctx, members: &[Row], slot: usize) -> Vec<f64> {
-    members
-        .iter()
-        .filter_map(|m| m[slot].as_ref())
-        .filter_map(|v| ctx.resolver.num(v))
-        .collect()
-}
-
-/// A variable's values across `members` as term strings (memoized decode).
-fn agg_terms(ctx: &Ctx, members: &[Row], slot: usize) -> Vec<Rc<str>> {
-    members
-        .iter()
-        .filter_map(|m| m[slot].as_ref())
-        .filter_map(|v| ctx.resolver.str_of(v))
-        .collect()
-}
-
+#[cfg(test)]
+/// Test helper: fold `members` through a single [`Accum`] — the batch view of the
+/// streaming path, so the assertions below exercise the exact per-row logic.
 fn compute_agg(ctx: &Ctx, agg: &Agg, members: &[Row]) -> Option<String> {
-    let slot_of = |var: &str| ctx.slots.slot(var);
-    match agg {
-        Agg::CountStar { .. } => Some(fmt_num_typed(members.len() as f64)),
-        Agg::Count(var, distinct) => {
-            let Some(slot) = slot_of(var) else {
-                return Some(fmt_num_typed(0.0));
-            };
-            let n = if *distinct {
-                members
-                    .iter()
-                    .filter_map(|m| m[slot].as_ref())
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len()
-            } else {
-                members.iter().filter(|m| m[slot].is_some()).count()
-            };
-            Some(fmt_num_typed(n as f64))
-        }
-        Agg::Sum(var) => {
-            let nums = match slot_of(var) {
-                Some(slot) => agg_nums(ctx, members, slot),
-                None => Vec::new(), // never-bound variable sums to 0
-            };
-            Some(fmt_num_typed(nums.iter().sum()))
-        }
-        Agg::Avg(var) => {
-            // AVG of an empty group is defined to be 0; a group that *has* bound
-            // values but some aren't numeric is a type error (unbound).
-            let slot = slot_of(var)?;
-            let bound = members.iter().filter(|m| m[slot].is_some()).count();
-            if bound == 0 {
-                return Some(fmt_num_typed(0.0));
-            }
-            let nums = agg_nums(ctx, members, slot);
-            if nums.len() != bound {
-                return None;
-            }
-            Some(fmt_num_typed(nums.iter().sum::<f64>() / nums.len() as f64))
-        }
-        Agg::Sample(var) => {
-            let slot = slot_of(var)?;
-            members
-                .iter()
-                .find_map(|m| m[slot].as_ref())
-                .and_then(|v| ctx.resolver.str_of(v))
-                .map(|t| t.to_string())
-        }
-        Agg::GroupConcat(var, sep, distinct) => {
-            let terms = match slot_of(var) {
-                Some(slot) => agg_terms(ctx, members, slot),
-                None => Vec::new(),
-            };
-            let mut parts: Vec<String> = terms.iter().map(|t| lexical(t)).collect();
-            if *distinct {
-                let mut seen = std::collections::HashSet::new();
-                parts.retain(|p| seen.insert(p.clone()));
-            }
-            // The concatenation is a simple literal (no datatype or language tag).
-            Some(crate::terms::make_literal(&parts.join(sep), None, None))
-        }
-        Agg::Min(var) | Agg::Max(var) => {
-            let want_min = matches!(agg, Agg::Min(_));
-            let slot = slot_of(var)?;
-            agg_terms(ctx, members, slot)
-                .into_iter()
-                .reduce(|cur, v| {
-                    let take = match (as_number(&v), as_number(&cur)) {
-                        (Some(a), Some(b)) if want_min => a < b,
-                        (Some(a), Some(b)) => a > b,
-                        _ if want_min => v < cur,
-                        _ => v > cur,
-                    };
-                    if take {
-                        v
-                    } else {
-                        cur
-                    }
-                })
-                .map(|t| t.to_string())
-        }
+    let mut acc = Accum::new(agg, ctx);
+    for m in members {
+        acc.update(ctx, m);
     }
+    acc.finalize()
 }
 
 #[cfg(test)]
