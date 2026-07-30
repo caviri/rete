@@ -12,6 +12,7 @@ caviri/rete`).
 |---|---|---|
 | **[dataset-download](dataset-download/SKILL.md)** | "download this dataset / get `<source>` into `./data`" | investigate → scaffold `data/<name>/` → download (resumable) → verify → profile → document |
 | **[rete-sparql](rete-sparql/SKILL.md)** | "write or debug a SPARQL query against a `.rete`" | supported surface → extensions (reasoning, RDF-star, SERVICE) → 0-rows gotchas → result formats |
+| **[rete-local-query](rete-local-query/SKILL.md)** | "a local query is slow / OOMs / I need to bound its RAM & I/O" | lazy vs read-whole commands → knobs (`RETE_BLOCK_KB`, `RETE_LOCAL_LAZY_ABOVE_MB`, 256 MiB cache) → `cost`/`why` preview → memory limits at billion-triple scale |
 | **[rete-catalog](rete-catalog/SKILL.md)** | "use an existing published dataset" | discover → card/schema/examples → open/download/federate |
 | **[rete-clients](rete-clients/SKILL.md)** | "wire rete into a new project" | Python / Pyodide / JS / script-tag / wasm / Rust setup + first query |
 | **[rete-from-graph](rete-from-graph/SKILL.md)** | "turn this dataset/graph/ontology/endpoint into a `.rete`" | source → N-Triples → `rete build` → verify |

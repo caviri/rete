@@ -220,3 +220,15 @@ Pipeline gotchas (all already handled in the scripts):
 - Long jobs must run as DETACHED docker containers (`docker run -d --name
   …`, no `--rm`) — attached wrappers get killed in this environment and
   `--rm` destroys the crash logs with them.
+
+<!-- r2-backup -->
+## Storage — mirrored on Cloudflare R2
+
+Built artifacts for this dataset are mirrored on Cloudflare R2 (public, HTTP-range served). The local copies were **reclaimed 2026-07-30** to free disk; re-fetch from the URLs below, or rebuild via `scripts/`.
+
+| file | size | URL |
+|---|--:|---|
+| `gharchive-2025-07.rete` | 17.10 GB | https://data.graphplaza.com/gharchive/gharchive-2025-07.rete |
+| `gharchive-2026-06.rete` | 6.49 GB | https://data.graphplaza.com/gharchive/gharchive-2026-06.rete |
+| `gharchive-2025-07-16-22.rete` | 4.06 GB | https://data.graphplaza.com/gharchive/gharchive-2025-07-16-22.rete |
+| `gharchive-2025-07-22.rete` | 0.68 GB | https://data.graphplaza.com/gharchive/gharchive-2025-07-22.rete |
