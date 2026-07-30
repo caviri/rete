@@ -401,12 +401,8 @@ pub(super) fn ask_solution(rete: &Rete, sel: &Select) -> bool {
     }
     // ASK pulls exactly one solution â€” let joins probe instead of scan.
     ctx.limit_hint.set(Some(1));
-    let merged = if sel.from.is_empty() {
-        None
-    } else {
-        Some(merge_graphs(rete, &sel.from))
-    };
-    let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
+    let mut merged = None;
+    let active = active_index(rete, &sel.from, &mut merged);
     plan_exists(&ctx, active, sel.from_named.as_deref(), &sel.plan)
 }
 
@@ -435,12 +431,8 @@ pub(super) fn raw_solutions<'a>(rete: &'a Rete, sel: &Select) -> (Ctx<'a>, Vec<R
 
 fn raw_solutions_in(ctx: &Ctx, sel: &Select) -> Vec<Row> {
     // The active default graph: `FROM` makes it the union of named graphs.
-    let merged = if sel.from.is_empty() {
-        None
-    } else {
-        Some(merge_graphs(ctx.rete, &sel.from))
-    };
-    let active = merged.as_ref().unwrap_or_else(|| ctx.rete.default_index());
+    let mut merged = None;
+    let active = active_index(ctx.rete, &sel.from, &mut merged);
     let nf = sel.from_named.as_deref();
 
     let mut raw = match &sel.group {
@@ -472,6 +464,28 @@ fn apply_extends_row(ctx: &Ctx, row: &mut Row, extends: &[(String, FExpr)]) {
                 row[slot] = Some(ctx.resolver.canon_term(&v));
             }
         }
+    }
+}
+
+/// The query's active default graph. No `FROM` → the file's default index. A
+/// single `FROM <g>` borrows that graph's index as-is — no copy, so selecting
+/// one large named graph costs nothing (rebuilding it into a fresh index is a
+/// whole-graph materialization: an OOM at billion-triple scale). Only a
+/// multi-graph `FROM` still merges triples into a temporary index, which
+/// `merged` keeps alive for the borrow.
+fn active_index<'a>(
+    rete: &'a Rete,
+    from: &[String],
+    merged: &'a mut Option<GraphIndex>,
+) -> &'a GraphIndex {
+    match from {
+        [] => rete.default_index(),
+        [g] => match rete.graph_index(g) {
+            Some(gi) => gi,
+            // A missing graph contributes nothing: an empty merge.
+            None => &*merged.insert(merge_graphs(rete, from)),
+        },
+        _ => &*merged.insert(merge_graphs(rete, from)),
     }
 }
 
@@ -559,12 +573,8 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
         ctx.limit_hint
             .set(sel.limit.map(|l| l.saturating_add(sel.offset)));
     }
-    let merged = if sel.from.is_empty() {
-        None
-    } else {
-        Some(merge_graphs(rete, &sel.from))
-    };
-    let active = merged.as_ref().unwrap_or_else(|| rete.default_index());
+    let mut merged = None;
+    let active = active_index(rete, &sel.from, &mut merged);
     let nf = sel.from_named.as_deref();
     let source = eval_plan_iter(&ctx, active, nf, &sel.plan);
     finish_select(&ctx, active, sel, source)
