@@ -48,7 +48,10 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("lombardi-guide.md", "Lombardi — network drawings in ink"),
             ("webgpu-guide.md", "WebGPU coherence (exp.)"),
             ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
-            ("neuro-showcase-guide.md", "Neuromorphology — 3D neurons & astrocytes (exp.)"),
+            (
+                "neuro-showcase-guide.md",
+                "Neuromorphology — 3D neurons & astrocytes (exp.)",
+            ),
         ],
     ),
     (
@@ -401,19 +404,16 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
         "neuro-showcase-guide.md" => Some(&[
             ("neuro-showcase-guide.html", "overview"),
             ("neuro-showcase.html", "reconstruct in 3D →"),
-            ("playground.html#dataset=neuro-showcase&load=lazy", "query in the playground →"),
+            (
+                "playground.html#dataset=neuro-showcase&load=lazy",
+                "query in the playground →",
+            ),
         ]),
         _ => None,
     }
 }
 
-fn template(
-    title: &str,
-    body: &str,
-    current_md: &str,
-    summary: &str,
-    missing: &[&str],
-) -> String {
+fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &[&str]) -> String {
     let mut nav_items: Vec<String> = Vec::new();
     for (section, pages) in SECTIONS {
         nav_items.push(format!("<li class=\"nav-h\">{section}</li>"));
@@ -478,7 +478,9 @@ fn template(
     let section = section_for(current_md);
     let social_title = format!("{title} · rete docs");
     let social_desc = if summary.is_empty() {
-        format!("{section} — the rete documentation. Cloud-native, range-queryable RDF graph files.")
+        format!(
+            "{section} — the rete documentation. Cloud-native, range-queryable RDF graph files."
+        )
     } else {
         summary.to_string()
     };
