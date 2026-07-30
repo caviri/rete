@@ -35,6 +35,11 @@ export RETE_BUILD_STAMP="${RETE_BUILD_STAMP:-$RETE_SOURCE_REVISION}"
 # builds explicitly skip wasm-opt. Rust's release profile still optimizes them.
 wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg --no-opt
 wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
+# docs/engine/ is the tracked ESM copy the standalone docs pages import
+# (anatomy/bim-pair/building). It used to be a hand-copy with no producer —
+# refresh it here so the CI parity diff below can actually guard it.
+mkdir -p docs/engine
+cp web/pkg/rete_wasm.js web/pkg/rete_wasm_bg.wasm docs/engine/
 bash scripts/build_playground_async.sh
 uv run python scripts/stage_playground_datasets.py
 uv run python scripts/build_playground.py

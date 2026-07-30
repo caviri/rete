@@ -8,8 +8,8 @@ use rete_core::{CountingReader, RangeReader, Rete};
 
 use crate::commands::card::{self, Coherence};
 use crate::commands::export::export_turtle;
-use crate::http::HttpRangeReader;
 use crate::commands::range_source::open_local;
+use crate::http::HttpRangeReader;
 
 type Triples = Vec<(String, String, String)>;
 
@@ -87,9 +87,7 @@ pub(crate) fn reason_cmd(
 /// verdict), mirroring `sparql_url`.
 fn load_base(file: Option<&str>, url: Option<&str>) -> anyhow::Result<Triples> {
     match (file, url) {
-        (Some(path), None) => {
-            Ok(open_local(path)?.dump(None))
-        }
+        (Some(path), None) => Ok(open_local(path)?.dump(None)),
         (None, Some(u)) => {
             let reader = std::sync::Arc::new(CountingReader::new(HttpRangeReader::open(u)?));
             let total = reader.len();

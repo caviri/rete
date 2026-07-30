@@ -4,8 +4,8 @@
 //! (`predicates`), and the type-level schema (`schema`). Several of these answer
 //! from the summary alone, never touching the triple index.
 
-use rete_core::{SliceReader, SummaryView, CODEC_ZSTD};
 use crate::commands::range_source::{open_local, LocalRangeReader};
+use rete_core::{SliceReader, SummaryView, CODEC_ZSTD};
 
 /// Print the raw file header (section offsets, counts, codec), plus the embedded
 /// Dataset Card catalog when the file carries one.

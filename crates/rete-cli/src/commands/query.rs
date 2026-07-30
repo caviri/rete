@@ -6,9 +6,9 @@
 use rete_core::{eval_bgp, eval_query, ByteRange, PatternTerm, TriplePattern, TripleProvenance};
 use serde_json::json;
 
+use crate::commands::range_source::open_local;
 use crate::commands::render::print_query_output;
 use crate::cypher;
-use crate::commands::range_source::open_local;
 
 /// Query a triple pattern: unspecified positions are variables, terms match as
 /// canonical N-Triples tokens.

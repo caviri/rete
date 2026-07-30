@@ -155,13 +155,10 @@ impl Graph {
         self.fresh_verdict();
         let out = py
             .allow_threads(|| -> Result<String, String> {
-                let shapes =
-                    ShaclShapes::parse_turtle(shapes_turtle).map_err(|e| e.to_string())?;
+                let shapes = ShaclShapes::parse_turtle(shapes_turtle).map_err(|e| e.to_string())?;
                 let report = match graph {
                     None => validate_shacl(&ReteGraph::new(&self.rete), &shapes),
-                    Some(g) => {
-                        validate_shacl(&DataGraph::from_rete(&self.rete, Some(g)), &shapes)
-                    }
+                    Some(g) => validate_shacl(&DataGraph::from_rete(&self.rete, Some(g)), &shapes),
                 };
                 Ok(match format {
                     "ttl" => report.to_turtle(),

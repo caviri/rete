@@ -187,9 +187,13 @@ jobs:
       - name: Verify provenance and generated browser files
         run: |
           test "$(python3 -c 'import json; print(json.load(open("docs/wasm-build.json"))["gitCommit"])')" = "$GITHUB_SHA"
+          # Only TRACKED artifacts belong here: web/pkg* are gitignored (git
+          # diff on them was a silent no-op) and docs/rete_wasm.js/_bg.wasm
+          # never existed. docs/engine is refreshed by build_wasm.sh now, so
+          # the ESM copy the standalone docs pages import is guarded too.
           git diff --exit-code -- \
-            web/pkg web/pkg-nomodules web/pkg-nomodules-async \
-            docs/playground.html docs/rete_wasm.js docs/rete_wasm_bg.wasm \
+            docs/playground.html docs/engine \
+            docs/explore-100mb.html web/explore-100mb.html \
             docs/rete_wasm_async.js docs/rete_wasm_async.wasm
       - name: Preserve exact browser build
         # always(): keep the rebuilt artifacts even when the parity diff

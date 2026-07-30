@@ -291,12 +291,7 @@ impl SectionChunk {
     }
 
     /// A resident chunk (data already decoded).
-    pub fn resident(
-        first_run: usize,
-        first_term: Vec<u8>,
-        body_start: u64,
-        data: Vec<u8>,
-    ) -> Self {
+    pub fn resident(first_run: usize, first_term: Vec<u8>, body_start: u64, data: Vec<u8>) -> Self {
         let cell = OnceLock::new();
         let _ = cell.set(data);
         SectionChunk {
@@ -663,7 +658,7 @@ pub fn encode_section_header(meta: &SectionMeta) -> Vec<u8> {
     write_uvarint(&mut out, meta.restart_interval as u64);
     write_uvarint(&mut out, meta.restart_offsets.len() as u64);
     for off in &meta.restart_offsets {
-        write_uvarint(&mut out, off.saturating_sub(body_start) as u64);
+        write_uvarint(&mut out, off.saturating_sub(body_start));
     }
     out
 }
