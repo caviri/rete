@@ -415,7 +415,11 @@ impl GroupSizer {
     /// The group's total encoded size so far.
     pub(crate) fn total(&self) -> usize {
         self.size
-            + if self.empty { 0 } else { varint_len(self.num_c) }
+            + if self.empty {
+                0
+            } else {
+                varint_len(self.num_c)
+            }
             + varint_len(self.num_b)
     }
 }
@@ -1077,11 +1081,11 @@ mod tests {
         for pat in [
             (None, Some(hot_p), None),
             (Some(1_050), Some(hot_p), None),
-            (None, Some(hot_p), Some(50_123)),  // first slice
-            (None, Some(hot_p), Some(70_000)),  // middle of the run
-            (None, Some(hot_p), Some(89_999)),  // last slice
-            (None, Some(hot_p), Some(49_000)),  // below the range → empty
-            (None, Some(hot_p), Some(95_000)),  // above the range → empty
+            (None, Some(hot_p), Some(50_123)), // first slice
+            (None, Some(hot_p), Some(70_000)), // middle of the run
+            (None, Some(hot_p), Some(89_999)), // last slice
+            (None, Some(hot_p), Some(49_000)), // below the range → empty
+            (None, Some(hot_p), Some(95_000)), // above the range → empty
         ] {
             assert_eq!(idx.match_pattern(pat), reference(&data, pat), "{pat:?}");
         }

@@ -592,7 +592,11 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
         restart_interval: 1,
         restart_offsets: Vec::new(),
     });
-    let body_start = meta.restart_offsets.first().copied().unwrap_or(raw.len() as u64);
+    let body_start = meta
+        .restart_offsets
+        .first()
+        .copied()
+        .unwrap_or(raw.len() as u64);
     let header = &raw[..(body_start.min(raw.len() as u64)) as usize];
 
     // Split runs into chunks by body-byte budget (whole runs only).
@@ -734,7 +738,7 @@ fn read_dict_dir_ranged<R: RangeReader>(
     // read only the directory below, never fetching the table.
     let init = 8192.min(total); // never over-read past the section (a tiny/empty
                                 // section holds only its header + a stub directory)
-    let head = reader.read_at(section.offset, init as u64)?;
+    let head = reader.read_at(section.offset, init)?;
     let (header_len, n0) =
         read_uvarint(&head).ok_or(FileError::Container("truncated dict header len"))?;
     let hbase = n0; // first byte of the header body
@@ -1079,8 +1083,8 @@ fn tile_file_ranges(
                         e.min_a,
                         e.max_a,
                         ByteRange {
-                            offset: range.offset + e.start as u64,
-                            len: (e.end - e.start) as u64,
+                            offset: range.offset + e.start,
+                            len: (e.end - e.start),
                         },
                     )
                 })
@@ -2207,8 +2211,8 @@ impl Rete {
             let ranges: Vec<ByteRange> = entries
                 .iter()
                 .map(|e| ByteRange {
-                    offset: section.offset + e.start as u64,
-                    len: (e.end - e.start) as u64,
+                    offset: section.offset + e.start,
+                    len: (e.end - e.start),
                 })
                 .collect();
             let chunks: Vec<crate::dict::SectionChunk> = entries
@@ -2278,8 +2282,8 @@ impl Rete {
                         e.min_a,
                         e.max_a,
                         ByteRange {
-                            offset: section.offset + e.start as u64,
-                            len: (e.end - e.start) as u64,
+                            offset: section.offset + e.start,
+                            len: (e.end - e.start),
                         },
                     )
                 })
@@ -2696,10 +2700,7 @@ fn fetch_routed_matches<R: RangeReader>(
         // mega-group; one otherwise).
         Some(a) => {
             for e in dir.iter().filter(|e| e.min_a <= a && a <= e.max_a) {
-                let bytes = reader.read_at(
-                    routed.section.offset + e.start as u64,
-                    (e.end - e.start) as u64,
-                )?;
+                let bytes = reader.read_at(routed.section.offset + e.start, e.end - e.start)?;
                 let tile = decompress(codec, &bytes)?;
                 out.extend(GraphIndex::match_serialized_block(
                     &tile,
@@ -2713,12 +2714,12 @@ fn fetch_routed_matches<R: RangeReader>(
         None => {
             if let (Some(first), Some(last)) = (dir.first(), dir.last()) {
                 let base = first.start;
-                let body = reader.read_at(
-                    routed.section.offset + base as u64,
-                    (last.end - base) as u64,
-                )?;
+                let body = reader.read_at(routed.section.offset + base, last.end - base)?;
                 for e in &dir {
-                    let tile = decompress(codec, &body[(e.start - base) as usize..(e.end - base) as usize])?;
+                    let tile = decompress(
+                        codec,
+                        &body[(e.start - base) as usize..(e.end - base) as usize],
+                    )?;
                     out.extend(GraphIndex::match_serialized_block(
                         &tile,
                         routed.permutation,
@@ -3280,8 +3281,7 @@ mod tests {
         }
         let syn = parse_tile_synopsis(&payload, trailer_start as usize, dir.len()).unwrap();
         for (e, (min_b, max_b, min_c, max_c)) in dir.iter().zip(syn) {
-            let block =
-                decompress(CODEC_NONE, &payload[e.start as usize..e.end as usize]).unwrap();
+            let block = decompress(CODEC_NONE, &payload[e.start as usize..e.end as usize]).unwrap();
             let z = *crate::triples::TripleBlock::parse(&block).unwrap().zone();
             assert_eq!(
                 (min_b, max_b, min_c, max_c),
@@ -4218,7 +4218,8 @@ mod tests {
         // A wildcard-everything scan is scoped to its graph.
         assert_eq!(rete.query_in_graph(None, None, None, None).len(), 2);
         assert_eq!(
-            rete.query_in_graph(Some("http://ex/g1"), None, None, None).len(),
+            rete.query_in_graph(Some("http://ex/g1"), None, None, None)
+                .len(),
             1
         );
 
@@ -4596,7 +4597,6 @@ mod tests {
     #[test]
     #[ignore = "operational tool, driven by RETE_DEBUG_* env vars"]
     fn debug_bound_po_routing() {
-        use crate::index::IndexPermutation;
         struct FR(std::fs::File);
         impl crate::RangeReader for FR {
             fn len(&self) -> u64 {
@@ -4612,10 +4612,9 @@ mod tests {
         let path = std::env::var("RETE_DEBUG_FILE").expect("RETE_DEBUG_FILE");
         let p_iri = std::env::var("RETE_DEBUG_P").expect("RETE_DEBUG_P");
         let o_iri = std::env::var("RETE_DEBUG_O").expect("RETE_DEBUG_O");
-        let rete = Rete::open_ranged_lazy(std::sync::Arc::new(FR(
-            std::fs::File::open(&path).unwrap(),
-        )))
-        .unwrap();
+        let rete =
+            Rete::open_ranged_lazy(std::sync::Arc::new(FR(std::fs::File::open(&path).unwrap())))
+                .unwrap();
         let pid = rete.dict.predicate_id(&p_iri).expect("p resolves");
         let oid = rete.dict.object_id(&o_iri).expect("o resolves");
         eprintln!("pid={pid} oid={oid}");
@@ -4630,16 +4629,12 @@ mod tests {
         let (start, end) = rete.index.tile_span(si, pa);
         eprintln!("tile_span = [{start}, {end}) -> {} tiles", end - start);
         let mut admitted = 0usize;
-        for ti in start..end {
-            let t = &tiles[ti];
+        for (ti, t) in tiles.iter().enumerate().take(end).skip(start) {
             if t.syn_admits(pb, pc) {
                 admitted += 1;
                 if admitted <= 10 {
                     let (lo, hi) = t.leading_range();
-                    eprintln!(
-                        "  admit tile {ti}: a=[{lo},{hi}] syn={:?}",
-                        t.syn
-                    );
+                    eprintln!("  admit tile {ti}: a=[{lo},{hi}] syn={:?}", t.syn);
                 }
             }
         }
@@ -4650,4 +4645,3 @@ mod tests {
         eprintln!("high-level query matches = {}", hi_res.len());
     }
 }
-

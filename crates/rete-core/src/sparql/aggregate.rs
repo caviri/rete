@@ -69,7 +69,10 @@ impl Accum {
                 n: 0,
                 seen: BTreeSet::new(),
             },
-            Agg::Sum(v) => Accum::Sum { slot: slot(v), sum: 0.0 },
+            Agg::Sum(v) => Accum::Sum {
+                slot: slot(v),
+                sum: 0.0,
+            },
             Agg::Avg(v) => Accum::Avg {
                 slot: slot(v),
                 bound: 0,
@@ -88,15 +91,28 @@ impl Accum {
                 parts: Vec::new(),
                 seen: HashSet::new(),
             },
-            Agg::Min(v) => Accum::MinMax { slot: slot(v), want_min: true, best: None },
-            Agg::Max(v) => Accum::MinMax { slot: slot(v), want_min: false, best: None },
+            Agg::Min(v) => Accum::MinMax {
+                slot: slot(v),
+                want_min: true,
+                best: None,
+            },
+            Agg::Max(v) => Accum::MinMax {
+                slot: slot(v),
+                want_min: false,
+                best: None,
+            },
         }
     }
 
     fn update(&mut self, ctx: &Ctx, row: &Row) {
         match self {
             Accum::CountStar(n) => *n += 1,
-            Accum::Count { slot, distinct, n, seen } => {
+            Accum::Count {
+                slot,
+                distinct,
+                n,
+                seen,
+            } => {
                 if let Some(v) = slot.and_then(|s| row[s].as_ref()) {
                     if *distinct {
                         seen.insert(v.clone());
@@ -106,11 +122,19 @@ impl Accum {
                 }
             }
             Accum::Sum { slot, sum } => {
-                if let Some(x) = slot.and_then(|s| row[s].as_ref()).and_then(|v| ctx.resolver.num(v)) {
+                if let Some(x) = slot
+                    .and_then(|s| row[s].as_ref())
+                    .and_then(|v| ctx.resolver.num(v))
+                {
                     *sum += x;
                 }
             }
-            Accum::Avg { slot, bound, sum, num } => {
+            Accum::Avg {
+                slot,
+                bound,
+                sum,
+                num,
+            } => {
                 if let Some(v) = slot.and_then(|s| row[s].as_ref()) {
                     *bound += 1;
                     if let Some(x) = ctx.resolver.num(v) {
@@ -127,16 +151,32 @@ impl Accum {
                     }
                 }
             }
-            Accum::GroupConcat { slot, distinct, parts, seen, .. } => {
-                if let Some(t) = slot.and_then(|s| row[s].as_ref()).and_then(|v| ctx.resolver.str_of(v)) {
+            Accum::GroupConcat {
+                slot,
+                distinct,
+                parts,
+                seen,
+                ..
+            } => {
+                if let Some(t) = slot
+                    .and_then(|s| row[s].as_ref())
+                    .and_then(|v| ctx.resolver.str_of(v))
+                {
                     let p = lexical(&t);
                     if !*distinct || seen.insert(p.clone()) {
                         parts.push(p);
                     }
                 }
             }
-            Accum::MinMax { slot, want_min, best } => {
-                if let Some(t) = slot.and_then(|s| row[s].as_ref()).and_then(|v| ctx.resolver.str_of(v)) {
+            Accum::MinMax {
+                slot,
+                want_min,
+                best,
+            } => {
+                if let Some(t) = slot
+                    .and_then(|s| row[s].as_ref())
+                    .and_then(|v| ctx.resolver.str_of(v))
+                {
                     let take = match best.as_ref() {
                         None => true,
                         Some(cur) => match (as_number(&t), as_number(cur)) {
@@ -159,15 +199,29 @@ impl Accum {
     fn finalize(self) -> Option<String> {
         match self {
             Accum::CountStar(n) => Some(fmt_num_typed(n as f64)),
-            Accum::Count { slot, distinct, n, seen } => {
+            Accum::Count {
+                slot,
+                distinct,
+                n,
+                seen,
+            } => {
                 if slot.is_none() {
                     return Some(fmt_num_typed(0.0)); // COUNT of an out-of-scope var is 0
                 }
-                let c = if distinct { seen.len() as f64 } else { n as f64 };
+                let c = if distinct {
+                    seen.len() as f64
+                } else {
+                    n as f64
+                };
                 Some(fmt_num_typed(c))
             }
             Accum::Sum { sum, .. } => Some(fmt_num_typed(sum)),
-            Accum::Avg { slot, bound, sum, num } => {
+            Accum::Avg {
+                slot,
+                bound,
+                sum,
+                num,
+            } => {
                 slot?; // AVG of an out-of-scope var is unbound
                 if bound == 0 {
                     return Some(fmt_num_typed(0.0)); // AVG of an empty group is 0

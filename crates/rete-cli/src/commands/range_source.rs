@@ -49,7 +49,11 @@ pub(crate) fn open_local(path: &str) -> anyhow::Result<Rete> {
         eprintln!(
             "[open_local] {path}: len={len} threshold={} -> {}",
             lazy_threshold_bytes(),
-            if len > lazy_threshold_bytes() { "LAZY" } else { "EAGER" }
+            if len > lazy_threshold_bytes() {
+                "LAZY"
+            } else {
+                "EAGER"
+            }
         );
     }
     if len <= lazy_threshold_bytes() {

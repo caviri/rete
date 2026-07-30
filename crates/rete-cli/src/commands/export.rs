@@ -1,9 +1,8 @@
 //! The `export` command plus the RDF serialization helpers (Turtle / JSON-LD)
 //! shared with the SPARQL CONSTRUCT output and `reason`.
 
-
-use crate::commands::render::term_to_json;
 use crate::commands::range_source::open_local;
+use crate::commands::render::term_to_json;
 
 /// `rete export <file> <format>`: write the graph as N-Quads, Turtle, or JSON-LD.
 pub(crate) fn export(file: &str, format: &str) -> anyhow::Result<()> {

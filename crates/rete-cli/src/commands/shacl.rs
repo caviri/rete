@@ -5,8 +5,8 @@ use rete_core::{
     ShaclShapes, ValidationReport, DEFAULT_BLOCK,
 };
 
-use crate::http::HttpRangeReader;
 use crate::commands::range_source::open_local;
+use crate::http::HttpRangeReader;
 
 pub(crate) fn shacl_cmd(
     file: &str,
