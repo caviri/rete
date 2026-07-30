@@ -69,7 +69,14 @@ The algebra evaluates as a lazy pull pipeline over integer slot rows: joins,
 `MINUS`, `DISTINCT`, filters, and `GRAPH` stream, so `LIMIT` and `ASK` stop the
 underlying index scans early, and under a small known demand joins switch to
 index-nested-loop probes. Aggregation, `ORDER BY` (a bounded top-k when `LIMIT`
-is present), and hash-join build sides are the only blocking points; terms are
+is present), and hash-join build sides are the only blocking points — and
+*blocking* is about ordering, not memory: aggregation folds rows through
+per-group accumulators, so resident memory is **O(groups), not O(rows)** — a
+bare `COUNT(*)` is a single counter, and a `GROUP BY` over the 1.38 billion
+`rdf:type` rows of the 9.83 B-triple DataCite graph completes inside a 4 GiB
+container (numbers on the [benchmark page](BENCHMARK.md)). What still
+materializes its input: a no-`LIMIT` `ORDER BY`, and a multi-graph `FROM` (a
+single `FROM <g>` borrows that graph's index without copying). Terms are
 resolved to strings only at projection. It is still not a *cost-based* planner —
 join order is a selectivity heuristic — and the benchmark page separates
 correctness coverage from latency and calls out the shapes where Oxigraph still

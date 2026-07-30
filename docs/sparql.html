@@ -385,7 +385,14 @@ counts, without reading the triple index:</p>
 <code>MINUS</code>, <code>DISTINCT</code>, filters, and <code>GRAPH</code> stream, so <code>LIMIT</code> and <code>ASK</code> stop the
 underlying index scans early, and under a small known demand joins switch to
 index-nested-loop probes. Aggregation, <code>ORDER BY</code> (a bounded top-k when <code>LIMIT</code>
-is present), and hash-join build sides are the only blocking points; terms are
+is present), and hash-join build sides are the only blocking points — and
+<em>blocking</em> is about ordering, not memory: aggregation folds rows through
+per-group accumulators, so resident memory is <strong>O(groups), not O(rows)</strong> — a
+bare <code>COUNT(*)</code> is a single counter, and a <code>GROUP BY</code> over the 1.38 billion
+<code>rdf:type</code> rows of the 9.83 B-triple DataCite graph completes inside a 4 GiB
+container (numbers on the <a href="BENCHMARK.html">benchmark page</a>). What still
+materializes its input: a no-<code>LIMIT</code> <code>ORDER BY</code>, and a multi-graph <code>FROM</code> (a
+single <code>FROM &lt;g&gt;</code> borrows that graph's index without copying). Terms are
 resolved to strings only at projection. It is still not a <em>cost-based</em> planner —
 join order is a selectivity heuristic — and the benchmark page separates
 correctness coverage from latency and calls out the shapes where Oxigraph still

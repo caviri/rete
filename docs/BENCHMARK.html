@@ -431,6 +431,26 @@ index never fetched</strong> — the "overview first, drill down later" promise.
 no pathological blowup: build 890 ms, triple query 54 ms, property path 103 ms,
 GROUP BY 261 ms, predicate totals 26 ms (summary stays cheap regardless of size),
 file 3.31 MB (same ~6.4× vs raw / ~2.3× vs gzip ratios as the table above).</p>
+<h2>Billion-triple scale: bounded-memory queries (DataCite)</h2>
+<p>The 52 GB <code>datacite.rete</code> — 9.83 B unique triples, 1.885 B dictionary terms, the
+largest <code>.rete</code> built to date — is queryable on a small machine. Measured under
+hard Docker memory caps (<code>--memory</code>, swap disabled), file opened locally through
+the lazy range reader:</p>
+<table><thead><tr><th>query</th><th>cap</th><th>result</th></tr></thead><tbody>
+<tr><td><code>SELECT ?s WHERE { ?s a dcite:Software } LIMIT 1</code></td><td>2 GiB</td><td>6 s</td></tr>
+<tr><td><code>SELECT (COUNT(*) AS ?n) WHERE { ?s a dcite:Software }</code></td><td>2 GiB</td><td><strong>779,399</strong> in 4 s</td></tr>
+<tr><td><code>SELECT ?t (COUNT(*) AS ?n) WHERE { ?s a ?t } GROUP BY ?t</code> — the full 1.38 B-row type slice</td><td>4 GiB</td><td><strong>30 groups</strong> in 131 s</td></tr>
+<tr><td><code>rete info</code> / <code>rete card</code> (header + card tier)</td><td>1 GiB</td><td>~1 s</td></tr>
+</tbody></table>
+<p>Aggregation folds rows through per-group accumulators (O(groups) resident) and
+the open path reads only section directories, so the memory that matters is the
+256 MiB block cache plus the group table — not the file size, the dictionary,
+or the match count.</p>
+<p>One diagnostic worth writing down: if <strong>every</strong> query on a large file OOMs, with
+wall time scaling linearly with the memory cap at a constant ~150 MB/s, the
+binary is reading the whole file — the lazy-local routing is missing (builds
+older than the 0.3.0 line; check <code>strings &lt;binary&gt; | grep RETE_LOCAL_LAZY_ABOVE_MB</code>). That slope is the cap filling at disk speed, not
+the query working.</p>
 <h2>The pyramid: cost vs benefit</h2>
 <p>A <code>.rete</code> carries <strong>two</strong> pyramidal structures with very different economics. This
 measures both, against <code>--no-pyramid</code>, on a typed <code>subClassOf</code> ontology fixture

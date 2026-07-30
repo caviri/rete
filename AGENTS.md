@@ -129,9 +129,12 @@ signature header); run the scripts with `python3 -P` (a `dev/inspect.py` shadows
 302-redirect to a per-range signed Xet CDN URL, and rete's default reader uses
 **synchronous XHR**, which does not follow a cross-origin redirect — so `resolve` URLs
 work from curl/CLI but fail in the browser (and are ~2× slower). An HF **bucket** exposes
-no public HTTP-range URL at all (Xet chunk storage, `hf_xet` client only). The retired
-`katospiegel-rete.hf.space` Space (a FastAPI FUSE-bucket Range proxy) served directly but
-wedged under load — R2 replaced it and it is now unused.
+no public HTTP-range URL at all (Xet chunk storage, `hf_xet` client only). The
+`katospiegel-rete.hf.space` Space's **byte-range proxy plane** (a FastAPI FUSE-bucket
+Range proxy) served directly but wedged under load — R2 replaced that plane, and bulk
+Range traffic should never route through the Space again. The Space itself is alive and
+current (engine 0.3.0) for its other planes: `/api`, `/mcp`, and the per-dataset
+SPARQL 1.1 endpoints under `/sparql/…`.
 
 ## Commits
 

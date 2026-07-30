@@ -82,7 +82,9 @@ curl -s https://host/data.nt | rete validate - --format nt
 
 ### `rete info <file>`
 Print the decoded 1 KB header (the section directory, codecs, counts, content hash) — plus
-the [Dataset Card](dataset-cards.md) catalog when the file carries one.
+the [Dataset Card](dataset-cards.md) catalog when the file carries one. Reads only
+the header and card byte ranges (the same two small reads `card-url` does over
+HTTP), so a 50 GB file answers in about a second.
 
 ### `rete stats <file>`
 Human-friendly overview: file size, default-graph triple count, distinct terms,
@@ -127,7 +129,8 @@ rete search data.rete --contains-prefix einst    # a word starting with "einst�
 ### `rete card <file> [--json]`
 Print the embedded [Dataset Card](dataset-cards.md) — curated metadata
 (title/license/source/…) plus the derived profile (counts, top predicates and
-classes, vocabularies) and the content-hash checksum. `--json` emits the card
+classes, vocabularies) and the content-hash checksum. Costs two small range
+reads (header + card), never the dictionary or index — instant on any size. `--json` emits the card
 object plus `schemaVersion: 1`. Prints `(no dataset card)` for a file built without one. `rete info` shows
 the same catalog beneath the header when a card is present.
 
@@ -208,6 +211,13 @@ rewritten query touches. See [Reasoning by query rewriting](reasoning.md#reasoni
 rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 rete sparql data.rete "SELECT ?o WHERE { ?o a <…/Aves> }" --entail    # ontology-aware
 ```
+
+**Memory & I/O.** Local files above 1 GiB open through the same lazy range
+reader the `-url` commands use (threshold: `RETE_LOCAL_LAZY_ABOVE_MB`, block
+size: `RETE_BLOCK_KB`, cache capped at 256 MiB), and aggregation streams
+through per-group accumulators — a `COUNT` over a 9.83 B-triple file runs in a
+2 GiB container ([benchmark](BENCHMARK.md)). Preview a query's byte cost with
+`rete cost`, and see the exact ranges a query read with `rete why`.
 
 ### `rete serve <file> [--bind addr] [--token t] [--journal path]`
 Serve one `.rete` as a live **SPARQL 1.1 Protocol endpoint — queries and

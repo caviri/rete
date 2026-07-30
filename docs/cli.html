@@ -398,7 +398,9 @@ curl -s https://host/data.nt | rete validate - --format nt
 <h2>Inspecting</h2>
 <h3><code>rete info &lt;file&gt;</code></h3>
 <p>Print the decoded 1 KB header (the section directory, codecs, counts, content hash) — plus
-the <a href="dataset-cards.html">Dataset Card</a> catalog when the file carries one.</p>
+the <a href="dataset-cards.html">Dataset Card</a> catalog when the file carries one. Reads only
+the header and card byte ranges (the same two small reads <code>card-url</code> does over
+HTTP), so a 50 GB file answers in about a second.</p>
 <h3><code>rete stats &lt;file&gt;</code></h3>
 <p>Human-friendly overview: file size, default-graph triple count, distinct terms,
 named-graph count, pyramid levels, and top predicates. Notes the label-index and
@@ -435,7 +437,8 @@ rete search data.rete --contains-prefix einst    # a word starting with "einst�
 <h3><code>rete card &lt;file&gt; [--json]</code></h3>
 <p>Print the embedded <a href="dataset-cards.html">Dataset Card</a> — curated metadata
 (title/license/source/…) plus the derived profile (counts, top predicates and
-classes, vocabularies) and the content-hash checksum. <code>--json</code> emits the card
+classes, vocabularies) and the content-hash checksum. Costs two small range
+reads (header + card), never the dictionary or index — instant on any size. <code>--json</code> emits the card
 object plus <code>schemaVersion: 1</code>. Prints <code>(no dataset card)</code> for a file built without one. <code>rete info</code> shows
 the same catalog beneath the header when a card is present.</p>
 <h3><code>rete graphs &lt;file&gt;</code></h3>
@@ -494,6 +497,12 @@ rewritten query touches. See <a href="reasoning.html#reasoning-by-query-rewritin
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 rete sparql data.rete "SELECT ?o WHERE { ?o a &lt;…/Aves&gt; }" --entail    # ontology-aware
 </code></pre>
+<p><strong>Memory &amp; I/O.</strong> Local files above 1 GiB open through the same lazy range
+reader the <code>-url</code> commands use (threshold: <code>RETE_LOCAL_LAZY_ABOVE_MB</code>, block
+size: <code>RETE_BLOCK_KB</code>, cache capped at 256 MiB), and aggregation streams
+through per-group accumulators — a <code>COUNT</code> over a 9.83 B-triple file runs in a
+2 GiB container (<a href="BENCHMARK.html">benchmark</a>). Preview a query's byte cost with
+<code>rete cost</code>, and see the exact ranges a query read with <code>rete why</code>.</p>
 <h3><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
 <p>Serve one <code>.rete</code> as a live <strong>SPARQL 1.1 Protocol endpoint — queries and
 SPARQL Update</strong>. The base file is <strong>never mutated</strong>: updates append to a
