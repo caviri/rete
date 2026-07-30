@@ -35,7 +35,7 @@ RUN wget -q "https://download.blender.org/release/Blender${SERIES}/blender-${BLE
 ARG WITH_ENGINE=1
 RUN /opt/blender/*/python/bin/python3* -m ensurepip --upgrade && \
     if [ "$WITH_ENGINE" = "1" ]; then \
-        /opt/blender/*/python/bin/python3* -m pip install --no-cache-dir "rete-graph>=0.2.3"; \
+        /opt/blender/*/python/bin/python3* -m pip install --no-cache-dir "rete-graph>=0.3.0"; \
     fi
 
 # ifcopenshell (IFC) and laspy[lazrs] (LAS/LAZ/COPC) exercise the CAD and
