@@ -28,7 +28,7 @@ p5.js-style: one self-contained file (engine embedded), full and minified,
 served by any npm CDN:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/rete-graph@0.1.0/dist/rete-graph.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/rete-graph@0.3.0/dist/rete-graph.min.js"></script>
 <script>
   (async () => {
     const bytes = new Uint8Array(await (await fetch("mydata.rete")).arrayBuffer());

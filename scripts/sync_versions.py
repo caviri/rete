@@ -56,6 +56,26 @@ TARGETS = [
         re.compile(r"(?m)^Version: (.+)$"),
         "r package",
     ),
+    # The Blender add-on ships rete-graph wheels inside its zip; its default pin
+    # and the test-image floor must track the engine minor or the add-on quietly
+    # bundles a previous engine generation.
+    (
+        "clients/blender/build.sh",
+        re.compile(r'(?m)^VERSION="\$\{RETE_GRAPH_VERSION:-([^}"]+)\}"'),
+        "blender bundled wheel pin",
+    ),
+    (
+        "clients/blender/Dockerfile",
+        re.compile(r'"rete-graph>=([0-9.]+)"'),
+        "blender test-image floor",
+    ),
+    # The HF Space installs the engine from PyPI at image build; a stale floor
+    # lets a Space rebuild silently resolve an old engine.
+    (
+        "hf-space/requirements.txt",
+        re.compile(r"(?m)^rete-graph>=([0-9.]+)$"),
+        "hf-space wheel floor",
+    ),
 ]
 
 # The Pyodide/JupyterLite fallback wheel is served from our own bucket, so its

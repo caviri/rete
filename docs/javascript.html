@@ -354,7 +354,7 @@ console.log(g.stats()); // { fileLength, bytes, requests } — lazy, not a downl
 <h2>Or a single <code>&lt;script&gt;</code> tag — no bundler, no install</h2>
 <p>p5.js-style: one self-contained file (engine embedded), full and minified,
 served by any npm CDN:</p>
-<pre><code class="language-html">&lt;script src="https://cdn.jsdelivr.net/npm/rete-graph@0.1.0/dist/rete-graph.min.js"&gt;&lt;/script&gt;
+<pre><code class="language-html">&lt;script src="https://cdn.jsdelivr.net/npm/rete-graph@0.3.0/dist/rete-graph.min.js"&gt;&lt;/script&gt;
 &lt;script&gt;
   (async () =&gt; {
     const bytes = new Uint8Array(await (await fetch("mydata.rete")).arrayBuffer());
