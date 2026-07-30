@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>Neurons by predicted neurotransmitter — neuro-showcase</title>
-<meta name="description" content="Every hemibrain neuron carries a predicted neurotransmitter (the FlyEM classifier&#39;s top class over GABA / acetylcholine / glutamate / dopamine /… Runs live in your browser over neuro-showcase (300 triples · 43 KB) — no server." />
+<meta name="description" content="Answer: 5 rows in 2.0 ms. Every hemibrain neuron carries a predicted neurotransmitter (the FlyEM classifier&#39;s top class over GABA / acetylcholine / glutamate / dopamine /… Runs live in your browser over neuro-showcase (300 triples · 43 KB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/neuro-showcase-5.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="Neurons by predicted neurotransmitter — neuro-showcase" />
-<meta property="og:description" content="Every hemibrain neuron carries a predicted neurotransmitter (the FlyEM classifier&#39;s top class over GABA / acetylcholine / glutamate / dopamine /… Runs live in your browser over neuro-showcase (300 triples · 43 KB) — no server." />
+<meta property="og:description" content="Answer: 5 rows in 2.0 ms. Every hemibrain neuron carries a predicted neurotransmitter (the FlyEM classifier&#39;s top class over GABA / acetylcholine / glutamate / dopamine /… Runs live in your browser over neuro-showcase (300 triples · 43 KB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/neuro-showcase-5.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/neuro-showcase-5.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="Neurons by predicted neurotransmitter — neuro-showcase" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Neurons by predicted neurotransmitter — neuro-showcase" />
-<meta name="twitter:description" content="Every hemibrain neuron carries a predicted neurotransmitter (the FlyEM classifier&#39;s top class over GABA / acetylcholine / glutamate / dopamine /… Runs live in your browser over neuro-showcase (300 triples · 43 KB) — no server." />
+<meta name="twitter:description" content="Answer: 5 rows in 2.0 ms. Every hemibrain neuron carries a predicted neurotransmitter (the FlyEM classifier&#39;s top class over GABA / acetylcholine / glutamate / dopamine /… Runs live in your browser over neuro-showcase (300 triples · 43 KB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/neuro-showcase-5.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Neurons by predicted neurotransmitter","description":"Every hemibrain neuron carries a predicted neurotransmitter (the FlyEM classifier's top class over GABA / acetylcholine / glutamate / dopamine /… Runs live in your browser over neuro-showcase (300 triples · 43 KB) — no server.","url":"https://caviri.github.io/rete/q/neuro-showcase-5.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"neuro-showcase","url":"https://caviri.github.io/rete/d/neuro-showcase.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Neurons by predicted neurotransmitter","description":"Answer: 5 rows in 2.0 ms. Every hemibrain neuron carries a predicted neurotransmitter (the FlyEM classifier's top class over GABA / acetylcholine / glutamate / dopamine /… Runs live in your browser over neuro-showcase (300 triples · 43 KB) — no server.","url":"https://caviri.github.io/rete/q/neuro-showcase-5.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"neuro-showcase","url":"https://caviri.github.io/rete/d/neuro-showcase.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,13 +49,13 @@
       <div class="chip">Aggregate</div>
     </div>
     <h1 class="title s1">Neurons by predicted neurotransmitter</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?nt</span> (<span class="kw">COUNT</span>(<span class="v">?n</span>) <span class="kw">AS</span> <span class="v">?neurons</span>) <span class="kw">WHERE</span> {
-  <span class="v">?n</span> a neuro:Neuron ; neuro:neurotransmitter/rdfs:label ?…
-} <span class="kw">GROUP BY</span> <span class="v">?nt</span> <span class="kw">ORDER BY</span> <span class="kw">DESC</span>(<span class="v">?neurons</span>)</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Neurotransmitter</th><th>Neurons</th></tr></thead><tbody><tr><td class="">GABA</td><td class="num">7</td></tr><tr><td class="">serotonin</td><td class="num">7</td></tr><tr><td class="">glutamate</td><td class="num">6</td></tr><tr><td class="">dopamine</td><td class="num">5</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🧠</div>
       <div class="key">neuro-showcase</div>
       <div class="facts"><b>300</b> triples · 43 KB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">5 rows</div>
+        <div class="sub">answered in 2.0 ms</div>
+        </div>
     </aside></div>
     <div class="foot">
       <div class="cta">Run this query in your browser — <b>no server, no download</b></div>
@@ -64,9 +64,10 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=neuro-showcase&amp;load=lazy&amp;mode=sparql&amp;ex=5">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">5 rows · 2.0 ms · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX neuro: &lt;https://w3id.org/rete/neuro#&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
 SELECT ?nt (COUNT(?n) AS ?neurons) WHERE {
   ?n a neuro:Neuron ; neuro:neurotransmitter/rdfs:label ?nt .
 } GROUP BY ?nt ORDER BY DESC(?neurons)</div>
