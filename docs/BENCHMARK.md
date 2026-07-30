@@ -125,6 +125,32 @@ no pathological blowup: build 890 ms, triple query 54 ms, property path 103 ms,
 GROUP BY 261 ms, predicate totals 26 ms (summary stays cheap regardless of size),
 file 3.31 MB (same ~6.4× vs raw / ~2.3× vs gzip ratios as the table above).
 
+## Billion-triple scale: bounded-memory queries (DataCite)
+
+The 52 GB `datacite.rete` — 9.83 B unique triples, 1.885 B dictionary terms, the
+largest `.rete` built to date — is queryable on a small machine. Measured under
+hard Docker memory caps (`--memory`, swap disabled), file opened locally through
+the lazy range reader:
+
+| query | cap | result |
+|---|---|---|
+| `SELECT ?s WHERE { ?s a dcite:Software } LIMIT 1` | 2 GiB | 6 s |
+| `SELECT (COUNT(*) AS ?n) WHERE { ?s a dcite:Software }` | 2 GiB | **779,399** in 4 s |
+| `SELECT ?t (COUNT(*) AS ?n) WHERE { ?s a ?t } GROUP BY ?t` — the full 1.38 B-row type slice | 4 GiB | **30 groups** in 131 s |
+| `rete info` / `rete card` (header + card tier) | 1 GiB | ~1 s |
+
+Aggregation folds rows through per-group accumulators (O(groups) resident) and
+the open path reads only section directories, so the memory that matters is the
+256 MiB block cache plus the group table — not the file size, the dictionary,
+or the match count.
+
+One diagnostic worth writing down: if **every** query on a large file OOMs, with
+wall time scaling linearly with the memory cap at a constant ~150 MB/s, the
+binary is reading the whole file — the lazy-local routing is missing (builds
+older than the 0.3.0 line; check `strings <binary> | grep
+RETE_LOCAL_LAZY_ABOVE_MB`). That slope is the cap filling at disk speed, not
+the query working.
+
 ## The pyramid: cost vs benefit
 
 A `.rete` carries **two** pyramidal structures with very different economics. This

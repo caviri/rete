@@ -5,6 +5,41 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Aggregation streams.** `GROUP BY` / `COUNT` / `SUM` / … fold solutions
+  through per-group accumulators instead of buffering every row, so resident
+  memory is **O(groups), not O(rows)** — a bare `COUNT(*)` is a single counter,
+  and a `GROUP BY` over the 1.38 B-row type slice of the 9.83 B-triple DataCite
+  graph completes inside a 4 GiB container (measurements on the benchmark
+  page). (#96)
+- **`rete info` / `rete card` no longer read the whole file.** Both use the
+  CARD tier — the same two small range reads `card-url` performs over HTTP —
+  so a 52 GB graph answers in ~1 s under a 1 GiB cap. A single-graph
+  `FROM <g>` now borrows that graph's index instead of copying every triple
+  into a fresh one. (#97)
+- **The PyPI publish job could ship the R2-only Pyodide-legacy wheel**, whose
+  platform tag PyPI rejects — the artifact now lives outside the publish job's
+  `wheel-*` download glob. (#98)
+- **The CI wasm-parity gate guards real files again.** Its diff listed
+  gitignored directories and two paths that never existed (silent no-ops, which
+  is how five different engine builds came to coexist across the shipped
+  pages); `docs/engine/` gained a producer (`build_wasm.sh`) and the parity
+  list now names exactly the tracked artifacts it regenerates. Workspace and
+  python-client fmt/clippy debt cleared; the python lint job's toolchain is
+  pinned to the repo's. (#100)
+
+### Changed
+
+- **Every client pin sits on the 0.3.0 engine line and is enforced.**
+  `sync_versions.py --check` now also guards the Blender wheel pin and
+  test-image floor and the HF Space wheel floor (eight lockstep targets);
+  the docs' jsDelivr snippets load `rete-graph@0.3.0`. (#99)
+- **Every browser surface rebuilt on the 0.3.0 engine** — playground,
+  explore-100mb, the Asyncify pair, explorer, yasgui, lombardi, atlas, the
+  plaza engine pair and `docs/engine` — from CI's canonical wasm bytes; the
+  deployed playground stamps the exact commit it was built from. (#100)
+
 ### Added
 
 - **Shared links now preview.** The playground keeps its state in the URL
