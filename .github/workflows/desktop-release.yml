@@ -26,7 +26,12 @@ on:
         default: true
   push:
     tags:
+      # `explorer-v*` cuts an app-only build. `v*` makes the desktop app ride
+      # along with every workspace release, so a new version is never published
+      # with a stale installer beside it. This runs alongside release.yml rather
+      # than inside it — a queued macOS runner must not hold up crates.io.
       - "explorer-v*"
+      - "v*"
 
 permissions:
   contents: write
@@ -37,12 +42,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # One universal binary rather than a job per architecture. The old
+          # macos-13 (Intel) job sat queued for hours every run — that image is
+          # being retired and its pool is thin — so every run stayed amber even
+          # though everything that mattered had passed. macos-14 cross-builds
+          # both arches into one .dmg that runs on Apple Silicon and Intel.
           - platform: macos-14
-            target: aarch64-apple-darwin
-            label: macOS (Apple Silicon)
-          - platform: macos-13
-            target: x86_64-apple-darwin
-            label: macOS (Intel)
+            target: universal-apple-darwin
+            label: macOS (universal)
           # Windows is the one target Docker could plausibly cross-compile
           # (cargo-xwin), but the NSIS/WiX bundlers want Wine and WebView2
           # bootstrapping is fiddliest exactly there. A runner costs nothing.
@@ -59,7 +66,9 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          # `universal-apple-darwin` is not a rustup target: it is a lipo of the
+          # two real ones, so both have to be installed for Tauri to build it.
+          targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -103,8 +112,8 @@ jobs:
 
             Or: right-click the app → Open → Open. Both are one-time.
 
-            Pick the **aarch64** build for Apple Silicon (M1 and later) and the
-            **x64** build for Intel Macs.
+            The macOS `.dmg` is a universal binary — one download for both
+            Apple Silicon and Intel.
 
             Windows builds (`.msi` / `-setup.exe`) are unsigned too: SmartScreen
             shows "Windows protected your PC" — **More info** → **Run anyway**.

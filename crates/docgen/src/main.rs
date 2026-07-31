@@ -37,6 +37,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("playground-guide.md", "Playground"),
             ("plaza-guide.md", "Plaza — dataset gallery"),
+            ("file-explorer.md", "File explorer — browse like an archive"),
             ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
             ("jupyterlite-guide.md", "JupyterLite — Python in the tab"),
             ("jslab-guide.md", "JS lab — rete × D3"),

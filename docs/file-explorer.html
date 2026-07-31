@@ -4,23 +4,23 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>Agents — MCP, plugin & skills · rete docs</title>
-  <meta name="description" content="rete has three agent-facing surfaces, all built on the same idea: a .rete file is self-describing (card, schema, example queries travel inside the file), so an agent can go from &quot;what datasets…" />
-  <link rel="canonical" href="https://caviri.github.io/rete/agents.html" />
+  <title>File explorer — browse like an archive · rete docs</title>
+  <meta name="description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
+  <link rel="canonical" href="https://caviri.github.io/rete/file-explorer.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
-  <meta property="og:title" content="Agents — MCP, plugin &amp; skills · rete docs" />
-  <meta property="og:description" content="rete has three agent-facing surfaces, all built on the same idea: a .rete file is self-describing (card, schema, example queries travel inside the file), so an agent can go from &quot;what datasets…" />
-  <meta property="og:url" content="https://caviri.github.io/rete/agents.html" />
-  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/agents.png" />
+  <meta property="og:title" content="File explorer — browse like an archive · rete docs" />
+  <meta property="og:description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
+  <meta property="og:url" content="https://caviri.github.io/rete/file-explorer.html" />
+  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/file-explorer.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="Agents — MCP, plugin &amp; skills · rete docs" />
+  <meta property="og:image:alt" content="File explorer — browse like an archive · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Agents — MCP, plugin &amp; skills · rete docs" />
-  <meta name="twitter:description" content="rete has three agent-facing surfaces, all built on the same idea: a .rete file is self-describing (card, schema, example queries travel inside the file), so an agent can go from &quot;what datasets…" />
-  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/agents.png" />
-  <meta name="rete:section" content="Clients" />
+  <meta name="twitter:title" content="File explorer — browse like an archive · rete docs" />
+  <meta name="twitter:description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
+  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/file-explorer.png" />
+  <meta name="rete:section" content="Explore in the browser" />
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -275,7 +275,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Explore in the browser</li>
         <li class="nav-group"><details><summary><a href="playground-guide.html">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
-        <li><a href="file-explorer.html">File explorer — browse like an archive</a></li>
+        <li><a href="file-explorer.html" class="active">File explorer — browse like an archive</a></li>
         <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
@@ -304,7 +304,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
         <li><a href="r.html">R — rete</a></li>
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
-        <li><a href="agents.html" class="active">Agents — MCP, plugin & skills</a></li>
+        <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
         <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
@@ -334,189 +334,149 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Agentic interfaces — MCP, plugin &amp; skills</h1>
-<p>rete has three agent-facing surfaces, all built on the same idea: a <code>.rete</code>
-file is <strong>self-describing</strong> (card, schema, example queries travel inside the
-file), so an agent can go from "what datasets exist?" to a correct SPARQL
-query — and to validated, media-rich answers — without any out-of-band
-documentation.</p>
-<table><thead><tr><th>Surface</th><th>What it is</th><th>For</th></tr></thead><tbody>
-<tr><td><strong>MCP server</strong></td><td><code>https://katospiegel-rete.hf.space/mcp/</code> — 18 tools over the published catalog and any <code>.rete</code> URL</td><td>ChatGPT, Claude, any MCP client</td></tr>
-<tr><td><strong>Desktop extension</strong></td><td><code>rete.mcpb</code> — the whole engine as a one-click local install</td><td>Claude Desktop, incl. private graphs and offline work</td></tr>
-<tr><td><strong>Claude Code plugin</strong></td><td>this repo, installable as a plugin + marketplace</td><td>Claude Code users: MCP + skills in two commands</td></tr>
-<tr><td><strong>Skills</strong></td><td>four repo-aware playbooks under <code>skills/</code></td><td>Claude Code; also readable as human docs</td></tr>
-</tbody></table>
-<h2>The MCP server</h2>
-<p>One streamable-HTTP endpoint, stateless, <strong>no authentication, no API key</strong>
-(the model lives in the client — the server only serves graphs):</p>
-<pre><code>https://katospiegel-rete.hf.space/mcp/
+<h1>File explorer — browse a <code>.rete</code> like an archive</h1>
+<p>Open a <code>.rete</code> the way an archive tool opens a <code>.zip</code>: folders, files, a preview
+pane, and <strong>extract</strong>. It runs in a browser and ships as a desktop app for macOS
+and Windows.</p>
+<p>SPARQL is the wall most people hit; folders are the one interface everybody
+already knows. Nothing here is a new engine feature — it projects what a <code>.rete</code>
+already carries (the 1 KB section directory, the baked schema pyramid, the
+Dataset Card, six permutation indexes) onto a metaphor a non-specialist can walk
+into.</p>
+<blockquote>
+<p><strong>Status: experiment.</strong> It lives in <code>experiments/rete-file-explorer/</code> and is not
+part of the released surface. The desktop builds are unsigned.</p>
+</blockquote>
+<hr />
+<h2>Run it in a browser</h2>
+<p>Served from the repo root, like the <a href="plaza-guide.html">plaza</a>:</p>
+<pre><code class="language-sh">python3 -m http.server 8901
+# → http://127.0.0.1:8901/experiments/rete-file-explorer/index.html
 </code></pre>
-<p>The tools, grouped by what an agent does with them:</p>
-<table><thead><tr><th>Group</th><th>Tools</th></tr></thead><tbody>
-<tr><td>Discover</td><td><code>list_datasets</code> · <code>dataset_card</code> · <code>dataset_schema</code> · <code>example_queries</code></td></tr>
-<tr><td>Query</td><td><code>sparql_query</code> (SELECT/ASK/CONSTRUCT/DESCRIBE, <code>reason=true</code> for OWL 2 QL, any catalog key <strong>or any <code>.rete</code> URL</strong>) · <code>find_entities</code> · <code>describe_entity</code></td></tr>
-<tr><td>Validate</td><td><code>validate_query</code> (deterministic SPARQL lint: parse, prefixes, features, vocabulary probes vs a dataset, ontology/subclass checks) · <code>validate_shacl</code> (lazy over shape targets) · <code>shacl_shapes</code> (curated shapes)</td></tr>
-<tr><td><strong>Author</strong></td><td><code>suggest_vocabulary</code> (search LOV before minting IRIs) · <code>check_ontology</code> (parse + lint battery + reasoner smoke) · <code>build_rete</code> (RDF text → a served, immediately-queryable <code>.rete</code>) · <code>causal_diagram</code> (extracted claims → Mermaid + Graphviz SVG + a CauseNet-aligned graph) — see the <a href="fallacies.html">conversation experiments</a></td></tr>
-<tr><td>Media</td><td><code>embed_media</code> (URLs → base64 data URIs, images recompressed to WebP) · <code>media_preview</code> (representative image of a PDF / video frame / IIIF / HTML page)</td></tr>
-<tr><td>ChatGPT connector contract</td><td><code>search</code> · <code>fetch</code></td></tr>
+<p>It loads the WASM build from <code>web/pkg-nomodules/</code>, so run <code>scripts/build_wasm.sh</code>
+first if that directory is stale.</p>
+<p>Open one of the catalogued datasets, paste any <code>.rete</code> URL, or <strong>drag a file onto
+the window</strong> — anywhere, at any time.</p>
+<h2>Install the desktop app</h2>
+<p>Builds are attached to a GitHub Release by
+<a href="https://github.com/caviri/rete/actions/workflows/desktop-release.yml"><code>.github/workflows/desktop-release.yml</code></a>:
+a universal macOS <code>.dmg</code> (Apple Silicon + Intel) and a Windows <code>.msi</code> /
+<code>-setup.exe</code>.</p>
+<p>The desktop build drives <code>rete-core</code> natively rather than WASM, which buys three
+things the browser cannot give: no 4 GB heap ceiling, real threads, and
+positional reads against a local file — so a multi-gigabyte <code>.rete</code> on disk
+faults in rather than being read whole.</p>
+<p><strong>They are unsigned.</strong> macOS refuses them on first open ("cannot be opened
+because the developer cannot be verified", or "is damaged"); neither is true —
+it is the quarantine attribute doing its job on an app with no Developer ID.
+Once, after dragging to Applications:</p>
+<pre><code class="language-sh">xattr -dr com.apple.quarantine "/Applications/Rete File Explorer.app"
+</code></pre>
+<p>Or right-click the app → <strong>Open</strong> → <strong>Open</strong>. On Windows, SmartScreen shows
+"Windows protected your PC" → <strong>More info</strong> → <strong>Run anyway</strong>.</p>
+<hr />
+<h2>Five views, because there is no single honest tree</h2>
+<p>RDF is a graph. It has no canonical folder hierarchy — but it has several
+defensible ones, each true in its own way, so you switch between them.</p>
+<table><thead><tr><th>View</th><th>Folders are</th><th>What it costs</th></tr></thead><tbody>
+<tr><td><strong>Types</strong></td><td>classes; files are instances</td><td>the schema pyramid only — the triple index is never read</td></tr>
+<tr><td><strong>Namespace</strong></td><td>the IRI's own path segments</td><td>a bounded sample per class</td></tr>
+<tr><td><strong>Predicates</strong></td><td>one relation each; files are two-column tables</td><td>the schema pyramid only</td></tr>
+<tr><td><strong>Graphs</strong></td><td>named graphs, as volumes</td><td>one <code>DISTINCT ?g</code></td></tr>
+<tr><td><strong>Sections</strong></td><td>the actual bytes on disk</td><td>nothing — it <em>is</em> the first 1 KB</td></tr>
 </tbody></table>
-<p>Every answer carries <code>stats</code> — the bytes physically fetched — so laziness
-stays observable. The server instructions teach the intended workflow
-(card → schema → examples → query), and reads are disk-cached server-side.</p>
-<h3>Connect from ChatGPT</h3>
-<p>Two integration levels:</p>
-<ol>
-<li><strong>Developer mode (all 18 tools).</strong> Settings → <em>Apps &amp; Connectors</em> →
-enable <em>Developer mode</em> (under advanced settings) → <em>Create</em> a
-connector: any name, MCP server URL
-<code>https://katospiegel-rete.hf.space/mcp/</code>, authentication <strong>None</strong>.
-Enable it per-chat from the composer's tools menu.</li>
-<li><strong>As a regular connector (search + deep research).</strong> The server
-implements ChatGPT's <code>search</code>/<code>fetch</code> contract, so it also works as a
-plain connector: <code>search</code> matches datasets and entities, <code>fetch</code> returns
-the card/schema/examples or everything about one entity.</li>
-</ol>
-<p><strong>Gotcha (hard-won):</strong> ChatGPT snapshots the tool list when the connector
-is created and does not refresh it on its own. After the server gains
-tools, <em>refresh</em> the connector (or delete and re-add it) and start a new
-chat — otherwise you keep the old tool list.</p>
-<h3>Connect from Claude</h3>
+<p><strong>Sections</strong> is the one that makes the metaphor land. It renders the header's
+typed section directory with real offsets, so you can see that the INDEX is 47%
+of a file and the DICTIONARY 9%, and click a section to see its extent drawn
+against the whole file. See <a href="SPEC.html">the format spec</a> for what each section holds.</p>
+<p>A "file" is a resource's Concise Bounded Description, previewable as a property
+table, JSON-LD, or Turtle, with its incoming references underneath.</p>
+<h2>Folders that do not bottom out</h2>
+<p>Expanding an instance lists the resources it points at, labelled by the predicate
+that got you there, plus a <code>↩ referenced by</code> folder for the inbound side. So you
+descend <code>Creature → A-Acererak the Archlich → printedIn → Adventures in the Forgotten Realms → ↩ referenced by → …</code> for as long as the data keeps going.</p>
+<p>That is not a limitation of the browser; it is the honest shape of RDF. Ancestors
+travel with each node, so a link back to something already on your path is marked
+<code>↺</code> rather than pretending to be new. Literals are deliberately <em>not</em> children —
+they are the contents of the file, shown in the preview.</p>
+<h2>Two layouts</h2>
 <ul>
-<li>
-<p><strong>Claude.ai (web/desktop):</strong> Settings → <em>Connectors</em> → <em>Add custom
-connector</em> → the <code>/mcp/</code> URL, no auth. Available on paid plans.</p>
-</li>
-<li>
-<p><strong>Claude Code — the plugin way (recommended):</strong> see below; installing
-the plugin wires the MCP automatically.</p>
-</li>
-<li>
-<p><strong>Claude Code — MCP only:</strong></p>
-<pre><code class="language-sh">claude mcp add --transport http rete-graphs https://katospiegel-rete.hf.space/mcp/
-</code></pre>
-</li>
+<li><strong>Tree</strong> — nested and expandable. The twisty expands; clicking the name opens
+the preview. They are separate targets on purpose: a resource is both a folder
+and a file, so clicking its name must not collapse it.</li>
+<li><strong>Icons</strong> — one folder at a time as tiles with a breadcrumb, like a file
+manager. Tiles show a real thumbnail wherever the data has one.</li>
 </ul>
-<h3>Connect from any other MCP client</h3>
-<p>Generic config (Cursor, Windsurf, custom hosts — field names vary
-slightly per client):</p>
-<pre><code class="language-json">{
-  "mcpServers": {
-    "rete-graphs": {
-      "type": "http",
-      "url": "https://katospiegel-rete.hf.space/mcp/"
-    }
-  }
-}
-</code></pre>
-<h3>Programmatic agents</h3>
-<p>An agent framework can reach a graph two ways: through this MCP server, or by
-calling the <code>rete-graph</code> library <strong>in process</strong>, so the tools run against a
-local path or a URL with no server in between —
-<a href="agent-frameworks.html">LangChain &amp; Pydantic AI</a> is the tutorial for both,
-with runnable scripts.</p>
-<p>Verified with <a href="https://ai.pydantic.dev">pydantic-ai</a> (2.x) — the full
-tool loop over this server:</p>
-<pre><code class="language-python">from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPToolset
-
-agent = Agent("anthropic:claude-sonnet-5",
-              toolsets=[MCPToolset("https://katospiegel-rete.hf.space/mcp/")])
-async with agent:
-    result = await agent.run("Which datasets cover Spanish law? Query one of them.")
-</code></pre>
-<p>And with the <a href="https://gofastmcp.com">FastMCP</a> client for direct calls:</p>
-<pre><code class="language-python">from fastmcp import Client
-
-async with Client("https://katospiegel-rete.hf.space/mcp/") as c:
-    tools = await c.list_tools()
-    result = await c.call_tool("sparql_query", {
-        "dataset": "boe",
-        "query": "SELECT (COUNT(?s) AS ?n) WHERE { ?s a &lt;http://data.europa.eu/eli/ontology#LegalResource&gt; }",
-    })
-</code></pre>
-<p>No MCP at all? The same surface is plain REST (<code>/api/…</code>, OpenAPI at
-<a href="https://katospiegel-rete.hf.space/docs"><code>/docs</code></a>) and every dataset is a
-standard <a href="interop.html">SPARQL 1.1 Protocol endpoint</a>
-(<code>/sparql/&lt;key&gt;</code> or <code>/sparql/&lt;any-.rete-URL&gt;</code>).</p>
-<h2>The desktop extension (<code>rete.mcpb</code>)</h2>
-<p>The MCP server above is a <em>hosted</em> surface: it queries the published
-catalog, and your own graphs are not on it. The
-<a href="https://github.com/modelcontextprotocol/mcpb">MCP Bundle</a> inverts that —
-it installs the <strong>whole engine on the user's machine</strong>, so Claude Desktop
-can query private <code>.rete</code> files with no network at all, and reach the
-published catalog directly over HTTP Range with no server in between.</p>
-<p>The format makes this unusually easy. MCPB's own guidance notes that Python
-bundles cannot portably ship compiled dependencies and that binary bundles
-need a build per platform; the rete engine is Rust <strong>already compiled to
-architecture-neutral wasm</strong>, so the extension is a plain <code>node</code> bundle — one
-JS file plus one <code>.wasm</code>, 1.3 MB packed — that runs unchanged on macOS,
-Windows and Linux with the Node runtime Claude Desktop ships.</p>
-<p>Nine tools, mirroring the hosted server's read surface plus local authoring:
-<code>list_datasets</code>, <code>dataset_card</code>, <code>dataset_schema</code>, <code>example_queries</code>,
-<code>sparql_query</code>, <code>find_entities</code>, <code>describe_entity</code>, <code>validate_shacl</code>,
-<code>build_rete</code>. Every <code>dataset</code> argument takes a local file name, a catalog
-key, or an <code>https://</code> URL to any published <code>.rete</code>.</p>
-<p>The decisive property is that <strong>local files are read lazily too</strong> — the same
-byte-range path as a remote graph, via the JS client's <code>file://</code> reader — so
-a multi-gigabyte graph on disk answers a selective query in megabytes and is
-never loaded into memory.</p>
-<h3>Try it now</h3>
-<p><strong>⬇ <a href="https://data.graphplaza.com/mcpb/rete.mcpb">Download rete.mcpb</a></strong> (1.4 MB)
-— then double-click it, or drag it into Claude Desktop.</p>
-<p>That link always serves the current build; a pinned copy of each version sits
-beside it (for example
-<a href="https://data.graphplaza.com/mcpb/rete-0.3.0.mcpb"><code>rete-0.3.0.mcpb</code></a>). Every
-tagged release additionally attaches <code>rete-&lt;version&gt;.mcpb</code> to the
-<a href="https://github.com/caviri/rete/releases">releases page</a>, built by the release
-workflow with a SHA-256 checksum and build provenance — take that copy if you
-want to verify what you are installing before you run it.</p>
-<pre><code class="language-sh"># or build it yourself — Docker only, no node needed
-cd clients/mcpb &amp;&amp; ./build.sh --test
-</code></pre>
-<p>At install time you choose which folders to expose. Leaving that empty is a
-fine way to start: the published catalog still works and the extension can read
-nothing on disk. Then ask Claude <em>"list the rete datasets, then show me the
-classes in the BOE graph"</em>. To query your own graphs, point it at a folder
-holding <code>.rete</code> files — reads and writes stay confined to the folders you
-granted, compared on real paths so a symlink cannot escape. See
-<code>clients/mcpb/README.md</code> for the build and test details.</p>
-<h2>The Claude Code plugin</h2>
-<p>The repo doubles as a plugin <strong>and</strong> its own marketplace:</p>
-<pre><code>/plugin marketplace add caviri/rete
-/plugin install rete-graph@rete
-</code></pre>
-<p>Installing wires up, in one step:</p>
-<ul>
-<li>the <strong>MCP server</strong> above (18 tools available in every session), and</li>
-<li>the four <strong>skills</strong>, namespaced as <code>/rete-graph:&lt;skill&gt;</code>.</li>
-</ul>
-<p>Versioning follows git — every push to <code>main</code> is a new plugin version, so
-updates arrive without manual bumps. To try it without installing:
-<code>claude --plugin-dir &lt;checkout&gt;</code>.</p>
-<h2>The skills</h2>
-<p>Four repo-aware playbooks (in <a href="https://github.com/caviri/rete/tree/main/skills"><code>skills/</code></a>,
-loaded automatically by the plugin):</p>
-<table><thead><tr><th>Skill</th><th>Use it when</th></tr></thead><tbody>
-<tr><td><code>rete-catalog</code></td><td>"use an existing published dataset" — discover, read card/schema/examples, open from any client, download-and-verify, federate</td></tr>
-<tr><td><code>rete-clients</code></td><td>"wire rete into a new project" — Python / Pyodide / JS / script-tag / wasm / Rust setup with verified first-query snippets</td></tr>
-<tr><td><code>rete-from-graph</code></td><td>"turn this dataset/graph/ontology/endpoint into a <code>.rete</code>" — source → N-Triples → <code>rete build</code> → verify, with tested converter utilities</td></tr>
-<tr><td><code>rete-publish</code></td><td>"make this <code>.rete</code> explorable in the playground" — companions → bucket → catalog → rebuild → verify</td></tr>
+<h2>Naming things</h2>
+<p>IRIs make serviceable filenames and terrible reading. The <strong>name by</strong> control
+lists every literal-valued predicate the schema knows about, with counts, and
+lets you choose which supplies display names — because <code>rdfs:label</code> is not
+universal. The default tries the usual set in order (<code>rdfs:label</code>,
+<code>skos:prefLabel</code>, <code>schema:name</code>, <code>dcterms:title</code>, …).</p>
+<p>Names are never on the critical path: listings paint local names immediately and
+patch labels in as background chunks land.</p>
+<h2>Search</h2>
+<p>Two indexes can answer a text search and neither is guaranteed, so the box tries
+the better one first and <strong>tells you which answered</strong>:</p>
+<table><thead><tr><th>Index</th><th>Matches</th><th>Present when</th></tr></thead><tbody>
+<tr><td><code>TEXT_INDEX</code></td><td>whole words, <code>CONTAINS</code></td><td>built with <code>rete build --text-index</code></td></tr>
+<tr><td>label prefix</td><td>the start of a label</td><td>the file has a pyramid</td></tr>
 </tbody></table>
-<p>Each is a <code>SKILL.md</code> with reference docs and working scripts — they read
-fine as human documentation too.</p>
-<h2>What an agent session looks like</h2>
-<p>A typical flow, entirely inside one chat, no rete-specific prompt
-engineering:</p>
-<ol>
-<li><code>list_datasets</code> → picks <code>boe</code> (Spanish consolidated legislation).</li>
-<li><code>dataset_schema("boe")</code> → copies the exact ELI IRIs.</li>
-<li><code>example_queries("boe")</code> → adapts the citation-network example.</li>
-<li><code>sparql_query</code> with <code>reason=true</code> → counts norms including subclass
-entailment.</li>
-<li><code>validate_shacl</code> → checks an integrity contract over the result set.</li>
-<li><code>media_preview</code> on a IIIF manifest or PDF the query surfaced →
-<code>embed_media</code> → a self-contained HTML report with the evidence inlined.</li>
-</ol>
+<p>That distinction matters. Silently returning nothing because a file has no text
+index is indistinguishable from "no matches", and the difference decides whether
+you rephrase the search or rebuild the file.</p>
+<h2>SPARQL</h2>
+<p>The folder views can only answer questions someone anticipated. The <strong>SPARQL</strong>
+tab is the escape hatch: an editor seeded from the file's own biggest class,
+<code>Ctrl</code>/<code>Cmd</code>+<code>Enter</code> to run, results as a table whose IRIs are clickable — so you
+can query your way to something and then keep walking the graph from it.
+<code>CONSTRUCT</code> and <code>DESCRIBE</code> come back as Turtle. Results export as CSV or JSON.</p>
+<p>See <a href="sparql.html">SPARQL support</a> for what the engine accepts.</p>
+<h2>Extract</h2>
+<p>Select a class, predicate, or named-graph folder and pull it out as <strong>CSV</strong>,
+<strong>JSON</strong>, or <strong>N-Triples</strong>, with a row cap you control.</p>
+<p>This is the half of the archive metaphor that RDF tooling never offers:
+<a href="cli.html"><code>rete export</code></a> is all-or-nothing, and the alternative is writing SPARQL.
+"Tick the <code>Person</code> folder, get a spreadsheet" is the actual product.</p>
+<hr />
+<h2>What it costs to browse</h2>
+<p>The footer meter reads <code>RemoteGraph.stats()</code> — cumulative <em>physical</em> bytes and
+requests, not a guess.</p>
+<table><thead><tr><th>Archive</th><th>Size</th><th>Open</th><th>Traffic to open</th></tr></thead><tbody>
+<tr><td>World Cup 2022</td><td>216 KB</td><td>instant</td><td>216 KB / 2 req (small files just get read)</td></tr>
+<tr><td>Lombardi</td><td>1016 KB</td><td>instant</td><td>760 KB / 6 req</td></tr>
+<tr><td>Wikidata slice</td><td>1.39 GB</td><td>~1 s warm</td><td>10.5 MB / 18 req — <strong>0.74%</strong></td></tr>
+<tr><td>data.bnf.fr</td><td>7.16 GB, 673.5M quads</td><td>5.7 s cold</td><td>18.9 MB / 23 req — <strong>0.26%</strong></td></tr>
+</tbody></table>
+<p>Listing a class of 1,067,797 Wikidata items — the first 200, with labels — took
+the session to 109 MB. That cost is dominated by <strong>dictionary chunk faults</strong>
+while decoding subject IDs, not by the <code>?s a &lt;C&gt;</code> scan, which is a contiguous POS
+range.</p>
+<h2>Files without a pyramid have no class list</h2>
+<p><code>gharchive</code>, <code>orcid</code>, <code>dblp</code> and the <code>wikidata-xxl</code> shards carry
+<code>schemaMetaLen = 0</code>. Types and Predicates are empty for them, because deriving
+classes would mean scanning the whole file — the page says so rather than
+appearing broken, and Namespace and Sections still work.</p>
+<p>Check before you wonder: a nonzero <code>schemaMetaLen</code> in the header means the views
+will populate.</p>
+<hr />
+<h2>Shape, for reuse</h2>
+<p>The split is deliberate:</p>
+<ul>
+<li><strong><code>js/rete-fs.js</code></strong> — the whole projection: header parsing, the five views,
+lazy listings, file bodies, search, query, extract. No DOM, no <code>fetch</code> of its
+own; it takes an <code>engine</code> (<code>query</code> / <code>prefix</code> / <code>text</code>) plus the file's
+self-description.</li>
+<li><strong><code>js/fs-worker.js</code></strong> — owns one <code>Graph</code> / <code>RemoteGraph</code>. A classic worker,
+because remote reads use synchronous XHR, which browsers allow only there.</li>
+<li><strong><code>js/app.js</code></strong> — chrome only.</li>
+</ul>
+<p>Exactly one line differs between the web and desktop builds:</p>
+<pre><code class="language-js">const w = isTauri() ? makeTauriWorkerShim() : new Worker("./js/fs-worker.js");
+</code></pre>
+<p><code>tauri-bridge.js</code> makes the native commands speak the worker's message protocol,
+so <code>rete-fs.js</code> is byte-identical in both. The engine is a seam; the desktop
+build is the proof.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -524,7 +484,7 @@ entailment.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/agents.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer>Generated from <code>docs/file-explorer.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <script>
 (function () {
