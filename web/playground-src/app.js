@@ -9130,7 +9130,10 @@ self.onmessage = function (e) {
     const workbench = document.querySelector(".workbench");
     if (dsHeader) {
       const updateGeometry = () => {
-        const tb = topbar ? topbar.offsetHeight : 0;
+        // On phones the topbar is static (it scrolls away so only the dataset
+        // title stays pinned) — the ds-header then sticks at 0, not below it.
+        const tbSticky = topbar && getComputedStyle(topbar).position !== "static";
+        const tb = tbSticky ? topbar.offsetHeight : 0;
         dsHeader.style.top = tb + "px";
         // Expose the rail's top (both sticky headers + the console-shell's 12px top
         // padding) so the mode rail tracks the header as it condenses.
@@ -9149,7 +9152,14 @@ self.onmessage = function (e) {
           // flicker). Compare the FULL (expanded) doc height against the viewport
           // plus what condensing frees. `saving` is the tagline height, sampled
           // while expanded so it's stable across the toggle.
-          if (!condensed && tagline) saving = tagline.offsetHeight;
+          if (!condensed) {
+            // Everything the phone condense hides: tagline + tag chips + meta
+            // pills. Sampled while expanded so the estimate is stable.
+            saving = 0;
+            for (const el of [tagline, dsHeader.querySelector(".ds-head-tags"), dsHeader.querySelector(".ds-header-meta")]) {
+              if (el) saving += el.offsetHeight;
+            }
+          }
           const fullDocH = document.documentElement.scrollHeight + (condensed ? saving : 0);
           enoughRoom = (fullDocH - saving) > window.innerHeight + 16;
         } else {
@@ -9183,6 +9193,15 @@ self.onmessage = function (e) {
       window.addEventListener("resize", () => { measure(); updateGeometry(); apply(); }, { passive: true });
       // Re-measure once the condense/expand transition settles (final header height).
       dsHeader.addEventListener("transitionend", updateGeometry);
+      // Phone: the condensed bar is a "back to the full header" affordance —
+      // tapping it scrolls to the top, where everything (chips, pills, the
+      // topbar's Change-dataset button) is visible again. Buttons/links inside
+      // keep their own behavior.
+      dsHeader.addEventListener("click", (e) => {
+        if (!condensed || !isPhone()) return;
+        if (e.target.closest("button, a, select, input")) return;
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
       // Rendering results changes the work-area height → re-check whether condensing
       // is allowed. This fires on real content/size changes, never on a condense
       // (the workbench's own height is unaffected), so it can't loop.
