@@ -406,7 +406,7 @@ in dependency order through the same protected job.</p>
 npm, and the R package, all embed engine 0.3.x. The patch component moves
 independently, so a binding-only fix ships as 0.3.1 without an engine release.
 <code>scripts/sync_versions.py --check</code> enforces this in CI; <code>--write</code> realigns.
-Every client also exposes the engine version it embeds — <code>rete_graph  .__engine_version__</code> in Python — which is the reliable answer to "does my
+Every client also exposes the engine version it embeds — <code>rete_graph .__engine_version__</code> in Python — which is the reliable answer to "does my
 install support feature X?", since the binding's own version tracks the binding.</p>
 <p>Clients release from their own tags (<code>py-v0.3.0</code>, <code>js-v0.3.0</code>), not the <code>v*</code>
 release tag.</p>
