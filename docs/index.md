@@ -82,15 +82,28 @@ The same engine, in your language of choice — every client opens local files
 ### Explore in the browser
 
 - **[Playground](playground-guide.md)** — the flagship demo: 65 real datasets queried live over HTTP ranges, with SPARQL + SQL + semantic search, media viewers, and AI helpers. [Launch it →](playground.html)
-- **[Plaza — dataset gallery](plaza/index.html)** — browse published datasets as live cards.
+- **[Plaza — dataset gallery](plaza-guide.md)** — browse published datasets as live cards. [Open it →](plaza/index.html)
 - **[SPARQL IDE — yasgui·wasm](yasgui-guide.md)** — a Yasgui-style IDE where the endpoint is a `.rete` file: paste a URL (read lazily over HTTP range) or drop a local file; tabs, autocomplete from the dataset's own labels, pivot/turtle views, share links. [Launch it →](yasgui.html)
 - **[Historical atlas](atlas.md)** — SPARQL + GIS: border polygons, timeline, five projections.
 - **[2D match replay](pitch.html)** — a football match replayed on a canvas pitch from a spatiotemporal `.rete` (player + ball positions, 5 fps; pick any match). [Launch it →](pitch.html)
-- **[Subtitle timeline](subtitles.html)** — one film subtitled in 20 languages; scrub the timeline and watch a line of dialogue appear in every language at once. [Launch it →](subtitles.html)
+- **[Subtitle timeline](subtitles-guide.md)** — one film subtitled in 20 languages; scrub the timeline and watch a line of dialogue appear in every language at once. [Launch it →](subtitles.html)
 - **[World Cup 2022 final](wcfinal.html)** — Argentina 3–3 France replayed from real StatsBomb positional freeze-frames: every player's place at every moment, with a live scoreboard and goal jumps. [Launch it →](wcfinal.html)
 - **[Ask the graph](ask-the-graph.md)** — graphRAG search over a `.rete`, entirely in the browser.
-- **[WebGPU coherence (experimental)](webgpu.html)** — several sources making causal claims, none of them certain: where do they contradict each other, which fallacies does the graph itself expose, and can a GPU find them faster than one CPU core? Circular reasoning, causes-vs-prevents, slippery slopes and confounders are all found by arithmetic — no language model reading anything — in an editable sandbox that draws your argument, traces belief spreading step by step, and exports it as RDF-star you can `rete build`. Write your own disagreement down, share it as a link, and see where it actually breaks; pairs with [the fallacy-annotation experiment](fallacies.md). Then a live benchmark: same-line checks cap at ~2×, chain checks reach 15–17×. [Try it →](webgpu.html)
+- **[WebGPU coherence (experimental)](webgpu-guide.md)** — several sources making causal claims, none of them certain: where do they contradict each other, which fallacies does the graph itself expose, and can a GPU find them faster than one CPU core? Circular reasoning, causes-vs-prevents, slippery slopes and confounders are all found by arithmetic — no language model reading anything — in an editable sandbox that draws your argument, traces belief spreading step by step, and exports it as RDF-star you can `rete build`. Write your own disagreement down, share it as a link, and see where it actually breaks; pairs with [the fallacy-annotation experiment](fallacies.md). Then a live benchmark: same-line checks cap at ~2×, chain checks reach 15–17×. [Try it →](webgpu.html)
 - **[Graph-map, topic-map & 3D (experimental)](graph-map.md)** — the community pyramid as a slippy map.
+
+**In 3D — a SPARQL answer becomes geometry**
+
+- **[Human anatomy](anatomy-guide.md)** — pick any bone, muscle, organ or nerve in the `z-anatomy` graph and see its real 3D neighbours: what touches it, shares its tissue or is thermally coupled to it, plus the diseases located there. [Launch it →](anatomy.html)
+- **[A building, queried](building-guide.md)** — the FZK-Haus IFC model as a graph: pick a wall, door, window, slab or room and see its floor, the rooms it encloses and everything within reach in 3D, with real SPARQL + **geo3** (GeoSPARQL in three dimensions). [Launch it →](building.html)
+- **[Architecture vs structure (BIM pair)](bim-pair-guide.md)** — the same house modelled twice by one TUM *BIM Project* team: the architectural envelope (walls, curtain walls, doors, windows, furniture) and the structural skeleton. Diff them, or overlay the skeleton inside the translucent envelope. [Launch it →](bim-pair.html)
+- **[Neurons & astrocytes](neuro-showcase-guide.md)** — a WebGL viewer that streams electron-microscopy meshes out of the file and rebuilds each cell in your browser: rotate an astrocyte, or show the whole neuron cluster coloured by neurotransmitter. [Launch it →](neuro-showcase.html)
+
+**Drawing & scripting**
+
+- **[Mark Lombardi's networks](lombardi-guide.md)** — 51 of Lombardi's hand-drawn conspiracy diagrams (banks, shell companies, arms deals) read live out of one `.rete` over HTTP range and redrawn in the browser. [Launch it →](lombardi.html)
+- **[JS lab](jslab-guide.md)** — an Observable-style notebook: a JavaScript editor beside a live visualization, the code querying a remote `.rete` as you type. [Launch it →](jslab.html)
+- **[JupyterLite notebook](jupyterlite-guide.md)** — a full Jupyter notebook running the `rete-graph` Python client in your tab, on a Pyodide kernel: `pip install`-free, queries a remote `.rete` over HTTP range. [Launch it →](jupyterlite/index.html)
 
 ### Guides
 
