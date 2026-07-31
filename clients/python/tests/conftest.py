@@ -86,3 +86,59 @@ def rete_bytes(nt_text) -> bytes:
     import rete_graph as rete
 
     return rete.build(nt_text)
+
+
+NQ = """\
+<http://example.org/alice> <http://www.w3.org/2000/01/rdf-schema#label> "Alice" .
+<http://example.org/bob> <http://www.w3.org/2000/01/rdf-schema#label> "Bob" .
+<http://example.org/alice> <http://example.org/knows> <http://example.org/bob> <http://example.org/g1> .
+<http://example.org/alice> <http://example.org/since> "2019"^^<http://www.w3.org/2001/XMLSchema#gYear> <http://example.org/g1> .
+<http://example.org/bob> <http://example.org/knows> <http://example.org/alice> <http://example.org/g2> .
+"""
+
+
+@pytest.fixture(scope="session")
+def nq_text() -> str:
+    """Two default-graph triples plus two named graphs (2 + 1 quads)."""
+    return NQ
+
+
+@pytest.fixture(scope="session")
+def nq_bytes(nq_text) -> bytes:
+    import rete_graph as rete
+
+    return rete.build(nq_text, "nq")
+
+
+#: Triples per subject in the generated fixtures below — enough fan-out that
+#: batch boundaries land inside a subject's group as well as between subjects.
+FANOUT = 5
+
+
+def _generated_graph(subjects: int) -> bytes:
+    """A ``subjects * FANOUT``-triple graph with long-ish literals, so that
+    holding every quad is visibly different from streaming them."""
+    import rete_graph as rete
+
+    filler = "x" * 60
+    lines = [
+        f"<http://example.org/s{s}> <http://example.org/p{i}> "
+        f'"value {s}-{i} {filler}" .'
+        for s in range(subjects)
+        for i in range(FANOUT)
+    ]
+    return rete.build("\n".join(lines) + "\n")
+
+
+@pytest.fixture(scope="session")
+def big_rete_bytes() -> bytes:
+    """40 000 quads (~0.6 MB): too many to be interesting one at a time, few
+    enough to walk several times in a test."""
+    return _generated_graph(8_000)
+
+
+@pytest.fixture(scope="session")
+def multiblock_rete_bytes() -> bytes:
+    """200 000 quads (~3.4 MB): large enough to span many read-cache blocks,
+    which is what makes "a ranged dump is not a download" measurable."""
+    return _generated_graph(40_000)

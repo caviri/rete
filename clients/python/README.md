@@ -70,6 +70,36 @@ g.info(), g.quads, g.content_hash()
 SPARQL 1.1 `SERVICE` federation works out of the box — join a `.rete` file
 against any public SPARQL endpoint in one query.
 
+### Stream every quad out
+
+`iter_quads()` is a generator over the whole dataset — default graph first,
+then each named graph — walked in batches, so **peak memory is bounded by one
+batch no matter how big the file is**:
+
+```python
+for s, p, o, graph in g.iter_quads():        # N-Triples term tokens; graph is
+    ...                                      # None for the default graph
+```
+
+`to_nquads()` serializes the same walk to a path or any open stream, which is
+what makes handing a `.rete` to another RDF toolchain a three-liner:
+
+```python
+g.to_nquads("out.nq")                        # or a StringIO / gzip.open(...) / sys.stdout
+store = pyoxigraph.Store()
+store.bulk_load(path="out.nq", format=pyoxigraph.RdfFormat.N_QUADS)
+```
+
+Measured on `figshare.rete` (221 MB, 15.9 M quads): `to_nquads` streams the
+whole file in **941 MiB peak RSS in 25 s**, of which only ~20 MiB is the batch
+— the rest is the engine's faulted index/dictionary, and it is flat in the
+quad count. `list(g.iter_quads())` on the same file needs many GB, and
+`rete export` needs > 1.1 GiB. Pass `batch_size=` to trade: a small batch
+makes a *peek* at a remote graph much cheaper (5 quads for 1.1 MB of range
+reads at `batch_size=1`, versus 44 MB at the default 10 000), a large one
+speeds up a full walk. Scope with `graph=`: `rete.DEFAULT_GRAPH` for the
+unnamed default graph alone, or an IRI for one named graph.
+
 ### Prepare a `.rete` step by step
 
 The lazy `Builder` configures a build — sources, embedded Dataset Card,
