@@ -21,7 +21,7 @@ fn read_input(path: &str) -> anyhow::Result<String> {
 
 /// The parser to use for an input: explicit `--format` wins, else by extension,
 /// else (no extension / stdin) N-Triples.
-fn input_format(path: &str, override_fmt: Option<&str>) -> &'static str {
+pub(crate) fn input_format(path: &str, override_fmt: Option<&str>) -> &'static str {
     if let Some(f) = override_fmt {
         return match f {
             "nq" => "nq",

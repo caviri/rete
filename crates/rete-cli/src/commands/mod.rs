@@ -7,6 +7,7 @@ pub(crate) mod build;
 pub(crate) mod card;
 pub(crate) mod communities;
 pub(crate) mod cost;
+pub(crate) mod estimate;
 pub(crate) mod export;
 pub(crate) mod federate;
 pub(crate) mod inspect;

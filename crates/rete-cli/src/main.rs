@@ -134,6 +134,29 @@ enum Command {
         #[arg(long, value_parser = ["nt", "nq", "ttl", "rdfxml"])]
         format: Option<String>,
     },
+    /// Estimate a build's output size, wall time and spill **before** running it.
+    ///
+    /// Streams the input exactly as `rete build` would — parsing every statement,
+    /// counting distinct terms with HyperLogLog — but writes nothing. Use
+    /// `--sample-mb` to read only a leading slice and extrapolate, which turns a
+    /// multi-hour question ("will this 110 GB conversion fit?") into a minute.
+    Estimate {
+        /// Input files (N-Triples / N-Quads).
+        #[arg(required = true, num_args = 1..)]
+        inputs: Vec<String>,
+        /// Force input format for all inputs: nt | nq.
+        #[arg(long, value_parser = ["nt", "nq"])]
+        format: Option<String>,
+        /// Read only this many MiB and extrapolate (default: read everything).
+        #[arg(long)]
+        sample_mb: Option<u64>,
+        /// The `--memory-budget-mb` the real build would use (default 4096).
+        #[arg(long)]
+        memory_budget_mb: Option<u64>,
+        /// Project the size of a `--no-pyramid` build (what the huge graphs use).
+        #[arg(long)]
+        no_pyramid: bool,
+    },
     /// Print the header of a `.rete` file.
     Info {
         /// Path to the `.rete` file.
@@ -714,6 +737,19 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Validate { inputs, format } => {
             commands::build::validate(&inputs, format.as_deref())
         }
+        Command::Estimate {
+            inputs,
+            format,
+            sample_mb,
+            memory_budget_mb,
+            no_pyramid,
+        } => commands::estimate::estimate(
+            &inputs,
+            format.as_deref(),
+            sample_mb,
+            memory_budget_mb,
+            no_pyramid,
+        ),
         Command::Info { file } => commands::inspect::info(&file),
         Command::Stats { file } => commands::inspect::stats(&file),
         Command::Verify { file } => commands::inspect::verify_cmd(&file),
