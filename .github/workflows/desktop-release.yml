@@ -43,6 +43,12 @@ jobs:
           - platform: macos-13
             target: x86_64-apple-darwin
             label: macOS (Intel)
+          # Windows is the one target Docker could plausibly cross-compile
+          # (cargo-xwin), but the NSIS/WiX bundlers want Wine and WebView2
+          # bootstrapping is fiddliest exactly there. A runner costs nothing.
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: Windows (x64)
 
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.platform }}
@@ -61,10 +67,14 @@ jobs:
           workspaces: clients/tauri/src-tauri -> target
           key: ${{ matrix.target }}
 
+      # `shell: bash` on both, so the Windows runner does not hand these to
+      # PowerShell — the script is POSIX and `cd &&` chaining is not pwsh syntax.
       - name: Stage the frontend
+        shell: bash
         run: bash clients/tauri/scripts/sync-frontend.sh
 
       - name: Generate app icons
+        shell: bash
         run: |
           npm install -g @tauri-apps/cli@^2
           cd clients/tauri/src-tauri
@@ -95,5 +105,8 @@ jobs:
 
             Pick the **aarch64** build for Apple Silicon (M1 and later) and the
             **x64** build for Intel Macs.
+
+            Windows builds (`.msi` / `-setup.exe`) are unsigned too: SmartScreen
+            shows "Windows protected your PC" — **More info** → **Run anyway**.
           releaseDraft: ${{ github.event.inputs.draft != 'false' }}
           prerelease: true
