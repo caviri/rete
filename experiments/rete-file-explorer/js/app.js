@@ -8,6 +8,7 @@ import {
   VIEWS, VIEW_BY_ID, makeContext, openFile, extract, candidateLabelPredicates,
   readSelfDescription, parseHeader, humanBytes, humanCount, localName, parseTerm,
 } from "./rete-fs.js";
+import { isTauri, makeTauriWorkerShim, pickReteFile } from "./tauri-bridge.js";
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -68,7 +69,11 @@ const state = {
 
 function bootWorker() {
   if (state.worker) state.worker.terminate();
-  const w = new Worker("./js/fs-worker.js");
+  // The one line that differs between the two builds. In a browser this is a
+  // Web Worker holding a wasm RemoteGraph; in the desktop app it is a shim over
+  // Rust commands driving rete-core natively. Both speak the same message
+  // protocol, so everything below here is identical.
+  const w = isTauri() ? makeTauriWorkerShim() : new Worker("./js/fs-worker.js");
   w.onmessage = (e) => {
     const m = e.data || {};
     if (m.type === "progress") {
@@ -118,7 +123,37 @@ const engine = {
 
 // --------------------------------------------------------------------- open
 
+/**
+ * Desktop open: one path for both local files and URLs, because the native side
+ * reads them through the same `RangeReader`. It hands back the raw 1 KB header
+ * so `parseHeader` — the browser's own — stays the single implementation.
+ */
+async function openNative(source, name) {
+  if (state.opening) return;
+  state.opening = true;
+  setStatus(`opening ${name}…`);
+  resetPanes();
+  try {
+    bootWorker();
+    const r = await send({ type: "open", source });
+    finishOpen({
+      source: name,
+      url: source,
+      size: r.size,
+      header: parseHeader(new Uint8Array(r.head)),
+      card: r.cardText ? JSON.parse(r.cardText) : null,
+      schema: r.schema,
+      schemaError: r.schemaError,
+    });
+  } catch (err) {
+    setStatus(`could not open: ${err.message}`, true);
+  } finally {
+    state.opening = false;
+  }
+}
+
 async function openRemote(entry) {
+  if (isTauri()) return openNative(entry.url, entry.name);
   if (state.opening) return;
   state.opening = true;
   setStatus(`opening ${entry.name}…`);
@@ -805,22 +840,94 @@ function paintCatalog() {
   }
 }
 
+const showVeil = (on) => {
+  $("#dropveil").hidden = !on;
+  const dz = $("#drop");
+  if (dz) dz.classList.toggle("over", on);
+};
+
+const baseName = (p) => String(p).split(/[\\/]/).pop() || String(p);
+
 function wireDrop() {
-  const zone = document.body;
+  // Desktop: the OS owns file picking, and a dropped file arrives as a *path*
+  // rather than a Blob — Tauri intercepts the webview's HTML5 drag events and
+  // re-emits them, so both routes go through the native open.
+  if (isTauri()) {
+    $("#file").parentElement.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try {
+        const path = await pickReteFile();
+        if (path) await openNative(path, baseName(path));
+      } catch (err) {
+        setStatus(`could not open: ${err.message}`, true);
+      }
+    });
+
+    const ev = window.__TAURI__ && window.__TAURI__.event;
+    if (ev && typeof ev.listen === "function") {
+      ev.listen("tauri://drag-enter", () => showVeil(true));
+      ev.listen("tauri://drag-over", () => showVeil(true));
+      ev.listen("tauri://drag-leave", () => showVeil(false));
+      ev.listen("tauri://drag-drop", (e) => {
+        showVeil(false);
+        const path = e.payload && e.payload.paths && e.payload.paths[0];
+        if (!path) return;
+        if (!/\.rete$/i.test(path)) {
+          setStatus(`not a .rete file: ${baseName(path)}`, true);
+          return;
+        }
+        openNative(path, baseName(path));
+      });
+    }
+
+    $("#url-open").addEventListener("click", () => {
+      const url = $("#url").value.trim();
+      if (url) openNative(url, baseName(url));
+    });
+    $("#url").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#url-open").click(); });
+    return;
+  }
+
+  // Browser. The listeners sit on the window rather than the landing-screen
+  // dropzone, because that element is hidden once an archive is open and
+  // dropping a second file has to keep working.
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
-  ["dragenter", "dragover"].forEach((t) => zone.addEventListener(t, (e) => { stop(e); $("#drop").classList.add("over"); }));
-  ["dragleave", "drop"].forEach((t) => zone.addEventListener(t, (e) => { stop(e); $("#drop").classList.remove("over"); }));
-  zone.addEventListener("drop", (e) => {
-    const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) openLocal(f);
+  let depth = 0; // dragenter/leave fire per element crossed; count to avoid flicker
+
+  window.addEventListener("dragenter", (e) => {
+    stop(e);
+    // Ignore drags that carry no file (text selections, links).
+    const dt = e.dataTransfer;
+    if (dt && dt.types && !Array.from(dt.types).includes("Files")) return;
+    depth++;
+    showVeil(true);
   });
+  window.addEventListener("dragover", (e) => { stop(e); if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"; });
+  window.addEventListener("dragleave", (e) => {
+    stop(e);
+    depth = Math.max(0, depth - 1);
+    if (depth === 0) showVeil(false);
+  });
+  window.addEventListener("drop", (e) => {
+    stop(e);
+    depth = 0;
+    showVeil(false);
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    if (!/\.rete$/i.test(f.name)) {
+      setStatus(`not a .rete file: ${f.name}`, true);
+      return;
+    }
+    openLocal(f);
+  });
+
   $("#file").addEventListener("change", (e) => {
     const f = e.target.files && e.target.files[0];
     if (f) openLocal(f);
   });
   $("#url-open").addEventListener("click", () => {
     const url = $("#url").value.trim();
-    if (url) openRemote({ name: url.split("/").pop(), url, size: 0 });
+    if (url) openRemote({ name: baseName(url), url, size: 0 });
   });
   $("#url").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#url-open").click(); });
 }

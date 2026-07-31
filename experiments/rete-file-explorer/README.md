@@ -21,8 +21,25 @@ python3 -m http.server 8901
 It loads the WASM build from `../../../web/pkg-nomodules/`, so run
 `scripts/build_wasm.sh` (in Docker) first if that directory is stale.
 
-Open one of the catalogued R2 archives, paste any `.rete` URL, or drop a local
-file on the page.
+Open one of the catalogued R2 archives, paste any `.rete` URL, or **drag a
+`.rete` onto the window** — anywhere, at any time. The drop target is the whole
+window rather than the dashed zone on the landing screen, because that zone is
+gone once an archive is open and dropping a second file has to keep working.
+Anything that is not a `.rete` is named and refused in the status bar.
+
+## Desktop build
+
+The same page ships as an installable app — see [`clients/tauri`](../../clients/tauri).
+Exactly one line differs:
+
+```js
+const w = isTauri() ? makeTauriWorkerShim() : new Worker("./js/fs-worker.js");
+```
+
+In the browser that is a Web Worker holding a wasm `RemoteGraph`; in the app it
+is a shim over Rust commands driving `rete-core` natively — no wasm, no 4 GB
+heap ceiling, real threads. Both speak the same message protocol, so `rete-fs.js`
+is byte-identical in both builds. That was the point of the split.
 
 ## Five views, because there is no single honest tree
 

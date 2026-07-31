@@ -82,3 +82,10 @@ tests/gate/node_modules/
 # docs/og/, docs/q/, docs/d/ — is committed; regenerate the cache with
 # scripts/preview/run.sh capture.
 /web/preview/.cache/
+
+# Tauri desktop app: staged frontend + generated icons are build outputs.
+/clients/tauri/dist/
+/clients/tauri/src-tauri/target/
+/clients/tauri/src-tauri/gen/
+/clients/tauri/src-tauri/icons/*
+!/clients/tauri/src-tauri/icons/source.png
