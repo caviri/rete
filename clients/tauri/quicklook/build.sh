@@ -10,7 +10,6 @@
 #
 # macOS only; it is a no-op elsewhere by design so CI can call it unconditionally.
 set -euo pipefail
-cd "$(dirname "$0")"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "quicklook: not macOS, skipping" >&2
@@ -19,6 +18,18 @@ fi
 
 APP="${1:?usage: build.sh <path to .app> [arch]}"
 ARCH="${2:-universal}"
+
+# Resolve the app path against the CALLER's directory before cd-ing to our own.
+# Getting this wrong is silent: the copy lands under quicklook/ instead of the
+# bundle, every command still succeeds, and the script cheerfully reports having
+# embedded the extension into an app that never received it.
+if [[ ! -d "$APP" ]]; then
+  echo "quicklook: no app bundle at '$APP' (from $(pwd))" >&2
+  exit 1
+fi
+APP="$(cd "$(dirname "$APP")" && pwd)/$(basename "$APP")"
+
+cd "$(dirname "$0")"
 NAME="ReteQuickLook"
 OUT="build/$NAME.appex"
 
@@ -58,8 +69,10 @@ cp Info.plist "$OUT/Contents/Info.plist"
 # An extension must carry a signature to be registered at all. Ad-hoc (`-`) is
 # enough for a local test build; a real Developer ID replaces it in CI when the
 # secrets exist. Without ANY signature macOS silently ignores the bundle.
-codesign --force --sign - --timestamp=none "$OUT" 2>/dev/null \
-  || echo "quicklook: ad-hoc signing failed (continuing; the extension will not register)" >&2
+# codesign's stderr is kept: a swallowed reason here is the difference between
+# "unsigned, as expected" and "the bundle is malformed", which look identical.
+codesign --force --sign - --timestamp=none "$OUT" \
+  || echo "quicklook: ad-hoc signing the extension failed (it will not register)" >&2
 
 PLUGINS="$APP/Contents/PlugIns"
 mkdir -p "$PLUGINS"
@@ -68,7 +81,14 @@ cp -R "$OUT" "$PLUGINS/"
 
 # Embedding changes the app bundle, so the host's own signature must be redone
 # or macOS treats the whole thing as tampered with.
-codesign --force --deep --sign - "$APP" 2>/dev/null \
-  || echo "quicklook: re-signing the host app failed" >&2
+codesign --force --deep --sign - "$APP" \
+  || echo "quicklook: re-signing the host app failed (it will not register)" >&2
 
-echo "quicklook: embedded $NAME.appex into $APP"
+# Verify rather than announce: every command above can succeed against the wrong
+# path, so check the file is actually where the .dmg will pick it up.
+EMBEDDED="$PLUGINS/$NAME.appex/Contents/MacOS/$NAME"
+if [[ ! -x "$EMBEDDED" ]]; then
+  echo "quicklook: embed FAILED — nothing executable at $EMBEDDED" >&2
+  exit 1
+fi
+echo "quicklook: embedded $NAME.appex ($(lipo -archs "$EMBEDDED" 2>/dev/null || echo '?')) into $APP"

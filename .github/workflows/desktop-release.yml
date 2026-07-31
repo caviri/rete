@@ -37,7 +37,60 @@ permissions:
   contents: write
 
 jobs:
+  # The draft is created once, here, and the platform jobs only ever upload into
+  # it. Previously both builders raced to create it: in the happy path macOS won
+  # and Windows uploaded, but when macOS failed early Windows was left having to
+  # create the release and died with "Resource not accessible by integration" —
+  # so one broken platform reported as two, and a perfectly good Windows
+  # installer was thrown away.
+  create-release:
+    name: draft release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - uses: actions/github-script@v7
+        id: draft
+        with:
+          script: |
+            const tag = context.payload.inputs?.tag || context.ref.replace('refs/tags/', '');
+            const { owner, repo } = context.repo;
+            let release;
+            try {
+              release = (await github.rest.repos.getReleaseByTag({ owner, repo, tag })).data;
+              core.info(`reusing release ${release.id} for ${tag}`);
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              release = (await github.rest.repos.createRelease({
+                owner, repo, tag_name: tag,
+                name: `Rete File Explorer ${tag}`,
+                draft: true, prerelease: true,
+                body: [
+                  'Browse a `.rete` graph like an archive — folders, files, and extract.',
+                  '',
+                  '**These builds are unsigned and unnotarized.** macOS will say the app',
+                  '"cannot be opened because the developer cannot be verified", or that it',
+                  'is damaged. To run it anyway, once:',
+                  '',
+                  '```sh',
+                  'xattr -dr com.apple.quarantine "/Applications/Rete File Explorer.app"',
+                  '```',
+                  '',
+                  'Or right-click the app → Open → Open. Both are one-time.',
+                  '',
+                  'The macOS `.dmg` is a universal binary — one download for both Apple',
+                  'Silicon and Intel.',
+                  '',
+                  'Windows builds (`.msi` / `-setup.exe`) are unsigned too: SmartScreen',
+                  'shows "Windows protected your PC" — **More info** → **Run anyway**.',
+                ].join('\n'),
+              })).data;
+              core.info(`created release ${release.id} for ${tag}`);
+            }
+            core.setOutput('release_id', release.id);
+
   build:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -113,28 +166,9 @@ jobs:
           projectPath: clients/tauri
           tauriScript: tauri
           args: --target ${{ matrix.target }}
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: "Rete File Explorer ${{ github.event.inputs.tag || github.ref_name }}"
-          releaseBody: |
-            Browse a `.rete` graph like an archive — folders, files, and extract.
-
-            **These builds are unsigned and unnotarized.** macOS will say the app
-            "cannot be opened because the developer cannot be verified", or that
-            it is damaged. To run it anyway, once:
-
-            ```sh
-            xattr -dr com.apple.quarantine "/Applications/Rete File Explorer.app"
-            ```
-
-            Or: right-click the app → Open → Open. Both are one-time.
-
-            The macOS `.dmg` is a universal binary — one download for both
-            Apple Silicon and Intel.
-
-            Windows builds (`.msi` / `-setup.exe`) are unsigned too: SmartScreen
-            shows "Windows protected your PC" — **More info** → **Run anyway**.
-          releaseDraft: ${{ github.event.inputs.draft != 'false' }}
-          prerelease: true
+          # Upload into the draft the create-release job already made, rather
+          # than creating one. Notes and draft/prerelease flags live there.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
 
       # Tauri builds the .app and the .dmg in one pass with no hook between
       # them, so the extension is embedded afterwards and the disk image is
