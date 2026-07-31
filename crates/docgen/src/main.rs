@@ -65,6 +65,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("shacl.md", "SHACL validation"),
             ("reasoning.md", "Reasoning & coherence"),
             ("federation.md", "Federated queries"),
+            ("manifest.md", "Writable graphs — manifest & WAL"),
             ("semantic-zoom.md", "Semantic zoom (schema pyramid)"),
             ("compatibility.md", "Compatibility & Cypher"),
         ],
