@@ -2047,23 +2047,43 @@ impl Rete {
     /// larger than RAM. `rete export` uses this to serialize 100M+ triple files
     /// that `dump()` (which collects every term into a `Vec<String>`) would OOM on.
     pub fn dump_each<F: FnMut(&str, &str, &str)>(&self, graph: Option<&str>, mut f: F) {
+        for (s, p, o) in self.dump_iter(graph) {
+            f(&s, &p, &o);
+        }
+    }
+
+    /// The **pull** twin of [`dump_each`](Self::dump_each): every triple of a
+    /// graph (`None` = default) as a lazy iterator of resolved terms.
+    ///
+    /// Same constant-memory scan — one triple decoded and resolved per `next()`,
+    /// never a `Vec` of the whole graph — but the caller drives it, so it can
+    /// stop early or be **suspended and resumed** across a foreign-function
+    /// boundary. That is what the wasm/JS client's batched quad cursor needs:
+    /// a callback cannot be paused mid-scan to hand control back to JavaScript,
+    /// an iterator can.
+    ///
+    /// The dictionary is prefetched once up front (as in [`dump`](Self::dump)) —
+    /// a dump resolves every term, so faulting the dictionary in coalesced range
+    /// reads beats one fault per term. Peak memory is therefore
+    /// O(dictionary + faulted index tiles), *not* O(triples).
+    pub fn dump_iter(&self, graph: Option<&str>) -> impl Iterator<Item = TermTriple> + '_ {
+        // A dump resolves every term: batch-fault the whole dictionary up
+        // front (coalesced range reads on a lazy remote open; no-op locally).
         self.dict.prefetch_all();
         let index = match graph {
-            None => &self.index,
-            Some(g) => match self.graph_index(g) {
-                Some(i) => i,
-                None => return,
-            },
+            None => Some(&self.index),
+            Some(g) => self.graph_index(g),
         };
-        for (s, p, o) in index.scan_iter((None, None, None)) {
-            if let (Some(st), Some(pt), Some(ot)) = (
-                self.dict.subject_term(s),
-                self.dict.predicate_term(p),
-                self.dict.object_term(o),
-            ) {
-                f(&st, &pt, &ot);
-            }
-        }
+        index
+            .into_iter()
+            .flat_map(|ix| ix.scan_iter((None, None, None)))
+            .filter_map(move |(s, p, o)| {
+                Some((
+                    self.dict.subject_term(s)?,
+                    self.dict.predicate_term(p)?,
+                    self.dict.object_term(o)?,
+                ))
+            })
     }
 
     /// All named graphs as `(iri, index)`.
@@ -4173,6 +4193,61 @@ mod tests {
         assert_eq!(
             rete.dump(Some("http://ex/g1")),
             vec![("Bob".into(), "age".into(), "30".into())]
+        );
+    }
+
+    /// `dump_iter` must agree with `dump` exactly — and must be *lazy*: taking
+    /// the first triple of a lazily range-read file may not drag the whole
+    /// index across the reader, or the JS client's streaming quad cursor (which
+    /// is this iterator, suspended between wasm calls) would be a materializing
+    /// dump wearing a cursor's clothes.
+    #[test]
+    fn dump_iter_matches_dump_and_stops_early() {
+        use crate::reader::{CountingReader, SliceReader};
+
+        // Enough triples over tiny tiles to force many tiles per permutation.
+        let triples: Vec<(String, String, String)> = (0..2000u32)
+            .map(|i| {
+                (
+                    format!("<http://ex/s/{i:04}>"),
+                    "<http://ex/p>".to_string(),
+                    format!("<http://ex/o/{i:04}>"),
+                )
+            })
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+
+        // Same triples, same order, as the eager dump.
+        let rete = Rete::open(&bytes).unwrap();
+        assert_eq!(rete.dump_iter(None).collect::<Vec<_>>(), rete.dump(None));
+        // A missing named graph yields nothing rather than the default graph.
+        assert_eq!(rete.dump_iter(Some("http://ex/nope")).count(), 0);
+
+        // Lazily: taking one triple must cost far fewer bytes than draining.
+        let read_bytes = |take: usize| -> u64 {
+            let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+            let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+            let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let before = reader.bytes_read();
+            let n = rete.dump_iter(None).take(take).count();
+            assert_eq!(n, take.min(triples.len()));
+            assert!(!rete.index_incomplete());
+            reader.bytes_read() - before
+        };
+        let first_only = read_bytes(1);
+        let everything = read_bytes(triples.len());
+        assert!(
+            first_only * 2 < everything,
+            "dump_iter is not lazy: one triple read {first_only} B of the {everything} B a full scan reads"
         );
     }
 

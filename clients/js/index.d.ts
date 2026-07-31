@@ -19,10 +19,31 @@ export class Term {
 export type Row = Record<string, Term>;
 export type Triple = [Term, Term, Term];
 
+/** `[subject, predicate, object, graph]`; `graph` is null in the default graph. */
+export type Quad = [Term, Term, Term, Term | null];
+/** The same, as the engine's raw N-Triples term tokens (`dump({raw: true})`). */
+export type RawQuad = [string, string, string, string | null];
+
 export interface QueryOptions {
   /** OWL 2 QL entailment by query rewriting. */
   reason?: boolean;
 }
+
+export interface DumpOptions {
+  /**
+   * Omit for the default graph followed by every named graph; `null` for the
+   * default graph only; an IRI for that named graph only.
+   */
+  graph?: string | null;
+  /** Quads pulled per wasm call (default 10 000). Bounds memory, not results. */
+  batch?: number;
+}
+
+/** A sink for {@link Graph.writeNQuads}: Node stream, web stream, or callback. */
+export type NQuadsSink =
+  | { write(chunk: string): unknown; once?(event: string, cb: () => void): unknown }
+  | { getWriter(): { ready: Promise<void>; write(chunk: string): unknown; releaseLock(): void } }
+  | ((chunk: string) => unknown);
 
 export class Graph {
   readonly source: string;
@@ -49,7 +70,20 @@ export class Graph {
     shapesTurtle: string,
     opts?: { graph?: string | null; format?: "json" | "text" },
   ): unknown;
+  /** The dataset's quad count (the streaming dump is {@link Graph.dump}). */
   readonly quads: number;
+  /**
+   * Every quad, streamed lazily and in memory that does not grow with the
+   * graph: `for await (const [s, p, o, g] of graph.dump())`.
+   */
+  dump(opts?: DumpOptions & { raw?: false }): AsyncGenerator<Quad>;
+  dump(opts: DumpOptions & { raw: true }): AsyncGenerator<RawQuad>;
+  /** The graph as N-Quads text, in whole-line chunks — constant memory. */
+  nquads(opts?: DumpOptions): AsyncGenerator<string>;
+  /** Stream the graph as N-Quads into a sink; returns the length written. */
+  writeNQuads(sink: NQuadsSink, opts?: DumpOptions): Promise<number>;
+  /** The whole graph as ONE N-Quads string (materializes it — see nquads). */
+  toNQuads(opts?: DumpOptions): Promise<string>;
   graphNames(): string[];
   /** Remote graphs only: cumulative fetch counters; null for bytes graphs. */
   stats(): { fileLength: number; bytes: number; requests: number } | null;
@@ -77,6 +111,13 @@ export function build(text: string, format?: "nt" | "nq" | "ttl"): Promise<Uint8
 
 /** Initialize the wasm engine explicitly (open()/build() do it lazily). */
 export function init(source?: BufferSource | WebAssembly.Module | URL | string | null): Promise<void>;
+
+/**
+ * The engine's wasm linear memory in bytes — a high-water mark, since wasm
+ * memory grows but never shrinks. Sample it around a dump to verify that
+ * streaming really does not grow with the graph.
+ */
+export function heapBytes(): number;
 
 /**
  * RDF/JS Source over an open Graph — plugs `.rete` files into Comunica,

@@ -7,9 +7,10 @@ use rete_core::{
     eval_query_reasoned, eval_select_communities, eval_sparql, project_graph, schema_classes,
     schema_summary, summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader,
     ByteRange, CountingReader, DataGraph, Header, QueryOutput, RangeReader, Rete, ReteGraph,
-    ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TripleProvenance, ValidationReport,
-    DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
+    ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TermTriple, TripleProvenance,
+    ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
 };
+use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
 /// Version of Rete-owned JSON object envelopes exposed by the browser API.
@@ -226,7 +227,7 @@ pub fn card_url(url: &str) -> Result<Option<String>, JsValue> {
 /// and are called rarely (once at load / on demand), so a handle buys little.
 #[wasm_bindgen]
 pub struct Graph {
-    rete: Rete,
+    rete: Rc<Rete>,
     file_len: usize,
 }
 
@@ -236,9 +237,17 @@ impl Graph {
     #[wasm_bindgen(constructor)]
     pub fn new(bytes: &[u8]) -> Result<Graph, JsValue> {
         Ok(Graph {
-            rete: open(bytes)?,
+            rete: Rc::new(open(bytes)?),
             file_len: bytes.len(),
         })
+    }
+
+    /// A **lazy, resumable cursor** over every quad of this graph — the
+    /// streaming export path. See [`QuadCursor`]; `graph` selects one graph
+    /// (`""` = the default graph), `None` streams the default graph followed by
+    /// every named graph.
+    pub fn quads(&self, graph: Option<String>) -> QuadCursor {
+        QuadCursor::start(self.rete.clone(), graph)
     }
 
     /// See [`info`].
@@ -386,6 +395,243 @@ impl Graph {
     }
 }
 
+/// A **lazy, resumable cursor** over every quad of an open `.rete` — the engine
+/// side of `for await (const [s, p, o, g] of graph.quads())` in the JS client.
+///
+/// # Why a cursor and not a callback
+///
+/// [`Rete::dump_each`] already streams in constant memory, but a Rust callback
+/// cannot be *paused* to hand control back to JavaScript: to feed a JS iterator
+/// it would have to buffer every quad first, which is exactly the `Vec` that
+/// [`Rete::dump`] builds and that OOMs on a large file. This wraps
+/// [`Rete::dump_iter`] instead, so the scan can be suspended between calls and
+/// resumed in place — one triple decoded per `next()`, never a whole-graph
+/// materialization anywhere in the pipeline.
+///
+/// # Why batched (and not one call per quad)
+///
+/// Each wasm→JS call costs far more than decoding a triple, and every returned
+/// `String` becomes a fresh JS string. Pulling one quad per call would make the
+/// boundary the bottleneck; pulling *all* of them would reintroduce the `Vec`.
+/// So the JS wrapper asks for [`DUMP_BATCH`] quads at a time and yields them one
+/// by one — bounded, amortized, and lazy. Memory is O(batch), not O(graph).
+///
+/// # Cost model
+///
+/// The dictionary is prefetched once (a dump resolves every term anyway), and
+/// index tiles fault in as the scan advances and stay resident, so a full dump
+/// of a *remote* graph ends up fetching essentially the whole file. Peak memory
+/// is O(dictionary + index), never O(quads).
+#[wasm_bindgen]
+pub struct QuadCursor {
+    // FIELD ORDER IS LOAD-BEARING: `iter` borrows into `*rete`, and Rust drops
+    // struct fields in declaration order, so the iterator must be dropped before
+    // the `Rc` that keeps the `Rete` alive.
+    iter: Option<Box<dyn Iterator<Item = TermTriple>>>,
+    /// Graph slots not yet streamed; `None` = the default graph.
+    pending: std::vec::IntoIter<Option<String>>,
+    /// The graph the live `iter` is streaming (`None` = the default graph).
+    current: Option<String>,
+    rete: Rc<Rete>,
+}
+
+/// Quads per `next_batch` / `next_nquads` call, and the JS wrapper's default.
+///
+/// 10 000 keeps the per-call boundary cost negligible (one call and ~40 000 JS
+/// string allocations amortize a 10 000-triple decode) while bounding the
+/// transient buffer at roughly 10 000 × ~120 B ≈ 1.2 MB — small next to the
+/// dictionary any dump already needs resident, and flat no matter how many
+/// billions of quads follow it.
+const DUMP_BATCH: usize = 10_000;
+
+/// Build the borrowed dump iterator and erase its lifetime so it can live in a
+/// `#[wasm_bindgen]` struct (which must be `'static`).
+///
+/// # Safety
+///
+/// The returned iterator borrows only from the `Rete` inside `rete`. That value
+/// lives in the `Rc`'s heap allocation — a stable address that is never moved —
+/// and a clone of the same `Rc` is stored in [`QuadCursor`] *after* the boxed
+/// iterator, so the allocation outlives every borrow (fields drop in
+/// declaration order). Nothing can mutate it through a `&mut` in the meantime:
+/// `Rc<Rete>` hands out only shared references, and the engine's lazily faulted
+/// state is write-once (`OnceLock` tiles, `OnceLock` group directories,
+/// dictionary chunks), so a concurrent query on the same handle can only *fill*
+/// cells the iterator has not read — it can never reallocate or evict bytes the
+/// iterator points at.
+fn dump_iter_static(
+    rete: &Rc<Rete>,
+    graph: Option<&str>,
+) -> Box<dyn Iterator<Item = TermTriple> + 'static> {
+    let it: Box<dyn Iterator<Item = TermTriple> + '_> = Box::new(rete.dump_iter(graph));
+    unsafe {
+        std::mem::transmute::<
+            Box<dyn Iterator<Item = TermTriple> + '_>,
+            Box<dyn Iterator<Item = TermTriple> + 'static>,
+        >(it)
+    }
+}
+
+impl QuadCursor {
+    /// `graph`: `None` = the default graph followed by every named graph;
+    /// `Some("")` = the default graph only; `Some(name)` = that named graph
+    /// (bare IRI or `<iri>` token — both are accepted).
+    fn start(rete: Rc<Rete>, graph: Option<String>) -> QuadCursor {
+        let slots: Vec<Option<String>> = match graph {
+            None => std::iter::once(None)
+                .chain(rete.graph_names().iter().map(|g| Some((*g).to_string())))
+                .collect(),
+            Some(g) if g.is_empty() => vec![None],
+            Some(g) => vec![Some(canonical_graph_name(&rete, g))],
+        };
+        // The incompleteness verdict is PER DUMP: clear the sticky flags so a
+        // failure from an earlier query does not condemn this one (and so
+        // `finish()` reports only what happened while streaming).
+        rete.reset_load_failures();
+        QuadCursor {
+            iter: None,
+            pending: slots.into_iter(),
+            current: None,
+            rete,
+        }
+    }
+
+    /// Pull at most `max` quads, handing each to `sink` as
+    /// `(s, p, o, graph)` where `graph` is `None` for the default graph.
+    /// Returns how many were emitted; fewer than `max` means the stream ended.
+    fn pull<F: FnMut(&str, &str, &str, Option<&str>)>(&mut self, max: usize, mut sink: F) -> usize {
+        // Split the borrows: `iter` is driven mutably while `current` is read.
+        let Self {
+            iter,
+            pending,
+            current,
+            rete,
+        } = self;
+        let mut emitted = 0;
+        while emitted < max {
+            let Some(active) = iter.as_mut() else {
+                match pending.next() {
+                    // Open the next graph slot in place and keep pulling.
+                    Some(slot) => {
+                        *current = slot;
+                        *iter = Some(dump_iter_static(rete, current.as_deref()));
+                        continue;
+                    }
+                    None => break,
+                }
+            };
+            match active.next() {
+                Some((s, p, o)) => {
+                    sink(&s, &p, &o, current.as_deref());
+                    emitted += 1;
+                }
+                // This graph is exhausted; the next loop turn opens the next.
+                None => *iter = None,
+            }
+        }
+        emitted
+    }
+
+    /// True once every selected graph has been streamed to its end.
+    fn finished(&self) -> bool {
+        self.iter.is_none() && self.pending.len() == 0
+    }
+
+    /// Refuse to end a dump that silently lost bytes to a failed range fetch —
+    /// a truncated export is worse than a failed one.
+    fn guard(&self) -> Result<(), JsValue> {
+        if self.finished() {
+            incomplete_guard(&self.rete, "dump")?;
+        }
+        Ok(())
+    }
+}
+
+#[wasm_bindgen]
+impl QuadCursor {
+    /// Up to `max` quads as a **flat** `string[]` of `[s, p, o, g, s, p, o, g, …]`
+    /// N-Triples term tokens, `g` being `""` for the default graph. Flat because
+    /// a nested array would allocate one JS array per quad for no gain — the
+    /// caller slices it into tuples as it yields them.
+    ///
+    /// An empty array means the stream is finished; keep calling until you get
+    /// one (that final call is what verifies no range fetch failed mid-dump).
+    pub fn next_batch(&mut self, max: Option<usize>) -> Result<Vec<String>, JsValue> {
+        let max = max.unwrap_or(DUMP_BATCH).max(1);
+        let mut out: Vec<String> = Vec::with_capacity(max.min(DUMP_BATCH) * 4);
+        self.pull(max, |s, p, o, g| {
+            out.push(s.to_string());
+            out.push(p.to_string());
+            out.push(o.to_string());
+            out.push(g.unwrap_or("").to_string());
+        });
+        self.guard()?;
+        Ok(out)
+    }
+
+    /// Up to `max` quads already serialized as N-Quads lines in **one** string —
+    /// the `.rete` → Oxigraph / N-Quads-file path. One string crossing per batch
+    /// instead of four per quad: no per-term JS string, no re-serialization in
+    /// JavaScript, and the terms are already canonical N-Triples tokens, so the
+    /// lines are emitted verbatim.
+    ///
+    /// An empty string means the stream is finished.
+    pub fn next_nquads(&mut self, max: Option<usize>) -> Result<String, JsValue> {
+        let max = max.unwrap_or(DUMP_BATCH).max(1);
+        // ~120 B/quad is a typical N-Quads line; the Vec grows if it is wrong.
+        let mut out = String::with_capacity(max.min(DUMP_BATCH) * 120);
+        self.pull(max, |s, p, o, g| {
+            out.push_str(s);
+            out.push(' ');
+            out.push_str(p);
+            out.push(' ');
+            out.push_str(o);
+            if let Some(g) = g {
+                out.push(' ');
+                out.push_str(g);
+            }
+            out.push_str(" .\n");
+        });
+        self.guard()?;
+        Ok(out)
+    }
+
+    /// Whether every selected graph has been streamed to its end.
+    pub fn done(&self) -> bool {
+        self.finished()
+    }
+}
+
+/// Resolve a caller-supplied graph name to the token the file stores. Graph
+/// names are canonical N-Triples terms (`<iri>`), but the JS client hands out
+/// bare IRIs, so accept either and prefer an exact match.
+fn canonical_graph_name(rete: &Rete, name: String) -> String {
+    if rete.graph_names().iter().any(|g| *g == name) {
+        return name;
+    }
+    if name.starts_with('<') || name.starts_with("_:") {
+        return name;
+    }
+    format!("<{name}>")
+}
+
+/// The wasm linear memory's current size in bytes — the engine's high-water
+/// mark, since wasm memory grows but never shrinks. Exposed so a host can
+/// *measure* the streaming-dump memory claim instead of trusting it: sample it
+/// before and after a full [`QuadCursor`] drain and the growth stays flat
+/// however many quads went by, where materializing them all does not.
+#[wasm_bindgen]
+pub fn heap_bytes() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        (core::arch::wasm32::memory_size(0) as f64) * 65536.0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0.0
+    }
+}
+
 /// A remote `.rete` opened **once over HTTP range** and kept resident in the
 /// worker, so repeated queries on the same URL reuse (a) the block cache — any
 /// 64 KiB block fetched once is served from memory by [`BlockCacheReader`] — and
@@ -398,7 +644,7 @@ impl Graph {
 #[wasm_bindgen]
 pub struct RemoteGraph {
     reader: std::sync::Arc<CountingReader<XhrRangeReader>>,
-    rete: Rete,
+    rete: Rc<Rete>,
 }
 
 #[wasm_bindgen]
@@ -409,7 +655,21 @@ impl RemoteGraph {
     #[wasm_bindgen(constructor)]
     pub fn new(url: &str) -> Result<RemoteGraph, JsValue> {
         let (reader, rete) = open_url(url)?;
-        Ok(RemoteGraph { reader, rete })
+        Ok(RemoteGraph {
+            reader,
+            rete: Rc::new(rete),
+        })
+    }
+
+    /// See [`Graph::quads`] — the SAME lazy cursor, over the lazily range-read
+    /// remote handle. It streams and stays memory-bounded exactly as the local
+    /// one does, but it is not *network*-lazy: a full dump resolves every term
+    /// and visits every tile, so it ends up fetching essentially the whole file
+    /// (and the tiles it faults stay resident). Use it to export a remote graph,
+    /// not to peek at one — for that, run a `LIMIT` query. Worker-only in the
+    /// browser, like every other read here.
+    pub fn quads(&self, graph: Option<String>) -> QuadCursor {
+        QuadCursor::start(self.rete.clone(), graph)
     }
 
     /// `{ fileLength, bytes, requests }` — CUMULATIVE physical fetches since this

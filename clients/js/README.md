@@ -64,9 +64,50 @@ worker. The host serving the file must send CORS headers and honor `Range`.
 common XSD types) and `.n3`. Also: `queryRaw`, `query(q, {reason: true})`
 (OWL 2 QL entailment), `prefixSearch`, `textSearch`, `schema`, `graphNames`,
 `info`, `card()` / `examples()` (the file's embedded Dataset Card and its
-example queries), `shacl(shapes)` (SHACL Core validation), and on lazily
-opened graphs `stats()` / `contentHash()`. `wasm` re-exports the raw engine
-for anything this wrapper doesn't wrap.
+example queries), `shacl(shapes)` (SHACL Core validation), `dump()` /
+`nquads()` / `writeNQuads()` / `toNQuads()` (the streaming export below), and
+on lazily opened graphs `stats()` / `contentHash()`. `wasm` re-exports the raw
+engine for anything this wrapper doesn't wrap.
+
+## Streaming the whole graph out
+
+`dump()` walks every quad lazily — the engine decodes one triple at a time and
+the wrapper never holds more than a batch of them, so memory does not grow with
+the graph:
+
+```js
+for await (const [s, p, o, g] of graph.dump()) {
+  // g is the graph Term, or null in the default graph
+}
+```
+
+`dump({graph})` narrows it: omit for the default graph followed by every named
+graph, `null` for the default graph only, an IRI for one named graph.
+`dump({raw: true})` yields the engine's N-Triples tokens instead of `Term`s.
+
+For handing a `.rete` to another store, `nquads()` streams ready-made N-Quads
+text (the engine writes the lines; nothing is re-serialized in JavaScript):
+
+```js
+import { Store } from "oxigraph";
+const store = new Store();
+for await (const chunk of graph.nquads()) store.load(chunk, { format: "application/n-quads" });
+
+await graph.writeNQuads(createWriteStream("out.nq"));  // Node stream, WritableStream, or fn
+const text = await graph.toNQuads();                   // one string — small graphs only
+```
+
+Under the hood each wasm call hands back **10 000 quads** (`batch`), which the
+generator yields one at a time: one call per quad would make the boundary the
+bottleneck, one call for the graph would rebuild the array these methods exist
+to avoid. `heapBytes()` lets you check the claim rather than take it — the
+engine heap is flat across a full dump, where materializing the same quads with
+`SELECT ?s ?p ?o` costs hundreds of MB (see `test/dump-memory.test.mjs`).
+
+This works on **remote graphs too**, with one honest caveat: a full dump
+resolves every term and visits every tile, so it ends up fetching essentially
+the whole file (and the tiles stay cached). It is how you *export* a remote
+graph, not how you peek at one — for that, run a `LIMIT` query.
 
 ## Local files, read lazily (Node)
 

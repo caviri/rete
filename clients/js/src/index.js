@@ -7,7 +7,19 @@ import initWasm, {
   Graph as WasmGraph,
   RemoteGraph as WasmRemoteGraph,
   build as wasmBuild,
+  heap_bytes as wasmHeapBytes,
 } from "../vendor/pkg/rete_wasm.js";
+
+/**
+ * Quads pulled per wasm call by the streaming dump (`dump`, `nquads`).
+ *
+ * A wasm→JS call costs far more than decoding a triple does, so pulling one
+ * quad per call would make the boundary the bottleneck; pulling the whole graph
+ * would rebuild the very array these methods exist to avoid. 10 000 amortizes
+ * the crossing to nothing while bounding the transient buffer at roughly
+ * 10 000 × ~120 B ≈ 1.2 MB — flat no matter how many quads follow.
+ */
+const DUMP_BATCH = 10_000;
 
 const XSD = "http://www.w3.org/2001/XMLSchema#";
 const INT_TYPES = new Set(
@@ -257,6 +269,135 @@ export class Graph {
     return this.info().quads;
   }
 
+  // -------------------------------------------------------------------------
+  // Streaming dump. See DUMP_BATCH for why this crosses the wasm boundary in
+  // batches rather than one quad — or one whole graph — at a time.
+
+  /**
+   * Every quad of the graph, streamed lazily:
+   * `for await (const [s, p, o, g] of graph.dump())`.
+   *
+   * (Named `dump()`, not `quads()`, because `graph.quads` is already this
+   * client's quad **count** — the engine calls the streaming scan a dump too.)
+   *
+   * `g` is the graph Term, or `null` for the default graph. Nothing is ever
+   * materialized: the engine decodes one triple per step and the wrapper holds
+   * at most `batch` of them, so this runs in memory independent of the graph's
+   * size — a billion-quad file streams in the same footprint as a thousand.
+   *
+   * Options:
+   * - `graph`: omit (or `undefined`) for the default graph **followed by every
+   *   named graph**; `null` for the default graph only; an IRI string for that
+   *   named graph only.
+   * - `raw: true` yields the engine's N-Triples term tokens (`"<urn:a>"`,
+   *   `'"x"@en'`) instead of `Term` objects — no per-term parsing, for when you
+   *   are re-serializing rather than inspecting.
+   * - `batch`: quads fetched per wasm call (default 10 000).
+   */
+  async *dump({ graph, raw = false, batch = DUMP_BATCH } = {}) {
+    const cursor = this.#cursor(graph);
+    try {
+      for (;;) {
+        // A flat [s, p, o, g, s, p, o, g, …] array: one JS array per BATCH,
+        // not per quad.
+        const flat = cursor.next_batch(batch);
+        if (flat.length === 0) return;
+        for (let i = 0; i < flat.length; i += 4) {
+          const g = flat[i + 3];
+          yield raw
+            ? [flat[i], flat[i + 1], flat[i + 2], g === "" ? null : g]
+            : [
+                Term.parse(flat[i]),
+                Term.parse(flat[i + 1]),
+                Term.parse(flat[i + 2]),
+                g === "" ? null : Term.parse(g),
+              ];
+        }
+      }
+    } finally {
+      // Breaking out of the loop calls this: release the engine-side cursor
+      // (and the scan state it pins) instead of waiting for a GC that wasm
+      // objects never get.
+      cursor.free();
+    }
+  }
+
+  /**
+   * The graph as N-Quads text, in chunks — the constant-memory serialization
+   * path. Each chunk is a batch's worth of complete lines (`\n`-terminated), so
+   * chunks can be concatenated or written straight through:
+   *
+   * ```js
+   * for await (const chunk of graph.nquads()) out.write(chunk);
+   * ```
+   *
+   * Terms are already canonical N-Triples tokens inside the file, so the engine
+   * emits the lines directly: one string per batch crosses the wasm boundary
+   * instead of four per quad, and nothing is re-serialized in JavaScript.
+   * Takes the same `graph` / `batch` options as {@link dump}.
+   */
+  async *nquads({ graph, batch = DUMP_BATCH } = {}) {
+    const cursor = this.#cursor(graph);
+    try {
+      for (;;) {
+        const chunk = cursor.next_nquads(batch);
+        if (chunk.length === 0) return;
+        yield chunk;
+      }
+    } finally {
+      cursor.free();
+    }
+  }
+
+  /**
+   * Write the whole graph as N-Quads into `sink`, and return the byte length
+   * written. `sink` may be a Node `Writable`, a WHATWG `WritableStream`, or any
+   * function taking a string chunk — so:
+   *
+   * ```js
+   * await graph.writeNQuads(createWriteStream("out.nq"));   // Node
+   * const parts = []; await graph.writeNQuads((c) => parts.push(c));
+   * ```
+   *
+   * Memory stays flat: one batch of text is live at a time, and backpressure is
+   * honored on both stream kinds.
+   */
+  async writeNQuads(sink, options = {}) {
+    const write = sinkWriter(sink);
+    let bytes = 0;
+    for await (const chunk of this.nquads(options)) {
+      bytes += chunk.length;
+      await write(chunk);
+    }
+    await write(null); // release a WritableStream writer's lock
+    return bytes;
+  }
+
+  /**
+   * The whole graph as ONE N-Quads string — the ready-to-load form for
+   * `store.load(text, {format: "application/n-quads"})` (Oxigraph, N3.js, …).
+   *
+   * Unlike {@link nquads} this necessarily holds the entire serialization in
+   * memory, so it is for graphs you are willing to materialize; stream with
+   * {@link nquads} / {@link writeNQuads} for anything large.
+   */
+  async toNQuads(options = {}) {
+    const parts = [];
+    for await (const chunk of this.nquads(options)) parts.push(chunk);
+    return parts.join("");
+  }
+
+  /** Open an engine-side cursor for the `graph` option of the dump methods. */
+  #cursor(graph) {
+    // undefined → every graph; null → the default graph (the engine's ""
+    // sentinel); a string → that named graph, as a clean IRI or an <iri> token.
+    if (graph === undefined) return this.#g.quads(undefined);
+    if (graph === null) return this.#g.quads("");
+    if (typeof graph !== "string")
+      throw new TypeError("the `graph` option takes an IRI string, null, or undefined");
+    return this.#g.quads(graph);
+  }
+
   graphNames() {
     return JSON.parse(this.#g.graph_names()).map(cleanIri);
   }
@@ -270,6 +411,33 @@ export class Graph {
   contentHash() {
     return this.#remote ? this.#g.content_hash() : null;
   }
+}
+
+/**
+ * Adapt the three shapes `writeNQuads` accepts — a plain function, a WHATWG
+ * `WritableStream`, a Node `Writable` — to one `await write(chunk)`, honoring
+ * backpressure so a dump larger than memory cannot outrun its sink. Call with
+ * `null` to finish (releases a WritableStream writer's lock).
+ */
+function sinkWriter(sink) {
+  if (typeof sink === "function") return async (chunk) => (chunk === null ? undefined : sink(chunk));
+  if (typeof sink?.getWriter === "function") {
+    const writer = sink.getWriter();
+    return async (chunk) => {
+      if (chunk === null) return writer.releaseLock();
+      await writer.ready;
+      return writer.write(chunk);
+    };
+  }
+  if (typeof sink?.write === "function") {
+    // Node Writable: write() returning false means the buffer is full.
+    return async (chunk) => {
+      if (chunk === null) return undefined;
+      if (sink.write(chunk) === false)
+        await new Promise((resolve) => sink.once("drain", resolve));
+    };
+  }
+  throw new TypeError("writeNQuads() takes a Writable, a WritableStream, or a function(chunk)");
 }
 
 const isBytes = (s) =>
@@ -325,6 +493,16 @@ export async function open(source, { headers } = {}) {
 export async function build(text, format = "nt") {
   await init();
   return wasmBuild(text, format);
+}
+
+/**
+ * The engine's wasm linear memory in bytes — its high-water mark, since wasm
+ * memory grows but never shrinks. Sample it around a `quads()` / `nquads()`
+ * drain to *verify* the streaming claim rather than trust it: the growth stays
+ * flat however many quads go by. Requires `init()` (any `open()` does it).
+ */
+export function heapBytes() {
+  return wasmHeapBytes();
 }
 
 // RDF/JS Source for Comunica / LDflex / GraphQL-LD pipelines.
