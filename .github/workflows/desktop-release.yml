@@ -119,3 +119,37 @@ jobs:
             shows "Windows protected your PC" — **More info** → **Run anyway**.
           releaseDraft: ${{ github.event.inputs.draft != 'false' }}
           prerelease: true
+
+      # Tauri builds the .app and the .dmg in one pass with no hook between
+      # them, so the extension is embedded afterwards and the disk image is
+      # rebuilt around the modified bundle. Rebuilding the .dmg is the whole
+      # reason this is a separate step: embedding into the .app alone would
+      # leave the shipped image without it.
+      - name: Embed the Quick Look extension and repack the .dmg (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE="clients/tauri/src-tauri/target/${{ matrix.target }}/release/bundle"
+          APP="$(find "$BUNDLE/macos" -maxdepth 1 -name '*.app' | head -1)"
+          DMG="$(find "$BUNDLE/dmg" -maxdepth 1 -name '*.dmg' | head -1)"
+          if [[ -z "$APP" ]]; then echo "no .app found under $BUNDLE" >&2; exit 1; fi
+
+          bash clients/tauri/quicklook/build.sh "$APP" universal
+          # Prove it landed rather than trusting the script's exit code.
+          test -x "$APP/Contents/PlugIns/ReteQuickLook.appex/Contents/MacOS/ReteQuickLook"
+          echo "embedded:"; ls -la "$APP/Contents/PlugIns/"
+
+          if [[ -n "$DMG" ]]; then
+            echo "repacking $DMG"
+            STAGE="$(mktemp -d)"
+            cp -R "$APP" "$STAGE/"
+            ln -s /Applications "$STAGE/Applications"
+            rm -f "$DMG"
+            hdiutil create -volname "Rete File Explorer" -srcfolder "$STAGE" \
+              -ov -format UDZO "$DMG"
+            gh release upload "${{ github.event.inputs.tag || github.ref_name }}" \
+              "$DMG" --clobber
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

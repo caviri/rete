@@ -54,6 +54,33 @@ xattr -dr com.apple.quarantine "/Applications/Rete File Explorer.app"
 Or right-click the app → **Open** → **Open**. On Windows, SmartScreen shows
 "Windows protected your PC" → **More info** → **Run anyway**.
 
+## Quick Look on macOS (experimental)
+
+The app bundles a **Quick Look preview extension**: select a `.rete` in Finder,
+press space, and its Dataset Card appears — title, description, licence,
+publisher, the section table, quad and term counts, content hash.
+
+It is a good fit for a reason worth stating. Reading a card is **two positional
+reads** — the 1 KB header, then the metadata section it points at. No dictionary,
+no index, no query engine. So a 17 GB graph previews exactly as fast as a 200 KB
+one, because the work does not scale with the file. Quick Look demands
+sub-second previews and this clears it without trying.
+
+> **It will not load from an unsigned build.** macOS refuses to register an app
+> extension that carries no valid signature, and every release so far is
+> unsigned. Everything else survives via the quarantine bypass; an extension
+> does not. This is the first feature that genuinely needs an Apple Developer
+> certificate rather than merely being nicer with one.
+
+Source: `clients/tauri/quicklook/`. It is assembled without an Xcode project —
+an app extension is a bundle whose binary links with `-e _NSExtensionMain`, so
+`swiftc` builds one directly, which keeps it in the same shell step as the rest
+rather than adding a second project file to keep in sync.
+
+The app also declares `.rete` as an exported type
+(`com.graphplaza.rete`), which is what the extension keys off and what gives
+Finder double-click-to-open.
+
 ---
 
 ## Five views, because there is no single honest tree
