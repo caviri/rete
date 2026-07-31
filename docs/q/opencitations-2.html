@@ -4,24 +4,24 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
-<title>Publications per year — opencitations</title>
-<meta name="description" content="Group dct:date (xsd:gYear) to see the time profile of the neighbourhood. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<title>A journal&#39;s papers, with identifiers you can follow — opencitations</title>
+<meta name="description" content="Venues are first-class nodes here, not strings — so you can pin one and list what it published, each row carrying the DOI (clickable), the PubMed id… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/opencitations-2.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
-<meta property="og:title" content="Publications per year — opencitations" />
-<meta property="og:description" content="Group dct:date (xsd:gYear) to see the time profile of the neighbourhood. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<meta property="og:title" content="A journal&#39;s papers, with identifiers you can follow — opencitations" />
+<meta property="og:description" content="Venues are first-class nodes here, not strings — so you can pin one and list what it published, each row carrying the DOI (clickable), the PubMed id… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/opencitations-2.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/opencitations-2.png" />
 <meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Publications per year — opencitations" />
+<meta property="og:image:alt" content="A journal&#39;s papers, with identifiers you can follow — opencitations" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Publications per year — opencitations" />
-<meta name="twitter:description" content="Group dct:date (xsd:gYear) to see the time profile of the neighbourhood. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<meta name="twitter:title" content="A journal&#39;s papers, with identifiers you can follow — opencitations" />
+<meta name="twitter:description" content="Venues are first-class nodes here, not strings — so you can pin one and list what it published, each row carrying the DOI (clickable), the PubMed id… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/opencitations-2.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Publications per year","description":"Group dct:date (xsd:gYear) to see the time profile of the neighbourhood. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server.","url":"https://caviri.github.io/rete/q/opencitations-2.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"opencitations","url":"https://caviri.github.io/rete/d/opencitations.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"A journal's papers, with identifiers you can follow","description":"Venues are first-class nodes here, not strings — so you can pin one and list what it published, each row carrying the DOI (clickable), the PubMed id… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server.","url":"https://caviri.github.io/rete/q/opencitations-2.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"opencitations","url":"https://caviri.github.io/rete/d/opencitations.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -46,13 +46,18 @@
 </svg>
     <div class="head">
       <div class="brand"><b>rete</b><span>playground</span></div>
-      <div class="chip">Aggregate</div>
+      <div class="chip">Select</div>
     </div>
-    <h1 class="title s1">Publications per year</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?year</span> (<span class="kw">COUNT</span>(<span class="v">?w</span>) <span class="kw">AS</span> <span class="v">?n</span>) <span class="kw">WHERE</span> { <span class="v">?w</span> dct:date <span class="v">?year</span> …</pre></div></div><aside class="rail">
+    <h1 class="title s2">A journal&#39;s papers, with identifiers you can follow</h1>
+    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?work</span> <span class="v">?title</span> <span class="v">?year</span> <span class="v">?pmid</span> <span class="v">?openalex</span> <span class="kw">WHERE</span> {
+  <span class="v">?v</span> oc:title &quot;Mathematical Structures In Computer Scienc…
+  <span class="v">?work</span> oc:partOf <span class="v">?v</span> ;
+        oc:title <span class="v">?title</span> ;
+        oc:publicationYear <span class="v">?year</span> .
+  <span class="kw">OPTIONAL</span> { <span class="v">?work</span> oc:pmid <span class="v">?pmid</span> }</pre></div></div><aside class="rail">
       <div class="icon">🔗</div>
       <div class="key">opencitations</div>
-      <div class="facts"><b>8103</b> triples · 86 KB<br />remote · HTTP range</div>
+      <div class="facts"><b>5184588893</b> triples · 33.4 GB<br />remote · HTTP range</div>
       
     </aside></div>
     <div class="foot">
@@ -64,8 +69,16 @@
     <a class="go" href="../playground.html#dataset=opencitations&amp;load=lazy&amp;mode=sparql&amp;ex=2">Run this query in the playground →</a>
     <span class="alt">no server, no download — the query runs in your browser.</span>
   </div>
-  <div class="q"><h2>The query</h2>PREFIX dct: &lt;http://purl.org/dc/terms/&gt;
-SELECT ?year (COUNT(?w) AS ?n) WHERE { ?w dct:date ?year } GROUP BY ?year ORDER BY ?year</div>
+  <div class="q"><h2>The query</h2>PREFIX oc: &lt;https://w3id.org/rete/opencitations#&gt;
+SELECT ?work ?title ?year ?pmid ?openalex WHERE {
+  ?v oc:title &quot;Mathematical Structures In Computer Science&quot; .
+  ?work oc:partOf ?v ;
+        oc:title ?title ;
+        oc:publicationYear ?year .
+  OPTIONAL { ?work oc:pmid ?pmid }
+  OPTIONAL { ?work oc:openalex ?openalex }
+}
+LIMIT 25</div>
   <p class="alt" style="margin-top:20px">
     <a href="../playground.html">rete playground</a> ·
     <a href="../index.html">documentation</a> ·

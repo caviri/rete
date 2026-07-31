@@ -4,24 +4,24 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
-<title>Citation closure of a seed paper — opencitations</title>
-<meta name="description" content="Transitive cito:cites+ from one JAMA article - everything it reaches by following references. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<title>What kinds of works are in the corpus — opencitations</title>
+<meta name="description" content="A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/opencitations-3.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
-<meta property="og:title" content="Citation closure of a seed paper — opencitations" />
-<meta property="og:description" content="Transitive cito:cites+ from one JAMA article - everything it reaches by following references. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<meta property="og:title" content="What kinds of works are in the corpus — opencitations" />
+<meta property="og:description" content="A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/opencitations-3.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/opencitations-3.png" />
 <meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Citation closure of a seed paper — opencitations" />
+<meta property="og:image:alt" content="What kinds of works are in the corpus — opencitations" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Citation closure of a seed paper — opencitations" />
-<meta name="twitter:description" content="Transitive cito:cites+ from one JAMA article - everything it reaches by following references. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<meta name="twitter:title" content="What kinds of works are in the corpus — opencitations" />
+<meta name="twitter:description" content="A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/opencitations-3.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Citation closure of a seed paper","description":"Transitive cito:cites+ from one JAMA article - everything it reaches by following references. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server.","url":"https://caviri.github.io/rete/q/opencitations-3.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"opencitations","url":"https://caviri.github.io/rete/d/opencitations.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"What kinds of works are in the corpus","description":"A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server.","url":"https://caviri.github.io/rete/q/opencitations-3.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"opencitations","url":"https://caviri.github.io/rete/d/opencitations.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -46,13 +46,16 @@
 </svg>
     <div class="head">
       <div class="brand"><b>rete</b><span>playground</span></div>
-      <div class="chip">Path</div>
+      <div class="chip">Aggregate</div>
     </div>
-    <h1 class="title s1">Citation closure of a seed paper</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="kw">DISTINCT</span> <span class="v">?w</span> <span class="kw">WHERE</span> { &lt;https://doi.org/10.1001/jama.…</pre></div></div><aside class="rail">
+    <h1 class="title s1">What kinds of works are in the corpus</h1>
+    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?type</span> (<span class="kw">COUNT</span>(*) <span class="kw">AS</span> <span class="v">?works</span>) <span class="kw">WHERE</span> {
+  <span class="v">?w</span> oc:resourceType <span class="v">?type</span> .
+}
+<span class="kw">GROUP BY</span> <span class="v">?type</span> <span class="kw">ORDER BY</span> <span class="kw">DESC</span>(<span class="v">?works</span>)</pre></div></div><aside class="rail">
       <div class="icon">🔗</div>
       <div class="key">opencitations</div>
-      <div class="facts"><b>8103</b> triples · 86 KB<br />remote · HTTP range</div>
+      <div class="facts"><b>5184588893</b> triples · 33.4 GB<br />remote · HTTP range</div>
       
     </aside></div>
     <div class="foot">
@@ -64,8 +67,11 @@
     <a class="go" href="../playground.html#dataset=opencitations&amp;load=lazy&amp;mode=sparql&amp;ex=3">Run this query in the playground →</a>
     <span class="alt">no server, no download — the query runs in your browser.</span>
   </div>
-  <div class="q"><h2>The query</h2>PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
-SELECT DISTINCT ?w WHERE { &lt;https://doi.org/10.1001/jama.2014.16543&gt; cito:cites+ ?w } LIMIT 100</div>
+  <div class="q"><h2>The query</h2>PREFIX oc: &lt;https://w3id.org/rete/opencitations#&gt;
+SELECT ?type (COUNT(*) AS ?works) WHERE {
+  ?w oc:resourceType ?type .
+}
+GROUP BY ?type ORDER BY DESC(?works)</div>
   <p class="alt" style="margin-top:20px">
     <a href="../playground.html">rete playground</a> ·
     <a href="../index.html">documentation</a> ·
