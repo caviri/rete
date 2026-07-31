@@ -160,6 +160,44 @@ fn run_query(
     ))
 }
 
+/// Label prefix search, served from the pyramid's label index. Empty when the
+/// file carries no pyramid.
+#[tauri::command]
+fn prefix_search(
+    state: tauri::State<'_, AppState>,
+    prefix: String,
+    limit: usize,
+) -> Result<Vec<serde_json::Value>, String> {
+    let guard = state.opened.lock().unwrap();
+    let opened = guard.as_ref().ok_or("no archive open")?;
+    Ok(opened
+        .rete
+        .prefix_search(&prefix, limit)
+        .into_iter()
+        .map(|(label, subject)| serde_json::json!({ "label": label, "subject": subject }))
+        .collect())
+}
+
+/// Full-text (word / CONTAINS) search over the TEXT_INDEX section. Empty when
+/// the file was built without `--text-index`; the caller falls back to prefix.
+#[tauri::command]
+fn text_search(
+    state: tauri::State<'_, AppState>,
+    words: Vec<String>,
+    contains_prefix: Option<String>,
+    limit: usize,
+) -> Result<Vec<serde_json::Value>, String> {
+    let guard = state.opened.lock().unwrap();
+    let opened = guard.as_ref().ok_or("no archive open")?;
+    let refs: Vec<&str> = words.iter().map(String::as_str).collect();
+    Ok(opened
+        .rete
+        .text_search(&refs, contains_prefix.as_deref(), limit)
+        .into_iter()
+        .map(|subject| serde_json::json!({ "subject": subject }))
+        .collect())
+}
+
 #[tauri::command]
 fn graph_stats(state: tauri::State<'_, AppState>) -> Result<Stats, String> {
     let guard = state.opened.lock().unwrap();
@@ -211,6 +249,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             open_graph,
             run_query,
+            prefix_search,
+            text_search,
             graph_stats
         ])
         .run(tauri::generate_context!())
