@@ -13,9 +13,9 @@ queries the file directly with no backend.
 
 Think **Parquet / SQLite-over-HTTP / PMTiles**, but for RDF + SPARQL.
 
-<img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
+<img src="img/lazy-open.svg" alt="Any client — a browser, a notebook, the CLI — sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched (shown blue); a small block cache keeps hot tiles; everything grey is never transferred.">
 
-*The pyramid: read a coarse summary first, then drill into detail only where a query needs it.*
+*Lazy opening: the file stays where it is — on a bucket or on disk — and a query fetches only the bytes it touches. Aggregation streams, so even a `COUNT` over 9.83 billion triples fits in 2 GiB.*
 
 ## Why
 
@@ -31,6 +31,10 @@ Think **Parquet / SQLite-over-HTTP / PMTiles**, but for RDF + SPARQL.
   page loads the overview over HTTP ranges and runs SPARQL with no server.
 - **Safe on untrusted input.** A truncated or corrupt file from an arbitrary URL
   yields an error, never a panic (fuzz-tested).
+
+<img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
+
+*The pyramid: read a coarse summary first, then drill into detail only where a query needs it.*
 
 ## 60-second tour
 
@@ -77,7 +81,7 @@ The same engine, in your language of choice — every client opens local files
 
 ### Explore in the browser
 
-- **[Playground](playground-guide.md)** — the flagship demo: 40+ real datasets queried live over HTTP ranges, with SPARQL + SQL + semantic search, media viewers, and AI helpers. [Launch it →](playground.html)
+- **[Playground](playground-guide.md)** — the flagship demo: 65 real datasets queried live over HTTP ranges, with SPARQL + SQL + semantic search, media viewers, and AI helpers. [Launch it →](playground.html)
 - **[Plaza — dataset gallery](plaza/index.html)** — browse published datasets as live cards.
 - **[SPARQL IDE — yasgui·wasm](yasgui-guide.md)** — a Yasgui-style IDE where the endpoint is a `.rete` file: paste a URL (read lazily over HTTP range) or drop a local file; tabs, autocomplete from the dataset's own labels, pivot/turtle views, share links. [Launch it →](yasgui.html)
 - **[Historical atlas](atlas.md)** — SPARQL + GIS: border polygons, timeline, five projections.

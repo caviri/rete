@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 430" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
+  <title id="t">How lazy opening works: any client — a browser, a notebook, the CLI — sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched; a small block cache keeps hot tiles; the rest of the file is never transferred. A COUNT over 9.83 billion triples runs inside a 2 GiB container.</title>
+  <defs>
+    <marker id="ab" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 Z" fill="#2a6df4"/></marker>
+    <marker id="ag" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 Z" fill="#16a34a"/></marker>
+  </defs>
+  <rect width="720" height="430" fill="#ffffff"/>
+  <text x="360" y="30" text-anchor="middle" font-size="17" font-weight="700" fill="#1b1f24">Open lazily — fetch only the bytes a query touches</text>
+
+  <!-- client panel -->
+  <text x="145" y="60" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1b1f24">any client</text>
+  <rect x="40" y="70" width="210" height="215" rx="9" fill="#0f1620" opacity="0.92"/>
+  <text x="145" y="94" text-anchor="middle" font-size="11" fill="#9fb3c8">browser · notebook · CLI · server</text>
+  <rect x="56" y="106" width="178" height="66" rx="6" fill="#2a3340"/>
+  <text x="66" y="128" font-size="11.5" fill="#c9d4e0">SELECT (COUNT(*) AS ?n)</text>
+  <text x="66" y="146" font-size="11.5" fill="#c9d4e0">WHERE { ?s a :Software }</text>
+  <text x="66" y="164" font-size="10.5" fill="#9fb3c8">→ 779,399 · 4 s · 2 GiB cap</text>
+  <rect x="56" y="186" width="178" height="52" rx="6" fill="#eef3ff" stroke="#cdd7e2" stroke-width="1.2"/>
+  <text x="66" y="206" font-size="11" font-weight="700" fill="#1b1f24">block cache</text>
+  <text x="66" y="223" font-size="10.5" fill="#5b6570">hot tiles stay resident · ≤ 256 MiB</text>
+  <text x="145" y="268" text-anchor="middle" font-size="10.5" fill="#9fb3c8">memory: O(groups), never O(file)</text>
+
+  <!-- request / response arrows -->
+  <line x1="262" y1="142" x2="442" y2="142" stroke="#2a6df4" stroke-width="2.2" marker-end="url(#ab)"/>
+  <text x="352" y="130" text-anchor="middle" font-size="12" font-weight="700" fill="#2a6df4">read · Range: bytes=…</text>
+  <line x1="442" y1="196" x2="262" y2="196" stroke="#16a34a" stroke-width="2.2" marker-end="url(#ag)"/>
+  <text x="352" y="216" text-anchor="middle" font-size="12" font-weight="700" fill="#16a34a">206 — just those bytes</text>
+  <text x="352" y="236" text-anchor="middle" font-size="10.5" fill="#5b6570">same reader for https:// and local files</text>
+
+  <!-- the file -->
+  <text x="572" y="60" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1b1f24">one .rete file — 52 GB, 9.83 B triples</text>
+  <rect x="462" y="70" width="220" height="272" rx="9" fill="#ffffff" stroke="#cdd7e2" stroke-width="1.5"/>
+  <rect x="476" y="84" width="192" height="16" rx="3" fill="#2a6df4"/>
+  <text x="572" y="96" text-anchor="middle" font-size="10" fill="#ffffff">header + card — 2 reads</text>
+
+  <text x="476" y="122" font-size="11" font-weight="700" fill="#1b1f24">dictionary chunks</text>
+  <rect x="476" y="130" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="509" y="130" width="28" height="16" rx="3" fill="#2a6df4"/>
+  <rect x="542" y="130" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="575" y="130" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="608" y="130" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="641" y="130" width="27" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="476" y="151" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="509" y="151" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="542" y="151" width="28" height="16" rx="3" fill="#5a8df6"/>
+  <rect x="575" y="151" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="608" y="151" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="641" y="151" width="27" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+
+  <text x="476" y="192" font-size="11" font-weight="700" fill="#1b1f24">index tiles — SPO · POS · OSP · …</text>
+  <rect x="476" y="200" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="509" y="200" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="542" y="200" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="575" y="200" width="28" height="16" rx="3" fill="#2a6df4"/>
+  <rect x="608" y="200" width="28" height="16" rx="3" fill="#2a6df4"/>
+  <rect x="641" y="200" width="27" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="476" y="221" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="509" y="221" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="542" y="221" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="575" y="221" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="608" y="221" width="28" height="16" rx="3" fill="#5a8df6"/>
+  <rect x="641" y="221" width="27" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="476" y="242" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="509" y="242" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="542" y="242" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="575" y="242" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="608" y="242" width="28" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="641" y="242" width="27" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+
+  <text x="476" y="283" font-size="11" font-weight="700" fill="#1b1f24">pyramid summary — overview tier</text>
+  <rect x="476" y="291" width="94" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="575" y="291" width="93" height="16" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <text x="572" y="326" text-anchor="middle" font-size="10.5" fill="#5b6570">everything grey stays on the server / disk</text>
+
+  <!-- legend -->
+  <rect x="196" y="366" width="14" height="11" rx="2" fill="#2a6df4"/>
+  <text x="216" y="376" font-size="11.5" fill="#1b1f24">fetched — a few KBs</text>
+  <rect x="356" y="366" width="14" height="11" rx="2" fill="#eef3ff" stroke="#cdd7e2"/>
+  <text x="376" y="376" font-size="11.5" fill="#1b1f24">never transferred</text>
+
+  <text x="360" y="408" text-anchor="middle" font-size="11.5" fill="#5b6570">Local files and remote URLs share one range reader — aggregation streams, so even a COUNT over 9.83 billion triples fits in 2 GiB.</text>
+</svg>

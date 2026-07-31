@@ -343,8 +343,8 @@ community summary. Drop the file on S3, GitHub, or any HTTP host that honors
 the bytes a query needs. The same engine compiles to WebAssembly, so the browser
 queries the file directly with no backend.</p>
 <p>Think <strong>Parquet / SQLite-over-HTTP / PMTiles</strong>, but for RDF + SPARQL.</p>
-<img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
-<p><em>The pyramid: read a coarse summary first, then drill into detail only where a query needs it.</em></p>
+<img src="img/lazy-open.svg" alt="Any client — a browser, a notebook, the CLI — sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched (shown blue); a small block cache keeps hot tiles; everything grey is never transferred.">
+<p><em>Lazy opening: the file stays where it is — on a bucket or on disk — and a query fetches only the bytes it touches. Aggregation streams, so even a <code>COUNT</code> over 9.83 billion triples fits in 2 GiB.</em></p>
 <h2>Why</h2>
 <ul>
 <li><strong>No database server.</strong> The file <em>is</em> the database. Publish once to static
@@ -360,6 +360,8 @@ page loads the overview over HTTP ranges and runs SPARQL with no server.</li>
 <li><strong>Safe on untrusted input.</strong> A truncated or corrupt file from an arbitrary URL
 yields an error, never a panic (fuzz-tested).</li>
 </ul>
+<img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
+<p><em>The pyramid: read a coarse summary first, then drill into detail only where a query needs it.</em></p>
 <h2>60-second tour</h2>
 <pre><code class="language-sh"># Build a file from N-Triples (or .nq / .ttl; merge several; or read stdin):
 rete build examples/social.nt -o social.rete
@@ -398,7 +400,7 @@ rete schema  social.rete    # semantic (by rdf:type)
 </ul>
 <h3>Explore in the browser</h3>
 <ul>
-<li><strong><a href="playground-guide.html">Playground</a></strong> — the flagship demo: 40+ real datasets queried live over HTTP ranges, with SPARQL + SQL + semantic search, media viewers, and AI helpers. <a href="playground.html">Launch it →</a></li>
+<li><strong><a href="playground-guide.html">Playground</a></strong> — the flagship demo: 65 real datasets queried live over HTTP ranges, with SPARQL + SQL + semantic search, media viewers, and AI helpers. <a href="playground.html">Launch it →</a></li>
 <li><strong><a href="plaza/index.html">Plaza — dataset gallery</a></strong> — browse published datasets as live cards.</li>
 <li><strong><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></strong> — a Yasgui-style IDE where the endpoint is a <code>.rete</code> file: paste a URL (read lazily over HTTP range) or drop a local file; tabs, autocomplete from the dataset's own labels, pivot/turtle views, share links. <a href="yasgui.html">Launch it →</a></li>
 <li><strong><a href="atlas.html">Historical atlas</a></strong> — SPARQL + GIS: border polygons, timeline, five projections.</li>
