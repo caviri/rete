@@ -3,7 +3,7 @@ uvicorn[standard]
 anyio
 httpx
 pydantic>=2
-rete-graph>=0.3.1
+rete-graph>=0.3.0
 fastmcp>=2.3
 pydantic-ai-slim[openai,anthropic]
 # media tools: WebP recompression, PDF first-page render, video frame grab

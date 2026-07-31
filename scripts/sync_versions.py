@@ -95,6 +95,20 @@ _CORE_PIN_FILES = [
     "crates/rete-wasm/Cargo.toml",
 ]
 
+# These three resolve `rete-graph` FROM PyPI at image-build time, so they must
+# never name a version the registry does not have yet. Bumping them in the same
+# commit as the workspace breaks every image build until the wheel is published
+# — which is exactly how the relay job failed on the 0.3.1 cut:
+#   ERROR: Could not find a version that satisfies rete-graph>=0.3.1
+# `--set` therefore leaves them alone; `--set-published` moves them once the
+# wheel is live. The lockstep contract still holds meanwhile, because `--check`
+# compares MAJOR.MINOR only and 0.3.0 satisfies a 0.3.1 engine.
+_PYPI_RESOLVED = {
+    "clients/blender/build.sh",
+    "clients/blender/Dockerfile",
+    "hf-space/requirements.txt",
+}
+
 
 def engine_version() -> str:
     text = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
@@ -150,6 +164,9 @@ def _stamp(version: str) -> int:
         path = ROOT / rel
         if not path.exists():
             sys.exit(f"{rel}: missing — cannot cut a release with a target gone")
+        if rel in _PYPI_RESOLVED:
+            print(f"  HELD  {label:32} (waits for PyPI — see --set-published)")
+            continue
         _edit(path, pattern, version)
         print(f"  wrote {label:32} {version}")
 
@@ -167,6 +184,21 @@ def _stamp(version: str) -> int:
 
     print("\nnow run --check to confirm the lockstep contract still holds")
     print("the Pyodide URL resolves only after scripts/publish_pyodide_wheel.sh")
+    print(f"once rete-graph {version} is on PyPI: --set-published {version}")
+    return 0
+
+
+def _stamp_published(version: str) -> int:
+    """Raise the PyPI-resolved floors — run this AFTER the wheel is published."""
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        sys.exit(f"--set-published expects MAJOR.MINOR.PATCH, got {version!r}")
+
+    print(f"raising the PyPI floors to {version} (the wheel must already be live)")
+    for rel, pattern, label in TARGETS:
+        if rel not in _PYPI_RESOLVED:
+            continue
+        _edit(ROOT / rel, pattern, version)
+        print(f"  wrote {label:32} {version}")
     return 0
 
 
@@ -180,13 +212,21 @@ def main() -> int:
         metavar="VERSION",
         help="cut a release: stamp VERSION on the workspace AND every client, "
         "patch included (--write only repairs MAJOR.MINOR drift, so it is a "
-        "no-op for a patch bump)",
+        "no-op for a patch bump). Leaves the PyPI-resolved floors behind",
+    )
+    mode.add_argument(
+        "--set-published",
+        metavar="VERSION",
+        help="raise the floors that install rete-graph FROM PyPI — run only "
+        "after the wheel is live, or every image build fails to resolve",
     )
     args = parser.parse_args()
     writing = args.write
 
     if args.set:
         return _stamp(args.set)
+    if args.set_published:
+        return _stamp_published(args.set_published)
 
     engine = engine_version()
     target_minor = minor_of(engine)
