@@ -277,6 +277,7 @@ const G2 = [
   ["check_query_shapes", "property paths + CONSTRUCT→graph + reasoning (embedded)", 90000, false],
   ["check_boe_reason", "BOE OWL 2 QL reasoning over live R2 (0 → N with 🧠 Reason)", 150000, true],
   ["check_enac", "EPFL ENAC repositories by lab over live R2", 150000, true],
+  ["check_recent_build", "RECENTLY-BUILT file, bound predicate+object over live R2", 150000, true],
   ["check_schema_empty", "no-pyramid dataset shows honest empty schema (no stale scholar leak)", 120000, true],
   ["check_schema_render", "with-pyramid remote schema + ontology diagram render on async default", 120000, true],
   ["check_ontology_docs", "ReSpec-style ontology reference (classes+props+definitions) renders, incl. --no-pyramid dblp", 150000, true],
