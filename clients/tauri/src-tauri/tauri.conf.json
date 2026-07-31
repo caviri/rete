@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Rete File Explorer",
+  "version": "0.3.0",
+  "identifier": "com.graphplaza.rete-file-explorer",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Rete File Explorer",
+        "width": 1280,
+        "height": 840,
+        "minWidth": 720,
+        "minHeight": 480,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Browse a .rete graph like an archive",
+    "longDescription": "Open a .rete knowledge-graph file the way an archive tool opens a zip: folders, files, a preview pane, and extract to CSV/JSON/N-Triples. Reads local files and remote URLs over HTTP range requests, so a multi-gigabyte graph opens without downloading it.",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  }
+}

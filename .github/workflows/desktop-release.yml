@@ -1,0 +1,99 @@
+name: desktop-release
+
+# Build the Rete File Explorer desktop app and attach the installers to a
+# GitHub Release.
+#
+# macOS cannot be built anywhere but macOS: the SDK is licensed to Apple
+# hardware, and codesign/notarytool do not exist off it. So the runner *is* the
+# build environment — there is no Docker path for this target, and pretending
+# otherwise would mean shipping something Gatekeeper refuses to open.
+#
+# These builds are UNSIGNED and UNNOTARIZED. macOS will refuse them on first
+# open; see clients/tauri/README.md for the one-time bypass. Signing is a
+# credentials problem, not a code one — when certificates exist, add them as
+# secrets and Tauri picks them up with no change to this file's shape.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish under (e.g. explorer-v0.3.0)"
+        required: true
+        default: explorer-v0.3.0
+      draft:
+        description: "Publish as a draft release"
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "explorer-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            target: aarch64-apple-darwin
+            label: macOS (Apple Silicon)
+          - platform: macos-13
+            target: x86_64-apple-darwin
+            label: macOS (Intel)
+
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/tauri/src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Stage the frontend
+        run: bash clients/tauri/scripts/sync-frontend.sh
+
+      - name: Generate app icons
+        run: |
+          npm install -g @tauri-apps/cli@^2
+          cd clients/tauri/src-tauri
+          tauri icon icons/source.png
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: clients/tauri
+          tauriScript: tauri
+          args: --target ${{ matrix.target }}
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: "Rete File Explorer ${{ github.event.inputs.tag || github.ref_name }}"
+          releaseBody: |
+            Browse a `.rete` graph like an archive — folders, files, and extract.
+
+            **These builds are unsigned and unnotarized.** macOS will say the app
+            "cannot be opened because the developer cannot be verified", or that
+            it is damaged. To run it anyway, once:
+
+            ```sh
+            xattr -dr com.apple.quarantine "/Applications/Rete File Explorer.app"
+            ```
+
+            Or: right-click the app → Open → Open. Both are one-time.
+
+            Pick the **aarch64** build for Apple Silicon (M1 and later) and the
+            **x64** build for Intel Macs.
+          releaseDraft: ${{ github.event.inputs.draft != 'false' }}
+          prerelease: true

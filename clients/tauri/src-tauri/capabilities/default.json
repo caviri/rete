@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Everything the explorer window needs: the file-open dialog, and the three graph commands. No filesystem, shell, or network plugin permissions — remote reads go through the Rust side, which only ever issues HTTP range requests for a URL the user typed or picked.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}
