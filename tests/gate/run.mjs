@@ -70,6 +70,24 @@ function g0() {
       String(e.stderr || e.stdout || e).slice(-160),
     );
   }
+
+  // The asyncify glue must normalize every wasm pointer it dereferences: above
+  // 2 GiB an `i32` import arrives sign-extended and `mem.set` throws. The browser
+  // matrix cannot see this — its async check runs a small dataset, and the bug
+  // needs a heap past 2 GiB (~150 MB of range reads). Assert the property instead.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_async_pointer_safety.mjs`, {
+      encoding: "utf8",
+    });
+    record("G0", "async glue pointer safety (>2 GiB heaps)", /\[G0\]/.test(out), out.slice(-160));
+  } catch (e) {
+    record(
+      "G0",
+      "async glue pointer safety (>2 GiB heaps)",
+      false,
+      String(e.stderr || e.stdout || e).slice(-160),
+    );
+  }
   try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/check_social_previews.mjs`, {
       encoding: "utf8",
@@ -259,6 +277,7 @@ const G2 = [
   ["check_query_shapes", "property paths + CONSTRUCT→graph + reasoning (embedded)", 90000, false],
   ["check_boe_reason", "BOE OWL 2 QL reasoning over live R2 (0 → N with 🧠 Reason)", 150000, true],
   ["check_enac", "EPFL ENAC repositories by lab over live R2", 150000, true],
+  ["check_recent_build", "RECENTLY-BUILT file, bound predicate+object over live R2", 150000, true],
   ["check_schema_empty", "no-pyramid dataset shows honest empty schema (no stale scholar leak)", 120000, true],
   ["check_schema_render", "with-pyramid remote schema + ontology diagram render on async default", 120000, true],
   ["check_ontology_docs", "ReSpec-style ontology reference (classes+props+definitions) renders, incl. --no-pyramid dblp", 150000, true],

@@ -1943,7 +1943,15 @@ let wasm_bindgen = (function(exports) {
             d.setInt32(__reteAD + 4, __reteAD + 8 + SIZE, true);
           }
         }
-        function __reteStr(ptr, len) { return new TextDecoder().decode(new Uint8Array(wasm.memory.buffer).slice(ptr, ptr + len)); }
+        // wasm32 pointers arrive through `i32` imports, so anything the engine
+        // allocates above 2 GiB reaches JS SIGN-EXTENDED — a negative number that
+        // makes `mem.set(b, ptr)` throw `RangeError: offset is out of bounds`. The
+        // heap really does cross 2 GiB on a big remote scan (measured at 2050 MB on
+        // wikidata-1GB), and because wasm memory never shrinks, every later read in
+        // that worker fails too. `>>> 0` restores the unsigned value; every pointer
+        // crossing this boundary goes through it.
+        function __reteP(ptr) { return ptr >>> 0; }
+        function __reteStr(ptr, len) { const p = __reteP(ptr); return new TextDecoder().decode(new Uint8Array(wasm.memory.buffer).slice(p, p + (len >>> 0))); }
         // cache:'no-store' is REQUIRED on WebKit (desktop Safari, and iOS when a user
         // forces concurrent reads): WebKit caches/coalesces concurrent same-URL Range
         // requests (this Promise.all fires many at once) and can hand back a
@@ -1956,7 +1964,8 @@ let wasm_bindgen = (function(exports) {
           const url = __reteStr(urlPtr, urlLen);
           const dv = new DataView(wasm.memory.buffer);
           const ranges = [];
-          for (let i = 0; i < n; i++) ranges.push([Number(dv.getBigUint64(offsPtr + i*8, true)), dv.getUint32(lensPtr + i*4, true)]);
+          const offsB = __reteP(offsPtr), lensB = __reteP(lensPtr);
+            for (let i = 0; i < n; i++) ranges.push([Number(dv.getBigUint64(offsB + i*8, true)), dv.getUint32(lensB + i*4, true)]);
           // Retry each range once after a short pause: this Promise.all fires a
           // BURST of concurrent fetches, and a single transient miss ("Failed to
           // fetch" on a flaky link, a 5xx blip) used to fail the whole query —
@@ -1971,7 +1980,7 @@ let wasm_bindgen = (function(exports) {
               });
           const bufs = await Promise.all(ranges.map((r) => one(r, 0)));
           const mem = new Uint8Array(wasm.memory.buffer);
-          let pos = dstPtr, total = 0;
+          let pos = __reteP(dstPtr), total = 0;
           // Each range MUST land at its fixed slot (cumulative REQUESTED length), and
           // its body MUST be exactly the requested length. A short/over response (the
           // symptom of the WebKit caching bug above) would otherwise misalign every
@@ -2007,7 +2016,7 @@ let wasm_bindgen = (function(exports) {
               } catch (e) { /* retry the whole probe */ }
             }
           }
-          new DataView(wasm.memory.buffer).setBigUint64(outPtr, BigInt(total > 0 ? total : 0), true);
+          new DataView(wasm.memory.buffer).setBigUint64(__reteP(outPtr), BigInt(total > 0 ? total : 0), true);
           return total > 0 ? 1 : 0;
         }
         function __reteSuspend(makePromise) {

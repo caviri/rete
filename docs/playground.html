@@ -12848,7 +12848,12 @@ self.onmessage = function (e) {
   // memory diagnosis below stays conservative.
   function isAsyncReaderTrap(msg) {
     return isEngineTrap(msg) ||
-      /null function|function signature mismatch|table\.grow|runtimeerror/i.test(String(msg || ""));
+      /null function|function signature mismatch|table\.grow|runtimeerror/i.test(String(msg || "")) ||
+      // `RangeError: offset is out of bounds` from the asyncify glue: a wasm
+      // pointer above 2 GiB reached JS sign-extended. wasm memory never shrinks,
+      // so once it happens EVERY later read in that worker fails the same way —
+      // it has to count as a transport trap, or one bad query bricks the session.
+      /offset is out of bounds/i.test(String(msg || ""));
   }
 
   // Viewport-based "small device" check, for the memory-reclamation paths below.
