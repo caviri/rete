@@ -228,6 +228,12 @@ fn build(mut p: &GraphPattern, sel: &mut Select, mut in_where: bool) -> Result<P
     loop {
         match p {
             GraphPattern::Distinct { inner } | GraphPattern::Reduced { inner } => {
+                // Below the query's own projection (or anywhere inside the pattern
+                // body) this modifier belongs to a nested SELECT, not to us — the
+                // same rule the `Project` arm below already applies.
+                if in_where || !sel.project.is_empty() {
+                    return Ok(Plan::Subquery(Box::new(lower_pattern(p)?)));
+                }
                 sel.distinct = true;
                 p = inner;
             }
@@ -236,6 +242,13 @@ fn build(mut p: &GraphPattern, sel: &mut Select, mut in_where: bool) -> Result<P
                 start,
                 length,
             } => {
+                // A sub-SELECT's LIMIT/OFFSET must not land on the outer query.
+                // Peeling it here overwrote the outer slice *and* stole the inner
+                // one before the nested `Project` could turn it into a subquery, so
+                // `SELECT … WHERE { { SELECT … LIMIT 10 } } LIMIT 3` returned 10.
+                if in_where || !sel.project.is_empty() {
+                    return Ok(Plan::Subquery(Box::new(lower_pattern(p)?)));
+                }
                 sel.offset = *start;
                 sel.limit = *length;
                 p = inner;
@@ -365,6 +378,9 @@ fn build(mut p: &GraphPattern, sel: &mut Select, mut in_where: bool) -> Result<P
             build(inner, sel, in_where)
         }
         GraphPattern::Distinct { inner } | GraphPattern::Reduced { inner } => {
+            if in_where || !sel.project.is_empty() {
+                return Ok(Plan::Subquery(Box::new(lower_pattern(p)?)));
+            }
             sel.distinct = true;
             build(inner, sel, in_where)
         }
@@ -373,6 +389,9 @@ fn build(mut p: &GraphPattern, sel: &mut Select, mut in_where: bool) -> Result<P
             start,
             length,
         } => {
+            if in_where || !sel.project.is_empty() {
+                return Ok(Plan::Subquery(Box::new(lower_pattern(p)?)));
+            }
             sel.offset = *start;
             sel.limit = *length;
             build(inner, sel, in_where)
@@ -1257,5 +1276,53 @@ mod tests {
             let lowered = parse_select(query).unwrap();
             assert!(lowered.star_counter > 0 || matches!(lowered.plan, Plan::Bgp(_)), "{query}");
         }
+    }
+
+    #[test]
+    fn sub_select_modifiers_stay_inside_the_subquery() {
+        // The transparent-modifier peel used to walk straight through the nested
+        // SELECT boundary, so the inner LIMIT overwrote the outer one AND never
+        // reached the subquery: `… WHERE { { SELECT … LIMIT 10 } } LIMIT 3`
+        // returned 10 rows. The outer slice must survive, and the inner one must
+        // travel with its own Select.
+        let outer = parse_select(
+            "SELECT ?s WHERE { { SELECT ?s WHERE { ?s <http://ex/p> ?o } LIMIT 10 } } LIMIT 3",
+        )
+        .unwrap();
+        assert_eq!(outer.limit, Some(3), "outer LIMIT was overwritten");
+        assert!(
+            matches!(outer.plan, Plan::Subquery(_)),
+            "inner SELECT is not a subquery"
+        );
+        if let Plan::Subquery(inner) = &outer.plan {
+            assert_eq!(
+                inner.limit,
+                Some(10),
+                "inner LIMIT did not travel with the subquery"
+            );
+        }
+
+        // OFFSET rides along with LIMIT.
+        let sliced = parse_select(
+            "SELECT ?s WHERE { { SELECT ?s WHERE { ?s <http://ex/p> ?o } LIMIT 10 } } OFFSET 5 LIMIT 2",
+        )
+        .unwrap();
+        assert_eq!((sliced.offset, sliced.limit), (5, Some(2)));
+
+        // A nested DISTINCT must not make the outer query DISTINCT.
+        let distinct = parse_select(
+            "SELECT ?s WHERE { { SELECT DISTINCT ?s WHERE { ?s <http://ex/p> ?o } } } LIMIT 3",
+        )
+        .unwrap();
+        assert!(
+            !distinct.distinct,
+            "inner DISTINCT leaked to the outer query"
+        );
+        assert_eq!(distinct.limit, Some(3));
+
+        // A plain top-level slice still peels (no subquery in sight).
+        let plain = parse_select("SELECT ?s WHERE { ?s <http://ex/p> ?o } LIMIT 3").unwrap();
+        assert_eq!(plain.limit, Some(3));
+        assert!(matches!(plain.plan, Plan::Bgp(_)));
     }
 }
