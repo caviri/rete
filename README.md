@@ -31,7 +31,7 @@ WebAssembly, so a **browser can query the file directly with no backend**.
 > graphs + SPARQL**.
 
 <p align="center">
-  <img src="docs/img/lazy-query.svg" alt="A browser sends HTTP Range requests to a remote .rete file shown as a stack of tiles; only the few tiles a query touches are fetched, while most of the file is never transferred. A 100 MB / 1 GB graph stays interactive because only a few MB cross the wire per query." width="620">
+  <img src="docs/img/lazy-open.svg" alt="Any client — a browser, a notebook, the CLI — sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched (shown blue); a small block cache keeps hot tiles; everything grey is never transferred. A COUNT over 9.83 billion triples runs inside a 2 GiB container." width="680">
 </p>
 
 - **No server.** The file *is* the database. Publish once to static hosting.
@@ -42,39 +42,51 @@ WebAssembly, so a **browser can query the file directly with no backend**.
   (309 tests; ≈89% excluding the RDFS/OWL-entailment regime rete leaves out by
   design and the SERVICE tests, which need a live endpoint — `SERVICE`
   federation itself [is supported](https://caviri.github.io/rete/sparql.html)).
-- **Lazy over HTTP.** Range-read a remote file: a selective query faults in only
-  the dictionary chunks and index tiles it touches, so a **1 GB graph stays
-  interactive** in the browser ([try it](https://caviri.github.io/rete/explore-100mb.html)).
+- **Lazy over HTTP — and on disk.** Range-read the file wherever it lives: a
+  selective query faults in only the dictionary chunks and index tiles it
+  touches, so a **1 GB graph stays interactive in the browser**
+  ([try it](https://caviri.github.io/rete/explore-100mb.html)) and a **52 GB
+  graph opens locally in KBs** (files past 1 GiB go through the same range
+  reader).
+- **Bounded memory at any scale.** Aggregation streams through per-group
+  accumulators — a `COUNT` over the **9.83-billion-triple** DataCite file
+  returns **779,399 in 4 s inside a 2 GiB container**, and a `GROUP BY` over
+  its 1.38 B-row type slice fits in 4 GiB
+  ([benchmark](https://caviri.github.io/rete/BENCHMARK.html#billion-triple-scale-bounded-memory-queries-datacite)).
 - **Self-describing.** Every file can carry its own **[Dataset Card](https://caviri.github.io/rete/dataset-cards.html)**
   (counts, vocabulary, detected signals, and a library of **ready-to-run starter
   queries**) plus a **[schema pyramid](https://caviri.github.io/rete/semantic-zoom.html)** —
   a *leveled* `rdf:type` legend you read **index-free** in a couple of range
   requests. See below.
 - **Small + fast to open.** Compressed (zstd) with indexes prebuilt, so it
-  *opens in ~16 ms* — no load/index step. (See [benchmarks](#how-fast).)
+  *opens in ~20 ms* — no load/index step. (See [benchmarks](#how-fast).)
 - **Runs in the browser.** Same engine in WASM — the
   **[interactive playground](https://caviri.github.io/rete/playground.html)** is
   a single offline HTML page.
 
 ## Clients
 
-One engine, four languages — every client opens local files *and* remote URLs
-(lazy HTTP range reads) and returns parsed SPARQL results:
+One engine, every runtime — every client opens local files *and* remote URLs
+through the same lazy range reader and returns parsed SPARQL results (all
+client versions track the engine's 0.3.0 line):
 
 | Client | Get it | Notes |
 |---|---|---|
 | **Python** [![PyPI](https://img.shields.io/pypi/v/rete-graph?label=rete-graph)](https://pypi.org/project/rete-graph/) | `pip install rete-graph` | CPython ≥ 3.9 wheels for Linux/macOS/Windows **plus Pyodide** (JupyterLite, marimo WASM) · [docs](https://caviri.github.io/rete/python.html) · [tutorial](https://caviri.github.io/rete/python-build-tutorial.html) |
-| **JavaScript** [![npm](https://img.shields.io/npm/v/rete-graph?label=rete-graph)](https://www.npmjs.com/package/rete-graph) | `npm install rete-graph` — or one `<script>` tag: `cdn.jsdelivr.net/npm/rete-graph/dist/rete-graph.min.js` | Node ≥ 18 + browsers; TypeScript types included · [docs](https://caviri.github.io/rete/javascript.html) |
+| **JavaScript** [![npm](https://img.shields.io/npm/v/rete-graph?label=rete-graph)](https://www.npmjs.com/package/rete-graph) | `npm install rete-graph` — or one `<script>` tag: `cdn.jsdelivr.net/npm/rete-graph@0.3.0/dist/rete-graph.min.js` | Node ≥ 18 + browsers; TypeScript types included · [docs](https://caviri.github.io/rete/javascript.html) |
+| **Java** | `mvn -f clients/java install` (Maven Central pending) | pure JVM — the engine as wasm on Chicory, plus an RDF4J `Sail` binding · [readme](clients/java/README.md) |
 | **R** | `remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)` (needs Rust; CRAN/R-universe pending) | R ≥ 4.2; SPARQL results as data frames · [docs](https://caviri.github.io/rete/r.html) |
 | **Rust** | `rete-core` / `rete-cli` in this repo (crates.io release pending) | native + wasm · [Rust API](https://caviri.github.io/rete/rust-api.html) · [CLI reference](https://caviri.github.io/rete/cli.html) |
 | **Browser, zero install** | [playground](https://caviri.github.io/rete/playground.html) · [SPARQL IDE](https://caviri.github.io/rete/yasgui.html) | query any `.rete` URL with no install at all |
 | **Claude Desktop** | [**⬇ rete.mcpb**](https://data.graphplaza.com/mcpb/rete.mcpb) — double-click it (or take the checksummed copy from [Releases](https://github.com/caviri/rete/releases)) | one-click [MCP Bundle](https://github.com/modelcontextprotocol/mcpb): the engine runs locally, so your own graphs stay on your machine and work offline · [docs](https://caviri.github.io/rete/agents.html) |
+| **Blender** | add-on zip from [Releases](https://github.com/caviri/rete/releases) | SPARQL results as 3D scenes; bundles the Python wheels · [docs](https://caviri.github.io/rete/blender.html) |
+| **Hosted gateway** | [`katospiegel-rete.hf.space`](https://katospiegel-rete.hf.space/) | no install: `/mcp` (agent tools), REST `/api`, and a W3C SPARQL 1.1 endpoint per dataset at `/sparql/{dataset}` |
 
 ## Claude Code plugin
 
 This repo doubles as a Claude Code plugin marketplace. Two commands wire
 everything into Claude — the build/publish **skills** and the **rete MCP
-server** (SPARQL + SHACL over 60+ public knowledge graphs, entity search,
+server** (SPARQL + SHACL over 65 public knowledge graphs, entity search,
 dataset cards, media previews):
 
 ```
@@ -185,7 +197,7 @@ query can use the summary-only or routed-pattern budgets.
 ### Try it in your browser (no install)
 
 The **[playground](https://caviri.github.io/rete/playground.html)** is a
-self-contained offline page bundling the WASM engine and **40+ example datasets**
+self-contained offline page bundling the WASM engine and **65 example datasets**
 — from tiny embedded graphs to **remote, lazily-queried** ones served over HTTP
 range requests:
 
@@ -213,16 +225,21 @@ container — full writeup in [Benchmarks](https://caviri.github.io/rete/BENCHMA
 
 | | rete | Oxigraph |
 |---|--:|--:|
-| **Open / load the graph** | **16 ms** (indexes prebuilt in the file) | ~2,200 ms (parse + index) |
-| SPARQL queries (24 operators) | **wins or ties 20/24** · 24/24 results identical | sub-ms to tens of ms |
-| Batch reachability, 300 seeds | 453 ms → **36 ms** with `--parallel` | 2,591 ms |
+| **Open / load the graph** | **~20 ms** (indexes prebuilt in the file) | ~2,440 ms (parse + index) |
+| SPARQL queries (24 operators) | **wins or ties 21/24** · 24/24 results identical | sub-ms to tens of ms |
+| Batch reachability, 300 seeds | 641 ms → **39 ms** with `--parallel` | 3,026 ms |
 
-rete opens ~100–160× faster, and after the 2026 engine rework (lazy slot-row
+rete opens ~120× faster, and after the 2026 engine rework (lazy slot-row
 pipeline, adaptive index-nested-loop joins, top-k ORDER BY) it wins or ties most
 SPARQL shapes — aggregates, GROUP BY, DISTINCT, OPTIONAL, UNION/VALUES, paths,
 sorted pagination. Oxigraph keeps a fractional edge on ASK, the tightest LIMIT
-joins, and non-literal REGEX scans. File size: ~11.7× smaller than raw
-N-Triples, ~1.27× of `gzip` — but *queryable*.
+joins, and non-literal REGEX scans. File size: ~6.4× smaller than raw
+N-Triples, ~2.3× of `gzip` — but *queryable*.
+
+And it holds at scale: the 52 GB, **9.83-billion-triple** DataCite file answers
+a `COUNT` in **4 s inside a 2 GiB container** and a `GROUP BY` over 1.38 B rows
+in 131 s inside 4 GiB — aggregation streams, memory is O(groups)
+([full numbers](https://caviri.github.io/rete/BENCHMARK.html#billion-triple-scale-bounded-memory-queries-datacite)).
 
 > **Honest note on the pyramid.** Two structures ship in the file: the
 > *community summary* scales with the graph and helps overview/aggregate queries
@@ -257,7 +274,8 @@ regenerated with `cargo run -p docgen`).
 
 ## Status
 
-**v0.3.0** — first crates.io release (see [CHANGELOG](CHANGELOG.md)).
+**v0.3.0** — the 0.3.0 engine line, shipped to PyPI and npm with every client
+in lockstep; crates.io release pending (see [CHANGELOG](CHANGELOG.md)).
 Working end-to-end — the single-file format, dictionary + permutation indexes, the
 community summary and a self-describing **schema pyramid**, SPARQL + GeoSPARQL,
 lazy HTTP-range queries (with per-tile synopses that prune a routed tile before
@@ -279,8 +297,8 @@ docker compose run --rm dev cargo run -p rete-cli -- info some.rete
 docker compose run --rm dev bash scripts/smoke.sh
 docker compose run --rm dev uv run python scripts/build_playground.py
 docker compose run --rm gate                   # full Playwright regression gate
-docker compose run --rm gate-catalog           # all 73 embedded catalog queries
-docker compose run --rm gate-catalog-live      # all 431 catalog queries (slow, live R2)
+docker compose run --rm gate-catalog           # every embedded catalog query
+docker compose run --rm gate-catalog-live      # every catalog query (slow, live R2)
 docker compose run --rm gate-firefox           # regular gate in Firefox
 ```
 

@@ -63,12 +63,14 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [0.3.0] - 2026-07-22
 
-First release to crates.io, published as `rete-core`, `rete-cli`, and
-`rete-wasm`. It carries the same code the 1.0 line will ship, but goes out as a
-0.x on purpose: it proves the published packaging, the docs.rs builds, and the
-release automation end to end before any version has to honour a compatibility
-promise. The on-disk format is already stable generation 1; the Rust, CLI, and
-WASM APIs carry no semver guarantee until 1.0.0.
+The 0.3.0 engine line: `rete-core`, `rete-cli`, and `rete-wasm` staged for
+crates.io (the registry bootstrap is still pending — nothing is on crates.io
+yet; `rete-graph` 0.3.0 *is* published to PyPI and npm). It carries the same
+code the 1.0 line will ship, but goes out as a 0.x on purpose: it proves the
+packaging, the docs builds, and the release automation end to end before any
+version has to honour a compatibility promise. The on-disk format is already
+stable generation 1; the Rust, CLI, and WASM APIs carry no semver guarantee
+until 1.0.0.
 
 ### Added
 
