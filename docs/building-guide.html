@@ -5,6 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>FZK-Haus — one building in 3D · rete docs</title>
+  <meta name="description" content="Open the 3D building → — a three.js explorer over the fzk-haus knowledge graph: pick any wall, door, window, slab or room and see where it sits — its floor, the rooms it encloses, the rooms next to…" />
+  <link rel="canonical" href="https://caviri.github.io/rete/building-guide.html" />
+  <meta property="og:type" content="article" />
+  <meta property="og:site_name" content="rete" />
+  <meta property="og:title" content="FZK-Haus — one building in 3D · rete docs" />
+  <meta property="og:description" content="Open the 3D building → — a three.js explorer over the fzk-haus knowledge graph: pick any wall, door, window, slab or room and see where it sits — its floor, the rooms it encloses, the rooms next to…" />
+  <meta property="og:url" content="https://caviri.github.io/rete/building-guide.html" />
+  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/building-guide.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="FZK-Haus — one building in 3D · rete docs" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="FZK-Haus — one building in 3D · rete docs" />
+  <meta name="twitter:description" content="Open the 3D building → — a three.js explorer over the fzk-haus knowledge graph: pick any wall, door, window, slab or room and see where it sits — its floor, the rooms it encloses, the rooms next to…" />
+  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/building-guide.png" />
+  <meta name="rete:section" content="Explore in the browser" />
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -267,13 +283,12 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
+        <li class="nav-group"><details open><summary><a href="building-guide.html" class="active">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html" class="active">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="neuro-showcase.html" target="_blank" rel="noopener">reconstruct in 3D →</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">query in the playground →</a></li></ul></details></li>
-        <li class="nav-h">Buildings & BIM (IFC)</li>
-        <li class="nav-group"><details open><summary><a href="building-guide.html" class="active">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html" class="active">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-h">Guides</li>
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
@@ -291,6 +306,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="r.html">R — rete</a></li>
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
+        <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
         <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
