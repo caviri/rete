@@ -4,22 +4,22 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>JS lab — rete × D3 · rete docs</title>
-  <meta name="description" content="An experiment in the spirit of Observable and the p5.js editor: an in-browser JavaScript editor next to a live visualization." />
-  <link rel="canonical" href="https://caviri.github.io/rete/jslab-guide.html" />
+  <title>File explorer — browse like an archive · rete docs</title>
+  <meta name="description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
+  <link rel="canonical" href="https://caviri.github.io/rete/file-explorer.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
-  <meta property="og:title" content="JS lab — rete × D3 · rete docs" />
-  <meta property="og:description" content="An experiment in the spirit of Observable and the p5.js editor: an in-browser JavaScript editor next to a live visualization." />
-  <meta property="og:url" content="https://caviri.github.io/rete/jslab-guide.html" />
-  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/jslab-guide.png" />
+  <meta property="og:title" content="File explorer — browse like an archive · rete docs" />
+  <meta property="og:description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
+  <meta property="og:url" content="https://caviri.github.io/rete/file-explorer.html" />
+  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/file-explorer.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="JS lab — rete × D3 · rete docs" />
+  <meta property="og:image:alt" content="File explorer — browse like an archive · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="JS lab — rete × D3 · rete docs" />
-  <meta name="twitter:description" content="An experiment in the spirit of Observable and the p5.js editor: an in-browser JavaScript editor next to a live visualization." />
-  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/jslab-guide.png" />
+  <meta name="twitter:title" content="File explorer — browse like an archive · rete docs" />
+  <meta name="twitter:description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
+  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/file-explorer.png" />
   <meta name="rete:section" content="Explore in the browser" />
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
@@ -265,7 +265,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.2</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.3.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -275,17 +275,15 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Explore in the browser</li>
         <li class="nav-group"><details><summary><a href="playground-guide.html">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
-        <li><a href="file-explorer.html">File explorer — browse like an archive</a></li>
+        <li><a href="file-explorer.html" class="active">File explorer — browse like an archive</a></li>
         <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
-        <li class="nav-group"><details open><summary><a href="jslab-guide.html" class="active">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html" class="active">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
@@ -297,7 +295,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="manifest.html">Writable graphs — manifest & WAL</a></li>
         <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="compatibility.html">Compatibility & Cypher</a></li>
         <li class="nav-h">Clients</li>
@@ -337,70 +334,149 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>JS lab — rete × D3, Observable-style</h1>
-<p>An experiment in the spirit of <a href="https://observablehq.com">Observable</a> and the
-p5.js editor: <strong>an in-browser JavaScript editor next to a live
-visualization</strong>. The code on the left queries a remote <code>.rete</code> file through
-the <a href="javascript.html"><code>rete-graph</code> npm client</a> (loaded straight from the CDN —
-the same build any web page can <code>&lt;script src&gt;</code>), and draws the result with
-<a href="https://d3js.org">D3</a> on the right. Edit, hit <code>Ctrl+Enter</code>, watch it redraw.</p>
-<p><strong><a href="jslab.html">Launch the lab →</a></strong></p>
-<p>Five presets, over two datasets, each ending with <code>stats()</code> — how few bytes
-the queries actually fetched:</p>
+<h1>File explorer — browse a <code>.rete</code> like an archive</h1>
+<p>Open a <code>.rete</code> the way an archive tool opens a <code>.zip</code>: folders, files, a preview
+pane, and <strong>extract</strong>. It runs in a browser and ships as a desktop app for macOS
+and Windows.</p>
+<p>SPARQL is the wall most people hit; folders are the one interface everybody
+already knows. Nothing here is a new engine feature — it projects what a <code>.rete</code>
+already carries (the 1 KB section directory, the baked schema pyramid, the
+Dataset Card, six permutation indexes) onto a metaphor a non-specialist can walk
+into.</p>
+<blockquote>
+<p><strong>Status: experiment.</strong> It lives in <code>experiments/rete-file-explorer/</code> and is not
+part of the released surface. The desktop builds are unsigned.</p>
+</blockquote>
+<hr />
+<h2>Run it in a browser</h2>
+<p>Served from the repo root, like the <a href="plaza-guide.html">plaza</a>:</p>
+<pre><code class="language-sh">python3 -m http.server 8901
+# → http://127.0.0.1:8901/experiments/rete-file-explorer/index.html
+</code></pre>
+<p>It loads the WASM build from <code>web/pkg-nomodules/</code>, so run <code>scripts/build_wasm.sh</code>
+first if that directory is stale.</p>
+<p>Open one of the catalogued datasets, paste any <code>.rete</code> URL, or <strong>drag a file onto
+the window</strong> — anywhere, at any time.</p>
+<h2>Install the desktop app</h2>
+<p>Builds are attached to a GitHub Release by
+<a href="https://github.com/caviri/rete/actions/workflows/desktop-release.yml"><code>.github/workflows/desktop-release.yml</code></a>:
+a universal macOS <code>.dmg</code> (Apple Silicon + Intel) and a Windows <code>.msi</code> /
+<code>-setup.exe</code>.</p>
+<p>The desktop build drives <code>rete-core</code> natively rather than WASM, which buys three
+things the browser cannot give: no 4 GB heap ceiling, real threads, and
+positional reads against a local file — so a multi-gigabyte <code>.rete</code> on disk
+faults in rather than being read whole.</p>
+<p><strong>They are unsigned.</strong> macOS refuses them on first open ("cannot be opened
+because the developer cannot be verified", or "is damaged"); neither is true —
+it is the quarantine attribute doing its job on an app with no Developer ID.
+Once, after dragging to Applications:</p>
+<pre><code class="language-sh">xattr -dr com.apple.quarantine "/Applications/Rete File Explorer.app"
+</code></pre>
+<p>Or right-click the app → <strong>Open</strong> → <strong>Open</strong>. On Windows, SmartScreen shows
+"Windows protected your PC" → <strong>More info</strong> → <strong>Run anyway</strong>.</p>
+<hr />
+<h2>Five views, because there is no single honest tree</h2>
+<p>RDF is a graph. It has no canonical folder hierarchy — but it has several
+defensible ones, each true in its own way, so you switch between them.</p>
+<table><thead><tr><th>View</th><th>Folders are</th><th>What it costs</th></tr></thead><tbody>
+<tr><td><strong>Types</strong></td><td>classes; files are instances</td><td>the schema pyramid only — the triple index is never read</td></tr>
+<tr><td><strong>Namespace</strong></td><td>the IRI's own path segments</td><td>a bounded sample per class</td></tr>
+<tr><td><strong>Predicates</strong></td><td>one relation each; files are two-column tables</td><td>the schema pyramid only</td></tr>
+<tr><td><strong>Graphs</strong></td><td>named graphs, as volumes</td><td>one <code>DISTINCT ?g</code></td></tr>
+<tr><td><strong>Sections</strong></td><td>the actual bytes on disk</td><td>nothing — it <em>is</em> the first 1 KB</td></tr>
+</tbody></table>
+<p><strong>Sections</strong> is the one that makes the metaphor land. It renders the header's
+typed section directory with real offsets, so you can see that the INDEX is 47%
+of a file and the DICTIONARY 9%, and click a section to see its extent drawn
+against the whole file. See <a href="SPEC.html">the format spec</a> for what each section holds.</p>
+<p>A "file" is a resource's Concise Bounded Description, previewable as a property
+table, JSON-LD, or Turtle, with its incoming references underneath.</p>
+<h2>Folders that do not bottom out</h2>
+<p>Expanding an instance lists the resources it points at, labelled by the predicate
+that got you there, plus a <code>↩ referenced by</code> folder for the inbound side. So you
+descend <code>Creature → A-Acererak the Archlich → printedIn → Adventures in the Forgotten Realms → ↩ referenced by → …</code> for as long as the data keeps going.</p>
+<p>That is not a limitation of the browser; it is the honest shape of RDF. Ancestors
+travel with each node, so a link back to something already on your path is marked
+<code>↺</code> rather than pretending to be new. Literals are deliberately <em>not</em> children —
+they are the contents of the file, shown in the preview.</p>
+<h2>Two layouts</h2>
 <ul>
-<li><strong>network</strong> — the <strong>Linked Jazz collaboration graph</strong> (who played, toured,
-and sat in bands with whom, a 176 KB <code>.rete</code>) as a draggable, zoomable
-force layout; hover a musician to isolate their circle.</li>
-<li><strong>chord</strong> — a circos-style diagram of the top 16 musicians over the <strong>full
-relationship taxonomy</strong> (eleven predicates: played/toured/band ties,
-friendship/acquaintance/hasMet, influence/mentorship — the generic
-<code>knowsOf</code> is deliberately excluded). Ribbons take the color of the pair's
-dominant relationship group; hovering a ribbon shows the exact breakdown.</li>
-<li><strong>stacked</strong> — each musician's connections broken down by relationship type
-(a validated 4-color categorical stack).</li>
-<li><strong>top 20</strong> — a SPARQL <code>GROUP BY</code> as a clean ranked bar chart.</li>
-<li><strong>timeline ▶</strong> — a <em>different</em> dataset with real temporal data:
-<strong>Heroic-Age Antarctic expeditions</strong> (Wikidata, CC0). Time runs down the
-y-axis; a year-cursor sweeps 1896→1918, expeditions grow as it passes,
-crews pop out of them, and the four people who sailed more than once
-become orange threads connecting expeditions. Run again to replay.</li>
+<li><strong>Tree</strong> — nested and expandable. The twisty expands; clicking the name opens
+the preview. They are separate targets on purpose: a resource is both a folder
+and a file, so clicking its name must not collapse it.</li>
+<li><strong>Icons</strong> — one folder at a time as tiles with a breadcrumb, like a file
+manager. Tiles show a real thumbnail wherever the data has one.</li>
 </ul>
-<p>Two more buttons in the header: <strong>⿻ hide code</strong> collapses the editor for a
-presentation view, and <strong>⬇ standalone</strong> downloads the <em>current program</em> as a
-single self-contained HTML file — D3 and the rete-graph engine embedded, no
-CDN, no editor — that runs anywhere and credits its sources (only the data's
-own network is needed). That exported file is yours to host or share.</p>
-<h2>How it works</h2>
+<h2>Naming things</h2>
+<p>IRIs make serviceable filenames and terrible reading. The <strong>name by</strong> control
+lists every literal-valued predicate the schema knows about, with counts, and
+lets you choose which supplies display names — because <code>rdfs:label</code> is not
+universal. The default tries the usual set in order (<code>rdfs:label</code>,
+<code>skos:prefLabel</code>, <code>schema:name</code>, <code>dcterms:title</code>, …).</p>
+<p>Names are never on the critical path: listings paint local names immediately and
+patch labels in as background chunks land.</p>
+<h2>Search</h2>
+<p>Two indexes can answer a text search and neither is guaranteed, so the box tries
+the better one first and <strong>tells you which answered</strong>:</p>
+<table><thead><tr><th>Index</th><th>Matches</th><th>Present when</th></tr></thead><tbody>
+<tr><td><code>TEXT_INDEX</code></td><td>whole words, <code>CONTAINS</code></td><td>built with <code>rete build --text-index</code></td></tr>
+<tr><td>label prefix</td><td>the start of a label</td><td>the file has a pyramid</td></tr>
+</tbody></table>
+<p>That distinction matters. Silently returning nothing because a file has no text
+index is indistinguishable from "no matches", and the difference decides whether
+you rephrase the search or rebuild the file.</p>
+<h2>SPARQL</h2>
+<p>The folder views can only answer questions someone anticipated. The <strong>SPARQL</strong>
+tab is the escape hatch: an editor seeded from the file's own biggest class,
+<code>Ctrl</code>/<code>Cmd</code>+<code>Enter</code> to run, results as a table whose IRIs are clickable — so you
+can query your way to something and then keep walking the graph from it.
+<code>CONSTRUCT</code> and <code>DESCRIBE</code> come back as Turtle. Results export as CSV or JSON.</p>
+<p>See <a href="sparql.html">SPARQL support</a> for what the engine accepts.</p>
+<h2>Extract</h2>
+<p>Select a class, predicate, or named-graph folder and pull it out as <strong>CSV</strong>,
+<strong>JSON</strong>, or <strong>N-Triples</strong>, with a row cap you control.</p>
+<p>This is the half of the archive metaphor that RDF tooling never offers:
+<a href="cli.html"><code>rete export</code></a> is all-or-nothing, and the alternative is writing SPARQL.
+"Tick the <code>Person</code> folder, get a spreadsheet" is the actual product.</p>
+<hr />
+<h2>What it costs to browse</h2>
+<p>The footer meter reads <code>RemoteGraph.stats()</code> — cumulative <em>physical</em> bytes and
+requests, not a guess.</p>
+<table><thead><tr><th>Archive</th><th>Size</th><th>Open</th><th>Traffic to open</th></tr></thead><tbody>
+<tr><td>World Cup 2022</td><td>216 KB</td><td>instant</td><td>216 KB / 2 req (small files just get read)</td></tr>
+<tr><td>Lombardi</td><td>1016 KB</td><td>instant</td><td>760 KB / 6 req</td></tr>
+<tr><td>Wikidata slice</td><td>1.39 GB</td><td>~1 s warm</td><td>10.5 MB / 18 req — <strong>0.74%</strong></td></tr>
+<tr><td>data.bnf.fr</td><td>7.16 GB, 673.5M quads</td><td>5.7 s cold</td><td>18.9 MB / 23 req — <strong>0.26%</strong></td></tr>
+</tbody></table>
+<p>Listing a class of 1,067,797 Wikidata items — the first 200, with labels — took
+the session to 109 MB. That cost is dominated by <strong>dictionary chunk faults</strong>
+while decoding subject IDs, not by the <code>?s a &lt;C&gt;</code> scan, which is a contiguous POS
+range.</p>
+<h2>Files without a pyramid have no class list</h2>
+<p><code>gharchive</code>, <code>orcid</code>, <code>dblp</code> and the <code>wikidata-xxl</code> shards carry
+<code>schemaMetaLen = 0</code>. Types and Predicates are empty for them, because deriving
+classes would mean scanning the whole file — the page says so rather than
+appearing broken, and Namespace and Sections still work.</p>
+<p>Check before you wonder: a nonzero <code>schemaMetaLen</code> in the header means the views
+will populate.</p>
+<hr />
+<h2>Shape, for reuse</h2>
+<p>The split is deliberate:</p>
 <ul>
-<li>The rete engine's remote reader uses <strong>synchronous XHR range requests</strong>,
-which browsers only allow in workers — so the page boots a tiny <strong>Web
-Worker</strong> that <code>importScripts</code> the CDN bundle and holds the opened graphs.
-Your code gets a promise-based façade: <code>openGraph(url)</code> →
-<code>{ query, prefixSearch, textSearch, stats, contentHash }</code>.</li>
-<li>Graphs stay <strong>resident in the worker</strong> between runs, so a re-run reuses the
-block cache and decoded dictionary — the second query is nearly free.</li>
-<li>Query rows arrive as <code>{variable: term}</code> objects; each term carries <code>.kind</code>
-(<code>iri</code>/<code>literal</code>/<code>bnode</code>) and <code>.value</code> (plus <code>.datatype</code>/<code>.lang</code>). Numbers
-from aggregates are literal terms — coerce with <code>+row.n.value</code>.</li>
-<li>Your program runs with five bindings in scope: <strong><code>openGraph</code></strong>, <strong><code>d3</code></strong>,
-<strong><code>viz</code></strong> (the output container element), <strong><code>log(...)</code></strong> (the console
-strip), and <strong><code>theme</code></strong> — the active palette (surface, inks, grid, and
-validated series colors), so charts repaint correctly when you flip the
-<strong>◐ theme</strong> toggle between light and dark. Both palettes pass the
-colorblind-safety validator against their own surfaces; the standalone
-export bakes in whichever theme is active.</li>
+<li><strong><code>js/rete-fs.js</code></strong> — the whole projection: header parsing, the five views,
+lazy listings, file bodies, search, query, extract. No DOM, no <code>fetch</code> of its
+own; it takes an <code>engine</code> (<code>query</code> / <code>prefix</code> / <code>text</code>) plus the file's
+self-description.</li>
+<li><strong><code>js/fs-worker.js</code></strong> — owns one <code>Graph</code> / <code>RemoteGraph</code>. A classic worker,
+because remote reads use synchronous XHR, which browsers allow only there.</li>
+<li><strong><code>js/app.js</code></strong> — chrome only.</li>
 </ul>
-<p>Point <code>openGraph()</code> at any <code>.rete</code> URL whose host serves <code>Range</code> with CORS
-(see <a href="hosting.html">Hosting</a>) — every dataset in the
-<a href="playground-guide.html">playground</a> qualifies; find their URLs in its catalog.</p>
-<h2>Credits &amp; license</h2>
-<p>Data: the <a href="https://linkedjazz.org/">Linked Jazz Project</a> (CC BY-SA) — thank
-you for a wonderful graph. Libraries: <a href="https://d3js.org">D3</a> (ISC),
-<a href="https://codemirror.net">CodeMirror</a> (MIT), served by
-<a href="https://www.jsdelivr.com/">jsDelivr</a>.</p>
-<p>Source &amp; issues: <a href="https://github.com/caviri/rete">https://github.com/caviri/rete</a> · © 2026 Carlos Vivar Ríos,
-released under the
-<a href="https://github.com/caviri/rete/blob/main/LICENSE">Apache License 2.0</a>.</p>
+<p>Exactly one line differs between the web and desktop builds:</p>
+<pre><code class="language-js">const w = isTauri() ? makeTauriWorkerShim() : new Worker("./js/fs-worker.js");
+</code></pre>
+<p><code>tauri-bridge.js</code> makes the native commands speak the worker's message protocol,
+so <code>rete-fs.js</code> is byte-identical in both. The engine is a seam; the desktop
+build is the proof.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -408,7 +484,7 @@ released under the
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/jslab-guide.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer>Generated from <code>docs/file-explorer.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <script>
 (function () {
